@@ -55,6 +55,7 @@
     "@types/pg": "^8.11.10",
     "@types/ws": "^8.5.13",
     "drizzle-kit": "^0.31.4",
+    "tsc-alias": "^1.8.16",
     "tsx": "^4.19.2",
     "typescript": "^5.6.3"
   }
