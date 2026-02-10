@@ -48,6 +48,16 @@ router.get("/students", ...auth, async (req, res, next) => {
   }
 });
 
+// GET /api/classpilot/student-analytics - Summary analytics for all students
+router.get("/student-analytics", ...auth, async (req, res, next) => {
+  try {
+    const students = await getStudentsBySchool(res.locals.schoolId!);
+    return res.json({ analytics: students.map((s) => ({ studentId: s.id, name: `${s.firstName} ${s.lastName}` })) });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /api/classpilot/student-analytics/:studentId - Student activity analytics
 router.get("/student-analytics/:studentId", ...auth, async (req, res, next) => {
   try {

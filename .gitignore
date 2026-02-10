@@ -1,4 +1,11 @@
 node_modules/
 dist/
 .env
+.env.local
 *.log
+cookies.txt
+tmp_login.json
+
+# Frontend build output
+schoolpilot-app/dist/
+schoolpilot-app/node_modules/

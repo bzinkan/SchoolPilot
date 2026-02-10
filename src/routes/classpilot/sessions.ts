@@ -26,6 +26,48 @@ const auth = [
   requireProductLicense("CLASSPILOT"),
 ] as const;
 
+// POST /api/classpilot/teaching-sessions/start - Alias for creating a session
+router.post("/start", ...auth, async (req, res, next) => {
+  try {
+    const { groupId } = req.body;
+    const teacherId = req.authUser!.id;
+
+    if (!groupId) {
+      return res.status(400).json({ error: "groupId is required" });
+    }
+
+    const group = await getGroupById(groupId);
+    if (!group) {
+      return res.status(404).json({ error: "Group not found" });
+    }
+
+    const existing = await getActiveTeachingSession(teacherId);
+    if (existing) {
+      await endTeachingSession(existing.id);
+    }
+
+    const session = await createTeachingSession({ groupId, teacherId });
+    return res.status(201).json({ session });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/classpilot/teaching-sessions/end - End the active session
+router.post("/end", ...auth, async (req, res, next) => {
+  try {
+    const existing = await getActiveTeachingSession(req.authUser!.id);
+    if (!existing) {
+      return res.status(404).json({ error: "No active session" });
+    }
+
+    const session = await endTeachingSession(existing.id);
+    return res.json({ session });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /api/classpilot/teaching-sessions - Start a teaching session
 router.post("/", ...auth, async (req, res, next) => {
   try {

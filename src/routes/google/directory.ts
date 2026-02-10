@@ -120,8 +120,8 @@ router.post("/import", ...auth, async (req, res, next) => {
   }
 });
 
-// POST /api/google/workspace/import-staff - Import users as staff
-router.post("/import-staff", ...auth, async (req, res, next) => {
+// Shared import-staff handler (used by both /import-staff and /import-teachers)
+const importStaffHandler = async (req: any, res: any, next: any) => {
   try {
     const { users, role } = req.body;
     if (!Array.isArray(users) || users.length === 0) {
@@ -167,6 +167,12 @@ router.post("/import-staff", ...auth, async (req, res, next) => {
     }
     next(err);
   }
-});
+};
+
+// POST /api/google/workspace/import-staff - Import users as staff
+router.post("/import-staff", ...auth, importStaffHandler);
+
+// POST /import-teachers - Alias for import-staff (PassPilot compatibility)
+router.post("/import-teachers", ...auth, importStaffHandler);
 
 export default router;

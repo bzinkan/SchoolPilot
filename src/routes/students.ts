@@ -155,79 +155,126 @@ router.post(
   }
 );
 
+// GET /api/students/csv-template - Download CSV template
+router.get(
+  "/csv-template",
+  ...schoolContext,
+  async (_req, res) => {
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", "attachment; filename=students-template.csv");
+    return res.send("firstName,lastName,studentIdNumber,gradeLevel\n");
+  }
+);
+
+// Shared import-csv handler (used by both /import-csv and /import)
+const importCsvHandler = async (req: any, res: any, next: any) => {
+  try {
+    const { rows } = req.body;
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return res
+        .status(400)
+        .json({ error: "Array of row objects required" });
+    }
+
+    const toInsert: InsertStudent[] = [];
+    const errors: { row: number; error: string }[] = [];
+
+    for (let i = 0; i < rows.length; i++) {
+      const raw = rows[i];
+      const normalized: Record<string, string> = {};
+      for (const [key, val] of Object.entries(raw)) {
+        const k = key.toLowerCase().replace(/[\s_-]+/g, "");
+        normalized[k] = String(val ?? "").trim();
+      }
+
+      let firstName = normalized["firstname"] || normalized["first"] || "";
+      let lastName = normalized["lastname"] || normalized["last"] || "";
+
+      if (!firstName && !lastName) {
+        const fullName = normalized["name"] || normalized["fullname"] || "";
+        if (fullName) {
+          const parts = fullName.split(/\s+/);
+          firstName = parts[0] || "";
+          lastName = parts.slice(1).join(" ") || "";
+        }
+      }
+
+      if (!firstName || !lastName) {
+        errors.push({ row: i + 1, error: "Missing first or last name" });
+        continue;
+      }
+
+      const email = normalized["email"] || null;
+      const studentIdNumber =
+        normalized["studentidnumber"] ||
+        normalized["studentid"] ||
+        normalized["id"] ||
+        normalized["badgeid"] ||
+        null;
+      const gradeLevel = normalized["gradelevel"] || normalized["grade"] || null;
+      const dismissalType = normalized["dismissaltype"] || normalized["dismissal"] || null;
+      const busRoute =
+        normalized["busroute"] || normalized["bus"] || normalized["bus#"] || null;
+
+      toInsert.push({
+        schoolId: res.locals.schoolId!,
+        firstName,
+        lastName,
+        email,
+        emailLc: email?.toLowerCase() || null,
+        studentIdNumber,
+        gradeLevel,
+        dismissalType: dismissalType || "car",
+        busRoute,
+      });
+    }
+
+    const created = await bulkCreateStudents(toInsert);
+    return res.status(201).json({
+      imported: created.length,
+      errors: errors.length > 0 ? errors : undefined,
+      total: rows.length,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// POST /api/students/import - Alias for import-csv (GoPilot compatibility)
+router.post(
+  "/import",
+  ...schoolContext,
+  requireRole("admin"),
+  importCsvHandler
+);
+
 // POST /api/students/import-csv - CSV import
 router.post(
   "/import-csv",
   ...schoolContext,
   requireRole("admin"),
+  importCsvHandler
+);
+
+// PUT /api/students/bulk-update - Bulk update students (GoPilot)
+router.put(
+  "/bulk-update",
+  ...schoolContext,
+  requireRole("admin"),
   async (req, res, next) => {
     try {
-      const { rows } = req.body;
-      if (!Array.isArray(rows) || rows.length === 0) {
-        return res
-          .status(400)
-          .json({ error: "Array of row objects required" });
+      const { updates } = req.body;
+      if (!Array.isArray(updates)) {
+        return res.status(400).json({ error: "Array of updates required" });
       }
-
-      const toInsert: InsertStudent[] = [];
-      const errors: { row: number; error: string }[] = [];
-
-      for (let i = 0; i < rows.length; i++) {
-        const raw = rows[i];
-        const normalized: Record<string, string> = {};
-        for (const [key, val] of Object.entries(raw)) {
-          const k = key.toLowerCase().replace(/[\s_-]+/g, "");
-          normalized[k] = String(val ?? "").trim();
+      const results: unknown[] = [];
+      for (const item of updates) {
+        if (item.id) {
+          const updated = await updateStudent(item.id, item);
+          if (updated) results.push(updated);
         }
-
-        let firstName = normalized["firstname"] || normalized["first"] || "";
-        let lastName = normalized["lastname"] || normalized["last"] || "";
-
-        if (!firstName && !lastName) {
-          const fullName = normalized["name"] || normalized["fullname"] || "";
-          if (fullName) {
-            const parts = fullName.split(/\s+/);
-            firstName = parts[0] || "";
-            lastName = parts.slice(1).join(" ") || "";
-          }
-        }
-
-        if (!firstName || !lastName) {
-          errors.push({ row: i + 1, error: "Missing first or last name" });
-          continue;
-        }
-
-        const email = normalized["email"] || null;
-        const studentIdNumber =
-          normalized["studentidnumber"] ||
-          normalized["studentid"] ||
-          normalized["id"] ||
-          normalized["badgeid"] ||
-          null;
-        const gradeLevel = normalized["gradelevel"] || normalized["grade"] || null;
-        const dismissalType = normalized["dismissaltype"] || normalized["dismissal"] || null;
-        const busRoute =
-          normalized["busroute"] || normalized["bus"] || normalized["bus#"] || null;
-
-        toInsert.push({
-          schoolId: res.locals.schoolId!,
-          firstName,
-          lastName,
-          email,
-          emailLc: email?.toLowerCase() || null,
-          studentIdNumber,
-          gradeLevel,
-          dismissalType: dismissalType || "car",
-          busRoute,
-        });
       }
-
-      const created = await bulkCreateStudents(toInsert);
-      return res.status(201).json({
-        imported: created.length,
-        errors: errors.length > 0 ? errors : undefined,
-        total: rows.length,
-      });
+      return res.json({ updated: results.length, students: results });
     } catch (err) {
       next(err);
     }

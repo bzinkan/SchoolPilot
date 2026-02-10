@@ -21,6 +21,10 @@ import {
   updateMembership,
   deleteMembership,
   getMembershipsWithSchool,
+  getApprovedChildrenForParent,
+  createParentStudentLink,
+  getSchoolBySlug,
+  getStudentByCode,
 } from "../services/storage.js";
 
 const router = Router();
@@ -81,6 +85,71 @@ router.get("/me/memberships", async (req, res, next) => {
         carNumber: m.membership.carNumber,
       })),
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ============================================================================
+// Parent features (GoPilot: /me/children, /me/join-school)
+// ============================================================================
+
+// GET /api/users/me/children
+router.get("/me/children", async (req, res, next) => {
+  try {
+    // schoolId from header or session
+    const schoolId = (req.headers["x-school-id"] as string) || req.session?.schoolId || "";
+    const children = await getApprovedChildrenForParent(req.authUser!.id, schoolId);
+    return res.json({ children });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/users/me/children/link
+router.post("/me/children/link", async (req, res, next) => {
+  try {
+    const { studentCode, schoolId } = req.body;
+    if (!studentCode || !schoolId) {
+      return res.status(400).json({ error: "studentCode and schoolId are required" });
+    }
+    // Look up student by code to get studentId
+    const student = await getStudentByCode(schoolId, studentCode);
+    if (!student) {
+      return res.status(404).json({ error: "Student not found with that code" });
+    }
+    const link = await createParentStudentLink({
+      parentId: req.authUser!.id,
+      studentId: student.id,
+      relationship: req.body.relationship || "parent",
+    });
+    return res.status(201).json({ link });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/users/me/join-school
+router.post("/me/join-school", async (req, res, next) => {
+  try {
+    const { slug, inviteCode } = req.body;
+    if (!slug && !inviteCode) {
+      return res.status(400).json({ error: "slug or inviteCode required" });
+    }
+    const school = slug ? await getSchoolBySlug(slug) : null;
+    if (!school) {
+      return res.status(404).json({ error: "School not found" });
+    }
+    const existing = await getMembershipByUserAndSchool(req.authUser!.id, school.id);
+    if (existing) {
+      return res.status(409).json({ error: "Already a member of this school" });
+    }
+    const membership = await createMembership({
+      userId: req.authUser!.id,
+      schoolId: school.id,
+      role: "parent",
+    });
+    return res.status(201).json({ membership, school });
   } catch (err) {
     next(err);
   }

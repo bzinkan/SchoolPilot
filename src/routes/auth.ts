@@ -8,6 +8,7 @@ import {
   createSchool,
   createMembership,
   getMembershipsWithSchool,
+  getProductLicenses,
   updateUser,
 } from "../services/storage.js";
 import { authenticate } from "../middleware/authenticate.js";
@@ -174,8 +175,25 @@ router.get("/me", authenticate, async (req, res, next) => {
 
     const { password: _, ...safeUser } = req.authUser;
 
+    // Resolve product licenses for the active school
+    const schoolId =
+      req.session?.schoolId || membershipsWithSchool[0]?.membership.schoolId;
+    let licenses = { classPilot: false, passPilot: false, goPilot: false };
+    if (schoolId) {
+      const productLicenses = await getProductLicenses(schoolId);
+      for (const pl of productLicenses) {
+        if (pl.product === "CLASSPILOT" && pl.status === "active")
+          licenses.classPilot = true;
+        if (pl.product === "PASSPILOT" && pl.status === "active")
+          licenses.passPilot = true;
+        if (pl.product === "GOPILOT" && pl.status === "active")
+          licenses.goPilot = true;
+      }
+    }
+
     return res.json({
       user: safeUser,
+      licenses,
       memberships: membershipsWithSchool.map((m) => ({
         id: m.membership.id,
         schoolId: m.membership.schoolId,

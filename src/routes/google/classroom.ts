@@ -111,4 +111,45 @@ router.post("/sync", ...auth, async (req, res, next) => {
   }
 });
 
+// POST /api/google/courses/:courseId/sync - Sync a single course (PassPilot)
+router.post("/courses/:courseId/sync", ...auth, async (req, res, next) => {
+  try {
+    const courseId = String(req.params.courseId ?? "");
+    const schoolId = res.locals.schoolId!;
+    const { oauth2Client, google } = await getAuthedClient(req.authUser!.id);
+    const classroom = google.classroom({ version: "v1", auth: oauth2Client });
+
+    const studentsRes = await classroom.courses.students.list({ courseId });
+    const googleStudents = studentsRes.data.students || [];
+
+    let imported = 0;
+    for (const gs of googleStudents) {
+      const email = gs.profile?.emailAddress;
+      const firstName = gs.profile?.name?.givenName || "";
+      const lastName = gs.profile?.name?.familyName || "";
+      if (!email) continue;
+
+      const existing = await searchStudents(schoolId, { search: email });
+      if (existing.length === 0) {
+        await createStudent({
+          schoolId,
+          firstName,
+          lastName,
+          email,
+          googleUserId: gs.userId || undefined,
+          status: "active",
+        });
+        imported++;
+      }
+    }
+
+    return res.json({ courseId, total: googleStudents.length, imported });
+  } catch (err: any) {
+    if (err.message === "Google not connected") {
+      return res.status(400).json({ error: "Google not connected" });
+    }
+    next(err);
+  }
+});
+
 export default router;

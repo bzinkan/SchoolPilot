@@ -418,4 +418,31 @@ router.get("/audit-logs", ...auth, async (req, res, next) => {
   }
 });
 
+// GET /api/admin/schools/:id/billing - School billing info
+router.get("/schools/:id/billing", ...auth, async (req, res, next) => {
+  try {
+    const { getSchoolById, getProductLicenses } = await import("../../services/storage.js");
+    const school = await getSchoolById(param(req, "id"));
+    if (!school) return res.status(404).json({ error: "School not found" });
+    const licenses = await getProductLicenses(school.id);
+    return res.json({
+      school: { id: school.id, name: school.name, planTier: school.planTier, status: school.status },
+      licenses,
+      billing: { stripeCustomerId: school.stripeCustomerId, stripeSubscriptionId: school.stripeSubscriptionId },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/admin/admin-emails - List admin emails
+router.get("/admin-emails", ...auth, async (_req, res) => {
+  return res.json({ emails: [] });
+});
+
+// POST /api/admin/broadcast-email - Send broadcast email
+router.post("/broadcast-email", ...auth, async (_req, res) => {
+  return res.json({ ok: true, message: "Broadcast not yet implemented" });
+});
+
 export default router;

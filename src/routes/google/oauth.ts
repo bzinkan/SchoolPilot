@@ -39,7 +39,11 @@ router.get("/auth-url", authenticate, requireSchoolContext, async (req, res, nex
       access_type: "offline",
       prompt: "consent",
       scope: SCOPES,
-      state: JSON.stringify({ userId: req.authUser!.id, schoolId }),
+      state: JSON.stringify({
+        userId: req.authUser!.id,
+        schoolId,
+        returnTo: (req.query.returnTo as string) || req.headers.referer || "",
+      }),
     });
 
     return res.json({ url });
@@ -58,7 +62,7 @@ router.get("/callback", async (req, res, next) => {
       return res.status(400).json({ error: "Missing code or state" });
     }
 
-    const { userId } = JSON.parse(state);
+    const { userId, returnTo } = JSON.parse(state);
     const oauth2Client = getOAuth2Client();
     const { tokens } = await oauth2Client.getToken(code);
 
@@ -69,8 +73,20 @@ router.get("/callback", async (req, res, next) => {
       expiryDate: tokens.expiry_date ? new Date(tokens.expiry_date) : undefined,
     });
 
-    // Redirect to frontend
-    const frontendUrl = process.env.CORS_ALLOWLIST?.split(",")[0] || "http://localhost:5173";
+    // Redirect back to the frontend that initiated the OAuth flow
+    const allowlist = (process.env.CORS_ALLOWLIST || "").split(",").map((s) => s.trim());
+    let frontendUrl = allowlist[0] || "http://localhost:5173";
+
+    // Use returnTo if it matches an allowed origin
+    if (returnTo) {
+      try {
+        const origin = new URL(returnTo).origin;
+        if (allowlist.includes(origin)) {
+          frontendUrl = origin;
+        }
+      } catch {}
+    }
+
     return res.redirect(`${frontendUrl}/settings/google?connected=true`);
   } catch (err) {
     next(err);

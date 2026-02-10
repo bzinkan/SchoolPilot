@@ -1,0 +1,35 @@
+@import "tailwindcss";
+
+/* Product color tokens */
+:root {
+  /* SchoolPilot - Navy/Amber */
+  --sp-navy: #1e293b;
+  --sp-navy-light: #334155;
+  --sp-amber: #f59e0b;
+  --sp-amber-light: #fbbf24;
+
+  /* ClassPilot - Yellow */
+  --cp-yellow: #eab308;
+  --cp-yellow-light: #facc15;
+  --cp-yellow-bg: #fefce8;
+
+  /* PassPilot - Purple */
+  --pp-purple: #7c3aed;
+  --pp-purple-light: #8b5cf6;
+  --pp-purple-bg: #f5f3ff;
+
+  /* GoPilot - Blue */
+  --gp-blue: #2563eb;
+  --gp-blue-light: #3b82f6;
+  --gp-blue-bg: #eff6ff;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  min-height: 100vh;
+}

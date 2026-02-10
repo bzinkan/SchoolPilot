@@ -279,6 +279,21 @@ router.delete("/devices/:deviceId", ...staffAuth, requireRole("admin"), async (r
   }
 });
 
+// GET /api/classpilot/heartbeats - Recent heartbeats for all devices
+router.get("/heartbeats", ...staffAuth, async (req, res, next) => {
+  try {
+    const devices = await getDevicesBySchool(res.locals.schoolId!);
+    const heartbeats: unknown[] = [];
+    for (const device of devices.slice(0, 50)) {
+      const hb = await getHeartbeatsByDevice(device.deviceId, 1);
+      if (hb.length > 0) heartbeats.push({ deviceId: device.deviceId, ...hb[0] });
+    }
+    return res.json({ heartbeats });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /api/classpilot/heartbeats/:deviceId - Device heartbeat history
 router.get("/heartbeats/:deviceId", ...staffAuth, async (req, res, next) => {
   try {

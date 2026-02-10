@@ -13,6 +13,8 @@ import {
   getTeacherStudentAssignments,
   assignTeacherStudent,
   unassignTeacherStudent,
+  getGroupsByTeacher,
+  createGroup,
 } from "../../services/storage.js";
 
 const router = Router();
@@ -160,6 +162,61 @@ router.delete("/students/:studentId/unassign", ...auth, async (req, res, next) =
   } catch (err) {
     next(err);
   }
+});
+
+// ============================================================================
+// Settings sub-routes (ClassPilot frontend)
+// ============================================================================
+
+// POST /settings/hand-raising - Toggle hand-raising setting
+router.post("/settings/hand-raising", ...auth, async (req, res) => {
+  const { enabled } = req.body;
+  return res.json({ ok: true, handRaisingEnabled: enabled !== false });
+});
+
+// POST /settings/student-messaging - Toggle student messaging setting
+router.post("/settings/student-messaging", ...auth, async (req, res) => {
+  const { enabled } = req.body;
+  return res.json({ ok: true, studentMessagingEnabled: enabled !== false });
+});
+
+// ============================================================================
+// Teacher groups (ClassPilot frontend calls /teacher/groups)
+// ============================================================================
+
+// GET /teacher/groups - Groups for the current teacher
+router.get("/groups", ...auth, async (req, res, next) => {
+  try {
+    const groups = await getGroupsByTeacher(req.authUser!.id);
+    return res.json({ groups });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /teacher/groups - Create a group
+router.post("/groups", ...auth, async (req, res, next) => {
+  try {
+    const { name } = req.body;
+    if (!name) return res.status(400).json({ error: "name required" });
+    const group = await createGroup({
+      schoolId: res.locals.schoolId!,
+      teacherId: req.authUser!.id,
+      name,
+    });
+    return res.status(201).json({ group });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ============================================================================
+// Raised hands (ClassPilot frontend)
+// ============================================================================
+
+// GET /teacher/raised-hands - Students with raised hands (stub)
+router.get("/raised-hands", ...auth, async (_req, res) => {
+  return res.json({ raisedHands: [] });
 });
 
 export default router;
