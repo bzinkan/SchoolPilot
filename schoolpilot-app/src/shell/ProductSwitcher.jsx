@@ -10,9 +10,6 @@ export default function ProductSwitcher() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  // Don't render if only 1 product
-  if (productCount < 2) return null;
-
   // Determine current product from URL
   const currentKey =
     licensedProducts.find((k) =>
@@ -28,6 +25,9 @@ export default function ProductSwitcher() {
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, []);
+
+  // Don't render if only 1 product (after all hooks)
+  if (productCount < 2) return null;
 
   return (
     <div className="relative" ref={ref}>

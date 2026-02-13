@@ -9,3 +9,4 @@ tmp_login.json
 # Frontend build output
 schoolpilot-app/dist/
 schoolpilot-app/node_modules/
+schoolpilot-app/NUL

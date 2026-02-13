@@ -5,7 +5,7 @@ import { PRODUCT_PRIORITY, PRODUCT_CONFIG } from '../shared/utils/constants';
 const LicenseContext = createContext(null);
 
 export function LicenseProvider({ children }) {
-  const { licenses } = useAuth();
+  const { licenses, activeMembership } = useAuth();
 
   const value = useMemo(() => {
     const hasClassPilot = !!licenses?.classPilot;
@@ -17,9 +17,17 @@ export function LicenseProvider({ children }) {
     if (hasPassPilot) licensedProducts.push('PASSPILOT');
     if (hasGoPilot) licensedProducts.push('GOPILOT');
 
-    // Find default product by priority
+    // Find default product by priority (ClassPilot > PassPilot > GoPilot)
     const defaultProduct = PRODUCT_PRIORITY.find((p) => licensedProducts.includes(p)) || null;
     const defaultPath = defaultProduct ? PRODUCT_CONFIG[defaultProduct].basePath : '/';
+
+    // Role-aware default path
+    const role = activeMembership?.role;
+    const isAdmin = role === 'admin' || role === 'school_admin';
+    let roleBasedDefaultPath = defaultPath;
+    if (defaultProduct === 'GOPILOT' && !isAdmin && role === 'teacher') {
+      roleBasedDefaultPath = '/gopilot/teacher';
+    }
 
     return {
       hasClassPilot,
@@ -28,9 +36,10 @@ export function LicenseProvider({ children }) {
       licensedProducts,
       defaultProduct,
       defaultPath,
+      roleBasedDefaultPath,
       productCount: licensedProducts.length,
     };
-  }, [licenses]);
+  }, [licenses, activeMembership]);
 
   return <LicenseContext.Provider value={value}>{children}</LicenseContext.Provider>;
 }

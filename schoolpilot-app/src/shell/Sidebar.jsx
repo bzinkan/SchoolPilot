@@ -1,4 +1,5 @@
 import { NavLink, useLocation } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
 import { useLicenses } from '../contexts/LicenseContext';
 import { PRODUCT_CONFIG } from '../shared/utils/constants';
 import PassWidget from './widgets/PassWidget';
@@ -7,29 +8,40 @@ import GoWidget from './widgets/GoWidget';
 const NAV_ITEMS = {
   CLASSPILOT: [
     { label: 'Dashboard', path: '/classpilot', icon: '📊' },
-    { label: 'Students', path: '/classpilot/students', icon: '👩‍🎓' },
-    { label: 'Devices', path: '/classpilot/devices', icon: '💻' },
-    { label: 'Groups', path: '/classpilot/groups', icon: '👥' },
-    { label: 'Settings', path: '/classpilot/settings', icon: '⚙️' },
+    { label: 'Roster', path: '/classpilot/roster', icon: '📋' },
+    { label: 'My Settings', path: '/classpilot/my-settings', icon: '👤' },
+    { label: 'Admin', path: '/classpilot/admin', icon: '🛡️', adminOnly: true },
+    { label: 'Classes', path: '/classpilot/admin/classes', icon: '🏫', adminOnly: true },
+    { label: 'Students', path: '/classpilot/students', icon: '👩‍🎓', adminOnly: true },
+    { label: 'Analytics', path: '/classpilot/admin/analytics', icon: '📈', adminOnly: true },
+    { label: 'Settings', path: '/classpilot/settings', icon: '⚙️', adminOnly: true },
   ],
   PASSPILOT: [
     { label: 'Dashboard', path: '/passpilot', icon: '📊' },
-    { label: 'Passes', path: '/passpilot/passes', icon: '🎫' },
-    { label: 'Students', path: '/passpilot/students', icon: '👩‍🎓' },
-    { label: 'Settings', path: '/passpilot/settings', icon: '⚙️' },
+    { label: 'Kiosk', path: '/passpilot/kiosk', icon: '🖥️' },
   ],
   GOPILOT: [
     { label: 'Dashboard', path: '/gopilot', icon: '📊' },
-    { label: 'Dismissal', path: '/gopilot/dismissal', icon: '🚗' },
-    { label: 'Students', path: '/gopilot/students', icon: '👩‍🎓' },
-    { label: 'Homerooms', path: '/gopilot/homerooms', icon: '🏫' },
-    { label: 'Settings', path: '/gopilot/settings', icon: '⚙️' },
+    { label: 'Teacher View', path: '/gopilot/teacher', icon: '👩‍🏫' },
+    { label: 'Parent App', path: '/gopilot/parent', icon: '👨‍👩‍👧' },
+    { label: 'Setup', path: '/gopilot/setup', icon: '⚙️' },
   ],
 };
 
+const SUPER_ADMIN_ITEMS = [
+  { label: 'Schools', path: '/super-admin/schools', icon: '🏫' },
+  { label: 'Trial Requests', path: '/super-admin/trial-requests', icon: '📋' },
+];
+
 export default function Sidebar({ open, onClose }) {
+  const { user, activeMembership } = useAuth();
   const { licensedProducts, hasPassPilot, hasGoPilot } = useLicenses();
   const location = useLocation();
+
+  const isSuperAdmin = user?.isSuperAdmin === true;
+  const isSuperAdminView = location.pathname.startsWith('/super-admin');
+  const memberRole = activeMembership?.role;
+  const isAdmin = memberRole === 'admin' || memberRole === 'school_admin';
 
   // Determine active product
   const activeProduct =
@@ -37,11 +49,12 @@ export default function Sidebar({ open, onClose }) {
       location.pathname.startsWith(PRODUCT_CONFIG[k].basePath)
     ) || licensedProducts[0];
 
-  const items = NAV_ITEMS[activeProduct] || [];
-  const cfg = PRODUCT_CONFIG[activeProduct];
+  const allItems = isSuperAdminView ? SUPER_ADMIN_ITEMS : (NAV_ITEMS[activeProduct] || []);
+  const items = allItems.filter((item) => !item.adminOnly || isAdmin);
+  const cfg = isSuperAdminView ? null : PRODUCT_CONFIG[activeProduct];
 
   // Show widgets only in ClassPilot view
-  const showWidgets = activeProduct === 'CLASSPILOT';
+  const showWidgets = !isSuperAdminView && activeProduct === 'CLASSPILOT';
 
   return (
     <>
@@ -58,26 +71,46 @@ export default function Sidebar({ open, onClose }) {
           open ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
-        {/* Product indicator */}
-        <div className={`flex items-center gap-2 border-b px-4 py-3 ${cfg?.bgClass || 'bg-slate-50'}`}>
-          <span>{cfg?.icon}</span>
-          <span className={`text-sm font-semibold ${cfg?.textClass || 'text-slate-700'}`}>
-            {cfg?.label}
-          </span>
-        </div>
+        {/* Product / Section indicator */}
+        {isSuperAdminView ? (
+          <div className="flex items-center gap-2 border-b px-4 py-3 bg-slate-900">
+            <span>🛡️</span>
+            <span className="text-sm font-semibold text-white">Super Admin</span>
+          </div>
+        ) : (
+          <div className={`flex items-center gap-2 border-b px-4 py-3 ${cfg?.bgClass || 'bg-slate-50'}`}>
+            <span>{cfg?.icon}</span>
+            <span className={`text-sm font-semibold ${cfg?.textClass || 'text-slate-700'}`}>
+              {cfg?.label}
+            </span>
+          </div>
+        )}
 
         {/* Nav items */}
         <nav className="flex-1 overflow-y-auto px-2 py-2">
+          {isSuperAdmin && !isSuperAdminView && (
+            <NavLink
+              to="/super-admin/schools"
+              onClick={onClose}
+              className="flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors text-slate-600 hover:bg-slate-50 hover:text-slate-900 mb-1"
+            >
+              <span>🛡️</span>
+              <span>Super Admin</span>
+            </NavLink>
+          )}
+
           {items.map((item) => (
             <NavLink
               key={item.path}
               to={item.path}
-              end={item.path === PRODUCT_CONFIG[activeProduct]?.basePath}
+              end={isSuperAdminView ? item.path === '/super-admin/schools' : item.path === PRODUCT_CONFIG[activeProduct]?.basePath}
               onClick={onClose}
               className={({ isActive }) =>
                 `flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors ${
                   isActive
-                    ? `${cfg?.bgClass || 'bg-slate-100'} ${cfg?.textClass || 'text-slate-900'} font-semibold`
+                    ? isSuperAdminView
+                      ? 'bg-slate-100 text-slate-900 font-semibold'
+                      : `${cfg?.bgClass || 'bg-slate-100'} ${cfg?.textClass || 'text-slate-900'} font-semibold`
                     : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
                 }`
               }

@@ -278,6 +278,10 @@ export async function getProductLicenses(
     .where(eq(productLicenses.schoolId, schoolId));
 }
 
+export async function getAllProductLicenses(): Promise<ProductLicense[]> {
+  return db.select().from(productLicenses);
+}
+
 export async function createProductLicense(
   data: InsertProductLicense
 ): Promise<ProductLicense> {

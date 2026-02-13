@@ -1,0 +1,1543 @@
+import { useState } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { apiRequest, queryClient } from "../../../lib/queryClient";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../../components/ui/card";
+import { Button } from "../../../components/ui/button";
+import { Input } from "../../../components/ui/input";
+import { Label } from "../../../components/ui/label";
+import { useToast } from "../../../hooks/use-toast";
+import { Trash2, UserPlus, Users, ArrowLeft, AlertTriangle, Clock, Settings as SettingsIcon, Key, FileText, ChevronLeft, ChevronRight, BarChart3, LogOut, Upload, Search, Plus, Building2, Loader2, AlertCircle, RefreshCw } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "../../../components/ui/alert-dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../../../components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../../../components/ui/select";
+import { Checkbox } from "../../../components/ui/checkbox";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "../../../components/ui/tabs";
+import { Badge } from "../../../components/ui/badge";
+import { useClassPilotAuth } from "../../../hooks/useClassPilotAuth";
+
+const createStaffSchema = z.object({
+  name: z.string().optional(),
+  email: z.string().email("Invalid email address"),
+  role: z.enum(["teacher", "school_admin"]),
+  password: z.string().optional(),
+});
+
+export default function Admin() {
+  const navigate = useNavigate();
+  const { toast } = useToast();
+  const { currentUser } = useClassPilotAuth();
+
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [staffToDelete, setStaffToDelete] = useState(null);
+  const [cleanupDialogOpen, setCleanupDialogOpen] = useState(false);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [staffToEdit, setStaffToEdit] = useState(null);
+  const [selectedRole, setSelectedRole] = useState("teacher");
+  const [editName, setEditName] = useState("");
+  const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
+  const [staffToResetPassword, setStaffToResetPassword] = useState(null);
+  const [newPassword, setNewPassword] = useState("");
+  const [activeTab, setActiveTab] = useState("staff");
+  const [auditPage, setAuditPage] = useState(0);
+  const [auditActionFilter, setAuditActionFilter] = useState("");
+  const [addStaffDialogOpen, setAddStaffDialogOpen] = useState(false);
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [wsImportDialogOpen, setWsImportDialogOpen] = useState(false);
+  const [wsImportOU, setWsImportOU] = useState("");
+  const [wsImportRole, setWsImportRole] = useState("teacher");
+  const [wsExcludedEmails, setWsExcludedEmails] = useState(new Set());
+  const [wsImportResult, setWsImportResult] = useState(null);
+  const [staffSearchQuery, setStaffSearchQuery] = useState("");
+  const [staffPage, setStaffPage] = useState(0);
+  const [importFile, setImportFile] = useState(null);
+  const [importPreview, setImportPreview] = useState([]);
+  const [importError, setImportError] = useState("");
+  const STAFF_PER_PAGE = 10;
+
+  const form = useForm({
+    resolver: zodResolver(createStaffSchema),
+    defaultValues: {
+      name: "",
+      email: "",
+      role: "teacher",
+      password: "",
+    },
+  });
+
+  const { data: staffData, isLoading } = useQuery({
+    queryKey: ["/api/admin/users"],
+    queryFn: async () => {
+      const res = await fetch("/api/admin/users", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch staff");
+      return res.json();
+    },
+  });
+
+  const { data: settings } = useQuery({
+    queryKey: ["/api/settings"],
+    queryFn: async () => {
+      const res = await fetch("/api/settings", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch settings");
+      return res.json();
+    },
+  });
+
+  const { data: activeSessions = [] } = useQuery({
+    queryKey: ["/api/sessions/all"],
+    queryFn: async () => {
+      const res = await fetch("/api/sessions/all", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch sessions");
+      return res.json();
+    },
+    refetchInterval: 10000, // Poll every 10 seconds
+  });
+
+  const { data: allGroups = [] } = useQuery({
+    queryKey: ["/api/teacher/groups"],
+    queryFn: async () => {
+      const res = await fetch("/api/teacher/groups", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch groups");
+      return res.json();
+    },
+  });
+
+  // Audit logs query
+  const { data: auditLogsData, isLoading: auditLogsLoading } = useQuery({
+    queryKey: ["/api/admin/audit-logs", auditPage, auditActionFilter],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      params.set("limit", "20");
+      params.set("offset", String(auditPage * 20));
+      if (auditActionFilter) params.set("action", auditActionFilter);
+      const res = await fetch(`/api/admin/audit-logs?${params.toString()}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch audit logs");
+      return res.json();
+    },
+    enabled: activeTab === "audit",
+  });
+
+  const getFriendlyErrorMessage = (error) => {
+    if (!error) return "";
+    const message = error instanceof Error ? error.message : String(error);
+    const jsonMatch = message.match(/\{.*\}/);
+    if (jsonMatch) {
+      try {
+        const parsed = JSON.parse(jsonMatch[0]);
+        if (parsed.error) {
+          return parsed.error;
+        }
+      } catch {
+        return message;
+      }
+    }
+    return message;
+  };
+
+  const createStaffMutation = useMutation({
+    mutationFn: async (data) => {
+      const payload = {
+        email: data.email,
+        role: data.role,
+        name: data.name?.trim() ? data.name.trim() : undefined,
+        password: data.password?.trim() ? data.password : null,
+      };
+      return await apiRequest("POST", "/admin/users", payload);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/teachers"] });
+      form.reset();
+      setAddStaffDialogOpen(false);
+      toast({
+        title: "Staff member added",
+        description: "The staff account has been created successfully.",
+      });
+    },
+    onError: (error) => {
+      toast({
+        variant: "destructive",
+        title: "Failed to add staff",
+        description: error.message || "An error occurred",
+      });
+    },
+  });
+
+  const bulkImportMutation = useMutation({
+    mutationFn: async (users) => {
+      const results = { success: 0, failed: 0, errors: [] };
+      for (const user of users) {
+        try {
+          await apiRequest("POST", "/admin/users", {
+            email: user.email,
+            role: user.role === "admin" ? "school_admin" : "teacher",
+            name: user.name || undefined,
+          });
+          results.success++;
+        } catch (error) {
+          results.failed++;
+          results.errors.push(`${user.email}: ${error.message || "Failed"}`);
+        }
+      }
+      return results;
+    },
+    onSuccess: (results) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/teachers"] });
+      setImportDialogOpen(false);
+      setImportFile(null);
+      setImportPreview([]);
+      setImportError("");
+      toast({
+        title: "Import complete",
+        description: `Successfully imported ${results.success} staff members.${results.failed > 0 ? ` ${results.failed} failed.` : ""}`,
+      });
+    },
+    onError: (error) => {
+      toast({
+        variant: "destructive",
+        title: "Import failed",
+        description: error.message || "An error occurred during import",
+      });
+    },
+  });
+
+  // Google Workspace staff import queries
+  const { data: wsUsersData, isLoading: wsUsersLoading, error: wsUsersError, refetch: wsUsersRefetch } = useQuery({
+    queryKey: ["/api/directory/users"],
+    queryFn: async () => {
+      const res = await fetch("/api/directory/users", { credentials: "include" });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`${res.status}: ${text}`);
+      }
+      return res.json();
+    },
+    enabled: wsImportDialogOpen,
+  });
+  const { data: wsOUData, isLoading: wsOULoading } = useQuery({
+    queryKey: ["/api/directory/orgunits"],
+    queryFn: async () => {
+      const res = await fetch("/api/directory/orgunits", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch org units");
+      return res.json();
+    },
+    enabled: wsImportDialogOpen,
+  });
+
+  const wsUsers = wsUsersData?.users || [];
+  const wsOUs = wsOUData?.orgUnits || [];
+  const wsFilteredUsers = wsImportOU && wsImportOU !== "__all__"
+    ? wsUsers.filter(u => u.orgUnitPath === wsImportOU && !u.suspended)
+    : wsUsers.filter(u => !u.suspended);
+
+  const wsErrorCode = (() => {
+    if (!wsUsersError) return null;
+    const msg = wsUsersError.message || "";
+    try { const m = msg.match(/\{.*\}/); if (m) return JSON.parse(m[0]).code || null; } catch { /* ignore */ }
+    if (msg.includes("NO_TOKENS")) return "NO_TOKENS";
+    if (msg.includes("INSUFFICIENT_PERMISSIONS")) return "INSUFFICIENT_PERMISSIONS";
+    return null;
+  })();
+
+  const wsImportMutation = useMutation({
+    mutationFn: async (params) => {
+      const res = await fetch("/api/directory/import-staff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(params),
+      });
+      if (!res.ok) throw new Error("Staff import failed");
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/teachers"] });
+      setWsImportResult(data);
+      toast({
+        title: "Staff import complete",
+        description: `Imported ${data.imported} new staff, skipped ${data.skipped} existing`,
+      });
+    },
+    onError: (error) => {
+      toast({ variant: "destructive", title: "Staff import failed", description: error.message });
+    },
+  });
+
+  const parseCSV = (text) => {
+    const lines = text.trim().split(/\r?\n/);
+    if (lines.length < 2) return [];
+
+    const header = lines[0].toLowerCase().split(",").map(h => h.trim());
+    const emailIdx = header.findIndex(h => h === "email" || h === "e-mail");
+    const nameIdx = header.findIndex(h => h === "name" || h === "full name" || h === "displayname");
+    const roleIdx = header.findIndex(h => h === "role" || h === "type");
+
+    if (emailIdx === -1) {
+      throw new Error("CSV must have an 'email' column");
+    }
+
+    const results = [];
+    for (let i = 1; i < lines.length; i++) {
+      const values = lines[i].split(",").map(v => v.trim().replace(/^"|"$/g, ""));
+      const email = values[emailIdx];
+      if (!email || !email.includes("@")) continue;
+
+      const name = nameIdx !== -1 ? values[nameIdx] || "" : "";
+      const roleValue = roleIdx !== -1 ? values[roleIdx]?.toLowerCase() || "" : "";
+      const role = roleValue.includes("admin") ? "admin" : "teacher";
+
+      results.push({ name, email, role });
+    }
+    return results;
+  };
+
+  const handleFileChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setImportFile(file);
+    setImportError("");
+    setImportPreview([]);
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const text = event.target?.result;
+        const parsed = parseCSV(text);
+        if (parsed.length === 0) {
+          setImportError("No valid staff entries found in CSV");
+        } else {
+          setImportPreview(parsed);
+        }
+      } catch (error) {
+        setImportError(error.message || "Failed to parse CSV");
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const deleteStaffMutation = useMutation({
+    mutationFn: async (id) => {
+      return await apiRequest("DELETE", `/admin/users/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/teachers"] });
+      toast({
+        title: "Staff account deleted",
+        description: "The staff account has been deleted successfully.",
+      });
+      setDeleteDialogOpen(false);
+      setStaffToDelete(null);
+    },
+    onError: (error) => {
+      const message = getFriendlyErrorMessage(error);
+      if (message.includes("last school admin")) {
+        toast({
+          title: "Action blocked",
+          description: message,
+        });
+        return;
+      }
+      toast({
+        variant: "destructive",
+        title: "Failed to delete staff",
+        description: message || "An error occurred",
+      });
+    },
+  });
+
+  const updateStaffMutation = useMutation({
+    mutationFn: async (payload) => {
+      return await apiRequest("PATCH", `/admin/users/${payload.userId}`, {
+        role: payload.role,
+        name: payload.name?.trim() || undefined,
+      });
+    },
+    onSuccess: () => {
+      toast({
+        title: "Staff updated",
+        description: "Staff details have been updated successfully.",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/teachers"] });
+      setEditDialogOpen(false);
+      setStaffToEdit(null);
+    },
+    onError: (error) => {
+      const message = getFriendlyErrorMessage(error);
+      if (message.includes("last school admin")) {
+        toast({
+          title: "Action blocked",
+          description: message,
+        });
+        return;
+      }
+      toast({
+        variant: "destructive",
+        title: "Failed to update staff",
+        description: message || "An error occurred",
+      });
+    },
+  });
+
+  const resetPasswordMutation = useMutation({
+    mutationFn: async (payload) => {
+      return await apiRequest("POST", `/admin/users/${payload.userId}/password`, {
+        newPassword: payload.newPassword,
+      });
+    },
+    onSuccess: () => {
+      toast({
+        title: "Password reset",
+        description: "The staff member's password has been reset successfully.",
+      });
+      setPasswordDialogOpen(false);
+      setStaffToResetPassword(null);
+      setNewPassword("");
+    },
+    onError: (error) => {
+      toast({
+        variant: "destructive",
+        title: "Failed to reset password",
+        description: getFriendlyErrorMessage(error) || "An error occurred",
+      });
+    },
+  });
+
+  const cleanupStudentsMutation = useMutation({
+    mutationFn: async () => {
+      return await apiRequest("POST", "/admin/cleanup-students");
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/students"] });
+      toast({
+        title: "Student data cleared",
+        description: "All student devices and activity data have been cleared successfully.",
+      });
+      setCleanupDialogOpen(false);
+    },
+    onError: (error) => {
+      toast({
+        variant: "destructive",
+        title: "Failed to cleanup student data",
+        description: error.message || "An error occurred",
+      });
+    },
+  });
+
+  const onSubmit = (data) => {
+    createStaffMutation.mutate(data);
+  };
+
+  const handleDeleteClick = (staff) => {
+    setStaffToDelete(staff);
+    setDeleteDialogOpen(true);
+  };
+
+  const handleEditClick = (staff) => {
+    setStaffToEdit(staff);
+    setSelectedRole(staff.role);
+    setEditName(staff.displayName || "");
+    setEditDialogOpen(true);
+  };
+
+  const handleResetPasswordClick = (staff) => {
+    setStaffToResetPassword(staff);
+    setNewPassword("");
+    setPasswordDialogOpen(true);
+  };
+
+  const handleResetPasswordSubmit = () => {
+    if (!staffToResetPassword || !newPassword) return;
+    resetPasswordMutation.mutate({
+      userId: staffToResetPassword.id,
+      newPassword,
+    });
+  };
+
+  const handleDeleteConfirm = () => {
+    if (staffToDelete) {
+      deleteStaffMutation.mutate(staffToDelete.id);
+    }
+  };
+
+  const handleEditSubmit = () => {
+    if (!staffToEdit) {
+      return;
+    }
+    updateStaffMutation.mutate({ userId: staffToEdit.id, role: selectedRole, name: editName });
+  };
+
+  const staff = staffData?.users || [];
+
+  return (
+    <div className="container mx-auto p-6 max-w-6xl space-y-6">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="h-12 w-12 rounded-lg bg-primary flex items-center justify-center">
+            <Users className="h-6 w-6 text-primary-foreground" />
+          </div>
+          <div>
+            <h1 className="text-3xl font-semibold">Admin Panel</h1>
+            <p className="text-muted-foreground">
+              {currentUser?.schoolName && <span className="font-medium">{currentUser.schoolName}</span>}
+              {currentUser?.schoolName && ' \u2022 '}
+              Manage staff accounts for your school
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            onClick={() => navigate("/classpilot/admin/analytics")}
+          >
+            <BarChart3 className="h-4 w-4 mr-2" />
+            Analytics
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => navigate("/classpilot")}
+            data-testid="button-back-dashboard"
+          >
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Dashboard
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => navigate("/login")}
+            data-testid="button-logout"
+            title="Log out"
+          >
+            <LogOut className="h-5 w-5" />
+          </Button>
+        </div>
+      </div>
+
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v)} className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="staff" className="flex items-center gap-2">
+            <Users className="h-4 w-4" />
+            Staff & Settings
+          </TabsTrigger>
+          <TabsTrigger value="audit" className="flex items-center gap-2">
+            <FileText className="h-4 w-4" />
+            Audit Logs
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="staff" className="space-y-6">
+          {/* Staff Management Card */}
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <Users className="h-5 w-5" />
+                    Staff Accounts
+                  </CardTitle>
+                  <CardDescription>
+                    {staff.length} {staff.length === 1 ? "staff member" : "staff members"} in the system
+                  </CardDescription>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setWsImportDialogOpen(true);
+                      setWsImportResult(null);
+                      setWsImportOU("");
+                      setWsImportRole("teacher");
+                      setWsExcludedEmails(new Set());
+                    }}
+                  >
+                    <Building2 className="h-4 w-4 mr-2" />
+                    Import from Google
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => setImportDialogOpen(true)}
+                  >
+                    <Upload className="h-4 w-4 mr-2" />
+                    Import CSV
+                  </Button>
+                  <Button onClick={() => setAddStaffDialogOpen(true)}>
+                    <Plus className="h-4 w-4 mr-2" />
+                    Add Staff
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Search */}
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search by name or email..."
+                  value={staffSearchQuery}
+                  onChange={(e) => {
+                    setStaffSearchQuery(e.target.value);
+                    setStaffPage(0);
+                  }}
+                  className="pl-9"
+                />
+              </div>
+
+              {/* Staff List */}
+              {isLoading ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  Loading staff...
+                </div>
+              ) : staff.length === 0 ? (
+                <div className="text-center py-8 text-muted-foreground">
+                  <Users className="h-12 w-12 mx-auto mb-3 text-muted-foreground/30" />
+                  <p>No staff yet. Add a staff member to get started!</p>
+                </div>
+              ) : (() => {
+                // Helper to extract last name for sorting
+                const getLastName = (name) => {
+                  if (!name) return "";
+                  const parts = name.trim().split(/\s+/);
+                  return parts.length > 1 ? parts[parts.length - 1].toLowerCase() : parts[0].toLowerCase();
+                };
+
+                const filteredStaff = staff
+                  .filter((member) => {
+                    const query = staffSearchQuery.toLowerCase();
+                    return (
+                      member.email.toLowerCase().includes(query) ||
+                      (member.displayName?.toLowerCase().includes(query) ?? false)
+                    );
+                  })
+                  .sort((a, b) => {
+                    // Sort by last name, then by email if no name
+                    const aLastName = getLastName(a.displayName) || a.email.toLowerCase();
+                    const bLastName = getLastName(b.displayName) || b.email.toLowerCase();
+                    return aLastName.localeCompare(bLastName);
+                  });
+                const totalPages = Math.ceil(filteredStaff.length / STAFF_PER_PAGE);
+                const paginatedStaff = filteredStaff.slice(
+                  staffPage * STAFF_PER_PAGE,
+                  (staffPage + 1) * STAFF_PER_PAGE
+                );
+
+                return (
+                  <div className="space-y-4">
+                    {filteredStaff.length === 0 ? (
+                      <div className="text-center py-8 text-muted-foreground">
+                        No staff members match your search.
+                      </div>
+                    ) : (
+                      <>
+                        <div className="border rounded-lg overflow-hidden">
+                          <table className="w-full">
+                            <thead className="bg-muted">
+                              <tr>
+                                <th className="px-4 py-3 text-left font-medium text-sm">Name</th>
+                                <th className="px-4 py-3 text-left font-medium text-sm">Email</th>
+                                <th className="px-4 py-3 text-left font-medium text-sm">Role</th>
+                                <th className="px-4 py-3 text-right font-medium text-sm">Actions</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {paginatedStaff.map((member) => (
+                                <tr
+                                  key={member.id}
+                                  data-testid={`staff-row-${member.id}`}
+                                  className="border-t hover:bg-muted/50"
+                                >
+                                  <td className="px-4 py-3">
+                                    <span className="font-medium" data-testid={`staff-name-${member.id}`}>
+                                      {member.displayName || "\u2014"}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-3 text-muted-foreground">
+                                    {member.email}
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <Badge variant={member.role === "school_admin" ? "default" : "secondary"}>
+                                      {member.role === "school_admin" ? "School Admin" : "Teacher"}
+                                    </Badge>
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <div className="flex items-center justify-end gap-1">
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        data-testid={`button-edit-${member.id}`}
+                                        onClick={() => handleEditClick(member)}
+                                        disabled={updateStaffMutation.isPending}
+                                      >
+                                        Edit
+                                      </Button>
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        data-testid={`button-reset-password-${member.id}`}
+                                        onClick={() => handleResetPasswordClick(member)}
+                                        disabled={resetPasswordMutation.isPending}
+                                      >
+                                        <Key className="h-4 w-4" />
+                                      </Button>
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        data-testid={`button-delete-${member.id}`}
+                                        onClick={() => handleDeleteClick(member)}
+                                        disabled={deleteStaffMutation.isPending}
+                                      >
+                                        <Trash2 className="h-4 w-4 text-destructive" />
+                                      </Button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+
+                        {/* Pagination */}
+                        {totalPages > 1 && (
+                          <div className="flex items-center justify-between">
+                            <div className="text-sm text-muted-foreground">
+                              Showing {staffPage * STAFF_PER_PAGE + 1} - {Math.min((staffPage + 1) * STAFF_PER_PAGE, filteredStaff.length)} of {filteredStaff.length}
+                            </div>
+                            <div className="flex gap-2">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                disabled={staffPage === 0}
+                                onClick={() => setStaffPage(p => p - 1)}
+                              >
+                                <ChevronLeft className="h-4 w-4" />
+                                Previous
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                disabled={staffPage >= totalPages - 1}
+                                onClick={() => setStaffPage(p => p + 1)}
+                              >
+                                Next
+                                <ChevronRight className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                );
+              })()}
+            </CardContent>
+          </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Users className="h-5 w-5" />
+            Student Roster Management
+          </CardTitle>
+          <CardDescription>
+            Manage student records and import new students
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="bg-muted p-4 rounded-lg">
+            <p className="text-sm mb-2">
+              <strong>Student Roster:</strong> Centralized management of all student records.
+            </p>
+            <ul className="text-sm space-y-1 list-disc list-inside text-muted-foreground">
+              <li>Import students via CSV files</li>
+              <li>Edit student information (name, email, grade)</li>
+              <li>Delete student records</li>
+              <li>Filter students by grade level</li>
+            </ul>
+          </div>
+          <Button
+            variant="default"
+            data-testid="button-manage-students"
+            onClick={() => navigate("/classpilot/students")}
+          >
+            Manage Students
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <SettingsIcon className="h-5 w-5" />
+            Class Management
+          </CardTitle>
+          <CardDescription>
+            Create and manage class rosters for teachers
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="bg-muted p-4 rounded-lg">
+            <p className="text-sm mb-2">
+              <strong>Admin Class Creation:</strong> Create official class rosters for teachers.
+            </p>
+            <ul className="text-sm space-y-1 list-disc list-inside text-muted-foreground">
+              <li>Browse classes by grade level</li>
+              <li>Create classes (e.g., "7th Science P3") and assign to teachers</li>
+              <li>Assign students to class rosters</li>
+              <li>Teachers can then start/end sessions for these classes</li>
+            </ul>
+          </div>
+          <Button
+            variant="default"
+            data-testid="button-manage-classes"
+            onClick={() => navigate("/classpilot/admin/classes")}
+          >
+            Manage Classes
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Clock className="h-5 w-5" />
+            Active Sessions Monitor
+          </CardTitle>
+          <CardDescription>
+            View all ongoing class sessions school-wide
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {activeSessions.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <Clock className="h-12 w-12 mx-auto mb-3 text-muted-foreground/30" />
+              <p className="text-sm">No active class sessions</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {activeSessions.map((session) => {
+                const teacher = staff.find(t => t.id === session.teacherId);
+                const group = allGroups.find(g => g.id === session.groupId);
+                return (
+                  <div
+                    key={session.id}
+                    className="flex items-center justify-between p-3 rounded-lg border hover-elevate"
+                    data-testid={`session-${session.id}`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
+                      <div>
+                        <p className="font-medium">{group?.name || 'Unknown Group'}</p>
+                        <p className="text-sm text-muted-foreground">
+                          {teacher?.displayName || teacher?.email || 'Unknown Teacher'} {'\u2022'} Started {new Date(session.startTime).toLocaleTimeString()}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className="border-destructive/50">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-destructive">
+            <AlertTriangle className="h-5 w-5" />
+            Database Cleanup
+          </CardTitle>
+          <CardDescription>
+            Remove all student devices and monitoring data from the system
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="bg-muted p-4 rounded-lg">
+            <p className="text-sm mb-2">
+              <strong>Warning:</strong> This will permanently delete:
+            </p>
+            <ul className="text-sm space-y-1 list-disc list-inside text-muted-foreground">
+              <li>All registered student/Chromebook devices</li>
+              <li>All heartbeat and activity history</li>
+              <li>All URL visit records</li>
+            </ul>
+            <p className="text-sm mt-3 text-muted-foreground">
+              Use this to clean up duplicate entries or start fresh. Extensions will need to re-register after cleanup.
+            </p>
+          </div>
+          <Button
+            variant="destructive"
+            data-testid="button-cleanup-students"
+            onClick={() => setCleanupDialogOpen(true)}
+            disabled={cleanupStudentsMutation.isPending}
+          >
+            {cleanupStudentsMutation.isPending ? "Cleaning up..." : "Clear All Student Data"}
+          </Button>
+        </CardContent>
+      </Card>
+        </TabsContent>
+
+        <TabsContent value="audit" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <FileText className="h-5 w-5" />
+                Audit Logs
+              </CardTitle>
+              <CardDescription>
+                Track administrative actions and changes for compliance
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center gap-4">
+                <div className="flex-1">
+                  <Label htmlFor="action-filter">Filter by Action</Label>
+                  <Select
+                    value={auditActionFilter}
+                    onValueChange={(v) => {
+                      setAuditActionFilter(v === "all" ? "" : v);
+                      setAuditPage(0);
+                    }}
+                  >
+                    <SelectTrigger id="action-filter">
+                      <SelectValue placeholder="All actions" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All actions</SelectItem>
+                      <SelectItem value="auth.login">Login</SelectItem>
+                      <SelectItem value="auth.logout">Logout</SelectItem>
+                      <SelectItem value="settings.update">Settings Update</SelectItem>
+                      <SelectItem value="user.create">User Created</SelectItem>
+                      <SelectItem value="user.update">User Updated</SelectItem>
+                      <SelectItem value="user.delete">User Deleted</SelectItem>
+                      <SelectItem value="student.create">Student Created</SelectItem>
+                      <SelectItem value="student.update">Student Updated</SelectItem>
+                      <SelectItem value="student.delete">Student Deleted</SelectItem>
+                      <SelectItem value="session.start">Session Started</SelectItem>
+                      <SelectItem value="session.end">Session Ended</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              {auditLogsLoading ? (
+                <div className="text-center py-8 text-muted-foreground">Loading audit logs...</div>
+              ) : auditLogsData?.logs && auditLogsData.logs.length > 0 ? (
+                <div className="space-y-4">
+                  <div className="border rounded-lg overflow-hidden">
+                    <table className="w-full text-sm">
+                      <thead className="bg-muted">
+                        <tr>
+                          <th className="px-4 py-2 text-left font-medium">Time</th>
+                          <th className="px-4 py-2 text-left font-medium">User</th>
+                          <th className="px-4 py-2 text-left font-medium">Action</th>
+                          <th className="px-4 py-2 text-left font-medium">Details</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {auditLogsData.logs.map((log) => (
+                          <tr key={log.id} className="border-t">
+                            <td className="px-4 py-2 whitespace-nowrap">
+                              {new Date(log.createdAt).toLocaleString()}
+                            </td>
+                            <td className="px-4 py-2">
+                              <div>{log.userEmail || log.userId}</div>
+                              {log.userRole && (
+                                <Badge variant="outline" className="text-xs mt-1">
+                                  {log.userRole}
+                                </Badge>
+                              )}
+                            </td>
+                            <td className="px-4 py-2">
+                              <Badge variant={
+                                log.action.startsWith('auth.') ? 'default' :
+                                log.action.includes('delete') ? 'destructive' :
+                                'secondary'
+                              }>
+                                {log.action}
+                              </Badge>
+                            </td>
+                            <td className="px-4 py-2 max-w-xs truncate">
+                              {log.entityName && <span>{log.entityName}</span>}
+                              {log.entityType && !log.entityName && <span className="text-muted-foreground">{log.entityType}</span>}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm text-muted-foreground">
+                      Showing {auditPage * 20 + 1} - {Math.min((auditPage + 1) * 20, auditLogsData.total)} of {auditLogsData.total}
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={auditPage === 0}
+                        onClick={() => setAuditPage(p => p - 1)}
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                        Previous
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={(auditPage + 1) * 20 >= auditLogsData.total}
+                        onClick={() => setAuditPage(p => p + 1)}
+                      >
+                        Next
+                        <ChevronRight className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center py-8 text-muted-foreground">
+                  No audit logs found. Actions will be recorded as users interact with the system.
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+
+      <Dialog
+        open={editDialogOpen}
+        onOpenChange={(open) => {
+          setEditDialogOpen(open);
+          if (!open) {
+            setStaffToEdit(null);
+          }
+        }}
+      >
+        <DialogContent data-testid="dialog-edit-staff">
+          <DialogHeader>
+            <DialogTitle>Edit Staff</DialogTitle>
+            <DialogDescription>
+              Update details for <strong>{staffToEdit?.displayName || staffToEdit?.email}</strong>.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="edit-name">Display Name</Label>
+              <Input
+                id="edit-name"
+                data-testid="input-edit-name"
+                type="text"
+                placeholder="e.g., John Smith"
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-role">Role</Label>
+              <Select
+                value={selectedRole}
+                onValueChange={(value) => setSelectedRole(value)}
+              >
+                <SelectTrigger id="edit-role" data-testid="select-edit-role">
+                  <SelectValue placeholder="Select role" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="teacher">Teacher</SelectItem>
+                  <SelectItem value="school_admin">School Admin</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setEditDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button type="button" onClick={handleEditSubmit} disabled={updateStaffMutation.isPending}>
+                {updateStaffMutation.isPending ? "Saving..." : "Save"}
+              </Button>
+            </DialogFooter>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={passwordDialogOpen}
+        onOpenChange={(open) => {
+          setPasswordDialogOpen(open);
+          if (!open) {
+            setStaffToResetPassword(null);
+            setNewPassword("");
+          }
+        }}
+      >
+        <DialogContent data-testid="dialog-reset-password">
+          <DialogHeader>
+            <DialogTitle>Reset Password</DialogTitle>
+            <DialogDescription>
+              Set a new password for <strong>{staffToResetPassword?.displayName || staffToResetPassword?.email}</strong>.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="new-password">New Password</Label>
+              <Input
+                id="new-password"
+                type="password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder="Enter new password (min 10 characters)"
+                data-testid="input-new-password"
+              />
+              <p className="text-xs text-muted-foreground">
+                Minimum 10 characters required.
+              </p>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setPasswordDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                onClick={handleResetPasswordSubmit}
+                disabled={resetPasswordMutation.isPending || newPassword.length < 10}
+              >
+                {resetPasswordMutation.isPending ? "Resetting..." : "Reset Password"}
+              </Button>
+            </DialogFooter>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Staff Account</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete the account for{" "}
+              <strong>{staffToDelete?.displayName || staffToDelete?.email}</strong>? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="button-cancel-delete">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              data-testid="button-confirm-delete"
+              onClick={handleDeleteConfirm}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Delete Account
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={cleanupDialogOpen} onOpenChange={setCleanupDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Clear All Student Data</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you absolutely sure? This will permanently delete all student devices, activity history, and monitoring data from the database. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="button-cancel-cleanup">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              data-testid="button-confirm-cleanup"
+              onClick={() => cleanupStudentsMutation.mutate()}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Yes, Clear All Data
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Add Staff Dialog */}
+      <Dialog
+        open={addStaffDialogOpen}
+        onOpenChange={(open) => {
+          setAddStaffDialogOpen(open);
+          if (!open) {
+            form.reset();
+          }
+        }}
+      >
+        <DialogContent data-testid="dialog-add-staff">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <UserPlus className="h-5 w-5" />
+              Add Staff Member
+            </DialogTitle>
+            <DialogDescription>
+              Add a teacher or school admin to your school. They can sign in with Google or use a temporary password.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="modal-name">Name (Optional)</Label>
+              <Input
+                id="modal-name"
+                data-testid="input-staff-name"
+                type="text"
+                placeholder="e.g., John Smith"
+                {...form.register("name")}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="modal-email">Email *</Label>
+              <Input
+                id="modal-email"
+                data-testid="input-staff-email"
+                type="email"
+                placeholder="e.g., john.smith@school.edu"
+                {...form.register("email")}
+              />
+              {form.formState.errors.email && (
+                <p className="text-sm text-destructive">
+                  {form.formState.errors.email.message}
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="modal-role">Role</Label>
+              <Select
+                value={form.watch("role")}
+                onValueChange={(value) => form.setValue("role", value)}
+              >
+                <SelectTrigger id="modal-role" data-testid="select-staff-role">
+                  <SelectValue placeholder="Select role" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="teacher">Teacher</SelectItem>
+                  <SelectItem value="school_admin">School Admin</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="modal-password">Temp Password (Optional)</Label>
+              <Input
+                id="modal-password"
+                data-testid="input-staff-password"
+                type="password"
+                placeholder="Leave blank for Google-only login"
+                {...form.register("password")}
+              />
+              <p className="text-xs text-muted-foreground">
+                If left blank, the user must sign in with Google.
+              </p>
+            </div>
+
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setAddStaffDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                data-testid="button-create-staff"
+                disabled={createStaffMutation.isPending}
+              >
+                {createStaffMutation.isPending ? "Adding..." : "Add Staff"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Import CSV Dialog */}
+      <Dialog
+        open={importDialogOpen}
+        onOpenChange={(open) => {
+          setImportDialogOpen(open);
+          if (!open) {
+            setImportFile(null);
+            setImportPreview([]);
+            setImportError("");
+          }
+        }}
+      >
+        <DialogContent className="max-w-2xl" data-testid="dialog-import-staff">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Upload className="h-5 w-5" />
+              Import Staff from CSV
+            </DialogTitle>
+            <DialogDescription>
+              Upload a CSV file to bulk import staff members. The file should have columns for email, name (optional), and role (optional).
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            {/* File Upload */}
+            <div className="space-y-2">
+              <Label htmlFor="csv-file">CSV File</Label>
+              <div className="border-2 border-dashed rounded-lg p-6 text-center">
+                <input
+                  id="csv-file"
+                  type="file"
+                  accept=".csv"
+                  onChange={handleFileChange}
+                  className="hidden"
+                />
+                <label htmlFor="csv-file" className="cursor-pointer">
+                  <Upload className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
+                  <p className="text-sm text-muted-foreground">
+                    {importFile ? importFile.name : "Click to upload or drag and drop"}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    CSV file with email, name, and role columns
+                  </p>
+                </label>
+              </div>
+            </div>
+
+            {/* CSV Format Help */}
+            <div className="bg-muted p-3 rounded-lg">
+              <p className="text-sm font-medium mb-1">Expected CSV format:</p>
+              <code className="text-xs text-muted-foreground">
+                email,name,role<br />
+                john@school.edu,John Smith,teacher<br />
+                jane@school.edu,Jane Doe,admin
+              </code>
+            </div>
+
+            {/* Error */}
+            {importError && (
+              <div className="bg-destructive/10 text-destructive p-3 rounded-lg text-sm">
+                {importError}
+              </div>
+            )}
+
+            {/* Preview */}
+            {importPreview.length > 0 && (
+              <div className="space-y-2">
+                <Label>Preview ({importPreview.length} staff members)</Label>
+                <div className="border rounded-lg max-h-48 overflow-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-muted sticky top-0">
+                      <tr>
+                        <th className="px-3 py-2 text-left font-medium">Name</th>
+                        <th className="px-3 py-2 text-left font-medium">Email</th>
+                        <th className="px-3 py-2 text-left font-medium">Role</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {importPreview.slice(0, 10).map((user, idx) => (
+                        <tr key={idx} className="border-t">
+                          <td className="px-3 py-2">{user.name || "\u2014"}</td>
+                          <td className="px-3 py-2">{user.email}</td>
+                          <td className="px-3 py-2">
+                            <Badge variant={user.role === "admin" ? "default" : "secondary"}>
+                              {user.role === "admin" ? "School Admin" : "Teacher"}
+                            </Badge>
+                          </td>
+                        </tr>
+                      ))}
+                      {importPreview.length > 10 && (
+                        <tr className="border-t">
+                          <td colSpan={3} className="px-3 py-2 text-center text-muted-foreground">
+                            ...and {importPreview.length - 10} more
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setImportDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => bulkImportMutation.mutate(importPreview)}
+              disabled={importPreview.length === 0 || bulkImportMutation.isPending}
+            >
+              {bulkImportMutation.isPending ? "Importing..." : `Import ${importPreview.length} Staff`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Google Workspace Staff Import Dialog */}
+      <Dialog open={wsImportDialogOpen} onOpenChange={(open) => {
+        setWsImportDialogOpen(open);
+        if (!open) { setWsImportResult(null); setWsImportOU(""); setWsExcludedEmails(new Set()); }
+      }}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Building2 className="h-5 w-5" />
+              Import Staff from Google Workspace
+            </DialogTitle>
+            <DialogDescription>
+              Import teachers and staff from your Google Workspace directory
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            {wsUsersLoading ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-6 w-6 animate-spin mr-2" />
+                <span className="text-muted-foreground">Loading users from Google Workspace...</span>
+              </div>
+            ) : wsErrorCode === "NO_TOKENS" ? (
+              <div className="text-center py-8 space-y-4">
+                <p className="text-muted-foreground">Google Workspace is not connected. Please sign out and sign back in with Google.</p>
+                <Button variant="outline" onClick={() => window.location.href = "/auth/google"}>Reconnect Google Account</Button>
+              </div>
+            ) : wsErrorCode === "INSUFFICIENT_PERMISSIONS" ? (
+              <div className="text-center py-8 space-y-4">
+                <div className="flex items-center justify-center gap-2 text-yellow-600">
+                  <AlertCircle className="h-5 w-5" />
+                  <span className="font-medium">Admin Access Required</span>
+                </div>
+                <p className="text-muted-foreground">This feature requires Google Workspace administrator privileges.</p>
+              </div>
+            ) : wsImportResult ? (
+              <div className="space-y-4">
+                <div className="p-4 border rounded-md space-y-3">
+                  <p className="font-medium">Import Results:</p>
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <p className="text-muted-foreground">Imported</p>
+                      <p className="text-2xl font-bold text-green-600">{wsImportResult.imported}</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Skipped (existing)</p>
+                      <p className="text-2xl font-bold text-gray-600">{wsImportResult.skipped}</p>
+                    </div>
+                  </div>
+                  {wsImportResult.errors.length > 0 && (
+                    <div className="mt-3 p-3 bg-destructive/10 rounded-md">
+                      <p className="font-medium text-destructive mb-2">Errors:</p>
+                      <ul className="list-disc list-inside text-sm text-destructive space-y-1">
+                        {wsImportResult.errors.slice(0, 10).map((err, i) => <li key={i}>{err}</li>)}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+                <div className="flex justify-end">
+                  <Button onClick={() => setWsImportDialogOpen(false)}>Done</Button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm text-muted-foreground">
+                    Found {wsFilteredUsers.length} user{wsFilteredUsers.length !== 1 ? "s" : ""}
+                  </p>
+                  <Button variant="outline" size="sm" onClick={() => wsUsersRefetch()}>
+                    <RefreshCw className="h-4 w-4 mr-2" /> Refresh
+                  </Button>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Filter by Organizational Unit</Label>
+                    <Select value={wsImportOU} onValueChange={(v) => { setWsImportOU(v); setWsExcludedEmails(new Set()); }}>
+                      <SelectTrigger>
+                        <SelectValue placeholder={wsOULoading ? "Loading..." : "All Users"} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__all__">All Users</SelectItem>
+                        {wsOUs.map((ou) => (
+                          <SelectItem key={ou.orgUnitId} value={ou.orgUnitPath}>{ou.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Import as Role</Label>
+                    <Select value={wsImportRole} onValueChange={(v) => setWsImportRole(v)}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="teacher">Teacher</SelectItem>
+                        <SelectItem value="school_admin">School Admin</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                {wsFilteredUsers.length > 0 && (
+                  <div className="border rounded-md divide-y max-h-64 overflow-auto">
+                    {wsFilteredUsers.map((user) => {
+                      const excluded = wsExcludedEmails.has(user.email.toLowerCase());
+                      return (
+                        <div key={user.id} className="flex items-center gap-3 p-2 text-sm">
+                          <Checkbox
+                            checked={!excluded}
+                            onCheckedChange={(checked) => {
+                              setWsExcludedEmails(prev => {
+                                const next = new Set(prev);
+                                if (checked) next.delete(user.email.toLowerCase());
+                                else next.add(user.email.toLowerCase());
+                                return next;
+                              });
+                            }}
+                          />
+                          <div className="flex-1 min-w-0">
+                            <p className="font-medium truncate">{user.name}</p>
+                            <p className="text-muted-foreground text-xs truncate">{user.email}</p>
+                          </div>
+                          {user.orgUnitPath && (
+                            <span className="text-xs text-muted-foreground">{user.orgUnitPath}</span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                <div className="flex justify-end gap-2">
+                  <Button variant="outline" onClick={() => setWsImportDialogOpen(false)}>Cancel</Button>
+                  <Button
+                    onClick={() => {
+                      const excludeArr = wsExcludedEmails.size > 0 ? Array.from(wsExcludedEmails) : undefined;
+                      wsImportMutation.mutate({
+                        orgUnitPath: wsImportOU && wsImportOU !== "__all__" ? wsImportOU : undefined,
+                        role: wsImportRole,
+                        excludeEmails: excludeArr,
+                      });
+                    }}
+                    disabled={wsImportMutation.isPending || wsFilteredUsers.length - wsExcludedEmails.size === 0}
+                  >
+                    {wsImportMutation.isPending ? (
+                      <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Importing...</>
+                    ) : (
+                      <><Users className="h-4 w-4 mr-2" />Import {wsFilteredUsers.length - wsExcludedEmails.size} Staff</>
+                    )}
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}

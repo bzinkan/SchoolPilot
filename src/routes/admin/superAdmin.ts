@@ -13,6 +13,7 @@ import {
   getUserByEmail,
   getStudentsBySchool,
   getStaffBySchool,
+  getAllProductLicenses,
 } from "../../services/storage.js";
 import { hashPassword } from "../../util/password.js";
 import { sendWelcomeEmail } from "../../services/email.js";
@@ -55,7 +56,21 @@ router.get("/stats", ...auth, async (req, res, next) => {
 // GET /api/super-admin/schools - List all schools
 router.get("/schools", ...auth, async (req, res, next) => {
   try {
-    const schools = await getAllSchools();
+    const [schools, licenses] = await Promise.all([
+      getAllSchools(),
+      getAllProductLicenses(),
+    ]);
+
+    // Build a map of schoolId -> active product names
+    const licenseMap = new Map<string, string[]>();
+    for (const lic of licenses) {
+      if (lic.status === "active") {
+        const arr = licenseMap.get(lic.schoolId) || [];
+        arr.push(lic.product);
+        licenseMap.set(lic.schoolId, arr);
+      }
+    }
+
     const { search, status } = req.query;
 
     let filtered = schools;
@@ -71,7 +86,12 @@ router.get("/schools", ...auth, async (req, res, next) => {
       );
     }
 
-    return res.json({ schools: filtered });
+    const result = filtered.map((s) => ({
+      ...s,
+      products: licenseMap.get(s.id) || [],
+    }));
+
+    return res.json({ schools: result });
   } catch (err) {
     next(err);
   }

@@ -6,11 +6,13 @@ const api = axios.create({
   withCredentials: true,
 });
 
-// Handle 401 → redirect to login
+// Handle 401 → redirect to login (but not for /auth/me which is expected to 401)
 api.interceptors.response.use(
   (res) => res,
   (error) => {
-    if (error.response?.status === 401 && !window.location.pathname.startsWith('/login')) {
+    const url = error.config?.url || '';
+    const isAuthCheck = url.includes('/auth/me') || url.includes('/auth/login');
+    if (error.response?.status === 401 && !isAuthCheck && !window.location.pathname.startsWith('/login')) {
       window.location.href = '/login';
     }
     return Promise.reject(error);

@@ -11,6 +11,9 @@ export function AuthProvider({ children }) {
   const [activeSchoolId, setActiveSchoolId] = useState(
     () => localStorage.getItem('sp_activeSchoolId') || null
   );
+  const [token, setToken] = useState(
+    () => localStorage.getItem('sp_token') || null
+  );
 
   const fetchUser = useCallback(async () => {
     try {
@@ -43,6 +46,12 @@ export function AuthProvider({ children }) {
     setUser(res.data.user);
     setMemberships(res.data.memberships || []);
 
+    // Store JWT token for socket.io auth (GoPilot real-time)
+    if (res.data.token) {
+      setToken(res.data.token);
+      localStorage.setItem('sp_token', res.data.token);
+    }
+
     if (res.data.memberships?.length > 0) {
       const schoolId = res.data.memberships[0].schoolId;
       setActiveSchoolId(schoolId);
@@ -64,7 +73,9 @@ export function AuthProvider({ children }) {
     setMemberships([]);
     setLicenses({});
     setActiveSchoolId(null);
+    setToken(null);
     localStorage.removeItem('sp_activeSchoolId');
+    localStorage.removeItem('sp_token');
   };
 
   const switchSchool = (schoolId) => {
@@ -80,6 +91,7 @@ export function AuthProvider({ children }) {
     <AuthContext.Provider
       value={{
         user,
+        token,
         memberships,
         licenses,
         loading,

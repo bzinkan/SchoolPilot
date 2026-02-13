@@ -176,10 +176,39 @@ router.use((req: Request, _res: Response, next: NextFunction) => {
     return next();
   }
 
+  // --- GoPilot school-scoped Google routes ---
+  // /schools/:uuid/google/<sub> → set X-School-Id header and rewrite to correct Google route
+  const googleSchoolMatch = p.match(
+    /^\/schools\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/google\/(.+?)(\?.*)?$/i
+  );
+  if (googleSchoolMatch) {
+    const schoolId = googleSchoolMatch[1]!;
+    const sub = googleSchoolMatch[2]!;
+    req.headers["x-school-id"] = schoolId;
+    const googleMap: Record<string, string> = {
+      "auth-url": "/google/auth-url",
+      "status": "/google/status",
+      "disconnect": "/google/disconnect",
+      "courses": "/google/classroom/courses",
+      "sync": "/google/classroom/sync",
+      "org-units": "/google/directory/orgunits",
+      "workspace-users": "/google/directory/users",
+      "import-users": "/google/directory/import",
+      "import-staff": "/google/directory/import-staff",
+      "import-org-units": "/google/directory/import-orgunits",
+    };
+    const mapped = googleMap[sub];
+    if (mapped) {
+      const qs = req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : "";
+      req.url = mapped + qs;
+      return next();
+    }
+  }
+
   // --- GoPilot school-scoped routes ---
   // /schools/:uuid/<resource> → set X-School-Id header and rewrite to canonical path
   const schoolMatch = p.match(
-    /^\/schools\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/(homerooms|students|staff|family-groups|sessions|dismissal-mode|send-to-app-mode|switch-to-no-app-mode|members|settings|invite|custody-alerts|parent-requests)(\/.*)?$/i
+    /^\/schools\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/(homerooms|students|staff|family-groups|sessions|dismissal-mode|send-to-app-mode|switch-to-no-app-mode|members|settings|invite|custody-alerts|parent-requests|parents|bus-routes)(\/.*)?$/i
   );
   if (schoolMatch) {
     const schoolId = schoolMatch[1]!;
@@ -200,6 +229,8 @@ router.use((req: Request, _res: Response, next: NextFunction) => {
       "invite": "/compat/invite",
       "custody-alerts": "/gopilot/pickups/custody-alerts",
       "parent-requests": "/compat/parent-requests",
+      "parents": "/compat/parents",
+      "bus-routes": "/gopilot/bus-routes",
     };
     const newBase = map[resource];
     if (newBase) {

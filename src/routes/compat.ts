@@ -14,6 +14,9 @@ import {
   getSchoolById,
   updateSchool,
   getPendingParentRequests,
+  updateParentStudentLink,
+  getParentStudentLinkById,
+  getApprovedChildrenForParent,
 } from "../services/storage.js";
 import { createGradeSchema } from "../schema/validation.js";
 
@@ -312,6 +315,51 @@ router.get("/compat/parent-requests", ...schoolAuth, requireRole("admin"), async
   try {
     const requests = await getPendingParentRequests(res.locals.schoolId!);
     return res.json({ requests });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.put("/compat/parent-requests/:id", ...schoolAuth, requireRole("admin"), async (req, res, next) => {
+  try {
+    const { status } = req.body;
+    if (!status || !["approved", "rejected"].includes(status)) {
+      return res.status(400).json({ error: "status must be 'approved' or 'rejected'" });
+    }
+    const link = await getParentStudentLinkById(param(req, "id"));
+    if (!link) return res.status(404).json({ error: "Request not found" });
+    const updated = await updateParentStudentLink(param(req, "id"), { status });
+    return res.json({ request: updated });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /compat/parents - List parents for a school with their linked children
+router.get("/compat/parents", ...schoolAuth, requireRole("admin"), async (req, res, next) => {
+  try {
+    const parentMemberships = await getUsersBySchool(res.locals.schoolId!, "parent");
+    const parents = await Promise.all(
+      parentMemberships.map(async (m) => {
+        const children = await getApprovedChildrenForParent(m.userId, res.locals.schoolId!);
+        const { password: _, ...safeUser } = m.user;
+        return {
+          membershipId: m.id,
+          userId: m.userId,
+          role: m.role,
+          carNumber: m.carNumber,
+          user: safeUser,
+          children: children.map((c) => ({
+            id: c.student.id,
+            firstName: c.student.firstName,
+            lastName: c.student.lastName,
+            gradeLevel: c.student.gradeLevel,
+            relationship: c.link.relationship,
+          })),
+        };
+      })
+    );
+    return res.json(parents);
   } catch (err) {
     next(err);
   }

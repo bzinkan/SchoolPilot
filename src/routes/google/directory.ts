@@ -169,6 +169,62 @@ const importStaffHandler = async (req: any, res: any, next: any) => {
   }
 };
 
+// POST /api/google/workspace/import-orgunits - Bulk import users from multiple org units
+router.post("/import-orgunits", ...auth, async (req, res, next) => {
+  try {
+    const { orgUnits, grade } = req.body;
+    if (!Array.isArray(orgUnits) || orgUnits.length === 0) {
+      return res.status(400).json({ error: "orgUnits array required" });
+    }
+
+    const schoolId = res.locals.schoolId!;
+    const { oauth2Client, google } = await getAuthedClient(req.authUser!.id);
+    const admin = google.admin({ version: "directory_v1", auth: oauth2Client });
+
+    let totalImported = 0;
+    let totalUpdated = 0;
+
+    for (const ouPath of orgUnits) {
+      const params: any = { customer: "my_customer", maxResults: 500 };
+      if (ouPath && ouPath !== "/") {
+        params.query = `orgUnitPath='${ouPath}'`;
+      }
+
+      const response = await admin.users.list(params);
+      const googleUsers = response.data.users || [];
+
+      for (const u of googleUsers) {
+        if (u.suspended) continue;
+        const email = u.primaryEmail;
+        if (!email) continue;
+
+        const existing = await searchStudents(schoolId, { search: email });
+        if (existing.length > 0) {
+          totalUpdated++;
+        } else {
+          await createStudent({
+            schoolId,
+            firstName: u.name?.givenName || email.split("@")[0],
+            lastName: u.name?.familyName || "",
+            email,
+            gradeLevel: grade || undefined,
+            googleUserId: u.id || undefined,
+            status: "active",
+          });
+          totalImported++;
+        }
+      }
+    }
+
+    return res.json({ imported: totalImported, updated: totalUpdated });
+  } catch (err: any) {
+    if (err.message === "Google not connected") {
+      return res.status(400).json({ error: "Google not connected" });
+    }
+    next(err);
+  }
+});
+
 // POST /api/google/workspace/import-staff - Import users as staff
 router.post("/import-staff", ...auth, importStaffHandler);
 
