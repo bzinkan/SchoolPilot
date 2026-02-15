@@ -183,7 +183,7 @@ module "ecs" {
   student_token_secret = var.student_token_secret
 
   # Auto-derive URLs from domain, with manual override
-  public_base_url = local.has_domain ? "https://${module.dns[0].primary_domain}/api" : var.public_base_url
+  public_base_url = local.has_domain ? "https://${module.dns[0].primary_domain}" : var.public_base_url
   cors_allowlist  = local.has_domain ? "https://${module.dns[0].primary_domain}" : var.cors_allowlist
   cookie_domain   = local.has_domain ? ".${var.domain}" : var.cookie_domain
 
