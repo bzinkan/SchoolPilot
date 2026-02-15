@@ -271,6 +271,7 @@ export default function SchoolSetupWizard() {
 
               { id: 'parents', icon: Users, label: 'Parents' },
               { id: 'settings', icon: Settings, label: 'Settings' },
+            // eslint-disable-next-line no-unused-vars
             ].map(({ id, icon: Icon, label }) => (
               <button
                 key={id}

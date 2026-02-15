@@ -48,7 +48,7 @@ function normalizeGrade(grade) {
 export default function Dashboard() {
   const navigate = useNavigate();
   const { currentUser, isAdmin, isTeacher, token, logout } = useClassPilotAuth();
-  const { hasPassPilot, hasGoPilot, productCount } = useLicenses();
+  const { hasPassPilot, hasGoPilot } = useLicenses();
   const [sidebarOpen, setSidebarOpen] = useState(() => {
     try {
       return localStorage.getItem('classpilot-sidebar-open') !== 'false';
@@ -59,7 +59,7 @@ export default function Dashboard() {
   const handleSidebarToggle = () => {
     const next = !sidebarOpen;
     setSidebarOpen(next);
-    try { localStorage.setItem('classpilot-sidebar-open', String(next)); } catch {}
+    try { localStorage.setItem('classpilot-sidebar-open', String(next)); } catch { /* ignore */ }
   };
   const showSidebar = (hasPassPilot || hasGoPilot) && sidebarOpen;
   const [selectedStudent, setSelectedStudent] = useState(null);
