@@ -5,8 +5,6 @@ import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import { Clock, Monitor, ExternalLink, AlertTriangle, Lock, Unlock, Video, Layers, Maximize2 } from "lucide-react";
 import { Checkbox } from "../../../components/ui/checkbox";
-import { formatDistanceToNow } from "date-fns";
-import { formatDuration } from "../../../lib/classpilot-utils";
 import { useToast } from "../../../hooks/use-toast";
 import { apiRequest, queryClient } from "../../../lib/queryClient";
 import VideoPortal from "./VideoPortal";
@@ -36,7 +34,7 @@ function isBlockedDomain(url, blockedDomains) {
   }
 }
 
-function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false, isSelected = false, onToggleSelect, liveStream, onStartLiveView, onStopLiveView, onEndLiveRefresh, onBlockRefetches }) {
+function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false, isSelected = false, onToggleSelect, liveStream, onStartLiveView, onStopLiveView, onBlockRefetches }) {
   const [expanded, setExpanded] = useState(false);
   const { toast } = useToast();
   const tileVideoSlotRef = useRef(null);
@@ -68,6 +66,7 @@ function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false,
     } else if (!liveStream && videoElementRef.current) {
       // Close portal if expanded
       if (expanded) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setExpanded(false);
       }
 
@@ -82,15 +81,17 @@ function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false,
     }
   }, [liveStream, expanded]);
 
-  const { data: settings } = useQuery({
+  const { data: _settings } = useQuery({
     queryKey: ['/api/settings'],
     queryFn: () => apiRequest('GET', '/settings'),
+    select: (data) => data?.settings ?? data ?? null,
   });
 
   // Fetch recent browsing history for mini history icons
   const { data: recentHeartbeats = [] } = useQuery({
     queryKey: ['/api/heartbeats', student.primaryDeviceId],
     queryFn: () => apiRequest('GET', `/heartbeats/${student.primaryDeviceId}`),
+    select: (data) => Array.isArray(data) ? data : data?.heartbeats ?? [],
     refetchInterval: 30000, // Refresh every 30 seconds
   });
 
@@ -98,6 +99,7 @@ function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false,
   const { data: flightPaths = [] } = useQuery({
     queryKey: ['/api/flight-paths'],
     queryFn: () => apiRequest('GET', '/flight-paths'),
+    select: (data) => Array.isArray(data) ? data : data?.flightPaths ?? [],
   });
 
   // Fetch screenshot thumbnail for this device (refreshes every 10 seconds)
@@ -129,7 +131,9 @@ function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false,
             title: hb.activeTabTitle
           });
         }
-      } catch {}
+      } catch {
+        // intentionally empty
+      }
       return acc;
     }, [])
     .slice(0, 5);
@@ -351,27 +355,6 @@ function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false,
         return 'opacity-75';
       default:
         return 'opacity-75';
-    }
-  };
-
-  const getGradientBackground = (status) => {
-    if (isOffTask) {
-      return 'bg-gradient-to-br from-red-50/50 via-red-50/20 to-transparent dark:from-red-950/20 dark:via-red-950/10 dark:to-transparent';
-    }
-
-    if (isBlocked) {
-      return 'bg-gradient-to-br from-destructive/10 via-destructive/5 to-transparent dark:from-destructive/5 dark:via-destructive/3 dark:to-transparent';
-    }
-
-    switch (status) {
-      case 'online':
-        return 'bg-gradient-to-br from-green-50/50 via-green-50/20 to-transparent dark:from-green-950/20 dark:via-green-950/10 dark:to-transparent';
-      case 'idle':
-        return 'bg-gradient-to-br from-amber-50/50 via-amber-50/20 to-transparent dark:from-amber-950/20 dark:via-amber-950/10 dark:to-transparent';
-      case 'offline':
-        return 'bg-card';
-      default:
-        return 'bg-card';
     }
   };
 

@@ -59,17 +59,20 @@ function RosterManagement() {
   const { data: students = [], isLoading } = useQuery({
     queryKey: ['/api/roster/students'],
     queryFn: () => apiRequest('GET', '/roster/students'),
+    select: (data) => Array.isArray(data) ? data : data?.students ?? [],
   });
 
   const { data: devices = [] } = useQuery({
     queryKey: ['/api/roster/devices'],
     queryFn: () => apiRequest('GET', '/roster/devices'),
+    select: (data) => Array.isArray(data) ? data : data?.devices ?? [],
   });
 
   // Fetch settings to get available grade levels
   const { data: settings } = useQuery({
     queryKey: ['/api/settings'],
     queryFn: () => apiRequest('GET', '/settings'),
+    select: (data) => data?.settings ?? data ?? null,
   });
 
   const availableGrades = settings?.gradeLevels || ['6', '7', '8', '9', '10', '11', '12'];

@@ -21,19 +21,19 @@ export default function ClassPilotDevices() {
 
   return (
     <div>
-      <h1 className="mb-6 text-2xl font-bold text-slate-900">Devices</h1>
+      <h1 className="mb-6 text-2xl font-bold text-foreground">Devices</h1>
       {devices.length === 0 ? (
         <Card>
-          <p className="py-8 text-center text-slate-500">No devices registered yet.</p>
+          <p className="py-8 text-center text-muted-foreground">No devices registered yet.</p>
         </Card>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {devices.map((d) => (
             <Card key={d.id} className="flex items-center gap-3">
-              <div className={`h-3 w-3 rounded-full ${d.isOnline || d.status === 'online' ? 'bg-green-500' : 'bg-slate-300'}`} />
+              <div className={`h-3 w-3 rounded-full ${d.isOnline || d.status === 'online' ? 'bg-green-500' : 'bg-muted-foreground/40'}`} />
               <div>
-                <p className="font-medium text-slate-900">{d.deviceName || d.hostname || 'Unknown'}</p>
-                <p className="text-xs text-slate-500">{d.os || '—'}</p>
+                <p className="font-medium text-foreground">{d.deviceName || d.hostname || 'Unknown'}</p>
+                <p className="text-xs text-muted-foreground">{d.os || '—'}</p>
               </div>
             </Card>
           ))}

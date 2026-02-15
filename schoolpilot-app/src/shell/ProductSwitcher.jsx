@@ -43,7 +43,7 @@ export default function ProductSwitcher() {
       </button>
 
       {open && (
-        <div className="absolute left-0 top-full mt-1 z-50 w-48 rounded-md bg-white shadow-lg ring-1 ring-black/5">
+        <div className="absolute left-0 top-full mt-1 z-50 w-48 rounded-md bg-card shadow-lg ring-1 ring-black/5 dark:ring-white/10">
           {licensedProducts.map((key) => {
             const cfg = PRODUCT_CONFIG[key];
             const isActive = key === currentKey;
@@ -55,7 +55,7 @@ export default function ProductSwitcher() {
                   setOpen(false);
                 }}
                 className={`flex w-full items-center gap-2 px-3 py-2 text-sm transition-colors ${
-                  isActive ? 'bg-slate-100 font-semibold text-slate-900' : 'text-slate-700 hover:bg-slate-50'
+                  isActive ? 'bg-muted font-semibold text-foreground' : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'
                 }`}
               >
                 <span>{cfg.icon}</span>

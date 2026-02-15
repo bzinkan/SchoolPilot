@@ -20,8 +20,6 @@ function StudentDetailDrawer({
 }) {
   const [historyStartDate, setHistoryStartDate] = useState(new Date());
   const [historyEndDate, setHistoryEndDate] = useState(new Date());
-  const [selectedEvent, setSelectedEvent] = useState(null);
-
   // Calculate URL sessions with duration from heartbeats
   const urlSessions = useMemo(() => {
     return calculateURLSessions(urlHistory);
@@ -78,19 +76,6 @@ function StudentDetailDrawer({
   }, []);
 
   if (!student) return null;
-
-  const getStatusColor = (status) => {
-    switch (status) {
-      case 'online':
-        return 'bg-status-online';
-      case 'idle':
-        return 'bg-status-away';
-      case 'offline':
-        return 'bg-status-offline';
-      default:
-        return 'bg-status-offline';
-    }
-  };
 
   const getStatusLabel = (status) => {
     switch (status) {

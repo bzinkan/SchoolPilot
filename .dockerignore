@@ -1,0 +1,17 @@
+node_modules
+dist
+.env
+.env.*
+.git
+.gitignore
+schoolpilot-app
+infra
+seeds
+migrations
+*.md
+*.log
+docker-compose.yml
+cookies.txt
+tmp_login.json
+diagnostic.js
+nul

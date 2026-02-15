@@ -2,6 +2,7 @@ node_modules/
 dist/
 .env
 .env.local
+.env.production
 *.log
 cookies.txt
 tmp_login.json
@@ -10,3 +11,10 @@ tmp_login.json
 schoolpilot-app/dist/
 schoolpilot-app/node_modules/
 schoolpilot-app/NUL
+
+# Terraform
+infra/.terraform/
+infra/*.tfstate
+infra/*.tfstate.*
+infra/.terraform.lock.hcl
+infra/secrets.auto.tfvars

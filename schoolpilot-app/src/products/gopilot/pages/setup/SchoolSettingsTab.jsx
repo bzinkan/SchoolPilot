@@ -45,42 +45,42 @@ export default function SchoolSettingsTab({ schoolId }) {
   };
 
   if (loading) {
-    return <div className="p-6 text-center text-gray-500">Loading settings...</div>;
+    return <div className="p-6 text-center text-gray-500 dark:text-slate-400">Loading settings...</div>;
   }
 
   return (
     <div className="p-6 max-w-2xl">
-      <h2 className="text-lg font-bold text-gray-900 mb-6">School Settings</h2>
+      <h2 className="text-lg font-bold text-gray-900 dark:text-white mb-6">School Settings</h2>
 
       <div className="space-y-6">
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">School Name</label>
+          <label className="block text-sm font-medium text-gray-700 dark:text-slate-200 mb-1">School Name</label>
           <input
             type="text"
             value={name}
             onChange={e => setName(e.target.value)}
-            className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+            className="w-full px-4 py-2.5 border border-gray-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
           />
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Dismissal Start Time</label>
-          <p className="text-xs text-gray-500 mb-2">Dismissal will automatically start at this time each school day.</p>
+          <label className="block text-sm font-medium text-gray-700 dark:text-slate-200 mb-1">Dismissal Start Time</label>
+          <p className="text-xs text-gray-500 dark:text-slate-400 mb-2">Dismissal will automatically start at this time each school day.</p>
           <input
             type="time"
             value={dismissalTime}
             onChange={e => setDismissalTime(e.target.value)}
-            className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+            className="w-full px-4 py-2.5 border border-gray-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
           />
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">School Timezone</label>
-          <p className="text-xs text-gray-500 mb-2">Auto-detected at registration. Change only if your school is in a different timezone.</p>
+          <label className="block text-sm font-medium text-gray-700 dark:text-slate-200 mb-1">School Timezone</label>
+          <p className="text-xs text-gray-500 dark:text-slate-400 mb-2">Auto-detected at registration. Change only if your school is in a different timezone.</p>
           <select
             value={timezone}
             onChange={e => setTimezone(e.target.value)}
-            className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+            className="w-full px-4 py-2.5 border border-gray-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
           >
             {TIMEZONES.map(tz => (
               <option key={tz.value} value={tz.value}>{tz.label}</option>
@@ -89,26 +89,26 @@ export default function SchoolSettingsTab({ schoolId }) {
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Change Request Warning (Optional)</label>
-          <p className="text-xs text-gray-500 mb-2">If set, parents will see this message when submitting a change request. Leave blank for no warning.</p>
+          <label className="block text-sm font-medium text-gray-700 dark:text-slate-200 mb-1">Change Request Warning (Optional)</label>
+          <p className="text-xs text-gray-500 dark:text-slate-400 mb-2">If set, parents will see this message when submitting a change request. Leave blank for no warning.</p>
           <textarea
             value={changeRequestWarning}
             onChange={e => setChangeRequestWarning(e.target.value)}
             placeholder="e.g. Changes submitted after 2:30 PM require office approval."
             rows={2}
-            className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+            className="w-full px-4 py-2.5 border border-gray-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
           />
         </div>
 
-        <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+        <div className="flex items-center justify-between p-4 bg-gray-50 dark:bg-slate-800 rounded-lg">
           <div>
-            <p className="text-sm font-medium text-gray-700">Enable QR Codes</p>
-            <p className="text-xs text-gray-500">Allow printing QR codes for students so parents can scan to link their account.</p>
+            <p className="text-sm font-medium text-gray-700 dark:text-slate-200">Enable QR Codes</p>
+            <p className="text-xs text-gray-500 dark:text-slate-400">Allow printing QR codes for students so parents can scan to link their account.</p>
           </div>
           <button
             type="button"
             onClick={() => setEnableQrCodes(!enableQrCodes)}
-            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${enableQrCodes ? 'bg-indigo-600' : 'bg-gray-300'}`}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${enableQrCodes ? 'bg-indigo-600' : 'bg-gray-300 dark:bg-slate-600'}`}
           >
             <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${enableQrCodes ? 'translate-x-6' : 'translate-x-1'}`} />
           </button>

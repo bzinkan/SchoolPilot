@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Car, Bus, PersonStanding, Clock, Users, Bell, Check, X,
   ChevronRight, ChevronDown, AlertTriangle, CheckCircle2, Timer,
@@ -65,8 +65,6 @@ export default function TeacherView() {
   const [homeroom, setHomeroom] = useState(null);
   const [session, setSession] = useState(null);
   const [students, setStudents] = useState([]);
-  const [announcements, setAnnouncements] = useState([]);
-
   const teacher = {
     name: user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() : '',
     homeroom: homeroom ? homeroom.name : 'Loading...',

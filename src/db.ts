@@ -7,6 +7,9 @@ const pool = new pg.Pool({
   max: 20,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000,
+  ...(process.env.DATABASE_URL?.includes("sslmode=require") && {
+    ssl: { rejectUnauthorized: false },
+  }),
 });
 
 pool.on("error", (err) => {

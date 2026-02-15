@@ -6,10 +6,10 @@ import { useState } from "react";
 import { usePassPilotAuth } from "../../../../hooks/usePassPilotAuth";
 import { formatTime } from "../../../../lib/date-utils";
 
-function PassesTab({ user }) {
+function PassesTab() {
   const { school } = usePassPilotAuth();
   const tz = school?.schoolTimezone ?? "America/New_York";
-  const { data: passes, isLoading, error, refetch } = useQuery({
+  const { data: passes, isLoading, error } = useQuery({
     queryKey: ['/api/passes/active'],
     queryFn: async () => {
       const res = await fetch('/api/passes/active', {
@@ -19,6 +19,7 @@ function PassesTab({ user }) {
       if (!res.ok) throw new Error(`Failed to fetch passes: ${res.status}`);
       return res.json();
     },
+    select: (data) => Array.isArray(data) ? data : (data?.passes ?? []),
     refetchInterval: 5000,
     gcTime: 0,
   });
@@ -30,6 +31,7 @@ function PassesTab({ user }) {
       if (!res.ok) throw new Error('Failed to fetch grades');
       return res.json();
     },
+    select: (data) => Array.isArray(data) ? data : (data?.grades ?? []),
   });
 
   const [filterType, setFilterType] = useState("all");
@@ -205,9 +207,9 @@ function PassesTab({ user }) {
               <CardContent className="p-4">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-3">
-                    <div className={`w-10 h-10 rounded-full flex items-center justify-center ${getAvatarColor(`${pass.student?.firstName} ${pass.student?.lastName}` || '')}`}>
+                    <div className={`w-10 h-10 rounded-full flex items-center justify-center ${getAvatarColor(`${pass.student?.firstName ?? ''} ${pass.student?.lastName ?? ''}`.trim() || '')}`}>
                       <span className="text-sm font-medium" data-testid={`student-initials-${pass.id}`}>
-                        {getInitials(`${pass.student?.firstName} ${pass.student?.lastName}` || '')}
+                        {getInitials(`${pass.student?.firstName ?? ''} ${pass.student?.lastName ?? ''}`.trim() || '')}
                       </span>
                     </div>
                     <div>

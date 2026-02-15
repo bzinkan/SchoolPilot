@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../..
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../../components/ui/select";
 import { Badge } from "../../../components/ui/badge";
 import { ArrowLeft, BarChart3, Users, Monitor, Clock, Globe, TrendingUp } from "lucide-react";
+import { ThemeToggle } from "../../../components/ThemeToggle";
 
 export default function AdminAnalytics() {
   const navigate = useNavigate();
@@ -54,6 +55,7 @@ export default function AdminAnalytics() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <ThemeToggle />
           <Button
             variant="outline"
             onClick={() => navigate("/classpilot/admin")}

@@ -19,6 +19,7 @@ import {
 import { useToast } from "../../../hooks/use-toast";
 import { apiRequest, queryClient } from "../../../lib/queryClient";
 import { ArrowLeft, Download, Shield, Clock, AlertCircle, Layers, Plus, Pencil, Trash2, Star, Users } from "lucide-react";
+import { ThemeToggle } from "../../../components/ThemeToggle";
 
 // Helper function to normalize domain names
 function normalizeDomain(domain) {
@@ -81,6 +82,7 @@ export default function Settings() {
       if (!res.ok) throw new Error('Failed to fetch flight paths');
       return res.json();
     },
+    select: (data) => Array.isArray(data) ? data : (data?.flightPaths ?? data?.scenes ?? []),
   });
 
   const form = useForm({
@@ -320,6 +322,7 @@ export default function Settings() {
                 <p className="text-xs text-muted-foreground">Manage your classroom monitoring settings</p>
               </div>
             </div>
+            <ThemeToggle />
           </div>
         </div>
       </header>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Car, Bus, PersonStanding, Clock, Users, Bell, Check, X,
   ChevronRight, ChevronDown, AlertTriangle, CheckCircle2, Timer,
@@ -60,7 +60,7 @@ const Card = ({ children, className = '', onClick }) => (
 
 // Main Parent App Component
 export default function ParentApp() {
-  const { user, logout, refetchUser, currentSchool, currentRole } = useGoPilotAuth();
+  const { user, logout, refetchUser, currentSchool } = useGoPilotAuth();
   const navigate = useNavigate();
   const socket = useSocket();
 
@@ -70,7 +70,7 @@ export default function ParentApp() {
   const [queueIds, setQueueIds] = useState([]); // queue entry IDs for dismiss calls
   const [queuePosition, setQueuePosition] = useState(null);
   const [estimatedWait, setEstimatedWait] = useState(null);
-  const [selectedChild, setSelectedChild] = useState(null);
+  const [, setSelectedChild] = useState(null);
   const [showChangeRequest, setShowChangeRequest] = useState(false);
   const [showAddChild, setShowAddChild] = useState(false);
   const [linkCode, setLinkCode] = useState('');
@@ -90,7 +90,7 @@ export default function ParentApp() {
   // Data states
   const [children, setChildren] = useState([]);
   const [authorizedPickups, setAuthorizedPickups] = useState([]);
-  const [history, setHistory] = useState([]);
+  const [history] = useState([]);
   const [sessionId, setSessionId] = useState(null);
 
   const [schoolSettings, setSchoolSettings] = useState({});
@@ -1258,14 +1258,17 @@ function NotificationsModal({ prefs, onClose, onSave }) {
         <div className="space-y-4 mb-6">
           <div className="flex items-center justify-between">
             <div><p className="font-medium">All Notifications</p><p className="text-sm text-gray-500">Enable or disable all</p></div>
+            {/* eslint-disable-next-line react-hooks/static-components */}
             <Toggle on={local.enabled} onToggle={() => toggle('enabled')} />
           </div>
           <div className="flex items-center justify-between">
             <div><p className="font-medium">Dismissal Updates</p><p className="text-sm text-gray-500">When your child is released</p></div>
+            {/* eslint-disable-next-line react-hooks/static-components */}
             <Toggle on={local.dismissal && local.enabled} onToggle={() => toggle('dismissal')} />
           </div>
           <div className="flex items-center justify-between">
             <div><p className="font-medium">Change Requests</p><p className="text-sm text-gray-500">Status of your requests</p></div>
+            {/* eslint-disable-next-line react-hooks/static-components */}
             <Toggle on={local.changes && local.enabled} onToggle={() => toggle('changes')} />
           </div>
         </div>

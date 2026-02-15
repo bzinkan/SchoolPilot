@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
+import { ThemeToggle } from '../../components/ThemeToggle';
 import api from '../../shared/utils/api';
 
 const statusColors = {
@@ -152,6 +153,7 @@ export default function SchoolsList() {
           <p className="text-sm text-slate-500 mt-1">Manage all schools and their configurations</p>
         </div>
         <div className="flex items-center gap-2">
+          <ThemeToggle />
           <button
             onClick={openBroadcast}
             className="flex items-center gap-1.5 px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50"

@@ -5,6 +5,7 @@ import { queryClient } from './lib/queryClient';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { LicenseProvider, useLicenses } from './contexts/LicenseContext';
 import { SocketProvider } from './contexts/SocketContext';
+import { ThemeProvider } from './contexts/ThemeContext';
 import Spinner from './shared/components/Spinner';
 import Login from './pages/Login';
 import Landing from './pages/Landing';
@@ -134,13 +135,15 @@ export default function App() {
   return (
     <BrowserRouter>
       <QueryClientProvider client={queryClient}>
-        <AuthProvider>
-          <LicenseProvider>
-            <SocketProvider>
-              <AppRoutes />
-            </SocketProvider>
-          </LicenseProvider>
-        </AuthProvider>
+        <ThemeProvider>
+          <AuthProvider>
+            <LicenseProvider>
+              <SocketProvider>
+                <AppRoutes />
+              </SocketProvider>
+            </LicenseProvider>
+          </AuthProvider>
+        </ThemeProvider>
       </QueryClientProvider>
     </BrowserRouter>
   );

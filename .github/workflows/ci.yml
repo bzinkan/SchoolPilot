@@ -22,6 +22,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Audit dependencies
+        run: npm audit --audit-level=moderate
+
       - name: TypeScript check
         run: npx tsc --noEmit
 
@@ -45,6 +48,14 @@ jobs:
       - name: Install frontend deps
         working-directory: schoolpilot-app
         run: npm ci
+
+      - name: Audit frontend dependencies
+        working-directory: schoolpilot-app
+        run: npm audit --audit-level=moderate
+
+      - name: Lint frontend
+        working-directory: schoolpilot-app
+        run: npm run lint
 
       - name: Build frontend
         working-directory: schoolpilot-app

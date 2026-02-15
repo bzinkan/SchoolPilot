@@ -1,6 +1,9 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { usePassPilotAuth } from '../../../hooks/usePassPilotAuth';
+import { useLicenses } from '../../../contexts/LicenseContext';
 import {
+  ArrowLeft,
   ClipboardList,
   Users,
   BookOpen,
@@ -13,6 +16,7 @@ import {
 } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '../../../components/ui/avatar';
 import { Button } from '../../../components/ui/button';
+import { ThemeToggle } from '../../../components/ThemeToggle';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -39,6 +43,8 @@ const navItems = [
 
 export default function AppShell({ children, currentTab, onTabChange }) {
   const { user, school, isAdmin, logout, refetchUser } = usePassPilotAuth();
+  const { hasClassPilot } = useLicenses();
+  const navigate = useNavigate();
   const [kioskNameInput, setKioskNameInput] = useState('');
   const [isKioskNameDialogOpen, setIsKioskNameDialogOpen] = useState(false);
   const [pendingKioskAction, setPendingKioskAction] = useState(null);
@@ -108,6 +114,16 @@ export default function AppShell({ children, currentTab, onTabChange }) {
       {/* Top bar */}
       <header className="border-b bg-card px-4 py-3 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">
+          {hasClassPilot && (
+            <button
+              onClick={() => navigate('/classpilot')}
+              className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors mr-1"
+              title="Back to ClassPilot"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              <span className="hidden sm:inline">ClassPilot</span>
+            </button>
+          )}
           <h1 className="text-2xl font-bold text-primary">PassPilot</h1>
           <div className="flex items-center space-x-2 text-sm text-muted-foreground">
             {school && <span>{school.name}</span>}
@@ -116,6 +132,7 @@ export default function AppShell({ children, currentTab, onTabChange }) {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <ThemeToggle />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm" className="gap-1.5">

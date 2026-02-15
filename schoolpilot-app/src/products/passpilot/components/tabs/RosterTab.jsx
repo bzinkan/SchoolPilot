@@ -13,8 +13,8 @@ import { Trash2, Edit, Plus, Users, Eye } from "lucide-react";
 
 const GRADE_LEVELS = ['K', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'];
 
-function RosterTab({ user }) {
-  const { user: authUser, isAdmin } = usePassPilotAuth();
+function RosterTab() {
+  const { isAdmin } = usePassPilotAuth();
   const [showAddStudentModal, setShowAddStudentModal] = useState(false);
   const [showBulkAddStudentsModal, setShowBulkAddStudentsModal] = useState(false);
   const [showAddClassModal, setShowAddClassModal] = useState(false);
@@ -47,6 +47,7 @@ function RosterTab({ user }) {
       if (!res.ok) throw new Error('Failed to fetch classes');
       return res.json();
     },
+    select: (data) => Array.isArray(data) ? data : (data?.grades ?? data?.classes ?? []),
   });
 
   // Available classes for "Add Class" dialog (teachers only)
@@ -57,6 +58,7 @@ function RosterTab({ user }) {
       if (!res.ok) return [];
       return res.json();
     },
+    select: (data) => Array.isArray(data) ? data : (data?.grades ?? []),
     enabled: !isAdmin,
   });
 
@@ -67,6 +69,7 @@ function RosterTab({ user }) {
       if (!res.ok) throw new Error('Failed to fetch students');
       return res.json();
     },
+    select: (data) => Array.isArray(data) ? data : (data?.students ?? []),
   });
 
   const isLoading = classesLoading || studentsLoading;

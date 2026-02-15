@@ -24,10 +24,7 @@ export default function GoWidget() {
 
   // Countdown timer
   useEffect(() => {
-    if (!sessionInfo?.scheduledTime) {
-      setCountdown('');
-      return;
-    }
+    if (!sessionInfo?.scheduledTime) return;
     const update = () => {
       const diff = new Date(sessionInfo.scheduledTime).getTime() - Date.now();
       if (diff <= 0) {

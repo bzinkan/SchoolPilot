@@ -44,6 +44,7 @@ export function LicenseProvider({ children }) {
   return <LicenseContext.Provider value={value}>{children}</LicenseContext.Provider>;
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useLicenses() {
   const ctx = useContext(LicenseContext);
   if (!ctx) throw new Error('useLicenses must be used within LicenseProvider');

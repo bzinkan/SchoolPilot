@@ -1,5 +1,18 @@
 import rateLimit from "express-rate-limit";
 
+/**
+ * IMPORTANT: Both limiters below use the default in-memory store, which does
+ * NOT share state across multiple server instances. In a horizontally-scaled
+ * production deployment, replace the default store with a Redis-backed store
+ * (e.g. rate-limit-redis) so that rate limits are enforced globally.
+ *
+ * Example:
+ *   import { RedisStore } from "rate-limit-redis";
+ *   import { createClient } from "redis";
+ *   const redisClient = createClient({ url: process.env.REDIS_URL });
+ *   // then pass  store: new RedisStore({ sendCommand: (...args) => redisClient.sendCommand(args) })
+ */
+
 export const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 15,

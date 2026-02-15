@@ -33,7 +33,7 @@ import { useToast } from "../../../hooks/use-toast";
 import { apiRequest, queryClient } from "../../../lib/queryClient";
 import { useQuery } from "@tanstack/react-query";
 
-function RemoteControlToolbar({ selectedStudentIds, students, onToggleStudent, onClearSelection, selectedGrade, onGradeChange, userRole }) {
+function RemoteControlToolbar({ selectedStudentIds, students, selectedGrade, onGradeChange, userRole }) {
   const [showOpenTab, setShowOpenTab] = useState(false);
   const [showLockScreen, setShowLockScreen] = useState(false);
   const [showFlightPathDialog, setShowFlightPathDialog] = useState(false);
@@ -55,12 +55,14 @@ function RemoteControlToolbar({ selectedStudentIds, students, onToggleStudent, o
   const { data: scenes = [] } = useQuery({
     queryKey: ['/api/flight-paths'],
     queryFn: () => apiRequest('GET', '/flight-paths'),
+    select: (data) => Array.isArray(data) ? data : data?.flightPaths ?? [],
   });
 
   // Fetch settings for grade levels
   const { data: settings } = useQuery({
     queryKey: ['/api/settings'],
     queryFn: () => apiRequest('GET', '/settings'),
+    select: (data) => data?.settings ?? data ?? null,
   });
 
   const handleOpenTab = async () => {
@@ -99,40 +101,10 @@ function RemoteControlToolbar({ selectedStudentIds, students, onToggleStudent, o
       });
       setTargetUrl("");
       setShowOpenTab(false);
-    } catch (error) {
+    } catch {
       toast({
         title: "Error",
         description: "Failed to open tab",
-        variant: "destructive",
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleCloseTabs = async () => {
-    // Validate selection before executing command
-    if (!validateSelection()) {
-      return;
-    }
-
-    setIsLoading(true);
-    try {
-      await apiRequest("POST", "/remote/close-tabs", {
-        closeAll: true,
-        targetDeviceIds: targetDeviceIdsArray
-      });
-      const target = selectedStudentIds.size > 0
-        ? `${selectedStudentIds.size} student(s)`
-        : "all students";
-      toast({
-        title: "Success",
-        description: `Closed tabs on ${target}`,
-      });
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to close tabs",
         variant: "destructive",
       });
     } finally {
@@ -184,43 +156,10 @@ function RemoteControlToolbar({ selectedStudentIds, students, onToggleStudent, o
       });
       setLockUrl("");
       setShowLockScreen(false);
-    } catch (error) {
+    } catch {
       toast({
         title: "Error",
         description: "Failed to lock screens",
-        variant: "destructive",
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleUnlockScreen = async () => {
-    // Validate selection before executing command
-    if (!validateSelection()) {
-      return;
-    }
-
-    setIsLoading(true);
-    try {
-      await apiRequest("POST", "/remote/unlock-screen", {
-        targetDeviceIds: targetDeviceIdsArray
-      });
-
-      // Invalidate cache to update lock icon immediately
-      queryClient.invalidateQueries({ queryKey: ['/api/students'] });
-
-      const target = selectedStudentIds.size > 0
-        ? `${selectedStudentIds.size} student(s)`
-        : "all students";
-      toast({
-        title: "Success",
-        description: `Unlocked ${target}`,
-      });
-    } catch (error) {
-      toast({
-        title: "Error",
-        description: "Failed to unlock screens",
         variant: "destructive",
       });
     } finally {
@@ -259,7 +198,7 @@ function RemoteControlToolbar({ selectedStudentIds, students, onToggleStudent, o
       });
       setShowTempUnblock(false);
       setTempUnblockDomain("");
-    } catch (error) {
+    } catch {
       toast({
         title: "Error",
         description: "Failed to temporarily unblock domain",
@@ -293,7 +232,7 @@ function RemoteControlToolbar({ selectedStudentIds, students, onToggleStudent, o
       });
       setTabLimit("");
       setShowTabLimit(false);
-    } catch (error) {
+    } catch {
       toast({
         title: "Error",
         description: "Failed to apply tab limit",
@@ -345,7 +284,7 @@ function RemoteControlToolbar({ selectedStudentIds, students, onToggleStudent, o
       });
       setSelectedSceneId("");
       setShowApplyScene(false);
-    } catch (error) {
+    } catch {
       toast({
         title: "Error",
         description: "Failed to apply flight path",
@@ -395,10 +334,6 @@ function RemoteControlToolbar({ selectedStudentIds, students, onToggleStudent, o
     return true;
   };
 
-  const selectionText = selectedStudentIds.size > 0
-    ? `${selectedStudentIds.size} selected`
-    : "All students";
-
   // Sort students alphabetically by name
   const sortedStudents = [...students].sort((a, b) => {
     const nameA = a.studentName || '';
@@ -410,6 +345,7 @@ function RemoteControlToolbar({ selectedStudentIds, students, onToggleStudent, o
   const { data: websiteDataRaw = [] } = useQuery({
     queryKey: ['/api/student-analytics', selectedStudentForData],
     queryFn: () => apiRequest('GET', `/student-analytics/${selectedStudentForData}`),
+    select: (data) => Array.isArray(data) ? data : data?.heartbeats ?? [],
     enabled: showStudentDataDialog,
   });
 

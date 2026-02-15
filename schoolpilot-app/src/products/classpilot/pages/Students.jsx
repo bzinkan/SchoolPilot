@@ -8,6 +8,7 @@ import { Input } from "../../../components/ui/input";
 import { Label } from "../../../components/ui/label";
 import { Checkbox } from "../../../components/ui/checkbox";
 import { ArrowLeft, Upload, Download, Edit, Trash2, FileSpreadsheet, GraduationCap, RefreshCw, Users, Loader2, Building2, AlertCircle, Plus, Search, ChevronRight, ChevronDown } from "lucide-react";
+import { ThemeToggle } from "../../../components/ThemeToggle";
 import { useNavigate } from "react-router-dom";
 import { Tabs, TabsList, TabsTrigger } from "../../../components/ui/tabs";
 import {
@@ -108,8 +109,8 @@ function StudentsContent() {
   const [syncingCourseId, setSyncingCourseId] = useState(null);
   const [showWorkspaceDialog, setShowWorkspaceDialog] = useState(false);
   const [workspaceImportResult, setWorkspaceImportResult] = useState(null);
-  const [selectedOrgUnit, setSelectedOrgUnit] = useState("");
-  const [importGradeLevel, setImportGradeLevel] = useState("");
+  const [, setSelectedOrgUnit] = useState("");
+  const [, setImportGradeLevel] = useState("");
   // Enhanced multi-OU import state
   const [checkedOUs, setCheckedOUs] = useState(new Set());
   const [ouGradeOverrides, setOuGradeOverrides] = useState({});
@@ -230,11 +231,6 @@ function StudentsContent() {
 
   const directoryUsers = directoryData?.users || [];
   const orgUnits = orgUnitsData?.orgUnits || [];
-
-  // Filter directory users by selected OU (client-side filtering for preview)
-  const filteredDirectoryUsers = selectedOrgUnit && selectedOrgUnit !== "__all__"
-    ? directoryUsers.filter(user => user.orgUnitPath === selectedOrgUnit)
-    : directoryUsers;
 
   // Parse error codes from the error message (format: "403: {\"error\":\"...\",\"code\":\"...\"}")
   const getDirectoryErrorCode = () => {
@@ -616,6 +612,7 @@ function StudentsContent() {
             <p className="text-muted-foreground">Manage student roster and import students</p>
           </div>
         </div>
+        <ThemeToggle />
       </div>
 
       {/* CSV Import Card */}

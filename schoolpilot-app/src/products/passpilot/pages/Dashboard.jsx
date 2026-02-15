@@ -9,7 +9,7 @@ import SetupView from '../components/admin/SetupView';
 import BillingView from '../components/admin/BillingView';
 
 export default function Dashboard() {
-  const { isLoading, user, isAdmin } = usePassPilotAuth();
+  const { isLoading, user } = usePassPilotAuth();
   const [currentTab, setCurrentTab] = useState(() => {
     const hash = window.location.hash.replace('#', '');
     if (hash.startsWith('setup')) {

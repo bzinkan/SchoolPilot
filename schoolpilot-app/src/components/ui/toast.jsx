@@ -94,6 +94,7 @@ function ToastDescription({ ref, className, ...props }) {
   );
 }
 
+/* eslint-disable react-refresh/only-export-components */
 export {
   ToastProvider,
   ToastViewport,
@@ -104,3 +105,4 @@ export {
   ToastAction,
   toastVariants,
 };
+/* eslint-enable react-refresh/only-export-components */

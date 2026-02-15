@@ -29,7 +29,7 @@ function getDestinationLabel(dest, custom) {
 }
 
 export default function KioskSimplePage() {
-  const [schoolId, setSchoolId] = useState("");
+  const [schoolId] = useState(() => new URLSearchParams(window.location.search).get("school") ?? "");
   const [grades, setGrades] = useState([]);
   const [selectedGradeId, setSelectedGradeId] = useState(null);
   const [students, setStudents] = useState([]);
@@ -40,12 +40,6 @@ export default function KioskSimplePage() {
   const inactivityRef = useRef();
   const feedbackRef = useRef();
   const scrollContainerRef = useRef(null);
-
-  // Get school ID from URL
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    setSchoolId(params.get("school") ?? "");
-  }, []);
 
   // Close destination picker on inactivity (10s), but keep grade selected
   const resetInactivity = useCallback(() => {

@@ -11,7 +11,7 @@ import { useAuth } from '../contexts/AuthContext';
  * reading from the already-fetched AuthContext.
  */
 export function useClassPilotAuth() {
-  const { user, memberships, loading, logout, activeSchoolId, activeMembership, refetchUser } = useAuth();
+  const { user, token, loading, logout, activeSchoolId, activeMembership, refetchUser } = useAuth();
 
   // Derive ClassPilot role from unified membership
   // ClassPilot uses 'school_admin' or 'teacher'
@@ -47,10 +47,11 @@ export function useClassPilotAuth() {
   return {
     currentUser,
     school,
-    isAdmin: role === 'school_admin',
+    isAdmin: role === 'school_admin' || role === 'admin',
     isTeacher: role === 'teacher',
     isAuthenticated,
     isLoading: loading,
+    token,
     logout,
     refetchUser,
   };

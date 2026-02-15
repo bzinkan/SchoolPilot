@@ -55,26 +55,26 @@ export default function DismissalConfig({ students, homerooms, schoolId, onUpdat
       )}
 
       <div>
-        <h2 className="text-xl font-bold text-gray-900">Set Dismissal Types</h2>
-        <p className="text-gray-500 text-sm">Choose how each student goes home.</p>
+        <h2 className="text-xl font-bold text-gray-900 dark:text-white">Set Dismissal Types</h2>
+        <p className="text-gray-500 dark:text-slate-400 text-sm">Choose how each student goes home.</p>
       </div>
 
       {/* Bus students info banner */}
       {busStudentCount > 0 && (
-        <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-3 flex items-center gap-2">
-          <Bus className="w-4 h-4 text-yellow-600 shrink-0" />
-          <p className="text-sm text-yellow-800">
+        <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg px-4 py-3 flex items-center gap-2">
+          <Bus className="w-4 h-4 text-yellow-600 dark:text-yellow-400 shrink-0" />
+          <p className="text-sm text-yellow-800 dark:text-yellow-400">
             {busStudentCount} student{busStudentCount !== 1 ? 's' : ''} already assigned to buses from the Bus Assignments step.
           </p>
         </div>
       )}
 
       {/* Bulk + Filter + Save */}
-      <div className="bg-white rounded-xl border p-4 flex flex-wrap items-center gap-4">
+      <div className="bg-white dark:bg-slate-900 rounded-xl border dark:border-slate-700 p-4 flex flex-wrap items-center gap-4">
         <div className="flex items-center gap-2">
-          <label className="text-sm text-gray-600">Filter:</label>
+          <label className="text-sm text-gray-600 dark:text-slate-300">Filter:</label>
           <select value={filterHomeroom} onChange={(e) => setFilterHomeroom(e.target.value)}
-            className="border rounded-lg px-3 py-1.5 text-sm">
+            className="border dark:border-slate-600 dark:bg-slate-800 dark:text-white rounded-lg px-3 py-1.5 text-sm">
             <option value="all">All homerooms</option>
             {homerooms.map(hr => (
               <option key={hr.id} value={hr.id}>{hr.teacher || hr.name} (Gr {hr.grade})</option>
@@ -89,7 +89,7 @@ export default function DismissalConfig({ students, homerooms, schoolId, onUpdat
             </button>
           )}
           <button onClick={() => setShowBulkOptions(!showBulkOptions)}
-            className="px-3 py-1.5 border rounded-lg text-sm hover:bg-gray-50">
+            className="px-3 py-1.5 border dark:border-slate-700 rounded-lg text-sm hover:bg-gray-50 dark:hover:bg-slate-800 dark:text-white">
             {showBulkOptions ? 'Hide Bulk' : 'Set All'}
           </button>
         </div>
@@ -101,7 +101,7 @@ export default function DismissalConfig({ students, homerooms, schoolId, onUpdat
             const Icon = type.icon;
             return (
               <button key={type.id} onClick={() => onBulkSet(type.id)}
-                className="flex items-center gap-1 px-3 py-1.5 border rounded-lg text-sm hover:bg-gray-50">
+                className="flex items-center gap-1 px-3 py-1.5 border dark:border-slate-700 rounded-lg text-sm hover:bg-gray-50 dark:hover:bg-slate-800 dark:text-white">
                 <Icon className="w-4 h-4" /> Set all to {type.label}
               </button>
             );
@@ -110,33 +110,33 @@ export default function DismissalConfig({ students, homerooms, schoolId, onUpdat
       )}
 
       {/* Student list */}
-      <div className="bg-white rounded-xl border overflow-hidden">
-        <div className="bg-gray-50 border-b px-4 py-3">
-          <div className="grid grid-cols-12 gap-4 text-sm font-medium text-gray-500">
+      <div className="bg-white dark:bg-slate-900 rounded-xl border dark:border-slate-700 overflow-hidden">
+        <div className="bg-gray-50 dark:bg-slate-800 border-b dark:border-slate-700 px-4 py-3">
+          <div className="grid grid-cols-12 gap-4 text-sm font-medium text-gray-500 dark:text-slate-400">
             <div className="col-span-4">Student</div>
             <div className="col-span-3">Homeroom</div>
             <div className="col-span-3">Dismissal Type</div>
             <div className="col-span-2">Bus #</div>
           </div>
         </div>
-        <div className="divide-y max-h-96 overflow-y-auto">
+        <div className="divide-y dark:divide-slate-700 max-h-96 overflow-y-auto">
           {filtered.map(student => {
             const hr = homerooms.find(h => h.id === student.homeroom);
             return (
               <div key={student.id} className="grid grid-cols-12 gap-4 px-4 py-3 items-center">
                 <div className="col-span-4 flex items-center gap-2">
-                  <div className="w-8 h-8 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-600 text-xs font-medium">
+                  <div className="w-8 h-8 bg-indigo-100 dark:bg-indigo-900/30 rounded-full flex items-center justify-center text-indigo-600 dark:text-indigo-400 text-xs font-medium">
                     {(student.firstName || '?')[0]}{(student.lastName || '?')[0]}
                   </div>
                   <span className="text-sm font-medium">{student.firstName} {student.lastName}</span>
                 </div>
-                <div className="col-span-3 text-sm text-gray-500">
-                  {hr ? hr.teacher || hr.name : <span className="text-yellow-600">Unassigned</span>}
+                <div className="col-span-3 text-sm text-gray-500 dark:text-slate-400">
+                  {hr ? hr.teacher || hr.name : <span className="text-yellow-600 dark:text-yellow-400">Unassigned</span>}
                 </div>
                 <div className="col-span-3">
                   <select value={student.dismissalType}
                     onChange={(e) => onUpdate(student.id, 'dismissalType', e.target.value)}
-                    className="w-full border rounded px-2 py-1 text-sm">
+                    className="w-full border dark:border-slate-600 dark:bg-slate-800 dark:text-white rounded px-2 py-1 text-sm">
                     {dismissalTypes.map(t => <option key={t.id} value={t.id}>{t.label}</option>)}
                   </select>
                 </div>
@@ -144,9 +144,9 @@ export default function DismissalConfig({ students, homerooms, schoolId, onUpdat
                   {student.dismissalType === 'bus' ? (
                     <input type="text" value={student.busRoute || ''}
                       onChange={(e) => onUpdate(student.id, 'busRoute', e.target.value)}
-                      placeholder="Bus #" className="w-full border rounded px-2 py-1 text-sm" />
+                      placeholder="Bus #" className="w-full border dark:border-slate-600 dark:bg-slate-800 dark:text-white rounded px-2 py-1 text-sm" />
                   ) : (
-                    <span className="text-gray-400 text-sm">&mdash;</span>
+                    <span className="text-gray-400 dark:text-slate-500 text-sm">&mdash;</span>
                   )}
                 </div>
               </div>
@@ -162,11 +162,11 @@ export default function DismissalConfig({ students, homerooms, schoolId, onUpdat
           const count = students.filter(s => s.dismissalType === type.id).length;
           const pct = students.length > 0 ? Math.round((count / students.length) * 100) : 0;
           return (
-            <div key={type.id} className="bg-white rounded-xl border p-4 text-center">
-              <Icon className="w-6 h-6 mx-auto mb-2 text-gray-500" />
-              <p className="text-2xl font-bold">{count}</p>
-              <p className="text-sm text-gray-500">{type.label}</p>
-              <p className="text-xs text-gray-400">{pct}%</p>
+            <div key={type.id} className="bg-white dark:bg-slate-900 rounded-xl border dark:border-slate-700 p-4 text-center">
+              <Icon className="w-6 h-6 mx-auto mb-2 text-gray-500 dark:text-slate-400" />
+              <p className="text-2xl font-bold dark:text-white">{count}</p>
+              <p className="text-sm text-gray-500 dark:text-slate-400">{type.label}</p>
+              <p className="text-xs text-gray-400 dark:text-slate-500">{pct}%</p>
             </div>
           );
         })}

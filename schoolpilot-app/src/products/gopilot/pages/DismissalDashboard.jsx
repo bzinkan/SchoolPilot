@@ -4,20 +4,22 @@ import { useGoPilotAuth } from '../../../hooks/useGoPilotAuth';
 import { useSocket } from '../../../contexts/SocketContext';
 import api from '../../../shared/utils/api';
 import {
-  Car, Bus, PersonStanding, Clock, Users, Search, Bell, AlertTriangle,
+  ArrowLeft, Car, Bus, PersonStanding, Clock, Users, Search, Bell, AlertTriangle,
   Check, X, ChevronRight, ChevronDown, Phone, MapPin, Play, Pause,
   Volume2, VolumeX, RefreshCw, Filter, MoreVertical, CheckCircle2,
   AlertCircle, Timer, UserCheck, Send, ArrowRight, Shield, Eye,
   Smartphone, QrCode, MessageSquare, Home, Settings, LogOut, Menu,
   Zap, TrendingUp, Calendar, Download, Plus, Edit, Trash2
 } from 'lucide-react';
+import { ThemeToggle } from '../../../components/ThemeToggle';
+import { useLicenses } from '../../../contexts/LicenseContext';
 
 const Badge = ({ children, variant = 'default', size = 'md', dot = false }) => {
   const variants = {
-    default: 'bg-gray-100 text-gray-800', blue: 'bg-blue-100 text-blue-800',
-    green: 'bg-green-100 text-green-800', yellow: 'bg-yellow-100 text-yellow-800',
-    red: 'bg-red-100 text-red-800', purple: 'bg-purple-100 text-purple-800',
-    orange: 'bg-orange-100 text-orange-800',
+    default: 'bg-gray-100 text-gray-800 dark:text-slate-200 dark:bg-slate-700 dark:text-slate-200', blue: 'bg-blue-100 text-blue-800 dark:bg-blue-950/50 dark:text-blue-300',
+    green: 'bg-green-100 dark:bg-green-950/50 text-green-800 dark:bg-green-950/50 dark:text-green-300', yellow: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-950/50 dark:text-yellow-300',
+    red: 'bg-red-100 text-red-800 dark:bg-red-950/50 dark:text-red-300', purple: 'bg-purple-100 text-purple-800 dark:bg-purple-950/50 dark:text-purple-300',
+    orange: 'bg-orange-100 text-orange-800 dark:bg-orange-950/50 dark:text-orange-300',
   };
   const sizes = { sm: 'px-2 py-0.5 text-xs', md: 'px-2.5 py-1 text-sm' };
   return (
@@ -30,12 +32,12 @@ const Badge = ({ children, variant = 'default', size = 'md', dot = false }) => {
 
 const Button = ({ children, variant = 'primary', size = 'md', onClick, disabled, className = '' }) => {
   const variants = {
-    primary: 'bg-indigo-600 text-white hover:bg-indigo-700 disabled:bg-indigo-300',
-    secondary: 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50',
-    success: 'bg-green-600 text-white hover:bg-green-700',
+    primary: 'bg-indigo-600 dark:bg-indigo-700 text-white hover:bg-indigo-700 disabled:bg-indigo-300',
+    secondary: 'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border border-gray-300 dark:border-slate-600 hover:bg-gray-50 dark:bg-slate-800/50 dark:hover:bg-slate-800 dark:hover:bg-slate-700',
+    success: 'bg-green-600 dark:bg-green-700 text-white hover:bg-green-700',
     danger: 'bg-red-600 text-white hover:bg-red-700',
     warning: 'bg-yellow-500 text-white hover:bg-yellow-600',
-    ghost: 'text-gray-600 hover:bg-gray-100',
+    ghost: 'text-gray-600 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800',
   };
   const sizes = { sm: 'px-3 py-1.5 text-sm', md: 'px-4 py-2 text-sm', lg: 'px-6 py-3 text-base' };
   return (
@@ -47,13 +49,14 @@ const Button = ({ children, variant = 'primary', size = 'md', onClick, disabled,
 };
 
 const Card = ({ children, className = '' }) => (
-  <div className={`bg-white rounded-xl shadow-sm border border-gray-200 ${className}`}>{children}</div>
+  <div className={`bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-gray-200 dark:border-slate-700 ${className}`}>{children}</div>
 );
 
 export default function DismissalDashboard() {
-  const { user, logout, currentSchool, currentRole } = useGoPilotAuth();
+  const { logout, currentSchool, currentRole } = useGoPilotAuth();
   const socket = useSocket();
   const navigate = useNavigate();
+  const { hasClassPilot } = useLicenses();
 
   const [currentTime, setCurrentTime] = useState(new Date());
   const [session, setSession] = useState(null);
@@ -86,8 +89,6 @@ export default function DismissalDashboard() {
   const [walkerQueueTab, setWalkerQueueTab] = useState('active'); // 'active' or 'dismissed'
   const [selectedGrades, setSelectedGrades] = useState([]);
   const [selectedWalkerHomerooms, setSelectedWalkerHomerooms] = useState([]);
-  const [walkerStudents, setWalkerStudents] = useState([]); // All walker students from roster
-
   // Student lookup state
   const [showStudentLookup, setShowStudentLookup] = useState(false);
   const [studentSearchTerm, setStudentSearchTerm] = useState('');
@@ -112,10 +113,10 @@ export default function DismissalDashboard() {
         api.get(`/schools/${currentSchool.id}/settings`),
       ]);
 
-      setQueue(queueRes.data);
+      setQueue(Array.isArray(queueRes.data) ? queueRes.data : (queueRes.data?.queue ?? []));
       setStats(statsRes.data);
-      setHomerooms(homeroomRes.data);
-      setAlerts(alertsRes.data);
+      setHomerooms(Array.isArray(homeroomRes.data) ? homeroomRes.data : (homeroomRes.data?.homerooms ?? []));
+      setAlerts(Array.isArray(alertsRes.data) ? alertsRes.data : (alertsRes.data?.alerts ?? []));
       const zones = settingsRes.data.pickupZones || [
         { id: 'A', name: 'Zone A' }, { id: 'B', name: 'Zone B' }, { id: 'C', name: 'Zone C' }
       ];
@@ -143,7 +144,7 @@ export default function DismissalDashboard() {
 
     const handleQueueUpdate = () => {
       if (session) {
-        api.get(`/sessions/${session.id}/queue`).then(r => setQueue(r.data));
+        api.get(`/sessions/${session.id}/queue`).then(r => setQueue(Array.isArray(r.data) ? r.data : (r.data?.queue ?? [])));
         api.get(`/sessions/${session.id}/stats`).then(r => setStats(r.data));
       }
     };
@@ -246,12 +247,6 @@ export default function DismissalDashboard() {
 
   const toggleHomeroomSelection = (homeroomId) => {
     setSelectedWalkerHomerooms(prev => prev.includes(homeroomId) ? prev.filter(h => h !== homeroomId) : [...prev, homeroomId]);
-  };
-
-  const handleCallNextBatch = async () => {
-    if (!session) return;
-    await api.post(`/sessions/${session.id}/call-batch`, { count: 3, zone: selectedZone || pickupZones[0]?.id });
-    await refreshQueue();
   };
 
   const handleSaveZones = async (zones) => {
@@ -373,7 +368,7 @@ export default function DismissalDashboard() {
       api.get(`/sessions/${session.id}/queue`),
       api.get(`/sessions/${session.id}/stats`),
     ]);
-    setQueue(queueRes.data);
+    setQueue(Array.isArray(queueRes.data) ? queueRes.data : (queueRes.data?.queue ?? []));
     setStats(statsRes.data);
   };
 
@@ -434,41 +429,52 @@ export default function DismissalDashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-100">
+    <div className="min-h-screen bg-gray-100 dark:bg-slate-950">
       {/* Header */}
-      <header className="bg-white border-b sticky top-0 z-50">
+      <header className="bg-white dark:bg-slate-900 border-b dark:border-slate-700 sticky top-0 z-50">
         <div className="px-3 sm:px-4 py-2 sm:py-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 sm:gap-4">
+              {hasClassPilot && (
+                <button
+                  onClick={() => navigate('/classpilot')}
+                  className="flex items-center gap-1 text-sm text-gray-500 dark:text-slate-400 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 transition-colors"
+                  title="Back to ClassPilot"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                  <span className="hidden sm:inline">ClassPilot</span>
+                </button>
+              )}
               <div className="flex items-center gap-2 sm:gap-3">
                 <div className="w-8 h-8 sm:w-10 sm:h-10 bg-indigo-600 rounded-xl flex items-center justify-center">
                   <Car className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
                 </div>
                 <div>
-                  <h1 className="font-bold text-sm sm:text-base text-gray-900">GoPilot</h1>
-                  <p className="text-[10px] sm:text-xs text-gray-500 truncate max-w-[100px] sm:max-w-none">{currentSchool?.name || 'No School Selected'}</p>
+                  <h1 className="font-bold text-sm sm:text-base text-gray-900 dark:text-white">GoPilot</h1>
+                  <p className="text-[10px] sm:text-xs text-gray-500 dark:text-slate-400 dark:text-slate-400 dark:text-slate-400 truncate max-w-[100px] sm:max-w-none">{currentSchool?.name || 'No School Selected'}</p>
                 </div>
               </div>
-              <div className={`hidden sm:flex ml-2 sm:ml-6 px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg items-center gap-2 ${dismissalActive ? 'bg-green-100' : 'bg-gray-100'}`}>
+              <div className={`hidden sm:flex ml-2 sm:ml-6 px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg items-center gap-2 ${dismissalActive ? 'bg-green-100 dark:bg-green-950/50 dark:bg-green-950/50' : 'bg-gray-100 dark:bg-slate-800'}`}>
                 <span className={`w-2 h-2 rounded-full ${dismissalActive ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`} />
-                <span className={`text-xs sm:text-sm font-medium ${dismissalActive ? 'text-green-700' : 'text-gray-600'}`}>
+                <span className={`text-xs sm:text-sm font-medium ${dismissalActive ? 'text-green-700 dark:text-green-400' : 'text-gray-600 dark:text-slate-400'}`}>
                   {dismissalActive ? 'Active' : 'Paused'}
                 </span>
               </div>
             </div>
             <div className="flex items-center gap-2 sm:gap-4">
               <div className="text-right hidden md:block">
-                <p className="text-2xl font-bold text-gray-900">
+                <p className="text-2xl font-bold text-gray-900 dark:text-white">
                   {currentTime.toLocaleTimeString([], { timeZone: currentSchool?.timezone, hour: '2-digit', minute: '2-digit' })}
                 </p>
-                <p className="text-xs text-gray-500">
+                <p className="text-xs text-gray-500 dark:text-slate-400 dark:text-slate-400">
                   {currentTime.toLocaleDateString([], { timeZone: currentSchool?.timezone, weekday: 'long', month: 'short', day: 'numeric' })}
                 </p>
               </div>
-              <p className="text-sm font-bold text-gray-900 md:hidden">
+              <p className="text-sm font-bold text-gray-900 dark:text-white md:hidden">
                 {currentTime.toLocaleTimeString([], { timeZone: currentSchool?.timezone, hour: '2-digit', minute: '2-digit' })}
               </p>
               <div className="flex items-center gap-1 sm:gap-2">
+                <ThemeToggle />
                 <Button variant={soundEnabled ? 'secondary' : 'ghost'} size="sm" onClick={() => setSoundEnabled(!soundEnabled)}>
                   {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
                 </Button>
@@ -484,10 +490,10 @@ export default function DismissalDashboard() {
           </div>
         </div>
         {alerts.length > 0 && (
-          <div className="bg-red-50 border-t border-red-200 px-4 py-2">
+          <div className="bg-red-50 dark:bg-red-950/40 border-t border-red-200 dark:border-red-800 px-4 py-2">
             <div className="flex items-center gap-3">
               <AlertTriangle className="w-5 h-5 text-red-500" />
-              <span className="text-sm text-red-700 font-medium">
+              <span className="text-sm text-red-700 dark:text-red-400 font-medium">
                 Custody alert: {alerts[0].person_name} - {alerts[0].alert_type} ({alerts[0].student_first_name} {alerts[0].student_last_name})
               </span>
               <Button variant="ghost" size="sm" className="ml-auto text-red-600">View Details</Button>
@@ -497,27 +503,27 @@ export default function DismissalDashboard() {
       </header>
 
       {/* Stats Bar */}
-      <div className="bg-white border-b px-3 sm:px-4 py-2 sm:py-3 overflow-x-auto">
+      <div className="bg-white dark:bg-slate-900 border-b dark:border-slate-700 px-3 sm:px-4 py-2 sm:py-3 overflow-x-auto">
         <div className="flex items-center gap-4 sm:gap-6 min-w-max sm:min-w-0">
           <div className="text-center">
             <p className="text-lg sm:text-2xl font-bold text-green-600">{stats.dismissed}</p>
-            <p className="text-[10px] sm:text-xs text-gray-500">Dismissed</p>
+            <p className="text-[10px] sm:text-xs text-gray-500 dark:text-slate-400 dark:text-slate-400">Dismissed</p>
           </div>
           <div className="text-center">
             <p className="text-lg sm:text-2xl font-bold text-red-600">{(stats.waiting || 0) + (stats.called || 0)}</p>
-            <p className="text-[10px] sm:text-xs text-gray-500">In Queue</p>
+            <p className="text-[10px] sm:text-xs text-gray-500 dark:text-slate-400 dark:text-slate-400">In Queue</p>
           </div>
           <div className="text-center">
             <p className="text-lg sm:text-2xl font-bold text-green-600">{stats.released || 0}</p>
-            <p className="text-[10px] sm:text-xs text-gray-500">In Transit</p>
+            <p className="text-[10px] sm:text-xs text-gray-500 dark:text-slate-400 dark:text-slate-400">In Transit</p>
           </div>
           <div className="text-center">
             <p className="text-lg sm:text-2xl font-bold text-red-600">{stats.held}</p>
-            <p className="text-[10px] sm:text-xs text-gray-500">Held</p>
+            <p className="text-[10px] sm:text-xs text-gray-500 dark:text-slate-400 dark:text-slate-400">Held</p>
           </div>
           <div className="border-l pl-4 sm:pl-6 text-center">
             <p className="text-lg sm:text-2xl font-bold text-indigo-600">{avgWait}</p>
-            <p className="text-[10px] sm:text-xs text-gray-500">Avg Wait</p>
+            <p className="text-[10px] sm:text-xs text-gray-500 dark:text-slate-400 dark:text-slate-400">Avg Wait</p>
           </div>
         </div>
       </div>
@@ -525,7 +531,7 @@ export default function DismissalDashboard() {
       {/* Main Content */}
       <div className="flex pb-16 sm:pb-0">
         {/* Desktop sidebar */}
-        <aside className="hidden sm:flex w-16 bg-white border-r flex-col items-center py-4 gap-2">
+        <aside className="hidden sm:flex w-16 bg-white dark:bg-slate-900 border-r dark:border-slate-700 flex-col items-center py-4 gap-2">
           {[
             { id: 'queue', icon: Users, label: 'Queue' },
             { id: 'homerooms', icon: Home, label: 'Rooms' },
@@ -534,7 +540,7 @@ export default function DismissalDashboard() {
           ].map(view => (
             <button key={view.id} onClick={() => setSelectedView(view.id)}
               className={`w-12 h-12 rounded-lg flex flex-col items-center justify-center gap-1 transition-colors ${
-                selectedView === view.id ? 'bg-indigo-100 text-indigo-600' : 'text-gray-400 hover:bg-gray-100'
+                selectedView === view.id ? 'bg-indigo-100 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400' : 'text-gray-400 dark:text-slate-500 hover:bg-gray-100 dark:hover:bg-slate-800'
               }`}>
               <view.icon className="w-5 h-5" />
               <span className="text-[10px]">{view.label}</span>
@@ -542,7 +548,7 @@ export default function DismissalDashboard() {
           ))}
           {(currentRole === 'admin' || currentRole === 'office_staff') && (
             <button onClick={() => navigate('/gopilot/setup')}
-              className="w-12 h-12 rounded-lg flex flex-col items-center justify-center gap-1 text-gray-400 hover:bg-gray-100">
+              className="w-12 h-12 rounded-lg flex flex-col items-center justify-center gap-1 text-gray-400 dark:text-slate-500 hover:bg-gray-100 dark:hover:bg-slate-800">
               <Settings className="w-5 h-5" />
               <span className="text-[10px]">Setup</span>
             </button>
@@ -550,7 +556,7 @@ export default function DismissalDashboard() {
         </aside>
 
         {/* Mobile bottom nav */}
-        <nav className="sm:hidden fixed bottom-0 left-0 right-0 bg-white border-t z-50 px-2 py-1">
+        <nav className="sm:hidden fixed bottom-0 left-0 right-0 bg-white dark:bg-slate-900 border-t dark:border-slate-700 z-50 px-2 py-1">
           <div className="flex items-center justify-around">
             {[
               { id: 'queue', icon: Users, label: 'Queue' },
@@ -560,7 +566,7 @@ export default function DismissalDashboard() {
             ].map(view => (
               <button key={view.id} onClick={() => setSelectedView(view.id)}
                 className={`flex flex-col items-center justify-center py-1.5 px-3 rounded-lg ${
-                  selectedView === view.id ? 'text-indigo-600' : 'text-gray-400'
+                  selectedView === view.id ? 'text-indigo-600 dark:text-indigo-400' : 'text-gray-400 dark:text-slate-500'
                 }`}>
                 <view.icon className="w-5 h-5" />
                 <span className="text-[10px]">{view.label}</span>
@@ -568,7 +574,7 @@ export default function DismissalDashboard() {
             ))}
             {(currentRole === 'admin' || currentRole === 'office_staff') && (
               <button onClick={() => navigate('/gopilot/setup')}
-                className="flex flex-col items-center justify-center py-1.5 px-3 rounded-lg text-gray-400">
+                className="flex flex-col items-center justify-center py-1.5 px-3 rounded-lg text-gray-400 dark:text-slate-500">
                 <Settings className="w-5 h-5" />
                 <span className="text-[10px]">Setup</span>
               </button>
@@ -597,14 +603,14 @@ export default function DismissalDashboard() {
                       value={carNumberInput}
                       onChange={(e) => setCarNumberInput(e.target.value)}
                       placeholder="e.g. 142"
-                      className="flex-1 px-3 py-2 border rounded-lg text-lg font-mono text-center tracking-widest"
+                      className="flex-1 px-3 py-2 border dark:border-slate-600 rounded-lg text-lg font-mono text-center tracking-widest bg-white dark:bg-slate-800 dark:text-white"
                     />
                     <Button variant="primary" size="md" onClick={handleCarNumberCheckIn} disabled={carNumberLoading || !carNumberInput.trim()}>
                       {carNumberLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />}
                     </Button>
                   </form>
                   {carNumberResult && (
-                    <div className={`mt-2 p-2 rounded-lg text-sm ${carNumberResult.type === 'success' ? 'bg-green-50 text-green-700' : carNumberResult.type === 'info' ? 'bg-yellow-50 text-yellow-700' : 'bg-red-50 text-red-700'}`}>
+                    <div className={`mt-2 p-2 rounded-lg text-sm ${carNumberResult.type === 'success' ? 'bg-green-50 dark:bg-green-950/40 text-green-700 dark:text-green-400' : carNumberResult.type === 'info' ? 'bg-yellow-50 dark:bg-yellow-950/40 text-yellow-700 dark:text-yellow-400' : 'bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-400'}`}>
                       {carNumberResult.message}
                     </div>
                   )}
@@ -620,11 +626,11 @@ export default function DismissalDashboard() {
                         Car Line
                       </h2>
                       {/* Queue / Dismissed tabs */}
-                      <div className="flex bg-gray-100 rounded-lg p-0.5">
+                      <div className="flex bg-gray-100 dark:bg-slate-800 rounded-lg p-0.5">
                         <button
                           onClick={() => setQueueTab('active')}
                           className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${
-                            queueTab === 'active' ? 'bg-white shadow text-indigo-600' : 'text-gray-600 hover:text-gray-900'
+                            queueTab === 'active' ? 'bg-white dark:bg-slate-700 shadow text-indigo-600 dark:text-indigo-400' : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white'
                           }`}
                         >
                           Queue {activeQueue.length > 0 && <span className="ml-1 text-xs bg-indigo-100 text-indigo-600 px-1.5 py-0.5 rounded-full">{activeQueue.length}</span>}
@@ -632,10 +638,10 @@ export default function DismissalDashboard() {
                         <button
                           onClick={() => setQueueTab('dismissed')}
                           className={`px-3 py-1 text-sm font-medium rounded-md transition-colors ${
-                            queueTab === 'dismissed' ? 'bg-white shadow text-green-600' : 'text-gray-600 hover:text-gray-900'
+                            queueTab === 'dismissed' ? 'bg-white dark:bg-slate-700 shadow text-green-600 dark:text-green-400' : 'text-gray-600 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white'
                           }`}
                         >
-                          Dismissed {dismissedQueue.length > 0 && <span className="ml-1 text-xs bg-green-100 text-green-600 px-1.5 py-0.5 rounded-full">{dismissedQueue.length}</span>}
+                          Dismissed {dismissedQueue.length > 0 && <span className="ml-1 text-xs bg-green-100 dark:bg-green-950/50 text-green-600 px-1.5 py-0.5 rounded-full">{dismissedQueue.length}</span>}
                         </button>
                       </div>
                     </div>
@@ -644,11 +650,11 @@ export default function DismissalDashboard() {
                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                         <input type="text" placeholder="Search..." value={searchTerm}
                           onChange={(e) => setSearchTerm(e.target.value)}
-                          className="pl-10 pr-4 py-1.5 border rounded-lg text-sm w-full" />
+                          className="pl-10 pr-4 py-1.5 border dark:border-slate-600 rounded-lg text-sm w-full bg-white dark:bg-slate-800 dark:text-white" />
                       </div>
                       {queueTab === 'active' && (
                         <select value={filterType} onChange={(e) => setFilterType(e.target.value)}
-                          className="border rounded-lg px-2 sm:px-3 py-1.5 text-sm">
+                          className="border dark:border-slate-600 rounded-lg px-2 sm:px-3 py-1.5 text-sm bg-white dark:bg-slate-800 dark:text-white">
                           <option value="all">All</option>
                           <option value="waiting">In Queue</option>
                           <option value="released">In Transit</option>
@@ -667,15 +673,15 @@ export default function DismissalDashboard() {
                       const groups = Object.entries(grouped);
                       if (groups.length === 0) {
                         return (
-                          <div className="p-8 text-center text-gray-500">
+                          <div className="p-8 text-center text-gray-500 dark:text-slate-400">
                             {queueTab === 'dismissed' ? (
                               <>
-                                <CheckCircle2 className="w-12 h-12 mx-auto mb-2 text-gray-300" />
+                                <CheckCircle2 className="w-12 h-12 mx-auto mb-2 text-gray-300 dark:text-slate-600" />
                                 <p>No dismissed students yet</p>
                               </>
                             ) : (
                               <>
-                                <Users className="w-12 h-12 mx-auto mb-2 text-gray-300" />
+                                <Users className="w-12 h-12 mx-auto mb-2 text-gray-300 dark:text-slate-600" />
                                 <p>No students in queue</p>
                               </>
                             )}
@@ -709,7 +715,7 @@ export default function DismissalDashboard() {
                       value={carNumberInput}
                       onChange={(e) => setCarNumberInput(e.target.value)}
                       placeholder="e.g. 142"
-                      className="flex-1 px-3 py-2 border rounded-lg text-lg font-mono text-center tracking-widest"
+                      className="flex-1 px-3 py-2 border dark:border-slate-600 rounded-lg text-lg font-mono text-center tracking-widest bg-white dark:bg-slate-800 dark:text-white"
                       autoFocus
                     />
                     <Button variant="primary" size="md" onClick={handleCarNumberCheckIn} disabled={carNumberLoading || !carNumberInput.trim()}>
@@ -717,14 +723,14 @@ export default function DismissalDashboard() {
                     </Button>
                   </form>
                   {carNumberResult && (
-                    <div className={`mt-2 p-2 rounded-lg text-sm ${carNumberResult.type === 'success' ? 'bg-green-50 text-green-700' : carNumberResult.type === 'info' ? 'bg-yellow-50 text-yellow-700' : 'bg-red-50 text-red-700'}`}>
+                    <div className={`mt-2 p-2 rounded-lg text-sm ${carNumberResult.type === 'success' ? 'bg-green-50 dark:bg-green-950/40 text-green-700 dark:text-green-400' : carNumberResult.type === 'info' ? 'bg-yellow-50 dark:bg-yellow-950/40 text-yellow-700 dark:text-yellow-400' : 'bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-400'}`}>
                       {carNumberResult.message}
                     </div>
                   )}
                 </Card>
                 <Card className="p-4">
                   <div className="flex items-center justify-between mb-3">
-                    <h3 className="font-semibold">Pickup Zones</h3>
+                    <h3 className="font-semibold dark:text-white">Pickup Zones</h3>
                     <Button variant="ghost" size="sm" onClick={() => setShowZoneManager(true)}>
                       <Settings className="w-4 h-4" />
                     </Button>
@@ -736,17 +742,17 @@ export default function DismissalDashboard() {
                       return (
                         <button key={zone.id} onClick={() => setSelectedZone(zone.id)}
                           className={`p-3 rounded-lg text-center transition-colors ${
-                            isSelected ? 'ring-2 ring-indigo-500 bg-indigo-50' :
-                            count > 0 ? 'bg-green-100' : 'bg-gray-100'
+                            isSelected ? 'ring-2 ring-indigo-500 bg-indigo-50 dark:bg-indigo-950/40' :
+                            count > 0 ? 'bg-green-100 dark:bg-green-950/50' : 'bg-gray-100 dark:bg-slate-700 border border-transparent dark:border-slate-600'
                           }`}>
-                          <p className="text-lg font-bold truncate">{zone.name}</p>
-                          <p className="text-xs text-gray-500">{count} waiting</p>
+                          <p className="text-lg font-bold truncate dark:text-white">{zone.name}</p>
+                          <p className="text-xs text-gray-500 dark:text-slate-400">{count} waiting</p>
                         </button>
                       );
                     })}
                   </div>
                   {pickupZones.length === 0 && (
-                    <p className="text-sm text-gray-400 text-center py-2">No zones configured</p>
+                    <p className="text-sm text-gray-400 dark:text-slate-500 text-center py-2">No zones configured</p>
                   )}
                 </Card>
                 <Card className="p-4">
@@ -770,20 +776,20 @@ export default function DismissalDashboard() {
               </div>
               <div className="divide-y">
                 {homerooms.map(room => (
-                  <div key={room.id} className="p-4 flex items-center justify-between hover:bg-gray-50">
+                  <div key={room.id} className="p-4 flex items-center justify-between hover:bg-gray-50 dark:bg-slate-800/50 dark:hover:bg-slate-800">
                     <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 bg-indigo-100 rounded-lg flex items-center justify-center">
-                        <span className="text-indigo-600 font-bold">{room.grade}</span>
+                      <div className="w-12 h-12 bg-indigo-100 dark:bg-indigo-950/50 rounded-lg flex items-center justify-center">
+                        <span className="text-indigo-600 dark:text-indigo-400 font-bold">{room.grade}</span>
                       </div>
                       <div>
-                        <p className="font-medium">{room.teacher_first_name} {room.teacher_last_name}</p>
-                        <p className="text-sm text-gray-500">Grade {room.grade} - {room.name}</p>
+                        <p className="font-medium dark:text-white">{room.teacher_first_name} {room.teacher_last_name}</p>
+                        <p className="text-sm text-gray-500 dark:text-slate-400">Grade {room.grade} - {room.name}</p>
                       </div>
                     </div>
                     <div className="flex items-center gap-6">
                       <div className="text-center">
                         <p className="text-lg font-bold text-indigo-600">{room.student_count}</p>
-                        <p className="text-xs text-gray-500">Students</p>
+                        <p className="text-xs text-gray-500 dark:text-slate-400">Students</p>
                       </div>
                     </div>
                   </div>
@@ -817,16 +823,16 @@ export default function DismissalDashboard() {
                       <Bus className="w-5 h-5 text-yellow-600" />
                       Enter Bus #
                     </h3>
-                    <div className="flex rounded-lg border border-gray-200 overflow-hidden">
+                    <div className="flex rounded-lg border border-gray-200 dark:border-slate-600 overflow-hidden">
                       <button
                         onClick={() => setBusQueueTab('active')}
-                        className={`px-3 py-1 text-sm font-medium ${busQueueTab === 'active' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                        className={`px-3 py-1 text-sm font-medium ${busQueueTab === 'active' ? 'bg-indigo-600 dark:bg-indigo-700 text-white' : 'bg-white text-gray-600 hover:bg-gray-50 dark:bg-slate-800/50 dark:hover:bg-slate-800'}`}
                       >
                         Queue <span className="ml-1 bg-white/20 px-1.5 rounded">{activeBusCount}</span>
                       </button>
                       <button
                         onClick={() => setBusQueueTab('dismissed')}
-                        className={`px-3 py-1 text-sm font-medium ${busQueueTab === 'dismissed' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                        className={`px-3 py-1 text-sm font-medium ${busQueueTab === 'dismissed' ? 'bg-indigo-600 dark:bg-indigo-700 text-white' : 'bg-white text-gray-600 hover:bg-gray-50 dark:bg-slate-800/50 dark:hover:bg-slate-800'}`}
                       >
                         Dismissed <span className="ml-1 bg-white/20 px-1.5 rounded">{dismissedBusCount}</span>
                       </button>
@@ -838,14 +844,14 @@ export default function DismissalDashboard() {
                       value={busNumberInput}
                       onChange={(e) => setBusNumberInput(e.target.value)}
                       placeholder="e.g. 42"
-                      className="flex-1 px-3 py-2 border rounded-lg text-lg font-mono text-center tracking-widest"
+                      className="flex-1 px-3 py-2 border dark:border-slate-600 rounded-lg text-lg font-mono text-center tracking-widest bg-white dark:bg-slate-800 dark:text-white"
                     />
                     <Button variant="primary" size="md" onClick={handleBusNumberCheckIn} disabled={busNumberLoading || !busNumberInput.trim()}>
                       {busNumberLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />}
                     </Button>
                   </form>
                   {busNumberResult && (
-                    <div className={`mt-2 p-2 rounded-lg text-sm ${busNumberResult.type === 'success' ? 'bg-green-50 text-green-700' : busNumberResult.type === 'info' ? 'bg-yellow-50 text-yellow-700' : 'bg-red-50 text-red-700'}`}>
+                    <div className={`mt-2 p-2 rounded-lg text-sm ${busNumberResult.type === 'success' ? 'bg-green-50 dark:bg-green-950/40 text-green-700 dark:text-green-400' : busNumberResult.type === 'info' ? 'bg-yellow-50 dark:bg-yellow-950/40 text-yellow-700 dark:text-yellow-400' : 'bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-400'}`}>
                       {busNumberResult.message}
                     </div>
                   )}
@@ -860,8 +866,8 @@ export default function DismissalDashboard() {
                   ))
                 ) : (
                   <Card>
-                    <div className="p-8 text-center text-gray-500">
-                      <Bus className="w-12 h-12 mx-auto mb-2 text-gray-300" />
+                    <div className="p-8 text-center text-gray-500 dark:text-slate-400">
+                      <Bus className="w-12 h-12 mx-auto mb-2 text-gray-300 dark:text-slate-600" />
                       <p>{busQueueTab === 'active' ? 'Enter a bus number above to check in bus students' : 'No dismissed bus students yet'}</p>
                     </div>
                   </Card>
@@ -895,16 +901,16 @@ export default function DismissalDashboard() {
                       <PersonStanding className="w-5 h-5 text-green-600" /> Walker Dismissal
                     </h2>
                     <div className="flex items-center gap-2">
-                      <div className="flex rounded-lg border border-gray-200 overflow-hidden">
+                      <div className="flex rounded-lg border border-gray-200 dark:border-slate-600 overflow-hidden">
                         <button
                           onClick={() => setWalkerQueueTab('active')}
-                          className={`px-3 py-1 text-sm font-medium ${walkerQueueTab === 'active' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                          className={`px-3 py-1 text-sm font-medium ${walkerQueueTab === 'active' ? 'bg-indigo-600 dark:bg-indigo-700 text-white' : 'bg-white text-gray-600 hover:bg-gray-50 dark:bg-slate-800/50 dark:hover:bg-slate-800'}`}
                         >
                           Queue <span className="ml-1 bg-white/20 px-1.5 rounded">{activeWalkerCount}</span>
                         </button>
                         <button
                           onClick={() => setWalkerQueueTab('dismissed')}
-                          className={`px-3 py-1 text-sm font-medium ${walkerQueueTab === 'dismissed' ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                          className={`px-3 py-1 text-sm font-medium ${walkerQueueTab === 'dismissed' ? 'bg-indigo-600 dark:bg-indigo-700 text-white' : 'bg-white text-gray-600 hover:bg-gray-50 dark:bg-slate-800/50 dark:hover:bg-slate-800'}`}
                         >
                           Dismissed <span className="ml-1 bg-white/20 px-1.5 rounded">{dismissedWalkerCount}</span>
                         </button>
@@ -912,7 +918,7 @@ export default function DismissalDashboard() {
                     </div>
                   </div>
                   {walkerResult && (
-                    <div className={`mb-3 p-2 rounded-lg text-sm ${walkerResult.type === 'success' ? 'bg-green-50 text-green-700' : walkerResult.type === 'info' ? 'bg-yellow-50 text-yellow-700' : 'bg-red-50 text-red-700'}`}>
+                    <div className={`mb-3 p-2 rounded-lg text-sm ${walkerResult.type === 'success' ? 'bg-green-50 dark:bg-green-950/40 text-green-700 dark:text-green-400' : walkerResult.type === 'info' ? 'bg-yellow-50 dark:bg-yellow-950/40 text-yellow-700 dark:text-yellow-400' : 'bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-400'}`}>
                       {walkerResult.message}
                     </div>
                   )}
@@ -921,17 +927,17 @@ export default function DismissalDashboard() {
                   <div className="border-t pt-3 mt-3">
                     <div className="flex items-center justify-between mb-3">
                       <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-gray-700">Release by:</span>
-                        <div className="flex rounded-lg border border-gray-200 overflow-hidden">
+                        <span className="text-sm font-medium text-gray-700 dark:text-slate-300">Release by:</span>
+                        <div className="flex rounded-lg border border-gray-200 dark:border-slate-600 overflow-hidden">
                           <button
                             onClick={() => setWalkerViewTab('grade')}
-                            className={`px-3 py-1 text-sm font-medium ${walkerViewTab === 'grade' ? 'bg-green-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                            className={`px-3 py-1 text-sm font-medium ${walkerViewTab === 'grade' ? 'bg-green-600 dark:bg-green-700 text-white' : 'bg-white text-gray-600 hover:bg-gray-50 dark:bg-slate-800/50 dark:hover:bg-slate-800'}`}
                           >
                             Grade
                           </button>
                           <button
                             onClick={() => setWalkerViewTab('homeroom')}
-                            className={`px-3 py-1 text-sm font-medium ${walkerViewTab === 'homeroom' ? 'bg-green-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                            className={`px-3 py-1 text-sm font-medium ${walkerViewTab === 'homeroom' ? 'bg-green-600 dark:bg-green-700 text-white' : 'bg-white text-gray-600 hover:bg-gray-50 dark:bg-slate-800/50 dark:hover:bg-slate-800'}`}
                           >
                             Homeroom
                           </button>
@@ -955,13 +961,13 @@ export default function DismissalDashboard() {
                     </div>
 
                     {/* Scrollable selection list */}
-                    <div className="max-h-64 overflow-y-auto border rounded-lg bg-gray-50 p-2">
+                    <div className="max-h-64 overflow-y-auto border dark:border-slate-700 rounded-lg bg-gray-50 dark:bg-slate-800/50 dark:bg-slate-800/50 p-2">
                       {walkerViewTab === 'grade' && (
                         <div className="space-y-1">
                           {uniqueGrades.length === 0 ? (
-                            <p className="text-sm text-gray-500 p-2">No grades found</p>
+                            <p className="text-sm text-gray-500 dark:text-slate-400  p-2">No grades found</p>
                           ) : uniqueGrades.map(grade => (
-                            <label key={grade} className={`flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-colors ${selectedGrades.includes(grade) ? 'bg-green-100 border border-green-500' : 'bg-white border border-gray-200 hover:bg-gray-100'}`}>
+                            <label key={grade} className={`flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-colors ${selectedGrades.includes(grade) ? 'bg-green-100 dark:bg-green-950/50 border border-green-500' : 'bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 hover:bg-gray-100 dark:hover:bg-slate-700'}`}>
                               <input
                                 type="checkbox"
                                 checked={selectedGrades.includes(grade)}
@@ -978,9 +984,9 @@ export default function DismissalDashboard() {
                       {walkerViewTab === 'homeroom' && (
                         <div className="space-y-1">
                           {homerooms.length === 0 ? (
-                            <p className="text-sm text-gray-500 p-2">No homerooms found</p>
+                            <p className="text-sm text-gray-500 dark:text-slate-400  p-2">No homerooms found</p>
                           ) : homerooms.map(room => (
-                            <label key={room.id} className={`flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-colors ${selectedWalkerHomerooms.includes(room.id) ? 'bg-green-100 border border-green-500' : 'bg-white border border-gray-200 hover:bg-gray-100'}`}>
+                            <label key={room.id} className={`flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-colors ${selectedWalkerHomerooms.includes(room.id) ? 'bg-green-100 dark:bg-green-950/50 border border-green-500' : 'bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 hover:bg-gray-100 dark:hover:bg-slate-700'}`}>
                               <input
                                 type="checkbox"
                                 checked={selectedWalkerHomerooms.includes(room.id)}
@@ -988,7 +994,7 @@ export default function DismissalDashboard() {
                                 className="w-4 h-4 text-green-600 rounded"
                               />
                               <span className="font-medium flex-1">{room.name}</span>
-                              <span className="text-xs text-gray-500">Grade {room.grade}</span>
+                              <span className="text-xs text-gray-500 dark:text-slate-400">Grade {room.grade}</span>
                               {selectedWalkerHomerooms.includes(room.id) && <Check className="w-4 h-4 text-green-600" />}
                             </label>
                           ))}
@@ -1004,15 +1010,15 @@ export default function DismissalDashboard() {
                     <h3 className="font-medium text-gray-700 mb-3">Dismissed Walkers ({walkerQueue.length})</h3>
                     <div className="max-h-96 overflow-y-auto space-y-2">
                       {walkerQueue.map(student => (
-                        <div key={student.id} className="flex items-center gap-3 p-2 bg-gray-50 rounded-lg">
-                          <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center">
+                        <div key={student.id} className="flex items-center gap-3 p-2 bg-gray-50 dark:bg-slate-800/50 dark:bg-slate-800/50 rounded-lg">
+                          <div className="w-8 h-8 bg-green-100 dark:bg-green-950/50 rounded-full flex items-center justify-center">
                             <Check className="w-4 h-4 text-green-600" />
                           </div>
                           <div className="flex-1">
                             <p className="font-medium text-sm">{student.first_name} {student.last_name}</p>
-                            <p className="text-xs text-gray-500">{student.guardian_name}</p>
+                            <p className="text-xs text-gray-500 dark:text-slate-400">{student.guardian_name}</p>
                           </div>
-                          <span className="text-xs text-gray-400">
+                          <span className="text-xs text-gray-400 dark:text-slate-500">
                             {student.dismissed_at && new Date(student.dismissed_at).toLocaleTimeString([], { timeZone: currentSchool?.timezone, hour: '2-digit', minute: '2-digit' })}
                           </span>
                         </div>
@@ -1023,8 +1029,8 @@ export default function DismissalDashboard() {
 
                 {walkerQueueTab === 'dismissed' && walkerQueue.length === 0 && (
                   <Card>
-                    <div className="p-8 text-center text-gray-500">
-                      <PersonStanding className="w-12 h-12 mx-auto mb-2 text-gray-300" />
+                    <div className="p-8 text-center text-gray-500 dark:text-slate-400">
+                      <PersonStanding className="w-12 h-12 mx-auto mb-2 text-gray-300 dark:text-slate-600" />
                       <p>No dismissed walker students yet</p>
                     </div>
                   </Card>
@@ -1056,11 +1062,11 @@ export default function DismissalDashboard() {
       {/* Student Lookup Modal */}
       {showStudentLookup && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md max-h-[80vh] flex flex-col">
+          <div className="bg-white dark:bg-slate-900 rounded-xl shadow-xl w-full max-w-md max-h-[80vh] flex flex-col">
             <div className="p-4 border-b flex items-center justify-between">
               <h2 className="text-lg font-semibold">Find Student</h2>
               <button onClick={() => { setShowStudentLookup(false); setStudentSearchTerm(''); setStudentSearchResults([]); }}
-                className="p-1 hover:bg-gray-100 rounded-lg">
+                className="p-1 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -1072,30 +1078,30 @@ export default function DismissalDashboard() {
                   value={studentSearchTerm}
                   onChange={(e) => handleStudentSearch(e.target.value)}
                   placeholder="Search by student name..."
-                  className="w-full pl-9 pr-4 py-2 border rounded-lg"
+                  className="w-full pl-9 pr-4 py-2 border dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 dark:text-white"
                   autoFocus
                 />
               </div>
             </div>
             <div className="flex-1 overflow-y-auto p-2">
               {studentSearchLoading && (
-                <div className="p-4 text-center text-gray-400">
+                <div className="p-4 text-center text-gray-400 dark:text-slate-500">
                   <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2" />
                   Searching...
                 </div>
               )}
               {!studentSearchLoading && studentSearchTerm && studentSearchResults.length === 0 && (
-                <div className="p-4 text-center text-gray-400">No students found</div>
+                <div className="p-4 text-center text-gray-400 dark:text-slate-500">No students found</div>
               )}
               {!studentSearchLoading && studentSearchResults.map(student => (
-                <div key={student.id} className="p-3 hover:bg-gray-50 rounded-lg flex items-center justify-between">
+                <div key={student.id} className="p-3 hover:bg-gray-50 dark:bg-slate-800/50 dark:hover:bg-slate-800 rounded-lg flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-600 font-medium">
+                    <div className="w-10 h-10 bg-indigo-100 dark:bg-indigo-950/60 rounded-full flex items-center justify-center text-indigo-600 dark:text-indigo-400 font-medium">
                       {student.first_name?.[0]}{student.last_name?.[0]}
                     </div>
                     <div>
-                      <p className="font-medium">{student.first_name} {student.last_name}</p>
-                      <p className="text-sm text-gray-500">
+                      <p className="font-medium dark:text-white">{student.first_name} {student.last_name}</p>
+                      <p className="text-sm text-gray-500 dark:text-slate-400">
                         {student.homeroom_name ? `${student.homeroom_name} • Grade ${student.homeroom_grade || student.grade}` : `Grade ${student.grade || '—'}`}
                       </p>
                     </div>
@@ -1103,18 +1109,18 @@ export default function DismissalDashboard() {
                   {student.car_number ? (
                     <button
                       onClick={() => handleUseCarNumber(student.car_number)}
-                      className="flex items-center gap-2 px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700"
+                      className="flex items-center gap-2 px-3 py-1.5 bg-indigo-600 dark:bg-indigo-700 text-white rounded-lg text-sm hover:bg-indigo-700"
                     >
                       <Car className="w-4 h-4" />
                       #{student.car_number}
                     </button>
                   ) : (
-                    <span className="text-sm text-gray-400 italic">No car #</span>
+                    <span className="text-sm text-gray-400 dark:text-slate-500 italic">No car #</span>
                   )}
                 </div>
               ))}
               {!studentSearchTerm && (
-                <div className="p-4 text-center text-gray-400 text-sm">
+                <div className="p-4 text-center text-gray-400 dark:text-slate-500 text-sm">
                   Start typing to search for a student by name
                 </div>
               )}
@@ -1148,15 +1154,15 @@ function ZoneManagerModal({ zones, onSave, onClose, saving }) {
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
+      <div className="bg-white dark:bg-slate-900 rounded-xl shadow-xl w-full max-w-md">
         <div className="p-4 border-b flex items-center justify-between">
           <h2 className="font-semibold text-lg">Manage Pickup Zones</h2>
-          <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded-full">
+          <button onClick={onClose} className="p-1 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-full">
             <X className="w-5 h-5" />
           </button>
         </div>
         <div className="p-4 space-y-3">
-          <p className="text-sm text-gray-500">
+          <p className="text-sm text-gray-500 dark:text-slate-400">
             Add, rename, or remove pickup zones. Students will be released to these zones during dismissal.
           </p>
           <div className="space-y-2">
@@ -1167,10 +1173,10 @@ function ZoneManagerModal({ zones, onSave, onClose, saving }) {
                   type="text"
                   value={zone.name}
                   onChange={(e) => handleRename(zone.id, e.target.value)}
-                  className="flex-1 p-2 border rounded-lg text-sm"
+                  className="flex-1 p-2 border dark:border-slate-600 rounded-lg text-sm bg-white dark:bg-slate-800 dark:text-white"
                 />
                 <button onClick={() => handleRemove(zone.id)}
-                  className="p-1.5 hover:bg-red-50 rounded text-red-500">
+                  className="p-1.5 hover:bg-red-50 dark:hover:bg-red-950/40 rounded text-red-500">
                   <Trash2 className="w-4 h-4" />
                 </button>
               </div>
@@ -1183,21 +1189,21 @@ function ZoneManagerModal({ zones, onSave, onClose, saving }) {
               value={newZoneName}
               onChange={(e) => setNewZoneName(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleAdd()}
-              className="flex-1 p-2 border rounded-lg text-sm"
+              className="flex-1 p-2 border dark:border-slate-600 rounded-lg text-sm bg-white dark:bg-slate-800 dark:text-white"
             />
             <button onClick={handleAdd}
-              className="p-2 bg-indigo-100 text-indigo-600 rounded-lg hover:bg-indigo-200">
+              className="p-2 bg-indigo-100 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 rounded-lg hover:bg-indigo-200 dark:hover:bg-indigo-900/50">
               <Plus className="w-4 h-4" />
             </button>
           </div>
         </div>
         <div className="p-4 border-t flex gap-3">
           <button onClick={onClose}
-            className="flex-1 px-4 py-2 border rounded-lg text-sm font-medium hover:bg-gray-50">
+            className="flex-1 px-4 py-2 border dark:border-slate-600 rounded-lg text-sm font-medium dark:text-slate-300 hover:bg-gray-50 dark:bg-slate-800/50 dark:hover:bg-slate-800">
             Cancel
           </button>
           <button onClick={() => onSave(editZones)} disabled={saving}
-            className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:bg-indigo-300">
+            className="flex-1 px-4 py-2 bg-indigo-600 dark:bg-indigo-700 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:bg-indigo-300">
             {saving ? 'Saving...' : 'Save Zones'}
           </button>
         </div>
@@ -1246,19 +1252,19 @@ function QrScannerModal({ onScan, onClose }) {
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-sm" onClick={e => e.stopPropagation()}>
+      <div className="bg-white dark:bg-slate-900 rounded-xl shadow-xl w-full max-w-sm" onClick={e => e.stopPropagation()}>
         <div className="p-4 border-b flex items-center justify-between">
           <h2 className="font-semibold text-lg flex items-center gap-2">
             <QrCode className="w-5 h-5 text-indigo-600" />
             Scan Parent QR
           </h2>
-          <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded-full">
+          <button onClick={onClose} className="p-1 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-full">
             <X className="w-5 h-5" />
           </button>
         </div>
         <div className="p-4">
           <div id="qr-reader" ref={scannerRef} className="w-full rounded-lg overflow-hidden" />
-          <p className="text-sm text-gray-500 text-center mt-3">
+          <p className="text-sm text-gray-500 dark:text-slate-400 text-center mt-3">
             Point camera at parent's QR code
           </p>
         </div>
@@ -1272,29 +1278,29 @@ function QueueGroup({ name, students, onPickupAll, onCall, onPickup }) {
 
   if (students.length === 1) {
     return (
-      <div className="border-b border-gray-100">
+      <div className="border-b border-gray-100 dark:border-slate-800">
         <QueueItem item={students[0]} position={1} onCall={onCall} onPickup={onPickup} />
       </div>
     );
   }
 
   return (
-    <div className="border-b border-gray-200">
-      <div className="flex items-center justify-between px-3 sm:px-4 py-2 bg-gray-50">
+    <div className="border-b border-gray-200 dark:border-slate-700">
+      <div className="flex items-center justify-between px-3 sm:px-4 py-2 bg-gray-50 dark:bg-slate-800/50">
         <div className="flex items-center gap-2">
-          <span className="font-semibold text-sm sm:text-base text-gray-800">{name}</span>
-          <span className="text-xs bg-gray-200 text-gray-600 rounded-full px-2 py-0.5">{students.length} students</span>
+          <span className="font-semibold text-sm sm:text-base text-gray-800 dark:text-slate-200">{name}</span>
+          <span className="text-xs bg-gray-200 dark:bg-slate-700 text-gray-600 dark:text-slate-300 rounded-full px-2 py-0.5">{students.length} students</span>
         </div>
         {eligible.length > 0 && (
           <button
             onClick={onPickupAll}
-            className="text-xs sm:text-sm px-3 py-1 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+            className="text-xs sm:text-sm px-3 py-1 bg-green-600 dark:bg-green-700 text-white rounded-lg hover:bg-green-700 transition-colors"
           >
             Pickup Complete All ({eligible.length})
           </button>
         )}
       </div>
-      <div className="divide-y divide-gray-100">
+      <div className="divide-y divide-gray-100 dark:divide-slate-800">
         {students.map((item, idx) => (
           <QueueItem key={item.id} item={item} position={idx + 1} onCall={onCall} onPickup={onPickup} />
         ))}
@@ -1303,7 +1309,7 @@ function QueueGroup({ name, students, onPickupAll, onCall, onPickup }) {
   );
 }
 
-function QueueItem({ item, position, onCall, onPickup }) {
+function QueueItem({ item, position, onPickup }) {
   const getStatusColor = (status) => {
     switch (status) {
       case 'waiting': return 'red';
@@ -1331,15 +1337,16 @@ function QueueItem({ item, position, onCall, onPickup }) {
     const start = new Date(item.check_in_time).getTime();
     const end = item.status === 'dismissed' && item.dismissed_at
       ? new Date(item.dismissed_at).getTime()
+      // eslint-disable-next-line react-hooks/purity
       : Date.now();
     return Math.floor((end - start) / 60000);
   };
   const waitTime = getWaitTime();
 
   return (
-    <div className={`p-3 sm:p-4 ${item.status === 'called' || item.status === 'waiting' ? 'bg-red-50' : item.status === 'released' ? 'bg-green-50' : 'hover:bg-gray-50'}`}>
+    <div className={`p-3 sm:p-4 ${item.status === 'called' || item.status === 'waiting' ? 'bg-red-50 dark:bg-red-950/30' : item.status === 'released' ? 'bg-green-50 dark:bg-green-950/30' : 'hover:bg-gray-50 dark:hover:bg-slate-800'}`}>
       <div className="flex items-start sm:items-center gap-3 sm:gap-4">
-        <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-gray-100 flex items-center justify-center text-xs sm:text-sm font-medium text-gray-500 flex-shrink-0">
+        <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-gray-100 dark:bg-slate-800 flex items-center justify-center text-xs sm:text-sm font-medium text-gray-500 dark:text-slate-400 flex-shrink-0">
           {position}
         </div>
         <div className="flex-1 min-w-0">
@@ -1349,7 +1356,7 @@ function QueueItem({ item, position, onCall, onPickup }) {
               {item.status === 'released' ? 'In Transit' : item.status === 'waiting' ? 'In Queue' : item.status === 'called' ? 'In Queue' : item.status}
             </Badge>
           </div>
-          <div className="flex items-center gap-2 sm:gap-3 text-xs sm:text-sm text-gray-500 flex-wrap">
+          <div className="flex items-center gap-2 sm:gap-3 text-xs sm:text-sm text-gray-500 dark:text-slate-400 flex-wrap">
             <span>Gr {item.grade}</span>
             <span className="hidden sm:inline">•</span>
             <span className="hidden sm:inline">{item.homeroom_name || 'No homeroom'}</span>

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useNavigate } from 'react-router-dom';
-import { Monitor, Users, Activity, Settings as SettingsIcon, LogOut, Download, Calendar, Shield, AlertTriangle, UserCog, Plus, X, GraduationCap, WifiOff, Video, MonitorPlay, TabletSmartphone, Lock, Unlock, Layers, Route, CheckSquare, XSquare, User, List, ShieldBan, Eye, EyeOff, Timer, Clock, BarChart3, Trash2, UsersRound, Filter, Hand, MessageSquareOff, MessageSquare, Send, LayoutGrid, ExternalLink } from "lucide-react";
+import { Monitor, Users, Activity, Settings as SettingsIcon, LogOut, Download, Calendar, Shield, AlertTriangle, UserCog, Plus, X, GraduationCap, WifiOff, Video, MonitorPlay, TabletSmartphone, Lock, Unlock, Layers, Route, CheckSquare, XSquare, User, List, ShieldBan, Eye, EyeOff, Timer, Clock, BarChart3, Trash2, UsersRound, Filter, Hand, MessageSquareOff, MessageSquare, Send } from "lucide-react";
 import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
 import { Badge } from '../../../components/ui/badge';
@@ -34,9 +34,8 @@ import { useWebRTC } from '../../../hooks/useWebRTC';
 import { apiRequest, queryClient } from '../../../lib/queryClient';
 import { useClassPilotAuth } from '../../../hooks/useClassPilotAuth';
 import { useLicenses } from '../../../contexts/LicenseContext';
-import PassWidget from '../../../shell/widgets/PassWidget';
-import GoWidget from '../../../shell/widgets/GoWidget';
-import { isWithinTrackingHours } from '../../../lib/classpilot-utils';
+import { ThemeToggle } from '../../../components/ThemeToggle';
+import ClassPilotSidebar from '../components/ClassPilotSidebar';
 
 // Helper to normalize grade levels (strip "th", "rd", "st", "nd" suffixes)
 function normalizeGrade(grade) {
@@ -48,9 +47,21 @@ function normalizeGrade(grade) {
 
 export default function Dashboard() {
   const navigate = useNavigate();
-  const { currentUser, isAdmin, isTeacher, logout } = useClassPilotAuth();
+  const { currentUser, isAdmin, isTeacher, token, logout } = useClassPilotAuth();
   const { hasPassPilot, hasGoPilot, productCount } = useLicenses();
-  const [appsDropdownOpen, setAppsDropdownOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(() => {
+    try {
+      return localStorage.getItem('classpilot-sidebar-open') !== 'false';
+    } catch {
+      return true;
+    }
+  });
+  const handleSidebarToggle = () => {
+    const next = !sidebarOpen;
+    setSidebarOpen(next);
+    try { localStorage.setItem('classpilot-sidebar-open', String(next)); } catch {}
+  };
+  const showSidebar = (hasPassPilot || hasGoPilot) && sidebarOpen;
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [selectedStudentIds, setSelectedStudentIds] = useState(new Set());
   const [searchQuery, setSearchQuery] = useState("");
@@ -101,20 +112,22 @@ export default function Dashboard() {
   const [studentMessages, setStudentMessages] = useState([]);
   const dismissedMessageIds = useRef(new Set());
   const dismissedMessagesInitialized = useRef(false);
+  // eslint-disable-next-line react-hooks/refs
   if (!dismissedMessagesInitialized.current) {
     dismissedMessagesInitialized.current = true;
     try {
       const saved = localStorage.getItem('classpilot-dismissed-messages');
       if (saved) {
         const ids = JSON.parse(saved);
+        // eslint-disable-next-line react-hooks/refs
         ids.forEach(id => dismissedMessageIds.current.add(id));
       }
     } catch {
       // Ignore localStorage errors
     }
   }
-  const [replyingToMessage, setReplyingToMessage] = useState(null);
-  const [replyText, setReplyText] = useState("");
+  const [, setReplyingToMessage] = useState(null);
+  const [, setReplyText] = useState("");
   const [adminObservedSessionId, setAdminObservedSessionId] = useState(null);
   const { toast } = useToast();
   const notifiedViolations = useRef(new Set());
@@ -128,11 +141,13 @@ export default function Dashboard() {
   const [wsAuthenticated, setWsAuthenticated] = useState(false);
 
   // WebRTC hook for live video streaming
+  // eslint-disable-next-line react-hooks/refs
   const webrtc = useWebRTC(wsRef.current);
 
-  const { data: students = [], refetch } = useQuery({
+  const { data: students = [] } = useQuery({
     queryKey: ['/api/students-aggregated'],
     queryFn: () => apiRequest('GET', '/students-aggregated'),
+    select: (data) => Array.isArray(data) ? data : data?.students ?? [],
     refetchInterval: () => {
       if (Date.now() < optimisticUpdateUntilRef.current) {
         return false;
@@ -145,38 +160,45 @@ export default function Dashboard() {
   const { data: urlHistory = [] } = useQuery({
     queryKey: ['/api/heartbeats', selectedStudent?.primaryDeviceId],
     queryFn: () => apiRequest('GET', `/heartbeats/${selectedStudent?.primaryDeviceId}`),
+    select: (data) => Array.isArray(data) ? data : data?.heartbeats ?? [],
     enabled: !!selectedStudent,
   });
 
   const { data: settings } = useQuery({
     queryKey: ['/api/settings'],
     queryFn: () => apiRequest('GET', '/settings'),
+    select: (data) => data?.settings ?? data ?? null,
   });
 
   const { data: flightPaths = [] } = useQuery({
     queryKey: ['/api/flight-paths'],
     queryFn: () => apiRequest('GET', '/flight-paths'),
+    select: (data) => Array.isArray(data) ? data : data?.flightPaths ?? [],
   });
 
   const { data: blockLists = [] } = useQuery({
     queryKey: ['/api/block-lists'],
     queryFn: () => apiRequest('GET', '/block-lists'),
+    select: (data) => Array.isArray(data) ? data : data?.blockLists ?? [],
   });
 
   const { data: activeSession } = useQuery({
     queryKey: ['/api/sessions/active'],
     queryFn: () => apiRequest('GET', '/sessions/active'),
+    select: (data) => data?.session !== undefined ? data.session : data ?? null,
     refetchInterval: 10000,
   });
 
   const { data: groups = [] } = useQuery({
     queryKey: ['/api/teacher/groups'],
     queryFn: () => apiRequest('GET', '/teacher/groups'),
+    select: (data) => Array.isArray(data) ? data : data?.groups ?? [],
   });
 
   const { data: allActiveSessions = [] } = useQuery({
     queryKey: ['/api/sessions/all'],
     queryFn: () => apiRequest('GET', '/sessions/all'),
+    select: (data) => Array.isArray(data) ? data : data?.sessions ?? [],
     enabled: isAdmin,
     refetchInterval: 10000,
   });
@@ -205,7 +227,10 @@ export default function Dashboard() {
     queryKey: ['/api/groups', effectiveSession?.groupId, 'students'],
     queryFn: () => apiRequest('GET', `/groups/${effectiveSession?.groupId}/students`),
     enabled: !!effectiveSession?.groupId,
-    select: (data) => (Array.isArray(data) ? data.map((s) => s.id) : []),
+    select: (data) => {
+      const students = Array.isArray(data) ? data : data?.students ?? [];
+      return students.map((s) => s.id);
+    },
   });
 
   const { data: initialRaisedHands } = useQuery({
@@ -287,8 +312,14 @@ export default function Dashboard() {
           console.log("[Dashboard] WebSocket connected successfully");
           setWsConnected(true);
           reconnectAttemptsRef.current = 0;
-          if (currentUser?.id) {
-            socket.send(JSON.stringify({ type: 'auth', role: 'teacher', userId: currentUser.id }));
+          if (currentUser?.id && token) {
+            socket.send(JSON.stringify({
+              type: 'auth',
+              role: currentUser.role === 'admin' || currentUser.role === 'school_admin' ? 'school_admin' : 'teacher',
+              userId: currentUser.id,
+              userToken: token,
+              schoolId: currentUser.schoolId,
+            }));
           }
         };
 
@@ -366,7 +397,7 @@ export default function Dashboard() {
           }
         };
 
-        socket.onclose = (event) => {
+        socket.onclose = () => {
           if (!isMountedRef.current) return;
           setWsConnected(false);
           setWsAuthenticated(false);
@@ -424,7 +455,7 @@ export default function Dashboard() {
   // Save selected grade to localStorage
   useEffect(() => {
     if (selectedGrade) {
-      try { localStorage.setItem('classpilot-selected-grade', selectedGrade); } catch {}
+      try { localStorage.setItem('classpilot-selected-grade', selectedGrade); } catch { /* intentionally empty */ }
     }
   }, [selectedGrade]);
 
@@ -916,7 +947,7 @@ export default function Dashboard() {
     try { await apiRequest('DELETE', `/teacher/messages/${messageId}`); } catch (error) {
       console.error('Failed to delete message from server:', error);
       dismissedMessageIds.current.add(messageId);
-      try { const ids = Array.from(dismissedMessageIds.current).slice(-100); localStorage.setItem('classpilot-dismissed-messages', JSON.stringify(ids)); } catch {}
+      try { const ids = Array.from(dismissedMessageIds.current).slice(-100); localStorage.setItem('classpilot-dismissed-messages', JSON.stringify(ids)); } catch { /* intentionally empty */ }
     }
   };
 
@@ -986,7 +1017,11 @@ export default function Dashboard() {
           <div className="flex items-center justify-between gap-4">
             {/* Left: Logo & School */}
             <div className="flex items-center gap-3">
-              <img src="/logo.png" alt="ClassPilot" className="h-10 w-10 rounded-xl shadow-lg" />
+              <svg width="40" height="40" viewBox="0 0 48 48" fill="none" className="rounded-xl shadow-lg">
+                <rect width="48" height="48" rx="12" fill="#fbbf24"/>
+                <path d="M12 24L36 14L30 36L24 28L36 14" stroke="#0f172a" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M24 28L26 34" stroke="#0f172a" strokeWidth="2.5" strokeLinecap="round"/>
+              </svg>
               <div>
                 <h1 className="text-lg font-bold text-slate-100 tracking-tight">ClassPilot</h1>
                 <p className="text-xs text-slate-400">
@@ -1105,6 +1140,7 @@ export default function Dashboard() {
             </div>
             {/* Right: Actions */}
             <div className="flex items-center gap-2">
+              <ThemeToggle />
               <button onClick={handleOpenExportDialog} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-transparent border border-slate-600 text-slate-400 hover:bg-slate-800 transition-colors" data-testid="button-export-excel">
                 <Download className="h-4 w-4" /> Export CSV
               </button>
@@ -1123,54 +1159,6 @@ export default function Dashboard() {
                   </button>
                 </>
               )}
-              {/* Product Apps Dropdown */}
-              {productCount >= 2 && (
-                <div className="relative">
-                  <button
-                    onClick={() => setAppsDropdownOpen(!appsDropdownOpen)}
-                    className={`w-9 h-9 flex items-center justify-center rounded-lg border transition-colors ${appsDropdownOpen ? 'bg-slate-700 border-slate-500 text-slate-200' : 'bg-transparent border-slate-600 text-slate-400 hover:bg-slate-800'}`}
-                    title="Switch Apps"
-                  >
-                    <LayoutGrid className="h-[18px] w-[18px]" />
-                  </button>
-                  {appsDropdownOpen && (
-                    <>
-                      <div className="fixed inset-0 z-40" onClick={() => setAppsDropdownOpen(false)} />
-                      <div className="absolute right-0 top-full mt-2 z-50 w-64 rounded-lg bg-white shadow-xl ring-1 ring-black/10 p-3 space-y-2">
-                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider px-1 mb-2">Other Apps</p>
-                        {hasPassPilot && (
-                          <div className="flex items-center gap-1">
-                            <div className="flex-1" onClick={() => { navigate('/passpilot'); setAppsDropdownOpen(false); }}>
-                              <PassWidget />
-                            </div>
-                            <button
-                              onClick={(e) => { e.stopPropagation(); window.open('/passpilot', '_blank'); setAppsDropdownOpen(false); }}
-                              className="w-8 h-8 flex items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors"
-                              title="Open PassPilot in new tab"
-                            >
-                              <ExternalLink className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-                        )}
-                        {hasGoPilot && (
-                          <div className="flex items-center gap-1">
-                            <div className="flex-1" onClick={() => { navigate('/gopilot'); setAppsDropdownOpen(false); }}>
-                              <GoWidget />
-                            </div>
-                            <button
-                              onClick={(e) => { e.stopPropagation(); window.open('/gopilot', '_blank'); setAppsDropdownOpen(false); }}
-                              className="w-8 h-8 flex items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors"
-                              title="Open GoPilot in new tab"
-                            >
-                              <ExternalLink className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    </>
-                  )}
-                </div>
-              )}
               <button onClick={handleLogout} className="w-9 h-9 flex items-center justify-center rounded-lg bg-slate-700 text-slate-400 hover:bg-slate-600 transition-colors" data-testid="button-logout">
                 <LogOut className="h-[18px] w-[18px]" />
               </button>
@@ -1179,8 +1167,10 @@ export default function Dashboard() {
         </div>
       </header>
 
-      {/* Main Content */}
-      <main className="max-w-screen-2xl mx-auto px-6 py-8">
+      {/* Sidebar + Main Content */}
+      <ClassPilotSidebar isOpen={sidebarOpen} onToggle={handleSidebarToggle} />
+      <main className={`transition-all duration-300 ${showSidebar ? 'lg:ml-80' : ''}`}>
+        <div className="max-w-screen-2xl mx-auto px-6 py-8">
         {/* Remote Control Toolbar */}
         {(isAdmin || (isTeacher && activeSession)) && (
           <RemoteControlToolbar
@@ -1342,6 +1332,7 @@ export default function Dashboard() {
             })}
           </div>
         )}
+        </div>
       </main>
 
       {/* Student Detail Drawer */}

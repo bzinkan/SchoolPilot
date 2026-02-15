@@ -9,6 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../../components/ui
 import { useToast } from "../../../hooks/use-toast";
 import { queryClient, apiRequest } from "../../../lib/queryClient";
 import { ArrowLeft, Edit, Monitor, Trash2, UserPlus, GraduationCap, Plus, X, Info } from "lucide-react";
+import { ThemeToggle } from "../../../components/ThemeToggle";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../../../components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "../../../components/ui/alert-dialog";
 import { Alert, AlertDescription, AlertTitle } from "../../../components/ui/alert";
@@ -438,6 +439,7 @@ export default function RosterPage() {
               </div>
             </div>
             <div className="flex items-center gap-2">
+              <ThemeToggle />
               <Button
                 variant="outline"
                 size="sm"

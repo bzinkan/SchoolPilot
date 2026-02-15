@@ -24,8 +24,8 @@ export const authenticate: RequestHandler = async (req, res, next) => {
         req.authMethod = "session";
         return next();
       }
-    } catch {
-      // Session user not found, fall through to JWT
+    } catch (err) {
+      console.error("[auth] Session lookup failed, falling through to JWT:", err);
     }
   }
 
@@ -48,8 +48,8 @@ export const authenticate: RequestHandler = async (req, res, next) => {
           req.jwtPayload = payload;
           return next();
         }
-      } catch {
-        // Token invalid, fall through
+      } catch (err) {
+        console.error("[auth] JWT verification failed, denying:", err);
       }
     }
   }
@@ -72,8 +72,8 @@ export const optionalAuth: RequestHandler = async (req, _res, next) => {
         req.authUser = user;
         req.authMethod = "session";
       }
-    } catch {
-      // ignore
+    } catch (err) {
+      console.error("[auth] Optional session lookup failed:", err);
     }
   } else {
     const authHeader = req.headers.authorization;
@@ -92,8 +92,8 @@ export const optionalAuth: RequestHandler = async (req, _res, next) => {
             req.authMethod = "jwt";
             req.jwtPayload = payload;
           }
-        } catch {
-          // ignore
+        } catch (err) {
+          console.error("[auth] Optional JWT verification failed:", err);
         }
       }
     }

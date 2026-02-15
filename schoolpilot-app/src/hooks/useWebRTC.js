@@ -36,6 +36,37 @@ export function useWebRTC(ws) {
   // Map of deviceId -> WebRTC connection
   const connectionsRef = useRef(new Map());
 
+  // Stop live view for a student
+  // NOTE: The second parameter intentionally shadows the outer `ws` to match
+  // ClassPilot's original behavior. When called without a ws argument (e.g. from
+  // onconnectionstatechange), no stop-share message is sent.
+  const stopLiveView = useCallback((deviceId, wsArg) => {
+    const connection = connectionsRef.current.get(deviceId);
+    if (!connection) return;
+
+    console.log(`[WebRTC] Stopping live view for ${deviceId}`);
+
+    // Stop all tracks
+    if (connection.stream) {
+      connection.stream.getTracks().forEach(track => track.stop());
+    }
+
+    // Close peer connection
+    connection.peerConnection.close();
+
+    // Tell student to stop sharing (only if ws is explicitly provided)
+    if (wsArg && wsArg.readyState === WebSocket.OPEN) {
+      wsArg.send(JSON.stringify({
+        type: 'stop-share',
+        deviceId: deviceId,
+      }));
+      console.log(`[WebRTC] Sent stop-share to ${deviceId}`);
+    }
+
+    // Remove from map
+    connectionsRef.current.delete(deviceId);
+  }, []);
+
   // Start live view for a student
   const startLiveView = useCallback(async (deviceId, onStreamReceived) => {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
@@ -113,7 +144,7 @@ export function useWebRTC(ws) {
     }
 
     return connection;
-  }, [ws]);
+  }, [ws, stopLiveView]);
 
   // Handle answer from student
   const handleAnswer = useCallback(async (deviceId, sdp) => {
@@ -145,37 +176,6 @@ export function useWebRTC(ws) {
     } catch (error) {
       console.error(`[WebRTC] Error adding ICE candidate for ${deviceId}:`, error);
     }
-  }, []);
-
-  // Stop live view for a student
-  // NOTE: The second parameter intentionally shadows the outer `ws` to match
-  // ClassPilot's original behavior. When called without a ws argument (e.g. from
-  // onconnectionstatechange), no stop-share message is sent.
-  const stopLiveView = useCallback((deviceId, ws) => {
-    const connection = connectionsRef.current.get(deviceId);
-    if (!connection) return;
-
-    console.log(`[WebRTC] Stopping live view for ${deviceId}`);
-
-    // Stop all tracks
-    if (connection.stream) {
-      connection.stream.getTracks().forEach(track => track.stop());
-    }
-
-    // Close peer connection
-    connection.peerConnection.close();
-
-    // Tell student to stop sharing (only if ws is explicitly provided)
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({
-        type: 'stop-share',
-        deviceId: deviceId,
-      }));
-      console.log(`[WebRTC] Sent stop-share to ${deviceId}`);
-    }
-
-    // Remove from map
-    connectionsRef.current.delete(deviceId);
   }, []);
 
   // Cleanup all connections

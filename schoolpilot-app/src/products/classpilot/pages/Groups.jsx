@@ -21,17 +21,17 @@ export default function ClassPilotGroups() {
 
   return (
     <div>
-      <h1 className="mb-6 text-2xl font-bold text-slate-900">Groups</h1>
+      <h1 className="mb-6 text-2xl font-bold text-foreground">Groups</h1>
       {groups.length === 0 ? (
         <Card>
-          <p className="py-8 text-center text-slate-500">No groups created yet.</p>
+          <p className="py-8 text-center text-muted-foreground">No groups created yet.</p>
         </Card>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {groups.map((g) => (
             <Card key={g.id}>
-              <p className="font-medium text-slate-900">{g.name}</p>
-              <p className="text-sm text-slate-500">{g.studentCount || 0} students</p>
+              <p className="font-medium text-foreground">{g.name}</p>
+              <p className="text-sm text-muted-foreground">{g.studentCount || 0} students</p>
             </Card>
           ))}
         </div>

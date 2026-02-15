@@ -14,6 +14,11 @@ import {
   getStudentsBySchool,
   getStaffBySchool,
   getAllProductLicenses,
+  getProductLicenses,
+  createProductLicense,
+  deleteProductLicense,
+  deleteMembership,
+  updateUser,
 } from "../../services/storage.js";
 import { hashPassword } from "../../util/password.js";
 import { sendWelcomeEmail } from "../../services/email.js";
@@ -104,18 +109,27 @@ router.post("/schools", ...auth, async (req, res, next) => {
       name,
       domain,
       status,
+      maxLicenses,
       maxStudents,
       billingEmail,
       trialDays,
-      adminEmail,
-      adminFirstName,
+      // Support both naming conventions from frontend
+      adminEmail, firstAdminEmail,
+      adminFirstName, firstAdminName,
       adminLastName,
-      adminPassword,
+      adminPassword, firstAdminPassword,
+      products,
     } = req.body;
 
     if (!name) {
       return res.status(400).json({ error: "name is required" });
     }
+
+    // Resolve field names (frontend sends firstAdmin*, backend originally used admin*)
+    const resolvedAdminEmail = adminEmail || firstAdminEmail;
+    const resolvedAdminPassword = adminPassword || firstAdminPassword;
+    const resolvedAdminFirstName = adminFirstName || firstAdminName;
+    const resolvedAdminLastName = adminLastName || "";
 
     const schoolData: Record<string, unknown> = {
       name,
@@ -124,6 +138,9 @@ router.post("/schools", ...auth, async (req, res, next) => {
       billingEmail: billingEmail || null,
     };
 
+    if (maxLicenses !== undefined) schoolData.maxLicenses = maxLicenses;
+    if (maxStudents !== undefined) schoolData.maxStudents = maxStudents;
+
     if (trialDays) {
       schoolData.status = "trial";
       schoolData.trialEndsAt = new Date(Date.now() + trialDays * 86400000);
@@ -131,18 +148,39 @@ router.post("/schools", ...auth, async (req, res, next) => {
 
     const school = await createSchool(schoolData as any);
 
+    // Create product licenses if provided
+    if (Array.isArray(products) && products.length > 0) {
+      for (const product of products) {
+        if (["CLASSPILOT", "PASSPILOT", "GOPILOT"].includes(product)) {
+          await createProductLicense({ schoolId: school.id, product, status: "active" });
+        }
+      }
+    }
+
     // Create admin user if provided
-    if (adminEmail) {
-      const tempPassword = adminPassword || crypto.randomBytes(8).toString("hex");
-      const hashed = await hashPassword(tempPassword);
+    let tempPassword: string | undefined;
+    if (resolvedAdminEmail) {
+      const adminEmail = resolvedAdminEmail as string;
+      const pwd = resolvedAdminPassword || crypto.randomBytes(8).toString("hex");
+      tempPassword = pwd;
+      const hashed = await hashPassword(pwd);
+
+      // Split name into first/last if provided as a single "firstAdminName" field
+      let firstName = resolvedAdminFirstName || "Admin";
+      let lastName = resolvedAdminLastName;
+      if (firstName && !lastName && firstName.includes(" ")) {
+        const parts = firstName.split(" ");
+        firstName = parts[0];
+        lastName = parts.slice(1).join(" ");
+      }
 
       let user = await getUserByEmail(adminEmail);
       if (!user) {
         user = await createUser({
           email: adminEmail,
           password: hashed,
-          firstName: adminFirstName || "Admin",
-          lastName: adminLastName || "",
+          firstName,
+          lastName,
         });
       }
 
@@ -153,7 +191,7 @@ router.post("/schools", ...auth, async (req, res, next) => {
         status: "active",
       });
 
-      await sendWelcomeEmail(adminEmail, name, tempPassword);
+      await sendWelcomeEmail(adminEmail, name, pwd);
     }
 
     await logAudit({
@@ -166,7 +204,7 @@ router.post("/schools", ...auth, async (req, res, next) => {
       entityName: name,
     });
 
-    return res.status(201).json({ school });
+    return res.status(201).json({ school, tempPassword });
   } catch (err) {
     next(err);
   }
@@ -180,14 +218,39 @@ router.get("/schools/:id", ...auth, async (req, res, next) => {
       return res.status(404).json({ error: "School not found" });
     }
 
-    const memberships = await getMembershipsBySchool(school.id);
-    const students = await getStudentsBySchool(school.id);
+    const [memberships, students, licenses] = await Promise.all([
+      getMembershipsBySchool(school.id),
+      getStudentsBySchool(school.id),
+      getProductLicenses(school.id),
+    ]);
+
+    // Flatten membership + user data so the frontend can read email/displayName directly
+    const flattenMembership = (m: any) => ({
+      id: m.id,
+      userId: m.userId,
+      role: m.role,
+      email: m.user?.email,
+      firstName: m.user?.firstName,
+      lastName: m.user?.lastName,
+      displayName: m.user?.displayName
+        || [m.user?.firstName, m.user?.lastName].filter(Boolean).join(" ")
+        || m.user?.email,
+    });
+
+    const admins = memberships.filter((m) => m.role === "admin").map(flattenMembership);
+    const teachers = memberships.filter((m) => m.role === "teacher").map(flattenMembership);
+    const products = licenses
+      .filter((l) => l.status === "active")
+      .map((l) => l.product);
 
     return res.json({
-      school,
-      admins: memberships.filter((m) => m.role === "admin"),
-      staff: memberships,
+      ...school,
+      admins,
+      teachers,
+      staff: memberships.map(flattenMembership),
       studentCount: students.length,
+      products,
+      productLicenses: licenses,
     });
   } catch (err) {
     next(err);
@@ -198,7 +261,7 @@ router.get("/schools/:id", ...auth, async (req, res, next) => {
 router.patch("/schools/:id", ...auth, async (req, res, next) => {
   try {
     const id = param(req, "id");
-    const { name, domain, status, billingEmail, schoolTimezone, maxStudents, planTier, planStatus, activeUntil } = req.body;
+    const { name, domain, status, billingEmail, schoolTimezone, maxStudents, maxLicenses, planTier, planStatus, activeUntil } = req.body;
 
     const data: Record<string, unknown> = {};
     if (name !== undefined) data.name = name;
@@ -207,6 +270,7 @@ router.patch("/schools/:id", ...auth, async (req, res, next) => {
     if (billingEmail !== undefined) data.billingEmail = billingEmail;
     if (schoolTimezone !== undefined) data.schoolTimezone = schoolTimezone;
     if (maxStudents !== undefined) data.maxStudents = maxStudents;
+    if (maxLicenses !== undefined) data.maxLicenses = maxLicenses;
     if (planTier !== undefined) data.planTier = planTier;
     if (planStatus !== undefined) data.planStatus = planStatus;
     if (activeUntil !== undefined) data.activeUntil = activeUntil ? new Date(activeUntil) : null;
@@ -301,10 +365,19 @@ router.post("/schools/:id/restore", ...auth, async (req, res, next) => {
 router.post("/schools/:id/admins", ...auth, async (req, res, next) => {
   try {
     const schoolId = param(req, "id");
-    const { email, firstName, lastName, password } = req.body;
+    const { email, firstName, lastName, displayName, password } = req.body;
 
     if (!email) {
       return res.status(400).json({ error: "email is required" });
+    }
+
+    // Resolve name: accept firstName/lastName or displayName (split on space)
+    let resolvedFirst = firstName;
+    let resolvedLast = lastName || "";
+    if (!resolvedFirst && displayName) {
+      const parts = displayName.trim().split(" ");
+      resolvedFirst = parts[0];
+      resolvedLast = parts.slice(1).join(" ");
     }
 
     const tempPassword = password || crypto.randomBytes(8).toString("hex");
@@ -315,8 +388,8 @@ router.post("/schools/:id/admins", ...auth, async (req, res, next) => {
       user = await createUser({
         email,
         password: hashed,
-        firstName: firstName || "Admin",
-        lastName: lastName || "",
+        firstName: resolvedFirst || "Admin",
+        lastName: resolvedLast,
       });
     }
 
@@ -333,6 +406,78 @@ router.post("/schools/:id/admins", ...auth, async (req, res, next) => {
     }
 
     return res.status(201).json({ user: { id: user.id, email: user.email }, tempPassword });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PATCH /api/super-admin/schools/:id/admins/:membershipId - Update admin name
+router.patch("/schools/:id/admins/:membershipId", ...auth, async (req, res, next) => {
+  try {
+    const schoolId = param(req, "id");
+    const membershipId = param(req, "membershipId");
+    const { firstName, lastName, displayName } = req.body;
+
+    // Find the membership to get the userId
+    const memberships = await getMembershipsBySchool(schoolId);
+    const membership = memberships.find((m) => m.id === membershipId);
+    if (!membership) {
+      return res.status(404).json({ error: "Admin not found" });
+    }
+
+    // Resolve name
+    let resolvedFirst = firstName;
+    let resolvedLast = lastName;
+    if (!resolvedFirst && displayName) {
+      const parts = displayName.trim().split(" ");
+      resolvedFirst = parts[0];
+      resolvedLast = parts.slice(1).join(" ");
+    }
+
+    const data: Record<string, unknown> = {};
+    if (resolvedFirst !== undefined) data.firstName = resolvedFirst;
+    if (resolvedLast !== undefined) data.lastName = resolvedLast;
+
+    await updateUser(membership.userId, data);
+
+    await logAudit({
+      schoolId,
+      userId: req.authUser!.id,
+      action: "admin.updated",
+      entityType: "membership",
+      entityId: membershipId,
+      changes: data,
+    });
+
+    return res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /api/super-admin/schools/:id/admins/:membershipId - Remove admin from school
+router.delete("/schools/:id/admins/:membershipId", ...auth, async (req, res, next) => {
+  try {
+    const schoolId = param(req, "id");
+    const membershipId = param(req, "membershipId");
+
+    const memberships = await getMembershipsBySchool(schoolId);
+    const membership = memberships.find((m) => m.id === membershipId);
+    if (!membership) {
+      return res.status(404).json({ error: "Admin not found" });
+    }
+
+    await deleteMembership(membershipId);
+
+    await logAudit({
+      schoolId,
+      userId: req.authUser!.id,
+      action: "admin.removed",
+      entityType: "membership",
+      entityId: membershipId,
+    });
+
+    return res.json({ ok: true });
   } catch (err) {
     next(err);
   }
@@ -391,6 +536,66 @@ router.post("/stop-impersonate", ...auth, async (req, res, next) => {
         delete (req.session as any).role;
       }
     }
+    return res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/super-admin/schools/:id/products - Add product license
+router.post("/schools/:id/products", ...auth, async (req, res, next) => {
+  try {
+    const schoolId = param(req, "id");
+    const { product } = req.body;
+    if (!product || !["CLASSPILOT", "PASSPILOT", "GOPILOT"].includes(product)) {
+      return res.status(400).json({ error: "product must be CLASSPILOT, PASSPILOT, or GOPILOT" });
+    }
+
+    const existing = await getProductLicenses(schoolId);
+    if (existing.some((l) => l.product === product && l.status === "active")) {
+      return res.status(409).json({ error: `${product} is already active for this school` });
+    }
+
+    const license = await createProductLicense({ schoolId, product, status: "active" });
+
+    await logAudit({
+      schoolId,
+      userId: req.authUser!.id,
+      action: "product.added",
+      entityType: "product_license",
+      entityId: license.id,
+      entityName: product,
+    });
+
+    return res.status(201).json({ license });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /api/super-admin/schools/:id/products/:product - Remove product license
+router.delete("/schools/:id/products/:product", ...auth, async (req, res, next) => {
+  try {
+    const schoolId = param(req, "id");
+    const product = param(req, "product").toUpperCase();
+
+    const existing = await getProductLicenses(schoolId);
+    const license = existing.find((l) => l.product === product);
+    if (!license) {
+      return res.status(404).json({ error: "Product license not found" });
+    }
+
+    await deleteProductLicense(license.id);
+
+    await logAudit({
+      schoolId,
+      userId: req.authUser!.id,
+      action: "product.removed",
+      entityType: "product_license",
+      entityId: license.id,
+      entityName: product,
+    });
+
     return res.json({ ok: true });
   } catch (err) {
     next(err);

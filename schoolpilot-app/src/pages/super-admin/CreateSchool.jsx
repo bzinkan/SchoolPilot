@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { ThemeToggle } from '../../components/ThemeToggle';
 import api from '../../shared/utils/api';
 
 export default function CreateSchool() {
@@ -17,7 +18,17 @@ export default function CreateSchool() {
     firstAdminName: searchParams.get('adminName') || '',
     firstAdminPassword: '',
     zipCode: searchParams.get('zipCode') || '',
+    products: [],
   });
+
+  const toggleProduct = (product) => {
+    setForm((prev) => ({
+      ...prev,
+      products: prev.products.includes(product)
+        ? prev.products.filter((p) => p !== product)
+        : [...prev.products, product],
+    }));
+  };
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
@@ -102,7 +113,10 @@ export default function CreateSchool() {
         Back to Schools
       </button>
 
-      <h1 className="text-2xl font-bold text-slate-900 mb-6">Create School</h1>
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-2xl font-bold text-slate-900">Create School</h1>
+        <ThemeToggle />
+      </div>
 
       {error && (
         <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg flex items-center gap-2 text-sm text-red-700">
@@ -161,6 +175,43 @@ export default function CreateSchool() {
                 placeholder="90210" />
               <p className="text-xs text-slate-400 mt-1">Used for timezone auto-detection</p>
             </div>
+          </div>
+        </div>
+
+        {/* Products */}
+        <div className="bg-white rounded-xl border border-slate-200 p-6">
+          <h2 className="font-semibold text-slate-900 mb-1">Products</h2>
+          <p className="text-sm text-slate-500 mb-4">Select which products to activate for this school.</p>
+          <div className="flex flex-wrap gap-3">
+            {[
+              { key: 'CLASSPILOT', label: 'ClassPilot', desc: 'Classroom device management', bg: 'bg-amber-400', text: 'text-slate-900' },
+              { key: 'PASSPILOT', label: 'PassPilot', desc: 'Digital hall passes', bg: 'bg-indigo-500', text: 'text-white' },
+              { key: 'GOPILOT', label: 'GoPilot', desc: 'Dismissal management', bg: 'bg-blue-600', text: 'text-white' },
+            ].map((p) => {
+              const isSelected = form.products.includes(p.key);
+              return (
+                <button
+                  key={p.key}
+                  type="button"
+                  onClick={() => toggleProduct(p.key)}
+                  className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-semibold transition-all border-2 ${
+                    isSelected
+                      ? `${p.bg} ${p.text} border-transparent ring-2 ring-offset-1 ring-slate-300`
+                      : 'bg-white text-slate-500 border-slate-200 hover:border-slate-400'
+                  }`}
+                >
+                  {isSelected ? (
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                  ) : (
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+                  )}
+                  <div className="text-left">
+                    <div>{p.label}</div>
+                    <div className={`text-xs font-normal ${isSelected ? 'opacity-80' : 'text-slate-400'}`}>{p.desc}</div>
+                  </div>
+                </button>
+              );
+            })}
           </div>
         </div>
 

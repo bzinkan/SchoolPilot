@@ -21,15 +21,9 @@ export default function KioskPage() {
   const [student, setStudent] = useState(null);
   const [activePass, setActivePass] = useState(null);
   const [message, setMessage] = useState("");
-  const [schoolId, setSchoolId] = useState("");
+  const [schoolId] = useState(() => new URLSearchParams(window.location.search).get("school") ?? "");
   const inputRef = useRef(null);
   const timeoutRef = useRef();
-
-  // Get school ID from URL params (e.g., /kiosk?school=abc123)
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    setSchoolId(params.get("school") ?? "");
-  }, []);
 
   const resetToScan = useCallback(() => {
     setState("scan");

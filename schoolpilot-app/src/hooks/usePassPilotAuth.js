@@ -8,7 +8,6 @@ import { queryClient } from '../lib/queryClient';
 export function usePassPilotAuth() {
   const {
     user: unifiedUser,
-    memberships,
     loading,
     logout,
     activeSchoolId,

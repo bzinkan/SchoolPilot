@@ -481,6 +481,7 @@ function StudentRosterTab() {
       if (!res.ok) throw new Error("Failed to fetch students");
       return res.json();
     },
+    select: (data) => Array.isArray(data) ? data : (data?.students ?? []),
   });
 
   const { data: grades } = useGrades();
@@ -1700,12 +1701,12 @@ function ClassesTab() {
   const [viewingGrade, setViewingGrade] = useState(null);
   const [viewOpen, setViewOpen] = useState(false);
   const [addStudentOpen, setAddStudentOpen] = useState(false);
-  const [addStudentGradeId, setAddStudentGradeId] = useState("");
+  const [, setAddStudentGradeId] = useState("");
   const [addStudentGradeName, setAddStudentGradeName] = useState("");
   const [studentName, setStudentName] = useState("");
   const [studentGradeLevel, setStudentGradeLevel] = useState("");
   const [bulkOpen, setBulkOpen] = useState(false);
-  const [bulkGradeId, setBulkGradeId] = useState("");
+  const [, setBulkGradeId] = useState("");
   const [bulkGradeName, setBulkGradeName] = useState("");
   const [bulkNames, setBulkNames] = useState("");
   const [bulkGradeLevel, setBulkGradeLevel] = useState("");
@@ -1727,6 +1728,7 @@ function ClassesTab() {
       if (!res.ok) return [];
       return res.json();
     },
+    select: (data) => Array.isArray(data) ? data : (data?.students ?? []),
   });
 
   // Count students per grade (class)
@@ -2267,6 +2269,7 @@ function AssignmentsTab() {
       if (!res.ok) return [];
       return res.json();
     },
+    select: (data) => Array.isArray(data) ? data : (data?.assignments ?? data?.teacherGrades ?? []),
     enabled: !!selectedTeacherId,
   });
 
@@ -2345,6 +2348,7 @@ function SettingsTab() {
 
   useEffect(() => {
     if (school) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setName(school.name ?? "");
       setKioskEnabled(school.kioskEnabled ?? true);
       setKioskRequiresApproval(school.kioskRequiresApproval ?? false);

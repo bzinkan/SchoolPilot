@@ -35,7 +35,7 @@ export default function LinkChild() {
         const joinRes = await api.post('/me/join-school', { schoolSlug });
         schoolId = joinRes.data.school?.id;
       }
-      const res = await api.post('/me/children/link', { code, relationship, schoolId });
+      const res = await api.post('/me/children/link', { studentCode: code, relationship, schoolId });
       setSuccess(res.data.student);
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to link student');

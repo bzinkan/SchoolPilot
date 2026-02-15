@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useRef, useSyncExternalStore } from 'react';
 import { io } from 'socket.io-client';
 import { useAuth } from './AuthContext';
 
@@ -6,15 +6,17 @@ const SocketContext = createContext(null);
 
 export function SocketProvider({ children }) {
   const { token } = useAuth();
-  const [socket, setSocket] = useState(null);
   const socketRef = useRef(null);
+  const subscribersRef = useRef(new Set());
+
+  const notify = () => subscribersRef.current.forEach((cb) => cb());
 
   useEffect(() => {
     if (!token) {
       if (socketRef.current) {
         socketRef.current.disconnect();
         socketRef.current = null;
-        setSocket(null);
+        notify();
       }
       return;
     }
@@ -28,9 +30,17 @@ export function SocketProvider({ children }) {
     s.on('disconnect', () => console.log('[GoPilot] Socket disconnected'));
 
     socketRef.current = s;
-    setSocket(s);
+    notify();
     return () => { s.disconnect(); };
   }, [token]);
+
+  const subscribe = (cb) => {
+    subscribersRef.current.add(cb);
+    return () => subscribersRef.current.delete(cb);
+  };
+  const getSnapshot = () => socketRef.current;
+
+  const socket = useSyncExternalStore(subscribe, getSnapshot);
 
   return (
     <SocketContext.Provider value={socket}>
@@ -39,6 +49,7 @@ export function SocketProvider({ children }) {
   );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useSocket() {
   return useContext(SocketContext);
 }

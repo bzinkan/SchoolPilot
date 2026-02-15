@@ -285,6 +285,7 @@ function ClassPilotLogo({ size = 64 }) {
 }
 
 function PassPilotLogo({ size = 64 }) {
+  // eslint-disable-next-line react-hooks/purity
   const id = `pp-${Math.random()}`;
   return (
     <svg width={size} height={size} viewBox="0 0 64 64" fill="none">

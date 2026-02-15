@@ -10,6 +10,7 @@ import { Input } from "../../../components/ui/input";
 import { Label } from "../../../components/ui/label";
 import { useToast } from "../../../hooks/use-toast";
 import { ArrowLeft, Plus, Users, Trash2, Edit, ChevronDown, ChevronRight, X, Cloud, Check, RefreshCw, ChevronsUpDown } from "lucide-react";
+import { ThemeToggle } from "../../../components/ThemeToggle";
 import { useNavigate } from "react-router-dom";
 import {
   Select,
@@ -778,6 +779,7 @@ export default function AdminClasses() {
             <p className="text-muted-foreground text-sm">Create and manage class rosters for teachers</p>
           </div>
         </div>
+        <ThemeToggle />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

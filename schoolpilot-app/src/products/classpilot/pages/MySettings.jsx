@@ -16,6 +16,7 @@ import { Badge } from "../../../components/ui/badge";
 import { useToast } from "../../../hooks/use-toast";
 import { apiRequest, queryClient } from "../../../lib/queryClient";
 import { ArrowLeft, User, Settings as SettingsIcon, Save, Plus, Edit, Trash2, Plane, AlertCircle, ShieldBan, UsersRound, UserPlus, UserMinus } from "lucide-react";
+import { ThemeToggle } from "../../../components/ThemeToggle";
 
 const teacherSettingsSchema = z.object({
   maxTabsPerStudent: z.string().optional(),
@@ -476,6 +477,7 @@ export default function MySettings() {
                 </div>
               </div>
             </div>
+            <ThemeToggle />
           </div>
         </div>
       </div>

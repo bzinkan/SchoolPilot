@@ -48,6 +48,7 @@ function TeacherFab({
       if (saved) {
         const parsed = JSON.parse(saved);
         if (typeof parsed.x === 'number' && typeof parsed.y === 'number') {
+          // eslint-disable-next-line react-hooks/set-state-in-effect
           setPosition(parsed);
         }
       }

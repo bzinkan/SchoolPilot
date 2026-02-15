@@ -206,37 +206,37 @@ export default function BusAssignments({ students, homerooms, onUpdateStudents, 
       )}
 
       <div>
-        <h2 className="text-xl font-bold text-gray-900">Bus Assignments</h2>
-        <p className="text-gray-500 text-sm">Assign students to buses before setting other dismissal types.</p>
+        <h2 className="text-xl font-bold text-gray-900 dark:text-white">Bus Assignments</h2>
+        <p className="text-gray-500 dark:text-slate-400 text-sm">Assign students to buses before setting other dismissal types.</p>
       </div>
 
       {/* Bus Summary Cards */}
       {busList.length > 0 && (
         <div className="flex flex-wrap gap-3">
           {busList.map(busNum => (
-            <div key={busNum} className="bg-yellow-50 border border-yellow-200 rounded-lg px-4 py-2 flex items-center gap-2">
-              <Bus className="w-4 h-4 text-yellow-600" />
-              <span className="font-semibold text-yellow-800">#{busNum}</span>
-              <span className="text-sm text-yellow-600">{busGroups[busNum].length} riders</span>
+            <div key={busNum} className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg px-4 py-2 flex items-center gap-2">
+              <Bus className="w-4 h-4 text-yellow-600 dark:text-yellow-400" />
+              <span className="font-semibold text-yellow-800 dark:text-yellow-400">#{busNum}</span>
+              <span className="text-sm text-yellow-600 dark:text-yellow-400">{busGroups[busNum].length} riders</span>
             </div>
           ))}
-          <div className="bg-gray-50 border rounded-lg px-4 py-2 text-sm text-gray-600">
+          <div className="bg-gray-50 dark:bg-slate-800 border dark:border-slate-700 rounded-lg px-4 py-2 text-sm text-gray-600 dark:text-slate-300">
             {busStudents.length} total bus riders
           </div>
         </div>
       )}
 
       {/* Sub-tab Navigation */}
-      <div className="bg-white rounded-xl border">
-        <div className="flex border-b">
+      <div className="bg-white dark:bg-slate-900 rounded-xl border dark:border-slate-700">
+        <div className="flex border-b dark:border-slate-700">
           {subTabs.map(tab => {
             const Icon = tab.icon;
             return (
               <button key={tab.id} onClick={() => setSubTab(tab.id)}
                 className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 -mb-px ${
                   subTab === tab.id
-                    ? 'border-indigo-600 text-indigo-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700'
+                    ? 'border-indigo-600 text-indigo-600 dark:text-indigo-400'
+                    : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200'
                 }`}>
                 <Icon className="w-4 h-4" /> {tab.label}
               </button>
@@ -250,37 +250,37 @@ export default function BusAssignments({ students, homerooms, onUpdateStudents, 
             <div className="space-y-4">
               <div className="flex items-center gap-3">
                 <button onClick={downloadTemplate}
-                  className="flex items-center gap-2 px-3 py-1.5 border rounded-lg text-sm hover:bg-gray-50">
+                  className="flex items-center gap-2 px-3 py-1.5 border dark:border-slate-700 rounded-lg text-sm hover:bg-gray-50 dark:hover:bg-slate-800 dark:text-white">
                   <Download className="w-4 h-4" /> Download Template
                 </button>
-                <span className="text-sm text-gray-500">Upload a CSV with student names and bus numbers</span>
+                <span className="text-sm text-gray-500 dark:text-slate-400">Upload a CSV with student names and bus numbers</span>
               </div>
 
               {!csvPreview ? (
                 <div
                   className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition ${
-                    dragOver ? 'border-indigo-400 bg-indigo-50' : 'border-gray-300 hover:border-gray-400'
+                    dragOver ? 'border-indigo-400 bg-indigo-50 dark:bg-indigo-900/20 dark:border-indigo-500' : 'border-gray-300 dark:border-slate-600 hover:border-gray-400 dark:hover:border-slate-500'
                   }`}
                   onClick={() => fileInputRef.current?.click()}
                   onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
                   onDragLeave={() => setDragOver(false)}
                   onDrop={handleDrop}
                 >
-                  <Upload className="w-8 h-8 text-gray-400 mx-auto mb-2" />
-                  <p className="text-gray-600 font-medium">Drop CSV file here or click to browse</p>
-                  <p className="text-sm text-gray-400 mt-1">Columns: Student First Name, Student Last Name, Bus Number</p>
+                  <Upload className="w-8 h-8 text-gray-400 dark:text-slate-500 mx-auto mb-2" />
+                  <p className="text-gray-600 dark:text-slate-300 font-medium">Drop CSV file here or click to browse</p>
+                  <p className="text-sm text-gray-400 dark:text-slate-500 mt-1">Columns: Student First Name, Student Last Name, Bus Number</p>
                   <input ref={fileInputRef} type="file" accept=".csv" className="hidden"
                     onChange={(e) => handleCSVFile(e.target.files[0])} />
                 </div>
               ) : (
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
-                    <p className="text-sm font-medium text-gray-700">
+                    <p className="text-sm font-medium text-gray-700 dark:text-slate-200">
                       Preview: {csvPreview.filter(r => r.match).length} matched, {csvPreview.filter(r => !r.match).length} unmatched
                     </p>
                     <div className="flex gap-2">
                       <button onClick={() => setCsvPreview(null)}
-                        className="px-3 py-1.5 border rounded-lg text-sm hover:bg-gray-50">
+                        className="px-3 py-1.5 border dark:border-slate-700 rounded-lg text-sm hover:bg-gray-50 dark:hover:bg-slate-800 dark:text-white">
                         Cancel
                       </button>
                       <button onClick={importCSVMatches}
@@ -290,29 +290,29 @@ export default function BusAssignments({ students, homerooms, onUpdateStudents, 
                       </button>
                     </div>
                   </div>
-                  <div className="bg-white border rounded-lg overflow-hidden max-h-80 overflow-y-auto">
+                  <div className="bg-white dark:bg-slate-900 border dark:border-slate-700 rounded-lg overflow-hidden max-h-80 overflow-y-auto">
                     <table className="w-full text-sm">
-                      <thead className="bg-gray-50 border-b">
+                      <thead className="bg-gray-50 dark:bg-slate-800 border-b dark:border-slate-700">
                         <tr>
-                          <th className="text-left px-3 py-2 font-medium text-gray-600">CSV Name</th>
-                          <th className="text-left px-3 py-2 font-medium text-gray-600">Bus #</th>
-                          <th className="text-left px-3 py-2 font-medium text-gray-600">Match</th>
+                          <th className="text-left px-3 py-2 font-medium text-gray-600 dark:text-slate-300">CSV Name</th>
+                          <th className="text-left px-3 py-2 font-medium text-gray-600 dark:text-slate-300">Bus #</th>
+                          <th className="text-left px-3 py-2 font-medium text-gray-600 dark:text-slate-300">Match</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y">
+                      <tbody className="divide-y dark:divide-slate-700">
                         {csvPreview.map((row, i) => (
-                          <tr key={i} className={row.match ? 'bg-green-50' : 'bg-yellow-50'}>
+                          <tr key={i} className={row.match ? 'bg-green-50 dark:bg-green-900/20' : 'bg-yellow-50 dark:bg-yellow-900/20'}>
                             <td className="px-3 py-2">{row.firstName} {row.lastName}</td>
                             <td className="px-3 py-2">{row.bus}</td>
                             <td className="px-3 py-2">
                               {row.match ? (
-                                <span className="flex items-center gap-1 text-green-700">
+                                <span className="flex items-center gap-1 text-green-700 dark:text-green-400">
                                   <CheckCircle2 className="w-3.5 h-3.5" />
                                   {row.match.student.firstName} {row.match.student.lastName}
-                                  {row.match.score < 1 && <span className="text-xs text-green-500 ml-1">({Math.round(row.match.score * 100)}%)</span>}
+                                  {row.match.score < 1 && <span className="text-xs text-green-500 dark:text-green-400 ml-1">({Math.round(row.match.score * 100)}%)</span>}
                                 </span>
                               ) : (
-                                <span className="flex items-center gap-1 text-yellow-700">
+                                <span className="flex items-center gap-1 text-yellow-700 dark:text-yellow-400">
                                   <AlertCircle className="w-3.5 h-3.5" /> No match
                                 </span>
                               )}
@@ -334,21 +334,21 @@ export default function BusAssignments({ students, homerooms, onUpdateStudents, 
               <div className="flex-1 space-y-3">
                 <div className="flex items-center gap-3">
                   <div className="flex items-center gap-2">
-                    <label className="text-sm text-gray-600">Bus #:</label>
+                    <label className="text-sm text-gray-600 dark:text-slate-300">Bus #:</label>
                     <input type="text" value={busNumber} onChange={(e) => setBusNumber(e.target.value)}
-                      placeholder="e.g. 42" className="border rounded-lg px-3 py-1.5 text-sm w-24" />
+                      placeholder="e.g. 42" className="border dark:border-slate-600 dark:bg-slate-800 dark:text-white rounded-lg px-3 py-1.5 text-sm w-24" />
                   </div>
                   <select value={busFilter} onChange={(e) => setBusFilter(e.target.value)}
-                    className="border rounded-lg px-3 py-1.5 text-sm">
+                    className="border dark:border-slate-600 dark:bg-slate-800 dark:text-white rounded-lg px-3 py-1.5 text-sm">
                     <option value="all">All homerooms</option>
                     {homerooms.map(hr => (
                       <option key={hr.id} value={hr.id}>{hr.teacher || hr.name} (Gr {hr.grade})</option>
                     ))}
                   </select>
                   <div className="relative flex-1">
-                    <Search className="w-4 h-4 absolute left-2.5 top-2.5 text-gray-400" />
+                    <Search className="w-4 h-4 absolute left-2.5 top-2.5 text-gray-400 dark:text-slate-500" />
                     <input type="text" value={busSearch} onChange={(e) => setBusSearch(e.target.value)}
-                      placeholder="Search students..." className="w-full border rounded-lg pl-8 pr-3 py-1.5 text-sm" />
+                      placeholder="Search students..." className="w-full border dark:border-slate-600 dark:bg-slate-800 dark:text-white rounded-lg pl-8 pr-3 py-1.5 text-sm" />
                   </div>
                 </div>
 
@@ -366,50 +366,50 @@ export default function BusAssignments({ students, homerooms, onUpdateStudents, 
                   )}
                 </div>
 
-                <div className="border rounded-lg max-h-80 overflow-y-auto divide-y">
+                <div className="border dark:border-slate-700 rounded-lg max-h-80 overflow-y-auto divide-y dark:divide-slate-700">
                   {assignableStudents.map(s => {
                     const hr = homerooms.find(h => h.id === s.homeroom);
                     return (
-                      <label key={s.id} className="flex items-center gap-3 px-3 py-2 hover:bg-gray-50 cursor-pointer">
+                      <label key={s.id} className="flex items-center gap-3 px-3 py-2 hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer">
                         <input type="checkbox" checked={selectedStudents.has(s.id)}
                           onChange={() => toggleStudent(s.id)} className="rounded" />
-                        <div className="w-7 h-7 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-600 text-xs font-medium">
+                        <div className="w-7 h-7 bg-indigo-100 dark:bg-indigo-900/30 rounded-full flex items-center justify-center text-indigo-600 dark:text-indigo-400 text-xs font-medium">
                           {s.firstName[0]}{s.lastName[0]}
                         </div>
                         <div className="flex-1">
-                          <span className="text-sm font-medium">{s.firstName} {s.lastName}</span>
-                          {hr && <span className="text-xs text-gray-400 ml-2">{hr.teacher || hr.name}</span>}
+                          <span className="text-sm font-medium dark:text-white">{s.firstName} {s.lastName}</span>
+                          {hr && <span className="text-xs text-gray-400 dark:text-slate-500 ml-2">{hr.teacher || hr.name}</span>}
                         </div>
                         {s.dismissalType === 'bus' && s.busRoute && (
-                          <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">Bus #{s.busRoute}</span>
+                          <span className="text-xs bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400 px-2 py-0.5 rounded-full">Bus #{s.busRoute}</span>
                         )}
                       </label>
                     );
                   })}
                   {assignableStudents.length === 0 && (
-                    <div className="p-4 text-center text-sm text-gray-400">No students found</div>
+                    <div className="p-4 text-center text-sm text-gray-400 dark:text-slate-500">No students found</div>
                   )}
                 </div>
               </div>
 
               {/* Right: current bus assignments sidebar */}
               <div className="w-64 shrink-0">
-                <h4 className="text-sm font-medium text-gray-700 mb-2">Current Buses</h4>
-                <div className="border rounded-lg max-h-96 overflow-y-auto divide-y">
+                <h4 className="text-sm font-medium text-gray-700 dark:text-slate-200 mb-2">Current Buses</h4>
+                <div className="border dark:border-slate-700 rounded-lg max-h-96 overflow-y-auto divide-y dark:divide-slate-700">
                   {busList.length === 0 && (
-                    <div className="p-3 text-center text-sm text-gray-400">No bus assignments yet</div>
+                    <div className="p-3 text-center text-sm text-gray-400 dark:text-slate-500">No bus assignments yet</div>
                   )}
                   {busList.map(busNum => (
                     <details key={busNum} className="group">
-                      <summary className="flex items-center justify-between px-3 py-2 cursor-pointer hover:bg-gray-50">
-                        <span className="text-sm font-medium flex items-center gap-2">
-                          <Bus className="w-3.5 h-3.5 text-yellow-600" /> Bus #{busNum}
+                      <summary className="flex items-center justify-between px-3 py-2 cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800">
+                        <span className="text-sm font-medium dark:text-white flex items-center gap-2">
+                          <Bus className="w-3.5 h-3.5 text-yellow-600 dark:text-yellow-400" /> Bus #{busNum}
                         </span>
-                        <span className="text-xs text-gray-500">{busGroups[busNum].length}</span>
+                        <span className="text-xs text-gray-500 dark:text-slate-400">{busGroups[busNum].length}</span>
                       </summary>
                       <div className="px-3 pb-2">
                         {busGroups[busNum].map(s => (
-                          <div key={s.id} className="text-xs text-gray-600 py-0.5 pl-6">
+                          <div key={s.id} className="text-xs text-gray-600 dark:text-slate-300 py-0.5 pl-6">
                             {s.firstName} {s.lastName}
                           </div>
                         ))}
@@ -426,46 +426,46 @@ export default function BusAssignments({ students, homerooms, onUpdateStudents, 
             <div className="space-y-3">
               <div className="flex items-center gap-3">
                 <select value={editFilter} onChange={(e) => setEditFilter(e.target.value)}
-                  className="border rounded-lg px-3 py-1.5 text-sm">
+                  className="border dark:border-slate-600 dark:bg-slate-800 dark:text-white rounded-lg px-3 py-1.5 text-sm">
                   <option value="all">All homerooms</option>
                   {homerooms.map(hr => (
                     <option key={hr.id} value={hr.id}>{hr.teacher || hr.name} (Gr {hr.grade})</option>
                   ))}
                 </select>
                 <div className="relative flex-1">
-                  <Search className="w-4 h-4 absolute left-2.5 top-2.5 text-gray-400" />
+                  <Search className="w-4 h-4 absolute left-2.5 top-2.5 text-gray-400 dark:text-slate-500" />
                   <input type="text" value={editSearch} onChange={(e) => setEditSearch(e.target.value)}
-                    placeholder="Search students..." className="w-full border rounded-lg pl-8 pr-3 py-1.5 text-sm" />
+                    placeholder="Search students..." className="w-full border dark:border-slate-600 dark:bg-slate-800 dark:text-white rounded-lg pl-8 pr-3 py-1.5 text-sm" />
                 </div>
               </div>
 
-              <div className="bg-white border rounded-lg overflow-hidden">
-                <div className="bg-gray-50 border-b px-4 py-2.5">
-                  <div className="grid grid-cols-12 gap-4 text-xs font-medium text-gray-500 uppercase">
+              <div className="bg-white dark:bg-slate-900 border dark:border-slate-700 rounded-lg overflow-hidden">
+                <div className="bg-gray-50 dark:bg-slate-800 border-b dark:border-slate-700 px-4 py-2.5">
+                  <div className="grid grid-cols-12 gap-4 text-xs font-medium text-gray-500 dark:text-slate-400 uppercase">
                     <div className="col-span-4">Student</div>
                     <div className="col-span-3">Homeroom</div>
                     <div className="col-span-3">Dismissal Type</div>
                     <div className="col-span-2">Bus #</div>
                   </div>
                 </div>
-                <div className="divide-y max-h-96 overflow-y-auto">
+                <div className="divide-y dark:divide-slate-700 max-h-96 overflow-y-auto">
                   {editFiltered.map(student => {
                     const hr = homerooms.find(h => h.id === student.homeroom);
                     return (
                       <div key={student.id} className="grid grid-cols-12 gap-4 px-4 py-2.5 items-center">
                         <div className="col-span-4 flex items-center gap-2">
-                          <div className="w-7 h-7 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-600 text-xs font-medium">
+                          <div className="w-7 h-7 bg-indigo-100 dark:bg-indigo-900/30 rounded-full flex items-center justify-center text-indigo-600 dark:text-indigo-400 text-xs font-medium">
                             {(student.firstName || '?')[0]}{(student.lastName || '?')[0]}
                           </div>
-                          <span className="text-sm font-medium">{student.firstName} {student.lastName}</span>
+                          <span className="text-sm font-medium dark:text-white">{student.firstName} {student.lastName}</span>
                         </div>
-                        <div className="col-span-3 text-sm text-gray-500">
-                          {hr ? hr.teacher || hr.name : <span className="text-yellow-600 text-xs">Unassigned</span>}
+                        <div className="col-span-3 text-sm text-gray-500 dark:text-slate-400">
+                          {hr ? hr.teacher || hr.name : <span className="text-yellow-600 dark:text-yellow-400 text-xs">Unassigned</span>}
                         </div>
                         <div className="col-span-3">
                           <select value={student.dismissalType}
                             onChange={(e) => handleInlineUpdate(student.id, 'dismissalType', e.target.value)}
-                            className="w-full border rounded px-2 py-1 text-sm">
+                            className="w-full border dark:border-slate-600 dark:bg-slate-800 dark:text-white rounded px-2 py-1 text-sm">
                             <option value="car">Car</option>
                             <option value="bus">Bus</option>
                             <option value="walker">Walker</option>
@@ -477,16 +477,16 @@ export default function BusAssignments({ students, homerooms, onUpdateStudents, 
                             <input type="text" value={student.busRoute || ''}
                               onChange={(e) => handleInlineUpdate(student.id, 'busRoute', e.target.value)}
                               onBlur={(e) => handleInlineUpdate(student.id, 'busRoute', e.target.value)}
-                              placeholder="Bus #" className="w-full border rounded px-2 py-1 text-sm" />
+                              placeholder="Bus #" className="w-full border dark:border-slate-600 dark:bg-slate-800 dark:text-white rounded px-2 py-1 text-sm" />
                           ) : (
-                            <span className="text-gray-400 text-sm">&mdash;</span>
+                            <span className="text-gray-400 dark:text-slate-500 text-sm">&mdash;</span>
                           )}
                         </div>
                       </div>
                     );
                   })}
                   {editFiltered.length === 0 && (
-                    <div className="p-4 text-center text-sm text-gray-400">No students found</div>
+                    <div className="p-4 text-center text-sm text-gray-400 dark:text-slate-500">No students found</div>
                   )}
                 </div>
               </div>

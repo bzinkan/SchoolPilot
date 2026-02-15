@@ -33,6 +33,7 @@ import { Checkbox } from "../../../components/ui/checkbox";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../../../components/ui/tabs";
 import { Badge } from "../../../components/ui/badge";
 import { useClassPilotAuth } from "../../../hooks/useClassPilotAuth";
+import { ThemeToggle } from "../../../components/ThemeToggle";
 
 const createStaffSchema = z.object({
   name: z.string().optional(),
@@ -90,9 +91,21 @@ export default function Admin() {
       if (!res.ok) throw new Error("Failed to fetch staff");
       return res.json();
     },
+    select: (data) => ({
+      users: (data?.users ?? []).map((m) => ({
+        id: m.membershipId || m.userId,
+        membershipId: m.membershipId,
+        userId: m.userId,
+        role: m.role,
+        email: m.user?.email,
+        displayName: m.user?.displayName
+          || [m.user?.firstName, m.user?.lastName].filter(Boolean).join(' ')
+          || null,
+      })),
+    }),
   });
 
-  const { data: settings } = useQuery({
+  const { data: _settings } = useQuery({
     queryKey: ["/api/settings"],
     queryFn: async () => {
       const res = await fetch("/api/settings", { credentials: "include" });
@@ -108,6 +121,7 @@ export default function Admin() {
       if (!res.ok) throw new Error("Failed to fetch sessions");
       return res.json();
     },
+    select: (data) => Array.isArray(data) ? data : data?.sessions ?? [],
     refetchInterval: 10000, // Poll every 10 seconds
   });
 
@@ -118,6 +132,7 @@ export default function Admin() {
       if (!res.ok) throw new Error("Failed to fetch groups");
       return res.json();
     },
+    select: (data) => Array.isArray(data) ? data : data?.groups ?? [],
   });
 
   // Audit logs query
@@ -508,6 +523,7 @@ export default function Admin() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <ThemeToggle />
           <Button
             variant="outline"
             onClick={() => navigate("/classpilot/admin/analytics")}

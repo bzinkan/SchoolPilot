@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 
 /**
@@ -5,10 +6,10 @@ import { useAuth } from '../contexts/AuthContext';
  * expected by GoPilot pages (matching GoPilot's original useAuth + useSchool).
  */
 export function useGoPilotAuth() {
-  const { user, token, memberships, loading, logout, switchSchool, activeSchoolId, activeMembership, refetchUser } = useAuth();
+  const { user, token, memberships, loading, logout, switchSchool, activeMembership, refetchUser } = useAuth();
 
-  // Map to GoPilot's expected school shape
-  const currentSchool = activeMembership
+  // Map to GoPilot's expected school shape (memoized to prevent infinite re-renders)
+  const currentSchool = useMemo(() => activeMembership
     ? {
         id: activeMembership.schoolId,
         name: activeMembership.schoolName || '',
@@ -16,9 +17,18 @@ export function useGoPilotAuth() {
         carNumber: activeMembership.carNumber || '',
         timezone: activeMembership.schoolTimezone || 'America/New_York',
       }
-    : null;
+    : null, [activeMembership]);
 
   const currentRole = activeMembership?.role || null;
+
+  const mappedMemberships = useMemo(() => memberships.map((m) => ({
+    school_id: m.schoolId,
+    school_name: m.schoolName || '',
+    school_slug: m.schoolSlug || '',
+    role: m.role,
+    car_number: m.carNumber || '',
+    school_timezone: m.schoolTimezone || 'America/New_York',
+  })), [memberships]);
 
   return {
     // Auth fields
@@ -31,13 +41,6 @@ export function useGoPilotAuth() {
     currentSchool,
     currentRole,
     switchSchool,
-    memberships: memberships.map((m) => ({
-      school_id: m.schoolId,
-      school_name: m.schoolName || '',
-      school_slug: m.schoolSlug || '',
-      role: m.role,
-      car_number: m.carNumber || '',
-      school_timezone: m.schoolTimezone || 'America/New_York',
-    })),
+    memberships: mappedMemberships,
   };
 }

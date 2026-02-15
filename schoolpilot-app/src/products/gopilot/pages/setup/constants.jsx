@@ -1,4 +1,5 @@
-import { Briefcase, Users, School, UserPlus, Bus, Car, Settings, CheckCircle2 } from 'lucide-react';
+/* eslint-disable react-refresh/only-export-components */
+import { Briefcase, Users, School, UserPlus, Bus, Car } from 'lucide-react';
 
 // Google Logo SVG
 export const GoogleLogo = ({ className = "w-5 h-5" }) => (
@@ -41,9 +42,6 @@ export const tabs = [
   { id: 'bus-assignments', label: 'Bus Assignments', icon: Bus },
   { id: 'dismissal', label: 'Set Dismissal', icon: Car },
   { id: 'car-numbers', label: 'Car Numbers', icon: Car },
-  { id: 'parents', label: 'Parents', icon: UserPlus },
-  { id: 'review', label: 'Review & Launch', icon: CheckCircle2 },
-  { id: 'settings', label: 'Settings', icon: Settings },
 ];
 
 export function detectGradeFromName(name) {

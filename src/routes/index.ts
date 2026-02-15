@@ -48,6 +48,13 @@ router.use((req: Request, _res: Response, next: NextFunction) => {
   // /me/* → /users/me/* (GoPilot: /me/children, /me/join-school, /me/memberships)
   if (p.startsWith("/me/")) { req.url = "/users" + req.url; return next(); }
 
+  // --- Super admin billing routes (must come before generic super-admin rewrite) ---
+  // /super-admin/schools/:id/send-invoice → /admin/billing/schools/:id/send-invoice
+  if (p.match(/^\/super-admin\/schools\/[^/]+\/send-invoice$/)) {
+    req.url = "/admin/billing" + req.url.slice("/super-admin".length);
+    return next();
+  }
+
   // --- Super admin prefix (all frontends use /super-admin, server uses /admin) ---
   if (p === "/super-admin" || p.startsWith("/super-admin/")) {
     req.url = "/admin" + req.url.slice("/super-admin".length);
@@ -208,7 +215,7 @@ router.use((req: Request, _res: Response, next: NextFunction) => {
   // --- GoPilot school-scoped routes ---
   // /schools/:uuid/<resource> → set X-School-Id header and rewrite to canonical path
   const schoolMatch = p.match(
-    /^\/schools\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/(homerooms|students|staff|family-groups|sessions|dismissal-mode|send-to-app-mode|switch-to-no-app-mode|members|settings|invite|custody-alerts|parent-requests|parents|bus-routes)(\/.*)?$/i
+    /^\/schools\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/(homerooms|students|staff|family-groups|sessions|members|settings|invite|custody-alerts|parent-requests|parents|bus-routes)(\/.*)?$/i
   );
   if (schoolMatch) {
     const schoolId = schoolMatch[1]!;
@@ -221,9 +228,6 @@ router.use((req: Request, _res: Response, next: NextFunction) => {
       "staff": "/users/staff",
       "family-groups": "/gopilot/family-groups",
       "sessions": "/gopilot/dismissal/sessions",
-      "dismissal-mode": "/gopilot/dismissal-mode",
-      "send-to-app-mode": "/gopilot/send-to-app-mode",
-      "switch-to-no-app-mode": "/gopilot/switch-to-no-app-mode",
       "members": "/users/members",
       "settings": "/compat/school-settings",
       "invite": "/compat/invite",

@@ -1,3 +1,9 @@
+# ============================================================================
+# LOCAL DEVELOPMENT ONLY — do NOT use these credentials in production.
+# In production, use strong randomly-generated passwords and manage secrets
+# via your cloud provider's secret manager (e.g., AWS Secrets Manager, GCP
+# Secret Manager, or Doppler).
+# ============================================================================
 services:
   postgres:
     image: postgres:16-alpine
@@ -5,7 +11,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: schoolpilot
-      POSTGRES_PASSWORD: schoolpilot_dev
+      POSTGRES_PASSWORD: schoolpilot_d3v!Pg2025
       POSTGRES_DB: schoolpilot
     ports:
       - "5435:5432"
@@ -21,10 +27,11 @@ services:
     image: redis:7-alpine
     container_name: schoolpilot-redis
     restart: unless-stopped
+    command: redis-server --requirepass schoolpilot_d3v!Redis2025
     ports:
       - "6380:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "schoolpilot_d3v!Redis2025", "ping"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -34,8 +41,8 @@ services:
     container_name: schoolpilot-pgadmin
     restart: unless-stopped
     environment:
-      PGADMIN_DEFAULT_EMAIL: admin@schoolpilot.com
-      PGADMIN_DEFAULT_PASSWORD: admin123
+      PGADMIN_DEFAULT_EMAIL: admin@schoolpilot.local
+      PGADMIN_DEFAULT_PASSWORD: schoolpilot_d3v!PgAdmin2025
     ports:
       - "5050:80"
     depends_on:

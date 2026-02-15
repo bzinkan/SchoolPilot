@@ -12,7 +12,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { usePassPilotAuth } from "../../../../hooks/usePassPilotAuth";
 import { formatTime, formatHour, formatDateTime, startOfTodayInTimezone } from "../../../../lib/date-utils";
 
-function ReportsTab({ user }) {
+function ReportsTab() {
   const { school } = usePassPilotAuth();
   const tz = school?.schoolTimezone ?? "America/New_York";
   const { toast } = useToast();
@@ -37,7 +37,7 @@ function ReportsTab({ user }) {
     return Math.max(0, Math.round(diffMs / (1000 * 60)));
   };
 
-  const { data: passes = [], refetch, isLoading } = useQuery({
+  const { data: passes = [], refetch } = useQuery({
     queryKey: ['/api/passes/history', JSON.stringify(filters), JSON.stringify(customDateRange)],
     refetchInterval: 3000,
     queryFn: async () => {
@@ -107,6 +107,7 @@ function ReportsTab({ user }) {
       if (!res.ok) throw new Error('Failed to fetch grades');
       return res.json();
     },
+    select: (data) => Array.isArray(data) ? data : (data?.grades ?? []),
   });
 
   const { data: teachers = [] } = useQuery({
@@ -116,6 +117,7 @@ function ReportsTab({ user }) {
       if (!res.ok) throw new Error('Failed to fetch teachers');
       return res.json();
     },
+    select: (data) => Array.isArray(data) ? data : (data?.teachers ?? data?.staff ?? []),
   });
 
   const handleExportCSV = () => {
@@ -130,9 +132,9 @@ function ReportsTab({ user }) {
       const calculatedDuration = isReturned ? calculateDuration(pass.issuedAt, pass.returnedAt) : null;
 
       return [
-        `${pass.student?.firstName} ${pass.student?.lastName}` || "Unknown",
+        `${pass.student?.firstName ?? ''} ${pass.student?.lastName ?? ''}`.trim() || "Unknown",
         pass.student?.grade || "Unknown",
-        `${pass.teacher?.firstName} ${pass.teacher?.lastName}` || "Unknown",
+        `${pass.teacher?.firstName ?? ''} ${pass.teacher?.lastName ?? ''}`.trim() || "Unknown",
         pass.destination || 'General',
         pass.customDestination || pass.destination || 'General',
         formatDateTime(pass.issuedAt, tz),
@@ -203,7 +205,7 @@ function ReportsTab({ user }) {
       const calculatedDuration = calculateDuration(pass.issuedAt, pass.returnedAt);
       return {
         id: pass.id,
-        studentName: `${pass.student?.firstName} ${pass.student?.lastName}` || 'Unknown',
+        studentName: `${pass.student?.firstName ?? ''} ${pass.student?.lastName ?? ''}`.trim() || 'Unknown',
         action: pass.status === 'returned'
           ? `Returned after ${calculatedDuration !== null ? calculatedDuration : 0} minutes`
           : `Checked out${pass.customDestination ? ` - ${pass.customDestination}` : (pass.destination ? ` to ${pass.destination}` : '')}`,

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import * as React from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../../components/ui/card";
 import { Button } from "../../../../components/ui/button";
@@ -24,7 +24,7 @@ import {
 import { Input } from "../../../../components/ui/input";
 import { Label } from "../../../../components/ui/label";
 
-function MyClassTab({ user }) {
+function MyClassTab() {
   const [activeGradeId, setActiveGradeId] = useState('');
   const [customReason, setCustomReason] = useState('');
   const [selectedStudentForCustom, setSelectedStudentForCustom] = useState(null);
@@ -44,6 +44,7 @@ function MyClassTab({ user }) {
       if (!res.ok) throw new Error('Failed to fetch classes');
       return res.json();
     },
+    select: (data) => Array.isArray(data) ? data : (data?.grades ?? data?.classes ?? []),
   });
 
   // Auto-select first class if none selected
@@ -60,6 +61,7 @@ function MyClassTab({ user }) {
       if (!res.ok) throw new Error('Failed to fetch students');
       return res.json();
     },
+    select: (data) => Array.isArray(data) ? data : (data?.students ?? []),
   });
 
   const { data: passes = [], isLoading: passesLoading } = useQuery({
@@ -69,6 +71,7 @@ function MyClassTab({ user }) {
       if (!res.ok) throw new Error('Failed to fetch passes');
       return res.json();
     },
+    select: (data) => Array.isArray(data) ? data : (data?.passes ?? []),
     refetchInterval: 3000,
     gcTime: 0,
   });
@@ -390,7 +393,6 @@ function MyClassTab({ user }) {
       <div className="mb-6">
         <div className="flex flex-wrap gap-2">
           {myClasses.map((grade) => {
-            const gradeStudentsList = students.filter(s => s.gradeId === grade.id);
             const gradeOutCount = passes.filter(p => {
               const student = students.find(s => s.id === p.studentId);
               return student && student.gradeId === grade.id;

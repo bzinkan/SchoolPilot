@@ -31,7 +31,6 @@ import {
   getStudentsByDismissalType,
   getFamilyGroupByCarNumber,
   getFamilyGroupStudents,
-  getMemberByCarNumber,
 } from "../../services/storage.js";
 import { getIO } from "../../realtime/socketio.js";
 
@@ -217,37 +216,29 @@ router.post(
         return res.status(404).json({ error: "Session not found" });
       }
 
-      const school = await getSchoolById(schoolId);
       let guardianName = `Car #${carNumber}`;
       let studentList: { id: string; homeroomId?: string | null }[] = [];
 
-      if (school?.dismissalMode === "no_app") {
-        // No-app mode: look up family group by car number
-        const group = await getFamilyGroupByCarNumber(schoolId, carNumber);
-        if (!group) {
-          return res.status(404).json({ error: "Car number not found" });
-        }
-        const groupStudents = await getFamilyGroupStudents(group.id);
-        studentList = groupStudents
-          .filter((s: any) => s.dismissalType === "car")
-          .map((s: any) => ({ id: s.id, homeroomId: s.homeroomId }));
-      } else {
-        // App mode: look up parent membership by car number
-        const member = await getMemberByCarNumber(schoolId, carNumber);
-        if (!member) {
-          return res.status(404).json({ error: "Car number not found" });
-        }
-        const parentId = member.userId;
-        const parent = await getUserById(parentId);
+      // Always look up family group by car number (unified — no mode branching)
+      const group = await getFamilyGroupByCarNumber(schoolId, carNumber.toString().trim());
+      if (!group) {
+        return res.status(404).json({ error: "Car number not found" });
+      }
+
+      // If a parent claimed this group, use their name
+      if (group.claimedByUserId) {
+        const parent = await getUserById(group.claimedByUserId);
         if (parent) {
           guardianName = `${parent.firstName} ${parent.lastName}`;
         }
-        const carRiders = await getCarRiderChildrenForParent(parentId, schoolId);
-        studentList = carRiders.map((r: any) => {
-          const s = r.student ?? r;
-          return { id: s.id, homeroomId: s.homeroomId };
-        });
+      } else if (group.familyName) {
+        guardianName = group.familyName;
       }
+
+      const groupStudents = await getFamilyGroupStudents(group.id);
+      studentList = groupStudents
+        .filter((s: any) => s.dismissalType === "car")
+        .map((s: any) => ({ id: s.id, homeroomId: s.homeroomId }));
 
       if (studentList.length === 0) {
         return res

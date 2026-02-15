@@ -1,8 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Car, X, AlertCircle, RefreshCw } from 'lucide-react';
+import { Car, X, AlertCircle, RefreshCw, Settings, Users } from 'lucide-react';
 import { useGoPilotAuth } from '../../../hooks/useGoPilotAuth';
 import api from '../../../shared/utils/api';
+
+/** Safely extract an array from API response data (handles wrapped objects). */
+const toArray = (data, key) => Array.isArray(data) ? data : (data?.[key] ?? []);
 import { normalizeStudent, tabs } from './setup/constants';
 import StaffManager from './setup/StaffManager';
 import StudentRoster from './setup/StudentRoster';
@@ -13,11 +16,11 @@ import DismissalConfig from './setup/DismissalConfig';
 import CarNumbersTab from './setup/CarNumbersTab';
 import ParentsTab from './setup/ParentsTab';
 import SchoolSettingsTab from './setup/SchoolSettingsTab';
-import ReviewLaunch from './setup/ReviewLaunch';
+
 
 export default function SchoolSetupWizard() {
   const navigate = useNavigate();
-  const { currentSchool, user } = useGoPilotAuth();
+  const { currentSchool } = useGoPilotAuth();
 
   const [activeTab, setActiveTab] = useState('staff');
   const [students, setStudents] = useState([]);
@@ -25,13 +28,10 @@ export default function SchoolSetupWizard() {
   const [staff, setStaff] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [savingIds, setSavingIds] = useState(new Set());
-
+  const [, setSavingIds] = useState(new Set());
   const [googleConnected, setGoogleConnected] = useState(false);
 
   const [showCreateSchool, setShowCreateSchool] = useState(!currentSchool);
-  const [newSchoolName, setNewSchoolName] = useState('');
-  const [creatingSchool, setCreatingSchool] = useState(false);
 
   const schoolId = currentSchool?.id;
   const schoolName = currentSchool?.name || '';
@@ -49,9 +49,9 @@ export default function SchoolSetupWizard() {
           api.get(`/schools/${schoolId}/homerooms`),
           api.get(`/schools/${schoolId}/staff`).catch(() => ({ data: [] })),
         ]);
-        setStudents((studentsRes.data || []).map(normalizeStudent));
-        setHomerooms(homeroomsRes.data || []);
-        setStaff(staffRes.data || []);
+        setStudents(toArray(studentsRes.data, 'students').map(normalizeStudent));
+        setHomerooms(toArray(homeroomsRes.data, 'homerooms'));
+        setStaff(toArray(staffRes.data, 'staff'));
         // Check Google Classroom connection status
         try {
           const gRes = await api.get(`/schools/${schoolId}/google/status`);
@@ -66,22 +66,6 @@ export default function SchoolSetupWizard() {
     };
     fetchData();
   }, [schoolId]);
-
-  // Create school handler
-  const handleCreateSchool = async (e) => {
-    e.preventDefault();
-    if (!newSchoolName.trim()) return;
-    setCreatingSchool(true);
-    setError(null);
-    try {
-      await api.post('/schools', { name: newSchoolName.trim() });
-      window.location.reload();
-    } catch (err) {
-      console.error('Failed to create school:', err);
-      setError('Failed to create school. Please try again.');
-      setCreatingSchool(false);
-    }
-  };
 
   // Student CRUD
   const handleAddStudent = async (data) => {
@@ -101,7 +85,7 @@ export default function SchoolSetupWizard() {
     try {
       await api.put(`/students/${id}`, data);
       const studentsRes = await api.get(`/schools/${schoolId}/students`);
-      setStudents((studentsRes.data || []).map(normalizeStudent));
+      setStudents(toArray(studentsRes.data, 'students').map(normalizeStudent));
     } catch (err) {
       console.error('Failed to update student:', err);
       setError('Failed to update student.');
@@ -134,7 +118,7 @@ export default function SchoolSetupWizard() {
 
   const refreshStudents = async () => {
     const studentsRes = await api.get(`/schools/${schoolId}/students`);
-    setStudents((studentsRes.data || []).map(normalizeStudent));
+    setStudents(toArray(studentsRes.data, 'students').map(normalizeStudent));
   };
 
   const handleImportCSV = async (file) => {
@@ -242,14 +226,14 @@ export default function SchoolSetupWizard() {
   // No school
   if (showCreateSchool) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="bg-white rounded-xl shadow-sm border p-8 max-w-md w-full text-center">
+      <div className="min-h-screen bg-gray-50 dark:bg-slate-950 flex items-center justify-center">
+        <div className="bg-white dark:bg-slate-900 rounded-xl shadow-sm border dark:border-slate-700 p-8 max-w-md w-full text-center">
           <div className="w-16 h-16 bg-indigo-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
             <Car className="w-8 h-8 text-white" />
           </div>
-          <h1 className="text-2xl font-bold text-gray-900 mb-2">Welcome to GoPilot</h1>
-          <p className="text-gray-500 mb-6">Your school is pending approval. You will receive an email once your account has been approved.</p>
-          <button onClick={() => navigate('/login')} className="px-4 py-2 border rounded-lg text-sm hover:bg-gray-50">
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Welcome to GoPilot</h1>
+          <p className="text-gray-500 dark:text-slate-400 mb-6">Your school is pending approval. You will receive an email once your account has been approved.</p>
+          <button onClick={() => navigate('/login')} className="px-4 py-2 border dark:border-slate-600 rounded-lg text-sm hover:bg-gray-50 dark:hover:bg-slate-800 dark:text-slate-300">
             Back to Login
           </button>
         </div>
@@ -259,37 +243,58 @@ export default function SchoolSetupWizard() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="min-h-screen bg-gray-50 dark:bg-slate-950 flex items-center justify-center">
         <div className="text-center">
           <RefreshCw className="w-8 h-8 text-indigo-600 animate-spin mx-auto mb-4" />
-          <p className="text-gray-600">Loading school data...</p>
+          <p className="text-gray-600 dark:text-slate-400">Loading school data...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 dark:bg-slate-950">
       {/* Header */}
-      <header className="bg-white border-b">
+      <header className="bg-white dark:bg-slate-900 border-b dark:border-slate-700">
         <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center">
               <Car className="w-5 h-5 text-white" />
             </div>
             <div>
-              <h1 className="font-bold text-gray-900">GoPilot Setup</h1>
-              <p className="text-sm text-gray-500">{schoolName}</p>
+              <h1 className="font-bold text-gray-900 dark:text-white">GoPilot Setup</h1>
+              <p className="text-sm text-gray-500 dark:text-slate-400">{schoolName}</p>
             </div>
           </div>
-          <button onClick={() => navigate('/gopilot')} className="px-4 py-2 text-sm text-gray-600 border rounded-lg hover:bg-gray-50">
-            Back to Dashboard
-          </button>
+          <div className="flex items-center gap-2">
+            {[
+
+              { id: 'parents', icon: Users, label: 'Parents' },
+              { id: 'settings', icon: Settings, label: 'Settings' },
+            ].map(({ id, icon: Icon, label }) => (
+              <button
+                key={id}
+                onClick={() => setActiveTab(id)}
+                className={`flex items-center gap-1.5 px-2.5 py-2 rounded-lg border text-sm transition-colors ${
+                  activeTab === id
+                    ? 'bg-indigo-50 dark:bg-indigo-900/30 border-indigo-200 dark:border-indigo-800 text-indigo-600 dark:text-indigo-400'
+                    : 'border-gray-200 dark:border-slate-600 text-gray-500 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-800'
+                }`}
+                title={label}
+              >
+                <Icon className="w-4 h-4" />
+                <span className="hidden sm:inline">{label}</span>
+              </button>
+            ))}
+            <button onClick={() => navigate('/gopilot')} className="px-4 py-2 text-sm text-gray-600 dark:text-slate-300 border dark:border-slate-600 rounded-lg hover:bg-gray-50 dark:hover:bg-slate-800">
+              Back to Dashboard
+            </button>
+          </div>
         </div>
       </header>
 
       {/* Tab Navigation */}
-      <div className="bg-white border-b">
+      <div className="bg-white dark:bg-slate-900 border-b dark:border-slate-700">
         <div className="max-w-6xl mx-auto px-4">
           <div className="flex gap-1 overflow-x-auto">
             {tabs.map(tab => {
@@ -302,7 +307,7 @@ export default function SchoolSetupWizard() {
                   className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 whitespace-nowrap transition-colors ${
                     isActive
                       ? 'border-indigo-600 text-indigo-600'
-                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                      : 'border-transparent text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-300 hover:border-gray-300 dark:hover:border-slate-600'
                   }`}
                 >
                   <Icon className="w-4 h-4" />
@@ -317,7 +322,7 @@ export default function SchoolSetupWizard() {
       {/* Main Content */}
       <main className="max-w-6xl mx-auto px-4 py-6">
         {error && (
-          <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg flex items-center gap-3 text-red-700 text-sm">
+          <div className="mb-4 p-3 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 rounded-lg flex items-center gap-3 text-red-700 dark:text-red-400 text-sm">
             <AlertCircle className="w-4 h-4 flex-shrink-0" />
             <p>{error}</p>
             <button onClick={() => setError(null)} className="ml-auto"><X className="w-4 h-4" /></button>
@@ -340,11 +345,11 @@ export default function SchoolSetupWizard() {
             onUpdate={async (userId, data) => {
               await api.put(`/schools/${schoolId}/staff/${userId}`, data);
               const res = await api.get(`/schools/${schoolId}/staff`);
-              setStaff(res.data || []);
+              setStaff(toArray(res.data, 'staff'));
             }}
             onRefresh={async () => {
               const res = await api.get(`/schools/${schoolId}/staff`);
-              setStaff(res.data || []);
+              setStaff(toArray(res.data, 'staff'));
             }}
           />
         )}
@@ -380,7 +385,7 @@ export default function SchoolSetupWizard() {
             setGoogleConnected={setGoogleConnected}
             onRefreshStudents={async () => {
               const res = await api.get(`/schools/${schoolId}/students`);
-              setStudents((res.data || []).map(normalizeStudent));
+              setStudents(toArray(res.data, 'students').map(normalizeStudent));
             }}
           />
         )}
@@ -391,7 +396,7 @@ export default function SchoolSetupWizard() {
             onUpdateStudents={async (updates) => {
               await api.put(`/schools/${schoolId}/students/bulk-update`, { updates });
               const res = await api.get(`/schools/${schoolId}/students`);
-              setStudents((res.data || []).map(normalizeStudent));
+              setStudents(toArray(res.data, 'students').map(normalizeStudent));
             }}
             onUpdateStudent={async (id, data) => {
               await api.put(`/students/${id}`, data);
@@ -408,13 +413,7 @@ export default function SchoolSetupWizard() {
             onBulkSet={handleBulkSetDismissal}
           />
         )}
-        {activeTab === 'review' && (
-          <ReviewLaunch
-            students={students}
-            homerooms={homerooms}
-            onLaunch={() => navigate('/gopilot')}
-          />
-        )}
+
         {activeTab === 'car-numbers' && (
           <CarNumbersTab schoolId={schoolId} students={students} />
         )}

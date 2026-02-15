@@ -11,6 +11,7 @@ export function useStudents() {
       if (!res.ok) throw new Error('Failed to fetch students');
       return res.json();
     },
+    select: (data) => Array.isArray(data) ? data : (data?.students ?? []),
   });
 }
 
@@ -22,6 +23,7 @@ export function useGrades() {
       if (!res.ok) throw new Error('Failed to fetch grades');
       return res.json();
     },
+    select: (data) => Array.isArray(data) ? data : (data?.grades ?? []),
   });
 }
 
@@ -33,6 +35,7 @@ export function useTeachers() {
       if (!res.ok) throw new Error('Failed to fetch teachers');
       return res.json();
     },
+    select: (data) => Array.isArray(data) ? data : (data?.teachers ?? data?.staff ?? []),
   });
 }
 

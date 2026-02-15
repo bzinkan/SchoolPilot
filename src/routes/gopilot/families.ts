@@ -16,8 +16,6 @@ import {
   setFamilyGroupStudents,
   removeStudentFromFamilyGroup,
   getUnassignedStudents,
-  getSchoolById,
-  updateSchool,
   getHomeroomById,
 } from "../../services/storage.js";
 import { generateFamilyGroupNumber } from "../../util/studentCode.js";
@@ -93,10 +91,12 @@ router.post(
 
       const num = carNumber || (await generateFamilyGroupNumber(schoolId));
 
+      const inviteToken = crypto.randomBytes(32).toString("hex");
       const group = await createFamilyGroup({
         schoolId,
         carNumber: num,
         familyName: familyName || null,
+        inviteToken,
       });
 
       if (Array.isArray(studentIds) && studentIds.length > 0) {
@@ -190,10 +190,12 @@ router.post(
       let created = 0;
       for (const student of unassigned) {
         const carNum = await generateFamilyGroupNumber(schoolId);
+        const inviteToken = crypto.randomBytes(32).toString("hex");
         const group = await createFamilyGroup({
           schoolId,
           carNumber: carNum,
           familyName: `${student.lastName} Family`,
+          inviteToken,
         });
         await addStudentsToFamilyGroup(group.id, [student.id]);
         created++;
@@ -205,65 +207,5 @@ router.post(
     }
   }
 );
-
-// ============================================================================
-// Dismissal Mode
-// ============================================================================
-
-// POST /api/gopilot/send-to-app-mode
-router.post(
-  "/send-to-app-mode",
-  ...auth,
-  requireRole("admin"),
-  async (req, res, next) => {
-    try {
-      const schoolId = res.locals.schoolId!;
-
-      await updateSchool(schoolId, { dismissalMode: "app" });
-
-      const groups = await getFamilyGroupsBySchool(schoolId);
-
-      const updatedGroups = await Promise.all(
-        groups.map(async (g) => {
-          if (!g.inviteToken) {
-            const token = crypto.randomBytes(32).toString("hex");
-            await updateFamilyGroup(g.id, { inviteToken: token });
-            return { ...g, inviteToken: token };
-          }
-          return g;
-        })
-      );
-
-      return res.json({ mode: "app", groups: updatedGroups });
-    } catch (err) {
-      next(err);
-    }
-  }
-);
-
-// POST /api/gopilot/switch-to-no-app-mode
-router.post(
-  "/switch-to-no-app-mode",
-  ...auth,
-  requireRole("admin"),
-  async (req, res, next) => {
-    try {
-      await updateSchool(res.locals.schoolId!, { dismissalMode: "no_app" });
-      return res.json({ mode: "no_app" });
-    } catch (err) {
-      next(err);
-    }
-  }
-);
-
-// GET /api/gopilot/dismissal-mode
-router.get("/dismissal-mode", ...auth, async (req, res, next) => {
-  try {
-    const school = await getSchoolById(res.locals.schoolId!);
-    return res.json({ mode: school?.dismissalMode ?? "no_app" });
-  } catch (err) {
-    next(err);
-  }
-});
 
 export default router;
