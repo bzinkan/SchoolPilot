@@ -196,6 +196,7 @@ module "ecs" {
   sendgrid_api_key   = var.sendgrid_api_key
   stripe_secret_key  = var.stripe_secret_key
   stripe_webhook_secret = var.stripe_webhook_secret
+  openai_api_key        = var.openai_api_key
 
   # Scaling
   desired_count = var.ecs_desired_count

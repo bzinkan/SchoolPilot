@@ -117,6 +117,7 @@ resource "aws_ecs_task_definition" "api" {
       { name = "SENDGRID_API_KEY", value = var.sendgrid_api_key },
       { name = "STRIPE_SECRET_KEY", value = var.stripe_secret_key },
       { name = "STRIPE_WEBHOOK_SECRET", value = var.stripe_webhook_secret },
+      { name = "OPENAI_API_KEY", value = var.openai_api_key },
     ]
 
     logConfiguration = {

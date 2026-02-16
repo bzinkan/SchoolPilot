@@ -13,7 +13,7 @@ variable "project" {
 variable "environment" {
   description = "Environment (staging, production)"
   type        = string
-  default     = "staging"
+  default     = "production"
 }
 
 variable "aws_region" {
@@ -27,7 +27,7 @@ variable "aws_region" {
 variable "vpc_cidr" {
   description = "CIDR block for the VPC"
   type        = string
-  default     = "10.0.0.0/16"
+  default     = "10.1.0.0/16"
 }
 
 variable "az_count" {
@@ -171,6 +171,13 @@ variable "stripe_secret_key" {
 
 variable "stripe_webhook_secret" {
   description = "Stripe webhook signing secret"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "openai_api_key" {
+  description = "OpenAI API key for AI content classification"
   type        = string
   sensitive   = true
   default     = ""

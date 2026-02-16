@@ -2093,6 +2093,57 @@ export async function updateStudentDeviceLastSeen(
     );
 }
 
+export async function getStudentsForDevice(
+  deviceId: string
+): Promise<Student[]> {
+  const rows = await db
+    .select({ student: students })
+    .from(studentDevices)
+    .innerJoin(students, eq(studentDevices.studentId, students.id))
+    .where(eq(studentDevices.deviceId, deviceId));
+  return rows.map((r) => r.student);
+}
+
+export async function getActiveStudentForDevice(
+  deviceId: string
+): Promise<{ student: Student; session: StudentSession } | null> {
+  const rows = await db
+    .select({ student: students, session: studentSessions })
+    .from(studentSessions)
+    .innerJoin(students, eq(studentSessions.studentId, students.id))
+    .where(
+      and(
+        eq(studentSessions.deviceId, deviceId),
+        eq(studentSessions.isActive, true)
+      )
+    )
+    .limit(1);
+  if (rows.length === 0) return null;
+  return { student: rows[0]!.student, session: rows[0]!.session };
+}
+
+export async function setActiveStudentForDevice(
+  deviceId: string,
+  studentId: string
+): Promise<StudentSession> {
+  // End any active session for this device
+  await db
+    .update(studentSessions)
+    .set({ isActive: false, endedAt: new Date() })
+    .where(
+      and(
+        eq(studentSessions.deviceId, deviceId),
+        eq(studentSessions.isActive, true)
+      )
+    );
+  // Start new session
+  const [session] = await db
+    .insert(studentSessions)
+    .values({ studentId, deviceId })
+    .returning();
+  return session!;
+}
+
 // ============================================================================
 // ClassPilot - Heartbeat operations
 // ============================================================================

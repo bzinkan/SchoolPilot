@@ -144,6 +144,7 @@ router.use((req: Request, _res: Response, next: NextFunction) => {
 
   // --- ClassPilot extension endpoints (no prefix) ---
   if (p === "/school/status") { req.url = "/classpilot" + req.url; return next(); }
+  if (p === "/register" && m === "POST") { req.url = "/classpilot" + req.url; return next(); }
 
   // --- ClassPilot route aliases (frontends call without /classpilot prefix) ---
   if (p === "/devices" || p.startsWith("/devices/")) { req.url = "/classpilot" + req.url; return next(); }
