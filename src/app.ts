@@ -94,6 +94,20 @@ export function createApp() {
     res.json({ status: "ok" });
   });
 
+  // Client config for Chrome extension (public, no auth)
+  app.get("/client-config.json", (_req, res) => {
+    res.json({
+      baseUrl: process.env.PUBLIC_BASE_URL || "http://localhost:4000",
+      wsAvailable: true,
+    });
+  });
+  app.get("/api/client-config", (_req, res) => {
+    res.json({
+      baseUrl: process.env.PUBLIC_BASE_URL || "http://localhost:4000",
+      wsAvailable: true,
+    });
+  });
+
   // Routes
   app.use("/api", routes);
 

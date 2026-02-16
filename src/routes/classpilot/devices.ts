@@ -20,6 +20,8 @@ import {
   createStudent,
   startStudentSession,
   searchStudents,
+  getSchoolByDomain,
+  getSchoolById,
 } from "../../services/storage.js";
 import { createStudentToken } from "../../services/deviceJwt.js";
 import {
@@ -47,21 +49,159 @@ const staffAuth = [
   requireProductLicense("CLASSPILOT"),
 ] as const;
 
+// POST /api/classpilot/school/status - Check school status from email domain
+router.post("/school/status", async (req, res, next) => {
+  try {
+    const { studentEmail } = req.body;
+    if (!studentEmail) {
+      return res.status(400).json({ error: "studentEmail required" });
+    }
+
+    const domain = studentEmail.split("@")[1]?.toLowerCase();
+    if (!domain) {
+      return res.status(400).json({ error: "Invalid email" });
+    }
+
+    const school = await getSchoolByDomain(domain);
+    if (!school) {
+      return res.status(401).json({ error: "Unknown school domain" });
+    }
+
+    return res.json({
+      schoolId: school.id,
+      schoolActive: school.status === "active" || school.status === "trial",
+      planStatus: school.planStatus || "active",
+      status: school.status,
+      schoolSessionVersion: 1,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/classpilot/school/status - Also support GET
+router.get("/school/status", async (req, res) => {
+  return res.json({ status: "ok", message: "Use POST with studentEmail" });
+});
+
+// GET /api/classpilot/extension/settings - Extension settings (requires device JWT)
+router.get("/extension/settings", requireDeviceAuth, async (req, res, next) => {
+  try {
+    const schoolId = res.locals.schoolId as string;
+    const school = await getSchoolById(schoolId);
+    if (!school) {
+      return res.status(404).json({ error: "School not found" });
+    }
+
+    return res.json({
+      enableTrackingHours: false,
+      trackingStartTime: null,
+      trackingEndTime: null,
+      trackingDays: null,
+      schoolTimezone: school.schoolTimezone || null,
+      afterHoursMode: "off",
+      maxTabsPerStudent: null,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /api/classpilot/extension/register - Register a device from the Chrome extension
+// Supports both email-based (ClassPilot extension) and schoolId-based registration
 router.post("/extension/register", async (req, res, next) => {
   try {
-    const { deviceId, deviceName, schoolId, classId } = req.body;
-    if (!deviceId || !schoolId) {
+    const { deviceId, deviceName, studentEmail, studentName, schoolId: explicitSchoolId, classId } = req.body;
+    if (!deviceId) {
+      return res.status(400).json({ error: "deviceId required" });
+    }
+
+    // Resolve school: either explicit schoolId or from email domain
+    let resolvedSchoolId = explicitSchoolId;
+    let school;
+
+    if (!resolvedSchoolId && studentEmail) {
+      const domain = studentEmail.split("@")[1]?.toLowerCase();
+      if (domain) {
+        school = await getSchoolByDomain(domain);
+        if (school) resolvedSchoolId = school.id;
+      }
+    }
+
+    if (resolvedSchoolId && !school) {
+      school = await getSchoolById(resolvedSchoolId);
+    }
+
+    if (!resolvedSchoolId) {
       return res.status(400).json({ error: "deviceId and schoolId required" });
     }
 
+    // Check school is active
+    if (school && school.status !== "active" && school.status !== "trial") {
+      return res.status(403).json({ error: "School is not active" });
+    }
+
+    // Create or update device
     let device = await getDeviceById(deviceId);
     if (!device) {
       device = await createDevice({
         deviceId,
         deviceName: deviceName || null,
-        schoolId,
-        classId: classId || schoolId,
+        schoolId: resolvedSchoolId,
+        classId: classId || resolvedSchoolId,
+      });
+    }
+
+    // If studentEmail provided, also register the student and return a token
+    if (studentEmail) {
+      const existing = await searchStudents(resolvedSchoolId, { search: studentEmail });
+      let student = existing[0];
+
+      if (!student) {
+        const nameParts = (studentName || studentEmail.split("@")[0]).split(/\s+/);
+        student = await createStudent({
+          schoolId: resolvedSchoolId,
+          firstName: nameParts[0] || studentEmail.split("@")[0],
+          lastName: nameParts.slice(1).join(" ") || "",
+          email: studentEmail,
+          gradeLevel: null,
+          status: "active",
+        });
+      }
+
+      // Link student to device
+      await linkStudentDevice({ studentId: student.id, deviceId });
+
+      // Start session
+      await startStudentSession(student.id, deviceId);
+
+      // Generate device JWT
+      const studentToken = createStudentToken({
+        studentId: student.id,
+        deviceId,
+        schoolId: resolvedSchoolId,
+        studentEmail,
+      });
+
+      // Broadcast to teachers
+      broadcastToTeachersLocal(resolvedSchoolId, {
+        type: "student-registered",
+        studentId: student.id,
+        deviceId,
+        studentEmail,
+        studentName: studentName || student.firstName,
+      });
+      await publishWS({ kind: "staff", schoolId: resolvedSchoolId }, {
+        type: "student-registered",
+        studentId: student.id,
+        deviceId,
+      });
+
+      return res.json({
+        success: true,
+        device,
+        student,
+        studentToken,
       });
     }
 
@@ -71,7 +211,7 @@ router.post("/extension/register", async (req, res, next) => {
   }
 });
 
-// POST /api/classpilot/register-student - Register student and get device token
+// POST /api/classpilot/register-student - Register student and get device token (legacy)
 router.post("/register-student", async (req, res, next) => {
   try {
     const { deviceId, studentEmail, gradeLevel, firstName, lastName, schoolId } = req.body;

@@ -216,6 +216,17 @@ export async function getSchoolById(
   return school;
 }
 
+export async function getSchoolByDomain(
+  domain: string
+): Promise<School | undefined> {
+  const [school] = await db
+    .select()
+    .from(schools)
+    .where(eq(schools.domain, domain.toLowerCase()))
+    .limit(1);
+  return school;
+}
+
 export async function createSchool(data: InsertSchool): Promise<School> {
   const [school] = await db.insert(schools).values(data).returning();
   return school!;
