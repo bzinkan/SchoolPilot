@@ -808,9 +808,11 @@ export default function AdminClasses() {
                             className="w-full justify-between font-normal"
                             data-testid="select-teacher"
                           >
+                            {/* eslint-disable-next-line react-hooks/incompatible-library */}
                             {form.watch("teacherId")
                               ? (() => {
-                                  const selectedTeacher = sortedTeachers.find(t => t.id === form.watch("teacherId"));
+                                  const teacherIdVal = form.getValues("teacherId");
+                                  const selectedTeacher = sortedTeachers.find(t => t.id === teacherIdVal);
                                   return selectedTeacher
                                     ? `${selectedTeacher.displayName || selectedTeacher.email || selectedTeacher.username}${selectedTeacher.role === 'school_admin' ? ' (Admin)' : ''}`
                                     : "Select a teacher";

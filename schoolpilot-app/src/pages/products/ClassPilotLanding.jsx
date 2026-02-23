@@ -6,12 +6,16 @@ export default function ClassPilotLanding() {
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
 
   useEffect(() => {
-    setLoaded(true);
+    // Use rAF to defer setState out of the synchronous effect body
+    const raf = requestAnimationFrame(() => setLoaded(true));
     const handleMouse = (e) => {
       setMousePos({ x: e.clientX, y: e.clientY });
     };
     window.addEventListener('mousemove', handleMouse);
-    return () => window.removeEventListener('mousemove', handleMouse);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener('mousemove', handleMouse);
+    };
   }, []);
 
   const students = [

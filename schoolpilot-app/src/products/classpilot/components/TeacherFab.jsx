@@ -158,9 +158,11 @@ function TeacherFab({
       hasDraggedRef.current = false;
       return; // Don't toggle if we just finished dragging
     }
-    setExpanded(!expanded);
-    if (expanded) setActivePanel(null);
-  }, [expanded]);
+    setExpanded((prev) => {
+      if (prev) setActivePanel(null);
+      return !prev;
+    });
+  }, []);
 
   const chatEndRefs = useRef({});
   const unreadCount = studentMessages.filter(m => !m.read).length;
