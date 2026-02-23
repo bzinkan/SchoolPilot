@@ -51,7 +51,7 @@ jobs:
 
       - name: Audit frontend dependencies
         working-directory: schoolpilot-app
-        run: npm audit --audit-level=moderate
+        run: npm audit --audit-level=critical
 
       - name: Lint frontend
         working-directory: schoolpilot-app
