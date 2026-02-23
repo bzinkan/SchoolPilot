@@ -6,6 +6,15 @@ const api = axios.create({
   withCredentials: true,
 });
 
+// Attach Bearer token from localStorage on every request
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('sp_token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
 // Handle 401 → redirect to login (but not for /auth/me which is expected to 401)
 api.interceptors.response.use(
   (res) => res,

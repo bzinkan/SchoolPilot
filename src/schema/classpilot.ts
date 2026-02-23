@@ -132,6 +132,40 @@ export type Heartbeat = typeof heartbeats.$inferSelect;
 export type InsertHeartbeat = typeof heartbeats.$inferInsert;
 
 // ============================================================================
+// Daily Usage - Pre-aggregated daily screen time per student
+// ============================================================================
+export const dailyUsage = pgTable(
+  "daily_usage",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
+    studentId: text("student_id").notNull(),
+    date: text("date").notNull(), // "YYYY-MM-DD" in school timezone
+    totalSeconds: integer("total_seconds").notNull().default(0),
+    heartbeatCount: integer("heartbeat_count").notNull().default(0),
+    topDomains: jsonb("top_domains"), // [{domain, seconds, visits}]
+    firstSeen: timestamp("first_seen"),
+    lastSeen: timestamp("last_seen"),
+    computedAt: timestamp("computed_at").notNull().default(sql`now()`),
+  },
+  (table) => [
+    index("daily_usage_school_date_idx").on(table.schoolId, table.date),
+    uniqueIndex("daily_usage_student_date_unique").on(
+      table.studentId,
+      table.date
+    ),
+    index("daily_usage_school_student_date_idx").on(
+      table.schoolId,
+      table.studentId,
+      table.date
+    ),
+  ]
+);
+
+export type DailyUsage = typeof dailyUsage.$inferSelect;
+export type InsertDailyUsage = typeof dailyUsage.$inferInsert;
+
+// ============================================================================
 // Events - Audit events for student activity
 // ============================================================================
 export const events = pgTable(
@@ -486,6 +520,8 @@ export const teacherSettings = pgTable("teacher_settings", {
     .array()
     .default(sql`'{}'::text[]`),
   defaultFlightPathId: text("default_flight_path_id"),
+  handRaisingEnabled: boolean("hand_raising_enabled").notNull().default(true),
+  studentMessagingEnabled: boolean("student_messaging_enabled").notNull().default(true),
   createdAt: timestamp("created_at").notNull().default(sql`now()`),
   updatedAt: timestamp("updated_at").notNull().default(sql`now()`),
 });

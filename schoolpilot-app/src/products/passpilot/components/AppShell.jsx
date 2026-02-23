@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { usePassPilotAuth } from '../../../hooks/usePassPilotAuth';
+import { apiRequest } from '../../../lib/queryClient';
 import { useLicenses } from '../../../contexts/LicenseContext';
 import {
   ArrowLeft,
@@ -53,12 +54,7 @@ export default function AppShell({ children, currentTab, onTabChange }) {
 
   const saveKioskName = async (name) => {
     try {
-      await fetch('/api/kiosk-config', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ kioskName: name }),
-      });
+      await apiRequest('PUT', '/kiosk-config', { kioskName: name });
       // Refresh user data so kioskName updates
       refetchUser();
     } catch {

@@ -79,24 +79,21 @@ function ClassCard({ group, teacher, teachers, isExpanded, onToggleExpand, onDel
     return parts.length > 1 ? parts[parts.length - 1].toLowerCase() : parts[0].toLowerCase();
   };
 
-  // Sort teachers by last name
+  // Sort teachers by last name (all staff who can teach)
   const sortedTeachers = teachers
-    .filter(t => t.role === 'teacher' || t.role === 'school_admin')
+    .filter(t => t.role === 'teacher' || t.role === 'school_admin' || t.role === 'admin')
     .sort((a, b) => {
-      const aLastName = getLastName(a.displayName) || a.email.toLowerCase();
-      const bLastName = getLastName(b.displayName) || b.email.toLowerCase();
+      const aLastName = getLastName(a.displayName) || a.email?.toLowerCase() || "";
+      const bLastName = getLastName(b.displayName) || b.email?.toLowerCase() || "";
       return aLastName.localeCompare(bLastName);
     });
 
   // Fetch students for this class (always fetch to show count)
-  const { data: classStudents = [], isLoading } = useQuery({
+  const { data: rawClassStudents, isLoading } = useQuery({
     queryKey: ["/api/groups", group.id, "students"],
-    queryFn: async () => {
-      const res = await fetch(`/api/groups/${group.id}/students`, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to fetch students");
-      return res.json();
-    },
+    queryFn: () => apiRequest("GET", `/groups/${group.id}/students`),
   });
+  const classStudents = Array.isArray(rawClassStudents) ? rawClassStudents : [];
 
   // Update class mutation
   const updateClassMutation = useMutation({
@@ -185,7 +182,7 @@ function ClassCard({ group, teacher, teachers, isExpanded, onToggleExpand, onDel
             <div className="flex-1">
               <p className="font-medium">{group.name}</p>
               <p className="text-sm text-muted-foreground">
-                {teacher?.username || 'Unknown Teacher'}
+                {teacher?.displayName || teacher?.email || 'Unknown Teacher'}
                 {group.periodLabel && ` \u2022 ${group.periodLabel}`}
                 {group.gradeLevel && ` \u2022 Grade ${group.gradeLevel}`}
               </p>
@@ -437,47 +434,28 @@ export default function AdminClasses() {
   // Queries
   const { data: teachersData } = useQuery({
     queryKey: ["/api/admin/teachers"],
-    queryFn: async () => {
-      const res = await fetch("/api/admin/teachers", { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to fetch teachers");
-      return res.json();
-    },
+    queryFn: () => apiRequest("GET", "/admin/teachers"),
   });
 
   const { data: studentsData } = useQuery({
     queryKey: ["/api/admin/teacher-students"],
-    queryFn: async () => {
-      const res = await fetch("/api/admin/teacher-students", { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to fetch students");
-      return res.json();
-    },
+    queryFn: () => apiRequest("GET", "/admin/teacher-students"),
   });
 
-  const { data: allGroups = [] } = useQuery({
+  const { data: groupsData } = useQuery({
     queryKey: ["/api/teacher/groups"],
-    queryFn: async () => {
-      const res = await fetch("/api/teacher/groups", { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to fetch groups");
-      return res.json();
-    },
+    queryFn: () => apiRequest("GET", "/teacher/groups"),
   });
+  const allGroups = groupsData?.groups || [];
 
   const { data: settings } = useQuery({
     queryKey: ["/api/settings"],
-    queryFn: async () => {
-      const res = await fetch("/api/settings", { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to fetch settings");
-      return res.json();
-    },
+    queryFn: () => apiRequest("GET", "/settings"),
   });
 
   const { data: classroomCourses = [], isLoading: isLoadingCourses, refetch: refetchCourses } = useQuery({
     queryKey: ["/api/admin/classroom/courses-preview"],
-    queryFn: async () => {
-      const res = await fetch("/api/admin/classroom/courses-preview", { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to fetch courses");
-      return res.json();
-    },
+    queryFn: () => apiRequest("GET", "/admin/classroom/courses-preview"),
     enabled: syncDialogOpen,
   });
 
@@ -491,12 +469,12 @@ export default function AdminClasses() {
     return parts.length > 1 ? parts[parts.length - 1].toLowerCase() : parts[0].toLowerCase();
   };
 
-  // Sort teachers by last name (filtered to teachers and school_admins only)
+  // Sort teachers by last name (all staff who can teach)
   const sortedTeachers = teachers
-    .filter(t => t.role === 'teacher' || t.role === 'school_admin')
+    .filter(t => t.role === 'teacher' || t.role === 'school_admin' || t.role === 'admin')
     .sort((a, b) => {
-      const aLastName = getLastName(a.displayName) || a.email.toLowerCase();
-      const bLastName = getLastName(b.displayName) || b.email.toLowerCase();
+      const aLastName = getLastName(a.displayName) || a.email?.toLowerCase() || "";
+      const bLastName = getLastName(b.displayName) || b.email?.toLowerCase() || "";
       return aLastName.localeCompare(bLastName);
     });
 
@@ -541,7 +519,6 @@ export default function AdminClasses() {
       return await apiRequest("POST", "/teacher/groups", {
         ...data,
         groupType: "admin_class",
-        schoolId: settings?.schoolId || "default-school",
       });
     },
     onSuccess: async () => {
@@ -595,7 +572,7 @@ export default function AdminClasses() {
   // Delete class mutation
   const deleteClassMutation = useMutation({
     mutationFn: async (classId) => {
-      return await apiRequest("DELETE", `/teacher/groups/${classId}`, {});
+      return await apiRequest("DELETE", `/groups/${classId}`, {});
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["/api/teacher/groups"], exact: false });
@@ -652,11 +629,7 @@ export default function AdminClasses() {
 
   // Sync courses from Google Classroom (actually fetches from Google API)
   const syncFromGoogleMutation = useMutation({
-    mutationFn: async () => {
-      const res = await fetch("/api/classroom/courses", { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to sync courses");
-      return res.json();
-    },
+    mutationFn: () => apiRequest("GET", "/classroom/courses"),
     onSuccess: async () => {
       await refetchCourses();
       toast({
@@ -1190,7 +1163,7 @@ export default function AdminClasses() {
                 <SelectContent>
                   {filteredClasses.map((group) => (
                     <SelectItem key={group.id} value={group.id}>
-                      {group.name} ({teachers.find(t => t.id === group.teacherId)?.username})
+                      {group.name} ({teachers.find(t => t.id === group.teacherId)?.displayName || teachers.find(t => t.id === group.teacherId)?.email || 'Unassigned'})
                     </SelectItem>
                   ))}
                 </SelectContent>

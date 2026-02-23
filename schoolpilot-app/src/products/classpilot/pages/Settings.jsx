@@ -45,7 +45,6 @@ const settingsSchema = z.object({
   retentionDays: z.string().min(1, "Retention period is required"),
   maxTabsPerStudent: z.string().optional(),
   blockedDomains: z.string(),
-  allowedDomains: z.string(),
   ipAllowlist: z.string(),
   aiSafetyEmailsEnabled: z.boolean().optional(),
 });
@@ -68,20 +67,12 @@ export default function Settings() {
 
   const { data: settings, isLoading } = useQuery({
     queryKey: ['/api/settings'],
-    queryFn: async () => {
-      const res = await fetch('/api/settings', { credentials: 'include' });
-      if (!res.ok) throw new Error('Failed to fetch settings');
-      return res.json();
-    },
+    queryFn: () => apiRequest('GET', '/settings'),
   });
 
   const { data: scenes = [], isLoading: scenesLoading } = useQuery({
     queryKey: ['/api/flight-paths'],
-    queryFn: async () => {
-      const res = await fetch('/api/flight-paths', { credentials: 'include' });
-      if (!res.ok) throw new Error('Failed to fetch flight paths');
-      return res.json();
-    },
+    queryFn: () => apiRequest('GET', '/flight-paths'),
     select: (data) => Array.isArray(data) ? data : (data?.flightPaths ?? data?.scenes ?? []),
   });
 
@@ -92,7 +83,6 @@ export default function Settings() {
       retentionDays: settings?.retentionHours ? String(Math.round(parseInt(settings.retentionHours) / 24)) : "30",
       maxTabsPerStudent: settings?.maxTabsPerStudent || "",
       blockedDomains: settings?.blockedDomains?.join(", ") || "",
-      allowedDomains: settings?.allowedDomains?.join(", ") || "",
       ipAllowlist: settings?.ipAllowlist?.join(", ") || "",
       aiSafetyEmailsEnabled: settings?.aiSafetyEmailsEnabled !== false,
     },
@@ -106,7 +96,6 @@ export default function Settings() {
         retentionDays: String(Math.round(parseInt(settings.retentionHours) / 24)),
         maxTabsPerStudent: settings.maxTabsPerStudent || "",
         blockedDomains: settings.blockedDomains?.join(", ") || "",
-        allowedDomains: settings.allowedDomains?.join(", ") || "",
         ipAllowlist: settings.ipAllowlist?.join(", ") || "",
         aiSafetyEmailsEnabled: settings.aiSafetyEmailsEnabled !== false,
       });
@@ -115,22 +104,14 @@ export default function Settings() {
 
   const updateSettingsMutation = useMutation({
     mutationFn: async (data) => {
-      // Use schoolId from loaded settings, or default for initial creation
-      const schoolId = settings?.schoolId || "default-school";
-
       // Convert days to hours for storage
       const retentionHours = String(parseInt(data.retentionDays) * 24);
 
       const payload = {
-        schoolId,
         ...data,
         retentionHours,
         maxTabsPerStudent: data.maxTabsPerStudent || null,
         blockedDomains: data.blockedDomains
-          .split(",")
-          .map((d) => normalizeDomain(d))
-          .filter(Boolean),
-        allowedDomains: data.allowedDomains
           .split(",")
           .map((d) => normalizeDomain(d))
           .filter(Boolean),
@@ -161,9 +142,7 @@ export default function Settings() {
   // Scenes mutations
   const createSceneMutation = useMutation({
     mutationFn: async () => {
-      const schoolId = settings?.schoolId || "default-school";
       return await apiRequest("POST", "/flight-paths", {
-        schoolId,
         flightPathName,
         description: sceneDescription || undefined,
         allowedDomains: sceneAllowedDomains.split(",").map(d => normalizeDomain(d)).filter(Boolean),
@@ -405,19 +384,6 @@ export default function Settings() {
                 />
                 <p className="text-xs text-muted-foreground">
                   Students will be blocked from accessing these domains. Use this to block AI tools, cheating sites, etc.
-                </p>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="allowedDomains">Allowed Websites (comma-separated)</Label>
-                <Input
-                  id="allowedDomains"
-                  data-testid="input-allowed-domains"
-                  {...form.register("allowedDomains")}
-                  placeholder="classroom.google.com, kahoot.com"
-                />
-                <p className="text-xs text-muted-foreground">
-                  Students navigating away from these websites will be marked as off-task. Leave empty to disable this feature.
                 </p>
               </div>
 

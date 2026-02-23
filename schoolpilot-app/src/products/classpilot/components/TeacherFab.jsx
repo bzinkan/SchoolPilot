@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { Eye, EyeOff, Timer, Clock, BarChart3, Hand, MessageSquare, X, Send, GraduationCap } from "lucide-react";
 import { Button } from "../../../components/ui/button";
 import { Input } from "../../../components/ui/input";
+import { Switch } from "../../../components/ui/switch";
 import { cn } from "../../../lib/utils";
 
 const FAB_POSITION_KEY = "classpilot-fab-position";
@@ -28,11 +29,12 @@ function TeacherFab({
   replyPending,
   studentMessagingEnabled = true,
   onToggleStudentMessaging,
+  chatReplies = {},
+  onCloseChat,
 }) {
   const [expanded, setExpanded] = useState(false);
   const [activePanel, setActivePanel] = useState(null);
-  const [replyingTo, setReplyingTo] = useState(null);
-  const [replyText, setReplyText] = useState("");
+  const [replyTexts, setReplyTexts] = useState({});
 
   // Draggable FAB state
   const [position, setPosition] = useState({ x: 24, y: 24 }); // bottom-right offset
@@ -160,17 +162,25 @@ function TeacherFab({
     if (expanded) setActivePanel(null);
   }, [expanded]);
 
+  const chatEndRefs = useRef({});
   const unreadCount = studentMessages.filter(m => !m.read).length;
   const handsCount = raisedHands.size;
   const totalNotifications = unreadCount + handsCount;
 
   const handleReply = (studentId) => {
-    if (replyText.trim()) {
-      onReplyToMessage(studentId, replyText.trim());
-      setReplyText("");
-      setReplyingTo(null);
+    const text = (replyTexts[studentId] || "").trim();
+    if (text) {
+      onReplyToMessage(studentId, text);
+      setReplyTexts(prev => ({ ...prev, [studentId]: "" }));
     }
   };
+
+  // Auto-scroll chat threads when messages change
+  useEffect(() => {
+    Object.keys(chatEndRefs.current).forEach(sid => {
+      chatEndRefs.current[sid]?.scrollIntoView({ behavior: 'smooth' });
+    });
+  }, [studentMessages, chatReplies]);
 
   return (
     <div
@@ -191,18 +201,11 @@ function TeacherFab({
             </span>
             <div className="flex items-center gap-2">
               {onToggleHandRaising && (
-                <button
-                  onClick={() => onToggleHandRaising(!handRaisingEnabled)}
-                  className={cn(
-                    "text-xs px-2 py-1 rounded font-medium transition-colors",
-                    handRaisingEnabled
-                      ? "bg-white/20 text-white hover:bg-white/30"
-                      : "bg-red-600 text-white hover:bg-red-700"
-                  )}
-                  title={handRaisingEnabled ? "Click to disable hand raising" : "Click to enable hand raising"}
-                >
-                  {handRaisingEnabled ? "ON" : "OFF"}
-                </button>
+                <Switch
+                  checked={handRaisingEnabled}
+                  onCheckedChange={(checked) => onToggleHandRaising(checked)}
+                  className="data-[state=checked]:bg-white/40 data-[state=unchecked]:bg-white/20"
+                />
               )}
               <button
                 onClick={() => setActivePanel(null)}
@@ -212,7 +215,7 @@ function TeacherFab({
               </button>
             </div>
           </div>
-          <div className="max-h-72 overflow-y-auto">
+          <div className={cn("max-h-72 overflow-y-auto", !handRaisingEnabled && "opacity-50 pointer-events-none")}>
             {handsCount === 0 ? (
               <div className="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
                 No raised hands
@@ -248,28 +251,31 @@ function TeacherFab({
         </div>
       )}
 
-      {/* Messages Panel */}
-      {activePanel === 'messages' && (
-        <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-700 w-80 max-h-96 overflow-hidden animate-in slide-in-from-bottom-2 duration-200">
-          <div className="bg-gradient-to-r from-blue-500 to-indigo-500 px-4 py-3 flex items-center justify-between">
+      {/* Messages Panel — Chat Thread */}
+      {activePanel === 'messages' && (() => {
+        // Group messages by student
+        const grouped = {};
+        studentMessages.forEach(msg => {
+          const key = msg.studentId || 'unknown';
+          if (!grouped[key]) grouped[key] = { studentName: msg.studentName || 'Unknown', messages: [] };
+          grouped[key].messages.push(msg);
+        });
+        const studentIds = Object.keys(grouped);
+
+        return (
+        <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-700 w-80 max-h-[500px] overflow-hidden animate-in slide-in-from-bottom-2 duration-200 flex flex-col">
+          <div className="bg-gradient-to-r from-blue-500 to-indigo-500 px-4 py-3 flex items-center justify-between shrink-0">
             <span className="text-white font-semibold flex items-center gap-2">
               <MessageSquare className="h-4 w-4" />
               Messages ({unreadCount} new)
             </span>
             <div className="flex items-center gap-2">
               {onToggleStudentMessaging && (
-                <button
-                  onClick={() => onToggleStudentMessaging(!studentMessagingEnabled)}
-                  className={cn(
-                    "text-xs px-2 py-1 rounded font-medium transition-colors",
-                    studentMessagingEnabled
-                      ? "bg-white/20 text-white hover:bg-white/30"
-                      : "bg-red-600 text-white hover:bg-red-700"
-                  )}
-                  title={studentMessagingEnabled ? "Click to disable student messaging" : "Click to enable student messaging"}
-                >
-                  {studentMessagingEnabled ? "ON" : "OFF"}
-                </button>
+                <Switch
+                  checked={studentMessagingEnabled}
+                  onCheckedChange={(checked) => onToggleStudentMessaging(checked)}
+                  className="data-[state=checked]:bg-white/40 data-[state=unchecked]:bg-white/20"
+                />
               )}
               <button
                 onClick={() => setActivePanel(null)}
@@ -279,96 +285,87 @@ function TeacherFab({
               </button>
             </div>
           </div>
-          <div className="max-h-72 overflow-y-auto">
+          <div className={cn("overflow-y-auto flex-1", !studentMessagingEnabled && "opacity-50 pointer-events-none")}>
             {studentMessages.length === 0 ? (
               <div className="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
                 No messages from students
               </div>
             ) : (
-              studentMessages.slice(0, 10).map((msg) => (
-                <div
-                  key={msg.id}
-                  className={cn(
-                    "px-4 py-3 border-b border-gray-100 dark:border-gray-700 last:border-b-0 transition-colors",
-                    !msg.read && "bg-blue-50 dark:bg-blue-950/30"
-                  )}
-                  onClick={() => onMarkMessageRead(msg.id)}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className={cn(
-                          "text-xs px-1.5 py-0.5 rounded font-medium",
-                          msg.messageType === 'question'
-                            ? "bg-purple-100 text-purple-700 dark:bg-purple-900/50 dark:text-purple-300"
-                            : "bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300"
-                        )}>
-                          {msg.messageType === 'question' ? '?' : 'msg'}
-                        </span>
-                        <span className="font-medium text-sm text-gray-900 dark:text-gray-100 truncate">
-                          {msg.studentName}
-                        </span>
-                      </div>
-                      <p className="text-sm text-gray-700 dark:text-gray-300 mt-1 break-words">
-                        {msg.message}
-                      </p>
-                      <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                        {new Date(msg.timestamp).toLocaleTimeString()}
-                      </div>
-                    </div>
-                    <div className="flex flex-col gap-1">
+              studentIds.map((sid) => {
+                const group = grouped[sid];
+                // Merge student messages + teacher replies into a timeline
+                const thread = [
+                  ...group.messages.map(m => ({ id: m.id, message: m.message, timestamp: m.timestamp, sender: 'student' })),
+                  ...(chatReplies[sid] || []).map((r, i) => ({ id: `reply-${sid}-${i}`, message: r.message, timestamp: r.timestamp, sender: 'teacher' })),
+                ].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+                return (
+                  <div key={sid} className="border-b border-gray-200 dark:border-gray-600 last:border-b-0 flex flex-col">
+                    {/* Student header with Close Chat */}
+                    <div className="px-4 py-2 bg-gray-50 dark:bg-gray-750 flex items-center justify-between shrink-0">
+                      <span className="font-semibold text-sm text-gray-800 dark:text-gray-200">{group.studentName}</span>
                       <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setReplyingTo(replyingTo === msg.id ? null : msg.id);
-                          setReplyText("");
-                        }}
-                        className="p-1.5 rounded hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
-                        title="Reply"
+                        onClick={() => onCloseChat ? onCloseChat(sid) : group.messages.forEach(m => onDismissMessage(m.id))}
+                        className="text-xs px-2 py-1 rounded bg-red-100 text-red-600 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50 font-medium transition-colors"
+                        title="Close chat and erase all messages from this student"
                       >
-                        <Send className="h-3.5 w-3.5" />
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onDismissMessage(msg.id);
-                        }}
-                        className="p-1.5 rounded hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors"
-                        title="Dismiss"
-                      >
-                        <X className="h-3.5 w-3.5" />
+                        Close Chat
                       </button>
                     </div>
-                  </div>
-                  {replyingTo === msg.id && (
-                    <div className="mt-2 flex gap-2" onClick={(e) => e.stopPropagation()}>
+                    {/* Chat thread */}
+                    <div className="max-h-48 overflow-y-auto px-3 py-2 space-y-1.5" onClick={() => group.messages.forEach(m => { if (!m.read) onMarkMessageRead(m.id); })}>
+                      {thread.map((item) => (
+                        <div
+                          key={item.id}
+                          className={cn(
+                            "flex",
+                            item.sender === 'teacher' ? "justify-end" : "justify-start"
+                          )}
+                        >
+                          <div
+                            className={cn(
+                              "max-w-[80%] px-3 py-1.5 rounded-2xl text-sm break-words",
+                              item.sender === 'teacher'
+                                ? "bg-blue-500 text-white rounded-br-md"
+                                : "bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-bl-md"
+                            )}
+                          >
+                            {item.message}
+                          </div>
+                        </div>
+                      ))}
+                      <div ref={el => { chatEndRefs.current[sid] = el; }} />
+                    </div>
+                    {/* Reply input — always visible */}
+                    <div className="px-3 py-2 border-t border-gray-100 dark:border-gray-700 flex gap-2 shrink-0">
                       <Input
-                        value={replyText}
-                        onChange={(e) => setReplyText(e.target.value)}
+                        value={replyTexts[sid] || ""}
+                        onChange={(e) => setReplyTexts(prev => ({ ...prev, [sid]: e.target.value }))}
                         placeholder="Type reply..."
                         className="h-8 text-sm"
                         onKeyDown={(e) => {
-                          if (e.key === 'Enter' && replyText.trim()) {
-                            handleReply(msg.studentId);
+                          if (e.key === 'Enter' && (replyTexts[sid] || "").trim()) {
+                            handleReply(sid);
                           }
                         }}
                       />
                       <Button
                         size="sm"
                         className="h-8 px-3"
-                        disabled={!replyText.trim() || replyPending}
-                        onClick={() => handleReply(msg.studentId)}
+                        disabled={!(replyTexts[sid] || "").trim() || replyPending}
+                        onClick={() => handleReply(sid)}
                       >
                         <Send className="h-3 w-3" />
                       </Button>
                     </div>
-                  )}
-                </div>
-              ))
+                  </div>
+                );
+              })
             )}
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* FAB Menu Items */}
       {expanded && (
@@ -378,14 +375,16 @@ function TeacherFab({
             onClick={() => setActivePanel(activePanel === 'messages' ? null : 'messages')}
             className={cn(
               "flex items-center gap-3 px-4 py-3 rounded-full shadow-lg transition-all duration-200 hover:scale-105",
-              activePanel === 'messages' || unreadCount > 0
-                ? "bg-blue-500 text-white"
-                : "bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-gray-700"
+              !studentMessagingEnabled
+                ? "bg-gray-400 text-white/70"
+                : activePanel === 'messages' || unreadCount > 0
+                  ? "bg-blue-500 text-white"
+                  : "bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-gray-700"
             )}
           >
             <MessageSquare className="h-5 w-5" />
-            <span className="font-medium">Messages</span>
-            {unreadCount > 0 && (
+            <span className="font-medium">Messages{!studentMessagingEnabled ? " (Off)" : ""}</span>
+            {unreadCount > 0 && studentMessagingEnabled && (
               <span className="bg-white text-blue-600 text-xs font-bold px-2 py-0.5 rounded-full">
                 {unreadCount}
               </span>
@@ -397,15 +396,17 @@ function TeacherFab({
             onClick={() => setActivePanel(activePanel === 'hands' ? null : 'hands')}
             className={cn(
               "flex items-center gap-3 px-4 py-3 rounded-full shadow-lg transition-all duration-200 hover:scale-105",
-              activePanel === 'hands' || handsCount > 0
-                ? "bg-amber-500 text-white"
-                : "bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-gray-700",
-              handsCount > 0 && activePanel !== 'hands' && "animate-pulse"
+              !handRaisingEnabled
+                ? "bg-gray-400 text-white/70"
+                : activePanel === 'hands' || handsCount > 0
+                  ? "bg-amber-500 text-white"
+                  : "bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-gray-700",
+              handsCount > 0 && handRaisingEnabled && activePanel !== 'hands' && "animate-pulse"
             )}
           >
             <Hand className="h-5 w-5" />
-            <span className="font-medium">Hands</span>
-            {handsCount > 0 && (
+            <span className="font-medium">Hands{!handRaisingEnabled ? " (Off)" : ""}</span>
+            {handsCount > 0 && handRaisingEnabled && (
               <span className="bg-white text-amber-600 text-xs font-bold px-2 py-0.5 rounded-full">
                 {handsCount}
               </span>

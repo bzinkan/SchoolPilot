@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import { Router } from "express";
 import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
@@ -26,8 +27,11 @@ import {
   getStudentsForDevice,
   getActiveStudentForDevice,
   setActiveStudentForDevice,
+  getAdminEmailsBySchool,
 } from "../../services/storage.js";
+import { sendSafetyAlertEmail } from "../../services/email.js";
 import { createStudentToken } from "../../services/deviceJwt.js";
+import { updateDeviceStatus } from "../../realtime/student-statuses.js";
 import {
   broadcastToTeachersLocal,
   broadcastToStudentsLocal,
@@ -70,45 +74,9 @@ setInterval(() => {
 }, RATE_LIMIT_CLEANUP_INTERVAL_MS);
 
 // ============================================================================
-// Tracking window enforcement (item #2)
+// Tracking window enforcement (shared utility)
 // ============================================================================
-function isWithinTrackingWindow(settings: {
-  enableTrackingHours: boolean | null;
-  trackingStartTime: string | null;
-  trackingEndTime: string | null;
-  trackingDays: string[] | null;
-  schoolTimezone: string | null;
-}): boolean {
-  if (!settings.enableTrackingHours) return true; // tracking hours disabled = always track
-
-  const tz = settings.schoolTimezone || "America/New_York";
-  let now: Date;
-  try {
-    const dateStr = new Date().toLocaleString("en-US", { timeZone: tz });
-    now = new Date(dateStr);
-  } catch {
-    now = new Date();
-  }
-
-  // Check day of week
-  if (settings.trackingDays && settings.trackingDays.length > 0) {
-    const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-    const today = dayNames[now.getDay()]!;
-    if (!settings.trackingDays.includes(today)) return false;
-  }
-
-  // Check time range
-  if (settings.trackingStartTime && settings.trackingEndTime) {
-    const [startH, startM] = settings.trackingStartTime.split(":").map(Number);
-    const [endH, endM] = settings.trackingEndTime.split(":").map(Number);
-    const currentMinutes = now.getHours() * 60 + now.getMinutes();
-    const startMinutes = (startH ?? 8) * 60 + (startM ?? 0);
-    const endMinutes = (endH ?? 15) * 60 + (endM ?? 0);
-    if (currentMinutes < startMinutes || currentMinutes > endMinutes) return false;
-  }
-
-  return true;
-}
+import { isWithinTrackingWindow } from "../../services/schoolHours.js";
 
 // ============================================================================
 // School Status Endpoints
@@ -481,6 +449,24 @@ router.post("/device/heartbeat", requireDeviceAuth, async (req, res, next) => {
       cameraActive: cameraActive || false,
     });
 
+    // --- Update in-memory real-time status ---
+    updateDeviceStatus({
+      deviceId,
+      studentId,
+      studentEmail,
+      schoolId,
+      activeTabUrl: activeTabUrl || "",
+      activeTabTitle: activeTabTitle || "",
+      favicon: favicon || undefined,
+      screenLocked: screenLocked || false,
+      flightPathActive: flightPathActive || false,
+      activeFlightPathName: activeFlightPathName || undefined,
+      isSharing: isScreenSharing || isScreenRecording || false,
+      cameraActive: cameraActive || false,
+      lastSeenAt: Date.now(),
+      allOpenTabs: allOpenTabs || undefined,
+    });
+
     // --- Broadcast full student state to teachers (item #1) ---
     const update: Record<string, unknown> = {
       type: "student-update",
@@ -520,7 +506,7 @@ router.post("/device/heartbeat", requireDeviceAuth, async (req, res, next) => {
         broadcastToTeachersLocal(schoolId, classificationUpdate);
         void publishWS({ kind: "staff", schoolId }, classificationUpdate);
 
-        // Safety alert — broadcast urgently
+        // Safety alert — broadcast urgently + email admins
         if (classification.safetyAlert) {
           const alert = {
             type: "safety-alert",
@@ -535,6 +521,24 @@ router.post("/device/heartbeat", requireDeviceAuth, async (req, res, next) => {
           };
           broadcastToTeachersLocal(schoolId, alert);
           void publishWS({ kind: "staff", schoolId }, alert);
+
+          // Send email to school admins if enabled
+          if (schoolSettings?.aiSafetyEmailsEnabled !== false) {
+            getAdminEmailsBySchool(schoolId).then((adminEmails) => {
+              if (adminEmails.length > 0) {
+                void sendSafetyAlertEmail({
+                  recipients: adminEmails,
+                  studentEmail,
+                  alertType: classification.safetyAlert!,
+                  url: activeTabUrl,
+                  title: activeTabTitle || "Unknown",
+                  schoolName: school?.name || "Your School",
+                });
+              }
+            }).catch((err) => {
+              console.error("[Safety] Failed to send alert emails:", err);
+            });
+          }
         }
       }).catch(() => { /* non-blocking */ });
     }
@@ -736,24 +740,60 @@ function remoteCommand(type: string) {
   return async (req: any, res: any, next: any) => {
     try {
       const schoolId = res.locals.schoolId!;
-      const { deviceIds, ...payload } = req.body;
+      const { deviceIds, targetDeviceIds, tabsToClose, ...payload } = req.body;
 
-      if (!Array.isArray(deviceIds) || deviceIds.length === 0) {
-        return res.status(400).json({ error: "deviceIds array required" });
+      // Accept deviceIds, targetDeviceIds, or extract from tabsToClose
+      let resolvedDeviceIds: string[] | undefined = deviceIds || targetDeviceIds || undefined;
+      if (
+        (!Array.isArray(resolvedDeviceIds) || resolvedDeviceIds.length === 0) &&
+        Array.isArray(tabsToClose) &&
+        tabsToClose.length > 0
+      ) {
+        resolvedDeviceIds = [
+          ...new Set(tabsToClose.map((t: any) => t.deviceId).filter(Boolean)),
+        ] as string[];
       }
 
-      const message = { type: "remote-control", command: type, ...payload };
+      // Build command in the format the extension expects:
+      // { type: "remote-control", command: { type: "...", data: { ... } } }
+      const commandData: Record<string, unknown> = { ...payload };
 
-      for (const deviceId of deviceIds) {
-        sendToDeviceLocal(schoolId, deviceId, message);
+      // Transform close-tabs: extension expects "close-tab" with data.specificUrls
+      if (type === "close-tabs" && Array.isArray(tabsToClose)) {
+        commandData.specificUrls = tabsToClose.map((t: any) => t.url);
+      }
+      if (type === "close-tabs" && payload.closeAll) {
+        commandData.closeAll = true;
       }
 
-      await publishWS(
-        { kind: "students", schoolId, targetDeviceIds: deviceIds },
-        message
-      );
+      // Extension uses singular "close-tab", not "close-tabs"
+      const extensionType = type === "close-tabs" ? "close-tab" : type;
 
-      return res.json({ ok: true, sent: deviceIds.length });
+      const message = {
+        type: "remote-control",
+        _msgId: crypto.randomUUID(),
+        command: {
+          type: extensionType,
+          data: commandData,
+        },
+      };
+
+      if (Array.isArray(resolvedDeviceIds) && resolvedDeviceIds.length > 0) {
+        // Send to specific devices
+        for (const deviceId of resolvedDeviceIds) {
+          sendToDeviceLocal(schoolId, deviceId, message);
+        }
+        await publishWS(
+          { kind: "students", schoolId, targetDeviceIds: resolvedDeviceIds },
+          message
+        );
+        return res.json({ success: true, sent: resolvedDeviceIds.length });
+      } else {
+        // Broadcast to all connected students
+        const sentCount = broadcastToStudentsLocal(schoolId, message);
+        await publishWS({ kind: "students", schoolId }, message);
+        return res.json({ success: true, sent: sentCount });
+      }
     } catch (err) {
       next(err);
     }
@@ -773,33 +813,34 @@ router.post("/remote/timer", ...staffAuth, remoteCommand("timer"));
 router.post("/remote/apply-flight-path", ...staffAuth, async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
-    const { deviceIds, flightPathId, flightPathName, allowedDomains } = req.body;
-
-    if (!Array.isArray(deviceIds) || deviceIds.length === 0) {
-      return res.status(400).json({ error: "deviceIds array required" });
-    }
+    const { deviceIds, targetDeviceIds, flightPathId, flightPathName, allowedDomains } = req.body;
+    const resolvedDeviceIds: string[] | undefined = deviceIds || targetDeviceIds || undefined;
 
     const message = {
       type: "remote-control",
-      command: "apply-flight-path",
-      flightPathId,
-      flightPathName,
-      allowedDomains,
+      _msgId: crypto.randomUUID(),
+      command: { type: "apply-flight-path", data: { flightPathId, flightPathName, allowedDomains } },
     };
 
-    for (const deviceId of deviceIds) {
-      sendToDeviceLocal(schoolId, deviceId, message);
-      await setFlightPathStatus(deviceId, {
-        active: true,
-        flightPathId,
-        flightPathName,
-        appliedAt: Date.now(),
-      });
+    if (Array.isArray(resolvedDeviceIds) && resolvedDeviceIds.length > 0) {
+      // Send to specific devices
+      for (const deviceId of resolvedDeviceIds) {
+        sendToDeviceLocal(schoolId, deviceId, message);
+        await setFlightPathStatus(deviceId, {
+          active: true,
+          flightPathId,
+          flightPathName,
+          appliedAt: Date.now(),
+        });
+      }
+      await publishWS({ kind: "students", schoolId, targetDeviceIds: resolvedDeviceIds }, message);
+      return res.json({ success: true, sent: resolvedDeviceIds.length });
+    } else {
+      // Broadcast to all connected students
+      const sentCount = broadcastToStudentsLocal(schoolId, message);
+      await publishWS({ kind: "students", schoolId }, message);
+      return res.json({ success: true, sent: sentCount, message: `Applied flight path to all connected devices` });
     }
-
-    await publishWS({ kind: "students", schoolId, targetDeviceIds: deviceIds }, message);
-
-    return res.json({ ok: true, sent: deviceIds.length });
   } catch (err) {
     next(err);
   }
@@ -809,22 +850,23 @@ router.post("/remote/apply-flight-path", ...staffAuth, async (req, res, next) =>
 router.post("/remote/remove-flight-path", ...staffAuth, async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
-    const { deviceIds } = req.body;
+    const { deviceIds, targetDeviceIds } = req.body;
+    const resolvedDeviceIds: string[] | undefined = deviceIds || targetDeviceIds || undefined;
 
-    if (!Array.isArray(deviceIds) || deviceIds.length === 0) {
-      return res.status(400).json({ error: "deviceIds array required" });
+    const message = { type: "remote-control", _msgId: crypto.randomUUID(), command: { type: "remove-flight-path", data: {} } };
+
+    if (Array.isArray(resolvedDeviceIds) && resolvedDeviceIds.length > 0) {
+      for (const deviceId of resolvedDeviceIds) {
+        sendToDeviceLocal(schoolId, deviceId, message);
+        await setFlightPathStatus(deviceId, { active: false, appliedAt: Date.now() });
+      }
+      await publishWS({ kind: "students", schoolId, targetDeviceIds: resolvedDeviceIds }, message);
+      return res.json({ success: true, sent: resolvedDeviceIds.length });
+    } else {
+      const sentCount = broadcastToStudentsLocal(schoolId, message);
+      await publishWS({ kind: "students", schoolId }, message);
+      return res.json({ success: true, sent: sentCount });
     }
-
-    const message = { type: "remote-control", command: "remove-flight-path" };
-
-    for (const deviceId of deviceIds) {
-      sendToDeviceLocal(schoolId, deviceId, message);
-      await setFlightPathStatus(deviceId, { active: false, appliedAt: Date.now() });
-    }
-
-    await publishWS({ kind: "students", schoolId, targetDeviceIds: deviceIds }, message);
-
-    return res.json({ ok: true, sent: deviceIds.length });
   } catch (err) {
     next(err);
   }

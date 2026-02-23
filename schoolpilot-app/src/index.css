@@ -145,9 +145,11 @@ body {
     radial-gradient(at 100% 0%, hsla(220, 80%, 15%, 0.5) 0, transparent 50%);
 }
 
-/* Apply default border color */
-*, *::before, *::after {
-  border-color: hsl(var(--border));
+/* Apply default border color (in base layer so utilities can override) */
+@layer base {
+  *, *::before, *::after {
+    border-color: hsl(var(--border));
+  }
 }
 
 /* Pointer cursor for all interactive elements */

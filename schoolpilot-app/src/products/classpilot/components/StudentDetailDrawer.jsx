@@ -1,5 +1,7 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
-import { ExternalLink, Clock, Monitor, Camera, History as HistoryIcon, LayoutGrid, Calendar as CalendarIcon, AlertTriangle } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { apiRequest } from "../../../lib/queryClient";
+import { ExternalLink, Clock, Monitor, Camera, History as HistoryIcon, LayoutGrid, Calendar as CalendarIcon, AlertTriangle, BarChart3 } from "lucide-react";
 import { Button } from "../../../components/ui/button";
 import { Badge } from "../../../components/ui/badge";
 import { ScrollArea } from "../../../components/ui/scroll-area";
@@ -74,6 +76,26 @@ function StudentDetailDrawer({
       document.removeEventListener('mouseup', handleMouseUp);
     };
   }, []);
+
+  // Fetch 7-day usage trend from rollup data
+  const usageDateRange = useMemo(() => {
+    const end = new Date();
+    const start = new Date();
+    start.setDate(start.getDate() - 6); // 7 days including today
+    return {
+      startDate: start.toISOString().slice(0, 10),
+      endDate: end.toISOString().slice(0, 10),
+    };
+  }, []);
+
+  const { data: weeklyUsage = [] } = useQuery({
+    queryKey: ['/api/classpilot/student-analytics/usage', student?.studentId, usageDateRange.startDate],
+    queryFn: () =>
+      apiRequest('GET', `/classpilot/student-analytics/${student.studentId}/usage?startDate=${usageDateRange.startDate}&endDate=${usageDateRange.endDate}`),
+    select: (data) => data?.usage ?? [],
+    enabled: !!student?.studentId,
+    staleTime: 60000,
+  });
 
   if (!student) return null;
 
@@ -544,6 +566,67 @@ function StudentDetailDrawer({
                             </CardContent>
                           </Card>
                         </div>
+                      );
+                    })()}
+
+                    {/* 7-Day Usage Trend */}
+                    {weeklyUsage.length > 0 && (() => {
+                      // Build a map of date → totalSeconds from the rollup data
+                      const usageByDate = new Map();
+                      weeklyUsage.forEach((row) => {
+                        usageByDate.set(row.date, row.totalSeconds || 0);
+                      });
+
+                      // Generate last 7 days
+                      const days = [];
+                      for (let i = 6; i >= 0; i--) {
+                        const d = new Date();
+                        d.setDate(d.getDate() - i);
+                        const dateStr = d.toISOString().slice(0, 10);
+                        const dayLabel = d.toLocaleDateString('en-US', { weekday: 'short' });
+                        days.push({
+                          date: dateStr,
+                          label: dayLabel,
+                          seconds: usageByDate.get(dateStr) || 0,
+                        });
+                      }
+
+                      const maxSeconds = Math.max(...days.map((d) => d.seconds), 1);
+
+                      return (
+                        <Card>
+                          <CardHeader className="pb-3">
+                            <CardTitle className="text-sm font-medium flex items-center gap-2">
+                              <BarChart3 className="h-4 w-4" />
+                              Weekly Usage Trend
+                            </CardTitle>
+                          </CardHeader>
+                          <Separator />
+                          <CardContent className="pt-4">
+                            <div className="flex items-end justify-between gap-1" style={{ height: '120px' }}>
+                              {days.map((day) => {
+                                const heightPercent = maxSeconds > 0 ? (day.seconds / maxSeconds) * 100 : 0;
+                                return (
+                                  <div key={day.date} className="flex-1 flex flex-col items-center gap-1">
+                                    <span className="text-[10px] text-muted-foreground">
+                                      {day.seconds > 0 ? formatDuration(day.seconds) : ''}
+                                    </span>
+                                    <div className="w-full flex items-end" style={{ height: '80px' }}>
+                                      <div
+                                        className="w-full rounded-t bg-primary/80 hover:bg-primary transition-colors min-h-[2px]"
+                                        style={{ height: `${Math.max(heightPercent, day.seconds > 0 ? 4 : 0)}%` }}
+                                        title={`${day.date}: ${formatDuration(day.seconds)}`}
+                                      />
+                                    </div>
+                                    <span className="text-[10px] font-medium text-muted-foreground">
+                                      {day.label}
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </CardContent>
+                        </Card>
                       );
                     })()}
                   </div>

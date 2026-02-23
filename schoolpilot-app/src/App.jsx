@@ -7,6 +7,7 @@ import { LicenseProvider, useLicenses } from './contexts/LicenseContext';
 import { SocketProvider } from './contexts/SocketContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import Spinner from './shared/components/Spinner';
+import { Toaster } from './components/ui/toaster';
 import Login from './pages/Login';
 import Landing from './pages/Landing';
 
@@ -33,6 +34,15 @@ const GPSetupWizard = lazy(() => import('./products/gopilot/pages/SetupWizard'))
 const GPParentOnboarding = lazy(() => import('./products/gopilot/pages/ParentOnboarding'));
 const GPJoinSchool = lazy(() => import('./products/gopilot/pages/JoinSchool'));
 const GPLinkChild = lazy(() => import('./products/gopilot/pages/LinkChild'));
+
+// Product landing pages (lazy-loaded, public)
+const ClassPilotLanding = lazy(() => import('./pages/products/ClassPilotLanding'));
+const PassPilotLanding = lazy(() => import('./pages/products/PassPilotLanding'));
+const GoPilotLanding = lazy(() => import('./pages/products/GoPilotLanding'));
+
+// Legal pages (lazy-loaded, public)
+const TermsOfService = lazy(() => import('./pages/legal/TermsOfService'));
+const PrivacyPolicy = lazy(() => import('./pages/legal/PrivacyPolicy'));
 
 // Super Admin pages (lazy-loaded)
 const SASchoolsList = lazy(() => import('./pages/super-admin/SchoolsList'));
@@ -70,6 +80,15 @@ function AppRoutes() {
         {/* Landing page — always accessible */}
         <Route path="/" element={<Landing />} />
         <Route path="/login" element={user ? <Navigate to={defaultDest} replace /> : <Login />} />
+
+        {/* Product landing pages (public, no auth) */}
+        <Route path="/products/classpilot" element={<ClassPilotLanding />} />
+        <Route path="/products/passpilot" element={<PassPilotLanding />} />
+        <Route path="/products/gopilot" element={<GoPilotLanding />} />
+
+        {/* Legal pages (public, no auth) */}
+        <Route path="/terms" element={<TermsOfService />} />
+        <Route path="/privacy" element={<PrivacyPolicy />} />
 
         {/* GoPilot public routes (no auth required) */}
         <Route path="/gopilot/join/:schoolSlug" element={<GPJoinSchool />} />
@@ -140,6 +159,7 @@ export default function App() {
             <LicenseProvider>
               <SocketProvider>
                 <AppRoutes />
+                <Toaster />
               </SocketProvider>
             </LicenseProvider>
           </AuthProvider>

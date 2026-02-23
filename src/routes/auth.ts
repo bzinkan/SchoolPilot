@@ -1,9 +1,11 @@
 import { Router } from "express";
+import { google } from "googleapis";
 import { loginSchema, registerSchema } from "../schema/validation.js";
 import { hashPassword, comparePassword } from "../util/password.js";
 import { signUserToken } from "../services/jwt.js";
 import {
   getUserByEmail,
+  getUserByGoogleId,
   createUser,
   createSchool,
   createMembership,
@@ -191,8 +193,16 @@ router.get("/me", authenticate, async (req, res, next) => {
       }
     }
 
+    // Generate JWT so clients can use it for Socket.io and API calls
+    const token = signUserToken({
+      userId: req.authUser.id,
+      email: req.authUser.email,
+      isSuperAdmin: req.authUser.isSuperAdmin,
+    });
+
     return res.json({
       user: safeUser,
+      token,
       licenses,
       memberships: membershipsWithSchool.map((m) => ({
         id: m.membership.id,
@@ -205,6 +215,116 @@ router.get("/me", authenticate, async (req, res, next) => {
     });
   } catch (err) {
     next(err);
+  }
+});
+
+// ============================================================================
+// Google OAuth Login
+// ============================================================================
+
+function getLoginOAuth2Client() {
+  return new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    `${process.env.PUBLIC_BASE_URL || "http://localhost:4000"}/api/auth/google/callback`
+  );
+}
+
+function getFrontendUrl(): string {
+  const allowlist = (process.env.CORS_ALLOWLIST || "")
+    .split(",")
+    .map((s: string) => s.trim())
+    .filter(Boolean);
+  return allowlist[0] || "http://localhost:5173";
+}
+
+// GET /api/auth/google — Initiate Google OAuth login
+router.get("/google", (req, res) => {
+  if (!process.env.GOOGLE_CLIENT_ID) {
+    return res.status(503).json({ error: "Google OAuth not configured" });
+  }
+
+  const oauth2Client = getLoginOAuth2Client();
+  const url = oauth2Client.generateAuthUrl({
+    access_type: "online",
+    scope: ["openid", "profile", "email"],
+    prompt: "select_account",
+  });
+
+  return res.redirect(url);
+});
+
+// GET /api/auth/google/callback — Handle Google OAuth callback
+router.get("/google/callback", async (req, res, next) => {
+  try {
+    const code = req.query.code as string;
+    const frontendUrl = getFrontendUrl();
+
+    if (!code) {
+      return res.redirect(`${frontendUrl}/login?error=no_code`);
+    }
+
+    const oauth2Client = getLoginOAuth2Client();
+    const { tokens } = await oauth2Client.getToken(code);
+    oauth2Client.setCredentials(tokens);
+
+    // Get user info from Google
+    const oauth2 = google.oauth2({ version: "v2", auth: oauth2Client });
+    const { data: profile } = await oauth2.userinfo.get();
+
+    if (!profile.email) {
+      return res.redirect(`${frontendUrl}/login?error=no_email`);
+    }
+
+    // Find user by googleId first, then by email
+    let user = profile.id ? await getUserByGoogleId(profile.id) : undefined;
+    if (!user) {
+      user = await getUserByEmail(profile.email);
+    }
+
+    if (!user) {
+      return res.redirect(`${frontendUrl}/login?error=no_account`);
+    }
+
+    // Update googleId and profile image if needed
+    const updates: Record<string, any> = { lastLoginAt: new Date() };
+    if (profile.id && !user.googleId) updates.googleId = profile.id;
+    if (profile.picture && profile.picture !== user.profileImageUrl)
+      updates.profileImageUrl = profile.picture;
+    await updateUser(user.id, updates);
+
+    // Get memberships for session
+    const membershipsWithSchool = await getMembershipsWithSchool(user.id);
+    const firstMembership = membershipsWithSchool[0];
+
+    // Set session
+    req.session.userId = user.id;
+    req.session.email = user.email;
+    req.session.role = user.isSuperAdmin
+      ? "super_admin"
+      : firstMembership?.membership.role || "teacher";
+    req.session.schoolId = firstMembership?.membership.schoolId || null;
+    req.session.schoolSessionVersion =
+      firstMembership?.school.schoolSessionVersion ?? 1;
+
+    // Generate JWT so the frontend can authenticate immediately
+    // (Session cookies don't work behind CloudFront→ALB HTTP proxy)
+    const token = signUserToken({
+      userId: user.id,
+      email: user.email,
+      isSuperAdmin: user.isSuperAdmin,
+    });
+
+    // Save session best-effort (for cookie-based clients)
+    await new Promise<void>((resolve, reject) => {
+      req.session.save((err) => (err ? reject(err) : resolve()));
+    });
+
+    return res.redirect(`${frontendUrl}/login?token=${encodeURIComponent(token)}`);
+  } catch (err) {
+    console.error("[auth] Google OAuth callback error:", err);
+    const frontendUrl = getFrontendUrl();
+    return res.redirect(`${frontendUrl}/login?error=oauth_failed`);
   }
 });
 

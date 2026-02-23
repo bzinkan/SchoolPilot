@@ -3,7 +3,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { Card } from "../../../components/ui/card";
 import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
-import { Clock, Monitor, ExternalLink, AlertTriangle, Lock, Unlock, Video, Layers, Maximize2 } from "lucide-react";
+import { Clock, Monitor, ExternalLink, AlertTriangle, Lock, Unlock, Video, Layers, Maximize2, Timer } from "lucide-react";
 import { Checkbox } from "../../../components/ui/checkbox";
 import { useToast } from "../../../hooks/use-toast";
 import { apiRequest, queryClient } from "../../../lib/queryClient";
@@ -137,6 +137,20 @@ function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false,
       return acc;
     }, [])
     .slice(0, 5);
+
+  // Calculate today's screen time from recent heartbeats (each heartbeat ≈ 10 seconds)
+  const todayScreenTime = (() => {
+    const today = new Date().toDateString();
+    const todayHeartbeats = recentHeartbeats.filter(hb => {
+      try { return new Date(hb.timestamp).toDateString() === today; } catch { return false; }
+    });
+    const seconds = todayHeartbeats.length * 10;
+    if (seconds < 60) return null; // Don't show if less than 1 minute
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    if (hours > 0) return `${hours}h ${minutes}m`;
+    return `${minutes}m`;
+  })();
 
   // Check if current URL is blocked by active flight path
   const activeFlightPath = flightPaths.find((fp) => fp.flightPathName === student.activeFlightPathName);
@@ -404,15 +418,23 @@ function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false,
                   </span>
                 )}
               </h3>
-              <span className={`text-xs font-medium ${
-                student.status === 'online'
-                  ? 'text-green-600 dark:text-green-400'
-                  : student.status === 'idle'
-                  ? 'text-amber-600 dark:text-amber-400'
-                  : 'text-muted-foreground'
-              }`}>
-                {getStatusLabel(student.status)}
-              </span>
+              <div className="flex items-center gap-2">
+                <span className={`text-xs font-medium ${
+                  student.status === 'online'
+                    ? 'text-green-600 dark:text-green-400'
+                    : student.status === 'idle'
+                    ? 'text-amber-600 dark:text-amber-400'
+                    : 'text-muted-foreground'
+                }`}>
+                  {getStatusLabel(student.status)}
+                </span>
+                {todayScreenTime && (
+                  <span className="text-xs text-muted-foreground flex items-center gap-0.5" title="Screen time today">
+                    <Timer className="h-3 w-3" />
+                    {todayScreenTime}
+                  </span>
+                )}
+              </div>
             </div>
           </div>
           <div className="flex items-center gap-1 flex-shrink-0">

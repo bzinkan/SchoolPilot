@@ -102,21 +102,13 @@ function ReportsTab() {
 
   const { data: grades = [] } = useQuery({
     queryKey: ['/api/grades'],
-    queryFn: async () => {
-      const res = await fetch('/api/grades', { credentials: 'include' });
-      if (!res.ok) throw new Error('Failed to fetch grades');
-      return res.json();
-    },
+    queryFn: () => apiRequest('GET', '/grades'),
     select: (data) => Array.isArray(data) ? data : (data?.grades ?? []),
   });
 
   const { data: teachers = [] } = useQuery({
     queryKey: ['/api/teachers'],
-    queryFn: async () => {
-      const res = await fetch('/api/teachers', { credentials: 'include' });
-      if (!res.ok) throw new Error('Failed to fetch teachers');
-      return res.json();
-    },
+    queryFn: () => apiRequest('GET', '/teachers'),
     select: (data) => Array.isArray(data) ? data : (data?.teachers ?? data?.staff ?? []),
   });
 

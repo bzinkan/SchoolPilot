@@ -130,7 +130,7 @@ export default function SchoolpilotLanding() {
                 control web access, lock devices, and keep your class focused and on task.
               </p>
               <a
-                href="https://classpilot.net"
+                href="/products/classpilot"
                 className="cta-btn"
                 style={{
                   display: "inline-flex", alignItems: "center", gap: 8,
@@ -160,11 +160,11 @@ export default function SchoolpilotLanding() {
                 monitor pass duration, and eliminate paper passes for good.
               </p>
               <a
-                href="https://pass-pilot.net"
+                href="/products/passpilot"
                 className="cta-btn"
                 style={{
                   display: "inline-flex", alignItems: "center", gap: 8,
-                  background: "#6366f1", color: "#fff",
+                  background: "#3b5bdb", color: "#fff",
                   padding: "12px 24px", borderRadius: 10,
                   textDecoration: "none", fontSize: 15, fontWeight: 600,
                 }}
@@ -190,11 +190,11 @@ export default function SchoolpilotLanding() {
                 with real-time notifications and a live dismissal dashboard.
               </p>
               <a
-                href="https://go-pilot.net"
+                href="/products/gopilot"
                 className="cta-btn"
                 style={{
                   display: "inline-flex", alignItems: "center", gap: 8,
-                  background: "#3b5bdb", color: "#fff",
+                  background: "#6366f1", color: "#fff",
                   padding: "12px 24px", borderRadius: 10,
                   textDecoration: "none", fontSize: 15, fontWeight: 600,
                 }}
@@ -203,6 +203,26 @@ export default function SchoolpilotLanding() {
                 <ArrowRightIcon />
               </a>
             </div>
+          </div>
+
+          <div className="fade-in delay-3" style={{
+            textAlign: "center", marginTop: 56, padding: "32px 24px",
+            background: "linear-gradient(135deg, #1e3a5f 0%, #0f172a 100%)",
+            borderRadius: 16,
+          }}>
+            <p style={{
+              fontFamily: "'Fraunces', serif", fontSize: "clamp(20px, 2.5vw, 26px)",
+              fontWeight: 600, color: "#fff", margin: 0, letterSpacing: 0.3,
+            }}>
+              Three tools. One dashboard.{" "}
+              <span style={{
+                background: "linear-gradient(135deg, #eab308 0%, #f59e0b 100%)",
+                WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
+              }}>
+                Better together
+              </span>
+              , but great on their own.
+            </p>
           </div>
         </div>
       </section>
@@ -246,13 +266,15 @@ export default function SchoolpilotLanding() {
           </div>
 
           <div style={{ display: "flex", gap: 24 }}>
-            <a href="https://classpilot.net" style={{ color: "#64748b", textDecoration: "none", fontSize: 14 }}>ClassPilot</a>
-            <a href="https://pass-pilot.net" style={{ color: "#64748b", textDecoration: "none", fontSize: 14 }}>PassPilot</a>
-            <a href="https://go-pilot.net" style={{ color: "#64748b", textDecoration: "none", fontSize: 14 }}>GoPilot</a>
+            <a href="/products/classpilot" style={{ color: "#64748b", textDecoration: "none", fontSize: 14 }}>ClassPilot</a>
+            <a href="/products/passpilot" style={{ color: "#64748b", textDecoration: "none", fontSize: 14 }}>PassPilot</a>
+            <a href="/products/gopilot" style={{ color: "#64748b", textDecoration: "none", fontSize: 14 }}>GoPilot</a>
+            <a href="/terms" style={{ color: "#64748b", textDecoration: "none", fontSize: 14 }}>Terms</a>
+            <a href="/privacy" style={{ color: "#64748b", textDecoration: "none", fontSize: 14 }}>Privacy</a>
           </div>
 
           <p style={{ color: "#475569", fontSize: 13 }}>
-            &copy; 2025 Schoolpilot. All rights reserved.
+            &copy; {new Date().getFullYear()} Schoolpilot. All rights reserved.
           </p>
         </div>
       </footer>
@@ -291,15 +313,15 @@ function PassPilotLogo({ size = 64 }) {
     <svg width={size} height={size} viewBox="0 0 64 64" fill="none">
       <defs>
         <linearGradient id={id} x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stopColor="#818cf8" />
-          <stop offset="100%" stopColor="#6366f1" />
+          <stop offset="0%" stopColor="#60a5fa" />
+          <stop offset="100%" stopColor="#3b5bdb" />
         </linearGradient>
       </defs>
       <rect width="64" height="64" rx="12" fill={`url(#${id})`} />
       <rect x="20" y="18" width="24" height="32" rx="3" fill="#fff" />
       <rect x="26" y="14" width="12" height="8" rx="2" fill="#fff" />
-      <rect x="28" y="16" width="8" height="4" rx="1" fill="#6366f1" />
-      <path d="M26 34 L30 38 L38 28" stroke="#6366f1" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+      <rect x="28" y="16" width="8" height="4" rx="1" fill="#3b5bdb" />
+      <path d="M26 34 L30 38 L38 28" stroke="#3b5bdb" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" fill="none" />
     </svg>
   );
 }
@@ -307,12 +329,12 @@ function PassPilotLogo({ size = 64 }) {
 function GoPilotLogo({ size = 64 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 64 64" fill="none">
-      <rect width="64" height="64" rx="12" fill="#3b5bdb" />
+      <rect width="64" height="64" rx="12" fill="#6366f1" />
       <rect x="16" y="20" width="32" height="24" rx="6" fill="#fff" />
-      <path d="M24 32 L26 26 L38 26 L40 32" stroke="#3b5bdb" strokeWidth="2.5" strokeLinecap="round" fill="none" />
-      <path d="M22 32 L42 32 L42 36 L22 36 Z" fill="none" stroke="#3b5bdb" strokeWidth="2.5" />
-      <circle cx="27" cy="36" r="2.5" fill="#3b5bdb" />
-      <circle cx="37" cy="36" r="2.5" fill="#3b5bdb" />
+      <path d="M24 32 L26 26 L38 26 L40 32" stroke="#6366f1" strokeWidth="2.5" strokeLinecap="round" fill="none" />
+      <path d="M22 32 L42 32 L42 36 L22 36 Z" fill="none" stroke="#6366f1" strokeWidth="2.5" />
+      <circle cx="27" cy="36" r="2.5" fill="#6366f1" />
+      <circle cx="37" cy="36" r="2.5" fill="#6366f1" />
     </svg>
   );
 }

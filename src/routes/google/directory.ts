@@ -1,9 +1,11 @@
 import { Router } from "express";
+import { google } from "googleapis";
 import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import {
   getGoogleOAuthToken,
   createStudent,
+  updateStudent,
   createUser,
   createMembership,
   searchStudents,
@@ -18,7 +20,6 @@ async function getAuthedClient(userId: string) {
   const token = await getGoogleOAuthToken(userId);
   if (!token) throw new Error("Google not connected");
 
-  const { google } = require("googleapis");
   const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET
@@ -37,7 +38,29 @@ router.get("/orgunits", ...auth, async (req, res, next) => {
       customerId: "my_customer",
     });
 
-    return res.json({ orgUnits: response.data.organizationUnits || [] });
+    // Auto-detect grade level from OU name (e.g. "Grade 7", "7th Grade", "8th")
+    const orgUnits = (response.data.organizationUnits || []).map((ou: any) => {
+      const name = ou.name || "";
+      let detectedGrade: string | null = null;
+      // Match patterns: "Grade 7", "Grade 8", "grade 12"
+      const gradeMatch = name.match(/\bgrade\s+(\d{1,2})\b/i);
+      if (gradeMatch) {
+        detectedGrade = gradeMatch[1];
+      }
+      // Match patterns: "7th Grade", "8th grade", "1st grade"
+      if (!detectedGrade) {
+        const ordinalMatch = name.match(/\b(\d{1,2})(?:st|nd|rd|th)\s*grade?\b/i);
+        if (ordinalMatch) detectedGrade = ordinalMatch[1];
+      }
+      // Match "Kindergarten" or "Pre-K"
+      if (!detectedGrade) {
+        if (/\bkindergarten\b/i.test(name)) detectedGrade = "K";
+        else if (/\bpre-?k\b/i.test(name)) detectedGrade = "PK";
+      }
+      return { ...ou, detectedGrade };
+    });
+
+    return res.json({ orgUnits });
   } catch (err: any) {
     if (err.message === "Google not connected") {
       return res.status(400).json({ error: "Google not connected" });
@@ -82,20 +105,141 @@ router.get("/users", ...auth, async (req, res, next) => {
 });
 
 // POST /api/google/workspace/import - Import selected users as students
+// Accepts either:
+//   { users: [...], grade } — direct user array (PassPilot)
+//   { entries: [{orgUnitPath, gradeLevel, excludeEmails?}] } — OU-based import (ClassPilot)
+//   { orgUnitPath, gradeLevel } — single OU import (PassPilot SetupView)
 router.post("/import", ...auth, async (req, res, next) => {
   try {
-    const { users, grade } = req.body;
-    if (!Array.isArray(users) || users.length === 0) {
-      return res.status(400).json({ error: "users array required" });
+    const { users, grade, entries, orgUnitPath, gradeLevel } = req.body;
+    const schoolId = res.locals.schoolId!;
+
+    // OU-based import with entries array (ClassPilot Students page)
+    if (Array.isArray(entries) && entries.length > 0) {
+      const { oauth2Client, google } = await getAuthedClient(req.authUser!.id);
+      const admin = google.admin({ version: "directory_v1", auth: oauth2Client });
+
+      let totalImported = 0;
+      let totalUpdated = 0;
+
+      for (const entry of entries) {
+        const params: any = { customer: "my_customer", maxResults: 500 };
+        if (entry.orgUnitPath && entry.orgUnitPath !== "/") {
+          params.query = `orgUnitPath='${entry.orgUnitPath}'`;
+        }
+
+        const response = await admin.users.list(params);
+        const googleUsers = response.data.users || [];
+        const excludeSet = new Set(entry.excludeEmails || []);
+
+        for (const u of googleUsers) {
+          if (u.suspended) continue;
+          const email = u.primaryEmail;
+          if (!email) continue;
+          if (excludeSet.has(email)) continue;
+
+          const existing = await searchStudents(schoolId, { search: email });
+          if (existing.length > 0) {
+            // Update existing student with latest data from Google + grade
+            const ex = existing[0]!;
+            await updateStudent(ex.id, {
+              firstName: u.name?.givenName || ex.firstName,
+              lastName: u.name?.familyName || ex.lastName,
+              email,
+              emailLc: email.toLowerCase(),
+              gradeLevel: entry.gradeLevel || ex.gradeLevel || undefined,
+              googleUserId: u.id || ex.googleUserId || undefined,
+            });
+            totalUpdated++;
+          } else {
+            await createStudent({
+              schoolId,
+              firstName: u.name?.givenName || email.split("@")[0] || "",
+              lastName: u.name?.familyName || "",
+              email,
+              emailLc: email.toLowerCase(),
+              gradeLevel: entry.gradeLevel || undefined,
+              googleUserId: u.id || undefined,
+              status: "active",
+            });
+            totalImported++;
+          }
+        }
+      }
+
+      return res.json({ imported: totalImported, updated: totalUpdated });
     }
 
-    const schoolId = res.locals.schoolId!;
+    // Single OU import (PassPilot SetupView)
+    if (orgUnitPath) {
+      const { oauth2Client, google } = await getAuthedClient(req.authUser!.id);
+      const admin = google.admin({ version: "directory_v1", auth: oauth2Client });
+
+      const params: any = { customer: "my_customer", maxResults: 500 };
+      if (orgUnitPath !== "/") {
+        params.query = `orgUnitPath='${orgUnitPath}'`;
+      }
+
+      const response = await admin.users.list(params);
+      const googleUsers = response.data.users || [];
+      let imported = 0;
+      let updated = 0;
+
+      for (const u of googleUsers) {
+        if (u.suspended) continue;
+        const email = u.primaryEmail;
+        if (!email) continue;
+
+        const existing = await searchStudents(schoolId, { search: email });
+        if (existing.length > 0) {
+          const ex = existing[0]!;
+          await updateStudent(ex.id, {
+            firstName: u.name?.givenName || ex.firstName,
+            lastName: u.name?.familyName || ex.lastName,
+            email,
+            emailLc: email.toLowerCase(),
+            gradeLevel: gradeLevel || ex.gradeLevel || undefined,
+            googleUserId: u.id || ex.googleUserId || undefined,
+          });
+          updated++;
+        } else {
+          await createStudent({
+            schoolId,
+            firstName: u.name?.givenName || email.split("@")[0] || "",
+            lastName: u.name?.familyName || "",
+            email,
+            emailLc: email.toLowerCase(),
+            gradeLevel: gradeLevel || undefined,
+            googleUserId: u.id || undefined,
+            status: "active",
+          });
+          imported++;
+        }
+      }
+
+      return res.json({ imported, updated });
+    }
+
+    // Direct user array import (PassPilot)
+    if (!Array.isArray(users) || users.length === 0) {
+      return res.status(400).json({ error: "users array, entries array, or orgUnitPath required" });
+    }
+
     let imported = 0;
     let updated = 0;
 
     for (const u of users) {
       const existing = await searchStudents(schoolId, { search: u.email });
       if (existing.length > 0) {
+        const ex = existing[0]!;
+        await updateStudent(ex.id, {
+          firstName: u.firstName || ex.firstName,
+          lastName: u.lastName || ex.lastName,
+          email: u.email,
+          emailLc: u.email.toLowerCase(),
+          gradeLevel: grade || u.grade || ex.gradeLevel || undefined,
+          googleUserId: u.id || ex.googleUserId || undefined,
+        });
         updated++;
       } else {
         await createStudent({
@@ -103,6 +247,7 @@ router.post("/import", ...auth, async (req, res, next) => {
           firstName: u.firstName || u.email.split("@")[0],
           lastName: u.lastName || "",
           email: u.email,
+          emailLc: u.email.toLowerCase(),
           gradeLevel: grade || u.grade || undefined,
           googleUserId: u.id || undefined,
           status: "active",
@@ -121,15 +266,71 @@ router.post("/import", ...auth, async (req, res, next) => {
 });
 
 // Shared import-staff handler (used by both /import-staff and /import-teachers)
+// Accepts either:
+//   { users: [...], role } — direct user array
+//   { orgUnitPath, userIds? } — OU-based import, optionally filtered by userIds
 const importStaffHandler = async (req: any, res: any, next: any) => {
   try {
-    const { users, role } = req.body;
-    if (!Array.isArray(users) || users.length === 0) {
-      return res.status(400).json({ error: "users array required" });
-    }
-
+    const { users, role, orgUnitPath, userIds } = req.body;
     const schoolId = res.locals.schoolId!;
     const staffRole = role || "teacher";
+
+    // If orgUnitPath provided, fetch users from Google Directory
+    if (orgUnitPath || (orgUnitPath === undefined && !users)) {
+      const { oauth2Client, google } = await getAuthedClient(req.authUser!.id);
+      const admin = google.admin({ version: "directory_v1", auth: oauth2Client });
+
+      const params: any = { customer: "my_customer", maxResults: 500 };
+      if (orgUnitPath && orgUnitPath !== "/") {
+        params.query = `orgUnitPath='${orgUnitPath}'`;
+      }
+
+      const response = await admin.users.list(params);
+      const googleUsers = response.data.users || [];
+      const filterIds = userIds ? new Set(userIds) : null;
+
+      let imported = 0;
+      let skipped = 0;
+
+      for (const u of googleUsers) {
+        if (u.suspended) continue;
+        const email = u.primaryEmail;
+        if (!email) continue;
+        if (filterIds && !filterIds.has(u.id)) continue;
+
+        let user = await getUserByEmail(email);
+        if (!user) {
+          user = await createUser({
+            email,
+            firstName: u.name?.givenName || email.split("@")[0],
+            lastName: u.name?.familyName || "",
+            googleId: u.id || null,
+          });
+          imported++;
+        } else {
+          skipped++;
+        }
+
+        const { getMembershipByUserAndSchool } = await import("../../services/storage.js");
+        const existing = await getMembershipByUserAndSchool(user.id, schoolId);
+        if (!existing) {
+          await createMembership({
+            userId: user.id,
+            schoolId,
+            role: staffRole,
+            status: "active",
+          });
+        }
+      }
+
+      return res.json({ imported, skipped, updated: skipped, total: imported + skipped });
+    }
+
+    // Direct user array import
+    if (!Array.isArray(users) || users.length === 0) {
+      return res.status(400).json({ error: "users array or orgUnitPath required" });
+    }
+
     let imported = 0;
     let updated = 0;
 
@@ -147,7 +348,6 @@ const importStaffHandler = async (req: any, res: any, next: any) => {
         updated++;
       }
 
-      // Ensure membership
       const { getMembershipByUserAndSchool } = await import("../../services/storage.js");
       const existing = await getMembershipByUserAndSchool(user.id, schoolId);
       if (!existing) {
@@ -200,13 +400,23 @@ router.post("/import-orgunits", ...auth, async (req, res, next) => {
 
         const existing = await searchStudents(schoolId, { search: email });
         if (existing.length > 0) {
+          const ex = existing[0]!;
+          await updateStudent(ex.id, {
+            firstName: u.name?.givenName || ex.firstName,
+            lastName: u.name?.familyName || ex.lastName,
+            email,
+            emailLc: email.toLowerCase(),
+            gradeLevel: grade || ex.gradeLevel || undefined,
+            googleUserId: u.id || ex.googleUserId || undefined,
+          });
           totalUpdated++;
         } else {
           await createStudent({
             schoolId,
-            firstName: u.name?.givenName || email.split("@")[0],
+            firstName: u.name?.givenName || email.split("@")[0] || "",
             lastName: u.name?.familyName || "",
             email,
+            emailLc: email.toLowerCase(),
             gradeLevel: grade || undefined,
             googleUserId: u.id || undefined,
             status: "active",

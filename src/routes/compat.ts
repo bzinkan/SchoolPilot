@@ -3,6 +3,8 @@ import { authenticate } from "../middleware/authenticate.js";
 import { requireSchoolContext } from "../middleware/requireSchoolContext.js";
 import { requireActiveSchool } from "../middleware/requireActiveSchool.js";
 import { requireRole } from "../middleware/requireRole.js";
+import { getSchoolDeviceStatuses } from "../realtime/student-statuses.js";
+import { getConnectedStudentDeviceIds } from "../realtime/ws-broadcast.js";
 import {
   getGradesBySchool,
   createGrade,
@@ -11,6 +13,9 @@ import {
   getUsersBySchool,
   getStaffBySchool,
   getStudentsBySchool,
+  getStudentById,
+  deleteStudent,
+  updateStudent,
   getSchoolById,
   updateSchool,
   getPendingParentRequests,
@@ -24,7 +29,14 @@ import {
   deleteMembership,
   updateMembership,
   updateUser,
+  getActiveTeachingSession,
+  getGroupStudents,
+  getSchoolUsageSummary,
+  getUserById,
 } from "../services/storage.js";
+import db from "../db.js";
+import { heartbeats, devices as deviceTable, teachingSessions, groups } from "../schema/classpilot.js";
+import { eq, and, sql } from "drizzle-orm";
 import { createGradeSchema } from "../schema/validation.js";
 import { hashPassword } from "../util/password.js";
 
@@ -142,11 +154,24 @@ router.get("/teachers", ...schoolAuth, async (req, res, next) => {
 
 router.get("/admin/teachers", ...schoolAuth, requireRole("admin"), async (req, res, next) => {
   try {
-    const teachers = await getUsersBySchool(res.locals.schoolId!, "teacher");
+    // Return all staff who can teach (teachers + school_admin + admin)
+    const allStaff = await getUsersBySchool(res.locals.schoolId!);
+    const teachable = allStaff.filter(t =>
+      t.role === "teacher" || t.role === "school_admin" || t.role === "admin"
+    );
     return res.json({
-      teachers: teachers.map((t) => {
+      teachers: teachable.map((t) => {
         const { password: _, ...safeUser } = t.user;
-        return { membershipId: t.id, userId: t.userId, role: t.role, user: safeUser };
+        const displayName = [safeUser.firstName, safeUser.lastName].filter(Boolean).join(" ") || null;
+        return {
+          id: t.userId,
+          membershipId: t.id,
+          userId: t.userId,
+          role: t.role,
+          email: safeUser.email,
+          displayName,
+          user: safeUser,
+        };
       }),
     });
   } catch (err) {
@@ -295,22 +320,199 @@ router.delete("/admin/users/:id", ...schoolAuth, requireRole("admin"), async (re
 router.get("/admin/teacher-students", ...schoolAuth, requireRole("admin"), async (req, res, next) => {
   try {
     const students = await getStudentsBySchool(res.locals.schoolId!);
-    return res.json({ students });
+    // Include studentName/studentEmail for ClassPilot frontend compatibility
+    const mapped = students.map((s: any) => ({
+      ...s,
+      studentName: [s.firstName, s.lastName].filter(Boolean).join(" ") || s.email || "",
+      studentEmail: s.email || "",
+    }));
+    return res.json({ students: mapped });
   } catch (err) {
     next(err);
   }
 });
 
-router.get("/admin/analytics/summary", ...schoolAuth, requireRole("admin"), async (_req, res) => {
-  return res.json({ summary: { totalStudents: 0, totalTeachers: 0, totalSessions: 0 } });
+router.get("/admin/analytics/summary", ...schoolAuth, requireRole("admin"), async (req, res, next) => {
+  try {
+    const schoolId = res.locals.schoolId!;
+    const period = (req.query.period as string) || "24h";
+
+    // Calculate date range based on period
+    const now = new Date();
+    let startDate: string;
+    if (period === "7d") {
+      const d = new Date(now);
+      d.setDate(d.getDate() - 7);
+      startDate = d.toISOString().slice(0, 10);
+    } else if (period === "30d") {
+      const d = new Date(now);
+      d.setDate(d.getDate() - 30);
+      startDate = d.toISOString().slice(0, 10);
+    } else {
+      // 24h — use yesterday + today
+      const d = new Date(now);
+      d.setDate(d.getDate() - 1);
+      startDate = d.toISOString().slice(0, 10);
+    }
+    const endDate = now.toISOString().slice(0, 10);
+
+    const [usageSummary, students, staff, devices, hourlyRaw, topDomainsRaw] = await Promise.all([
+      getSchoolUsageSummary(schoolId, startDate, endDate),
+      getStudentsBySchool(schoolId),
+      getStaffBySchool(schoolId),
+      db.select({ deviceId: deviceTable.deviceId })
+        .from(deviceTable)
+        .where(eq(deviceTable.schoolId, schoolId)),
+      // Hourly activity: heartbeats in last 24h grouped by hour
+      db.select({
+        hour: sql<number>`EXTRACT(HOUR FROM ${heartbeats.timestamp})::int`,
+        count: sql<number>`COUNT(*)::int`,
+      })
+        .from(heartbeats)
+        .where(
+          and(
+            eq(heartbeats.schoolId, schoolId),
+            sql`${heartbeats.timestamp} >= NOW() - INTERVAL '24 hours'`
+          )
+        )
+        .groupBy(sql`EXTRACT(HOUR FROM ${heartbeats.timestamp})`),
+      // Top websites: aggregate from heartbeats for the period
+      db.select({
+        domain: sql<string>`SUBSTRING(${heartbeats.activeTabUrl} FROM '://([^/]+)')`,
+        minutes: sql<number>`(COUNT(*) * 10 / 60)::int`,
+        visits: sql<number>`COUNT(*)::int`,
+      })
+        .from(heartbeats)
+        .where(
+          and(
+            eq(heartbeats.schoolId, schoolId),
+            sql`${heartbeats.timestamp} >= ${startDate}::timestamp`,
+            sql`${heartbeats.activeTabUrl} IS NOT NULL`
+          )
+        )
+        .groupBy(sql`SUBSTRING(${heartbeats.activeTabUrl} FROM '://([^/]+)')`)
+        .orderBy(sql`COUNT(*) DESC`)
+        .limit(10),
+    ]);
+
+    // Build hourly activity array (0-23)
+    const hourlyMap = new Map(hourlyRaw.map(h => [h.hour, h.count]));
+    const hourlyActivity = Array.from({ length: 24 }, (_, i) => ({
+      hour: i,
+      count: hourlyMap.get(i) || 0,
+    }));
+
+    const teacherCount = staff.filter(s => s.role === "teacher" || s.role === "admin").length;
+
+    return res.json({
+      summary: {
+        activeStudents: usageSummary.activeStudents,
+        totalStudents: students.length,
+        totalDevices: devices.length,
+        totalBrowsingMinutes: Math.round(usageSummary.totalSeconds / 60),
+        totalTeachers: teacherCount,
+      },
+      hourlyActivity,
+      topWebsites: topDomainsRaw.filter(d => d.domain),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get("/admin/analytics/by-teacher", ...schoolAuth, requireRole("admin"), async (req, res, next) => {
+  try {
+    const schoolId = res.locals.schoolId!;
+    const period = (req.query.period as string) || "7d";
+    const days = period === "30d" ? 30 : 7;
+
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - days);
+
+    // Get teachers with their session stats
+    const teacherStats = await db
+      .select({
+        id: teachingSessions.teacherId,
+        sessionCount: sql<number>`COUNT(DISTINCT ${teachingSessions.id})::int`,
+        totalSessionMinutes: sql<number>`COALESCE(SUM(EXTRACT(EPOCH FROM (COALESCE(${teachingSessions.endTime}, NOW()) - ${teachingSessions.startTime})) / 60)::int, 0)`,
+        groupCount: sql<number>`COUNT(DISTINCT ${teachingSessions.groupId})::int`,
+      })
+      .from(teachingSessions)
+      .innerJoin(groups, eq(teachingSessions.groupId, groups.id))
+      .where(
+        and(
+          eq(groups.schoolId, schoolId),
+          sql`${teachingSessions.startTime} >= ${cutoff}`
+        )
+      )
+      .groupBy(teachingSessions.teacherId);
+
+    // Get teacher details
+    const teachers = [];
+    for (const stat of teacherStats) {
+      const user = await getUserById(stat.id);
+      if (user) {
+        teachers.push({
+          id: stat.id,
+          name: user.displayName || user.email || "Unknown",
+          email: user.email || "",
+          sessionCount: stat.sessionCount,
+          totalSessionMinutes: stat.totalSessionMinutes,
+          groupCount: stat.groupCount,
+        });
+      }
+    }
+
+    return res.json({ teachers });
+  } catch (err) {
+    next(err);
+  }
 });
 
 router.post("/admin/bulk-import", ...schoolAuth, requireRole("admin"), async (_req, res) => {
   return res.status(400).json({ error: "Use POST /students/import-csv for bulk import" });
 });
 
-router.post("/admin/students/bulk-delete", ...schoolAuth, requireRole("admin"), async (_req, res) => {
-  return res.status(400).json({ error: "Bulk delete not yet implemented" });
+router.post("/admin/students/bulk-delete", ...schoolAuth, requireRole("admin"), async (req, res, next) => {
+  try {
+    const { studentIds } = req.body;
+    if (!Array.isArray(studentIds) || studentIds.length === 0) {
+      return res.status(400).json({ error: "studentIds array required" });
+    }
+    const schoolId = res.locals.schoolId!;
+    let deleted = 0;
+    for (const id of studentIds) {
+      const student = await getStudentById(id);
+      if (student && student.schoolId === schoolId) {
+        await deleteStudent(id);
+        deleted++;
+      }
+    }
+    return res.json({ deleted });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post("/admin/students/bulk-update-grade", ...schoolAuth, requireRole("admin"), async (req, res, next) => {
+  try {
+    const { studentIds, gradeLevel } = req.body;
+    if (!Array.isArray(studentIds) || studentIds.length === 0) {
+      return res.status(400).json({ error: "studentIds array required" });
+    }
+    const schoolId = res.locals.schoolId!;
+    let updated = 0;
+    for (const id of studentIds) {
+      const student = await getStudentById(id);
+      if (student && student.schoolId === schoolId) {
+        await updateStudent(id, { gradeLevel: gradeLevel || null });
+        updated++;
+      }
+    }
+    return res.json({ updated });
+  } catch (err) {
+    next(err);
+  }
 });
 
 router.get("/admin/admin-emails", ...schoolAuth, requireRole("admin"), async (_req, res) => {
@@ -378,8 +580,83 @@ router.get("/my-classes", ...schoolAuth, async (req, res, next) => {
 
 router.get("/students-aggregated", ...schoolAuth, async (req, res, next) => {
   try {
-    const students = await getStudentsBySchool(res.locals.schoolId!);
-    return res.json({ students });
+    const schoolId = res.locals.schoolId!;
+    const userId = req.authUser!.id;
+    const membershipRole = res.locals.membershipRole as string | undefined;
+    const isAdmin = membershipRole === "admin" || membershipRole === "school_admin" || membershipRole === "super_admin";
+
+    // Check for active teaching session
+    const activeSession = await getActiveTeachingSession(userId);
+
+    let dbStudents;
+    if (activeSession?.groupId) {
+      // Teacher/admin with active session → show only students in that group
+      const groupStudentRows = await getGroupStudents(activeSession.groupId);
+      dbStudents = groupStudentRows.map((gs) => gs.student);
+    } else if (isAdmin) {
+      // Admin without active session → show all students
+      dbStudents = await getStudentsBySchool(schoolId);
+    } else {
+      // Teacher without active session → show empty (Dashboard shows "No Active Class Session")
+      return res.json([]);
+    }
+
+    const realtimeStatuses = getSchoolDeviceStatuses(schoolId);
+    const connectedDevices = getConnectedStudentDeviceIds(schoolId);
+
+    // Build lookups for real-time status
+    const statusByDevice = new Map(
+      realtimeStatuses.map((s) => [s.deviceId, s])
+    );
+    const statusByStudent = new Map(
+      realtimeStatuses.map((s) => [s.studentId, s])
+    );
+
+    const aggregated = dbStudents.map((student) => {
+      const rt =
+        (student.deviceId ? statusByDevice.get(student.deviceId) : null) ||
+        statusByStudent.get(student.id) ||
+        null;
+      const deviceId = rt?.deviceId || student.deviceId || null;
+      const isConnected = deviceId ? connectedDevices.has(deviceId) : false;
+      const timeSinceLastSeen = rt ? Date.now() - rt.lastSeenAt : Infinity;
+      let status: "online" | "idle" | "offline" = "offline";
+      if (timeSinceLastSeen < 60000 || (isConnected && timeSinceLastSeen < 90000)) {
+        status = "online";
+      } else if (timeSinceLastSeen < 180000) {
+        status = "idle";
+      }
+
+      return {
+        studentId: student.id,
+        studentEmail: student.email || undefined,
+        studentName:
+          [student.firstName, student.lastName].filter(Boolean).join(" ") ||
+          student.email ||
+          "Unknown",
+        gradeLevel: student.gradeLevel || undefined,
+        classId: "",
+        deviceCount: deviceId ? 1 : 0,
+        devices: deviceId
+          ? [{ deviceId, deviceName: undefined, status, lastSeenAt: rt?.lastSeenAt || 0 }]
+          : [],
+        status,
+        lastSeenAt: rt?.lastSeenAt || 0,
+        primaryDeviceId: deviceId,
+        deviceName: undefined,
+        activeTabTitle: rt?.activeTabTitle || "",
+        activeTabUrl: rt?.activeTabUrl || "",
+        favicon: rt?.favicon,
+        allOpenTabs: rt?.allOpenTabs?.map((t) => ({ ...t, deviceId: deviceId || "" })),
+        isSharing: rt?.isSharing || false,
+        screenLocked: rt?.screenLocked || false,
+        flightPathActive: rt?.flightPathActive || false,
+        activeFlightPathName: rt?.activeFlightPathName,
+        cameraActive: rt?.cameraActive || false,
+      };
+    });
+
+    return res.json(aggregated);
   } catch (err) {
     next(err);
   }

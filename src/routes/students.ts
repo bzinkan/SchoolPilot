@@ -58,11 +58,23 @@ router.post(
   async (req, res, next) => {
     try {
       const body = { ...req.body };
+      // Handle studentName → firstName/lastName (ClassPilot sends studentName)
+      if (body.studentName && !body.firstName) {
+        const parts = body.studentName.trim().split(/\s+/);
+        body.firstName = parts[0] || "";
+        body.lastName = parts.slice(1).join(" ") || "";
+        delete body.studentName;
+      }
       if (body.name && !body.firstName) {
         const parts = body.name.trim().split(/\s+/);
         body.firstName = parts[0] || "";
         body.lastName = parts.slice(1).join(" ") || "";
         delete body.name;
+      }
+      // Handle studentEmail → email (ClassPilot sends studentEmail)
+      if (body.studentEmail && !body.email) {
+        body.email = body.studentEmail;
+        delete body.studentEmail;
       }
 
       const parsed = createStudentSchema.safeParse(body);

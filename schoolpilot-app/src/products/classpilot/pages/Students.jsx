@@ -131,32 +131,23 @@ function StudentsContent() {
   // Fetch all students (only runs for admins)
   const { data: studentsData, isLoading } = useQuery({
     queryKey: ["/api/admin/teacher-students"],
-    queryFn: async () => {
-      const res = await fetch("/api/admin/teacher-students", { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to fetch students");
-      return res.json();
-    },
+    queryFn: () => apiRequest("GET", "/admin/teacher-students"),
   });
 
   // Fetch Google Classroom courses (only when dialog is open)
   const { data: classroomData, isLoading: isLoadingCourses, error: classroomError, refetch: refetchCourses } = useQuery({
     queryKey: ["/api/classroom/courses"],
-    queryFn: async () => {
-      const res = await fetch("/api/classroom/courses", { credentials: "include" });
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`${res.status}: ${text}`);
-      }
-      return res.json();
-    },
+    queryFn: () => apiRequest("GET", "/classroom/courses"),
     enabled: showClassroomDialog,
   });
 
   const classroomCourses = classroomData?.courses || [];
 
-  // Parse error code from classroom error
+  // Parse error code from classroom error (axios errors have response data in error.response.data)
   const classroomNotConnected = (() => {
     if (!classroomError) return false;
+    const serverMsg = classroomError.response?.data?.error || "";
+    if (serverMsg.includes("Google not connected") || serverMsg.includes("NO_TOKENS")) return true;
     const errorMessage = classroomError.message || "";
     try {
       const jsonMatch = errorMessage.match(/\{.*\}/);
@@ -174,14 +165,7 @@ function StudentsContent() {
   const syncClassroomMutation = useMutation({
     mutationFn: async ({ courseId, gradeLevel }) => {
       setSyncingCourseId(courseId);
-      const res = await fetch(`/api/classroom/courses/${courseId}/sync`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ gradeLevel: gradeLevel || undefined }),
-      });
-      if (!res.ok) throw new Error("Sync failed");
-      return res.json();
+      return apiRequest("POST", `/classroom/courses/${courseId}/sync`, { gradeLevel: gradeLevel || undefined });
     },
     onSuccess: async (data) => {
       await queryClient.invalidateQueries({ queryKey: ["/api/admin/teacher-students"], exact: false });
@@ -207,34 +191,26 @@ function StudentsContent() {
   // Fetch Google Workspace Directory users (only when dialog is open)
   const { data: directoryData, isLoading: isLoadingDirectory, error: directoryError, refetch: refetchDirectory } = useQuery({
     queryKey: ["/api/directory/users"],
-    queryFn: async () => {
-      const res = await fetch("/api/directory/users", { credentials: "include" });
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`${res.status}: ${text}`);
-      }
-      return res.json();
-    },
+    queryFn: () => apiRequest("GET", "/directory/users"),
     enabled: showWorkspaceDialog,
   });
 
   // Fetch organizational units (only when dialog is open)
   const { data: orgUnitsData, isLoading: isLoadingOrgUnits } = useQuery({
     queryKey: ["/api/directory/orgunits"],
-    queryFn: async () => {
-      const res = await fetch("/api/directory/orgunits", { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to fetch org units");
-      return res.json();
-    },
+    queryFn: () => apiRequest("GET", "/directory/orgunits"),
     enabled: showWorkspaceDialog,
   });
 
   const directoryUsers = directoryData?.users || [];
   const orgUnits = orgUnitsData?.orgUnits || [];
 
-  // Parse error codes from the error message (format: "403: {\"error\":\"...\",\"code\":\"...\"}")
+  // Parse error codes from the error (axios errors have response data in error.response.data)
   const getDirectoryErrorCode = () => {
     if (!directoryError) return null;
+    const serverMsg = directoryError.response?.data?.error || "";
+    if (serverMsg.includes("Google not connected") || serverMsg.includes("NO_TOKENS")) return "NO_TOKENS";
+    if (serverMsg.includes("INSUFFICIENT_PERMISSIONS")) return "INSUFFICIENT_PERMISSIONS";
     const errorMessage = directoryError.message || "";
     try {
       const jsonMatch = errorMessage.match(/\{.*\}/);
@@ -243,11 +219,10 @@ function StudentsContent() {
         return parsed.code || null;
       }
     } catch {
-      // Not JSON, check for keywords
       if (errorMessage.includes("NO_TOKENS")) return "NO_TOKENS";
       if (errorMessage.includes("INSUFFICIENT_PERMISSIONS")) return "INSUFFICIENT_PERMISSIONS";
     }
-    return null;
+    return "UNKNOWN_ERROR";
   };
 
   const directoryErrorCode = getDirectoryErrorCode();
@@ -256,20 +231,11 @@ function StudentsContent() {
 
   // Import from Google Workspace Directory mutation
   const importDirectoryMutation = useMutation({
-    mutationFn: async (params) => {
-      const res = await fetch("/api/directory/import", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({
-          orgUnitPath: params.orgUnitPath || undefined,
-          gradeLevel: params.gradeLevel || undefined,
-          entries: params.entries || undefined,
-        }),
-      });
-      if (!res.ok) throw new Error("Import failed");
-      return res.json();
-    },
+    mutationFn: (params) => apiRequest("POST", "/directory/import", {
+      orgUnitPath: params.orgUnitPath || undefined,
+      gradeLevel: params.gradeLevel || undefined,
+      entries: params.entries || undefined,
+    }),
     onSuccess: async (data) => {
       await queryClient.invalidateQueries({ queryKey: ["/api/admin/teacher-students"], exact: false });
       setWorkspaceImportResult(data);
@@ -970,10 +936,10 @@ function StudentsContent() {
                     </div>
                     <div>
                       <p className="text-muted-foreground">Skipped</p>
-                      <p className="text-2xl font-bold text-gray-600">{workspaceImportResult.skipped}</p>
+                      <p className="text-2xl font-bold text-gray-600">{workspaceImportResult.skipped || 0}</p>
                     </div>
                   </div>
-                  {workspaceImportResult.errors.length > 0 && (
+                  {workspaceImportResult.errors?.length > 0 && (
                     <div className="mt-3 p-3 bg-destructive/10 rounded-md">
                       <p className="font-medium text-destructive mb-2">Errors:</p>
                       <ul className="list-disc list-inside text-sm text-destructive space-y-1">
@@ -1291,6 +1257,15 @@ function StudentsContent() {
             <div className="space-y-3">
               <Label className="text-sm font-medium">Filter by Grade</Label>
               <div className="flex flex-wrap gap-2">
+                <Button
+                  variant={selectedGrade === "" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setSelectedGrade("")}
+                  data-testid="button-grade-all"
+                >
+                  All
+                  <span className="ml-1 text-xs opacity-70">({allStudents.length})</span>
+                </Button>
                 {activeGrades.map((grade) => (
                   <Button
                     key={grade}

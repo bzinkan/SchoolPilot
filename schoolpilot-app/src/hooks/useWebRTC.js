@@ -74,6 +74,12 @@ export function useWebRTC(ws) {
       return null;
     }
 
+    // Guard against double invocation (React StrictMode in dev)
+    if (connectionsRef.current.has(deviceId)) {
+      console.log(`[WebRTC] Already have connection for ${deviceId}, skipping`);
+      return connectionsRef.current.get(deviceId);
+    }
+
     console.log(`[WebRTC] Starting live view for device ${deviceId}`);
 
     // Create peer connection

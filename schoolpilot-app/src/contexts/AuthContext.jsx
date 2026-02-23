@@ -22,6 +22,12 @@ export function AuthProvider({ children }) {
       setMemberships(res.data.memberships || []);
       setLicenses(res.data.licenses || {});
 
+      // Store JWT token (returned by /me for Google OAuth sessions + email login)
+      if (res.data.token) {
+        setToken(res.data.token);
+        localStorage.setItem('sp_token', res.data.token);
+      }
+
       // Default to first membership's school if none selected
       if (!activeSchoolId && res.data.memberships?.length > 0) {
         const defaultSchool = res.data.memberships[0].schoolId;

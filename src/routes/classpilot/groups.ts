@@ -158,6 +158,25 @@ router.delete("/:id", ...auth, async (req, res, next) => {
   }
 });
 
+// GET /api/classpilot/groups/:id/students - List students in group
+router.get("/:id/students", ...auth, async (req, res, next) => {
+  try {
+    const rows = await getGroupStudents(param(req, "id"));
+    const students = rows.map((r) => ({
+      id: r.student.id,
+      studentName: [r.student.firstName, r.student.lastName].filter(Boolean).join(" ") || r.student.email || "",
+      studentEmail: r.student.email || "",
+      gradeLevel: r.student.gradeLevel || null,
+      firstName: r.student.firstName,
+      lastName: r.student.lastName,
+      email: r.student.email,
+    }));
+    return res.json(students);
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /api/classpilot/groups/:id/students - Add students to group
 router.post("/:id/students", ...auth, async (req, res, next) => {
   try {
@@ -166,6 +185,16 @@ router.post("/:id/students", ...auth, async (req, res, next) => {
       return res.status(400).json({ error: "studentIds array required" });
     }
     await addGroupStudents(param(req, "id"), studentIds);
+    return res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/classpilot/groups/:id/students/:studentId - Add single student to group
+router.post("/:id/students/:studentId", ...auth, async (req, res, next) => {
+  try {
+    await addGroupStudents(param(req, "id"), [param(req, "studentId")]);
     return res.json({ ok: true });
   } catch (err) {
     next(err);

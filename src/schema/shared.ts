@@ -191,6 +191,8 @@ export const trialRequests = pgTable(
     status: text("status").notNull().default("pending"), // pending | contacted | converted | declined
     notes: text("notes"),
     schoolId: text("school_id"), // FK once provisioned
+    schoolStartTime: text("school_start_time"), // e.g. "08:00"
+    schoolEndTime: text("school_end_time"), // e.g. "16:00"
     createdAt: timestamp("created_at").notNull().default(sql`now()`),
     processedAt: timestamp("processed_at"),
     processedBy: text("processed_by"),

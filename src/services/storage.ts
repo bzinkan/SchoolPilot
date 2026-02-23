@@ -86,6 +86,7 @@ import {
   dashboardTabs,
   teacherSettings,
   teacherStudents,
+  dailyUsage,
   type Device,
   type InsertDevice,
   type StudentDevice,
@@ -128,6 +129,8 @@ import {
   type InsertTeacherSetting,
   type TeacherStudent,
   type InsertTeacherStudent,
+  type DailyUsage,
+  type InsertDailyUsage,
 } from "../schema/classpilot.js";
 import {
   settings,
@@ -512,6 +515,23 @@ export async function getStaffBySchool(
     .orderBy(users.lastName, users.firstName);
 
   return rows.map((r) => ({ ...r.membership, user: r.user }));
+}
+
+export async function getAdminEmailsBySchool(
+  schoolId: string
+): Promise<string[]> {
+  const rows = await db
+    .select({ email: users.email })
+    .from(schoolMemberships)
+    .innerJoin(users, eq(schoolMemberships.userId, users.id))
+    .where(
+      and(
+        eq(schoolMemberships.schoolId, schoolId),
+        eq(schoolMemberships.status, "active"),
+        eq(schoolMemberships.role, "admin")
+      )
+    );
+  return rows.map((r) => r.email);
 }
 
 export async function getMembershipByUserAndSchool(
@@ -2180,6 +2200,108 @@ export async function getHeartbeatsByStudent(
 }
 
 // ============================================================================
+// ClassPilot - Daily Usage operations
+// ============================================================================
+
+export async function upsertDailyUsage(
+  data: InsertDailyUsage
+): Promise<DailyUsage> {
+  const [row] = await db
+    .insert(dailyUsage)
+    .values(data)
+    .onConflictDoUpdate({
+      target: [dailyUsage.studentId, dailyUsage.date],
+      set: {
+        totalSeconds: data.totalSeconds,
+        heartbeatCount: data.heartbeatCount,
+        topDomains: data.topDomains,
+        firstSeen: data.firstSeen,
+        lastSeen: data.lastSeen,
+        computedAt: sql`now()`,
+      },
+    })
+    .returning();
+  return row!;
+}
+
+export async function getDailyUsageForStudent(
+  studentId: string,
+  startDate: string,
+  endDate: string
+): Promise<DailyUsage[]> {
+  return db
+    .select()
+    .from(dailyUsage)
+    .where(
+      and(
+        eq(dailyUsage.studentId, studentId),
+        sql`${dailyUsage.date} >= ${startDate}`,
+        sql`${dailyUsage.date} <= ${endDate}`
+      )
+    )
+    .orderBy(asc(dailyUsage.date));
+}
+
+export async function getDailyUsageForSchool(
+  schoolId: string,
+  date: string
+): Promise<DailyUsage[]> {
+  return db
+    .select()
+    .from(dailyUsage)
+    .where(
+      and(eq(dailyUsage.schoolId, schoolId), eq(dailyUsage.date, date))
+    )
+    .orderBy(desc(dailyUsage.totalSeconds));
+}
+
+export async function getSchoolUsageSummary(
+  schoolId: string,
+  startDate: string,
+  endDate: string
+): Promise<{
+  totalSeconds: number;
+  activeStudents: number;
+  avgSecondsPerStudent: number;
+}> {
+  const [row] = await db
+    .select({
+      totalSeconds: sql<number>`COALESCE(SUM(${dailyUsage.totalSeconds}), 0)`,
+      activeStudents: sql<number>`COUNT(DISTINCT ${dailyUsage.studentId})`,
+      avgSecondsPerStudent: sql<number>`COALESCE(AVG(${dailyUsage.totalSeconds}), 0)`,
+    })
+    .from(dailyUsage)
+    .where(
+      and(
+        eq(dailyUsage.schoolId, schoolId),
+        sql`${dailyUsage.date} >= ${startDate}`,
+        sql`${dailyUsage.date} <= ${endDate}`
+      )
+    );
+  return {
+    totalSeconds: Number(row?.totalSeconds ?? 0),
+    activeStudents: Number(row?.activeStudents ?? 0),
+    avgSecondsPerStudent: Number(row?.avgSecondsPerStudent ?? 0),
+  };
+}
+
+export async function purgeOldHeartbeats(
+  schoolId: string,
+  cutoffDate: Date
+): Promise<number> {
+  const result = await db
+    .delete(heartbeats)
+    .where(
+      and(
+        eq(heartbeats.schoolId, schoolId),
+        sql`${heartbeats.timestamp} < ${cutoffDate}`
+      )
+    )
+    .returning({ id: heartbeats.id });
+  return result.length;
+}
+
+// ============================================================================
 // ClassPilot - Event operations
 // ============================================================================
 
@@ -2313,6 +2435,28 @@ export async function endTeachingSession(
     .where(eq(teachingSessions.id, sessionId))
     .returning();
   return session;
+}
+
+export async function getActiveTeachingSessions(
+  schoolId: string
+): Promise<TeachingSession[]> {
+  return db
+    .select({
+      id: teachingSessions.id,
+      groupId: teachingSessions.groupId,
+      teacherId: teachingSessions.teacherId,
+      startTime: teachingSessions.startTime,
+      endTime: teachingSessions.endTime,
+      createdAt: teachingSessions.createdAt,
+    })
+    .from(teachingSessions)
+    .innerJoin(groups, eq(teachingSessions.groupId, groups.id))
+    .where(
+      and(
+        eq(groups.schoolId, schoolId),
+        isNull(teachingSessions.endTime)
+      )
+    );
 }
 
 export async function getActiveTeachingSession(

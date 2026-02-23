@@ -16,6 +16,8 @@ import {
   getDevicesBySchool,
   getActiveSessionByStudent,
   getActiveSessions,
+  getActiveTeachingSessions,
+  getDailyUsageForStudent,
 } from "../../services/storage.js";
 
 const router = Router();
@@ -77,6 +79,31 @@ router.get("/student-analytics/:studentId", ...auth, async (req, res, next) => {
       heartbeats,
       activeSession,
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/classpilot/student-analytics/:studentId/usage - Daily usage history
+router.get("/student-analytics/:studentId/usage", ...auth, async (req, res, next) => {
+  try {
+    const studentId = param(req, "studentId");
+
+    const student = await getStudentById(studentId);
+    if (!student) {
+      return res.status(404).json({ error: "Student not found" });
+    }
+
+    // Default: last 7 days
+    const now = new Date();
+    const defaultStart = new Date(now);
+    defaultStart.setDate(defaultStart.getDate() - 7);
+
+    const startDate = (req.query.startDate as string) || defaultStart.toISOString().slice(0, 10);
+    const endDate = (req.query.endDate as string) || now.toISOString().slice(0, 10);
+
+    const usage = await getDailyUsageForStudent(studentId, startDate, endDate);
+    return res.json({ usage });
   } catch (err) {
     next(err);
   }
@@ -192,10 +219,10 @@ router.get("/sessions/active/:deviceId", ...auth, async (req, res, next) => {
   }
 });
 
-// GET /api/classpilot/sessions/all - All active sessions
+// GET /api/classpilot/sessions/all - All active teaching sessions (for admin observe)
 router.get("/sessions/all", ...auth, async (req, res, next) => {
   try {
-    const sessions = await getActiveSessions(res.locals.schoolId!);
+    const sessions = await getActiveTeachingSessions(res.locals.schoolId!);
     return res.json({ sessions });
   } catch (err) {
     next(err);

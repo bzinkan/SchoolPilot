@@ -36,6 +36,8 @@ router.post("/", async (req, res, next) => {
       message,
       zipCode,
       product,
+      schoolStartTime,
+      schoolEndTime,
     } = req.body;
 
     if (!schoolName || !contactName || !contactEmail) {
@@ -65,6 +67,8 @@ router.post("/", async (req, res, next) => {
       message: message || null,
       zipCode: zipCode || null,
       product: product || null,
+      schoolStartTime: schoolStartTime || null,
+      schoolEndTime: schoolEndTime || null,
       status: "pending",
     });
 

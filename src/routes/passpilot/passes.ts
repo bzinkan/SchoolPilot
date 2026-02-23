@@ -19,7 +19,9 @@ import {
   getGradesBySchool,
   getTeacherGrades,
   getSchoolById,
+  getSettingsForSchool,
 } from "../../services/storage.js";
+import { isWithinTrackingWindow } from "../../services/schoolHours.js";
 import type { Pass } from "../../schema/passpilot.js";
 
 const router = Router();
@@ -232,6 +234,12 @@ router.post("/", async (req, res, next) => {
     const activePass = await getActivePassForStudent(studentId, res.locals.schoolId!);
     if (activePass) {
       return res.status(409).json({ error: "Student already has an active pass" });
+    }
+
+    // Enforce school hours
+    const schoolSettings = await getSettingsForSchool(res.locals.schoolId!);
+    if (schoolSettings && !isWithinTrackingWindow(schoolSettings)) {
+      return res.status(403).json({ error: "Passes cannot be issued outside school hours" });
     }
 
     // Calculate duration and expiry

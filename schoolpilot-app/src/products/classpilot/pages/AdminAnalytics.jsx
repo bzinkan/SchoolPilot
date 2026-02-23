@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { apiRequest } from "../../../lib/queryClient";
 import { useNavigate } from "react-router-dom";
 import { Button } from "../../../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../../components/ui/card";
@@ -15,20 +16,12 @@ export default function AdminAnalytics() {
 
   const { data: summaryData, isLoading: summaryLoading } = useQuery({
     queryKey: ["/api/admin/analytics/summary", summaryPeriod],
-    queryFn: async () => {
-      const res = await fetch(`/api/admin/analytics/summary?period=${summaryPeriod}`, { credentials: 'include' });
-      if (!res.ok) throw new Error('Failed to fetch analytics summary');
-      return res.json();
-    },
+    queryFn: () => apiRequest("GET", `/admin/analytics/summary?period=${summaryPeriod}`),
   });
 
   const { data: teacherData, isLoading: teacherLoading } = useQuery({
     queryKey: ["/api/admin/analytics/by-teacher", teacherPeriod],
-    queryFn: async () => {
-      const res = await fetch(`/api/admin/analytics/by-teacher?period=${teacherPeriod}`, { credentials: 'include' });
-      if (!res.ok) throw new Error('Failed to fetch teacher analytics');
-      return res.json();
-    },
+    queryFn: () => apiRequest("GET", `/admin/analytics/by-teacher?period=${teacherPeriod}`),
   });
 
   const formatMinutes = (minutes) => {
@@ -38,8 +31,12 @@ export default function AdminAnalytics() {
     return `${hours}h ${mins}m`;
   };
 
-  const maxHourlyCount = summaryData?.hourlyActivity
-    ? Math.max(...summaryData.hourlyActivity.map(h => h.count), 1)
+  const hourlyActivity = Array.isArray(summaryData?.hourlyActivity) ? summaryData.hourlyActivity : [];
+  const topWebsites = Array.isArray(summaryData?.topWebsites) ? summaryData.topWebsites : [];
+  const teachersList = Array.isArray(teacherData?.teachers) ? teacherData.teachers : [];
+
+  const maxHourlyCount = hourlyActivity.length > 0
+    ? Math.max(...hourlyActivity.map(h => h.count), 1)
     : 1;
 
   return (
@@ -155,11 +152,11 @@ export default function AdminAnalytics() {
                 <CardDescription>Most visited domains</CardDescription>
               </CardHeader>
               <CardContent>
-                {summaryData.topWebsites.length === 0 ? (
+                {topWebsites.length === 0 ? (
                   <p className="text-muted-foreground text-center py-4">No website data available</p>
                 ) : (
                   <div className="space-y-3">
-                    {summaryData.topWebsites.map((site, idx) => (
+                    {topWebsites.map((site, idx) => (
                       <div key={site.domain} className="flex items-center gap-3">
                         <span className="text-sm text-muted-foreground w-6">{idx + 1}.</span>
                         <div className="flex-1">
@@ -171,7 +168,7 @@ export default function AdminAnalytics() {
                             <div
                               className="h-full bg-primary rounded-full"
                               style={{
-                                width: `${(site.visits / summaryData.topWebsites[0].visits) * 100}%`
+                                width: `${(site.visits / topWebsites[0].visits) * 100}%`
                               }}
                             />
                           </div>
@@ -194,7 +191,7 @@ export default function AdminAnalytics() {
               </CardHeader>
               <CardContent>
                 <div className="flex items-end gap-1 h-32">
-                  {summaryData.hourlyActivity.map((hour) => (
+                  {hourlyActivity.map((hour) => (
                     <div key={hour.hour} className="flex-1 flex flex-col items-center">
                       <div
                         className="w-full bg-primary/80 rounded-t"
@@ -237,7 +234,7 @@ export default function AdminAnalytics() {
         <CardContent className="pt-6">
           {teacherLoading ? (
             <div className="text-center py-8 text-muted-foreground">Loading teacher data...</div>
-          ) : teacherData?.teachers && teacherData.teachers.length > 0 ? (
+          ) : teachersList.length > 0 ? (
             <div className="border rounded-lg overflow-hidden">
               <table className="w-full text-sm">
                 <thead className="bg-muted">
@@ -249,7 +246,7 @@ export default function AdminAnalytics() {
                   </tr>
                 </thead>
                 <tbody>
-                  {teacherData.teachers.map((teacher) => (
+                  {teachersList.map((teacher) => (
                     <tr key={teacher.id} className="border-t">
                       <td className="px-4 py-3">
                         <div className="font-medium">{teacher.name}</div>

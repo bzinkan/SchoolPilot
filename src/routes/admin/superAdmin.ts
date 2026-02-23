@@ -19,6 +19,8 @@ import {
   deleteProductLicense,
   deleteMembership,
   updateUser,
+  getSettingsForSchool,
+  upsertSettings,
 } from "../../services/storage.js";
 import { hashPassword } from "../../util/password.js";
 import { sendWelcomeEmail } from "../../services/email.js";
@@ -119,6 +121,7 @@ router.post("/schools", ...auth, async (req, res, next) => {
       adminLastName,
       adminPassword, firstAdminPassword,
       products,
+      schoolHours,
     } = req.body;
 
     if (!name) {
@@ -194,6 +197,19 @@ router.post("/schools", ...auth, async (req, res, next) => {
       await sendWelcomeEmail(adminEmail, name, pwd);
     }
 
+    // Initialize school hours settings if provided
+    if (schoolHours) {
+      await upsertSettings(school.id, {
+        schoolName: name,
+        enableTrackingHours: schoolHours.enabled ?? false,
+        trackingStartTime: schoolHours.startTime ?? "08:00",
+        trackingEndTime: schoolHours.endTime ?? "15:00",
+        schoolTimezone: schoolHours.timezone ?? "America/New_York",
+        trackingDays: schoolHours.days ?? ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
+        afterHoursMode: schoolHours.afterHoursMode ?? "off",
+      });
+    }
+
     await logAudit({
       schoolId: school.id,
       userId: req.authUser!.id,
@@ -218,10 +234,11 @@ router.get("/schools/:id", ...auth, async (req, res, next) => {
       return res.status(404).json({ error: "School not found" });
     }
 
-    const [memberships, students, licenses] = await Promise.all([
+    const [memberships, students, licenses, schoolSettings] = await Promise.all([
       getMembershipsBySchool(school.id),
       getStudentsBySchool(school.id),
       getProductLicenses(school.id),
+      getSettingsForSchool(school.id),
     ]);
 
     // Flatten membership + user data so the frontend can read email/displayName directly
@@ -251,6 +268,14 @@ router.get("/schools/:id", ...auth, async (req, res, next) => {
       studentCount: students.length,
       products,
       productLicenses: licenses,
+      schoolHours: {
+        enabled: schoolSettings?.enableTrackingHours ?? false,
+        startTime: schoolSettings?.trackingStartTime ?? "08:00",
+        endTime: schoolSettings?.trackingEndTime ?? "15:00",
+        timezone: schoolSettings?.schoolTimezone ?? school.schoolTimezone ?? "America/New_York",
+        days: schoolSettings?.trackingDays ?? ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
+        afterHoursMode: schoolSettings?.afterHoursMode ?? "off",
+      },
     });
   } catch (err) {
     next(err);
@@ -261,7 +286,7 @@ router.get("/schools/:id", ...auth, async (req, res, next) => {
 router.patch("/schools/:id", ...auth, async (req, res, next) => {
   try {
     const id = param(req, "id");
-    const { name, domain, status, billingEmail, schoolTimezone, maxStudents, maxLicenses, planTier, planStatus, activeUntil } = req.body;
+    const { schoolHours, name, domain, status, billingEmail, schoolTimezone, maxStudents, maxLicenses, planTier, planStatus, activeUntil } = req.body;
 
     const data: Record<string, unknown> = {};
     if (name !== undefined) data.name = name;
@@ -280,13 +305,26 @@ router.patch("/schools/:id", ...auth, async (req, res, next) => {
       return res.status(404).json({ error: "School not found" });
     }
 
+    // Save school hours to settings table
+    if (schoolHours) {
+      await upsertSettings(id, {
+        schoolName: updated.name,
+        enableTrackingHours: schoolHours.enabled ?? false,
+        trackingStartTime: schoolHours.startTime ?? "08:00",
+        trackingEndTime: schoolHours.endTime ?? "15:00",
+        schoolTimezone: schoolHours.timezone ?? updated.schoolTimezone ?? "America/New_York",
+        trackingDays: schoolHours.days ?? ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
+        afterHoursMode: schoolHours.afterHoursMode ?? "off",
+      });
+    }
+
     await logAudit({
       schoolId: id,
       userId: req.authUser!.id,
       action: "school.updated",
       entityType: "school",
       entityId: id,
-      changes: data,
+      changes: { ...data, ...(schoolHours ? { schoolHours } : {}) },
     });
 
     return res.json({ school: updated });

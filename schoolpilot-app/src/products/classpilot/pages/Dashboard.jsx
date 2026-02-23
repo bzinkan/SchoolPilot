@@ -110,6 +110,7 @@ export default function Dashboard() {
   const [subgroupMembers, setSubgroupMembers] = useState(new Set());
   const [raisedHands, setRaisedHands] = useState(new Map());
   const [studentMessages, setStudentMessages] = useState([]);
+  const [chatReplies, setChatReplies] = useState({});
   const dismissedMessageIds = useRef(new Set());
   const dismissedMessagesInitialized = useRef(false);
   // eslint-disable-next-line react-hooks/refs
@@ -239,11 +240,7 @@ export default function Dashboard() {
     refetchInterval: 30000,
   });
 
-  const { data: initialStudentMessages } = useQuery({
-    queryKey: ['/api/teacher/messages'],
-    queryFn: () => apiRequest('GET', '/teacher/messages'),
-    refetchInterval: 30000,
-  });
+  // Student messages are ephemeral (WS-only, cleared on refresh)
 
   // Sync initial raised hands to state
   useEffect(() => {
@@ -260,25 +257,6 @@ export default function Dashboard() {
       setRaisedHands(handsMap);
     }
   }, [initialRaisedHands]);
-
-  // Sync initial student messages to state
-  useEffect(() => {
-    if (initialStudentMessages?.messages) {
-      const filteredMessages = initialStudentMessages.messages
-        .filter(msg => !dismissedMessageIds.current.has(msg.id))
-        .map(msg => ({
-          id: msg.id,
-          studentId: msg.studentId,
-          studentName: msg.studentName,
-          studentEmail: msg.studentEmail,
-          message: msg.message,
-          messageType: msg.messageType,
-          timestamp: msg.createdAt,
-          read: false,
-        }));
-      setStudentMessages(filteredMessages);
-    }
-  }, [initialStudentMessages]);
 
   // WebSocket connection with automatic reconnection
   useEffect(() => {
@@ -321,6 +299,14 @@ export default function Dashboard() {
               schoolId: currentUser.schoolId,
             }));
           }
+
+          // Heartbeat to keep CloudFront/ALB connection alive
+          const heartbeatInterval = setInterval(() => {
+            if (socket.readyState === WebSocket.OPEN) {
+              socket.send(JSON.stringify({ type: 'ping' }));
+            }
+          }, 20000);
+          socket._heartbeatInterval = heartbeatInterval;
         };
 
         socket.onmessage = (event) => {
@@ -378,6 +364,7 @@ export default function Dashboard() {
                 studentId: message.data.studentId,
                 studentName: message.data.studentName,
                 studentEmail: message.data.studentEmail,
+                deviceId: message.data.deviceId,
                 message: message.data.message,
                 messageType: message.data.messageType,
                 timestamp: message.data.timestamp,
@@ -399,6 +386,7 @@ export default function Dashboard() {
 
         socket.onclose = () => {
           if (!isMountedRef.current) return;
+          if (socket._heartbeatInterval) clearInterval(socket._heartbeatInterval);
           setWsConnected(false);
           setWsAuthenticated(false);
           wsRef.current = null;
@@ -437,11 +425,17 @@ export default function Dashboard() {
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Re-authenticate when currentUser becomes available
+  // Re-authenticate when currentUser becomes available (e.g. token loaded after WS connected)
   useEffect(() => {
-    if (!currentUser?.id || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN || wsAuthenticated) return;
-    wsRef.current.send(JSON.stringify({ type: 'auth', role: currentUser.role || 'teacher', userId: currentUser.id }));
-  }, [currentUser?.id, currentUser?.role, wsConnected, wsAuthenticated]);
+    if (!currentUser?.id || !token || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN || wsAuthenticated) return;
+    wsRef.current.send(JSON.stringify({
+      type: 'auth',
+      role: currentUser.role === 'admin' || currentUser.role === 'school_admin' ? 'school_admin' : 'teacher',
+      userId: currentUser.id,
+      userToken: token,
+      schoolId: currentUser.schoolId,
+    }));
+  }, [currentUser?.id, currentUser?.role, currentUser?.schoolId, token, wsConnected, wsAuthenticated]);
 
   // Set initial grade when settings load
   useEffect(() => {
@@ -528,10 +522,10 @@ export default function Dashboard() {
 
   // Session-only filtered students (no search filter) - used for stats
   const sessionFilteredStudents = students.filter((student) => {
-    if (activeSession && sessionStudentIds.length > 0) {
+    if (effectiveSession && sessionStudentIds.length > 0) {
       if (!sessionStudentIds.includes(student.studentId)) return false;
     }
-    if (isAdmin) {
+    if (isAdmin && !effectiveSession) {
       return normalizeGrade(student.gradeLevel) === normalizeGrade(selectedGrade);
     }
     return true;
@@ -935,8 +929,17 @@ export default function Dashboard() {
   });
 
   const replyToMessageMutation = useMutation({
-    mutationFn: async ({ studentId, message }) => apiRequest('POST', '/teacher/reply', { studentId, message }),
-    onSuccess: () => { setReplyingToMessage(null); setReplyText(""); toast({ title: "Reply Sent", description: "Your reply has been sent to the student" }); },
+    mutationFn: async ({ studentId, message, deviceId }) => apiRequest('POST', '/teacher/reply', { studentId, message, deviceId }),
+    onSuccess: (_, variables) => {
+      setChatReplies(prev => ({
+        ...prev,
+        [variables.studentId]: [
+          ...(prev[variables.studentId] || []),
+          { message: variables.message, timestamp: new Date().toISOString() },
+        ],
+      }));
+      toast({ title: "Reply Sent" });
+    },
     onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
   });
 
@@ -948,6 +951,17 @@ export default function Dashboard() {
       console.error('Failed to delete message from server:', error);
       dismissedMessageIds.current.add(messageId);
       try { const ids = Array.from(dismissedMessageIds.current).slice(-100); localStorage.setItem('classpilot-dismissed-messages', JSON.stringify(ids)); } catch { /* intentionally empty */ }
+    }
+  };
+
+  const closeChat = async (studentId) => {
+    const msg = studentMessages.find(m => m.studentId === studentId);
+    setStudentMessages(prev => prev.filter(m => m.studentId !== studentId));
+    setChatReplies(prev => { const next = { ...prev }; delete next[studentId]; return next; });
+    if (msg?.deviceId) {
+      try { await apiRequest('POST', '/teacher/close-chat', { studentId, deviceId: msg.deviceId }); } catch (error) {
+        console.error('Failed to send close-chat:', error);
+      }
     }
   };
 
@@ -1114,7 +1128,6 @@ export default function Dashboard() {
                               <DropdownMenuCheckboxItem key={session.id} checked={adminObservedSessionId === session.id} onSelect={() => setAdminObservedSessionId(session.id)} data-testid={`menu-item-observe-${session.id}`}>
                                 <div className="flex flex-col">
                                   <span className="font-medium">{sessionGroup?.name || 'Unknown Class'}{isOwnSession && <span className="ml-1 text-xs text-primary">(yours)</span>}</span>
-                                  <span className="text-xs text-muted-foreground">Started {new Date(session.startTime).toLocaleTimeString()}</span>
                                 </div>
                               </DropdownMenuCheckboxItem>
                             );
@@ -1727,10 +1740,15 @@ export default function Dashboard() {
           studentMessages={studentMessages}
           onMarkMessageRead={markMessageRead}
           onDismissMessage={dismissMessage}
-          onReplyToMessage={(studentId, message) => replyToMessageMutation.mutate({ studentId, message })}
+          onReplyToMessage={(studentId, message) => {
+            const msg = studentMessages.find(m => m.studentId === studentId);
+            replyToMessageMutation.mutate({ studentId, message, deviceId: msg?.deviceId });
+          }}
           replyPending={replyToMessageMutation.isPending}
           studentMessagingEnabled={settings?.studentMessagingEnabled !== false}
           onToggleStudentMessaging={(enabled) => toggleStudentMessagingMutation.mutate(enabled)}
+          chatReplies={chatReplies}
+          onCloseChat={closeChat}
         />
       )}
     </div>

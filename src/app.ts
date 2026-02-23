@@ -74,6 +74,7 @@ export function createApp() {
       }),
       name: "schoolpilot.sid",
       secret: sessionSecret,
+      rolling: true,
       resave: false,
       saveUninitialized: false,
       cookie: {

@@ -7,6 +7,9 @@ export default function CreateSchool() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
+  const preStartTime = searchParams.get('startTime') || '';
+  const preEndTime = searchParams.get('endTime') || '';
+
   const [form, setForm] = useState({
     name: searchParams.get('name') || '',
     domain: searchParams.get('domain') || '',
@@ -19,6 +22,14 @@ export default function CreateSchool() {
     firstAdminPassword: '',
     zipCode: searchParams.get('zipCode') || '',
     products: [],
+    schoolHours: {
+      enabled: !!(preStartTime && preEndTime),
+      startTime: preStartTime || '08:00',
+      endTime: preEndTime || '15:00',
+      timezone: 'America/New_York',
+      days: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
+      afterHoursMode: 'off',
+    },
   });
 
   const toggleProduct = (product) => {
@@ -29,6 +40,34 @@ export default function CreateSchool() {
         : [...prev.products, product],
     }));
   };
+
+  const setHoursField = (field, value) => {
+    setForm((prev) => ({
+      ...prev,
+      schoolHours: { ...prev.schoolHours, [field]: value },
+    }));
+  };
+
+  const toggleHoursDay = (day) => {
+    setForm((prev) => ({
+      ...prev,
+      schoolHours: {
+        ...prev.schoolHours,
+        days: prev.schoolHours.days.includes(day)
+          ? prev.schoolHours.days.filter((d) => d !== day)
+          : [...prev.schoolHours.days, day],
+      },
+    }));
+  };
+
+  const getHoursDuration = () => {
+    const [sh, sm] = form.schoolHours.startTime.split(':').map(Number);
+    const [eh, em] = form.schoolHours.endTime.split(':').map(Number);
+    const diff = (eh * 60 + em - sh * 60 - sm) / 60;
+    return diff > 0 ? diff : 0;
+  };
+
+  const showSchoolHours = form.products.includes('CLASSPILOT') || form.products.includes('PASSPILOT');
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
@@ -49,7 +88,13 @@ export default function CreateSchool() {
     setError(null);
 
     try {
-      const res = await api.post('/super-admin/schools', form);
+      const payload = { ...form };
+      // Only include schoolHours if products require it and hours are enabled
+      const needsHours = payload.products.includes('CLASSPILOT') || payload.products.includes('PASSPILOT');
+      if (!needsHours || !payload.schoolHours?.enabled) {
+        delete payload.schoolHours;
+      }
+      const res = await api.post('/super-admin/schools', payload);
       setResult(res.data);
     } catch (err) {
       setError(err.response?.data?.error || err.response?.data?.message || 'Failed to create school');
@@ -214,6 +259,100 @@ export default function CreateSchool() {
             })}
           </div>
         </div>
+
+        {/* School Hours - shown when ClassPilot or PassPilot is selected */}
+        {showSchoolHours && (
+          <div className="bg-white rounded-xl border border-slate-200 p-6">
+            <h2 className="font-semibold text-slate-900 mb-1">School Hours</h2>
+            <p className="text-sm text-slate-500 mb-4">Set the school's operating hours for ClassPilot and PassPilot.</p>
+
+            {/* Enable toggle */}
+            <label className="flex items-center gap-3 mb-4 cursor-pointer">
+              <div className={`relative w-10 h-6 rounded-full transition-colors ${form.schoolHours.enabled ? 'bg-green-500' : 'bg-slate-300'}`}
+                onClick={() => setHoursField('enabled', !form.schoolHours.enabled)}>
+                <div className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${form.schoolHours.enabled ? 'left-5' : 'left-1'}`} />
+              </div>
+              <span className="text-sm font-medium text-slate-700">
+                {form.schoolHours.enabled ? 'Restricted to school hours' : 'No restriction (24/7 operation)'}
+              </span>
+            </label>
+
+            {form.schoolHours.enabled && (
+              <div className="space-y-4">
+                {/* Time range */}
+                <div className="flex items-center gap-3">
+                  <div className="flex-1">
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Start Time</label>
+                    <input type="time" value={form.schoolHours.startTime}
+                      onChange={(e) => setHoursField('startTime', e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" />
+                  </div>
+                  <span className="text-slate-400 mt-6">to</span>
+                  <div className="flex-1">
+                    <label className="block text-sm font-medium text-slate-700 mb-1">End Time</label>
+                    <input type="time" value={form.schoolHours.endTime}
+                      onChange={(e) => setHoursField('endTime', e.target.value)}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" />
+                  </div>
+                </div>
+
+                {/* Duration indicator + 9-hour warning */}
+                {(() => {
+                  const dur = getHoursDuration();
+                  return (
+                    <div className={`text-sm px-3 py-2 rounded ${dur > 9 ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-slate-50 text-slate-600'}`}>
+                      {dur > 0 ? `${dur.toFixed(1)} hours per day` : 'Invalid time range'}
+                      {dur > 9 && ' — Schools operating more than 9 hours per day may incur additional infrastructure costs.'}
+                    </div>
+                  );
+                })()}
+
+                {/* Days */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Active Days</label>
+                  <div className="flex flex-wrap gap-2">
+                    {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].map((day) => (
+                      <button key={day} type="button" onClick={() => toggleHoursDay(day)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                          form.schoolHours.days.includes(day)
+                            ? 'bg-slate-900 text-white'
+                            : 'bg-slate-100 text-slate-400 hover:bg-slate-200'
+                        }`}>
+                        {day.slice(0, 3)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Timezone */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Timezone</label>
+                  <select value={form.schoolHours.timezone}
+                    onChange={(e) => setHoursField('timezone', e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
+                    <option value="America/New_York">Eastern (ET)</option>
+                    <option value="America/Chicago">Central (CT)</option>
+                    <option value="America/Denver">Mountain (MT)</option>
+                    <option value="America/Los_Angeles">Pacific (PT)</option>
+                    <option value="America/Anchorage">Alaska (AKT)</option>
+                    <option value="Pacific/Honolulu">Hawaii (HT)</option>
+                  </select>
+                </div>
+
+                {/* After-hours mode */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">After-Hours Behavior</label>
+                  <select value={form.schoolHours.afterHoursMode}
+                    onChange={(e) => setHoursField('afterHoursMode', e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
+                    <option value="off">Off — Extensions sleep, no passes</option>
+                    <option value="limited">Limited — Monitor only, no alerts</option>
+                  </select>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* First Admin */}
         <div className="bg-white rounded-xl border border-slate-200 p-6">

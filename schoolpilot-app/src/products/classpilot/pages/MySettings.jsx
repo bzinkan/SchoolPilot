@@ -20,7 +20,6 @@ import { ThemeToggle } from "../../../components/ThemeToggle";
 
 const teacherSettingsSchema = z.object({
   maxTabsPerStudent: z.string().optional(),
-  allowedDomains: z.string(),
   blockedDomains: z.string(),
   defaultFlightPathId: z.string().optional(),
 });
@@ -57,38 +56,25 @@ export default function MySettings() {
 
   const { data: teacherSettings, isLoading } = useQuery({
     queryKey: ['/api/teacher/settings'],
-    queryFn: async () => {
-      const res = await fetch('/api/teacher/settings', { credentials: 'include' });
-      if (!res.ok) throw new Error('Failed to fetch teacher settings');
-      return res.json();
-    },
+    queryFn: () => apiRequest('GET', '/teacher/settings'),
   });
 
   const { data: flightPaths = [] } = useQuery({
     queryKey: ['/api/flight-paths'],
-    queryFn: async () => {
-      const res = await fetch('/api/flight-paths', { credentials: 'include' });
-      if (!res.ok) throw new Error('Failed to fetch flight paths');
-      return res.json();
-    },
+    queryFn: () => apiRequest('GET', '/flight-paths'),
+    select: (data) => Array.isArray(data) ? data : data?.flightPaths ?? [],
   });
 
   const { data: blockLists = [] } = useQuery({
     queryKey: ['/api/block-lists'],
-    queryFn: async () => {
-      const res = await fetch('/api/block-lists', { credentials: 'include' });
-      if (!res.ok) throw new Error('Failed to fetch block lists');
-      return res.json();
-    },
+    queryFn: () => apiRequest('GET', '/block-lists'),
+    select: (data) => Array.isArray(data) ? data : data?.blockLists ?? [],
   });
 
   const { data: groups = [] } = useQuery({
     queryKey: ['/api/teacher/groups'],
-    queryFn: async () => {
-      const res = await fetch('/api/teacher/groups', { credentials: 'include' });
-      if (!res.ok) throw new Error('Failed to fetch groups');
-      return res.json();
-    },
+    queryFn: () => apiRequest('GET', '/teacher/groups'),
+    select: (data) => Array.isArray(data) ? data : data?.groups ?? [],
   });
 
   const { data: subgroups = [], refetch: refetchSubgroups } = useQuery({
@@ -105,7 +91,8 @@ export default function MySettings() {
     queryKey: ['/api/groups', selectedGroupId, 'students'],
     queryFn: async () => {
       if (!selectedGroupId) return [];
-      return await apiRequest('GET', `/groups/${selectedGroupId}/students`);
+      const data = await apiRequest('GET', `/groups/${selectedGroupId}/students`);
+      return Array.isArray(data) ? data : [];
     },
     enabled: !!selectedGroupId,
   });
@@ -114,7 +101,6 @@ export default function MySettings() {
     resolver: zodResolver(teacherSettingsSchema),
     defaultValues: {
       maxTabsPerStudent: "",
-      allowedDomains: "",
       blockedDomains: "",
       defaultFlightPathId: "",
     },
@@ -124,8 +110,7 @@ export default function MySettings() {
     if (teacherSettings) {
       form.reset({
         maxTabsPerStudent: teacherSettings.maxTabsPerStudent || "",
-        allowedDomains: teacherSettings.allowedDomains?.join(", ") || "",
-        blockedDomains: teacherSettings.blockedDomains?.join(", ") || "",
+        blockedDomains: teacherSettings.teacherBlockedDomains?.join(", ") || "",
         defaultFlightPathId: teacherSettings.defaultFlightPathId || "",
       });
     }
@@ -395,9 +380,6 @@ export default function MySettings() {
     mutationFn: async (data) => {
       const payload = {
         maxTabsPerStudent: data.maxTabsPerStudent || null,
-        allowedDomains: data.allowedDomains
-          ? data.allowedDomains.split(",").map(d => d.trim()).filter(Boolean)
-          : [],
         blockedDomains: data.blockedDomains
           ? data.blockedDomains.split(",").map(d => d.trim()).filter(Boolean)
           : [],
@@ -794,16 +776,35 @@ export default function MySettings() {
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Maximum Tabs Per Student</FormLabel>
-                      <FormControl>
-                        <Input
-                          data-testid="input-max-tabs"
-                          type="number"
-                          placeholder="Leave empty for no limit"
-                          {...field}
-                        />
-                      </FormControl>
+                      <div className="flex items-center gap-2">
+                        <FormControl>
+                          <Input
+                            data-testid="input-max-tabs"
+                            type="number"
+                            min="1"
+                            placeholder="No limit"
+                            {...field}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              if (val === '' || (parseInt(val, 10) >= 1)) {
+                                field.onChange(val);
+                              }
+                            }}
+                          />
+                        </FormControl>
+                        {field.value && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => field.onChange("")}
+                          >
+                            Clear
+                          </Button>
+                        )}
+                      </div>
                       <FormDescription>
-                        Limit the number of browser tabs students can have open. Leave empty to allow unlimited tabs.
+                        Limit the number of browser tabs students can have open. Leave empty or clear to allow unlimited tabs.
                       </FormDescription>
                       <FormMessage />
                     </FormItem>
@@ -842,34 +843,28 @@ export default function MySettings() {
                   )}
                 />
 
-                <FormField
-                  control={form.control}
-                  name="allowedDomains"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Allowed Domains</FormLabel>
-                      <FormControl>
-                        <Textarea
-                          data-testid="textarea-allowed-domains"
-                          placeholder="example.com, google.com, education.org"
-                          className="min-h-[100px] font-mono text-sm"
-                          {...field}
-                        />
-                      </FormControl>
-                      <FormDescription>
-                        Comma-separated list of domains students are allowed to visit. These domains are in addition to school-wide allowed domains.
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                {teacherSettings?.schoolBlockedDomains?.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium">School-Wide Blocked Domains</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {teacherSettings.schoolBlockedDomains.map((domain, idx) => (
+                        <span key={idx} className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400">
+                          {domain}
+                        </span>
+                      ))}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Set by your school admin. These apply to all students school-wide.
+                    </p>
+                  </div>
+                )}
 
                 <FormField
                   control={form.control}
                   name="blockedDomains"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Blocked Domains</FormLabel>
+                      <FormLabel>My Blocked Domains</FormLabel>
                       <FormControl>
                         <Textarea
                           data-testid="textarea-blocked-domains"
@@ -879,7 +874,7 @@ export default function MySettings() {
                         />
                       </FormControl>
                       <FormDescription>
-                        Comma-separated list of domains that are ALWAYS blocked for your students. Unlike "My Block Lists" above, these are permanent and don't need to be applied.
+                        Comma-separated list of domains that are ALWAYS blocked for your students. These are in addition to the school-wide blocked domains above.
                       </FormDescription>
                       <FormMessage />
                     </FormItem>

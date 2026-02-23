@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { google } from "googleapis";
 import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import {
@@ -10,7 +11,6 @@ import {
 const router = Router();
 
 function getOAuth2Client() {
-  const { google } = require("googleapis");
   return new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,

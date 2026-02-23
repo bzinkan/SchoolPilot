@@ -38,12 +38,7 @@ function MyClassTab() {
 
   const { data: myClasses = [] } = useQuery({
     queryKey: ['my-classes'],
-    queryFn: async () => {
-      const url = isAdmin ? '/api/grades' : '/api/my-classes';
-      const res = await fetch(url, { credentials: 'include' });
-      if (!res.ok) throw new Error('Failed to fetch classes');
-      return res.json();
-    },
+    queryFn: () => apiRequest('GET', isAdmin ? '/grades' : '/my-classes'),
     select: (data) => Array.isArray(data) ? data : (data?.grades ?? data?.classes ?? []),
   });
 
@@ -56,21 +51,13 @@ function MyClassTab() {
 
   const { data: students = [], isLoading: studentsLoading } = useQuery({
     queryKey: ['/api/students'],
-    queryFn: async () => {
-      const res = await fetch('/api/students', { credentials: 'include' });
-      if (!res.ok) throw new Error('Failed to fetch students');
-      return res.json();
-    },
+    queryFn: () => apiRequest('GET', '/students'),
     select: (data) => Array.isArray(data) ? data : (data?.students ?? []),
   });
 
   const { data: passes = [], isLoading: passesLoading } = useQuery({
     queryKey: ['/api/passes/active'],
-    queryFn: async () => {
-      const res = await fetch('/api/passes/active', { credentials: 'include' });
-      if (!res.ok) throw new Error('Failed to fetch passes');
-      return res.json();
-    },
+    queryFn: () => apiRequest('GET', '/passes/active'),
     select: (data) => Array.isArray(data) ? data : (data?.passes ?? []),
     refetchInterval: 3000,
     gcTime: 0,

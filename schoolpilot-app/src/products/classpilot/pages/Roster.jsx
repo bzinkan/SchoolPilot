@@ -45,29 +45,19 @@ export default function RosterPage() {
   // Fetch devices, students, and settings in parallel
   const { data: devices = [], isLoading: devicesLoading } = useQuery({
     queryKey: ['/api/roster/devices'],
-    queryFn: async () => {
-      const res = await fetch('/api/roster/devices', { credentials: 'include' });
-      if (!res.ok) throw new Error('Failed to fetch devices');
-      return res.json();
-    },
+    queryFn: () => apiRequest('GET', '/roster/devices'),
+    select: (data) => Array.isArray(data) ? data : data?.devices ?? [],
   });
 
   const { data: students = [], isLoading: studentsLoading } = useQuery({
     queryKey: ['/api/roster/students'],
-    queryFn: async () => {
-      const res = await fetch('/api/roster/students', { credentials: 'include' });
-      if (!res.ok) throw new Error('Failed to fetch students');
-      return res.json();
-    },
+    queryFn: () => apiRequest('GET', '/roster/students'),
+    select: (data) => Array.isArray(data) ? data : data?.students ?? [],
   });
 
   const { data: settings } = useQuery({
     queryKey: ['/api/settings'],
-    queryFn: async () => {
-      const res = await fetch('/api/settings', { credentials: 'include' });
-      if (!res.ok) throw new Error('Failed to fetch settings');
-      return res.json();
-    },
+    queryFn: () => apiRequest('GET', '/settings'),
   });
 
   const isLoading = devicesLoading || studentsLoading;

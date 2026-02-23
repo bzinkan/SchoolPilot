@@ -86,11 +86,7 @@ export default function Admin() {
 
   const { data: staffData, isLoading } = useQuery({
     queryKey: ["/api/admin/users"],
-    queryFn: async () => {
-      const res = await fetch("/api/admin/users", { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to fetch staff");
-      return res.json();
-    },
+    queryFn: () => apiRequest("GET", "/admin/users"),
     select: (data) => ({
       users: (data?.users ?? []).map((m) => ({
         id: m.membershipId || m.userId,
@@ -107,31 +103,19 @@ export default function Admin() {
 
   const { data: _settings } = useQuery({
     queryKey: ["/api/settings"],
-    queryFn: async () => {
-      const res = await fetch("/api/settings", { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to fetch settings");
-      return res.json();
-    },
+    queryFn: () => apiRequest("GET", "/settings"),
   });
 
   const { data: activeSessions = [] } = useQuery({
     queryKey: ["/api/sessions/all"],
-    queryFn: async () => {
-      const res = await fetch("/api/sessions/all", { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to fetch sessions");
-      return res.json();
-    },
+    queryFn: () => apiRequest("GET", "/sessions/all"),
     select: (data) => Array.isArray(data) ? data : data?.sessions ?? [],
     refetchInterval: 10000, // Poll every 10 seconds
   });
 
   const { data: allGroups = [] } = useQuery({
     queryKey: ["/api/teacher/groups"],
-    queryFn: async () => {
-      const res = await fetch("/api/teacher/groups", { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to fetch groups");
-      return res.json();
-    },
+    queryFn: () => apiRequest("GET", "/teacher/groups"),
     select: (data) => Array.isArray(data) ? data : data?.groups ?? [],
   });
 
@@ -143,9 +127,7 @@ export default function Admin() {
       params.set("limit", "20");
       params.set("offset", String(auditPage * 20));
       if (auditActionFilter) params.set("action", auditActionFilter);
-      const res = await fetch(`/api/admin/audit-logs?${params.toString()}`, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to fetch audit logs");
-      return res.json();
+      return apiRequest("GET", `/admin/audit-logs?${params.toString()}`);
     },
     enabled: activeTab === "audit",
   });
@@ -238,23 +220,12 @@ export default function Admin() {
   // Google Workspace staff import queries
   const { data: wsUsersData, isLoading: wsUsersLoading, error: wsUsersError, refetch: wsUsersRefetch } = useQuery({
     queryKey: ["/api/directory/users"],
-    queryFn: async () => {
-      const res = await fetch("/api/directory/users", { credentials: "include" });
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(`${res.status}: ${text}`);
-      }
-      return res.json();
-    },
+    queryFn: () => apiRequest("GET", "/directory/users"),
     enabled: wsImportDialogOpen,
   });
   const { data: wsOUData, isLoading: wsOULoading } = useQuery({
     queryKey: ["/api/directory/orgunits"],
-    queryFn: async () => {
-      const res = await fetch("/api/directory/orgunits", { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to fetch org units");
-      return res.json();
-    },
+    queryFn: () => apiRequest("GET", "/directory/orgunits"),
     enabled: wsImportDialogOpen,
   });
 
@@ -266,24 +237,17 @@ export default function Admin() {
 
   const wsErrorCode = (() => {
     if (!wsUsersError) return null;
-    const msg = wsUsersError.message || "";
+    // With axios, the server response is in error.response.data; error.message is generic
+    const serverMsg = wsUsersError.response?.data?.error || wsUsersError.response?.data?.message || "";
+    const msg = serverMsg || wsUsersError.message || "";
     try { const m = msg.match(/\{.*\}/); if (m) return JSON.parse(m[0]).code || null; } catch { /* ignore */ }
-    if (msg.includes("NO_TOKENS")) return "NO_TOKENS";
+    if (msg.includes("NO_TOKENS") || msg.includes("Google not connected")) return "NO_TOKENS";
     if (msg.includes("INSUFFICIENT_PERMISSIONS")) return "INSUFFICIENT_PERMISSIONS";
-    return null;
+    return "UNKNOWN_ERROR";
   })();
 
   const wsImportMutation = useMutation({
-    mutationFn: async (params) => {
-      const res = await fetch("/api/directory/import-staff", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify(params),
-      });
-      if (!res.ok) throw new Error("Staff import failed");
-      return res.json();
-    },
+    mutationFn: (params) => apiRequest("POST", "/directory/import-staff", params),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
       queryClient.invalidateQueries({ queryKey: ["/api/admin/teachers"] });
@@ -1420,8 +1384,15 @@ export default function Admin() {
               </div>
             ) : wsErrorCode === "NO_TOKENS" ? (
               <div className="text-center py-8 space-y-4">
-                <p className="text-muted-foreground">Google Workspace is not connected. Please sign out and sign back in with Google.</p>
-                <Button variant="outline" onClick={() => window.location.href = "/auth/google"}>Reconnect Google Account</Button>
+                <p className="text-muted-foreground">Google Workspace is not connected. Connect your Google Workspace admin account to import staff.</p>
+                <Button variant="outline" onClick={async () => {
+                  try {
+                    const data = await apiRequest("GET", "/google/auth-url");
+                    if (data.url) window.location.href = data.url;
+                  } catch (err) {
+                    toast({ variant: "destructive", title: "Failed to connect Google", description: err.response?.data?.error || err.message });
+                  }
+                }}>Connect Google Workspace</Button>
               </div>
             ) : wsErrorCode === "INSUFFICIENT_PERMISSIONS" ? (
               <div className="text-center py-8 space-y-4">
@@ -1429,7 +1400,16 @@ export default function Admin() {
                   <AlertCircle className="h-5 w-5" />
                   <span className="font-medium">Admin Access Required</span>
                 </div>
-                <p className="text-muted-foreground">This feature requires Google Workspace administrator privileges.</p>
+                <p className="text-muted-foreground">This feature requires Google Workspace administrator privileges. Make sure you connected a Google Workspace admin account.</p>
+              </div>
+            ) : wsErrorCode ? (
+              <div className="text-center py-8 space-y-4">
+                <div className="flex items-center justify-center gap-2 text-red-600">
+                  <AlertCircle className="h-5 w-5" />
+                  <span className="font-medium">Failed to load users</span>
+                </div>
+                <p className="text-muted-foreground">{wsUsersError?.response?.data?.error || wsUsersError?.message || "An unexpected error occurred."}</p>
+                <Button variant="outline" size="sm" onClick={() => wsUsersRefetch()}>Try Again</Button>
               </div>
             ) : wsImportResult ? (
               <div className="space-y-4">
@@ -1442,10 +1422,10 @@ export default function Admin() {
                     </div>
                     <div>
                       <p className="text-muted-foreground">Skipped (existing)</p>
-                      <p className="text-2xl font-bold text-gray-600">{wsImportResult.skipped}</p>
+                      <p className="text-2xl font-bold text-gray-600">{wsImportResult.skipped || wsImportResult.updated || 0}</p>
                     </div>
                   </div>
-                  {wsImportResult.errors.length > 0 && (
+                  {wsImportResult.errors?.length > 0 && (
                     <div className="mt-3 p-3 bg-destructive/10 rounded-md">
                       <p className="font-medium text-destructive mb-2">Errors:</p>
                       <ul className="list-disc list-inside text-sm text-destructive space-y-1">

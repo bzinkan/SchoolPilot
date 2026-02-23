@@ -4,6 +4,7 @@ import { Badge } from "../../../../components/ui/badge";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { usePassPilotAuth } from "../../../../hooks/usePassPilotAuth";
+import { apiRequest } from "../../../../lib/queryClient";
 import { formatTime } from "../../../../lib/date-utils";
 
 function PassesTab() {
@@ -11,14 +12,7 @@ function PassesTab() {
   const tz = school?.schoolTimezone ?? "America/New_York";
   const { data: passes, isLoading, error } = useQuery({
     queryKey: ['/api/passes/active'],
-    queryFn: async () => {
-      const res = await fetch('/api/passes/active', {
-        credentials: 'include',
-        cache: 'no-cache',
-      });
-      if (!res.ok) throw new Error(`Failed to fetch passes: ${res.status}`);
-      return res.json();
-    },
+    queryFn: () => apiRequest('GET', '/passes/active'),
     select: (data) => Array.isArray(data) ? data : (data?.passes ?? []),
     refetchInterval: 5000,
     gcTime: 0,
@@ -26,11 +20,7 @@ function PassesTab() {
 
   const { data: grades = [] } = useQuery({
     queryKey: ['/api/grades'],
-    queryFn: async () => {
-      const res = await fetch('/api/grades', { credentials: 'include' });
-      if (!res.ok) throw new Error('Failed to fetch grades');
-      return res.json();
-    },
+    queryFn: () => apiRequest('GET', '/grades'),
     select: (data) => Array.isArray(data) ? data : (data?.grades ?? []),
   });
 

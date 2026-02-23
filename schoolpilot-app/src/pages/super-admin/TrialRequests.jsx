@@ -92,12 +92,17 @@ export default function TrialRequests() {
       : request.contact_name || '';
     const zipCode = request.zipCode || '';
 
+    const startTime = request.schoolStartTime || request.school_start_time || '';
+    const endTime = request.schoolEndTime || request.school_end_time || '';
+
     const params = new URLSearchParams();
     if (name) params.set('name', name);
     if (domain) params.set('domain', domain);
     if (email) params.set('email', email);
     if (adminName) params.set('adminName', adminName.trim());
     if (zipCode) params.set('zipCode', zipCode);
+    if (startTime) params.set('startTime', startTime);
+    if (endTime) params.set('endTime', endTime);
 
     navigate(`/super-admin/schools/new?${params.toString()}`);
   };
@@ -223,6 +228,12 @@ export default function TrialRequests() {
                       <p className="flex items-center gap-2">
                         <svg className="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9" /></svg>
                         {request.schoolDomain || request.domain}
+                      </p>
+                    )}
+                    {(request.schoolStartTime || request.school_start_time) && (
+                      <p className="flex items-center gap-2">
+                        <svg className="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                        School Hours: {request.schoolStartTime || request.school_start_time} – {request.schoolEndTime || request.school_end_time}
                       </p>
                     )}
                   </div>

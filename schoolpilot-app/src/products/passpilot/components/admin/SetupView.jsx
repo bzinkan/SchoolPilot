@@ -3,6 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useTeachers, useGrades } from "../../../../hooks/use-students";
 import { usePassPilotAuth } from "../../../../hooks/usePassPilotAuth";
 import { apiRequest, queryClient } from "../../../../lib/queryClient";
+import api from "../../../../shared/utils/api";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../../components/ui/card";
 import { Button } from "../../../../components/ui/button";
 import { Input } from "../../../../components/ui/input";
@@ -93,17 +94,7 @@ function TeachersTab() {
   const loadGwOrgUnits = async () => {
     setGwOuLoading(true);
     try {
-      const res = await fetch("/api/directory/orgunits", { credentials: "include" });
-      if (!res.ok) {
-        const err = await res.json();
-        if (err.code === "NO_TOKENS") {
-          toast({ title: "Google not connected", description: "Connect your Google account in Settings first.", variant: "destructive" });
-          setGwImportOpen(false);
-          return;
-        }
-        throw new Error(err.error || "Failed to load org units");
-      }
-      const data = await res.json();
+      const data = await apiRequest("GET", "/directory/orgunits");
       const ous = data.orgUnits || [];
       setGwOrgUnits(ous);
       if (ous.length <= 1) {
@@ -112,7 +103,13 @@ function TeachersTab() {
         loadGwUsers(ouPath);
       }
     } catch (err) {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
+      const serverMsg = err.response?.data?.error || err.response?.data?.code || "";
+      if (serverMsg.includes("NO_TOKENS") || serverMsg.includes("Google not connected")) {
+        toast({ title: "Google not connected", description: "Connect your Google account in Settings first.", variant: "destructive" });
+        setGwImportOpen(false);
+        return;
+      }
+      toast({ title: "Error", description: serverMsg || err.message, variant: "destructive" });
     } finally {
       setGwOuLoading(false);
     }
@@ -122,15 +119,13 @@ function TeachersTab() {
     setGwUsersLoading(true);
     try {
       const url = orgUnitPath
-        ? `/api/directory/users?orgUnitPath=${encodeURIComponent(orgUnitPath)}`
-        : "/api/directory/users";
-      const res = await fetch(url, { credentials: "include" });
-      if (!res.ok) { const err = await res.json(); throw new Error(err.error || "Failed to load users"); }
-      const data = await res.json();
+        ? `/directory/users?orgUnitPath=${encodeURIComponent(orgUnitPath)}`
+        : "/directory/users";
+      const data = await apiRequest("GET", url);
       setGwUsers(data.users || []);
       setGwSelectedUsers(new Set((data.users || []).map((u) => u.id)));
     } catch (err) {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
+      toast({ title: "Error", description: err.response?.data?.error || err.message, variant: "destructive" });
     } finally {
       setGwUsersLoading(false);
     }
@@ -142,17 +137,9 @@ function TeachersTab() {
     let totalSkipped = 0;
     for (const ouPath of gwSelectedOUs) {
       try {
-        const res = await fetch("/api/directory/import-teachers", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ orgUnitPath: ouPath }),
-          credentials: "include",
-        });
-        if (res.ok) {
-          const data = await res.json();
-          totalImported += data.imported;
-          totalSkipped += data.skipped;
-        }
+        const data = await apiRequest("POST", "/directory/import-teachers", { orgUnitPath: ouPath });
+        totalImported += data.imported;
+        totalSkipped += data.skipped;
       } catch { /* continue */ }
     }
     queryClient.invalidateQueries({ queryKey: ["teachers"] });
@@ -165,26 +152,15 @@ function TeachersTab() {
   const importGwTeachersFromUsers = async () => {
     setGwImporting(true);
     try {
-      const res = await fetch("/api/directory/import-teachers", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          orgUnitPath: gwExpandedOU === "__all__" ? undefined : gwExpandedOU,
-          userIds: Array.from(gwSelectedUsers),
-        }),
-        credentials: "include",
+      const data = await apiRequest("POST", "/directory/import-teachers", {
+        orgUnitPath: gwExpandedOU === "__all__" ? undefined : gwExpandedOU,
+        userIds: Array.from(gwSelectedUsers),
       });
-      if (res.ok) {
-        const data = await res.json();
-        queryClient.invalidateQueries({ queryKey: ["teachers"] });
-        setGwResult({ imported: data.imported, skipped: data.skipped });
-        toast({ title: `Imported ${data.imported} teachers` });
-      } else {
-        const err = await res.json();
-        toast({ title: "Import failed", description: err.error, variant: "destructive" });
-      }
+      queryClient.invalidateQueries({ queryKey: ["teachers"] });
+      setGwResult({ imported: data.imported, skipped: data.skipped });
+      toast({ title: `Imported ${data.imported} teachers` });
     } catch (err) {
-      toast({ title: "Import failed", description: err.message, variant: "destructive" });
+      toast({ title: "Import failed", description: err.response?.data?.error || err.message, variant: "destructive" });
     } finally {
       setGwImporting(false);
     }
@@ -476,11 +452,7 @@ function StudentRosterTab() {
 
   const { data: students, isLoading } = useQuery({
     queryKey: ["students"],
-    queryFn: async () => {
-      const res = await fetch("/api/students", { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to fetch students");
-      return res.json();
-    },
+    queryFn: () => apiRequest("GET", "/students"),
     select: (data) => Array.isArray(data) ? data : (data?.students ?? []),
   });
 
@@ -567,9 +539,8 @@ function StudentRosterTab() {
       const formData = new FormData();
       formData.append("file", csvFile);
       if (csvGradeLevel) formData.append("gradeLevel", csvGradeLevel);
-      const res = await fetch("/api/students/import-csv", { method: "POST", body: formData, credentials: "include" });
-      if (!res.ok) { const err = await res.json(); throw new Error(err.error || "Import failed"); }
-      return res.json();
+      const res = await api.post("/students/import-csv", formData);
+      return res.data;
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["students"] });
@@ -597,17 +568,7 @@ function StudentRosterTab() {
   const loadOrgUnits = async () => {
     setOuLoading(true);
     try {
-      const res = await fetch("/api/directory/orgunits", { credentials: "include" });
-      if (!res.ok) {
-        const err = await res.json();
-        if (err.code === "NO_TOKENS") {
-          toast({ title: "Google not connected", description: "Connect your Google account in Settings first.", variant: "destructive" });
-          setGoogleDirOpen(false);
-          return;
-        }
-        throw new Error(err.error || "Failed to load org units");
-      }
-      const data = await res.json();
+      const data = await apiRequest("GET", "/directory/orgunits");
       const ous = data.orgUnits || [];
       setOrgUnits(ous);
       // Pre-set auto-detected grades
@@ -624,7 +585,13 @@ function StudentRosterTab() {
         loadDirectoryUsers(ouPath);
       }
     } catch (err) {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
+      const serverMsg = err.response?.data?.error || err.response?.data?.code || "";
+      if (serverMsg.includes("NO_TOKENS") || serverMsg.includes("Google not connected")) {
+        toast({ title: "Google not connected", description: "Connect your Google account in Settings first.", variant: "destructive" });
+        setGoogleDirOpen(false);
+        return;
+      }
+      toast({ title: "Error", description: serverMsg || err.message, variant: "destructive" });
     } finally {
       setOuLoading(false);
     }
@@ -634,34 +601,20 @@ function StudentRosterTab() {
     setGoogleDirLoading(true);
     try {
       const url = orgUnitPath
-        ? `/api/directory/users?orgUnitPath=${encodeURIComponent(orgUnitPath)}`
-        : "/api/directory/users";
-      const res = await fetch(url, { credentials: "include" });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || "Failed to load users");
-      }
-      const data = await res.json();
+        ? `/directory/users?orgUnitPath=${encodeURIComponent(orgUnitPath)}`
+        : "/directory/users";
+      const data = await apiRequest("GET", url);
       setGoogleDirUsers(data.users || []);
       setGoogleDirSelected(new Set((data.users || []).map((u) => u.id)));
     } catch (err) {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
+      toast({ title: "Error", description: err.response?.data?.error || err.message, variant: "destructive" });
     } finally {
       setGoogleDirLoading(false);
     }
   };
 
   const googleDirImport = useMutation({
-    mutationFn: async (params) => {
-      const res = await fetch("/api/directory/import", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(params),
-        credentials: "include",
-      });
-      if (!res.ok) { const err = await res.json(); throw new Error(err.error || "Import failed"); }
-      return res.json();
-    },
+    mutationFn: (params) => apiRequest("POST", "/directory/import", params),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["students"] });
       setImportResult({ imported: data.imported, message: `Imported: ${data.imported}, Updated: ${data.updated}` });
@@ -676,17 +629,9 @@ function StudentRosterTab() {
     for (const ouPath of selectedOUs) {
       try {
         const grade = ouGradeOverrides[ouPath] || undefined;
-        const res = await fetch("/api/directory/import", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ orgUnitPath: ouPath, gradeLevel: grade }),
-          credentials: "include",
-        });
-        if (res.ok) {
-          const data = await res.json();
-          totalImported += data.imported;
-          totalUpdated += data.updated;
-        }
+        const data = await apiRequest("POST", "/directory/import", { orgUnitPath: ouPath, gradeLevel: grade });
+        totalImported += data.imported;
+        totalUpdated += data.updated;
       } catch { /* continue */ }
     }
     queryClient.invalidateQueries({ queryKey: ["students"] });
@@ -699,20 +644,16 @@ function StudentRosterTab() {
   const loadClassroomCourses = async () => {
     setClassroomLoading(true);
     try {
-      const res = await fetch("/api/classroom/courses", { credentials: "include" });
-      if (!res.ok) {
-        const err = await res.json();
-        if (err.code === "NO_TOKENS") {
-          toast({ title: "Google not connected", description: "Connect your Google account in Settings first.", variant: "destructive" });
-          setClassroomOpen(false);
-          return;
-        }
-        throw new Error(err.error || "Failed to load courses");
-      }
-      const data = await res.json();
+      const data = await apiRequest("GET", "/classroom/courses");
       setClassroomCourses(data.courses || data || []);
     } catch (err) {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
+      const serverMsg = err.response?.data?.error || err.response?.data?.code || "";
+      if (serverMsg.includes("NO_TOKENS") || serverMsg.includes("Google not connected")) {
+        toast({ title: "Google not connected", description: "Connect your Google account in Settings first.", variant: "destructive" });
+        setClassroomOpen(false);
+        return;
+      }
+      toast({ title: "Error", description: serverMsg || err.message, variant: "destructive" });
     } finally {
       setClassroomLoading(false);
     }
@@ -721,14 +662,7 @@ function StudentRosterTab() {
   const classroomImport = useMutation({
     mutationFn: async () => {
       if (!classroomSelectedCourse) throw new Error("No course selected");
-      const res = await fetch(`/api/classroom/courses/${classroomSelectedCourse}/sync`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ gradeLevel: classroomGradeLevel || undefined }),
-        credentials: "include",
-      });
-      if (!res.ok) { const err = await res.json(); throw new Error(err.error || "Sync failed"); }
-      return res.json();
+      return apiRequest("POST", `/classroom/courses/${classroomSelectedCourse}/sync`, { gradeLevel: classroomGradeLevel || undefined });
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["students"] });
@@ -1723,11 +1657,7 @@ function ClassesTab() {
 
   const { data: students } = useQuery({
     queryKey: ["students"],
-    queryFn: async () => {
-      const res = await fetch("/api/students", { credentials: "include" });
-      if (!res.ok) return [];
-      return res.json();
-    },
+    queryFn: () => apiRequest("GET", "/students").catch(() => []),
     select: (data) => Array.isArray(data) ? data : (data?.students ?? []),
   });
 
@@ -1811,25 +1741,20 @@ function ClassesTab() {
   const loadGcCourses = async () => {
     setGcLoading(true);
     try {
-      const res = await fetch("/api/classroom/courses", { credentials: "include" });
-      if (!res.ok) {
-        const err = await res.json();
-        toast({ title: "Error", description: err.error || "Failed to load courses", variant: "destructive" });
-        setGcSyncOpen(false);
-        return;
-      }
-      const courses = await res.json();
-      setGcCourses(courses);
-      setGcSelected(new Set(courses.map((c) => c.id)));
+      const courses = await apiRequest("GET", "/classroom/courses");
+      const courseList = Array.isArray(courses) ? courses : (courses.courses || []);
+      setGcCourses(courseList);
+      setGcSelected(new Set(courseList.map((c) => c.id)));
       // Auto-map courses to existing classes by name match
       const mapping = {};
-      for (const course of courses) {
+      for (const course of courseList) {
         const match = (grades ?? []).find((g) => g.name.toLowerCase() === course.name.toLowerCase());
         if (match) mapping[course.id] = match.id;
       }
       setGcCourseMapping(mapping);
     } catch (err) {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
+      toast({ title: "Error", description: err.response?.data?.error || err.message, variant: "destructive" });
+      setGcSyncOpen(false);
     } finally {
       setGcLoading(false);
     }
@@ -1847,31 +1772,14 @@ function ClassesTab() {
         let gradeId = gcCourseMapping[courseId];
         // If no mapping, create a new class with the course name
         if (!gradeId) {
-          const createRes = await fetch("/api/grades", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name: course.name }),
-            credentials: "include",
-          });
-          if (createRes.ok) {
-            const newGrade = await createRes.json();
-            gradeId = newGrade.id;
-          } else {
-            continue;
-          }
+          const newGrade = await apiRequest("POST", "/grades", { name: course.name });
+          gradeId = newGrade.id;
+          if (!gradeId) continue;
         }
-        const res = await fetch(`/api/classroom/courses/${courseId}/sync`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ gradeId, gradeLevel: gcGradeLevels[courseId] || undefined }),
-          credentials: "include",
-        });
-        if (res.ok) {
-          const data = await res.json();
-          totalImported += data.imported || 0;
-          totalUpdated += data.updated || 0;
-          synced++;
-        }
+        const data = await apiRequest("POST", `/classroom/courses/${courseId}/sync`, { gradeId, gradeLevel: gcGradeLevels[courseId] || undefined });
+        totalImported += data.imported || 0;
+        totalUpdated += data.updated || 0;
+        synced++;
       } catch { /* continue */ }
     }
     queryClient.invalidateQueries({ queryKey: ["grades"] });
@@ -2263,12 +2171,7 @@ function AssignmentsTab() {
 
   const { data: assignments } = useQuery({
     queryKey: ["teacher-grades", selectedTeacherId],
-    queryFn: async () => {
-      if (!selectedTeacherId) return [];
-      const res = await fetch(`/api/teacher-grades/${selectedTeacherId}`, { credentials: "include" });
-      if (!res.ok) return [];
-      return res.json();
-    },
+    queryFn: () => apiRequest("GET", `/teacher-grades/${selectedTeacherId}`).catch(() => []),
     select: (data) => Array.isArray(data) ? data : (data?.assignments ?? data?.teacherGrades ?? []),
     enabled: !!selectedTeacherId,
   });

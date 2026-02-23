@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { google } from "googleapis";
 import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import {
@@ -16,7 +17,6 @@ async function getAuthedClient(userId: string) {
   const token = await getGoogleOAuthToken(userId);
   if (!token) throw new Error("Google not connected");
 
-  const { google } = require("googleapis");
   const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET

@@ -41,12 +41,7 @@ function RosterTab() {
   // For teachers - their assigned classes; for admins - all classes
   const { data: myClasses = [], isLoading: classesLoading } = useQuery({
     queryKey: ['my-classes'],
-    queryFn: async () => {
-      const url = isAdmin ? '/api/grades' : '/api/my-classes';
-      const res = await fetch(url, { credentials: 'include' });
-      if (!res.ok) throw new Error('Failed to fetch classes');
-      return res.json();
-    },
+    queryFn: () => apiRequest('GET', isAdmin ? '/grades' : '/my-classes'),
     select: (data) => Array.isArray(data) ? data : (data?.grades ?? data?.classes ?? []),
   });
 
@@ -54,9 +49,7 @@ function RosterTab() {
   const { data: availableClasses = [] } = useQuery({
     queryKey: ['available-classes'],
     queryFn: async () => {
-      const res = await fetch('/api/grades/available', { credentials: 'include' });
-      if (!res.ok) return [];
-      return res.json();
+      try { return await apiRequest('GET', '/grades/available'); } catch { return []; }
     },
     select: (data) => Array.isArray(data) ? data : (data?.grades ?? []),
     enabled: !isAdmin,
@@ -64,11 +57,7 @@ function RosterTab() {
 
   const { data: students = [], isLoading: studentsLoading } = useQuery({
     queryKey: ['/api/students'],
-    queryFn: async () => {
-      const res = await fetch('/api/students', { credentials: 'include' });
-      if (!res.ok) throw new Error('Failed to fetch students');
-      return res.json();
-    },
+    queryFn: () => apiRequest('GET', '/students'),
     select: (data) => Array.isArray(data) ? data : (data?.students ?? []),
   });
 

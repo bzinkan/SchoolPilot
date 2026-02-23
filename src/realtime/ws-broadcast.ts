@@ -15,6 +15,27 @@ const wsClients = new Map<WebSocket, WSClient>();
 const teacherSocketsBySchool = new Map<string, Set<WebSocket>>();
 const studentSocketsBySchool = new Map<string, Set<WebSocket>>();
 
+// Per-device message deduplication to prevent double delivery across Redis relay
+const recentDeviceMessages = new Map<string, Set<string>>();
+const DEDUP_TTL_MS = 10_000; // 10 seconds
+
+function dedupKey(deviceId: string, msgId: string): boolean {
+  const seen = recentDeviceMessages.get(deviceId);
+  if (seen?.has(msgId)) return true; // already sent
+  if (!seen) recentDeviceMessages.set(deviceId, new Set([msgId]));
+  else seen.add(msgId);
+  setTimeout(() => {
+    const s = recentDeviceMessages.get(deviceId);
+    if (s) { s.delete(msgId); if (s.size === 0) recentDeviceMessages.delete(deviceId); }
+  }, DEDUP_TTL_MS);
+  return false;
+}
+
+function extractMsgId(message: unknown): string | null {
+  const msg = message as { _msgId?: string };
+  return msg?._msgId ?? null;
+}
+
 function addSocket(map: Map<string, Set<WebSocket>>, schoolId: string, ws: WebSocket) {
   const existing = map.get(schoolId);
   if (existing) {
@@ -124,6 +145,7 @@ export function broadcastToStudentsLocal(
   if (!sockets) {
     return 0;
   }
+  const msgId = extractMsgId(message);
   const messageStr = JSON.stringify(message);
   let sentCount = 0;
   sockets.forEach((ws) => {
@@ -132,6 +154,10 @@ export function broadcastToStudentsLocal(
       return;
     }
     if (targetDeviceIds && targetDeviceIds.length > 0 && !targetDeviceIds.includes(client.deviceId ?? "")) {
+      return;
+    }
+    // Per-device dedup: skip if this exact message was already sent to this device
+    if (msgId && client.deviceId && dedupKey(client.deviceId, msgId)) {
       return;
     }
     if (!filterFn || filterFn(client)) {
@@ -149,6 +175,11 @@ export function sendToDeviceLocal(schoolId: string, deviceId: string, message: u
   const msgType = (message as { type?: string })?.type ?? 'unknown';
   if (!sockets) {
     console.log(`[WS-Local] No sockets for school ${schoolId} to deliver ${msgType} to ${deviceId}`);
+    return;
+  }
+  // Per-device dedup
+  const msgId = extractMsgId(message);
+  if (msgId && dedupKey(deviceId, msgId)) {
     return;
   }
   const messageStr = JSON.stringify(message);
@@ -197,6 +228,19 @@ export function closeSocketsForSchool(schoolId: string) {
     studentSockets.forEach((ws) => ws.close());
     studentSocketsBySchool.delete(schoolId);
   }
+}
+
+export function getConnectedStudentDeviceIds(schoolId: string): Set<string> {
+  const sockets = studentSocketsBySchool.get(schoolId);
+  const deviceIds = new Set<string>();
+  if (!sockets) return deviceIds;
+  sockets.forEach((ws) => {
+    const client = wsClients.get(ws);
+    if (client?.authenticated && client.deviceId && ws.readyState === WebSocket.OPEN) {
+      deviceIds.add(client.deviceId);
+    }
+  });
+  return deviceIds;
 }
 
 export function resetWsState() {

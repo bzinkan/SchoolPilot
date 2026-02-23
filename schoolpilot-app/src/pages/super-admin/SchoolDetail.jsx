@@ -37,6 +37,17 @@ export default function SchoolDetail() {
   // Reset login
   const [resetResult, setResetResult] = useState(null);
 
+  // School Hours
+  const [hoursForm, setHoursForm] = useState({
+    enabled: false,
+    startTime: '08:00',
+    endTime: '15:00',
+    timezone: 'America/New_York',
+    days: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
+    afterHoursMode: 'off',
+  });
+  const [hoursSaving, setHoursSaving] = useState(false);
+
   const [error, setError] = useState(null);
 
   const loadSchool = async () => {
@@ -51,6 +62,16 @@ export default function SchoolDetail() {
         status: data.status || 'active',
         maxLicenses: data.maxLicenses ?? 100,
       });
+      if (data.schoolHours) {
+        setHoursForm({
+          enabled: data.schoolHours.enabled ?? false,
+          startTime: data.schoolHours.startTime ?? '08:00',
+          endTime: data.schoolHours.endTime ?? '15:00',
+          timezone: data.schoolHours.timezone ?? 'America/New_York',
+          days: data.schoolHours.days ?? ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
+          afterHoursMode: data.schoolHours.afterHoursMode ?? 'off',
+        });
+      }
     } catch (err) {
       console.error(err);
     } finally {
@@ -153,6 +174,35 @@ export default function SchoolDetail() {
     } catch (err) {
       alert(err.response?.data?.error || 'Failed to delete');
     }
+  };
+
+  const handleSaveHours = async () => {
+    try {
+      setHoursSaving(true);
+      setError(null);
+      await api.patch(`/super-admin/schools/${id}`, { schoolHours: hoursForm });
+      loadSchool();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to save school hours');
+    } finally {
+      setHoursSaving(false);
+    }
+  };
+
+  const toggleDay = (day) => {
+    setHoursForm((prev) => ({
+      ...prev,
+      days: prev.days.includes(day)
+        ? prev.days.filter((d) => d !== day)
+        : [...prev.days, day],
+    }));
+  };
+
+  const getHoursDuration = () => {
+    const [sh, sm] = hoursForm.startTime.split(':').map(Number);
+    const [eh, em] = hoursForm.endTime.split(':').map(Number);
+    const diff = (eh * 60 + em - sh * 60 - sm) / 60;
+    return diff > 0 ? diff : 0;
   };
 
   const handleAddProduct = async (product) => {
@@ -326,6 +376,117 @@ export default function SchoolDetail() {
           <p className="text-sm text-slate-400 mt-2">No products assigned. Click a product above to activate it.</p>
         )}
       </div>
+
+      {/* School Hours - shown if school has ClassPilot or PassPilot */}
+      {(activeProducts.includes('CLASSPILOT') || activeProducts.includes('PASSPILOT')) && (
+        <div className="bg-white rounded-xl border border-slate-200 p-6 mb-6">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="font-semibold text-slate-900">School Hours</h2>
+              <p className="text-xs text-slate-500">Applies to ClassPilot (device monitoring) and PassPilot (hall passes). GoPilot uses its own dismissal time.</p>
+            </div>
+          </div>
+
+          {/* Enable toggle */}
+          <label className="flex items-center gap-3 mb-4 cursor-pointer">
+            <div className={`relative w-10 h-6 rounded-full transition-colors ${hoursForm.enabled ? 'bg-green-500' : 'bg-slate-300'}`}
+              onClick={() => setHoursForm({ ...hoursForm, enabled: !hoursForm.enabled })}>
+              <div className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${hoursForm.enabled ? 'left-5' : 'left-1'}`} />
+            </div>
+            <span className="text-sm font-medium text-slate-700">
+              {hoursForm.enabled ? 'Restricted to school hours' : 'No restriction (24/7 operation)'}
+            </span>
+          </label>
+
+          {hoursForm.enabled && (
+            <div className="space-y-4">
+              {/* Time range */}
+              <div className="flex items-center gap-3">
+                <div className="flex-1">
+                  <label className="text-xs text-slate-500">Start Time</label>
+                  <input type="time" value={hoursForm.startTime}
+                    onChange={(e) => setHoursForm({ ...hoursForm, startTime: e.target.value })}
+                    className="w-full px-3 py-1.5 border border-slate-300 rounded text-sm" />
+                </div>
+                <span className="text-slate-400 mt-4">to</span>
+                <div className="flex-1">
+                  <label className="text-xs text-slate-500">End Time</label>
+                  <input type="time" value={hoursForm.endTime}
+                    onChange={(e) => setHoursForm({ ...hoursForm, endTime: e.target.value })}
+                    className="w-full px-3 py-1.5 border border-slate-300 rounded text-sm" />
+                </div>
+              </div>
+
+              {/* Duration indicator */}
+              {(() => {
+                const dur = getHoursDuration();
+                return (
+                  <div className={`text-sm px-3 py-2 rounded ${dur > 9 ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-slate-50 text-slate-600'}`}>
+                    {dur > 0 ? `${dur.toFixed(1)} hours per day` : 'Invalid time range'}
+                    {dur > 9 && ' — Schools operating more than 9 hours per day may incur additional infrastructure costs.'}
+                  </div>
+                );
+              })()}
+
+              {/* Days */}
+              <div>
+                <label className="text-xs text-slate-500 mb-1 block">Active Days</label>
+                <div className="flex flex-wrap gap-2">
+                  {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].map((day) => (
+                    <button key={day} onClick={() => toggleDay(day)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                        hoursForm.days.includes(day)
+                          ? 'bg-slate-900 text-white'
+                          : 'bg-slate-100 text-slate-400 hover:bg-slate-200'
+                      }`}>
+                      {day.slice(0, 3)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Timezone */}
+              <div>
+                <label className="text-xs text-slate-500">Timezone</label>
+                <select value={hoursForm.timezone}
+                  onChange={(e) => setHoursForm({ ...hoursForm, timezone: e.target.value })}
+                  className="w-full px-3 py-1.5 border border-slate-300 rounded text-sm">
+                  <option value="America/New_York">Eastern (ET)</option>
+                  <option value="America/Chicago">Central (CT)</option>
+                  <option value="America/Denver">Mountain (MT)</option>
+                  <option value="America/Los_Angeles">Pacific (PT)</option>
+                  <option value="America/Anchorage">Alaska (AKT)</option>
+                  <option value="Pacific/Honolulu">Hawaii (HT)</option>
+                </select>
+              </div>
+
+              {/* After-hours mode */}
+              <div>
+                <label className="text-xs text-slate-500">After-Hours Behavior</label>
+                <select value={hoursForm.afterHoursMode}
+                  onChange={(e) => setHoursForm({ ...hoursForm, afterHoursMode: e.target.value })}
+                  className="w-full px-3 py-1.5 border border-slate-300 rounded text-sm">
+                  <option value="off">Off — Extensions sleep, no passes</option>
+                  <option value="limited">Limited — Monitor only, no alerts</option>
+                </select>
+              </div>
+
+              {/* Save */}
+              <button onClick={handleSaveHours} disabled={hoursSaving}
+                className="px-4 py-2 bg-slate-900 text-white rounded-lg text-sm font-medium hover:bg-slate-800 disabled:opacity-50">
+                {hoursSaving ? 'Saving...' : 'Save School Hours'}
+              </button>
+            </div>
+          )}
+
+          {!hoursForm.enabled && (
+            <button onClick={handleSaveHours} disabled={hoursSaving}
+              className="px-4 py-2 bg-slate-900 text-white rounded-lg text-sm font-medium hover:bg-slate-800 disabled:opacity-50">
+              {hoursSaving ? 'Saving...' : 'Save'}
+            </button>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* School Info */}

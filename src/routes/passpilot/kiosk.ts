@@ -17,7 +17,9 @@ import {
   getGradesBySchool,
   updateSchool,
   updateUser,
+  getSettingsForSchool,
 } from "../../services/storage.js";
+import { isWithinTrackingWindow } from "../../services/schoolHours.js";
 
 const router = Router();
 
@@ -102,6 +104,12 @@ router.post("/checkout", async (req, res, next) => {
     const student = await getStudentById(parsed.data.studentId);
     if (!student || student.schoolId !== schoolId) {
       return res.status(404).json({ error: "Student not found" });
+    }
+
+    // Enforce school hours
+    const schoolSettings = await getSettingsForSchool(schoolId);
+    if (schoolSettings && !isWithinTrackingWindow(schoolSettings)) {
+      return res.status(403).json({ error: "Passes cannot be issued outside school hours" });
     }
 
     // Check for existing active pass

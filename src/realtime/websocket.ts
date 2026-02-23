@@ -319,7 +319,7 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
         }
 
         // --- Heartbeat handling ---
-        if (message.type === "heartbeat") {
+        if (message.type === "heartbeat" || message.type === "ping") {
           ws.send(JSON.stringify({ type: "pong" }));
           return;
         }
