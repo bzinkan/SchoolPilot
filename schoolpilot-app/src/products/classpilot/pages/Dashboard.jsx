@@ -127,8 +127,8 @@ export default function Dashboard() {
       // Ignore localStorage errors
     }
   }
-  const [, setReplyingToMessage] = useState(null);
-  const [, setReplyText] = useState("");
+  const [, _setReplyingToMessage] = useState(null);
+  const [, _setReplyText] = useState("");
   const [adminObservedSessionId, setAdminObservedSessionId] = useState(null);
   const { toast } = useToast();
   const notifiedViolations = useRef(new Set());

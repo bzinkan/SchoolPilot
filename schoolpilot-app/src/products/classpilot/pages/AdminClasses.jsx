@@ -448,7 +448,7 @@ export default function AdminClasses() {
   });
   const allGroups = groupsData?.groups || [];
 
-  const { data: settings } = useQuery({
+  const { data: _settings } = useQuery({
     queryKey: ["/api/settings"],
     queryFn: () => apiRequest("GET", "/settings"),
   });

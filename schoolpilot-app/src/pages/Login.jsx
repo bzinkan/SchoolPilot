@@ -1,11 +1,10 @@
 import { useState, useEffect } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function Login() {
   const { login, refetchUser } = useAuth();
   const [searchParams] = useSearchParams();
-  const navigate = useNavigate();
   const [showEmailLogin, setShowEmailLogin] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
