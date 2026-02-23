@@ -83,6 +83,7 @@ export default function Admin() {
       password: "",
     },
   });
+  const watchedRole = form.watch("role");
 
   const { data: staffData, isLoading } = useQuery({
     queryKey: ["/api/admin/users"],
@@ -1200,7 +1201,7 @@ export default function Admin() {
             <div className="space-y-2">
               <Label htmlFor="modal-role">Role</Label>
               <Select
-                value={form.watch("role")}
+                value={watchedRole}
                 onValueChange={(value) => form.setValue("role", value)}
               >
                 <SelectTrigger id="modal-role" data-testid="select-staff-role">

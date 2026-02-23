@@ -430,6 +430,7 @@ export default function AdminClasses() {
       description: "",
     },
   });
+  const watchedTeacherId = form.watch("teacherId");
 
   // Queries
   const { data: teachersData } = useQuery({
@@ -808,10 +809,9 @@ export default function AdminClasses() {
                             className="w-full justify-between font-normal"
                             data-testid="select-teacher"
                           >
-                            {/* eslint-disable-next-line react-hooks/incompatible-library */}
-                            {form.watch("teacherId")
+                            {watchedTeacherId
                               ? (() => {
-                                  const teacherIdVal = form.getValues("teacherId");
+                                  const teacherIdVal = watchedTeacherId;
                                   const selectedTeacher = sortedTeachers.find(t => t.id === teacherIdVal);
                                   return selectedTeacher
                                     ? `${selectedTeacher.displayName || selectedTeacher.email || selectedTeacher.username}${selectedTeacher.role === 'school_admin' ? ' (Admin)' : ''}`
@@ -838,7 +838,7 @@ export default function AdminClasses() {
                                   >
                                     <Check
                                       className={`mr-2 h-4 w-4 ${
-                                        form.watch("teacherId") === teacher.id ? "opacity-100" : "opacity-0"
+                                        watchedTeacherId === teacher.id ? "opacity-100" : "opacity-0"
                                       }`}
                                     />
                                     {teacher.displayName || teacher.email || teacher.username}

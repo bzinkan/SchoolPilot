@@ -162,7 +162,7 @@ function TeacherFab({
       if (prev) setActivePanel(null);
       return !prev;
     });
-  }, []);
+  }, [setExpanded, setActivePanel]);
 
   const chatEndRefs = useRef({});
   const unreadCount = studentMessages.filter(m => !m.read).length;
