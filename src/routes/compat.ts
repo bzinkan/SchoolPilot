@@ -406,10 +406,10 @@ router.get("/admin/analytics/summary", ...schoolAuth, requireRole("admin"), asyn
 
     return res.json({
       summary: {
-        activeStudents: usageSummary.activeStudents,
+        activeStudents: Number(usageSummary.activeStudents) || 0,
         totalStudents: students.length,
         totalDevices: devices.length,
-        totalBrowsingMinutes: Math.round(usageSummary.totalSeconds / 60),
+        totalBrowsingMinutes: Math.round((Number(usageSummary.totalSeconds) || 0) / 60),
         totalTeachers: teacherCount,
       },
       hourlyActivity,

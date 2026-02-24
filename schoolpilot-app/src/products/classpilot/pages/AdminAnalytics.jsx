@@ -25,9 +25,10 @@ export default function AdminAnalytics() {
   });
 
   const formatMinutes = (minutes) => {
-    if (minutes < 60) return `${minutes}m`;
-    const hours = Math.floor(minutes / 60);
-    const mins = minutes % 60;
+    const m = Number(minutes) || 0;
+    if (m < 60) return `${m}m`;
+    const hours = Math.floor(m / 60);
+    const mins = m % 60;
     return `${hours}h ${mins}m`;
   };
 
@@ -90,11 +91,11 @@ export default function AdminAnalytics() {
                     <Users className="h-5 w-5 text-blue-600 dark:text-blue-400" />
                   </div>
                   <div>
-                    <p className="text-2xl font-bold">{summaryData.summary.activeStudents}</p>
+                    <p className="text-2xl font-bold">{summaryData.summary.activeStudents ?? 0}</p>
                     <p className="text-sm text-muted-foreground">Active Students</p>
                   </div>
                 </div>
-                <p className="text-xs text-muted-foreground mt-2">of {summaryData.summary.totalStudents} total</p>
+                <p className="text-xs text-muted-foreground mt-2">of {summaryData.summary.totalStudents ?? 0} total</p>
               </CardContent>
             </Card>
 
@@ -105,7 +106,7 @@ export default function AdminAnalytics() {
                     <Monitor className="h-5 w-5 text-green-600 dark:text-green-400" />
                   </div>
                   <div>
-                    <p className="text-2xl font-bold">{summaryData.summary.totalDevices}</p>
+                    <p className="text-2xl font-bold">{summaryData.summary.totalDevices ?? 0}</p>
                     <p className="text-sm text-muted-foreground">Devices</p>
                   </div>
                 </div>
@@ -133,7 +134,7 @@ export default function AdminAnalytics() {
                     <TrendingUp className="h-5 w-5 text-amber-600 dark:text-amber-400" />
                   </div>
                   <div>
-                    <p className="text-2xl font-bold">{summaryData.summary.totalTeachers}</p>
+                    <p className="text-2xl font-bold">{summaryData.summary.totalTeachers ?? 0}</p>
                     <p className="text-sm text-muted-foreground">Teachers</p>
                   </div>
                 </div>
