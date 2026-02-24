@@ -6,13 +6,14 @@ import { Button } from "../../../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../../components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../../components/ui/select";
 import { Badge } from "../../../components/ui/badge";
-import { ArrowLeft, BarChart3, Users, Monitor, Clock, Globe, TrendingUp } from "lucide-react";
+import { ArrowLeft, BarChart3, Users, Monitor, Clock, Globe, TrendingUp, Layers } from "lucide-react";
 import { ThemeToggle } from "../../../components/ThemeToggle";
 
 export default function AdminAnalytics() {
   const navigate = useNavigate();
   const [summaryPeriod, setSummaryPeriod] = useState("24h");
   const [teacherPeriod, setTeacherPeriod] = useState("7d");
+  const [groupPeriod, setGroupPeriod] = useState("7d");
 
   const { data: summaryData, isLoading: summaryLoading } = useQuery({
     queryKey: ["/api/admin/analytics/summary", summaryPeriod],
@@ -22,6 +23,11 @@ export default function AdminAnalytics() {
   const { data: teacherData, isLoading: teacherLoading } = useQuery({
     queryKey: ["/api/admin/analytics/by-teacher", teacherPeriod],
     queryFn: () => apiRequest("GET", `/admin/analytics/by-teacher?period=${teacherPeriod}`),
+  });
+
+  const { data: groupData, isLoading: groupLoading } = useQuery({
+    queryKey: ["/api/admin/analytics/by-group", groupPeriod],
+    queryFn: () => apiRequest("GET", `/admin/analytics/by-group?period=${groupPeriod}`),
   });
 
   const formatMinutes = (minutes) => {
@@ -35,6 +41,7 @@ export default function AdminAnalytics() {
   const hourlyActivity = Array.isArray(summaryData?.hourlyActivity) ? summaryData.hourlyActivity : [];
   const topWebsites = Array.isArray(summaryData?.topWebsites) ? summaryData.topWebsites : [];
   const teachersList = Array.isArray(teacherData?.teachers) ? teacherData.teachers : [];
+  const groupsList = Array.isArray(groupData?.groups) ? groupData.groups : [];
 
   const maxHourlyCount = hourlyActivity.length > 0
     ? Math.max(...hourlyActivity.map(h => h.count), 1)
@@ -270,6 +277,69 @@ export default function AdminAnalytics() {
           ) : (
             <div className="text-center py-8 text-muted-foreground">
               No teacher activity data available for this period.
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Class Usage */}
+      <div className="flex items-center justify-between mt-8">
+        <h2 className="text-xl font-semibold flex items-center gap-2">
+          <Layers className="h-5 w-5" />
+          Class Usage
+        </h2>
+        <Select value={groupPeriod} onValueChange={setGroupPeriod}>
+          <SelectTrigger className="w-36">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="7d">Last 7 days</SelectItem>
+            <SelectItem value="30d">Last 30 days</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      <Card>
+        <CardContent className="pt-6">
+          {groupLoading ? (
+            <div className="text-center py-8 text-muted-foreground">Loading class data...</div>
+          ) : groupsList.length > 0 ? (
+            <div className="border rounded-lg overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-muted">
+                  <tr>
+                    <th className="px-4 py-3 text-left font-medium">Class</th>
+                    <th className="px-4 py-3 text-left font-medium">Teacher</th>
+                    <th className="px-4 py-3 text-left font-medium">Students</th>
+                    <th className="px-4 py-3 text-left font-medium">Total Usage</th>
+                    <th className="px-4 py-3 text-left font-medium">Avg / Student</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {groupsList.map((group) => (
+                    <tr key={group.groupId} className="border-t">
+                      <td className="px-4 py-3">
+                        <div className="font-medium">{group.groupName}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {[group.periodLabel, group.gradeLevel ? `Grade ${group.gradeLevel}` : null].filter(Boolean).join(" · ") || "\u00A0"}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">{group.teacherName}</td>
+                      <td className="px-4 py-3">
+                        <Badge variant="secondary">
+                          {group.activeStudentCount}/{group.studentCount}
+                        </Badge>
+                      </td>
+                      <td className="px-4 py-3">{formatMinutes(group.totalBrowsingMinutes)}</td>
+                      <td className="px-4 py-3">{formatMinutes(group.avgMinutesPerStudent)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="text-center py-8 text-muted-foreground">
+              No class usage data available for this period.
             </div>
           )}
         </CardContent>

@@ -35,7 +35,8 @@ import {
   getUserById,
 } from "../services/storage.js";
 import db from "../db.js";
-import { heartbeats, devices as deviceTable, teachingSessions, groups } from "../schema/classpilot.js";
+import { heartbeats, devices as deviceTable, teachingSessions, groups, groupStudents, dailyUsage } from "../schema/classpilot.js";
+import { users } from "../schema/core.js";
 import { eq, and, sql } from "drizzle-orm";
 import { createGradeSchema } from "../schema/validation.js";
 import { hashPassword } from "../util/password.js";
@@ -464,6 +465,66 @@ router.get("/admin/analytics/by-teacher", ...schoolAuth, requireRole("admin"), a
     }
 
     return res.json({ teachers });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get("/admin/analytics/by-group", ...schoolAuth, requireRole("admin"), async (req, res, next) => {
+  try {
+    const schoolId = res.locals.schoolId!;
+    const period = (req.query.period as string) || "7d";
+    const days = period === "30d" ? 30 : 7;
+
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - days);
+    const startDate = cutoff.toISOString().slice(0, 10);
+    const endDate = new Date().toISOString().slice(0, 10);
+
+    const rows = await db
+      .select({
+        groupId: groups.id,
+        groupName: groups.name,
+        periodLabel: groups.periodLabel,
+        gradeLevel: groups.gradeLevel,
+        teacherDisplayName: users.displayName,
+        teacherEmail: users.email,
+        studentCount: sql<number>`COUNT(DISTINCT ${groupStudents.studentId})::int`,
+        activeStudentCount: sql<number>`COUNT(DISTINCT ${dailyUsage.studentId})::int`,
+        totalSeconds: sql<number>`COALESCE(SUM(${dailyUsage.totalSeconds}), 0)::int`,
+      })
+      .from(groups)
+      .innerJoin(users, eq(users.id, groups.teacherId))
+      .leftJoin(groupStudents, eq(groupStudents.groupId, groups.id))
+      .leftJoin(
+        dailyUsage,
+        and(
+          eq(dailyUsage.studentId, groupStudents.studentId),
+          eq(dailyUsage.schoolId, schoolId),
+          sql`${dailyUsage.date} >= ${startDate}`,
+          sql`${dailyUsage.date} <= ${endDate}`
+        )
+      )
+      .where(eq(groups.schoolId, schoolId))
+      .groupBy(groups.id, groups.name, groups.periodLabel, groups.gradeLevel, users.displayName, users.email)
+      .orderBy(sql`COALESCE(SUM(${dailyUsage.totalSeconds}), 0) DESC`);
+
+    const groupsList = rows.map((r) => {
+      const totalMinutes = Math.round(r.totalSeconds / 60);
+      return {
+        groupId: r.groupId,
+        groupName: r.groupName,
+        periodLabel: r.periodLabel,
+        gradeLevel: r.gradeLevel,
+        teacherName: r.teacherDisplayName || r.teacherEmail || "Unknown",
+        studentCount: r.studentCount,
+        activeStudentCount: r.activeStudentCount,
+        totalBrowsingMinutes: totalMinutes,
+        avgMinutesPerStudent: r.activeStudentCount > 0 ? Math.round(totalMinutes / r.activeStudentCount) : 0,
+      };
+    });
+
+    return res.json({ groups: groupsList });
   } catch (err) {
     next(err);
   }
