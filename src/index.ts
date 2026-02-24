@@ -30,6 +30,33 @@ validateEnv();
 
 const PORT = parseInt(process.env.PORT || "4000", 10);
 
+// Run lightweight auto-migrations for new tables
+import { pool } from "./db.js";
+(async () => {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS daily_usage (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        school_id TEXT NOT NULL,
+        student_id TEXT NOT NULL,
+        date TEXT NOT NULL,
+        total_seconds INTEGER NOT NULL DEFAULT 0,
+        heartbeat_count INTEGER NOT NULL DEFAULT 0,
+        top_domains JSONB,
+        first_seen TIMESTAMP,
+        last_seen TIMESTAMP,
+        computed_at TIMESTAMP NOT NULL DEFAULT now()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS daily_usage_school_date_idx ON daily_usage (school_id, date)`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS daily_usage_student_date_unique ON daily_usage (student_id, date)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS daily_usage_school_student_date_idx ON daily_usage (school_id, student_id, date)`);
+    console.log("[migration] daily_usage table ready");
+  } catch (err) {
+    console.warn("[migration] daily_usage auto-migration skipped:", (err as Error).message);
+  }
+})();
+
 const app = createApp();
 const server = http.createServer(app);
 
