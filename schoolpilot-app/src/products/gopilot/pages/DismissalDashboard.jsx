@@ -140,7 +140,12 @@ export default function DismissalDashboard() {
   // Socket listeners
   useEffect(() => {
     if (!socket || !currentSchool) return;
-    socket.emit('join:school', { schoolId: currentSchool.id, role: 'admin' });
+
+    const joinRoom = () => {
+      socket.emit('join:school', { schoolId: currentSchool.id, role: 'admin' });
+    };
+    joinRoom();
+    socket.on('connect', joinRoom);
 
     const handleQueueUpdate = () => {
       if (session) {
@@ -156,6 +161,7 @@ export default function DismissalDashboard() {
     socket.on('change:requested', () => { /* could show notification */ });
 
     return () => {
+      socket.off('connect', joinRoom);
       socket.off('queue:updated', handleQueueUpdate);
       socket.off('student:called', handleQueueUpdate);
       socket.off('student:released', handleQueueUpdate);

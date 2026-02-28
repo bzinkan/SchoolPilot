@@ -6,11 +6,17 @@ const api = axios.create({
   withCredentials: true,
 });
 
-// Attach Bearer token from localStorage on every request
+// In-memory token store (never persisted to localStorage)
+let _token = null;
+
+export function setApiToken(token) {
+  _token = token;
+}
+
+// Attach Bearer token from memory on every request
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('sp_token');
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
+  if (_token) {
+    config.headers.Authorization = `Bearer ${_token}`;
   }
   return config;
 });

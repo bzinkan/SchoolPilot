@@ -55,6 +55,13 @@ router.use((req: Request, _res: Response, next: NextFunction) => {
     return next();
   }
 
+  // --- School admin routes handled by compat (must come before super-admin rewrite) ---
+  if (p === "/admin/audit-logs" || p === "/admin/cleanup-students" ||
+      p.startsWith("/admin/classroom/") || p.match(/^\/admin\/teachers\/[^/]+$/) ) {
+    req.url = "/compat" + req.url;
+    return next();
+  }
+
   // --- Super admin prefix (all frontends use /super-admin, server uses /admin) ---
   if (p === "/super-admin" || p.startsWith("/super-admin/")) {
     req.url = "/admin" + req.url.slice("/super-admin".length);

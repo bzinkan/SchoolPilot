@@ -71,6 +71,21 @@ router.post("/sessions", ...auth, async (req, res, next) => {
   }
 });
 
+// GET /api/gopilot/dismissal/sessions/active - Get today's session (if any)
+router.get("/sessions/active", ...auth, async (req, res, next) => {
+  try {
+    const schoolId = res.locals.schoolId!;
+    const school = await getSchoolById(schoolId);
+    const timeZone = school?.schoolTimezone ?? "America/New_York";
+    const localDate = new Date().toLocaleDateString("en-CA", { timeZone });
+
+    const session = await getOrCreateSession(schoolId, localDate);
+    return res.json({ session });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /api/gopilot/dismissal/sessions/:id
 router.get("/sessions/:id", ...auth, async (req, res, next) => {
   try {

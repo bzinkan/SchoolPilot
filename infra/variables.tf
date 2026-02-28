@@ -94,6 +94,12 @@ variable "domain" {
 
 # --- Application Secrets ---
 
+variable "database_url" {
+  description = "Full PostgreSQL connection string"
+  type        = string
+  sensitive   = true
+}
+
 variable "session_secret" {
   description = "Express session secret"
   type        = string

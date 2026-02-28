@@ -817,7 +817,7 @@ export default function Admin() {
           ) : (
             <div className="space-y-2">
               {activeSessions.map((session) => {
-                const teacher = staff.find(t => t.id === session.teacherId);
+                const teacher = staff.find(t => t.userId === session.teacherId);
                 const group = allGroups.find(g => g.id === session.groupId);
                 return (
                   <div

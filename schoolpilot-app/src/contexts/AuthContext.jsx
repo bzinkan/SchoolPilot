@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import api from '../shared/utils/api';
+import api, { setApiToken } from '../shared/utils/api';
 
 const AuthContext = createContext(null);
 
@@ -11,9 +11,8 @@ export function AuthProvider({ children }) {
   const [activeSchoolId, setActiveSchoolId] = useState(
     () => localStorage.getItem('sp_activeSchoolId') || null
   );
-  const [token, setToken] = useState(
-    () => localStorage.getItem('sp_token') || null
-  );
+  // Token kept in memory only — never persisted to localStorage (XSS protection)
+  const [token, setToken] = useState(null);
 
   const fetchUser = useCallback(async () => {
     try {
@@ -22,10 +21,9 @@ export function AuthProvider({ children }) {
       setMemberships(res.data.memberships || []);
       setLicenses(res.data.licenses || {});
 
-      // Store JWT token (returned by /me for Google OAuth sessions + email login)
+      // Store JWT token in memory only (returned by /me for WebSocket auth)
       if (res.data.token) {
         setToken(res.data.token);
-        localStorage.setItem('sp_token', res.data.token);
       }
 
       // Default to first membership's school if none selected
@@ -43,6 +41,11 @@ export function AuthProvider({ children }) {
     }
   }, [activeSchoolId]);
 
+  // Sync in-memory token to API interceptor
+  useEffect(() => {
+    setApiToken(token);
+  }, [token]);
+
   useEffect(() => {
     fetchUser();
   }, [fetchUser]);
@@ -52,10 +55,9 @@ export function AuthProvider({ children }) {
     setUser(res.data.user);
     setMemberships(res.data.memberships || []);
 
-    // Store JWT token for socket.io auth (GoPilot real-time)
+    // Store JWT token in memory for WebSocket auth
     if (res.data.token) {
       setToken(res.data.token);
-      localStorage.setItem('sp_token', res.data.token);
     }
 
     if (res.data.memberships?.length > 0) {
@@ -81,7 +83,6 @@ export function AuthProvider({ children }) {
     setActiveSchoolId(null);
     setToken(null);
     localStorage.removeItem('sp_activeSchoolId');
-    localStorage.removeItem('sp_token');
   };
 
   const switchSchool = (schoolId) => {

@@ -1,6 +1,6 @@
 import db from "../db.js";
 import { auditLogs } from "../schema/shared.js";
-import { desc, eq, and } from "drizzle-orm";
+import { desc, eq, and, sql, count } from "drizzle-orm";
 
 export async function logAudit(entry: {
   schoolId: string;
@@ -55,4 +55,24 @@ export async function getAuditLogs(options: {
     .offset(options.offset || 0);
 
   return query;
+}
+
+export async function countAuditLogs(options: {
+  schoolId?: string;
+  userId?: string;
+  action?: string;
+  entityType?: string;
+}) {
+  const conditions = [];
+  if (options.schoolId) conditions.push(eq(auditLogs.schoolId, options.schoolId));
+  if (options.userId) conditions.push(eq(auditLogs.userId, options.userId));
+  if (options.action) conditions.push(eq(auditLogs.action, options.action));
+  if (options.entityType) conditions.push(eq(auditLogs.entityType, options.entityType));
+
+  const [result] = await db
+    .select({ total: count() })
+    .from(auditLogs)
+    .where(conditions.length > 0 ? and(...conditions) : undefined);
+
+  return result?.total ?? 0;
 }

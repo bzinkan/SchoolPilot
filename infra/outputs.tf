@@ -58,7 +58,3 @@ output "site_url" {
   value       = var.domain != "" ? "https://${module.dns[0].primary_domain}" : "https://${module.cdn.cloudfront_domain}"
 }
 
-output "rds_secret_arn" {
-  description = "Secrets Manager ARN for RDS master password"
-  value       = module.rds.master_user_secret_arn
-}

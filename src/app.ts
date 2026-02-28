@@ -21,7 +21,15 @@ export function createApp() {
   app.set("trust proxy", 1);
 
   // Security headers
-  app.use(helmet());
+  app.use(
+    helmet({
+      contentSecurityPolicy: false, // CSP handled by CloudFront/frontend
+      hsts: isProduction
+        ? { maxAge: 31536000, includeSubDomains: true, preload: true }
+        : false,
+      crossOriginEmbedderPolicy: false, // Allow loading cross-origin resources
+    })
+  );
 
   // CORS — allow all configured frontend origins
   const allowlist = (process.env.CORS_ALLOWLIST || "")

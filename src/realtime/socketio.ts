@@ -5,7 +5,10 @@ import { verifyUserToken } from "../services/jwt.js";
 let io: Server | null = null;
 
 export function setupSocketIO(httpServer: HttpServer): Server {
-  const origins = (process.env.CORS_ALLOWLIST || "http://localhost:3000,http://localhost:5000,http://localhost:5173").split(",");
+  const origins = (process.env.CORS_ALLOWLIST || "http://localhost:3000,http://localhost:5000,http://localhost:5173")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
 
   io = new Server(httpServer, {
     cors: { origin: origins, methods: ["GET", "POST"] },

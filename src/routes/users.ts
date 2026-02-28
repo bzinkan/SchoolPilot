@@ -99,6 +99,12 @@ router.get("/me/children", async (req, res, next) => {
   try {
     // schoolId from header or session
     const schoolId = (req.headers["x-school-id"] as string) || req.session?.schoolId || "";
+    if (schoolId) {
+      const membership = await getMembershipByUserAndSchool(req.authUser!.id, schoolId);
+      if (!membership) {
+        return res.status(403).json({ error: "You do not have access to this school" });
+      }
+    }
     const children = await getApprovedChildrenForParent(req.authUser!.id, schoolId);
     return res.json({ children });
   } catch (err) {
@@ -112,6 +118,11 @@ router.post("/me/children/link", async (req, res, next) => {
     const { studentCode, schoolId } = req.body;
     if (!studentCode || !schoolId) {
       return res.status(400).json({ error: "studentCode and schoolId are required" });
+    }
+    // Verify the parent has a membership in this school
+    const membership = await getMembershipByUserAndSchool(req.authUser!.id, schoolId);
+    if (!membership) {
+      return res.status(403).json({ error: "You do not have access to this school" });
     }
     // Look up student by code to get studentId
     const student = await getStudentByCode(schoolId, studentCode);

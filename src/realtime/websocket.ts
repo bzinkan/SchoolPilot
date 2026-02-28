@@ -25,6 +25,7 @@ import {
   linkStudentDevice,
   startStudentSession,
   getSettingsForSchool,
+  getMembershipByUserAndSchool,
 } from "../services/storage.js";
 
 // Ping/pong keepalive constants
@@ -61,6 +62,11 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
   void subscribeWS(deliverRedisMessage);
 
   // --- HTTP upgrade handling ---
+  const wsAllowlist = (process.env.CORS_ALLOWLIST || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
   httpServer.on("upgrade", (request, socket, head) => {
     const rawUrl = request.url ?? "/";
     let pathname = rawUrl;
@@ -73,6 +79,15 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
     if (pathname !== "/ws" && pathname !== "/ws/") {
       console.warn("[WebSocket] Rejected upgrade for invalid path:", pathname);
       socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+
+    // Validate origin in production (Chrome extensions have no origin, so allow those)
+    const origin = request.headers.origin;
+    if (wsAllowlist.length > 0 && origin && !wsAllowlist.includes(origin)) {
+      console.warn("[WebSocket] Rejected upgrade from unauthorized origin:", origin);
+      socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
       socket.destroy();
       return;
     }
@@ -298,8 +313,19 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
                 return;
               }
 
-              // Use the role from the verified JWT payload if available, otherwise trust client
-              const role = (message.role as "teacher" | "school_admin" | "super_admin");
+              // Verify role from DB membership instead of trusting client
+              let role: "teacher" | "school_admin" | "super_admin" = "teacher";
+              if (payload.isSuperAdmin) {
+                role = "super_admin";
+              } else {
+                const membership = await getMembershipByUserAndSchool(userId, schoolId);
+                if (!membership) {
+                  ws.send(JSON.stringify({ type: "auth-error", message: "No access to this school" }));
+                  ws.close();
+                  return;
+                }
+                role = membership.role === "admin" || membership.role === "school_admin" ? "school_admin" : "teacher";
+              }
 
               authenticateWsClient(ws, {
                 role,

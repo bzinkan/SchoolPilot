@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { setApiToken } from '../shared/utils/api';
+import { queryClient } from '../lib/queryClient';
 
 export default function Login() {
   const { login, refetchUser } = useAuth();
@@ -15,7 +17,10 @@ export default function Login() {
   useEffect(() => {
     const token = searchParams.get('token');
     if (token) {
-      localStorage.setItem('sp_token', token);
+      // Set token in memory only (never localStorage)
+      setApiToken(token);
+      // Clear stale query cache so Dashboard fetches fresh data
+      queryClient.clear();
       // Clean token from URL, then refetch user with the new token
       window.history.replaceState({}, '', '/login');
       refetchUser();
@@ -37,6 +42,7 @@ export default function Login() {
     setError('');
     setLoading(true);
     try {
+      queryClient.clear();
       await login(email, password);
     } catch (err) {
       setError(err.response?.data?.error || 'Login failed');

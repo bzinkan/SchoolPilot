@@ -1,5 +1,8 @@
 import jwt from "jsonwebtoken";
 
+if (!process.env.STUDENT_TOKEN_SECRET && process.env.NODE_ENV === "production") {
+  throw new Error("FATAL: STUDENT_TOKEN_SECRET must be set in production");
+}
 const STUDENT_TOKEN_SECRET =
   process.env.STUDENT_TOKEN_SECRET || "schoolpilot-dev-student-token-secret-32";
 const TOKEN_EXPIRY = "7d";

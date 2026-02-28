@@ -19,6 +19,7 @@ import {
   getActiveTeachingSessions,
   getDailyUsageForStudent,
 } from "../../services/storage.js";
+import { logAudit } from "../../services/audit.js";
 
 const router = Router();
 
@@ -146,6 +147,17 @@ router.post("/roster/student", ...auth, async (req, res, next) => {
       status: "active",
     });
 
+    logAudit({
+      schoolId: res.locals.schoolId!,
+      userId: req.authUser!.id,
+      userEmail: req.authUser!.email,
+      userRole: res.locals.membershipRole,
+      action: "student.create",
+      entityType: "student",
+      entityId: student.id,
+      entityName: `${firstName} ${lastName}`,
+    });
+
     return res.status(201).json({ student });
   } catch (err) {
     next(err);
@@ -202,7 +214,19 @@ router.patch("/students/:studentId", ...auth, async (req, res, next) => {
 // DELETE /api/classpilot/students/:studentId - Delete student
 router.delete("/students/:studentId", ...auth, requireRole("admin"), async (req, res, next) => {
   try {
-    await deleteStudent(param(req, "studentId"));
+    const studentId = param(req, "studentId");
+    await deleteStudent(studentId);
+
+    logAudit({
+      schoolId: res.locals.schoolId!,
+      userId: req.authUser!.id,
+      userEmail: req.authUser!.email,
+      userRole: res.locals.membershipRole,
+      action: "student.delete",
+      entityType: "student",
+      entityId: studentId,
+    });
+
     return res.json({ ok: true });
   } catch (err) {
     next(err);

@@ -80,8 +80,6 @@ resource "aws_db_instance" "main" {
   tags = { Name = "${local.name}-db" }
 }
 
-# --- Read managed password from Secrets Manager ---
-
-data "aws_secretsmanager_secret_version" "rds_password" {
-  secret_id = aws_db_instance.main.master_user_secret[0].secret_arn
-}
+# Note: RDS password is managed by AWS Secrets Manager (via manage_master_user_password).
+# DATABASE_URL is passed directly as a Terraform variable to avoid
+# reading the secret at plan time.

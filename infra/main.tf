@@ -176,7 +176,7 @@ module "ecs" {
   ecs_security_group_id = aws_security_group.ecs_tasks.id
 
   # Environment variables for the API
-  database_url         = module.rds.database_url
+  database_url         = var.database_url
   redis_url            = module.redis.redis_url
   session_secret       = var.session_secret
   jwt_secret           = var.jwt_secret

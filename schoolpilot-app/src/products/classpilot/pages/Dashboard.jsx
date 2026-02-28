@@ -145,7 +145,7 @@ export default function Dashboard() {
   // eslint-disable-next-line react-hooks/refs
   const webrtc = useWebRTC(wsRef.current);
 
-  const { data: students = [] } = useQuery({
+  const { data: students = [], isLoading: studentsLoading } = useQuery({
     queryKey: ['/api/students-aggregated'],
     queryFn: () => apiRequest('GET', '/students-aggregated'),
     select: (data) => Array.isArray(data) ? data : data?.students ?? [],
@@ -378,6 +378,31 @@ export default function Dashboard() {
                 title: message.data.messageType === 'question' ? "Question" : "Message",
                 description: `${message.data.studentName}: ${message.data.message.slice(0, 50)}${message.data.message.length > 50 ? '...' : ''}`,
               });
+            }
+            if (message.type === 'student-registered') {
+              queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
+            }
+            if (message.type === 'ai-classification') {
+              queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
+            }
+            if (message.type === 'safety-alert') {
+              toast({
+                title: "Safety Alert",
+                description: `${message.studentName || 'A student'} may need attention — ${message.classification?.reason || 'flagged content detected'}`,
+                variant: "destructive",
+              });
+              queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
+            }
+            if (message.type === 'screenshot-available') {
+              queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
+            }
+            if (message.type === 'student-event') {
+              if (message.eventType === 'blocked_domain') {
+                toast({
+                  title: "Blocked Site",
+                  description: `${message.studentId} attempted to visit a blocked domain`,
+                });
+              }
             }
           } catch (error) {
             console.error("[Dashboard] WebSocket message error:", error);
@@ -664,6 +689,7 @@ export default function Dashboard() {
     mutationFn: async (groupId) => apiRequest('POST', '/sessions/start', { groupId }),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['/api/sessions/active'], exact: false });
+      queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
       queryClient.invalidateQueries({ queryKey: ['/api/groups'], exact: false });
       queryClient.invalidateQueries({ queryKey: ['/api/teacher/groups'], exact: false });
       const group = groups.find(g => g.id === data.groupId);
@@ -676,6 +702,7 @@ export default function Dashboard() {
     mutationFn: async () => apiRequest('POST', '/sessions/end', {}),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/sessions/active'], exact: false });
+      queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
       queryClient.invalidateQueries({ queryKey: ['/api/groups'], exact: false });
       queryClient.invalidateQueries({ queryKey: ['/api/teacher/groups'], exact: false });
       toast({ title: "Class Ended", description: "Class session has been ended" });
@@ -1312,6 +1339,11 @@ export default function Dashboard() {
             <h3 className="text-xl font-semibold mb-2">No Active Class Session</h3>
             <p className="text-sm text-muted-foreground max-w-md mx-auto mb-6">Start a class session to view and monitor your students. Click "Start Class" in the top right to select a class period.</p>
             {groups.length === 0 && <p className="text-xs text-muted-foreground max-w-md mx-auto">You don't have any class groups yet. Contact your administrator to have students assigned to your classes.</p>}
+          </div>
+        ) : studentsLoading ? (
+          <div className="py-20 text-center">
+            <div className="h-10 w-10 mx-auto mb-4 animate-spin rounded-full border-4 border-muted border-t-primary" />
+            <p className="text-sm text-muted-foreground">Loading students...</p>
           </div>
         ) : filteredStudents.length === 0 ? (
           <div className="py-20 text-center">

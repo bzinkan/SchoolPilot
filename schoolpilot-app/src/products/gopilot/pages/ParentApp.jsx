@@ -205,10 +205,15 @@ export default function ParentApp() {
     return () => clearInterval(interval);
   }, []);
 
-  // Join socket room
+  // Join socket room (and re-join on reconnect)
   useEffect(() => {
     if (!socket || !currentSchool?.id) return;
-    socket.emit('join:school', { schoolId: currentSchool.id, role: 'parent' });
+    const joinRoom = () => {
+      socket.emit('join:school', { schoolId: currentSchool.id, role: 'parent' });
+    };
+    joinRoom();
+    socket.on('connect', joinRoom);
+    return () => { socket.off('connect', joinRoom); };
   }, [socket, currentSchool?.id]);
 
   // Socket events

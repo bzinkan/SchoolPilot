@@ -21,16 +21,7 @@ export function requireRole(...roles: Role[]): RequestHandler {
       return next();
     }
 
-    // Session-based: role is in session
-    if (req.authMethod === "session" && req.session?.role) {
-      const sessionRole = req.session.role === "school_admin" ? "admin" : req.session.role;
-      if (roles.includes(sessionRole as Role)) {
-        return next();
-      }
-      return res.status(403).json({ error: "Insufficient permissions" });
-    }
-
-    // JWT-based: check school_memberships
+    // Always verify role from DB when school context is available
     const schoolId = res.locals.schoolId;
     if (!schoolId) {
       return res.status(400).json({ error: "School context required" });

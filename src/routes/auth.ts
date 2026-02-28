@@ -1,4 +1,5 @@
 import { Router } from "express";
+import crypto from "crypto";
 import { google } from "googleapis";
 import { loginSchema, registerSchema } from "../schema/validation.js";
 import { hashPassword, comparePassword } from "../util/password.js";
@@ -337,10 +338,12 @@ router.post("/logout", (req, res) => {
 });
 
 // GET /api/auth/csrf
-// Returns CSRF token for ClassPilot-style clients
+// Returns a per-session CSRF token
 router.get("/csrf", (req, res) => {
-  // For now, return a simple token. Full CSRF will be added with csurf.
-  res.json({ csrfToken: "ok" });
+  if (!req.session.csrfToken) {
+    req.session.csrfToken = crypto.randomBytes(32).toString("hex");
+  }
+  res.json({ csrfToken: req.session.csrfToken });
 });
 
 export default router;

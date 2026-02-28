@@ -137,7 +137,7 @@ async function rollupDailyUsage() {
         productLicenses,
         and(
           eq(productLicenses.schoolId, schools.id),
-          eq(productLicenses.product, "classpilot"),
+          eq(productLicenses.product, "CLASSPILOT"),
           eq(productLicenses.status, "active")
         )
       )
@@ -256,7 +256,7 @@ async function purgeExpiredHeartbeats() {
         productLicenses,
         and(
           eq(productLicenses.schoolId, schools.id),
-          eq(productLicenses.product, "classpilot"),
+          eq(productLicenses.product, "CLASSPILOT"),
           eq(productLicenses.status, "active")
         )
       )

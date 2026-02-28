@@ -341,12 +341,29 @@ function RemoteControlToolbar({ selectedStudentIds, students, selectedGrade, onG
     return nameA.localeCompare(nameB);
   });
 
-  // Fetch website duration analytics
+  // Fetch website duration analytics for a specific student
   const { data: websiteDataRaw = [] } = useQuery({
     queryKey: ['/api/student-analytics', selectedStudentForData],
     queryFn: () => apiRequest('GET', `/student-analytics/${selectedStudentForData}`),
-    select: (data) => Array.isArray(data) ? data : data?.heartbeats ?? [],
-    enabled: showStudentDataDialog,
+    select: (data) => {
+      const heartbeats = Array.isArray(data) ? data : data?.heartbeats ?? [];
+      // Aggregate heartbeats by domain into { name, value } format
+      const domainMap = {};
+      for (const hb of heartbeats) {
+        if (!hb.activeTabUrl) continue;
+        try {
+          const domain = new URL(hb.activeTabUrl).hostname;
+          domainMap[domain] = (domainMap[domain] || 0) + 10; // 10s per heartbeat
+        } catch {
+          // skip invalid URLs
+        }
+      }
+      return Object.entries(domainMap)
+        .map(([name, value]) => ({ name, value }))
+        .sort((a, b) => b.value - a.value)
+        .slice(0, 10);
+    },
+    enabled: showStudentDataDialog && selectedStudentForData !== "all",
   });
 
   // Add colors to website data
@@ -363,12 +380,33 @@ function RemoteControlToolbar({ selectedStudentIds, students, selectedGrade, onG
     '#84cc16', // lime
   ];
 
+  // For "Whole Class" view, aggregate current active URLs from all online students
+  const classWebsiteData = useMemo(() => {
+    if (selectedStudentForData !== "all") return [];
+    const domainMap = {};
+    students.forEach((s) => {
+      if (!s.activeTabUrl || s.status === "offline") return;
+      try {
+        const domain = new URL(s.activeTabUrl).hostname;
+        domainMap[domain] = (domainMap[domain] || 0) + 1;
+      } catch {
+        // skip invalid URLs
+      }
+    });
+    return Object.entries(domainMap)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 10);
+  }, [selectedStudentForData, students]);
+
+  const displayData = selectedStudentForData === "all" ? classWebsiteData : websiteDataRaw;
+
   const studentDataStats = useMemo(() => {
-    return websiteDataRaw.map((item, index) => ({
+    return displayData.map((item, index) => ({
       ...item,
       color: CHART_COLORS[index % CHART_COLORS.length],
     }));
-  }, [websiteDataRaw]);
+  }, [displayData]);
 
   return (
     <>
@@ -724,8 +762,8 @@ function RemoteControlToolbar({ selectedStudentIds, students, selectedGrade, onG
             <div className="space-y-4">
               <h3 className="text-lg font-semibold">
                 {selectedStudentForData === "all"
-                  ? "Top Websites Visited (Last 24 Hours)"
-                  : `${sortedStudents.find(s => s.studentId === selectedStudentForData)?.studentName || 'Student'}'s Top Websites`}
+                  ? "Current Class Activity"
+                  : `${sortedStudents.find(s => s.studentId === selectedStudentForData)?.studentName || 'Student'}'s Top Websites (Last 24h)`}
               </h3>
 
               {studentDataStats.length > 0 ? (
@@ -734,9 +772,14 @@ function RemoteControlToolbar({ selectedStudentIds, students, selectedGrade, onG
                   <div className="w-80 flex-shrink-0">
                     <div className="space-y-2 max-h-96 overflow-y-auto pr-2">
                       {studentDataStats.map((stat, index) => {
-                        const minutes = Math.floor(stat.value / 60);
-                        const seconds = stat.value % 60;
-                        const timeStr = minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+                        let displayValue;
+                        if (selectedStudentForData === "all") {
+                          displayValue = `${stat.value} student${stat.value !== 1 ? 's' : ''}`;
+                        } else {
+                          const minutes = Math.floor(stat.value / 60);
+                          const seconds = stat.value % 60;
+                          displayValue = minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+                        }
 
                         return (
                           <div key={stat.name} className="flex items-center gap-3 p-2 rounded-md hover-elevate">
@@ -753,7 +796,7 @@ function RemoteControlToolbar({ selectedStudentIds, students, selectedGrade, onG
                               </div>
                             </div>
                             <div className="flex-shrink-0 text-sm font-semibold text-muted-foreground">
-                              {timeStr}
+                              {displayValue}
                             </div>
                           </div>
                         );
@@ -784,6 +827,9 @@ function RemoteControlToolbar({ selectedStudentIds, students, selectedGrade, onG
                         </Pie>
                         <Tooltip
                           formatter={(value, name) => {
+                            if (selectedStudentForData === "all") {
+                              return [`${value} student${value !== 1 ? 's' : ''}`, name];
+                            }
                             const minutes = Math.floor(value / 60);
                             const seconds = value % 60;
                             const timeStr = minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;

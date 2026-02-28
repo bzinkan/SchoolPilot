@@ -49,18 +49,30 @@ resource "aws_iam_role_policy_attachment" "ecs_execution" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
-# Allow reading RDS managed password from Secrets Manager
+# Allow reading SSM parameters for ECS secrets injection
 resource "aws_iam_role_policy" "ecs_secrets" {
   name = "${local.name}-ecs-secrets"
   role = aws_iam_role.ecs_execution.id
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Effect   = "Allow"
-      Action   = ["secretsmanager:GetSecretValue"]
-      Resource = ["arn:aws:secretsmanager:${var.aws_region}:*:secret:*"]
-    }]
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["ssm:GetParameters"]
+        Resource = ["arn:aws:ssm:${var.aws_region}:*:parameter/${var.project}/${var.environment}/*"]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt"]
+        Resource = ["*"]
+        Condition = {
+          StringEquals = {
+            "kms:ViaService" = "ssm.${var.aws_region}.amazonaws.com"
+          }
+        }
+      }
+    ]
   })
 }
 
@@ -101,23 +113,26 @@ resource "aws_ecs_task_definition" "api" {
     environment = [
       { name = "NODE_ENV", value = "production" },
       { name = "PORT", value = tostring(var.container_port) },
-      { name = "DATABASE_URL", value = var.database_url },
       { name = "PGSSLMODE", value = "require" },
       { name = "NODE_TLS_REJECT_UNAUTHORIZED", value = "0" },
-      { name = "REDIS_URL", value = var.redis_url },
-      { name = "SESSION_SECRET", value = var.session_secret },
-      { name = "JWT_SECRET", value = var.jwt_secret },
-      { name = "STUDENT_TOKEN_SECRET", value = var.student_token_secret },
       { name = "PUBLIC_BASE_URL", value = var.public_base_url },
       { name = "CORS_ALLOWLIST", value = var.cors_allowlist },
       { name = "COOKIE_DOMAIN", value = var.cookie_domain },
       { name = "GOOGLE_CLIENT_ID", value = var.google_client_id },
-      { name = "GOOGLE_CLIENT_SECRET", value = var.google_client_secret },
-      { name = "GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY", value = var.google_oauth_encryption_key },
-      { name = "SENDGRID_API_KEY", value = var.sendgrid_api_key },
-      { name = "STRIPE_SECRET_KEY", value = var.stripe_secret_key },
-      { name = "STRIPE_WEBHOOK_SECRET", value = var.stripe_webhook_secret },
-      { name = "OPENAI_API_KEY", value = var.openai_api_key },
+    ]
+
+    secrets = [
+      { name = "DATABASE_URL", valueFrom = aws_ssm_parameter.database_url.arn },
+      { name = "REDIS_URL", valueFrom = aws_ssm_parameter.redis_url.arn },
+      { name = "SESSION_SECRET", valueFrom = aws_ssm_parameter.session_secret.arn },
+      { name = "JWT_SECRET", valueFrom = aws_ssm_parameter.jwt_secret.arn },
+      { name = "STUDENT_TOKEN_SECRET", valueFrom = aws_ssm_parameter.student_token_secret.arn },
+      { name = "GOOGLE_CLIENT_SECRET", valueFrom = aws_ssm_parameter.google_client_secret.arn },
+      { name = "GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY", valueFrom = aws_ssm_parameter.google_oauth_encryption_key.arn },
+      { name = "SENDGRID_API_KEY", valueFrom = aws_ssm_parameter.sendgrid_api_key.arn },
+      { name = "STRIPE_SECRET_KEY", valueFrom = aws_ssm_parameter.stripe_secret_key.arn },
+      { name = "STRIPE_WEBHOOK_SECRET", valueFrom = aws_ssm_parameter.stripe_webhook_secret.arn },
+      { name = "OPENAI_API_KEY", valueFrom = aws_ssm_parameter.openai_api_key.arn },
     ]
 
     logConfiguration = {

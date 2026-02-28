@@ -1,9 +1,19 @@
 import { Router } from "express";
+import rateLimit from "express-rate-limit";
 import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { kioskLookupSchema, kioskCheckoutSchema } from "../../schema/validation.js";
+
+// Strict rate limiter for public kiosk endpoints
+const kioskLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 30, // 30 requests per minute per IP
+  message: { error: "Too many kiosk requests, please try again later" },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 import {
   getSchoolById,
   getStudentByIdNumber,
@@ -37,11 +47,15 @@ function getKioskSchoolId(req: { headers: Record<string, unknown>; query: Record
   );
 }
 
-// Helper: validate kiosk is enabled
-async function validateKiosk(schoolId: string) {
+// Helper: validate kiosk is enabled and PIN matches (if set)
+async function validateKiosk(schoolId: string, kioskPin?: string) {
   const school = await getSchoolById(schoolId);
   if (!school) return { error: "School not found", status: 404, school: null };
   if (!school.kioskEnabled) return { error: "Kiosk is not enabled", status: 403, school: null };
+  // If the school has a kiosk PIN, require it on every request
+  if ((school as any).kioskPin && (school as any).kioskPin !== kioskPin) {
+    return { error: "Invalid kiosk PIN", status: 401, school: null };
+  }
   return { error: null, status: 200, school };
 }
 
@@ -50,14 +64,15 @@ async function validateKiosk(schoolId: string) {
 // ============================================================================
 
 // POST /api/passpilot/kiosk/lookup - Student lookup by badge ID
-router.post("/lookup", async (req, res, next) => {
+router.post("/lookup", kioskLimiter, async (req, res, next) => {
   try {
     const schoolId = getKioskSchoolId(req);
     if (!schoolId) {
       return res.status(400).json({ error: "School ID required (x-school-id header)" });
     }
 
-    const { error, status, school } = await validateKiosk(schoolId);
+    const kioskPin = req.headers["x-kiosk-pin"] as string | undefined;
+    const { error, status, school } = await validateKiosk(schoolId, kioskPin);
     if (error) return res.status(status).json({ error });
 
     const parsed = kioskLookupSchema.safeParse(req.body);
@@ -86,14 +101,15 @@ router.post("/lookup", async (req, res, next) => {
 });
 
 // POST /api/passpilot/kiosk/checkout - Self-checkout (create pass from kiosk)
-router.post("/checkout", async (req, res, next) => {
+router.post("/checkout", kioskLimiter, async (req, res, next) => {
   try {
     const schoolId = getKioskSchoolId(req);
     if (!schoolId) {
       return res.status(400).json({ error: "School ID required (x-school-id header)" });
     }
 
-    const { error, status, school } = await validateKiosk(schoolId);
+    const kioskPin = req.headers["x-kiosk-pin"] as string | undefined;
+    const { error, status, school } = await validateKiosk(schoolId, kioskPin);
     if (error || !school) return res.status(status).json({ error });
 
     const parsed = kioskCheckoutSchema.safeParse(req.body);
@@ -155,14 +171,15 @@ router.post("/checkout", async (req, res, next) => {
 });
 
 // POST /api/passpilot/kiosk/checkin - Return pass from kiosk
-router.post("/checkin", async (req, res, next) => {
+router.post("/checkin", kioskLimiter, async (req, res, next) => {
   try {
     const schoolId = getKioskSchoolId(req);
     if (!schoolId) {
       return res.status(400).json({ error: "School ID required (x-school-id header)" });
     }
 
-    const { error, status } = await validateKiosk(schoolId);
+    const kioskPin = req.headers["x-kiosk-pin"] as string | undefined;
+    const { error, status } = await validateKiosk(schoolId, kioskPin);
     if (error) return res.status(status).json({ error });
 
     const { studentId } = req.body;
@@ -183,14 +200,15 @@ router.post("/checkin", async (req, res, next) => {
 });
 
 // GET /api/passpilot/kiosk/grades - List grades for kiosk
-router.get("/grades", async (req, res, next) => {
+router.get("/grades", kioskLimiter, async (req, res, next) => {
   try {
     const schoolId = getKioskSchoolId(req);
     if (!schoolId) {
       return res.status(400).json({ error: "School ID required" });
     }
 
-    const { error, status } = await validateKiosk(schoolId);
+    const kioskPin = req.headers["x-kiosk-pin"] as string | undefined;
+    const { error, status } = await validateKiosk(schoolId, kioskPin);
     if (error) return res.status(status).json({ error });
 
     const gradesList = await getGradesBySchool(schoolId);
@@ -201,7 +219,7 @@ router.get("/grades", async (req, res, next) => {
 });
 
 // GET /api/passpilot/kiosk/students - List students for a grade with active pass status
-router.get("/students", async (req, res, next) => {
+router.get("/students", kioskLimiter, async (req, res, next) => {
   try {
     const schoolId = getKioskSchoolId(req);
     if (!schoolId) {
@@ -213,7 +231,8 @@ router.get("/students", async (req, res, next) => {
       return res.status(400).json({ error: "gradeId required" });
     }
 
-    const { error, status } = await validateKiosk(schoolId);
+    const kioskPin = req.headers["x-kiosk-pin"] as string | undefined;
+    const { error, status } = await validateKiosk(schoolId, kioskPin);
     if (error) return res.status(status).json({ error });
 
     const [studentsList, activePasses] = await Promise.all([
@@ -239,7 +258,7 @@ router.get("/students", async (req, res, next) => {
 });
 
 // GET /api/passpilot/kiosk/config - Get kiosk configuration
-router.get("/config", async (req, res, next) => {
+router.get("/config", kioskLimiter, async (req, res, next) => {
   try {
     const schoolId = getKioskSchoolId(req);
     if (!schoolId) {

@@ -27,8 +27,8 @@ async function getStripe() {
   return new Stripe(stripeKey);
 }
 
-// POST /api/checkout/create-session - Create Stripe checkout session
-router.post("/checkout/create-session", async (req, res, next) => {
+// POST /api/checkout/create-session - Create Stripe checkout session (requires auth)
+router.post("/checkout/create-session", authenticate, async (req, res, next) => {
   try {
     const stripe = await getStripe();
     if (!stripe) {

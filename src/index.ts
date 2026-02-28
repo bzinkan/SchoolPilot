@@ -55,6 +55,19 @@ import { pool } from "./db.js";
   } catch (err) {
     console.warn("[migration] daily_usage auto-migration skipped:", (err as Error).message);
   }
+
+  // One-time: update super-admin email alias in users + audit_logs
+  try {
+    const OLD_EMAIL = "bzinkan@school-pilot.net";
+    const NEW_EMAIL = "support@school-pilot.net";
+    const { rowCount } = await pool.query(`UPDATE users SET email = $1 WHERE email = $2`, [NEW_EMAIL, OLD_EMAIL]);
+    if (rowCount && rowCount > 0) {
+      await pool.query(`UPDATE audit_logs SET user_email = $1 WHERE user_email = $2`, [NEW_EMAIL, OLD_EMAIL]);
+      console.log("[migration] email alias updated");
+    }
+  } catch (err) {
+    console.warn("[migration] email alias update skipped:", (err as Error).message);
+  }
 })();
 
 const app = createApp();

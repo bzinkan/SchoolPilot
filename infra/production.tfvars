@@ -11,7 +11,7 @@ vpc_cidr = "10.1.0.0/16"
 az_count = 2
 
 # Database — start small, scale up later
-db_instance_class = "db.t4g.micro"
+db_instance_class = "db.t4g.medium"
 db_name           = "schoolpilot"
 db_username       = "schoolpilot"
 
