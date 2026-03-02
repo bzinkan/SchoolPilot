@@ -27,6 +27,8 @@ Backend lives at the root (`src/`), frontend in `schoolpilot-app/`. The ClassPil
 │   │   ├── gopilot/        # dismissal, homerooms, pickups, bus-routes, families
 │   │   ├── google/         # OAuth, Classroom sync, Directory sync
 │   │   └── admin/          # Super admin, trial requests, billing
+│   ├── config/
+│   │   └── pricing.ts      # Product pricing constants, bundle discounts, calculateInvoice()
 │   ├── middleware/         # authenticate, requireRole, requireProductLicense, etc.
 │   ├── schema/             # Drizzle ORM table definitions (core, students, per-product)
 │   ├── services/
@@ -49,7 +51,7 @@ schoolpilot-app/            # Frontend (React + Vite)
 │   ├── pages/              # Landing, Login, super-admin/
 │   ├── shell/              # Shared shell components (widgets, Layout)
 │   ├── components/ui/      # Radix UI component library
-│   └── shared/             # Shared components, hooks, utils
+│   └── shared/             # Shared components, hooks, utils (includes pricing.js)
 └── vite.config.js          # Proxy /api→:4000, /ws→:4000
 ```
 
@@ -110,6 +112,28 @@ Roles: `admin`, `school_admin`, `teacher`, `office_staff`. Super admins have `is
 
 ### Product Licensing
 Each school has entries in the `product_licenses` table (CLASSPILOT, PASSPILOT, GOPILOT). The `requireProductLicense` middleware gates access. Frontend checks licenses via `LicenseContext` which reads from the `/auth/me` response.
+
+### Billing & Stripe Integration
+Pricing is defined in `src/config/pricing.ts` (backend) and mirrored in `schoolpilot-app/src/shared/utils/pricing.js` (frontend). Keep both in sync when changing prices.
+
+**Product Pricing (Annual):**
+| Product | Base Fee | Per-Student |
+|---------|----------|-------------|
+| ClassPilot | $500 | $2/student |
+| GoPilot | $300 | $2/student |
+| PassPilot | $0 | $2/student |
+
+**Bundle Discounts:** 2 products → 10% off, all 3 → 20% off.
+
+**Invoice Flow:** Super admins send manual invoices from SchoolDetail page → `POST /super-admin/schools/:id/send-invoice` → creates per-product Stripe line items + discount → Stripe emails the school → school pays via hosted invoice → `invoice.paid` webhook activates school and extends product license expiry.
+
+**Webhook Events Handled** (`src/routes/admin/billing.ts`):
+- `checkout.session.completed` — activates school after checkout
+- `invoice.paid` — activates school, sets planTier, extends product licenses
+- `invoice.payment_failed` — sets planStatus to `past_due`
+- `customer.subscription.deleted` — sets planStatus to `canceled`
+
+**Stripe env vars:** `STRIPE_SECRET_KEY`, `STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET`. Raw body middleware in `app.ts` captures `req.rawBody` for webhook signature verification.
 
 ### Real-time Communication
 - **Socket.io** (`src/realtime/socketio.ts`) — GoPilot dismissal updates, namespaced at `/gopilot-socket`
