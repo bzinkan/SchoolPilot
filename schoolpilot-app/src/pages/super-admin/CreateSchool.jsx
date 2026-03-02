@@ -230,8 +230,8 @@ export default function CreateSchool() {
           <div className="flex flex-wrap gap-3">
             {[
               { key: 'CLASSPILOT', label: 'ClassPilot', desc: 'Classroom device management', bg: 'bg-amber-400', text: 'text-slate-900' },
-              { key: 'PASSPILOT', label: 'PassPilot', desc: 'Digital hall passes', bg: 'bg-indigo-500', text: 'text-white' },
-              { key: 'GOPILOT', label: 'GoPilot', desc: 'Dismissal management', bg: 'bg-blue-600', text: 'text-white' },
+              { key: 'PASSPILOT', label: 'PassPilot', desc: 'Digital hall passes', bg: 'bg-blue-600', text: 'text-white' },
+              { key: 'GOPILOT', label: 'GoPilot', desc: 'Dismissal management', bg: 'bg-indigo-500', text: 'text-white' },
             ].map((p) => {
               const isSelected = form.products.includes(p.key);
               return (

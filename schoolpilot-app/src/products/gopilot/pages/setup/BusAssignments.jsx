@@ -122,8 +122,8 @@ export default function BusAssignments({ students, homerooms, onUpdateStudents, 
     const matched = csvPreview.filter(r => r.match && r.bus);
     const updates = matched.map(r => ({
       id: r.match.student.id,
-      dismissal_type: 'bus',
-      bus_route: r.bus,
+      dismissalType: 'bus',
+      busRoute: r.bus,
     }));
     if (updates.length === 0) return;
     await onUpdateStudents(updates);
@@ -142,7 +142,7 @@ export default function BusAssignments({ students, homerooms, onUpdateStudents, 
   };
 
   const assignableStudents = students.filter(s => {
-    if (busFilter !== 'all' && s.homeroom !== parseInt(busFilter)) return false;
+    if (busFilter !== 'all' && String(s.homeroom) !== busFilter) return false;
     if (busSearch) {
       const q = busSearch.toLowerCase();
       if (!(`${s.firstName} ${s.lastName}`.toLowerCase().includes(q))) return false;
@@ -154,8 +154,8 @@ export default function BusAssignments({ students, homerooms, onUpdateStudents, 
     if (!busNumber.trim() || selectedStudents.size === 0) return;
     const updates = [...selectedStudents].map(id => ({
       id,
-      dismissal_type: 'bus',
-      bus_route: busNumber.trim(),
+      dismissalType: 'bus',
+      busRoute: busNumber.trim(),
     }));
     await onUpdateStudents(updates);
     showToast(`Assigned ${updates.length} students to Bus #${busNumber.trim()}`);
@@ -172,7 +172,7 @@ export default function BusAssignments({ students, homerooms, onUpdateStudents, 
 
   // Individual Edit handlers
   const editFiltered = students.filter(s => {
-    if (editFilter !== 'all' && s.homeroom !== parseInt(editFilter)) return false;
+    if (editFilter !== 'all' && String(s.homeroom) !== editFilter) return false;
     if (editSearch) {
       const q = editSearch.toLowerCase();
       if (!(`${s.firstName} ${s.lastName}`.toLowerCase().includes(q))) return false;
@@ -181,11 +181,9 @@ export default function BusAssignments({ students, homerooms, onUpdateStudents, 
   });
 
   const handleInlineUpdate = async (studentId, field, value) => {
-    const fieldMap = { dismissalType: 'dismissal_type', busRoute: 'bus_route' };
-    const apiField = fieldMap[field] || field;
-    const payload = { [apiField]: value };
+    const payload = { [field]: value };
     if (field === 'dismissalType' && value !== 'bus') {
-      payload.bus_route = null;
+      payload.busRoute = null;
     }
     await onUpdateStudent(studentId, payload);
   };
@@ -342,7 +340,7 @@ export default function BusAssignments({ students, homerooms, onUpdateStudents, 
                     className="border dark:border-slate-600 dark:bg-slate-800 dark:text-white rounded-lg px-3 py-1.5 text-sm">
                     <option value="all">All homerooms</option>
                     {homerooms.map(hr => (
-                      <option key={hr.id} value={hr.id}>{hr.teacher || hr.name} (Gr {hr.grade})</option>
+                      <option key={hr.id} value={hr.id}>{hr.teacher?.name || hr.name} (Gr {hr.grade})</option>
                     ))}
                   </select>
                   <div className="relative flex-1">
@@ -378,7 +376,7 @@ export default function BusAssignments({ students, homerooms, onUpdateStudents, 
                         </div>
                         <div className="flex-1">
                           <span className="text-sm font-medium dark:text-white">{s.firstName} {s.lastName}</span>
-                          {hr && <span className="text-xs text-gray-400 dark:text-slate-500 ml-2">{hr.teacher || hr.name}</span>}
+                          {hr && <span className="text-xs text-gray-400 dark:text-slate-500 ml-2">{hr.teacher?.name || hr.name}</span>}
                         </div>
                         {s.dismissalType === 'bus' && s.busRoute && (
                           <span className="text-xs bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400 px-2 py-0.5 rounded-full">Bus #{s.busRoute}</span>
@@ -429,7 +427,7 @@ export default function BusAssignments({ students, homerooms, onUpdateStudents, 
                   className="border dark:border-slate-600 dark:bg-slate-800 dark:text-white rounded-lg px-3 py-1.5 text-sm">
                   <option value="all">All homerooms</option>
                   {homerooms.map(hr => (
-                    <option key={hr.id} value={hr.id}>{hr.teacher || hr.name} (Gr {hr.grade})</option>
+                    <option key={hr.id} value={hr.id}>{hr.teacher?.name || hr.name} (Gr {hr.grade})</option>
                   ))}
                 </select>
                 <div className="relative flex-1">
@@ -460,7 +458,7 @@ export default function BusAssignments({ students, homerooms, onUpdateStudents, 
                           <span className="text-sm font-medium dark:text-white">{student.firstName} {student.lastName}</span>
                         </div>
                         <div className="col-span-3 text-sm text-gray-500 dark:text-slate-400">
-                          {hr ? hr.teacher || hr.name : <span className="text-yellow-600 dark:text-yellow-400 text-xs">Unassigned</span>}
+                          {hr ? hr.teacher?.name || hr.name : <span className="text-yellow-600 dark:text-yellow-400 text-xs">Unassigned</span>}
                         </div>
                         <div className="col-span-3">
                           <select value={student.dismissalType}

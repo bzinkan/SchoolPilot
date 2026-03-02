@@ -210,8 +210,8 @@ export default function SchoolsList() {
         <div className="flex gap-1">
           {[
             { key: 'CLASSPILOT', label: 'ClassPilot', bg: 'bg-amber-400', text: 'text-slate-900', ring: 'ring-amber-500' },
-            { key: 'PASSPILOT', label: 'PassPilot', bg: 'bg-indigo-500', text: 'text-white', ring: 'ring-indigo-600' },
-            { key: 'GOPILOT', label: 'GoPilot', bg: 'bg-blue-600', text: 'text-white', ring: 'ring-blue-700' },
+            { key: 'PASSPILOT', label: 'PassPilot', bg: 'bg-blue-600', text: 'text-white', ring: 'ring-blue-700' },
+            { key: 'GOPILOT', label: 'GoPilot', bg: 'bg-indigo-500', text: 'text-white', ring: 'ring-indigo-600' },
           ].map((p) => (
             <button
               key={p.key}
@@ -277,10 +277,10 @@ export default function SchoolsList() {
                         <span className="inline-flex px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-400 text-slate-900">CP</span>
                       )}
                       {(school.products || []).includes('PASSPILOT') && (
-                        <span className="inline-flex px-1.5 py-0.5 rounded text-[10px] font-semibold bg-indigo-500 text-white">PP</span>
+                        <span className="inline-flex px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-600 text-white">PP</span>
                       )}
                       {(school.products || []).includes('GOPILOT') && (
-                        <span className="inline-flex px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-600 text-white">GP</span>
+                        <span className="inline-flex px-1.5 py-0.5 rounded text-[10px] font-semibold bg-indigo-500 text-white">GP</span>
                       )}
                     </div>
                   </td>

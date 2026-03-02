@@ -307,6 +307,54 @@ export async function createProductLicense(
 }
 
 // ============================================================================
+// School counts (for super-admin dashboard)
+// ============================================================================
+
+export async function getSchoolCounts(): Promise<
+  Map<string, { adminCount: number; teacherCount: number; studentCount: number }>
+> {
+  const [membershipRows, studentRows] = await Promise.all([
+    db
+      .select({
+        schoolId: schoolMemberships.schoolId,
+        role: schoolMemberships.role,
+        cnt: sql<number>`count(*)::int`,
+      })
+      .from(schoolMemberships)
+      .where(eq(schoolMemberships.status, "active"))
+      .groupBy(schoolMemberships.schoolId, schoolMemberships.role),
+    db
+      .select({
+        schoolId: students.schoolId,
+        cnt: sql<number>`count(*)::int`,
+      })
+      .from(students)
+      .where(eq(students.status, "active"))
+      .groupBy(students.schoolId),
+  ]);
+
+  const counts = new Map<
+    string,
+    { adminCount: number; teacherCount: number; studentCount: number }
+  >();
+
+  for (const row of membershipRows) {
+    const entry = counts.get(row.schoolId) || { adminCount: 0, teacherCount: 0, studentCount: 0 };
+    if (row.role === "admin") entry.adminCount = row.cnt;
+    else if (row.role === "teacher") entry.teacherCount = row.cnt;
+    counts.set(row.schoolId, entry);
+  }
+
+  for (const row of studentRows) {
+    const entry = counts.get(row.schoolId) || { adminCount: 0, teacherCount: 0, studentCount: 0 };
+    entry.studentCount = row.cnt;
+    counts.set(row.schoolId, entry);
+  }
+
+  return counts;
+}
+
+// ============================================================================
 // Student operations (basic - Phase 3 will expand)
 // ============================================================================
 

@@ -12,11 +12,12 @@ export default function HomeroomManager({ homerooms, students, staff, onAdd, onR
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    const name = teacherId
-      ? teachers.find(t => t.id === Number(teacherId))?.first_name + ' ' + teachers.find(t => t.id === Number(teacherId))?.last_name
+    const teacher = teacherId ? teachers.find(t => String(t.id) === String(teacherId)) : null;
+    const name = teacher
+      ? `${teacher.first_name} ${teacher.last_name}`.trim()
       : teacherName.trim();
     if (!name) return;
-    onAdd(`${name} - Grade ${grade}`, name, grade, teacherId ? Number(teacherId) : null);
+    onAdd(`${name} - Grade ${grade}`, name, grade, teacherId || null);
     setTeacherId('');
     setTeacherName('');
     setShowForm(false);
@@ -85,7 +86,7 @@ export default function HomeroomManager({ homerooms, students, staff, onAdd, onR
                     <School className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
                   </div>
                   <div>
-                    <p className="font-medium">{hr.teacher || hr.name}</p>
+                    <p className="font-medium">{hr.teacher?.name || hr.name}</p>
                     <p className="text-sm text-gray-500 dark:text-slate-400">Grade {hr.grade} · {count} student{count !== 1 ? 's' : ''}</p>
                   </div>
                 </div>

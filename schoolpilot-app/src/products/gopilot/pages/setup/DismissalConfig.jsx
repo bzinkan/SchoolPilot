@@ -21,7 +21,7 @@ export default function DismissalConfig({ students, homerooms, schoolId, onUpdat
   ];
 
   const filtered = students.filter(s =>
-    filterHomeroom === 'all' || s.homeroom === parseInt(filterHomeroom)
+    filterHomeroom === 'all' || String(s.homeroom) === filterHomeroom
   );
 
   const busStudentCount = students.filter(s => s.dismissalType === 'bus' && s.busRoute).length;
@@ -30,11 +30,11 @@ export default function DismissalConfig({ students, homerooms, schoolId, onUpdat
     if (filterHomeroom === 'all' || saving) return;
     setSaving(true);
     try {
-      const homeroomStudents = students.filter(s => s.homeroom === parseInt(filterHomeroom));
+      const homeroomStudents = students.filter(s => String(s.homeroom) === filterHomeroom);
       const updates = homeroomStudents.map(s => ({
         id: s.id,
-        dismissal_type: s.dismissalType,
-        bus_route: s.dismissalType === 'bus' ? (s.busRoute || null) : null,
+        dismissalType: s.dismissalType,
+        busRoute: s.dismissalType === 'bus' ? (s.busRoute || null) : null,
       }));
       await api.put(`/schools/${schoolId}/students/bulk-update`, { updates });
       showToast(`Saved ${updates.length} students`);
@@ -77,7 +77,7 @@ export default function DismissalConfig({ students, homerooms, schoolId, onUpdat
             className="border dark:border-slate-600 dark:bg-slate-800 dark:text-white rounded-lg px-3 py-1.5 text-sm">
             <option value="all">All homerooms</option>
             {homerooms.map(hr => (
-              <option key={hr.id} value={hr.id}>{hr.teacher || hr.name} (Gr {hr.grade})</option>
+              <option key={hr.id} value={hr.id}>{hr.teacher?.name || hr.name} (Gr {hr.grade})</option>
             ))}
           </select>
         </div>
@@ -131,7 +131,7 @@ export default function DismissalConfig({ students, homerooms, schoolId, onUpdat
                   <span className="text-sm font-medium">{student.firstName} {student.lastName}</span>
                 </div>
                 <div className="col-span-3 text-sm text-gray-500 dark:text-slate-400">
-                  {hr ? hr.teacher || hr.name : <span className="text-yellow-600 dark:text-yellow-400">Unassigned</span>}
+                  {hr ? hr.teacher?.name || hr.name : <span className="text-yellow-600 dark:text-yellow-400">Unassigned</span>}
                 </div>
                 <div className="col-span-3">
                   <select value={student.dismissalType}

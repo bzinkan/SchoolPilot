@@ -1,10 +1,11 @@
 import { Router } from "express";
 import { authenticate } from "../../middleware/authenticate.js";
-import { getSchoolById, updateSchool } from "../../services/storage.js";
+import { getSchoolById, updateSchool, getProductLicenses } from "../../services/storage.js";
 import { logAudit } from "../../services/audit.js";
 import db from "../../db.js";
-import { schools } from "../../schema/core.js";
-import { eq, sql } from "drizzle-orm";
+import { schools, productLicenses } from "../../schema/core.js";
+import { eq, and, sql } from "drizzle-orm";
+import { calculateInvoice, PRODUCT_PRICING, type ProductKey } from "../../config/pricing.js";
 
 const router = Router();
 
@@ -148,17 +149,21 @@ router.post(
           const schoolId = invoice.metadata?.schoolId;
           const studentCount = parseInt(invoice.metadata?.studentCount || "0", 10);
           const amountPaid = invoice.amount_paid || 0;
+          const products = (invoice.metadata?.products || "").split(",").filter(Boolean);
 
           if (schoolId) {
             const now = new Date();
             const activeUntil = new Date(now);
             activeUntil.setFullYear(activeUntil.getFullYear() + 1);
 
+            // Set plan tier based on product count
+            const planTier = products.length >= 3 ? "enterprise" : products.length >= 2 ? "pro" : "basic";
+
             await db
               .update(schools)
               .set({
                 status: "active",
-                planTier: "basic",
+                planTier,
                 planStatus: "active",
                 activeUntil,
                 maxLicenses: studentCount || undefined,
@@ -170,16 +175,30 @@ router.post(
               })
               .where(eq(schools.id, schoolId));
 
+            // Update product license expiry dates
+            for (const product of products) {
+              await db
+                .update(productLicenses)
+                .set({ expiresAt: activeUntil })
+                .where(
+                  and(
+                    eq(productLicenses.schoolId, schoolId),
+                    eq(productLicenses.product, product),
+                    eq(productLicenses.status, "active")
+                  )
+                );
+            }
+
             await logAudit({
               schoolId,
               userId: "system",
               action: "billing.invoice_paid",
               entityType: "school",
               entityId: schoolId,
-              metadata: { invoiceId: invoice.id, amountPaid, studentCount },
+              metadata: { invoiceId: invoice.id, amountPaid, studentCount, products },
             });
 
-            console.log(`[Stripe] Invoice paid for school ${schoolId}: $${(amountPaid / 100).toFixed(2)}`);
+            console.log(`[Stripe] Invoice paid for school ${schoolId}: $${(amountPaid / 100).toFixed(2)} (${products.join(", ")})`);
           } else {
             console.log(`[Stripe] Invoice paid (no schoolId): customer ${invoice.customer}`);
           }
@@ -239,7 +258,6 @@ router.post(
 );
 
 // POST /api/admin/billing/schools/:id/send-invoice - Create and send a Stripe invoice
-// Frontend calls: POST /api/super-admin/billing/schools/:id/send-invoice
 router.post(
   "/schools/:id/send-invoice",
   authenticate,
@@ -258,15 +276,31 @@ router.post(
 
       const {
         studentCount,
-        basePrice = 500,
-        perStudentPrice = 2,
-        description,
+        products: requestedProducts,
         daysUntilDue = 30,
         billingEmail,
       } = req.body;
 
       if (!studentCount || studentCount < 1) {
         return res.status(400).json({ error: "studentCount required" });
+      }
+
+      // Determine which products to invoice
+      let invoiceProducts: ProductKey[];
+      if (Array.isArray(requestedProducts) && requestedProducts.length > 0) {
+        invoiceProducts = requestedProducts.filter(
+          (p: string) => p in PRODUCT_PRICING
+        ) as ProductKey[];
+      } else {
+        const licenses = await getProductLicenses(school.id);
+        invoiceProducts = licenses
+          .filter((l) => l.status === "active")
+          .map((l) => l.product as ProductKey)
+          .filter((p) => p in PRODUCT_PRICING);
+      }
+
+      if (invoiceProducts.length === 0) {
+        return res.status(400).json({ error: "No active products to invoice for" });
       }
 
       const email = billingEmail || school.billingEmail;
@@ -286,11 +320,11 @@ router.post(
         await updateSchool(school.id, { stripeCustomerId: customerId, billingEmail: email });
       }
 
-      const baseCents = Math.round(basePrice * 100);
-      const perStudentCents = Math.round(perStudentPrice * 100);
-      const totalStudentCents = perStudentCents * studentCount;
+      // Calculate pricing
+      const pricing = calculateInvoice(invoiceProducts, studentCount);
 
       // Create invoice
+      const productLabels = invoiceProducts.map((p) => PRODUCT_PRICING[p].label).join(", ");
       const invoice = await stripe.invoices.create({
         customer: customerId,
         collection_method: "send_invoice",
@@ -298,28 +332,45 @@ router.post(
         metadata: {
           schoolId: school.id,
           studentCount: String(studentCount),
+          products: invoiceProducts.join(","),
         },
         custom_fields: [
-          { name: "School", value: school.name },
+          { name: "School", value: school.name.slice(0, 30) },
+          { name: "Products", value: productLabels.slice(0, 30) },
         ],
       });
 
-      // Add line items
-      await stripe.invoiceItems.create({
-        customer: customerId,
-        invoice: invoice.id,
-        amount: baseCents,
-        currency: "usd",
-        description: description || "SchoolPilot Annual Platform Fee",
-      });
+      // Add line items per product
+      for (const item of pricing.lineItems) {
+        if (item.baseCents > 0) {
+          await stripe.invoiceItems.create({
+            customer: customerId,
+            invoice: invoice.id,
+            amount: item.baseCents,
+            currency: "usd",
+            description: `${item.label} — Annual Base Fee`,
+          });
+        }
 
-      if (studentCount > 0 && perStudentCents > 0) {
+        if (item.perStudentTotalCents > 0) {
+          await stripe.invoiceItems.create({
+            customer: customerId,
+            invoice: invoice.id,
+            amount: item.perStudentTotalCents,
+            currency: "usd",
+            description: `${item.label} — Per-Student License (${studentCount} students × $${item.perStudentDollars.toFixed(2)}/student)`,
+          });
+        }
+      }
+
+      // Discount line (negative amount)
+      if (pricing.discountCents > 0) {
         await stripe.invoiceItems.create({
           customer: customerId,
           invoice: invoice.id,
-          amount: totalStudentCents,
+          amount: -pricing.discountCents,
           currency: "usd",
-          description: `Per-student license (${studentCount} students × $${perStudentPrice}/student)`,
+          description: `Multi-Product Discount (${pricing.productCount} products — ${Math.round(pricing.discountRate * 100)}% off)`,
         });
       }
 
@@ -335,8 +386,10 @@ router.post(
         entityId: school.id,
         metadata: {
           invoiceId: invoice.id,
-          amount: baseCents + totalStudentCents,
+          amount: pricing.totalCents,
           studentCount,
+          products: invoiceProducts,
+          discountRate: pricing.discountRate,
         },
       });
 
@@ -345,6 +398,7 @@ router.post(
         invoiceId: invoice.id,
         invoiceUrl: finalizedInvoice.hosted_invoice_url || "",
         customerId,
+        pricing,
       });
     } catch (err) {
       next(err);

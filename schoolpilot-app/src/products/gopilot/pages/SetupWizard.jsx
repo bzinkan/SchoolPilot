@@ -6,7 +6,7 @@ import api from '../../../shared/utils/api';
 
 /** Safely extract an array from API response data (handles wrapped objects). */
 const toArray = (data, key) => Array.isArray(data) ? data : (data?.[key] ?? []);
-import { normalizeStudent, tabs } from './setup/constants';
+import { normalizeStudent, normalizeStaff, tabs } from './setup/constants';
 import StaffManager from './setup/StaffManager';
 import StudentRoster from './setup/StudentRoster';
 import HomeroomManager from './setup/HomeroomManager';
@@ -51,7 +51,7 @@ export default function SchoolSetupWizard() {
         ]);
         setStudents(toArray(studentsRes.data, 'students').map(normalizeStudent));
         setHomerooms(toArray(homeroomsRes.data, 'homerooms'));
-        setStaff(toArray(staffRes.data, 'staff'));
+        setStaff(toArray(staffRes.data, 'staff').map(normalizeStaff));
         // Check Google Classroom connection status
         try {
           const gRes = await api.get(`/schools/${schoolId}/google/status`);
@@ -141,7 +141,9 @@ export default function SchoolSetupWizard() {
     setError(null);
     try {
       const res = await api.post(`/schools/${schoolId}/homerooms`, { name, grade, teacherId: teacherIdVal || null });
-      setHomerooms(prev => [...prev, res.data]);
+      const hr = res.data.homeroom || res.data;
+      // Add teacher name so the card displays correctly before a full reload
+      setHomerooms(prev => [...prev, { ...hr, teacher: teacher ? { name: teacher } : null }]);
     } catch (err) {
       console.error('Failed to create homeroom:', err);
       setError('Failed to create homeroom.');
@@ -180,13 +182,11 @@ export default function SchoolSetupWizard() {
   const handleUpdateDismissal = async (studentId, field, value) => {
     setError(null);
     setSavingIds(prev => new Set(prev).add(studentId));
-    const fieldMap = { dismissalType: 'dismissal_type', busRoute: 'bus_route' };
-    const apiField = fieldMap[field] || field;
     try {
-      const payload = { [apiField]: value };
-      // Clear bus_route when changing away from bus
+      const payload = { [field]: value };
+      // Clear busRoute when changing away from bus
       if (field === 'dismissalType' && value !== 'bus') {
-        payload.bus_route = null;
+        payload.busRoute = null;
       }
       await api.put(`/students/${studentId}`, payload);
       setStudents(prev => prev.map(s => {

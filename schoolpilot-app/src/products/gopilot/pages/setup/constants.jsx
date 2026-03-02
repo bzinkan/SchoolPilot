@@ -16,10 +16,21 @@ export const normalizeStudent = (s) => ({
   ...s,
   firstName: s.first_name || s.firstName || '',
   lastName: s.last_name || s.lastName || '',
+  grade: s.gradeLevel || s.grade_level || s.grade || '',
   dismissalType: s.dismissal_type || s.dismissalType || 'car',
   busRoute: s.bus_route || s.busRoute || '',
-  homeroom: s.homeroom_id || s.homeroom || null,
+  homeroom: s.homeroomId || s.homeroom_id || s.homeroom || null,
   externalId: s.external_id || s.externalId || '',
+});
+
+// Normalize nested staff API data to flat structure for components
+export const normalizeStaff = (s) => ({
+  ...s,
+  id: s.userId || s.id,
+  first_name: s.user?.firstName || s.first_name || s.firstName || '',
+  last_name: s.user?.lastName || s.last_name || s.lastName || '',
+  email: s.user?.email || s.email || '',
+  role: s.role || 'teacher',
 });
 
 export const GRADES = ['Pre-K', 'K', '1', '2', '3', '4', '5', '6', '7', '8'];

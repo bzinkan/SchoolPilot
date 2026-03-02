@@ -63,6 +63,17 @@ export function createApp() {
   app.use(express.urlencoded({ extended: true, limit: "1mb" }));
   app.use(cookieParser());
 
+  // CloudFront → ALB uses HTTP ("http-only" origin protocol), so the ALB sets
+  // X-Forwarded-Proto: http. But the viewer → CloudFront link is always HTTPS
+  // (ViewerProtocolPolicy: redirect-to-https). Override so express-session
+  // correctly marks cookies as secure.
+  if (isProduction) {
+    app.use((req, _res, next) => {
+      req.headers["x-forwarded-proto"] = "https";
+      next();
+    });
+  }
+
   // Session secret: require in production, random fallback for dev
   if (isProduction && !process.env.SESSION_SECRET) {
     throw new Error(

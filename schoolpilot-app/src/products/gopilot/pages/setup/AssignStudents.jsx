@@ -55,7 +55,7 @@ export default function AssignStudents({ students, homerooms, onAssign, schoolId
     setBulkAssigning(true);
     try {
       for (const studentId of selectedStudents) {
-        await onAssign(studentId, parseInt(bulkHomeroom));
+        await onAssign(studentId, bulkHomeroom);
       }
       setSelectedStudents(new Set());
       setBulkHomeroom('');
@@ -93,7 +93,7 @@ export default function AssignStudents({ students, homerooms, onAssign, schoolId
   const handleSync = async () => {
     const selected = Object.entries(courseMapping)
       .filter(([, homeroomId]) => homeroomId)
-      .map(([courseId, homeroomId]) => ({ courseId, homeroomId: parseInt(homeroomId), grade: courseGrades[courseId] || null }));
+      .map(([courseId, homeroomId]) => ({ courseId, homeroomId, grade: courseGrades[courseId] || null }));
 
     if (selected.length === 0) return;
 
@@ -198,7 +198,7 @@ export default function AssignStudents({ students, homerooms, onAssign, schoolId
                     >
                       <option value="">Skip (don't sync)</option>
                       {homerooms.map(hr => (
-                        <option key={hr.id} value={hr.id}>{hr.teacher || hr.name} (Gr {hr.grade})</option>
+                        <option key={hr.id} value={hr.id}>{hr.teacher?.name || hr.name} (Gr {hr.grade})</option>
                       ))}
                     </select>
                   </div>
@@ -291,12 +291,12 @@ export default function AssignStudents({ students, homerooms, onAssign, schoolId
                 {homerooms
                   .filter(hr => !gradeFilter || hr.grade === gradeFilter)
                   .map(hr => (
-                    <option key={hr.id} value={hr.id}>{hr.teacher || hr.name} (Gr {hr.grade})</option>
+                    <option key={hr.id} value={hr.id}>{hr.teacher?.name || hr.name} (Gr {hr.grade})</option>
                   ))}
                 {gradeFilter && homerooms.filter(hr => hr.grade !== gradeFilter).length > 0 && (
                   <optgroup label="Other grades">
                     {homerooms.filter(hr => hr.grade !== gradeFilter).map(hr => (
-                      <option key={hr.id} value={hr.id}>{hr.teacher || hr.name} (Gr {hr.grade})</option>
+                      <option key={hr.id} value={hr.id}>{hr.teacher?.name || hr.name} (Gr {hr.grade})</option>
                     ))}
                   </optgroup>
                 )}
@@ -343,11 +343,11 @@ export default function AssignStudents({ students, homerooms, onAssign, schoolId
                         {student.grade && <span className="text-xs text-gray-400 dark:text-slate-500 ml-2">Gr {student.grade}</span>}
                       </div>
                     </div>
-                    <select onChange={(e) => onAssign(student.id, parseInt(e.target.value))} defaultValue=""
+                    <select onChange={(e) => onAssign(student.id, e.target.value)} defaultValue=""
                       className="text-sm border dark:border-slate-600 dark:bg-slate-800 dark:text-white rounded px-2 py-1">
                       <option value="" disabled>Assign to...</option>
                       {homerooms.map(hr => (
-                        <option key={hr.id} value={hr.id}>{hr.teacher || hr.name} (Gr {hr.grade})</option>
+                        <option key={hr.id} value={hr.id}>{hr.teacher?.name || hr.name} (Gr {hr.grade})</option>
                       ))}
                     </select>
                   </div>
@@ -373,7 +373,7 @@ export default function AssignStudents({ students, homerooms, onAssign, schoolId
                     <div className="flex items-center gap-3">
                       <School className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
                       <div className="text-left">
-                        <p className="font-medium">{hr.teacher || hr.name}</p>
+                        <p className="font-medium">{hr.teacher?.name || hr.name}</p>
                         <p className="text-sm text-gray-500 dark:text-slate-400">Grade {hr.grade}</p>
                       </div>
                     </div>

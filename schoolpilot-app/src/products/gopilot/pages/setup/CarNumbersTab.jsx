@@ -121,8 +121,8 @@ export default function CarNumbersTab({ schoolId, students }) {
   const handleDownloadCSV = () => {
     const rows = [['Family Group', 'Students', 'Car Number']];
     groups.forEach(g => {
-      const studentNames = (g.students || []).map(s => `${s.first_name} ${s.last_name}`).join('; ');
-      rows.push([g.family_name || '', studentNames, g.car_number || '']);
+      const studentNames = (g.students || []).map(s => `${s.firstName || s.first_name} ${s.lastName || s.last_name}`).join('; ');
+      rows.push([g.familyName || g.family_name || '', studentNames, g.carNumber || g.car_number || '']);
     });
     const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
@@ -232,7 +232,7 @@ export default function CarNumbersTab({ schoolId, students }) {
                         onClick={() => handleAddToGroup(g.id)}
                         className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-slate-800 dark:text-white"
                       >
-                        #{g.car_number} {g.family_name || ''}
+                        #{g.carNumber || g.car_number} {g.familyName || g.family_name || ''}
                       </button>
                     ))}
                   </div>
@@ -275,11 +275,11 @@ export default function CarNumbersTab({ schoolId, students }) {
                         </div>
                       ) : (
                         <span className="text-xl font-bold text-indigo-600 dark:text-indigo-400">
-                          #{g.car_number}
+                          #{g.carNumber || g.car_number}
                         </span>
                       )}
-                      {g.family_name && <span className="text-sm text-gray-500 dark:text-slate-400">{g.family_name}</span>}
-                      {g.claimed_by_user_id && (
+                      {(g.familyName || g.family_name) && <span className="text-sm text-gray-500 dark:text-slate-400">{g.familyName || g.family_name}</span>}
+                      {(g.claimedByUserId || g.claimed_by_user_id) && (
                         <span className="text-xs bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-1.5 py-0.5 rounded-full">Linked</span>
                       )}
                     </div>
@@ -291,7 +291,7 @@ export default function CarNumbersTab({ schoolId, students }) {
                       >
                         QR
                       </button>
-                      <button onClick={() => { setEditingGroupId(g.id); setEditingCarNumber(g.car_number); }} className="text-xs text-indigo-500 hover:text-indigo-700 font-medium px-2 py-1 rounded hover:bg-indigo-50">
+                      <button onClick={() => { setEditingGroupId(g.id); setEditingCarNumber(g.carNumber || g.car_number); }} className="text-xs text-indigo-500 hover:text-indigo-700 font-medium px-2 py-1 rounded hover:bg-indigo-50">
                         Edit #
                       </button>
                       <button onClick={() => handleDeleteGroup(g.id)} className="p-1 text-gray-500 dark:text-slate-400 hover:text-red-600 rounded hover:bg-red-50 dark:hover:bg-red-900/20">
@@ -302,7 +302,7 @@ export default function CarNumbersTab({ schoolId, students }) {
                   <div className="flex flex-wrap gap-1.5">
                     {(g.students || []).map(s => (
                       <span key={s.id} className="inline-flex items-center gap-1 text-xs bg-gray-100 dark:bg-slate-700 text-gray-700 dark:text-slate-300 pl-2 pr-1 py-1 rounded-full">
-                        {s.first_name} {s.last_name}
+                        {s.firstName || s.first_name} {s.lastName || s.last_name}
                         <button
                           onClick={() => handleRemoveStudent(g.id, s.id)}
                           className="text-gray-400 dark:text-slate-500 hover:text-red-500 ml-0.5"
@@ -315,14 +315,14 @@ export default function CarNumbersTab({ schoolId, students }) {
                       <span className="text-xs text-gray-400 dark:text-slate-500 italic">No students</span>
                     )}
                   </div>
-                  {showInviteGroupId === g.id && g.invite_token && (
+                  {showInviteGroupId === g.id && (g.inviteToken || g.invite_token) && (
                     <div className="mt-3 pt-3 border-t dark:border-slate-700 flex flex-col items-center">
-                      <QRCodeSVG value={`${clientUrl}/register?invite=${g.invite_token}`} size={120} />
+                      <QRCodeSVG value={`${clientUrl}/register?invite=${g.inviteToken || g.invite_token}`} size={120} />
                       <p className="text-xs text-gray-400 dark:text-slate-500 mt-2 break-all text-center max-w-[200px]">
-                        {`${clientUrl}/register?invite=${g.invite_token}`}
+                        {`${clientUrl}/register?invite=${g.inviteToken || g.invite_token}`}
                       </p>
                       <button
-                        onClick={() => navigator.clipboard.writeText(`${clientUrl}/register?invite=${g.invite_token}`)}
+                        onClick={() => navigator.clipboard.writeText(`${clientUrl}/register?invite=${g.inviteToken || g.invite_token}`)}
                         className="mt-2 text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
                       >
                         Copy Link

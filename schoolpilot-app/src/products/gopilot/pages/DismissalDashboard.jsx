@@ -67,7 +67,7 @@ export default function DismissalDashboard() {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState('all');
   const [queue, setQueue] = useState([]);
-  const [stats, setStats] = useState({ waiting: 0, called: 0, released: 0, dismissed: 0, held: 0, total: 0, avg_wait_seconds: null });
+  const [stats, setStats] = useState({ waiting: 0, called: 0, released: 0, dismissed: 0, total: 0, avg_wait_seconds: null });
   const [homerooms, setHomerooms] = useState([]);
   const [alerts, setAlerts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -522,10 +522,6 @@ export default function DismissalDashboard() {
           <div className="text-center">
             <p className="text-lg sm:text-2xl font-bold text-green-600">{stats.released || 0}</p>
             <p className="text-[10px] sm:text-xs text-gray-500 dark:text-slate-400 dark:text-slate-400">In Transit</p>
-          </div>
-          <div className="text-center">
-            <p className="text-lg sm:text-2xl font-bold text-red-600">{stats.held}</p>
-            <p className="text-[10px] sm:text-xs text-gray-500 dark:text-slate-400 dark:text-slate-400">Held</p>
           </div>
           <div className="border-l pl-4 sm:pl-6 text-center">
             <p className="text-lg sm:text-2xl font-bold text-indigo-600">{avgWait}</p>
@@ -1321,7 +1317,7 @@ function QueueItem({ item, position, onPickup }) {
       case 'waiting': return 'red';
       case 'called': return 'red';
       case 'released': return 'green';
-      case 'held': return 'purple';
+
       case 'delayed': return 'red';
       default: return 'default';
     }

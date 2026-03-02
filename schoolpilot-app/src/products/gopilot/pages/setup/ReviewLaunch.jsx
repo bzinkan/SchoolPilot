@@ -95,7 +95,7 @@ export default function ReviewLaunch({ students, homerooms, onNavigate }) {
           <div className="space-y-2">
             {homerooms.map(hr => (
               <div key={hr.id} className="flex justify-between text-sm">
-                <span className="dark:text-slate-300">{hr.teacher || hr.name} - Grade {hr.grade}</span>
+                <span className="dark:text-slate-300">{hr.teacher?.name || hr.name} - Grade {hr.grade}</span>
                 <span className="px-2 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-400 rounded-full text-xs font-medium">
                   {students.filter(s => s.homeroom === hr.id).length} students
                 </span>

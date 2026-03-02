@@ -970,7 +970,16 @@ router.get("/compat/school-settings", ...schoolAuth, async (req, res, next) => {
   try {
     const school = await getSchoolById(res.locals.schoolId!);
     if (!school) return res.status(404).json({ error: "School not found" });
-    return res.json({ settings: school });
+    const parsed = school.settings ? JSON.parse(school.settings) : {};
+    // Provide default pickup zones if none configured
+    if (!parsed.pickupZones || parsed.pickupZones.length === 0) {
+      parsed.pickupZones = [
+        { id: "A", name: "Zone A" },
+        { id: "B", name: "Zone B" },
+        { id: "C", name: "Zone C" },
+      ];
+    }
+    return res.json(parsed);
   } catch (err) {
     next(err);
   }
@@ -978,9 +987,16 @@ router.get("/compat/school-settings", ...schoolAuth, async (req, res, next) => {
 
 router.put("/compat/school-settings", ...schoolAuth, requireRole("admin"), async (req, res, next) => {
   try {
-    const school = await updateSchool(res.locals.schoolId!, req.body);
+    const school = await getSchoolById(res.locals.schoolId!);
     if (!school) return res.status(404).json({ error: "School not found" });
-    return res.json({ settings: school });
+    // Merge incoming settings with existing settings JSON blob
+    const existing = school.settings ? JSON.parse(school.settings) : {};
+    const merged = { ...existing, ...req.body };
+    const updated = await updateSchool(res.locals.schoolId!, {
+      settings: JSON.stringify(merged),
+    });
+    if (!updated) return res.status(404).json({ error: "School not found" });
+    return res.json(merged);
   } catch (err) {
     next(err);
   }

@@ -21,6 +21,7 @@ import {
   updateUser,
   getSettingsForSchool,
   upsertSettings,
+  getSchoolCounts,
 } from "../../services/storage.js";
 import { hashPassword } from "../../util/password.js";
 import { sendWelcomeEmail } from "../../services/email.js";
@@ -44,16 +45,25 @@ const auth = [authenticate, requireSuperAdmin] as const;
 // GET /api/super-admin/stats - Dashboard statistics
 router.get("/stats", ...auth, async (req, res, next) => {
   try {
-    const schools = await getAllSchools();
+    const [schools, counts] = await Promise.all([
+      getAllSchools(),
+      getSchoolCounts(),
+    ]);
     const active = schools.filter((s) => s.status === "active").length;
     const trial = schools.filter((s) => s.status === "trial").length;
     const suspended = schools.filter((s) => s.status === "suspended").length;
+
+    let totalStudents = 0;
+    for (const c of counts.values()) {
+      totalStudents += c.studentCount;
+    }
 
     return res.json({
       totalSchools: schools.length,
       activeSchools: active,
       trialSchools: trial,
       suspendedSchools: suspended,
+      totalStudents,
     });
   } catch (err) {
     next(err);
@@ -63,9 +73,10 @@ router.get("/stats", ...auth, async (req, res, next) => {
 // GET /api/super-admin/schools - List all schools
 router.get("/schools", ...auth, async (req, res, next) => {
   try {
-    const [schools, licenses] = await Promise.all([
+    const [schools, licenses, counts] = await Promise.all([
       getAllSchools(),
       getAllProductLicenses(),
+      getSchoolCounts(),
     ]);
 
     // Build a map of schoolId -> active product names
@@ -93,10 +104,16 @@ router.get("/schools", ...auth, async (req, res, next) => {
       );
     }
 
-    const result = filtered.map((s) => ({
-      ...s,
-      products: licenseMap.get(s.id) || [],
-    }));
+    const result = filtered.map((s) => {
+      const c = counts.get(s.id) || { adminCount: 0, teacherCount: 0, studentCount: 0 };
+      return {
+        ...s,
+        products: licenseMap.get(s.id) || [],
+        adminCount: c.adminCount,
+        teacherCount: c.teacherCount,
+        studentCount: c.studentCount,
+      };
+    });
 
     return res.json({ schools: result });
   } catch (err) {

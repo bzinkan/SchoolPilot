@@ -49,8 +49,8 @@ router.use((req: Request, _res: Response, next: NextFunction) => {
   if (p.startsWith("/me/")) { req.url = "/users" + req.url; return next(); }
 
   // --- Super admin billing routes (must come before generic super-admin rewrite) ---
-  // /super-admin/schools/:id/send-invoice → /admin/billing/schools/:id/send-invoice
-  if (p.match(/^\/super-admin\/schools\/[^/]+\/send-invoice$/)) {
+  // /super-admin/schools/:id/(send-invoice|billing) → /admin/billing/schools/:id/...
+  if (p.match(/^\/super-admin\/schools\/[^/]+\/(send-invoice|billing)$/)) {
     req.url = "/admin/billing" + req.url.slice("/super-admin".length);
     return next();
   }

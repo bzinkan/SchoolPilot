@@ -63,6 +63,11 @@ router.post("/login", authLimiter, async (req, res, next) => {
       isSuperAdmin: user.isSuperAdmin,
     });
 
+    // Persist session to PostgreSQL before responding
+    await new Promise<void>((resolve, reject) => {
+      req.session.save((err) => (err ? reject(err) : resolve()));
+    });
+
     // Update last login
     await updateUser(user.id, { lastLoginAt: new Date() });
 
@@ -144,6 +149,11 @@ router.post("/register", authLimiter, async (req, res, next) => {
       req.session.role = "teacher";
       req.session.schoolId = null;
     }
+
+    // Persist session to PostgreSQL before responding
+    await new Promise<void>((resolve, reject) => {
+      req.session.save((err) => (err ? reject(err) : resolve()));
+    });
 
     const token = signUserToken({
       userId: user.id,

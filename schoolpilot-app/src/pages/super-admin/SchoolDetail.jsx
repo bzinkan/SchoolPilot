@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ThemeToggle } from '../../components/ThemeToggle';
 import api from '../../shared/utils/api';
+import { calculateInvoicePreview, formatCents, PRODUCT_PRICING } from '../../shared/utils/pricing';
 
 const statusColors = {
   active: 'bg-green-100 text-green-800',
@@ -11,8 +12,8 @@ const statusColors = {
 
 const ALL_PRODUCTS = [
   { key: 'CLASSPILOT', label: 'ClassPilot', bg: 'bg-amber-400', text: 'text-slate-900' },
-  { key: 'PASSPILOT', label: 'PassPilot', bg: 'bg-indigo-500', text: 'text-white' },
-  { key: 'GOPILOT', label: 'GoPilot', bg: 'bg-blue-600', text: 'text-white' },
+  { key: 'PASSPILOT', label: 'PassPilot', bg: 'bg-blue-600', text: 'text-white' },
+  { key: 'GOPILOT', label: 'GoPilot', bg: 'bg-indigo-500', text: 'text-white' },
 ];
 
 export default function SchoolDetail() {
@@ -48,6 +49,12 @@ export default function SchoolDetail() {
   });
   const [hoursSaving, setHoursSaving] = useState(false);
 
+  // Billing
+  const [billingData, setBillingData] = useState(null);
+  const [invoiceStudentCount, setInvoiceStudentCount] = useState(0);
+  const [sendingInvoice, setSendingInvoice] = useState(false);
+  const [invoiceResult, setInvoiceResult] = useState(null);
+
   const [error, setError] = useState(null);
 
   const loadSchool = async () => {
@@ -61,6 +68,7 @@ export default function SchoolDetail() {
         domain: data.domain || '',
         status: data.status || 'active',
         maxLicenses: data.maxLicenses ?? 100,
+        billingEmail: data.billingEmail || '',
       });
       if (data.schoolHours) {
         setHoursForm({
@@ -226,6 +234,35 @@ export default function SchoolDetail() {
     }
   };
 
+  const loadBilling = async () => {
+    try {
+      const res = await api.get(`/super-admin/schools/${id}/billing`);
+      setBillingData(res.data);
+    } catch { /* ignore - billing may not be configured */ }
+  };
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (school?.id) { loadBilling(); setInvoiceStudentCount(school.studentCount ?? 0); } }, [school?.id]);
+
+  const handleSendInvoice = async () => {
+    const preview = calculateInvoicePreview(activeProducts, invoiceStudentCount);
+    if (!window.confirm(`Send invoice for ${formatCents(preview.totalCents)} to ${school.billingEmail || 'the school billing email'}?`)) return;
+    try {
+      setSendingInvoice(true);
+      setError(null);
+      const res = await api.post(`/super-admin/schools/${id}/send-invoice`, {
+        studentCount: invoiceStudentCount,
+        products: activeProducts,
+      });
+      setInvoiceResult(res.data);
+      loadBilling();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to send invoice');
+    } finally {
+      setSendingInvoice(false);
+    }
+  };
+
   if (loading) return <div className="p-6 text-center text-slate-400">Loading...</div>;
   if (!school) return <div className="p-6 text-center text-slate-400">School not found</div>;
 
@@ -374,6 +411,134 @@ export default function SchoolDetail() {
         </div>
         {activeProducts.length === 0 && (
           <p className="text-sm text-slate-400 mt-2">No products assigned. Click a product above to activate it.</p>
+        )}
+      </div>
+
+      {/* Billing & Invoicing */}
+      <div className="bg-white rounded-xl border border-slate-200 p-6 mb-6">
+        <h2 className="font-semibold text-slate-900 mb-4">Billing & Invoicing</h2>
+
+        {invoiceResult && (
+          <div className="mb-4 p-4 bg-green-50 border border-green-200 rounded-lg">
+            <p className="font-semibold text-green-800 mb-1">Invoice Sent!</p>
+            <p className="text-sm text-green-700">Invoice ID: {invoiceResult.invoiceId}</p>
+            {invoiceResult.invoiceUrl && (
+              <a href={invoiceResult.invoiceUrl} target="_blank" rel="noopener noreferrer"
+                className="text-sm text-green-700 underline">View Invoice</a>
+            )}
+          </div>
+        )}
+
+        {activeProducts.length === 0 ? (
+          <p className="text-sm text-slate-400">Add products above before creating an invoice.</p>
+        ) : (
+          <>
+            <div className="mb-4">
+              <label className="text-xs text-slate-500 block mb-1">Student Count</label>
+              <input
+                type="number"
+                min="1"
+                value={invoiceStudentCount}
+                onChange={(e) => setInvoiceStudentCount(Math.max(1, parseInt(e.target.value) || 0))}
+                className="w-32 px-3 py-1.5 border border-slate-300 rounded text-sm"
+              />
+            </div>
+
+            {(() => {
+              const preview = calculateInvoicePreview(activeProducts, invoiceStudentCount);
+              return (
+                <div className="border border-slate-200 rounded-lg overflow-hidden mb-4">
+                  <table className="w-full text-sm">
+                    <thead className="bg-slate-50">
+                      <tr>
+                        <th className="text-left px-4 py-2 text-slate-600 font-medium">Product</th>
+                        <th className="text-right px-4 py-2 text-slate-600 font-medium">Base</th>
+                        <th className="text-right px-4 py-2 text-slate-600 font-medium">Per-Student</th>
+                        <th className="text-right px-4 py-2 text-slate-600 font-medium">Subtotal</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {preview.lineItems.map((item) => (
+                        <tr key={item.product} className="border-t border-slate-100">
+                          <td className="px-4 py-2 font-medium text-slate-900">{item.label}</td>
+                          <td className="px-4 py-2 text-right text-slate-700">
+                            {item.baseCents > 0 ? formatCents(item.baseCents) : '—'}
+                          </td>
+                          <td className="px-4 py-2 text-right text-slate-700">
+                            {invoiceStudentCount} × ${item.perStudentDollars.toFixed(2)}
+                          </td>
+                          <td className="px-4 py-2 text-right text-slate-900 font-medium">{formatCents(item.subtotalCents)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t border-slate-200">
+                        <td colSpan={3} className="px-4 py-2 text-right text-slate-600">Subtotal</td>
+                        <td className="px-4 py-2 text-right text-slate-900 font-medium">{formatCents(preview.subtotalCents)}</td>
+                      </tr>
+                      {preview.discountCents > 0 && (
+                        <tr className="border-t border-slate-100">
+                          <td colSpan={3} className="px-4 py-2 text-right text-green-700">
+                            Bundle Discount ({activeProducts.length} products — {Math.round(preview.discountRate * 100)}% off)
+                          </td>
+                          <td className="px-4 py-2 text-right text-green-700 font-medium">-{formatCents(preview.discountCents)}</td>
+                        </tr>
+                      )}
+                      <tr className="border-t-2 border-slate-300 bg-slate-50">
+                        <td colSpan={3} className="px-4 py-2 text-right text-slate-900 font-semibold">Total Due (Annual)</td>
+                        <td className="px-4 py-2 text-right text-slate-900 font-bold text-base">{formatCents(preview.totalCents)}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              );
+            })()}
+
+            <p className="text-sm text-slate-500 mb-3">
+              Invoice will be sent to: <span className="font-medium text-slate-700">{school.billingEmail || 'No billing email set'}</span>
+            </p>
+
+            <button
+              onClick={handleSendInvoice}
+              disabled={sendingInvoice || !school.billingEmail || invoiceStudentCount < 1}
+              className="px-4 py-2 bg-slate-900 text-white rounded-lg text-sm font-medium hover:bg-slate-800 disabled:opacity-50"
+            >
+              {sendingInvoice ? 'Sending...' : 'Send Invoice'}
+            </button>
+            {!school.billingEmail && (
+              <p className="text-xs text-red-500 mt-1">Set a billing email for this school before sending an invoice.</p>
+            )}
+          </>
+        )}
+
+        {billingData?.invoices && billingData.invoices.length > 0 && (
+          <div className="mt-6">
+            <h3 className="text-sm font-medium text-slate-700 mb-2">Invoice History</h3>
+            <div className="space-y-2">
+              {billingData.invoices.map((inv) => (
+                <div key={inv.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
+                  <div>
+                    <p className="text-sm font-medium text-slate-900">{formatCents(inv.amount)}</p>
+                    <p className="text-xs text-slate-400">{new Date(inv.created * 1000).toLocaleDateString()}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                      inv.status === 'paid' ? 'bg-green-100 text-green-800' :
+                      inv.status === 'open' ? 'bg-blue-100 text-blue-800' :
+                      inv.status === 'void' ? 'bg-slate-100 text-slate-600' :
+                      'bg-red-100 text-red-800'
+                    }`}>
+                      {inv.status}
+                    </span>
+                    {inv.hostedUrl && (
+                      <a href={inv.hostedUrl} target="_blank" rel="noopener noreferrer"
+                        className="text-xs text-blue-600 hover:text-blue-700 underline">View</a>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         )}
       </div>
 
@@ -528,11 +693,17 @@ export default function SchoolDetail() {
                 <input type="number" value={editForm.maxLicenses} onChange={(e) => setEditForm({...editForm, maxLicenses: parseInt(e.target.value) || 0})}
                   className="w-full px-3 py-1.5 border border-slate-300 rounded text-sm" />
               </div>
+              <div>
+                <label className="text-xs text-slate-500">Billing Email</label>
+                <input type="email" value={editForm.billingEmail} onChange={(e) => setEditForm({...editForm, billingEmail: e.target.value})}
+                  className="w-full px-3 py-1.5 border border-slate-300 rounded text-sm" placeholder="billing@school.edu" />
+              </div>
             </div>
           ) : (
             <div className="space-y-2 text-sm">
               <div className="flex justify-between"><span className="text-slate-500">Domain</span><span>{school.domain || '—'}</span></div>
               <div className="flex justify-between"><span className="text-slate-500">Max Licenses</span><span>{school.maxLicenses ?? '—'}</span></div>
+              <div className="flex justify-between"><span className="text-slate-500">Billing Email</span><span className="text-xs">{school.billingEmail || '—'}</span></div>
               {school.trialEndsAt && (
                 <div className="flex justify-between"><span className="text-slate-500">Trial Ends</span><span>{formatDate(school.trialEndsAt)}</span></div>
               )}
