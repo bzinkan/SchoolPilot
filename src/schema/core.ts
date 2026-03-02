@@ -147,6 +147,7 @@ export const schoolMemberships = pgTable(
     status: text("status").notNull().default("active"),
     carNumber: text("car_number"), // GoPilot family car number
     kioskName: text("kiosk_name"), // PassPilot per-teacher kiosk name
+    gopilotRole: text("gopilot_role"), // optional GoPilot-specific role override
     createdAt: timestamp("created_at").notNull().default(sql`now()`),
   },
   (table) => [

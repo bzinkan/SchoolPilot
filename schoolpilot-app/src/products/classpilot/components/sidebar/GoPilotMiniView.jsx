@@ -7,9 +7,9 @@ import { useAuth } from '../../../../contexts/AuthContext';
 export default function GoPilotMiniView() {
   const { activeMembership } = useAuth();
   const gopilotPath = useMemo(() => {
-    const role = activeMembership?.role;
+    const role = activeMembership?.gopilotRole || activeMembership?.role;
     return role === 'teacher' ? '/gopilot/teacher' : '/gopilot';
-  }, [activeMembership?.role]);
+  }, [activeMembership?.gopilotRole, activeMembership?.role]);
   const [sessionInfo, setSessionInfo] = useState(null);
   const [stats, setStats] = useState(null);
   const [countdown, setCountdown] = useState('');

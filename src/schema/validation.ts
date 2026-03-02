@@ -40,6 +40,7 @@ export const createTeacherSchema = z.object({
   firstName: z.string().min(1).optional(),
   lastName: z.string().min(1).optional(),
   role: z.enum(["admin", "teacher", "office_staff"]).optional(),
+  gopilotRole: z.enum(["teacher", "office_staff"]).optional().nullable(),
   password: z
     .string()
     .min(8, "Password must be at least 8 characters")
@@ -179,6 +180,7 @@ export type UpdateUserData = z.infer<typeof updateUserSchema>;
 
 export const updateMembershipSchema = z.object({
   role: z.enum(["admin", "teacher", "office_staff", "parent"]).optional(),
+  gopilotRole: z.enum(["teacher", "office_staff"]).optional().nullable(),
   kioskName: z.string().optional().nullable(),
   carNumber: z.string().optional().nullable(),
 });

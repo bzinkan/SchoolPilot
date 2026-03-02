@@ -8,7 +8,7 @@ import { GoogleLogo } from './constants';
 export default function StaffManager({ staff, schoolId, googleConnected, onAdd, onRemove, onUpdate, onRefresh }) {
   const [roleFilter, setRoleFilter] = useState('All');
   const [showAddForm, setShowAddForm] = useState(false);
-  const [addForm, setAddForm] = useState({ email: '', firstName: '', lastName: '', role: 'teacher', password: '' });
+  const [addForm, setAddForm] = useState({ email: '', firstName: '', lastName: '', role: 'teacher', gopilotRole: '', password: '' });
   const [showPassword, setShowPassword] = useState(false);
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState(null);
@@ -39,6 +39,7 @@ export default function StaffManager({ staff, schoolId, googleConnected, onAdd, 
       last_name: s.last_name || s.lastName || u.last_name || u.lastName || '',
       email: s.email || u.email || '',
       phone: s.phone || u.phone || '',
+      gopilotRole: s.gopilotRole || s.gopilot_role || null,
     };
   });
 
@@ -56,7 +57,7 @@ export default function StaffManager({ staff, schoolId, googleConnected, onAdd, 
     setAddError(null);
     try {
       await onAdd(addForm);
-      setAddForm({ email: '', firstName: '', lastName: '', role: 'teacher', password: '' });
+      setAddForm({ email: '', firstName: '', lastName: '', role: 'teacher', gopilotRole: '', password: '' });
       setShowAddForm(false);
     } catch (err) {
       setAddError(err.response?.data?.error || 'Failed to add staff');
@@ -66,7 +67,7 @@ export default function StaffManager({ staff, schoolId, googleConnected, onAdd, 
 
   const startEdit = (s) => {
     setEditingId(`${s.id}-${s.role}`);
-    setEditData({ firstName: s.first_name, lastName: s.last_name, role: s.role });
+    setEditData({ firstName: s.first_name, lastName: s.last_name, role: s.role, gopilotRole: s.gopilotRole || '' });
     setEditPassword('');
     setShowEditPassword(false);
   };
@@ -206,6 +207,18 @@ export default function StaffManager({ staff, schoolId, googleConnected, onAdd, 
               </select>
             </div>
             <div className="flex items-center gap-3">
+              <label className="text-sm text-gray-600 dark:text-slate-300 whitespace-nowrap">GoPilot Role:</label>
+              <select
+                value={addForm.gopilotRole} onChange={e => setAddForm(f => ({ ...f, gopilotRole: e.target.value }))}
+                className="border dark:border-slate-600 rounded-lg px-3 py-2 text-sm dark:bg-slate-800 dark:text-white"
+              >
+                <option value="">Same as Role</option>
+                <option value="teacher">Teacher</option>
+                <option value="office_staff">Office Staff</option>
+              </select>
+              <p className="text-xs text-gray-400 dark:text-slate-500">Override role for GoPilot dismissal (optional)</p>
+            </div>
+            <div className="flex items-center gap-3">
               <div className="relative flex-1 max-w-xs">
                 <input
                   type={showPassword ? 'text' : 'password'}
@@ -253,8 +266,8 @@ export default function StaffManager({ staff, schoolId, googleConnected, onAdd, 
               <th className="p-3">Name</th>
               <th className="p-3">Email</th>
               <th className="p-3">Role</th>
+              <th className="p-3">GoPilot Role</th>
               <th className="p-3">Homeroom</th>
-              <th className="p-3">Login</th>
               <th className="p-3 text-right">Actions</th>
             </tr>
           </thead>
@@ -281,7 +294,15 @@ export default function StaffManager({ staff, schoolId, googleConnected, onAdd, 
                     <option value="office_staff">Office Staff</option>
                   </select>
                 </td>
-                <td className="p-3" colSpan={2}>
+                <td className="p-3">
+                  <select value={editData.gopilotRole || ''} onChange={e => setEditData(d => ({ ...d, gopilotRole: e.target.value || null }))}
+                    className="border dark:border-slate-600 rounded px-2 py-1 text-sm dark:bg-slate-800 dark:text-white">
+                    <option value="">Same</option>
+                    <option value="teacher">Teacher</option>
+                    <option value="office_staff">Office</option>
+                  </select>
+                </td>
+                <td className="p-3">
                   <div className="relative">
                     <input type={showEditPassword ? 'text' : 'password'} value={editPassword}
                       onChange={e => setEditPassword(e.target.value)}
@@ -325,11 +346,20 @@ export default function StaffManager({ staff, schoolId, googleConnected, onAdd, 
                     {s.role === 'admin' ? 'Admin' : s.role === 'teacher' ? 'Teacher' : 'Office Staff'}
                   </span>
                 </td>
+                <td className="p-3">
+                  {s.gopilotRole ? (
+                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                      s.gopilotRole === 'teacher' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400'
+                      : 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400'
+                    }`}>
+                      {s.gopilotRole === 'teacher' ? 'Teacher' : 'Office'}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-gray-400 dark:text-slate-500">—</span>
+                  )}
+                </td>
                 <td className="p-3 text-gray-500 dark:text-slate-400">
                   {s.homeroom_name ? `${s.homeroom_name} (Gr ${s.homeroom_grade})` : '—'}
-                </td>
-                <td className="p-3">
-                  <span className="text-xs text-gray-400 dark:text-slate-500">Google / Password</span>
                 </td>
                 <td className="p-3 text-right">
                   <div className="flex items-center justify-end gap-1">

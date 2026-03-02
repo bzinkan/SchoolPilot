@@ -185,6 +185,7 @@ router.get(
             id: s.id,
             userId: s.userId,
             role: s.role,
+            gopilotRole: s.gopilotRole,
             kioskName: s.kioskName,
             carNumber: s.carNumber,
             user: safeUser,
@@ -269,6 +270,7 @@ router.post(
         userId: user.id,
         schoolId: res.locals.schoolId!,
         role,
+        gopilotRole: parsed.data.gopilotRole || null,
       });
 
       const { password: _, ...safeUser } = user;

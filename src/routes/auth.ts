@@ -80,6 +80,7 @@ router.post("/login", authLimiter, async (req, res, next) => {
         id: m.membership.id,
         schoolId: m.membership.schoolId,
         role: m.membership.role,
+        gopilotRole: m.membership.gopilotRole,
         schoolName: m.school.name,
       })),
     });
@@ -219,6 +220,7 @@ router.get("/me", authenticate, async (req, res, next) => {
         id: m.membership.id,
         schoolId: m.membership.schoolId,
         role: m.membership.role,
+        gopilotRole: m.membership.gopilotRole,
         schoolName: m.school.name,
         kioskName: m.membership.kioskName,
         carNumber: m.membership.carNumber,

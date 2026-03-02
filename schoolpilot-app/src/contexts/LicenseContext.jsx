@@ -25,8 +25,10 @@ export function LicenseProvider({ children }) {
     const role = activeMembership?.role;
     const isAdmin = role === 'admin' || role === 'school_admin';
     let roleBasedDefaultPath = defaultPath;
+    // Use gopilotRole override if set, otherwise fall back to base role
+    const gopilotRole = activeMembership?.gopilotRole || role;
     // Teachers with GoPilot (regardless of which product has priority) go to teacher view
-    if (hasGoPilot && !isAdmin && role === 'teacher') {
+    if (hasGoPilot && !isAdmin && gopilotRole === 'teacher') {
       roleBasedDefaultPath = '/gopilot/teacher';
     }
 

@@ -19,7 +19,7 @@ export function useGoPilotAuth() {
       }
     : null, [activeMembership]);
 
-  const currentRole = activeMembership?.role || null;
+  const currentRole = activeMembership?.gopilotRole || activeMembership?.role || null;
 
   const mappedMemberships = useMemo(() => memberships.map((m) => ({
     school_id: m.schoolId,

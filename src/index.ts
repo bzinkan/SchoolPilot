@@ -56,6 +56,14 @@ import { pool } from "./db.js";
     console.warn("[migration] daily_usage auto-migration skipped:", (err as Error).message);
   }
 
+  // Add gopilot_role column for per-product role overrides
+  try {
+    await pool.query(`ALTER TABLE school_memberships ADD COLUMN IF NOT EXISTS gopilot_role TEXT`);
+    console.log("[migration] gopilot_role column ready");
+  } catch (err) {
+    console.warn("[migration] gopilot_role migration skipped:", (err as Error).message);
+  }
+
   // One-time: update super-admin email alias in users + audit_logs
   try {
     const OLD_EMAIL = "bzinkan@school-pilot.net";
