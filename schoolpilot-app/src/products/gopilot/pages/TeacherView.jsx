@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useGoPilotAuth } from '../../../hooks/useGoPilotAuth';
+import { useLicenses } from '../../../contexts/LicenseContext';
 import { useSocket } from '../../../contexts/SocketContext';
 import api from '../../../shared/utils/api';
 
@@ -54,6 +55,7 @@ const Card = ({ children, className = '' }) => (
 // Main Teacher View Component
 export default function TeacherView() {
   const { currentSchool, user, logout } = useGoPilotAuth();
+  const { hasClassPilot, hasPassPilot } = useLicenses();
   const navigate = useNavigate();
   const socket = useSocket();
 
@@ -81,7 +83,7 @@ export default function TeacherView() {
         setError(null);
 
         const homeroomsRes = await api.get(`/schools/${currentSchool.id}/homerooms`);
-        const homerooms = homeroomsRes.data;
+        const homerooms = Array.isArray(homeroomsRes.data) ? homeroomsRes.data : homeroomsRes.data?.homerooms || [];
         const myHomeroom = homerooms.find(
           (h) => h.teacher_id == user?.id || h.teacherId == user?.id || h.userId == user?.id
         );
@@ -100,7 +102,7 @@ export default function TeacherView() {
         if (!cancelled) setSession(sessionData);
 
         const queueRes = await api.get(`/sessions/${sessionData.id}/queue`, { params: { homeroomId: myHomeroom.id } });
-        const studentList = studentsRes.data;
+        const studentList = Array.isArray(studentsRes.data) ? studentsRes.data : studentsRes.data?.students || [];
         const queueItems = Array.isArray(queueRes.data) ? queueRes.data : queueRes.data?.items || [];
 
         const queueByStudentId = {};
@@ -400,6 +402,24 @@ export default function TeacherView() {
                   <p className="text-xs text-gray-500">{teacher.name} • {currentSchool?.name}</p>
                 </div>
               </div>
+
+              {/* Product switcher */}
+              {(hasClassPilot || hasPassPilot) && (
+                <div className="flex items-center gap-1 ml-2 border-l pl-3">
+                  {hasClassPilot && (
+                    <button onClick={() => navigate('/classpilot')}
+                      className="px-2.5 py-1 rounded-md text-xs font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors">
+                      ClassPilot
+                    </button>
+                  )}
+                  {hasPassPilot && (
+                    <button onClick={() => navigate('/passpilot')}
+                      className="px-2.5 py-1 rounded-md text-xs font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors">
+                      PassPilot
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
 
             <div className="flex items-center gap-4">

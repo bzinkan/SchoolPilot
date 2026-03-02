@@ -20,7 +20,7 @@ import SchoolSettingsTab from './setup/SchoolSettingsTab';
 
 export default function SchoolSetupWizard() {
   const navigate = useNavigate();
-  const { currentSchool } = useGoPilotAuth();
+  const { currentSchool, currentRole } = useGoPilotAuth();
 
   const [activeTab, setActiveTab] = useState('staff');
   const [students, setStudents] = useState([]);
@@ -287,7 +287,7 @@ export default function SchoolSetupWizard() {
                 <span className="hidden sm:inline">{label}</span>
               </button>
             ))}
-            <button onClick={() => navigate('/gopilot')} className="px-4 py-2 text-sm text-gray-600 dark:text-slate-300 border dark:border-slate-600 rounded-lg hover:bg-gray-50 dark:hover:bg-slate-800">
+            <button onClick={() => navigate(currentRole === 'teacher' ? '/gopilot/teacher' : '/gopilot')} className="px-4 py-2 text-sm text-gray-600 dark:text-slate-300 border dark:border-slate-600 rounded-lg hover:bg-gray-50 dark:hover:bg-slate-800">
               Back to Dashboard
             </button>
           </div>

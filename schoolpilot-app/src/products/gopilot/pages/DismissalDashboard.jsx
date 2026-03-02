@@ -56,7 +56,7 @@ export default function DismissalDashboard() {
   const { logout, currentSchool, currentRole } = useGoPilotAuth();
   const socket = useSocket();
   const navigate = useNavigate();
-  const { hasClassPilot } = useLicenses();
+  const { hasClassPilot, hasPassPilot } = useLicenses();
 
   const [currentTime, setCurrentTime] = useState(new Date());
   const [session, setSession] = useState(null);
@@ -441,15 +441,26 @@ export default function DismissalDashboard() {
         <div className="px-3 sm:px-4 py-2 sm:py-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 sm:gap-4">
-              {hasClassPilot && (
-                <button
-                  onClick={() => navigate('/classpilot')}
-                  className="flex items-center gap-1 text-sm text-gray-500 dark:text-slate-400 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200 transition-colors"
-                  title="Back to ClassPilot"
-                >
-                  <ArrowLeft className="w-4 h-4" />
-                  <span className="hidden sm:inline">ClassPilot</span>
-                </button>
+              {(hasClassPilot || hasPassPilot) && (
+                <div className="flex items-center gap-1">
+                  {hasClassPilot && (
+                    <button
+                      onClick={() => navigate('/classpilot')}
+                      className="flex items-center gap-1 px-2 py-1 rounded-md text-sm text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 hover:text-gray-700 dark:hover:text-slate-200 transition-colors"
+                    >
+                      <ArrowLeft className="w-4 h-4 sm:hidden" />
+                      <span className="hidden sm:inline">ClassPilot</span>
+                    </button>
+                  )}
+                  {hasPassPilot && (
+                    <button
+                      onClick={() => navigate('/passpilot')}
+                      className="px-2 py-1 rounded-md text-sm text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 hover:text-gray-700 dark:hover:text-slate-200 transition-colors"
+                    >
+                      <span className="hidden sm:inline">PassPilot</span>
+                    </button>
+                  )}
+                </div>
               )}
               <div className="flex items-center gap-2 sm:gap-3">
                 <div className="w-8 h-8 sm:w-10 sm:h-10 bg-indigo-600 rounded-xl flex items-center justify-center">

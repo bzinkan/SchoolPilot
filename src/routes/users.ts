@@ -232,10 +232,7 @@ router.post(
           .json({ error: parsed.error.errors[0]?.message || "Invalid input" });
       }
 
-      const role = req.body.role || "teacher";
-      if (!["teacher", "office_staff", "admin"].includes(role)) {
-        return res.status(400).json({ error: "Invalid role" });
-      }
+      const role = parsed.data.role || "teacher";
 
       let user = await getUserByEmail(parsed.data.email);
 
@@ -244,13 +241,17 @@ router.post(
           ? await hashPassword(parsed.data.password)
           : null;
 
-        const nameParts = parsed.data.displayName.split(/\s+/);
+        // Support both displayName and firstName/lastName from frontend
+        const firstName = parsed.data.firstName || parsed.data.displayName?.split(/\s+/)[0] || "";
+        const lastName = parsed.data.lastName || parsed.data.displayName?.split(/\s+/).slice(1).join(" ") || "";
+        const displayName = parsed.data.displayName || `${firstName} ${lastName}`.trim();
+
         user = await createUser({
           email: parsed.data.email.toLowerCase(),
           password: hashedPassword,
-          firstName: nameParts[0] || "",
-          lastName: nameParts.slice(1).join(" ") || "",
-          displayName: parsed.data.displayName,
+          firstName,
+          lastName,
+          displayName,
         });
       }
 
@@ -298,6 +299,23 @@ router.put(
       );
       if (!membership) {
         return res.status(404).json({ error: "Membership not found" });
+      }
+
+      // Also update user fields (name, password) if provided
+      const { firstName, lastName, password } = req.body;
+      if (membership.userId && (firstName || lastName || password)) {
+        const userUpdates: Record<string, any> = {};
+        if (firstName) userUpdates.firstName = firstName;
+        if (lastName) userUpdates.lastName = lastName;
+        if (firstName || lastName) {
+          userUpdates.displayName = `${firstName || ""} ${lastName || ""}`.trim();
+        }
+        if (password && password.length >= 8) {
+          userUpdates.password = await hashPassword(password);
+        }
+        if (Object.keys(userUpdates).length > 0) {
+          await updateUser(membership.userId, userUpdates);
+        }
       }
 
       return res.json({ membership });

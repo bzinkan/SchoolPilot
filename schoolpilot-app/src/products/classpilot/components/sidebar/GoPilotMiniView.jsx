@@ -1,9 +1,15 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ChevronDown, ChevronRight, ExternalLink, Car } from 'lucide-react';
 import api from '../../../../shared/utils/api';
+import { useAuth } from '../../../../contexts/AuthContext';
 
 export default function GoPilotMiniView() {
+  const { activeMembership } = useAuth();
+  const gopilotPath = useMemo(() => {
+    const role = activeMembership?.role;
+    return role === 'teacher' ? '/gopilot/teacher' : '/gopilot';
+  }, [activeMembership?.role]);
   const [sessionInfo, setSessionInfo] = useState(null);
   const [stats, setStats] = useState(null);
   const [countdown, setCountdown] = useState('');
@@ -163,13 +169,13 @@ export default function GoPilotMiniView() {
           {/* Footer */}
           <div className="flex items-center gap-1 pt-1 border-t border-slate-100 dark:border-slate-800">
             <button
-              onClick={() => navigate('/gopilot')}
+              onClick={() => navigate(gopilotPath)}
               className="flex-1 text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 py-1.5 rounded hover:bg-indigo-50 dark:hover:bg-indigo-950/30 transition-colors text-center"
             >
               {isActive ? 'View Dashboard' : 'Go to GoPilot'}
             </button>
             <button
-              onClick={(e) => { e.stopPropagation(); window.open('/gopilot', '_blank'); }}
+              onClick={(e) => { e.stopPropagation(); window.open(gopilotPath, '_blank'); }}
               className="p-1.5 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
               title="Open GoPilot in new tab"
             >

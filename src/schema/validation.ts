@@ -36,7 +36,10 @@ export type RegisterParentData = z.infer<typeof registerParentSchema>;
 // ============================================================================
 export const createTeacherSchema = z.object({
   email: z.string().email("Invalid email address"),
-  displayName: z.string().min(2, "Name must be at least 2 characters"),
+  displayName: z.string().min(2, "Name must be at least 2 characters").optional(),
+  firstName: z.string().min(1).optional(),
+  lastName: z.string().min(1).optional(),
+  role: z.enum(["admin", "teacher", "office_staff"]).optional(),
   password: z
     .string()
     .min(8, "Password must be at least 8 characters")
