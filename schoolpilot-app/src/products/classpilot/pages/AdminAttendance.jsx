@@ -47,7 +47,7 @@ import {
 export default function AdminAttendance() {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { currentUser } = useClassPilotAuth();
+  useClassPilotAuth();
 
   const today = new Date().toISOString().slice(0, 10);
   const [selectedDate, setSelectedDate] = useState(today);
