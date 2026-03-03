@@ -34,7 +34,7 @@ function isBlockedDomain(url, blockedDomains) {
   }
 }
 
-function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false, isSelected = false, onToggleSelect, liveStream, onStartLiveView, onStopLiveView, onBlockRefetches }) {
+function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false, isAbsent = false, isSelected = false, onToggleSelect, liveStream, onStartLiveView, onStopLiveView, onBlockRefetches }) {
   const [expanded, setExpanded] = useState(false);
   const { toast } = useToast();
   const tileVideoSlotRef = useRef(null);
@@ -278,6 +278,7 @@ function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false,
   });
 
   const getStatusColor = (status) => {
+    if (isAbsent) return 'bg-blue-400';
     switch (status) {
       case 'online':
         return 'bg-status-online';
@@ -291,6 +292,7 @@ function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false,
   };
 
   const getStatusLabel = (status) => {
+    if (isAbsent) return 'Absent';
     switch (status) {
       case 'online':
         return 'Online';
@@ -346,6 +348,7 @@ function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false,
   };
 
   const getOpacity = (status) => {
+    if (isAbsent) return 'opacity-50';
     switch (status) {
       case 'online':
         return 'opacity-100';

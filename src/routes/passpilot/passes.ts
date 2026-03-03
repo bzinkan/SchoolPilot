@@ -20,6 +20,7 @@ import {
   getTeacherGrades,
   getSchoolById,
   getSettingsForSchool,
+  getAbsentStudentIds,
 } from "../../services/storage.js";
 import { isWithinTrackingWindow } from "../../services/schoolHours.js";
 import type { Pass } from "../../schema/passpilot.js";
@@ -229,6 +230,13 @@ router.post("/", async (req, res, next) => {
     const student = await getStudentById(studentId);
     if (!student || student.schoolId !== res.locals.schoolId) {
       return res.status(404).json({ error: "Student not found" });
+    }
+
+    // Check if student is absent
+    const today = new Date().toISOString().slice(0, 10);
+    const absentIds = await getAbsentStudentIds(res.locals.schoolId!, today);
+    if (absentIds.has(studentId)) {
+      return res.status(400).json({ error: "Cannot issue pass to absent student" });
     }
 
     // Check for existing active pass

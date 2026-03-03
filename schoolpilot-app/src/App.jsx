@@ -17,7 +17,7 @@ const CPRoster = lazy(() => import('./products/classpilot/pages/Roster'));
 const CPAdmin = lazy(() => import('./products/classpilot/pages/Admin'));
 const CPAdminClasses = lazy(() => import('./products/classpilot/pages/AdminClasses'));
 const CPAdminAnalytics = lazy(() => import('./products/classpilot/pages/AdminAnalytics'));
-
+const CPAdminAttendance = lazy(() => import('./products/classpilot/pages/AdminAttendance'));
 const CPStudents = lazy(() => import('./products/classpilot/pages/Students'));
 const CPSettings = lazy(() => import('./products/classpilot/pages/Settings'));
 const CPMySettings = lazy(() => import('./products/classpilot/pages/MySettings'));
@@ -122,7 +122,7 @@ function AppRoutes() {
             <Route path="/classpilot/admin" element={<CPAdmin />} />
             <Route path="/classpilot/admin/classes" element={<CPAdminClasses />} />
             <Route path="/classpilot/admin/analytics" element={<CPAdminAnalytics />} />
-
+            <Route path="/classpilot/admin/attendance" element={<CPAdminAttendance />} />
             <Route path="/classpilot/students" element={<CPStudents />} />
             <Route path="/classpilot/settings" element={<CPSettings />} />
             <Route path="/classpilot/my-settings" element={<CPMySettings />} />

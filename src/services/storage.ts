@@ -17,8 +17,11 @@ import {
 } from "../schema/core.js";
 import {
   students,
+  studentAttendance,
   type Student,
   type InsertStudent,
+  type StudentAttendance,
+  type InsertStudentAttendance,
 } from "../schema/students.js";
 import {
   grades,
@@ -3383,4 +3386,163 @@ export async function getClassroomCourseStudents(
     .where(eq(classroomCourseStudents.courseId, courseId));
 }
 
+
+// ============================================================================
+// Student Attendance
+// ============================================================================
+
+/** Returns a Set of student IDs marked absent (or tardy/early_dismissal) for a given date */
+export async function getAbsentStudentIds(
+  schoolId: string,
+  date: string
+): Promise<Set<string>> {
+  const rows = await db
+    .select({ studentId: studentAttendance.studentId })
+    .from(studentAttendance)
+    .where(
+      and(
+        eq(studentAttendance.schoolId, schoolId),
+        eq(studentAttendance.date, date)
+      )
+    );
+  return new Set(rows.map((r) => r.studentId));
+}
+
+/** Full attendance records for a school on a given date, joined with student name */
+export async function getAttendanceBySchool(schoolId: string, date: string) {
+  const rows = await db
+    .select({
+      attendance: studentAttendance,
+      student: {
+        id: students.id,
+        firstName: students.firstName,
+        lastName: students.lastName,
+        gradeLevel: students.gradeLevel,
+        gradeId: students.gradeId,
+        homeroomId: students.homeroomId,
+      },
+    })
+    .from(studentAttendance)
+    .innerJoin(students, eq(studentAttendance.studentId, students.id))
+    .where(
+      and(
+        eq(studentAttendance.schoolId, schoolId),
+        eq(studentAttendance.date, date)
+      )
+    )
+    .orderBy(students.lastName, students.firstName);
+  return rows;
+}
+
+/** Attendance history for a single student within a date range */
+export async function getStudentAttendance(
+  studentId: string,
+  startDate: string,
+  endDate: string
+) {
+  const rows = await db
+    .select()
+    .from(studentAttendance)
+    .where(
+      and(
+        eq(studentAttendance.studentId, studentId),
+        sql`${studentAttendance.date} >= ${startDate}`,
+        sql`${studentAttendance.date} <= ${endDate}`
+      )
+    )
+    .orderBy(desc(studentAttendance.date));
+  return rows;
+}
+
+/** Mark a student absent (upsert — updates if already marked for that date) */
+export async function markStudentAbsent(data: {
+  schoolId: string;
+  studentId: string;
+  date: string;
+  status: string;
+  reason?: string | null;
+  notes?: string | null;
+  markedBy: string;
+  source?: string;
+}) {
+  const [row] = await db
+    .insert(studentAttendance)
+    .values({
+      schoolId: data.schoolId,
+      studentId: data.studentId,
+      date: data.date,
+      status: data.status,
+      reason: data.reason || null,
+      notes: data.notes || null,
+      markedBy: data.markedBy,
+      source: data.source || "manual",
+    })
+    .onConflictDoUpdate({
+      target: [studentAttendance.studentId, studentAttendance.date],
+      set: {
+        status: sql`EXCLUDED.status`,
+        reason: sql`EXCLUDED.reason`,
+        notes: sql`EXCLUDED.notes`,
+        markedBy: sql`EXCLUDED.marked_by`,
+        source: sql`EXCLUDED.source`,
+        updatedAt: sql`now()`,
+      },
+    })
+    .returning();
+  return row;
+}
+
+/** Bulk mark students absent for a given date */
+export async function markStudentsAbsentBulk(
+  schoolId: string,
+  studentIds: string[],
+  data: {
+    date: string;
+    status: string;
+    reason?: string | null;
+    notes?: string | null;
+    markedBy: string;
+    source?: string;
+  }
+) {
+  const results = await Promise.all(
+    studentIds.map((studentId) =>
+      markStudentAbsent({ schoolId, studentId, ...data })
+    )
+  );
+  return results;
+}
+
+/** Remove an absence record (student showed up) */
+export async function removeAbsence(id: string): Promise<boolean> {
+  const result = await db
+    .delete(studentAttendance)
+    .where(eq(studentAttendance.id, id));
+  return (result.rowCount ?? 0) > 0;
+}
+
+/** Attendance stats for a school over a date range */
+export async function getAttendanceStats(
+  schoolId: string,
+  startDate: string,
+  endDate: string
+) {
+  const rows = await db
+    .select({
+      date: studentAttendance.date,
+      status: studentAttendance.status,
+      count: sql<number>`count(*)::int`,
+    })
+    .from(studentAttendance)
+    .where(
+      and(
+        eq(studentAttendance.schoolId, schoolId),
+        sql`${studentAttendance.date} >= ${startDate}`,
+        sql`${studentAttendance.date} <= ${endDate}`
+      )
+    )
+    .groupBy(studentAttendance.date, studentAttendance.status)
+    .orderBy(desc(studentAttendance.date));
+  return rows;
+}
 

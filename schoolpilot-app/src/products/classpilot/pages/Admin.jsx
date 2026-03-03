@@ -9,7 +9,7 @@ import { Button } from "../../../components/ui/button";
 import { Input } from "../../../components/ui/input";
 import { Label } from "../../../components/ui/label";
 import { useToast } from "../../../hooks/use-toast";
-import { Trash2, UserPlus, Users, ArrowLeft, AlertTriangle, Clock, Settings as SettingsIcon, Key, FileText, ChevronLeft, ChevronRight, BarChart3, LogOut, Upload, Search, Plus, Building2, Loader2, AlertCircle, RefreshCw } from "lucide-react";
+import { Trash2, UserPlus, Users, ArrowLeft, AlertTriangle, Clock, Settings as SettingsIcon, Key, FileText, ChevronLeft, ChevronRight, BarChart3, LogOut, Upload, Search, Plus, Building2, Loader2, AlertCircle, RefreshCw, ClipboardCheck } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import {
   AlertDialog,
@@ -489,6 +489,13 @@ export default function Admin() {
         </div>
         <div className="flex items-center gap-2">
           <ThemeToggle />
+          <Button
+            variant="outline"
+            onClick={() => navigate("/classpilot/admin/attendance")}
+          >
+            <ClipboardCheck className="h-4 w-4 mr-2" />
+            Attendance
+          </Button>
           <Button
             variant="outline"
             onClick={() => navigate("/classpilot/admin/analytics")}

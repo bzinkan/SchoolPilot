@@ -11,6 +11,8 @@ import { useGoPilotAuth } from '../../../hooks/useGoPilotAuth';
 import { useLicenses } from '../../../contexts/LicenseContext';
 import { useSocket } from '../../../contexts/SocketContext';
 import api from '../../../shared/utils/api';
+import { useAbsentStudents } from '../../../hooks/useAbsentStudents';
+
 // Utility Components
 const Badge = ({ children, variant = 'default', size = 'md', pulse = false }) => {
   const variants = {
@@ -58,6 +60,7 @@ export default function TeacherView() {
   const navigate = useNavigate();
   const socket = useSocket();
 
+  const { absentIds } = useAbsentStudents();
   const [currentTime, setCurrentTime] = useState(new Date());
   const [soundEnabled, setSoundEnabled] = useState(true);
 
@@ -479,15 +482,16 @@ export default function TeacherView() {
             {rosterStudents.map(student => {
               const TypeIcon = getTypeIcon(student.dismissal_type || student.dismissalType);
               const isPickedUp = student.queueStatus === 'dismissed';
+              const isAbsent = absentIds.has(student.id);
               return (
-                <div key={student.id} className={`p-3 flex items-center gap-3 ${isPickedUp ? 'bg-blue-50' : 'hover:bg-gray-50'}`}>
+                <div key={student.id} className={`p-3 flex items-center gap-3 ${isAbsent ? 'bg-gray-50 opacity-60' : isPickedUp ? 'bg-blue-50' : 'hover:bg-gray-50'}`}>
                   <div className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-medium ${
-                    isPickedUp ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-600'
+                    isAbsent ? 'bg-gray-200 text-gray-500' : isPickedUp ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-600'
                   }`}>
                     {(student.first_name || student.firstName || '?')[0]}{(student.last_name || student.lastName || '?')[0]}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className={`text-sm font-medium truncate ${isPickedUp ? 'text-blue-700' : 'text-gray-900'}`}>
+                    <p className={`text-sm font-medium truncate ${isAbsent ? 'text-gray-500' : isPickedUp ? 'text-blue-700' : 'text-gray-900'}`}>
                       {student.first_name || student.firstName} {student.last_name || student.lastName}
                     </p>
                     <div className="flex items-center gap-1 text-xs text-gray-500">
@@ -496,7 +500,10 @@ export default function TeacherView() {
                       {(student.bus_route || student.busRoute) && <span>#{student.bus_route || student.busRoute}</span>}
                     </div>
                   </div>
-                  {isPickedUp && (
+                  {isAbsent && (
+                    <Badge variant="default" size="sm">Absent</Badge>
+                  )}
+                  {!isAbsent && isPickedUp && (
                     <Badge variant="blue" size="sm">Picked Up</Badge>
                   )}
                 </div>
@@ -615,15 +622,16 @@ export default function TeacherView() {
                 {rosterStudents.map(student => {
                   const TypeIcon = getTypeIcon(student.dismissal_type || student.dismissalType);
                   const isPickedUp = student.queueStatus === 'dismissed';
+                  const isAbsent = absentIds.has(student.id);
                   return (
-                    <div key={student.id} className={`p-3 flex items-center gap-3 ${isPickedUp ? 'bg-blue-50' : ''}`}>
+                    <div key={student.id} className={`p-3 flex items-center gap-3 ${isAbsent ? 'bg-gray-50 opacity-60' : isPickedUp ? 'bg-blue-50' : ''}`}>
                       <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium ${
-                        isPickedUp ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-600'
+                        isAbsent ? 'bg-gray-200 text-gray-500' : isPickedUp ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-600'
                       }`}>
                         {(student.first_name || student.firstName || '?')[0]}{(student.last_name || student.lastName || '?')[0]}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className={`text-sm font-medium truncate ${isPickedUp ? 'text-blue-700' : 'text-gray-900'}`}>
+                        <p className={`text-sm font-medium truncate ${isAbsent ? 'text-gray-500' : isPickedUp ? 'text-blue-700' : 'text-gray-900'}`}>
                           {student.first_name || student.firstName} {student.last_name || student.lastName}
                         </p>
                         <div className="flex items-center gap-1 text-xs text-gray-500">
@@ -631,7 +639,8 @@ export default function TeacherView() {
                           <span className="capitalize">{student.dismissal_type || student.dismissalType || 'car'}</span>
                         </div>
                       </div>
-                      {isPickedUp && <Badge variant="blue" size="sm">Picked Up</Badge>}
+                      {isAbsent && <Badge variant="default" size="sm">Absent</Badge>}
+                      {!isAbsent && isPickedUp && <Badge variant="blue" size="sm">Picked Up</Badge>}
                     </div>
                   );
                 })}

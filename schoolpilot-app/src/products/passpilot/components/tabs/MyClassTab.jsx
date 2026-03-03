@@ -23,6 +23,7 @@ import {
 } from "../../../../components/ui/dialog";
 import { Input } from "../../../../components/ui/input";
 import { Label } from "../../../../components/ui/label";
+import { useAbsentStudents } from "../../../../hooks/useAbsentStudents";
 
 function MyClassTab() {
   const [activeGradeId, setActiveGradeId] = useState('');
@@ -35,6 +36,7 @@ function MyClassTab() {
   const { isAdmin, school } = usePassPilotAuth();
   const tz = school?.schoolTimezone ?? "America/New_York";
   const { toast } = useToast();
+  const { absentIds } = useAbsentStudents();
 
   const { data: myClasses = [] } = useQuery({
     queryKey: ['my-classes'],
@@ -569,12 +571,13 @@ function MyClassTab() {
                 </p>
               ) : (
                 <div className="grid gap-3">
-                  {availableStudents.map((student) => (
-                    <DropdownMenu key={student.id}>
-                      <DropdownMenuTrigger asChild>
+                  {availableStudents.map((student) => {
+                    const isAbsent = absentIds.has(student.id);
+                    if (isAbsent) {
+                      return (
                         <div
-                          className="flex items-center justify-between p-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg cursor-pointer hover:bg-green-100 dark:hover:bg-green-900/30 transition-colors"
-                          data-testid={`button-checkout-${student.id}`}
+                          key={student.id}
+                          className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800/30 border border-gray-200 dark:border-gray-700 rounded-lg opacity-60"
                         >
                           <div className="flex items-center space-x-3 flex-grow">
                             <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-medium ${getAvatarColor(`${student.firstName} ${student.lastName}`)}`}>
@@ -583,7 +586,7 @@ function MyClassTab() {
                             <div className="flex-grow">
                               <div className="flex items-center gap-3">
                                 <span className="font-medium">{student.firstName} {student.lastName}</span>
-                                <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                                <span className="px-2 py-0.5 text-xs rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 font-medium">Absent</span>
                               </div>
                               {student.studentIdNumber && (
                                 <p className="text-sm text-muted-foreground">ID: {student.studentIdNumber}</p>
@@ -591,39 +594,64 @@ function MyClassTab() {
                             </div>
                           </div>
                         </div>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="start">
-                        <DropdownMenuItem
-                          onClick={() => handleMarkOut(student.id, `${student.firstName} ${student.lastName}`, 'general', '')}
-                          className="flex items-center gap-2"
-                        >
-                          <Bath className="w-4 h-4 text-blue-500" />
-                          General/Restroom
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          onClick={() => handleMarkOut(student.id, `${student.firstName} ${student.lastName}`, 'nurse')}
-                          className="flex items-center gap-2"
-                        >
-                          <Heart className="w-4 h-4 text-red-500" />
-                          Nurse
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          onClick={() => handleMarkOut(student.id, `${student.firstName} ${student.lastName}`, 'office')}
-                          className="flex items-center gap-2"
-                        >
-                          <Triangle className="w-4 h-4 text-yellow-500" />
-                          Office
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          onClick={() => openCustomReasonDialog(student)}
-                          className="flex items-center gap-2"
-                        >
-                          <Edit3 className="w-4 h-4 text-purple-500" />
-                          Custom Reason
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  ))}
+                      );
+                    }
+                    return (
+                      <DropdownMenu key={student.id}>
+                        <DropdownMenuTrigger asChild>
+                          <div
+                            className="flex items-center justify-between p-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg cursor-pointer hover:bg-green-100 dark:hover:bg-green-900/30 transition-colors"
+                            data-testid={`button-checkout-${student.id}`}
+                          >
+                            <div className="flex items-center space-x-3 flex-grow">
+                              <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-medium ${getAvatarColor(`${student.firstName} ${student.lastName}`)}`}>
+                                {getInitials(`${student.firstName} ${student.lastName}`)}
+                              </div>
+                              <div className="flex-grow">
+                                <div className="flex items-center gap-3">
+                                  <span className="font-medium">{student.firstName} {student.lastName}</span>
+                                  <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                                </div>
+                                {student.studentIdNumber && (
+                                  <p className="text-sm text-muted-foreground">ID: {student.studentIdNumber}</p>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start">
+                          <DropdownMenuItem
+                            onClick={() => handleMarkOut(student.id, `${student.firstName} ${student.lastName}`, 'general', '')}
+                            className="flex items-center gap-2"
+                          >
+                            <Bath className="w-4 h-4 text-blue-500" />
+                            General/Restroom
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => handleMarkOut(student.id, `${student.firstName} ${student.lastName}`, 'nurse')}
+                            className="flex items-center gap-2"
+                          >
+                            <Heart className="w-4 h-4 text-red-500" />
+                            Nurse
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => handleMarkOut(student.id, `${student.firstName} ${student.lastName}`, 'office')}
+                            className="flex items-center gap-2"
+                          >
+                            <Triangle className="w-4 h-4 text-yellow-500" />
+                            Office
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => openCustomReasonDialog(student)}
+                            className="flex items-center gap-2"
+                          >
+                            <Edit3 className="w-4 h-4 text-purple-500" />
+                            Custom Reason
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    );
+                  })}
                 </div>
               )}
             </CardContent>

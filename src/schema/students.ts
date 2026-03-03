@@ -64,3 +64,35 @@ export const students = pgTable(
 
 export type Student = typeof students.$inferSelect;
 export type InsertStudent = typeof students.$inferInsert;
+
+// ============================================================================
+// Student Attendance - Daily absence tracking across all products
+// ============================================================================
+export const studentAttendance = pgTable(
+  "student_attendance",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
+    studentId: text("student_id").notNull(),
+    date: text("date").notNull(), // "YYYY-MM-DD" format
+    status: text("status").notNull(), // absent | tardy | early_dismissal
+    reason: text("reason"), // sick | family | appointment | other
+    notes: text("notes"),
+    markedBy: text("marked_by").notNull(), // FK → users
+    source: text("source").notNull().default("manual"), // manual | sis
+    createdAt: timestamp("created_at").notNull().default(sql`now()`),
+    updatedAt: timestamp("updated_at").notNull().default(sql`now()`),
+  },
+  (table) => [
+    uniqueIndex("student_attendance_student_date_unique").on(
+      table.studentId,
+      table.date
+    ),
+    index("student_attendance_school_date_idx").on(table.schoolId, table.date),
+    index("student_attendance_student_id_idx").on(table.studentId),
+    index("student_attendance_school_id_idx").on(table.schoolId),
+  ]
+);
+
+export type StudentAttendance = typeof studentAttendance.$inferSelect;
+export type InsertStudentAttendance = typeof studentAttendance.$inferInsert;

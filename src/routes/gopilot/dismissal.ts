@@ -31,6 +31,7 @@ import {
   getStudentsByDismissalType,
   getFamilyGroupByCarNumber,
   getFamilyGroupStudents,
+  getAbsentStudentIds,
 } from "../../services/storage.js";
 import { getIO } from "../../realtime/socketio.js";
 
@@ -177,10 +178,19 @@ router.post("/sessions/:id/check-in", ...auth, async (req, res, next) => {
       ? `${guardian.firstName} ${guardian.lastName}`
       : "Unknown";
 
+    // Filter out absent students
+    const today = new Date().toISOString().slice(0, 10);
+    const absentIds = await getAbsentStudentIds(schoolId, today);
+    const skippedAbsent: string[] = [];
+
     let position = await getMaxQueuePosition(sessionId);
     const entries: unknown[] = [];
 
     for (const student of carRiders) {
+      if (absentIds.has(student.id)) {
+        skippedAbsent.push(`${(student as any).firstName} ${(student as any).lastName}`);
+        continue;
+      }
       const alreadyInQueue = await isStudentInQueue(sessionId, student.id);
       if (alreadyInQueue) continue;
 
@@ -206,7 +216,13 @@ router.post("/sessions/:id/check-in", ...auth, async (req, res, next) => {
       entries,
     });
 
-    return res.json({ entries, position });
+    return res.json({
+      entries,
+      position,
+      ...(skippedAbsent.length > 0 && {
+        warning: `Skipped absent students: ${skippedAbsent.join(", ")}`,
+      }),
+    });
   } catch (err) {
     next(err);
   }
@@ -232,7 +248,7 @@ router.post(
       }
 
       let guardianName = `Car #${carNumber}`;
-      let studentList: { id: string; homeroomId?: string | null }[] = [];
+      let studentList: { id: string; homeroomId?: string | null; firstName?: string; lastName?: string }[] = [];
 
       // Always look up family group by car number (unified — no mode branching)
       const group = await getFamilyGroupByCarNumber(schoolId, carNumber.toString().trim());
@@ -253,13 +269,21 @@ router.post(
       const groupStudents = await getFamilyGroupStudents(group.id);
       studentList = groupStudents
         .filter((s: any) => s.dismissalType === "car")
-        .map((s: any) => ({ id: s.id, homeroomId: s.homeroomId }));
+        .map((s: any) => ({ id: s.id, homeroomId: s.homeroomId, firstName: s.firstName, lastName: s.lastName }));
 
       if (studentList.length === 0) {
         return res
           .status(400)
           .json({ error: "No car-rider students for this number" });
       }
+
+      // Filter out absent students
+      const today = new Date().toISOString().slice(0, 10);
+      const absentIds = await getAbsentStudentIds(schoolId, today);
+      const skippedAbsent = studentList
+        .filter((s) => absentIds.has(s.id))
+        .map((s) => `${s.firstName} ${s.lastName}`);
+      studentList = studentList.filter((s) => !absentIds.has(s.id));
 
       let position = await getMaxQueuePosition(sessionId);
       const entries: unknown[] = [];
@@ -289,7 +313,14 @@ router.post(
         carNumber,
       });
 
-      return res.json({ entries, position, carNumber });
+      return res.json({
+        entries,
+        position,
+        carNumber,
+        ...(skippedAbsent.length > 0 && {
+          warning: `Skipped absent students: ${skippedAbsent.join(", ")}`,
+        }),
+      });
     } catch (err) {
       next(err);
     }
@@ -322,10 +353,15 @@ router.post(
           .json({ error: "No students on this bus route" });
       }
 
+      // Filter out absent students
+      const today = new Date().toISOString().slice(0, 10);
+      const absentIds = await getAbsentStudentIds(schoolId, today);
+      const presentStudents = busStudents.filter((s) => !absentIds.has(s.id));
+
       let position = await getMaxQueuePosition(sessionId);
       const entries: unknown[] = [];
 
-      for (const student of busStudents) {
+      for (const student of presentStudents) {
         const alreadyInQueue = await isStudentInQueue(sessionId, student.id);
         if (alreadyInQueue) continue;
 
@@ -563,10 +599,15 @@ router.post(
         return res.json({ entries: [], position: 0 });
       }
 
+      // Filter out absent students
+      const today = new Date().toISOString().slice(0, 10);
+      const absentIds = await getAbsentStudentIds(schoolId, today);
+      const presentWalkers = walkers.filter((s) => !absentIds.has(s.id));
+
       let position = await getMaxQueuePosition(sessionId);
       const entries: unknown[] = [];
 
-      for (const student of walkers) {
+      for (const student of presentWalkers) {
         const alreadyInQueue = await isStudentInQueue(sessionId, student.id);
         if (alreadyInQueue) continue;
 

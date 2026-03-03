@@ -21,7 +21,7 @@ import dashboardRoutes from "./classpilot/dashboard.js";
 import superAdminRoutes from "./admin/superAdmin.js";
 import trialRequestRoutes from "./admin/trialRequests.js";
 import billingRoutes from "./admin/billing.js";
-
+import attendanceRoutes from "./admin/attendance.js";
 import googleOAuthRoutes from "./google/oauth.js";
 import googleClassroomRoutes from "./google/classroom.js";
 import googleDirectoryRoutes from "./google/directory.js";
@@ -53,6 +53,12 @@ router.use((req: Request, _res: Response, next: NextFunction) => {
   // /super-admin/schools/:id/(send-invoice|billing) → /admin/billing/schools/:id/...
   if (p.match(/^\/super-admin\/schools\/[^/]+\/(send-invoice|billing)$/)) {
     req.url = "/admin/billing" + req.url.slice("/super-admin".length);
+    return next();
+  }
+
+  // --- Attendance management ---
+  if (p === "/attendance" || p.startsWith("/attendance/")) {
+    req.url = "/admin/attendance" + req.url.slice("/attendance".length);
     return next();
   }
 
@@ -344,6 +350,8 @@ router.use("/classpilot/teacher", dashboardRoutes);
 router.use("/admin", superAdminRoutes);
 router.use("/admin/trial-requests", trialRequestRoutes);
 router.use("/admin/billing", billingRoutes);
+router.use("/admin/attendance", attendanceRoutes);
+
 // Google integrations
 router.use("/google", googleOAuthRoutes);
 router.use("/google/classroom", googleClassroomRoutes);

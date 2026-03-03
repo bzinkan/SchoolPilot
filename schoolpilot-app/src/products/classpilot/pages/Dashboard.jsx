@@ -36,6 +36,8 @@ import { useClassPilotAuth } from '../../../hooks/useClassPilotAuth';
 import { useLicenses } from '../../../contexts/LicenseContext';
 import { ThemeToggle } from '../../../components/ThemeToggle';
 import ClassPilotSidebar from '../components/ClassPilotSidebar';
+import { useAbsentStudents } from '../../../hooks/useAbsentStudents';
+
 // Helper to normalize grade levels (strip "th", "rd", "st", "nd" suffixes)
 function normalizeGrade(grade) {
   if (!grade) return null;
@@ -48,6 +50,7 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const { currentUser, isAdmin, isTeacher, token, logout } = useClassPilotAuth();
   const { hasPassPilot, hasGoPilot } = useLicenses();
+  const { absentIds } = useAbsentStudents();
   const [sidebarOpen, setSidebarOpen] = useState(() => {
     try {
       return localStorage.getItem('classpilot-sidebar-open') !== 'false';
@@ -1364,6 +1367,7 @@ export default function Dashboard() {
                   onClick={() => setSelectedStudent(student)}
                   blockedDomains={settings?.blockedDomains || []}
                   isOffTask={isStudentOffTask(student)}
+                  isAbsent={absentIds.has(student.studentId)}
                   isSelected={selectedStudentIds.has(student.studentId)}
                   onToggleSelect={() => toggleStudentSelection(student.studentId)}
                   liveStream={primaryDeviceId ? liveStreams.get(primaryDeviceId) || null : null}

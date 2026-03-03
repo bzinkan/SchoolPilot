@@ -128,6 +128,32 @@ import { pool } from "./db.js";
     console.warn("[migration] co-teacher data seed skipped:", (err as Error).message);
   }
 
+  // Student attendance table for daily absence tracking
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS student_attendance (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        school_id TEXT NOT NULL,
+        student_id TEXT NOT NULL,
+        date TEXT NOT NULL,
+        status TEXT NOT NULL,
+        reason TEXT,
+        notes TEXT,
+        marked_by TEXT NOT NULL,
+        source TEXT NOT NULL DEFAULT 'manual',
+        created_at TIMESTAMP NOT NULL DEFAULT now(),
+        updated_at TIMESTAMP NOT NULL DEFAULT now()
+      )
+    `);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS student_attendance_student_date_unique ON student_attendance (student_id, date)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS student_attendance_school_date_idx ON student_attendance (school_id, date)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS student_attendance_student_id_idx ON student_attendance (student_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS student_attendance_school_id_idx ON student_attendance (school_id)`);
+    console.log("[migration] student_attendance table ready");
+  } catch (err) {
+    console.warn("[migration] student_attendance migration skipped:", (err as Error).message);
+  }
+
   // One-time: update super-admin email alias in users + audit_logs
   try {
     const OLD_EMAIL = "bzinkan@school-pilot.net";
