@@ -22,7 +22,10 @@ import {
   getSubgroupMembers,
   addSubgroupMembers,
   removeSubgroupMember,
-  getSubstitutedTeacherIds,
+  getGroupTeachers,
+  addGroupTeacher,
+  removeGroupTeacher,
+  getUserById,
 } from "../../services/storage.js";
 
 const router = Router();
@@ -57,13 +60,6 @@ router.get("/", ...auth, async (req, res, next) => {
       groups = await getGroupsBySchool(schoolId);
     } else {
       groups = await getGroupsByTeacher(user.id);
-
-      // Include groups from substitute assignments
-      const subTeacherIds = await getSubstitutedTeacherIds(user.id, schoolId);
-      for (const tid of subTeacherIds) {
-        const subGroups = await getGroupsByTeacher(tid);
-        groups = [...groups, ...subGroups];
-      }
     }
 
     // Enrich with student counts
@@ -114,6 +110,9 @@ router.post("/", ...auth, async (req, res, next) => {
       gradeLevel: gradeLevel || null,
       groupType: groupType || "teacher_created",
     });
+
+    // Seed the junction table with the creator as primary teacher
+    await addGroupTeacher(group.id, req.authUser!.id, "primary");
 
     if (Array.isArray(studentIds) && studentIds.length > 0) {
       await addGroupStudents(group.id, studentIds);
@@ -317,6 +316,84 @@ router.post("/subgroups/:subgroupId/members", ...auth, async (req, res, next) =>
 router.delete("/subgroups/:subgroupId/members/:studentId", ...auth, async (req, res, next) => {
   try {
     await removeSubgroupMember(param(req, "subgroupId"), param(req, "studentId"));
+    return res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ============================================================================
+// Co-teacher management
+// ============================================================================
+
+// GET /api/classpilot/groups/:id/teachers - List teachers for a group
+router.get("/:id/teachers", ...auth, async (req, res, next) => {
+  try {
+    const group = await getGroupById(param(req, "id"));
+    if (!group) {
+      return res.status(404).json({ error: "Group not found" });
+    }
+    const teachers = await getGroupTeachers(group.id);
+
+    // Enrich with user info
+    const enriched = [];
+    for (const t of teachers) {
+      const user = await getUserById(t.teacherId);
+      enriched.push({
+        ...t,
+        teacher: user
+          ? {
+              id: user.id,
+              firstName: user.firstName,
+              lastName: user.lastName,
+              name: `${user.firstName} ${user.lastName}`,
+            }
+          : null,
+      });
+    }
+
+    return res.json({ teachers: enriched });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/classpilot/groups/:id/teachers - Add co-teacher
+router.post("/:id/teachers", ...auth, requireRole("admin"), async (req, res, next) => {
+  try {
+    const { teacherId, role } = req.body;
+    if (!teacherId) {
+      return res.status(400).json({ error: "teacherId is required" });
+    }
+
+    const group = await getGroupById(param(req, "id"));
+    if (!group) {
+      return res.status(404).json({ error: "Group not found" });
+    }
+
+    const teacher = await addGroupTeacher(
+      group.id,
+      teacherId,
+      role || "co-teacher"
+    );
+    return res.status(201).json({ teacher });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /api/classpilot/groups/:id/teachers/:teacherId - Remove co-teacher
+router.delete("/:id/teachers/:teacherId", ...auth, requireRole("admin"), async (req, res, next) => {
+  try {
+    const group = await getGroupById(param(req, "id"));
+    if (!group) {
+      return res.status(404).json({ error: "Group not found" });
+    }
+
+    const removed = await removeGroupTeacher(group.id, param(req, "teacherId"));
+    if (!removed) {
+      return res.status(404).json({ error: "Teacher not found in group" });
+    }
     return res.json({ ok: true });
   } catch (err) {
     next(err);

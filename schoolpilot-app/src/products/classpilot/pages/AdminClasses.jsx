@@ -71,6 +71,7 @@ function ClassCard({ group, teacher, teachers, isExpanded, onToggleExpand, onDel
   const [editGradeLevel, setEditGradeLevel] = useState(group.gradeLevel || "");
   const [editPeriodLabel, setEditPeriodLabel] = useState(group.periodLabel || "");
   const [editTeacherComboboxOpen, setEditTeacherComboboxOpen] = useState(false);
+  const [addCoTeacherOpen, setAddCoTeacherOpen] = useState(false);
 
   // Helper to get last name for sorting
   const getLastName = (name) => {
@@ -115,6 +116,41 @@ function ClassCard({ group, teacher, teachers, isExpanded, onToggleExpand, onDel
         title: "Error",
         description: error.message || "Failed to update class",
       });
+    },
+  });
+
+  // Co-teacher queries and mutations
+  const { data: coTeachersData } = useQuery({
+    queryKey: ["/api/groups", group.id, "teachers"],
+    queryFn: () => apiRequest("GET", `/groups/${group.id}/teachers`),
+    enabled: editDialogOpen,
+  });
+  const coTeachers = coTeachersData?.teachers || [];
+
+  const addCoTeacherMutation = useMutation({
+    mutationFn: async (teacherId) => {
+      return await apiRequest("POST", `/groups/${group.id}/teachers`, { teacherId });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/groups", group.id, "teachers"] });
+      setAddCoTeacherOpen(false);
+      toast({ title: "Co-Teacher Added" });
+    },
+    onError: (error) => {
+      toast({ variant: "destructive", title: "Error", description: error.message || "Failed to add co-teacher" });
+    },
+  });
+
+  const removeCoTeacherMutation = useMutation({
+    mutationFn: async (teacherId) => {
+      return await apiRequest("DELETE", `/groups/${group.id}/teachers/${teacherId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/groups", group.id, "teachers"] });
+      toast({ title: "Co-Teacher Removed" });
+    },
+    onError: (error) => {
+      toast({ variant: "destructive", title: "Error", description: error.message || "Failed to remove co-teacher" });
     },
   });
 
@@ -385,6 +421,60 @@ function ClassCard({ group, teacher, teachers, isExpanded, onToggleExpand, onDel
                 placeholder="e.g., P3 or 10:10-10:55"
                 data-testid="input-edit-period"
               />
+            </div>
+
+            {/* Co-Teachers */}
+            <div className="space-y-2">
+              <Label>Co-Teachers</Label>
+              <div className="space-y-1">
+                {coTeachers
+                  .filter((ct) => ct.role === "co-teacher")
+                  .map((ct) => (
+                    <div key={ct.id} className="flex items-center justify-between text-sm bg-muted rounded px-2 py-1">
+                      <span>{ct.teacher?.name || ct.teacherId}</span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 w-6 p-0"
+                        onClick={() => removeCoTeacherMutation.mutate(ct.teacherId)}
+                      >
+                        <X className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  ))}
+                {coTeachers.filter((ct) => ct.role === "co-teacher").length === 0 && (
+                  <p className="text-xs text-muted-foreground">No co-teachers assigned</p>
+                )}
+              </div>
+              <Popover open={addCoTeacherOpen} onOpenChange={setAddCoTeacherOpen}>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" size="sm" className="w-full mt-1">
+                    <Plus className="h-3 w-3 mr-1" /> Add Co-Teacher
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                  <Command>
+                    <CommandInput placeholder="Search teachers..." />
+                    <CommandList>
+                      <CommandEmpty>No teacher found.</CommandEmpty>
+                      <CommandGroup>
+                        {sortedTeachers
+                          .filter((t) => t.id !== editTeacherId && !coTeachers.some((ct) => ct.teacherId === t.id))
+                          .map((t) => (
+                            <CommandItem
+                              key={t.id}
+                              value={`${t.displayName || ""} ${t.email} ${t.username}`}
+                              onSelect={() => addCoTeacherMutation.mutate(t.id)}
+                            >
+                              {t.displayName || t.email || t.username}
+                              {t.role === "school_admin" ? " (Admin)" : ""}
+                            </CommandItem>
+                          ))}
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              </Popover>
             </div>
           </div>
           <DialogFooter>

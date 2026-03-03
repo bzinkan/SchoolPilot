@@ -3,6 +3,7 @@ import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
 import { requireProductLicense } from "../../middleware/requireProductLicense.js";
+import { requireRole } from "../../middleware/requireRole.js";
 import {
   getHomeroomsBySchool,
   getHomeroomById,
@@ -12,7 +13,9 @@ import {
   assignStudentsToHomeroom,
   searchStudents,
   getUserById,
-  getSubstitutedTeacherIds,
+  getHomeroomTeachers,
+  addHomeroomTeacher,
+  removeHomeroomTeacher,
 } from "../../services/storage.js";
 
 const router = Router();
@@ -28,21 +31,22 @@ const auth = [
   requireProductLicense("GOPILOT"),
 ] as const;
 
-// GET /api/gopilot/homerooms/mine - Teacher's own homerooms (+ substituted)
+// GET /api/gopilot/homerooms/mine - Teacher's own homerooms
 router.get("/mine", ...auth, async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
     const userId = req.authUser!.id;
 
-    // Collect teacher IDs: own + any teachers being substituted for
-    const teacherIds = [userId];
-    const subTeacherIds = await getSubstitutedTeacherIds(userId, schoolId);
-    teacherIds.push(...subTeacherIds);
-
+    // Find homerooms where this teacher is assigned (primary or co-teacher)
     const allHomerooms = await getHomeroomsBySchool(schoolId);
-    const mine = allHomerooms.filter(
-      (h) => h.teacherId && teacherIds.includes(h.teacherId)
-    );
+    const myHomeroomIds = new Set<string>();
+    for (const h of allHomerooms) {
+      const teachers = await getHomeroomTeachers(h.id);
+      if (teachers.some((t) => t.teacherId === userId)) {
+        myHomeroomIds.add(h.id);
+      }
+    }
+    const mine = allHomerooms.filter((h) => myHomeroomIds.has(h.id));
 
     // Get student counts
     const allStudents = await searchStudents(schoolId, { status: "active" });
@@ -146,6 +150,11 @@ router.post("/", ...auth, async (req, res, next) => {
       teacherId: teacherId || null,
     });
 
+    // Also seed the junction table
+    if (teacherId) {
+      await addHomeroomTeacher(homeroom.id, teacherId, "primary");
+    }
+
     return res.status(201).json({ homeroom });
   } catch (err) {
     next(err);
@@ -206,6 +215,84 @@ router.post("/:id/assign", ...auth, async (req, res, next) => {
 
     await assignStudentsToHomeroom(id, studentIds);
     return res.json({ ok: true, assigned: studentIds.length });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ============================================================================
+// Co-teacher management
+// ============================================================================
+
+// GET /api/gopilot/homerooms/:id/teachers - List teachers for a homeroom
+router.get("/:id/teachers", ...auth, async (req, res, next) => {
+  try {
+    const homeroom = await getHomeroomById(param(req, "id"));
+    if (!homeroom) {
+      return res.status(404).json({ error: "Homeroom not found" });
+    }
+    const teachers = await getHomeroomTeachers(homeroom.id);
+
+    // Enrich with user info
+    const enriched = [];
+    for (const t of teachers) {
+      const user = await getUserById(t.teacherId);
+      enriched.push({
+        ...t,
+        teacher: user
+          ? {
+              id: user.id,
+              firstName: user.firstName,
+              lastName: user.lastName,
+              name: `${user.firstName} ${user.lastName}`,
+            }
+          : null,
+      });
+    }
+
+    return res.json({ teachers: enriched });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/gopilot/homerooms/:id/teachers - Add co-teacher
+router.post("/:id/teachers", ...auth, requireRole("admin"), async (req, res, next) => {
+  try {
+    const { teacherId, role } = req.body;
+    if (!teacherId) {
+      return res.status(400).json({ error: "teacherId is required" });
+    }
+
+    const homeroom = await getHomeroomById(param(req, "id"));
+    if (!homeroom) {
+      return res.status(404).json({ error: "Homeroom not found" });
+    }
+
+    const teacher = await addHomeroomTeacher(
+      homeroom.id,
+      teacherId,
+      role || "co-teacher"
+    );
+    return res.status(201).json({ teacher });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /api/gopilot/homerooms/:id/teachers/:teacherId - Remove co-teacher
+router.delete("/:id/teachers/:teacherId", ...auth, requireRole("admin"), async (req, res, next) => {
+  try {
+    const homeroom = await getHomeroomById(param(req, "id"));
+    if (!homeroom) {
+      return res.status(404).json({ error: "Homeroom not found" });
+    }
+
+    const removed = await removeHomeroomTeacher(homeroom.id, param(req, "teacherId"));
+    if (!removed) {
+      return res.status(404).json({ error: "Teacher not found in homeroom" });
+    }
+    return res.json({ ok: true });
   } catch (err) {
     next(err);
   }

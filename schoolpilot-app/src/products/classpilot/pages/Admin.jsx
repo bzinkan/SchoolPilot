@@ -491,13 +491,6 @@ export default function Admin() {
           <ThemeToggle />
           <Button
             variant="outline"
-            onClick={() => navigate("/classpilot/admin/substitutes")}
-          >
-            <Users className="h-4 w-4 mr-2" />
-            Substitutes
-          </Button>
-          <Button
-            variant="outline"
             onClick={() => navigate("/classpilot/admin/analytics")}
           >
             <BarChart3 className="h-4 w-4 mr-2" />

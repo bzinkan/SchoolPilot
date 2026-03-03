@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { usePassPilotAuth } from '../../../hooks/usePassPilotAuth';
 import { apiRequest } from '../../../lib/queryClient';
 import { useLicenses } from '../../../contexts/LicenseContext';
-import SubstituteBanner from '../../../shared/components/SubstituteBanner';
 import {
   ArrowLeft,
   ClipboardList,
@@ -187,9 +186,6 @@ export default function AppShell({ children, currentTab, onTabChange }) {
           </DropdownMenu>
         </div>
       </header>
-
-      {/* Substitute teacher banner */}
-      {!isAdmin && <SubstituteBanner />}
 
       {/* Main content */}
       <main className="flex-1 overflow-auto pb-20">{children}</main>

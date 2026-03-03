@@ -312,3 +312,25 @@ export const activityLog = pgTable(
 
 export type ActivityLogEntry = typeof activityLog.$inferSelect;
 export type InsertActivityLogEntry = typeof activityLog.$inferInsert;
+
+// ============================================================================
+// Homeroom Teachers - Co-teacher support (multiple teachers per homeroom)
+// ============================================================================
+export const homeroomTeachers = pgTable(
+  "homeroom_teachers",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    homeroomId: text("homeroom_id").notNull(),
+    teacherId: text("teacher_id").notNull(),
+    role: text("role").notNull().default("primary"), // 'primary' | 'co-teacher'
+    assignedAt: timestamp("assigned_at").notNull().default(sql`now()`),
+  },
+  (table) => [
+    unique("homeroom_teachers_unique").on(table.homeroomId, table.teacherId),
+    index("homeroom_teachers_homeroom_id_idx").on(table.homeroomId),
+    index("homeroom_teachers_teacher_id_idx").on(table.teacherId),
+  ]
+);
+
+export type HomeroomTeacher = typeof homeroomTeachers.$inferSelect;
+export type InsertHomeroomTeacher = typeof homeroomTeachers.$inferInsert;

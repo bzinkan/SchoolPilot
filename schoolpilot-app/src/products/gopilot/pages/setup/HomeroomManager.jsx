@@ -1,6 +1,69 @@
 import React, { useState } from 'react';
-import { Plus, Trash2, School } from 'lucide-react';
+import { Plus, Trash2, School, UserPlus, X } from 'lucide-react';
+import { useQuery, useMutation } from '@tanstack/react-query';
+import { apiRequest, queryClient } from '../../../../lib/queryClient';
 import { GRADES } from './constants';
+
+function HomeroomCoTeachers({ homeroomId, staff }) {
+  const [showAdd, setShowAdd] = useState(false);
+  const { data } = useQuery({
+    queryKey: ['/api/homerooms', homeroomId, 'teachers'],
+    queryFn: () => apiRequest('GET', `/homerooms/${homeroomId}/teachers`),
+  });
+  const teachers = data?.teachers || [];
+  const coTeachers = teachers.filter(t => t.role === 'co-teacher');
+
+  const addMutation = useMutation({
+    mutationFn: (teacherId) => apiRequest('POST', `/homerooms/${homeroomId}/teachers`, { teacherId }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/homerooms', homeroomId, 'teachers'] });
+      setShowAdd(false);
+    },
+  });
+
+  const removeMutation = useMutation({
+    mutationFn: (teacherId) => apiRequest('DELETE', `/homerooms/${homeroomId}/teachers/${teacherId}`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['/api/homerooms', homeroomId, 'teachers'] }),
+  });
+
+  const availableStaff = (staff || []).filter(
+    s => s.role === 'teacher' && !teachers.some(t => t.teacherId === String(s.id))
+  );
+
+  return (
+    <div className="mt-2 pt-2 border-t dark:border-slate-700">
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-xs font-medium text-gray-500 dark:text-slate-400">Co-Teachers</span>
+        <button onClick={() => setShowAdd(!showAdd)} className="text-xs text-indigo-600 hover:text-indigo-700 flex items-center gap-0.5">
+          <UserPlus className="w-3 h-3" /> Add
+        </button>
+      </div>
+      {coTeachers.map(ct => (
+        <div key={ct.id} className="flex items-center justify-between text-xs py-0.5">
+          <span className="text-gray-600 dark:text-slate-300">{ct.teacher?.name || ct.teacherId}</span>
+          <button onClick={() => removeMutation.mutate(ct.teacherId)} className="text-gray-400 hover:text-red-500">
+            <X className="w-3 h-3" />
+          </button>
+        </div>
+      ))}
+      {coTeachers.length === 0 && !showAdd && (
+        <p className="text-xs text-gray-400 dark:text-slate-500">None</p>
+      )}
+      {showAdd && (
+        <select
+          className="w-full mt-1 text-xs px-2 py-1 border dark:border-slate-600 dark:bg-slate-800 dark:text-white rounded"
+          defaultValue=""
+          onChange={(e) => { if (e.target.value) addMutation.mutate(e.target.value); }}
+        >
+          <option value="">Select teacher...</option>
+          {availableStaff.map(s => (
+            <option key={s.id} value={s.id}>{s.first_name} {s.last_name}</option>
+          ))}
+        </select>
+      )}
+    </div>
+  );
+}
 
 export default function HomeroomManager({ homerooms, students, staff, onAdd, onRemove }) {
   const [showForm, setShowForm] = useState(false);
@@ -80,19 +143,22 @@ export default function HomeroomManager({ homerooms, students, staff, onAdd, onR
           {homerooms.map(hr => {
             const count = students.filter(s => s.homeroom === hr.id).length;
             return (
-              <div key={hr.id} className="bg-white dark:bg-slate-900 rounded-xl border dark:border-slate-700 p-4 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-indigo-100 dark:bg-indigo-900/30 rounded-lg flex items-center justify-center">
-                    <School className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+              <div key={hr.id} className="bg-white dark:bg-slate-900 rounded-xl border dark:border-slate-700 p-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-indigo-100 dark:bg-indigo-900/30 rounded-lg flex items-center justify-center">
+                      <School className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+                    </div>
+                    <div>
+                      <p className="font-medium">{hr.teacher?.name || hr.name}</p>
+                      <p className="text-sm text-gray-500 dark:text-slate-400">Grade {hr.grade} · {count} student{count !== 1 ? 's' : ''}</p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="font-medium">{hr.teacher?.name || hr.name}</p>
-                    <p className="text-sm text-gray-500 dark:text-slate-400">Grade {hr.grade} · {count} student{count !== 1 ? 's' : ''}</p>
-                  </div>
+                  <button onClick={() => onRemove(hr.id)} className="text-gray-400 dark:text-slate-500 hover:text-red-600">
+                    <Trash2 className="w-4 h-4" />
+                  </button>
                 </div>
-                <button onClick={() => onRemove(hr.id)} className="text-gray-400 dark:text-slate-500 hover:text-red-600">
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                <HomeroomCoTeachers homeroomId={hr.id} staff={staff} />
               </div>
             );
           })}

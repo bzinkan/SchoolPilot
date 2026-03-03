@@ -11,8 +11,6 @@ import { useGoPilotAuth } from '../../../hooks/useGoPilotAuth';
 import { useLicenses } from '../../../contexts/LicenseContext';
 import { useSocket } from '../../../contexts/SocketContext';
 import api from '../../../shared/utils/api';
-import SubstituteBanner from '../../../shared/components/SubstituteBanner';
-
 // Utility Components
 const Badge = ({ children, variant = 'default', size = 'md', pulse = false }) => {
   const variants = {
@@ -464,9 +462,6 @@ export default function TeacherView() {
           </div>
         </div>
       </header>
-
-      {/* Substitute teacher banner */}
-      <SubstituteBanner />
 
       {/* 3-Panel Layout */}
       <div className="flex h-[calc(100vh-73px)]">

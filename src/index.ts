@@ -64,30 +64,68 @@ import { pool } from "./db.js";
     console.warn("[migration] gopilot_role migration skipped:", (err as Error).message);
   }
 
-  // Substitute assignments table for temporary teacher coverage
+  // Drop legacy substitute_assignments table
+  try {
+    await pool.query(`DROP TABLE IF EXISTS substitute_assignments`);
+    console.log("[migration] substitute_assignments table dropped");
+  } catch (err) {
+    console.warn("[migration] substitute_assignments drop skipped:", (err as Error).message);
+  }
+
+  // Co-teacher junction tables
   try {
     await pool.query(`
-      CREATE TABLE IF NOT EXISTS substitute_assignments (
+      CREATE TABLE IF NOT EXISTS group_teachers (
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
-        school_id TEXT NOT NULL,
-        substitute_user_id TEXT NOT NULL,
-        absent_teacher_id TEXT NOT NULL,
-        start_date TIMESTAMP NOT NULL,
-        end_date TIMESTAMP NOT NULL,
-        notes TEXT,
-        status TEXT NOT NULL DEFAULT 'active',
-        created_by TEXT NOT NULL,
-        created_at TIMESTAMP NOT NULL DEFAULT now()
+        group_id TEXT NOT NULL,
+        teacher_id TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'primary',
+        assigned_at TIMESTAMP NOT NULL DEFAULT now(),
+        UNIQUE(group_id, teacher_id)
       )
     `);
-    await pool.query(`CREATE INDEX IF NOT EXISTS substitute_assignments_school_id_idx ON substitute_assignments (school_id)`);
-    await pool.query(`CREATE INDEX IF NOT EXISTS substitute_assignments_substitute_user_id_idx ON substitute_assignments (substitute_user_id)`);
-    await pool.query(`CREATE INDEX IF NOT EXISTS substitute_assignments_absent_teacher_id_idx ON substitute_assignments (absent_teacher_id)`);
-    await pool.query(`CREATE INDEX IF NOT EXISTS substitute_assignments_status_idx ON substitute_assignments (status)`);
-    await pool.query(`CREATE INDEX IF NOT EXISTS substitute_assignments_dates_idx ON substitute_assignments (start_date, end_date)`);
-    console.log("[migration] substitute_assignments table ready");
+    await pool.query(`CREATE INDEX IF NOT EXISTS group_teachers_group_id_idx ON group_teachers (group_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS group_teachers_teacher_id_idx ON group_teachers (teacher_id)`);
+    console.log("[migration] group_teachers table ready");
   } catch (err) {
-    console.warn("[migration] substitute_assignments migration skipped:", (err as Error).message);
+    console.warn("[migration] group_teachers migration skipped:", (err as Error).message);
+  }
+
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS homeroom_teachers (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        homeroom_id TEXT NOT NULL,
+        teacher_id TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'primary',
+        assigned_at TIMESTAMP NOT NULL DEFAULT now(),
+        UNIQUE(homeroom_id, teacher_id)
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS homeroom_teachers_homeroom_id_idx ON homeroom_teachers (homeroom_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS homeroom_teachers_teacher_id_idx ON homeroom_teachers (teacher_id)`);
+    console.log("[migration] homeroom_teachers table ready");
+  } catch (err) {
+    console.warn("[migration] homeroom_teachers migration skipped:", (err as Error).message);
+  }
+
+  // Seed co-teacher tables from existing teacherId columns
+  try {
+    await pool.query(`
+      INSERT INTO group_teachers (group_id, teacher_id, role)
+      SELECT id, teacher_id, 'primary' FROM groups
+      WHERE teacher_id IS NOT NULL
+      ON CONFLICT DO NOTHING
+    `);
+    await pool.query(`
+      INSERT INTO homeroom_teachers (homeroom_id, teacher_id, role)
+      SELECT id, teacher_id, 'primary' FROM homerooms
+      WHERE teacher_id IS NOT NULL
+      ON CONFLICT DO NOTHING
+    `);
+    console.log("[migration] co-teacher data seeded from existing teacherId columns");
+  } catch (err) {
+    console.warn("[migration] co-teacher data seed skipped:", (err as Error).message);
   }
 
   // One-time: update super-admin email alias in users + audit_logs
@@ -103,17 +141,6 @@ import { pool } from "./db.js";
     console.warn("[migration] email alias update skipped:", (err as Error).message);
   }
 })();
-
-// Expire stale substitute assignments every 15 minutes
-import { expireSubstituteAssignments } from "./services/storage.js";
-setInterval(async () => {
-  try {
-    const count = await expireSubstituteAssignments();
-    if (count > 0) console.log(`[cron] Expired ${count} substitute assignment(s)`);
-  } catch (err) {
-    console.error("[cron] Failed to expire substitute assignments:", err);
-  }
-}, 15 * 60 * 1000);
 
 const app = createApp();
 const server = http.createServer(app);

@@ -36,8 +36,6 @@ import { useClassPilotAuth } from '../../../hooks/useClassPilotAuth';
 import { useLicenses } from '../../../contexts/LicenseContext';
 import { ThemeToggle } from '../../../components/ThemeToggle';
 import ClassPilotSidebar from '../components/ClassPilotSidebar';
-import SubstituteBanner from '../../../shared/components/SubstituteBanner';
-
 // Helper to normalize grade levels (strip "th", "rd", "st", "nd" suffixes)
 function normalizeGrade(grade) {
   if (!grade) return null;
@@ -1207,9 +1205,6 @@ export default function Dashboard() {
           </div>
         </div>
       </header>
-
-      {/* Substitute teacher banner */}
-      {isTeacher && <SubstituteBanner />}
 
       {/* Sidebar + Main Content */}
       <ClassPilotSidebar isOpen={sidebarOpen} onToggle={handleSidebarToggle} />

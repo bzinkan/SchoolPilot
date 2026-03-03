@@ -541,3 +541,25 @@ export const teacherStudents = pgTable("teacher_students", {
 
 export type TeacherStudent = typeof teacherStudents.$inferSelect;
 export type InsertTeacherStudent = typeof teacherStudents.$inferInsert;
+
+// ============================================================================
+// Group Teachers - Co-teacher support (multiple teachers per group)
+// ============================================================================
+export const groupTeachers = pgTable(
+  "group_teachers",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    groupId: text("group_id").notNull(),
+    teacherId: text("teacher_id").notNull(),
+    role: text("role").notNull().default("primary"), // 'primary' | 'co-teacher'
+    assignedAt: timestamp("assigned_at").notNull().default(sql`now()`),
+  },
+  (table) => [
+    unique("group_teachers_unique").on(table.groupId, table.teacherId),
+    index("group_teachers_group_id_idx").on(table.groupId),
+    index("group_teachers_teacher_id_idx").on(table.teacherId),
+  ]
+);
+
+export type GroupTeacher = typeof groupTeachers.$inferSelect;
+export type InsertGroupTeacher = typeof groupTeachers.$inferInsert;

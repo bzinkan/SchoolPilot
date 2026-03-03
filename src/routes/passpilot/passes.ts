@@ -20,7 +20,6 @@ import {
   getTeacherGrades,
   getSchoolById,
   getSettingsForSchool,
-  getSubstitutedTeacherIds,
 } from "../../services/storage.js";
 import { isWithinTrackingWindow } from "../../services/schoolHours.js";
 import type { Pass } from "../../schema/passpilot.js";
@@ -119,18 +118,6 @@ router.get("/", async (req, res, next) => {
     ) {
       const assignments = await getTeacherGrades(req.authUser!.id);
       const assignedGradeIds = new Set(assignments.map((a) => a.teacherGrade.gradeId));
-
-      // Include grades from substitute assignments
-      const subTeacherIds = await getSubstitutedTeacherIds(
-        req.authUser!.id,
-        res.locals.schoolId!
-      );
-      for (const tid of subTeacherIds) {
-        const subAssignments = await getTeacherGrades(tid);
-        for (const a of subAssignments) {
-          assignedGradeIds.add(a.teacherGrade.gradeId);
-        }
-      }
 
       rawPasses = rawPasses.filter(
         (p) => p.gradeId && assignedGradeIds.has(p.gradeId)

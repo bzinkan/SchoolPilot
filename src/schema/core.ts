@@ -167,31 +167,3 @@ export const schoolMemberships = pgTable(
 export type SchoolMembership = typeof schoolMemberships.$inferSelect;
 export type InsertSchoolMembership = typeof schoolMemberships.$inferInsert;
 
-// ============================================================================
-// Substitute Assignments - Temporary teacher coverage across all products
-// ============================================================================
-export const substituteAssignments = pgTable(
-  "substitute_assignments",
-  {
-    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-    schoolId: text("school_id").notNull(),
-    substituteUserId: text("substitute_user_id").notNull(),
-    absentTeacherId: text("absent_teacher_id").notNull(),
-    startDate: timestamp("start_date").notNull(),
-    endDate: timestamp("end_date").notNull(),
-    notes: text("notes"),
-    status: text("status").notNull().default("active"), // active | expired | canceled
-    createdBy: text("created_by").notNull(),
-    createdAt: timestamp("created_at").notNull().default(sql`now()`),
-  },
-  (table) => [
-    index("substitute_assignments_school_id_idx").on(table.schoolId),
-    index("substitute_assignments_substitute_user_id_idx").on(table.substituteUserId),
-    index("substitute_assignments_absent_teacher_id_idx").on(table.absentTeacherId),
-    index("substitute_assignments_status_idx").on(table.status),
-    index("substitute_assignments_dates_idx").on(table.startDate, table.endDate),
-  ]
-);
-
-export type SubstituteAssignment = typeof substituteAssignments.$inferSelect;
-export type InsertSubstituteAssignment = typeof substituteAssignments.$inferInsert;
