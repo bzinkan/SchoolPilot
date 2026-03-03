@@ -5,6 +5,7 @@ import {
   schools,
   schoolMemberships,
   productLicenses,
+  substituteAssignments,
   type User,
   type InsertUser,
   type School,
@@ -13,6 +14,8 @@ import {
   type InsertSchoolMembership,
   type ProductLicense,
   type InsertProductLicense,
+  type SubstituteAssignment,
+  type InsertSubstituteAssignment,
 } from "../schema/core.js";
 import {
   students,
@@ -3293,5 +3296,97 @@ export async function getClassroomCourseStudents(
     .select()
     .from(classroomCourseStudents)
     .where(eq(classroomCourseStudents.courseId, courseId));
+}
+
+// ============================================================================
+// Substitute Assignments
+// ============================================================================
+
+export async function getActiveSubstitutionsForUser(
+  substituteUserId: string,
+  schoolId: string
+): Promise<SubstituteAssignment[]> {
+  const now = new Date();
+  return db
+    .select()
+    .from(substituteAssignments)
+    .where(
+      and(
+        eq(substituteAssignments.substituteUserId, substituteUserId),
+        eq(substituteAssignments.schoolId, schoolId),
+        eq(substituteAssignments.status, "active"),
+        sql`${substituteAssignments.startDate} <= ${now}`,
+        sql`${substituteAssignments.endDate} >= ${now}`
+      )
+    );
+}
+
+export async function getSubstitutedTeacherIds(
+  userId: string,
+  schoolId: string
+): Promise<string[]> {
+  const subs = await getActiveSubstitutionsForUser(userId, schoolId);
+  return subs.map((s) => s.absentTeacherId);
+}
+
+export async function getSubstitutionsBySchool(
+  schoolId: string
+): Promise<SubstituteAssignment[]> {
+  return db
+    .select()
+    .from(substituteAssignments)
+    .where(eq(substituteAssignments.schoolId, schoolId))
+    .orderBy(desc(substituteAssignments.createdAt));
+}
+
+export async function getActiveSubstitutionsBySchool(
+  schoolId: string
+): Promise<SubstituteAssignment[]> {
+  const now = new Date();
+  return db
+    .select()
+    .from(substituteAssignments)
+    .where(
+      and(
+        eq(substituteAssignments.schoolId, schoolId),
+        eq(substituteAssignments.status, "active"),
+        sql`${substituteAssignments.endDate} >= ${now}`
+      )
+    );
+}
+
+export async function createSubstituteAssignment(
+  data: InsertSubstituteAssignment
+): Promise<SubstituteAssignment> {
+  const [assignment] = await db
+    .insert(substituteAssignments)
+    .values(data)
+    .returning();
+  return assignment!;
+}
+
+export async function cancelSubstituteAssignment(
+  id: string
+): Promise<SubstituteAssignment | undefined> {
+  const [updated] = await db
+    .update(substituteAssignments)
+    .set({ status: "canceled" })
+    .where(eq(substituteAssignments.id, id))
+    .returning();
+  return updated;
+}
+
+export async function expireSubstituteAssignments(): Promise<number> {
+  const now = new Date();
+  const result = await db
+    .update(substituteAssignments)
+    .set({ status: "expired" })
+    .where(
+      and(
+        eq(substituteAssignments.status, "active"),
+        sql`${substituteAssignments.endDate} < ${now}`
+      )
+    );
+  return result.rowCount ?? 0;
 }
 

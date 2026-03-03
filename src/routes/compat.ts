@@ -37,6 +37,7 @@ import {
   getGroupStudents,
   getSchoolUsageSummary,
   getUserById,
+  getSubstitutedTeacherIds,
 } from "../services/storage.js";
 import db from "../db.js";
 import { heartbeats, devices as deviceTable, teachingSessions, groups, groupStudents, dailyUsage } from "../schema/classpilot.js";
@@ -841,8 +842,20 @@ router.put("/kiosk-config", ...schoolAuth, requireRole("admin"), async (req, res
 router.get("/my-classes", ...schoolAuth, async (req, res, next) => {
   try {
     const assignments = await getTeacherGrades(req.authUser!.id);
+
+    // Include classes from substitute assignments
+    const subTeacherIds = await getSubstitutedTeacherIds(
+      req.authUser!.id,
+      res.locals.schoolId!
+    );
+    const subAssignments = (
+      await Promise.all(subTeacherIds.map((tid) => getTeacherGrades(tid)))
+    ).flat();
+
+    const allAssignments = [...assignments, ...subAssignments];
+
     return res.json({
-      classes: assignments.map((a) => ({
+      classes: allAssignments.map((a) => ({
         id: a.teacherGrade.id,
         gradeId: a.teacherGrade.gradeId,
         name: a.grade.name,

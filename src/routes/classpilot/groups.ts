@@ -22,6 +22,7 @@ import {
   getSubgroupMembers,
   addSubgroupMembers,
   removeSubgroupMember,
+  getSubstitutedTeacherIds,
 } from "../../services/storage.js";
 
 const router = Router();
@@ -56,6 +57,13 @@ router.get("/", ...auth, async (req, res, next) => {
       groups = await getGroupsBySchool(schoolId);
     } else {
       groups = await getGroupsByTeacher(user.id);
+
+      // Include groups from substitute assignments
+      const subTeacherIds = await getSubstitutedTeacherIds(user.id, schoolId);
+      for (const tid of subTeacherIds) {
+        const subGroups = await getGroupsByTeacher(tid);
+        groups = [...groups, ...subGroups];
+      }
     }
 
     // Enrich with student counts

@@ -12,6 +12,7 @@ import {
   assignStudentsToHomeroom,
   searchStudents,
   getUserById,
+  getSubstitutedTeacherIds,
 } from "../../services/storage.js";
 
 const router = Router();
@@ -26,6 +27,64 @@ const auth = [
   requireActiveSchool,
   requireProductLicense("GOPILOT"),
 ] as const;
+
+// GET /api/gopilot/homerooms/mine - Teacher's own homerooms (+ substituted)
+router.get("/mine", ...auth, async (req, res, next) => {
+  try {
+    const schoolId = res.locals.schoolId!;
+    const userId = req.authUser!.id;
+
+    // Collect teacher IDs: own + any teachers being substituted for
+    const teacherIds = [userId];
+    const subTeacherIds = await getSubstitutedTeacherIds(userId, schoolId);
+    teacherIds.push(...subTeacherIds);
+
+    const allHomerooms = await getHomeroomsBySchool(schoolId);
+    const mine = allHomerooms.filter(
+      (h) => h.teacherId && teacherIds.includes(h.teacherId)
+    );
+
+    // Get student counts
+    const allStudents = await searchStudents(schoolId, { status: "active" });
+    const countMap = new Map<string, number>();
+    for (const s of allStudents) {
+      if (s.homeroomId) {
+        countMap.set(s.homeroomId, (countMap.get(s.homeroomId) ?? 0) + 1);
+      }
+    }
+
+    // Enrich with teacher info
+    const uniqueTeacherIds = [
+      ...new Set(mine.map((r) => r.teacherId).filter(Boolean)),
+    ] as string[];
+    const teacherMap = new Map<
+      string,
+      { id: string; firstName: string; lastName: string }
+    >();
+    for (const tid of uniqueTeacherIds) {
+      const user = await getUserById(tid);
+      if (user) teacherMap.set(tid, user);
+    }
+
+    const homerooms = mine.map((r) => ({
+      ...r,
+      teacher:
+        r.teacherId && teacherMap.has(r.teacherId)
+          ? {
+              id: teacherMap.get(r.teacherId)!.id,
+              firstName: teacherMap.get(r.teacherId)!.firstName,
+              lastName: teacherMap.get(r.teacherId)!.lastName,
+              name: `${teacherMap.get(r.teacherId)!.firstName} ${teacherMap.get(r.teacherId)!.lastName}`,
+            }
+          : null,
+      studentCount: countMap.get(r.id) ?? 0,
+    }));
+
+    return res.json({ homerooms });
+  } catch (err) {
+    next(err);
+  }
+});
 
 // GET /api/gopilot/homerooms - List homerooms with teacher and student count
 router.get("/", ...auth, async (req, res, next) => {
