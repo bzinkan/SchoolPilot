@@ -2,7 +2,6 @@ import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "../../../lib/queryClient";
 import { useNavigate } from "react-router-dom";
-import { useClassPilotAuth } from "../../../hooks/useClassPilotAuth";
 import { useToast } from "../../../hooks/use-toast";
 import { ThemeToggle } from "../../../components/ThemeToggle";
 import { Button } from "../../../components/ui/button";
@@ -56,7 +55,6 @@ import {
 export default function AdminSubstitutes() {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { currentUser } = useClassPilotAuth();
 
   const [assignDialogOpen, setAssignDialogOpen] = useState(false);
   const [cancelTarget, setCancelTarget] = useState(null);
