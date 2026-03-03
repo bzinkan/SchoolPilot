@@ -7,11 +7,11 @@ import {
   getAbsentStudentIds,
   getAttendanceBySchool,
   getStudentAttendance,
-  markStudentAbsent,
   markStudentsAbsentBulk,
   removeAbsence,
   getAttendanceStats,
   getUserById,
+  getStudentsBySchool,
 } from "../../services/storage.js";
 
 const router = Router();
@@ -116,6 +116,16 @@ router.post("/", ...staffAuth, async (req, res, next) => {
 
     const attendanceDate = date || todayDate();
     const schoolId = res.locals.schoolId!;
+
+    // Verify all students belong to this school
+    const schoolStudents = await getStudentsBySchool(schoolId);
+    const schoolStudentIds = new Set(schoolStudents.map((s) => s.id));
+    const invalid = ids.filter((id: string) => !schoolStudentIds.has(id));
+    if (invalid.length > 0) {
+      return res.status(400).json({
+        error: `Students not found in this school: ${invalid.join(", ")}`,
+      });
+    }
 
     const records = await markStudentsAbsentBulk(schoolId, ids, {
       date: attendanceDate,

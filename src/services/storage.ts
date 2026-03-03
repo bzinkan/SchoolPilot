@@ -3492,7 +3492,7 @@ export async function markStudentAbsent(data: {
   return row;
 }
 
-/** Bulk mark students absent for a given date */
+/** Bulk mark students absent for a given date (atomic transaction) */
 export async function markStudentsAbsentBulk(
   schoolId: string,
   studentIds: string[],
@@ -3505,12 +3505,37 @@ export async function markStudentsAbsentBulk(
     source?: string;
   }
 ) {
-  const results = await Promise.all(
-    studentIds.map((studentId) =>
-      markStudentAbsent({ schoolId, studentId, ...data })
-    )
-  );
-  return results;
+  return await db.transaction(async (tx) => {
+    const results = [];
+    for (const studentId of studentIds) {
+      const [row] = await tx
+        .insert(studentAttendance)
+        .values({
+          schoolId,
+          studentId,
+          date: data.date,
+          status: data.status,
+          reason: data.reason || null,
+          notes: data.notes || null,
+          markedBy: data.markedBy,
+          source: data.source || "manual",
+        })
+        .onConflictDoUpdate({
+          target: [studentAttendance.studentId, studentAttendance.date],
+          set: {
+            status: sql`EXCLUDED.status`,
+            reason: sql`EXCLUDED.reason`,
+            notes: sql`EXCLUDED.notes`,
+            markedBy: sql`EXCLUDED.marked_by`,
+            source: sql`EXCLUDED.source`,
+            updatedAt: sql`now()`,
+          },
+        })
+        .returning();
+      results.push(row);
+    }
+    return results;
+  });
 }
 
 /** Remove an absence record (student showed up) */
