@@ -7,7 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "../../../../lib/queryClient";
 import { usePassPilotAuth } from "../../../../hooks/usePassPilotAuth";
 import { formatTimeFull } from "../../../../lib/date-utils";
-import { Users, Clock, UserCheck, Timer, Heart, AlertTriangle, ChevronDown, Edit3, X, Search, Bath, MapPin, Building2, HelpCircle, Triangle, Monitor } from "lucide-react";
+import { Users, Clock, UserCheck, Timer, Heart, AlertTriangle, ChevronDown, Edit3, X, Search, Bath, MapPin, Building2, HelpCircle, Triangle, Monitor, ClipboardCheck } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -24,6 +24,7 @@ import {
 import { Input } from "../../../../components/ui/input";
 import { Label } from "../../../../components/ui/label";
 import { useAbsentStudents } from "../../../../hooks/useAbsentStudents";
+import { AttendancePanel } from "../../../../components/AttendancePanel";
 
 function MyClassTab() {
   const [activeGradeId, setActiveGradeId] = useState('');
@@ -32,6 +33,7 @@ function MyClassTab() {
   const [isCustomReasonDialogOpen, setIsCustomReasonDialogOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [kioskGradeId, setKioskGradeId] = useState(null);
+  const [showAttendance, setShowAttendance] = useState(false);
 
   const { isAdmin, school } = usePassPilotAuth();
   const tz = school?.schoolTimezone ?? "America/New_York";
@@ -411,25 +413,46 @@ function MyClassTab() {
             );
           })}
           {currentActiveGrade && (
-            <Button
-              variant={kioskGradeId === currentActiveGrade.id ? "default" : "outline"}
-              size="sm"
-              onClick={() => {
-                if (kioskGradeId === currentActiveGrade.id) {
-                  handleClearKiosk();
-                } else {
-                  handleSendToKiosk(currentActiveGrade.id);
-                }
-              }}
-              className="flex items-center gap-1.5"
-              title={kioskGradeId === currentActiveGrade.id ? "Click to clear kiosk" : "Send this grade to kiosk"}
-            >
-              <Monitor className="w-4 h-4" />
-              {kioskGradeId === currentActiveGrade.id ? "On Kiosk" : "Send to Kiosk"}
-            </Button>
+            <>
+              <Button
+                variant={showAttendance ? "default" : "outline"}
+                size="sm"
+                onClick={() => setShowAttendance(!showAttendance)}
+                className="flex items-center gap-1.5"
+              >
+                <ClipboardCheck className="w-4 h-4" />
+                Attendance
+              </Button>
+              <Button
+                variant={kioskGradeId === currentActiveGrade.id ? "default" : "outline"}
+                size="sm"
+                onClick={() => {
+                  if (kioskGradeId === currentActiveGrade.id) {
+                    handleClearKiosk();
+                  } else {
+                    handleSendToKiosk(currentActiveGrade.id);
+                  }
+                }}
+                className="flex items-center gap-1.5"
+                title={kioskGradeId === currentActiveGrade.id ? "Click to clear kiosk" : "Send this grade to kiosk"}
+              >
+                <Monitor className="w-4 h-4" />
+                {kioskGradeId === currentActiveGrade.id ? "On Kiosk" : "Send to Kiosk"}
+              </Button>
+            </>
           )}
         </div>
       </div>
+
+      {/* Attendance Panel */}
+      {showAttendance && currentActiveGrade && (
+        <div className="mb-6">
+          <AttendancePanel
+            students={gradeStudents}
+            onClose={() => setShowAttendance(false)}
+          />
+        </div>
+      )}
 
       {/* Show active grade content */}
       {currentActiveGrade && (

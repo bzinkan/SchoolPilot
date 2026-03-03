@@ -4,7 +4,7 @@ import {
   ChevronRight, ChevronDown, AlertTriangle, CheckCircle2, Timer,
   Volume2, VolumeX, LogOut, Home, RefreshCw, User,
   AlertCircle, Send, Coffee, Hand, MapPin, Smartphone, Filter,
-  Loader2, ArrowRight, Megaphone
+  Loader2, ArrowRight, Megaphone, ClipboardCheck
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useGoPilotAuth } from '../../../hooks/useGoPilotAuth';
@@ -12,6 +12,7 @@ import { useLicenses } from '../../../contexts/LicenseContext';
 import { useSocket } from '../../../contexts/SocketContext';
 import api from '../../../shared/utils/api';
 import { useAbsentStudents } from '../../../hooks/useAbsentStudents';
+import { AttendancePanel } from '../../../components/AttendancePanel';
 
 // Utility Components
 const Badge = ({ children, variant = 'default', size = 'md', pulse = false }) => {
@@ -66,6 +67,7 @@ export default function TeacherView() {
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [showAttendance, setShowAttendance] = useState(false);
   const [homeroom, setHomeroom] = useState(null);
   const [session, setSession] = useState(null);
   const [students, setStudents] = useState([]);
@@ -472,12 +474,33 @@ export default function TeacherView() {
         {/* LEFT PANEL - Class Roster */}
         <aside className="w-64 xl:w-72 bg-white border-r overflow-y-auto flex-shrink-0 hidden lg:block">
           <div className="p-3 border-b bg-gray-50">
-            <h2 className="font-semibold text-sm text-gray-700 flex items-center gap-2">
-              <Users className="w-4 h-4" />
-              Class Roster
-              <span className="text-xs text-gray-400 ml-auto">{students.length} students</span>
-            </h2>
+            <div className="flex items-center justify-between">
+              <h2 className="font-semibold text-sm text-gray-700 flex items-center gap-2">
+                <Users className="w-4 h-4" />
+                Class Roster
+                <span className="text-xs text-gray-400">{students.length}</span>
+              </h2>
+              <button
+                onClick={() => setShowAttendance(!showAttendance)}
+                className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors ${showAttendance ? 'bg-blue-600 text-white' : 'bg-white border border-gray-300 text-gray-600 hover:bg-gray-100'}`}
+              >
+                <ClipboardCheck className="w-3.5 h-3.5" />
+                Attendance
+              </button>
+            </div>
           </div>
+          {showAttendance && (
+            <div className="p-2 border-b">
+              <AttendancePanel
+                students={students.map((s) => ({
+                  id: s.id,
+                  firstName: s.first_name || s.firstName || '',
+                  lastName: s.last_name || s.lastName || '',
+                }))}
+                onClose={() => setShowAttendance(false)}
+              />
+            </div>
+          )}
           <div className="divide-y">
             {rosterStudents.map(student => {
               const TypeIcon = getTypeIcon(student.dismissal_type || student.dismissalType);
@@ -612,12 +635,33 @@ export default function TeacherView() {
           <div className="lg:hidden mt-6">
             <Card>
               <div className="p-3 border-b bg-gray-50">
-                <h2 className="font-semibold text-sm text-gray-700 flex items-center gap-2">
-                  <Users className="w-4 h-4" />
-                  Class Roster
-                  <span className="text-xs text-gray-400 ml-auto">{students.length} students</span>
-                </h2>
+                <div className="flex items-center justify-between">
+                  <h2 className="font-semibold text-sm text-gray-700 flex items-center gap-2">
+                    <Users className="w-4 h-4" />
+                    Class Roster
+                    <span className="text-xs text-gray-400">{students.length}</span>
+                  </h2>
+                  <button
+                    onClick={() => setShowAttendance(!showAttendance)}
+                    className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors ${showAttendance ? 'bg-blue-600 text-white' : 'bg-white border border-gray-300 text-gray-600 hover:bg-gray-100'}`}
+                  >
+                    <ClipboardCheck className="w-3.5 h-3.5" />
+                    Attendance
+                  </button>
+                </div>
               </div>
+              {showAttendance && (
+                <div className="p-2 border-b">
+                  <AttendancePanel
+                    students={students.map((s) => ({
+                      id: s.id,
+                      firstName: s.first_name || s.firstName || '',
+                      lastName: s.last_name || s.lastName || '',
+                    }))}
+                    onClose={() => setShowAttendance(false)}
+                  />
+                </div>
+              )}
               <div className="divide-y">
                 {rosterStudents.map(student => {
                   const TypeIcon = getTypeIcon(student.dismissal_type || student.dismissalType);

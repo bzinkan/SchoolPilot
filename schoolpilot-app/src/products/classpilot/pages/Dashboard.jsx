@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useNavigate } from 'react-router-dom';
-import { Monitor, Users, Activity, Settings as SettingsIcon, LogOut, Download, Calendar, Shield, AlertTriangle, UserCog, Plus, X, GraduationCap, WifiOff, Video, MonitorPlay, TabletSmartphone, Lock, Unlock, Layers, Route, CheckSquare, XSquare, User, List, ShieldBan, Eye, EyeOff, Timer, Clock, BarChart3, Trash2, UsersRound, Filter, Hand, MessageSquareOff, MessageSquare, Send } from "lucide-react";
+import { Monitor, Users, Activity, Settings as SettingsIcon, LogOut, Download, Calendar, Shield, AlertTriangle, UserCog, Plus, X, GraduationCap, WifiOff, Video, MonitorPlay, TabletSmartphone, Lock, Unlock, Layers, Route, CheckSquare, XSquare, User, List, ShieldBan, Eye, EyeOff, Timer, Clock, BarChart3, Trash2, UsersRound, Filter, Hand, MessageSquareOff, MessageSquare, Send, ClipboardCheck } from "lucide-react";
 import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
 import { Badge } from '../../../components/ui/badge';
@@ -37,6 +37,7 @@ import { useLicenses } from '../../../contexts/LicenseContext';
 import { ThemeToggle } from '../../../components/ThemeToggle';
 import ClassPilotSidebar from '../components/ClassPilotSidebar';
 import { useAbsentStudents } from '../../../hooks/useAbsentStudents';
+import { AttendancePanel } from '../../../components/AttendancePanel';
 
 // Helper to normalize grade levels (strip "th", "rd", "st", "nd" suffixes)
 function normalizeGrade(grade) {
@@ -66,6 +67,7 @@ export default function Dashboard() {
   const showSidebar = (hasPassPilot || hasGoPilot) && sidebarOpen;
   const [selectedStudent, setSelectedStudent] = useState(null);
   const [selectedStudentIds, setSelectedStudentIds] = useState(new Set());
+  const [showAttendance, setShowAttendance] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedGrade, setSelectedGrade] = useState(() => {
     try {
@@ -1183,6 +1185,9 @@ export default function Dashboard() {
             {/* Right: Actions */}
             <div className="flex items-center gap-2">
               <ThemeToggle />
+              <button onClick={() => setShowAttendance(!showAttendance)} className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium border transition-colors ${showAttendance ? 'bg-primary text-primary-foreground border-primary' : 'bg-transparent border-slate-600 text-slate-400 hover:bg-slate-800'}`} data-testid="button-attendance">
+                <ClipboardCheck className="h-4 w-4" /> Attendance
+              </button>
               <button onClick={handleOpenExportDialog} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-transparent border border-slate-600 text-slate-400 hover:bg-slate-800 transition-colors" data-testid="button-export-excel">
                 <Download className="h-4 w-4" /> Export CSV
               </button>
@@ -1208,6 +1213,19 @@ export default function Dashboard() {
           </div>
         </div>
       </header>
+
+      {/* Attendance Panel */}
+      {showAttendance && (
+        <div className="px-6 py-3 border-b border-border bg-background">
+          <AttendancePanel
+            students={sessionFilteredStudents.map((s) => {
+              const parts = (s.studentName || '').split(' ');
+              return { id: s.studentId, firstName: parts[0] || '', lastName: parts.slice(1).join(' ') || '' };
+            })}
+            onClose={() => setShowAttendance(false)}
+          />
+        </div>
+      )}
 
       {/* Sidebar + Main Content */}
       <ClassPilotSidebar isOpen={sidebarOpen} onToggle={handleSidebarToggle} />
