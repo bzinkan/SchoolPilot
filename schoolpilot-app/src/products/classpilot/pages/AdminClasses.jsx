@@ -326,7 +326,7 @@ function ClassCard({ group, teacher, teachers, isExpanded, onToggleExpand, onDel
               Update class details and assign a teacher
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
+          <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1">
             <div className="space-y-2">
               <Label htmlFor="edit-name">Class Name</Label>
               <Input
