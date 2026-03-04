@@ -17,6 +17,7 @@ import {
   removeStudentFromFamilyGroup,
   getUnassignedStudents,
   getHomeroomById,
+  autoAssignFamilyGroups,
 } from "../../services/storage.js";
 import { generateFamilyGroupNumber } from "../../util/studentCode.js";
 
@@ -185,23 +186,11 @@ router.post(
   async (req, res, next) => {
     try {
       const schoolId = res.locals.schoolId!;
-      const unassigned = await getUnassignedStudents(schoolId);
-
-      let created = 0;
-      for (const student of unassigned) {
-        const carNum = await generateFamilyGroupNumber(schoolId);
-        const inviteToken = crypto.randomBytes(32).toString("hex");
-        const group = await createFamilyGroup({
-          schoolId,
-          carNumber: carNum,
-          familyName: `${student.lastName} Family`,
-          inviteToken,
-        });
-        await addStudentsToFamilyGroup(group.id, [student.id]);
-        created++;
-      }
-
-      return res.json({ created, total: unassigned.length });
+      const result = await autoAssignFamilyGroups(schoolId);
+      return res.json({
+        created: result.created,
+        total: result.assigned,
+      });
     } catch (err) {
       next(err);
     }

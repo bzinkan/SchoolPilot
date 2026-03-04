@@ -1722,6 +1722,69 @@ export async function getUnassignedStudents(
     .orderBy(students.lastName, students.firstName);
 }
 
+export async function autoAssignFamilyGroups(
+  schoolId: string
+): Promise<{ created: number; assigned: number }> {
+  const { generateFamilyGroupNumber } = await import(
+    "../util/studentCode.js"
+  );
+  const crypto = await import("crypto");
+
+  const unassigned = await getUnassignedStudents(schoolId);
+  if (unassigned.length === 0) return { created: 0, assigned: 0 };
+
+  // Group by lastName for sibling grouping
+  const byLastName = new Map<string, Student[]>();
+  for (const s of unassigned) {
+    const key = (s.lastName || "").trim();
+    if (!byLastName.has(key)) byLastName.set(key, []);
+    byLastName.get(key)!.push(s);
+  }
+
+  let created = 0;
+  let assigned = 0;
+
+  for (const [lastName, groupStudents] of byLastName) {
+    const familyName = `${lastName} Family`;
+
+    // Check if a family group with this name already exists for the school
+    const [existing] = await db
+      .select()
+      .from(familyGroups)
+      .where(
+        and(
+          eq(familyGroups.schoolId, schoolId),
+          eq(familyGroups.familyName, familyName)
+        )
+      )
+      .limit(1);
+
+    if (existing) {
+      await addStudentsToFamilyGroup(
+        existing.id,
+        groupStudents.map((s) => s.id)
+      );
+    } else {
+      const carNum = await generateFamilyGroupNumber(schoolId);
+      const inviteToken = crypto.randomBytes(32).toString("hex");
+      const group = await createFamilyGroup({
+        schoolId,
+        carNumber: carNum,
+        familyName,
+        inviteToken,
+      });
+      await addStudentsToFamilyGroup(
+        group.id,
+        groupStudents.map((s) => s.id)
+      );
+      created++;
+    }
+    assigned += groupStudents.length;
+  }
+
+  return { created, assigned };
+}
+
 export async function getFamilyGroupByInviteToken(
   token: string
 ): Promise<FamilyGroup | undefined> {

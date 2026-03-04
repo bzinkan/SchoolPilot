@@ -1,5 +1,5 @@
-import React, { useState, useCallback, useEffect } from 'react';
-import { X, Car, Plus, Trash2, Search, CheckCircle2, RefreshCw } from 'lucide-react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
+import { X, Car, Plus, Trash2, Search, CheckCircle2, RefreshCw, UserPlus } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import api from '../../../../shared/utils/api';
 
@@ -16,6 +16,8 @@ export default function CarNumbersTab({ schoolId, students }) {
   const [editingGroupId, setEditingGroupId] = useState(null);
   const [editingCarNumber, setEditingCarNumber] = useState('');
   const [showInviteGroupId, setShowInviteGroupId] = useState(null);
+  const [addingToGroupId, setAddingToGroupId] = useState(null);
+  const [addSearchTerm, setAddSearchTerm] = useState('');
 
   const clientUrl = window.location.origin;
 
@@ -72,6 +74,25 @@ export default function CarNumbersTab({ schoolId, students }) {
       console.error('Failed to create family group:', err?.response?.data || err);
       alert(err?.response?.data?.error || 'Failed to create family group');
     } finally { setCreating(false); }
+  };
+
+  // Map studentId -> groupId for move operations
+  const studentGroupMap = useMemo(() => {
+    const map = new Map();
+    groups.forEach(g => (g.students || []).forEach(s => map.set(s.id, g.id)));
+    return map;
+  }, [groups]);
+
+  const handleAddSingleStudent = async (groupId, studentId) => {
+    try {
+      // If student is in another group, remove first
+      const currentGroup = studentGroupMap.get(studentId);
+      if (currentGroup) {
+        await api.delete(`/family-groups/${currentGroup}/students/${studentId}`);
+      }
+      await api.post(`/family-groups/${groupId}/students`, { studentIds: [studentId] });
+      await loadGroups();
+    } catch { /* ignore */ }
   };
 
   const handleAddToGroup = async (groupId) => {
@@ -285,6 +306,13 @@ export default function CarNumbersTab({ schoolId, students }) {
                     </div>
                     <div className="flex items-center gap-2">
                       <button
+                        onClick={() => { setAddingToGroupId(addingToGroupId === g.id ? null : g.id); setAddSearchTerm(''); }}
+                        className={`p-1 rounded hover:bg-indigo-50 dark:hover:bg-indigo-900/20 ${addingToGroupId === g.id ? 'text-indigo-600 bg-indigo-50 dark:bg-indigo-900/20' : 'text-gray-500 dark:text-slate-400 hover:text-indigo-600'}`}
+                        title="Add student"
+                      >
+                        <UserPlus className="w-4 h-4" />
+                      </button>
+                      <button
                         onClick={() => setShowInviteGroupId(showInviteGroupId === g.id ? null : g.id)}
                         className="text-xs text-green-600 dark:text-green-400 hover:text-green-700 font-medium px-2 py-1 rounded hover:bg-green-50 dark:hover:bg-green-900/20"
                         title="Share invite with parent"
@@ -315,6 +343,48 @@ export default function CarNumbersTab({ schoolId, students }) {
                       <span className="text-xs text-gray-400 dark:text-slate-500 italic">No students</span>
                     )}
                   </div>
+                  {addingToGroupId === g.id && (() => {
+                    const groupStudentIds = new Set((g.students || []).map(s => s.id));
+                    const available = students.filter(s => !groupStudentIds.has(s.id));
+                    const filtered = addSearchTerm
+                      ? available.filter(s => `${s.firstName || s.first_name} ${s.lastName || s.last_name}`.toLowerCase().includes(addSearchTerm.toLowerCase()))
+                      : available;
+                    return (
+                      <div className="mt-2 border dark:border-slate-600 rounded-lg overflow-hidden">
+                        <div className="relative">
+                          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 dark:text-slate-500" />
+                          <input
+                            type="text"
+                            placeholder="Search students to add..."
+                            value={addSearchTerm}
+                            onChange={(e) => setAddSearchTerm(e.target.value)}
+                            autoFocus
+                            className="w-full pl-8 pr-3 py-1.5 text-sm border-b dark:border-slate-600 dark:bg-slate-800 dark:text-white bg-gray-50"
+                          />
+                        </div>
+                        <div className="max-h-[160px] overflow-y-auto">
+                          {filtered.length === 0 ? (
+                            <p className="text-xs text-gray-400 dark:text-slate-500 text-center py-3">No students available</p>
+                          ) : (
+                            filtered.map(s => (
+                              <button
+                                key={s.id}
+                                onClick={() => handleAddSingleStudent(g.id, s.id)}
+                                className="w-full text-left px-3 py-1.5 text-sm hover:bg-indigo-50 dark:hover:bg-indigo-900/20 dark:text-white flex items-center justify-between"
+                              >
+                                <span>{s.firstName || s.first_name} {s.lastName || s.last_name}</span>
+                                {studentGroupMap.has(s.id) && (
+                                  <span className="text-xs text-gray-400 dark:text-slate-500">
+                                    #{groups.find(gg => gg.id === studentGroupMap.get(s.id))?.carNumber || groups.find(gg => gg.id === studentGroupMap.get(s.id))?.car_number}
+                                  </span>
+                                )}
+                              </button>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
                   {showInviteGroupId === g.id && (g.inviteToken || g.invite_token) && (
                     <div className="mt-3 pt-3 border-t dark:border-slate-700 flex flex-col items-center">
                       <QRCodeSVG value={`${clientUrl}/register?invite=${g.inviteToken || g.invite_token}`} size={120} />

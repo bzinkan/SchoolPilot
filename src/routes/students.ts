@@ -14,6 +14,8 @@ import {
   deleteStudent,
   searchStudents,
   bulkCreateStudents,
+  getProductLicenses,
+  autoAssignFamilyGroups,
 } from "../services/storage.js";
 import type { InsertStudent } from "../schema/students.js";
 
@@ -156,10 +158,25 @@ router.post(
       }
 
       const created = await bulkCreateStudents(toInsert);
+
+      // Auto-assign car numbers if school has GoPilot
+      let autoAssigned: number | undefined;
+      if (created.length > 0) {
+        const licenses = await getProductLicenses(res.locals.schoolId!);
+        const hasGoPilot = licenses.some(
+          (l) => l.product === "GOPILOT" && l.status === "active"
+        );
+        if (hasGoPilot) {
+          const result = await autoAssignFamilyGroups(res.locals.schoolId!);
+          autoAssigned = result.assigned;
+        }
+      }
+
       return res.status(201).json({
         imported: created.length,
         errors: errors.length > 0 ? errors : undefined,
         total: studentData.length,
+        autoAssigned,
       });
     } catch (err) {
       next(err);
@@ -242,10 +259,25 @@ const importCsvHandler = async (req: any, res: any, next: any) => {
     }
 
     const created = await bulkCreateStudents(toInsert);
+
+    // Auto-assign car numbers if school has GoPilot
+    let autoAssigned: number | undefined;
+    if (created.length > 0) {
+      const licenses = await getProductLicenses(res.locals.schoolId!);
+      const hasGoPilot = licenses.some(
+        (l) => l.product === "GOPILOT" && l.status === "active"
+      );
+      if (hasGoPilot) {
+        const result = await autoAssignFamilyGroups(res.locals.schoolId!);
+        autoAssigned = result.assigned;
+      }
+    }
+
     return res.status(201).json({
       imported: created.length,
       errors: errors.length > 0 ? errors : undefined,
       total: rows.length,
+      autoAssigned,
     });
   } catch (err) {
     next(err);
