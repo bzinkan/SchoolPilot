@@ -1651,6 +1651,8 @@ function ClassesTab() {
   const [assignGradeName, setAssignGradeName] = useState("");
   const [assignSelected, setAssignSelected] = useState(new Set());
   const [assignSearch, setAssignSearch] = useState("");
+  const [assignGradeLevel, setAssignGradeLevel] = useState("");
+  const [assignShowAll, setAssignShowAll] = useState(false);
 
   // Google Classroom sync state
   const [gcSyncOpen, setGcSyncOpen] = useState(false);
@@ -1905,7 +1907,7 @@ function ClassesTab() {
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={() => { setAssignGradeId(grade.id); setAssignGradeName(grade.name); setAssignSelected(new Set()); setAssignSearch(""); setAssignOpen(true); }}
+                    onClick={() => { setAssignGradeId(grade.id); setAssignGradeName(grade.name); const m = grade.name.match(/(\d+)/); setAssignGradeLevel(m ? m[1] : ""); setAssignShowAll(false); setAssignSelected(new Set()); setAssignSearch(""); setAssignOpen(true); }}
                     className="h-6 text-xs px-2"
                   >
                     Assign Students
@@ -2072,46 +2074,56 @@ function ClassesTab() {
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle>Assign Students to {assignGradeName}</DialogTitle></DialogHeader>
           <div className="space-y-3">
-            {unassignedStudents.length === 0 ? (
-              <p className="text-center text-sm text-muted-foreground py-4">All students are already assigned to a class.</p>
-            ) : (
-              <>
-                <div className="flex items-center justify-between">
-                  <p className="text-sm text-muted-foreground">{unassignedStudents.length} unassigned student{unassignedStudents.length !== 1 ? "s" : ""}</p>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="text-xs h-6"
-                    onClick={() => {
-                      const filtered = unassignedStudents.filter((s) => {
-                        if (!assignSearch) return true;
-                        const q = assignSearch.toLowerCase();
-                        return `${s.firstName} ${s.lastName}`.toLowerCase().includes(q);
-                      });
-                      if (assignSelected.size === filtered.length) {
-                        setAssignSelected(new Set());
-                      } else {
-                        setAssignSelected(new Set(filtered.map((s) => s.id)));
-                      }
-                    }}
-                  >
-                    {assignSelected.size > 0 ? "Deselect All" : "Select All"}
-                  </Button>
+            {(() => {
+              const gradeFiltered = unassignedStudents.filter((s) =>
+                assignShowAll || !assignGradeLevel ? true : s.gradeLevel === assignGradeLevel
+              );
+              const visible = gradeFiltered
+                .filter((s) => {
+                  if (!assignSearch) return true;
+                  const q = assignSearch.toLowerCase();
+                  return `${s.firstName} ${s.lastName}`.toLowerCase().includes(q);
+                })
+                .sort((a, b) => (a.lastName || "").localeCompare(b.lastName || ""));
+              return gradeFiltered.length === 0 && !assignShowAll ? (
+                <div className="text-center py-4 space-y-2">
+                  <p className="text-sm text-muted-foreground">No unassigned students in grade {assignGradeLevel}.</p>
+                  <Button size="sm" variant="link" onClick={() => setAssignShowAll(true)}>Show all grades</Button>
                 </div>
-                <Input
-                  placeholder="Search students..."
-                  value={assignSearch}
-                  onChange={(e) => setAssignSearch(e.target.value)}
-                />
-                <div className="max-h-[280px] overflow-y-auto border rounded-md divide-y">
-                  {unassignedStudents
-                    .filter((s) => {
-                      if (!assignSearch) return true;
-                      const q = assignSearch.toLowerCase();
-                      return `${s.firstName} ${s.lastName}`.toLowerCase().includes(q);
-                    })
-                    .sort((a, b) => (a.lastName || "").localeCompare(b.lastName || ""))
-                    .map((s) => (
+              ) : gradeFiltered.length === 0 ? (
+                <p className="text-center text-sm text-muted-foreground py-4">All students are already assigned to a class.</p>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm text-muted-foreground">{gradeFiltered.length} student{gradeFiltered.length !== 1 ? "s" : ""}</p>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="text-xs h-6"
+                      onClick={() => {
+                        if (assignSelected.size === visible.length) {
+                          setAssignSelected(new Set());
+                        } else {
+                          setAssignSelected(new Set(visible.map((s) => s.id)));
+                        }
+                      }}
+                    >
+                      {assignSelected.size > 0 ? "Deselect All" : "Select All"}
+                    </Button>
+                  </div>
+                  {assignGradeLevel && (
+                    <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
+                      <input type="checkbox" checked={assignShowAll} onChange={(e) => { setAssignShowAll(e.target.checked); setAssignSelected(new Set()); }} className="rounded border-gray-300" />
+                      Show all grade levels
+                    </label>
+                  )}
+                  <Input
+                    placeholder="Search students..."
+                    value={assignSearch}
+                    onChange={(e) => setAssignSearch(e.target.value)}
+                  />
+                  <div className="max-h-[280px] overflow-y-auto border rounded-md divide-y">
+                    {visible.map((s) => (
                       <label key={s.id} className="flex items-center gap-3 px-3 py-2 hover:bg-muted/50 cursor-pointer">
                         <input
                           type="checkbox"
@@ -2131,16 +2143,17 @@ function ClassesTab() {
                         </div>
                       </label>
                     ))}
-                </div>
-                <Button
-                  className="w-full"
-                  onClick={() => assignStudents.mutate({ gradeId: assignGradeId, studentIds: [...assignSelected] })}
-                  disabled={assignStudents.isPending || assignSelected.size === 0}
-                >
-                  {assignStudents.isPending ? "Assigning..." : `Assign ${assignSelected.size} Student${assignSelected.size !== 1 ? "s" : ""}`}
-                </Button>
-              </>
-            )}
+                  </div>
+                  <Button
+                    className="w-full"
+                    onClick={() => assignStudents.mutate({ gradeId: assignGradeId, studentIds: [...assignSelected] })}
+                    disabled={assignStudents.isPending || assignSelected.size === 0}
+                  >
+                    {assignStudents.isPending ? "Assigning..." : `Assign ${assignSelected.size} Student${assignSelected.size !== 1 ? "s" : ""}`}
+                  </Button>
+                </>
+              );
+            })()}
           </div>
         </DialogContent>
       </Dialog>
