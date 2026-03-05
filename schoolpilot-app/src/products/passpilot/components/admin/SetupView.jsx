@@ -1652,7 +1652,6 @@ function ClassesTab() {
   const [assignSelected, setAssignSelected] = useState(new Set());
   const [assignSearch, setAssignSearch] = useState("");
   const [assignGradeLevel, setAssignGradeLevel] = useState("");
-  const [assignShowAll, setAssignShowAll] = useState(false);
 
   // Google Classroom sync state
   const [gcSyncOpen, setGcSyncOpen] = useState(false);
@@ -1907,7 +1906,7 @@ function ClassesTab() {
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={() => { setAssignGradeId(grade.id); setAssignGradeName(grade.name); const m = grade.name.match(/(\d+)/); setAssignGradeLevel(m ? m[1] : ""); setAssignShowAll(false); setAssignSelected(new Set()); setAssignSearch(""); setAssignOpen(true); }}
+                    onClick={() => { setAssignGradeId(grade.id); setAssignGradeName(grade.name); setAssignGradeLevel(""); setAssignSelected(new Set()); setAssignSearch(""); setAssignOpen(true); }}
                     className="h-6 text-xs px-2"
                   >
                     Assign Students
@@ -2075,8 +2074,9 @@ function ClassesTab() {
           <DialogHeader><DialogTitle>Assign Students to {assignGradeName}</DialogTitle></DialogHeader>
           <div className="space-y-3">
             {(() => {
+              const gradeTabs = [...new Set(unassignedStudents.map((s) => s.gradeLevel).filter(Boolean))].sort((a, b) => Number(a) - Number(b));
               const gradeFiltered = unassignedStudents.filter((s) =>
-                assignShowAll || !assignGradeLevel ? true : s.gradeLevel === assignGradeLevel
+                !assignGradeLevel ? true : s.gradeLevel === assignGradeLevel
               );
               const visible = gradeFiltered
                 .filter((s) => {
@@ -2085,15 +2085,34 @@ function ClassesTab() {
                   return `${s.firstName} ${s.lastName}`.toLowerCase().includes(q);
                 })
                 .sort((a, b) => (a.lastName || "").localeCompare(b.lastName || ""));
-              return gradeFiltered.length === 0 && !assignShowAll ? (
-                <div className="text-center py-4 space-y-2">
-                  <p className="text-sm text-muted-foreground">No unassigned students in grade {assignGradeLevel}.</p>
-                  <Button size="sm" variant="link" onClick={() => setAssignShowAll(true)}>Show all grades</Button>
-                </div>
-              ) : gradeFiltered.length === 0 ? (
+              return unassignedStudents.length === 0 ? (
                 <p className="text-center text-sm text-muted-foreground py-4">All students are already assigned to a class.</p>
               ) : (
                 <>
+                  <div className="flex flex-wrap gap-1">
+                    <Button
+                      size="sm"
+                      variant={assignGradeLevel === "" ? "default" : "outline"}
+                      className="h-7 text-xs px-3 rounded-full"
+                      onClick={() => { setAssignGradeLevel(""); setAssignSelected(new Set()); }}
+                    >
+                      All ({unassignedStudents.length})
+                    </Button>
+                    {gradeTabs.map((level) => {
+                      const count = unassignedStudents.filter((s) => s.gradeLevel === level).length;
+                      return (
+                        <Button
+                          key={level}
+                          size="sm"
+                          variant={assignGradeLevel === level ? "default" : "outline"}
+                          className="h-7 text-xs px-3 rounded-full"
+                          onClick={() => { setAssignGradeLevel(level); setAssignSelected(new Set()); }}
+                        >
+                          Gr {level} ({count})
+                        </Button>
+                      );
+                    })}
+                  </div>
                   <div className="flex items-center justify-between">
                     <p className="text-sm text-muted-foreground">{gradeFiltered.length} student{gradeFiltered.length !== 1 ? "s" : ""}</p>
                     <Button
@@ -2111,12 +2130,6 @@ function ClassesTab() {
                       {assignSelected.size > 0 ? "Deselect All" : "Select All"}
                     </Button>
                   </div>
-                  {assignGradeLevel && (
-                    <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
-                      <input type="checkbox" checked={assignShowAll} onChange={(e) => { setAssignShowAll(e.target.checked); setAssignSelected(new Set()); }} className="rounded border-gray-300" />
-                      Show all grade levels
-                    </label>
-                  )}
                   <Input
                     placeholder="Search students..."
                     value={assignSearch}
