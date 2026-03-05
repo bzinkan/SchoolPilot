@@ -1635,15 +1635,22 @@ function ClassesTab() {
   const [viewingGrade, setViewingGrade] = useState(null);
   const [viewOpen, setViewOpen] = useState(false);
   const [addStudentOpen, setAddStudentOpen] = useState(false);
-  const [, setAddStudentGradeId] = useState("");
+  const [addStudentGradeId, setAddStudentGradeId] = useState("");
   const [addStudentGradeName, setAddStudentGradeName] = useState("");
   const [studentName, setStudentName] = useState("");
   const [studentGradeLevel, setStudentGradeLevel] = useState("");
   const [bulkOpen, setBulkOpen] = useState(false);
-  const [, setBulkGradeId] = useState("");
+  const [bulkGradeId, setBulkGradeId] = useState("");
   const [bulkGradeName, setBulkGradeName] = useState("");
   const [bulkNames, setBulkNames] = useState("");
   const [bulkGradeLevel, setBulkGradeLevel] = useState("");
+
+  // Assign existing students state
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [assignGradeId, setAssignGradeId] = useState("");
+  const [assignGradeName, setAssignGradeName] = useState("");
+  const [assignSelected, setAssignSelected] = useState(new Set());
+  const [assignSearch, setAssignSearch] = useState("");
 
   // Google Classroom sync state
   const [gcSyncOpen, setGcSyncOpen] = useState(false);
@@ -1724,7 +1731,7 @@ function ClassesTab() {
           .replace(/^\*\s*/, '')
           .trim();
         if (cleanLine) {
-          await apiRequest("POST", "/students", { name: cleanLine, grade: data.grade, gradeLevel: data.gradeLevel });
+          await apiRequest("POST", "/students", { name: cleanLine, gradeId: data.gradeId, gradeLevel: data.gradeLevel });
         }
       }
     },
@@ -1734,6 +1741,24 @@ function ClassesTab() {
       setBulkOpen(false);
       setBulkNames("");
       setBulkGradeLevel("");
+    },
+    onError: (err) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+  });
+
+  const unassignedStudents = (students ?? []).filter((s) => !s.gradeId);
+
+  const assignStudents = useMutation({
+    mutationFn: async ({ gradeId, studentIds }) => {
+      for (const id of studentIds) {
+        await apiRequest("PUT", `/students/${id}`, { gradeId });
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["students"] });
+      toast({ title: "Students assigned" });
+      setAssignOpen(false);
+      setAssignSelected(new Set());
+      setAssignSearch("");
     },
     onError: (err) => toast({ title: "Error", description: err.message, variant: "destructive" }),
   });
@@ -1877,6 +1902,14 @@ function ClassesTab() {
                   >
                     Bulk Add
                   </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => { setAssignGradeId(grade.id); setAssignGradeName(grade.name); setAssignSelected(new Set()); setAssignSearch(""); setAssignOpen(true); }}
+                    className="h-6 text-xs px-2"
+                  >
+                    Assign Students
+                  </Button>
                 </div>
               </CardContent>
             </Card>
@@ -1989,7 +2022,7 @@ function ClassesTab() {
             </div>
             <Button
               className="w-full"
-              onClick={() => addStudent.mutate({ name: studentName, grade: addStudentGradeName, gradeLevel: studentGradeLevel })}
+              onClick={() => addStudent.mutate({ name: studentName, gradeId: addStudentGradeId, gradeLevel: studentGradeLevel })}
               disabled={addStudent.isPending || !studentName.trim() || !studentGradeLevel}
             >
               {addStudent.isPending ? "Adding..." : "Add Student"}
@@ -2025,11 +2058,89 @@ function ClassesTab() {
             </div>
             <Button
               className="w-full"
-              onClick={() => bulkAddStudents.mutate({ names: bulkNames, grade: bulkGradeName, gradeLevel: bulkGradeLevel })}
+              onClick={() => bulkAddStudents.mutate({ names: bulkNames, gradeId: bulkGradeId, gradeLevel: bulkGradeLevel })}
               disabled={bulkAddStudents.isPending || !bulkNames.trim() || !bulkGradeLevel}
             >
               {bulkAddStudents.isPending ? "Adding..." : "Add Students"}
             </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Assign Existing Students Dialog */}
+      <Dialog open={assignOpen} onOpenChange={setAssignOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Assign Students to {assignGradeName}</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            {unassignedStudents.length === 0 ? (
+              <p className="text-center text-sm text-muted-foreground py-4">All students are already assigned to a class.</p>
+            ) : (
+              <>
+                <div className="flex items-center justify-between">
+                  <p className="text-sm text-muted-foreground">{unassignedStudents.length} unassigned student{unassignedStudents.length !== 1 ? "s" : ""}</p>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="text-xs h-6"
+                    onClick={() => {
+                      const filtered = unassignedStudents.filter((s) => {
+                        if (!assignSearch) return true;
+                        const q = assignSearch.toLowerCase();
+                        return `${s.firstName} ${s.lastName}`.toLowerCase().includes(q);
+                      });
+                      if (assignSelected.size === filtered.length) {
+                        setAssignSelected(new Set());
+                      } else {
+                        setAssignSelected(new Set(filtered.map((s) => s.id)));
+                      }
+                    }}
+                  >
+                    {assignSelected.size > 0 ? "Deselect All" : "Select All"}
+                  </Button>
+                </div>
+                <Input
+                  placeholder="Search students..."
+                  value={assignSearch}
+                  onChange={(e) => setAssignSearch(e.target.value)}
+                />
+                <div className="max-h-[280px] overflow-y-auto border rounded-md divide-y">
+                  {unassignedStudents
+                    .filter((s) => {
+                      if (!assignSearch) return true;
+                      const q = assignSearch.toLowerCase();
+                      return `${s.firstName} ${s.lastName}`.toLowerCase().includes(q);
+                    })
+                    .sort((a, b) => (a.lastName || "").localeCompare(b.lastName || ""))
+                    .map((s) => (
+                      <label key={s.id} className="flex items-center gap-3 px-3 py-2 hover:bg-muted/50 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={assignSelected.has(s.id)}
+                          onChange={() => {
+                            setAssignSelected((prev) => {
+                              const next = new Set(prev);
+                              next.has(s.id) ? next.delete(s.id) : next.add(s.id);
+                              return next;
+                            });
+                          }}
+                          className="rounded border-gray-300"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">{s.lastName}, {s.firstName}</p>
+                          {s.gradeLevel && <p className="text-xs text-muted-foreground">Grade {s.gradeLevel}</p>}
+                        </div>
+                      </label>
+                    ))}
+                </div>
+                <Button
+                  className="w-full"
+                  onClick={() => assignStudents.mutate({ gradeId: assignGradeId, studentIds: [...assignSelected] })}
+                  disabled={assignStudents.isPending || assignSelected.size === 0}
+                >
+                  {assignStudents.isPending ? "Assigning..." : `Assign ${assignSelected.size} Student${assignSelected.size !== 1 ? "s" : ""}`}
+                </Button>
+              </>
+            )}
           </div>
         </DialogContent>
       </Dialog>
