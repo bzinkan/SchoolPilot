@@ -83,6 +83,10 @@ export function isRedisEnabled(): boolean {
   return redisEnabled;
 }
 
+export function getRedisPublisher(): RedisClientType | null {
+  return redisPublisher;
+}
+
 export async function subscribeWS(
   onMessage: (target: WsRedisTarget, message: unknown) => void
 ): Promise<void> {

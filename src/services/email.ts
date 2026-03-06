@@ -110,3 +110,40 @@ export async function sendBroadcastEmail(recipients: string[], subject: string, 
   }
   return sent;
 }
+
+export async function sendChatEscalationEmail(options: {
+  summary: string;
+  category: string;
+  severity: string;
+  stepsAttempted: string;
+  userName: string;
+  userRole: string;
+  schoolName: string;
+  chatTranscript: string;
+}): Promise<boolean> {
+  const { summary, category, severity, stepsAttempted, userName, userRole, schoolName, chatTranscript } = options;
+  const severityColor = severity === "high" ? "#dc2626" : severity === "medium" ? "#d97706" : "#6b7280";
+  const html = `
+    <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: ${severityColor};">🤖 AI Assistant Escalation</h2>
+      <p>The SchoolPilot AI Assistant has escalated an issue that could not be resolved through troubleshooting.</p>
+      <table style="width: 100%; border-collapse: collapse; margin: 16px 0;">
+        <tr><td style="padding: 8px; font-weight: bold; border-bottom: 1px solid #e5e7eb;">Summary</td><td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">${summary}</td></tr>
+        <tr><td style="padding: 8px; font-weight: bold; border-bottom: 1px solid #e5e7eb;">Category</td><td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">${category}</td></tr>
+        <tr><td style="padding: 8px; font-weight: bold; border-bottom: 1px solid #e5e7eb;">Severity</td><td style="padding: 8px; border-bottom: 1px solid #e5e7eb; color: ${severityColor}; font-weight: bold;">${severity.toUpperCase()}</td></tr>
+        <tr><td style="padding: 8px; font-weight: bold; border-bottom: 1px solid #e5e7eb;">User</td><td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">${userName} (${userRole})</td></tr>
+        <tr><td style="padding: 8px; font-weight: bold; border-bottom: 1px solid #e5e7eb;">School</td><td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">${schoolName}</td></tr>
+        <tr><td style="padding: 8px; font-weight: bold; border-bottom: 1px solid #e5e7eb;">Steps Attempted</td><td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">${stepsAttempted}</td></tr>
+        <tr><td style="padding: 8px; font-weight: bold;">Time</td><td style="padding: 8px;">${new Date().toLocaleString("en-US", { timeZone: "America/New_York" })}</td></tr>
+      </table>
+      <h3 style="margin-top: 24px;">Chat Transcript (last messages)</h3>
+      <pre style="background: #f3f4f6; padding: 12px; border-radius: 6px; font-size: 13px; white-space: pre-wrap; overflow-x: auto;">${chatTranscript}</pre>
+    </div>
+  `;
+
+  return sendEmail({
+    to: ADMIN_EMAIL,
+    subject: `🤖 AI Escalation [${severity.toUpperCase()}]: ${summary}`,
+    html,
+  });
+}

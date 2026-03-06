@@ -7,6 +7,7 @@ import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
 import cookieParser from "cookie-parser";
 import { pool } from "./db.js";
+import { getIO } from "./realtime/socketio.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import { apiLimiter } from "./middleware/rateLimiter.js";
 import routes from "./routes/index.js";
@@ -110,8 +111,41 @@ export function createApp() {
   app.use("/api", apiLimiter);
 
   // Health check (no auth required)
-  app.get("/health", (_req, res) => {
-    res.json({ status: "ok" });
+  app.get("/health", async (_req, res) => {
+    const results: Record<string, any> = {};
+    let allOk = true;
+
+    // 1. Postgres ping
+    try {
+      const start = Date.now();
+      await pool.query("SELECT 1");
+      results.postgres = { ok: true, latencyMs: Date.now() - start };
+    } catch (err: any) {
+      results.postgres = { ok: false, error: err.message };
+      allOk = false;
+    }
+
+    // 2. DB pool stats
+    const waiting = pool.waitingCount;
+    results.dbPool = {
+      ok: waiting === 0,
+      total: pool.totalCount,
+      idle: pool.idleCount,
+      waiting,
+    };
+    if (waiting > 0) allOk = false;
+
+    // 3. Socket.IO
+    const io = getIO();
+    results.socketio = io
+      ? { ok: true, clients: io.engine.clientsCount }
+      : { ok: false, error: "not initialized" };
+    if (!io) allOk = false;
+
+    results.uptime = Math.floor(process.uptime());
+    results.timestamp = new Date().toISOString();
+
+    res.status(allOk ? 200 : 503).json({ status: allOk ? "ok" : "degraded", checks: results });
   });
 
   // Client config for Chrome extension (public, no auth)

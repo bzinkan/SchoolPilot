@@ -26,6 +26,7 @@ import googleOAuthRoutes from "./google/oauth.js";
 import googleClassroomRoutes from "./google/classroom.js";
 import googleDirectoryRoutes from "./google/directory.js";
 import compatRoutes from "./compat.js";
+// import aiChatRoutes from "./chat.js"; // AI Chat — disabled for now
 
 const router = Router();
 
@@ -362,5 +363,8 @@ router.use("/compat", compatRoutes);
 
 // Compatibility aliases (grades, teachers, admin features)
 router.use("/", compatRoutes);
+
+// AI Chat assistant — disabled for now
+// router.use("/chat", aiChatRoutes);
 
 export default router;
