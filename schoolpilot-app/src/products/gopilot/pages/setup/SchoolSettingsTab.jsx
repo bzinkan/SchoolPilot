@@ -4,7 +4,6 @@ import api from '../../../../shared/utils/api';
 import { TIMEZONES } from './constants';
 
 export default function SchoolSettingsTab({ schoolId }) {
-  const [name, setName] = useState('');
   const [dismissalTime, setDismissalTime] = useState('15:00');
   const [timezone, setTimezone] = useState('America/New_York');
   const [changeRequestWarning, setChangeRequestWarning] = useState('');
@@ -20,7 +19,6 @@ export default function SchoolSettingsTab({ schoolId }) {
       api.get(`/schools/${schoolId}/settings`).catch(() => ({ data: {} })),
     ]).then(([schoolRes, settingsRes]) => {
       const school = schoolRes.data;
-      setName(school.name || '');
       setDismissalTime(school.dismissal_time || '15:00');
       setTimezone(school.timezone || 'America/New_York');
       setChangeRequestWarning(settingsRes.data?.changeRequestWarning || '');
@@ -32,7 +30,7 @@ export default function SchoolSettingsTab({ schoolId }) {
     setSaving(true);
     setSaved(false);
     try {
-      await api.put(`/schools/${schoolId}`, { name, dismissalTime, timezone });
+      await api.put(`/schools/${schoolId}`, { dismissalTime, timezone });
       // Save settings separately (changeRequestWarning goes in settings JSON)
       const currentSettings = await api.get(`/schools/${schoolId}/settings`).then(r => r.data).catch(() => ({}));
       await api.put(`/schools/${schoolId}/settings`, { ...currentSettings, changeRequestWarning: changeRequestWarning.trim() || undefined, enableQrCodes });
@@ -53,16 +51,6 @@ export default function SchoolSettingsTab({ schoolId }) {
       <h2 className="text-lg font-bold text-gray-900 dark:text-white mb-6">School Settings</h2>
 
       <div className="space-y-6">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 dark:text-slate-200 mb-1">School Name</label>
-          <input
-            type="text"
-            value={name}
-            onChange={e => setName(e.target.value)}
-            className="w-full px-4 py-2.5 border border-gray-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-          />
-        </div>
-
         <div>
           <label className="block text-sm font-medium text-gray-700 dark:text-slate-200 mb-1">Dismissal Start Time</label>
           <p className="text-xs text-gray-500 dark:text-slate-400 mb-2">Dismissal will automatically start at this time each school day.</p>
@@ -117,7 +105,7 @@ export default function SchoolSettingsTab({ schoolId }) {
         <div className="flex items-center gap-3">
           <button
             onClick={handleSave}
-            disabled={saving || !name.trim()}
+            disabled={saving}
             className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 disabled:opacity-50 transition-colors"
           >
             <Save className="w-4 h-4" />
