@@ -34,6 +34,9 @@ import {
   getAbsentStudentIds,
 } from "../../services/storage.js";
 import { getIO } from "../../realtime/socketio.js";
+import { db } from "../../db.js";
+import { dismissalSessions } from "../../schema/gopilot.js";
+import { eq, and } from "drizzle-orm";
 
 const router = Router();
 
@@ -72,7 +75,7 @@ router.post("/sessions", ...auth, async (req, res, next) => {
   }
 });
 
-// GET /api/gopilot/dismissal/sessions/active - Get today's session (if any)
+// GET /api/gopilot/dismissal/sessions/active - Get today's active session (if any)
 router.get("/sessions/active", ...auth, async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
@@ -80,8 +83,20 @@ router.get("/sessions/active", ...auth, async (req, res, next) => {
     const timeZone = school?.schoolTimezone ?? "America/New_York";
     const localDate = new Date().toLocaleDateString("en-CA", { timeZone });
 
-    const session = await getOrCreateSession(schoolId, localDate);
-    return res.json({ session });
+    // Only return session if it is actually active (not pending/completed)
+    const [session] = await db
+      .select()
+      .from(dismissalSessions)
+      .where(
+        and(
+          eq(dismissalSessions.schoolId, schoolId),
+          eq(dismissalSessions.date, localDate),
+          eq(dismissalSessions.status, "active")
+        )
+      )
+      .limit(1);
+
+    return res.json(session ? { session } : null);
   } catch (err) {
     next(err);
   }

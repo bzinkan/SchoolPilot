@@ -22,11 +22,12 @@ export default function GoPilotMiniView() {
     const fetchSession = async () => {
       try {
         const res = await api.get('/gopilot/dismissal/sessions/active');
-        if (mounted && res.data) {
-          setSessionInfo(res.data);
+        const session = res.data?.session;
+        if (mounted && session) {
+          setSessionInfo(session);
           // Try to fetch stats if session exists
           try {
-            const statsRes = await api.get(`/gopilot/dismissal/sessions/${res.data.id}/stats`);
+            const statsRes = await api.get(`/gopilot/dismissal/sessions/${session.id}/stats`);
             if (mounted && statsRes.data) setStats(statsRes.data);
           } catch {
             // Stats endpoint may not exist - graceful degradation
