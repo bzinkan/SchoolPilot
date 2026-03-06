@@ -45,7 +45,7 @@ export function stopScheduler() {
 
 async function checkDismissalTimes() {
   try {
-    // Find schools where dismissal_time matches current time in their timezone
+    // Find schools where current time >= dismissal_time (catches exact match + late starts after deploys)
     const result = await db
       .select({
         id: schools.id,
@@ -58,7 +58,7 @@ async function checkDismissalTimes() {
         and(
           eq(schools.status, "active"),
           isNotNull(schools.dismissalTime),
-          sql`TO_CHAR(NOW() AT TIME ZONE COALESCE(${schools.schoolTimezone}, 'America/New_York'), 'HH24:MI') = ${schools.dismissalTime}`
+          sql`TO_CHAR(NOW() AT TIME ZONE COALESCE(${schools.schoolTimezone}, 'America/New_York'), 'HH24:MI') >= ${schools.dismissalTime}`
         )
       );
 
