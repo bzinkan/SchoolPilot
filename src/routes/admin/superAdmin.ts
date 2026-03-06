@@ -160,6 +160,7 @@ router.post("/schools", ...auth, async (req, res, next) => {
 
     if (maxLicenses !== undefined) schoolData.maxLicenses = maxLicenses;
     if (maxStudents !== undefined) schoolData.maxStudents = maxStudents;
+    if (schoolHours?.timezone) schoolData.schoolTimezone = schoolHours.timezone;
 
     if (trialDays) {
       schoolData.status = "trial";

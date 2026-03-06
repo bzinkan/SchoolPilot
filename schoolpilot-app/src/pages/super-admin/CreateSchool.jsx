@@ -3,6 +3,44 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ThemeToggle } from '../../components/ThemeToggle';
 import api from '../../shared/utils/api';
 
+/** Map browser IANA timezone to one of the 6 supported US timezones. */
+function detectTimezone() {
+  try {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const supported = [
+      'America/New_York', 'America/Chicago', 'America/Denver',
+      'America/Los_Angeles', 'America/Anchorage', 'Pacific/Honolulu',
+    ];
+    if (supported.includes(tz)) return tz;
+    // Map common variants
+    const map = {
+      'America/Detroit': 'America/New_York',
+      'America/Indiana/Indianapolis': 'America/New_York',
+      'America/Indiana/Knox': 'America/Chicago',
+      'America/Menominee': 'America/Chicago',
+      'America/North_Dakota/Center': 'America/Chicago',
+      'America/Boise': 'America/Denver',
+      'America/Phoenix': 'America/Denver',
+      'US/Eastern': 'America/New_York',
+      'US/Central': 'America/Chicago',
+      'US/Mountain': 'America/Denver',
+      'US/Pacific': 'America/Los_Angeles',
+      'US/Alaska': 'America/Anchorage',
+      'US/Hawaii': 'Pacific/Honolulu',
+    };
+    if (map[tz]) return map[tz];
+    // Fallback: estimate from UTC offset (minutes)
+    const offset = new Date().getTimezoneOffset();
+    if (offset <= 300 && offset >= 240) return 'America/New_York';
+    if (offset <= 360 && offset > 300) return 'America/Chicago';
+    if (offset <= 420 && offset > 360) return 'America/Denver';
+    if (offset <= 480 && offset > 420) return 'America/Los_Angeles';
+    if (offset <= 540 && offset > 480) return 'America/Anchorage';
+    if (offset <= 600 && offset > 540) return 'Pacific/Honolulu';
+  } catch { /* ignore */ }
+  return 'America/New_York';
+}
+
 export default function CreateSchool() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -26,7 +64,7 @@ export default function CreateSchool() {
       enabled: !!(preStartTime && preEndTime),
       startTime: preStartTime || '08:00',
       endTime: preEndTime || '15:00',
-      timezone: 'America/New_York',
+      timezone: detectTimezone(),
       days: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
       afterHoursMode: 'off',
     },
