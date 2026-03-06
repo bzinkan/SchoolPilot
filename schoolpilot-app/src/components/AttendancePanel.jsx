@@ -67,6 +67,7 @@ export function AttendancePanel({ students, onClose }) {
       });
       setSelectedStudents(new Set());
       setMarkReason("");
+      onClose();
     },
     onError: (error) => {
       toast({
