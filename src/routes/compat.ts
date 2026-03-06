@@ -181,7 +181,11 @@ router.post("/teacher-grades/self-assign", ...schoolAuth, async (req, res, next)
 
 router.get("/teachers", ...schoolAuth, async (req, res, next) => {
   try {
-    const teachers = await getUsersBySchool(res.locals.schoolId!, "teacher");
+    // Include office_staff since they act as teachers in PassPilot/ClassPilot
+    const allStaff = await getUsersBySchool(res.locals.schoolId!);
+    const teachers = allStaff.filter(t =>
+      t.role === "teacher" || t.role === "office_staff"
+    );
     return res.json({
       teachers: teachers.map((t) => {
         const { password: _, ...safeUser } = t.user;
@@ -199,10 +203,10 @@ router.get("/teachers", ...schoolAuth, async (req, res, next) => {
 
 router.get("/admin/teachers", ...schoolAuth, requireRole("admin"), async (req, res, next) => {
   try {
-    // Return all staff who can teach (teachers + school_admin + admin)
+    // Return all staff who can teach (office_staff acts as teacher in PassPilot/ClassPilot)
     const allStaff = await getUsersBySchool(res.locals.schoolId!);
     const teachable = allStaff.filter(t =>
-      t.role === "teacher" || t.role === "school_admin" || t.role === "admin"
+      t.role === "teacher" || t.role === "school_admin" || t.role === "admin" || t.role === "office_staff"
     );
     return res.json({
       teachers: teachable.map((t) => {
