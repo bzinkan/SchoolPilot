@@ -77,7 +77,7 @@ function ReportsTab() {
 
       const url = `/passes/history${params.toString() ? '?' + params.toString() : ''}`;
       const data = await apiRequest('GET', url);
-      return Array.isArray(data) ? data : [];
+      return Array.isArray(data) ? data : (data?.passes ?? []);
     },
     gcTime: 0,
   });
