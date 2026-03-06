@@ -16,7 +16,7 @@ export default function Dashboard() {
       window.history.replaceState(null, '', window.location.pathname);
       return 'setup';
     }
-    return 'passes';
+    return 'myclass';
   });
 
   if (isLoading) {
