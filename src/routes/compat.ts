@@ -189,7 +189,8 @@ router.get("/teachers", ...schoolAuth, async (req, res, next) => {
     return res.json({
       teachers: teachers.map((t) => {
         const { password: _, ...safeUser } = t.user;
-        return { membershipId: t.id, userId: t.userId, role: t.role, user: safeUser };
+        const displayName = [safeUser.firstName, safeUser.lastName].filter(Boolean).join(" ") || null;
+        return { id: t.userId, membershipId: t.id, userId: t.userId, role: t.role, name: displayName, displayName, email: safeUser.email, user: safeUser };
       }),
     });
   } catch (err) {
