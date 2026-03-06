@@ -1,8 +1,6 @@
 import { useState, useCallback, useRef } from "react";
-import { useAuth } from "../contexts/AuthContext";
 
 export function useChat() {
-  const { activeSchoolId } = useAuth();
   const [messages, setMessages] = useState([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [pendingAction, setPendingAction] = useState(null);
@@ -51,7 +49,7 @@ export function useChat() {
         }
 
         await readSSEStream(res, assistantIdx);
-      } catch (err) {
+      } catch {
         setMessages((prev) => {
           const updated = [...prev];
           updated[assistantIdx] = {
@@ -74,8 +72,6 @@ export function useChat() {
       setPendingAction(null);
       setIsStreaming(true);
 
-      const assistantIdx =
-        messages.length + (confirmed ? 0 : 0);
       setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
 
       try {
