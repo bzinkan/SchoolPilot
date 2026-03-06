@@ -58,6 +58,13 @@ export default function DismissalDashboard() {
   const navigate = useNavigate();
   const { hasClassPilot, hasPassPilot } = useLicenses();
 
+  // Teachers should see their homeroom view, not the admin dashboard
+  useEffect(() => {
+    if (currentRole === 'teacher') {
+      navigate('/gopilot/teacher', { replace: true });
+    }
+  }, [currentRole, navigate]);
+
   const [currentTime, setCurrentTime] = useState(new Date());
   const [session, setSession] = useState(null);
   const [dismissalActive, setDismissalActive] = useState(false);
