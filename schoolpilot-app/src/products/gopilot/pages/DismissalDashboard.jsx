@@ -446,18 +446,17 @@ export default function DismissalDashboard() {
                   {hasClassPilot && (
                     <button
                       onClick={() => navigate('/classpilot')}
-                      className="flex items-center gap-1 px-2 py-1 rounded-md text-sm text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 hover:text-gray-700 dark:hover:text-slate-200 transition-colors"
+                      className="px-3 py-1 rounded-md text-sm font-semibold bg-yellow-400 text-blue-900 hover:bg-yellow-300 transition-colors"
                     >
-                      <ArrowLeft className="w-4 h-4 sm:hidden" />
-                      <span className="hidden sm:inline">ClassPilot</span>
+                      ClassPilot
                     </button>
                   )}
                   {hasPassPilot && (
                     <button
                       onClick={() => navigate('/passpilot')}
-                      className="px-2 py-1 rounded-md text-sm text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 hover:text-gray-700 dark:hover:text-slate-200 transition-colors"
+                      className="px-3 py-1 rounded-md text-sm font-semibold bg-blue-600 text-white hover:bg-blue-500 transition-colors"
                     >
-                      <span className="hidden sm:inline">PassPilot</span>
+                      PassPilot
                     </button>
                   )}
                 </div>

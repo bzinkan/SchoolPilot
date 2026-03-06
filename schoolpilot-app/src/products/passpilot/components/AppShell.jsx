@@ -44,7 +44,7 @@ const navItems = [
 
 export default function AppShell({ children, currentTab, onTabChange }) {
   const { user, school, isAdmin, logout, refetchUser } = usePassPilotAuth();
-  const { hasClassPilot } = useLicenses();
+  const { hasClassPilot, hasGoPilot } = useLicenses();
   const navigate = useNavigate();
   const [kioskNameInput, setKioskNameInput] = useState('');
   const [isKioskNameDialogOpen, setIsKioskNameDialogOpen] = useState(false);
@@ -113,11 +113,17 @@ export default function AppShell({ children, currentTab, onTabChange }) {
           {hasClassPilot && (
             <button
               onClick={() => navigate('/classpilot')}
-              className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors mr-1"
-              title="Back to ClassPilot"
+              className="px-3 py-1 rounded-md text-sm font-semibold bg-yellow-400 text-blue-900 hover:bg-yellow-300 transition-colors"
             >
-              <ArrowLeft className="h-4 w-4" />
-              <span className="hidden sm:inline">ClassPilot</span>
+              ClassPilot
+            </button>
+          )}
+          {hasGoPilot && (
+            <button
+              onClick={() => navigate('/gopilot')}
+              className="px-3 py-1 rounded-md text-sm font-semibold bg-purple-600 text-white hover:bg-purple-500 transition-colors"
+            >
+              GoPilot
             </button>
           )}
           <h1 className="text-2xl font-bold text-primary">PassPilot</h1>

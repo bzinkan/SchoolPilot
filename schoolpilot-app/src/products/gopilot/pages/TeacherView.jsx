@@ -412,13 +412,13 @@ export default function TeacherView() {
                 <div className="flex items-center gap-1 ml-2 border-l pl-3">
                   {hasClassPilot && (
                     <button onClick={() => navigate('/classpilot')}
-                      className="px-2.5 py-1 rounded-md text-xs font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors">
+                      className="px-3 py-1 rounded-md text-sm font-semibold bg-yellow-400 text-blue-900 hover:bg-yellow-300 transition-colors">
                       ClassPilot
                     </button>
                   )}
                   {hasPassPilot && (
                     <button onClick={() => navigate('/passpilot')}
-                      className="px-2.5 py-1 rounded-md text-xs font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-colors">
+                      className="px-3 py-1 rounded-md text-sm font-semibold bg-blue-600 text-white hover:bg-blue-500 transition-colors">
                       PassPilot
                     </button>
                   )}
