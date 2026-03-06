@@ -12,6 +12,7 @@ import {
   getAttendanceStats,
   getUserById,
   getStudentsBySchool,
+  getSchoolById,
 } from "../../services/storage.js";
 
 const router = Router();
@@ -33,15 +34,30 @@ const staffAuth = [
 
 const adminAuth = [...schoolAuth, requireRole("admin")] as const;
 
-function todayDate(): string {
-  return new Date().toISOString().slice(0, 10);
+/** Return today's date string in a given IANA timezone (defaults to America/New_York). */
+function todayInTz(tz = "America/New_York"): string {
+  try {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: tz,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+  } catch {
+    return new Date().toISOString().slice(0, 10);
+  }
+}
+
+async function todayForSchool(schoolId: string): Promise<string> {
+  const school = await getSchoolById(schoolId);
+  return todayInTz(school?.schoolTimezone || "America/New_York");
 }
 
 // GET /api/admin/attendance?date=YYYY-MM-DD — list attendance for a date
 router.get("/", ...staffAuth, async (req, res, next) => {
   try {
-    const date = (req.query.date as string) || todayDate();
     const schoolId = res.locals.schoolId!;
+    const date = (req.query.date as string) || await todayForSchool(schoolId);
     const records = await getAttendanceBySchool(schoolId, date);
 
     // Enrich with who marked it
@@ -114,8 +130,8 @@ router.post("/", ...staffAuth, async (req, res, next) => {
       });
     }
 
-    const attendanceDate = date || todayDate();
     const schoolId = res.locals.schoolId!;
+    const attendanceDate = date || await todayForSchool(schoolId);
 
     // Verify all students belong to this school
     const schoolStudents = await getStudentsBySchool(schoolId);
@@ -161,8 +177,9 @@ router.get(
   async (req, res, next) => {
     try {
       const studentId = param(req, "studentId");
+      const schoolId = res.locals.schoolId!;
       const start = (req.query.start as string) || "2020-01-01";
-      const end = (req.query.end as string) || todayDate();
+      const end = (req.query.end as string) || await todayForSchool(schoolId);
       const records = await getStudentAttendance(studentId, start, end);
       return res.json({ records });
     } catch (err) {
@@ -175,8 +192,9 @@ router.get(
 router.get("/stats", ...adminAuth, async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
-    const start = (req.query.start as string) || todayDate();
-    const end = (req.query.end as string) || todayDate();
+    const schoolToday = await todayForSchool(schoolId);
+    const start = (req.query.start as string) || schoolToday;
+    const end = (req.query.end as string) || schoolToday;
     const stats = await getAttendanceStats(schoolId, start, end);
     return res.json({ stats });
   } catch (err) {

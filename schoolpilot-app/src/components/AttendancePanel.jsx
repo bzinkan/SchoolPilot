@@ -2,6 +2,7 @@ import { useState, useMemo } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "../lib/queryClient";
 import { useAbsentStudents } from "../hooks/useAbsentStudents";
+import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../hooks/use-toast";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
@@ -25,6 +26,7 @@ import { ClipboardCheck, Loader2, Search, X } from "lucide-react";
  */
 export function AttendancePanel({ students, onClose }) {
   const { toast } = useToast();
+  const { activeMembership } = useAuth();
   const { absentIds, records } = useAbsentStudents();
 
   const [selectedStudents, setSelectedStudents] = useState(new Set());
@@ -32,7 +34,13 @@ export function AttendancePanel({ students, onClose }) {
   const [markReason, setMarkReason] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
 
-  const today = new Date().toISOString().slice(0, 10);
+  const tz = activeMembership?.schoolTimezone || "America/New_York";
+  let today;
+  try {
+    today = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  } catch {
+    today = new Date().toISOString().slice(0, 10);
+  }
 
   // Split students into absent and present for this class
   const classAbsentRecords = useMemo(
