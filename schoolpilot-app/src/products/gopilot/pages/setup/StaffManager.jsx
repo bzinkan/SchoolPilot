@@ -40,11 +40,12 @@ export default function StaffManager({ staff, schoolId, googleConnected, onAdd, 
       email: s.email || u.email || '',
       phone: s.phone || u.phone || '',
       gopilotRole: s.gopilotRole || s.gopilot_role || null,
+      effectiveRole: s.gopilotRole || s.gopilot_role || s.role,
     };
   });
 
-  const teachers = normalized.filter(s => s.role === 'teacher');
-  const officeStaff = normalized.filter(s => s.role === 'office_staff');
+  const teachers = normalized.filter(s => s.effectiveRole === 'teacher');
+  const officeStaff = normalized.filter(s => s.effectiveRole === 'office_staff');
 
   const filtered = roleFilter === 'All' ? normalized
     : roleFilter === 'teacher' ? teachers
@@ -56,7 +57,11 @@ export default function StaffManager({ staff, schoolId, googleConnected, onAdd, 
     setAdding(true);
     setAddError(null);
     try {
-      await onAdd(addForm);
+      // Office staff in GoPilot = teacher base role + gopilotRole override
+      const payload = addForm.role === 'office_staff'
+        ? { ...addForm, role: 'teacher', gopilotRole: 'office_staff' }
+        : addForm;
+      await onAdd(payload);
       setAddForm({ email: '', firstName: '', lastName: '', role: 'teacher', password: '' });
       setShowAddForm(false);
     } catch (err) {
@@ -66,8 +71,8 @@ export default function StaffManager({ staff, schoolId, googleConnected, onAdd, 
   };
 
   const startEdit = (s) => {
-    setEditingId(`${s.id}-${s.role}`);
-    setEditData({ firstName: s.first_name, lastName: s.last_name, role: s.role });
+    setEditingId(`${s.id}-${s.effectiveRole}`);
+    setEditData({ firstName: s.first_name, lastName: s.last_name, role: s.effectiveRole });
     setEditPassword('');
     setShowEditPassword(false);
   };
@@ -77,7 +82,18 @@ export default function StaffManager({ staff, schoolId, googleConnected, onAdd, 
   const saveEdit = async (s) => {
     setSaving(true);
     try {
-      await onUpdate(s.id, { ...editData, password: editPassword || undefined });
+      // Transform role selection: office_staff writes to gopilotRole only, admin is universal
+      const { role: selectedRole, ...rest } = editData;
+      let payload = { ...rest, password: editPassword || undefined };
+      if (selectedRole === 'office_staff') {
+        payload.gopilotRole = 'office_staff';
+      } else if (selectedRole === 'teacher') {
+        payload.gopilotRole = null;
+      } else if (selectedRole === 'admin') {
+        payload.role = 'admin';
+        payload.gopilotRole = null;
+      }
+      await onUpdate(s.id, payload);
       setEditingId(null);
       setEditData({});
       setEditPassword('');
@@ -262,9 +278,9 @@ export default function StaffManager({ staff, schoolId, googleConnected, onAdd, 
             {filtered.length === 0 ? (
               <tr><td colSpan={5} className="p-8 text-center text-gray-400 dark:text-slate-500">No staff added yet. Click "Add Staff" to get started.</td></tr>
             ) : filtered.map(s => {
-              const isEditing = editingId === `${s.id}-${s.role}`;
+              const isEditing = editingId === `${s.id}-${s.effectiveRole}`;
               return isEditing ? (
-              <tr key={`${s.id}-${s.role}`} className="bg-blue-50 dark:bg-blue-900/30">
+              <tr key={`${s.id}-${s.effectiveRole}`} className="bg-blue-50 dark:bg-blue-900/30">
                 <td className="p-3">
                   <div className="flex gap-1">
                     <input type="text" value={editData.firstName} onChange={e => setEditData(d => ({ ...d, firstName: e.target.value }))}
@@ -306,7 +322,7 @@ export default function StaffManager({ staff, schoolId, googleConnected, onAdd, 
                 </td>
               </tr>
               ) : (
-              <tr key={`${s.id}-${s.role}`} className="hover:bg-gray-50 dark:hover:bg-slate-800">
+              <tr key={`${s.id}-${s.effectiveRole}`} className="hover:bg-gray-50 dark:hover:bg-slate-800">
                 <td className="p-3">
                   <div className="flex items-center gap-2">
                     <div className="w-8 h-8 bg-indigo-100 dark:bg-indigo-900/30 rounded-full flex items-center justify-center text-indigo-600 dark:text-indigo-400 text-xs font-medium">
@@ -318,11 +334,11 @@ export default function StaffManager({ staff, schoolId, googleConnected, onAdd, 
                 <td className="p-3 text-gray-500 dark:text-slate-400">{s.email}</td>
                 <td className="p-3">
                   <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
-                    s.role === 'admin' ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400'
-                    : s.role === 'teacher' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400'
+                    s.effectiveRole === 'admin' ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400'
+                    : s.effectiveRole === 'teacher' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400'
                     : 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400'
                   }`}>
-                    {s.role === 'admin' ? 'Admin' : s.role === 'teacher' ? 'Teacher' : 'Office Staff'}
+                    {s.effectiveRole === 'admin' ? 'Admin' : s.effectiveRole === 'teacher' ? 'Teacher' : 'Office Staff'}
                   </span>
                 </td>
                 <td className="p-3 text-gray-500 dark:text-slate-400">
