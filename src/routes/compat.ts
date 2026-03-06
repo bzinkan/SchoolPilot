@@ -844,7 +844,7 @@ router.get("/my-classes", ...schoolAuth, async (req, res, next) => {
 
     return res.json({
       classes: assignments.map((a) => ({
-        id: a.teacherGrade.id,
+        id: a.grade.id,
         gradeId: a.teacherGrade.gradeId,
         name: a.grade.name,
       })),
