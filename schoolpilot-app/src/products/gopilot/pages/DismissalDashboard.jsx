@@ -565,7 +565,7 @@ export default function DismissalDashboard() {
               <span className="text-[10px]">{view.label}</span>
             </button>
           ))}
-          {(currentRole === 'admin' || currentRole === 'office_staff') && (
+          {currentRole === 'admin' && (
             <button onClick={() => navigate('/gopilot/setup')}
               className="w-12 h-12 rounded-lg flex flex-col items-center justify-center gap-1 text-gray-400 dark:text-slate-500 hover:bg-gray-100 dark:hover:bg-slate-800">
               <Settings className="w-5 h-5" />
@@ -591,7 +591,7 @@ export default function DismissalDashboard() {
                 <span className="text-[10px]">{view.label}</span>
               </button>
             ))}
-            {(currentRole === 'admin' || currentRole === 'office_staff') && (
+            {currentRole === 'admin' && (
               <button onClick={() => navigate('/gopilot/setup')}
                 className="flex flex-col items-center justify-center py-1.5 px-3 rounded-lg text-gray-400 dark:text-slate-500">
                 <Settings className="w-5 h-5" />
