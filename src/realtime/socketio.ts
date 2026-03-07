@@ -10,6 +10,11 @@ export function setupSocketIO(httpServer: HttpServer): Server {
     .map((s) => s.trim())
     .filter(Boolean);
 
+  // Capacitor native app origins
+  for (const o of ["capacitor://localhost", "http://localhost"]) {
+    if (!origins.includes(o)) origins.push(o);
+  }
+
   io = new Server(httpServer, {
     cors: { origin: origins, methods: ["GET", "POST"] },
     path: "/gopilot-socket",

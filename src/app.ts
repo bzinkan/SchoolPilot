@@ -32,11 +32,17 @@ export function createApp() {
     })
   );
 
-  // CORS — allow all configured frontend origins
+  // CORS — allow all configured frontend origins + Capacitor native origins
   const allowlist = (process.env.CORS_ALLOWLIST || "")
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
+
+  // Capacitor native app origins (always allowed)
+  const capacitorOrigins = ["capacitor://localhost", "http://localhost"];
+  for (const origin of capacitorOrigins) {
+    if (!allowlist.includes(origin)) allowlist.push(origin);
+  }
 
   if (isProduction && allowlist.length === 0) {
     throw new Error(
