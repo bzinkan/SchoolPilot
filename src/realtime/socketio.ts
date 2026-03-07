@@ -11,7 +11,7 @@ export function setupSocketIO(httpServer: HttpServer): Server {
     .filter(Boolean);
 
   // Capacitor native app origins
-  for (const o of ["capacitor://localhost", "http://localhost"]) {
+  for (const o of ["capacitor://localhost", "http://localhost", "https://localhost"]) {
     if (!origins.includes(o)) origins.push(o);
   }
 

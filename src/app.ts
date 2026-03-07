@@ -39,7 +39,7 @@ export function createApp() {
     .filter(Boolean);
 
   // Capacitor native app origins (always allowed)
-  const capacitorOrigins = ["capacitor://localhost", "http://localhost"];
+  const capacitorOrigins = ["capacitor://localhost", "http://localhost", "https://localhost"];
   for (const origin of capacitorOrigins) {
     if (!allowlist.includes(origin)) allowlist.push(origin);
   }
