@@ -38,6 +38,12 @@ export const schools = pgTable("schools", {
   lastPaymentAmount: integer("last_payment_amount"),
   lastPaymentDate: timestamp("last_payment_date"),
 
+  // Tax exemption
+  taxExemptStatus: text("tax_exempt_status"),
+  taxExemptCertUrl: text("tax_exempt_cert_url"),
+  taxExemptCertRequestedAt: timestamp("tax_exempt_cert_requested_at"),
+  taxExemptCertUploadedAt: timestamp("tax_exempt_cert_uploaded_at"),
+
   // Licensing
   maxTeachers: integer("max_teachers").default(50),
   maxLicenses: integer("max_licenses").default(100), // ClassPilot student seats

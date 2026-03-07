@@ -24,8 +24,11 @@ import {
   getSchoolCounts,
 } from "../../services/storage.js";
 import { hashPassword } from "../../util/password.js";
-import { sendWelcomeEmail } from "../../services/email.js";
+import { sendWelcomeEmail, sendTaxCertificateRequestEmail } from "../../services/email.js";
 import { logAudit } from "../../services/audit.js";
+import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import multer from "multer";
 
 const router = Router();
 
@@ -41,6 +44,17 @@ function requireSuperAdmin(req: any, res: any, next: any) {
 }
 
 const auth = [authenticate, requireSuperAdmin] as const;
+
+const TAX_CERT_BUCKET = process.env.TAX_CERT_BUCKET || "schoolpilot-documents";
+const s3 = new S3Client({ region: process.env.AWS_REGION || "us-east-1" });
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const allowed = ["application/pdf", "image/png", "image/jpeg"];
+    cb(null, allowed.includes(file.mimetype));
+  },
+});
 
 // GET /api/super-admin/stats - Dashboard statistics
 router.get("/stats", ...auth, async (req, res, next) => {
@@ -724,6 +738,152 @@ router.get("/admin-emails", ...auth, async (_req, res) => {
 // POST /api/admin/broadcast-email - Send broadcast email
 router.post("/broadcast-email", ...auth, async (_req, res) => {
   return res.json({ ok: true, message: "Broadcast not yet implemented" });
+});
+
+// POST /api/super-admin/schools/:id/request-tax-cert - Request tax exemption certificate
+router.post("/schools/:id/request-tax-cert", ...auth, async (req, res, next) => {
+  try {
+    const school = await getSchoolById(param(req, "id"));
+    if (!school) return res.status(404).json({ error: "School not found" });
+
+    const email = school.billingEmail;
+    if (!email) return res.status(400).json({ error: "No billing email set for this school" });
+
+    await sendTaxCertificateRequestEmail(email, school.name);
+    await updateSchool(school.id, {
+      taxExemptStatus: "pending",
+      taxExemptCertRequestedAt: new Date(),
+    });
+
+    await logAudit({
+      schoolId: school.id,
+      userId: req.authUser!.id,
+      action: "billing.tax_cert_requested",
+      entityType: "school",
+      entityId: school.id,
+    });
+
+    return res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/super-admin/schools/:id/tax-cert - Upload tax exemption certificate
+router.post("/schools/:id/tax-cert", ...auth, upload.single("certificate"), async (req, res, next) => {
+  try {
+    const school = await getSchoolById(param(req, "id"));
+    if (!school) return res.status(404).json({ error: "School not found" });
+
+    const file = req.file;
+    if (!file) return res.status(400).json({ error: "No file uploaded" });
+
+    const key = `tax-certs/${school.id}/${Date.now()}-${file.originalname}`;
+    await s3.send(new PutObjectCommand({
+      Bucket: TAX_CERT_BUCKET,
+      Key: key,
+      Body: file.buffer,
+      ContentType: file.mimetype,
+    }));
+
+    await updateSchool(school.id, {
+      taxExemptStatus: "exempt",
+      taxExemptCertUrl: key,
+      taxExemptCertUploadedAt: new Date(),
+    });
+
+    // Mark Stripe customer as tax-exempt
+    if (school.stripeCustomerId) {
+      try {
+        const stripeKey = process.env.STRIPE_SECRET_KEY;
+        if (stripeKey) {
+          const Stripe = (await import("stripe")).default;
+          const stripe = new Stripe(stripeKey);
+          await stripe.customers.update(school.stripeCustomerId, { tax_exempt: "exempt" });
+        }
+      } catch (stripeErr) {
+        console.error("[TaxCert] Failed to update Stripe customer tax status:", stripeErr);
+      }
+    }
+
+    await logAudit({
+      schoolId: school.id,
+      userId: req.authUser!.id,
+      action: "billing.tax_cert_uploaded",
+      entityType: "school",
+      entityId: school.id,
+      metadata: { filename: file.originalname },
+    });
+
+    return res.json({ ok: true, key });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/super-admin/schools/:id/tax-cert-url - Get pre-signed download URL
+router.get("/schools/:id/tax-cert-url", ...auth, async (req, res, next) => {
+  try {
+    const school = await getSchoolById(param(req, "id"));
+    if (!school) return res.status(404).json({ error: "School not found" });
+    if (!school.taxExemptCertUrl) return res.status(404).json({ error: "No certificate on file" });
+
+    const url = await getSignedUrl(s3, new GetObjectCommand({
+      Bucket: TAX_CERT_BUCKET,
+      Key: school.taxExemptCertUrl,
+    }), { expiresIn: 900 });
+
+    return res.json({ url });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE /api/super-admin/schools/:id/tax-cert - Remove tax exemption certificate
+router.delete("/schools/:id/tax-cert", ...auth, async (req, res, next) => {
+  try {
+    const school = await getSchoolById(param(req, "id"));
+    if (!school) return res.status(404).json({ error: "School not found" });
+
+    if (school.taxExemptCertUrl) {
+      await s3.send(new DeleteObjectCommand({
+        Bucket: TAX_CERT_BUCKET,
+        Key: school.taxExemptCertUrl,
+      }));
+    }
+
+    await updateSchool(school.id, {
+      taxExemptStatus: null,
+      taxExemptCertUrl: null,
+      taxExemptCertUploadedAt: null,
+    });
+
+    // Remove Stripe tax exemption
+    if (school.stripeCustomerId) {
+      try {
+        const stripeKey = process.env.STRIPE_SECRET_KEY;
+        if (stripeKey) {
+          const Stripe = (await import("stripe")).default;
+          const stripe = new Stripe(stripeKey);
+          await stripe.customers.update(school.stripeCustomerId, { tax_exempt: "none" });
+        }
+      } catch (stripeErr) {
+        console.error("[TaxCert] Failed to update Stripe customer tax status:", stripeErr);
+      }
+    }
+
+    await logAudit({
+      schoolId: school.id,
+      userId: req.authUser!.id,
+      action: "billing.tax_cert_removed",
+      entityType: "school",
+      entityId: school.id,
+    });
+
+    return res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
 });
 
 export default router;

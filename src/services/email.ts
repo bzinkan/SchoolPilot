@@ -111,6 +111,31 @@ export async function sendBroadcastEmail(recipients: string[], subject: string, 
   return sent;
 }
 
+export async function sendTaxCertificateRequestEmail(to: string, schoolName: string): Promise<boolean> {
+  return sendEmail({
+    to,
+    subject: "Tax Exemption Certificate Request — SchoolPilot",
+    html: `
+      <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2>Tax Exemption Certificate Request</h2>
+        <p>Hello,</p>
+        <p>Thank you for choosing SchoolPilot for <strong>${schoolName}</strong>.</p>
+        <p>To ensure proper tax handling on your invoices, we kindly request a copy of your organization's tax exemption documentation. This may include:</p>
+        <ul>
+          <li>IRS 501(c)(3) determination letter</li>
+          <li>State sales tax exemption certificate</li>
+          <li>Government entity documentation (for public schools)</li>
+        </ul>
+        <p>You can reply to this email with the document attached (PDF, PNG, or JPG format).</p>
+        <p>Once received, your account will be marked as tax-exempt and future invoices will reflect this status.</p>
+        <p>If you have any questions, please don't hesitate to reach out.</p>
+        <p style="margin-top: 24px;">Best regards,<br/>SchoolPilot Team</p>
+        <p style="color: #6b7280; font-size: 12px; margin-top: 24px;">This email was sent by SchoolPilot. Reply directly to provide your certificate.</p>
+      </div>
+    `,
+  });
+}
+
 export async function sendChatEscalationEmail(options: {
   summary: string;
   category: string;

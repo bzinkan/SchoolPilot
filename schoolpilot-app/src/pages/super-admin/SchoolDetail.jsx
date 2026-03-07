@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ThemeToggle } from '../../components/ThemeToggle';
 import api from '../../shared/utils/api';
@@ -54,6 +54,11 @@ export default function SchoolDetail() {
   const [invoiceStudentCount, setInvoiceStudentCount] = useState(0);
   const [sendingInvoice, setSendingInvoice] = useState(false);
   const [invoiceResult, setInvoiceResult] = useState(null);
+
+  // Tax cert
+  const [taxCertRequesting, setTaxCertRequesting] = useState(false);
+  const [taxCertUploading, setTaxCertUploading] = useState(false);
+  const taxCertInputRef = useRef(null);
 
   const [error, setError] = useState(null);
 
@@ -540,6 +545,115 @@ export default function SchoolDetail() {
             </div>
           </div>
         )}
+
+        {/* Tax Exemption */}
+        <div className="mt-6 pt-6 border-t border-slate-200">
+          <h3 className="text-sm font-medium text-slate-700 mb-3">Tax Exemption</h3>
+          <div className="flex items-center gap-3 mb-3">
+            <span className="text-sm text-slate-600">Status:</span>
+            {school.taxExemptStatus === 'exempt' ? (
+              <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-green-100 text-green-800">Exempt</span>
+            ) : school.taxExemptStatus === 'pending' ? (
+              <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-yellow-100 text-yellow-800">Requested</span>
+            ) : (
+              <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-slate-100 text-slate-600">Not on file</span>
+            )}
+            {school.taxExemptStatus === 'pending' && school.taxExemptCertRequestedAt && (
+              <span className="text-xs text-slate-400">{new Date(school.taxExemptCertRequestedAt).toLocaleDateString()}</span>
+            )}
+            {school.taxExemptStatus === 'exempt' && school.taxExemptCertUploadedAt && (
+              <span className="text-xs text-slate-400">uploaded {new Date(school.taxExemptCertUploadedAt).toLocaleDateString()}</span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            {school.taxExemptStatus !== 'exempt' && (
+              <>
+                <button
+                  onClick={async () => {
+                    setTaxCertRequesting(true);
+                    try {
+                      await api.post(`/super-admin/schools/${id}/request-tax-cert`);
+                      loadSchool();
+                    } catch (err) {
+                      setError(err.response?.data?.error || 'Failed to send request');
+                    } finally {
+                      setTaxCertRequesting(false);
+                    }
+                  }}
+                  disabled={taxCertRequesting || !school.billingEmail}
+                  className="px-3 py-1.5 bg-slate-900 text-white rounded-lg text-xs font-medium hover:bg-slate-800 disabled:opacity-50"
+                >
+                  {taxCertRequesting ? 'Sending...' : school.taxExemptStatus === 'pending' ? 'Resend Request' : 'Request Certificate'}
+                </button>
+                <button
+                  onClick={() => taxCertInputRef.current?.click()}
+                  disabled={taxCertUploading}
+                  className="px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-medium hover:bg-slate-50 disabled:opacity-50"
+                >
+                  {taxCertUploading ? 'Uploading...' : 'Upload Certificate'}
+                </button>
+                <input
+                  ref={taxCertInputRef}
+                  type="file"
+                  accept=".pdf,.png,.jpg,.jpeg"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    setTaxCertUploading(true);
+                    try {
+                      const formData = new FormData();
+                      formData.append('certificate', file);
+                      await api.post(`/super-admin/schools/${id}/tax-cert`, formData, {
+                        headers: { 'Content-Type': 'multipart/form-data' },
+                      });
+                      loadSchool();
+                    } catch (err) {
+                      setError(err.response?.data?.error || 'Failed to upload certificate');
+                    } finally {
+                      setTaxCertUploading(false);
+                      e.target.value = '';
+                    }
+                  }}
+                />
+              </>
+            )}
+            {school.taxExemptStatus === 'exempt' && (
+              <>
+                <button
+                  onClick={async () => {
+                    try {
+                      const res = await api.get(`/super-admin/schools/${id}/tax-cert-url`);
+                      window.open(res.data.url, '_blank');
+                    } catch (err) {
+                      setError(err.response?.data?.error || 'Failed to get certificate URL');
+                    }
+                  }}
+                  className="px-3 py-1.5 bg-slate-900 text-white rounded-lg text-xs font-medium hover:bg-slate-800"
+                >
+                  View Certificate
+                </button>
+                <button
+                  onClick={async () => {
+                    if (!window.confirm('Remove tax exemption certificate? The school will no longer be marked as tax-exempt.')) return;
+                    try {
+                      await api.delete(`/super-admin/schools/${id}/tax-cert`);
+                      loadSchool();
+                    } catch (err) {
+                      setError(err.response?.data?.error || 'Failed to remove certificate');
+                    }
+                  }}
+                  className="px-3 py-1.5 border border-red-300 text-red-600 rounded-lg text-xs font-medium hover:bg-red-50"
+                >
+                  Remove
+                </button>
+              </>
+            )}
+          </div>
+          {!school.billingEmail && school.taxExemptStatus !== 'exempt' && (
+            <p className="text-xs text-red-500 mt-1">Set a billing email before requesting a certificate.</p>
+          )}
+        </div>
       </div>
 
       {/* School Hours - shown if school has ClassPilot or PassPilot */}
