@@ -108,15 +108,23 @@ export default function ParentApp() {
         setLoading(true);
         setError(null);
 
-        const childrenRes = await api.get('/me/children');
+        const childrenRes = await api.get('/me/children', {
+          headers: currentSchool?.id ? { 'x-school-id': currentSchool.id } : {},
+        });
         const rawChildren = Array.isArray(childrenRes.data) ? childrenRes.data : (childrenRes.data?.children || []);
-        const childrenData = rawChildren.map(c => ({
-          ...c,
-          firstName: c.first_name,
-          lastName: c.last_name,
-          homeroom: c.homeroom_name || 'Unassigned',
-          dismissalType: c.dismissal_type || 'car',
-        }));
+        const childrenData = rawChildren.map(c => {
+          // Handle both Drizzle ORM response (nested {link, student, homeroom}) and flat response
+          const s = c.student || c;
+          const h = c.homeroom || {};
+          return {
+            ...s,
+            id: s.id,
+            firstName: s.firstName || s.first_name,
+            lastName: s.lastName || s.last_name,
+            homeroom: h.name || s.homeroom_name || s.homeroom || 'Unassigned',
+            dismissalType: s.dismissalType || s.dismissal_type || 'car',
+          };
+        });
         if (cancelled) return;
         setChildren(childrenData);
 
@@ -126,7 +134,8 @@ export default function ParentApp() {
         for (const child of childrenData) {
           try {
             const pickupsRes = await api.get(`/students/${child.id}/pickups`);
-            for (const p of pickupsRes.data) {
+            const pickupsArr = Array.isArray(pickupsRes.data) ? pickupsRes.data : (pickupsRes.data?.pickups || []);
+            for (const p of pickupsArr) {
               if (!seenIds.has(p.id)) {
                 seenIds.add(p.id);
                 allPickups.push(p);
@@ -156,7 +165,7 @@ export default function ParentApp() {
     }
     fetchData();
     return () => { cancelled = true; };
-  }, []);
+  }, [currentSchool?.id]);
 
   // Redirect to onboarding if parent has no children linked and no car number
   useEffect(() => {
@@ -883,6 +892,18 @@ export default function ParentApp() {
                         try {
                           const res = await api.post('/me/children/link-by-car', { carNumber: linkCode.trim(), schoolId: currentSchool?.id });
                           setLinkSuccess({ count: res.data.students?.length || 0 });
+                          // Refresh children list
+                          const childrenRes = await api.get('/me/children', {
+                            headers: currentSchool?.id ? { 'x-school-id': currentSchool.id } : {},
+                          });
+                          const rawChildren = Array.isArray(childrenRes.data) ? childrenRes.data : (childrenRes.data?.children || []);
+                          setChildren(rawChildren.map(c => ({
+                            ...c,
+                            firstName: c.first_name || c.firstName,
+                            lastName: c.last_name || c.lastName,
+                            homeroom: c.homeroom_name || c.homeroom || 'Unassigned',
+                            dismissalType: c.dismissal_type || c.dismissalType || 'car',
+                          })));
                         } catch (err) {
                           setLinkError(err.response?.data?.error || 'Failed to link children');
                         } finally {
@@ -1038,7 +1059,8 @@ export default function ParentApp() {
             for (const child of children) {
               try {
                 const res = await api.get(`/students/${child.id}/pickups`);
-                for (const p of res.data) {
+                const arr = Array.isArray(res.data) ? res.data : (res.data?.pickups || []);
+                for (const p of arr) {
                   if (!seenIds.has(p.id)) { seenIds.add(p.id); allPickups.push(p); }
                 }
               } catch { /* ignore */ }
