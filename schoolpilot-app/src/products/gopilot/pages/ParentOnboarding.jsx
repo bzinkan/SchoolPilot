@@ -66,18 +66,11 @@ export default function ParentOnboarding() {
 
   const [authorizedPickups, setAuthorizedPickups] = useState([]);
 
-  const [notifications, setNotifications] = useState({
-    pushEnabled: true,
-    smsEnabled: true,
-    emailEnabled: false,
-    dismissalAlerts: true,
-    changeConfirmations: true,
-    arrivalReminders: true,
-  });
+  // notifications state removed — unused
 
   const [carNumber, setCarNumber] = useState('');
   const [autoLinked, setAutoLinked] = useState(false);
-  const [phone, setPhone] = useState('');
+  // phone state removed — unused
   const [schoolCheckInMethod, setSchoolCheckInMethod] = useState('app');
 
   const steps = [

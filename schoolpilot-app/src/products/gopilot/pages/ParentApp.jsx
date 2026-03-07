@@ -74,7 +74,7 @@ export default function ParentApp() {
   const [showChangeRequest, setShowChangeRequest] = useState(false);
   const [showAddChild, setShowAddChild] = useState(false);
   const [linkCode, setLinkCode] = useState('');
-  const [linkRelationship, setLinkRelationship] = useState('parent');
+  // linkRelationship removed — unused
   const [linkLoading, setLinkLoading] = useState(false);
   const [linkError, setLinkError] = useState('');
   const [linkSuccess, setLinkSuccess] = useState(null);

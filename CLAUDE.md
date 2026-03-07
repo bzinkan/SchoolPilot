@@ -197,6 +197,56 @@ The frontend uses React Compiler lint rules. Common gotchas:
 
 No test suite currently configured.
 
+## Native Mobile Apps (Capacitor)
+
+GoPilot and PassPilot are available as native Android apps via Capacitor. Each product has its own Android project and Capacitor config.
+
+### Directory Structure
+```
+schoolpilot-app/
+├── capacitor.config.ts              # Default (GoPilot)
+├── capacitor.gopilot.config.ts      # GoPilot-specific config
+├── capacitor.passpilot.config.ts    # PassPilot-specific config
+├── android-gopilot/                 # GoPilot Android project (com.schoolpilot.gopilot)
+├── android-passpilot/               # PassPilot Android project (com.schoolpilot.passpilot)
+└── resources/
+    ├── gopilot/                     # GoPilot icons and splash
+    └── passpilot/                   # PassPilot icons and splash
+```
+
+### Build Native App (GoPilot example)
+```bash
+cd schoolpilot-app
+
+# 1. Build web assets with product env var
+VITE_APP_PRODUCT=gopilot npm run build
+
+# 2. Sync Capacitor (use product-specific config)
+cp capacitor.gopilot.config.ts capacitor.config.ts
+npx cap sync android
+
+# 3. Build APK
+cd android-gopilot
+JAVA_HOME="C:/Program Files/Android/Android Studio/jbr" ./gradlew assembleDebug
+
+# 4. Install on device
+"C:/Users/zinka/AppData/Local/Android/Sdk/platform-tools/adb" install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+### Native App Key Details
+- `VITE_APP_PRODUCT` env var (`gopilot` | `passpilot`) controls branding and routing
+- `NativeContext.jsx` detects native platform via `@capacitor/core` and reads `VITE_APP_PRODUCT`
+- API base URL: `/api` on web, `https://school-pilot.net/api` on native
+- Auth: JWT Bearer tokens (no cookies on native), persisted via `@capacitor/preferences`
+- `useGoPilotAuth` hook adapts unified AuthContext to GoPilot-specific shape
+
+### GoPilot Parent Flow
+1. Parent registers via `/auth/register/parent` with `schoolSlug`
+2. Auto-assigned car number via `generateCarNumber()`
+3. Onboarding links children by car number (`/me/children/link-by-car`)
+4. Dashboard shows linked children, authorized pickups, check-in UI
+5. Check-in method (app vs QR) is school-controlled via `settings.checkInMethod`
+
 ## Production Deployment
 
 Infrastructure is on AWS (us-east-1):
@@ -207,8 +257,10 @@ Infrastructure is on AWS (us-east-1):
 - **CloudFront**: Distribution `E1TPPJOD7C2CXR`
 
 ### Deploy Backend
+**IMPORTANT: Always build from `C:\GitHub\SchoolPilot\` (this repo). NEVER build from `C:\GoPilot\server\` — that is an obsolete prototype with incompatible schemas.**
 ```bash
 # On Windows, prefix AWS CLI / Docker commands with MSYS_NO_PATHCONV=1
+# Run from the SchoolPilot repo root:
 docker build -t schoolpilot-production-api .
 docker tag schoolpilot-production-api:latest 135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api:latest
 docker push 135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api:latest
