@@ -340,14 +340,20 @@ router.post(
         ],
       });
 
-      // Add line items per product
+      // Add line items per product (linked to Stripe catalog products)
       for (const item of pricing.lineItems) {
+        const productConfig = PRODUCT_PRICING[item.product as ProductKey];
+
         if (item.baseCents > 0) {
           await stripe.invoiceItems.create({
             customer: customerId,
             invoice: invoice.id,
-            amount: item.baseCents,
-            currency: "usd",
+            price_data: {
+              product: productConfig.stripeProductId,
+              currency: "usd",
+              unit_amount: item.baseCents,
+            },
+            quantity: 1,
             description: `${item.label} — Annual Base Fee`,
           });
         }
@@ -356,9 +362,13 @@ router.post(
           await stripe.invoiceItems.create({
             customer: customerId,
             invoice: invoice.id,
-            amount: item.perStudentTotalCents,
-            currency: "usd",
-            description: `${item.label} — Per-Student License (${studentCount} students × $${item.perStudentDollars.toFixed(2)}/student)`,
+            price_data: {
+              product: productConfig.stripeProductId,
+              currency: "usd",
+              unit_amount: item.perStudentCents,
+            },
+            quantity: studentCount,
+            description: `${item.label} — Per-Student License ($${item.perStudentDollars.toFixed(2)}/student)`,
           });
         }
       }

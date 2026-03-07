@@ -3,16 +3,19 @@ export const PRODUCT_PRICING = {
     label: "ClassPilot",
     basePriceDollars: 500,
     perStudentDollars: 2,
+    stripeProductId: process.env.STRIPE_PRODUCT_CLASSPILOT || "prod_U6M16fOy3YKKN0",
   },
   GOPILOT: {
     label: "GoPilot",
     basePriceDollars: 300,
     perStudentDollars: 2,
+    stripeProductId: process.env.STRIPE_PRODUCT_GOPILOT || "prod_U6M10fBJ6tafrM",
   },
   PASSPILOT: {
     label: "PassPilot",
     basePriceDollars: 0,
     perStudentDollars: 2,
+    stripeProductId: process.env.STRIPE_PRODUCT_PASSPILOT || "prod_U6M1Z6TG0jsUHh",
   },
 } as const;
 
