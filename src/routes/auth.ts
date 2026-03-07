@@ -13,6 +13,7 @@ import {
   getMembershipsWithSchool,
   getProductLicenses,
   updateUser,
+  getSchoolBySlug,
 } from "../services/storage.js";
 import { authenticate } from "../middleware/authenticate.js";
 import { authLimiter } from "../middleware/rateLimiter.js";
@@ -100,13 +101,22 @@ router.post("/register", authLimiter, async (req, res, next) => {
         .json({ error: parsed.error.errors[0]?.message || "Invalid input" });
     }
 
-    const { email, password, firstName, lastName, phone, schoolName, timezone } =
+    const { email, password, firstName, lastName, phone, schoolName, timezone, schoolSlug } =
       parsed.data;
 
     // Check if user exists
     const existing = await getUserByEmail(email);
     if (existing) {
       return res.status(409).json({ error: "Email already registered" });
+    }
+
+    // If schoolSlug provided, verify school exists (parent registration)
+    let parentSchool = null;
+    if (schoolSlug) {
+      parentSchool = await getSchoolBySlug(schoolSlug);
+      if (!parentSchool) {
+        return res.status(404).json({ error: "School not found. Check the code and try again." });
+      }
     }
 
     const hashedPassword = await hashPassword(password);
@@ -123,8 +133,22 @@ router.post("/register", authLimiter, async (req, res, next) => {
     let school = null;
     let membership = null;
 
-    // If schoolName provided, create a school (GoPilot pattern)
-    if (schoolName) {
+    if (parentSchool) {
+      // Parent registration: join existing school
+      school = parentSchool;
+      membership = await createMembership({
+        userId: user.id,
+        schoolId: school.id,
+        role: "parent",
+      });
+
+      req.session.userId = user.id;
+      req.session.email = user.email;
+      req.session.role = "parent";
+      req.session.schoolId = school.id;
+      req.session.schoolSessionVersion = school.schoolSessionVersion;
+    } else if (schoolName) {
+      // Admin registration: create a new school
       school = await createSchool({
         name: schoolName,
         status: "trial",
@@ -138,7 +162,6 @@ router.post("/register", authLimiter, async (req, res, next) => {
         role: "admin",
       });
 
-      // Set session
       req.session.userId = user.id;
       req.session.email = user.email;
       req.session.role = "admin";

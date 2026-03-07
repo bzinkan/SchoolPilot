@@ -84,7 +84,6 @@ export default function ParentApp() {
   const [showNotifications, setShowNotifications] = useState(false);
   const [showAuthorizedPickups, setShowAuthorizedPickups] = useState(false);
   const [showMyQrCode, setShowMyQrCode] = useState(false);
-  const [showCheckInMethod, setShowCheckInMethod] = useState(false);
   const [showQrModal, setShowQrModal] = useState(false);
 
   // Data states
@@ -110,7 +109,8 @@ export default function ParentApp() {
         setError(null);
 
         const childrenRes = await api.get('/me/children');
-        const childrenData = childrenRes.data.map(c => ({
+        const rawChildren = Array.isArray(childrenRes.data) ? childrenRes.data : (childrenRes.data?.children || []);
+        const childrenData = rawChildren.map(c => ({
           ...c,
           firstName: c.first_name,
           lastName: c.last_name,
@@ -157,6 +157,13 @@ export default function ParentApp() {
     fetchData();
     return () => { cancelled = true; };
   }, []);
+
+  // Redirect to onboarding if parent has no children linked and no car number
+  useEffect(() => {
+    if (!loading && children.length === 0 && !currentSchool?.carNumber) {
+      navigate('/gopilot/onboarding', { replace: true });
+    }
+  }, [loading, children, currentSchool, navigate]);
 
   // Get or create dismissal session when school is known
   useEffect(() => {
@@ -351,7 +358,7 @@ export default function ParentApp() {
             <div className="flex items-center justify-between mb-6">
               <div>
                 <p className="text-indigo-200 text-sm">Good afternoon,</p>
-                <h1 className="text-xl font-bold">{user.first_name}</h1>
+                <h1 className="text-xl font-bold">{user.firstName || user.first_name}</h1>
                 <p className="text-indigo-200 text-xs">{currentSchool?.name}</p>
               </div>
               <div className="flex items-center gap-3">
@@ -425,9 +432,13 @@ export default function ParentApp() {
                   ))}
                 </div>
 
-                {schoolSettings.enableQrCodes && currentSchool?.carNumber ? (
+                {schoolSettings.checkInMethod === 'qr' && currentSchool?.carNumber ? (
                   <p className="text-sm text-center text-gray-400 mt-2">
                     Tap the QR button below to show your check-in code
+                  </p>
+                ) : schoolSettings.checkInMethod === 'app' ? (
+                  <p className="text-sm text-center text-gray-400 mt-2">
+                    Tap "I'm Here" when you arrive for pickup
                   </p>
                 ) : (
                   <p className="text-sm text-center text-gray-400 mt-2">
@@ -534,7 +545,7 @@ export default function ParentApp() {
             <Card className="mb-4">
               <div className="p-4 border-b flex items-center justify-between">
                 <h3 className="font-semibold">My Children</h3>
-                <button className="text-indigo-600 text-sm font-medium">Manage</button>
+                <button className="text-indigo-600 text-sm font-medium" onClick={() => setCurrentView('children')}>Manage</button>
               </div>
               <div className="divide-y">
                 {children.map(child => {
@@ -574,7 +585,7 @@ export default function ParentApp() {
             <Card>
               <div className="p-4 border-b flex items-center justify-between">
                 <h3 className="font-semibold">Authorized Pickups</h3>
-                <button className="text-indigo-600 text-sm font-medium">
+                <button className="text-indigo-600 text-sm font-medium" onClick={() => setShowAuthorizedPickups(true)}>
                   <Plus className="w-4 h-4 inline mr-1" />
                   Add
                 </button>
@@ -620,12 +631,12 @@ export default function ParentApp() {
               {/* QR Code Button */}
               <button
                 onClick={() => {
-                  if (schoolSettings.enableQrCodes && currentSchool?.carNumber) {
+                  if (schoolSettings.checkInMethod === 'qr' && currentSchool?.carNumber) {
                     setShowQrModal(true);
                   }
                 }}
                 className={`flex flex-col items-center py-2 px-4 rounded-lg ${
-                  schoolSettings.enableQrCodes && currentSchool?.carNumber
+                  schoolSettings.checkInMethod === 'qr' && currentSchool?.carNumber
                     ? 'text-indigo-600'
                     : 'text-gray-300 cursor-not-allowed'
                 }`}
@@ -832,21 +843,21 @@ export default function ParentApp() {
                 {linkSuccess ? (
                   <div className="text-center">
                     <CheckCircle2 className="w-12 h-12 text-green-500 mx-auto mb-3" />
-                    <h3 className="text-lg font-bold mb-1">Link Request Sent!</h3>
+                    <h3 className="text-lg font-bold mb-1">Children Linked!</h3>
                     <p className="text-sm text-gray-600 mb-4">
-                      Your request to link to <strong>{linkSuccess.firstName} {linkSuccess.lastName}</strong> has been submitted for approval.
+                      {linkSuccess.count} {linkSuccess.count === 1 ? 'child has' : 'children have'} been linked to your account.
                     </p>
-                    <button onClick={() => setShowAddChild(false)} className="px-6 py-2 bg-indigo-600 text-white rounded-lg font-medium">Done</button>
+                    <button onClick={() => { setShowAddChild(false); window.location.reload(); }} className="px-6 py-2 bg-indigo-600 text-white rounded-lg font-medium">Done</button>
                   </div>
                 ) : (
                   <>
                     <div className="flex items-center justify-between mb-4">
-                      <h3 className="text-lg font-bold">Add Child</h3>
+                      <h3 className="text-lg font-bold">Add Children</h3>
                       <button onClick={() => setShowAddChild(false)} className="p-1 hover:bg-gray-100 rounded-lg">
                         <X className="w-5 h-5" />
                       </button>
                     </div>
-                    <p className="text-sm text-gray-500 mb-4">Enter the student code provided by your school.</p>
+                    <p className="text-sm text-gray-500 mb-4">Enter your family car number to link your children.</p>
                     {linkError && (
                       <div className="flex items-center gap-2 bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded-lg mb-3 text-sm">
                         <AlertCircle className="w-4 h-4 flex-shrink-0" />
@@ -855,27 +866,13 @@ export default function ParentApp() {
                     )}
                     <div className="space-y-3 mb-4">
                       <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Student Code</label>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Car Number</label>
                         <input
                           value={linkCode}
-                          onChange={e => setLinkCode(e.target.value.toUpperCase())}
-                          placeholder="e.g. ABC123"
-                          maxLength={6}
-                          className="w-full px-4 py-3 border border-gray-300 rounded-lg font-mono text-center text-lg tracking-widest focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                          onChange={e => setLinkCode(e.target.value)}
+                          placeholder="e.g. 42"
+                          className="w-full px-4 py-3 border border-gray-300 rounded-lg font-mono text-center text-2xl tracking-widest font-bold focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                         />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Relationship</label>
-                        <select
-                          value={linkRelationship}
-                          onChange={e => setLinkRelationship(e.target.value)}
-                          className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                        >
-                          <option value="parent">Parent</option>
-                          <option value="guardian">Guardian</option>
-                          <option value="grandparent">Grandparent</option>
-                          <option value="other">Other</option>
-                        </select>
                       </div>
                     </div>
                     <button
@@ -884,10 +881,10 @@ export default function ParentApp() {
                         setLinkLoading(true);
                         setLinkError('');
                         try {
-                          const res = await api.post('/me/children/link', { code: linkCode.trim(), relationship: linkRelationship, schoolId: currentSchool?.id });
-                          setLinkSuccess(res.data.student);
+                          const res = await api.post('/me/children/link-by-car', { carNumber: linkCode.trim(), schoolId: currentSchool?.id });
+                          setLinkSuccess({ count: res.data.students?.length || 0 });
                         } catch (err) {
-                          setLinkError(err.response?.data?.error || 'Failed to link student');
+                          setLinkError(err.response?.data?.error || 'Failed to link children');
                         } finally {
                           setLinkLoading(false);
                         }
@@ -896,7 +893,7 @@ export default function ParentApp() {
                       className="w-full py-3 bg-indigo-600 text-white rounded-lg font-semibold hover:bg-indigo-700 disabled:opacity-50 flex items-center justify-center gap-2"
                     >
                       {linkLoading && <Loader2 className="w-4 h-4 animate-spin" />}
-                      {linkLoading ? 'Linking...' : 'Link Child'}
+                      {linkLoading ? 'Linking...' : 'Link Children'}
                     </button>
                   </>
                 )}
@@ -949,7 +946,7 @@ export default function ParentApp() {
                   <User className="w-8 h-8 text-indigo-600" />
                 </div>
                 <div className="flex-1">
-                  <p className="font-bold text-lg">{user.first_name} {user.last_name}</p>
+                  <p className="font-bold text-lg">{user.firstName || user.first_name} {user.lastName || user.last_name}</p>
                   <p className="text-sm text-gray-500">{user.email}</p>
                 </div>
                 <Button variant="secondary" size="sm">Edit</Button>
@@ -961,7 +958,7 @@ export default function ParentApp() {
               <div className="divide-y">
                 {[
                   { icon: Bell, label: 'Notifications', value: user.notification_prefs?.enabled === false ? 'Off' : 'On', onClick: () => setShowNotifications(true) },
-                  { icon: Smartphone, label: 'Check-in Method', value: user.check_in_method || 'App', onClick: () => setShowCheckInMethod(true) },
+                  { icon: Smartphone, label: 'Check-in Method', value: schoolSettings.checkInMethod === 'qr' ? 'QR Code Tag' : 'GoPilot App', onClick: () => {} },
                   { icon: Phone, label: 'Phone Number', value: user.phone || 'Not set', onClick: () => setShowPhoneEdit(true) },
                   { icon: Shield, label: 'Authorized Pickups', value: `${authorizedPickups.length} people`, onClick: () => setShowAuthorizedPickups(true) },
                   { icon: QrCode, label: 'My QR Code', value: '', onClick: () => setShowMyQrCode(true) },
@@ -1017,28 +1014,6 @@ export default function ParentApp() {
               />
             )}
 
-            {/* Check-in Method Modal */}
-            {showCheckInMethod && (
-              <CheckInMethodModal
-                current={user.check_in_method || 'app'}
-                onClose={() => setShowCheckInMethod(false)}
-                onSave={async (method) => {
-                  await api.put('/me', { checkInMethod: method });
-                  await refetchUser();
-                  setShowCheckInMethod(false);
-                }}
-              />
-            )}
-
-            {/* Authorized Pickups Modal */}
-            {showAuthorizedPickups && (
-              <AuthorizedPickupsModal
-                pickups={authorizedPickups}
-                children={children}
-                onClose={() => setShowAuthorizedPickups(false)}
-              />
-            )}
-
             {/* My QR Code Modal */}
             {showMyQrCode && (
               <MyQrCodeModal
@@ -1049,6 +1024,28 @@ export default function ParentApp() {
             )}
           </main>
         </div>
+      )}
+
+      {/* Authorized Pickups Modal — rendered at top level so it works from any view */}
+      {showAuthorizedPickups && (
+        <AuthorizedPickupsModal
+          pickups={authorizedPickups}
+          children={children}
+          onClose={() => setShowAuthorizedPickups(false)}
+          onAdd={async () => {
+            const allPickups = [];
+            const seenIds = new Set();
+            for (const child of children) {
+              try {
+                const res = await api.get(`/students/${child.id}/pickups`);
+                for (const p of res.data) {
+                  if (!seenIds.has(p.id)) { seenIds.add(p.id); allPickups.push(p); }
+                }
+              } catch { /* ignore */ }
+            }
+            setAuthorizedPickups(allPickups);
+          }}
+        />
       )}
     </div>
   );
@@ -1290,69 +1287,82 @@ function NotificationsModal({ prefs, onClose, onSave }) {
   );
 }
 
-// Check-in Method Modal
-function CheckInMethodModal({ current, onClose, onSave }) {
-  const [method, setMethod] = useState(current);
+// Authorized Pickups Modal
+function AuthorizedPickupsModal({ pickups, children, onClose, onAdd }) {
+  const [showForm, setShowForm] = useState(false);
+  const [name, setName] = useState('');
+  const [relationship, setRelationship] = useState('');
+  const [phone, setPhone] = useState('');
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
 
-  const options = [
-    { id: 'app', label: 'App', description: 'Tap "I\'m Here" in the app', icon: Smartphone },
-    { id: 'qr', label: 'QR Code', description: 'Show QR code at pickup', icon: QrCode },
-  ];
-
-  const handleSave = async () => {
+  const handleAdd = async (e) => {
+    e.preventDefault();
+    if (!name.trim() || !relationship.trim()) return;
     setSaving(true);
-    try { await onSave(method); } catch { setSaving(false); }
+    setError('');
+    try {
+      for (const child of children) {
+        await api.post(`/students/${child.id}/pickups`, {
+          name: name.trim(),
+          relationship: relationship.trim(),
+          phone: phone.trim() || undefined,
+        });
+      }
+      if (onAdd) onAdd();
+      setShowForm(false);
+      setName('');
+      setRelationship('');
+      setPhone('');
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to add pickup person');
+    } finally {
+      setSaving(false);
+    }
   };
 
-  return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-end">
-      <div className="bg-white w-full rounded-t-3xl p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="font-bold text-lg">Check-in Method</h2>
-          <button onClick={onClose} className="p-2"><X className="w-5 h-5" /></button>
-        </div>
-        <div className="space-y-3 mb-6">
-          {options.map(opt => (
-            <button
-              key={opt.id}
-              onClick={() => setMethod(opt.id)}
-              className={`w-full p-4 rounded-xl border-2 flex items-center gap-4 text-left ${method === opt.id ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200'}`}
-            >
-              <opt.icon className={`w-6 h-6 ${method === opt.id ? 'text-indigo-600' : 'text-gray-400'}`} />
-              <div>
-                <p className="font-medium">{opt.label}</p>
-                <p className="text-sm text-gray-500">{opt.description}</p>
-              </div>
-              {method === opt.id && <CheckCircle2 className="w-5 h-5 text-indigo-600 ml-auto" />}
-            </button>
-          ))}
-        </div>
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className="w-full py-3 bg-indigo-600 text-white rounded-xl font-medium hover:bg-indigo-700 disabled:opacity-50 flex items-center justify-center gap-2"
-        >
-          {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
-          {saving ? 'Saving...' : 'Save'}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// Authorized Pickups Modal
-function AuthorizedPickupsModal({ pickups, onClose }) {
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-end">
       <div className="bg-white w-full rounded-t-3xl max-h-[85vh] overflow-y-auto">
         <div className="p-4 border-b sticky top-0 bg-white flex items-center justify-between">
           <h2 className="font-bold text-lg">Authorized Pickups</h2>
-          <button onClick={onClose} className="p-2"><X className="w-5 h-5" /></button>
+          <div className="flex items-center gap-2">
+            {!showForm && (
+              <button onClick={() => setShowForm(true)} className="text-indigo-600 text-sm font-medium flex items-center gap-1">
+                <Plus className="w-4 h-4" /> Add
+              </button>
+            )}
+            <button onClick={onClose} className="p-2"><X className="w-5 h-5" /></button>
+          </div>
         </div>
         <div className="p-4">
-          {pickups.length === 0 ? (
-            <p className="text-gray-500 text-center py-8">No authorized pickups added yet. Contact your school to add authorized pickup persons.</p>
+          {showForm && (
+            <form onSubmit={handleAdd} className="mb-4 p-4 bg-indigo-50 rounded-xl space-y-3">
+              <h3 className="font-semibold text-sm">Add Authorized Pickup Person</h3>
+              {error && <p className="text-red-600 text-sm">{error}</p>}
+              <input type="text" value={name} onChange={(e) => setName(e.target.value)} required
+                placeholder="Full name" className="w-full px-3 py-2 border rounded-lg text-sm" />
+              <input type="text" value={relationship} onChange={(e) => setRelationship(e.target.value)} required
+                placeholder="Relationship (e.g. Grandparent, Aunt)" className="w-full px-3 py-2 border rounded-lg text-sm" />
+              <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)}
+                placeholder="Phone (optional)" className="w-full px-3 py-2 border rounded-lg text-sm" />
+              <div className="flex gap-2">
+                <button type="submit" disabled={saving} className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium disabled:opacity-50">
+                  {saving ? 'Adding...' : 'Add Person'}
+                </button>
+                <button type="button" onClick={() => setShowForm(false)} className="px-4 py-2 border rounded-lg text-sm">Cancel</button>
+              </div>
+              <p className="text-xs text-gray-500">This person will be authorized for all your children.</p>
+            </form>
+          )}
+          {pickups.length === 0 && !showForm ? (
+            <div className="text-center py-8">
+              <Shield className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+              <p className="text-gray-500 mb-3">No authorized pickups added yet.</p>
+              <button onClick={() => setShowForm(true)} className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium">
+                <Plus className="w-4 h-4 inline mr-1" /> Add Pickup Person
+              </button>
+            </div>
           ) : (
             <div className="space-y-3">
               {pickups.map(p => (

@@ -4,6 +4,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { queryClient } from './lib/queryClient';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { LicenseProvider, useLicenses } from './contexts/LicenseContext';
+import { NativeProvider, useNative } from './contexts/NativeContext';
 import { SocketProvider } from './contexts/SocketContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import Spinner from './shared/components/Spinner';
@@ -11,6 +12,7 @@ import { Toaster } from './components/ui/toaster';
 // import { AIChatButton } from './components/chat/AIChatButton'; // AI Chat — disabled for now
 import Login from './pages/Login';
 import Landing from './pages/Landing';
+import AuthCallback from './pages/AuthCallback';
 
 // ClassPilot pages (lazy-loaded)
 const CPDashboard = lazy(() => import('./products/classpilot/pages/Dashboard'));
@@ -61,12 +63,25 @@ function PageLoader() {
 }
 
 function AppRoutes() {
-  const { user, loading } = useAuth();
+  const { user, loading, activeMembership } = useAuth();
   const { hasClassPilot, hasPassPilot, hasGoPilot, roleBasedDefaultPath } = useLicenses();
+  const { isNative, product } = useNative();
 
   const isSuperAdmin = user?.isSuperAdmin === true;
   const superAdminDefault = '/super-admin/schools';
-  const defaultDest = isSuperAdmin ? superAdminDefault : (roleBasedDefaultPath || '/classpilot');
+
+  // On native, override default destination based on product
+  let defaultDest;
+  if (isNative && (product === 'gopilot' || (product === null && hasGoPilot))) {
+    const gopilotRole = activeMembership?.gopilotRole || activeMembership?.role;
+    if (gopilotRole === 'parent') defaultDest = '/gopilot/parent';
+    else if (gopilotRole === 'teacher') defaultDest = '/gopilot/teacher';
+    else defaultDest = '/gopilot';
+  } else if (isNative && product === 'passpilot') {
+    defaultDest = '/passpilot';
+  } else {
+    defaultDest = isSuperAdmin ? superAdminDefault : (roleBasedDefaultPath || '/classpilot');
+  }
 
   if (loading) {
     return (
@@ -79,33 +94,24 @@ function AppRoutes() {
   return (
     <Suspense fallback={<PageLoader />}>
       <Routes>
-        {/* Landing page — always accessible */}
-        <Route path="/" element={<Landing />} />
+        {/* Login & OAuth callback — always accessible */}
         <Route path="/login" element={user ? <Navigate to={defaultDest} replace /> : <Login />} />
+        <Route path="/auth/callback" element={<AuthCallback />} />
 
-        {/* Product landing pages (public, no auth) */}
-        <Route path="/products/classpilot" element={<ClassPilotLanding />} />
-        <Route path="/products/passpilot" element={<PassPilotLanding />} />
-        <Route path="/products/gopilot" element={<GoPilotLanding />} />
-
-        {/* Legal pages (public, no auth) */}
-        <Route path="/terms" element={<TermsOfService />} />
-        <Route path="/privacy" element={<PrivacyPolicy />} />
-
-        {/* GoPilot public routes (no auth required) */}
-        <Route path="/gopilot/join/:schoolSlug" element={<GPJoinSchool />} />
-        <Route path="/gopilot/onboarding" element={<GPParentOnboarding />} />
-
-        {/* PassPilot Kiosk routes (standalone) */}
-        {hasPassPilot && (
+        {/* Web-only routes (landing pages, legal, super admin) */}
+        {!isNative && (
           <>
-            <Route path="/passpilot/kiosk" element={<PPKiosk />} />
-            <Route path="/passpilot/kiosk/simple" element={<PPKioskSimple />} />
+            <Route path="/" element={<Landing />} />
+            <Route path="/products/classpilot" element={<ClassPilotLanding />} />
+            <Route path="/products/passpilot" element={<PassPilotLanding />} />
+            <Route path="/products/gopilot" element={<GoPilotLanding />} />
+            <Route path="/terms" element={<TermsOfService />} />
+            <Route path="/privacy" element={<PrivacyPolicy />} />
           </>
         )}
 
-        {/* Super Admin — pages have their own headers */}
-        {isSuperAdmin && (
+        {/* Super Admin — web only */}
+        {!isNative && isSuperAdmin && (
           <>
             <Route path="/super-admin/schools" element={<SASchoolsList />} />
             <Route path="/super-admin/schools/new" element={<SACreateSchool />} />
@@ -114,8 +120,8 @@ function AppRoutes() {
           </>
         )}
 
-        {/* ClassPilot — dark header built into each page */}
-        {hasClassPilot && (
+        {/* ClassPilot — web only (not suitable for mobile) */}
+        {!isNative && hasClassPilot && (
           <>
             <Route path="/classpilot" element={<CPDashboard />} />
             <Route path="/classpilot/class/:classId" element={<CPDashboard />} />
@@ -130,24 +136,38 @@ function AppRoutes() {
           </>
         )}
 
-        {/* PassPilot — uses its own AppShell */}
-        {hasPassPilot && (
-          <Route path="/passpilot" element={<PPDashboard />} />
+        {/* GoPilot routes — web or native (product may be null if VITE_APP_PRODUCT not set) */}
+        {(!isNative || product === 'gopilot' || product === null) && (
+          <>
+            <Route path="/gopilot/join/:schoolSlug" element={<GPJoinSchool />} />
+            <Route path="/gopilot/onboarding" element={<GPParentOnboarding />} />
+            {hasGoPilot && (
+              <>
+                <Route path="/gopilot" element={<GPDismissalDashboard />} />
+                <Route path="/gopilot/teacher" element={<GPTeacherView />} />
+                <Route path="/gopilot/parent" element={<GPParentApp />} />
+                <Route path="/gopilot/setup" element={<GPSetupWizard />} />
+                <Route path="/gopilot/link" element={<GPLinkChild />} />
+              </>
+            )}
+          </>
         )}
 
-        {/* GoPilot — pages have their own headers */}
-        {hasGoPilot && (
+        {/* PassPilot routes — web or native passpilot app */}
+        {(!isNative || product === 'passpilot') && hasPassPilot && (
           <>
-            <Route path="/gopilot" element={<GPDismissalDashboard />} />
-            <Route path="/gopilot/teacher" element={<GPTeacherView />} />
-            <Route path="/gopilot/parent" element={<GPParentApp />} />
-            <Route path="/gopilot/setup" element={<GPSetupWizard />} />
-            <Route path="/gopilot/link" element={<GPLinkChild />} />
+            <Route path="/passpilot" element={<PPDashboard />} />
+            {!isNative && (
+              <>
+                <Route path="/passpilot/kiosk" element={<PPKiosk />} />
+                <Route path="/passpilot/kiosk/simple" element={<PPKioskSimple />} />
+              </>
+            )}
           </>
         )}
 
         {/* Catch-all redirect */}
-        <Route path="*" element={user ? <Navigate to={defaultDest} replace /> : <Navigate to="/" replace />} />
+        <Route path="*" element={user ? <Navigate to={defaultDest} replace /> : <Navigate to={isNative ? '/login' : '/'} replace />} />
       </Routes>
     </Suspense>
   );
@@ -157,17 +177,19 @@ export default function App() {
   return (
     <BrowserRouter>
       <QueryClientProvider client={queryClient}>
-        <ThemeProvider>
-          <AuthProvider>
-            <LicenseProvider>
-              <SocketProvider>
-                <AppRoutes />
-                <Toaster />
-                {/* <AIChatButton /> — AI Chat disabled for now */}
-              </SocketProvider>
-            </LicenseProvider>
-          </AuthProvider>
-        </ThemeProvider>
+        <NativeProvider>
+          <ThemeProvider>
+            <AuthProvider>
+              <LicenseProvider>
+                <SocketProvider>
+                  <AppRoutes />
+                  <Toaster />
+                  {/* <AIChatButton /> — AI Chat disabled for now */}
+                </SocketProvider>
+              </LicenseProvider>
+            </AuthProvider>
+          </ThemeProvider>
+        </NativeProvider>
       </QueryClientProvider>
     </BrowserRouter>
   );

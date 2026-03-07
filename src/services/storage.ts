@@ -240,7 +240,27 @@ export async function getSchoolByDomain(
   return school;
 }
 
+function generateSlug(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
 export async function createSchool(data: InsertSchool): Promise<School> {
+  // Auto-generate slug from school name if not provided
+  if (!data.slug && data.name) {
+    let base = generateSlug(data.name);
+    let slug = base;
+    let attempt = 0;
+    while (attempt < 10) {
+      const existing = await getSchoolBySlug(slug);
+      if (!existing) break;
+      attempt++;
+      slug = `${base}-${Math.random().toString(36).slice(2, 6)}`;
+    }
+    data.slug = slug;
+  }
   const [school] = await db.insert(schools).values(data).returning();
   return school!;
 }
@@ -1982,6 +2002,38 @@ export async function createParentStudentLink(
     .onConflictDoNothing()
     .returning();
   return row!;
+}
+
+export async function linkParentByCarNumber(
+  parentId: string,
+  schoolId: string,
+  carNumber: string,
+  membershipId: string
+): Promise<{ group: FamilyGroup; students: Student[] }> {
+  const group = await getFamilyGroupByCarNumber(schoolId, carNumber);
+  if (!group) {
+    throw new Error("No family found with that car number");
+  }
+  const studs = await getFamilyGroupStudents(group.id);
+  if (studs.length === 0) {
+    throw new Error("No students found in that family group");
+  }
+  // Link each student to this parent
+  for (const s of studs) {
+    await createParentStudentLink({
+      parentId,
+      studentId: s.id,
+      relationship: "parent",
+      status: "approved",
+    });
+  }
+  // Set car number on the parent's membership
+  await updateMembership(membershipId, { carNumber });
+  // Claim the family group
+  if (!group.claimedByUserId) {
+    await updateFamilyGroup(group.id, { claimedByUserId: parentId });
+  }
+  return { group, students: studs };
 }
 
 export async function getApprovedChildrenForParent(

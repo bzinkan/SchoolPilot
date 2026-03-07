@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">PassPilot</string>
+    <string name="title_activity_main">PassPilot</string>
+    <string name="package_name">com.schoolpilot.passpilot</string>
+    <string name="custom_url_scheme">com.schoolpilot.passpilot</string>
+</resources>

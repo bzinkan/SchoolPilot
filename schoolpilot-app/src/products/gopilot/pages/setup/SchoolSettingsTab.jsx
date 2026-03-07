@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Save, CheckCircle2 } from 'lucide-react';
+import { Save, CheckCircle2, Smartphone, QrCode } from 'lucide-react';
 import api from '../../../../shared/utils/api';
 import { TIMEZONES } from './constants';
 
@@ -7,7 +7,7 @@ export default function SchoolSettingsTab({ schoolId }) {
   const [dismissalTime, setDismissalTime] = useState('15:00');
   const [timezone, setTimezone] = useState('America/New_York');
   const [changeRequestWarning, setChangeRequestWarning] = useState('');
-  const [enableQrCodes, setEnableQrCodes] = useState(false);
+  const [checkInMethod, setCheckInMethod] = useState('app');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -22,7 +22,7 @@ export default function SchoolSettingsTab({ schoolId }) {
       setDismissalTime(school.dismissal_time || '15:00');
       setTimezone(school.timezone || 'America/New_York');
       setChangeRequestWarning(settingsRes.data?.changeRequestWarning || '');
-      setEnableQrCodes(settingsRes.data?.enableQrCodes || false);
+      setCheckInMethod(settingsRes.data?.checkInMethod || (settingsRes.data?.enableQrCodes ? 'qr' : 'app'));
     }).finally(() => setLoading(false));
   }, [schoolId]);
 
@@ -33,7 +33,7 @@ export default function SchoolSettingsTab({ schoolId }) {
       await api.put(`/schools/${schoolId}`, { dismissalTime, timezone });
       // Save settings separately (changeRequestWarning goes in settings JSON)
       const currentSettings = await api.get(`/schools/${schoolId}/settings`).then(r => r.data).catch(() => ({}));
-      await api.put(`/schools/${schoolId}/settings`, { ...currentSettings, changeRequestWarning: changeRequestWarning.trim() || undefined, enableQrCodes });
+      await api.put(`/schools/${schoolId}/settings`, { ...currentSettings, changeRequestWarning: changeRequestWarning.trim() || undefined, checkInMethod, enableQrCodes: checkInMethod === 'qr' });
       window.location.reload();
     } catch (err) {
       console.error('Failed to save settings:', err);
@@ -88,18 +88,33 @@ export default function SchoolSettingsTab({ schoolId }) {
           />
         </div>
 
-        <div className="flex items-center justify-between p-4 bg-gray-50 dark:bg-slate-800 rounded-lg">
-          <div>
-            <p className="text-sm font-medium text-gray-700 dark:text-slate-200">Enable QR Codes</p>
-            <p className="text-xs text-gray-500 dark:text-slate-400">Allow printing QR codes for students so parents can scan to link their account.</p>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-slate-200 mb-1">Parent Check-In Method</label>
+          <p className="text-xs text-gray-500 dark:text-slate-400 mb-3">How parents check in when they arrive for pickup.</p>
+          <div className="space-y-2">
+            <label
+              className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${checkInMethod === 'app' ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20' : 'border-gray-200 dark:border-slate-600 hover:border-gray-300 dark:hover:border-slate-500'}`}
+              onClick={() => setCheckInMethod('app')}
+            >
+              <input type="radio" name="checkInMethod" value="app" checked={checkInMethod === 'app'} onChange={() => setCheckInMethod('app')} className="text-indigo-600" />
+              <Smartphone className="w-5 h-5 text-gray-600 dark:text-slate-300" />
+              <div>
+                <p className="text-sm font-medium text-gray-900 dark:text-white">GoPilot App</p>
+                <p className="text-xs text-gray-500 dark:text-slate-400">Parents tap "I'm Here" in the app when they arrive</p>
+              </div>
+            </label>
+            <label
+              className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${checkInMethod === 'qr' ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20' : 'border-gray-200 dark:border-slate-600 hover:border-gray-300 dark:hover:border-slate-500'}`}
+              onClick={() => setCheckInMethod('qr')}
+            >
+              <input type="radio" name="checkInMethod" value="qr" checked={checkInMethod === 'qr'} onChange={() => setCheckInMethod('qr')} className="text-indigo-600" />
+              <QrCode className="w-5 h-5 text-gray-600 dark:text-slate-300" />
+              <div>
+                <p className="text-sm font-medium text-gray-900 dark:text-white">QR Code Tag</p>
+                <p className="text-xs text-gray-500 dark:text-slate-400">Parents display their QR code tag in the car window</p>
+              </div>
+            </label>
           </div>
-          <button
-            type="button"
-            onClick={() => setEnableQrCodes(!enableQrCodes)}
-            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${enableQrCodes ? 'bg-indigo-600' : 'bg-gray-300 dark:bg-slate-600'}`}
-          >
-            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${enableQrCodes ? 'translate-x-6' : 'translate-x-1'}`} />
-          </button>
         </div>
 
         <div className="flex items-center gap-3">

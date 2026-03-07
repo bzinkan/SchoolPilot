@@ -7,9 +7,25 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build:gopilot": "cross-env VITE_APP_PRODUCT=gopilot vite build",
+    "build:passpilot": "cross-env VITE_APP_PRODUCT=passpilot vite build",
+    "cap:sync:gopilot": "npx cap sync --project android-gopilot",
+    "cap:sync:passpilot": "npx cap sync --project android-passpilot",
+    "mobile:gopilot": "npm run build:gopilot && npm run cap:sync:gopilot",
+    "mobile:passpilot": "npm run build:passpilot && npm run cap:sync:passpilot"
   },
   "dependencies": {
+    "@capacitor/android": "^8.2.0",
+    "@capacitor/app": "^8.0.1",
+    "@capacitor/cli": "^8.2.0",
+    "@capacitor/core": "^8.2.0",
+    "@capacitor/haptics": "^8.0.1",
+    "@capacitor/keyboard": "^8.0.1",
+    "@capacitor/network": "^8.0.1",
+    "@capacitor/preferences": "^8.0.1",
+    "@capacitor/splash-screen": "^8.0.1",
+    "@capacitor/status-bar": "^8.0.1",
     "@hookform/resolvers": "^5.2.2",
     "@radix-ui/react-alert-dialog": "^1.1.15",
     "@radix-ui/react-avatar": "^1.1.11",
@@ -33,6 +49,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
+    "cross-env": "^10.1.0",
     "date-fns": "^4.1.0",
     "date-fns-tz": "^3.2.0",
     "html5-qrcode": "^2.3.8",
@@ -58,6 +75,7 @@
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.24",
     "globals": "^16.5.0",
+    "sharp": "^0.34.5",
     "tailwindcss": "^4.1.18",
     "vite": "^7.3.1"
   }

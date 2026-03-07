@@ -137,7 +137,7 @@ export default function StudentRoster({ students, schoolId, onImport, onRefresh,
           <Download className="w-4 h-4" />
           Download Template
         </button>
-        {schoolSettings.enableQrCodes && (
+        {schoolSettings.checkInMethod === 'qr' && (
           <button onClick={() => setShowQrPrint(true)} className="flex items-center gap-2 px-4 py-2 border dark:border-slate-700 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-slate-800 dark:text-slate-200">
             <QrCode className="w-4 h-4" />
             Print QR Codes
@@ -262,8 +262,8 @@ export default function StudentRoster({ students, schoolId, onImport, onRefresh,
       )}
 
       {/* Student Table */}
-      <div className="bg-white dark:bg-slate-900 rounded-xl border dark:border-slate-700 overflow-hidden">
-        <table className="w-full text-sm">
+      <div className="bg-white dark:bg-slate-900 rounded-xl border dark:border-slate-700 overflow-x-auto">
+        <table className="w-full text-sm min-w-[600px]">
           <thead className="bg-gray-50 dark:bg-slate-800 border-b dark:border-slate-700">
             <tr>
               <th className="w-10 p-3">

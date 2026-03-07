@@ -9,6 +9,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { useGoPilotAuth } from '../../../hooks/useGoPilotAuth';
 import { useLicenses } from '../../../contexts/LicenseContext';
+import { useNative } from '../../../contexts/NativeContext';
 import { useSocket } from '../../../contexts/SocketContext';
 import api from '../../../shared/utils/api';
 import { useAbsentStudents } from '../../../hooks/useAbsentStudents';
@@ -58,6 +59,7 @@ const Card = ({ children, className = '' }) => (
 export default function TeacherView() {
   const { currentSchool, user, logout } = useGoPilotAuth();
   const { hasClassPilot, hasPassPilot } = useLicenses();
+  const { isNative } = useNative();
   const navigate = useNavigate();
   const socket = useSocket();
 
@@ -408,7 +410,7 @@ export default function TeacherView() {
               </div>
 
               {/* Product switcher */}
-              {(hasClassPilot || hasPassPilot) && (
+              {!isNative && (hasClassPilot || hasPassPilot) && (
                 <div className="flex items-center gap-1 ml-2 border-l pl-3">
                   {hasClassPilot && (
                     <button onClick={() => navigate('/classpilot')}

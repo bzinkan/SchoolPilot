@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">GoPilot</string>
+    <string name="title_activity_main">GoPilot</string>
+    <string name="package_name">com.schoolpilot.gopilot</string>
+    <string name="custom_url_scheme">com.schoolpilot.gopilot</string>
+</resources>

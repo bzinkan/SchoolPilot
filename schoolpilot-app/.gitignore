@@ -12,6 +12,13 @@ dist
 dist-ssr
 *.local
 
+# Release keystores
+*.keystore
+
+# Android build outputs
+android-gopilot/app/build/
+android-passpilot/app/build/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

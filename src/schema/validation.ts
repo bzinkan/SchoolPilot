@@ -18,6 +18,8 @@ export const registerSchema = z.object({
   // GoPilot-style: create school on register
   schoolName: z.string().optional(),
   timezone: z.string().optional(),
+  // Parent registration: join existing school by slug
+  schoolSlug: z.string().optional(),
 });
 export type RegisterData = z.infer<typeof registerSchema>;
 

@@ -25,6 +25,7 @@ import {
   createParentStudentLink,
   getSchoolBySlug,
   getStudentByCode,
+  linkParentByCarNumber,
 } from "../services/storage.js";
 
 const router = Router();
@@ -136,6 +137,35 @@ router.post("/me/children/link", async (req, res, next) => {
     });
     return res.status(201).json({ link });
   } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/users/me/children/link-by-car
+router.post("/me/children/link-by-car", async (req, res, next) => {
+  try {
+    const { carNumber, schoolId } = req.body;
+    if (!carNumber || !schoolId) {
+      return res.status(400).json({ error: "carNumber and schoolId are required" });
+    }
+    const membership = await getMembershipByUserAndSchool(req.authUser!.id, schoolId);
+    if (!membership) {
+      return res.status(403).json({ error: "You do not have access to this school" });
+    }
+    const result = await linkParentByCarNumber(
+      req.authUser!.id,
+      schoolId,
+      carNumber,
+      membership.id
+    );
+    return res.status(201).json({
+      students: result.students,
+      familyGroup: result.group,
+    });
+  } catch (err: any) {
+    if (err.message?.includes("No family found") || err.message?.includes("No students found")) {
+      return res.status(404).json({ error: err.message });
+    }
     next(err);
   }
 });

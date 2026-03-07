@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useSyncExternalStore } from 'react';
 import { io } from 'socket.io-client';
+import { Capacitor } from '@capacitor/core';
 import { useAuth } from './AuthContext';
 
 const SocketContext = createContext(null);
@@ -21,7 +22,11 @@ export function SocketProvider({ children }) {
       return;
     }
 
-    const s = io(window.location.origin, {
+    const socketUrl = Capacitor.isNativePlatform()
+      ? 'https://school-pilot.net'
+      : window.location.origin;
+
+    const s = io(socketUrl, {
       auth: { token },
       path: '/gopilot-socket',
     });
@@ -31,7 +36,23 @@ export function SocketProvider({ children }) {
 
     socketRef.current = s;
     notify();
-    return () => { s.disconnect(); };
+
+    // Reconnect when native app resumes from background
+    let appListener;
+    if (Capacitor.isNativePlatform()) {
+      import('@capacitor/app').then(({ App }) => {
+        App.addListener('appStateChange', ({ isActive }) => {
+          if (isActive && socketRef.current && !socketRef.current.connected) {
+            socketRef.current.connect();
+          }
+        }).then((l) => { appListener = l; });
+      });
+    }
+
+    return () => {
+      s.disconnect();
+      appListener?.remove();
+    };
   }, [token]);
 
   const subscribe = (cb) => {

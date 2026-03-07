@@ -263,8 +263,8 @@ export default function StaffManager({ staff, schoolId, googleConnected, onAdd, 
       </div>
 
       {/* Staff Table */}
-      <div className="bg-white dark:bg-slate-900 rounded-xl border dark:border-slate-700 overflow-hidden">
-        <table className="w-full text-sm">
+      <div className="bg-white dark:bg-slate-900 rounded-xl border dark:border-slate-700 overflow-x-auto">
+        <table className="w-full text-sm min-w-[600px]">
           <thead>
             <tr className="bg-gray-50 dark:bg-slate-800 text-left text-gray-600 dark:text-slate-300 text-xs uppercase">
               <th className="p-3">Name</th>

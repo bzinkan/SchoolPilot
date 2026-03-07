@@ -1,9 +1,13 @@
 import axios from 'axios';
+import { Capacitor } from '@capacitor/core';
+
+const isNative = Capacitor.isNativePlatform();
+const baseURL = isNative ? 'https://school-pilot.net/api' : '/api';
 
 const api = axios.create({
-  baseURL: '/api',
+  baseURL,
   headers: { 'Content-Type': 'application/json' },
-  withCredentials: true,
+  withCredentials: !isNative, // cookies for web, JWT-only for native
 });
 
 // In-memory token store (never persisted to localStorage)

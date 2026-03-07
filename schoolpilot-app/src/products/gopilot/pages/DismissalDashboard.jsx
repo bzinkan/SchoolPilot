@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { ThemeToggle } from '../../../components/ThemeToggle';
 import { useLicenses } from '../../../contexts/LicenseContext';
+import { useNative } from '../../../contexts/NativeContext';
 
 const Badge = ({ children, variant = 'default', size = 'md', dot = false }) => {
   const variants = {
@@ -57,6 +58,7 @@ export default function DismissalDashboard() {
   const socket = useSocket();
   const navigate = useNavigate();
   const { hasClassPilot, hasPassPilot } = useLicenses();
+  const { isNative } = useNative();
 
   // Teachers should see their homeroom view, not the admin dashboard
   useEffect(() => {
@@ -448,7 +450,7 @@ export default function DismissalDashboard() {
         <div className="px-3 sm:px-4 py-2 sm:py-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 sm:gap-4">
-              {(hasClassPilot || hasPassPilot) && (
+              {!isNative && (hasClassPilot || hasPassPilot) && (
                 <div className="flex items-center gap-1">
                   {hasClassPilot && (
                     <button
@@ -575,7 +577,7 @@ export default function DismissalDashboard() {
         </aside>
 
         {/* Mobile bottom nav */}
-        <nav className="sm:hidden fixed bottom-0 left-0 right-0 bg-white dark:bg-slate-900 border-t dark:border-slate-700 z-50 px-2 py-1">
+        <nav className="sm:hidden fixed bottom-0 left-0 right-0 bg-white dark:bg-slate-900 border-t dark:border-slate-700 z-50 px-2 py-1" style={{ paddingBottom: 'max(4px, env(safe-area-inset-bottom))' }}>
           <div className="flex items-center justify-around">
             {[
               { id: 'queue', icon: Users, label: 'Queue' },
@@ -601,7 +603,7 @@ export default function DismissalDashboard() {
           </div>
         </nav>
 
-        <main className="flex-1 p-3 sm:p-4">
+        <main className="flex-1 p-3 sm:p-4 pb-20 sm:pb-4">
           {selectedView === 'queue' && (
             <div className="flex flex-col lg:grid lg:grid-cols-3 gap-3 sm:gap-4">
               {/* Car Number Input - shows first on mobile */}
@@ -913,56 +915,56 @@ export default function DismissalDashboard() {
             });
 
             return (
-              <div className="space-y-4">
-                <Card className="p-4">
-                  <div className="flex items-center justify-between mb-3">
-                    <h2 className="font-semibold flex items-center gap-2">
-                      <PersonStanding className="w-5 h-5 text-green-600" /> Walker Dismissal
+              <div className="space-y-3 sm:space-y-4">
+                <Card className="p-3 sm:p-4">
+                  <div className="flex items-center justify-between mb-2 sm:mb-3">
+                    <h2 className="font-semibold flex items-center gap-2 text-sm sm:text-base">
+                      <PersonStanding className="w-4 h-4 sm:w-5 sm:h-5 text-green-600" /> Walker Dismissal
                     </h2>
                     <div className="flex items-center gap-2">
                       <div className="flex rounded-lg border border-gray-200 dark:border-slate-600 overflow-hidden">
                         <button
                           onClick={() => setWalkerQueueTab('active')}
-                          className={`px-3 py-1 text-sm font-medium ${walkerQueueTab === 'active' ? 'bg-indigo-600 dark:bg-indigo-700 text-white' : 'bg-white text-gray-600 hover:bg-gray-50 dark:bg-slate-800/50 dark:hover:bg-slate-800'}`}
+                          className={`px-2 sm:px-3 py-1 text-xs sm:text-sm font-medium ${walkerQueueTab === 'active' ? 'bg-indigo-600 dark:bg-indigo-700 text-white' : 'bg-white text-gray-600 hover:bg-gray-50 dark:bg-slate-800/50 dark:hover:bg-slate-800'}`}
                         >
                           Queue <span className="ml-1 bg-white/20 px-1.5 rounded">{activeWalkerCount}</span>
                         </button>
                         <button
                           onClick={() => setWalkerQueueTab('dismissed')}
-                          className={`px-3 py-1 text-sm font-medium ${walkerQueueTab === 'dismissed' ? 'bg-indigo-600 dark:bg-indigo-700 text-white' : 'bg-white text-gray-600 hover:bg-gray-50 dark:bg-slate-800/50 dark:hover:bg-slate-800'}`}
+                          className={`px-2 sm:px-3 py-1 text-xs sm:text-sm font-medium ${walkerQueueTab === 'dismissed' ? 'bg-indigo-600 dark:bg-indigo-700 text-white' : 'bg-white text-gray-600 hover:bg-gray-50 dark:bg-slate-800/50 dark:hover:bg-slate-800'}`}
                         >
-                          Dismissed <span className="ml-1 bg-white/20 px-1.5 rounded">{dismissedWalkerCount}</span>
+                          Done <span className="ml-1 bg-white/20 px-1.5 rounded">{dismissedWalkerCount}</span>
                         </button>
                       </div>
                     </div>
                   </div>
                   {walkerResult && (
-                    <div className={`mb-3 p-2 rounded-lg text-sm ${walkerResult.type === 'success' ? 'bg-green-50 dark:bg-green-950/40 text-green-700 dark:text-green-400' : walkerResult.type === 'info' ? 'bg-yellow-50 dark:bg-yellow-950/40 text-yellow-700 dark:text-yellow-400' : 'bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-400'}`}>
+                    <div className={`mb-2 p-2 rounded-lg text-sm ${walkerResult.type === 'success' ? 'bg-green-50 dark:bg-green-950/40 text-green-700 dark:text-green-400' : walkerResult.type === 'info' ? 'bg-yellow-50 dark:bg-yellow-950/40 text-yellow-700 dark:text-yellow-400' : 'bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-400'}`}>
                       {walkerResult.message}
                     </div>
                   )}
 
                   {/* Release Options */}
-                  <div className="border-t pt-3 mt-3">
-                    <div className="flex items-center justify-between mb-3">
+                  <div className="border-t pt-2 sm:pt-3 mt-2 sm:mt-3">
+                    <div className="flex flex-wrap items-center gap-2 mb-2 sm:mb-3">
                       <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-gray-700 dark:text-slate-300">Release by:</span>
+                        <span className="text-xs sm:text-sm font-medium text-gray-700 dark:text-slate-300">Release by:</span>
                         <div className="flex rounded-lg border border-gray-200 dark:border-slate-600 overflow-hidden">
                           <button
                             onClick={() => setWalkerViewTab('grade')}
-                            className={`px-3 py-1 text-sm font-medium ${walkerViewTab === 'grade' ? 'bg-green-600 dark:bg-green-700 text-white' : 'bg-white text-gray-600 hover:bg-gray-50 dark:bg-slate-800/50 dark:hover:bg-slate-800'}`}
+                            className={`px-2 sm:px-3 py-1 text-xs sm:text-sm font-medium ${walkerViewTab === 'grade' ? 'bg-green-600 dark:bg-green-700 text-white' : 'bg-white text-gray-600 hover:bg-gray-50 dark:bg-slate-800/50 dark:hover:bg-slate-800'}`}
                           >
                             Grade
                           </button>
                           <button
                             onClick={() => setWalkerViewTab('homeroom')}
-                            className={`px-3 py-1 text-sm font-medium ${walkerViewTab === 'homeroom' ? 'bg-green-600 dark:bg-green-700 text-white' : 'bg-white text-gray-600 hover:bg-gray-50 dark:bg-slate-800/50 dark:hover:bg-slate-800'}`}
+                            className={`px-2 sm:px-3 py-1 text-xs sm:text-sm font-medium ${walkerViewTab === 'homeroom' ? 'bg-green-600 dark:bg-green-700 text-white' : 'bg-white text-gray-600 hover:bg-gray-50 dark:bg-slate-800/50 dark:hover:bg-slate-800'}`}
                           >
                             Homeroom
                           </button>
                         </div>
                       </div>
-                      <div className="flex gap-2">
+                      <div className="flex gap-2 ml-auto">
                         <Button
                           variant="success"
                           size="sm"
@@ -970,17 +972,19 @@ export default function DismissalDashboard() {
                           disabled={walkerLoading || (walkerViewTab === 'grade' ? selectedGrades.length === 0 : selectedWalkerHomerooms.length === 0)}
                         >
                           {walkerLoading ? <RefreshCw className="w-4 h-4 animate-spin mr-1" /> : <PersonStanding className="w-4 h-4 mr-1" />}
-                          Dismiss Selected {walkerViewTab === 'grade' ? `(${selectedGrades.length} grades)` : `(${selectedWalkerHomerooms.length} homerooms)`}
+                          <span className="hidden sm:inline">Dismiss Selected {walkerViewTab === 'grade' ? `(${selectedGrades.length} grades)` : `(${selectedWalkerHomerooms.length} homerooms)`}</span>
+                          <span className="sm:hidden">Dismiss ({walkerViewTab === 'grade' ? selectedGrades.length : selectedWalkerHomerooms.length})</span>
                         </Button>
                         <Button variant="danger" size="sm" onClick={handleReleaseWalkers} disabled={walkerLoading}>
                           {walkerLoading ? <RefreshCw className="w-4 h-4 animate-spin mr-1" /> : <PersonStanding className="w-4 h-4 mr-1" />}
-                          Dismiss All Walkers
+                          <span className="hidden sm:inline">Dismiss All Walkers</span>
+                          <span className="sm:hidden">All</span>
                         </Button>
                       </div>
                     </div>
 
                     {/* Scrollable selection list */}
-                    <div className="max-h-64 overflow-y-auto border dark:border-slate-700 rounded-lg bg-gray-50 dark:bg-slate-800/50 dark:bg-slate-800/50 p-2">
+                    <div className="max-h-40 sm:max-h-64 overflow-y-auto border dark:border-slate-700 rounded-lg bg-gray-50 dark:bg-slate-800/50 p-2">
                       {walkerViewTab === 'grade' && (
                         <div className="space-y-1">
                           {uniqueGrades.length === 0 ? (

@@ -75,8 +75,10 @@ export default function ParentOnboarding() {
     arrivalReminders: true,
   });
 
+  const [carNumber, setCarNumber] = useState('');
+  const [autoLinked, setAutoLinked] = useState(false);
   const [phone, setPhone] = useState('');
-  const [checkInMethod, setCheckInMethod] = useState('app');
+  const [schoolCheckInMethod, setSchoolCheckInMethod] = useState('app');
 
   const steps = [
     { num: 1, title: 'Sign In', icon: User },
@@ -91,7 +93,8 @@ export default function ParentOnboarding() {
     setError(null);
     try {
       const res = await api.get('/me/children');
-      setChildren(res.data || []);
+      const data = Array.isArray(res.data) ? res.data : (res.data?.children || []);
+      setChildren(data);
     } catch (err) {
       console.error('Failed to fetch children:', err);
       setError('Failed to load children. Please try again.');
@@ -119,21 +122,45 @@ export default function ParentOnboarding() {
     fetchChildren();
   }, [fetchChildren]);
 
+  // Auto-populate car number from school membership and auto-link children
+  useEffect(() => {
+    if (currentSchool?.carNumber && !autoLinked && children.length === 0) {
+      setCarNumber(currentSchool.carNumber);
+      setAutoLinked(true);
+      handleLinkByCarNumber(currentSchool.carNumber);
+    }
+  }, [currentSchool?.carNumber, autoLinked, children.length]);
+
+  useEffect(() => {
+    if (!currentSchool?.id) return;
+    api.get(`/schools/${currentSchool.id}/settings`).then(res => {
+      setSchoolCheckInMethod(res.data?.checkInMethod || 'app');
+    }).catch(() => {});
+  }, [currentSchool?.id]);
+
   useEffect(() => {
     if (children.length > 0) {
       fetchPickups(children);
     }
   }, [children, fetchPickups]);
 
-  const handleAddChildByCode = async (code) => {
+  const handleLinkByCarNumber = async (num) => {
     setIsLoading(true);
     setError(null);
     try {
-      await api.post('/me/children/link', { student_code: code });
-      await fetchChildren();
+      const res = await api.post('/me/children/link-by-car', {
+        carNumber: num,
+        schoolId: currentSchool?.id,
+      });
+      // Directly set children from response if available
+      if (res.data?.students && Array.isArray(res.data.students)) {
+        setChildren(res.data.students);
+      } else {
+        await fetchChildren();
+      }
     } catch (err) {
-      console.error('Failed to link child:', err);
-      setError(err.response?.data?.error || 'Failed to link child. Please check the code and try again.');
+      const msg = err.response?.data?.error || err.message || 'Failed to link. Please try again.';
+      setError(msg);
     } finally {
       setIsLoading(false);
     }
@@ -162,7 +189,7 @@ export default function ParentOnboarding() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-indigo-50 to-white">
+    <div className="min-h-screen bg-gradient-to-b from-indigo-50 to-white text-black" style={{ colorScheme: 'light' }}>
       {/* Header */}
       <header className="bg-white border-b">
         <div className="max-w-lg mx-auto px-4 py-4">
@@ -210,11 +237,11 @@ export default function ParentOnboarding() {
 
         {/* Global Error Banner */}
         {error && (
-          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg flex items-start gap-3">
-            <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+          <div className="mb-6 p-4 bg-red-100 border-2 border-red-400 rounded-lg flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
             <div>
-              <p className="text-sm text-red-700">{error}</p>
-              <button onClick={() => setError(null)} className="text-sm text-red-500 underline mt-1">Dismiss</button>
+              <p className="text-sm font-medium text-red-800">{error}</p>
+              <button onClick={() => setError(null)} className="text-sm font-bold text-red-600 underline mt-1">Dismiss</button>
             </div>
           </div>
         )}
@@ -265,42 +292,34 @@ export default function ParentOnboarding() {
           </div>
         )}
 
-        {/* Step 2: Link Children */}
+        {/* Step 2: Link Children by Car Number */}
         {currentStep === 2 && (
           <div className="space-y-6">
             <div className="text-center">
-              <h2 className="text-2xl font-bold text-gray-900">Your Children</h2>
-              <p className="text-gray-500 mt-1">Confirm linked children or add more</p>
+              <h2 className="text-2xl font-bold text-gray-900">Link Your Children</h2>
+              <p className="text-gray-500 mt-1">Enter your family car number to find your children</p>
             </div>
-
-            {childrenLoading && (
-              <Card className="p-6">
-                <div className="text-center text-gray-500">
-                  <span className="animate-pulse">Loading children...</span>
-                </div>
-              </Card>
-            )}
 
             {children.length > 0 && (
               <Card>
                 <div className="p-4 border-b">
-                  <h3 className="font-semibold flex items-center gap-2">
+                  <h3 className="font-semibold text-black flex items-center gap-2">
                     <CheckCircle2 className="w-5 h-5 text-green-500" />
-                    Linked Children
+                    Linked Children ({children.length})
                   </h3>
                 </div>
                 <div className="divide-y">
                   {children.map(child => (
                     <div key={child.id} className="p-4 flex items-center justify-between">
                       <div className="flex items-center gap-3">
-                        <div className="w-12 h-12 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-600 font-medium">
+                        <div className="w-12 h-12 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-600 font-bold">
                           {(child.firstName || child.first_name || '?')[0]}{(child.lastName || child.last_name || '?')[0]}
                         </div>
                         <div>
-                          <p className="font-medium">{child.firstName || child.first_name} {child.lastName || child.last_name}</p>
-                          <p className="text-sm text-gray-500">
-                            {child.grade && `Grade ${child.grade}`}
-                            {child.homeroom && ` \u2022 ${child.homeroom}`}
+                          <p className="font-semibold text-black">{child.firstName || child.first_name} {child.lastName || child.last_name}</p>
+                          <p className="text-sm text-gray-600">
+                            {(child.gradeLevel || child.grade_level || child.grade) && `Grade ${child.gradeLevel || child.grade_level || child.grade}`}
+                            {child.homeroom && ` • ${child.homeroom}`}
                           </p>
                         </div>
                       </div>
@@ -311,20 +330,40 @@ export default function ParentOnboarding() {
               </Card>
             )}
 
-            <Card className="p-4">
-              <h3 className="font-semibold mb-3">Add Another Child</h3>
-              <p className="text-sm text-gray-500 mb-4">
-                Enter the student code provided by your school
-              </p>
-              <AddChildForm onAdd={handleAddChildByCode} disabled={isLoading} />
-            </Card>
+            {children.length === 0 && (
+              <Card className="p-5">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-10 h-10 bg-indigo-100 rounded-full flex items-center justify-center">
+                    <Car className="w-5 h-5 text-indigo-600" />
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-black">Enter Your Car Number</h3>
+                    <p className="text-sm text-gray-600">This links all your children at once</p>
+                  </div>
+                </div>
+                <form onSubmit={(e) => { e.preventDefault(); if (carNumber.trim()) handleLinkByCarNumber(carNumber.trim()); }} className="space-y-3">
+                  <input
+                    type="text"
+                    value={carNumber}
+                    onChange={(e) => setCarNumber(e.target.value)}
+                    placeholder="e.g. 42"
+                    className="w-full px-4 py-3 border border-gray-300 rounded-lg text-center text-2xl tracking-widest font-mono font-bold text-black bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    autoFocus
+                  />
+                  <p className="text-xs text-gray-400 text-center">Your family car number assigned by the school</p>
+                  <Button type="submit" variant="primary" size="lg" className="w-full" disabled={isLoading || childrenLoading || !carNumber.trim()}>
+                    {isLoading ? 'Linking...' : 'Link My Children'}
+                  </Button>
+                </form>
+              </Card>
+            )}
 
             <div className="flex gap-3">
               <Button variant="secondary" size="lg" onClick={() => setCurrentStep(1)} className="flex-1">
                 <ArrowLeft className="w-4 h-4 mr-2" />
                 Back
               </Button>
-              <Button variant="primary" size="lg" onClick={() => setCurrentStep(3)} className="flex-1">
+              <Button variant="primary" size="lg" onClick={() => setCurrentStep(3)} className="flex-1" disabled={children.length === 0}>
                 Continue
                 <ArrowRight className="w-4 h-4 ml-2" />
               </Button>
@@ -398,120 +437,44 @@ export default function ParentOnboarding() {
           </div>
         )}
 
-        {/* Step 4: Preferences */}
+        {/* Step 4: Check-in Method (informational — set by school) */}
         {currentStep === 4 && (
           <div className="space-y-6">
             <div className="text-center">
-              <h2 className="text-2xl font-bold text-gray-900">Your Preferences</h2>
-              <p className="text-gray-500 mt-1">Set up notifications and check-in method</p>
+              <h2 className="text-2xl font-bold text-gray-900">How You'll Check In</h2>
+              <p className="text-gray-500 mt-1">Your school has set the check-in method for pickup</p>
             </div>
 
-            <Card className="p-4">
-              <h3 className="font-semibold mb-3 flex items-center gap-2">
-                <Phone className="w-5 h-5 text-indigo-500" />
-                Phone Number
-              </h3>
-              <p className="text-sm text-gray-500 mb-3">Required for SMS check-in and notifications</p>
-              <input
-                type="tel"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                placeholder="(555) 123-4567"
-                className="w-full px-4 py-3 border rounded-lg text-lg"
-              />
-            </Card>
-
-            <Card className="p-4">
-              <h3 className="font-semibold mb-3">Preferred Check-in Method</h3>
-              <p className="text-sm text-gray-500 mb-4">How do you want to check in when you arrive?</p>
-
-              <div className="space-y-2">
-                {[
-                  { id: 'app', icon: Smartphone, title: 'GoPilot App', desc: 'Tap "I\'m Here" when you arrive' },
-                  { id: 'sms', icon: MessageSquare, title: 'Text Message', desc: 'Text your student code to check in' },
-                  { id: 'qr', icon: QrCode, title: 'QR Code Tag', desc: 'Display tag in your car window' },
-                ].map(method => (
-                  <label
-                    key={method.id}
-                    className={`flex items-center gap-3 p-4 border rounded-lg cursor-pointer transition-colors ${
-                      checkInMethod === method.id ? 'border-indigo-500 bg-indigo-50' : 'hover:bg-gray-50'
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="checkInMethod"
-                      value={method.id}
-                      checked={checkInMethod === method.id}
-                      onChange={(e) => setCheckInMethod(e.target.value)}
-                      className="w-4 h-4 text-indigo-600"
-                    />
-                    <method.icon className={`w-5 h-5 ${checkInMethod === method.id ? 'text-indigo-600' : 'text-gray-400'}`} />
-                    <div>
-                      <p className="font-medium">{method.title}</p>
-                      <p className="text-sm text-gray-500">{method.desc}</p>
-                    </div>
-                  </label>
-                ))}
+            <Card className="p-5">
+              <div className="flex items-center gap-4">
+                <div className={`w-14 h-14 rounded-full flex items-center justify-center ${schoolCheckInMethod === 'qr' ? 'bg-purple-100' : 'bg-indigo-100'}`}>
+                  {schoolCheckInMethod === 'qr'
+                    ? <QrCode className="w-7 h-7 text-purple-600" />
+                    : <Smartphone className="w-7 h-7 text-indigo-600" />
+                  }
+                </div>
+                <div>
+                  <p className="text-lg font-bold text-gray-900">
+                    {schoolCheckInMethod === 'qr' ? 'QR Code Tag' : 'GoPilot App'}
+                  </p>
+                  <p className="text-sm text-gray-500 mt-1">
+                    {schoolCheckInMethod === 'qr'
+                      ? 'Display your QR code tag in your car window when you arrive for pickup.'
+                      : 'When you arrive for pickup, tap "I\'m Here" in the app to check in.'
+                    }
+                  </p>
+                </div>
               </div>
             </Card>
 
-            <Card className="p-4">
-              <h3 className="font-semibold mb-3 flex items-center gap-2">
-                <Bell className="w-5 h-5 text-indigo-500" />
-                Notifications
-              </h3>
-
-              <div className="space-y-3">
-                <label className="flex items-center justify-between">
-                  <span className="text-sm">Push notifications</span>
-                  <input
-                    type="checkbox"
-                    checked={notifications.pushEnabled}
-                    onChange={(e) => setNotifications({ ...notifications, pushEnabled: e.target.checked })}
-                    className="w-5 h-5 rounded"
-                  />
-                </label>
-                <label className="flex items-center justify-between">
-                  <span className="text-sm">SMS notifications</span>
-                  <input
-                    type="checkbox"
-                    checked={notifications.smsEnabled}
-                    onChange={(e) => setNotifications({ ...notifications, smsEnabled: e.target.checked })}
-                    className="w-5 h-5 rounded"
-                  />
-                </label>
-
-                <div className="border-t pt-3 mt-3">
-                  <p className="text-sm font-medium mb-2">Notify me when:</p>
-                  <div className="space-y-2 text-sm">
-                    <label className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={notifications.dismissalAlerts}
-                        onChange={(e) => setNotifications({ ...notifications, dismissalAlerts: e.target.checked })}
-                        className="w-4 h-4 rounded"
-                      />
-                      Child is ready for pickup
-                    </label>
-                    <label className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={notifications.changeConfirmations}
-                        onChange={(e) => setNotifications({ ...notifications, changeConfirmations: e.target.checked })}
-                        className="w-4 h-4 rounded"
-                      />
-                      Dismissal changes are confirmed
-                    </label>
-                    <label className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={notifications.arrivalReminders}
-                        onChange={(e) => setNotifications({ ...notifications, arrivalReminders: e.target.checked })}
-                        className="w-4 h-4 rounded"
-                      />
-                      Reminder before dismissal time
-                    </label>
-                  </div>
+            <Card className="p-4 bg-amber-50 border-amber-200">
+              <div className="flex items-start gap-3">
+                <Shield className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-medium text-amber-900">Office Confirmation Required</p>
+                  <p className="text-sm text-amber-700 mt-1">
+                    After you check in, your child will only be released once office staff confirms and approves the dismissal.
+                  </p>
                 </div>
               </div>
             </Card>
@@ -554,16 +517,7 @@ export default function ParentOnboarding() {
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-gray-500">Check-in method</span>
-                  <span className="font-medium capitalize">{checkInMethod === 'sms' ? 'SMS' : checkInMethod === 'qr' ? 'QR Code' : 'App'}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-gray-500">Notifications</span>
-                  <span className="font-medium">
-                    {[
-                      notifications.pushEnabled && 'Push',
-                      notifications.smsEnabled && 'SMS'
-                    ].filter(Boolean).join(', ') || 'Off'}
-                  </span>
+                  <span className="font-medium">{schoolCheckInMethod === 'qr' ? 'QR Code Tag' : 'GoPilot App'}</span>
                 </div>
               </div>
             </Card>
@@ -602,52 +556,42 @@ export default function ParentOnboarding() {
 }
 
 // Add Child Form Component
-function AddChildForm({ onAdd, disabled }) {
-  const [code, setCode] = useState('');
-  const [showForm, setShowForm] = useState(false);
+function CarNumberForm({ onLink, disabled }) {
+  const [carNumber, setCarNumber] = useState('');
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (code.trim()) {
-      onAdd(code);
-      setCode('');
-      setShowForm(false);
+    if (carNumber.trim()) {
+      onLink(carNumber.trim());
     }
   };
 
-  if (!showForm) {
-    return (
-      <Button variant="secondary" size="md" onClick={() => setShowForm(true)} className="w-full" disabled={disabled}>
-        <Plus className="w-4 h-4 mr-2" />
-        Add Another Child
-      </Button>
-    );
-  }
-
   return (
-    <form onSubmit={handleSubmit} className="space-y-3">
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">Student Code</label>
+    <Card className="p-5">
+      <div className="flex items-center gap-3 mb-4">
+        <div className="w-10 h-10 bg-indigo-100 rounded-full flex items-center justify-center">
+          <Car className="w-5 h-5 text-indigo-600" />
+        </div>
+        <div>
+          <h3 className="font-semibold">Enter Your Car Number</h3>
+          <p className="text-sm text-gray-500">This links all your children at once</p>
+        </div>
+      </div>
+      <form onSubmit={handleSubmit} className="space-y-3">
         <input
           type="text"
-          value={code}
-          onChange={(e) => setCode(e.target.value.toUpperCase())}
-          placeholder="Enter 6-digit code"
-          className="w-full px-4 py-2 border rounded-lg text-center text-lg tracking-widest font-mono"
-          maxLength={6}
+          value={carNumber}
+          onChange={(e) => setCarNumber(e.target.value)}
+          placeholder="e.g. 42"
+          className="w-full px-4 py-3 border rounded-lg text-center text-2xl tracking-widest font-mono font-bold"
           autoFocus
         />
-        <p className="text-xs text-gray-400 mt-1">Code provided by your school</p>
-      </div>
-      <div className="flex gap-2">
-        <Button type="submit" variant="primary" size="sm" className="flex-1" disabled={disabled}>
-          Add Child
+        <p className="text-xs text-gray-400 text-center">Your family car number assigned by the school</p>
+        <Button type="submit" variant="primary" size="lg" className="w-full" disabled={disabled || !carNumber.trim()}>
+          {disabled ? 'Linking...' : 'Link My Children'}
         </Button>
-        <Button type="button" variant="ghost" size="sm" onClick={() => setShowForm(false)}>
-          Cancel
-        </Button>
-      </div>
-    </form>
+      </form>
+    </Card>
   );
 }
 

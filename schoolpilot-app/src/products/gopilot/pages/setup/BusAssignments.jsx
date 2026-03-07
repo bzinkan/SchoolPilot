@@ -288,8 +288,8 @@ export default function BusAssignments({ students, homerooms, onUpdateStudents, 
                       </button>
                     </div>
                   </div>
-                  <div className="bg-white dark:bg-slate-900 border dark:border-slate-700 rounded-lg overflow-hidden max-h-80 overflow-y-auto">
-                    <table className="w-full text-sm">
+                  <div className="bg-white dark:bg-slate-900 border dark:border-slate-700 rounded-lg overflow-x-auto max-h-80 overflow-y-auto">
+                    <table className="w-full text-sm min-w-[500px]">
                       <thead className="bg-gray-50 dark:bg-slate-800 border-b dark:border-slate-700">
                         <tr>
                           <th className="text-left px-3 py-2 font-medium text-gray-600 dark:text-slate-300">CSV Name</th>

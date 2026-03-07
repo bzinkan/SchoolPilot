@@ -24,6 +24,7 @@ import {
   getTeacherGrades,
   assignTeacherGrade,
   removeTeacherGrade,
+  getSchoolBySlug,
 } from "../services/storage.js";
 
 const router = Router();
@@ -89,9 +90,26 @@ router.post("/", requireSuperAdmin, async (req, res, next) => {
 // GET /api/schools/:schoolId - Get school details
 router.get("/:schoolId", requireSchoolContext, async (req, res, next) => {
   try {
-    const school = await getSchoolById(param(req, "schoolId"));
+    let school = await getSchoolById(param(req, "schoolId"));
     if (!school || school.deletedAt) {
       return res.status(404).json({ error: "School not found" });
+    }
+
+    // Lazy-generate slug for schools created before auto-slug
+    if (!school.slug && school.name) {
+      let base = school.name
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "");
+      let slug = base;
+      let attempt = 0;
+      while (attempt < 10) {
+        const existing = await getSchoolBySlug(slug);
+        if (!existing) break;
+        attempt++;
+        slug = `${base}-${Math.random().toString(36).slice(2, 6)}`;
+      }
+      school = (await updateSchool(school.id, { slug })) ?? school;
     }
 
     const licenses = await getProductLicenses(school.id);
