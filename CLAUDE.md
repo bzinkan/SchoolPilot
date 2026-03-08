@@ -305,3 +305,83 @@ Session-scoped dismissal type changes (car/bus/walker/afterschool) for today onl
 - **Socket event:** `dismissal:override` emitted to office, teacher, and parent rooms
 - **Queue integration:** All check-in methods (app, car number, bus, walker release) use `getEffectiveDismissalTypes()` to respect overrides. Afterschool students are excluded from queue.
 - **Frontend:** Override UI in ParentApp, TeacherView, and DismissalDashboard (including expandable homerooms in Rooms tab)
+
+## AWS Infrastructure Architecture
+
+### Traffic Flow
+```
+User → CloudFront (E1TPPJOD7C2CXR) → routes by path:
+  /api/*              → ALB → ECS Fargate (port 4000)
+  /health             → ALB → ECS Fargate (port 4000)
+  /ws                 → ALB → ECS Fargate (port 4000)
+  /gopilot-socket/*   → ALB → ECS Fargate (port 4000)
+  /* (default)        → S3 (schoolpilot-production-frontend)
+```
+
+### Component Details
+
+| Component | Name / ARN | Notes |
+|-----------|-----------|-------|
+| **CloudFront** | Distribution `E1TPPJOD7C2CXR` | Two origins: `alb-api` (ALB) and `s3-frontend` (S3) |
+| **ALB** | `schoolpilot-production-alb` (`schoolpilot-production-alb-1268871698.us-east-1.elb.amazonaws.com`) | Forwards to ECS target group |
+| **ECS Cluster** | `schoolpilot-production-cluster` | Fargate launch type |
+| **ECS Service** | `schoolpilot-production-api` | 1 desired task, Fargate, uses ALB target group |
+| **Task Definition** | `schoolpilot-production-api` (currently rev 14) | Single container named `api`, port 4000 |
+| **ECR** | `135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api` | Image tagged `:latest` |
+| **S3** | `schoolpilot-production-frontend` | Static frontend assets served by CloudFront |
+| **RDS** | PostgreSQL in private VPC | Not directly accessible; use auto-migrations in `index.ts` |
+| **Region** | `us-east-1` | All resources |
+| **Account** | `135775632425` | |
+
+### Deploy Sequence — Backend
+
+**CRITICAL: Always deploy from `C:\GitHub\SchoolPilot\` (this repo). NEVER from `C:\GoPilot\server\`.**
+
+```bash
+# Step 1: ECR login (required — tokens expire after 12 hours)
+MSYS_NO_PATHCONV=1 aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 135775632425.dkr.ecr.us-east-1.amazonaws.com
+
+# Step 2: Build Docker image from THIS repo root
+docker build -t schoolpilot-production-api .
+
+# Step 3: Tag for ECR
+docker tag schoolpilot-production-api:latest 135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api:latest
+
+# Step 4: Push to ECR
+docker push 135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api:latest
+
+# Step 5: Force ECS to pull new image and redeploy
+MSYS_NO_PATHCONV=1 aws ecs update-service --cluster schoolpilot-production-cluster --service schoolpilot-production-api --force-new-deployment --region us-east-1
+
+# Step 6: VERIFY — wait for new task to reach RUNNING, old task to stop
+MSYS_NO_PATHCONV=1 aws ecs describe-services --cluster schoolpilot-production-cluster --services schoolpilot-production-api --region us-east-1 --query 'services[0].deployments'
+# Should show 1 deployment with desiredCount=1, runningCount=1, rolloutState=COMPLETED
+# If runningCount=0 or rolloutState=FAILED, check task logs in CloudWatch
+```
+
+### Deploy Sequence — Frontend
+
+```bash
+# Step 1: Build frontend
+cd schoolpilot-app && npm run build
+
+# Step 2: Sync to S3 (--delete removes old files)
+MSYS_NO_PATHCONV=1 aws s3 sync "C:/GitHub/Schoolpilot/schoolpilot-app/dist/" s3://schoolpilot-production-frontend/ --delete --region us-east-1
+
+# Step 3: Invalidate CloudFront cache
+MSYS_NO_PATHCONV=1 aws cloudfront create-invalidation --distribution-id E1TPPJOD7C2CXR --paths "/*" --region us-east-1
+
+# Step 4: VERIFY — check invalidation completed
+MSYS_NO_PATHCONV=1 aws cloudfront list-invalidations --distribution-id E1TPPJOD7C2CXR --region us-east-1 --query 'InvalidationList.Items[0]'
+# Status should be "Completed" (may take 1-2 minutes)
+```
+
+### Common Deployment Pitfalls
+
+1. **Wrong source directory** — ALWAYS build from `C:\GitHub\SchoolPilot`. The `C:\GoPilot\server` repo uses raw `pool.query()` with columns that don't exist in the production database.
+2. **ECR login expired** — `docker push` will fail with auth errors if you haven't run `ecr get-login-password` recently. Tokens last 12 hours.
+3. **ECS service name** — Must be exactly `schoolpilot-production-api` in cluster `schoolpilot-production-cluster`. There are no other services/clusters.
+4. **Task not starting** — If the new task fails to start after `force-new-deployment`, ECS rolls back automatically. Check CloudWatch logs for the failed task. Common causes: missing env vars, bad image, port mismatch.
+5. **CloudFront caching** — After frontend deploy, always invalidate CloudFront. Without invalidation, users may see stale JS/CSS for up to 24 hours.
+6. **Windows path conversion** — Always prefix AWS CLI commands with `MSYS_NO_PATHCONV=1` in Git Bash on Windows, otherwise paths like `--paths "/*"` get mangled.
+7. **Task definition env vars** — The ECS task definition must include `CLIENT_URL=https://school-pilot.net` and `GOOGLE_CALLBACK_URL=https://school-pilot.net/api/auth/google/callback`. These are set in the task definition, not in the container.
