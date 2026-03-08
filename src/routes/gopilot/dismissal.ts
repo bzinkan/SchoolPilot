@@ -153,7 +153,7 @@ router.get("/sessions/:id/queue", ...auth, async (req, res, next) => {
     const studentIds = entries.map((e) => e.studentId);
     const effectiveTypes = await getEffectiveDismissalTypes(studentIds, sessionId);
 
-    // Enrich each entry with student and homeroom data
+    // Enrich each entry with student and homeroom data (snake_case for frontend compat)
     const queue = await Promise.all(
       entries.map(async (entry) => {
         const student = await getStudentById(entry.studentId);
@@ -164,19 +164,35 @@ router.get("/sessions/:id/queue", ...auth, async (req, res, next) => {
         }
         const effectiveType = effectiveTypes.get(entry.studentId) ?? student?.dismissalType ?? null;
         return {
-          ...entry,
-          firstName: student?.firstName ?? null,
-          lastName: student?.lastName ?? null,
-          dismissalType: effectiveType,
-          permanentDismissalType: student?.dismissalType ?? null,
-          isOverridden: effectiveType !== (student?.dismissalType ?? null),
-          busRoute: student?.busRoute ?? null,
-          homeroomName,
+          id: entry.id,
+          session_id: entry.sessionId,
+          student_id: entry.studentId,
+          guardian_id: entry.guardianId,
+          guardian_name: entry.guardianName,
+          check_in_time: entry.checkInTime,
+          check_in_method: entry.checkInMethod,
+          status: entry.status,
+          zone: entry.zone,
+          called_at: entry.calledAt,
+          released_at: entry.releasedAt,
+          dismissed_at: entry.dismissedAt,
+          hold_reason: entry.holdReason,
+          delayed_until: entry.delayedUntil,
+          position: entry.position,
+          created_at: entry.createdAt,
+          first_name: student?.firstName ?? null,
+          last_name: student?.lastName ?? null,
+          grade: student?.gradeLevel ?? null,
+          homeroom_name: homeroomName,
+          dismissal_type: effectiveType,
+          permanent_dismissal_type: student?.dismissalType ?? null,
+          is_overridden: effectiveType !== (student?.dismissalType ?? null),
+          bus_route: student?.busRoute ?? null,
         };
       })
     );
 
-    return res.json({ queue });
+    return res.json(queue);
   } catch (err) {
     next(err);
   }
