@@ -10,6 +10,7 @@ import {
   updateDismissalChange,
   updateStudent,
   getSessionById,
+  getStudentById,
 } from "../../services/storage.js";
 import { getIO } from "../../realtime/socketio.js";
 
@@ -56,12 +57,18 @@ router.post(
         note: note || null,
       });
 
-      // Notify office and teachers
+      // Notify office and the student's homeroom teacher
       const io = getIO();
       if (io) {
-        io.to(`school:${res.locals.schoolId}:office`)
-          .to(`school:${res.locals.schoolId}:teacher`)
-          .emit("change:requested", { change });
+        const student = await getStudentById(studentId);
+        const payload = {
+          change,
+          studentName: student ? `${student.firstName} ${student.lastName}` : "",
+        };
+        io.to(`school:${res.locals.schoolId}:office`).emit("change:requested", payload);
+        if (student?.homeroomId) {
+          io.to(`school:${res.locals.schoolId}:teacher:${student.homeroomId}`).emit("change:requested", payload);
+        }
       }
 
       return res.status(201).json({ change });

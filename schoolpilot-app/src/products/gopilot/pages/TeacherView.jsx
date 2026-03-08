@@ -4,7 +4,7 @@ import {
   ChevronRight, ChevronDown, AlertTriangle, CheckCircle2, Timer,
   Volume2, VolumeX, LogOut, Home, RefreshCw, User,
   AlertCircle, Send, Coffee, Hand, MapPin, Smartphone, Filter,
-  Loader2, ArrowRight, Megaphone, ClipboardCheck
+  Loader2, ArrowRight, Megaphone, ClipboardCheck, MessageSquare
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useGoPilotAuth } from '../../../hooks/useGoPilotAuth';
@@ -74,6 +74,9 @@ export default function TeacherView() {
   const [session, setSession] = useState(null);
   const [students, setStudents] = useState([]);
   const [overrides, setOverrides] = useState({});
+  const [changeRequests, setChangeRequests] = useState([]);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [showNoteFor, setShowNoteFor] = useState(null);
   const [showOverrideFor, setShowOverrideFor] = useState(null);
   const [overrideType, setOverrideType] = useState('');
   const [overrideReason, setOverrideReason] = useState('');
@@ -145,6 +148,23 @@ export default function TeacherView() {
               map[o.studentId] = { overrideType: o.overrideType, reason: o.reason };
             }
             setOverrides(map);
+          }
+        } catch { /* non-critical */ }
+
+        // Fetch existing change requests for this session
+        try {
+          const changesRes = await api.get(`/sessions/${sessionData.id}/changes`);
+          if (!cancelled) {
+            const changes = (changesRes.data?.changes || []).filter(c => c.status === 'pending');
+            setChangeRequests(changes.map(c => ({
+              id: c.id,
+              studentId: c.studentId,
+              studentName: c.student ? `${c.student.firstName} ${c.student.lastName}` : '',
+              fromType: c.fromType,
+              toType: c.toType,
+              note: c.note,
+              createdAt: c.createdAt,
+            })));
           }
         } catch { /* non-critical */ }
 
@@ -295,12 +315,25 @@ export default function TeacherView() {
       }
     };
 
+    const handleChangeRequested = ({ change, studentName }) => {
+      setChangeRequests(prev => [...prev, {
+        id: change.id,
+        studentId: change.studentId,
+        studentName: studentName || '',
+        fromType: change.fromType,
+        toType: change.toType,
+        note: change.note,
+        createdAt: change.createdAt,
+      }]);
+    };
+
     socket.on('student:checked-in', handleStudentCheckedIn);
     socket.on('student:called', handleStudentCalled);
     socket.on('student:released', handleStudentReleased);
     socket.on('student:dismissed', handleStudentDismissed);
     socket.on('queue:updated', handleQueueUpdated);
     socket.on('dismissal:override', handleOverride);
+    socket.on('change:requested', handleChangeRequested);
 
     return () => {
       socket.off('student:checked-in', handleStudentCheckedIn);
@@ -309,6 +342,7 @@ export default function TeacherView() {
       socket.off('student:dismissed', handleStudentDismissed);
       socket.off('queue:updated', handleQueueUpdated);
       socket.off('dismissal:override', handleOverride);
+      socket.off('change:requested', handleChangeRequested);
     };
   }, [socket, session?.id, homeroom?.id]);
 
@@ -499,6 +533,48 @@ export default function TeacherView() {
                 </p>
               </div>
 
+              <div className="relative">
+                <button
+                  onClick={() => setShowNotifications(!showNotifications)}
+                  className="p-2 rounded-lg hover:bg-gray-100 relative"
+                >
+                  <Bell className="w-5 h-5 text-gray-600" />
+                  {changeRequests.length > 0 && (
+                    <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+                      {changeRequests.length}
+                    </span>
+                  )}
+                </button>
+                {showNotifications && (
+                  <div className="absolute right-0 top-full mt-1 w-80 bg-white rounded-xl shadow-xl border z-[100] max-h-96 overflow-y-auto">
+                    <div className="p-3 border-b font-semibold text-sm flex items-center justify-between">
+                      <span>Change Requests</span>
+                      <button onClick={() => setShowNotifications(false)} className="p-1 hover:bg-gray-100 rounded"><X className="w-4 h-4" /></button>
+                    </div>
+                    {changeRequests.length === 0 ? (
+                      <div className="p-4 text-center text-sm text-gray-400">No change requests</div>
+                    ) : (
+                      changeRequests.map((cr, i) => (
+                        <div key={cr.id || i} className="p-3 border-b last:border-b-0 hover:bg-gray-50">
+                          <div className="flex items-center justify-between">
+                            <p className="text-sm font-medium">{cr.studentName}</p>
+                            <span className="text-xs text-gray-400">{cr.createdAt ? new Date(cr.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</span>
+                          </div>
+                          <p className="text-xs text-gray-500 mt-0.5">
+                            <span className="capitalize">{cr.fromType}</span> → <span className="capitalize">{cr.toType}</span>
+                          </p>
+                          {cr.note && (
+                            <p className="text-xs bg-amber-50 text-amber-800 rounded px-2 py-1 mt-1">
+                              <MessageSquare className="w-3 h-3 inline mr-1" />{cr.note}
+                            </p>
+                          )}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
+
               <Button
                 variant={soundEnabled ? 'secondary' : 'ghost'}
                 size="sm"
@@ -567,9 +643,23 @@ export default function TeacherView() {
                     {(student.first_name || student.firstName || '?')[0]}{(student.last_name || student.lastName || '?')[0]}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className={`text-sm font-medium truncate ${isAbsent ? 'text-gray-500' : isPickedUp ? 'text-blue-700' : 'text-gray-900'}`}>
+                    <p className={`text-sm font-medium truncate flex items-center gap-1 ${isAbsent ? 'text-gray-500' : isPickedUp ? 'text-blue-700' : 'text-gray-900'}`}>
                       {student.first_name || student.firstName} {student.last_name || student.lastName}
+                      {changeRequests.find(cr => cr.studentId === student.id && cr.note) && (
+                        <button onClick={(e) => { e.stopPropagation(); setShowNoteFor(showNoteFor === student.id ? null : student.id); }} className="flex-shrink-0">
+                          <MessageSquare className="w-3.5 h-3.5 text-amber-500" />
+                        </button>
+                      )}
                     </p>
+                    {showNoteFor === student.id && (() => {
+                      const cr = changeRequests.find(c => c.studentId === student.id && c.note);
+                      return cr ? (
+                        <div className="text-xs bg-amber-50 text-amber-800 rounded px-2 py-1 mt-1">
+                          <span className="font-medium">Parent note:</span> {cr.note}
+                          <div className="text-amber-600 mt-0.5 capitalize">{cr.fromType} → {cr.toType}</div>
+                        </div>
+                      ) : null;
+                    })()}
                     <button
                       className="flex items-center gap-1 text-xs text-gray-500 hover:text-indigo-600"
                       onClick={() => {

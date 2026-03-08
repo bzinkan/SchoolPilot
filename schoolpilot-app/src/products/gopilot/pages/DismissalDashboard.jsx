@@ -107,6 +107,9 @@ export default function DismissalDashboard() {
   const [expandedHomeroom, setExpandedHomeroom] = useState(null);
   const [homeroomStudents, setHomeroomStudents] = useState([]);
   const [loadingStudents, setLoadingStudents] = useState(false);
+  // Change request notifications
+  const [changeRequests, setChangeRequests] = useState([]);
+  const [showChangeNotifications, setShowChangeNotifications] = useState(false);
   // Student lookup state
   const [showStudentLookup, setShowStudentLookup] = useState(false);
   const [studentSearchTerm, setStudentSearchTerm] = useState('');
@@ -145,6 +148,22 @@ export default function DismissalDashboard() {
         }
         setOverrides(map);
       } catch { /* non-critical */ }
+
+      // Fetch existing change requests
+      try {
+        const changesRes = await api.get(`/sessions/${sessionRes.data.id}/changes`);
+        const changes = (changesRes.data?.changes || []).filter(c => c.status === 'pending');
+        setChangeRequests(changes.map(c => ({
+          id: c.id,
+          studentId: c.studentId,
+          studentName: c.student ? `${c.student.firstName} ${c.student.lastName}` : '',
+          fromType: c.fromType,
+          toType: c.toType,
+          note: c.note,
+          createdAt: c.createdAt,
+        })));
+      } catch { /* non-critical */ }
+
       const zones = settingsRes.data.pickupZones || [
         { id: 'A', name: 'Zone A' }, { id: 'B', name: 'Zone B' }, { id: 'C', name: 'Zone C' }
       ];
@@ -186,7 +205,17 @@ export default function DismissalDashboard() {
     socket.on('student:called', handleQueueUpdate);
     socket.on('student:released', handleQueueUpdate);
     socket.on('student:dismissed', handleQueueUpdate);
-    socket.on('change:requested', () => { /* could show notification */ });
+    socket.on('change:requested', ({ change, studentName }) => {
+      setChangeRequests(prev => [...prev, {
+        id: change.id,
+        studentId: change.studentId,
+        studentName: studentName || '',
+        fromType: change.fromType,
+        toType: change.toType,
+        note: change.note,
+        createdAt: change.createdAt,
+      }]);
+    });
 
     const handleOverride = (data) => {
       if (data.overrideType) {
@@ -205,7 +234,7 @@ export default function DismissalDashboard() {
       socket.off('student:called', handleQueueUpdate);
       socket.off('student:released', handleQueueUpdate);
       socket.off('student:dismissed', handleQueueUpdate);
-      socket.off('change:requested');
+      socket.off('change:requested'); // cleanup handled by React re-render
       socket.off('dismissal:override', handleOverride);
     };
   }, [socket, currentSchool, session]);
@@ -568,6 +597,47 @@ export default function DismissalDashboard() {
                 {currentTime.toLocaleTimeString([], { timeZone: currentSchool?.timezone, hour: '2-digit', minute: '2-digit' })}
               </p>
               <div className="flex items-center gap-1 sm:gap-2">
+                <div className="relative">
+                  <button
+                    onClick={() => setShowChangeNotifications(!showChangeNotifications)}
+                    className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 relative"
+                  >
+                    <Bell className="w-5 h-5 text-gray-600 dark:text-gray-300" />
+                    {changeRequests.length > 0 && (
+                      <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+                        {changeRequests.length}
+                      </span>
+                    )}
+                  </button>
+                  {showChangeNotifications && (
+                    <div className="absolute right-0 top-full mt-1 w-80 bg-white dark:bg-slate-800 rounded-xl shadow-xl border dark:border-slate-700 z-[100] max-h-96 overflow-y-auto">
+                      <div className="p-3 border-b dark:border-slate-700 font-semibold text-sm flex items-center justify-between">
+                        <span>Change Requests</span>
+                        <button onClick={() => setShowChangeNotifications(false)} className="p-1 hover:bg-gray-100 dark:hover:bg-slate-700 rounded"><X className="w-4 h-4" /></button>
+                      </div>
+                      {changeRequests.length === 0 ? (
+                        <div className="p-4 text-center text-sm text-gray-400">No change requests</div>
+                      ) : (
+                        changeRequests.map((cr, i) => (
+                          <div key={cr.id || i} className="p-3 border-b last:border-b-0 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700/50">
+                            <div className="flex items-center justify-between">
+                              <p className="text-sm font-medium">{cr.studentName}</p>
+                              <span className="text-xs text-gray-400">{cr.createdAt ? new Date(cr.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</span>
+                            </div>
+                            <p className="text-xs text-gray-500 mt-0.5">
+                              <span className="capitalize">{cr.fromType}</span> → <span className="capitalize">{cr.toType}</span>
+                            </p>
+                            {cr.note && (
+                              <p className="text-xs bg-amber-50 dark:bg-amber-900/30 text-amber-800 dark:text-amber-200 rounded px-2 py-1 mt-1">
+                                <MessageSquare className="w-3 h-3 inline mr-1" />{cr.note}
+                              </p>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
                 <ThemeToggle />
                 <Button variant={soundEnabled ? 'secondary' : 'ghost'} size="sm" onClick={() => setSoundEnabled(!soundEnabled)}>
                   {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
