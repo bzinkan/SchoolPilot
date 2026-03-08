@@ -903,20 +903,22 @@ export default function DismissalDashboard() {
                             <div className="divide-y dark:divide-slate-700">
                               {homeroomStudents.map(student => {
                                 const override = overrides[student.id];
-                                const effectiveType = override ? override.overrideType : student.dismissal_type;
+                                const effectiveType = override ? override.overrideType : (student.dismissalType || student.dismissal_type);
                                 const isOverridden = !!override;
                                 const typeColors = { car: 'blue', bus: 'yellow', walker: 'green', afterschool: 'purple' };
                                 const typeLabels = { car: 'Car', bus: 'Bus', walker: 'Walker', afterschool: 'After School' };
                                 const TypeIcon = { car: Car, bus: Bus, walker: PersonStanding, afterschool: Clock }[effectiveType] || Car;
+                                const fname = student.firstName || student.first_name || '';
+                                const lname = student.lastName || student.last_name || '';
                                 return (
                                   <div key={student.id} className="flex items-center justify-between py-2.5">
                                     <div className="flex items-center gap-3">
                                       <div className="w-8 h-8 bg-indigo-100 dark:bg-indigo-950/50 rounded-full flex items-center justify-center">
                                         <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400">
-                                          {(student.first_name || '')[0]}{(student.last_name || '')[0]}
+                                          {fname[0]}{lname[0]}
                                         </span>
                                       </div>
-                                      <span className="text-sm font-medium dark:text-white">{student.first_name} {student.last_name}</span>
+                                      <span className="text-sm font-medium dark:text-white">{fname} {lname}</span>
                                     </div>
                                     <div className="flex items-center gap-2">
                                       {isOverridden && (
