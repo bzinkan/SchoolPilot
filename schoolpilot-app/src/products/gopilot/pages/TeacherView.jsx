@@ -112,7 +112,7 @@ export default function TeacherView() {
 
         const studentsRes = await api.get(`/schools/${currentSchool.id}/students`, { params: { homeroomId: myHomeroom.id } });
         const sessionRes = await api.post(`/schools/${currentSchool.id}/sessions`);
-        const sessionData = sessionRes.data;
+        const sessionData = sessionRes.data?.session || sessionRes.data;
         if (!cancelled) setSession(sessionData);
 
         const queueRes = await api.get(`/sessions/${sessionData.id}/queue`, { params: { homeroomId: myHomeroom.id } });

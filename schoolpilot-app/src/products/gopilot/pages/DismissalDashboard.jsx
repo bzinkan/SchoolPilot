@@ -125,12 +125,13 @@ export default function DismissalDashboard() {
     try {
       setLoading(true);
       const sessionRes = await api.post(`/schools/${currentSchool.id}/sessions`);
-      setSession(sessionRes.data);
-      setDismissalActive(sessionRes.data.status === 'active');
+      const sessionData = sessionRes.data?.session || sessionRes.data;
+      setSession(sessionData);
+      setDismissalActive(sessionData.status === 'active');
 
       const [queueRes, statsRes, homeroomRes, alertsRes, settingsRes] = await Promise.all([
-        api.get(`/sessions/${sessionRes.data.id}/queue`),
-        api.get(`/sessions/${sessionRes.data.id}/stats`),
+        api.get(`/sessions/${sessionData.id}/queue`),
+        api.get(`/sessions/${sessionData.id}/stats`),
         api.get(`/schools/${currentSchool.id}/homerooms`),
         api.get(`/schools/${currentSchool.id}/custody-alerts`),
         api.get(`/schools/${currentSchool.id}/settings`),
@@ -143,7 +144,7 @@ export default function DismissalDashboard() {
 
       // Fetch overrides
       try {
-        const overridesRes = await api.get(`/sessions/${sessionRes.data.id}/overrides`);
+        const overridesRes = await api.get(`/sessions/${sessionData.id}/overrides`);
         const map = {};
         for (const o of overridesRes.data?.overrides || []) {
           map[o.studentId] = { overrideType: o.overrideType, reason: o.reason, studentName: o.studentName, homeroomId: o.homeroomId };
@@ -153,7 +154,7 @@ export default function DismissalDashboard() {
 
       // Fetch existing change requests (all statuses — persist until midnight/session end)
       try {
-        const changesRes = await api.get(`/sessions/${sessionRes.data.id}/changes`);
+        const changesRes = await api.get(`/sessions/${sessionData.id}/changes`);
         const changes = changesRes.data?.changes || [];
         setChangeRequests(changes.map(c => ({
           id: c.id,
