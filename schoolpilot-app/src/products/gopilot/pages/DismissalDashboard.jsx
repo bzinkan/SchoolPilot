@@ -98,6 +98,15 @@ export default function DismissalDashboard() {
   const [walkerQueueTab, setWalkerQueueTab] = useState('active'); // 'active' or 'dismissed'
   const [selectedGrades, setSelectedGrades] = useState([]);
   const [selectedWalkerHomerooms, setSelectedWalkerHomerooms] = useState([]);
+  // Override state
+  const [overrides, setOverrides] = useState({});
+  const [showOverrideFor, setShowOverrideFor] = useState(null);
+  const [overrideType, setOverrideType] = useState('');
+  const [overrideReason, setOverrideReason] = useState('');
+  // Expandable homeroom state
+  const [expandedHomeroom, setExpandedHomeroom] = useState(null);
+  const [homeroomStudents, setHomeroomStudents] = useState([]);
+  const [loadingStudents, setLoadingStudents] = useState(false);
   // Student lookup state
   const [showStudentLookup, setShowStudentLookup] = useState(false);
   const [studentSearchTerm, setStudentSearchTerm] = useState('');
@@ -126,6 +135,16 @@ export default function DismissalDashboard() {
       setStats(statsRes.data);
       setHomerooms(Array.isArray(homeroomRes.data) ? homeroomRes.data : (homeroomRes.data?.homerooms ?? []));
       setAlerts(Array.isArray(alertsRes.data) ? alertsRes.data : (alertsRes.data?.alerts ?? []));
+
+      // Fetch overrides
+      try {
+        const overridesRes = await api.get(`/sessions/${sessionRes.data.id}/overrides`);
+        const map = {};
+        for (const o of overridesRes.data?.overrides || []) {
+          map[o.studentId] = { overrideType: o.overrideType, reason: o.reason, studentName: o.studentName, homeroomId: o.homeroomId };
+        }
+        setOverrides(map);
+      } catch { /* non-critical */ }
       const zones = settingsRes.data.pickupZones || [
         { id: 'A', name: 'Zone A' }, { id: 'B', name: 'Zone B' }, { id: 'C', name: 'Zone C' }
       ];
@@ -169,6 +188,17 @@ export default function DismissalDashboard() {
     socket.on('student:dismissed', handleQueueUpdate);
     socket.on('change:requested', () => { /* could show notification */ });
 
+    const handleOverride = (data) => {
+      if (data.overrideType) {
+        setOverrides(prev => ({ ...prev, [data.studentId]: { overrideType: data.overrideType, reason: data.reason, studentName: data.studentName } }));
+      } else {
+        setOverrides(prev => { const next = { ...prev }; delete next[data.studentId]; return next; });
+      }
+      // Refresh queue to reflect type changes
+      handleQueueUpdate();
+    };
+    socket.on('dismissal:override', handleOverride);
+
     return () => {
       socket.off('connect', joinRoom);
       socket.off('queue:updated', handleQueueUpdate);
@@ -176,6 +206,7 @@ export default function DismissalDashboard() {
       socket.off('student:released', handleQueueUpdate);
       socket.off('student:dismissed', handleQueueUpdate);
       socket.off('change:requested');
+      socket.off('dismissal:override', handleOverride);
     };
   }, [socket, currentSchool, session]);
 
@@ -387,6 +418,44 @@ export default function DismissalDashboard() {
     setStats(statsRes.data);
   };
 
+  // Toggle homeroom expansion (accordion)
+  const toggleHomeroom = async (roomId) => {
+    if (expandedHomeroom === roomId) {
+      setExpandedHomeroom(null);
+      setHomeroomStudents([]);
+      return;
+    }
+    setExpandedHomeroom(roomId);
+    setLoadingStudents(true);
+    try {
+      const res = await api.get(`/schools/${currentSchool.id}/students?homeroomId=${roomId}`);
+      setHomeroomStudents(res.data);
+    } catch (err) {
+      console.error('Failed to load students', err);
+      setHomeroomStudents([]);
+    }
+    setLoadingStudents(false);
+  };
+
+  // Override handler
+  const handleOverrideSubmit = async () => {
+    if (!session?.id || !showOverrideFor || !overrideType) return;
+    try {
+      await api.post(`/sessions/${session.id}/override`, {
+        studentId: showOverrideFor,
+        overrideType,
+        reason: overrideReason || undefined,
+      });
+      setOverrides(prev => ({ ...prev, [showOverrideFor]: { overrideType, reason: overrideReason } }));
+      setShowOverrideFor(null);
+      setOverrideType('');
+      setOverrideReason('');
+      await refreshQueue();
+    } catch (err) {
+      alert(err.response?.data?.error || 'Failed to change dismissal type');
+    }
+  };
+
   // Student lookup search with debounce
   const handleStudentSearch = (term) => {
     setStudentSearchTerm(term);
@@ -558,6 +627,7 @@ export default function DismissalDashboard() {
             { id: 'homerooms', icon: Home, label: 'Rooms' },
             { id: 'buses', icon: Bus, label: 'Buses' },
             { id: 'walkers', icon: PersonStanding, label: 'Walkers' },
+            { id: 'afterschool', icon: Clock, label: 'After' },
           ].map(view => (
             <button key={view.id} onClick={() => setSelectedView(view.id)}
               className={`w-12 h-12 rounded-lg flex flex-col items-center justify-center gap-1 transition-colors ${
@@ -584,6 +654,7 @@ export default function DismissalDashboard() {
               { id: 'homerooms', icon: Home, label: 'Rooms' },
               { id: 'buses', icon: Bus, label: 'Buses' },
               { id: 'walkers', icon: PersonStanding, label: 'Walk' },
+              { id: 'afterschool', icon: Clock, label: 'After' },
             ].map(view => (
               <button key={view.id} onClick={() => setSelectedView(view.id)}
                 className={`flex flex-col items-center justify-center py-1.5 px-3 rounded-lg ${
@@ -795,26 +866,88 @@ export default function DismissalDashboard() {
                   <Home className="w-5 h-5 text-indigo-600" /> Homeroom Status
                 </h2>
               </div>
-              <div className="divide-y">
-                {homerooms.map(room => (
-                  <div key={room.id} className="p-4 flex items-center justify-between hover:bg-gray-50 dark:bg-slate-800/50 dark:hover:bg-slate-800">
-                    <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 bg-indigo-100 dark:bg-indigo-950/50 rounded-lg flex items-center justify-center">
-                        <span className="text-indigo-600 dark:text-indigo-400 font-bold">{room.grade}</span>
+              <div className="divide-y dark:divide-slate-700">
+                {homerooms.map(room => {
+                  const isExpanded = expandedHomeroom === room.id;
+                  return (
+                    <div key={room.id}>
+                      <div
+                        onClick={() => toggleHomeroom(room.id)}
+                        className="p-4 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-slate-800 cursor-pointer select-none"
+                      >
+                        <div className="flex items-center gap-4">
+                          {isExpanded ? <ChevronDown className="w-5 h-5 text-gray-400" /> : <ChevronRight className="w-5 h-5 text-gray-400" />}
+                          <div className="w-12 h-12 bg-indigo-100 dark:bg-indigo-950/50 rounded-lg flex items-center justify-center">
+                            <span className="text-indigo-600 dark:text-indigo-400 font-bold">{room.grade}</span>
+                          </div>
+                          <div>
+                            <p className="font-medium dark:text-white">{room.teacher_first_name} {room.teacher_last_name}</p>
+                            <p className="text-sm text-gray-500 dark:text-slate-400">Grade {room.grade} - {room.name}</p>
+                          </div>
+                        </div>
+                        <div className="text-center">
+                          <p className="text-lg font-bold text-indigo-600">{room.student_count}</p>
+                          <p className="text-xs text-gray-500 dark:text-slate-400">Students</p>
+                        </div>
                       </div>
-                      <div>
-                        <p className="font-medium dark:text-white">{room.teacher_first_name} {room.teacher_last_name}</p>
-                        <p className="text-sm text-gray-500 dark:text-slate-400">Grade {room.grade} - {room.name}</p>
-                      </div>
+                      {isExpanded && (
+                        <div className="bg-gray-50 dark:bg-slate-800/50 border-t dark:border-slate-700 px-4 py-2">
+                          {loadingStudents ? (
+                            <div className="flex items-center justify-center py-6">
+                              <RefreshCw className="w-5 h-5 animate-spin text-indigo-500" />
+                              <span className="ml-2 text-sm text-gray-500 dark:text-slate-400">Loading students...</span>
+                            </div>
+                          ) : homeroomStudents.length === 0 ? (
+                            <p className="text-sm text-gray-500 dark:text-slate-400 py-4 text-center">No students found</p>
+                          ) : (
+                            <div className="divide-y dark:divide-slate-700">
+                              {homeroomStudents.map(student => {
+                                const override = overrides[student.id];
+                                const effectiveType = override ? override.overrideType : student.dismissal_type;
+                                const isOverridden = !!override;
+                                const typeColors = { car: 'blue', bus: 'yellow', walker: 'green', afterschool: 'purple' };
+                                const typeLabels = { car: 'Car', bus: 'Bus', walker: 'Walker', afterschool: 'After School' };
+                                const TypeIcon = { car: Car, bus: Bus, walker: PersonStanding, afterschool: Clock }[effectiveType] || Car;
+                                return (
+                                  <div key={student.id} className="flex items-center justify-between py-2.5">
+                                    <div className="flex items-center gap-3">
+                                      <div className="w-8 h-8 bg-indigo-100 dark:bg-indigo-950/50 rounded-full flex items-center justify-center">
+                                        <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400">
+                                          {(student.first_name || '')[0]}{(student.last_name || '')[0]}
+                                        </span>
+                                      </div>
+                                      <span className="text-sm font-medium dark:text-white">{student.first_name} {student.last_name}</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      {isOverridden && (
+                                        <span className="text-xs text-orange-600 dark:text-orange-400 font-medium">Today</span>
+                                      )}
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setShowOverrideFor(student.id);
+                                          setOverrideType(effectiveType || '');
+                                          setOverrideReason(override?.reason || '');
+                                        }}
+                                        className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-colors hover:ring-2 hover:ring-indigo-300 dark:hover:ring-indigo-600"
+                                        style={{ cursor: 'pointer' }}
+                                      >
+                                        <Badge variant={typeColors[effectiveType] || 'default'} size="sm">
+                                          <TypeIcon className="w-3 h-3" />
+                                          {typeLabels[effectiveType] || effectiveType}
+                                        </Badge>
+                                      </button>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
-                    <div className="flex items-center gap-6">
-                      <div className="text-center">
-                        <p className="text-lg font-bold text-indigo-600">{room.student_count}</p>
-                        <p className="text-xs text-gray-500 dark:text-slate-400">Students</p>
-                      </div>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </Card>
           )}
@@ -1061,8 +1194,105 @@ export default function DismissalDashboard() {
               </div>
             );
           })()}
+
+          {/* After School View */}
+          {selectedView === 'afterschool' && (
+            <div className="p-4">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <Clock className="w-5 h-5 text-purple-600" />
+                  <h2 className="font-bold text-lg dark:text-white">After School Activities</h2>
+                </div>
+                <Badge variant="purple">{Object.values(overrides).filter(o => o.overrideType === 'afterschool').length} students</Badge>
+              </div>
+
+              {Object.values(overrides).filter(o => o.overrideType === 'afterschool').length === 0 ? (
+                <Card>
+                  <div className="p-8 text-center text-gray-500 dark:text-slate-400">
+                    <Clock className="w-12 h-12 mx-auto mb-2 text-gray-300 dark:text-slate-600" />
+                    <p>No after-school activities for today</p>
+                    <p className="text-sm mt-1">Students will appear here when parents, teachers, or office change their dismissal to "After School"</p>
+                  </div>
+                </Card>
+              ) : (
+                <div className="space-y-3">
+                  {Object.entries(overrides)
+                    .filter(([, o]) => o.overrideType === 'afterschool')
+                    .map(([studentId, o]) => (
+                      <Card key={studentId}>
+                        <div className="p-4 flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 bg-purple-100 dark:bg-purple-950/50 rounded-full flex items-center justify-center">
+                              <Clock className="w-5 h-5 text-purple-600" />
+                            </div>
+                            <div>
+                              <p className="font-medium dark:text-white">{o.studentName || 'Student'}</p>
+                              <p className="text-sm text-purple-600">{o.reason || 'After School Activity'}</p>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => { setShowOverrideFor(studentId); setOverrideType('car'); setOverrideReason(''); }}
+                            className="text-sm text-indigo-600 hover:text-indigo-700 font-medium"
+                          >
+                            Change
+                          </button>
+                        </div>
+                      </Card>
+                    ))}
+                </div>
+              )}
+            </div>
+          )}
         </main>
       </div>
+
+      {/* Dismissal Override Modal */}
+      {showOverrideFor && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-xl shadow-xl w-full max-w-sm">
+            <div className="p-4 border-b dark:border-slate-700 flex items-center justify-between">
+              <h2 className="font-bold dark:text-white">Change Dismissal for Today</h2>
+              <button onClick={() => setShowOverrideFor(null)} className="p-1"><X className="w-5 h-5 dark:text-slate-400" /></button>
+            </div>
+            <div className="p-4 space-y-4">
+              <p className="text-xs text-gray-500 dark:text-slate-400">This change only applies to today.</p>
+              <div className="grid grid-cols-2 gap-2">
+                {[
+                  { id: 'car', label: 'Car Rider', icon: Car },
+                  { id: 'bus', label: 'Bus', icon: Bus },
+                  { id: 'walker', label: 'Walker', icon: PersonStanding },
+                  { id: 'afterschool', label: 'After School', icon: Clock },
+                ].map(opt => (
+                  <button
+                    key={opt.id}
+                    onClick={() => setOverrideType(opt.id)}
+                    className={`p-3 rounded-lg border-2 flex flex-col items-center gap-1 text-sm ${
+                      overrideType === opt.id ? 'border-indigo-600 bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600' : 'border-gray-200 dark:border-slate-600 text-gray-500 dark:text-slate-400'
+                    }`}
+                  >
+                    <opt.icon className="w-5 h-5" />
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              {overrideType === 'afterschool' ? (
+                <input type="text" value={overrideReason} onChange={(e) => setOverrideReason(e.target.value)}
+                  placeholder="Activity name (required)" className="w-full px-3 py-2 border dark:border-slate-600 rounded-lg text-sm dark:bg-slate-800 dark:text-white" />
+              ) : (
+                <input type="text" value={overrideReason} onChange={(e) => setOverrideReason(e.target.value)}
+                  placeholder="Reason (optional)" className="w-full px-3 py-2 border dark:border-slate-600 rounded-lg text-sm dark:bg-slate-800 dark:text-white" />
+              )}
+              <div className="flex gap-2">
+                <Button variant="secondary" className="flex-1" onClick={() => setShowOverrideFor(null)}>Cancel</Button>
+                <Button variant="primary" className="flex-1" onClick={handleOverrideSubmit}
+                  disabled={overrideType === 'afterschool' && !overrideReason.trim()}>
+                  Save
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Zone Manager Modal */}
       {showZoneManager && (
@@ -1378,6 +1608,9 @@ function QueueItem({ item, position, onPickup }) {
             <Badge variant={getStatusColor(item.status)} size="sm">
               {item.status === 'released' ? 'In Transit' : item.status === 'waiting' ? 'In Queue' : item.status === 'called' ? 'In Queue' : item.status}
             </Badge>
+            {(item.isOverridden || item.is_overridden) && (
+              <Badge variant="orange" size="sm">Override</Badge>
+            )}
           </div>
           <div className="flex items-center gap-2 sm:gap-3 text-xs sm:text-sm text-gray-500 dark:text-slate-400 flex-wrap">
             <span>Gr {item.grade}</span>

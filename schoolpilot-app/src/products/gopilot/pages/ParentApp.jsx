@@ -93,6 +93,10 @@ export default function ParentApp() {
   const [sessionId, setSessionId] = useState(null);
 
   const [schoolSettings, setSchoolSettings] = useState({});
+  const [overrides, setOverrides] = useState({}); // { studentId: { overrideType, reason } }
+  const [showOverrideFor, setShowOverrideFor] = useState(null); // studentId for override modal
+  const [overrideType, setOverrideType] = useState('');
+  const [overrideReason, setOverrideReason] = useState('');
 
   // Loading / error states
   const [loading, setLoading] = useState(true);
@@ -185,6 +189,18 @@ export default function ParentApp() {
         const sid = res.data.id;
         setSessionId(sid);
 
+        // Fetch existing overrides for this session
+        try {
+          const overridesRes = await api.get(`/sessions/${sid}/overrides`);
+          if (!cancelled) {
+            const map = {};
+            for (const o of overridesRes.data?.overrides || []) {
+              map[o.studentId] = { overrideType: o.overrideType, reason: o.reason };
+            }
+            setOverrides(map);
+          }
+        } catch { /* non-critical */ }
+
         // Check if children are already in the queue (e.g. parent reopens app)
         if (children.length > 0) {
           try {
@@ -266,14 +282,32 @@ export default function ParentApp() {
       if (data.estimatedWait != null) setEstimatedWait(data.estimatedWait);
     };
 
+    const handleOverride = (data) => {
+      const childIds = children.map(c => c.id);
+      if (childIds.includes(data.studentId)) {
+        if (data.overrideType) {
+          setOverrides(prev => ({ ...prev, [data.studentId]: { overrideType: data.overrideType, reason: data.reason } }));
+        } else {
+          // Override reverted
+          setOverrides(prev => {
+            const next = { ...prev };
+            delete next[data.studentId];
+            return next;
+          });
+        }
+      }
+    };
+
     socket.on('student:called', handleStudentCalled);
     socket.on('student:dismissed', handleStudentDismissed);
     socket.on('queue:updated', handleQueueUpdated);
+    socket.on('dismissal:override', handleOverride);
 
     return () => {
       socket.off('student:called', handleStudentCalled);
       socket.off('student:dismissed', handleStudentDismissed);
       socket.off('queue:updated', handleQueueUpdated);
+      socket.off('dismissal:override', handleOverride);
     };
   }, [socket, children]);
 
@@ -315,6 +349,30 @@ export default function ParentApp() {
     }
   };
 
+  // Submit dismissal override for today
+  const handleOverrideSubmit = async () => {
+    if (!sessionId || !showOverrideFor || !overrideType) return;
+    try {
+      await api.post(`/sessions/${sessionId}/override`, {
+        studentId: showOverrideFor,
+        overrideType,
+        reason: overrideReason || undefined,
+      });
+      setOverrides(prev => ({ ...prev, [showOverrideFor]: { overrideType, reason: overrideReason } }));
+      setShowOverrideFor(null);
+      setOverrideType('');
+      setOverrideReason('');
+    } catch (err) {
+      alert(err.response?.data?.error || 'Failed to change dismissal type');
+    }
+  };
+
+  // Get effective dismissal type (override or permanent)
+  const getEffectiveType = (child) => {
+    const override = overrides[child.id];
+    return override ? override.overrideType : child.dismissalType;
+  };
+
   // Get dismissal type icon
   const getDismissalIcon = (type) => {
     switch (type) {
@@ -326,7 +384,7 @@ export default function ParentApp() {
     }
   };
 
-  const carRiderChildren = children.filter(c => c.dismissalType === 'car');
+  const carRiderChildren = children.filter(c => getEffectiveType(c) === 'car');
 
   // Loading state
   if (loading) {
@@ -558,15 +616,14 @@ export default function ParentApp() {
               </div>
               <div className="divide-y">
                 {children.map(child => {
-                  const DismissalIcon = getDismissalIcon(child.dismissalType);
+                  const effectiveType = getEffectiveType(child);
+                  const isOverridden = overrides[child.id] != null;
+                  const DismissalIcon = getDismissalIcon(effectiveType);
+                  const typeVariant = effectiveType === 'car' ? 'blue' : effectiveType === 'bus' ? 'yellow' : effectiveType === 'afterschool' ? 'purple' : 'green';
                   return (
                     <div
                       key={child.id}
                       className="p-4 flex items-center justify-between"
-                      onClick={() => {
-                        setSelectedChild(child);
-                        setCurrentView('child-detail');
-                      }}
                     >
                       <div className="flex items-center gap-3">
                         <div className="w-12 h-12 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-600 font-bold">
@@ -578,11 +635,17 @@ export default function ParentApp() {
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
-                        <Badge variant={child.dismissalType === 'car' ? 'blue' : child.dismissalType === 'bus' ? 'yellow' : 'green'}>
-                          <DismissalIcon className="w-3 h-3" />
-                          {child.dismissalType}
-                        </Badge>
-                        <ChevronRight className="w-4 h-4 text-gray-400" />
+                        <button
+                          onClick={() => { setShowOverrideFor(child.id); setOverrideType(effectiveType); setOverrideReason(overrides[child.id]?.reason || ''); }}
+                          className="flex items-center gap-1"
+                        >
+                          <Badge variant={typeVariant}>
+                            <DismissalIcon className="w-3 h-3" />
+                            {effectiveType === 'afterschool' ? 'After School' : effectiveType}
+                            {isOverridden && <span className="ml-1 text-[10px]">Today</span>}
+                          </Badge>
+                          <Edit className="w-3 h-3 text-gray-400" />
+                        </button>
                       </div>
                     </div>
                   );
@@ -801,7 +864,10 @@ export default function ParentApp() {
           <main className="p-4 pb-24">
             <div className="space-y-4">
               {children.map(child => {
-                const DismissalIcon = getDismissalIcon(child.dismissalType);
+                const effectiveType = getEffectiveType(child);
+                const isOverridden = overrides[child.id] != null;
+                const DismissalIcon = getDismissalIcon(effectiveType);
+                const typeVariant = effectiveType === 'car' ? 'blue' : effectiveType === 'bus' ? 'yellow' : effectiveType === 'afterschool' ? 'purple' : 'green';
                 return (
                   <Card key={child.id} className="overflow-hidden">
                     <div className="p-4">
@@ -825,16 +891,35 @@ export default function ParentApp() {
                           <span className="font-medium">{child.homeroom}</span>
                         </div>
                         <div className="flex items-center justify-between py-2 border-t">
-                          <span className="text-gray-500">Dismissal</span>
-                          <Badge variant="blue">
-                            <DismissalIcon className="w-3 h-3" />
-                            {child.dismissalType}
-                          </Badge>
+                          <span className="text-gray-500">Dismissal Today</span>
+                          <button
+                            onClick={() => { setShowOverrideFor(child.id); setOverrideType(effectiveType); setOverrideReason(overrides[child.id]?.reason || ''); }}
+                            className="flex items-center gap-1"
+                          >
+                            <Badge variant={typeVariant}>
+                              <DismissalIcon className="w-3 h-3" />
+                              {effectiveType === 'afterschool' ? 'After School' : effectiveType}
+                              {isOverridden && <span className="ml-1 text-[10px]">Today</span>}
+                            </Badge>
+                            <Edit className="w-3 h-3 text-gray-400" />
+                          </button>
                         </div>
+                        {isOverridden && (
+                          <div className="flex items-center justify-between py-2 border-t">
+                            <span className="text-gray-500">Default</span>
+                            <span className="text-sm text-gray-400">{child.dismissalType}</span>
+                          </div>
+                        )}
+                        {isOverridden && overrides[child.id]?.reason && (
+                          <div className="flex items-center justify-between py-2 border-t">
+                            <span className="text-gray-500">Reason</span>
+                            <span className="text-sm">{overrides[child.id].reason}</span>
+                          </div>
+                        )}
                       </div>
                     </div>
                     <div className="bg-gray-50 px-4 py-3 flex justify-end">
-                      <Button variant="secondary" size="sm">
+                      <Button variant="secondary" size="sm" onClick={() => { setShowOverrideFor(child.id); setOverrideType(effectiveType); setOverrideReason(overrides[child.id]?.reason || ''); }}>
                         <Edit className="w-4 h-4 mr-1" />
                         Edit
                       </Button>
@@ -1048,6 +1133,79 @@ export default function ParentApp() {
       )}
 
       {/* Authorized Pickups Modal — rendered at top level so it works from any view */}
+      {/* Dismissal Override Modal */}
+      {showOverrideFor && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end">
+          <div className="bg-white w-full rounded-t-3xl max-h-[85vh] overflow-y-auto">
+            <div className="p-4 border-b sticky top-0 bg-white flex items-center justify-between">
+              <h2 className="font-bold text-lg">Change Dismissal for Today</h2>
+              <button onClick={() => setShowOverrideFor(null)} className="p-2"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="p-4 space-y-4">
+              <p className="text-sm text-gray-500">
+                This change only applies to today. Tomorrow will revert to the default.
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                {[
+                  { id: 'car', label: 'Car Rider', icon: Car, variant: 'blue' },
+                  { id: 'bus', label: 'Bus', icon: Bus, variant: 'yellow' },
+                  { id: 'walker', label: 'Walker', icon: PersonStanding, variant: 'green' },
+                  { id: 'afterschool', label: 'After School', icon: Coffee, variant: 'purple' },
+                ].map(opt => (
+                  <button
+                    key={opt.id}
+                    onClick={() => setOverrideType(opt.id)}
+                    className={`p-4 rounded-xl border-2 flex flex-col items-center gap-2 transition-all ${
+                      overrideType === opt.id
+                        ? 'border-indigo-600 bg-indigo-50'
+                        : 'border-gray-200 hover:border-gray-300'
+                    }`}
+                  >
+                    <opt.icon className={`w-6 h-6 ${overrideType === opt.id ? 'text-indigo-600' : 'text-gray-400'}`} />
+                    <span className={`text-sm font-medium ${overrideType === opt.id ? 'text-indigo-600' : 'text-gray-600'}`}>{opt.label}</span>
+                  </button>
+                ))}
+              </div>
+              {overrideType === 'afterschool' && (
+                <div>
+                  <label className="text-sm font-medium text-gray-700 block mb-1">Activity Name *</label>
+                  <input
+                    type="text"
+                    value={overrideReason}
+                    onChange={(e) => setOverrideReason(e.target.value)}
+                    placeholder="e.g., Robotics Club, Chess Club"
+                    className="w-full px-3 py-2 border rounded-lg text-sm"
+                  />
+                </div>
+              )}
+              {overrideType !== 'afterschool' && (
+                <div>
+                  <label className="text-sm font-medium text-gray-700 block mb-1">Reason (optional)</label>
+                  <input
+                    type="text"
+                    value={overrideReason}
+                    onChange={(e) => setOverrideReason(e.target.value)}
+                    placeholder="e.g., Taking bus home today"
+                    className="w-full px-3 py-2 border rounded-lg text-sm"
+                  />
+                </div>
+              )}
+              <div className="flex gap-3 pt-2">
+                <Button variant="secondary" className="flex-1" onClick={() => setShowOverrideFor(null)}>Cancel</Button>
+                <Button
+                  variant="primary"
+                  className="flex-1"
+                  onClick={handleOverrideSubmit}
+                  disabled={overrideType === 'afterschool' && !overrideReason.trim()}
+                >
+                  Save for Today
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showAuthorizedPickups && (
         <AuthorizedPickupsModal
           pickups={authorizedPickups}

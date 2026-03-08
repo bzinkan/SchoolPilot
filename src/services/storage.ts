@@ -68,8 +68,11 @@ import {
   type FamilyGroupStudent,
   type InsertFamilyGroupStudent,
   homeroomTeachers,
+  dismissalOverrides,
   type HomeroomTeacher,
   type InsertHomeroomTeacher,
+  type DismissalOverride,
+  type InsertDismissalOverride,
 } from "../schema/gopilot.js";
 import {
   devices,
@@ -3684,5 +3687,121 @@ export async function getAttendanceStats(
     .groupBy(studentAttendance.date, studentAttendance.status)
     .orderBy(desc(studentAttendance.date));
   return rows;
+}
+
+// ============================================================================
+// Dismissal Overrides
+// ============================================================================
+
+export async function upsertDismissalOverride(data: {
+  sessionId: string;
+  studentId: string;
+  originalType: string;
+  overrideType: string;
+  reason?: string | null;
+  changedBy: string;
+  changedByRole: string;
+}): Promise<DismissalOverride> {
+  const [row] = await db
+    .insert(dismissalOverrides)
+    .values(data)
+    .onConflictDoUpdate({
+      target: [dismissalOverrides.sessionId, dismissalOverrides.studentId],
+      set: {
+        overrideType: sql`EXCLUDED.override_type`,
+        reason: sql`EXCLUDED.reason`,
+        changedBy: sql`EXCLUDED.changed_by`,
+        changedByRole: sql`EXCLUDED.changed_by_role`,
+        createdAt: sql`now()`,
+      },
+    })
+    .returning();
+  return row!;
+}
+
+export async function deleteDismissalOverride(
+  sessionId: string,
+  studentId: string
+): Promise<boolean> {
+  const result = await db
+    .delete(dismissalOverrides)
+    .where(
+      and(
+        eq(dismissalOverrides.sessionId, sessionId),
+        eq(dismissalOverrides.studentId, studentId)
+      )
+    )
+    .returning();
+  return result.length > 0;
+}
+
+export async function getOverridesForSession(
+  sessionId: string
+): Promise<DismissalOverride[]> {
+  return db
+    .select()
+    .from(dismissalOverrides)
+    .where(eq(dismissalOverrides.sessionId, sessionId))
+    .orderBy(desc(dismissalOverrides.createdAt));
+}
+
+export async function getOverrideForStudent(
+  sessionId: string,
+  studentId: string
+): Promise<DismissalOverride | undefined> {
+  const [row] = await db
+    .select()
+    .from(dismissalOverrides)
+    .where(
+      and(
+        eq(dismissalOverrides.sessionId, sessionId),
+        eq(dismissalOverrides.studentId, studentId)
+      )
+    )
+    .limit(1);
+  return row;
+}
+
+export async function getEffectiveDismissalType(
+  studentId: string,
+  sessionId: string
+): Promise<string> {
+  const override = await getOverrideForStudent(sessionId, studentId);
+  if (override) return override.overrideType;
+  const student = await getStudentById(studentId);
+  return student?.dismissalType ?? "car";
+}
+
+export async function getEffectiveDismissalTypes(
+  studentIds: string[],
+  sessionId: string
+): Promise<Map<string, string>> {
+  const result = new Map<string, string>();
+  if (studentIds.length === 0) return result;
+
+  // Get all overrides for this session in one query
+  const overrides = await db
+    .select()
+    .from(dismissalOverrides)
+    .where(
+      and(
+        eq(dismissalOverrides.sessionId, sessionId),
+        inArray(dismissalOverrides.studentId, studentIds)
+      )
+    );
+
+  const overrideMap = new Map(overrides.map((o) => [o.studentId, o.overrideType]));
+
+  // Get all students in one query
+  const studentRows = await db
+    .select({ id: students.id, dismissalType: students.dismissalType })
+    .from(students)
+    .where(inArray(students.id, studentIds));
+
+  for (const s of studentRows) {
+    result.set(s.id, overrideMap.get(s.id) ?? s.dismissalType ?? "car");
+  }
+
+  return result;
 }
 

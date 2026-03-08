@@ -155,6 +155,29 @@ import { pool } from "./db.js";
     console.warn("[migration] student_attendance migration skipped:", (err as Error).message);
   }
 
+  // Dismissal overrides table (session-scoped daily type changes)
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS dismissal_overrides (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        session_id TEXT NOT NULL,
+        student_id TEXT NOT NULL,
+        original_type TEXT NOT NULL,
+        override_type TEXT NOT NULL,
+        reason TEXT,
+        changed_by TEXT NOT NULL,
+        changed_by_role TEXT NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT now(),
+        UNIQUE(session_id, student_id)
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS dismissal_overrides_session_id_idx ON dismissal_overrides (session_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS dismissal_overrides_student_id_idx ON dismissal_overrides (student_id)`);
+    console.log("[migration] dismissal_overrides table ready");
+  } catch (err) {
+    console.warn("[migration] dismissal_overrides migration skipped:", (err as Error).message);
+  }
+
   // One-time: update super-admin email alias in users + audit_logs
   try {
     const OLD_EMAIL = "bzinkan@school-pilot.net";

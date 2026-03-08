@@ -334,3 +334,32 @@ export const homeroomTeachers = pgTable(
 
 export type HomeroomTeacher = typeof homeroomTeachers.$inferSelect;
 export type InsertHomeroomTeacher = typeof homeroomTeachers.$inferInsert;
+
+// ============================================================================
+// Dismissal Overrides - GoPilot (session-scoped daily type changes)
+// ============================================================================
+export const dismissalOverrides = pgTable(
+  "dismissal_overrides",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    sessionId: text("session_id").notNull(),
+    studentId: text("student_id").notNull(),
+    originalType: text("original_type").notNull(),
+    overrideType: text("override_type").notNull(), // car | bus | walker | afterschool
+    reason: text("reason"),
+    changedBy: text("changed_by").notNull(), // FK to users
+    changedByRole: text("changed_by_role").notNull(), // parent | teacher | office
+    createdAt: timestamp("created_at").notNull().default(sql`now()`),
+  },
+  (table) => [
+    unique("dismissal_overrides_session_student_unique").on(
+      table.sessionId,
+      table.studentId
+    ),
+    index("dismissal_overrides_session_id_idx").on(table.sessionId),
+    index("dismissal_overrides_student_id_idx").on(table.studentId),
+  ]
+);
+
+export type DismissalOverride = typeof dismissalOverrides.$inferSelect;
+export type InsertDismissalOverride = typeof dismissalOverrides.$inferInsert;

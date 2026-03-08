@@ -73,6 +73,10 @@ export default function TeacherView() {
   const [homeroom, setHomeroom] = useState(null);
   const [session, setSession] = useState(null);
   const [students, setStudents] = useState([]);
+  const [overrides, setOverrides] = useState({});
+  const [showOverrideFor, setShowOverrideFor] = useState(null);
+  const [overrideType, setOverrideType] = useState('');
+  const [overrideReason, setOverrideReason] = useState('');
   const teacher = {
     name: user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() : '',
     homeroom: homeroom ? homeroom.name : 'Loading...',
@@ -131,6 +135,18 @@ export default function TeacherView() {
             holdReason: q?.hold_reason || q?.holdReason || null,
           };
         });
+
+        // Fetch overrides for this session
+        try {
+          const overridesRes = await api.get(`/sessions/${sessionData.id}/overrides`);
+          if (!cancelled) {
+            const map = {};
+            for (const o of overridesRes.data?.overrides || []) {
+              map[o.studentId] = { overrideType: o.overrideType, reason: o.reason };
+            }
+            setOverrides(map);
+          }
+        } catch { /* non-critical */ }
 
         if (!cancelled) {
           setStudents(merged);
@@ -271,11 +287,20 @@ export default function TeacherView() {
       } catch { /* silent */ }
     };
 
+    const handleOverride = (data) => {
+      if (data.overrideType) {
+        setOverrides(prev => ({ ...prev, [data.studentId]: { overrideType: data.overrideType, reason: data.reason } }));
+      } else {
+        setOverrides(prev => { const next = { ...prev }; delete next[data.studentId]; return next; });
+      }
+    };
+
     socket.on('student:checked-in', handleStudentCheckedIn);
     socket.on('student:called', handleStudentCalled);
     socket.on('student:released', handleStudentReleased);
     socket.on('student:dismissed', handleStudentDismissed);
     socket.on('queue:updated', handleQueueUpdated);
+    socket.on('dismissal:override', handleOverride);
 
     return () => {
       socket.off('student:checked-in', handleStudentCheckedIn);
@@ -283,6 +308,7 @@ export default function TeacherView() {
       socket.off('student:released', handleStudentReleased);
       socket.off('student:dismissed', handleStudentDismissed);
       socket.off('queue:updated', handleQueueUpdated);
+      socket.off('dismissal:override', handleOverride);
     };
   }, [socket, session?.id, homeroom?.id]);
 
@@ -335,6 +361,29 @@ export default function TeacherView() {
     if (!calledByReason[key]) calledByReason[key] = [];
     calledByReason[key].push(s);
   });
+
+  // Override handler
+  const handleOverrideSubmit = async () => {
+    if (!session?.id || !showOverrideFor || !overrideType) return;
+    try {
+      await api.post(`/sessions/${session.id}/override`, {
+        studentId: showOverrideFor,
+        overrideType,
+        reason: overrideReason || undefined,
+      });
+      setOverrides(prev => ({ ...prev, [showOverrideFor]: { overrideType, reason: overrideReason } }));
+      setShowOverrideFor(null);
+      setOverrideType('');
+      setOverrideReason('');
+    } catch (err) {
+      alert(err.response?.data?.error || 'Failed to change dismissal type');
+    }
+  };
+
+  const getEffectiveType = (student) => {
+    const override = overrides[student.id];
+    return override ? override.overrideType : (student.dismissal_type || student.dismissalType || 'car');
+  };
 
   const dismissalTypes = [
     { id: 'car', label: 'Car', icon: Car, color: 'blue' },
@@ -505,7 +554,9 @@ export default function TeacherView() {
           )}
           <div className="divide-y">
             {rosterStudents.map(student => {
-              const TypeIcon = getTypeIcon(student.dismissal_type || student.dismissalType);
+              const effectiveType = getEffectiveType(student);
+              const isOverridden = overrides[student.id] != null;
+              const TypeIcon = getTypeIcon(effectiveType);
               const isPickedUp = student.queueStatus === 'dismissed';
               const isAbsent = absentIds.has(student.id);
               return (
@@ -519,11 +570,19 @@ export default function TeacherView() {
                     <p className={`text-sm font-medium truncate ${isAbsent ? 'text-gray-500' : isPickedUp ? 'text-blue-700' : 'text-gray-900'}`}>
                       {student.first_name || student.firstName} {student.last_name || student.lastName}
                     </p>
-                    <div className="flex items-center gap-1 text-xs text-gray-500">
+                    <button
+                      className="flex items-center gap-1 text-xs text-gray-500 hover:text-indigo-600"
+                      onClick={() => {
+                        setShowOverrideFor(student.id);
+                        setOverrideType(effectiveType);
+                        setOverrideReason(overrides[student.id]?.reason || '');
+                      }}
+                    >
                       <TypeIcon className="w-3 h-3" />
-                      <span className="capitalize">{student.dismissal_type || student.dismissalType || 'car'}</span>
-                      {(student.bus_route || student.busRoute) && <span>#{student.bus_route || student.busRoute}</span>}
-                    </div>
+                      <span className="capitalize">{effectiveType === 'afterschool' ? 'After School' : effectiveType}</span>
+                      {(student.bus_route || student.busRoute) && effectiveType === 'bus' && <span>#{student.bus_route || student.busRoute}</span>}
+                      {isOverridden && <span className="text-orange-500 font-medium ml-1">Today</span>}
+                    </button>
                   </div>
                   {isAbsent && (
                     <Badge variant="default" size="sm">Absent</Badge>
@@ -797,6 +856,54 @@ export default function TeacherView() {
           </div>
         </aside>
       </div>
+
+      {/* Dismissal Override Modal */}
+      {showOverrideFor && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm">
+            <div className="p-4 border-b flex items-center justify-between">
+              <h2 className="font-bold">Change Dismissal for Today</h2>
+              <button onClick={() => setShowOverrideFor(null)} className="p-1"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="p-4 space-y-4">
+              <p className="text-xs text-gray-500">This change only applies to today.</p>
+              <div className="grid grid-cols-2 gap-2">
+                {dismissalTypes.map(opt => (
+                  <button
+                    key={opt.id}
+                    onClick={() => setOverrideType(opt.id)}
+                    className={`p-3 rounded-lg border-2 flex flex-col items-center gap-1 text-sm ${
+                      overrideType === opt.id ? 'border-indigo-600 bg-indigo-50 text-indigo-600' : 'border-gray-200 text-gray-500'
+                    }`}
+                  >
+                    <opt.icon className="w-5 h-5" />
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              {overrideType === 'afterschool' && (
+                <input
+                  type="text" value={overrideReason} onChange={(e) => setOverrideReason(e.target.value)}
+                  placeholder="Activity name (required)" className="w-full px-3 py-2 border rounded-lg text-sm"
+                />
+              )}
+              {overrideType !== 'afterschool' && (
+                <input
+                  type="text" value={overrideReason} onChange={(e) => setOverrideReason(e.target.value)}
+                  placeholder="Reason (optional)" className="w-full px-3 py-2 border rounded-lg text-sm"
+                />
+              )}
+              <div className="flex gap-2">
+                <Button variant="secondary" className="flex-1" onClick={() => setShowOverrideFor(null)}>Cancel</Button>
+                <Button variant="primary" className="flex-1" onClick={handleOverrideSubmit}
+                  disabled={overrideType === 'afterschool' && !overrideReason.trim()}>
+                  Save
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
