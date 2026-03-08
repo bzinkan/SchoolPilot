@@ -429,7 +429,7 @@ export default function DismissalDashboard() {
     setLoadingStudents(true);
     try {
       const res = await api.get(`/schools/${currentSchool.id}/students?homeroomId=${roomId}`);
-      setHomeroomStudents(res.data);
+      setHomeroomStudents(Array.isArray(res.data) ? res.data : (res.data?.students ?? []));
     } catch (err) {
       console.error('Failed to load students', err);
       setHomeroomStudents([]);
