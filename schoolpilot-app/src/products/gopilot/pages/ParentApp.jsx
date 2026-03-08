@@ -184,7 +184,7 @@ export default function ParentApp() {
       try {
         const res = await api.post(`/schools/${currentSchool.id}/sessions`);
         if (cancelled) return;
-        const sid = res.data.id;
+        const sid = res.data.session?.id || res.data.id;
         setSessionId(sid);
 
         // Fetch existing overrides for this session
@@ -337,9 +337,13 @@ export default function ParentApp() {
 
   // Change request handler — sends one request per child
   const handleChangeSubmit = async ({ changes, note }) => {
-    if (!sessionId) return;
+    if (!sessionId) {
+      setChangeError('No active dismissal session. Please try again later.');
+      return;
+    }
     setChangeError(null);
     try {
+      let submitted = 0;
       for (const child of children) {
         const change = changes[child.id];
         if (!change) continue;
@@ -351,6 +355,11 @@ export default function ParentApp() {
           toType: change.type,
           note,
         });
+        submitted++;
+      }
+      if (submitted === 0) {
+        setChangeError('No changes detected. Select a different dismissal type to submit a change.');
+        return;
       }
       setShowChangeRequest(false);
     } catch (err) {
