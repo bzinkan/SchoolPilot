@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Car, Bus, PersonStanding, Clock, Users, Bell, Check, X,
+  Car, Bus, PersonStanding, Clock, Users, Check, X,
   ChevronRight, ChevronDown, AlertTriangle, CheckCircle2, Timer,
   Home, Settings, History, User, Plus, Edit, Calendar,
-  Phone, Shield, AlertCircle, RefreshCw, Send,
+  Shield, AlertCircle, RefreshCw, Send,
   ArrowLeft, Camera, QrCode, MessageSquare, Smartphone, Coffee,
   Loader2, LogOut, Save
 } from 'lucide-react';
@@ -60,7 +60,7 @@ const Card = ({ children, className = '', onClick }) => (
 
 // Main Parent App Component
 export default function ParentApp() {
-  const { user, logout, refetchUser, currentSchool } = useGoPilotAuth();
+  const { user, logout, currentSchool } = useGoPilotAuth();
   const navigate = useNavigate();
   const socket = useSocket();
 
@@ -79,8 +79,6 @@ export default function ParentApp() {
   const [linkSuccess, setLinkSuccess] = useState(null);
 
   // Settings modal states
-  const [showPhoneEdit, setShowPhoneEdit] = useState(false);
-  const [showNotifications, setShowNotifications] = useState(false);
   const [showAuthorizedPickups, setShowAuthorizedPickups] = useState(false);
   const [showMyQrCode, setShowMyQrCode] = useState(false);
   const [showQrModal, setShowQrModal] = useState(false);
@@ -681,7 +679,7 @@ export default function ParentApp() {
           </main>
 
           {/* Bottom Navigation */}
-          <nav className="fixed bottom-0 left-0 right-0 bg-white border-t px-4 py-2">
+          <nav className="fixed bottom-0 left-0 right-0 bg-white border-t px-4 pt-2 pb-6">
             <div className="flex items-center justify-around">
               {[
                 { id: 'home', icon: Home, label: 'Home' },
@@ -818,7 +816,7 @@ export default function ParentApp() {
           </main>
 
           {/* Bottom Navigation */}
-          <nav className="fixed bottom-0 left-0 right-0 bg-white border-t px-4 py-2">
+          <nav className="fixed bottom-0 left-0 right-0 bg-white border-t px-4 pt-2 pb-6">
             <div className="flex items-center justify-around">
               {[
                 { id: 'home', icon: Home, label: 'Home' },
@@ -1007,7 +1005,7 @@ export default function ParentApp() {
           )}
 
           {/* Bottom Navigation */}
-          <nav className="fixed bottom-0 left-0 right-0 bg-white border-t px-4 py-2">
+          <nav className="fixed bottom-0 left-0 right-0 bg-white border-t px-4 pt-2 pb-6">
             <div className="flex items-center justify-around">
               {[
                 { id: 'home', icon: Home, label: 'Home' },
@@ -1062,22 +1060,17 @@ export default function ParentApp() {
             <Card>
               <div className="divide-y">
                 {[
-                  { icon: Bell, label: 'Notifications', value: user.notification_prefs?.enabled === false ? 'Off' : 'On', onClick: () => setShowNotifications(true) },
-                  { icon: Smartphone, label: 'Check-in Method', value: schoolSettings.checkInMethod === 'qr' ? 'QR Code Tag' : 'GoPilot App', onClick: () => {} },
-                  { icon: Phone, label: 'Phone Number', value: user.phone || 'Not set', onClick: () => setShowPhoneEdit(true) },
+                  { icon: Smartphone, label: 'Check-in Method', value: schoolSettings.checkInMethod === 'qr' ? 'QR Code Tag' : 'GoPilot App' },
                   { icon: Shield, label: 'Authorized Pickups', value: `${authorizedPickups.length} people`, onClick: () => setShowAuthorizedPickups(true) },
                   { icon: QrCode, label: 'My QR Code', value: '', onClick: () => setShowMyQrCode(true) },
-                  ...(currentSchool?.carNumber ? [{ icon: Car, label: 'My Car Number', value: `#${currentSchool.carNumber}`, onClick: () => {} }] : []),
+                  ...(currentSchool?.carNumber ? [{ icon: Car, label: 'My Car Number', value: `#${currentSchool.carNumber}` }] : []),
                 ].map((item, index) => (
-                  <div key={index} className="p-4 flex items-center justify-between cursor-pointer hover:bg-gray-50 active:bg-gray-100 transition-colors" onClick={item.onClick}>
+                  <div key={index} className={`p-4 flex items-center justify-between ${item.onClick ? 'cursor-pointer hover:bg-gray-50 active:bg-gray-100' : ''} transition-colors`} onClick={item.onClick}>
                     <div className="flex items-center gap-3">
                       <item.icon className="w-5 h-5 text-gray-400" />
                       <span>{item.label}</span>
                     </div>
-                    <div className="flex items-center gap-2">
-                      {item.value && <span className="text-gray-500 text-sm">{item.value}</span>}
-                      <ChevronRight className="w-4 h-4 text-gray-400" />
-                    </div>
+                    {item.value && <span className="text-gray-500 text-sm">{item.value}</span>}
                   </div>
                 ))}
               </div>
@@ -1092,32 +1085,6 @@ export default function ParentApp() {
                 <span>Sign Out</span>
               </button>
             </Card>
-
-            {/* Phone Number Edit Modal */}
-            {showPhoneEdit && (
-              <PhoneEditModal
-                currentPhone={user.phone || ''}
-                onClose={() => setShowPhoneEdit(false)}
-                onSave={async (phone) => {
-                  await api.put('/me', { phone });
-                  await refetchUser();
-                  setShowPhoneEdit(false);
-                }}
-              />
-            )}
-
-            {/* Notifications Modal */}
-            {showNotifications && (
-              <NotificationsModal
-                prefs={user.notification_prefs || { enabled: true, dismissal: true, changes: true }}
-                onClose={() => setShowNotifications(false)}
-                onSave={async (prefs) => {
-                  await api.put('/me', { notificationPrefs: prefs });
-                  await refetchUser();
-                  setShowNotifications(false);
-                }}
-              />
-            )}
 
             {/* My QR Code Modal */}
             {showMyQrCode && (
@@ -1234,7 +1201,7 @@ export default function ParentApp() {
 function ChangeRequestModal({ children, onClose, onSubmit, error, schoolSettings = {} }) {
   const [changes, setChanges] = useState(
     children.reduce((acc, child) => {
-      acc[child.id] = { type: child.dismissalType, busRoute: child.busRoute || '' };
+      acc[child.id] = { type: child.dismissalType, busRoute: child.busRoute || child.bus_route || '' };
       return acc;
     }, {})
   );
@@ -1266,7 +1233,7 @@ function ChangeRequestModal({ children, onClose, onSubmit, error, schoolSettings
           </div>
         </div>
 
-        <div className="p-4 space-y-6">
+        <div className="p-4 pb-10 space-y-6">
           {error && (
             <div className="bg-red-50 border border-red-200 rounded-xl p-4">
               <div className="flex items-center gap-3">
@@ -1357,110 +1324,6 @@ function ChangeRequestModal({ children, onClose, onSubmit, error, schoolSettings
             {submitting ? 'Submitting...' : 'Submit Change Request'}
           </Button>
         </div>
-      </div>
-    </div>
-  );
-}
-
-// Phone Edit Modal
-function PhoneEditModal({ currentPhone, onClose, onSave }) {
-  const [phone, setPhone] = useState(currentPhone);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-
-  const handleSave = async () => {
-    setSaving(true);
-    setError('');
-    try {
-      await onSave(phone);
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to update phone number');
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-end">
-      <div className="bg-white w-full rounded-t-3xl p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="font-bold text-lg">Phone Number</h2>
-          <button onClick={onClose} className="p-2"><X className="w-5 h-5" /></button>
-        </div>
-        {error && <p className="text-red-600 text-sm mb-3">{error}</p>}
-        <input
-          type="tel"
-          value={phone}
-          onChange={e => setPhone(e.target.value)}
-          placeholder="(555) 123-4567"
-          className="w-full px-4 py-3 border border-gray-300 rounded-xl mb-4 text-lg"
-        />
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className="w-full py-3 bg-indigo-600 text-white rounded-xl font-medium hover:bg-indigo-700 disabled:opacity-50 flex items-center justify-center gap-2"
-        >
-          {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
-          {saving ? 'Saving...' : 'Save'}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// Notifications Modal
-function NotificationsModal({ prefs, onClose, onSave }) {
-  const [local, setLocal] = useState({
-    enabled: prefs.enabled !== false,
-    dismissal: prefs.dismissal !== false,
-    changes: prefs.changes !== false,
-  });
-  const [saving, setSaving] = useState(false);
-
-  const toggle = (key) => setLocal(p => ({ ...p, [key]: !p[key] }));
-
-  const handleSave = async () => {
-    setSaving(true);
-    try { await onSave(local); } catch { setSaving(false); }
-  };
-
-  const Toggle = ({ on, onToggle }) => (
-    <button onClick={onToggle} className={`w-12 h-7 rounded-full transition-colors ${on ? 'bg-indigo-600' : 'bg-gray-300'} relative`}>
-      <div className={`w-5 h-5 bg-white rounded-full absolute top-1 transition-transform ${on ? 'translate-x-6' : 'translate-x-1'}`} />
-    </button>
-  );
-
-  return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-end">
-      <div className="bg-white w-full rounded-t-3xl p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="font-bold text-lg">Notifications</h2>
-          <button onClick={onClose} className="p-2"><X className="w-5 h-5" /></button>
-        </div>
-        <div className="space-y-4 mb-6">
-          <div className="flex items-center justify-between">
-            <div><p className="font-medium">All Notifications</p><p className="text-sm text-gray-500">Enable or disable all</p></div>
-            {/* eslint-disable-next-line react-hooks/static-components */}
-            <Toggle on={local.enabled} onToggle={() => toggle('enabled')} />
-          </div>
-          <div className="flex items-center justify-between">
-            <div><p className="font-medium">Dismissal Updates</p><p className="text-sm text-gray-500">When your child is released</p></div>
-            {/* eslint-disable-next-line react-hooks/static-components */}
-            <Toggle on={local.dismissal && local.enabled} onToggle={() => toggle('dismissal')} />
-          </div>
-          <div className="flex items-center justify-between">
-            <div><p className="font-medium">Change Requests</p><p className="text-sm text-gray-500">Status of your requests</p></div>
-            {/* eslint-disable-next-line react-hooks/static-components */}
-            <Toggle on={local.changes && local.enabled} onToggle={() => toggle('changes')} />
-          </div>
-        </div>
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className="w-full py-3 bg-indigo-600 text-white rounded-xl font-medium hover:bg-indigo-700 disabled:opacity-50 flex items-center justify-center gap-2"
-        >
-          {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
-          {saving ? 'Saving...' : 'Save'}
-        </button>
       </div>
     </div>
   );
