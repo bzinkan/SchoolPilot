@@ -1267,21 +1267,6 @@ function ChangeRequestModal({ children, onClose, onSubmit, error, schoolSettings
                 })}
               </div>
 
-              {changes[child.id].type === 'bus' && (
-                <div className="mt-3">
-                  <label className="block text-sm text-gray-600 mb-1">Bus Number</label>
-                  <input
-                    type="text"
-                    value={changes[child.id].busRoute}
-                    onChange={(e) => setChanges(prev => ({
-                      ...prev,
-                      [child.id]: { ...prev[child.id], busRoute: e.target.value }
-                    }))}
-                    placeholder="Enter bus number"
-                    className="w-full px-4 py-2 border rounded-lg"
-                  />
-                </div>
-              )}
             </div>
           ))}
 
