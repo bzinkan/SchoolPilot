@@ -77,6 +77,7 @@ export default function TeacherView() {
   const [changeRequests, setChangeRequests] = useState([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [showNoteFor, setShowNoteFor] = useState(null);
+  const [unreadChangeCount, setUnreadChangeCount] = useState(0);
   const [showOverrideFor, setShowOverrideFor] = useState(null);
   const [overrideType, setOverrideType] = useState('');
   const [overrideReason, setOverrideReason] = useState('');
@@ -151,11 +152,11 @@ export default function TeacherView() {
           }
         } catch { /* non-critical */ }
 
-        // Fetch existing change requests for this session
+        // Fetch existing change requests for this session (all statuses — persist until midnight)
         try {
           const changesRes = await api.get(`/sessions/${sessionData.id}/changes`);
           if (!cancelled) {
-            const changes = (changesRes.data?.changes || []).filter(c => c.status === 'pending');
+            const changes = changesRes.data?.changes || [];
             setChangeRequests(changes.map(c => ({
               id: c.id,
               studentId: c.studentId,
@@ -163,6 +164,7 @@ export default function TeacherView() {
               fromType: c.fromType,
               toType: c.toType,
               note: c.note,
+              status: c.status || 'pending',
               createdAt: c.createdAt,
             })));
           }
@@ -323,8 +325,16 @@ export default function TeacherView() {
         fromType: change.fromType,
         toType: change.toType,
         note: change.note,
+        status: change.status || 'pending',
         createdAt: change.createdAt,
       }]);
+      setUnreadChangeCount(prev => prev + 1);
+    };
+
+    const handleTypeUpdated = ({ studentId, dismissalType, busRoute }) => {
+      setStudents(prev => prev.map(s =>
+        s.id === studentId ? { ...s, dismissalType, dismissal_type: dismissalType, busRoute, bus_route: busRoute } : s
+      ));
     };
 
     socket.on('student:checked-in', handleStudentCheckedIn);
@@ -334,6 +344,7 @@ export default function TeacherView() {
     socket.on('queue:updated', handleQueueUpdated);
     socket.on('dismissal:override', handleOverride);
     socket.on('change:requested', handleChangeRequested);
+    socket.on('student:typeUpdated', handleTypeUpdated);
 
     return () => {
       socket.off('student:checked-in', handleStudentCheckedIn);
@@ -343,6 +354,7 @@ export default function TeacherView() {
       socket.off('queue:updated', handleQueueUpdated);
       socket.off('dismissal:override', handleOverride);
       socket.off('change:requested', handleChangeRequested);
+      socket.off('student:typeUpdated', handleTypeUpdated);
     };
   }, [socket, session?.id, homeroom?.id]);
 
@@ -535,13 +547,26 @@ export default function TeacherView() {
 
               <div className="relative">
                 <button
-                  onClick={() => setShowNotifications(!showNotifications)}
+                  onClick={() => {
+                    const opening = !showNotifications;
+                    setShowNotifications(opening);
+                    if (opening) {
+                      setUnreadChangeCount(0);
+                      // Auto-approve pending change requests
+                      changeRequests.forEach(cr => {
+                        if (cr.status !== 'approved') {
+                          api.put(`/changes/${cr.id}`, { status: 'approved' }).catch(() => {});
+                        }
+                      });
+                      setChangeRequests(prev => prev.map(cr => ({ ...cr, status: 'approved' })));
+                    }
+                  }}
                   className="p-2 rounded-lg hover:bg-gray-100 relative"
                 >
                   <Bell className="w-5 h-5 text-gray-600" />
-                  {changeRequests.length > 0 && (
+                  {unreadChangeCount > 0 && (
                     <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
-                      {changeRequests.length}
+                      {unreadChangeCount}
                     </span>
                   )}
                 </button>
@@ -555,9 +580,12 @@ export default function TeacherView() {
                       <div className="p-4 text-center text-sm text-gray-400">No change requests</div>
                     ) : (
                       changeRequests.map((cr, i) => (
-                        <div key={cr.id || i} className="p-3 border-b last:border-b-0 hover:bg-gray-50">
+                        <div key={cr.id || i} className={`p-3 border-b last:border-b-0 ${cr.status === 'approved' ? 'opacity-60' : ''} hover:bg-gray-50`}>
                           <div className="flex items-center justify-between">
-                            <p className="text-sm font-medium">{cr.studentName}</p>
+                            <p className="text-sm font-medium flex items-center gap-1.5">
+                              {cr.studentName}
+                              {cr.status === 'approved' && <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />}
+                            </p>
                             <span className="text-xs text-gray-400">{cr.createdAt ? new Date(cr.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</span>
                           </div>
                           <p className="text-xs text-gray-500 mt-0.5">
@@ -646,7 +674,16 @@ export default function TeacherView() {
                     <p className={`text-sm font-medium truncate flex items-center gap-1 ${isAbsent ? 'text-gray-500' : isPickedUp ? 'text-blue-700' : 'text-gray-900'}`}>
                       {student.first_name || student.firstName} {student.last_name || student.lastName}
                       {changeRequests.find(cr => cr.studentId === student.id && cr.note) && (
-                        <button onClick={(e) => { e.stopPropagation(); setShowNoteFor(showNoteFor === student.id ? null : student.id); }} className="flex-shrink-0">
+                        <button onClick={(e) => {
+                          e.stopPropagation();
+                          setShowNoteFor(showNoteFor === student.id ? null : student.id);
+                          // Auto-approve this student's pending change request
+                          const pending = changeRequests.find(cr => cr.studentId === student.id && cr.status !== 'approved');
+                          if (pending) {
+                            api.put(`/changes/${pending.id}`, { status: 'approved' }).catch(() => {});
+                            setChangeRequests(prev => prev.map(cr => cr.id === pending.id ? { ...cr, status: 'approved' } : cr));
+                          }
+                        }} className="flex-shrink-0">
                           <MessageSquare className="w-3.5 h-3.5 text-amber-500" />
                         </button>
                       )}

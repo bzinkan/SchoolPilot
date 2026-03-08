@@ -100,6 +100,7 @@ export default function ParentApp() {
   const [error, setError] = useState(null);
   const [checkInError, setCheckInError] = useState(null);
   const [changeError, setChangeError] = useState(null);
+  const [changeConfirmation, setChangeConfirmation] = useState(null);
 
   // Fetch children and their authorized pickups on mount
   useEffect(() => {
@@ -296,16 +297,32 @@ export default function ParentApp() {
       }
     };
 
+    const handleChangeResolved = ({ change }) => {
+      if (!change) return;
+      // Update child's dismissal type
+      setChildren(prev => prev.map(c =>
+        c.id === change.studentId ? { ...c, dismissalType: change.toType || change.to_type, dismissal_type: change.toType || change.to_type } : c
+      ));
+      // Show confirmation toast
+      const childName = children.find(c => c.id === change.studentId);
+      const name = childName?.firstName || childName?.first_name || 'Child';
+      const newType = change.toType || change.to_type || '';
+      setChangeConfirmation(`${name}'s dismissal confirmed: ${newType}`);
+      setTimeout(() => setChangeConfirmation(null), 5000);
+    };
+
     socket.on('student:called', handleStudentCalled);
     socket.on('student:dismissed', handleStudentDismissed);
     socket.on('queue:updated', handleQueueUpdated);
     socket.on('dismissal:override', handleOverride);
+    socket.on('change:resolved', handleChangeResolved);
 
     return () => {
       socket.off('student:called', handleStudentCalled);
       socket.off('student:dismissed', handleStudentDismissed);
       socket.off('queue:updated', handleQueueUpdated);
       socket.off('dismissal:override', handleOverride);
+      socket.off('change:resolved', handleChangeResolved);
     };
   }, [socket, children]);
 
@@ -355,6 +372,10 @@ export default function ParentApp() {
           toType: change.type,
           note,
         });
+        // Update local state immediately so parent sees the new type
+        setChildren(prev => prev.map(c =>
+          c.id === child.id ? { ...c, dismissalType: change.type, dismissal_type: change.type } : c
+        ));
         submitted++;
       }
       if (submitted === 0) {
@@ -488,6 +509,19 @@ export default function ParentApp() {
                   <p className="text-sm text-red-700">{checkInError}</p>
                   <button onClick={() => setCheckInError(null)} className="ml-auto">
                     <X className="w-4 h-4 text-red-400" />
+                  </button>
+                </div>
+              </Card>
+            )}
+
+            {/* Change confirmation toast */}
+            {changeConfirmation && (
+              <Card className="p-4 mb-4 border-green-200 bg-green-50">
+                <div className="flex items-center gap-3">
+                  <CheckCircle2 className="w-5 h-5 text-green-600 flex-shrink-0" />
+                  <p className="text-sm text-green-800">{changeConfirmation}</p>
+                  <button onClick={() => setChangeConfirmation(null)} className="ml-auto">
+                    <X className="w-4 h-4 text-green-400" />
                   </button>
                 </div>
               </Card>

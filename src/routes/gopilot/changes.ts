@@ -126,20 +126,39 @@ router.put("/changes/:id", ...auth, async (req, res, next) => {
       reviewedAt: new Date(),
     });
 
-    // If approved, update student's dismissal type
+    // If approved, update student's dismissal type and notify all parties
     if (status === "approved" && existing) {
       await updateStudent(existing.studentId, {
         dismissalType: existing.toType,
         ...(existing.busRoute && { busRoute: existing.busRoute }),
       });
-    }
 
-    // Notify parent
-    const io = getIO();
-    if (io) {
-      io.to(
-        `school:${res.locals.schoolId}:parent:${existing.requestedBy}`
-      ).emit("change:resolved", { change: updated });
+      // Notify teacher/office that student type changed so roster updates
+      const io = getIO();
+      if (io) {
+        const student = await getStudentById(existing.studentId);
+        const typePayload = {
+          studentId: existing.studentId,
+          dismissalType: existing.toType,
+          busRoute: existing.busRoute,
+        };
+        io.to(`school:${res.locals.schoolId}:office`).emit("student:typeUpdated", typePayload);
+        if (student?.homeroomId) {
+          io.to(`school:${res.locals.schoolId}:teacher:${student.homeroomId}`).emit("student:typeUpdated", typePayload);
+        }
+        // Notify parent of resolution
+        io.to(
+          `school:${res.locals.schoolId}:parent:${existing.requestedBy}`
+        ).emit("change:resolved", { change: updated });
+      }
+    } else {
+      // Rejected or other status — still notify parent
+      const io = getIO();
+      if (io) {
+        io.to(
+          `school:${res.locals.schoolId}:parent:${existing.requestedBy}`
+        ).emit("change:resolved", { change: updated });
+      }
     }
 
     return res.json({ change: updated });

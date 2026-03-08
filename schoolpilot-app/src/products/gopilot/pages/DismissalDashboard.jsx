@@ -110,6 +110,8 @@ export default function DismissalDashboard() {
   // Change request notifications
   const [changeRequests, setChangeRequests] = useState([]);
   const [showChangeNotifications, setShowChangeNotifications] = useState(false);
+  const [unreadChangeCount, setUnreadChangeCount] = useState(0);
+  const [showNoteFor, setShowNoteFor] = useState(null);
   // Student lookup state
   const [showStudentLookup, setShowStudentLookup] = useState(false);
   const [studentSearchTerm, setStudentSearchTerm] = useState('');
@@ -149,10 +151,10 @@ export default function DismissalDashboard() {
         setOverrides(map);
       } catch { /* non-critical */ }
 
-      // Fetch existing change requests
+      // Fetch existing change requests (all statuses — persist until midnight/session end)
       try {
         const changesRes = await api.get(`/sessions/${sessionRes.data.id}/changes`);
-        const changes = (changesRes.data?.changes || []).filter(c => c.status === 'pending');
+        const changes = changesRes.data?.changes || [];
         setChangeRequests(changes.map(c => ({
           id: c.id,
           studentId: c.studentId,
@@ -160,8 +162,10 @@ export default function DismissalDashboard() {
           fromType: c.fromType,
           toType: c.toType,
           note: c.note,
+          status: c.status || 'pending',
           createdAt: c.createdAt,
         })));
+        // Don't set unreadCount on load — user is "seeing" them by loading the page
       } catch { /* non-critical */ }
 
       const zones = settingsRes.data.pickupZones || [
@@ -205,7 +209,7 @@ export default function DismissalDashboard() {
     socket.on('student:called', handleQueueUpdate);
     socket.on('student:released', handleQueueUpdate);
     socket.on('student:dismissed', handleQueueUpdate);
-    socket.on('change:requested', ({ change, studentName }) => {
+    const handleChangeRequested = ({ change, studentName }) => {
       setChangeRequests(prev => [...prev, {
         id: change.id,
         studentId: change.studentId,
@@ -213,9 +217,19 @@ export default function DismissalDashboard() {
         fromType: change.fromType,
         toType: change.toType,
         note: change.note,
+        status: change.status || 'pending',
         createdAt: change.createdAt,
       }]);
-    });
+      setUnreadChangeCount(prev => prev + 1);
+    };
+    socket.on('change:requested', handleChangeRequested);
+
+    const handleTypeUpdated = ({ studentId, dismissalType, busRoute }) => {
+      setHomeroomStudents(prev => prev.map(s =>
+        s.id === studentId ? { ...s, dismissalType, dismissal_type: dismissalType, busRoute } : s
+      ));
+    };
+    socket.on('student:typeUpdated', handleTypeUpdated);
 
     const handleOverride = (data) => {
       if (data.overrideType) {
@@ -234,7 +248,8 @@ export default function DismissalDashboard() {
       socket.off('student:called', handleQueueUpdate);
       socket.off('student:released', handleQueueUpdate);
       socket.off('student:dismissed', handleQueueUpdate);
-      socket.off('change:requested'); // cleanup handled by React re-render
+      socket.off('change:requested', handleChangeRequested);
+      socket.off('student:typeUpdated', handleTypeUpdated);
       socket.off('dismissal:override', handleOverride);
     };
   }, [socket, currentSchool, session]);
@@ -599,13 +614,26 @@ export default function DismissalDashboard() {
               <div className="flex items-center gap-1 sm:gap-2">
                 <div className="relative">
                   <button
-                    onClick={() => setShowChangeNotifications(!showChangeNotifications)}
+                    onClick={() => {
+                      const opening = !showChangeNotifications;
+                      setShowChangeNotifications(opening);
+                      if (opening) {
+                        setUnreadChangeCount(0);
+                        // Auto-approve pending change requests
+                        changeRequests.forEach(cr => {
+                          if (cr.status !== 'approved') {
+                            api.put(`/changes/${cr.id}`, { status: 'approved' }).catch(() => {});
+                          }
+                        });
+                        setChangeRequests(prev => prev.map(cr => ({ ...cr, status: 'approved' })));
+                      }
+                    }}
                     className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 relative"
                   >
                     <Bell className="w-5 h-5 text-gray-600 dark:text-gray-300" />
-                    {changeRequests.length > 0 && (
+                    {unreadChangeCount > 0 && (
                       <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
-                        {changeRequests.length}
+                        {unreadChangeCount}
                       </span>
                     )}
                   </button>
@@ -619,9 +647,12 @@ export default function DismissalDashboard() {
                         <div className="p-4 text-center text-sm text-gray-400">No change requests</div>
                       ) : (
                         changeRequests.map((cr, i) => (
-                          <div key={cr.id || i} className="p-3 border-b last:border-b-0 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700/50">
+                          <div key={cr.id || i} className={`p-3 border-b last:border-b-0 dark:border-slate-700 ${cr.status === 'approved' ? 'opacity-60' : ''} hover:bg-gray-50 dark:hover:bg-slate-700/50`}>
                             <div className="flex items-center justify-between">
-                              <p className="text-sm font-medium">{cr.studentName}</p>
+                              <p className="text-sm font-medium flex items-center gap-1.5">
+                                {cr.studentName}
+                                {cr.status === 'approved' && <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />}
+                              </p>
                               <span className="text-xs text-gray-400">{cr.createdAt ? new Date(cr.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</span>
                             </div>
                             <p className="text-xs text-gray-500 mt-0.5">
@@ -981,16 +1012,31 @@ export default function DismissalDashboard() {
                                 const fname = student.firstName || student.first_name || '';
                                 const lname = student.lastName || student.last_name || '';
                                 return (
-                                  <div key={student.id} className="flex items-center justify-between py-2.5">
-                                    <div className="flex items-center gap-3">
-                                      <div className="w-8 h-8 bg-indigo-100 dark:bg-indigo-950/50 rounded-full flex items-center justify-center">
-                                        <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400">
-                                          {fname[0]}{lname[0]}
-                                        </span>
+                                  <div key={student.id} className="py-2.5">
+                                    <div className="flex items-center justify-between">
+                                      <div className="flex items-center gap-3">
+                                        <div className="w-8 h-8 bg-indigo-100 dark:bg-indigo-950/50 rounded-full flex items-center justify-center">
+                                          <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400">
+                                            {fname[0]}{lname[0]}
+                                          </span>
+                                        </div>
+                                        <span className="text-sm font-medium dark:text-white">{fname} {lname}</span>
+                                        {changeRequests.find(cr => cr.studentId === student.id && cr.note) && (
+                                          <button onClick={(e) => {
+                                            e.stopPropagation();
+                                            setShowNoteFor(showNoteFor === student.id ? null : student.id);
+                                            // Auto-approve this student's pending change request
+                                            const pending = changeRequests.find(cr => cr.studentId === student.id && cr.status !== 'approved');
+                                            if (pending) {
+                                              api.put(`/changes/${pending.id}`, { status: 'approved' }).catch(() => {});
+                                              setChangeRequests(prev => prev.map(cr => cr.id === pending.id ? { ...cr, status: 'approved' } : cr));
+                                            }
+                                          }} className="flex-shrink-0">
+                                            <MessageSquare className="w-3.5 h-3.5 text-amber-500" />
+                                          </button>
+                                        )}
                                       </div>
-                                      <span className="text-sm font-medium dark:text-white">{fname} {lname}</span>
-                                    </div>
-                                    <div className="flex items-center gap-2">
+                                      <div className="flex items-center gap-2">
                                       {isOverridden && (
                                         <span className="text-xs text-orange-600 dark:text-orange-400 font-medium">Today</span>
                                       )}
@@ -1009,7 +1055,17 @@ export default function DismissalDashboard() {
                                           {typeLabels[effectiveType] || effectiveType}
                                         </Badge>
                                       </button>
+                                      </div>
                                     </div>
+                                    {showNoteFor === student.id && (() => {
+                                      const cr = changeRequests.find(c => c.studentId === student.id && c.note);
+                                      return cr ? (
+                                        <div className="text-xs bg-amber-50 dark:bg-amber-900/30 text-amber-800 dark:text-amber-200 rounded px-2 py-1 mt-1 ml-11">
+                                          <span className="font-medium">Parent note:</span> {cr.note}
+                                          <div className="text-amber-600 dark:text-amber-400 mt-0.5 capitalize">{cr.fromType} → {cr.toType}</div>
+                                        </div>
+                                      ) : null;
+                                    })()}
                                   </div>
                                 );
                               })}
