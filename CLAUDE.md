@@ -174,6 +174,14 @@ When a school has multiple products, priority order is: ClassPilot > PassPilot >
 - **Vite proxy**: The frontend dev server proxies `/api`, `/ws`, and `/gopilot-socket` to the backend on port 4000.
 - **Chrome extension**: The ClassPilot Chrome extension (MV3, separate repo at `ClassPilot/extension/`) uses a service worker (`service-worker.js`). Use `console.warn` instead of `console.error` — Chrome surfaces `console.error` calls as visible "Errors" on the chrome://extensions page, alarming school IT admins.
 
+### API Response Format Gotchas
+**IMPORTANT:** Backend and frontend use inconsistent field naming. Be careful:
+- **Drizzle ORM** returns camelCase JS properties (`firstName`, `lastName`, `dismissalType`, `checkInMethod`).
+- **Some endpoints** wrap responses in objects (`{ students: [...] }`, `{ session: {...} }`, `{ overrides: [...] }`). Others return flat arrays. Always check the specific route handler.
+- **GoPilot queue endpoint** (`GET /sessions/:id/queue`) explicitly maps to snake_case (`first_name`, `last_name`, `check_in_method`, `dismissal_type`) for frontend compatibility.
+- **Students endpoint** (`GET /schools/:id/students`) returns Drizzle camelCase wrapped in `{ students: [...] }`.
+- When consuming API responses in the frontend, always handle both formats defensively: `Array.isArray(res.data) ? res.data : (res.data?.items ?? [])` and `student.firstName || student.first_name`.
+
 ## Environment Variables
 
 Copy `.env.example` to `.env`. Required for local dev:
@@ -261,9 +269,16 @@ Infrastructure is on AWS (us-east-1):
 ```bash
 # On Windows, prefix AWS CLI / Docker commands with MSYS_NO_PATHCONV=1
 # Run from the SchoolPilot repo root:
+
+# 1. Login to ECR (required before push)
+MSYS_NO_PATHCONV=1 aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 135775632425.dkr.ecr.us-east-1.amazonaws.com
+
+# 2. Build, tag, push
 docker build -t schoolpilot-production-api .
 docker tag schoolpilot-production-api:latest 135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api:latest
 docker push 135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api:latest
+
+# 3. Force ECS redeployment (rolls out new task ~1-2 min)
 MSYS_NO_PATHCONV=1 aws ecs update-service --cluster schoolpilot-production-cluster --service schoolpilot-production-api --force-new-deployment --region us-east-1
 ```
 
@@ -276,5 +291,17 @@ MSYS_NO_PATHCONV=1 aws cloudfront create-invalidation --distribution-id E1TPPJOD
 
 ### Schema Changes
 Since production RDS is in a private VPC, `drizzle-kit push` cannot reach it directly. Instead:
-1. Add the Drizzle schema definition in `src/schema/classpilot.ts` (for type safety and local dev)
+1. Add the Drizzle schema definition in the appropriate `src/schema/*.ts` file (e.g., `gopilot.ts` for GoPilot tables, `classpilot.ts` for ClassPilot, etc.)
 2. Add a `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS` block in `src/index.ts` (for production auto-migration on startup)
+
+### GoPilot Dismissal Override System
+Session-scoped dismissal type changes (car/bus/walker/afterschool) for today only, without admin approval:
+- **Table:** `dismissal_overrides` (schema in `src/schema/gopilot.ts`, auto-migration in `src/index.ts`)
+- **Storage functions:** `src/services/storage.ts` — `upsertDismissalOverride`, `deleteDismissalOverride`, `getOverridesForSession`, `getEffectiveDismissalType(s)`
+- **API endpoints** in `src/routes/gopilot/dismissal.ts`:
+  - `POST /sessions/:id/override` — create/update override (role-based: parent must be linked, teacher must have homeroom, office/admin unrestricted)
+  - `GET /sessions/:id/overrides` — list all overrides for session
+  - `DELETE /sessions/:id/override/:studentId` — revert to permanent default
+- **Socket event:** `dismissal:override` emitted to office, teacher, and parent rooms
+- **Queue integration:** All check-in methods (app, car number, bus, walker release) use `getEffectiveDismissalTypes()` to respect overrides. Afterschool students are excluded from queue.
+- **Frontend:** Override UI in ParentApp, TeacherView, and DismissalDashboard (including expandable homerooms in Rooms tab)
