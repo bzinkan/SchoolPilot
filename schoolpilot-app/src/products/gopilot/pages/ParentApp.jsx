@@ -122,6 +122,7 @@ export default function ParentApp() {
             id: s.id,
             firstName: s.firstName || s.first_name,
             lastName: s.lastName || s.last_name,
+            grade: s.gradeLevel || s.grade_level || s.grade || null,
             homeroom: h.name || s.homeroom_name || s.homeroom || 'Unassigned',
             dismissalType: s.dismissalType || s.dismissal_type || 'car',
           };
@@ -334,15 +335,26 @@ export default function ParentApp() {
     }, 3000);
   };
 
-  // Change request handler
+  // Change request handler — sends one request per child
   const handleChangeSubmit = async ({ changes, note }) => {
     if (!sessionId) return;
     setChangeError(null);
     try {
-      await api.post(`/sessions/${sessionId}/changes`, { changes, note });
+      for (const child of children) {
+        const change = changes[child.id];
+        if (!change) continue;
+        const currentType = child.dismissalType || child.dismissal_type || 'car';
+        if (change.type === currentType) continue; // skip unchanged
+        await api.post(`/sessions/${sessionId}/changes`, {
+          studentId: child.id,
+          fromType: currentType,
+          toType: change.type,
+          note,
+        });
+      }
       setShowChangeRequest(false);
     } catch (err) {
-      setChangeError(err.response?.data?.message || 'Failed to submit change request.');
+      setChangeError(err.response?.data?.error || err.response?.data?.message || 'Failed to submit change request.');
     }
   };
 
@@ -874,7 +886,7 @@ export default function ParentApp() {
                         </div>
                         <div>
                           <p className="font-bold text-lg">{child.firstName} {child.lastName}</p>
-                          <p className="text-gray-500">Grade {child.grade}</p>
+                          <p className="text-gray-500">{child.grade ? `Grade ${child.grade}` : 'Unassigned'}</p>
                         </div>
                       </div>
 
@@ -889,17 +901,11 @@ export default function ParentApp() {
                         </div>
                         <div className="flex items-center justify-between py-2 border-t">
                           <span className="text-gray-500">Dismissal Today</span>
-                          <button
-                            onClick={() => { setShowOverrideFor(child.id); setOverrideType(effectiveType); setOverrideReason(overrides[child.id]?.reason || ''); }}
-                            className="flex items-center gap-1"
-                          >
-                            <Badge variant={typeVariant}>
-                              <DismissalIcon className="w-3 h-3" />
-                              {effectiveType === 'afterschool' ? 'After School' : effectiveType}
-                              {isOverridden && <span className="ml-1 text-[10px]">Today</span>}
-                            </Badge>
-                            <Edit className="w-3 h-3 text-gray-400" />
-                          </button>
+                          <Badge variant={typeVariant}>
+                            <DismissalIcon className="w-3 h-3" />
+                            {effectiveType === 'afterschool' ? 'After School' : effectiveType}
+                            {isOverridden && <span className="ml-1 text-[10px]">Today</span>}
+                          </Badge>
                         </div>
                         {isOverridden && (
                           <div className="flex items-center justify-between py-2 border-t">
@@ -914,12 +920,6 @@ export default function ParentApp() {
                           </div>
                         )}
                       </div>
-                    </div>
-                    <div className="bg-gray-50 px-4 py-3 flex justify-end">
-                      <Button variant="secondary" size="sm" onClick={() => { setShowOverrideFor(child.id); setOverrideType(effectiveType); setOverrideReason(overrides[child.id]?.reason || ''); }}>
-                        <Edit className="w-4 h-4 mr-1" />
-                        Edit
-                      </Button>
                     </div>
                   </Card>
                 );
@@ -979,13 +979,19 @@ export default function ParentApp() {
                             headers: currentSchool?.id ? { 'x-school-id': currentSchool.id } : {},
                           });
                           const rawChildren = Array.isArray(childrenRes.data) ? childrenRes.data : (childrenRes.data?.children || []);
-                          setChildren(rawChildren.map(c => ({
-                            ...c,
-                            firstName: c.first_name || c.firstName,
-                            lastName: c.last_name || c.lastName,
-                            homeroom: c.homeroom_name || c.homeroom || 'Unassigned',
-                            dismissalType: c.dismissal_type || c.dismissalType || 'car',
-                          })));
+                          setChildren(rawChildren.map(c => {
+                            const s = c.student || c;
+                            const h = c.homeroom || {};
+                            return {
+                              ...s,
+                              id: s.id,
+                              firstName: s.firstName || s.first_name,
+                              lastName: s.lastName || s.last_name,
+                              grade: s.gradeLevel || s.grade_level || s.grade || null,
+                              homeroom: h.name || s.homeroom_name || s.homeroom || 'Unassigned',
+                              dismissalType: s.dismissalType || s.dismissal_type || 'car',
+                            };
+                          }));
                         } catch (err) {
                           setLinkError(err.response?.data?.error || 'Failed to link children');
                         } finally {

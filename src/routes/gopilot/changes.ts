@@ -56,13 +56,12 @@ router.post(
         note: note || null,
       });
 
-      // Notify office
+      // Notify office and teachers
       const io = getIO();
       if (io) {
-        io.to(`school:${res.locals.schoolId}:office`).emit(
-          "change:requested",
-          { change }
-        );
+        io.to(`school:${res.locals.schoolId}:office`)
+          .to(`school:${res.locals.schoolId}:teacher`)
+          .emit("change:requested", { change });
       }
 
       return res.status(201).json({ change });
