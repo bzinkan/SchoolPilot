@@ -70,7 +70,6 @@ export default function ParentApp() {
   const [queueIds, setQueueIds] = useState([]); // queue entry IDs for dismiss calls
   const [queuePosition, setQueuePosition] = useState(null);
   const [estimatedWait, setEstimatedWait] = useState(null);
-  const [, setSelectedChild] = useState(null);
   const [showChangeRequest, setShowChangeRequest] = useState(false);
   const [showAddChild, setShowAddChild] = useState(false);
   const [linkCode, setLinkCode] = useState('');
