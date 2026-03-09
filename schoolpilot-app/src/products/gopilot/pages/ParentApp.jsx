@@ -88,6 +88,8 @@ export default function ParentApp() {
   const [authorizedPickups, setAuthorizedPickups] = useState([]);
   const [history] = useState([]);
   const [sessionId, setSessionId] = useState(null);
+  const [sessionStatus, setSessionStatus] = useState(null); // 'pending', 'active', 'completed'
+  const [dismissedStudents, setDismissedStudents] = useState(new Set()); // student IDs dismissed today
 
   const [schoolSettings, setSchoolSettings] = useState({});
   const [overrides, setOverrides] = useState({}); // { studentId: { overrideType, reason } }
@@ -185,8 +187,10 @@ export default function ParentApp() {
       try {
         const res = await api.post(`/schools/${currentSchool.id}/sessions`);
         if (cancelled) return;
-        const sid = res.data.session?.id || res.data.id;
+        const sessionData = res.data.session || res.data;
+        const sid = sessionData.id;
         setSessionId(sid);
+        setSessionStatus(sessionData.status || 'pending');
 
         // Fetch existing overrides for this session
         try {
@@ -206,9 +210,17 @@ export default function ParentApp() {
             const queueRes = await api.get(`/sessions/${sid}/queue`);
             if (cancelled) return;
             const childIds = children.map(c => c.id);
-            const myQueue = queueRes.data.filter(q =>
-              childIds.includes(q.student_id) && q.status !== 'dismissed'
-            );
+            const allMyQueue = queueRes.data.filter(q => childIds.includes(q.student_id || q.studentId));
+            // Restore dismissed students from queue
+            const alreadyDismissed = allMyQueue.filter(q => q.status === 'dismissed');
+            if (alreadyDismissed.length > 0) {
+              setDismissedStudents(prev => {
+                const next = new Set(prev);
+                alreadyDismissed.forEach(q => next.add(q.student_id || q.studentId));
+                return next;
+              });
+            }
+            const myQueue = allMyQueue.filter(q => q.status !== 'dismissed');
             if (myQueue.length > 0) {
               setQueueIds(myQueue.map(q => q.id));
               const statuses = myQueue.map(q => q.status);
@@ -266,13 +278,14 @@ export default function ParentApp() {
       const studentId = data.student_id || data.studentId;
       const childIds = children.map(c => c.id);
       if (childIds.includes(studentId)) {
+        setDismissedStudents(prev => new Set(prev).add(studentId));
         setCheckInStatus('complete');
         setQueueIds([]);
         setTimeout(() => {
           setCheckInStatus(null);
           setQueuePosition(null);
           setEstimatedWait(null);
-        }, 10000);
+        }, 2000);
       }
     };
 
@@ -311,11 +324,16 @@ export default function ParentApp() {
       setTimeout(() => setChangeConfirmation(null), 5000);
     };
 
+    const handleDismissalStarted = () => {
+      setSessionStatus('active');
+    };
+
     socket.on('student:called', handleStudentCalled);
     socket.on('student:dismissed', handleStudentDismissed);
     socket.on('queue:updated', handleQueueUpdated);
     socket.on('dismissal:override', handleOverride);
     socket.on('change:resolved', handleChangeResolved);
+    socket.on('dismissal:started', handleDismissalStarted);
 
     return () => {
       socket.off('student:called', handleStudentCalled);
@@ -323,8 +341,28 @@ export default function ParentApp() {
       socket.off('queue:updated', handleQueueUpdated);
       socket.off('dismissal:override', handleOverride);
       socket.off('change:resolved', handleChangeResolved);
+      socket.off('dismissal:started', handleDismissalStarted);
     };
   }, [socket, children]);
+
+  // Get effective dismissal type (override or permanent)
+  const getEffectiveType = (child) => {
+    const override = overrides[child.id];
+    return override ? override.overrideType : child.dismissalType;
+  };
+
+  // Get dismissal type icon
+  const getDismissalIcon = (type) => {
+    switch (type) {
+      case 'car': return Car;
+      case 'bus': return Bus;
+      case 'walker': return PersonStanding;
+      case 'afterschool': return Clock;
+      default: return Car;
+    }
+  };
+
+  const carRiderChildren = children.filter(c => getEffectiveType(c) === 'car');
 
   // Cancel check-in
   const cancelCheckIn = () => {
@@ -345,11 +383,38 @@ export default function ParentApp() {
     }
     setCheckInStatus('complete');
     setQueueIds([]);
+    // Mark all car-rider children as dismissed
+    setDismissedStudents(prev => {
+      const next = new Set(prev);
+      carRiderChildren.forEach(c => next.add(c.id));
+      return next;
+    });
     setTimeout(() => {
       setCheckInStatus(null);
       setQueuePosition(null);
       setEstimatedWait(null);
-    }, 3000);
+    }, 2000);
+  };
+
+  // Check in — parent taps "I'm Here"
+  const handleCheckIn = async () => {
+    if (!sessionId) {
+      setCheckInError('No active dismissal session yet. Please wait for dismissal to start.');
+      return;
+    }
+    setCheckInStatus('checking');
+    setCheckInError(null);
+    try {
+      const res = await api.post(`/sessions/${sessionId}/check-in`);
+      const entries = res.data?.entries || res.data?.queue || [];
+      setQueueIds(entries.map(e => e.id));
+      setCheckInStatus('queued');
+      if (res.data?.position != null) setQueuePosition(res.data.position);
+    } catch (err) {
+      console.error('Check-in failed:', err);
+      setCheckInError(err.response?.data?.error || 'Check-in failed. Please try again.');
+      setCheckInStatus(null);
+    }
   };
 
   // Change request handler — sends one request per child
@@ -405,25 +470,6 @@ export default function ParentApp() {
       alert(err.response?.data?.error || 'Failed to change dismissal type');
     }
   };
-
-  // Get effective dismissal type (override or permanent)
-  const getEffectiveType = (child) => {
-    const override = overrides[child.id];
-    return override ? override.overrideType : child.dismissalType;
-  };
-
-  // Get dismissal type icon
-  const getDismissalIcon = (type) => {
-    switch (type) {
-      case 'car': return Car;
-      case 'bus': return Bus;
-      case 'walker': return PersonStanding;
-      case 'afterschool': return Clock;
-      default: return Car;
-    }
-  };
-
-  const carRiderChildren = children.filter(c => getEffectiveType(c) === 'car');
 
   // Loading state
   if (loading) {
@@ -528,7 +574,17 @@ export default function ParentApp() {
             )}
 
             {/* Check-In Card */}
-            {!checkInStatus && (
+            {!checkInStatus && sessionStatus !== 'active' && (
+              <Card className="p-6 mb-4">
+                <div className="text-center">
+                  <Clock className="w-10 h-10 text-gray-300 mx-auto mb-3" />
+                  <h2 className="font-semibold mb-1">Waiting for Dismissal</h2>
+                  <p className="text-sm text-gray-500">Dismissal will begin at the scheduled time</p>
+                </div>
+              </Card>
+            )}
+
+            {!checkInStatus && sessionStatus === 'active' && (
               <Card className="p-6 mb-4">
                 <h2 className="font-semibold mb-4">Ready for Pickup?</h2>
 
@@ -556,14 +612,30 @@ export default function ParentApp() {
                     Tap the QR button below to show your check-in code
                   </p>
                 ) : schoolSettings.checkInMethod === 'app' ? (
-                  <p className="text-sm text-center text-gray-400 mt-2">
-                    Tap "I'm Here" when you arrive for pickup
-                  </p>
+                  <Button
+                    variant="success"
+                    size="lg"
+                    className="w-full"
+                    onClick={handleCheckIn}
+                  >
+                    <Car className="w-5 h-5 mr-2" />
+                    I'm Here
+                  </Button>
                 ) : (
                   <p className="text-sm text-center text-gray-400 mt-2">
                     Office staff will enter your car number to check you in
                   </p>
                 )}
+              </Card>
+            )}
+
+            {/* Checking in spinner */}
+            {checkInStatus === 'checking' && (
+              <Card className="p-6 mb-4">
+                <div className="text-center">
+                  <Loader2 className="w-10 h-10 text-indigo-600 animate-spin mx-auto mb-3" />
+                  <p className="font-semibold">Checking in...</p>
+                </div>
               </Card>
             )}
 
@@ -687,17 +759,14 @@ export default function ParentApp() {
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => { setShowOverrideFor(child.id); setOverrideType(effectiveType); setOverrideReason(overrides[child.id]?.reason || ''); }}
-                          className="flex items-center gap-1"
-                        >
-                          <Badge variant={typeVariant}>
-                            <DismissalIcon className="w-3 h-3" />
-                            {effectiveType === 'afterschool' ? 'After School' : effectiveType}
-                            {isOverridden && <span className="ml-1 text-[10px]">Today</span>}
-                          </Badge>
-                          <Edit className="w-3 h-3 text-gray-400" />
-                        </button>
+                        <Badge variant={typeVariant}>
+                          <DismissalIcon className="w-3 h-3" />
+                          {effectiveType === 'afterschool' ? 'After School' : effectiveType}
+                          {isOverridden && <span className="ml-1 text-[10px]">Today</span>}
+                        </Badge>
+                        {dismissedStudents.has(child.id) && (
+                          <CheckCircle2 className="w-4 h-4 text-green-500" />
+                        )}
                       </div>
                     </div>
                   );
@@ -944,11 +1013,16 @@ export default function ParentApp() {
                         </div>
                         <div className="flex items-center justify-between py-2 border-t">
                           <span className="text-gray-500">Dismissal Today</span>
-                          <Badge variant={typeVariant}>
-                            <DismissalIcon className="w-3 h-3" />
-                            {effectiveType === 'afterschool' ? 'After School' : effectiveType}
-                            {isOverridden && <span className="ml-1 text-[10px]">Today</span>}
-                          </Badge>
+                          <div className="flex items-center gap-2">
+                            <Badge variant={typeVariant}>
+                              <DismissalIcon className="w-3 h-3" />
+                              {effectiveType === 'afterschool' ? 'After School' : effectiveType}
+                              {isOverridden && <span className="ml-1 text-[10px]">Today</span>}
+                            </Badge>
+                            {dismissedStudents.has(child.id) && (
+                              <CheckCircle2 className="w-4 h-4 text-green-500" />
+                            )}
+                          </div>
                         </div>
                         {isOverridden && (
                           <div className="flex items-center justify-between py-2 border-t">
