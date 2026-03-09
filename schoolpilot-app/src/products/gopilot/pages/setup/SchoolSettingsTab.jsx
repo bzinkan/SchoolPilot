@@ -18,9 +18,9 @@ export default function SchoolSettingsTab({ schoolId }) {
       api.get(`/schools/${schoolId}`),
       api.get(`/schools/${schoolId}/settings`).catch(() => ({ data: {} })),
     ]).then(([schoolRes, settingsRes]) => {
-      const school = schoolRes.data;
-      setDismissalTime(school.dismissal_time || '15:00');
-      setTimezone(school.timezone || 'America/New_York');
+      const school = schoolRes.data?.school || schoolRes.data;
+      setDismissalTime(school.dismissalTime || school.dismissal_time || '15:00');
+      setTimezone(school.schoolTimezone || school.school_timezone || school.timezone || 'America/New_York');
       setChangeRequestWarning(settingsRes.data?.changeRequestWarning || '');
       setCheckInMethod(settingsRes.data?.checkInMethod || (settingsRes.data?.enableQrCodes ? 'qr' : 'app'));
     }).finally(() => setLoading(false));
@@ -30,7 +30,7 @@ export default function SchoolSettingsTab({ schoolId }) {
     setSaving(true);
     setSaved(false);
     try {
-      await api.put(`/schools/${schoolId}`, { dismissalTime, timezone });
+      await api.put(`/schools/${schoolId}`, { dismissalTime, schoolTimezone: timezone });
       // Save settings separately (changeRequestWarning goes in settings JSON)
       const currentSettings = await api.get(`/schools/${schoolId}/settings`).then(r => r.data).catch(() => ({}));
       await api.put(`/schools/${schoolId}/settings`, { ...currentSettings, changeRequestWarning: changeRequestWarning.trim() || undefined, checkInMethod, enableQrCodes: checkInMethod === 'qr' });
