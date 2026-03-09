@@ -328,12 +328,23 @@ export default function ParentApp() {
       setSessionStatus('active');
     };
 
+    const handleCheckedIn = (data) => {
+      // QR scan: office scanned our QR code, we're now in the queue
+      if (data.entries && data.entries.length > 0) {
+        const ids = data.entries.map(e => e.id).filter(Boolean);
+        setQueueIds(ids);
+        setCheckInStatus('queued');
+        setQueuePosition(data.position ?? null);
+      }
+    };
+
     socket.on('student:called', handleStudentCalled);
     socket.on('student:dismissed', handleStudentDismissed);
     socket.on('queue:updated', handleQueueUpdated);
     socket.on('dismissal:override', handleOverride);
     socket.on('change:resolved', handleChangeResolved);
     socket.on('dismissal:started', handleDismissalStarted);
+    socket.on('student:checked-in', handleCheckedIn);
 
     return () => {
       socket.off('student:called', handleStudentCalled);
@@ -342,6 +353,7 @@ export default function ParentApp() {
       socket.off('dismissal:override', handleOverride);
       socket.off('change:resolved', handleChangeResolved);
       socket.off('dismissal:started', handleDismissalStarted);
+      socket.off('student:checked-in', handleCheckedIn);
     };
   }, [socket, children]);
 
@@ -608,9 +620,18 @@ export default function ParentApp() {
                 </div>
 
                 {schoolSettings.checkInMethod === 'qr' && currentSchool?.carNumber ? (
-                  <p className="text-sm text-center text-gray-400 mt-2">
-                    Tap the QR button below to show your check-in code
-                  </p>
+                  <div className="flex flex-col items-center mt-2">
+                    <QRCodeSVG
+                      value={`gopilot://checkin?car=${currentSchool.carNumber}&school=${currentSchool.slug}`}
+                      size={180}
+                      level="M"
+                    />
+                    <Badge variant="blue" className="mt-3 text-lg px-4 py-1">
+                      <Car className="w-4 h-4 mr-1" />
+                      #{currentSchool.carNumber}
+                    </Badge>
+                    <p className="text-sm text-gray-500 mt-2">Show this to office staff</p>
+                  </div>
                 ) : schoolSettings.checkInMethod === 'app' ? (
                   <Button
                     variant="success"

@@ -388,6 +388,14 @@ router.post(
         }
       }
 
+      // Notify parent app so QR check-in triggers the same queued flow
+      if (group.claimedByUserId) {
+        emitToSchool(schoolId, `parent:${group.claimedByUserId}`, "student:checked-in", {
+          entries,
+          carNumber,
+        });
+      }
+
       emitToSchool(schoolId, "office", "queue:updated", {
         action: "check_in",
         entries,
