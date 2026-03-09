@@ -81,7 +81,6 @@ export default function ParentApp() {
   // Settings modal states
   const [showAuthorizedPickups, setShowAuthorizedPickups] = useState(false);
   const [showMyQrCode, setShowMyQrCode] = useState(false);
-  const [showQrModal, setShowQrModal] = useState(false);
 
   // Data states
   const [children, setChildren] = useState([]);
@@ -842,23 +841,6 @@ export default function ParentApp() {
                 </button>
               ))}
 
-              {/* QR Code Button */}
-              <button
-                onClick={() => {
-                  if (schoolSettings.checkInMethod === 'qr' && currentSchool?.carNumber) {
-                    setShowQrModal(true);
-                  }
-                }}
-                className={`flex flex-col items-center py-2 px-4 rounded-lg ${
-                  schoolSettings.checkInMethod === 'qr' && currentSchool?.carNumber
-                    ? 'text-indigo-600'
-                    : 'text-gray-300 cursor-not-allowed'
-                }`}
-              >
-                <QrCode className="w-6 h-6" />
-                <span className="text-xs mt-1">QR Code</span>
-              </button>
-
               {[
                 { id: 'history', icon: History, label: 'History' },
                 { id: 'settings', icon: Settings, label: 'Settings' },
@@ -876,34 +858,6 @@ export default function ParentApp() {
               ))}
             </div>
           </nav>
-
-          {/* QR Code Modal */}
-          {showQrModal && currentSchool?.carNumber && (
-            <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setShowQrModal(false)}>
-              <div className="bg-white rounded-3xl shadow-xl w-full max-w-sm p-6 text-center" onClick={e => e.stopPropagation()}>
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="font-bold text-lg">Check-in QR Code</h2>
-                  <button onClick={() => setShowQrModal(false)} className="p-2">
-                    <X className="w-5 h-5" />
-                  </button>
-                </div>
-                <p className="text-sm text-gray-500 mb-4">Show this to office staff at pickup</p>
-                <div className="inline-block p-4 bg-white rounded-2xl shadow-lg border mb-4">
-                  <QRCodeSVG
-                    value={`gopilot://checkin?car=${currentSchool.carNumber}&school=${currentSchool.slug}`}
-                    size={220}
-                    level="M"
-                  />
-                </div>
-                <div>
-                  <Badge variant="blue" size="md">
-                    <Car className="w-3 h-3" />
-                    Car #{currentSchool.carNumber}
-                  </Badge>
-                </div>
-              </div>
-            </div>
-          )}
 
           {/* Change Request Modal */}
           {showChangeRequest && (
