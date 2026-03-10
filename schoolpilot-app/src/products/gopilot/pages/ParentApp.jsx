@@ -94,7 +94,6 @@ export default function ParentApp() {
   const [history] = useState([]);
   const [sessionId, setSessionId] = useState(null);
   const [sessionStatus, setSessionStatus] = useState(null); // 'pending', 'active', 'completed'
-  const [dismissedStudents, setDismissedStudents] = useState(new Set()); // student IDs dismissed today
 
   const [schoolSettings, setSchoolSettings] = useState({});
   const [overrides, setOverrides] = useState({}); // { studentId: { overrideType, reason } }
@@ -234,14 +233,9 @@ export default function ParentApp() {
             if (cancelled) return;
             const childIds = children.map(c => c.id);
             const allMyQueue = queueRes.data.filter(q => childIds.includes(q.student_id || q.studentId));
-            // Restore dismissed students from queue
+            // Restore dismissed state from queue
             const alreadyDismissed = allMyQueue.filter(q => q.status === 'dismissed');
             if (alreadyDismissed.length > 0) {
-              setDismissedStudents(prev => {
-                const next = new Set(prev);
-                alreadyDismissed.forEach(q => next.add(q.student_id || q.studentId));
-                return next;
-              });
               setCheckInStatus('complete');
             }
             const myQueue = allMyQueue.filter(q => q.status !== 'dismissed');
@@ -299,7 +293,6 @@ export default function ParentApp() {
       const studentId = data.student_id || data.studentId;
       const childIds = children.map(c => c.id);
       if (childIds.includes(studentId)) {
-        setDismissedStudents(prev => new Set(prev).add(studentId));
         setCheckInStatus('complete');
         setQueueIds([]);
       }
@@ -397,12 +390,6 @@ export default function ParentApp() {
     }
     setCheckInStatus('complete');
     setQueueIds([]);
-    // Mark all car-rider children as dismissed
-    setDismissedStudents(prev => {
-      const next = new Set(prev);
-      carRiderChildren.forEach(c => next.add(c.id));
-      return next;
-    });
   };
 
   // Check in — parent taps "I'm Here"
