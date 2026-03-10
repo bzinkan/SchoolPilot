@@ -30,7 +30,8 @@ export const students = pgTable(
 
     // GoPilot fields
     homeroomId: text("homeroom_id"), // FK to homerooms
-    dismissalType: text("dismissal_type").default("car"), // car | bus | walker
+    dismissalType: text("dismissal_type").default("car"), // car | bus | walker | afterschool
+    afterschoolReason: text("afterschool_reason"), // Optional activity/program name
     busRoute: text("bus_route"),
     studentCode: text("student_code"), // GoPilot numeric car-rider code
     externalId: text("external_id"), // SIS integration ID

@@ -281,7 +281,7 @@ export default function DismissalDashboard() {
       result.set(s.id, {
         studentId: s.id,
         studentName: `${s.firstName || s.first_name || ''} ${s.lastName || s.last_name || ''}`.trim(),
-        reason: override?.reason || 'After School Program',
+        reason: override?.reason || s.afterschoolReason || s.afterschool_reason || 'After School Program',
       });
     }
 

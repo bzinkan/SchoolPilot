@@ -53,7 +53,7 @@ export default function KioskPage() {
     if (!idInput.trim() || !schoolId) return;
 
     try {
-      const res = await fetch("/api/kiosk/lookup", {
+      const res = await fetch("/api/passpilot/kiosk/lookup", {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-School-Id": schoolId },
         body: JSON.stringify({ studentIdNumber: idInput.trim() }),
@@ -80,7 +80,7 @@ export default function KioskPage() {
     if (!student || !schoolId) return;
 
     try {
-      const res = await fetch("/api/kiosk/checkout", {
+      const res = await fetch("/api/passpilot/kiosk/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-School-Id": schoolId },
         body: JSON.stringify({ studentId: student.id, destination }),
@@ -105,7 +105,7 @@ export default function KioskPage() {
     if (!student || !schoolId) return;
 
     try {
-      const res = await fetch("/api/kiosk/checkin", {
+      const res = await fetch("/api/passpilot/kiosk/checkin", {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-School-Id": schoolId },
         body: JSON.stringify({ studentId: student.id }),

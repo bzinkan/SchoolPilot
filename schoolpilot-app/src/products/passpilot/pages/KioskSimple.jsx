@@ -58,9 +58,9 @@ export default function KioskSimplePage() {
   // Fetch grades
   useEffect(() => {
     if (!schoolId) return;
-    fetch(`/api/kiosk/grades?school=${schoolId}`)
-      .then(r => r.ok ? r.json() : [])
-      .then(setGrades)
+    fetch(`/api/passpilot/kiosk/grades?school=${schoolId}`)
+      .then(r => r.ok ? r.json() : { grades: [] })
+      .then(data => setGrades(data.grades || data || []))
       .catch(() => {});
   }, [schoolId]);
 
@@ -68,7 +68,7 @@ export default function KioskSimplePage() {
   useEffect(() => {
     if (!schoolId) return;
     const poll = () => {
-      fetch(`/api/kiosk/config?school=${schoolId}`)
+      fetch(`/api/passpilot/kiosk/config?school=${schoolId}`)
         .then(r => r.ok ? r.json() : null)
         .then(data => {
           if (data?.gradeId) {
@@ -90,9 +90,9 @@ export default function KioskSimplePage() {
     if (!schoolId || !selectedGradeId) return;
     let active = true;
     const poll = () => {
-      fetch(`/api/kiosk/students?school=${schoolId}&gradeId=${selectedGradeId}`)
-        .then(r => r.ok ? r.json() : [])
-        .then(data => { if (active) setStudents(data); })
+      fetch(`/api/passpilot/kiosk/students?school=${schoolId}&gradeId=${selectedGradeId}`)
+        .then(r => r.ok ? r.json() : { students: [] })
+        .then(data => { if (active) setStudents(data.students || data || []); })
         .catch(() => {});
     };
     poll();
@@ -114,7 +114,7 @@ export default function KioskSimplePage() {
     setCheckoutStudentId(null);
     setLoading(true);
     try {
-      const res = await fetch("/api/kiosk/checkout", {
+      const res = await fetch("/api/passpilot/kiosk/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-School-Id": schoolId },
         body: JSON.stringify({ studentId, destination }),
@@ -130,16 +130,16 @@ export default function KioskSimplePage() {
       showFeedback("error", "Connection error");
     }
     setLoading(false);
-    fetch(`/api/kiosk/students?school=${schoolId}&gradeId=${selectedGradeId}`)
-      .then(r => r.ok ? r.json() : [])
-      .then(setStudents)
+    fetch(`/api/passpilot/kiosk/students?school=${schoolId}&gradeId=${selectedGradeId}`)
+      .then(r => r.ok ? r.json() : { students: [] })
+      .then(data => setStudents(data.students || data || []))
       .catch(() => {});
   };
 
   const handleCheckin = async (studentId) => {
     setLoading(true);
     try {
-      const res = await fetch("/api/kiosk/checkin", {
+      const res = await fetch("/api/passpilot/kiosk/checkin", {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-School-Id": schoolId },
         body: JSON.stringify({ studentId }),
@@ -154,9 +154,9 @@ export default function KioskSimplePage() {
       showFeedback("error", "Connection error");
     }
     setLoading(false);
-    fetch(`/api/kiosk/students?school=${schoolId}&gradeId=${selectedGradeId}`)
-      .then(r => r.ok ? r.json() : [])
-      .then(setStudents)
+    fetch(`/api/passpilot/kiosk/students?school=${schoolId}&gradeId=${selectedGradeId}`)
+      .then(r => r.ok ? r.json() : { students: [] })
+      .then(data => setStudents(data.students || data || []))
       .catch(() => {});
   };
 

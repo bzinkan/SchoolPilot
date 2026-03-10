@@ -62,6 +62,7 @@ export const createStudentSchema = z.object({
   gradeLevel: z.string().optional().or(z.literal("")),
   homeroomId: z.string().optional().or(z.literal("")),
   dismissalType: z.string().optional(),
+  afterschoolReason: z.string().optional().nullable(),
   busRoute: z.string().optional(),
 });
 export type CreateStudentData = z.infer<typeof createStudentSchema>;
@@ -167,6 +168,7 @@ export const updateStudentSchema = z.object({
   gradeLevel: z.string().optional().nullable().or(z.literal("")),
   homeroomId: z.string().optional().nullable().or(z.literal("")),
   dismissalType: z.string().optional(),
+  afterschoolReason: z.string().optional().nullable(),
   busRoute: z.string().optional().nullable(),
   status: z.enum(["active", "inactive"]).optional(),
 });

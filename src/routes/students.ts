@@ -365,6 +365,10 @@ router.put(
       for (const key of ["gradeId", "homeroomId", "studentIdNumber", "gradeLevel"]) {
         if (updateData[key] === "") updateData[key] = null;
       }
+      // Clear afterschool reason when switching away from afterschool
+      if (parsed.data.dismissalType && parsed.data.dismissalType !== "afterschool") {
+        updateData.afterschoolReason = null;
+      }
 
       const student = await updateStudent(param(req, "studentId"), updateData);
       return res.json({ student });
@@ -399,6 +403,10 @@ router.patch(
       }
       for (const key of ["gradeId", "homeroomId", "studentIdNumber", "gradeLevel"]) {
         if (updateData[key] === "") updateData[key] = null;
+      }
+      // Clear afterschool reason when switching away from afterschool
+      if (parsed.data.dismissalType && parsed.data.dismissalType !== "afterschool") {
+        updateData.afterschoolReason = null;
       }
 
       const student = await updateStudent(param(req, "studentId"), updateData);

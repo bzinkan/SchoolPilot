@@ -111,6 +111,7 @@ export default function StudentRoster({ students, schoolId, onImport, onRefresh,
       email: student.email || '',
       grade: student.grade || '',
       dismissal_type: student.dismissalType || 'car',
+      afterschool_reason: student.afterschoolReason || '',
       bus_route: student.busRoute || '',
     });
   };
@@ -322,6 +323,12 @@ export default function StudentRoster({ students, schoolId, onImport, onRefresh,
                         <option value="walker">Walker</option>
                         <option value="afterschool">After School</option>
                       </select>
+                      {editData.dismissal_type === 'afterschool' && (
+                        <input value={editData.afterschool_reason || ''}
+                          onChange={e => setEditData(d => ({ ...d, afterschool_reason: e.target.value }))}
+                          placeholder="Activity (optional)"
+                          className="border dark:border-slate-600 rounded px-2 py-1 mt-1 w-full dark:bg-slate-800 dark:text-white text-sm" />
+                      )}
                     </td>
                     <td className="p-3 text-right">
                       <button onClick={saveEdit} className="text-green-600 hover:text-green-800 mr-2"><Save className="w-4 h-4" /></button>
@@ -753,6 +760,12 @@ export function AddStudentForm({ onAdd, onClose }) {
             <option value="walker">Walker</option>
             <option value="afterschool">After School</option>
           </select>
+          {form.dismissal_type === 'afterschool' && (
+            <input value={form.afterschool_reason || ''}
+              onChange={e => setForm(f => ({ ...f, afterschool_reason: e.target.value }))}
+              placeholder="Activity (optional)"
+              className="border dark:border-slate-600 rounded-lg px-3 py-2 text-sm mt-1 w-full dark:bg-slate-800 dark:text-white" />
+          )}
         </div>
         <button type="submit" className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700">
           Add

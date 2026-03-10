@@ -18,6 +18,7 @@ export const normalizeStudent = (s) => ({
   lastName: s.last_name || s.lastName || '',
   grade: s.gradeLevel || s.grade_level || s.grade || '',
   dismissalType: s.dismissal_type || s.dismissalType || 'car',
+  afterschoolReason: s.afterschool_reason || s.afterschoolReason || '',
   busRoute: s.bus_route || s.busRoute || '',
   homeroom: s.homeroomId || s.homeroom_id || s.homeroom || null,
   externalId: s.external_id || s.externalId || '',
