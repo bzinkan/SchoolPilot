@@ -142,10 +142,20 @@ router.post("/checkout", kioskLimiter, async (req, res, next) => {
     if (school.kioskActivatedByUserId) {
       const activatingUser = await getUserById(school.kioskActivatedByUserId);
       if (activatingUser) {
-        // Check for kioskName on their membership (stored there in SchoolPilot)
         kioskName = activatingUser.displayName || null;
       }
     }
+
+    // Look up class name from kioskGradeId
+    let className: string | null = null;
+    if (school.kioskGradeId) {
+      const allGrades = await getGradesBySchool(schoolId);
+      const grade = allGrades.find((g) => g.id === school.kioskGradeId);
+      if (grade) className = grade.name;
+    }
+
+    // Combine: "7th Science" or just "Science" or just "7th" or null
+    const kioskLabel = [className, kioskName].filter(Boolean).join(" ");
 
     const pass = await createPass({
       schoolId,
@@ -161,7 +171,7 @@ router.post("/checkout", kioskLimiter, async (req, res, next) => {
       duration: passDuration,
       expiresAt,
       issuedVia: "kiosk",
-      notes: kioskName,
+      notes: kioskLabel || null,
     });
 
     return res.status(201).json({ pass });

@@ -31,10 +31,9 @@ export default function SchoolSettingsTab({ schoolId }) {
     setSaved(false);
     try {
       await api.put(`/schools/${schoolId}`, { dismissalTime, schoolTimezone: timezone });
-      // Save settings separately (changeRequestWarning goes in settings JSON)
       const currentSettings = await api.get(`/schools/${schoolId}/settings`).then(r => r.data).catch(() => ({}));
       await api.put(`/schools/${schoolId}/settings`, { ...currentSettings, changeRequestWarning: changeRequestWarning.trim() || undefined, checkInMethod, enableQrCodes: checkInMethod === 'qr' });
-      window.location.reload();
+      setSaved(true);
     } catch (err) {
       console.error('Failed to save settings:', err);
     } finally {

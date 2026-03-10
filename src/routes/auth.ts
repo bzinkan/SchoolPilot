@@ -83,6 +83,8 @@ router.post("/login", authLimiter, async (req, res, next) => {
         role: m.membership.role,
         gopilotRole: m.membership.gopilotRole,
         schoolName: m.school.name,
+        schoolTimezone: m.school.schoolTimezone,
+        dismissalTime: m.school.dismissalTime,
       })),
     });
   } catch (err) {
@@ -245,6 +247,8 @@ router.get("/me", authenticate, async (req, res, next) => {
         role: m.membership.role,
         gopilotRole: m.membership.gopilotRole,
         schoolName: m.school.name,
+        schoolTimezone: m.school.schoolTimezone,
+        dismissalTime: m.school.dismissalTime,
         kioskName: m.membership.kioskName,
         carNumber: m.membership.carNumber,
       })),

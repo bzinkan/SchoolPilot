@@ -16,6 +16,7 @@ export function useGoPilotAuth() {
         slug: activeMembership.schoolSlug || '',
         carNumber: activeMembership.carNumber || '',
         timezone: activeMembership.schoolTimezone || 'America/New_York',
+        dismissalTime: activeMembership.dismissalTime || '15:00',
       }
     : null, [activeMembership]);
 

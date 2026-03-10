@@ -214,7 +214,7 @@ function PassesTab() {
                         Out for <span data-testid={`pass-duration-${pass.id}`}>{formatDuration(pass.issuedAt)}</span>
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        Issued by: <span className="font-medium">{pass.teacher ? `${pass.teacher.firstName} ${pass.teacher.lastName}`.trim() + (pass.issuedVia === "kiosk" && pass.notes ? ` (Kiosk: ${pass.notes})` : '') : (pass.issuedVia === "kiosk" ? (pass.notes ? `Kiosk: ${pass.notes}` : "Kiosk") : "Unknown")}</span>
+                        Issued by: <span className="font-medium">{pass.teacher ? `${pass.teacher.firstName} ${pass.teacher.lastName}`.trim() + (pass.issuedVia === "kiosk" && pass.notes ? ` (${pass.notes} Kiosk)` : '') : (pass.issuedVia === "kiosk" ? (pass.notes ? `${pass.notes} Kiosk` : "Kiosk") : "Unknown")}</span>
                       </p>
                     </div>
                   </div>

@@ -13,6 +13,14 @@ import { useGoPilotAuth } from '../../../hooks/useGoPilotAuth';
 import { useSocket } from '../../../contexts/SocketContext';
 import api from '../../../shared/utils/api';
 
+function formatDismissalTime(time24) {
+  if (!time24) return '3:00 PM';
+  const [h, m] = time24.split(':').map(Number);
+  const period = h >= 12 ? 'PM' : 'AM';
+  const hour12 = h % 12 || 12;
+  return `${hour12}:${String(m).padStart(2, '0')} ${period}`;
+}
+
 // Utility Components
 const Badge = ({ children, variant = 'default', size = 'md' }) => {
   const variants = {
@@ -545,7 +553,7 @@ export default function ParentApp() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-indigo-200 text-sm">Dismissal Time</p>
-                  <p className="text-2xl font-bold">3:00 PM</p>
+                  <p className="text-2xl font-bold">{formatDismissalTime(currentSchool?.dismissalTime)}</p>
                 </div>
                 <div className="text-right">
                   <p className="text-indigo-200 text-sm">Current Time</p>
