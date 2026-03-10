@@ -353,7 +353,7 @@ export default function Login() {
 
             {/* Google sign in */}
             <button
-              onClick={() => { window.location.href = '/api/auth/google'; }}
+              onClick={() => { window.location.href = isNative ? 'https://school-pilot.net/api/auth/google' : '/api/auth/google'; }}
               style={{
                 width: '100%',
                 padding: '16px',

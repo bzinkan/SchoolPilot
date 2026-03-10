@@ -8,6 +8,7 @@ export default function CarNumbersTab({ schoolId, students }) {
   const [groups, setGroups] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  const [groupSearchTerm, setGroupSearchTerm] = useState('');
   const [selectedStudents, setSelectedStudents] = useState(new Set());
   const [familyNameInput, setFamilyNameInput] = useState('');
   const [showCreateDialog, setShowCreateDialog] = useState(false);
@@ -75,6 +76,19 @@ export default function CarNumbersTab({ schoolId, students }) {
       alert(err?.response?.data?.error || 'Failed to create family group');
     } finally { setCreating(false); }
   };
+
+  const filteredGroups = useMemo(() => {
+    if (!groupSearchTerm.trim()) return groups;
+    const term = groupSearchTerm.toLowerCase();
+    return groups.filter(g => {
+      const carNum = String(g.carNumber || g.car_number || '');
+      const famName = (g.familyName || g.family_name || '').toLowerCase();
+      const studentMatch = (g.students || []).some(s =>
+        `${s.firstName || s.first_name || ''} ${s.lastName || s.last_name || ''}`.toLowerCase().includes(term)
+      );
+      return carNum.includes(term) || famName.includes(term) || studentMatch;
+    });
+  }, [groups, groupSearchTerm]);
 
   // Map studentId -> groupId for move operations
   const studentGroupMap = useMemo(() => {
@@ -266,6 +280,16 @@ export default function CarNumbersTab({ schoolId, students }) {
         {/* Right Panel: Family Groups */}
         <div className="space-y-3">
           <h3 className="font-semibold dark:text-white">Family Groups ({groups.length})</h3>
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <input
+              type="text"
+              placeholder="Search by name or car #..."
+              value={groupSearchTerm}
+              onChange={e => setGroupSearchTerm(e.target.value)}
+              className="w-full pl-9 pr-3 py-2 text-sm border dark:border-slate-600 dark:bg-slate-800 dark:text-white rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+            />
+          </div>
           {groups.length === 0 ? (
             <div className="bg-white dark:bg-slate-900 rounded-xl border dark:border-slate-700 p-8 text-center text-gray-500 dark:text-slate-400">
               <Car className="w-8 h-8 mx-auto mb-2 text-gray-300 dark:text-slate-600" />
@@ -273,7 +297,7 @@ export default function CarNumbersTab({ schoolId, students }) {
             </div>
           ) : (
             <div className="max-h-[550px] overflow-y-auto space-y-3">
-              {groups.map(g => (
+              {filteredGroups.map(g => (
                 <div key={g.id} className="bg-white dark:bg-slate-900 rounded-xl border dark:border-slate-700 p-4">
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2">
