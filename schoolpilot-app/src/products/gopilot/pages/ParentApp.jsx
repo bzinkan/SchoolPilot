@@ -74,10 +74,8 @@ export default function ParentApp() {
 
   const [currentView, setCurrentView] = useState('home');
   const [currentTime, setCurrentTime] = useState(new Date());
-  const [checkInStatus, setCheckInStatus] = useState(null); // null, 'checking', 'queued', 'called', 'complete'
+  const [checkInStatus, setCheckInStatus] = useState(null); // null, 'checking', 'checked-in', 'complete'
   const [queueIds, setQueueIds] = useState([]); // queue entry IDs for dismiss calls
-  const [queuePosition, setQueuePosition] = useState(null);
-  const [estimatedWait, setEstimatedWait] = useState(null);
   const [showChangeRequest, setShowChangeRequest] = useState(false);
   const [showAddChild, setShowAddChild] = useState(false);
   const [linkCode, setLinkCode] = useState('');
@@ -190,6 +188,7 @@ export default function ParentApp() {
   useEffect(() => {
     if (!currentSchool?.id) return;
     let cancelled = false;
+    let pollInterval = null;
     async function initSession() {
       try {
         const res = await api.post(`/schools/${currentSchool.id}/sessions`);
@@ -197,7 +196,24 @@ export default function ParentApp() {
         const sessionData = res.data.session || res.data;
         const sid = sessionData.id;
         setSessionId(sid);
-        setSessionStatus(sessionData.status || 'pending');
+        const status = sessionData.status || 'pending';
+        setSessionStatus(status);
+
+        // Poll for active session if not yet active (fixes missed socket events)
+        if (status !== 'active') {
+          pollInterval = setInterval(async () => {
+            try {
+              const r = await api.get(`/schools/${currentSchool.id}/sessions/active`);
+              if (cancelled) return;
+              if (r.data?.session) {
+                setSessionId(r.data.session.id);
+                setSessionStatus('active');
+                clearInterval(pollInterval);
+                pollInterval = null;
+              }
+            } catch { /* non-critical */ }
+          }, 30000);
+        }
 
         // Fetch existing overrides for this session
         try {
@@ -226,16 +242,12 @@ export default function ParentApp() {
                 alreadyDismissed.forEach(q => next.add(q.student_id || q.studentId));
                 return next;
               });
+              setCheckInStatus('complete');
             }
             const myQueue = allMyQueue.filter(q => q.status !== 'dismissed');
             if (myQueue.length > 0) {
               setQueueIds(myQueue.map(q => q.id));
-              const statuses = myQueue.map(q => q.status);
-              if (statuses.includes('released')) {
-                setCheckInStatus('called');
-              } else {
-                setCheckInStatus('queued');
-              }
+              setCheckInStatus('checked-in');
             }
           } catch {
             // Non-critical; queue check failed
@@ -246,7 +258,10 @@ export default function ParentApp() {
       }
     }
     initSession();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      if (pollInterval) clearInterval(pollInterval);
+    };
   }, [currentSchool, children]);
 
   // Update time
@@ -275,8 +290,7 @@ export default function ParentApp() {
       const queueId = data.id || data.queueId;
       const childIds = children.map(c => c.id);
       if (childIds.includes(studentId)) {
-        setCheckInStatus('called');
-        setQueuePosition(0);
+        setCheckInStatus('checked-in');
         if (queueId) setQueueIds(prev => [...new Set([...prev, queueId])]);
       }
     };
@@ -288,17 +302,7 @@ export default function ParentApp() {
         setDismissedStudents(prev => new Set(prev).add(studentId));
         setCheckInStatus('complete');
         setQueueIds([]);
-        setTimeout(() => {
-          setCheckInStatus(null);
-          setQueuePosition(null);
-          setEstimatedWait(null);
-        }, 2000);
       }
-    };
-
-    const handleQueueUpdated = (data) => {
-      if (data.position != null) setQueuePosition(data.position);
-      if (data.estimatedWait != null) setEstimatedWait(data.estimatedWait);
     };
 
     const handleOverride = (data) => {
@@ -340,14 +344,12 @@ export default function ParentApp() {
       if (data.entries && data.entries.length > 0) {
         const ids = data.entries.map(e => e.id).filter(Boolean);
         setQueueIds(ids);
-        setCheckInStatus('queued');
-        setQueuePosition(data.position ?? null);
+        setCheckInStatus('checked-in');
       }
     };
 
     socket.on('student:called', handleStudentCalled);
     socket.on('student:dismissed', handleStudentDismissed);
-    socket.on('queue:updated', handleQueueUpdated);
     socket.on('dismissal:override', handleOverride);
     socket.on('change:resolved', handleChangeResolved);
     socket.on('dismissal:started', handleDismissalStarted);
@@ -356,7 +358,6 @@ export default function ParentApp() {
     return () => {
       socket.off('student:called', handleStudentCalled);
       socket.off('student:dismissed', handleStudentDismissed);
-      socket.off('queue:updated', handleQueueUpdated);
       socket.off('dismissal:override', handleOverride);
       socket.off('change:resolved', handleChangeResolved);
       socket.off('dismissal:started', handleDismissalStarted);
@@ -384,12 +385,6 @@ export default function ParentApp() {
   const carRiderChildren = children.filter(c => getEffectiveType(c) === 'car');
 
   // Cancel check-in
-  const cancelCheckIn = () => {
-    setCheckInStatus(null);
-    setQueuePosition(null);
-    setEstimatedWait(null);
-  };
-
   // Complete pickup (confirmation from parent side - calls server)
   const completePickup = async () => {
     try {
@@ -408,11 +403,6 @@ export default function ParentApp() {
       carRiderChildren.forEach(c => next.add(c.id));
       return next;
     });
-    setTimeout(() => {
-      setCheckInStatus(null);
-      setQueuePosition(null);
-      setEstimatedWait(null);
-    }, 2000);
   };
 
   // Check in — parent taps "I'm Here"
@@ -427,8 +417,7 @@ export default function ParentApp() {
       const res = await api.post(`/sessions/${sessionId}/check-in`);
       const entries = res.data?.entries || res.data?.queue || [];
       setQueueIds(entries.map(e => e.id));
-      setCheckInStatus('queued');
-      if (res.data?.position != null) setQueuePosition(res.data.position);
+      setCheckInStatus('checked-in');
     } catch (err) {
       console.error('Check-in failed:', err);
       setCheckInError(err.response?.data?.error || 'Check-in failed. Please try again.');
@@ -667,54 +656,13 @@ export default function ParentApp() {
               </Card>
             )}
 
-            {/* In Queue */}
-            {checkInStatus === 'queued' && (
-              <Card className="p-6 mb-4 border-2 border-indigo-200 bg-indigo-50">
+            {/* Checked in — show Pickup Complete button */}
+            {checkInStatus === 'checked-in' && (
+              <Card className="p-6 mb-4 border-2 border-blue-200 bg-blue-50">
                 <div className="text-center">
-                  <Badge variant="blue" size="md" className="mb-4">In Queue</Badge>
-                  <div className="w-24 h-24 bg-white rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
-                    <span className="text-4xl font-bold text-indigo-600">#{queuePosition}</span>
-                  </div>
-                  <p className="font-semibold text-lg">You're in line!</p>
-                  <p className="text-sm text-gray-600 mb-4">
-                    Estimated wait: <span className="font-semibold">{estimatedWait} min</span>
-                  </p>
-
-                  <div className="bg-white rounded-xl p-4 mb-4">
-                    <p className="text-sm text-gray-500 mb-2">Picking up:</p>
-                    <div className="flex justify-center gap-2">
-                      {carRiderChildren.map(child => (
-                        <Badge key={child.id} variant="default">{child.firstName}</Badge>
-                      ))}
-                    </div>
-                  </div>
-
-                  <Button variant="ghost" size="sm" onClick={cancelCheckIn}>
-                    Cancel Check-in
-                  </Button>
-                </div>
-              </Card>
-            )}
-
-            {/* Called - Ready for Pickup */}
-            {checkInStatus === 'called' && (
-              <Card className="p-6 mb-4 border-2 border-green-400 bg-green-50">
-                <div className="text-center">
-                  <div className="w-20 h-20 bg-green-500 rounded-full flex items-center justify-center mx-auto mb-4 animate-bounce">
-                    <CheckCircle2 className="w-10 h-10 text-white" />
-                  </div>
-                  <p className="font-bold text-xl text-green-800">Proceed to Zone B</p>
-                  <p className="text-green-600 mb-6">Your children are on their way!</p>
-
-                  <div className="bg-white rounded-xl p-4 mb-4">
-                    {carRiderChildren.map(child => (
-                      <div key={child.id} className="flex items-center justify-between py-2">
-                        <span className="font-medium">{child.firstName}</span>
-                        <Badge variant="green">On the way</Badge>
-                      </div>
-                    ))}
-                  </div>
-
+                  <Car className="w-10 h-10 text-blue-600 mx-auto mb-3" />
+                  <h2 className="font-semibold text-lg mb-1">You're checked in!</h2>
+                  <p className="text-sm text-gray-600 mb-4">Tap below when pickup is done</p>
                   <Button variant="success" size="lg" className="w-full" onClick={completePickup}>
                     <Check className="w-5 h-5 mr-2" />
                     Pickup Complete
@@ -723,12 +671,12 @@ export default function ParentApp() {
               </Card>
             )}
 
-            {/* Pickup Complete */}
+            {/* Pickup Complete — persists until midnight */}
             {checkInStatus === 'complete' && (
               <Card className="p-6 mb-4 bg-green-500 text-white">
                 <div className="text-center py-4">
                   <CheckCircle2 className="w-16 h-16 mx-auto mb-4" />
-                  <p className="font-bold text-xl">Pickup Complete!</p>
+                  <p className="font-bold text-xl">Pickup Complete</p>
                   <p className="text-green-100">Have a great day!</p>
                 </div>
               </Card>
@@ -792,9 +740,6 @@ export default function ParentApp() {
                           {effectiveType === 'afterschool' ? 'After School' : effectiveType}
                           {isOverridden && <span className="ml-1 text-[10px]">Today</span>}
                         </Badge>
-                        {dismissedStudents.has(child.id) && (
-                          <CheckCircle2 className="w-4 h-4 text-green-500" />
-                        )}
                       </div>
                     </div>
                   );
@@ -1002,9 +947,6 @@ export default function ParentApp() {
                               {effectiveType === 'afterschool' ? 'After School' : effectiveType}
                               {isOverridden && <span className="ml-1 text-[10px]">Today</span>}
                             </Badge>
-                            {dismissedStudents.has(child.id) && (
-                              <CheckCircle2 className="w-4 h-4 text-green-500" />
-                            )}
                           </div>
                         </div>
                         {isOverridden && (
