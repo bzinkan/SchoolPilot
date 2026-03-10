@@ -46,6 +46,7 @@ export function setupSocketIO(httpServer: HttpServer): Server {
       }
       if (role === "parent") {
         socket.join(`school:${schoolId}:parent:${userId}`);
+        socket.join(`school:${schoolId}:parents`);
       }
     });
 

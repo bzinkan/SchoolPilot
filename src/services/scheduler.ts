@@ -45,6 +45,7 @@ export function stopScheduler() {
 
 async function checkDismissalTimes() {
   try {
+
     // Find schools where current time >= dismissal_time (catches exact match + late starts after deploys)
     const result = await db
       .select({
@@ -56,12 +57,15 @@ async function checkDismissalTimes() {
       .from(schools)
       .where(
         and(
-          eq(schools.status, "active"),
+          sql`${schools.status} IN ('active', 'trial')`,
           isNotNull(schools.dismissalTime),
           sql`TO_CHAR(NOW() AT TIME ZONE COALESCE(${schools.schoolTimezone}, 'America/New_York'), 'HH24:MI') >= ${schools.dismissalTime}`
         )
       );
 
+    if (result.length > 0) {
+      console.log(`[Scheduler] Found ${result.length} school(s) ready for dismissal:`, result.map(s => `${s.name} (${s.dismissalTime} ${s.schoolTimezone})`));
+    }
     for (const school of result) {
       await autoStartDismissal(school.id, school.name);
     }
@@ -84,9 +88,9 @@ async function autoStartDismissal(schoolId: string, schoolName: string) {
     if (session.status === "pending") {
       await updateSessionStatus(session.id, "active");
       console.log(`Auto-started dismissal for ${schoolName} (session ${session.id})`);
-      io?.to(`school:${schoolId}:office`).emit("dismissal:started", {
-        sessionId: session.id,
-      });
+      const payload = { sessionId: session.id };
+      io?.to(`school:${schoolId}:office`).emit("dismissal:started", payload);
+      io?.to(`school:${schoolId}:parents`).emit("dismissal:started", payload);
     }
   } catch (err) {
     console.error(`Failed to auto-start dismissal for school ${schoolId}:`, err);
