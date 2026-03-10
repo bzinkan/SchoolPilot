@@ -155,7 +155,7 @@ export default function DismissalDashboard() {
 
       // Fetch permanent afterschool students
       try {
-        const afterRes = await api.get(`/schools/${id}/students`, { params: { dismissalType: 'afterschool' } });
+        const afterRes = await api.get(`/schools/${currentSchool.id}/students`, { params: { dismissalType: 'afterschool' } });
         setAfterschoolStudents(afterRes.data?.students || []);
       } catch { /* non-critical */ }
 
