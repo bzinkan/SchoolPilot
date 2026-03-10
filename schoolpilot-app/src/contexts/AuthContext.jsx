@@ -84,9 +84,7 @@ export function AuthProvider({ children }) {
   };
 
   const register = async (data) => {
-    // Use parent registration endpoint when schoolSlug is provided (GoPilot parent flow)
-    const endpoint = data.schoolSlug ? '/auth/register/parent' : '/auth/register';
-    const res = await api.post(endpoint, data);
+    const res = await api.post('/auth/register', data);
     setUser(res.data.user);
 
     if (res.data.token) {
