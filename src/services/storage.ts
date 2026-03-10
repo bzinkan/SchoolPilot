@@ -444,6 +444,7 @@ export async function searchStudents(
     gradeId?: string;
     homeroomId?: string;
     status?: string;
+    dismissalType?: string;
   } = {}
 ): Promise<Student[]> {
   const conditions = [eq(students.schoolId, schoolId)];
@@ -462,6 +463,9 @@ export async function searchStudents(
   }
   if (options.homeroomId) {
     conditions.push(eq(students.homeroomId, options.homeroomId));
+  }
+  if (options.dismissalType) {
+    conditions.push(eq(students.dismissalType, options.dismissalType));
   }
 
   let query = db

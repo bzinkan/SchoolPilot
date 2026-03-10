@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useGoPilotAuth } from '../../../hooks/useGoPilotAuth';
 import { useSocket } from '../../../contexts/SocketContext';
@@ -100,6 +100,7 @@ export default function DismissalDashboard() {
   const [selectedWalkerHomerooms, setSelectedWalkerHomerooms] = useState([]);
   // Override state
   const [overrides, setOverrides] = useState({});
+  const [afterschoolStudents, setAfterschoolStudents] = useState([]);
   const [showOverrideFor, setShowOverrideFor] = useState(null);
   const [overrideType, setOverrideType] = useState('');
   const [overrideReason, setOverrideReason] = useState('');
@@ -150,6 +151,12 @@ export default function DismissalDashboard() {
           map[o.studentId] = { overrideType: o.overrideType, reason: o.reason, studentName: o.studentName, homeroomId: o.homeroomId };
         }
         setOverrides(map);
+      } catch { /* non-critical */ }
+
+      // Fetch permanent afterschool students
+      try {
+        const afterRes = await api.get(`/schools/${id}/students`, { params: { dismissalType: 'afterschool' } });
+        setAfterschoolStudents(afterRes.data?.students || []);
       } catch { /* non-critical */ }
 
       // Fetch existing change requests (all statuses — persist until midnight/session end)
@@ -229,6 +236,14 @@ export default function DismissalDashboard() {
       setHomeroomStudents(prev => prev.map(s =>
         s.id === studentId ? { ...s, dismissalType, dismissal_type: dismissalType, busRoute } : s
       ));
+      if (dismissalType === 'afterschool') {
+        setAfterschoolStudents(prev => {
+          if (prev.some(s => s.id === studentId)) return prev;
+          return [...prev, { id: studentId, dismissalType }];
+        });
+      } else {
+        setAfterschoolStudents(prev => prev.filter(s => s.id !== studentId));
+      }
     };
     socket.on('student:typeUpdated', handleTypeUpdated);
 
@@ -254,6 +269,35 @@ export default function DismissalDashboard() {
       socket.off('dismissal:override', handleOverride);
     };
   }, [socket, currentSchool, session]);
+
+  // Effective afterschool list: permanent afterschool students + override-to-afterschool
+  const effectiveAfterschoolList = useMemo(() => {
+    const result = new Map();
+
+    // Permanent afterschool students (unless overridden away)
+    for (const s of afterschoolStudents) {
+      const override = overrides[s.id];
+      if (override && override.overrideType !== 'afterschool') continue;
+      result.set(s.id, {
+        studentId: s.id,
+        studentName: `${s.firstName || s.first_name || ''} ${s.lastName || s.last_name || ''}`.trim(),
+        reason: override?.reason || 'After School Program',
+      });
+    }
+
+    // Override-to-afterschool students (not already in the map)
+    for (const [studentId, o] of Object.entries(overrides)) {
+      if (o.overrideType === 'afterschool' && !result.has(studentId)) {
+        result.set(studentId, {
+          studentId,
+          studentName: o.studentName || 'Student',
+          reason: o.reason || 'After School Activity',
+        });
+      }
+    }
+
+    return Array.from(result.values());
+  }, [afterschoolStudents, overrides]);
 
   // Actions
   const handleToggleDismissal = async () => {
@@ -1332,10 +1376,10 @@ export default function DismissalDashboard() {
                   <Clock className="w-5 h-5 text-purple-600" />
                   <h2 className="font-bold text-lg dark:text-white">After School Activities</h2>
                 </div>
-                <Badge variant="purple">{Object.values(overrides).filter(o => o.overrideType === 'afterschool').length} students</Badge>
+                <Badge variant="purple">{effectiveAfterschoolList.length} students</Badge>
               </div>
 
-              {Object.values(overrides).filter(o => o.overrideType === 'afterschool').length === 0 ? (
+              {effectiveAfterschoolList.length === 0 ? (
                 <Card>
                   <div className="p-8 text-center text-gray-500 dark:text-slate-400">
                     <Clock className="w-12 h-12 mx-auto mb-2 text-gray-300 dark:text-slate-600" />
@@ -1345,22 +1389,20 @@ export default function DismissalDashboard() {
                 </Card>
               ) : (
                 <div className="space-y-3">
-                  {Object.entries(overrides)
-                    .filter(([, o]) => o.overrideType === 'afterschool')
-                    .map(([studentId, o]) => (
-                      <Card key={studentId}>
+                  {effectiveAfterschoolList.map(item => (
+                      <Card key={item.studentId}>
                         <div className="p-4 flex items-center justify-between">
                           <div className="flex items-center gap-3">
                             <div className="w-10 h-10 bg-purple-100 dark:bg-purple-950/50 rounded-full flex items-center justify-center">
                               <Clock className="w-5 h-5 text-purple-600" />
                             </div>
                             <div>
-                              <p className="font-medium dark:text-white">{o.studentName || 'Student'}</p>
-                              <p className="text-sm text-purple-600">{o.reason || 'After School Activity'}</p>
+                              <p className="font-medium dark:text-white">{item.studentName}</p>
+                              <p className="text-sm text-purple-600">{item.reason}</p>
                             </div>
                           </div>
                           <button
-                            onClick={() => { setShowOverrideFor(studentId); setOverrideType('car'); setOverrideReason(''); }}
+                            onClick={() => { setShowOverrideFor(item.studentId); setOverrideType('car'); setOverrideReason(''); }}
                             className="text-sm text-indigo-600 hover:text-indigo-700 font-medium"
                           >
                             Change

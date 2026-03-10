@@ -78,7 +78,7 @@ export default function AssignStudents({ students, homerooms, onAssign, schoolId
     setLoadingCourses(true);
     try {
       const res = await api.get(`/schools/${schoolId}/google/courses`);
-      setCourses(res.data);
+      setCourses(res.data?.courses || res.data || []);
       setShowCourses(true);
     } catch (err) {
       console.error('Failed to load courses:', err);
@@ -166,6 +166,15 @@ export default function AssignStudents({ students, homerooms, onAssign, schoolId
             )}
           </div>
         </div>
+
+        {/* No courses empty state */}
+        {showCourses && courses.length === 0 && (
+          <div className="mt-4 border-t dark:border-slate-700 pt-4">
+            <p className="text-sm text-gray-500 dark:text-slate-400">
+              No active courses found in Google Classroom. Create courses in Google Classroom first, then click "Load Courses" again.
+            </p>
+          </div>
+        )}
 
         {/* Course List */}
         {showCourses && courses.length > 0 && (

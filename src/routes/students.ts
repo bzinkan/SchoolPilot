@@ -36,7 +36,7 @@ const schoolContext = [requireSchoolContext, requireActiveSchool] as const;
 // GET /api/students - List students (school-scoped)
 router.get("/", ...schoolContext, async (req, res, next) => {
   try {
-    const { search, gradeLevel, gradeId, homeroomId, status } = req.query as Record<string, string | undefined>;
+    const { search, gradeLevel, gradeId, homeroomId, status, dismissalType } = req.query as Record<string, string | undefined>;
 
     const studentsList = await searchStudents(res.locals.schoolId!, {
       search,
@@ -44,6 +44,7 @@ router.get("/", ...schoolContext, async (req, res, next) => {
       gradeId,
       homeroomId,
       status: status || "active",
+      dismissalType,
     });
 
     return res.json({ students: studentsList });

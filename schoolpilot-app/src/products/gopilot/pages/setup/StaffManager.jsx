@@ -109,7 +109,7 @@ export default function StaffManager({ staff, schoolId, googleConnected, onAdd, 
     setWsLoading(true);
     try {
       const res = await api.get(`/schools/${schoolId}/google/org-units`);
-      setWsOrgUnits(res.data);
+      setWsOrgUnits(res.data?.orgUnits || res.data || []);
     } catch (err) {
       console.error(err);
       setWsOrgUnits([]);
@@ -124,7 +124,8 @@ export default function StaffManager({ staff, schoolId, googleConnected, onAdd, 
     try {
       const path = ou ? ou.orgUnitPath : '/';
       const res = await api.get(`/schools/${schoolId}/google/workspace-users`, { params: { orgUnitPath: path } });
-      const active = res.data.filter(u => !u.suspended);
+      const users = res.data?.users || res.data || [];
+      const active = users.filter(u => !u.suspended);
       setWsUsers(active);
       setWsSelectedUsers(new Set(active.map(u => u.email)));
     } catch (err) { console.error(err); setWsUsers([]); }
