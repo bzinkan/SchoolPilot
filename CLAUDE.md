@@ -194,7 +194,7 @@ Copy `.env.example` to `.env`. Required for local dev:
 
 ## CI
 
-GitHub Actions (`.github/workflows/ci.yml`) runs on push/PR to main:
+GitHub Actions (`.github/workflows/ci-build.yml`) runs on push/PR to main:
 - Backend: `npm audit --audit-level=high` + `tsc --noEmit` + `npm run build`
 - Frontend: `npm audit --audit-level=critical` + `npm run lint` + `vite build`
 
@@ -264,31 +264,6 @@ Infrastructure is on AWS (us-east-1):
 - **S3**: `schoolpilot-production-frontend` (static frontend assets)
 - **CloudFront**: Distribution `E1TPPJOD7C2CXR`
 
-### Deploy Backend
-**IMPORTANT: Always build from `C:\GitHub\SchoolPilot\` (this repo). NEVER build from `C:\GoPilot\server\` — that is an obsolete prototype with incompatible schemas.**
-```bash
-# On Windows, prefix AWS CLI / Docker commands with MSYS_NO_PATHCONV=1
-# Run from the SchoolPilot repo root:
-
-# 1. Login to ECR (required before push)
-MSYS_NO_PATHCONV=1 aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 135775632425.dkr.ecr.us-east-1.amazonaws.com
-
-# 2. Build, tag, push
-docker build -t schoolpilot-production-api .
-docker tag schoolpilot-production-api:latest 135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api:latest
-docker push 135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api:latest
-
-# 3. Force ECS redeployment (rolls out new task ~1-2 min)
-MSYS_NO_PATHCONV=1 aws ecs update-service --cluster schoolpilot-production-cluster --service schoolpilot-production-api --force-new-deployment --region us-east-1
-```
-
-### Deploy Frontend
-```bash
-cd schoolpilot-app && npm run build
-MSYS_NO_PATHCONV=1 aws s3 sync "C:/GitHub/Schoolpilot/schoolpilot-app/dist/" s3://schoolpilot-production-frontend/ --delete --region us-east-1
-MSYS_NO_PATHCONV=1 aws cloudfront create-invalidation --distribution-id E1TPPJOD7C2CXR --paths "/*" --region us-east-1
-```
-
 ### Schema Changes
 Since production RDS is in a private VPC, `drizzle-kit push` cannot reach it directly. Instead:
 1. Add the Drizzle schema definition in the appropriate `src/schema/*.ts` file (e.g., `gopilot.ts` for GoPilot tables, `classpilot.ts` for ClassPilot, etc.)
@@ -305,6 +280,22 @@ Session-scoped dismissal type changes (car/bus/walker/afterschool) for today onl
 - **Socket event:** `dismissal:override` emitted to office, teacher, and parent rooms
 - **Queue integration:** All check-in methods (app, car number, bus, walker release) use `getEffectiveDismissalTypes()` to respect overrides. Afterschool students are excluded from queue.
 - **Frontend:** Override UI in ParentApp, TeacherView, and DismissalDashboard (including expandable homerooms in Rooms tab)
+
+### GoPilot Role Override
+GoPilot uses a `gopilot_role` column on `memberships` that overrides the base `role` for dismissal-specific access control. This lets a teacher be assigned as `office_staff` in GoPilot (to manage the dismissal queue) without changing their role in ClassPilot or PassPilot. The `useGoPilotAuth` hook reads `gopilot_role ?? role` to determine the effective role.
+
+### School Timezone
+The `school_timezone` column on the `schools` table (IANA string, e.g. `America/Chicago`) drives all time-sensitive features: attendance resets, dismissal auto-start, and date-based queries.
+
+- **Backend pattern**: `todayInTz(tz)` and `todayForSchool(schoolId)` in `src/routes/admin/attendance.ts` use `Intl.DateTimeFormat("en-CA", { timeZone: tz })` to get YYYY-MM-DD in the school's local time. Always use these instead of `new Date().toISOString().slice(0,10)` (which returns UTC and breaks after 7 PM Eastern).
+- **Frontend pattern**: Same `Intl.DateTimeFormat("en-CA", { timeZone: tz })` approach, reading timezone from `activeMembership.schoolTimezone` via `useAuth()`.
+- **Auto-detection at school creation**: `detectTimezone()` in `CreateSchool.jsx` uses `Intl.DateTimeFormat().resolvedOptions().timeZone` to detect the browser's timezone, mapping it to one of 6 supported US timezones. The super admin POST /schools endpoint saves this to both `schools.school_timezone` and `school_settings`.
+
+### Attendance System
+Daily attendance tracking with timezone-aware resets:
+- **Backend**: `src/routes/admin/attendance.ts` — POST marks absent (date defaults to school's local today), GET queries by date, GET `/stats` returns summary.
+- **Frontend**: `useAbsentStudents.js` hook queries today's absences using the school's timezone. `AttendancePanel.jsx` marks students absent with timezone-aware date.
+- **Reset behavior**: No cron job needed — attendance "resets" naturally because queries filter by the current local date. Historical records are permanent.
 
 ## AWS Infrastructure Architecture
 
@@ -326,7 +317,7 @@ User → CloudFront (E1TPPJOD7C2CXR) → routes by path:
 | **ALB** | `schoolpilot-production-alb` (`schoolpilot-production-alb-1268871698.us-east-1.elb.amazonaws.com`) | Forwards to ECS target group |
 | **ECS Cluster** | `schoolpilot-production-cluster` | Fargate launch type |
 | **ECS Service** | `schoolpilot-production-api` | 1 desired task, Fargate, uses ALB target group |
-| **Task Definition** | `schoolpilot-production-api` (currently rev 14) | Single container named `api`, port 4000 |
+| **Task Definition** | `schoolpilot-production-api` | Single container named `api`, port 4000 |
 | **ECR** | `135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api` | Image tagged `:latest` |
 | **S3** | `schoolpilot-production-frontend` | Static frontend assets served by CloudFront |
 | **RDS** | PostgreSQL in private VPC | Not directly accessible; use auto-migrations in `index.ts` |
@@ -366,10 +357,10 @@ MSYS_NO_PATHCONV=1 aws ecs describe-services --cluster schoolpilot-production-cl
 cd schoolpilot-app && npm run build
 
 # Step 2: Sync to S3 (--delete removes old files)
-MSYS_NO_PATHCONV=1 aws s3 sync "C:/GitHub/Schoolpilot/schoolpilot-app/dist/" s3://schoolpilot-production-frontend/ --delete --region us-east-1
+MSYS_NO_PATHCONV=1 aws s3 sync "C:/GitHub/SchoolPilot/schoolpilot-app/dist/" s3://schoolpilot-production-frontend/ --delete --region us-east-1
 
-# Step 3: Invalidate CloudFront cache
-MSYS_NO_PATHCONV=1 aws cloudfront create-invalidation --distribution-id E1TPPJOD7C2CXR --paths "/*" --region us-east-1
+# Step 3: Invalidate CloudFront cache (use targeted paths to reduce costs — "/*" causes ALL cached objects to refetch)
+MSYS_NO_PATHCONV=1 aws cloudfront create-invalidation --distribution-id E1TPPJOD7C2CXR --paths "/index.html" "/assets/*" --region us-east-1
 
 # Step 4: VERIFY — check invalidation completed
 MSYS_NO_PATHCONV=1 aws cloudfront list-invalidations --distribution-id E1TPPJOD7C2CXR --region us-east-1 --query 'InvalidationList.Items[0]'
@@ -382,6 +373,6 @@ MSYS_NO_PATHCONV=1 aws cloudfront list-invalidations --distribution-id E1TPPJOD7
 2. **ECR login expired** — `docker push` will fail with auth errors if you haven't run `ecr get-login-password` recently. Tokens last 12 hours.
 3. **ECS service name** — Must be exactly `schoolpilot-production-api` in cluster `schoolpilot-production-cluster`. There are no other services/clusters.
 4. **Task not starting** — If the new task fails to start after `force-new-deployment`, ECS rolls back automatically. Check CloudWatch logs for the failed task. Common causes: missing env vars, bad image, port mismatch.
-5. **CloudFront caching** — After frontend deploy, always invalidate CloudFront. Without invalidation, users may see stale JS/CSS for up to 24 hours.
+5. **CloudFront invalidation costs** — Use targeted invalidation (`/index.html /assets/*`) instead of `/*`. Wildcard `/*` invalidates ALL cached objects, causing every request to refetch from origin, generating massive CloudFront + S3 request charges during development.
 6. **Windows path conversion** — Always prefix AWS CLI commands with `MSYS_NO_PATHCONV=1` in Git Bash on Windows, otherwise paths like `--paths "/*"` get mangled.
 7. **Task definition env vars** — The ECS task definition must include `CLIENT_URL=https://school-pilot.net` and `GOOGLE_CALLBACK_URL=https://school-pilot.net/api/auth/google/callback`. These are set in the task definition, not in the container.
