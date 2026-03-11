@@ -448,7 +448,7 @@ router.get(
         try {
           const invoices = await stripe.invoices.list({
             customer: school.stripeCustomerId,
-            limit: 10,
+            limit: 50,
           });
           return res.json({
             ...billing,
@@ -459,6 +459,8 @@ router.get(
               created: inv.created,
               hostedUrl: inv.hosted_invoice_url,
               dueDate: inv.due_date,
+              paidAt: (inv as any).status_transitions?.paid_at || null,
+              description: inv.description || null,
             })),
           });
         } catch {

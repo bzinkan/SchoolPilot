@@ -337,6 +337,11 @@ router.patch("/schools/:id", ...auth, async (req, res, next) => {
       return res.status(404).json({ error: "School not found" });
     }
 
+    // Sync timezone from schoolHours to schools table
+    if (schoolHours?.timezone) {
+      await updateSchool(id, { schoolTimezone: schoolHours.timezone });
+    }
+
     // Save school hours to settings table
     if (schoolHours) {
       await upsertSettings(id, {

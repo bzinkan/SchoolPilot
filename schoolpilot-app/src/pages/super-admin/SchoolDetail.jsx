@@ -54,6 +54,8 @@ export default function SchoolDetail() {
   const [invoiceStudentCount, setInvoiceStudentCount] = useState(0);
   const [sendingInvoice, setSendingInvoice] = useState(false);
   const [invoiceResult, setInvoiceResult] = useState(null);
+  const [expandedInvoiceId, setExpandedInvoiceId] = useState(null);
+  const [showNewInvoice, setShowNewInvoice] = useState(false);
 
   // Tax cert
   const [taxCertRequesting, setTaxCertRequesting] = useState(false);
@@ -243,6 +245,10 @@ export default function SchoolDetail() {
     try {
       const res = await api.get(`/super-admin/schools/${id}/billing`);
       setBillingData(res.data);
+      const invoices = res.data?.invoices || [];
+      if (invoices.length === 0) {
+        setShowNewInvoice(true);
+      }
     } catch { /* ignore - billing may not be configured */ }
   };
 
@@ -434,115 +440,162 @@ export default function SchoolDetail() {
           </div>
         )}
 
+        {/* Invoice History */}
+        {billingData?.invoices && billingData.invoices.length > 0 && (
+          <div className="mb-4">
+            <h3 className="text-sm font-medium text-slate-700 mb-2">Invoice History</h3>
+            <div className="border border-slate-200 rounded-lg overflow-hidden divide-y divide-slate-100">
+              {billingData.invoices.map((inv, idx) => {
+                const isExpanded = expandedInvoiceId === inv.id || (expandedInvoiceId === null && idx === 0);
+                const sentDate = new Date(inv.created * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                const paidDate = inv.paidAt ? new Date(inv.paidAt * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : null;
+                const dueDate = inv.dueDate ? new Date(inv.dueDate * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : null;
+                return (
+                  <div key={inv.id}>
+                    <button
+                      onClick={() => setExpandedInvoiceId(isExpanded ? '__none__' : inv.id)}
+                      className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-slate-50 transition-colors"
+                    >
+                      <svg className={`w-4 h-4 text-slate-400 transition-transform flex-shrink-0 ${isExpanded ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
+                      <span className="text-sm font-semibold text-slate-900 w-24">{formatCents(inv.amount)}</span>
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                        inv.status === 'paid' ? 'bg-green-100 text-green-800' :
+                        inv.status === 'open' ? 'bg-blue-100 text-blue-800' :
+                        inv.status === 'void' ? 'bg-slate-100 text-slate-600' :
+                        'bg-red-100 text-red-800'
+                      }`}>
+                        {inv.status}
+                      </span>
+                      <span className="text-xs text-slate-500 flex-1">
+                        Sent {sentDate}
+                        {inv.status === 'paid' && paidDate && <span className="text-green-700 font-medium"> · Paid {paidDate}</span>}
+                        {inv.status === 'open' && dueDate && <span className="text-slate-400"> · Due {dueDate}</span>}
+                      </span>
+                      {inv.hostedUrl && (
+                        <a href={inv.hostedUrl} target="_blank" rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="text-xs text-blue-600 hover:text-blue-700 underline flex-shrink-0">View</a>
+                      )}
+                    </button>
+                    {isExpanded && (
+                      <div className="px-4 pb-3 pl-11">
+                        <div className="bg-slate-50 rounded-lg p-3 text-xs text-slate-600 space-y-1">
+                          <div className="flex justify-between"><span>Invoice ID</span><span className="font-mono text-slate-500">{inv.id}</span></div>
+                          <div className="flex justify-between"><span>Sent</span><span>{sentDate}</span></div>
+                          {dueDate && <div className="flex justify-between"><span>Due Date</span><span>{dueDate}</span></div>}
+                          {inv.status === 'paid' && paidDate && <div className="flex justify-between"><span>Paid</span><span className="text-green-700 font-medium">{paidDate}</span></div>}
+                          {inv.description && <div className="flex justify-between"><span>Description</span><span>{inv.description}</span></div>}
+                          {inv.hostedUrl && (
+                            <a href={inv.hostedUrl} target="_blank" rel="noopener noreferrer"
+                              className="inline-block mt-2 text-blue-600 hover:text-blue-700 underline">
+                              View full invoice on Stripe
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Create New Invoice (collapsible) */}
         {activeProducts.length === 0 ? (
           <p className="text-sm text-slate-400">Add products above before creating an invoice.</p>
         ) : (
-          <>
-            <div className="mb-4">
-              <label className="text-xs text-slate-500 block mb-1">Student Count</label>
-              <input
-                type="number"
-                min="1"
-                value={invoiceStudentCount}
-                onChange={(e) => setInvoiceStudentCount(Math.max(1, parseInt(e.target.value) || 0))}
-                className="w-32 px-3 py-1.5 border border-slate-300 rounded text-sm"
-              />
-            </div>
-
-            {(() => {
-              const preview = calculateInvoicePreview(activeProducts, invoiceStudentCount);
-              return (
-                <div className="border border-slate-200 rounded-lg overflow-hidden mb-4">
-                  <table className="w-full text-sm">
-                    <thead className="bg-slate-50">
-                      <tr>
-                        <th className="text-left px-4 py-2 text-slate-600 font-medium">Product</th>
-                        <th className="text-right px-4 py-2 text-slate-600 font-medium">Base</th>
-                        <th className="text-right px-4 py-2 text-slate-600 font-medium">Per-Student</th>
-                        <th className="text-right px-4 py-2 text-slate-600 font-medium">Subtotal</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {preview.lineItems.map((item) => (
-                        <tr key={item.product} className="border-t border-slate-100">
-                          <td className="px-4 py-2 font-medium text-slate-900">{item.label}</td>
-                          <td className="px-4 py-2 text-right text-slate-700">
-                            {item.baseCents > 0 ? formatCents(item.baseCents) : '—'}
-                          </td>
-                          <td className="px-4 py-2 text-right text-slate-700">
-                            {invoiceStudentCount} × ${item.perStudentDollars.toFixed(2)}
-                          </td>
-                          <td className="px-4 py-2 text-right text-slate-900 font-medium">{formatCents(item.subtotalCents)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                    <tfoot>
-                      <tr className="border-t border-slate-200">
-                        <td colSpan={3} className="px-4 py-2 text-right text-slate-600">Subtotal</td>
-                        <td className="px-4 py-2 text-right text-slate-900 font-medium">{formatCents(preview.subtotalCents)}</td>
-                      </tr>
-                      {preview.discountCents > 0 && (
-                        <tr className="border-t border-slate-100">
-                          <td colSpan={3} className="px-4 py-2 text-right text-green-700">
-                            Bundle Discount ({activeProducts.length} products — {Math.round(preview.discountRate * 100)}% off)
-                          </td>
-                          <td className="px-4 py-2 text-right text-green-700 font-medium">-{formatCents(preview.discountCents)}</td>
-                        </tr>
-                      )}
-                      <tr className="border-t-2 border-slate-300 bg-slate-50">
-                        <td colSpan={3} className="px-4 py-2 text-right text-slate-900 font-semibold">Total Due (Annual)</td>
-                        <td className="px-4 py-2 text-right text-slate-900 font-bold text-base">{formatCents(preview.totalCents)}</td>
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
-              );
-            })()}
-
-            <p className="text-sm text-slate-500 mb-3">
-              Invoice will be sent to: <span className="font-medium text-slate-700">{school.billingEmail || 'No billing email set'}</span>
-            </p>
-
+          <div className="border border-slate-200 rounded-lg overflow-hidden">
             <button
-              onClick={handleSendInvoice}
-              disabled={sendingInvoice || !school.billingEmail || invoiceStudentCount < 1}
-              className="px-4 py-2 bg-slate-900 text-white rounded-lg text-sm font-medium hover:bg-slate-800 disabled:opacity-50"
+              onClick={() => setShowNewInvoice(!showNewInvoice)}
+              className="w-full flex items-center justify-between px-4 py-3 hover:bg-slate-50 transition-colors"
             >
-              {sendingInvoice ? 'Sending...' : 'Send Invoice'}
+              <span className="text-sm font-semibold text-slate-900">Create New Invoice</span>
+              <svg className={`w-4 h-4 text-slate-400 transition-transform ${showNewInvoice ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
             </button>
-            {!school.billingEmail && (
-              <p className="text-xs text-red-500 mt-1">Set a billing email for this school before sending an invoice.</p>
-            )}
-          </>
-        )}
-
-        {billingData?.invoices && billingData.invoices.length > 0 && (
-          <div className="mt-6">
-            <h3 className="text-sm font-medium text-slate-700 mb-2">Invoice History</h3>
-            <div className="space-y-2">
-              {billingData.invoices.map((inv) => (
-                <div key={inv.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
-                  <div>
-                    <p className="text-sm font-medium text-slate-900">{formatCents(inv.amount)}</p>
-                    <p className="text-xs text-slate-400">{new Date(inv.created * 1000).toLocaleDateString()}</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                      inv.status === 'paid' ? 'bg-green-100 text-green-800' :
-                      inv.status === 'open' ? 'bg-blue-100 text-blue-800' :
-                      inv.status === 'void' ? 'bg-slate-100 text-slate-600' :
-                      'bg-red-100 text-red-800'
-                    }`}>
-                      {inv.status}
-                    </span>
-                    {inv.hostedUrl && (
-                      <a href={inv.hostedUrl} target="_blank" rel="noopener noreferrer"
-                        className="text-xs text-blue-600 hover:text-blue-700 underline">View</a>
-                    )}
-                  </div>
+            {showNewInvoice && (
+              <div className="px-4 pb-4 border-t border-slate-100">
+                <div className="my-4">
+                  <label className="text-xs text-slate-500 block mb-1">Student Count</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={invoiceStudentCount}
+                    onChange={(e) => setInvoiceStudentCount(Math.max(1, parseInt(e.target.value) || 0))}
+                    className="w-32 px-3 py-1.5 border border-slate-300 rounded text-sm"
+                  />
                 </div>
-              ))}
-            </div>
+
+                {(() => {
+                  const preview = calculateInvoicePreview(activeProducts, invoiceStudentCount);
+                  return (
+                    <div className="border border-slate-200 rounded-lg overflow-hidden mb-4">
+                      <table className="w-full text-sm">
+                        <thead className="bg-slate-50">
+                          <tr>
+                            <th className="text-left px-4 py-2 text-slate-600 font-medium">Product</th>
+                            <th className="text-right px-4 py-2 text-slate-600 font-medium">Base</th>
+                            <th className="text-right px-4 py-2 text-slate-600 font-medium">Per-Student</th>
+                            <th className="text-right px-4 py-2 text-slate-600 font-medium">Subtotal</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {preview.lineItems.map((item) => (
+                            <tr key={item.product} className="border-t border-slate-100">
+                              <td className="px-4 py-2 font-medium text-slate-900">{item.label}</td>
+                              <td className="px-4 py-2 text-right text-slate-700">
+                                {item.baseCents > 0 ? formatCents(item.baseCents) : '—'}
+                              </td>
+                              <td className="px-4 py-2 text-right text-slate-700">
+                                {invoiceStudentCount} × ${item.perStudentDollars.toFixed(2)}
+                              </td>
+                              <td className="px-4 py-2 text-right text-slate-900 font-medium">{formatCents(item.subtotalCents)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot>
+                          <tr className="border-t border-slate-200">
+                            <td colSpan={3} className="px-4 py-2 text-right text-slate-600">Subtotal</td>
+                            <td className="px-4 py-2 text-right text-slate-900 font-medium">{formatCents(preview.subtotalCents)}</td>
+                          </tr>
+                          {preview.discountCents > 0 && (
+                            <tr className="border-t border-slate-100">
+                              <td colSpan={3} className="px-4 py-2 text-right text-green-700">
+                                Bundle Discount ({activeProducts.length} products — {Math.round(preview.discountRate * 100)}% off)
+                              </td>
+                              <td className="px-4 py-2 text-right text-green-700 font-medium">-{formatCents(preview.discountCents)}</td>
+                            </tr>
+                          )}
+                          <tr className="border-t-2 border-slate-300 bg-slate-50">
+                            <td colSpan={3} className="px-4 py-2 text-right text-slate-900 font-semibold">Total Due (Annual)</td>
+                            <td className="px-4 py-2 text-right text-slate-900 font-bold text-base">{formatCents(preview.totalCents)}</td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  );
+                })()}
+
+                <p className="text-sm text-slate-500 mb-3">
+                  Invoice will be sent to: <span className="font-medium text-slate-700">{school.billingEmail || 'No billing email set'}</span>
+                </p>
+
+                <button
+                  onClick={handleSendInvoice}
+                  disabled={sendingInvoice || !school.billingEmail || invoiceStudentCount < 1}
+                  className="px-4 py-2 bg-slate-900 text-white rounded-lg text-sm font-medium hover:bg-slate-800 disabled:opacity-50"
+                >
+                  {sendingInvoice ? 'Sending...' : 'Send Invoice'}
+                </button>
+                {!school.billingEmail && (
+                  <p className="text-xs text-red-500 mt-1">Set a billing email for this school before sending an invoice.</p>
+                )}
+              </div>
+            )}
           </div>
         )}
 
