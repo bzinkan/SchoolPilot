@@ -188,27 +188,9 @@ export default function TeacherView() {
 
   // Join socket room (and re-join on reconnect)
   useEffect(() => {
-    console.log('[TeacherView] Socket effect:', {
-      hasSocket: !!socket,
-      schoolId: currentSchool?.id,
-      homeroomId: homeroom?.id
-    });
-
-    if (!socket) {
-      console.log('[TeacherView] MISSING: socket');
-      return;
-    }
-    if (!currentSchool?.id) {
-      console.log('[TeacherView] MISSING: currentSchool.id');
-      return;
-    }
-    if (!homeroom?.id) {
-      console.log('[TeacherView] MISSING: homeroom.id, homeroom=', homeroom);
-      return;
-    }
+    if (!socket || !currentSchool?.id || !homeroom?.id) return;
 
     const joinRoom = () => {
-      console.log('[TeacherView] Emitting join:school:', { schoolId: currentSchool.id, homeroomId: homeroom.id });
       socket.emit('join:school', { schoolId: currentSchool.id, role: 'teacher', homeroomId: homeroom.id });
     };
 
@@ -491,22 +473,22 @@ export default function TeacherView() {
 
       {/* Header */}
       <header className="bg-white border-b sticky top-0 z-50">
-        <div className="px-4 py-3">
+        <div className="px-3 sm:px-4 py-2 sm:py-3">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center">
-                  <Home className="w-5 h-5 text-white" />
+            <div className="flex items-center gap-2 sm:gap-4 min-w-0">
+              <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+                <div className="w-8 h-8 sm:w-10 sm:h-10 bg-indigo-600 rounded-xl flex items-center justify-center flex-shrink-0">
+                  <Home className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
                 </div>
-                <div>
-                  <h1 className="font-bold text-gray-900">{teacher.homeroom}</h1>
-                  <p className="text-xs text-gray-500">{teacher.name} • {currentSchool?.name}</p>
+                <div className="min-w-0">
+                  <h1 className="font-bold text-gray-900 text-sm sm:text-base truncate">{teacher.homeroom}</h1>
+                  <p className="text-[10px] sm:text-xs text-gray-500 truncate">{teacher.name} • {currentSchool?.name}</p>
                 </div>
               </div>
 
               {/* Product switcher */}
               {!isNative && (hasClassPilot || hasPassPilot) && (
-                <div className="flex items-center gap-1 ml-2 border-l pl-3">
+                <div className="hidden sm:flex items-center gap-1 ml-2 border-l pl-3">
                   {hasClassPilot && (
                     <button onClick={() => navigate('/classpilot')}
                       className="px-3 py-1 rounded-md text-sm font-semibold bg-yellow-400 text-blue-900 hover:bg-yellow-300 transition-colors">
@@ -523,8 +505,8 @@ export default function TeacherView() {
               )}
             </div>
 
-            <div className="flex items-center gap-4">
-              <div className="flex items-center gap-4 text-sm">
+            <div className="flex items-center gap-2 sm:gap-4 flex-shrink-0">
+              <div className="hidden sm:flex items-center gap-4 text-sm">
                 <div className="flex items-center gap-1.5">
                   <div className="w-2.5 h-2.5 rounded-full bg-red-500 animate-pulse" />
                   <span className="font-medium text-red-600">{calledStudents.length} Called</span>
@@ -540,7 +522,7 @@ export default function TeacherView() {
               </div>
 
               <div className="text-right">
-                <p className="text-xl font-bold text-gray-900">
+                <p className="text-base sm:text-xl font-bold text-gray-900">
                   {currentTime.toLocaleTimeString([], { timeZone: currentSchool?.timezone, hour: '2-digit', minute: '2-digit' })}
                 </p>
               </div>
@@ -552,7 +534,6 @@ export default function TeacherView() {
                     setShowNotifications(opening);
                     if (opening) {
                       setUnreadChangeCount(0);
-                      // Auto-approve pending change requests
                       changeRequests.forEach(cr => {
                         if (cr.status !== 'approved') {
                           api.put(`/changes/${cr.id}`, { status: 'approved' }).catch(() => {});
@@ -561,7 +542,7 @@ export default function TeacherView() {
                       setChangeRequests(prev => prev.map(cr => ({ ...cr, status: 'approved' })));
                     }
                   }}
-                  className="p-2 rounded-lg hover:bg-gray-100 relative"
+                  className="p-1.5 sm:p-2 rounded-lg hover:bg-gray-100 relative"
                 >
                   <Bell className="w-5 h-5 text-gray-600" />
                   {unreadChangeCount > 0 && (
@@ -621,10 +602,25 @@ export default function TeacherView() {
             </div>
           </div>
         </div>
+        {/* Mobile stats bar */}
+        <div className="sm:hidden border-t px-3 py-1.5 flex items-center justify-around text-xs">
+          <div className="flex items-center gap-1">
+            <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+            <span className="font-medium text-red-600">{calledStudents.length} Called</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <div className="w-2 h-2 rounded-full bg-green-500" />
+            <span className="font-medium text-green-600">{inTransitStudents.length} In Transit</span>
+          </div>
+          <div className="flex items-center gap-1">
+            <div className="w-2 h-2 rounded-full bg-blue-500" />
+            <span className="font-medium text-blue-600">{rosterStudents.filter(s => s.queueStatus === 'dismissed').length} Picked Up</span>
+          </div>
+        </div>
       </header>
 
       {/* 3-Panel Layout */}
-      <div className="flex h-[calc(100vh-73px)]">
+      <div className="flex flex-col sm:flex-row h-[calc(100vh-105px)] sm:h-[calc(100vh-73px)]">
 
         {/* LEFT PANEL - Class Roster */}
         <aside className="w-64 xl:w-72 bg-white border-r overflow-y-auto flex-shrink-0 hidden lg:block">

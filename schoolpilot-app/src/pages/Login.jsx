@@ -3,7 +3,9 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useNative } from '../contexts/NativeContext';
 import { setApiToken } from '../shared/utils/api';
+import { saveToken } from '../native/storage';
 import { queryClient } from '../lib/queryClient';
+import { Capacitor } from '@capacitor/core';
 
 export default function Login() {
   const { login, register, refetchUser } = useAuth();
@@ -25,15 +27,12 @@ export default function Login() {
   const [regPassword, setRegPassword] = useState('');
   const [regPhone, setRegPhone] = useState('');
 
-  // Handle OAuth token redirect — store JWT and trigger auth
+  // Handle OAuth token redirect — store JWT and trigger auth (web only)
   useEffect(() => {
     const token = searchParams.get('token');
     if (token) {
-      // Set token in memory only (never localStorage)
       setApiToken(token);
-      // Clear stale query cache so Dashboard fetches fresh data
       queryClient.clear();
-      // Clean token from URL, then refetch user with the new token
       window.history.replaceState({}, '', '/login');
       refetchUser();
       return;
@@ -48,6 +47,34 @@ export default function Login() {
       setError('Could not retrieve email from Google. Please try again.');
     }
   }, [searchParams, refetchUser]);
+
+  // Native: listen for deep link callback from OAuth (com.schoolpilot.gopilot://auth/callback?token=...&redirect=...)
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    let listener;
+    import('@capacitor/app').then(({ App }) => {
+      App.addListener('appUrlOpen', ({ url }) => {
+        try {
+          const parsed = new URL(url);
+          const token = parsed.searchParams.get('token');
+          const redirect = parsed.searchParams.get('redirect');
+          if (token) {
+            setApiToken(token);
+            saveToken(token);
+            queryClient.clear();
+            refetchUser().then(() => {
+              if (redirect && redirect.startsWith('/')) {
+                navigate(redirect, { replace: true });
+              }
+            });
+          }
+        } catch (err) {
+          console.error('[Login] Deep link parse error:', err);
+        }
+      }).then(l => { listener = l; });
+    });
+    return () => { listener?.remove(); };
+  }, [refetchUser, navigate]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -353,7 +380,14 @@ export default function Login() {
 
             {/* Google sign in */}
             <button
-              onClick={() => { window.location.href = isNative ? 'https://school-pilot.net/api/auth/google' : '/api/auth/google'; }}
+              onClick={async () => {
+                if (Capacitor.isNativePlatform()) {
+                  const { Browser } = await import('@capacitor/browser');
+                  await Browser.open({ url: 'https://school-pilot.net/api/auth/google?redirect=/gopilot' });
+                } else {
+                  window.location.href = '/api/auth/google';
+                }
+              }}
               style={{
                 width: '100%',
                 padding: '16px',

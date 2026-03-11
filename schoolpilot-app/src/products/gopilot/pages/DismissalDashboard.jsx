@@ -557,7 +557,7 @@ export default function DismissalDashboard() {
       setStudentSearchLoading(true);
       try {
         const res = await api.get(`/schools/${currentSchool.id}/students`, { params: { search: term.trim() } });
-        setStudentSearchResults(res.data || []);
+        setStudentSearchResults(res.data?.students || res.data || []);
       } catch (err) {
         console.error('Student search failed:', err);
         setStudentSearchResults([]);
@@ -853,6 +853,12 @@ export default function DismissalDashboard() {
                     </div>
                   )}
                 </Card>
+                <Card className="p-3 sm:p-4">
+                  <h3 className="font-semibold mb-2 text-sm">Car# Look Up</h3>
+                  <Button variant="secondary" size="sm" className="w-full justify-start" onClick={() => setShowStudentLookup(true)}>
+                    <Search className="w-4 h-4 mr-2" /> Find Student
+                  </Button>
+                </Card>
               </div>
 
               <div className="lg:col-span-2">
@@ -994,7 +1000,7 @@ export default function DismissalDashboard() {
                   )}
                 </Card>
                 <Card className="p-4">
-                  <h3 className="font-semibold mb-3">Quick Actions</h3>
+                  <h3 className="font-semibold mb-3">Car# Look Up</h3>
                   <div className="space-y-2">
                     <Button variant="secondary" size="sm" className="w-full justify-start" onClick={() => setShowStudentLookup(true)}>
                       <Search className="w-4 h-4 mr-2" /> Find Student
@@ -1521,22 +1527,22 @@ export default function DismissalDashboard() {
                 <div key={student.id} className="p-3 hover:bg-gray-50 dark:bg-slate-800/50 dark:hover:bg-slate-800 rounded-lg flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 bg-indigo-100 dark:bg-indigo-950/60 rounded-full flex items-center justify-center text-indigo-600 dark:text-indigo-400 font-medium">
-                      {student.first_name?.[0]}{student.last_name?.[0]}
+                      {student.firstName?.[0]}{student.lastName?.[0]}
                     </div>
                     <div>
-                      <p className="font-medium dark:text-white">{student.first_name} {student.last_name}</p>
+                      <p className="font-medium dark:text-white">{student.firstName} {student.lastName}</p>
                       <p className="text-sm text-gray-500 dark:text-slate-400">
-                        {student.homeroom_name ? `${student.homeroom_name} • Grade ${student.homeroom_grade || student.grade}` : `Grade ${student.grade || '—'}`}
+                        {student.homeroomName ? `${student.homeroomName} • Grade ${student.homeroomGrade || student.gradeLevel}` : `Grade ${student.gradeLevel || '—'}`}
                       </p>
                     </div>
                   </div>
-                  {student.car_number ? (
+                  {student.carNumber ? (
                     <button
-                      onClick={() => handleUseCarNumber(student.car_number)}
+                      onClick={() => handleUseCarNumber(student.carNumber)}
                       className="flex items-center gap-2 px-3 py-1.5 bg-indigo-600 dark:bg-indigo-700 text-white rounded-lg text-sm hover:bg-indigo-700"
                     >
                       <Car className="w-4 h-4" />
-                      #{student.car_number}
+                      #{student.carNumber}
                     </button>
                   ) : (
                     <span className="text-sm text-gray-400 dark:text-slate-500 italic">No car #</span>

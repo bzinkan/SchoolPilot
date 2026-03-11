@@ -279,16 +279,22 @@ function getFrontendUrl(): string {
 }
 
 // GET /api/auth/google — Initiate Google OAuth login
+// Accepts optional ?redirect= to return the user to a specific path after login
 router.get("/google", (req, res) => {
   if (!process.env.GOOGLE_CLIENT_ID) {
     return res.status(503).json({ error: "Google OAuth not configured" });
   }
+
+  // Encode the desired post-login redirect path into OAuth state
+  const redirectPath = (req.query.redirect as string) || "";
+  const state = redirectPath ? Buffer.from(redirectPath).toString("base64url") : "";
 
   const oauth2Client = getLoginOAuth2Client();
   const url = oauth2Client.generateAuthUrl({
     access_type: "online",
     scope: ["openid", "profile", "email"],
     prompt: "select_account",
+    ...(state ? { state } : {}),
   });
 
   return res.redirect(url);
@@ -360,6 +366,32 @@ router.get("/google/callback", async (req, res, next) => {
       req.session.save((err) => (err ? reject(err) : resolve()));
     });
 
+    // Decode redirect hint from OAuth state (if provided)
+    const stateParam = req.query.state as string;
+    let redirectAfter = "";
+    if (stateParam) {
+      try {
+        const decoded = Buffer.from(stateParam, "base64url").toString();
+        // Only allow relative paths starting with /
+        if (decoded.startsWith("/")) redirectAfter = decoded;
+      } catch { /* ignore invalid state */ }
+    }
+
+    // Resolve /gopilot to the correct role-based path
+    if (redirectAfter === "/gopilot") {
+      const gopilotRole = firstMembership?.membership.gopilotRole || firstMembership?.membership.role;
+      if (gopilotRole === "parent") redirectAfter = "/gopilot/parent";
+      else if (gopilotRole === "teacher") redirectAfter = "/gopilot/teacher";
+      // else stays /gopilot (office/admin dashboard)
+    }
+
+    // Native GoPilot app: redirect via deep link back into the app
+    if (redirectAfter.startsWith("/gopilot")) {
+      const deepLink = `com.schoolpilot.gopilot://auth/callback?token=${encodeURIComponent(token)}&redirect=${encodeURIComponent(redirectAfter)}`;
+      return res.redirect(deepLink);
+    }
+
+    // Web login: go to /login as usual
     return res.redirect(`${frontendUrl}/login?token=${encodeURIComponent(token)}`);
   } catch (err) {
     console.error("[auth] Google OAuth callback error:", err);

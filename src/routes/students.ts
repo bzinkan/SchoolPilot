@@ -18,6 +18,10 @@ import {
   autoAssignFamilyGroups,
 } from "../services/storage.js";
 import type { InsertStudent } from "../schema/students.js";
+import db from "../db.js";
+import { eq } from "drizzle-orm";
+import { familyGroups, familyGroupStudents } from "../schema/gopilot.js";
+import { homerooms } from "../schema/gopilot.js";
 
 const router = Router();
 
@@ -47,7 +51,47 @@ router.get("/", ...schoolContext, async (req, res, next) => {
       dismissalType,
     });
 
-    return res.json({ students: studentsList });
+    // Enrich with car numbers from family_groups and homeroom names
+    const studentIds = studentsList.map((s) => s.id);
+    let carNumberMap: Record<string, string> = {};
+    let homeroomMap: Record<string, { name: string; grade: string }> = {};
+
+    if (studentIds.length > 0) {
+      // Get car numbers via family_group_students → family_groups
+      const fgRows = await db
+        .select({
+          studentId: familyGroupStudents.studentId,
+          carNumber: familyGroups.carNumber,
+        })
+        .from(familyGroupStudents)
+        .innerJoin(familyGroups, eq(familyGroups.id, familyGroupStudents.familyGroupId))
+        .where(eq(familyGroups.schoolId, res.locals.schoolId!));
+
+      for (const row of fgRows) {
+        if (row.carNumber) carNumberMap[row.studentId] = row.carNumber;
+      }
+
+      // Get homeroom names
+      const homeroomIds = [...new Set(studentsList.filter((s) => s.homeroomId).map((s) => s.homeroomId!))];
+      if (homeroomIds.length > 0) {
+        const hrRows = await db.select().from(homerooms).where(eq(homerooms.schoolId, res.locals.schoolId!));
+        for (const hr of hrRows) {
+          homeroomMap[hr.id] = { name: hr.name, grade: hr.grade || "" };
+        }
+      }
+    }
+
+    const enriched = studentsList.map((s) => {
+      const hr = s.homeroomId ? homeroomMap[s.homeroomId] : undefined;
+      return {
+        ...s,
+        carNumber: carNumberMap[s.id] || null,
+        homeroomName: hr?.name || null,
+        homeroomGrade: hr?.grade || null,
+      };
+    });
+
+    return res.json({ students: enriched });
   } catch (err) {
     next(err);
   }

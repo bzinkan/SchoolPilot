@@ -3,6 +3,7 @@ import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
 import { requireProductLicense } from "../../middleware/requireProductLicense.js";
+import { requireRole } from "../../middleware/requireRole.js";
 import {
   getSchoolById,
   getSessionById,
@@ -640,7 +641,7 @@ router.post("/queue/:id/dismiss", ...auth, async (req, res, next) => {
 });
 
 // POST /api/gopilot/dismissal/queue/dismiss-batch - Batch dismiss
-router.post("/queue/dismiss-batch", ...auth, async (req, res, next) => {
+router.post("/queue/dismiss-batch", ...auth, requireRole("admin", "office_staff", "teacher"), async (req, res, next) => {
   try {
     const { queueIds } = req.body;
     if (!Array.isArray(queueIds) || queueIds.length === 0) {
@@ -662,7 +663,7 @@ router.post("/queue/dismiss-batch", ...auth, async (req, res, next) => {
 });
 
 // POST /api/gopilot/dismissal/queue/release-batch - Batch release
-router.post("/queue/release-batch", ...auth, async (req, res, next) => {
+router.post("/queue/release-batch", ...auth, requireRole("admin", "office_staff", "teacher"), async (req, res, next) => {
   try {
     const { queueIds } = req.body;
     if (!Array.isArray(queueIds) || queueIds.length === 0) {

@@ -176,6 +176,18 @@ export default function ParentApp() {
     return () => { cancelled = true; };
   }, [currentSchool?.id]);
 
+  // Handle Android back button — return to home view instead of navigating away
+  useEffect(() => {
+    if (currentView !== 'home') {
+      window.history.pushState({ parentView: currentView }, '');
+      const handlePopState = () => {
+        setCurrentView('home');
+      };
+      window.addEventListener('popstate', handlePopState);
+      return () => window.removeEventListener('popstate', handlePopState);
+    }
+  }, [currentView]);
+
   // Redirect to onboarding if parent has no children linked and no car number
   useEffect(() => {
     if (!loading && children.length === 0 && !currentSchool?.carNumber) {
@@ -645,7 +657,7 @@ export default function ParentApp() {
 
             {/* Checked in — show Pickup Complete button */}
             {checkInStatus === 'checked-in' && (
-              <Card className="p-6 mb-4 border-2 border-blue-200 bg-blue-50">
+              <div className="rounded-lg p-6 mb-4 border-2 shadow-sm" style={{ borderColor: '#bfdbfe', backgroundColor: '#eff6ff' }}>
                 <div className="text-center">
                   <Car className="w-10 h-10 text-blue-600 mx-auto mb-3" />
                   <h2 className="font-semibold text-lg mb-1">You're checked in!</h2>
@@ -655,18 +667,18 @@ export default function ParentApp() {
                     Pickup Complete
                   </Button>
                 </div>
-              </Card>
+              </div>
             )}
 
             {/* Pickup Complete — persists until midnight */}
             {checkInStatus === 'complete' && (
-              <Card className="p-6 mb-4 bg-green-500 text-white">
+              <div className="rounded-lg p-6 mb-4 shadow-sm" style={{ backgroundColor: '#22c55e', color: '#ffffff' }}>
                 <div className="text-center py-4">
                   <CheckCircle2 className="w-16 h-16 mx-auto mb-4" />
                   <p className="font-bold text-xl">Pickup Complete</p>
-                  <p className="text-green-100">Have a great day!</p>
+                  <p style={{ color: '#bbf7d0' }}>Have a great day!</p>
                 </div>
-              </Card>
+              </div>
             )}
 
             {/* Quick Actions */}
