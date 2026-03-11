@@ -169,7 +169,7 @@ module "ecs" {
   environment        = var.environment
   aws_region         = var.aws_region
   vpc_id             = module.vpc.vpc_id
-  private_subnet_ids = module.vpc.private_subnet_ids
+  public_subnet_ids = module.vpc.public_subnet_ids
   alb_target_group_arn = module.alb.target_group_arn
   ecr_repository_url = module.ecr.repository_url
   container_port     = 4000
