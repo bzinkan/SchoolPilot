@@ -39,7 +39,7 @@ export default function PassPilotLanding() {
         </p>
         <div className="flex gap-4 justify-center flex-wrap">
           <a
-            href="/login"
+            href="/#signup"
             className="inline-flex items-center justify-center rounded-md bg-blue-600 px-6 py-3 text-base font-medium text-white shadow-lg hover:bg-blue-700 transition-colors"
           >
             Start Free Trial
@@ -131,10 +131,10 @@ export default function PassPilotLanding() {
         <div className="max-w-2xl mx-auto px-4">
           <h2 className="text-3xl md:text-4xl font-bold mb-4">Ready to go paperless?</h2>
           <p className="text-lg opacity-90 mb-8">
-            Start your free 30-day trial. No credit card required.
+            Try PassPilot free through the end of the school year. No credit card required.
           </p>
           <a
-            href="/login"
+            href="/#signup"
             className="inline-flex items-center justify-center rounded-md bg-white text-blue-700 px-8 py-4 text-lg font-semibold shadow-lg hover:bg-slate-50 transition-colors"
           >
             Start Free Trial →

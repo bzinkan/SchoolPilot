@@ -259,7 +259,7 @@ export default function ClassPilotLanding() {
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
           <a href="/login" className="cp-nav-link">Sign in</a>
-          <a href="/login" className="cp-btn-primary">Start Free Trial</a>
+          <a href="/#signup" className="cp-btn-primary">Start Free Trial</a>
         </div>
       </nav>
 
@@ -312,7 +312,7 @@ export default function ClassPilotLanding() {
           </p>
 
           <div className="fade-4" style={{ display: 'flex', gap: '16px', marginBottom: '48px', flexWrap: 'wrap' }}>
-            <a href="/login" className="cp-btn-primary" style={{ padding: '18px 36px', fontSize: '16px' }}>
+            <a href="/#signup" className="cp-btn-primary" style={{ padding: '18px 36px', fontSize: '16px' }}>
               Start Free Trial →
             </a>
             <a href="#features" className="cp-btn-secondary" style={{ padding: '18px 36px', fontSize: '16px' }}>
@@ -328,8 +328,8 @@ export default function ClassPilotLanding() {
             flexWrap: 'wrap',
           }}>
             <div>
-              <div style={{ fontSize: '28px', fontWeight: 600, letterSpacing: '-1px', color: '#f8fafc' }}>30 days</div>
-              <div style={{ fontSize: '14px', color: '#64748b' }}>free trial</div>
+              <div style={{ fontSize: '28px', fontWeight: 600, letterSpacing: '-1px', color: '#f8fafc' }}>Free</div>
+              <div style={{ fontSize: '14px', color: '#64748b' }}>through June</div>
             </div>
             <div>
               <div style={{ fontSize: '28px', fontWeight: 600, letterSpacing: '-1px', color: '#f8fafc' }}>10 min</div>
@@ -876,9 +876,9 @@ export default function ClassPilotLanding() {
           maxWidth: '500px',
           margin: '0 auto 40px',
         }}>
-          Start your free 30-day trial. No credit card required. Setup takes less than 10 minutes.
+          Try ClassPilot free through the end of the school year. No credit card required. Setup takes less than 10 minutes.
         </p>
-        <a href="/login" style={{
+        <a href="/#signup" style={{
           background: '#0f172a',
           color: '#fbbf24',
           border: 'none',

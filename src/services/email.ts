@@ -66,6 +66,55 @@ export async function sendTrialRequestNotification(request: {
   });
 }
 
+export async function sendTrialRequestConfirmation(request: {
+  contactName: string;
+  contactEmail: string;
+  schoolName: string;
+}): Promise<boolean> {
+  return sendEmail({
+    to: request.contactEmail,
+    subject: "Welcome to SchoolPilot — we're setting you up",
+    html: `
+      <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2>Welcome to SchoolPilot!</h2>
+        <p>Hi ${request.contactName},</p>
+        <p>Thanks for signing up! We're getting <strong>${request.schoolName}</strong> set up now — you'll receive a confirmation within 24 hours to begin your free SchoolPilot trial (good through June 1st).</p>
+        <p>Once activated, you'll log in with your school Google account — no extra passwords needed.</p>
+        <p>Here's what you'll get access to:</p>
+        <ul>
+          <li><strong>ClassPilot</strong> — real-time Chromebook monitoring</li>
+          <li><strong>PassPilot</strong> — digital hall passes</li>
+          <li><strong>GoPilot</strong> — dismissal management</li>
+        </ul>
+        <p>Questions? Just reply to this email.</p>
+        <p style="margin-top: 24px;">— The SchoolPilot Team</p>
+      </div>
+    `,
+  });
+}
+
+export async function sendTrialExpirationEmail(options: {
+  to: string;
+  contactName: string;
+  schoolName: string;
+  trialEndsAt: string;
+}): Promise<boolean> {
+  return sendEmail({
+    to: options.to,
+    subject: "Your SchoolPilot trial is ending soon",
+    html: `
+      <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2>Your trial is ending soon</h2>
+        <p>Hi ${options.contactName},</p>
+        <p>Your free trial for <strong>${options.schoolName}</strong> ends on <strong>${options.trialEndsAt}</strong>.</p>
+        <p>If you'd like to keep using SchoolPilot, we'd love to set you up on an annual plan — starting at just $2/student for a single app, or bundle all three for ~$6/student.</p>
+        <p>Reply to this email and we'll get you sorted.</p>
+        <p style="margin-top: 24px;">— The SchoolPilot Team</p>
+      </div>
+    `,
+  });
+}
+
 export async function sendSafetyAlertEmail(options: {
   recipients: string[];
   studentEmail: string;

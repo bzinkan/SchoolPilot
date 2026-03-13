@@ -56,6 +56,8 @@ export default function SchoolDetail() {
   const [invoiceResult, setInvoiceResult] = useState(null);
   const [expandedInvoiceId, setExpandedInvoiceId] = useState(null);
   const [showNewInvoice, setShowNewInvoice] = useState(false);
+  const [sendingExpiration, setSendingExpiration] = useState(false);
+  const [expirationResult, setExpirationResult] = useState(null);
 
   // Tax cert
   const [taxCertRequesting, setTaxCertRequesting] = useState(false);
@@ -427,7 +429,35 @@ export default function SchoolDetail() {
 
       {/* Billing & Invoicing */}
       <div className="bg-white rounded-xl border border-slate-200 p-6 mb-6">
-        <h2 className="font-semibold text-slate-900 mb-4">Billing & Invoicing</h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-semibold text-slate-900">Billing & Invoicing</h2>
+          {school?.status === 'trial' && (
+            <button
+              onClick={async () => {
+                setSendingExpiration(true);
+                setExpirationResult(null);
+                try {
+                  const res = await api.post(`/super-admin/schools/${id}/send-expiration-email`);
+                  setExpirationResult({ ok: true, sentTo: res.data.sentTo });
+                } catch (err) {
+                  setExpirationResult({ ok: false, error: err.response?.data?.error || 'Failed to send' });
+                } finally {
+                  setSendingExpiration(false);
+                }
+              }}
+              disabled={sendingExpiration}
+              className="px-3 py-1.5 text-xs font-medium rounded-lg bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 disabled:opacity-50"
+            >
+              {sendingExpiration ? 'Sending...' : 'Send Trial Expiration Reminder'}
+            </button>
+          )}
+        </div>
+
+        {expirationResult && (
+          <div className={`mb-4 p-3 rounded-lg text-sm ${expirationResult.ok ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-red-50 border border-red-200 text-red-700'}`}>
+            {expirationResult.ok ? `Expiration reminder sent to ${expirationResult.sentTo}` : expirationResult.error}
+          </div>
+        )}
 
         {invoiceResult && (
           <div className="mb-4 p-4 bg-green-50 border border-green-200 rounded-lg">

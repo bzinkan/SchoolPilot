@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { useAuth } from "../contexts/AuthContext";
 import { useLicenses } from "../contexts/LicenseContext";
+import api from '../shared/utils/api';
 
 export default function SchoolpilotLanding() {
   const { user } = useAuth();
@@ -51,7 +53,7 @@ export default function SchoolpilotLanding() {
 
           <div style={{ display: "flex", alignItems: "center", gap: 32 }}>
             <a href="#products" style={{ color: "#64748b", textDecoration: "none", fontSize: 15, fontWeight: 500 }}>Products</a>
-            <a href="#contact" style={{ color: "#64748b", textDecoration: "none", fontSize: 15, fontWeight: 500 }}>Contact</a>
+            <a href="#signup" style={{ color: "#64748b", textDecoration: "none", fontSize: 15, fontWeight: 500 }}>Get Started</a>
             {user ? (
               <a href={dashboardPath} style={{
                 background: "#1e3a5f", color: "#fff", padding: "10px 20px",
@@ -227,31 +229,20 @@ export default function SchoolpilotLanding() {
         </div>
       </section>
 
-      {/* Contact Section */}
-      <section id="contact" style={{ padding: "100px 24px", background: "#1e3a5f" }}>
-        <div style={{ maxWidth: 600, margin: "0 auto", textAlign: "center" }}>
+      {/* Sign-Up / Contact Section */}
+      <section id="signup" style={{ padding: "100px 24px", background: "#1e3a5f" }}>
+        <div style={{ maxWidth: 520, margin: "0 auto" }}>
           <h2 style={{
             fontFamily: "'Fraunces', serif", fontSize: 36, fontWeight: 700,
-            color: "#fff", marginBottom: 16,
+            color: "#fff", marginBottom: 16, textAlign: "center",
           }}>
-            Get in Touch
+            Get Started Free
           </h2>
-          <p style={{ fontSize: 18, color: "#94a3b8", marginBottom: 40, lineHeight: 1.7 }}>
-            Have questions? Want a demo? We'd love to hear from you.
+          <p style={{ fontSize: 18, color: "#94a3b8", marginBottom: 40, lineHeight: 1.7, textAlign: "center" }}>
+            Try SchoolPilot free through the end of the school year. No credit card required.
           </p>
 
-          <a
-            href="mailto:info@school-pilot.net"
-            style={{
-              display: "inline-flex", alignItems: "center", gap: 12,
-              background: "#eab308", color: "#1e3a5f",
-              padding: "18px 36px", borderRadius: 12,
-              textDecoration: "none", fontSize: 18, fontWeight: 600,
-            }}
-          >
-            <EmailIcon />
-            info@school-pilot.net
-          </a>
+          <SignUpForm />
         </div>
       </section>
 
@@ -279,6 +270,125 @@ export default function SchoolpilotLanding() {
         </div>
       </footer>
     </div>
+  );
+}
+
+// ============================================================
+// SIGN-UP FORM
+// ============================================================
+
+function SignUpForm() {
+  const [form, setForm] = useState({ schoolName: '', contactName: '', contactEmail: '', estimatedStudents: '' });
+  const [products, setProducts] = useState([]);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const [error, setError] = useState('');
+
+  const toggleProduct = (p) => setProducts(prev => prev.includes(p) ? prev.filter(x => x !== p) : [...prev, p]);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+    setSubmitting(true);
+    try {
+      await api.post('/admin/trial-requests', {
+        ...form,
+        product: products.join(',') || null,
+      });
+      setSubmitted(true);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Something went wrong. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (submitted) {
+    return (
+      <div style={{
+        background: "rgba(255,255,255,0.1)", borderRadius: 16, padding: 40, textAlign: "center",
+      }}>
+        <CheckCircleIcon />
+        <h3 style={{ fontFamily: "'Fraunces', serif", fontSize: 24, fontWeight: 700, color: "#fff", margin: "16px 0 12px" }}>
+          We're on it!
+        </h3>
+        <p style={{ fontSize: 16, color: "#94a3b8", lineHeight: 1.7 }}>
+          Check your inbox for a confirmation email. We'll have your account ready within 24 hours.
+        </p>
+      </div>
+    );
+  }
+
+  const inputStyle = {
+    width: "100%", padding: "12px 16px", borderRadius: 10,
+    border: "1px solid rgba(255,255,255,0.2)", background: "rgba(255,255,255,0.08)",
+    color: "#fff", fontSize: 15, outline: "none",
+  };
+
+  const labelStyle = { display: "block", fontSize: 13, fontWeight: 600, color: "#94a3b8", marginBottom: 6 };
+
+  return (
+    <form onSubmit={handleSubmit}>
+      <div style={{ display: "grid", gap: 16 }}>
+        <div>
+          <label style={labelStyle}>School Name *</label>
+          <input required style={inputStyle} value={form.schoolName} placeholder="Lincoln Elementary"
+            onChange={(e) => setForm({ ...form, schoolName: e.target.value })} />
+        </div>
+        <div>
+          <label style={labelStyle}>Your Name *</label>
+          <input required style={inputStyle} value={form.contactName} placeholder="Jane Smith"
+            onChange={(e) => setForm({ ...form, contactName: e.target.value })} />
+        </div>
+        <div>
+          <label style={labelStyle}>Email *</label>
+          <input required type="email" style={inputStyle} value={form.contactEmail} placeholder="jsmith@school.edu"
+            onChange={(e) => setForm({ ...form, contactEmail: e.target.value })} />
+        </div>
+        <div>
+          <label style={labelStyle}>Estimated Students</label>
+          <input type="number" style={inputStyle} value={form.estimatedStudents} placeholder="300"
+            onChange={(e) => setForm({ ...form, estimatedStudents: e.target.value })} />
+        </div>
+        <div>
+          <label style={labelStyle}>Products you're interested in</label>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {[
+              { key: 'CLASSPILOT', label: 'ClassPilot', color: '#eab308' },
+              { key: 'PASSPILOT', label: 'PassPilot', color: '#3b5bdb' },
+              { key: 'GOPILOT', label: 'GoPilot', color: '#6366f1' },
+            ].map(p => {
+              const active = products.includes(p.key);
+              return (
+                <button type="button" key={p.key} onClick={() => toggleProduct(p.key)} style={{
+                  padding: "8px 16px", borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: "pointer",
+                  border: active ? `2px solid ${p.color}` : "2px solid rgba(255,255,255,0.2)",
+                  background: active ? p.color : "transparent",
+                  color: active ? (p.key === 'CLASSPILOT' ? '#1e3a5f' : '#fff') : "#94a3b8",
+                }}>
+                  {p.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {error && <p style={{ color: "#f87171", fontSize: 14, marginTop: 12 }}>{error}</p>}
+
+      <button type="submit" disabled={submitting} className="cta-btn" style={{
+        width: "100%", marginTop: 24, padding: "16px", borderRadius: 12,
+        background: "#eab308", color: "#1e3a5f", fontSize: 16, fontWeight: 700,
+        border: "none", cursor: submitting ? "not-allowed" : "pointer",
+        opacity: submitting ? 0.7 : 1,
+      }}>
+        {submitting ? 'Submitting...' : 'Start Your Free Trial'}
+      </button>
+
+      <p style={{ textAlign: "center", fontSize: 13, color: "#64748b", marginTop: 12 }}>
+        Free through end of school year. No credit card required.
+      </p>
+    </form>
   );
 }
 
@@ -351,10 +461,10 @@ function ArrowRightIcon() {
   );
 }
 
-function EmailIcon() {
+function CheckCircleIcon() {
   return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="2" y="4" width="20" height="16" rx="2"/><path d="M22 6l-10 7L2 6"/>
+    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#22c55e" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>
     </svg>
   );
 }

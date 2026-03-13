@@ -7,7 +7,7 @@ import {
   updateTrialRequest,
   deleteTrialRequest,
 } from "../../services/storage.js";
-import { sendTrialRequestNotification } from "../../services/email.js";
+import { sendTrialRequestNotification, sendTrialRequestConfirmation } from "../../services/email.js";
 
 const router = Router();
 
@@ -77,6 +77,12 @@ router.post("/", async (req, res, next) => {
       contactName,
       contactEmail,
       product,
+    });
+
+    await sendTrialRequestConfirmation({
+      contactName,
+      contactEmail,
+      schoolName,
     });
 
     return res.status(201).json({ success: true, request });

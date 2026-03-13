@@ -29,13 +29,13 @@ export default function GoPilotLanding() {
 
             <div className="flex flex-col sm:flex-row gap-4 justify-center mb-12">
               <a
-                href="/login"
+                href="/#signup"
                 className="bg-white text-indigo-600 px-8 py-4 rounded-lg font-semibold hover:bg-gray-50 transition duration-200 shadow-lg text-center no-underline"
               >
                 Get Started
               </a>
               <a
-                href="/login"
+                href="/#signup"
                 className="bg-transparent border-2 border-white text-white px-8 py-4 rounded-lg font-semibold hover:bg-white hover:text-indigo-600 transition duration-200 text-center no-underline"
               >
                 Log In
@@ -185,7 +185,7 @@ export default function GoPilotLanding() {
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center mb-8">
             <a
-              href="/login"
+              href="/#signup"
               className="bg-white text-indigo-600 px-8 py-4 rounded-lg font-semibold hover:bg-gray-50 transition duration-200 shadow-lg inline-flex items-center justify-center gap-2 no-underline"
             >
               Get Started Free
@@ -195,7 +195,7 @@ export default function GoPilotLanding() {
               </svg>
             </a>
             <a
-              href="/login"
+              href="/#signup"
               className="bg-transparent border-2 border-white text-white px-8 py-4 rounded-lg font-semibold hover:bg-white hover:text-indigo-600 transition duration-200 no-underline text-center"
             >
               Log In
@@ -212,7 +212,7 @@ export default function GoPilotLanding() {
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="20 6 9 17 4 12"/>
               </svg>
-              30-day free trial
+              Free through June
             </span>
             <span className="flex items-center gap-1">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
