@@ -47,6 +47,7 @@ const settingsSchema = z.object({
   blockedDomains: z.string(),
   ipAllowlist: z.string(),
   aiSafetyEmailsEnabled: z.boolean().optional(),
+  autoBlockUnsafeUrls: z.boolean().optional(),
 });
 
 export default function Settings() {
@@ -85,6 +86,7 @@ export default function Settings() {
       blockedDomains: settings?.blockedDomains?.join(", ") || "",
       ipAllowlist: settings?.ipAllowlist?.join(", ") || "",
       aiSafetyEmailsEnabled: settings?.aiSafetyEmailsEnabled !== false,
+      autoBlockUnsafeUrls: settings?.autoBlockUnsafeUrls !== false,
     },
   });
 
@@ -98,6 +100,7 @@ export default function Settings() {
         blockedDomains: settings.blockedDomains?.join(", ") || "",
         ipAllowlist: settings.ipAllowlist?.join(", ") || "",
         aiSafetyEmailsEnabled: settings.aiSafetyEmailsEnabled !== false,
+        autoBlockUnsafeUrls: settings.autoBlockUnsafeUrls !== false,
       });
     }
   }, [settings, form]);
@@ -120,6 +123,7 @@ export default function Settings() {
           .map((ip) => ip.trim())
           .filter(Boolean),
         aiSafetyEmailsEnabled: data.aiSafetyEmailsEnabled !== false,
+        autoBlockUnsafeUrls: data.autoBlockUnsafeUrls !== false,
       };
       return await apiRequest("POST", "/settings", payload);
     },
@@ -413,6 +417,21 @@ export default function Settings() {
               </div>
               <p className="text-xs text-muted-foreground -mt-4 ml-7">
                 Send email notifications to school admins when dangerous content (self-harm, violence, sexual) is detected.
+              </p>
+
+              <div className="flex items-center space-x-3">
+                <input
+                  type="checkbox"
+                  id="autoBlockUnsafeUrls"
+                  className="h-4 w-4 rounded border-gray-300"
+                  {...form.register("autoBlockUnsafeUrls")}
+                />
+                <Label htmlFor="autoBlockUnsafeUrls">
+                  Auto-Block Unsafe Content
+                </Label>
+              </div>
+              <p className="text-xs text-muted-foreground -mt-4 ml-7">
+                Automatically block domains flagged by AI for self-harm, violence, sexual, or drug content. Blocked domains appear in your blocklist above.
               </p>
 
               <Button

@@ -137,7 +137,7 @@ router.post("/settings", ...auth, async (req, res, next) => {
   try {
     const {
       maxTabsPerStudent, allowedDomains, blockedDomains, defaultFlightPathId,
-      schoolName, retentionHours, ipAllowlist, aiSafetyEmailsEnabled,
+      schoolName, retentionHours, ipAllowlist, aiSafetyEmailsEnabled, autoBlockUnsafeUrls,
     } = req.body;
 
     // Teacher-specific settings
@@ -153,7 +153,7 @@ router.post("/settings", ...auth, async (req, res, next) => {
     // The admin page sends schoolName/retentionHours/ipAllowlist/aiSafetyEmailsEnabled
     // which the teacher's MySettings page never includes.
     const isAdminSettingsRequest = schoolName !== undefined || retentionHours !== undefined
-      || ipAllowlist !== undefined || aiSafetyEmailsEnabled !== undefined;
+      || ipAllowlist !== undefined || aiSafetyEmailsEnabled !== undefined || autoBlockUnsafeUrls !== undefined;
 
     if (isAdminSettingsRequest) {
       const schoolId = res.locals.schoolId!;
@@ -165,6 +165,7 @@ router.post("/settings", ...auth, async (req, res, next) => {
       if (allowedDomains !== undefined) schoolData.allowedDomains = allowedDomains;
       if (maxTabsPerStudent !== undefined) schoolData.maxTabsPerStudent = maxTabsPerStudent || null;
       if (aiSafetyEmailsEnabled !== undefined) schoolData.aiSafetyEmailsEnabled = aiSafetyEmailsEnabled !== false;
+      if (autoBlockUnsafeUrls !== undefined) schoolData.autoBlockUnsafeUrls = autoBlockUnsafeUrls !== false;
 
       if (Object.keys(schoolData).length > 0) {
         await upsertSettings(schoolId, schoolData);

@@ -28,6 +28,7 @@ import {
   getActiveStudentForDevice,
   setActiveStudentForDevice,
   getAdminEmailsBySchool,
+  upsertSettings,
 } from "../../services/storage.js";
 import { sendSafetyAlertEmail } from "../../services/email.js";
 import { createStudentToken } from "../../services/deviceJwt.js";
@@ -538,6 +539,25 @@ router.post("/device/heartbeat", requireDeviceAuth, async (req, res, next) => {
             }).catch((err) => {
               console.error("[Safety] Failed to send alert emails:", err);
             });
+          }
+
+          // Auto-block the flagged domain school-wide
+          if (schoolSettings?.autoBlockUnsafeUrls !== false) {
+            const currentBlocked = schoolSettings?.blockedDomains || [];
+            if (!currentBlocked.includes(classification.domain)) {
+              const updatedBlocked = [...currentBlocked, classification.domain];
+              upsertSettings(schoolId, { blockedDomains: updatedBlocked }).then(() => {
+                console.log(`[Safety] Auto-blocked domain: ${classification.domain} for school ${schoolId}`);
+                const blacklistMsg = {
+                  type: "update-global-blacklist",
+                  blockedDomains: updatedBlocked,
+                };
+                broadcastToStudentsLocal(schoolId, blacklistMsg);
+                void publishWS({ kind: "students", schoolId }, blacklistMsg);
+              }).catch((err) => {
+                console.error("[Safety] Failed to auto-block domain:", err);
+              });
+            }
           }
         }
       }).catch(() => { /* non-blocking */ });
