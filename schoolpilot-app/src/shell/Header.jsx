@@ -5,7 +5,7 @@ import ProductSwitcher from './ProductSwitcher';
 import SchoolSwitcher from './SchoolSwitcher';
 
 export default function Header({ onToggleSidebar }) {
-  const { user, activeMembership, logout } = useAuth();
+  const { user, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
