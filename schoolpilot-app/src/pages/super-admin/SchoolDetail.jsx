@@ -257,7 +257,7 @@ export default function SchoolDetail() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (school?.id) { loadBilling(); setInvoiceStudentCount(school.studentCount ?? 0); } }, [school?.id]);
 
-  const has24x7 = hoursForm.afterHoursMode !== 'off';
+  const has24x7 = !hoursForm.enabled;
 
   const handleSendInvoice = async () => {
     const preview = calculateInvoicePreview(activeProducts, invoiceStudentCount, { has24x7Monitoring: has24x7 });
