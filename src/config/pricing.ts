@@ -1,63 +1,73 @@
 export const PRODUCT_PRICING = {
   CLASSPILOT: {
     label: "ClassPilot",
-    basePriceDollars: 500,
-    perStudentDollars: 2,
+    basePriceDollars: 0,
+    perStudentDollars: 3,
     stripeProductId: process.env.STRIPE_PRODUCT_CLASSPILOT || "prod_U6MPNh7Ygg2xZ5",
   },
   GOPILOT: {
     label: "GoPilot",
-    basePriceDollars: 300,
-    perStudentDollars: 2,
+    basePriceDollars: 0,
+    perStudentDollars: 3,
     stripeProductId: process.env.STRIPE_PRODUCT_GOPILOT || "prod_U6MPwHnROzofRz",
   },
   PASSPILOT: {
     label: "PassPilot",
     basePriceDollars: 0,
-    perStudentDollars: 2,
+    perStudentDollars: 3,
     stripeProductId: process.env.STRIPE_PRODUCT_PASSPILOT || "prod_U6MPEdSLnMl3Or",
   },
 } as const;
 
 export type ProductKey = keyof typeof PRODUCT_PRICING;
 
+// Per-student rate by number of products: 1 app = $3, 2 apps = $5 ($2.50 each), 3 apps = $7 (~$2.33 each)
+export const PER_STUDENT_BY_PRODUCT_COUNT: Record<number, number> = {
+  1: 3,
+  2: 5,
+  3: 7,
+};
+
+// Legacy — kept for compatibility but no longer used
 export const BUNDLE_DISCOUNTS: Record<number, number> = {
-  2: 0.1,
-  3: 0.2,
+  2: 0,
+  3: 0,
 };
 
 export function calculateInvoice(
   products: ProductKey[],
   studentCount: number
 ) {
+  const productCount = products.length;
+  const bundlePerStudent = PER_STUDENT_BY_PRODUCT_COUNT[productCount] ?? (productCount * 3);
+  const perStudentDollars = bundlePerStudent / productCount;
+
   const lineItems = products.map((key) => {
     const p = PRODUCT_PRICING[key];
-    const baseCents = Math.round(p.basePriceDollars * 100);
-    const perStudentCents = Math.round(p.perStudentDollars * 100);
+    const baseCents = 0;
+    const perStudentCents = Math.round(perStudentDollars * 100);
     const perStudentTotalCents = perStudentCents * studentCount;
     return {
       product: key,
       label: p.label,
       baseCents,
       perStudentCents,
-      perStudentDollars: p.perStudentDollars,
+      perStudentDollars,
       studentCount,
       perStudentTotalCents,
-      subtotalCents: baseCents + perStudentTotalCents,
+      subtotalCents: perStudentTotalCents,
     };
   });
 
   const subtotalCents = lineItems.reduce((sum, item) => sum + item.subtotalCents, 0);
-  const discountRate = BUNDLE_DISCOUNTS[products.length] ?? 0;
-  const discountCents = Math.round(subtotalCents * discountRate);
-  const totalCents = subtotalCents - discountCents;
+  const totalCents = subtotalCents;
 
   return {
     lineItems,
     subtotalCents,
-    discountRate,
-    discountCents,
+    discountRate: 0,
+    discountCents: 0,
     totalCents,
-    productCount: products.length,
+    productCount,
   };
 }

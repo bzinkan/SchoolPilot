@@ -107,7 +107,7 @@ export async function sendTrialExpirationEmail(options: {
         <h2>Your trial is ending soon</h2>
         <p>Hi ${options.contactName},</p>
         <p>Your free trial for <strong>${options.schoolName}</strong> ends on <strong>${options.trialEndsAt}</strong>.</p>
-        <p>If you'd like to keep using SchoolPilot, we'd love to set you up on an annual plan — starting at just $2/student for a single app, or bundle all three for ~$6/student.</p>
+        <p>If you'd like to keep using SchoolPilot, we'd love to set you up on an annual plan — just $3/student/year for any single app, $5/student for two, or $7/student for all three.</p>
         <p>Reply to this email and we'll get you sorted.</p>
         <p style="margin-top: 24px;">— The SchoolPilot Team</p>
       </div>

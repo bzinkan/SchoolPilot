@@ -116,14 +116,14 @@ Each school has entries in the `product_licenses` table (CLASSPILOT, PASSPILOT, 
 ### Billing & Stripe Integration
 Pricing is defined in `src/config/pricing.ts` (backend) and mirrored in `schoolpilot-app/src/shared/utils/pricing.js` (frontend). Keep both in sync when changing prices.
 
-**Product Pricing (Annual):**
-| Product | Base Fee | Per-Student |
-|---------|----------|-------------|
-| ClassPilot | $500 | $2/student |
-| GoPilot | $300 | $2/student |
-| PassPilot | $0 | $2/student |
+**Product Pricing (Annual, per-student):**
+| Products | Per-Student/Year |
+|----------|-----------------|
+| Any 1 app | $3/student |
+| Any 2 apps | $5/student |
+| All 3 apps | $7/student |
 
-**Bundle Discounts:** 2 products → 10% off, all 3 → 20% off.
+No base fees. Pure per-student pricing.
 
 **Invoice Flow:** Super admins send manual invoices from SchoolDetail page → `POST /super-admin/schools/:id/send-invoice` → creates per-product Stripe line items + discount → Stripe emails the school → school pays via hosted invoice → `invoice.paid` webhook activates school and extends product license expiry.
 

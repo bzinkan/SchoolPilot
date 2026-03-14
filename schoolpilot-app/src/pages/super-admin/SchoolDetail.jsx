@@ -568,7 +568,6 @@ export default function SchoolDetail() {
                         <thead className="bg-slate-50">
                           <tr>
                             <th className="text-left px-4 py-2 text-slate-600 font-medium">Product</th>
-                            <th className="text-right px-4 py-2 text-slate-600 font-medium">Base</th>
                             <th className="text-right px-4 py-2 text-slate-600 font-medium">Per-Student</th>
                             <th className="text-right px-4 py-2 text-slate-600 font-medium">Subtotal</th>
                           </tr>
@@ -578,9 +577,6 @@ export default function SchoolDetail() {
                             <tr key={item.product} className="border-t border-slate-100">
                               <td className="px-4 py-2 font-medium text-slate-900">{item.label}</td>
                               <td className="px-4 py-2 text-right text-slate-700">
-                                {item.baseCents > 0 ? formatCents(item.baseCents) : '—'}
-                              </td>
-                              <td className="px-4 py-2 text-right text-slate-700">
                                 {invoiceStudentCount} × ${item.perStudentDollars.toFixed(2)}
                               </td>
                               <td className="px-4 py-2 text-right text-slate-900 font-medium">{formatCents(item.subtotalCents)}</td>
@@ -588,20 +584,16 @@ export default function SchoolDetail() {
                           ))}
                         </tbody>
                         <tfoot>
-                          <tr className="border-t border-slate-200">
-                            <td colSpan={3} className="px-4 py-2 text-right text-slate-600">Subtotal</td>
-                            <td className="px-4 py-2 text-right text-slate-900 font-medium">{formatCents(preview.subtotalCents)}</td>
-                          </tr>
-                          {preview.discountCents > 0 && (
+                          {activeProducts.length > 1 && (
                             <tr className="border-t border-slate-100">
-                              <td colSpan={3} className="px-4 py-2 text-right text-green-700">
-                                Bundle Discount ({activeProducts.length} products — {Math.round(preview.discountRate * 100)}% off)
+                              <td colSpan={2} className="px-4 py-2 text-right text-green-700">
+                                Bundle Rate ({activeProducts.length} apps — ${(preview.totalCents / 100 / invoiceStudentCount).toFixed(2)}/student)
                               </td>
-                              <td className="px-4 py-2 text-right text-green-700 font-medium">-{formatCents(preview.discountCents)}</td>
+                              <td className="px-4 py-2 text-right text-green-700 font-medium">{formatCents(preview.totalCents)}</td>
                             </tr>
                           )}
                           <tr className="border-t-2 border-slate-300 bg-slate-50">
-                            <td colSpan={3} className="px-4 py-2 text-right text-slate-900 font-semibold">Total Due (Annual)</td>
+                            <td colSpan={2} className="px-4 py-2 text-right text-slate-900 font-semibold">Total Due (Annual)</td>
                             <td className="px-4 py-2 text-right text-slate-900 font-bold text-base">{formatCents(preview.totalCents)}</td>
                           </tr>
                         </tfoot>
