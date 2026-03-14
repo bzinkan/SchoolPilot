@@ -279,6 +279,7 @@ router.post(
         products: requestedProducts,
         daysUntilDue = 30,
         billingEmail,
+        has24x7Monitoring,
       } = req.body;
 
       if (!studentCount || studentCount < 1) {
@@ -321,7 +322,7 @@ router.post(
       }
 
       // Calculate pricing
-      const pricing = calculateInvoice(invoiceProducts, studentCount);
+      const pricing = calculateInvoice(invoiceProducts, studentCount, { has24x7Monitoring: !!has24x7Monitoring });
 
       // Create invoice
       const productLabels = invoiceProducts.map((p) => PRODUCT_PRICING[p].label).join(", ");
@@ -373,14 +374,18 @@ router.post(
         }
       }
 
-      // Discount line (negative amount)
-      if (pricing.discountCents > 0) {
+      // 24/7 monitoring add-on
+      if (pricing.addonCents > 0) {
         await stripe.invoiceItems.create({
           customer: customerId,
           invoice: invoice.id,
-          amount: -pricing.discountCents,
-          currency: "usd",
-          description: `Multi-Product Discount (${pricing.productCount} products — ${Math.round(pricing.discountRate * 100)}% off)`,
+          price_data: {
+            product: PRODUCT_PRICING.CLASSPILOT.stripeProductId,
+            currency: "usd",
+            unit_amount: 100,
+          },
+          quantity: studentCount,
+          description: `24/7 Monitoring Add-On ($1.00/student)`,
         });
       }
 

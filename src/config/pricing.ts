@@ -28,6 +28,9 @@ export const PER_STUDENT_BY_PRODUCT_COUNT: Record<number, number> = {
   3: 7,
 };
 
+// 24/7 monitoring add-on: $1/student/year
+export const MONITORING_24_7_PER_STUDENT = 1;
+
 // Legacy — kept for compatibility but no longer used
 export const BUNDLE_DISCOUNTS: Record<number, number> = {
   2: 0,
@@ -36,7 +39,8 @@ export const BUNDLE_DISCOUNTS: Record<number, number> = {
 
 export function calculateInvoice(
   products: ProductKey[],
-  studentCount: number
+  studentCount: number,
+  options?: { has24x7Monitoring?: boolean }
 ) {
   const productCount = products.length;
   const bundlePerStudent = PER_STUDENT_BY_PRODUCT_COUNT[productCount] ?? (productCount * 3);
@@ -60,11 +64,19 @@ export function calculateInvoice(
   });
 
   const subtotalCents = lineItems.reduce((sum, item) => sum + item.subtotalCents, 0);
-  const totalCents = subtotalCents;
+
+  // 24/7 monitoring add-on
+  const addonCents = options?.has24x7Monitoring
+    ? MONITORING_24_7_PER_STUDENT * 100 * studentCount
+    : 0;
+
+  const totalCents = subtotalCents + addonCents;
 
   return {
     lineItems,
     subtotalCents,
+    addonCents,
+    addonLabel: options?.has24x7Monitoring ? "24/7 Monitoring" : null,
     discountRate: 0,
     discountCents: 0,
     totalCents,

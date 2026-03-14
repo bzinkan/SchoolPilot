@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ThemeToggle } from '../../components/ThemeToggle';
 import api from '../../shared/utils/api';
-import { calculateInvoicePreview, formatCents, PRODUCT_PRICING } from '../../shared/utils/pricing';
+import { calculateInvoicePreview, formatCents, PRODUCT_PRICING, MONITORING_24_7_PER_STUDENT } from '../../shared/utils/pricing';
 
 const statusColors = {
   active: 'bg-green-100 text-green-800',
@@ -257,8 +257,10 @@ export default function SchoolDetail() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (school?.id) { loadBilling(); setInvoiceStudentCount(school.studentCount ?? 0); } }, [school?.id]);
 
+  const has24x7 = hoursForm.afterHoursMode !== 'off';
+
   const handleSendInvoice = async () => {
-    const preview = calculateInvoicePreview(activeProducts, invoiceStudentCount);
+    const preview = calculateInvoicePreview(activeProducts, invoiceStudentCount, { has24x7Monitoring: has24x7 });
     if (!window.confirm(`Send invoice for ${formatCents(preview.totalCents)} to ${school.billingEmail || 'the school billing email'}?`)) return;
     try {
       setSendingInvoice(true);
@@ -266,6 +268,7 @@ export default function SchoolDetail() {
       const res = await api.post(`/super-admin/schools/${id}/send-invoice`, {
         studentCount: invoiceStudentCount,
         products: activeProducts,
+        has24x7Monitoring: has24x7,
       });
       setInvoiceResult(res.data);
       loadBilling();
@@ -561,7 +564,7 @@ export default function SchoolDetail() {
                 </div>
 
                 {(() => {
-                  const preview = calculateInvoicePreview(activeProducts, invoiceStudentCount);
+                  const preview = calculateInvoicePreview(activeProducts, invoiceStudentCount, { has24x7Monitoring: has24x7 });
                   return (
                     <div className="border border-slate-200 rounded-lg overflow-hidden mb-4">
                       <table className="w-full text-sm">
@@ -582,14 +585,23 @@ export default function SchoolDetail() {
                               <td className="px-4 py-2 text-right text-slate-900 font-medium">{formatCents(item.subtotalCents)}</td>
                             </tr>
                           ))}
+                          {preview.addonCents > 0 && (
+                            <tr className="border-t border-slate-100">
+                              <td className="px-4 py-2 font-medium text-slate-900">{preview.addonLabel}</td>
+                              <td className="px-4 py-2 text-right text-slate-700">
+                                {invoiceStudentCount} × $1.00
+                              </td>
+                              <td className="px-4 py-2 text-right text-slate-900 font-medium">{formatCents(preview.addonCents)}</td>
+                            </tr>
+                          )}
                         </tbody>
                         <tfoot>
                           {activeProducts.length > 1 && (
                             <tr className="border-t border-slate-100">
                               <td colSpan={2} className="px-4 py-2 text-right text-green-700">
-                                Bundle Rate ({activeProducts.length} apps — ${(preview.totalCents / 100 / invoiceStudentCount).toFixed(2)}/student)
+                                Bundle Rate ({activeProducts.length} apps — ${(preview.subtotalCents / 100 / invoiceStudentCount).toFixed(2)}/student)
                               </td>
-                              <td className="px-4 py-2 text-right text-green-700 font-medium">{formatCents(preview.totalCents)}</td>
+                              <td className="px-4 py-2 text-right text-green-700 font-medium">{formatCents(preview.subtotalCents)}</td>
                             </tr>
                           )}
                           <tr className="border-t-2 border-slate-300 bg-slate-50">
