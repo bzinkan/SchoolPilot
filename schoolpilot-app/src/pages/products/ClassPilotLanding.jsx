@@ -259,7 +259,7 @@ export default function ClassPilotLanding() {
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
           <a href="/login" className="cp-nav-link">Sign in</a>
-          <a href="/#signup" className="cp-btn-primary">Start Free Trial</a>
+          <a href="/get-started" className="cp-btn-primary">Start Free Trial</a>
         </div>
       </nav>
 
@@ -312,7 +312,7 @@ export default function ClassPilotLanding() {
           </p>
 
           <div className="fade-4" style={{ display: 'flex', gap: '16px', marginBottom: '48px', flexWrap: 'wrap' }}>
-            <a href="/#signup" className="cp-btn-primary" style={{ padding: '18px 36px', fontSize: '16px' }}>
+            <a href="/get-started" className="cp-btn-primary" style={{ padding: '18px 36px', fontSize: '16px' }}>
               Start Free Trial →
             </a>
             <a href="#features" className="cp-btn-secondary" style={{ padding: '18px 36px', fontSize: '16px' }}>
@@ -878,7 +878,7 @@ export default function ClassPilotLanding() {
         }}>
           Try ClassPilot free through the end of the school year. No credit card required. Setup takes less than 10 minutes.
         </p>
-        <a href="/#signup" style={{
+        <a href="/get-started" style={{
           background: '#0f172a',
           color: '#fbbf24',
           border: 'none',

@@ -39,7 +39,7 @@ export default function PassPilotLanding() {
         </p>
         <div className="flex gap-4 justify-center flex-wrap">
           <a
-            href="/#signup"
+            href="/get-started"
             className="inline-flex items-center justify-center rounded-md bg-blue-600 px-6 py-3 text-base font-medium text-white shadow-lg hover:bg-blue-700 transition-colors"
           >
             Start Free Trial
@@ -134,7 +134,7 @@ export default function PassPilotLanding() {
             Try PassPilot free through the end of the school year. No credit card required.
           </p>
           <a
-            href="/#signup"
+            href="/get-started"
             className="inline-flex items-center justify-center rounded-md bg-white text-blue-700 px-8 py-4 text-lg font-semibold shadow-lg hover:bg-slate-50 transition-colors"
           >
             Start Free Trial →

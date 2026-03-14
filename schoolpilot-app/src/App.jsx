@@ -44,6 +44,9 @@ const ClassPilotLanding = lazy(() => import('./pages/products/ClassPilotLanding'
 const PassPilotLanding = lazy(() => import('./pages/products/PassPilotLanding'));
 const GoPilotLanding = lazy(() => import('./pages/products/GoPilotLanding'));
 
+// Get Started (lazy-loaded, public)
+const GetStarted = lazy(() => import('./pages/GetStarted'));
+
 // Legal pages (lazy-loaded, public)
 const TermsOfService = lazy(() => import('./pages/legal/TermsOfService'));
 const PrivacyPolicy = lazy(() => import('./pages/legal/PrivacyPolicy'));
@@ -103,6 +106,7 @@ function AppRoutes() {
         {!isNative && (
           <>
             <Route path="/" element={<Landing />} />
+            <Route path="/get-started" element={<GetStarted />} />
             <Route path="/products/classpilot" element={<ClassPilotLanding />} />
             <Route path="/products/passpilot" element={<PassPilotLanding />} />
             <Route path="/products/gopilot" element={<GoPilotLanding />} />

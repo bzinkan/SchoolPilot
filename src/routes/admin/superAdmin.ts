@@ -24,7 +24,7 @@ import {
   getSchoolCounts,
 } from "../../services/storage.js";
 import { hashPassword } from "../../util/password.js";
-import { sendWelcomeEmail, sendTaxCertificateRequestEmail, sendTrialExpirationEmail } from "../../services/email.js";
+import { sendWelcomeEmail, sendTaxCertificateRequestEmail, sendTrialExpirationEmail, sendTrialWelcomeEmail } from "../../services/email.js";
 import { logAudit } from "../../services/audit.js";
 import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
@@ -915,6 +915,44 @@ router.post("/schools/:id/send-expiration-email", ...auth, async (req, res, next
       to: adminEmail,
       contactName: adminName,
       schoolName: school.name,
+      trialEndsAt: trialEnd,
+    });
+
+    return res.json({ ok: true, sentTo: adminEmail });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/super-admin/schools/:id/send-trial-welcome - Send trial welcome onboarding email
+router.post("/schools/:id/send-trial-welcome", ...auth, async (req, res, next) => {
+  try {
+    const school = await getSchoolById(param(req, "id"));
+    if (!school) return res.status(404).json({ error: "School not found" });
+
+    const members = await getMembershipsBySchool(school.id);
+    const adminMembership = members.find((m) => m.role === "admin") as any;
+    if (!adminMembership) return res.status(400).json({ error: "No admin found for this school" });
+
+    const adminEmail = adminMembership.user?.email || school.billingEmail;
+    const adminName = adminMembership.user?.displayName
+      || [adminMembership.user?.firstName, adminMembership.user?.lastName].filter(Boolean).join(" ")
+      || adminEmail;
+    if (!adminEmail) return res.status(400).json({ error: "No email found for school admin" });
+
+    const trialEnd = school.trialEndsAt
+      ? new Date(school.trialEndsAt).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })
+      : undefined;
+
+    const products = (school as any).products
+      ? (school as any).products.split(",").map((p: string) => p.trim())
+      : ["CLASSPILOT", "PASSPILOT", "GOPILOT"];
+
+    await sendTrialWelcomeEmail({
+      to: adminEmail,
+      contactName: adminName,
+      schoolName: school.name,
+      products,
       trialEndsAt: trialEnd,
     });
 

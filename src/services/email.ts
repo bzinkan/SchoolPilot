@@ -115,6 +115,53 @@ export async function sendTrialExpirationEmail(options: {
   });
 }
 
+export async function sendTrialWelcomeEmail(options: {
+  to: string;
+  contactName: string;
+  schoolName: string;
+  products: string[];
+  trialEndsAt?: string;
+}): Promise<boolean> {
+  const productDescriptions: Record<string, { name: string; desc: string }> = {
+    CLASSPILOT: { name: "ClassPilot", desc: "Real-time Chromebook monitoring. View student screens, control web access, and keep your class on task." },
+    PASSPILOT: { name: "PassPilot", desc: "Digital hall passes. Track student movement, set limits, and eliminate paper passes." },
+    GOPILOT: { name: "GoPilot", desc: "Dismissal management. Coordinate car riders, buses, and walkers with real-time notifications." },
+  };
+
+  const productList = options.products
+    .map((p) => productDescriptions[p])
+    .filter((p): p is { name: string; desc: string } => Boolean(p))
+    .map((p) => `<li><strong>${p.name}</strong> — ${p.desc}</li>`)
+    .join("");
+
+  const trialNote = options.trialEndsAt
+    ? `Your free trial runs through <strong>${options.trialEndsAt}</strong>.`
+    : "Your free trial runs through the end of the school year.";
+
+  return sendEmail({
+    to: options.to,
+    subject: "Welcome to SchoolPilot — Your trial is ready!",
+    html: `
+      <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2>Welcome to SchoolPilot!</h2>
+        <p>Hi ${options.contactName},</p>
+        <p>Great news — your trial for <strong>${options.schoolName}</strong> is set up and ready to go!</p>
+        <p>Here's what's included in your trial:</p>
+        <ul>${productList}</ul>
+        <h3>Getting Started</h3>
+        <ol>
+          <li>Go to <a href="https://school-pilot.net">school-pilot.net</a></li>
+          <li>Click <strong>Sign In</strong> and log in with your school Google account</li>
+          <li>You're in! Start exploring your dashboard.</li>
+        </ol>
+        <p>${trialNote}</p>
+        <p>Questions? Just reply to this email — we're happy to help.</p>
+        <p style="margin-top: 24px;">— The SchoolPilot Team</p>
+      </div>
+    `,
+  });
+}
+
 export async function sendSafetyAlertEmail(options: {
   recipients: string[];
   studentEmail: string;
