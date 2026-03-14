@@ -243,6 +243,50 @@ export async function getSchoolByDomain(
   return school;
 }
 
+export async function getSchoolsByDomain(
+  domain: string
+): Promise<School[]> {
+  return db
+    .select()
+    .from(schools)
+    .where(eq(schools.domain, domain.toLowerCase()));
+}
+
+/**
+ * Resolve which school a student belongs to from their email.
+ * - Single-school domain: returns that school (fast path).
+ * - Multi-school domain: looks up the student record to disambiguate.
+ * - Returns undefined if no school found or student not yet imported on a shared domain.
+ */
+export async function resolveSchoolForStudent(
+  email: string
+): Promise<{ school: School; isSharedDomain: boolean } | undefined> {
+  const domain = email.split("@")[1]?.toLowerCase();
+  if (!domain) return undefined;
+
+  const matchingSchools = await getSchoolsByDomain(domain);
+  if (matchingSchools.length === 0) return undefined;
+  if (matchingSchools.length === 1) return { school: matchingSchools[0]!, isSharedDomain: false };
+
+  // Multiple schools share this domain — find student by email
+  const schoolIds = matchingSchools.map((s) => s.id);
+  const [student] = await db
+    .select({ schoolId: students.schoolId })
+    .from(students)
+    .where(
+      and(
+        eq(students.emailLc, email.toLowerCase()),
+        inArray(students.schoolId, schoolIds)
+      )
+    )
+    .limit(1);
+
+  if (!student) return undefined; // Student not imported yet
+
+  const school = matchingSchools.find((s) => s.id === student.schoolId);
+  return school ? { school, isSharedDomain: true } : undefined;
+}
+
 function generateSlug(name: string): string {
   return name
     .toLowerCase()

@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useTheme } from '../contexts/ThemeContext';
 import ProductSwitcher from './ProductSwitcher';
+import SchoolSwitcher from './SchoolSwitcher';
 
 export default function Header({ onToggleSidebar }) {
   const { user, activeMembership, logout } = useAuth();
@@ -35,11 +36,7 @@ export default function Header({ onToggleSidebar }) {
         {/* Logo */}
         <div className="flex items-center gap-2">
           <span className="text-lg font-bold text-amber-400">SchoolPilot</span>
-          {activeMembership && (
-            <span className="hidden text-sm text-slate-400 sm:inline">
-              | {activeMembership.schoolName}
-            </span>
-          )}
+          <SchoolSwitcher />
         </div>
 
         <ProductSwitcher />

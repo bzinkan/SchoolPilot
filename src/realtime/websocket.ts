@@ -18,6 +18,7 @@ import {
 } from "./ws-redis.js";
 import {
   getSchoolByDomain,
+  resolveSchoolForStudent,
   searchStudents,
   createStudent,
   createDevice,
@@ -198,23 +199,23 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
               try {
                 const email = message.studentEmail as string;
                 const deviceId = message.deviceId as string;
-                const domain = email.split("@")[1]?.toLowerCase();
-                if (!domain) {
-                  ws.send(JSON.stringify({ type: "auth-error", message: "Invalid email" }));
+
+                const resolved = await resolveSchoolForStudent(email);
+                if (!resolved) {
+                  ws.send(JSON.stringify({ type: "auth-error", message: "Student not found — please ask your administrator to import students first" }));
                   ws.close();
                   return;
                 }
+                const school = resolved.school;
 
-                const school = await getSchoolByDomain(domain);
-                if (!school) {
-                  ws.send(JSON.stringify({ type: "auth-error", message: "Unknown school domain" }));
-                  ws.close();
-                  return;
-                }
-
-                // Auto-provision student and device
+                // Auto-provision student and device (only for single-school domains)
                 const existing = await searchStudents(school.id, { search: email });
                 let student = existing[0];
+                if (!student && resolved.isSharedDomain) {
+                  ws.send(JSON.stringify({ type: "auth-error", message: "Student not found — please ask your administrator to import students first" }));
+                  ws.close();
+                  return;
+                }
                 if (!student) {
                   const name = message.studentName || email.split("@")[0];
                   const parts = (name as string).split(/\s+/);

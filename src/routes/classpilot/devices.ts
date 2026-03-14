@@ -22,6 +22,7 @@ import {
   startStudentSession,
   searchStudents,
   getSchoolByDomain,
+  resolveSchoolForStudent,
   getSchoolById,
   getSettingsForSchool,
   getStudentsForDevice,
@@ -110,21 +111,16 @@ router.post("/school/status", async (req, res, next) => {
       return res.status(400).json({ error: "studentEmail required" });
     }
 
-    const domain = studentEmail.split("@")[1]?.toLowerCase();
-    if (!domain) {
-      return res.status(400).json({ error: "Invalid email" });
-    }
-
-    const school = await getSchoolByDomain(domain);
-    if (!school) {
-      return res.status(401).json({ error: "Unknown school domain" });
+    const result = await resolveSchoolForStudent(studentEmail);
+    if (!result) {
+      return res.status(401).json({ error: "Student not found — please ask your administrator to import students first" });
     }
 
     return res.json({
-      schoolId: school.id,
-      schoolActive: school.status === "active" || school.status === "trial",
-      planStatus: school.planStatus || "active",
-      status: school.status,
+      schoolId: result.school.id,
+      schoolActive: result.school.status === "active" || result.school.status === "trial",
+      planStatus: result.school.planStatus || "active",
+      status: result.school.status,
       schoolSessionVersion: 1,
     });
   } catch (err) {
@@ -219,10 +215,10 @@ router.post("/extension/register", async (req, res, next) => {
     let school;
 
     if (!resolvedSchoolId && studentEmail) {
-      const domain = studentEmail.split("@")[1]?.toLowerCase();
-      if (domain) {
-        school = await getSchoolByDomain(domain);
-        if (school) resolvedSchoolId = school.id;
+      const result = await resolveSchoolForStudent(studentEmail);
+      if (result) {
+        school = result.school;
+        resolvedSchoolId = school.id;
       }
     }
 

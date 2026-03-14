@@ -17,7 +17,7 @@ import {
 export const schools = pgTable("schools", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull(),
-  domain: text("domain").unique(), // Google Workspace domain
+  domain: text("domain"), // Google Workspace domain (multiple schools can share a domain)
   slug: text("slug").unique(), // URL-friendly identifier (from GoPilot)
   address: text("address"),
   phone: text("phone"),
@@ -78,7 +78,10 @@ export const schools = pgTable("schools", {
   createdAt: timestamp("created_at").notNull().default(sql`now()`),
   updatedAt: timestamp("updated_at").notNull().default(sql`now()`),
   deletedAt: timestamp("deleted_at"),
-});
+}, (table) => [
+  unique("schools_domain_name_unique").on(table.domain, table.name),
+  index("schools_domain_idx").on(table.domain),
+]);
 
 export type School = typeof schools.$inferSelect;
 export type InsertSchool = typeof schools.$inferInsert;
