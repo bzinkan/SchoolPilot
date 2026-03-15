@@ -763,7 +763,7 @@ export default function Dashboard() {
       );
       return { previousStudents, devicesToLock };
     },
-    onSuccess: (data) => { toast({ title: "Success", description: `Locked screen for ${data.deviceCount} student(s)` }); },
+    onSuccess: (data, variables) => { toast({ title: "Success", description: `Locked screen for ${data.deviceCount} student(s)` }); refreshScreenshotsForDevices(variables.devicesToLock); },
     onError: (error, _, context) => {
       optimisticUpdateUntilRef.current = 0;
       if (context?.previousStudents) queryClient.setQueryData(['/api/students-aggregated'], context.previousStudents);
@@ -786,7 +786,7 @@ export default function Dashboard() {
       );
       return { previousStudents, devicesToUnlock };
     },
-    onSuccess: (data) => { toast({ title: "Success", description: `Unlocked screen for ${data.deviceCount} student(s)` }); },
+    onSuccess: (data, variables) => { toast({ title: "Success", description: `Unlocked screen for ${data.deviceCount} student(s)` }); refreshScreenshotsForDevices(variables.devicesToUnlock); },
     onError: (error, _, context) => {
       optimisticUpdateUntilRef.current = 0;
       if (context?.previousStudents) queryClient.setQueryData(['/api/students-aggregated'], context.previousStudents);
@@ -863,7 +863,7 @@ export default function Dashboard() {
       );
       return { previousStudents };
     },
-    onSuccess: (data) => { toast({ title: "Success", description: `Removed flight path from ${data.deviceCount} student(s)` }); },
+    onSuccess: (data, variables) => { toast({ title: "Success", description: `Removed flight path from ${data.deviceCount} student(s)` }); refreshScreenshotsForDevices(variables.targetDeviceIds); },
     onError: (error, _, context) => {
       optimisticUpdateUntilRef.current = 0;
       if (context?.previousStudents) queryClient.setQueryData(['/api/students-aggregated'], context.previousStudents);
@@ -884,17 +884,18 @@ export default function Dashboard() {
 
   const applyBlockListMutation = useMutation({
     mutationFn: async ({ blockListId, targetDeviceIds }) => apiRequest('POST', `/block-lists/${blockListId}/apply`, { targetDeviceIds }),
-    onSuccess: (data) => {
+    onSuccess: (data, variables) => {
       const blockList = blockLists.find(bl => bl.id === selectedBlockListId);
       toast({ title: "Success", description: `Applied "${blockList?.name || 'Block List'}" to ${data.sentTo || 0} student(s)` });
       setShowApplyBlockListDialog(false); setSelectedBlockListId("");
+      refreshScreenshotsForDevices(variables.targetDeviceIds);
     },
     onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
   });
 
   const removeBlockListMutation = useMutation({
     mutationFn: async ({ targetDeviceIds }) => apiRequest('POST', '/block-lists/remove', { targetDeviceIds }),
-    onSuccess: (data) => { toast({ title: "Success", description: `Removed block list from ${data.sentTo || 0} student(s)` }); },
+    onSuccess: (data, variables) => { toast({ title: "Success", description: `Removed block list from ${data.sentTo || 0} student(s)` }); refreshScreenshotsForDevices(variables.targetDeviceIds); },
     onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
   });
 
@@ -911,6 +912,7 @@ export default function Dashboard() {
       setAttentionActive(variables.active);
       toast({ title: variables.active ? "Attention Mode Enabled" : "Attention Mode Disabled", description: variables.active ? `Showing "${variables.message}" to ${data.sentTo || 0} student(s)` : `Released ${data.sentTo || 0} student(s)` });
       if (!variables.active) setShowAttentionDialog(false);
+      refreshScreenshotsForDevices(variables.targetDeviceIds);
     },
     onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
   });

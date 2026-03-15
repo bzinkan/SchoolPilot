@@ -2423,6 +2423,25 @@ export async function getHeartbeatsByStudent(
     .limit(limit);
 }
 
+export async function getHeartbeatsForStudentsInRange(
+  studentIds: string[],
+  startTime: Date,
+  endTime: Date
+): Promise<Heartbeat[]> {
+  if (studentIds.length === 0) return [];
+  return db
+    .select()
+    .from(heartbeats)
+    .where(
+      and(
+        inArray(heartbeats.studentId, studentIds),
+        sql`${heartbeats.timestamp} >= ${startTime}`,
+        sql`${heartbeats.timestamp} <= ${endTime}`
+      )
+    )
+    .orderBy(heartbeats.studentId, heartbeats.timestamp);
+}
+
 // ============================================================================
 // ClassPilot - Daily Usage operations
 // ============================================================================

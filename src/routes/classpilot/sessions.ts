@@ -11,7 +11,10 @@ import {
   getSessionSettings,
   upsertSessionSettings,
   getGroupById,
+  getGroupStudents,
+  getHeartbeatsForStudentsInRange,
 } from "../../services/storage.js";
+import { sendSessionSummaryEmail } from "../../services/email.js";
 
 const router = Router();
 
@@ -62,7 +65,14 @@ router.post("/end", ...auth, async (req, res, next) => {
     }
 
     const session = await endTeachingSession(existing.id);
-    return res.json({ session });
+    res.json({ session });
+
+    // Fire-and-forget: send session summary email to teacher
+    if (session?.startTime && session?.endTime) {
+      buildAndSendSessionSummary(session, req.authUser!).catch((err) =>
+        console.error("[SessionSummary] Failed to send:", err)
+      );
+    }
   } catch (err) {
     next(err);
   }
@@ -152,5 +162,71 @@ router.put("/:id/settings", ...auth, async (req, res, next) => {
     next(err);
   }
 });
+
+// Build and send session summary email (called async after response)
+async function buildAndSendSessionSummary(
+  session: { id: string; groupId: string; startTime: Date; endTime: Date | null },
+  teacher: { email: string; firstName?: string; lastName?: string }
+) {
+  const endTime = session.endTime ?? new Date();
+  const group = await getGroupById(session.groupId);
+  const className = (group as any)?.name || "Class";
+
+  const groupStudentRows = await getGroupStudents(session.groupId);
+  const studentIds = groupStudentRows.map((gs) => gs.studentId);
+
+  const hbs = await getHeartbeatsForStudentsInRange(studentIds, session.startTime, endTime);
+
+  // Build per-student domain summaries
+  const studentMap = new Map<string, { name: string; domainSeconds: Map<string, number>; count: number }>();
+  for (const gs of groupStudentRows) {
+    const name = [gs.student.firstName, gs.student.lastName].filter(Boolean).join(" ") || gs.student.email || "Unknown";
+    studentMap.set(gs.studentId, { name, domainSeconds: new Map(), count: 0 });
+  }
+
+  for (const hb of hbs) {
+    if (!hb.studentId) continue;
+    const entry = studentMap.get(hb.studentId);
+    if (!entry) continue;
+    entry.count++;
+    if (hb.activeTabUrl) {
+      try {
+        const domain = new URL(hb.activeTabUrl).hostname.replace(/^www\./, "");
+        entry.domainSeconds.set(domain, (entry.domainSeconds.get(domain) || 0) + 10);
+      } catch { /* skip invalid URLs */ }
+    }
+  }
+
+  const students = Array.from(studentMap.values()).map((s) => {
+    const topDomains = Array.from(s.domainSeconds.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([domain, seconds]) => ({ domain, minutes: Math.round(seconds / 60) }));
+    return { name: s.name, totalMinutes: Math.round((s.count * 10) / 60), topDomains };
+  });
+
+  const durationMs = endTime.getTime() - session.startTime.getTime();
+  const durationMin = Math.round(durationMs / 60000);
+  const fmt = (d: Date) =>
+    d.toLocaleString("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit", hour12: true });
+  const fmtDate = (d: Date) =>
+    d.toLocaleDateString("en-US", { timeZone: "America/New_York", weekday: "long", month: "long", day: "numeric", year: "numeric" });
+
+  const teacherName = [teacher.firstName, teacher.lastName].filter(Boolean).join(" ") || "Teacher";
+
+  await sendSessionSummaryEmail({
+    to: teacher.email,
+    teacherName,
+    className,
+    date: fmtDate(session.startTime),
+    startTime: fmt(session.startTime),
+    endTime: fmt(endTime),
+    duration: `${durationMin} min`,
+    studentCount: studentIds.length,
+    students,
+  });
+
+  console.log(`[SessionSummary] Sent to ${teacher.email} for "${className}"`);
+}
 
 export default router;
