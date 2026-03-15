@@ -84,9 +84,10 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
       return;
     }
 
-    // Validate origin in production (Chrome extensions have no origin, so allow those)
+    // Validate origin in production (allow Chrome extensions which send chrome-extension:// origin)
     const origin = request.headers.origin;
-    if (wsAllowlist.length > 0 && origin && !wsAllowlist.includes(origin)) {
+    const isExtensionOrigin = origin?.startsWith("chrome-extension://");
+    if (wsAllowlist.length > 0 && origin && !isExtensionOrigin && !wsAllowlist.includes(origin)) {
       console.warn("[WebSocket] Rejected upgrade from unauthorized origin:", origin);
       socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
       socket.destroy();

@@ -896,11 +896,17 @@ router.get("/students-aggregated", ...schoolAuth, async (req, res, next) => {
     const statusByStudent = new Map(
       realtimeStatuses.map((s) => [s.studentId, s])
     );
+    const statusByEmail = new Map(
+      realtimeStatuses
+        .filter((s) => s.studentEmail)
+        .map((s) => [s.studentEmail!.toLowerCase(), s])
+    );
 
     const aggregated = dbStudents.map((student) => {
       const rt =
         (student.deviceId ? statusByDevice.get(student.deviceId) : null) ||
         statusByStudent.get(student.id) ||
+        (student.email ? statusByEmail.get(student.email.toLowerCase()) : null) ||
         null;
       const deviceId = rt?.deviceId || student.deviceId || null;
       const isConnected = deviceId ? connectedDevices.has(deviceId) : false;
