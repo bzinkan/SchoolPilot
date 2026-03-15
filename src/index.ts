@@ -178,6 +178,14 @@ import { pool } from "./db.js";
     console.warn("[migration] dismissal_overrides migration skipped:", (err as Error).message);
   }
 
+  // Add auto_block_unsafe_urls column to settings table
+  try {
+    await pool.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS auto_block_unsafe_urls BOOLEAN DEFAULT true`);
+    console.log("[migration] auto_block_unsafe_urls column ready");
+  } catch (err) {
+    console.warn("[migration] auto_block_unsafe_urls migration skipped:", (err as Error).message);
+  }
+
   // One-time: update super-admin email alias in users + audit_logs
   try {
     const OLD_EMAIL = "bzinkan@school-pilot.net";
