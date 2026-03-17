@@ -20,16 +20,21 @@ export async function sendEmail(options: {
   }
 
   try {
-    await sgMail.send({
+    const msg: any = {
       to: options.to,
       from: FROM_EMAIL,
       subject: options.subject,
-      text: options.text || "",
-      html: options.html || "",
-    });
+    };
+    if (options.html) msg.html = options.html;
+    if (options.text) msg.text = options.text;
+    if (!msg.html && !msg.text) msg.text = options.subject;
+    await sgMail.send(msg);
     return true;
-  } catch (error) {
-    console.error("[Email] Send failed:", error);
+  } catch (error: any) {
+    console.error("[Email] Send failed:", error?.message || error);
+    if (error?.response?.body) {
+      console.error("[Email] SendGrid response:", JSON.stringify(error.response.body));
+    }
     return false;
   }
 }
