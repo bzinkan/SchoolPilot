@@ -579,7 +579,7 @@ export default function MySettings() {
                   </Button>
                 </div>
                 <CardDescription>
-                  Create lists of blocked websites to apply on-demand during class. Unlike "Blocked Domains" below (which are always active), these block lists must be manually applied from the dashboard and are session-based.
+                  Create lists of blocked websites to apply on-demand during class. Block lists are session-based and must be manually applied from the dashboard toolbar.
                 </CardDescription>
               </CardHeader>
               <CardContent>
