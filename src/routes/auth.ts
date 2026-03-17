@@ -14,6 +14,7 @@ import {
   getProductLicenses,
   updateUser,
   getSchoolBySlug,
+  upsertGoogleOAuthToken,
 } from "../services/storage.js";
 import { authenticate } from "../middleware/authenticate.js";
 import { authLimiter } from "../middleware/rateLimiter.js";
@@ -291,9 +292,17 @@ router.get("/google", (req, res) => {
 
   const oauth2Client = getLoginOAuth2Client();
   const url = oauth2Client.generateAuthUrl({
-    access_type: "online",
-    scope: ["openid", "profile", "email"],
-    prompt: "select_account",
+    access_type: "offline",
+    scope: [
+      "openid",
+      "profile",
+      "email",
+      "https://www.googleapis.com/auth/admin.directory.user.readonly",
+      "https://www.googleapis.com/auth/admin.directory.orgunit.readonly",
+      "https://www.googleapis.com/auth/classroom.courses.readonly",
+      "https://www.googleapis.com/auth/classroom.rosters.readonly",
+    ],
+    prompt: "consent",
     ...(state ? { state } : {}),
   });
 
@@ -338,6 +347,16 @@ router.get("/google/callback", async (req, res, next) => {
     if (profile.picture && profile.picture !== user.profileImageUrl)
       updates.profileImageUrl = profile.picture;
     await updateUser(user.id, updates);
+
+    // Save Google OAuth refresh token so Workspace directory import works immediately
+    if (tokens.refresh_token) {
+      await upsertGoogleOAuthToken(user.id, {
+        refreshToken: tokens.refresh_token,
+        scope: tokens.scope || "",
+        tokenType: tokens.token_type || "Bearer",
+        expiryDate: tokens.expiry_date ? new Date(tokens.expiry_date) : undefined,
+      });
+    }
 
     // Get memberships for session
     const membershipsWithSchool = await getMembershipsWithSchool(user.id);

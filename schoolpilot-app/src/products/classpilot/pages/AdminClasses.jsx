@@ -616,11 +616,12 @@ export default function AdminClasses() {
     queryFn: () => apiRequest("GET", "/settings"),
   });
 
-  const { data: classroomCourses = [], isLoading: isLoadingCourses, refetch: refetchCourses } = useQuery({
+  const { data: classroomCoursesData, isLoading: isLoadingCourses, refetch: refetchCourses } = useQuery({
     queryKey: ["/api/admin/classroom/courses-preview"],
     queryFn: () => apiRequest("GET", "/admin/classroom/courses-preview"),
     enabled: syncDialogOpen,
   });
+  const classroomCourses = classroomCoursesData?.courses || [];
 
   const teachers = teachersData?.teachers || [];
   const allStudents = studentsData?.students || [];

@@ -395,6 +395,8 @@ export default function Admin() {
       setPasswordDialogOpen(false);
       setStaffToResetPassword(null);
       setNewPassword("");
+      setStaffSearchQuery("");
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
     },
     onError: (error) => {
       toast({

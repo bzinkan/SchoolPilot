@@ -897,14 +897,14 @@ function StudentsContent() {
             ) : directoryNotConnected ? (
               <div className="text-center py-8 space-y-4">
                 <p className="text-muted-foreground">
-                  Google Workspace is not connected. Please sign out and sign back in with Google.
+                  Google Workspace is not connected. Please sign out and sign back in with Google to grant directory access.
                 </p>
                 <Button
                   variant="outline"
                   onClick={() => window.location.href = "/auth/google"}
                   data-testid="button-reconnect-google-workspace"
                 >
-                  Reconnect Google Account
+                  Sign in with Google
                 </Button>
               </div>
             ) : directoryNoPermission ? (

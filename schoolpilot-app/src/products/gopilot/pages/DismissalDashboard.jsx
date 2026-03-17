@@ -722,7 +722,7 @@ export default function DismissalDashboard() {
                   {dismissalActive ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
                   <span className="hidden sm:inline ml-1">{dismissalActive ? 'Pause' : 'Start'}</span>
                 </Button>
-                <Button variant="ghost" size="sm" onClick={logout}>
+                <Button variant="ghost" size="sm" onClick={() => { logout(); navigate('/login'); }}>
                   <LogOut className="w-4 h-4" />
                 </Button>
               </div>
