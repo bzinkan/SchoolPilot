@@ -174,7 +174,7 @@ function StudentsContent() {
       await queryClient.invalidateQueries({ queryKey: ["/api/classroom/courses"] });
       toast({
         title: "Import Complete",
-        description: `Imported ${data.count || 0} students from Google Classroom`,
+        description: `Imported ${data.imported || 0} students from Google Classroom`,
       });
       setSyncingCourseId(null);
     },
@@ -349,16 +349,27 @@ function StudentsContent() {
   // Bulk import mutation
   const bulkImportMutation = useMutation({
     mutationFn: async ({ fileContent }) => {
-      return await apiRequest("POST", "/admin/bulk-import", { fileContent });
+      // Parse CSV client-side into rows array for the backend
+      const lines = fileContent.split(/\r?\n/).filter(l => l.trim());
+      if (lines.length < 2) throw new Error("CSV must have a header row and at least one data row");
+      const headers = lines[0].split(",").map(h => h.trim());
+      const rows = lines.slice(1).map(line => {
+        const values = line.split(",").map(v => v.trim());
+        const row = {};
+        headers.forEach((h, i) => { row[h] = values[i] || ""; });
+        return row;
+      });
+      return await apiRequest("POST", "/students/import-csv", { rows });
     },
     onSuccess: async (data) => {
       await queryClient.invalidateQueries({ queryKey: ["/api/admin/teacher-students"], exact: false });
       await queryClient.invalidateQueries({ queryKey: ["/api/groups"], exact: false });
       await queryClient.invalidateQueries({ queryKey: ["/api/teacher/groups"], exact: false });
-      setImportResults(data.results);
+      setImportResults(data);
+      const errorMsg = data.errors?.length ? `, ${data.errors.length} errors` : "";
       toast({
         title: "Import Complete",
-        description: `Created ${data.results.created} students, updated ${data.results.updated}, assigned ${data.results.assigned} to classes`,
+        description: `Imported ${data.imported} of ${data.total} students${errorMsg}`,
       });
       setCsvFile(null);
     },
@@ -635,18 +646,14 @@ function StudentsContent() {
           {importResults && (
             <div className="p-4 border rounded-md space-y-2" data-testid="import-results">
               <p className="font-medium">Import Results:</p>
-              <div className="grid grid-cols-3 gap-4 text-sm">
+              <div className="grid grid-cols-2 gap-4 text-sm">
                 <div>
-                  <p className="text-muted-foreground">Created</p>
-                  <p className="text-2xl font-bold text-green-600">{importResults.created}</p>
+                  <p className="text-muted-foreground">Imported</p>
+                  <p className="text-2xl font-bold text-green-600">{importResults.imported}</p>
                 </div>
                 <div>
-                  <p className="text-muted-foreground">Updated</p>
-                  <p className="text-2xl font-bold text-blue-600">{importResults.updated}</p>
-                </div>
-                <div>
-                  <p className="text-muted-foreground">Assigned to Classes</p>
-                  <p className="text-2xl font-bold text-purple-600">{importResults.assigned}</p>
+                  <p className="text-muted-foreground">Total Rows</p>
+                  <p className="text-2xl font-bold text-blue-600">{importResults.total}</p>
                 </div>
               </div>
               {importResults.errors && importResults.errors.length > 0 && (
@@ -654,17 +661,7 @@ function StudentsContent() {
                   <p className="font-medium text-destructive mb-2">Errors:</p>
                   <ul className="list-disc list-inside text-sm text-destructive space-y-1">
                     {importResults.errors.map((error, i) => (
-                      <li key={i}>{error}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              {importResults.warnings && importResults.warnings.length > 0 && (
-                <div className="mt-3 p-3 bg-yellow-500/10 rounded-md">
-                  <p className="font-medium text-yellow-700 dark:text-yellow-500 mb-2">Warnings:</p>
-                  <ul className="list-disc list-inside text-sm text-yellow-700 dark:text-yellow-500 space-y-1">
-                    {importResults.warnings.map((warning, i) => (
-                      <li key={i}>{warning}</li>
+                      <li key={i}>Row {error.row}: {error.error}</li>
                     ))}
                   </ul>
                 </div>

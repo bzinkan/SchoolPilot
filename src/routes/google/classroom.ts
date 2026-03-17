@@ -116,6 +116,7 @@ router.post("/courses/:courseId/sync", ...auth, async (req, res, next) => {
   try {
     const courseId = String(req.params.courseId ?? "");
     const schoolId = res.locals.schoolId!;
+    const gradeLevel = req.body?.gradeLevel || null;
     const { oauth2Client, google } = await getAuthedClient(req.authUser!.id);
     const classroom = google.classroom({ version: "v1", auth: oauth2Client });
 
@@ -136,6 +137,7 @@ router.post("/courses/:courseId/sync", ...auth, async (req, res, next) => {
           firstName,
           lastName,
           email,
+          gradeLevel,
           googleUserId: gs.userId || undefined,
           status: "active",
         });
