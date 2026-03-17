@@ -29,6 +29,7 @@ import {
   DialogFooter,
 } from "../../../components/ui/dialog";
 import { Checkbox } from "../../../components/ui/checkbox";
+import { Switch } from "../../../components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "../../../components/ui/tabs";
 import { Popover, PopoverContent, PopoverTrigger } from "../../../components/ui/popover";
 import {
@@ -60,7 +61,25 @@ const createClassSchema = z.object({
   gradeLevel: z.string().optional(),
   periodLabel: z.string().optional(),
   description: z.string().optional(),
-});
+  scheduleEnabled: z.boolean().optional().default(false),
+  blockStartTime: z.string().optional(),
+  blockEndTime: z.string().optional(),
+}).refine(
+  (data) => !data.scheduleEnabled || (data.blockStartTime && data.blockEndTime),
+  { message: "Start and end times are required when scheduling is enabled", path: ["blockStartTime"] }
+).refine(
+  (data) => !data.scheduleEnabled || !data.blockStartTime || !data.blockEndTime || data.blockStartTime < data.blockEndTime,
+  { message: "Start time must be before end time", path: ["blockEndTime"] }
+);
+
+function formatTime12h(time24) {
+  if (!time24) return "";
+  const [h, m] = time24.split(":");
+  const hour = parseInt(h, 10);
+  const ampm = hour >= 12 ? "PM" : "AM";
+  const hour12 = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
+  return `${hour12}:${m} ${ampm}`;
+}
 
 function ClassCard({ group, teacher, teachers, isExpanded, onToggleExpand, onDelete, isDeleting }) {
   const { toast } = useToast();
@@ -70,6 +89,9 @@ function ClassCard({ group, teacher, teachers, isExpanded, onToggleExpand, onDel
   const [editTeacherId, setEditTeacherId] = useState(group.teacherId || "");
   const [editGradeLevel, setEditGradeLevel] = useState(group.gradeLevel || "");
   const [editPeriodLabel, setEditPeriodLabel] = useState(group.periodLabel || "");
+  const [editScheduleEnabled, setEditScheduleEnabled] = useState(group.scheduleEnabled || false);
+  const [editBlockStartTime, setEditBlockStartTime] = useState(group.blockStartTime || "");
+  const [editBlockEndTime, setEditBlockEndTime] = useState(group.blockEndTime || "");
   const [editTeacherComboboxOpen, setEditTeacherComboboxOpen] = useState(false);
   const [addCoTeacherOpen, setAddCoTeacherOpen] = useState(false);
 
@@ -160,6 +182,9 @@ function ClassCard({ group, teacher, teachers, isExpanded, onToggleExpand, onDel
       teacherId: editTeacherId || undefined,
       gradeLevel: editGradeLevel || undefined,
       periodLabel: editPeriodLabel || undefined,
+      scheduleEnabled: editScheduleEnabled,
+      blockStartTime: editScheduleEnabled ? editBlockStartTime : undefined,
+      blockEndTime: editScheduleEnabled ? editBlockEndTime : undefined,
     });
   };
 
@@ -168,6 +193,9 @@ function ClassCard({ group, teacher, teachers, isExpanded, onToggleExpand, onDel
     setEditTeacherId(group.teacherId || "");
     setEditGradeLevel(group.gradeLevel || "");
     setEditPeriodLabel(group.periodLabel || "");
+    setEditScheduleEnabled(group.scheduleEnabled || false);
+    setEditBlockStartTime(group.blockStartTime || "");
+    setEditBlockEndTime(group.blockEndTime || "");
     setEditDialogOpen(true);
   };
 
@@ -220,6 +248,9 @@ function ClassCard({ group, teacher, teachers, isExpanded, onToggleExpand, onDel
               <p className="text-sm text-muted-foreground">
                 {teacher?.displayName || teacher?.email || 'Unknown Teacher'}
                 {group.periodLabel && ` \u2022 ${group.periodLabel}`}
+                {group.scheduleEnabled && group.blockStartTime && group.blockEndTime && (
+                  ` \u2022 ${formatTime12h(group.blockStartTime)} – ${formatTime12h(group.blockEndTime)}`
+                )}
                 {group.gradeLevel && ` \u2022 Grade ${group.gradeLevel}`}
               </p>
             </div>
@@ -413,14 +444,52 @@ function ClassCard({ group, teacher, teachers, isExpanded, onToggleExpand, onDel
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="edit-period">Period</Label>
+              <Label htmlFor="edit-period">Class Block</Label>
               <Input
                 id="edit-period"
                 value={editPeriodLabel}
                 onChange={(e) => setEditPeriodLabel(e.target.value)}
-                placeholder="e.g., P3 or 10:10-10:55"
+                placeholder="e.g., Period 3 or Block A"
                 data-testid="input-edit-period"
               />
+            </div>
+
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="edit-schedule-toggle">Automatic Scheduling</Label>
+                <Switch
+                  id="edit-schedule-toggle"
+                  checked={editScheduleEnabled}
+                  onCheckedChange={setEditScheduleEnabled}
+                />
+              </div>
+              <div className={`grid grid-cols-2 gap-3 ${!editScheduleEnabled ? 'opacity-50 pointer-events-none' : ''}`}>
+                <div className="space-y-1">
+                  <Label htmlFor="edit-block-start" className="text-xs">Start Time</Label>
+                  <Input
+                    id="edit-block-start"
+                    type="time"
+                    value={editBlockStartTime}
+                    onChange={(e) => setEditBlockStartTime(e.target.value)}
+                    disabled={!editScheduleEnabled}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="edit-block-end" className="text-xs">End Time</Label>
+                  <Input
+                    id="edit-block-end"
+                    type="time"
+                    value={editBlockEndTime}
+                    onChange={(e) => setEditBlockEndTime(e.target.value)}
+                    disabled={!editScheduleEnabled}
+                  />
+                </div>
+              </div>
+              {editScheduleEnabled && (
+                <p className="text-xs text-muted-foreground">
+                  Class will auto-start and auto-end at these times (weekdays only).
+                </p>
+              )}
             </div>
 
             {/* Co-Teachers */}
@@ -518,6 +587,9 @@ export default function AdminClasses() {
       gradeLevel: "",
       periodLabel: "",
       description: "",
+      scheduleEnabled: false,
+      blockStartTime: "",
+      blockEndTime: "",
     },
   });
   const watchedTeacherId = form.watch("teacherId");
@@ -956,13 +1028,57 @@ export default function AdminClasses() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="periodLabel">Period</Label>
+                      <Label htmlFor="periodLabel">Class Block</Label>
                       <Input
                         id="periodLabel"
-                        placeholder="e.g., P3 or 10:10-10:55"
+                        placeholder="e.g., Period 3 or Block A"
                         data-testid="input-period-label"
                         {...form.register("periodLabel")}
                       />
+                    </div>
+
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <Label htmlFor="schedule-toggle">Automatic Scheduling</Label>
+                        <Switch
+                          id="schedule-toggle"
+                          checked={form.watch("scheduleEnabled") || false}
+                          onCheckedChange={(val) => form.setValue("scheduleEnabled", val)}
+                        />
+                      </div>
+                      <div className={`grid grid-cols-2 gap-3 ${!form.watch("scheduleEnabled") ? 'opacity-50 pointer-events-none' : ''}`}>
+                        <div className="space-y-1">
+                          <Label htmlFor="blockStartTime" className="text-xs">Start Time</Label>
+                          <Input
+                            id="blockStartTime"
+                            type="time"
+                            data-testid="input-block-start"
+                            disabled={!form.watch("scheduleEnabled")}
+                            {...form.register("blockStartTime")}
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label htmlFor="blockEndTime" className="text-xs">End Time</Label>
+                          <Input
+                            id="blockEndTime"
+                            type="time"
+                            data-testid="input-block-end"
+                            disabled={!form.watch("scheduleEnabled")}
+                            {...form.register("blockEndTime")}
+                          />
+                        </div>
+                      </div>
+                      {form.watch("scheduleEnabled") && (
+                        <p className="text-xs text-muted-foreground">
+                          Class will auto-start and auto-end at these times (weekdays only).
+                        </p>
+                      )}
+                      {form.formState.errors.blockStartTime && (
+                        <p className="text-sm text-destructive">{form.formState.errors.blockStartTime.message}</p>
+                      )}
+                      {form.formState.errors.blockEndTime && (
+                        <p className="text-sm text-destructive">{form.formState.errors.blockEndTime.message}</p>
+                      )}
                     </div>
 
                     <div className="space-y-2">

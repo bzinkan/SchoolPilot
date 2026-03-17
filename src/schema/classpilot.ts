@@ -219,6 +219,10 @@ export const groups = pgTable(
     gradeLevel: text("grade_level"),
     groupType: text("group_type").notNull().default("teacher_created"), // admin_class | teacher_small_group | teacher_created
     parentGroupId: text("parent_group_id"), // FK to groups for nested small groups
+    scheduleEnabled: boolean("schedule_enabled").notNull().default(false),
+    blockStartTime: text("block_start_time"), // HH:MM 24h format, e.g. "10:10"
+    blockEndTime: text("block_end_time"),     // HH:MM 24h format, e.g. "10:55"
+    scheduleSkippedDate: text("schedule_skipped_date"), // YYYY-MM-DD, set when teacher manually ends early
     createdAt: timestamp("created_at").notNull().default(sql`now()`),
   },
   (table) => [

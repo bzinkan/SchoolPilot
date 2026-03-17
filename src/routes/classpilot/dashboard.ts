@@ -309,7 +309,8 @@ router.get("/groups", ...auth, async (req, res, next) => {
 // POST /teacher/groups - Create a group
 router.post("/groups", ...auth, async (req, res, next) => {
   try {
-    const { name, teacherId, gradeLevel, periodLabel, description, groupType } = req.body;
+    const { name, teacherId, gradeLevel, periodLabel, description, groupType,
+            scheduleEnabled, blockStartTime, blockEndTime } = req.body;
     if (!name) return res.status(400).json({ error: "name required" });
     const group = await createGroup({
       schoolId: res.locals.schoolId!,
@@ -319,6 +320,9 @@ router.post("/groups", ...auth, async (req, res, next) => {
       periodLabel: periodLabel || undefined,
       description: description || undefined,
       groupType: groupType || "teacher_created",
+      scheduleEnabled: scheduleEnabled || false,
+      blockStartTime: scheduleEnabled ? blockStartTime : undefined,
+      blockEndTime: scheduleEnabled ? blockEndTime : undefined,
     });
     return res.status(201).json({ group });
   } catch (err) {

@@ -2756,6 +2756,116 @@ export async function upsertSessionSettings(
 }
 
 // ============================================================================
+// ClassPilot - Scheduled class block helpers
+// ============================================================================
+
+export async function getScheduledGroupsReadyToStart(
+  schoolId: string,
+  currentTimeHHMM: string,
+  todayDate: string
+): Promise<Group[]> {
+  return db
+    .select({
+      id: groups.id,
+      schoolId: groups.schoolId,
+      teacherId: groups.teacherId,
+      name: groups.name,
+      description: groups.description,
+      periodLabel: groups.periodLabel,
+      gradeLevel: groups.gradeLevel,
+      groupType: groups.groupType,
+      parentGroupId: groups.parentGroupId,
+      scheduleEnabled: groups.scheduleEnabled,
+      blockStartTime: groups.blockStartTime,
+      blockEndTime: groups.blockEndTime,
+      scheduleSkippedDate: groups.scheduleSkippedDate,
+      createdAt: groups.createdAt,
+    })
+    .from(groups)
+    .where(
+      and(
+        eq(groups.schoolId, schoolId),
+        eq(groups.scheduleEnabled, true),
+        sql`${groups.blockStartTime} IS NOT NULL`,
+        sql`${groups.blockEndTime} IS NOT NULL`,
+        sql`${groups.blockStartTime} <= ${currentTimeHHMM}`,
+        sql`${groups.blockEndTime} > ${currentTimeHHMM}`,
+        or(
+          isNull(groups.scheduleSkippedDate),
+          ne(groups.scheduleSkippedDate, todayDate)
+        )
+      )
+    );
+}
+
+export async function getScheduledGroupsReadyToEnd(
+  schoolId: string,
+  currentTimeHHMM: string
+): Promise<(Group & { sessionId: string })[]> {
+  const rows = await db
+    .select({
+      id: groups.id,
+      schoolId: groups.schoolId,
+      teacherId: groups.teacherId,
+      name: groups.name,
+      description: groups.description,
+      periodLabel: groups.periodLabel,
+      gradeLevel: groups.gradeLevel,
+      groupType: groups.groupType,
+      parentGroupId: groups.parentGroupId,
+      scheduleEnabled: groups.scheduleEnabled,
+      blockStartTime: groups.blockStartTime,
+      blockEndTime: groups.blockEndTime,
+      scheduleSkippedDate: groups.scheduleSkippedDate,
+      createdAt: groups.createdAt,
+      sessionId: teachingSessions.id,
+    })
+    .from(groups)
+    .innerJoin(
+      teachingSessions,
+      and(
+        eq(teachingSessions.groupId, groups.id),
+        isNull(teachingSessions.endTime)
+      )
+    )
+    .where(
+      and(
+        eq(groups.schoolId, schoolId),
+        eq(groups.scheduleEnabled, true),
+        sql`${groups.blockEndTime} IS NOT NULL`,
+        sql`${groups.blockEndTime} <= ${currentTimeHHMM}`
+      )
+    );
+  return rows as (Group & { sessionId: string })[];
+}
+
+export async function setScheduleSkippedDate(
+  groupId: string,
+  date: string | null
+): Promise<void> {
+  await db
+    .update(groups)
+    .set({ scheduleSkippedDate: date })
+    .where(eq(groups.id, groupId));
+}
+
+export async function hasActiveSessionForGroup(
+  groupId: string
+): Promise<boolean> {
+  const [row] = await db
+    .select({ id: teachingSessions.id })
+    .from(teachingSessions)
+    .where(
+      and(
+        eq(teachingSessions.groupId, groupId),
+        isNull(teachingSessions.endTime)
+      )
+    )
+    .limit(1);
+  return !!row;
+}
+
+// ============================================================================
 // ClassPilot - Group operations
 // ============================================================================
 

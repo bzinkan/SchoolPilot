@@ -13,6 +13,8 @@ import {
   getGroupById,
   getGroupStudents,
   getHeartbeatsForStudentsInRange,
+  setScheduleSkippedDate,
+  getSchoolById,
 } from "../../services/storage.js";
 import { sendSessionSummaryEmail } from "../../services/email.js";
 
@@ -66,6 +68,19 @@ router.post("/end", ...auth, async (req, res, next) => {
 
     const session = await endTeachingSession(existing.id);
     res.json({ session });
+
+    // If this was a scheduled class, mark it as skipped so scheduler doesn't restart it today
+    const group = await getGroupById(existing.groupId);
+    if (group && (group as any).scheduleEnabled) {
+      try {
+        const school = await getSchoolById(group.schoolId);
+        const tz = school?.schoolTimezone || "America/New_York";
+        const todayDate = new Date().toLocaleDateString("en-CA", { timeZone: tz });
+        await setScheduleSkippedDate(group.id, todayDate);
+      } catch (err) {
+        console.warn("[Sessions] Failed to set scheduleSkippedDate:", err);
+      }
+    }
 
     // Fire-and-forget: send session summary email to teacher
     if (session?.startTime && session?.endTime) {
@@ -163,14 +178,18 @@ router.put("/:id/settings", ...auth, async (req, res, next) => {
   }
 });
 
-// Build and send session summary email (called async after response)
-async function buildAndSendSessionSummary(
+// Build and send session summary email (called async after response, or by scheduler)
+export async function buildAndSendSessionSummary(
   session: { id: string; groupId: string; startTime: Date; endTime: Date | null },
   teacher: { email: string; firstName?: string; lastName?: string }
 ) {
   const endTime = session.endTime ?? new Date();
   const group = await getGroupById(session.groupId);
   const className = (group as any)?.name || "Class";
+
+  // Use school timezone for formatting (instead of hardcoded America/New_York)
+  const school = await getSchoolById(group?.schoolId || "");
+  const tz = school?.schoolTimezone || "America/New_York";
 
   const groupStudentRows = await getGroupStudents(session.groupId);
   const studentIds = groupStudentRows.map((gs) => gs.studentId);
@@ -208,9 +227,9 @@ async function buildAndSendSessionSummary(
   const durationMs = endTime.getTime() - session.startTime.getTime();
   const durationMin = Math.round(durationMs / 60000);
   const fmt = (d: Date) =>
-    d.toLocaleString("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit", hour12: true });
+    d.toLocaleString("en-US", { timeZone: tz, hour: "numeric", minute: "2-digit", hour12: true });
   const fmtDate = (d: Date) =>
-    d.toLocaleDateString("en-US", { timeZone: "America/New_York", weekday: "long", month: "long", day: "numeric", year: "numeric" });
+    d.toLocaleDateString("en-US", { timeZone: tz, weekday: "long", month: "long", day: "numeric", year: "numeric" });
 
   const teacherName = [teacher.firstName, teacher.lastName].filter(Boolean).join(" ") || "Teacher";
 

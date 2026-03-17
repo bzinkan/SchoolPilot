@@ -6,7 +6,15 @@ import {
   upsertDailyUsage,
   getSettingsForSchool,
   purgeOldHeartbeats,
+  getScheduledGroupsReadyToStart,
+  getScheduledGroupsReadyToEnd,
+  hasActiveSessionForGroup,
+  getActiveTeachingSession,
+  endTeachingSession,
+  createTeachingSession,
+  getUserById,
 } from "./storage.js";
+import { buildAndSendSessionSummary } from "../routes/classpilot/sessions.js";
 import db from "../db.js";
 import { schools, productLicenses } from "../schema/core.js";
 import { heartbeats } from "../schema/classpilot.js";
@@ -23,6 +31,8 @@ export function startScheduler(socketIo: SocketServer) {
   intervalId = setInterval(() => {
     checkDismissalTimes();
     autoCompleteStaleGoPilotSessions();
+    autoStartClassBlocks();
+    autoEndClassBlocks();
 
     // Run rollup and purge once per hour (when the hour changes)
     const currentHour = new Date().getUTCHours();
@@ -34,6 +44,8 @@ export function startScheduler(socketIo: SocketServer) {
   }, 60 * 1000);
   checkDismissalTimes();
   autoCompleteStaleGoPilotSessions();
+  autoStartClassBlocks();
+  autoEndClassBlocks();
 }
 
 export function stopScheduler() {
@@ -278,5 +290,121 @@ async function purgeExpiredHeartbeats() {
     }
   } catch (err) {
     console.error("[ClassPilot] Heartbeat purge error:", err);
+  }
+}
+
+// ============================================================================
+// ClassPilot - Automatic class block scheduling
+// ============================================================================
+
+async function autoStartClassBlocks() {
+  try {
+    const activeSchools = await db
+      .select({
+        id: schools.id,
+        schoolTimezone: schools.schoolTimezone,
+      })
+      .from(schools)
+      .innerJoin(
+        productLicenses,
+        and(
+          eq(productLicenses.schoolId, schools.id),
+          eq(productLicenses.product, "CLASSPILOT"),
+          eq(productLicenses.status, "active")
+        )
+      )
+      .where(sql`${schools.status} IN ('active', 'trial')`);
+
+    for (const school of activeSchools) {
+      const tz = school.schoolTimezone || "America/New_York";
+      const now = new Date();
+
+      // Skip weekends (Saturday, Sunday)
+      const localDayStr = new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short" }).format(now);
+      if (localDayStr === "Sat" || localDayStr === "Sun") continue;
+
+      const currentTimeHHMM = now.toLocaleString("en-US", {
+        timeZone: tz,
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      }).replace(/^24:/, "00:");
+      const todayDate = now.toLocaleDateString("en-CA", { timeZone: tz });
+
+      const readyGroups = await getScheduledGroupsReadyToStart(school.id, currentTimeHHMM, todayDate);
+
+      for (const group of readyGroups) {
+        // Check if session already exists for this group
+        const alreadyActive = await hasActiveSessionForGroup(group.id);
+        if (alreadyActive) continue;
+
+        // End any existing active session for this teacher
+        const existingSession = await getActiveTeachingSession(group.teacherId);
+        if (existingSession) {
+          await endTeachingSession(existingSession.id);
+          console.log(`[ClassPilot] Auto-ended previous session for teacher ${group.teacherId} before starting "${group.name}"`);
+        }
+
+        // Create new session
+        await createTeachingSession({ groupId: group.id, teacherId: group.teacherId });
+        console.log(`[ClassPilot] Auto-started session for "${group.name}" (teacher ${group.teacherId}, school ${school.id})`);
+      }
+    }
+  } catch (err) {
+    console.error("[ClassPilot] Auto-start class blocks error:", err);
+  }
+}
+
+async function autoEndClassBlocks() {
+  try {
+    const activeSchools = await db
+      .select({
+        id: schools.id,
+        schoolTimezone: schools.schoolTimezone,
+      })
+      .from(schools)
+      .innerJoin(
+        productLicenses,
+        and(
+          eq(productLicenses.schoolId, schools.id),
+          eq(productLicenses.product, "CLASSPILOT"),
+          eq(productLicenses.status, "active")
+        )
+      )
+      .where(sql`${schools.status} IN ('active', 'trial')`);
+
+    for (const school of activeSchools) {
+      const tz = school.schoolTimezone || "America/New_York";
+      const now = new Date();
+      const currentTimeHHMM = now.toLocaleString("en-US", {
+        timeZone: tz,
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      }).replace(/^24:/, "00:");
+
+      const readyGroups = await getScheduledGroupsReadyToEnd(school.id, currentTimeHHMM);
+
+      for (const group of readyGroups) {
+        const session = await endTeachingSession(group.sessionId);
+        console.log(`[ClassPilot] Auto-ended session for "${group.name}" (teacher ${group.teacherId}, school ${school.id})`);
+
+        // Send session summary email (same as manual end)
+        if (session?.startTime && session?.endTime) {
+          const teacher = await getUserById(group.teacherId);
+          if (teacher) {
+            buildAndSendSessionSummary(session, {
+              email: teacher.email,
+              firstName: (teacher as any).firstName,
+              lastName: (teacher as any).lastName,
+            }).catch((err) =>
+              console.error("[ClassPilot] Auto-end session summary email failed:", err)
+            );
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error("[ClassPilot] Auto-end class blocks error:", err);
   }
 }

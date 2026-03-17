@@ -186,6 +186,17 @@ import { pool } from "./db.js";
     console.warn("[migration] auto_block_unsafe_urls migration skipped:", (err as Error).message);
   }
 
+  // Add class block scheduling columns to groups table
+  try {
+    await pool.query(`ALTER TABLE groups ADD COLUMN IF NOT EXISTS schedule_enabled BOOLEAN NOT NULL DEFAULT false`);
+    await pool.query(`ALTER TABLE groups ADD COLUMN IF NOT EXISTS block_start_time TEXT`);
+    await pool.query(`ALTER TABLE groups ADD COLUMN IF NOT EXISTS block_end_time TEXT`);
+    await pool.query(`ALTER TABLE groups ADD COLUMN IF NOT EXISTS schedule_skipped_date TEXT`);
+    console.log("[migration] class block scheduling columns ready");
+  } catch (err) {
+    console.warn("[migration] class block scheduling migration skipped:", (err as Error).message);
+  }
+
   // One-time: update super-admin email alias in users + audit_logs
   try {
     const OLD_EMAIL = "bzinkan@school-pilot.net";

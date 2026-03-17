@@ -96,9 +96,20 @@ router.get("/:id", ...auth, async (req, res, next) => {
 // POST /api/classpilot/groups - Create group
 router.post("/", ...auth, async (req, res, next) => {
   try {
-    const { name, description, periodLabel, gradeLevel, groupType, studentIds } = req.body;
+    const { name, description, periodLabel, gradeLevel, groupType, studentIds,
+            scheduleEnabled, blockStartTime, blockEndTime } = req.body;
     if (!name) {
       return res.status(400).json({ error: "name is required" });
+    }
+
+    // Validate schedule times if scheduling is enabled
+    if (scheduleEnabled) {
+      if (!blockStartTime || !blockEndTime) {
+        return res.status(400).json({ error: "blockStartTime and blockEndTime are required when scheduling is enabled" });
+      }
+      if (blockStartTime >= blockEndTime) {
+        return res.status(400).json({ error: "blockStartTime must be before blockEndTime" });
+      }
     }
 
     const group = await createGroup({
@@ -109,6 +120,9 @@ router.post("/", ...auth, async (req, res, next) => {
       periodLabel: periodLabel || null,
       gradeLevel: gradeLevel || null,
       groupType: groupType || "teacher_created",
+      scheduleEnabled: scheduleEnabled || false,
+      blockStartTime: scheduleEnabled ? blockStartTime : null,
+      blockEndTime: scheduleEnabled ? blockEndTime : null,
     });
 
     // Seed the junction table with the creator as primary teacher
@@ -128,13 +142,35 @@ router.post("/", ...auth, async (req, res, next) => {
 router.patch("/:id", ...auth, async (req, res, next) => {
   try {
     const id = param(req, "id");
-    const { name, description, periodLabel, gradeLevel, studentIds } = req.body;
+    const { name, description, periodLabel, gradeLevel, studentIds,
+            scheduleEnabled, blockStartTime, blockEndTime } = req.body;
 
     const data: Record<string, unknown> = {};
     if (name !== undefined) data.name = name;
     if (description !== undefined) data.description = description;
     if (periodLabel !== undefined) data.periodLabel = periodLabel;
     if (gradeLevel !== undefined) data.gradeLevel = gradeLevel;
+
+    if (scheduleEnabled !== undefined) {
+      data.scheduleEnabled = scheduleEnabled;
+      if (scheduleEnabled) {
+        if (!blockStartTime || !blockEndTime) {
+          return res.status(400).json({ error: "blockStartTime and blockEndTime are required when scheduling is enabled" });
+        }
+        if (blockStartTime >= blockEndTime) {
+          return res.status(400).json({ error: "blockStartTime must be before blockEndTime" });
+        }
+        data.blockStartTime = blockStartTime;
+        data.blockEndTime = blockEndTime;
+      } else {
+        data.blockStartTime = null;
+        data.blockEndTime = null;
+        data.scheduleSkippedDate = null;
+      }
+    } else {
+      if (blockStartTime !== undefined) data.blockStartTime = blockStartTime;
+      if (blockEndTime !== undefined) data.blockEndTime = blockEndTime;
+    }
 
     const updated = await updateGroup(id, data);
     if (!updated) {
