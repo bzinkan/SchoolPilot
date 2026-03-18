@@ -9,6 +9,7 @@ import {
   isChatAvailable,
   type ConversationContext,
 } from "../services/chatService.js";
+import { getProductLicenses } from "../services/storage.js";
 
 const router = Router();
 
@@ -21,16 +22,24 @@ const chatLimiter = rateLimit({
 
 const auth = [authenticate, requireSchoolContext] as const;
 
-function buildContext(req: any, res: any): ConversationContext {
+async function buildContext(req: any, res: any): Promise<ConversationContext> {
   const user = req.authUser!;
   const membership = res.locals.membership;
+  const schoolId = res.locals.schoolId!;
+
+  // Look up active product licenses for this school
+  const licenses = await getProductLicenses(schoolId);
+  const licensedProducts = licenses
+    .filter((l: any) => l.status === "active")
+    .map((l: any) => l.product);
+
   return {
     userId: user.id,
-    schoolId: res.locals.schoolId!,
+    schoolId,
     schoolName: membership?.schoolName || "Unknown School",
     userName: user.displayName || `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.email || "Unknown",
     userRole: membership?.role || "teacher",
-    licensedProducts: res.locals.licensedProducts || [],
+    licensedProducts,
   };
 }
 
@@ -52,7 +61,7 @@ router.post("/message", ...auth, chatLimiter, async (req, res) => {
   }
 
   const convId = conversationId || crypto.randomUUID();
-  const context = buildContext(req, res);
+  const context = await buildContext(req, res);
 
   // Set up SSE
   res.writeHead(200, {
@@ -89,7 +98,7 @@ router.post("/confirm", ...auth, async (req, res) => {
     return;
   }
 
-  const context = buildContext(req, res);
+  const context = await buildContext(req, res);
 
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
