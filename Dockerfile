@@ -27,13 +27,12 @@ WORKDIR /app
 
 # Install production dependencies + drizzle-kit for schema migrations
 COPY package*.json ./
-RUN npm ci --omit=dev && npm install drizzle-kit && npm cache clean --force
+RUN npm ci --omit=dev && npm cache clean --force
 
 # Copy compiled output
 COPY --from=builder /app/dist ./dist
 
-# Copy drizzle config and schema for db:push
-COPY drizzle.config.ts ./
+# Copy schema source (needed by drizzle ORM at runtime)
 COPY src/schema ./src/schema
 
 EXPOSE 4000
@@ -43,4 +42,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 
 USER node
 
-CMD ["sh", "-c", "npx drizzle-kit push --force && node dist/index.js"]
+CMD ["node", "dist/index.js"]
