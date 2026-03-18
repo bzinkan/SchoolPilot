@@ -13,8 +13,15 @@ import {
   createPass,
   addGroupTeacher,
   addHomeroomTeacher,
+  getSchoolUsageSummary,
+  getHeartbeatsByStudent,
 } from "./storage.js";
 import { sendChatEscalationEmail } from "./email.js";
+import db from "../db.js";
+import { heartbeats, teachingSessions, groups } from "../schema/classpilot.js";
+import { users } from "../schema/core.js";
+import { devices as deviceTable } from "../schema/classpilot.js";
+import { eq, and, sql, desc } from "drizzle-orm";
 
 // Lazy imports to avoid circular deps — flight paths may not exist in all setups
 let _getFlightPathsBySchool: ((schoolId: string) => Promise<any[]>) | null =
@@ -298,6 +305,146 @@ const executors: Record<string, ToolExecutor> = {
         destination: pass.destination,
         duration,
         expiresAt: expiresAt.toISOString(),
+      },
+    };
+  },
+
+  // === CLASSPILOT ANALYTICS ===
+
+  get_top_websites: async (args, ctx) => {
+    const period = args.period || "24h";
+    const now = new Date();
+    let startDate: string;
+    if (period === "30d") {
+      const d = new Date(now); d.setDate(d.getDate() - 30); startDate = d.toISOString().slice(0, 10);
+    } else if (period === "7d") {
+      const d = new Date(now); d.setDate(d.getDate() - 7); startDate = d.toISOString().slice(0, 10);
+    } else {
+      const d = new Date(now); d.setDate(d.getDate() - 1); startDate = d.toISOString().slice(0, 10);
+    }
+
+    const topDomains = await db.select({
+      domain: sql<string>`SUBSTRING(${heartbeats.activeTabUrl} FROM '://([^/]+)')`,
+      minutes: sql<number>`(COUNT(*) * 10 / 60)::int`,
+      visits: sql<number>`COUNT(*)::int`,
+    })
+      .from(heartbeats)
+      .where(and(
+        eq(heartbeats.schoolId, ctx.schoolId),
+        sql`${heartbeats.timestamp} >= ${startDate}::timestamp`,
+        sql`${heartbeats.activeTabUrl} IS NOT NULL`
+      ))
+      .groupBy(sql`SUBSTRING(${heartbeats.activeTabUrl} FROM '://([^/]+)')`)
+      .orderBy(sql`COUNT(*) DESC`)
+      .limit(15);
+
+    return {
+      success: true,
+      data: {
+        period,
+        websites: topDomains.filter((d: any) => d.domain).map((d: any) => ({
+          domain: d.domain,
+          estimatedMinutes: d.minutes,
+          visits: d.visits,
+        })),
+      },
+    };
+  },
+
+  get_usage_summary: async (args, ctx) => {
+    const period = args.period || "24h";
+    const now = new Date();
+    let startDate: string;
+    if (period === "30d") {
+      const d = new Date(now); d.setDate(d.getDate() - 30); startDate = d.toISOString().slice(0, 10);
+    } else if (period === "7d") {
+      const d = new Date(now); d.setDate(d.getDate() - 7); startDate = d.toISOString().slice(0, 10);
+    } else {
+      const d = new Date(now); d.setDate(d.getDate() - 1); startDate = d.toISOString().slice(0, 10);
+    }
+    const endDate = now.toISOString().slice(0, 10);
+
+    const [usageSummary, students, deviceCount] = await Promise.all([
+      getSchoolUsageSummary(ctx.schoolId, startDate, endDate),
+      getStudentsBySchool(ctx.schoolId),
+      db.select({ c: sql<number>`COUNT(*)::int` }).from(deviceTable).where(eq(deviceTable.schoolId, ctx.schoolId)),
+    ]);
+
+    return {
+      success: true,
+      data: {
+        period,
+        activeStudents: Number(usageSummary.activeStudents) || 0,
+        totalStudents: students.length,
+        totalDevices: Number(deviceCount[0]?.c) || 0,
+        totalBrowsingMinutes: Math.round((Number(usageSummary.totalSeconds) || 0) / 60),
+        avgMinutesPerStudent: Number(usageSummary.activeStudents) > 0
+          ? Math.round((Number(usageSummary.totalSeconds) || 0) / 60 / Number(usageSummary.activeStudents))
+          : 0,
+      },
+    };
+  },
+
+  get_student_browsing_history: async (args, ctx) => {
+    const limit = args.limit || 20;
+    const records = await db.select({
+      url: heartbeats.activeTabUrl,
+      timestamp: heartbeats.timestamp,
+    })
+      .from(heartbeats)
+      .where(and(
+        eq(heartbeats.studentId, args.studentId),
+        eq(heartbeats.schoolId, ctx.schoolId),
+        sql`${heartbeats.activeTabUrl} IS NOT NULL`
+      ))
+      .orderBy(desc(heartbeats.timestamp))
+      .limit(limit);
+
+    return {
+      success: true,
+      data: {
+        count: records.length,
+        history: records.map((r: any) => ({
+          url: r.url,
+          timestamp: r.timestamp,
+        })),
+      },
+    };
+  },
+
+  get_teacher_session_stats: async (args, ctx) => {
+    const period = args.period || "7d";
+    const days = period === "30d" ? 30 : 7;
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - days);
+
+    const stats = await db.select({
+      teacherId: groups.teacherId,
+      teacherFirstName: users.firstName,
+      teacherLastName: users.lastName,
+      sessionCount: sql<number>`COUNT(${teachingSessions.id})::int`,
+      totalMinutes: sql<number>`COALESCE(SUM(EXTRACT(EPOCH FROM (${teachingSessions.endTime} - ${teachingSessions.startTime})) / 60), 0)::int`,
+    })
+      .from(teachingSessions)
+      .innerJoin(groups, eq(teachingSessions.groupId, groups.id))
+      .innerJoin(users, eq(groups.teacherId, users.id))
+      .where(and(
+        eq(groups.schoolId, ctx.schoolId),
+        sql`${teachingSessions.startTime} >= ${cutoff.toISOString()}::timestamp`
+      ))
+      .groupBy(groups.teacherId, users.firstName, users.lastName)
+      .orderBy(sql`COUNT(${teachingSessions.id}) DESC`);
+
+    return {
+      success: true,
+      data: {
+        period,
+        teachers: stats.map((s: any) => ({
+          name: `${s.teacherFirstName} ${s.teacherLastName}`,
+          sessions: s.sessionCount,
+          totalMinutes: s.totalMinutes,
+          avgMinutesPerSession: s.sessionCount > 0 ? Math.round(s.totalMinutes / s.sessionCount) : 0,
+        })),
       },
     };
   },

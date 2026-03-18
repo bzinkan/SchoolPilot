@@ -322,6 +322,95 @@ export const chatTools: ChatTool[] = [
     mutating: true,
   },
 
+  // === CLASSPILOT ANALYTICS ===
+  {
+    definition: {
+      name: "get_top_websites",
+      description:
+        "Get the most visited websites by students over a given period. Returns domain names ranked by visit count and estimated browsing minutes.",
+      input_schema: {
+        type: "object" as const,
+        properties: {
+          period: {
+            type: "string",
+            enum: ["24h", "7d", "30d"],
+            description: "Time period to analyze (default: 24h)",
+          },
+        },
+        required: [],
+      },
+    },
+    product: "classpilot",
+    requiredRoles: teacherAndAdmin,
+    mutating: false,
+  },
+  {
+    definition: {
+      name: "get_usage_summary",
+      description:
+        "Get a summary of student device usage including active student count, total browsing minutes, device count, and hourly activity breakdown.",
+      input_schema: {
+        type: "object" as const,
+        properties: {
+          period: {
+            type: "string",
+            enum: ["24h", "7d", "30d"],
+            description: "Time period to analyze (default: 24h)",
+          },
+        },
+        required: [],
+      },
+    },
+    product: "classpilot",
+    requiredRoles: teacherAndAdmin,
+    mutating: false,
+  },
+  {
+    definition: {
+      name: "get_student_browsing_history",
+      description:
+        "Get browsing history for a specific student. Returns recent websites visited with timestamps. Use list_students first to get the student ID.",
+      input_schema: {
+        type: "object" as const,
+        properties: {
+          studentId: {
+            type: "string",
+            description: "The student's ID",
+          },
+          limit: {
+            type: "number",
+            description: "Max number of records to return (default: 20)",
+          },
+        },
+        required: ["studentId"],
+      },
+    },
+    product: "classpilot",
+    requiredRoles: teacherAndAdmin,
+    mutating: false,
+  },
+  {
+    definition: {
+      name: "get_teacher_session_stats",
+      description:
+        "Get teaching session statistics by teacher over a period — how many sessions each teacher ran, total duration, and average session length.",
+      input_schema: {
+        type: "object" as const,
+        properties: {
+          period: {
+            type: "string",
+            enum: ["7d", "30d"],
+            description: "Time period (default: 7d)",
+          },
+        },
+        required: [],
+      },
+    },
+    product: "classpilot",
+    requiredRoles: adminOnly,
+    mutating: false,
+  },
+
   // === ESCALATION ===
   {
     definition: {

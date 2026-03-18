@@ -24,7 +24,7 @@ export function useChat() {
       setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
 
       try {
-        const res = await fetch("/api/chat/message", {
+        const res = await fetch("/api/ai-chat/message", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           credentials: "include",
@@ -75,7 +75,7 @@ export function useChat() {
       setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
 
       try {
-        const res = await fetch("/api/chat/confirm", {
+        const res = await fetch("/api/ai-chat/confirm", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           credentials: "include",
@@ -196,7 +196,7 @@ export function useChat() {
   const clearChat = useCallback(async () => {
     if (conversationIdRef.current) {
       try {
-        await fetch(`/api/chat/conversations/${conversationIdRef.current}`, {
+        await fetch(`/api/ai-chat/conversations/${conversationIdRef.current}`, {
           method: "DELETE",
           credentials: "include",
         });
