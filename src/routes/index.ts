@@ -358,13 +358,13 @@ router.use("/google", googleOAuthRoutes);
 router.use("/google/classroom", googleClassroomRoutes);
 router.use("/google/directory", googleDirectoryRoutes);
 
+// AI Chat assistant (must be before compat catch-all)
+router.use("/ai-chat", aiChatRoutes);
+
 // Compatibility routes for missing features
 router.use("/compat", compatRoutes);
 
 // Compatibility aliases (grades, teachers, admin features)
 router.use("/", compatRoutes);
-
-// AI Chat assistant
-router.use("/ai-chat", aiChatRoutes);
 
 export default router;

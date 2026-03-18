@@ -131,6 +131,8 @@ export async function* sendMessage(
     context.licensedProducts
   );
 
+  console.log(`[AI Chat] Tools available (${tools.length}): ${tools.map(t => t.name).join(", ") || "NONE"}`);
+
   // Add user message
   conv.messages.push({ role: "user", content: userMessage });
 

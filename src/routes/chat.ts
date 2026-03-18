@@ -62,6 +62,7 @@ router.post("/message", ...auth, chatLimiter, async (req, res) => {
 
   const convId = conversationId || crypto.randomUUID();
   const context = await buildContext(req, res);
+  console.log(`[AI Chat] User=${context.userName} Role=${context.userRole} Products=${context.licensedProducts.join(",") || "NONE"}`);
 
   // Set up SSE
   res.writeHead(200, {
