@@ -297,6 +297,36 @@ Daily attendance tracking with timezone-aware resets:
 - **Frontend**: `useAbsentStudents.js` hook queries today's absences using the school's timezone. `AttendancePanel.jsx` marks students absent with timezone-aware date.
 - **Reset behavior**: No cron job needed — attendance "resets" naturally because queries filter by the current local date. Historical records are permanent.
 
+### Error Monitoring
+Centralized error tracking in `src/services/errorMonitor.ts`. Tracks errors in a 5-minute sliding window and emails `ADMIN_EMAIL` (bzinkan@school-pilot.net) when thresholds are exceeded.
+
+**Wired into:**
+- `process.on("uncaughtException"/"unhandledRejection")` in `src/index.ts`
+- Express error middleware (`src/middleware/errorHandler.ts`) — 500-level errors only
+- All scheduler catch blocks (`src/services/scheduler.ts`)
+- SendGrid failures (`src/services/email.ts`) — with recursion guard to avoid alert→email→fail→alert loops
+- WebSocket connection errors (`src/realtime/websocket.ts`)
+
+**Thresholds** (errors in 5-min window to trigger alert): uncaught_exception: 1, api_error: 5, scheduler_failure: 2, email_failure: 3, websocket_error: 10, database_error: 3. Each category has a 15-30 min cooldown to prevent spam.
+
+**Health endpoint** (`/health`) includes `recentErrors` summary with counts per category.
+
+### Class Block Scheduling
+Optional time-based auto-start/end for ClassPilot classes. Schema columns on `groups`: `schedule_enabled`, `block_start_time` (HH:MM), `block_end_time` (HH:MM), `schedule_skipped_date` (YYYY-MM-DD).
+
+- **Scheduler** (`src/services/scheduler.ts`): `autoStartClassBlocks()` and `autoEndClassBlocks()` run every 60s. Skips weekends. Uses school timezone.
+- **Skip-date pattern**: When a teacher manually ends a scheduled class, `schedule_skipped_date` is set to today to prevent the scheduler from restarting it. Resets naturally the next day.
+- **Session summary email**: `buildAndSendSessionSummary()` in `src/routes/classpilot/sessions.ts` is exported and called by both manual end and auto-end. Uses school timezone (not hardcoded ET).
+
+### AI Chat (Backend Only — FAB Disabled)
+Claude-powered chat assistant at `/api/ai-chat/*`. Frontend FAB is commented out in `App.jsx` but backend routes remain mounted. Uses `ANTHROPIC_API_KEY` env var (set in ECS task definition).
+
+- **Route**: `src/routes/chat.ts` → mounted at `/ai-chat` (NOT `/chat` — that path is rewritten to ClassPilot student chat)
+- **Service**: `src/services/chatService.ts` — Claude Sonnet streaming via SSE, conversation memory (30-min TTL)
+- **Tools**: `src/services/chatTools.ts` + `chatToolExecutor.ts` — role-aware tools filtered by product license
+- **System prompt**: `src/prompts/systemPrompt.ts` — includes UI navigation docs and product feature descriptions
+- **Escalation**: Chat tool executor auto-emails dev team on unexpected tool errors
+
 ## AWS Infrastructure Architecture
 
 ### Traffic Flow
@@ -376,3 +406,4 @@ MSYS_NO_PATHCONV=1 aws cloudfront list-invalidations --distribution-id E1TPPJOD7
 5. **CloudFront invalidation costs** — Use targeted invalidation (`/index.html /assets/*`) instead of `/*`. Wildcard `/*` invalidates ALL cached objects, causing every request to refetch from origin, generating massive CloudFront + S3 request charges during development.
 6. **Windows path conversion** — Always prefix AWS CLI commands with `MSYS_NO_PATHCONV=1` in Git Bash on Windows, otherwise paths like `--paths "/*"` get mangled.
 7. **Task definition env vars** — The ECS task definition must include `CLIENT_URL=https://school-pilot.net` and `GOOGLE_CALLBACK_URL=https://school-pilot.net/api/auth/google/callback`. These are set in the task definition, not in the container.
+8. **Dockerfile CMD** — Runs `node dist/index.js` directly (no `drizzle-kit push`). Schema migrations are handled by auto-migration blocks in `src/index.ts` on startup.
