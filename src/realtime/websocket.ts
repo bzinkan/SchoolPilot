@@ -2,6 +2,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import type { Server } from "http";
 import { verifyStudentToken, createStudentToken } from "../services/deviceJwt.js";
 import { verifyUserToken } from "../services/jwt.js";
+import errorMonitor from "../services/errorMonitor.js";
 import {
   registerWsClient,
   removeWsClient,
@@ -422,6 +423,7 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
 
     ws.on("error", (error) => {
       console.error("[WebSocket] Error:", error);
+      errorMonitor.trackError("websocket_error", error);
       stopPingInterval(ws);
       removeWsClient(ws);
     });

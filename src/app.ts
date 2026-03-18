@@ -11,6 +11,7 @@ import { getIO } from "./realtime/socketio.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import { apiLimiter } from "./middleware/rateLimiter.js";
 import routes from "./routes/index.js";
+import errorMonitor from "./services/errorMonitor.js";
 
 const PgStore = connectPgSimple(session);
 const isProduction = process.env.NODE_ENV === "production";
@@ -150,6 +151,7 @@ export function createApp() {
 
     results.uptime = Math.floor(process.uptime());
     results.timestamp = new Date().toISOString();
+    results.recentErrors = errorMonitor.getErrorSummary();
 
     res.status(allOk ? 200 : 503).json({ status: allOk ? "ok" : "degraded", checks: results });
   });

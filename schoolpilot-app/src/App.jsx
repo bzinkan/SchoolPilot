@@ -9,7 +9,7 @@ import { SocketProvider } from './contexts/SocketContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import Spinner from './shared/components/Spinner';
 import { Toaster } from './components/ui/toaster';
-import { AIChatButton } from './components/chat/AIChatButton';
+// import { AIChatButton } from './components/chat/AIChatButton'; // AI Chat FAB — disabled, using backend-only monitoring
 import Login from './pages/Login';
 import Landing from './pages/Landing';
 import AuthCallback from './pages/AuthCallback';
@@ -190,7 +190,7 @@ export default function App() {
                 <SocketProvider>
                   <AppRoutes />
                   <Toaster />
-                  <AIChatButton />
+                  {/* <AIChatButton /> — AI Chat FAB disabled, using backend-only monitoring */}
                 </SocketProvider>
               </LicenseProvider>
             </AuthProvider>

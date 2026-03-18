@@ -1,5 +1,15 @@
 import sgMail from "@sendgrid/mail";
 
+// Lazy import to avoid circular dep (errorMonitor imports email.ts)
+let _errorMonitor: any = null;
+async function getErrorMonitor() {
+  if (!_errorMonitor) {
+    const mod = await import("./errorMonitor.js");
+    _errorMonitor = mod.default;
+  }
+  return _errorMonitor;
+}
+
 const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY || "";
 const FROM_EMAIL = process.env.SENDGRID_FROM || "noreply@school-pilot.net";
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "bzinkan@school-pilot.net";
@@ -34,6 +44,13 @@ export async function sendEmail(options: {
     console.error("[Email] Send failed:", error?.message || error);
     if (error?.response?.body) {
       console.error("[Email] SendGrid response:", JSON.stringify(error.response.body));
+    }
+    // Track in error monitor (skip if this IS an alert email to avoid recursion)
+    if (!options.subject.startsWith("[SchoolPilot ALERT]")) {
+      try {
+        const monitor = await getErrorMonitor();
+        monitor.trackError("email_failure", error, { to: options.to, subject: options.subject });
+      } catch { /* avoid recursion */ }
     }
     return false;
   }

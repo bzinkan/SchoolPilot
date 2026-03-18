@@ -1,4 +1,5 @@
 import type { Server as SocketServer } from "socket.io";
+import errorMonitor from "./errorMonitor.js";
 import {
   getSchoolById,
   getOrCreateSession,
@@ -83,6 +84,7 @@ async function checkDismissalTimes() {
     }
   } catch (err) {
     console.error("Scheduler error:", err);
+    errorMonitor.trackError("scheduler_failure", err as Error, { job: "checkDismissalTimes" });
   }
 }
 
@@ -106,6 +108,7 @@ async function autoStartDismissal(schoolId: string, schoolName: string) {
     }
   } catch (err) {
     console.error(`Failed to auto-start dismissal for school ${schoolId}:`, err);
+    errorMonitor.trackError("scheduler_failure", err as Error, { job: "autoStartDismissal", schoolId });
   }
 }
 
@@ -133,6 +136,7 @@ async function autoCompleteStaleGoPilotSessions() {
     }
   } catch (err) {
     console.error("[GoPilot] Failed to auto-complete stale sessions:", err);
+    errorMonitor.trackError("scheduler_failure", err as Error, { job: "autoCompleteStaleGoPilotSessions" });
   }
 }
 
@@ -164,6 +168,7 @@ async function rollupDailyUsage() {
     }
   } catch (err) {
     console.error("[ClassPilot] Daily usage rollup error:", err);
+    errorMonitor.trackError("scheduler_failure", err as Error, { job: "rollupDailyUsage" });
   }
 }
 
@@ -254,6 +259,7 @@ async function rollupSchoolUsage(schoolId: string, timezone: string) {
     console.log(`[ClassPilot] Rolled up daily usage for school ${schoolId}: ${studentTotals.length} students (${yesterdayStr})`);
   } catch (err) {
     console.error(`[ClassPilot] Rollup failed for school ${schoolId}:`, err);
+    errorMonitor.trackError("scheduler_failure", err as Error, { job: "rollupSchoolUsage", schoolId });
   }
 }
 
@@ -290,6 +296,7 @@ async function purgeExpiredHeartbeats() {
     }
   } catch (err) {
     console.error("[ClassPilot] Heartbeat purge error:", err);
+    errorMonitor.trackError("scheduler_failure", err as Error, { job: "purgeExpiredHeartbeats" });
   }
 }
 
@@ -352,6 +359,7 @@ async function autoStartClassBlocks() {
     }
   } catch (err) {
     console.error("[ClassPilot] Auto-start class blocks error:", err);
+    errorMonitor.trackError("scheduler_failure", err as Error, { job: "autoStartClassBlocks" });
   }
 }
 
@@ -406,5 +414,6 @@ async function autoEndClassBlocks() {
     }
   } catch (err) {
     console.error("[ClassPilot] Auto-end class blocks error:", err);
+    errorMonitor.trackError("scheduler_failure", err as Error, { job: "autoEndClassBlocks" });
   }
 }

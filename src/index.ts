@@ -5,6 +5,20 @@ import { setupSocketIO } from "./realtime/socketio.js";
 import { setupWebSocket } from "./realtime/websocket.js";
 import { startScheduler } from "./services/scheduler.js";
 import { startHealthMonitor } from "./services/healthMonitor.js";
+import errorMonitor from "./services/errorMonitor.js";
+
+// ---------------------------------------------------------------------------
+// Global error handlers — catch crashes and alert developers
+// ---------------------------------------------------------------------------
+process.on("uncaughtException", (err) => {
+  errorMonitor.trackError("uncaught_exception", err);
+  console.error("[FATAL] Uncaught exception:", err);
+});
+
+process.on("unhandledRejection", (reason) => {
+  errorMonitor.trackError("uncaught_exception", reason instanceof Error ? reason : new Error(String(reason)));
+  console.error("[FATAL] Unhandled rejection:", reason);
+});
 
 // ---------------------------------------------------------------------------
 // Environment validation — runs before anything else touches env vars
