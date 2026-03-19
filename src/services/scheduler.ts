@@ -76,10 +76,19 @@ async function checkDismissalTimes() {
         )
       );
 
-    if (result.length > 0) {
-      console.log(`[Scheduler] Found ${result.length} school(s) ready for dismissal:`, result.map(s => `${s.name} (${s.dismissalTime} ${s.schoolTimezone})`));
-    }
+    // Filter out schools with auto-dismissal disabled
+    const eligible = [];
     for (const school of result) {
+      const fullSchool = await getSchoolById(school.id);
+      const schoolSettings = fullSchool?.settings ? JSON.parse(fullSchool.settings) : {};
+      if (schoolSettings.autoDismissalEnabled === false) continue;
+      eligible.push(school);
+    }
+
+    if (eligible.length > 0) {
+      console.log(`[Scheduler] Found ${eligible.length} school(s) ready for dismissal:`, eligible.map(s => `${s.name} (${s.dismissalTime} ${s.schoolTimezone})`));
+    }
+    for (const school of eligible) {
       await autoStartDismissal(school.id, school.name);
     }
   } catch (err) {

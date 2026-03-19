@@ -8,6 +8,7 @@ export default function SchoolSettingsTab({ schoolId }) {
   const [timezone, setTimezone] = useState('America/New_York');
   const [changeRequestWarning, setChangeRequestWarning] = useState('');
   const [checkInMethod, setCheckInMethod] = useState('app');
+  const [autoDismissalEnabled, setAutoDismissalEnabled] = useState(true);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -23,6 +24,7 @@ export default function SchoolSettingsTab({ schoolId }) {
       setTimezone(school.schoolTimezone || school.school_timezone || school.timezone || 'America/New_York');
       setChangeRequestWarning(settingsRes.data?.changeRequestWarning || '');
       setCheckInMethod(settingsRes.data?.checkInMethod || (settingsRes.data?.enableQrCodes ? 'qr' : 'app'));
+      setAutoDismissalEnabled(settingsRes.data?.autoDismissalEnabled !== false);
     }).finally(() => setLoading(false));
   }, [schoolId]);
 
@@ -32,7 +34,7 @@ export default function SchoolSettingsTab({ schoolId }) {
     try {
       await api.put(`/schools/${schoolId}`, { dismissalTime, schoolTimezone: timezone });
       const currentSettings = await api.get(`/schools/${schoolId}/settings`).then(r => r.data).catch(() => ({}));
-      await api.put(`/schools/${schoolId}/settings`, { ...currentSettings, changeRequestWarning: changeRequestWarning.trim() || undefined, checkInMethod, enableQrCodes: checkInMethod === 'qr' });
+      await api.put(`/schools/${schoolId}/settings`, { ...currentSettings, changeRequestWarning: changeRequestWarning.trim() || undefined, checkInMethod, enableQrCodes: checkInMethod === 'qr', autoDismissalEnabled });
       setSaved(true);
     } catch (err) {
       console.error('Failed to save settings:', err);
@@ -51,13 +53,32 @@ export default function SchoolSettingsTab({ schoolId }) {
 
       <div className="space-y-6">
         <div>
+          <div className="flex items-center justify-between mb-2">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-slate-200">Auto-Start Dismissal</label>
+              <p className="text-xs text-gray-500 dark:text-slate-400">Automatically start dismissal at the scheduled time each school day.</p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={autoDismissalEnabled}
+              onClick={() => setAutoDismissalEnabled(!autoDismissalEnabled)}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${autoDismissalEnabled ? 'bg-indigo-600' : 'bg-gray-300 dark:bg-slate-600'}`}
+            >
+              <span className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${autoDismissalEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+            </button>
+          </div>
+        </div>
+
+        <div className={!autoDismissalEnabled ? 'opacity-50 pointer-events-none' : ''}>
           <label className="block text-sm font-medium text-gray-700 dark:text-slate-200 mb-1">Dismissal Start Time</label>
-          <p className="text-xs text-gray-500 dark:text-slate-400 mb-2">Dismissal will automatically start at this time each school day.</p>
+          <p className="text-xs text-gray-500 dark:text-slate-400 mb-2">{autoDismissalEnabled ? 'Dismissal will automatically start at this time each school day.' : 'Enable auto-start to schedule dismissal.'}</p>
           <input
             type="time"
             value={dismissalTime}
             onChange={e => setDismissalTime(e.target.value)}
-            className="w-full px-4 py-2.5 border border-gray-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+            disabled={!autoDismissalEnabled}
+            className="w-full px-4 py-2.5 border border-gray-300 dark:border-slate-600 dark:bg-slate-800 dark:text-white rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
           />
         </div>
 
