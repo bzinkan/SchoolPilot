@@ -105,6 +105,13 @@ router.post(
   async (req, res, next) => {
     try {
       const body = { ...req.body };
+      // Handle snake_case → camelCase (GoPilot sends first_name, last_name, etc.)
+      if (body.first_name && !body.firstName) { body.firstName = body.first_name; delete body.first_name; }
+      if (body.last_name && !body.lastName) { body.lastName = body.last_name; delete body.last_name; }
+      if (body.grade_level && !body.gradeLevel) { body.gradeLevel = body.grade_level; delete body.grade_level; }
+      if (body.dismissal_type && !body.dismissalType) { body.dismissalType = body.dismissal_type; delete body.dismissal_type; }
+      if (body.bus_route && !body.busRoute) { body.busRoute = body.bus_route; delete body.bus_route; }
+      if (body.afterschool_reason && !body.afterschoolReason) { body.afterschoolReason = body.afterschool_reason; delete body.afterschool_reason; }
       // Handle studentName → firstName/lastName (ClassPilot sends studentName)
       if (body.studentName && !body.firstName) {
         const parts = body.studentName.trim().split(/\s+/);
@@ -123,6 +130,8 @@ router.post(
         body.email = body.studentEmail;
         delete body.studentEmail;
       }
+      // Handle grade → gradeLevel (GoPilot sends grade)
+      if (body.grade && !body.gradeLevel) { body.gradeLevel = body.grade; delete body.grade; }
 
       const parsed = createStudentSchema.safeParse(body);
       if (!parsed.success) {
