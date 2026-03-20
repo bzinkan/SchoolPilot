@@ -16,6 +16,17 @@ const router = Router();
 
 const auth = [authenticate, requireSchoolContext] as const;
 
+// Extract student ID from Google Workspace externalIds field
+function extractStudentId(user: any): string | undefined {
+  const externalIds = user.externalIds;
+  if (!Array.isArray(externalIds) || externalIds.length === 0) return undefined;
+  // Prefer "organization" or "account" type, fall back to first entry
+  const org = externalIds.find((e: any) => e.type === "organization");
+  const acct = externalIds.find((e: any) => e.type === "account");
+  const val = org?.value || acct?.value || externalIds[0]?.value;
+  return val ? String(val).trim() : undefined;
+}
+
 async function getAuthedClient(userId: string) {
   const token = await getGoogleOAuthToken(userId);
   if (!token) throw new Error("Google not connected");
@@ -123,7 +134,7 @@ router.post("/import", ...auth, async (req, res, next) => {
       let totalUpdated = 0;
 
       for (const entry of entries) {
-        const params: any = { customer: "my_customer", maxResults: 500 };
+        const params: any = { customer: "my_customer", maxResults: 500, projection: "full" };
         if (entry.orgUnitPath && entry.orgUnitPath !== "/") {
           params.query = `orgUnitPath='${entry.orgUnitPath}'`;
         }
@@ -137,6 +148,7 @@ router.post("/import", ...auth, async (req, res, next) => {
           const email = u.primaryEmail;
           if (!email) continue;
           if (excludeSet.has(email)) continue;
+          const studentIdNumber = extractStudentId(u);
 
           const existing = await searchStudents(schoolId, { search: email });
           if (existing.length > 0) {
@@ -149,6 +161,7 @@ router.post("/import", ...auth, async (req, res, next) => {
               emailLc: email.toLowerCase(),
               gradeLevel: entry.gradeLevel || ex.gradeLevel || undefined,
               googleUserId: u.id || ex.googleUserId || undefined,
+              studentIdNumber: studentIdNumber || ex.studentIdNumber || undefined,
             });
             totalUpdated++;
           } else {
@@ -160,6 +173,7 @@ router.post("/import", ...auth, async (req, res, next) => {
               emailLc: email.toLowerCase(),
               gradeLevel: entry.gradeLevel || undefined,
               googleUserId: u.id || undefined,
+              studentIdNumber: studentIdNumber || undefined,
               status: "active",
             });
             totalImported++;
@@ -175,7 +189,7 @@ router.post("/import", ...auth, async (req, res, next) => {
       const { oauth2Client, google } = await getAuthedClient(req.authUser!.id);
       const admin = google.admin({ version: "directory_v1", auth: oauth2Client });
 
-      const params: any = { customer: "my_customer", maxResults: 500 };
+      const params: any = { customer: "my_customer", maxResults: 500, projection: "full" };
       if (orgUnitPath !== "/") {
         params.query = `orgUnitPath='${orgUnitPath}'`;
       }
@@ -189,6 +203,7 @@ router.post("/import", ...auth, async (req, res, next) => {
         if (u.suspended) continue;
         const email = u.primaryEmail;
         if (!email) continue;
+        const studentIdNumber = extractStudentId(u);
 
         const existing = await searchStudents(schoolId, { search: email });
         if (existing.length > 0) {
@@ -200,6 +215,7 @@ router.post("/import", ...auth, async (req, res, next) => {
             emailLc: email.toLowerCase(),
             gradeLevel: gradeLevel || ex.gradeLevel || undefined,
             googleUserId: u.id || ex.googleUserId || undefined,
+            studentIdNumber: studentIdNumber || ex.studentIdNumber || undefined,
           });
           updated++;
         } else {
@@ -211,6 +227,7 @@ router.post("/import", ...auth, async (req, res, next) => {
             emailLc: email.toLowerCase(),
             gradeLevel: gradeLevel || undefined,
             googleUserId: u.id || undefined,
+            studentIdNumber: studentIdNumber || undefined,
             status: "active",
           });
           imported++;
