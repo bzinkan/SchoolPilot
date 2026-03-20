@@ -1,10 +1,12 @@
-// Centralized error monitoring with developer alerts via email
+// Centralized error monitoring with developer alerts via email + Telegram
 // Tracks errors in a sliding window and sends alerts when thresholds are exceeded
 
 import { sendEmail } from "./email.js";
 
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "bzinkan@school-pilot.net";
 const NODE_ENV = process.env.NODE_ENV || "development";
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || "";
 const WINDOW_MS = 5 * 60 * 1000; // 5-minute sliding window
 
 export type ErrorCategory =
@@ -152,11 +154,35 @@ class ErrorMonitor {
       `[ErrorMonitor] ALERT: ${category} — ${count} errors in 5 min`
     );
 
+    // Send email alert
     await sendEmail({
       to: ADMIN_EMAIL,
       subject,
       text,
     });
+
+    // Send Telegram alert (picked up by Claude Code Channels)
+    await sendTelegramAlert(subject, text);
+  }
+}
+
+// Telegram alert — sends to bot which Claude Code Channels picks up
+export async function sendTelegramAlert(subject: string, text: string): Promise<void> {
+  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) return;
+  try {
+    const message = `🚨 *${subject}*\n\n\`\`\`\n${text}\n\`\`\``;
+    const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
+    await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: TELEGRAM_CHAT_ID,
+        text: message,
+        parse_mode: "Markdown",
+      }),
+    });
+  } catch (err) {
+    console.error("[ErrorMonitor] Telegram alert failed:", err);
   }
 }
 

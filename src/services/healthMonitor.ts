@@ -7,6 +7,7 @@ import { pool } from "../db.js";
 import { getIO } from "../realtime/socketio.js";
 import { isRedisEnabled } from "../realtime/ws-redis.js";
 import { sendEmail } from "./email.js";
+import { sendTelegramAlert } from "./errorMonitor.js";
 
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "bzinkan@school-pilot.net";
 const CHECK_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
@@ -134,6 +135,9 @@ async function maybeSendAlert(subsystem: string, error: string): Promise<void> {
         </div>
       `,
     });
+    // Also send to Telegram for Claude Code Channels
+    const alertText = `Subsystem: ${subsystem}\nStatus: FAILING\nError: ${error}\nServer: ${env}\nTime: ${timestamp}`;
+    await sendTelegramAlert(`${subsystem} failure`, alertText);
   } catch (emailErr) {
     console.error("[HealthMonitor] Failed to send alert email:", emailErr);
   }
