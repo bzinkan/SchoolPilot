@@ -60,9 +60,13 @@ export default function KioskPage() {
       });
 
       if (!res.ok) {
-        const err = await res.json();
+        let errMsg = "Student not found";
+        try {
+          const err = await res.json();
+          errMsg = err.error || errMsg;
+        } catch { /* non-JSON response */ }
         setState("error");
-        setMessage(err.error || "Student not found");
+        setMessage(errMsg);
         return;
       }
 
