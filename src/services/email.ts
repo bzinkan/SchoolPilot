@@ -175,7 +175,11 @@ export async function sendTrialWelcomeEmail(options: {
           <li>Go to <a href="https://school-pilot.net">school-pilot.net</a></li>
           <li>Click <strong>Sign In</strong> and log in with your school Google account</li>
           <li>You're in! Start exploring your dashboard.</li>
-        </ol>
+        </ol>${options.products.includes("CLASSPILOT") ? `
+        <h3>Install the ClassPilot Extension</h3>
+        <p>To monitor student Chromebooks, install the ClassPilot extension on your student devices:</p>
+        <p><a href="https://chromewebstore.google.com/detail/classpilot/iggbfegfcjkfieoemeolfmfnapepalca" style="display: inline-block; background: #4f46e5; color: #fff; padding: 10px 20px; border-radius: 6px; text-decoration: none;">Install ClassPilot Extension</a></p>
+        <p style="font-size: 13px; color: #666;">Tip: Use Google Admin to force-install the extension across all student Chromebooks for automatic deployment.</p>` : ""}
         <p>${trialNote}</p>
         <p>Questions? Just reply to this email — we're happy to help.</p>
         <p style="margin-top: 24px;">— The SchoolPilot Team</p>
