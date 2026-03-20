@@ -238,7 +238,7 @@ export default function KioskPage() {
           <CardContent className="py-12 text-center space-y-4">
             <div className="text-6xl">{"\u274C"}</div>
             <h2 className="text-xl font-bold text-red-300">{message}</h2>
-            <Button variant="outline" onClick={resetToScan} className="border-red-700 text-white">
+            <Button variant="outline" onClick={resetToScan} className="border-red-700 bg-white text-black hover:bg-gray-100">
               Try Again
             </Button>
           </CardContent>
