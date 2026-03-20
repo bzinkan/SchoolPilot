@@ -82,7 +82,7 @@ router.post("/lookup", kioskLimiter, async (req, res, next) => {
 
     const student = await getStudentByIdNumber(schoolId, parsed.data.studentIdNumber);
     if (!student) {
-      return res.status(404).json({ error: "Student not found" });
+      return res.json({ error: "Student not found", student: null, activePass: null });
     }
 
     const activePass = await getActivePassForStudent(student.id, schoolId);

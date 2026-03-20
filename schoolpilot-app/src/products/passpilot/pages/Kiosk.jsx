@@ -71,6 +71,11 @@ export default function KioskPage() {
       }
 
       const data = await res.json();
+      if (data.error || !data.student) {
+        setState("error");
+        setMessage(data.error || "Student not found");
+        return;
+      }
       setStudent(data.student);
       setActivePass(data.activePass);
       setState("found");
