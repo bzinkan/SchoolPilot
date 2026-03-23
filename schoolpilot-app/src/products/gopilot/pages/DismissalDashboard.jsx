@@ -212,8 +212,8 @@ export default function DismissalDashboard() {
 
     const handleQueueUpdate = () => {
       if (session) {
-        api.get(`/sessions/${session.id}/queue`).then(r => setQueue(Array.isArray(r.data) ? r.data : (r.data?.queue ?? [])));
-        api.get(`/sessions/${session.id}/stats`).then(r => setStats(r.data));
+        api.get(`/sessions/${session.id}/queue`).then(r => setQueue(Array.isArray(r.data) ? r.data : (r.data?.queue ?? []))).catch(() => {});
+        api.get(`/sessions/${session.id}/stats`).then(r => setStats(r.data)).catch(() => {});
       }
     };
 
@@ -316,9 +316,11 @@ export default function DismissalDashboard() {
   // Actions
   const handleToggleDismissal = async () => {
     if (!session) return;
-    const newStatus = dismissalActive ? 'paused' : 'active';
-    await api.put(`/sessions/${session.id}`, { status: newStatus });
-    setDismissalActive(!dismissalActive);
+    try {
+      const newStatus = dismissalActive ? 'paused' : 'active';
+      await api.put(`/sessions/${session.id}`, { status: newStatus });
+      setDismissalActive(!dismissalActive);
+    } catch (err) { console.warn('Action failed:', err); }
   };
 
   const handleEndDismissal = async () => {
@@ -337,20 +339,26 @@ export default function DismissalDashboard() {
 
   const handleCallStudent = async (queueId) => {
     if (!session) return;
-    await api.post(`/sessions/${session.id}/call`, { queueId, zone: selectedZone || pickupZones[0]?.id });
-    await refreshQueue();
+    try {
+      await api.post(`/sessions/${session.id}/call`, { queueId, zone: selectedZone || pickupZones[0]?.id });
+      await refreshQueue();
+    } catch (err) { console.warn('Action failed:', err); }
   };
 
   const handleMarkPickedUp = async (queueId) => {
-    await api.post(`/queue/${queueId}/dismiss`);
-    await refreshQueue();
+    try {
+      await api.post(`/queue/${queueId}/dismiss`);
+      await refreshQueue();
+    } catch (err) { console.warn('Action failed:', err); }
   };
 
   const handlePickupAll = async (students) => {
     const eligible = students.filter(s => s.status === 'waiting' || s.status === 'called' || s.status === 'released');
     if (eligible.length === 0) return;
-    await api.post('/queue/dismiss-batch', { queueIds: eligible.map(s => s.id) });
-    await refreshQueue();
+    try {
+      await api.post('/queue/dismiss-batch', { queueIds: eligible.map(s => s.id) });
+      await refreshQueue();
+    } catch (err) { console.warn('Action failed:', err); }
   };
 
   const [walkerLoading, setWalkerLoading] = useState(false);
@@ -569,7 +577,7 @@ export default function DismissalDashboard() {
       setOverrideReason('');
       await refreshQueue();
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to change dismissal type');
+      console.warn('Failed to change dismissal type:', err.response?.data?.error || err);
     }
   };
 

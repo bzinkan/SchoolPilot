@@ -81,6 +81,7 @@ export default function TeacherView() {
   const [showOverrideFor, setShowOverrideFor] = useState(null);
   const [overrideType, setOverrideType] = useState('');
   const [overrideReason, setOverrideReason] = useState('');
+  const [retryCount, setRetryCount] = useState(0);
   const teacher = {
     name: user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() : '',
     homeroom: homeroom ? homeroom.name : 'Loading...',
@@ -184,7 +185,7 @@ export default function TeacherView() {
 
     init();
     return () => { cancelled = true; };
-  }, [currentSchool?.id, user?.id]);
+  }, [currentSchool?.id, user?.id, retryCount]);
 
   // Join socket room (and re-join on reconnect)
   useEffect(() => {
@@ -341,7 +342,7 @@ export default function TeacherView() {
   }, [socket, session?.id, homeroom?.id]);
 
   useEffect(() => {
-    const interval = setInterval(() => setCurrentTime(new Date()), 1000);
+    const interval = setInterval(() => setCurrentTime(new Date()), 30000);
     return () => clearInterval(interval);
   }, []);
 
@@ -404,7 +405,7 @@ export default function TeacherView() {
       setOverrideType('');
       setOverrideReason('');
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to change dismissal type');
+      setError(err.response?.data?.error || 'Failed to change dismissal type');
     }
   };
 
@@ -446,7 +447,7 @@ export default function TeacherView() {
             <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
             <h2 className="text-lg font-semibold text-gray-900 mb-2">Unable to Load</h2>
             <p className="text-gray-600 mb-4">{error}</p>
-            <Button onClick={() => window.location.reload()}>
+            <Button onClick={() => { setError(null); setLoading(true); setRetryCount(c => c + 1); }}>
               <RefreshCw className="w-4 h-4 mr-2" />
               Retry
             </Button>
@@ -536,7 +537,7 @@ export default function TeacherView() {
                       setUnreadChangeCount(0);
                       changeRequests.forEach(cr => {
                         if (cr.status !== 'approved') {
-                          api.put(`/changes/${cr.id}`, { status: 'approved' }).catch(() => {});
+                          api.put(`/changes/${cr.id}`, { status: 'approved' }).catch(err => console.warn('Failed to approve change:', err));
                         }
                       });
                       setChangeRequests(prev => prev.map(cr => ({ ...cr, status: 'approved' })));
