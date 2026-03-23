@@ -91,7 +91,6 @@ export default function ParentApp() {
   // Data states
   const [children, setChildren] = useState([]);
   const [authorizedPickups, setAuthorizedPickups] = useState([]);
-  const [editingPickup, setEditingPickup] = useState(null);
   const [history] = useState([]);
   const [sessionId, setSessionId] = useState(null);
   const [sessionStatus, setSessionStatus] = useState(null); // 'pending', 'active', 'completed'
@@ -786,12 +785,6 @@ export default function ParentApp() {
                     </div>
                     <div className="flex items-center gap-1">
                       <button
-                        className="p-2 hover:bg-gray-100 rounded-lg"
-                        onClick={() => { setEditingPickup(pickup); setShowAuthorizedPickups(true); }}
-                      >
-                        <Edit className="w-4 h-4 text-gray-400" />
-                      </button>
-                      <button
                         className="p-2 hover:bg-red-50 rounded-lg"
                         onClick={async () => {
                           if (!confirm('Remove this authorized pickup person?')) return;
@@ -1261,7 +1254,7 @@ export default function ParentApp() {
         <AuthorizedPickupsModal
           pickups={authorizedPickups}
           children={children}
-          onClose={() => { setShowAuthorizedPickups(false); setEditingPickup(null); }}
+          onClose={() => setShowAuthorizedPickups(false)}
           onAdd={fetchPickups}
           onDelete={async (pickup) => {
             const toDelete = authorizedPickups.filter(p => p.name === pickup.name && p.relationship === pickup.relationship);
