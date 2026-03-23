@@ -1162,7 +1162,7 @@ export default function ParentApp() {
               <div className="divide-y">
                 {[
                   { icon: Smartphone, label: 'Check-in Method', value: schoolSettings.checkInMethod === 'qr' ? 'QR Code Tag' : 'GoPilot App' },
-                  { icon: Shield, label: 'Authorized Pickups', value: `${authorizedPickups.length} people`, onClick: () => setShowAuthorizedPickups(true) },
+                  { icon: Shield, label: 'Authorized Pickups', value: `${authorizedPickups.filter((p, i, arr) => arr.findIndex(x => x.name === p.name && x.relationship === p.relationship) === i).length} people`, onClick: () => setShowAuthorizedPickups(true) },
                   { icon: QrCode, label: 'My QR Code', value: '', onClick: () => setShowMyQrCode(true) },
                   ...(currentSchool?.carNumber ? [{ icon: Car, label: 'My Car Number', value: `#${currentSchool.carNumber}` }] : []),
                 ].map((item, index) => (
