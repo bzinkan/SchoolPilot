@@ -307,9 +307,30 @@ Centralized error tracking in `src/services/errorMonitor.ts`. Tracks errors in a
 - SendGrid failures (`src/services/email.ts`) — with recursion guard to avoid alert→email→fail→alert loops
 - WebSocket connection errors (`src/realtime/websocket.ts`)
 
-**Thresholds** (errors in 5-min window to trigger alert): uncaught_exception: 1, api_error: 5, scheduler_failure: 2, email_failure: 3, websocket_error: 10, database_error: 3. Each category has a 15-30 min cooldown to prevent spam.
+**Thresholds** (errors in 5-min window to trigger alert): uncaught_exception: 1, api_error: 5, client_error: 10, scheduler_failure: 2, email_failure: 3, websocket_error: 10, database_error: 3. Each category has a 15-30 min cooldown to prevent spam.
+
+**Alerts sent to:** Email (SendGrid → ADMIN_EMAIL) AND Telegram bot (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID env vars). Telegram alerts are picked up by Claude Code Channels for AI-powered diagnosis.
 
 **Health endpoint** (`/health`) includes `recentErrors` summary with counts per category.
+
+### AI Content Classification (ClassPilot)
+Claude Haiku classifies student browsing activity on each heartbeat. Uses `ANTHROPIC_API_KEY` (same key as AI chat).
+
+- **Service**: `src/services/aiClassification.ts` — `classifyUrl()` with 30-min domain cache
+- **Categories**: `educational`, `non-educational`, `unknown`
+- **Safety alerts**: `sexual`, `violence`, `drugs`, `self-harm`
+- **Known lists**: `KNOWN_EDUCATIONAL` (Google, IXL, Khan Academy, etc.), `KNOWN_NON_EDUCATIONAL` (ESPN, YouTube, TikTok, etc.), `KNOWN_UNSAFE` (explicit sites → instant safety alert)
+- **Search query detection**: Catches unsafe Google/Bing/Yahoo searches (e.g., "porn", "how to kill")
+- **Auto-blocking**: Safety alerts auto-close the tab, add domain to school blacklist, email admins, alert teachers
+- **Cooldown**: 10-min per device per domain to prevent alert spam
+- **Persistence**: `ai_category` and `safety_alert` columns on `heartbeats` table (auto-migrated in `index.ts`)
+- **Off-task overrides**: Teacher intent is respected — domains from Open Tab, Flight Path allowed domains, or manual dismiss are not flagged
+
+### Student Detail Drawer (ClassPilot)
+The student sidebar (Screens, Timeline, History) is scoped to the active teaching session:
+- Heartbeat queries filter by `activeSession.startTime` to `activeSession.endTime`
+- Class name badge shows the active group name (e.g., "Science"), not "NO CLASS"
+- `/api/classpilot/heartbeats/:deviceId` accepts optional `startTime`/`endTime` query params
 
 ### Class Block Scheduling
 Optional time-based auto-start/end for ClassPilot classes. Schema columns on `groups`: `schedule_enabled`, `block_start_time` (HH:MM), `block_end_time` (HH:MM), `schedule_skipped_date` (YYYY-MM-DD).
