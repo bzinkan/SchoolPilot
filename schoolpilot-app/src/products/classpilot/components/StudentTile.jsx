@@ -278,19 +278,6 @@ function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false,
     },
   });
 
-  const getStatusColor = (status) => {
-    if (isAbsent) return 'bg-blue-400';
-    switch (status) {
-      case 'online':
-        return 'bg-status-online';
-      case 'idle':
-        return 'bg-status-away';
-      case 'offline':
-        return 'bg-status-offline';
-      default:
-        return 'bg-status-offline';
-    }
-  };
 
   const getStatusLabel = (status) => {
     if (isAbsent) return 'Absent';
@@ -474,7 +461,7 @@ function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false,
                         try {
                           const domain = new URL(student.activeTabUrl).hostname.toLowerCase().replace(/^www\./, '');
                           onAllowDomain(domain);
-                        } catch {}
+                        } catch { /* ignore invalid URL */ }
                       }}
                       title="Allow this domain for this session"
                     >
