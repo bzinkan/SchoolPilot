@@ -284,6 +284,24 @@ export default function ParentApp() {
     };
   }, [currentSchool, children]);
 
+  // Poll for session changes (detect when admin ends dismissal)
+  useEffect(() => {
+    if (!currentSchool?.id || !sessionStatus || sessionStatus !== 'active') return;
+    const poll = setInterval(async () => {
+      try {
+        const r = await api.get(`/schools/${currentSchool.id}/sessions/active`);
+        if (!r.data?.session) {
+          // Session ended — reset everything
+          setSessionStatus(null);
+          setSessionId(null);
+          setCheckInStatus(null);
+          setQueueIds([]);
+        }
+      } catch { /* ignore */ }
+    }, 15000);
+    return () => clearInterval(poll);
+  }, [currentSchool?.id, sessionStatus]);
+
   // Update time
   useEffect(() => {
     const interval = setInterval(() => setCurrentTime(new Date()), 30000);
@@ -446,24 +464,29 @@ export default function ParentApp() {
     }
     setChangeError(null);
     try {
-      let submitted = 0;
-      for (const child of children) {
-        const change = changes[child.id];
-        if (!change) continue;
-        const currentType = child.dismissalType || child.dismissal_type || 'car';
-        if (change.type === currentType) continue; // skip unchanged
-        await api.post(`/sessions/${sessionId}/changes`, {
-          studentId: child.id,
-          fromType: currentType,
-          toType: change.type,
-          note,
+      const changePromises = children
+        .filter(child => {
+          const change = changes[child.id];
+          if (!change) return false;
+          const currentType = child.dismissalType || child.dismissal_type || 'car';
+          return change.type !== currentType;
+        })
+        .map(child => {
+          const change = changes[child.id];
+          const currentType = child.dismissalType || child.dismissal_type || 'car';
+          return api.post(`/sessions/${sessionId}/changes`, {
+            studentId: child.id,
+            fromType: currentType,
+            toType: change.type,
+            note,
+          }).then(() => child.id);
         });
-        // Update local state immediately so parent sees the new type
-        setChildren(prev => prev.map(c =>
-          c.id === child.id ? { ...c, dismissalType: change.type, dismissal_type: change.type } : c
-        ));
-        submitted++;
-      }
+      const changedIds = await Promise.all(changePromises);
+      const submitted = changedIds.length;
+      // Update local state for all changed children
+      setChildren(prev => prev.map(c =>
+        changedIds.includes(c.id) ? { ...c, dismissalType: changes[c.id].type, dismissal_type: changes[c.id].type } : c
+      ));
       if (submitted === 0) {
         setChangeError('No changes detected. Select a different dismissal type to submit a change.');
         return;
@@ -488,7 +511,7 @@ export default function ParentApp() {
       setOverrideType('');
       setOverrideReason('');
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to change dismissal type');
+      setError(err.response?.data?.error || 'Failed to change dismissal type');
     }
   };
 
@@ -614,7 +637,7 @@ export default function ParentApp() {
                   {carRiderChildren.map(child => (
                     <div key={child.id} className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
                       <div className="w-10 h-10 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-600 font-medium">
-                        {child.firstName[0]}
+                        {(child.firstName || '?')[0]}
                       </div>
                       <div className="flex-1">
                         <p className="font-medium">{child.firstName}</p>
@@ -740,7 +763,7 @@ export default function ParentApp() {
                     >
                       <div className="flex items-center gap-3">
                         <div className="w-12 h-12 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-600 font-bold">
-                          {child.firstName[0]}
+                          {(child.firstName || '?')[0]}
                         </div>
                         <div>
                           <p className="font-medium">{child.firstName} {child.lastName}</p>
@@ -952,7 +975,7 @@ export default function ParentApp() {
                     <div className="p-4">
                       <div className="flex items-center gap-4 mb-4">
                         <div className="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-600 text-xl font-bold">
-                          {child.firstName[0]}{child.lastName[0]}
+                          {(child.firstName || '?')[0]}{(child.lastName || '')[0]}
                         </div>
                         <div>
                           <p className="font-bold text-lg">{child.firstName} {child.lastName}</p>
@@ -1010,7 +1033,7 @@ export default function ParentApp() {
                     <p className="text-sm text-gray-600 mb-4">
                       {linkSuccess.count} {linkSuccess.count === 1 ? 'child has' : 'children have'} been linked to your account.
                     </p>
-                    <button onClick={() => { setShowAddChild(false); window.location.reload(); }} className="px-6 py-2 bg-indigo-600 text-white rounded-lg font-medium">Done</button>
+                    <button onClick={() => { setShowAddChild(false); setCurrentView('home'); fetchPickups(); }} className="px-6 py-2 bg-indigo-600 text-white rounded-lg font-medium">Done</button>
                   </div>
                 ) : (
                   <>

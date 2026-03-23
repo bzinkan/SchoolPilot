@@ -109,6 +109,7 @@ export default function DismissalDashboard() {
   const [expandedHomeroom, setExpandedHomeroom] = useState(null);
   const [homeroomStudents, setHomeroomStudents] = useState([]);
   const [loadingStudents, setLoadingStudents] = useState(false);
+  const [showEndConfirm, setShowEndConfirm] = useState(false);
   // Change request notifications
   const [changeRequests, setChangeRequests] = useState([]);
   const [showChangeNotifications, setShowChangeNotifications] = useState(false);
@@ -318,6 +319,20 @@ export default function DismissalDashboard() {
     const newStatus = dismissalActive ? 'paused' : 'active';
     await api.put(`/sessions/${session.id}`, { status: newStatus });
     setDismissalActive(!dismissalActive);
+  };
+
+  const handleEndDismissal = async () => {
+    if (!session) return;
+    try {
+      await api.put(`/sessions/${session.id}`, { status: 'completed' });
+      setDismissalActive(false);
+      setSession(null);
+      setQueue([]);
+      setStats({ waiting: 0, called: 0, released: 0, dismissed: 0, total: 0, avg_wait_seconds: null });
+      setShowEndConfirm(false);
+    } catch (err) {
+      console.error('Failed to end dismissal:', err);
+    }
   };
 
   const handleCallStudent = async (queueId) => {
@@ -653,7 +668,7 @@ export default function DismissalDashboard() {
               <div className={`hidden sm:flex ml-2 sm:ml-6 px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg items-center gap-2 ${dismissalActive ? 'bg-green-100 dark:bg-green-950/50 dark:bg-green-950/50' : 'bg-gray-100 dark:bg-slate-800'}`}>
                 <span className={`w-2 h-2 rounded-full ${dismissalActive ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`} />
                 <span className={`text-xs sm:text-sm font-medium ${dismissalActive ? 'text-green-700 dark:text-green-400' : 'text-gray-600 dark:text-slate-400'}`}>
-                  {dismissalActive ? 'Active' : 'Paused'}
+                  {dismissalActive ? 'Active' : session ? 'Paused' : 'Not Started'}
                 </span>
               </div>
             </div>
@@ -731,10 +746,17 @@ export default function DismissalDashboard() {
                 <Button variant={soundEnabled ? 'secondary' : 'ghost'} size="sm" onClick={() => setSoundEnabled(!soundEnabled)}>
                   {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
                 </Button>
-                <Button variant={dismissalActive ? 'warning' : 'success'} size="sm" onClick={handleToggleDismissal}>
-                  {dismissalActive ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-                  <span className="hidden sm:inline ml-1">{dismissalActive ? 'Pause' : 'Start'}</span>
-                </Button>
+                {dismissalActive ? (
+                  <button onClick={() => setShowEndConfirm(true)} className="flex items-center gap-1 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-lg transition-colors">
+                    <X className="w-4 h-4" />
+                    <span className="hidden sm:inline">End</span>
+                  </button>
+                ) : (
+                  <Button variant="success" size="sm" onClick={handleToggleDismissal}>
+                    <Play className="w-4 h-4" />
+                    <span className="hidden sm:inline ml-1">Start</span>
+                  </Button>
+                )}
                 <Button variant="ghost" size="sm" onClick={() => { logout(); navigate('/login'); }}>
                   <LogOut className="w-4 h-4" />
                 </Button>
@@ -1482,6 +1504,25 @@ export default function DismissalDashboard() {
                   Save
                 </Button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* End Dismissal Confirmation */}
+      {showEndConfirm && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl max-w-sm w-full p-6 shadow-xl">
+            <div className="text-center mb-4">
+              <div className="w-12 h-12 bg-red-100 dark:bg-red-950/30 rounded-full flex items-center justify-center mx-auto mb-3">
+                <AlertTriangle className="w-6 h-6 text-red-600 dark:text-red-400" />
+              </div>
+              <h2 className="text-lg font-bold dark:text-white">End Today's Dismissal?</h2>
+              <p className="text-sm text-gray-500 dark:text-slate-400 mt-2">This will end the current dismissal session and reset all queue entries. Parents will see "Waiting for Dismissal."</p>
+            </div>
+            <div className="flex gap-3">
+              <Button variant="outline" className="flex-1" onClick={() => setShowEndConfirm(false)}>Cancel</Button>
+              <Button variant="destructive" className="flex-1" onClick={handleEndDismissal}>End Dismissal</Button>
             </div>
           </div>
         </div>
