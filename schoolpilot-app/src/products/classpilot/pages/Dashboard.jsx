@@ -170,8 +170,14 @@ export default function Dashboard() {
   });
 
   const { data: urlHistory = [] } = useQuery({
-    queryKey: ['/api/heartbeats', selectedStudent?.primaryDeviceId],
-    queryFn: () => apiRequest('GET', `/heartbeats/${selectedStudent?.primaryDeviceId}`),
+    queryKey: ['/api/heartbeats', selectedStudent?.primaryDeviceId, activeSession?.startTime],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (activeSession?.startTime) params.set('startTime', new Date(activeSession.startTime).toISOString());
+      if (activeSession?.endTime) params.set('endTime', new Date(activeSession.endTime).toISOString());
+      const qs = params.toString();
+      return apiRequest('GET', `/heartbeats/${selectedStudent?.primaryDeviceId}${qs ? `?${qs}` : ''}`);
+    },
     select: (data) => Array.isArray(data) ? data : data?.heartbeats ?? [],
     enabled: !!selectedStudent,
   });
@@ -1481,7 +1487,14 @@ export default function Dashboard() {
 
       {/* Student Detail Drawer */}
       {selectedStudent && (
-        <StudentDetailDrawer student={selectedStudent} urlHistory={urlHistory} allowedDomains={settings?.allowedDomains || []} onClose={() => setSelectedStudent(null)} />
+        <StudentDetailDrawer
+          student={selectedStudent}
+          urlHistory={urlHistory}
+          allowedDomains={settings?.allowedDomains || []}
+          onClose={() => setSelectedStudent(null)}
+          activeClassName={effectiveSession ? groups.find(g => g.id === effectiveSession.groupId)?.name : null}
+          sessionStartTime={effectiveSession?.startTime}
+        />
       )}
 
       {/* Export Dialog */}

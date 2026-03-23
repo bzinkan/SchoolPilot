@@ -19,6 +19,8 @@ function StudentDetailDrawer({
   urlHistory,
   allowedDomains,
   onClose,
+  activeClassName,
+  sessionStartTime,
 }) {
   const [historyStartDate, setHistoryStartDate] = useState(new Date());
   const [historyEndDate, setHistoryEndDate] = useState(new Date());
@@ -130,7 +132,7 @@ function StudentDetailDrawer({
               </SheetTitle>
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <Badge variant="secondary" className="uppercase text-xs">
-                  {student.classId || "No Class"}
+                  {activeClassName || "No Class"}
                 </Badge>
                 <Badge className={`text-xs ${
                   student.status === "offline" ? "bg-status-offline text-white" :

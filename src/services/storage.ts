@@ -2419,6 +2419,24 @@ export async function getHeartbeatsByDevice(
     .limit(limit);
 }
 
+export async function getHeartbeatsByDeviceInRange(
+  deviceId: string,
+  startTime: Date,
+  endTime: Date
+): Promise<Heartbeat[]> {
+  return db
+    .select()
+    .from(heartbeats)
+    .where(
+      and(
+        eq(heartbeats.deviceId, deviceId),
+        sql`${heartbeats.timestamp} >= ${startTime}`,
+        sql`${heartbeats.timestamp} <= ${endTime}`
+      )
+    )
+    .orderBy(desc(heartbeats.timestamp));
+}
+
 export async function getHeartbeatsByStudent(
   studentId: string,
   limit = 50

@@ -15,6 +15,7 @@ import {
   createHeartbeat,
   updateHeartbeatClassification,
   getHeartbeatsByDevice,
+  getHeartbeatsByDeviceInRange,
   createEvent,
   getStudentById,
   getStudentsBySchool,
@@ -772,7 +773,18 @@ router.get("/heartbeats", ...staffAuth, async (req, res, next) => {
 router.get("/heartbeats/:deviceId", ...staffAuth, async (req, res, next) => {
   try {
     const limit = parseInt(req.query.limit as string) || 50;
-    const heartbeats = await getHeartbeatsByDevice(param(req, "deviceId"), limit);
+    const startTime = req.query.startTime as string | undefined;
+    const endTime = req.query.endTime as string | undefined;
+
+    let heartbeats;
+    if (startTime) {
+      // Filter by time range (for session-scoped views)
+      const start = new Date(startTime);
+      const end = endTime ? new Date(endTime) : new Date();
+      heartbeats = await getHeartbeatsByDeviceInRange(param(req, "deviceId"), start, end);
+    } else {
+      heartbeats = await getHeartbeatsByDevice(param(req, "deviceId"), limit);
+    }
     return res.json({ heartbeats });
   } catch (err) {
     next(err);
