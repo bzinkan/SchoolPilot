@@ -12,6 +12,12 @@ export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
       path: req.originalUrl,
       userId: (req as any).authUser?.id,
     });
+  } else if (status >= 400) {
+    errorMonitor.trackError("client_error", err, {
+      method: req.method,
+      path: req.originalUrl,
+      status,
+    });
   }
 
   if (res.headersSent) {

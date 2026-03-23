@@ -944,6 +944,7 @@ router.get("/students-aggregated", ...schoolAuth, async (req, res, next) => {
         flightPathActive: rt?.flightPathActive || false,
         activeFlightPathName: rt?.activeFlightPathName,
         cameraActive: rt?.cameraActive || false,
+        aiClassification: rt?.aiClassification || undefined,
       };
     });
 

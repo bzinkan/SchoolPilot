@@ -197,10 +197,10 @@ export async function buildAndSendSessionSummary(
   const hbs = await getHeartbeatsForStudentsInRange(studentIds, session.startTime, endTime);
 
   // Build per-student domain summaries
-  const studentMap = new Map<string, { name: string; domainSeconds: Map<string, number>; count: number }>();
+  const studentMap = new Map<string, { name: string; domainSeconds: Map<string, number>; count: number; offTaskCount: number; safetyAlerts: string[]; safetyUrls: string[] }>();
   for (const gs of groupStudentRows) {
     const name = [gs.student.firstName, gs.student.lastName].filter(Boolean).join(" ") || gs.student.email || "Unknown";
-    studentMap.set(gs.studentId, { name, domainSeconds: new Map(), count: 0 });
+    studentMap.set(gs.studentId, { name, domainSeconds: new Map(), count: 0, offTaskCount: 0, safetyAlerts: [], safetyUrls: [] });
   }
 
   for (const hb of hbs) {
@@ -208,6 +208,13 @@ export async function buildAndSendSessionSummary(
     const entry = studentMap.get(hb.studentId);
     if (!entry) continue;
     entry.count++;
+    if ((hb as any).aiCategory === "non-educational") entry.offTaskCount++;
+    if ((hb as any).safetyAlert) {
+      entry.safetyAlerts.push((hb as any).safetyAlert);
+      if (hb.activeTabUrl) {
+        try { entry.safetyUrls.push(new URL(hb.activeTabUrl).hostname.replace(/^www\./, "")); } catch {}
+      }
+    }
     if (hb.activeTabUrl) {
       try {
         const domain = new URL(hb.activeTabUrl).hostname.replace(/^www\./, "");
@@ -221,7 +228,9 @@ export async function buildAndSendSessionSummary(
       .sort((a, b) => b[1] - a[1])
       .slice(0, 5)
       .map(([domain, seconds]) => ({ domain, minutes: Math.round(seconds / 60) }));
-    return { name: s.name, totalMinutes: Math.round((s.count * 10) / 60), topDomains };
+    const uniqueSafetyAlerts = [...new Set(s.safetyAlerts)];
+    const uniqueSafetyUrls = [...new Set(s.safetyUrls)];
+    return { name: s.name, totalMinutes: Math.round((s.count * 10) / 60), topDomains, offTaskCount: s.offTaskCount, safetyAlerts: uniqueSafetyAlerts, safetyUrls: uniqueSafetyUrls };
   });
 
   const durationMs = endTime.getTime() - session.startTime.getTime();

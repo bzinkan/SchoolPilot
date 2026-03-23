@@ -308,9 +308,26 @@ export async function sendSessionSummaryEmail(options: {
     name: string;
     totalMinutes: number;
     topDomains: Array<{ domain: string; minutes: number }>;
+    offTaskCount?: number;
+    safetyAlerts?: string[];
+    safetyUrls?: string[];
   }>;
 }): Promise<boolean> {
   const { to, teacherName, className, date, startTime, endTime, duration, studentCount, students } = options;
+
+  // Build safety incidents section if any exist
+  const safetyIncidents = students
+    .filter(s => s.safetyAlerts && s.safetyAlerts.length > 0)
+    .map(s => `<tr><td style="padding: 6px 8px; border-bottom: 1px solid #fecaca;">${s.name}</td><td style="padding: 6px 8px; border-bottom: 1px solid #fecaca; color: #dc2626; font-weight: bold;">${s.safetyAlerts!.join(", ")}</td><td style="padding: 6px 8px; border-bottom: 1px solid #fecaca; font-size: 13px;">${s.safetyUrls?.join(", ") || ""}</td></tr>`)
+    .join("");
+  const safetySection = safetyIncidents ? `
+    <div style="margin: 20px 0; padding: 16px; background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px;">
+      <h3 style="color: #dc2626; margin: 0 0 12px 0;">&#9888; Safety Alerts</h3>
+      <table style="width: 100%; border-collapse: collapse;">
+        <thead><tr style="background: #fee2e2;"><th style="padding: 6px 8px; text-align: left;">Student</th><th style="padding: 6px 8px; text-align: left;">Alert Type</th><th style="padding: 6px 8px; text-align: left;">Site</th></tr></thead>
+        <tbody>${safetyIncidents}</tbody>
+      </table>
+    </div>` : "";
 
   const studentRows = students
     .sort((a, b) => b.totalMinutes - a.totalMinutes)
@@ -319,10 +336,18 @@ export async function sendSessionSummaryEmail(options: {
         .slice(0, 5)
         .map((d) => `${d.domain} (${d.minutes}m)`)
         .join(", ");
+      const offTask = s.offTaskCount || 0;
+      const offTaskCell = offTask > 0
+        ? `<span style="color: #dc2626; font-weight: bold;">${offTask}</span>`
+        : `<span style="color: #16a34a;">0</span>`;
+      const safetyCell = s.safetyAlerts && s.safetyAlerts.length > 0
+        ? `<span style="color: #dc2626; font-weight: bold;">${s.safetyAlerts.join(", ")}</span>`
+        : "";
       return `
         <tr>
           <td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">${s.name}</td>
           <td style="padding: 8px; border-bottom: 1px solid #e5e7eb; text-align: center;">${s.totalMinutes}m</td>
+          <td style="padding: 8px; border-bottom: 1px solid #e5e7eb; text-align: center;">${offTaskCell}${safetyCell ? ` ${safetyCell}` : ""}</td>
           <td style="padding: 8px; border-bottom: 1px solid #e5e7eb; font-size: 13px; color: #6b7280;">${domains || "No activity"}</td>
         </tr>`;
     })
@@ -333,6 +358,7 @@ export async function sendSessionSummaryEmail(options: {
       <h2 style="color: #1e293b;">📋 ClassPilot Session Summary</h2>
       <p>Hi ${teacherName},</p>
       <p>Here's your session summary for <strong>${className}</strong>.</p>
+      ${safetySection}
       <table style="width: 100%; border-collapse: collapse; margin: 16px 0; background: #f8fafc; border-radius: 6px;">
         <tr><td style="padding: 8px 12px; font-weight: bold;">Date</td><td style="padding: 8px 12px;">${date}</td></tr>
         <tr><td style="padding: 8px 12px; font-weight: bold;">Time</td><td style="padding: 8px 12px;">${startTime} — ${endTime} (${duration})</td></tr>
@@ -344,6 +370,7 @@ export async function sendSessionSummaryEmail(options: {
           <tr style="background: #f1f5f9;">
             <th style="padding: 8px; text-align: left; border-bottom: 2px solid #e2e8f0;">Student</th>
             <th style="padding: 8px; text-align: center; border-bottom: 2px solid #e2e8f0;">Active Time</th>
+            <th style="padding: 8px; text-align: center; border-bottom: 2px solid #e2e8f0;">Off-Task</th>
             <th style="padding: 8px; text-align: left; border-bottom: 2px solid #e2e8f0;">Top Sites</th>
           </tr>
         </thead>

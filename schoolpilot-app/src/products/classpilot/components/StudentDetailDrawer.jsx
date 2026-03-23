@@ -166,10 +166,6 @@ function StudentDetailDrawer({
                     <HistoryIcon className="h-4 w-4 mr-2" />
                     History
                   </TabsTrigger>
-                  <TabsTrigger value="snapshots" className="data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none" data-testid="tab-snapshots">
-                    <Camera className="h-4 w-4 mr-2" />
-                    Snapshots
-                  </TabsTrigger>
                 </TabsList>
               </div>
 
@@ -377,7 +373,7 @@ function StudentDetailDrawer({
 
                         // Use shared off-task detection logic (checks camera AND allowed domains)
                         // BUT skip off-task check for "no active tab" sessions - they're neutral, not off-task
-                        const hasOffTask = isNoTab ? false : isSessionOffTask(session.url, hasCamera, allowedDomains);
+                        const hasOffTask = isNoTab ? false : isSessionOffTask(session.url, hasCamera, allowedDomains, session.aiCategory);
 
                         return {
                           ...session,
@@ -737,7 +733,7 @@ function StudentDetailDrawer({
                             new Date(hb.timestamp) <= session.endTime
                           );
 
-                          const hasOffTask = sessionHeartbeats.some(hb => hb.flightPathActive && hb.activeFlightPathName);
+                          const hasOffTask = sessionHeartbeats.some(hb => hb.aiCategory === 'non-educational' || hb.cameraActive);
                           const hasLocked = sessionHeartbeats.some(hb => hb.screenLocked);
                           const hasCamera = sessionHeartbeats.some(hb => hb.cameraActive);
 
@@ -823,18 +819,6 @@ function StudentDetailDrawer({
                 </ScrollArea>
               </TabsContent>
 
-              {/* Snapshots Tab */}
-              <TabsContent value="snapshots" className="flex-1 overflow-hidden m-0">
-                <ScrollArea className="h-full">
-                  <div className="p-6">
-                    <div className="p-8 text-center text-muted-foreground">
-                      <Camera className="h-12 w-12 mx-auto mb-3 opacity-50" />
-                      <p className="font-medium">Screenshot Snapshots</p>
-                      <p className="text-sm mt-1">Captured screenshots coming soon</p>
-                    </div>
-                  </div>
-                </ScrollArea>
-              </TabsContent>
             </Tabs>
           </div>
         </SheetContent>

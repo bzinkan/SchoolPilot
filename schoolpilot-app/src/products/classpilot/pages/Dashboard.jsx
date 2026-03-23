@@ -6,6 +6,10 @@ import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
 import { Badge } from '../../../components/ui/badge';
 import StudentTile from '../components/StudentTile';
+import StudentTileV0 from '../components/StudentTileV0';
+
+// Toggle this to test v0 dark theme tiles
+const USE_V0_TILE = false;
 import StudentDetailDrawer from '../components/StudentDetailDrawer';
 import RemoteControlToolbar from '../components/RemoteControlToolbar';
 import TeacherFab from '../components/TeacherFab';
@@ -80,6 +84,7 @@ export default function Dashboard() {
   const [wsConnected, setWsConnected] = useState(false);
   const [liveStreams, setLiveStreams] = useState(new Map());
   const [tileRevisions, setTileRevisions] = useState({});
+  const [teacherAllowedDomains, setTeacherAllowedDomains] = useState(new Set());
   const [showExportDialog, setShowExportDialog] = useState(false);
   const [exportStartDate, setExportStartDate] = useState("");
   const [exportEndDate, setExportEndDate] = useState("");
@@ -94,6 +99,8 @@ export default function Dashboard() {
   const [showFlightPathViewerDialog, setShowFlightPathViewerDialog] = useState(false);
   const [showApplyBlockListDialog, setShowApplyBlockListDialog] = useState(false);
   const [selectedBlockListId, setSelectedBlockListId] = useState("");
+  const [showSendMessageDialog, setShowSendMessageDialog] = useState(false);
+  const [sendMessageText, setSendMessageText] = useState("");
   const [showBlockListViewerDialog, setShowBlockListViewerDialog] = useState(false);
   const [showAttentionDialog, setShowAttentionDialog] = useState(false);
   const [attentionMessage, setAttentionMessage] = useState("Please look up!");
@@ -485,10 +492,26 @@ export default function Dashboard() {
   // Check if student is off-task
   const isStudentOffTask = (student) => {
     if (student.cameraActive) return true;
-    if (student.aiClassification?.category === 'non-educational') return true;
-    if (!settings?.allowedDomains || settings.allowedDomains.length === 0) return false;
     if (!student.activeTabUrl) return false;
     if (student.status !== 'online') return false;
+
+    // AI classification check — respect teacher overrides
+    if (student.aiClassification?.category === 'non-educational') {
+      try {
+        const domain = new URL(student.activeTabUrl).hostname.toLowerCase().replace(/^www\./, '');
+        // Skip if teacher explicitly allowed this domain (Open Tab, dismiss, etc.)
+        if (teacherAllowedDomains.has(domain)) return false;
+        // Skip if domain is in active flight path's allowed list
+        if (student.flightPathActive && student.activeFlightPathName) {
+          const fp = flightPaths.find(f => f.flightPathName === student.activeFlightPathName);
+          if (fp?.allowedDomains?.some(d => domain.includes(d.toLowerCase().replace(/^www\./, '')))) return false;
+        }
+        return true;
+      } catch { return false; }
+    }
+
+    // Allowed domains list check (school settings)
+    if (!settings?.allowedDomains || settings.allowedDomains.length === 0) return false;
     try {
       const hostname = new URL(student.activeTabUrl).hostname.toLowerCase();
       const isOnAllowedDomain = settings.allowedDomains.some(allowed => {
@@ -505,6 +528,10 @@ export default function Dashboard() {
     } catch {
       return false;
     }
+  };
+
+  const handleAllowDomain = (domain) => {
+    setTeacherAllowedDomains(prev => new Set(prev).add(domain));
   };
 
   const getLastName = (fullName) => {
@@ -591,6 +618,8 @@ export default function Dashboard() {
     });
     return deviceIds.length > 0 ? deviceIds : undefined;
   };
+
+  const targetLabel = (count) => selectedStudentIds.size > 0 ? `${count} selected student(s)` : `all ${count} online student(s)`;
 
   const relevantStudents = selectedStudentIds.size > 0
     ? students.filter(s => selectedStudentIds.has(s.studentId))
@@ -725,8 +754,15 @@ export default function Dashboard() {
 
   const refreshScreenshotsForDevices = (targetDeviceIds) => {
     const deviceIds = targetDeviceIds || students.filter(s => s.status === 'online' || s.status === 'idle').map(s => s.primaryDeviceId).filter(Boolean);
-    setTimeout(() => { deviceIds.forEach(deviceId => { queryClient.invalidateQueries({ queryKey: ['/api/device/screenshot', deviceId] }); }); }, 2000);
-    setTimeout(() => { deviceIds.forEach(deviceId => { queryClient.invalidateQueries({ queryKey: ['/api/device/screenshot', deviceId] }); }); }, 5000);
+    // Rapid background refetch bursts at 1s, 2s, 3s, 5s, 8s to feel immediate after toolbar actions
+    // Uses invalidateQueries (keeps old data visible) + refetchType 'all' to bypass staleTime
+    for (const delay of [1000, 2000, 3000, 5000, 8000]) {
+      setTimeout(() => {
+        deviceIds.forEach(deviceId => {
+          queryClient.invalidateQueries({ queryKey: ['/api/device/screenshot', deviceId], refetchType: 'all' });
+        });
+      }, delay);
+    }
   };
 
   const openTabMutation = useMutation({
@@ -734,7 +770,12 @@ export default function Dashboard() {
       const data = await apiRequest('POST', '/remote/open-tab', { url, targetDeviceIds });
       return { ...data, targetDeviceIds };
     },
-    onSuccess: (data) => { toast({ title: "Success", description: data.message }); setShowOpenTabDialog(false); setOpenTabUrl(""); refreshScreenshotsForDevices(data.targetDeviceIds); },
+    onSuccess: (data, variables) => {
+      toast({ title: "Success", description: data.message }); setShowOpenTabDialog(false);
+      // Auto-allow the opened domain so it's not flagged as off-task
+      try { const d = new URL(variables.url).hostname.toLowerCase().replace(/^www\./, ''); handleAllowDomain(d); } catch {}
+      setOpenTabUrl(""); refreshScreenshotsForDevices(data.targetDeviceIds);
+    },
     onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
   });
 
@@ -763,7 +804,7 @@ export default function Dashboard() {
       );
       return { previousStudents, devicesToLock };
     },
-    onSuccess: (data, variables) => { toast({ title: "Success", description: `Locked screen for ${data.deviceCount} student(s)` }); refreshScreenshotsForDevices(variables.devicesToLock); },
+    onSuccess: (data, variables) => { toast({ title: "Success", description: `Locked screen for ${targetLabel(data.deviceCount)}` }); refreshScreenshotsForDevices(variables.devicesToLock); },
     onError: (error, _, context) => {
       optimisticUpdateUntilRef.current = 0;
       if (context?.previousStudents) queryClient.setQueryData(['/api/students-aggregated'], context.previousStudents);
@@ -786,7 +827,7 @@ export default function Dashboard() {
       );
       return { previousStudents, devicesToUnlock };
     },
-    onSuccess: (data, variables) => { toast({ title: "Success", description: `Unlocked screen for ${data.deviceCount} student(s)` }); refreshScreenshotsForDevices(variables.devicesToUnlock); },
+    onSuccess: (data, variables) => { toast({ title: "Success", description: `Unlocked screen for ${targetLabel(data.deviceCount)}` }); refreshScreenshotsForDevices(variables.devicesToUnlock); },
     onError: (error, _, context) => {
       optimisticUpdateUntilRef.current = 0;
       if (context?.previousStudents) queryClient.setQueryData(['/api/students-aggregated'], context.previousStudents);
@@ -841,7 +882,13 @@ export default function Dashboard() {
       );
       return { previousStudents, devicesToApply };
     },
-    onSuccess: (data) => { toast({ title: "Success", description: `Applied "${data.flightPathName}" to ${data.deviceCount} student(s)` }); setShowApplyFlightPathDialog(false); setSelectedFlightPathId(""); refreshScreenshotsForDevices(data.devicesToApply); },
+    onSuccess: (data, variables) => {
+      toast({ title: "Success", description: `Applied "${data.flightPathName}" to ${targetLabel(data.deviceCount)}` });
+      setShowApplyFlightPathDialog(false); setSelectedFlightPathId("");
+      // Auto-allow all domains in the flight path so they're not flagged as off-task
+      (variables.allowedDomains || []).forEach(d => { try { handleAllowDomain(d.toLowerCase().replace(/^www\./, '')); } catch {} });
+      refreshScreenshotsForDevices(data.devicesToApply);
+    },
     onError: (error, _, context) => {
       optimisticUpdateUntilRef.current = 0;
       if (context?.previousStudents) queryClient.setQueryData(['/api/students-aggregated'], context.previousStudents);
@@ -863,7 +910,7 @@ export default function Dashboard() {
       );
       return { previousStudents };
     },
-    onSuccess: (data, variables) => { toast({ title: "Success", description: `Removed flight path from ${data.deviceCount} student(s)` }); refreshScreenshotsForDevices(variables.targetDeviceIds); },
+    onSuccess: (data, variables) => { toast({ title: "Success", description: `Removed flight path from ${targetLabel(data.deviceCount)}` }); refreshScreenshotsForDevices(variables.targetDeviceIds); },
     onError: (error, _, context) => {
       optimisticUpdateUntilRef.current = 0;
       if (context?.previousStudents) queryClient.setQueryData(['/api/students-aggregated'], context.previousStudents);
@@ -886,7 +933,7 @@ export default function Dashboard() {
     mutationFn: async ({ blockListId, targetDeviceIds }) => apiRequest('POST', `/block-lists/${blockListId}/apply`, { targetDeviceIds }),
     onSuccess: (data, variables) => {
       const blockList = blockLists.find(bl => bl.id === selectedBlockListId);
-      toast({ title: "Success", description: `Applied "${blockList?.name || 'Block List'}" to ${data.sentTo || 0} student(s)` });
+      toast({ title: "Success", description: `Applied "${blockList?.name || 'Block List'}" to ${targetLabel(data.sentTo || 0)}` });
       setShowApplyBlockListDialog(false); setSelectedBlockListId("");
       refreshScreenshotsForDevices(variables.targetDeviceIds);
     },
@@ -895,7 +942,7 @@ export default function Dashboard() {
 
   const removeBlockListMutation = useMutation({
     mutationFn: async ({ targetDeviceIds }) => apiRequest('POST', '/block-lists/remove', { targetDeviceIds }),
-    onSuccess: (data, variables) => { toast({ title: "Success", description: `Removed block list from ${data.sentTo || 0} student(s)` }); refreshScreenshotsForDevices(variables.targetDeviceIds); },
+    onSuccess: (data, variables) => { toast({ title: "Success", description: `Removed block list from ${targetLabel(data.sentTo || 0)}` }); refreshScreenshotsForDevices(variables.targetDeviceIds); },
     onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
   });
 
@@ -910,7 +957,7 @@ export default function Dashboard() {
     mutationFn: async ({ active, message, targetDeviceIds }) => apiRequest('POST', '/remote/attention-mode', { active, message, targetDeviceIds }),
     onSuccess: (data, variables) => {
       setAttentionActive(variables.active);
-      toast({ title: variables.active ? "Attention Mode Enabled" : "Attention Mode Disabled", description: variables.active ? `Showing "${variables.message}" to ${data.sentTo || 0} student(s)` : `Released ${data.sentTo || 0} student(s)` });
+      toast({ title: variables.active ? "Attention Mode Enabled" : "Attention Mode Disabled", description: variables.active ? `Showing "${variables.message}" to ${targetLabel(data.sentTo || 0)}` : `Released ${targetLabel(data.sentTo || 0)}` });
       if (!variables.active) setShowAttentionDialog(false);
       refreshScreenshotsForDevices(variables.targetDeviceIds);
     },
@@ -921,7 +968,7 @@ export default function Dashboard() {
     mutationFn: async ({ action, seconds, message, targetDeviceIds }) => apiRequest('POST', '/remote/timer', { action, seconds, message, targetDeviceIds }),
     onSuccess: (data, variables) => {
       setTimerActive(variables.action === 'start');
-      toast({ title: variables.action === 'start' ? "Timer Started" : "Timer Stopped", description: variables.action === 'start' ? `${Math.floor((variables.seconds || 0) / 60)}:${String((variables.seconds || 0) % 60).padStart(2, '0')} timer sent to ${data.sentTo || 0} student(s)` : `Stopped timer for ${data.sentTo || 0} student(s)` });
+      toast({ title: variables.action === 'start' ? "Timer Started" : "Timer Stopped", description: variables.action === 'start' ? `${Math.floor((variables.seconds || 0) / 60)}:${String((variables.seconds || 0) % 60).padStart(2, '0')} timer sent to ${targetLabel(data.sentTo || 0)}` : `Stopped timer for ${targetLabel(data.sentTo || 0)}` });
       if (variables.action === 'start') setShowTimerDialog(false);
     },
     onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
@@ -942,7 +989,7 @@ export default function Dashboard() {
     onSuccess: (data) => {
       setActivePoll({ id: data.poll.id, question: data.poll.question, options: data.poll.options });
       setPollResults([]); setPollTotalResponses(0);
-      toast({ title: "Poll Created", description: `Poll sent to ${data.sentTo || 0} student(s)` });
+      toast({ title: "Poll Created", description: `Poll sent to ${targetLabel(data.sentTo || 0)}` });
       setShowPollDialog(false); setPollQuestion(""); setPollOptions(["", ""]);
       startPollResultsPolling(data.poll.id);
     },
@@ -975,6 +1022,33 @@ export default function Dashboard() {
     },
     onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
   });
+
+  const sendMessageMutation = useMutation({
+    mutationFn: async ({ message, targetDeviceIds }) => {
+      const onlineStudents = students.filter(s => s.status === 'online' || s.status === 'idle');
+      const targets = targetDeviceIds
+        ? onlineStudents.filter(s => targetDeviceIds.includes(s.primaryDeviceId))
+        : onlineStudents;
+      let sentTo = 0;
+      for (const student of targets) {
+        if (student.primaryDeviceId) {
+          await apiRequest('POST', '/teacher/reply', { studentId: student.studentId, message, deviceId: student.primaryDeviceId });
+          sentTo++;
+        }
+      }
+      return { sentTo };
+    },
+    onSuccess: (data) => {
+      toast({ title: "Message Sent", description: `Sent to ${targetLabel(data.sentTo || 0)}` });
+      setShowSendMessageDialog(false); setSendMessageText("");
+    },
+    onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
+  });
+
+  const handleSendMessage = () => {
+    if (!sendMessageText.trim()) { toast({ variant: "destructive", title: "Empty Message", description: "Please enter a message" }); return; }
+    sendMessageMutation.mutate({ message: sendMessageText.trim(), targetDeviceIds: getTargetDeviceIds() });
+  };
 
   const markMessageRead = (messageId) => { setStudentMessages(prev => prev.map(msg => msg.id === messageId ? { ...msg, read: true } : msg)); };
 
@@ -1380,8 +1454,9 @@ export default function Dashboard() {
             {filteredStudents.map((student) => {
               const primaryDeviceId = student.primaryDeviceId ?? undefined;
               const tileRevision = primaryDeviceId ? tileRevisions[primaryDeviceId] ?? 0 : 0;
+              const TileComponent = USE_V0_TILE ? StudentTileV0 : StudentTile;
               return (
-                <StudentTile
+                <TileComponent
                   key={`${student.studentId}-${primaryDeviceId ?? "no-device"}-${tileRevision}`}
                   student={student}
                   onClick={() => setSelectedStudent(student)}
@@ -1395,6 +1470,7 @@ export default function Dashboard() {
                   onStopLiveView={primaryDeviceId ? () => handleStopLiveView(primaryDeviceId) : undefined}
                   onEndLiveRefresh={primaryDeviceId ? () => refreshTile(primaryDeviceId) : undefined}
                   onBlockRefetches={() => { optimisticUpdateUntilRef.current = Date.now() + 15000; }}
+                  onAllowDomain={handleAllowDomain}
                 />
               );
             })}
@@ -1642,6 +1718,33 @@ export default function Dashboard() {
         </DialogContent>
       </Dialog>
 
+      {/* Send Message Dialog */}
+      <Dialog open={showSendMessageDialog} onOpenChange={setShowSendMessageDialog}>
+        <DialogContent data-testid="dialog-send-message">
+          <DialogHeader>
+            <DialogTitle>Send Message</DialogTitle>
+            <DialogDescription>{selectedStudentIds.size > 0 ? `Send a message to ${selectedStudentIds.size} selected student(s)` : "Send a message to all online students"}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <textarea
+              className="w-full min-h-[100px] p-3 border rounded-md text-sm resize-none focus:outline-none focus:ring-2 focus:ring-ring"
+              placeholder="Type your message..."
+              value={sendMessageText}
+              onChange={(e) => setSendMessageText(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(); } }}
+              data-testid="input-send-message"
+            />
+            <p className="text-xs text-muted-foreground">Press Enter to send, Shift+Enter for new line</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowSendMessageDialog(false)}>Cancel</Button>
+            <Button onClick={handleSendMessage} disabled={sendMessageMutation.isPending || !sendMessageText.trim()} data-testid="button-confirm-send-message">
+              <Send className="h-4 w-4 mr-2" />Send Message
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Attention Mode Dialog */}
       <Dialog open={showAttentionDialog} onOpenChange={setShowAttentionDialog}>
         <DialogContent data-testid="dialog-attention-mode">
@@ -1804,6 +1907,7 @@ export default function Dashboard() {
           onToggleStudentMessaging={(enabled) => toggleStudentMessagingMutation.mutate(enabled)}
           chatReplies={chatReplies}
           onCloseChat={closeChat}
+          onSendMessage={() => setShowSendMessageDialog(true)}
         />
       )}
     </div>

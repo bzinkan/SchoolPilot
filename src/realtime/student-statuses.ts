@@ -18,6 +18,20 @@ export interface DeviceRealtimeStatus {
   cameraActive: boolean;
   lastSeenAt: number;
   allOpenTabs?: Array<{ url: string; title: string; favicon?: string }>;
+  aiClassification?: { category: string; safetyAlert: string | null };
+}
+
+export function updateDeviceClassification(
+  schoolId: string,
+  deviceId: string,
+  classification: { category: string; safetyAlert: string | null }
+): void {
+  const schoolMap = statusMap.get(schoolId);
+  if (!schoolMap) return;
+  const status = schoolMap.get(deviceId);
+  if (status) {
+    status.aiClassification = classification;
+  }
 }
 
 // schoolId → deviceId → status

@@ -101,6 +101,8 @@ export const heartbeats = pgTable(
     activeFlightPathName: text("active_flight_path_name"),
     isSharing: boolean("is_sharing").default(false),
     cameraActive: boolean("camera_active").default(false),
+    aiCategory: text("ai_category"),
+    safetyAlert: text("safety_alert"),
     timestamp: timestamp("timestamp").notNull().default(sql`now()`),
   },
   (table) => [

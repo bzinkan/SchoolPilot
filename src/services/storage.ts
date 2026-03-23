@@ -2399,6 +2399,14 @@ export async function createHeartbeat(
   return hb!;
 }
 
+export async function updateHeartbeatClassification(
+  heartbeatId: string,
+  aiCategory: string,
+  safetyAlert: string | null
+): Promise<void> {
+  await db.update(heartbeats).set({ aiCategory, safetyAlert }).where(eq(heartbeats.id, heartbeatId));
+}
+
 export async function getHeartbeatsByDevice(
   deviceId: string,
   limit = 50
@@ -2575,13 +2583,16 @@ export async function startStudentSession(
   studentId: string,
   deviceId: string
 ): Promise<StudentSession> {
-  // End any active sessions for this student
+  // End any active sessions for this student OR this device
   await db
     .update(studentSessions)
     .set({ isActive: false, endedAt: new Date() })
     .where(
       and(
-        eq(studentSessions.studentId, studentId),
+        or(
+          eq(studentSessions.studentId, studentId),
+          eq(studentSessions.deviceId, deviceId)
+        ),
         eq(studentSessions.isActive, true)
       )
     );

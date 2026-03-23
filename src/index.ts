@@ -211,6 +211,15 @@ import { pool } from "./db.js";
     console.warn("[migration] class block scheduling migration skipped:", (err as Error).message);
   }
 
+  // Add AI classification columns to heartbeats table
+  try {
+    await pool.query(`ALTER TABLE heartbeats ADD COLUMN IF NOT EXISTS ai_category TEXT`);
+    await pool.query(`ALTER TABLE heartbeats ADD COLUMN IF NOT EXISTS safety_alert TEXT`);
+    console.log("[migration] heartbeats AI classification columns ready");
+  } catch (err) {
+    console.warn("[migration] heartbeats AI classification migration skipped:", (err as Error).message);
+  }
+
   // One-time: update super-admin email alias in users + audit_logs
   try {
     const OLD_EMAIL = "bzinkan@school-pilot.net";

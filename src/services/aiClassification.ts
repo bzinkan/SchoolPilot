@@ -1,10 +1,10 @@
-import OpenAI from "openai";
+import Anthropic from "@anthropic-ai/sdk";
 
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 
-let openai: OpenAI | null = null;
-if (OPENAI_API_KEY) {
-  openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+let anthropic: Anthropic | null = null;
+if (ANTHROPIC_API_KEY) {
+  anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
 }
 
 export interface AiClassification {
@@ -45,17 +45,31 @@ const KNOWN_NON_EDUCATIONAL = new Set([
   "twitch.tv", "discord.com", "roblox.com", "minecraft.net",
   "fortnite.com", "epicgames.com", "steampowered.com",
   "netflix.com", "hulu.com", "disneyplus.com", "spotify.com",
+  "espn.com", "yahoo.com",
+]);
+
+// Known unsafe domains — instant safety alert + auto-block
+const KNOWN_UNSAFE: Map<string, "sexual" | "violence" | "drugs" | "self-harm"> = new Map([
+  ["pornhub.com", "sexual"], ["xvideos.com", "sexual"], ["xnxx.com", "sexual"],
+  ["xhamster.com", "sexual"], ["redtube.com", "sexual"], ["youporn.com", "sexual"],
+  ["tube8.com", "sexual"], ["spankbang.com", "sexual"], ["chaturbate.com", "sexual"],
+  ["onlyfans.com", "sexual"], ["brazzers.com", "sexual"], ["livejasmin.com", "sexual"],
+  ["cam4.com", "sexual"], ["bongacams.com", "sexual"], ["stripchat.com", "sexual"],
+  ["rule34.xxx", "sexual"], ["nhentai.net", "sexual"], ["hanime.tv", "sexual"],
+  ["hentaihaven.xxx", "sexual"], ["tik.porn", "sexual"],
+  ["bestgore.com", "violence"], ["liveleak.com", "violence"],
+  ["silkroad.com", "drugs"], ["darkweb.com", "drugs"],
 ]);
 
 export function isAiAvailable(): boolean {
-  return openai !== null;
+  return anthropic !== null;
 }
 
 export async function classifyUrl(
   url: string,
   title?: string
 ): Promise<AiClassification | null> {
-  if (!openai) return null;
+  if (!anthropic) return null;
 
   const domain = extractDomain(url);
 
@@ -63,6 +77,33 @@ export async function classifyUrl(
   const cached = classificationCache.get(domain);
   if (cached && Date.now() - cached.classifiedAt < CACHE_TTL_MS) {
     return cached;
+  }
+
+  // Check Google/Bing searches for unsafe queries before marking as educational
+  if (domain === "google.com" || domain === "bing.com" || domain === "search.yahoo.com") {
+    try {
+      const searchUrl = new URL(url);
+      const query = (searchUrl.searchParams.get("q") || searchUrl.searchParams.get("p") || "").toLowerCase();
+      const unsafeSearchTerms = [
+        "porn", "xxx", "hentai", "nude", "naked", "sex video", "onlyfans",
+        "how to kill", "how to make a bomb", "buy drugs", "buy weed",
+        "self harm", "suicide method",
+      ];
+      const matchedTerm = unsafeSearchTerms.find(term => query.includes(term));
+      if (matchedTerm) {
+        const alertType: "sexual" | "violence" | "drugs" | "self-harm" =
+          ["porn", "xxx", "hentai", "nude", "naked", "sex video", "onlyfans"].includes(matchedTerm) ? "sexual" :
+          ["how to kill", "how to make a bomb"].includes(matchedTerm) ? "violence" :
+          ["buy drugs", "buy weed"].includes(matchedTerm) ? "drugs" : "self-harm";
+        const result: AiClassification = {
+          category: "non-educational",
+          safetyAlert: alertType,
+          domain: `search:${matchedTerm}`,
+          classifiedAt: Date.now(),
+        };
+        return result; // Don't cache — each search is unique
+      }
+    } catch { /* fall through */ }
   }
 
   // Known domains — instant classification
@@ -87,36 +128,47 @@ export async function classifyUrl(
     return result;
   }
 
+  // Known unsafe domains — instant safety alert
+  const unsafeType = KNOWN_UNSAFE.get(domain);
+  if (unsafeType) {
+    const result: AiClassification = {
+      category: "non-educational",
+      safetyAlert: unsafeType,
+      domain,
+      classifiedAt: Date.now(),
+    };
+    classificationCache.set(domain, result);
+    return result;
+  }
+
   // Skip chrome-internal URLs
   if (url.startsWith("chrome://") || url.startsWith("chrome-extension://") || url.startsWith("about:")) {
     return null;
   }
 
   try {
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+    const response = await anthropic.messages.create({
+      model: "claude-haiku-4-5-20251001",
       max_tokens: 150,
-      temperature: 0,
       messages: [
         {
-          role: "system",
-          content: `You are a K-12 school web content classifier. Given a URL and page title from a student's Chromebook, classify the content. Respond ONLY with valid JSON:
+          role: "user",
+          content: `You are a K-12 school web content classifier. Given a URL and page title from a student's Chromebook, classify the content. Respond ONLY with valid JSON, no other text:
 {"category":"educational"|"non-educational"|"unknown","safetyAlert":"self-harm"|"violence"|"sexual"|"drugs"|null}
 
 Rules:
 - "educational": academic content, research, school tools, learning platforms
-- "non-educational": social media, gaming, entertainment, shopping
+- "non-educational": social media, gaming, entertainment, shopping, sports, news
 - "unknown": can't determine
-- safetyAlert: ONLY flag genuinely concerning content (self-harm ideation, graphic violence, explicit sexual content, drug use/purchase). Do NOT flag normal news or health education.`,
-        },
-        {
-          role: "user",
-          content: `URL: ${url}\nTitle: ${title || "Unknown"}`,
+- safetyAlert: ONLY flag genuinely concerning content (self-harm ideation, graphic violence, explicit sexual content, drug use/purchase). Do NOT flag normal news or health education.
+
+URL: ${url}
+Title: ${title || "Unknown"}`,
         },
       ],
     });
 
-    const text = response.choices[0]?.message?.content?.trim();
+    const text = response.content[0]?.type === "text" ? response.content[0].text.trim() : null;
     if (!text) return null;
 
     const parsed = JSON.parse(text);

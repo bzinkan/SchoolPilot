@@ -104,6 +104,8 @@ export function calculateURLSessions(heartbeats, heartbeatIntervalSeconds = 10) 
         endTime: currentTime,
         durationSeconds: heartbeatIntervalSeconds, // Initial duration
         heartbeatCount: 1,
+        aiCategory: heartbeat.aiCategory || null,
+        safetyAlert: heartbeat.safetyAlert || null,
       };
     } else {
       // Continue existing session
@@ -193,11 +195,14 @@ export function isUrlAllowed(url, allowedDomains) {
  * @param {string[]} allowedDomains - Array of allowed domain strings
  * @returns {boolean} true if off-task, false otherwise
  */
-export function isSessionOffTask(url, cameraActive, allowedDomains) {
+export function isSessionOffTask(url, cameraActive, allowedDomains, aiCategory) {
   // Camera active = always off-task
   if (cameraActive) return true;
 
-  // No allowed domains configured = nothing is off-task
+  // AI classified as non-educational = off-task
+  if (aiCategory === 'non-educational') return true;
+
+  // No allowed domains configured = nothing is off-task (beyond AI check above)
   if (!allowedDomains || allowedDomains.length === 0) return false;
 
   // Not on allowed domain = off-task

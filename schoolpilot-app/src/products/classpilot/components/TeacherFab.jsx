@@ -31,6 +31,7 @@ function TeacherFab({
   onToggleStudentMessaging,
   chatReplies = {},
   onCloseChat,
+  onSendMessage,
 }) {
   const [expanded, setExpanded] = useState(false);
   const [activePanel, setActivePanel] = useState(null);
@@ -391,6 +392,19 @@ function TeacherFab({
                 {unreadCount}
               </span>
             )}
+          </button>
+
+          {/* Send Message */}
+          <button
+            onClick={() => {
+              onSendMessage?.();
+              setExpanded(false);
+              setActivePanel(null);
+            }}
+            className="flex items-center gap-3 px-4 py-3 rounded-full shadow-lg transition-all duration-200 hover:scale-105 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-gray-700"
+          >
+            <Send className="h-5 w-5" />
+            <span className="font-medium">Send Message</span>
           </button>
 
           {/* Raised Hands */}

@@ -3,7 +3,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { Card } from "../../../components/ui/card";
 import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
-import { Monitor, ExternalLink, AlertTriangle, Lock, Unlock, Video, Layers, Maximize2 } from "lucide-react";
+import { Monitor, ExternalLink, AlertTriangle, Lock, Unlock, Video, Layers, Maximize2, X } from "lucide-react";
 import { Checkbox } from "../../../components/ui/checkbox";
 import { useToast } from "../../../hooks/use-toast";
 import { apiRequest, queryClient } from "../../../lib/queryClient";
@@ -34,7 +34,7 @@ function isBlockedDomain(url, blockedDomains) {
   }
 }
 
-function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false, isAbsent = false, isSelected = false, onToggleSelect, liveStream, onStartLiveView, onStopLiveView, onBlockRefetches }) {
+function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false, isAbsent = false, isSelected = false, onToggleSelect, liveStream, onStartLiveView, onStopLiveView, onBlockRefetches, onAllowDomain }) {
   const [expanded, setExpanded] = useState(false);
   const { toast } = useToast();
   const tileVideoSlotRef = useRef(null);
@@ -92,6 +92,7 @@ function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false,
     queryKey: ['/api/heartbeats', student.primaryDeviceId],
     queryFn: () => apiRequest('GET', `/heartbeats/${student.primaryDeviceId}`),
     select: (data) => Array.isArray(data) ? data : data?.heartbeats ?? [],
+    enabled: !!student.primaryDeviceId,
     refetchInterval: 30000, // Refresh every 30 seconds
   });
 
@@ -392,12 +393,6 @@ function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false,
                   ? student.studentName.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
                   : '?'}
               </div>
-              <div
-                className={`absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full border-2 border-white dark:border-gray-900 ${getStatusColor(student.status)} ${
-                  student.status === 'online' ? 'animate-pulse' : ''
-                }`}
-                title={getStatusLabel(student.status)}
-              />
             </div>
             <div className="flex-1 min-w-0">
               <h3 className="font-semibold text-sm" data-testid={`text-student-name-${student.primaryDeviceId}`}>
@@ -471,6 +466,21 @@ function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false,
                 <Badge variant="outline" className="text-xs px-2 py-0.5 bg-red-50 text-red-700 border-red-200 dark:bg-red-950 dark:text-red-400 dark:border-red-800" data-testid={`badge-offtask-${student.primaryDeviceId}`}>
                   <AlertTriangle className="h-3 w-3 mr-1" />
                   Off-Task
+                  {onAllowDomain && (
+                    <button
+                      className="ml-1.5 hover:bg-red-200 dark:hover:bg-red-800 rounded-full p-0.5"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        try {
+                          const domain = new URL(student.activeTabUrl).hostname.toLowerCase().replace(/^www\./, '');
+                          onAllowDomain(domain);
+                        } catch {}
+                      }}
+                      title="Allow this domain for this session"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  )}
                 </Badge>
               )}
               {isBlocked && !isOffTask && !isBlockedByFlightPath && (

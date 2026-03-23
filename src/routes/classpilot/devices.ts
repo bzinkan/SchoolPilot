@@ -13,6 +13,7 @@ import {
   updateDevice,
   deleteDevice,
   createHeartbeat,
+  updateHeartbeatClassification,
   getHeartbeatsByDevice,
   createEvent,
   getStudentById,
@@ -33,7 +34,7 @@ import {
 } from "../../services/storage.js";
 import { sendSafetyAlertEmail } from "../../services/email.js";
 import { createStudentToken } from "../../services/deviceJwt.js";
-import { updateDeviceStatus } from "../../realtime/student-statuses.js";
+import { updateDeviceStatus, updateDeviceClassification } from "../../realtime/student-statuses.js";
 import {
   broadcastToTeachersLocal,
   broadcastToStudentsLocal,
@@ -48,6 +49,10 @@ import {
 import { classifyUrl, isAiAvailable } from "../../services/aiClassification.js";
 
 const router = Router();
+
+// Cooldown for safety alerts: deviceId:domain → timestamp. Prevents duplicate alerts/emails.
+const safetyAlertCooldown = new Map<string, number>();
+const SAFETY_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
 
 function param(req: any, key: string): string {
   return String(req.params[key] ?? "");
@@ -431,7 +436,7 @@ router.post("/device/heartbeat", requireDeviceAuth, async (req, res, next) => {
     }
 
     // --- Save heartbeat to DB (item #1 — capture all fields) ---
-    await createHeartbeat({
+    const heartbeat = await createHeartbeat({
       deviceId,
       studentId,
       studentEmail,
@@ -493,6 +498,15 @@ router.post("/device/heartbeat", requireDeviceAuth, async (req, res, next) => {
       classifyUrl(activeTabUrl, activeTabTitle).then((classification) => {
         if (!classification) return;
 
+        // Store classification in realtime status so students-aggregated includes it
+        updateDeviceClassification(schoolId, deviceId, {
+          category: classification.category,
+          safetyAlert: classification.safetyAlert,
+        });
+
+        // Persist classification to the heartbeat record
+        updateHeartbeatClassification(heartbeat.id, classification.category, classification.safetyAlert).catch(() => {});
+
         // Broadcast classification to teachers
         const classificationUpdate = {
           type: "ai-classification",
@@ -503,8 +517,25 @@ router.post("/device/heartbeat", requireDeviceAuth, async (req, res, next) => {
         broadcastToTeachersLocal(schoolId, classificationUpdate);
         void publishWS({ kind: "staff", schoolId }, classificationUpdate);
 
-        // Safety alert — broadcast urgently + email admins
+        // Safety alert — broadcast urgently + email admins + force close tab
         if (classification.safetyAlert) {
+          // Always close the tab immediately regardless of cooldown
+          const closeCmd = {
+            type: "remote-control",
+            _msgId: crypto.randomUUID(),
+            command: { type: "close-tab", data: { pattern: classification.domain } },
+          };
+          sendToDeviceLocal(schoolId, deviceId, closeCmd);
+          void publishWS({ kind: "device", schoolId, deviceId }, closeCmd);
+
+          // Cooldown: only send alerts/emails once per device per domain per 10 min
+          const cooldownKey = `${deviceId}:${classification.domain}`;
+          const lastAlert = safetyAlertCooldown.get(cooldownKey) || 0;
+          if (Date.now() - lastAlert < SAFETY_COOLDOWN_MS) {
+            return; // Skip duplicate alert — tab close already sent above
+          }
+          safetyAlertCooldown.set(cooldownKey, Date.now());
+
           const alert = {
             type: "safety-alert",
             studentId,

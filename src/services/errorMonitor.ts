@@ -12,6 +12,7 @@ const WINDOW_MS = 5 * 60 * 1000; // 5-minute sliding window
 export type ErrorCategory =
   | "uncaught_exception"
   | "api_error"
+  | "client_error"
   | "scheduler_failure"
   | "email_failure"
   | "websocket_error"
@@ -29,6 +30,7 @@ interface TrackedError {
 const THRESHOLDS: Record<ErrorCategory, number> = {
   uncaught_exception: 1,
   api_error: 5,
+  client_error: 10,
   scheduler_failure: 2,
   email_failure: 3,
   websocket_error: 10,
@@ -40,6 +42,7 @@ const THRESHOLDS: Record<ErrorCategory, number> = {
 const COOLDOWNS: Record<ErrorCategory, number> = {
   uncaught_exception: 15 * 60 * 1000,
   api_error: 15 * 60 * 1000,
+  client_error: 30 * 60 * 1000,
   scheduler_failure: 15 * 60 * 1000,
   email_failure: 30 * 60 * 1000,
   websocket_error: 15 * 60 * 1000,
