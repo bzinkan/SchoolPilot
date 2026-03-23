@@ -222,7 +222,27 @@ export default function ParentApp() {
         const sid = sessionData.id;
         setSessionId(sid);
         const status = sessionData.status || 'pending';
-        setSessionStatus(status);
+        setSessionStatus(status === 'completed' ? null : status);
+
+        // If session is completed, don't restore anything — treat as no session
+        if (status === 'completed') {
+          setSessionId(null);
+          setCheckInStatus(null);
+          // Poll for new active session
+          pollInterval = setInterval(async () => {
+            try {
+              const r = await api.get(`/schools/${currentSchool.id}/sessions/active`);
+              if (cancelled) return;
+              if (r.data?.session) {
+                setSessionId(r.data.session.id);
+                setSessionStatus('active');
+                clearInterval(pollInterval);
+                pollInterval = null;
+              }
+            } catch { /* non-critical */ }
+          }, 30000);
+          return;
+        }
 
         // Poll for active session if not yet active (fixes missed socket events)
         if (status !== 'active') {
@@ -253,7 +273,7 @@ export default function ParentApp() {
         } catch { /* non-critical */ }
 
         // Check if children are already in the queue (e.g. parent reopens app)
-        if (children.length > 0) {
+        if (children.length > 0 && status === 'active') {
           try {
             const queueRes = await api.get(`/sessions/${sid}/queue`);
             if (cancelled) return;
