@@ -773,7 +773,7 @@ export default function Dashboard() {
     onSuccess: (data, variables) => {
       toast({ title: "Success", description: data.message }); setShowOpenTabDialog(false);
       // Auto-allow the opened domain so it's not flagged as off-task
-      try { const d = new URL(variables.url).hostname.toLowerCase().replace(/^www\./, ''); handleAllowDomain(d); } catch {}
+      try { const d = new URL(variables.url).hostname.toLowerCase().replace(/^www\./, ''); handleAllowDomain(d); } catch { /* ignore invalid URL */ }
       setOpenTabUrl(""); refreshScreenshotsForDevices(data.targetDeviceIds);
     },
     onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
@@ -886,7 +886,7 @@ export default function Dashboard() {
       toast({ title: "Success", description: `Applied "${data.flightPathName}" to ${targetLabel(data.deviceCount)}` });
       setShowApplyFlightPathDialog(false); setSelectedFlightPathId("");
       // Auto-allow all domains in the flight path so they're not flagged as off-task
-      (variables.allowedDomains || []).forEach(d => { try { handleAllowDomain(d.toLowerCase().replace(/^www\./, '')); } catch {} });
+      (variables.allowedDomains || []).forEach(d => { try { handleAllowDomain(d.toLowerCase().replace(/^www\./, '')); } catch { /* ignore */ } });
       refreshScreenshotsForDevices(data.devicesToApply);
     },
     onError: (error, _, context) => {
