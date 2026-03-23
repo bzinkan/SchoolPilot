@@ -66,6 +66,7 @@ function StudentTileV0({ student, onClick, blockedDomains = [], isOffTask = fals
         tileVideoSlotRef.current.appendChild(videoElementRef.current);
       }
     } else if (!liveStream && videoElementRef.current) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       if (expanded) setExpanded(false);
       const portalSlot = document.querySelector('#portal-video-slot');
       if (portalSlot && portalSlot.contains(videoElementRef.current)) {
