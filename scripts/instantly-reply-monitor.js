@@ -1,9 +1,14 @@
 // Polls Instantly.ai API for new email replies and sends notifications to Telegram
 // Run with: node scripts/instantly-reply-monitor.js
 
-const INSTANTLY_API_KEY = process.env.INSTANTLY_API_KEY || "ZWEzODIyYzUtZGIxMS00YTcyLWE3YTQtMjQzY2FhODg4OTBmOkVtbmdTZ3RiTGdWQQ==";
-const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "8611462175:AAHASZQI0JYCVNx5St2tIHk4Dh7Lky4Wb8g";
-const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID || "8061328979";
+const INSTANTLY_API_KEY = process.env.INSTANTLY_API_KEY;
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+
+if (!INSTANTLY_API_KEY || !TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
+  console.error("Missing required env vars: INSTANTLY_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID");
+  process.exit(1);
+}
 const POLL_INTERVAL_MS = 5 * 60 * 1000; // Check every 5 minutes
 
 const INSTANTLY_BASE = "https://api.instantly.ai/api/v2";
