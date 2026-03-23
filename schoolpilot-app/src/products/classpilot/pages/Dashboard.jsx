@@ -1493,7 +1493,6 @@ export default function Dashboard() {
           allowedDomains={settings?.allowedDomains || []}
           onClose={() => setSelectedStudent(null)}
           activeClassName={effectiveSession ? groups.find(g => g.id === effectiveSession.groupId)?.name : null}
-          sessionStartTime={effectiveSession?.startTime}
         />
       )}
 

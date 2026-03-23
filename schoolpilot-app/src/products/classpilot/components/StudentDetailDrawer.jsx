@@ -20,7 +20,6 @@ function StudentDetailDrawer({
   allowedDomains,
   onClose,
   activeClassName,
-  sessionStartTime,
 }) {
   const [historyStartDate, setHistoryStartDate] = useState(new Date());
   const [historyEndDate, setHistoryEndDate] = useState(new Date());
