@@ -30,6 +30,17 @@ const auth = [
 // Authorized Pickups
 // ============================================================================
 
+// GET /api/gopilot/pickups/all — All pickups for this school (admin/office)
+router.get("/all", ...auth, async (req, res, next) => {
+  try {
+    const { getPickupsBySchool } = await import("../../services/storage.js");
+    const pickups = await getPickupsBySchool(res.locals.schoolId!);
+    return res.json({ pickups });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /api/gopilot/pickups/student/:studentId
 router.get("/student/:studentId", ...auth, async (req, res, next) => {
   try {

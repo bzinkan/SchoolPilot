@@ -5,7 +5,7 @@ import {
   Home, Settings, History, User, Plus, Edit, Calendar,
   Shield, AlertCircle, RefreshCw, Send,
   ArrowLeft, Camera, QrCode, MessageSquare, Smartphone, Coffee,
-  Loader2, LogOut, Save
+  Loader2, LogOut, Save, Trash2
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { QRCodeSVG } from 'qrcode.react';
@@ -91,6 +91,7 @@ export default function ParentApp() {
   // Data states
   const [children, setChildren] = useState([]);
   const [authorizedPickups, setAuthorizedPickups] = useState([]);
+  const [editingPickup, setEditingPickup] = useState(null);
   const [history] = useState([]);
   const [sessionId, setSessionId] = useState(null);
   const [sessionStatus, setSessionStatus] = useState(null); // 'pending', 'active', 'completed'
@@ -137,21 +138,20 @@ export default function ParentApp() {
         if (cancelled) return;
         setChildren(childrenData);
 
-        // Fetch authorized pickups for each child and merge
+        // Fetch authorized pickups for all children in parallel (not sequential)
         const allPickups = [];
         const seenIds = new Set();
-        for (const child of childrenData) {
-          try {
-            const pickupsRes = await api.get(`/students/${child.id}/pickups`);
-            const pickupsArr = Array.isArray(pickupsRes.data) ? pickupsRes.data : (pickupsRes.data?.pickups || []);
-            for (const p of pickupsArr) {
-              if (!seenIds.has(p.id)) {
-                seenIds.add(p.id);
-                allPickups.push(p);
-              }
+        const pickupPromises = childrenData.map(child =>
+          api.get(`/students/${child.id}/pickups`).catch(() => ({ data: [] }))
+        );
+        const pickupResults = await Promise.all(pickupPromises);
+        for (const pickupsRes of pickupResults) {
+          const pickupsArr = Array.isArray(pickupsRes.data) ? pickupsRes.data : (pickupsRes.data?.pickups || []);
+          for (const p of pickupsArr) {
+            if (!seenIds.has(p.id)) {
+              seenIds.add(p.id);
+              allPickups.push(p);
             }
-          } catch {
-            // Non-critical; continue with other children
           }
         }
         if (cancelled) return;
@@ -175,6 +175,21 @@ export default function ParentApp() {
     fetchData();
     return () => { cancelled = true; };
   }, [currentSchool?.id]);
+
+  // Refetch authorized pickups (called after add/edit/delete)
+  const fetchPickups = async () => {
+    try {
+      const allPickups = [];
+      const seenIds = new Set();
+      const promises = children.map(child => api.get(`/students/${child.id}/pickups`).catch(() => ({ data: [] })));
+      const results = await Promise.all(promises);
+      for (const res of results) {
+        const arr = Array.isArray(res.data) ? res.data : (res.data?.pickups || []);
+        for (const p of arr) { if (!seenIds.has(p.id)) { seenIds.add(p.id); allPickups.push(p); } }
+      }
+      setAuthorizedPickups(allPickups);
+    } catch { /* ignore */ }
+  };
 
   // Handle Android back button — return to home view instead of navigating away
   useEffect(() => {
@@ -272,7 +287,7 @@ export default function ParentApp() {
 
   // Update time
   useEffect(() => {
-    const interval = setInterval(() => setCurrentTime(new Date()), 1000);
+    const interval = setInterval(() => setCurrentTime(new Date()), 30000);
     return () => clearInterval(interval);
   }, []);
 
@@ -756,7 +771,9 @@ export default function ParentApp() {
                 </button>
               </div>
               <div className="divide-y">
-                {authorizedPickups.map(pickup => (
+                {authorizedPickups
+                  .filter((p, i, arr) => arr.findIndex(x => x.name === p.name && x.relationship === p.relationship) === i)
+                  .map(pickup => (
                   <div key={pickup.id} className="p-4 flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center">
@@ -767,7 +784,28 @@ export default function ParentApp() {
                         <p className="text-sm text-gray-500">{pickup.relationship}</p>
                       </div>
                     </div>
-                    <Badge variant="green" size="sm">Approved</Badge>
+                    <div className="flex items-center gap-1">
+                      <button
+                        className="p-2 hover:bg-gray-100 rounded-lg"
+                        onClick={() => { setEditingPickup(pickup); setShowAuthorizedPickups(true); }}
+                      >
+                        <Edit className="w-4 h-4 text-gray-400" />
+                      </button>
+                      <button
+                        className="p-2 hover:bg-red-50 rounded-lg"
+                        onClick={async () => {
+                          if (!confirm('Remove this authorized pickup person?')) return;
+                          try {
+                            // Delete all records for this person (one per child)
+                            const toDelete = authorizedPickups.filter(p => p.name === pickup.name && p.relationship === pickup.relationship);
+                            for (const p of toDelete) { await api.delete(`/pickups/${p.id}`); }
+                            fetchPickups();
+                          } catch { /* ignore */ }
+                        }}
+                      >
+                        <Trash2 className="w-4 h-4 text-red-400" />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -1223,20 +1261,12 @@ export default function ParentApp() {
         <AuthorizedPickupsModal
           pickups={authorizedPickups}
           children={children}
-          onClose={() => setShowAuthorizedPickups(false)}
-          onAdd={async () => {
-            const allPickups = [];
-            const seenIds = new Set();
-            for (const child of children) {
-              try {
-                const res = await api.get(`/students/${child.id}/pickups`);
-                const arr = Array.isArray(res.data) ? res.data : (res.data?.pickups || []);
-                for (const p of arr) {
-                  if (!seenIds.has(p.id)) { seenIds.add(p.id); allPickups.push(p); }
-                }
-              } catch { /* ignore */ }
-            }
-            setAuthorizedPickups(allPickups);
+          onClose={() => { setShowAuthorizedPickups(false); setEditingPickup(null); }}
+          onAdd={fetchPickups}
+          onDelete={async (pickup) => {
+            const toDelete = authorizedPickups.filter(p => p.name === pickup.name && p.relationship === pickup.relationship);
+            for (const p of toDelete) { await api.delete(`/pickups/${p.id}`).catch(() => {}); }
+            fetchPickups();
           }}
         />
       )}
@@ -1362,7 +1392,7 @@ function ChangeRequestModal({ children, onClose, onSubmit, error, schoolSettings
 }
 
 // Authorized Pickups Modal
-function AuthorizedPickupsModal({ pickups, children, onClose, onAdd }) {
+function AuthorizedPickupsModal({ pickups, children, onClose, onAdd, onDelete }) {
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState('');
   const [relationship, setRelationship] = useState('');
@@ -1439,7 +1469,9 @@ function AuthorizedPickupsModal({ pickups, children, onClose, onAdd }) {
             </div>
           ) : (
             <div className="space-y-3">
-              {pickups.map(p => (
+              {pickups
+                .filter((p, i, arr) => arr.findIndex(x => x.name === p.name && x.relationship === p.relationship) === i)
+                .map(p => (
                 <div key={p.id} className="p-4 bg-gray-50 rounded-xl flex items-center gap-4">
                   <div className="w-10 h-10 bg-indigo-100 rounded-full flex items-center justify-center">
                     <User className="w-5 h-5 text-indigo-600" />
@@ -1448,7 +1480,15 @@ function AuthorizedPickupsModal({ pickups, children, onClose, onAdd }) {
                     <p className="font-medium">{p.name}</p>
                     <p className="text-sm text-gray-500">{p.relationship}{p.phone ? ` • ${p.phone}` : ''}</p>
                   </div>
-                  <Badge variant={p.status === 'active' ? 'green' : 'yellow'} size="sm">{p.status}</Badge>
+                  <button
+                    onClick={async () => {
+                      if (!confirm(`Remove ${p.name}?`)) return;
+                      if (onDelete) await onDelete(p);
+                    }}
+                    className="p-2 hover:bg-red-50 rounded-lg"
+                  >
+                    <Trash2 className="w-4 h-4 text-red-400" />
+                  </button>
                 </div>
               ))}
             </div>

@@ -1530,6 +1530,23 @@ export async function getPickupsForStudent(
     .orderBy(authorizedPickups.name);
 }
 
+export async function getPickupsBySchool(
+  schoolId: string
+): Promise<AuthorizedPickup[]> {
+  return db
+    .select({ pickup: authorizedPickups })
+    .from(authorizedPickups)
+    .innerJoin(students, eq(students.id, authorizedPickups.studentId))
+    .where(
+      and(
+        eq(students.schoolId, schoolId),
+        ne(authorizedPickups.status, "revoked")
+      )
+    )
+    .orderBy(authorizedPickups.name)
+    .then(rows => rows.map(r => r.pickup));
+}
+
 export async function createPickup(
   data: InsertAuthorizedPickup
 ): Promise<AuthorizedPickup> {

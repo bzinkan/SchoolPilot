@@ -74,7 +74,7 @@ export const authorizedPickups = pgTable(
     relationship: text("relationship").notNull(),
     phone: text("phone"),
     photoUrl: text("photo_url"),
-    status: text("status").notNull().default("pending"),
+    status: text("status").notNull().default("approved"),
     createdAt: timestamp("created_at").notNull().default(sql`now()`),
   },
   (table) => [

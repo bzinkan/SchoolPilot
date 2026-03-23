@@ -79,6 +79,7 @@ export default function DismissalDashboard() {
   const [stats, setStats] = useState({ waiting: 0, called: 0, released: 0, dismissed: 0, total: 0, avg_wait_seconds: null });
   const [homerooms, setHomerooms] = useState([]);
   const [alerts, setAlerts] = useState([]);
+  const [allPickups, setAllPickups] = useState([]);
   const [loading, setLoading] = useState(true);
   const [pickupZones, setPickupZones] = useState([]);
   const [selectedZone, setSelectedZone] = useState(null);
@@ -130,18 +131,20 @@ export default function DismissalDashboard() {
       setSession(sessionData);
       setDismissalActive(sessionData.status === 'active');
 
-      const [queueRes, statsRes, homeroomRes, alertsRes, settingsRes] = await Promise.all([
+      const [queueRes, statsRes, homeroomRes, alertsRes, settingsRes, pickupsRes] = await Promise.all([
         api.get(`/sessions/${sessionData.id}/queue`),
         api.get(`/sessions/${sessionData.id}/stats`),
         api.get(`/schools/${currentSchool.id}/homerooms`),
         api.get(`/schools/${currentSchool.id}/custody-alerts`),
         api.get(`/schools/${currentSchool.id}/settings`),
+        api.get('/pickups/all').catch(() => ({ data: { pickups: [] } })),
       ]);
 
       setQueue(Array.isArray(queueRes.data) ? queueRes.data : (queueRes.data?.queue ?? []));
       setStats(statsRes.data);
       setHomerooms(Array.isArray(homeroomRes.data) ? homeroomRes.data : (homeroomRes.data?.homerooms ?? []));
       setAlerts(Array.isArray(alertsRes.data) ? alertsRes.data : (alertsRes.data?.alerts ?? []));
+      setAllPickups(Array.isArray(pickupsRes.data) ? pickupsRes.data : (pickupsRes.data?.pickups ?? []));
 
       // Fetch overrides
       try {
@@ -271,6 +274,16 @@ export default function DismissalDashboard() {
   }, [socket, currentSchool, session]);
 
   // Effective afterschool list: permanent afterschool students + override-to-afterschool
+  // Build lookup: studentId → pickups[]
+  const pickupsByStudent = useMemo(() => {
+    const map = {};
+    for (const p of allPickups) {
+      if (!map[p.studentId]) map[p.studentId] = [];
+      map[p.studentId].push(p);
+    }
+    return map;
+  }, [allPickups]);
+
   const effectiveAfterschoolList = useMemo(() => {
     const result = new Map();
 
@@ -936,7 +949,8 @@ export default function DismissalDashboard() {
                         <QueueGroup key={groupName} name={groupName} students={students}
                           onPickupAll={() => handlePickupAll(students)}
                           onCall={handleCallStudent}
-                          onPickup={handleMarkPickedUp} />
+                          onPickup={handleMarkPickedUp}
+                          pickupsByStudent={pickupsByStudent} />
                       ));
                     })()}
                   </div>
@@ -1195,7 +1209,8 @@ export default function DismissalDashboard() {
                     <QueueGroup key={routeName} name={routeName} students={students}
                       onPickupAll={() => handlePickupAll(students)}
                       onCall={handleCallStudent}
-                      onPickup={handleMarkPickedUp} />
+                      onPickup={handleMarkPickedUp}
+                      pickupsByStudent={pickupsByStudent} />
                   ))
                 ) : (
                   <Card>
@@ -1420,6 +1435,7 @@ export default function DismissalDashboard() {
               )}
             </div>
           )}
+
         </main>
       </div>
 
@@ -1703,13 +1719,13 @@ function QrScannerModal({ onScan, onClose }) {
   );
 }
 
-function QueueGroup({ name, students, onPickupAll, onCall, onPickup }) {
+function QueueGroup({ name, students, onPickupAll, onCall, onPickup, pickupsByStudent }) {
   const eligible = students.filter(s => s.status === 'waiting' || s.status === 'called' || s.status === 'released');
 
   if (students.length === 1) {
     return (
       <div className="border-b border-gray-100 dark:border-slate-800">
-        <QueueItem item={students[0]} position={1} onCall={onCall} onPickup={onPickup} />
+        <QueueItem item={students[0]} position={1} onCall={onCall} onPickup={onPickup} authorizedPickups={pickupsByStudent?.[students[0].student_id] || []} />
       </div>
     );
   }
@@ -1732,14 +1748,14 @@ function QueueGroup({ name, students, onPickupAll, onCall, onPickup }) {
       </div>
       <div className="divide-y divide-gray-100 dark:divide-slate-800">
         {students.map((item, idx) => (
-          <QueueItem key={item.id} item={item} position={idx + 1} onCall={onCall} onPickup={onPickup} />
+          <QueueItem key={item.id} item={item} position={idx + 1} onCall={onCall} onPickup={onPickup} authorizedPickups={pickupsByStudent?.[item.student_id] || []} />
         ))}
       </div>
     </div>
   );
 }
 
-function QueueItem({ item, position, onPickup }) {
+function QueueItem({ item, position, onPickup, authorizedPickups }) {
   const getStatusColor = (status) => {
     switch (status) {
       case 'waiting': return 'red';
@@ -1800,6 +1816,18 @@ function QueueItem({ item, position, onPickup }) {
               {waitTime}m
             </span>
           </div>
+          {authorizedPickups && authorizedPickups.length > 0 && (
+            <div className="flex items-center gap-1 mt-1 flex-wrap">
+              <span className="text-xs text-indigo-600 dark:text-indigo-400 font-medium">Authorized:</span>
+              {authorizedPickups
+                .filter((p, i, arr) => arr.findIndex(x => x.name === p.name) === i)
+                .map((p, idx) => (
+                <span key={idx} className="text-xs bg-indigo-50 dark:bg-indigo-950/30 text-indigo-700 dark:text-indigo-300 px-1.5 py-0.5 rounded">
+                  {p.name} ({p.relationship})
+                </span>
+              ))}
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
           {item.status !== 'dismissed' && (

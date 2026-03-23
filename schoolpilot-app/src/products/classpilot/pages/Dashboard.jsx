@@ -169,19 +169,6 @@ export default function Dashboard() {
     staleTime: 10000,
   });
 
-  const { data: urlHistory = [] } = useQuery({
-    queryKey: ['/api/heartbeats', selectedStudent?.primaryDeviceId, activeSession?.startTime],
-    queryFn: () => {
-      const params = new URLSearchParams();
-      if (activeSession?.startTime) params.set('startTime', new Date(activeSession.startTime).toISOString());
-      if (activeSession?.endTime) params.set('endTime', new Date(activeSession.endTime).toISOString());
-      const qs = params.toString();
-      return apiRequest('GET', `/heartbeats/${selectedStudent?.primaryDeviceId}${qs ? `?${qs}` : ''}`);
-    },
-    select: (data) => Array.isArray(data) ? data : data?.heartbeats ?? [],
-    enabled: !!selectedStudent,
-  });
-
   const { data: settings } = useQuery({
     queryKey: ['/api/settings'],
     queryFn: () => apiRequest('GET', '/settings'),
@@ -230,6 +217,19 @@ export default function Dashboard() {
     (observedSession && observedSession.teacherId === currentUser?.id)
   );
   const effectiveSession = isAdmin ? (observedSession || activeSession) : activeSession;
+
+  const { data: urlHistory = [] } = useQuery({
+    queryKey: ['/api/heartbeats', selectedStudent?.primaryDeviceId, effectiveSession?.startTime],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (effectiveSession?.startTime) params.set('startTime', new Date(effectiveSession.startTime).toISOString());
+      if (effectiveSession?.endTime) params.set('endTime', new Date(effectiveSession.endTime).toISOString());
+      const qs = params.toString();
+      return apiRequest('GET', `/heartbeats/${selectedStudent?.primaryDeviceId}${qs ? `?${qs}` : ''}`);
+    },
+    select: (data) => Array.isArray(data) ? data : data?.heartbeats ?? [],
+    enabled: !!selectedStudent,
+  });
 
   const { data: subgroups = [] } = useQuery({
     queryKey: ['/api/groups', effectiveSession?.groupId, 'subgroups'],
