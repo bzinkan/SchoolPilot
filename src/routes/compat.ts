@@ -828,11 +828,13 @@ router.patch("/admin/settings", ...schoolAuth, requireRole("admin"), async (req,
 // Kiosk config (PassPilot calls PUT /kiosk-config)
 // ============================================================================
 
-router.put("/kiosk-config", ...schoolAuth, requireRole("admin"), async (req, res, next) => {
+router.put("/kiosk-config", ...schoolAuth, requireRole("admin", "teacher"), async (req, res, next) => {
   try {
-    const school = await updateSchool(res.locals.schoolId!, {
-      kioskEnabled: req.body.kioskEnabled,
-    });
+    const updates: Record<string, any> = {};
+    if (req.body.kioskEnabled !== undefined) updates.kioskEnabled = req.body.kioskEnabled;
+    if (req.body.gradeId !== undefined) updates.kioskGradeId = req.body.gradeId;
+    if (req.body.kioskName !== undefined) updates.kioskName = req.body.kioskName;
+    const school = await updateSchool(res.locals.schoolId!, updates);
     return res.json({ school });
   } catch (err) {
     next(err);

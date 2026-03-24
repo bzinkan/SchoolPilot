@@ -50,8 +50,8 @@ function getKioskSchoolId(req: { headers: Record<string, unknown>; query: Record
 // Helper: validate kiosk is enabled and PIN matches (if set)
 async function validateKiosk(schoolId: string, kioskPin?: string) {
   const school = await getSchoolById(schoolId);
-  if (!school) return { error: "School not found", status: 404, school: null };
-  if (!school.kioskEnabled) return { error: "Kiosk is not enabled", status: 403, school: null };
+  if (!school) return { error: "School not found", status: 400, school: null };
+  if (school.kioskEnabled === false) return { error: "Kiosk is not enabled", status: 403, school: null };
   // If the school has a kiosk PIN, require it on every request
   if ((school as any).kioskPin && (school as any).kioskPin !== kioskPin) {
     return { error: "Invalid kiosk PIN", status: 401, school: null };
@@ -119,7 +119,7 @@ router.post("/checkout", kioskLimiter, async (req, res, next) => {
 
     const student = await getStudentById(parsed.data.studentId);
     if (!student || student.schoolId !== schoolId) {
-      return res.status(404).json({ error: "Student not found" });
+      return res.status(400).json({ error: "Student not found" });
     }
 
     // Enforce school hours
@@ -199,7 +199,7 @@ router.post("/checkin", kioskLimiter, async (req, res, next) => {
 
     const activePass = await getActivePassForStudent(studentId, schoolId);
     if (!activePass) {
-      return res.status(404).json({ error: "No active pass found" });
+      return res.status(400).json({ error: "No active pass found" });
     }
 
     const pass = await returnPass(activePass.id, schoolId);
@@ -257,6 +257,7 @@ router.get("/students", kioskLimiter, async (req, res, next) => {
       firstName: s.firstName,
       lastName: s.lastName,
       gradeId: s.gradeId,
+      studentIdNumber: s.studentIdNumber || null,
       status: s.status,
       activePass: passMap.get(s.id) || null,
     }));
@@ -277,7 +278,7 @@ router.get("/config", kioskLimiter, async (req, res, next) => {
 
     const school = await getSchoolById(schoolId);
     if (!school) {
-      return res.status(404).json({ error: "School not found" });
+      return res.status(400).json({ error: "School not found" });
     }
 
     let kioskName: string | null = null;

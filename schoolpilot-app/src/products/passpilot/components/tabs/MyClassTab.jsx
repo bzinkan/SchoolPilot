@@ -7,7 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "../../../../lib/queryClient";
 import { usePassPilotAuth } from "../../../../hooks/usePassPilotAuth";
 import { formatTimeFull } from "../../../../lib/date-utils";
-import { Users, Clock, UserCheck, Timer, Heart, AlertTriangle, ChevronDown, Edit3, X, Search, Bath, MapPin, Building2, HelpCircle, Triangle, Monitor, ClipboardCheck } from "lucide-react";
+import { Users, Clock, UserCheck, Timer, Heart, AlertTriangle, ChevronDown, Edit3, X, Search, Bath, Triangle, Monitor, ClipboardCheck } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -19,7 +19,6 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "../../../../components/ui/dialog";
 import { Input } from "../../../../components/ui/input";
 import { Label } from "../../../../components/ui/label";
@@ -551,13 +550,13 @@ function MyClassTab() {
                           <div>
                             <div className="flex items-center gap-2">
                               <p className="font-medium">{student.firstName} {student.lastName}</p>
-                              <span className={`px-2 py-1 text-xs rounded-full border flex items-center gap-1 ${getPassTypeBadgeColor(pass.passType || 'general', pass.destination)}`}>
-                                {getPassTypeIcon(pass.passType || 'general', pass.destination)}
-                                {pass.destination || getPassTypeLabel(pass.passType || 'general')}
+                              <span className={`px-2 py-1 text-xs rounded-full border flex items-center gap-1 ${getPassTypeBadgeColor(pass.destination || 'general', pass.destination)}`}>
+                                {getPassTypeIcon(pass.destination || 'general', pass.destination)}
+                                {pass.destination || 'general'}
                               </span>
                             </div>
                             <p className="text-sm text-muted-foreground">
-                              {pass.customReason || `Out for ${formatDuration(pass.issuedAt)}`} • Since {pass.issuedAt ? formatTimeFull(pass.issuedAt, tz) : 'Unknown time'}
+                              {pass.customDestination || `Out for ${formatDuration(pass.issuedAt)}`} • Since {pass.issuedAt ? formatTimeFull(pass.issuedAt, tz) : 'Unknown time'}
                             </p>
                           </div>
                         </div>

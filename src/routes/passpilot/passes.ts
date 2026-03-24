@@ -8,7 +8,6 @@ import {
   getActivePassesBySchool,
   getActivePassForStudent,
   getPassHistory,
-  getPassById,
   createPass,
   returnPass,
   cancelPass,
@@ -229,7 +228,7 @@ router.post("/", async (req, res, next) => {
     // Verify student exists in school
     const student = await getStudentById(studentId);
     if (!student || student.schoolId !== res.locals.schoolId) {
-      return res.status(404).json({ error: "Student not found" });
+      return res.status(400).json({ error: "Student not found" });
     }
 
     // Check if student is absent
@@ -281,7 +280,7 @@ router.patch("/:id/return", async (req, res, next) => {
   try {
     const pass = await returnPass(param(req, "id"), res.locals.schoolId!);
     if (!pass) {
-      return res.status(404).json({ error: "Active pass not found" });
+      return res.status(400).json({ error: "Active pass not found" });
     }
     return res.json({ pass });
   } catch (err) {
@@ -294,7 +293,7 @@ router.put("/:id/return", async (req, res, next) => {
   try {
     const pass = await returnPass(param(req, "id"), res.locals.schoolId!);
     if (!pass) {
-      return res.status(404).json({ error: "Active pass not found" });
+      return res.status(400).json({ error: "Active pass not found" });
     }
     return res.json({ pass });
   } catch (err) {
@@ -307,7 +306,7 @@ router.patch("/:id/cancel", async (req, res, next) => {
   try {
     const pass = await cancelPass(param(req, "id"), res.locals.schoolId!);
     if (!pass) {
-      return res.status(404).json({ error: "Active pass not found" });
+      return res.status(400).json({ error: "Active pass not found" });
     }
     return res.json({ pass });
   } catch (err) {

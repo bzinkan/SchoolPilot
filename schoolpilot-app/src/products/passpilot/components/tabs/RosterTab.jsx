@@ -143,7 +143,7 @@ function RosterTab() {
     try {
       await apiRequest('POST', '/students', {
         name: studentForm.name,
-        grade: studentForm.grade,
+        gradeId: studentForm.grade,
         studentId: studentForm.studentId || undefined,
         gradeLevel: studentForm.gradeLevel || undefined
       });
@@ -184,7 +184,7 @@ function RosterTab() {
 
         return apiRequest('POST', '/students', {
           name: cleanLine,
-          grade: bulkGrade,
+          gradeId: bulkGrade,
           gradeLevel: bulkGradeLevel || undefined
         });
       });
@@ -220,7 +220,7 @@ function RosterTab() {
     try {
       await apiRequest('PUT', `/students/${editingStudent.id}`, {
         name: studentForm.name,
-        grade: studentForm.grade,
+        gradeId: studentForm.grade,
         studentId: studentForm.studentId || undefined,
         gradeLevel: studentForm.gradeLevel || undefined
       });
@@ -375,7 +375,7 @@ function RosterTab() {
                         {gradeStudents.length} student{gradeStudents.length !== 1 ? 's' : ''}
                       </p>
                       <div className="flex gap-1 mt-2">
-                        <Button size="sm" variant="outline" onClick={() => { setStudentForm({ name: '', grade: grade.name, studentId: '', gradeLevel: '' }); setShowAddStudentModal(true); }} className="h-6 text-xs px-2">
+                        <Button size="sm" variant="outline" onClick={() => { setStudentForm({ name: '', grade: grade.id, studentId: '', gradeLevel: '' }); setShowAddStudentModal(true); }} className="h-6 text-xs px-2">
                           Add Student
                         </Button>
                         <Button size="sm" variant="outline" onClick={() => { setBulkGrade(grade.name); setBulkGradeLevel(''); setShowBulkAddStudentsModal(true); }} className="h-6 text-xs px-2">
@@ -406,7 +406,7 @@ function RosterTab() {
                 <SelectTrigger><SelectValue placeholder="Select a class" /></SelectTrigger>
                 <SelectContent>
                   {myClasses.map((grade) => (
-                    <SelectItem key={grade.id} value={grade.name}>{grade.name}</SelectItem>
+                    <SelectItem key={grade.id} value={grade.id}>{grade.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -445,7 +445,7 @@ function RosterTab() {
                 <SelectTrigger><SelectValue placeholder="Select a class" /></SelectTrigger>
                 <SelectContent>
                   {myClasses.map((grade) => (
-                    <SelectItem key={grade.id} value={grade.name}>{grade.name}</SelectItem>
+                    <SelectItem key={grade.id} value={grade.id}>{grade.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -517,7 +517,7 @@ function RosterTab() {
                   <SelectTrigger><SelectValue placeholder="Select a class" /></SelectTrigger>
                   <SelectContent>
                     {myClasses.map((grade) => (
-                      <SelectItem key={grade.id} value={grade.name}>{grade.name}</SelectItem>
+                      <SelectItem key={grade.id} value={grade.id}>{grade.name}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>

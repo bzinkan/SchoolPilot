@@ -166,9 +166,15 @@ function ReportsTab() {
       ? Math.round(passesWithDuration.reduce((sum, p) => sum + (p.calculatedDuration || 0), 0) / passesWithDuration.length * 10) / 10
       : 0,
     peakHour: passes.length > 0
-      ? formatHour(passes.reduce((latest, pass) =>
-          new Date(pass.issuedAt) > new Date(latest.issuedAt) ? pass : latest
-        ).issuedAt, tz)
+      ? (() => {
+          const hourCounts = {};
+          passes.forEach(p => {
+            const h = new Date(p.issuedAt).getHours();
+            hourCounts[h] = (hourCounts[h] || 0) + 1;
+          });
+          const peakH = Object.entries(hourCounts).sort((a, b) => b[1] - a[1])[0]?.[0];
+          return peakH !== undefined ? formatHour(new Date(2000, 0, 1, Number(peakH)).toISOString(), tz) : 'N/A';
+        })()
       : 'N/A',
     uniqueStudents: new Set(passes.map(p => p.studentId)).size,
   };

@@ -96,9 +96,10 @@ export default function KioskPage() {
       });
 
       if (!res.ok) {
-        const err = await res.json();
+        let errMsg = "Failed to issue pass";
+        try { const err = await res.json(); errMsg = err.error || errMsg; } catch { /* non-JSON */ }
         setState("error");
-        setMessage(err.error || "Failed to issue pass");
+        setMessage(errMsg);
         return;
       }
 
@@ -121,9 +122,10 @@ export default function KioskPage() {
       });
 
       if (!res.ok) {
-        const err = await res.json();
+        let errMsg = "Failed to check in";
+        try { const err = await res.json(); errMsg = err.error || errMsg; } catch { /* non-JSON */ }
         setState("error");
-        setMessage(err.error || "Failed to check in");
+        setMessage(errMsg);
         return;
       }
 

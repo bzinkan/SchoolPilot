@@ -120,8 +120,9 @@ export default function KioskSimplePage() {
         body: JSON.stringify({ studentId, destination }),
       });
       if (!res.ok) {
-        const err = await res.json();
-        showFeedback("error", err.error || "Failed to issue pass");
+        let errMsg = "Failed to issue pass";
+        try { const err = await res.json(); errMsg = err.error || errMsg; } catch { /* non-JSON */ }
+        showFeedback("error", errMsg);
       } else {
         showFeedback("success", "Pass issued!");
         scrollToTop();
@@ -145,8 +146,9 @@ export default function KioskSimplePage() {
         body: JSON.stringify({ studentId }),
       });
       if (!res.ok) {
-        const err = await res.json();
-        showFeedback("error", err.error || "Failed to check in");
+        let errMsg = "Failed to check in";
+        try { const err = await res.json(); errMsg = err.error || errMsg; } catch { /* non-JSON */ }
+        showFeedback("error", errMsg);
       } else {
         showFeedback("success", "Welcome back!");
       }
