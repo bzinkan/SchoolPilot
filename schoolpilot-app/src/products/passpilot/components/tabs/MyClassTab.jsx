@@ -218,17 +218,6 @@ function MyClassTab() {
     }
   };
 
-  const getPassTypeLabel = (passType) => {
-    switch (passType) {
-      case 'nurse':
-        return 'Nurse';
-      case 'discipline':
-        return 'Discipline';
-      default:
-        return 'General';
-    }
-  };
-
   const getPassTypeBadgeColor = (passType, destination) => {
     if (destination) {
       const destLower = destination.toLowerCase();
