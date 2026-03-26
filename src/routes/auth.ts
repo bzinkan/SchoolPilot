@@ -301,6 +301,7 @@ router.get("/google", (req, res) => {
       "https://www.googleapis.com/auth/admin.directory.orgunit.readonly",
       "https://www.googleapis.com/auth/classroom.courses.readonly",
       "https://www.googleapis.com/auth/classroom.rosters.readonly",
+      "https://www.googleapis.com/auth/classroom.profile.emails",
     ],
     prompt: "consent",
     ...(state ? { state } : {}),
