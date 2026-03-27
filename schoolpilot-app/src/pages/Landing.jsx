@@ -1,6 +1,6 @@
 import { useAuth } from "../contexts/AuthContext";
 import { useLicenses } from "../contexts/LicenseContext";
-import { useRef, useEffect, useCallback } from "react";
+import { useRef, useEffect } from "react";
 
 function PlaneCanvas() {
   const canvasRef = useRef(null);
