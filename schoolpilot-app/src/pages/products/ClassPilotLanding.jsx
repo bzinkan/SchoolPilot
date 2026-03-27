@@ -253,8 +253,6 @@ export default function ClassPilotLanding() {
         </a>
 
         <div className="cp-nav-links-desktop" style={{ display: 'flex', alignItems: 'center', gap: '40px' }}>
-          <a href="#features" className="cp-nav-link">Features</a>
-          <a href="#how" className="cp-nav-link">How it works</a>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
@@ -328,16 +326,12 @@ export default function ClassPilotLanding() {
             flexWrap: 'wrap',
           }}>
             <div>
-              <div style={{ fontSize: '28px', fontWeight: 600, letterSpacing: '-1px', color: '#f8fafc' }}>Free</div>
-              <div style={{ fontSize: '14px', color: '#64748b' }}>through June</div>
-            </div>
-            <div>
               <div style={{ fontSize: '28px', fontWeight: 600, letterSpacing: '-1px', color: '#f8fafc' }}>10 min</div>
               <div style={{ fontSize: '14px', color: '#64748b' }}>setup time</div>
             </div>
             <div>
-              <div style={{ fontSize: '28px', fontWeight: 600, letterSpacing: '-1px', color: '#f8fafc' }}>$0</div>
-              <div style={{ fontSize: '14px', color: '#64748b' }}>to get started</div>
+              <div style={{ fontSize: '28px', fontWeight: 600, letterSpacing: '-1px', color: '#f8fafc' }}>Free Trial</div>
+              <div style={{ fontSize: '14px', color: '#64748b' }}>no credit card</div>
             </div>
           </div>
         </div>
@@ -876,7 +870,7 @@ export default function ClassPilotLanding() {
           maxWidth: '500px',
           margin: '0 auto 40px',
         }}>
-          Try ClassPilot free through the end of the school year. No credit card required. Setup takes less than 10 minutes.
+          Try ClassPilot with a free trial. No credit card required. Setup takes less than 10 minutes.
         </p>
         <a href="/get-started" style={{
           background: '#0f172a',

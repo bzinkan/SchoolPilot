@@ -12,6 +12,7 @@ import { Toaster } from './components/ui/toaster';
 // import { AIChatButton } from './components/chat/AIChatButton'; // AI Chat FAB — disabled, using backend-only monitoring
 import Login from './pages/Login';
 import Landing from './pages/Landing';
+import LandingV2 from './pages/LandingV2';
 import AuthCallback from './pages/AuthCallback';
 
 // ClassPilot pages (lazy-loaded)

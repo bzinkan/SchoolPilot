@@ -292,8 +292,17 @@ router.get("/schools/:id", ...auth, async (req, res, next) => {
       .filter((l) => l.status === "active")
       .map((l) => l.product);
 
+    // Calculate trial days remaining if applicable
+    let trialDaysRemaining: number | undefined;
+    if (school.status === "trial" && school.trialEndsAt) {
+      const now = new Date();
+      const end = new Date(school.trialEndsAt);
+      trialDaysRemaining = Math.max(0, Math.ceil((end.getTime() - now.getTime()) / 86400000));
+    }
+
     return res.json({
       ...school,
+      trialDaysRemaining,
       admins,
       teachers,
       staff: memberships.map(flattenMembership),
@@ -693,6 +702,25 @@ router.post("/schools/:id/reset-login", ...auth, async (req, res, next) => {
     const { updateUser } = await import("../../services/storage.js");
     await updateUser(admin.userId, { password: hashed });
 
+    // Send temp password to admin via email
+    const adminEmail = admin.user?.email;
+    if (adminEmail) {
+      const { sendEmail } = await import("../../services/email.js");
+      await sendEmail({
+        to: adminEmail,
+        subject: "SchoolPilot — Your password has been reset",
+        html: `
+          <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+            <h2>Password Reset</h2>
+            <p>Your SchoolPilot login password has been reset by a super admin.</p>
+            <p>Your temporary password is: <strong>${tempPassword}</strong></p>
+            <p>Please log in and change your password as soon as possible.</p>
+            <p style="margin-top: 24px;">— The SchoolPilot Team</p>
+          </div>
+        `,
+      });
+    }
+
     return res.json({ tempPassword, userId: admin.userId });
   } catch (err) {
     next(err);
@@ -736,13 +764,78 @@ router.get("/schools/:id/billing", ...auth, async (req, res, next) => {
 });
 
 // GET /api/admin/admin-emails - List admin emails
-router.get("/admin-emails", ...auth, async (_req, res) => {
-  return res.json({ emails: [] });
+router.get("/admin-emails", ...auth, async (_req, res, next) => {
+  try {
+    const schools = await getAllSchools();
+    const adminEmails: string[] = [];
+    const schoolIds = new Set<string>();
+
+    for (const school of schools) {
+      const memberships = await getMembershipsBySchool(school.id);
+      const admins = memberships.filter((m) => m.role === "admin");
+      for (const admin of admins) {
+        const email = admin.user?.email;
+        if (email && !adminEmails.includes(email)) {
+          adminEmails.push(email);
+          schoolIds.add(school.id);
+        }
+      }
+    }
+
+    return res.json({ emails: adminEmails, totalAdmins: adminEmails.length, schoolCount: schoolIds.size });
+  } catch (err) {
+    next(err);
+  }
 });
 
 // POST /api/admin/broadcast-email - Send broadcast email
-router.post("/broadcast-email", ...auth, async (_req, res) => {
-  return res.json({ ok: true, message: "Broadcast not yet implemented" });
+router.post("/broadcast-email", ...auth, async (req, res, next) => {
+  try {
+    const { subject, message } = req.body;
+    if (!subject || !message) {
+      return res.status(400).json({ error: "subject and message are required" });
+    }
+
+    // Gather all admin emails
+    const schools = await getAllSchools();
+    const adminEmails: string[] = [];
+    for (const school of schools) {
+      const memberships = await getMembershipsBySchool(school.id);
+      const admins = memberships.filter((m) => m.role === "admin");
+      for (const admin of admins) {
+        const email = admin.user?.email;
+        if (email && !adminEmails.includes(email)) {
+          adminEmails.push(email);
+        }
+      }
+    }
+
+    if (adminEmails.length === 0) {
+      return res.status(400).json({ error: "No admin emails found" });
+    }
+
+    const { sendEmail } = await import("../../services/email.js");
+    let sent = 0;
+    let failed = 0;
+    for (const email of adminEmails) {
+      const ok = await sendEmail({
+        to: email,
+        subject,
+        html: `
+          <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+            ${message}
+            <p style="margin-top: 24px; color: #999; font-size: 12px;">— The SchoolPilot Team</p>
+          </div>
+        `,
+      });
+      if (ok) sent++;
+      else failed++;
+    }
+
+    return res.json({ ok: true, sent, failed, totalRecipients: adminEmails.length });
+  } catch (err) {
+    next(err);
+  }
 });
 
 // POST /api/super-admin/schools/:id/request-tax-cert - Request tax exemption certificate

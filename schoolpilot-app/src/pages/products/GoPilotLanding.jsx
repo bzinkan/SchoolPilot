@@ -57,8 +57,8 @@ export default function GoPilotLanding() {
                 <svg className="w-8 h-8 mx-auto mb-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
                 </svg>
-                <h3 className="font-semibold mb-2">Verified Pickups</h3>
-                <p className="text-sm opacity-80">Authorized pickup lists and custody alert flags for every student</p>
+                <h3 className="font-semibold mb-2">Authorized Pickup List</h3>
+                <p className="text-sm opacity-80">Parents manage authorized pickup contacts. Office sees the list during dismissal for safe, verified releases.</p>
               </div>
               <div className="bg-white/10 backdrop-blur-sm rounded-lg p-6">
                 {/* Bell icon */}
@@ -96,8 +96,8 @@ export default function GoPilotLanding() {
                     <path d="M12 18h.01"/>
                   </svg>
                 ),
-                title: 'Multiple Check-in Methods',
-                description: 'Parents choose: app tap, SMS text, or QR code. Whatever works best for your families.',
+                title: 'Apps for Everyone',
+                description: 'Parent, office, admin, and teacher apps available for easy access on any device.',
                 color: 'bg-indigo-500',
               },
               {
@@ -117,8 +117,8 @@ export default function GoPilotLanding() {
                     <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
                   </svg>
                 ),
-                title: 'Verified Pickups',
-                description: 'Authorized pickup lists, photo ID matching, and custody alert flags.',
+                title: 'Authorized Pickup List',
+                description: 'Parents manage authorized pickup contacts. Office sees the list during dismissal for safe, verified releases.',
                 color: 'bg-red-500',
               },
               {
@@ -128,8 +128,8 @@ export default function GoPilotLanding() {
                     <polyline points="12 6 12 12 16 14"/>
                   </svg>
                 ),
-                title: 'Real-time Queue',
-                description: 'Parents see their position and wait time. No more guessing or endless car lines.',
+                title: 'Live Dismissal Dashboard',
+                description: 'Office and teachers see every student\'s status in real-time — from queue to pickup.',
                 color: 'bg-yellow-500',
               },
               {

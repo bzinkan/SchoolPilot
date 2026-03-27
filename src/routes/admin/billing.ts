@@ -286,6 +286,7 @@ router.post(
         return res.status(400).json({ error: "studentCount required" });
       }
 
+
       // Determine which products to invoice
       let invoiceProducts: ProductKey[];
       if (Array.isArray(requestedProducts) && requestedProducts.length > 0) {

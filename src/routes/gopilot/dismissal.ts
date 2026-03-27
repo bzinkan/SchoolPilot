@@ -132,6 +132,16 @@ router.put("/sessions/:id", ...auth, async (req, res, next) => {
     const { status } = req.body;
 
     const session = await updateSessionStatus(id, status);
+
+    // Notify all connected clients in this school's room
+    const schoolId = res.locals.schoolId!;
+    const io = getIO();
+    if (io && status === "active") {
+      io.to(`school:${schoolId}`).emit("dismissal:started", { sessionId: id });
+    } else if (io && status === "completed") {
+      io.to(`school:${schoolId}`).emit("dismissal:ended", { sessionId: id });
+    }
+
     return res.json({ session });
   } catch (err) {
     next(err);

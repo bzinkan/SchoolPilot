@@ -100,7 +100,7 @@ export async function sendTrialRequestConfirmation(request: {
       <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
         <h2>Welcome to SchoolPilot!</h2>
         <p>Hi ${request.contactName},</p>
-        <p>Thanks for signing up! We're getting <strong>${request.schoolName}</strong> set up now — you'll receive a confirmation within 24 hours to begin your free SchoolPilot trial (good through June 1st).</p>
+        <p>Thanks for signing up! We're getting <strong>${request.schoolName}</strong> set up now — you'll receive a confirmation within 24 hours to begin your free SchoolPilot trial.</p>
         <p>Once activated, you'll log in with your school Google account — no extra passwords needed.</p>
         <p>Here's what you'll get access to:</p>
         <ul>

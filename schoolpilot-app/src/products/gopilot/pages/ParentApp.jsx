@@ -75,7 +75,7 @@ export default function ParentApp() {
   const [currentView, setCurrentView] = useState('home');
   const [currentTime, setCurrentTime] = useState(new Date());
   const [checkInStatus, setCheckInStatus] = useState(null); // null, 'checking', 'checked-in', 'complete'
-  const [queueIds, setQueueIds] = useState([]); // queue entry IDs for dismiss calls
+  const [_queueIds, setQueueIds] = useState([]); // tracked for socket state management
   const [showChangeRequest, setShowChangeRequest] = useState(false);
   const [showAddChild, setShowAddChild] = useState(false);
   const [linkCode, setLinkCode] = useState('');
@@ -104,7 +104,7 @@ export default function ParentApp() {
   // Loading / error states
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [checkInError, setCheckInError] = useState(null);
+  // checkInError removed — parent app is passive, no check-in actions
   const [changeError, setChangeError] = useState(null);
   const [changeConfirmation, setChangeConfirmation] = useState(null);
 
@@ -396,6 +396,13 @@ export default function ParentApp() {
       setSessionStatus('active');
     };
 
+    const handleDismissalEnded = () => {
+      setSessionStatus(null);
+      setSessionId(null);
+      setCheckInStatus(null);
+      setQueueIds([]);
+    };
+
     const handleCheckedIn = (data) => {
       // QR scan: office scanned our QR code, we're now in the queue
       if (data.entries && data.entries.length > 0) {
@@ -410,6 +417,7 @@ export default function ParentApp() {
     socket.on('dismissal:override', handleOverride);
     socket.on('change:resolved', handleChangeResolved);
     socket.on('dismissal:started', handleDismissalStarted);
+    socket.on('dismissal:ended', handleDismissalEnded);
     socket.on('student:checked-in', handleCheckedIn);
 
     return () => {
@@ -418,6 +426,7 @@ export default function ParentApp() {
       socket.off('dismissal:override', handleOverride);
       socket.off('change:resolved', handleChangeResolved);
       socket.off('dismissal:started', handleDismissalStarted);
+      socket.off('dismissal:ended', handleDismissalEnded);
       socket.off('student:checked-in', handleCheckedIn);
     };
   }, [socket, children]);
@@ -439,42 +448,10 @@ export default function ParentApp() {
     }
   };
 
-  const carRiderChildren = children.filter(c => getEffectiveType(c) === 'car');
+  // carRiderChildren removed — parent app no longer shows check-in UI
 
-  // Cancel check-in
-  // Complete pickup (confirmation from parent side - calls server)
-  const completePickup = async () => {
-    try {
-      // Dismiss all queued children on server
-      for (const qId of queueIds) {
-        await api.post(`/queue/${qId}/dismiss`);
-      }
-    } catch (err) {
-      console.error('Failed to complete pickup:', err);
-    }
-    setCheckInStatus('complete');
-    setQueueIds([]);
-  };
-
-  // Check in — parent taps "I'm Here"
-  const handleCheckIn = async () => {
-    if (!sessionId) {
-      setCheckInError('No active dismissal session yet. Please wait for dismissal to start.');
-      return;
-    }
-    setCheckInStatus('checking');
-    setCheckInError(null);
-    try {
-      const res = await api.post(`/sessions/${sessionId}/check-in`);
-      const entries = res.data?.entries || res.data?.queue || [];
-      setQueueIds(entries.map(e => e.id));
-      setCheckInStatus('checked-in');
-    } catch (err) {
-      console.error('Check-in failed:', err);
-      setCheckInError(err.response?.data?.error || 'Check-in failed. Please try again.');
-      setCheckInStatus(null);
-    }
-  };
+  // Parent app is fully passive — no check-in or pickup actions
+  // Status updates come from socket events (student:checked-in, student:dismissed)
 
   // Change request handler — sends one request per child
   const handleChangeSubmit = async ({ changes, note }) => {
@@ -611,19 +588,6 @@ export default function ParentApp() {
           </header>
 
           <main className="px-4 -mt-4 pb-24">
-            {/* Check-in error */}
-            {checkInError && (
-              <Card className="p-4 mb-4 border-red-200 bg-red-50">
-                <div className="flex items-center gap-3">
-                  <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0" />
-                  <p className="text-sm text-red-700">{checkInError}</p>
-                  <button onClick={() => setCheckInError(null)} className="ml-auto">
-                    <X className="w-4 h-4 text-red-400" />
-                  </button>
-                </div>
-              </Card>
-            )}
-
             {/* Change confirmation toast */}
             {changeConfirmation && (
               <Card className="p-4 mb-4 border-green-200 bg-green-50">
@@ -650,79 +614,27 @@ export default function ParentApp() {
 
             {!checkInStatus && sessionStatus === 'active' && (
               <Card className="p-6 mb-4">
-                <h2 className="font-semibold mb-4">Ready for Pickup?</h2>
-
-                {/* Children for pickup */}
-                <div className="space-y-2 mb-4">
-                  {carRiderChildren.map(child => (
-                    <div key={child.id} className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
-                      <div className="w-10 h-10 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-600 font-medium">
-                        {(child.firstName || '?')[0]}
-                      </div>
-                      <div className="flex-1">
-                        <p className="font-medium">{child.firstName}</p>
-                        <p className="text-sm text-gray-500">Grade {child.grade} • {child.homeroom}</p>
-                      </div>
-                      <Badge variant="blue">
-                        <Car className="w-3 h-3" />
-                        Car
-                      </Badge>
-                    </div>
-                  ))}
-                </div>
-
-                {schoolSettings.checkInMethod === 'qr' && currentSchool?.carNumber ? (
-                  <div className="flex flex-col items-center mt-2">
-                    <QRCodeSVG
-                      value={`gopilot://checkin?car=${currentSchool.carNumber}&school=${currentSchool.slug}`}
-                      size={180}
-                      level="M"
-                    />
-                    <Badge variant="blue" className="mt-3 text-lg px-4 py-1">
-                      <Car className="w-4 h-4 mr-1" />
-                      #{currentSchool.carNumber}
-                    </Badge>
-                    <p className="text-sm text-gray-500 mt-2">Show this to office staff</p>
-                  </div>
-                ) : schoolSettings.checkInMethod === 'app' ? (
-                  <Button
-                    variant="success"
-                    size="lg"
-                    className="w-full"
-                    onClick={handleCheckIn}
-                  >
-                    <Car className="w-5 h-5 mr-2" />
-                    I'm Here
-                  </Button>
-                ) : (
-                  <p className="text-sm text-center text-gray-400 mt-2">
-                    Office staff will enter your car number to check you in
-                  </p>
-                )}
-              </Card>
-            )}
-
-            {/* Checking in spinner */}
-            {checkInStatus === 'checking' && (
-              <Card className="p-6 mb-4">
                 <div className="text-center">
-                  <Loader2 className="w-10 h-10 text-indigo-600 animate-spin mx-auto mb-3" />
-                  <p className="font-semibold">Checking in...</p>
+                  <Car className="w-10 h-10 text-indigo-500 mx-auto mb-3" />
+                  <h2 className="font-semibold mb-1">Dismissal is Active</h2>
+                  <p className="text-sm text-gray-500 mb-4">Office will check you in when you arrive</p>
+                  {currentSchool?.carNumber && (
+                    <Badge variant="blue" className="text-lg px-4 py-1">
+                      <Car className="w-4 h-4 mr-1" />
+                      Car #{currentSchool.carNumber}
+                    </Badge>
+                  )}
                 </div>
               </Card>
             )}
 
-            {/* Checked in — show Pickup Complete button */}
+            {/* Checked in — passive status display */}
             {checkInStatus === 'checked-in' && (
               <div className="rounded-lg p-6 mb-4 border-2 shadow-sm" style={{ borderColor: '#bfdbfe', backgroundColor: '#eff6ff' }}>
                 <div className="text-center">
                   <Car className="w-10 h-10 text-blue-600 mx-auto mb-3" />
                   <h2 className="font-semibold text-lg mb-1">You're checked in!</h2>
-                  <p className="text-sm text-gray-600 mb-4">Tap below when pickup is done</p>
-                  <Button variant="success" size="lg" className="w-full" onClick={completePickup}>
-                    <Check className="w-5 h-5 mr-2" />
-                    Pickup Complete
-                  </Button>
+                  <p className="text-sm text-gray-500">Waiting for your children to be released</p>
                 </div>
               </div>
             )}

@@ -1134,6 +1134,19 @@ export async function getOrCreateSession(
     )
     .limit(1);
 
+  if (existing && existing.status === "completed") {
+    // Reset completed session so admin can start a new dismissal today
+    // Clear old queue entries first
+    await db
+      .delete(dismissalQueue)
+      .where(eq(dismissalQueue.sessionId, existing.id));
+    const [reset] = await db
+      .update(dismissalSessions)
+      .set({ status: "pending", endedAt: null, startedAt: null })
+      .where(eq(dismissalSessions.id, existing.id))
+      .returning();
+    return reset!;
+  }
   if (existing) return existing;
 
   // Create new with conflict handling
