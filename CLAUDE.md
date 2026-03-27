@@ -252,8 +252,20 @@ JAVA_HOME="C:/Program Files/Android/Android Studio/jbr" ./gradlew assembleDebug
 1. Parent registers via `/auth/register/parent` with `schoolSlug`
 2. Auto-assigned car number via `generateCarNumber()`
 3. Onboarding links children by car number (`/me/children/link-by-car`)
-4. Dashboard shows linked children, authorized pickups, check-in UI
-5. Check-in method (app vs QR) is school-controlled via `settings.checkInMethod`
+4. **Parent app is fully passive** — no check-in or pickup buttons. All status driven by socket events:
+   - `Waiting for Dismissal` → `Dismissal is Active` (shows car number) → `You're checked in!` → `Pickup Complete`
+   - Office enters car number → `student:checked-in` socket event → parent sees "Checked in"
+   - Office marks pickup complete → `student:dismissed` socket event → parent sees "Pickup Complete"
+5. Office has final authority — can complete dismissal even if teacher hasn't released
+6. Session reset: admin can end and restart dismissal same day (clears queue, resets timestamps)
+
+### GoPilot Socket Events
+- `dismissal:started` — emitted when admin starts session, parent app switches to active
+- `dismissal:ended` — emitted when admin ends session, parent app resets
+- `student:checked-in` — office adds student to queue, parent app updates
+- `student:called` — office calls student
+- `student:dismissed` — office completes pickup, parent app shows "Pickup Complete"
+- `student:released` — teacher releases student
 
 ## Production Deployment
 
@@ -338,6 +350,13 @@ Optional time-based auto-start/end for ClassPilot classes. Schema columns on `gr
 - **Scheduler** (`src/services/scheduler.ts`): `autoStartClassBlocks()` and `autoEndClassBlocks()` run every 60s. Skips weekends. Uses school timezone.
 - **Skip-date pattern**: When a teacher manually ends a scheduled class, `schedule_skipped_date` is set to today to prevent the scheduler from restarting it. Resets naturally the next day.
 - **Session summary email**: `buildAndSendSessionSummary()` in `src/routes/classpilot/sessions.ts` is exported and called by both manual end and auto-end. Uses school timezone (not hardcoded ET).
+
+### Super Admin Features
+- **Broadcast email**: POST `/super-admin/broadcast-email` sends to all school admins via SendGrid
+- **Reset login**: POST `/super-admin/schools/:id/reset-login` generates temp password AND emails it to the admin
+- **Trial management**: `trialDaysRemaining` computed field in school detail response
+- **Tax exemption**: Full S3 upload/download flow with Stripe tax-exempt status sync
+- **Impersonation**: Session-based, stores `originalUserId` to restore after
 
 ### AI Chat (Backend Only — FAB Disabled)
 Claude-powered chat assistant at `/api/ai-chat/*`. Frontend FAB is commented out in `App.jsx` but backend routes remain mounted. Uses `ANTHROPIC_API_KEY` env var (set in ECS task definition).
