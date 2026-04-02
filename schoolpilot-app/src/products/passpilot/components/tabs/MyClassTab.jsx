@@ -35,6 +35,7 @@ function MyClassTab() {
   const [showAttendance, setShowAttendance] = useState(false);
   const [showPassData, setShowPassData] = useState(false);
   const [timePeriod, setTimePeriod] = useState('today');
+  const [selectedPassDataStudent, setSelectedPassDataStudent] = useState(null); // { id, name }
 
   const { isAdmin, school } = usePassPilotAuth();
   const tz = school?.schoolTimezone ?? "America/New_York";
@@ -107,10 +108,13 @@ function MyClassTab() {
     gcTime: 0,
   });
 
-  const passDataStats = useMemo(() => {
-    if (!passHistory.length) return { topStudents: [], topDestinations: [], total: 0, avgDuration: 0 };
+  const destMap = {
+    bathroom: 'Bathroom', nurse: 'Nurse', office: 'Office',
+    counselor: 'Counselor', other_classroom: 'Other Classroom',
+  };
 
-    // Top students
+  const passDataStats = useMemo(() => {
+    // Build student counts from pass history
     const studentCounts = new Map();
     passHistory.forEach(pass => {
       const key = pass.studentId;
@@ -121,16 +125,21 @@ function MyClassTab() {
       if (existing) {
         existing.count++;
       } else {
-        studentCounts.set(key, { name, count: 1 });
+        studentCounts.set(key, { id: key, name, count: 1 });
       }
     });
-    const topStudents = [...studentCounts.values()].sort((a, b) => b.count - a.count).slice(0, 5);
 
-    // Top destinations
-    const destMap = {
-      bathroom: 'Bathroom', nurse: 'Nurse', office: 'Office',
-      counselor: 'Counselor', other_classroom: 'Other Classroom',
-    };
+    // Include ALL grade students (even those with 0 passes)
+    const currentGradeStudents = students.filter(s => s.gradeId === activeGradeId);
+    currentGradeStudents.forEach(s => {
+      if (!studentCounts.has(s.id)) {
+        studentCounts.set(s.id, { id: s.id, name: `${s.firstName} ${s.lastName}`, count: 0 });
+      }
+    });
+
+    const allStudents = [...studentCounts.values()].sort((a, b) => b.count - a.count);
+
+    // Top destinations (class-wide)
     const destCounts = new Map();
     passHistory.forEach(pass => {
       const dest = pass.customDestination || destMap[pass.destination] || pass.destination || 'General';
@@ -155,8 +164,34 @@ function MyClassTab() {
     });
     const avgDuration = completedCount > 0 ? Math.round(totalDuration / completedCount) : 0;
 
-    return { topStudents, topDestinations, total: passHistory.length, avgDuration };
-  }, [passHistory]);
+    return { allStudents, topDestinations, total: passHistory.length, avgDuration };
+  }, [passHistory, students, activeGradeId]);
+
+  // Per-student destinations when a student is selected
+  const selectedStudentStats = useMemo(() => {
+    if (!selectedPassDataStudent) return null;
+    const studentPasses = passHistory.filter(p => p.studentId === selectedPassDataStudent.id);
+    const destCounts = new Map();
+    studentPasses.forEach(pass => {
+      const dest = pass.customDestination || destMap[pass.destination] || pass.destination || 'General';
+      destCounts.set(dest, (destCounts.get(dest) || 0) + 1);
+    });
+    const destinations = [...destCounts.entries()]
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count);
+
+    let totalDuration = 0;
+    let completedCount = 0;
+    studentPasses.forEach(pass => {
+      if (pass.returnedAt && pass.issuedAt) {
+        const diff = (new Date(pass.returnedAt).getTime() - new Date(pass.issuedAt).getTime()) / 60000;
+        if (diff > 0) { totalDuration += diff; completedCount++; }
+      }
+    });
+    const avgDuration = completedCount > 0 ? Math.round(totalDuration / completedCount) : 0;
+
+    return { total: studentPasses.length, destinations, avgDuration };
+  }, [selectedPassDataStudent, passHistory]);
 
   const isLoading = studentsLoading || passesLoading;
 
@@ -610,11 +645,26 @@ function MyClassTab() {
                   ))}
                 </div>
 
+                {/* Class / Student Tab Switcher */}
+                <div className="flex items-center gap-2 border-b pb-2">
+                  <Button
+                    variant={!selectedPassDataStudent ? "default" : "ghost"}
+                    size="sm"
+                    onClick={() => setSelectedPassDataStudent(null)}
+                  >
+                    Class
+                  </Button>
+                  {selectedPassDataStudent && (
+                    <Button variant="default" size="sm" className="pointer-events-none">
+                      {selectedPassDataStudent.name}
+                    </Button>
+                  )}
+                </div>
+
                 {historyLoading ? (
                   <div className="text-center py-4 text-muted-foreground text-sm">Loading pass data...</div>
-                ) : passDataStats.total === 0 ? (
-                  <div className="text-center py-4 text-muted-foreground text-sm">No pass data for this period</div>
-                ) : (
+                ) : !selectedPassDataStudent ? (
+                  /* ========== CLASS VIEW ========== */
                   <>
                     {/* Summary Stats */}
                     <div className="flex items-center gap-6 text-sm">
@@ -630,20 +680,26 @@ function MyClassTab() {
 
                     {/* Two-column grid */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {/* Top Students */}
+                      {/* All Students */}
                       <div className="space-y-2">
                         <h4 className="text-sm font-semibold text-foreground flex items-center gap-1.5">
                           <Users className="w-4 h-4 text-blue-600" />
-                          Top Students
+                          Students
                         </h4>
-                        <div className="space-y-1.5">
-                          {passDataStats.topStudents.map((s, i) => (
-                            <div key={i} className="flex items-center justify-between text-sm py-1 px-2 rounded bg-muted/50">
+                        <div className="space-y-1.5 max-h-64 overflow-y-auto">
+                          {passDataStats.allStudents.map((s, i) => (
+                            <div
+                              key={s.id || i}
+                              className="flex items-center justify-between text-sm py-1.5 px-2 rounded bg-muted/50 cursor-pointer hover:bg-muted transition-colors"
+                              onClick={() => setSelectedPassDataStudent({ id: s.id, name: s.name })}
+                            >
                               <span className="flex items-center gap-2">
                                 <span className="text-muted-foreground font-mono w-4 text-right">{i + 1}.</span>
                                 <span className="font-medium">{s.name}</span>
                               </span>
-                              <span className="text-muted-foreground">{s.count} {s.count === 1 ? 'pass' : 'passes'}</span>
+                              <span className={`${s.count === 0 ? 'text-muted-foreground/50' : 'text-muted-foreground'}`}>
+                                {s.count} {s.count === 1 ? 'pass' : 'passes'}
+                              </span>
                             </div>
                           ))}
                         </div>
@@ -656,7 +712,9 @@ function MyClassTab() {
                           Top Destinations
                         </h4>
                         <div className="space-y-1.5">
-                          {passDataStats.topDestinations.map((d, i) => (
+                          {passDataStats.topDestinations.length === 0 ? (
+                            <p className="text-sm text-muted-foreground py-2">No passes this period</p>
+                          ) : passDataStats.topDestinations.map((d, i) => (
                             <div key={i} className="flex items-center justify-between text-sm py-1 px-2 rounded bg-muted/50">
                               <span className="flex items-center gap-2">
                                 <span className="text-muted-foreground font-mono w-4 text-right">{i + 1}.</span>
@@ -672,6 +730,40 @@ function MyClassTab() {
                     {passHistory.length >= 2000 && (
                       <p className="text-xs text-muted-foreground">Showing data from the most recent 2,000 passes</p>
                     )}
+                  </>
+                ) : (
+                  /* ========== STUDENT VIEW ========== */
+                  <>
+                    <div className="flex items-center gap-6 text-sm">
+                      <span className="font-medium text-foreground">
+                        Total: <span className="text-blue-600">{selectedStudentStats?.total || 0} passes</span>
+                      </span>
+                      {(selectedStudentStats?.avgDuration || 0) > 0 && (
+                        <span className="font-medium text-foreground">
+                          Avg Duration: <span className="text-blue-600">{selectedStudentStats.avgDuration} min</span>
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="space-y-2">
+                      <h4 className="text-sm font-semibold text-foreground flex items-center gap-1.5">
+                        <Clock className="w-4 h-4 text-blue-600" />
+                        Destinations
+                      </h4>
+                      <div className="space-y-1.5">
+                        {(!selectedStudentStats || selectedStudentStats.destinations.length === 0) ? (
+                          <p className="text-sm text-muted-foreground py-2">No passes this period</p>
+                        ) : selectedStudentStats.destinations.map((d, i) => (
+                          <div key={i} className="flex items-center justify-between text-sm py-1 px-2 rounded bg-muted/50">
+                            <span className="flex items-center gap-2">
+                              <span className="text-muted-foreground font-mono w-4 text-right">{i + 1}.</span>
+                              <span className="font-medium">{d.name}</span>
+                            </span>
+                            <span className="text-muted-foreground">{d.count} {d.count === 1 ? 'pass' : 'passes'}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
                   </>
                 )}
               </CardContent>
