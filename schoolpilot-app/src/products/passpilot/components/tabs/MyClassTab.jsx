@@ -460,110 +460,60 @@ function MyClassTab() {
         <p className="text-sm text-muted-foreground">Manage student passes and track who's out of class</p>
       </div>
 
-      {/* Small Grade Tabs for Quick Switching */}
+      {/* Grade Tabs (left) + Action Buttons (right) */}
       <div className="mb-6">
-        <div className="flex flex-wrap gap-2">
-          {myClasses.map((grade) => {
-            const gradeOutCount = passes.filter(p => {
-              const student = students.find(s => s.id === p.studentId);
-              return student && student.gradeId === grade.id;
-            }).length;
+        <div className="flex items-center justify-between">
+          <div className="flex flex-wrap gap-2">
+            {myClasses.map((grade) => {
+              const gradeOutCount = passes.filter(p => {
+                const student = students.find(s => s.id === p.studentId);
+                return student && student.gradeId === grade.id;
+              }).length;
 
-            const isActive = activeGradeId === grade.id;
+              const isActive = activeGradeId === grade.id;
 
-            return (
-              <Button
-                key={grade.id}
-                variant={isActive ? "default" : "outline"}
-                size="sm"
-                onClick={() => {
-                  setActiveGradeId(grade.id);
-                }}
-                data-testid={`tab-grade-${grade.name}`}
-                className={`flex items-center gap-2 ${isActive ? 'ring-2 ring-primary' : ''}`}
-              >
-                <Users className="w-4 h-4" />
-                {grade.name}
-                {gradeOutCount > 0 && (
-                  <span className="ml-1 px-1.5 py-0.5 text-xs bg-red-100 text-red-700 rounded-full">
-                    {gradeOutCount}
-                  </span>
-                )}
-              </Button>
-            );
-          })}
+              return (
+                <Button
+                  key={grade.id}
+                  variant={isActive ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => {
+                    setActiveGradeId(grade.id);
+                  }}
+                  data-testid={`tab-grade-${grade.name}`}
+                  className={`flex items-center gap-2 ${isActive ? 'ring-2 ring-primary' : ''}`}
+                >
+                  <Users className="w-4 h-4" />
+                  {grade.name}
+                  {gradeOutCount > 0 && (
+                    <span className="ml-1 px-1.5 py-0.5 text-xs bg-red-100 text-red-700 rounded-full">
+                      {gradeOutCount}
+                    </span>
+                  )}
+                </Button>
+              );
+            })}
+            {currentActiveGrade && (
+                <Button
+                  variant={kioskGradeId === currentActiveGrade.id ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => {
+                    if (kioskGradeId === currentActiveGrade.id) {
+                      handleClearKiosk();
+                    } else {
+                      handleSendToKiosk(currentActiveGrade.id);
+                    }
+                  }}
+                  className="flex items-center gap-1.5"
+                  title={kioskGradeId === currentActiveGrade.id ? "Click to clear kiosk" : "Send this grade to kiosk"}
+                >
+                  <Monitor className="w-4 h-4" />
+                  {kioskGradeId === currentActiveGrade.id ? "On Kiosk" : "Send to Kiosk"}
+                </Button>
+            )}
+          </div>
           {currentActiveGrade && (
-              <Button
-                variant={kioskGradeId === currentActiveGrade.id ? "default" : "outline"}
-                size="sm"
-                onClick={() => {
-                  if (kioskGradeId === currentActiveGrade.id) {
-                    handleClearKiosk();
-                  } else {
-                    handleSendToKiosk(currentActiveGrade.id);
-                  }
-                }}
-                className="flex items-center gap-1.5"
-                title={kioskGradeId === currentActiveGrade.id ? "Click to clear kiosk" : "Send this grade to kiosk"}
-              >
-                <Monitor className="w-4 h-4" />
-                {kioskGradeId === currentActiveGrade.id ? "On Kiosk" : "Send to Kiosk"}
-              </Button>
-          )}
-        </div>
-      </div>
-
-      {/* Attendance Panel */}
-      {showAttendance && currentActiveGrade && (
-        <div className="mb-6">
-          <AttendancePanel
-            students={gradeStudents}
-            onClose={() => setShowAttendance(false)}
-          />
-        </div>
-      )}
-
-      {/* Show active grade content */}
-      {currentActiveGrade && (
-        <div className="space-y-6">
-          {/* Quick Stats + Action Buttons */}
-          <div className="flex items-start gap-4">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 flex-1">
-              <Card>
-                <CardContent className="p-4">
-                  <div className="flex items-center">
-                    <Users className="h-5 w-5 text-blue-600 mr-2" />
-                    <div>
-                      <p className="text-sm font-medium text-muted-foreground">Total Students</p>
-                      <p className="text-lg font-bold">{gradeStudents.length}</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="p-4">
-                  <div className="flex items-center">
-                    <Timer className="h-5 w-5 text-red-600 mr-2" />
-                    <div>
-                      <p className="text-sm font-medium text-muted-foreground">Currently Out</p>
-                      <p className="text-lg font-bold text-red-600">{sortedGradeOutPasses.length}</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="p-4">
-                  <div className="flex items-center">
-                    <UserCheck className="h-5 w-5 text-green-600 mr-2" />
-                    <div>
-                      <p className="text-sm font-medium text-muted-foreground">Available</p>
-                      <p className="text-lg font-bold text-green-600">{availableStudents.length}</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-            <div className="flex flex-col gap-2 shrink-0">
+            <div className="flex gap-2 shrink-0">
               <Button
                 variant={showPassData ? "default" : "outline"}
                 size="sm"
@@ -584,6 +534,58 @@ function MyClassTab() {
                 Attendance
               </Button>
             </div>
+          )}
+        </div>
+      </div>
+
+      {/* Attendance Panel */}
+      {showAttendance && currentActiveGrade && (
+        <div className="mb-6">
+          <AttendancePanel
+            students={gradeStudents}
+            onClose={() => setShowAttendance(false)}
+          />
+        </div>
+      )}
+
+      {/* Show active grade content */}
+      {currentActiveGrade && (
+        <div className="space-y-6">
+          {/* Quick Stats */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center">
+                  <Users className="h-5 w-5 text-blue-600 mr-2" />
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground">Total Students</p>
+                    <p className="text-lg font-bold">{gradeStudents.length}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center">
+                  <Timer className="h-5 w-5 text-red-600 mr-2" />
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground">Currently Out</p>
+                    <p className="text-lg font-bold text-red-600">{sortedGradeOutPasses.length}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center">
+                  <UserCheck className="h-5 w-5 text-green-600 mr-2" />
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground">Available</p>
+                    <p className="text-lg font-bold text-green-600">{availableStudents.length}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
           </div>
 
           {showPassData && (
