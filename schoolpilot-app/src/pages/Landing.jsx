@@ -428,6 +428,14 @@ export default function SchoolpilotLanding() {
         </div>
       </section>
 
+      {/* AI Transparency one-liner */}
+      <section style={{ padding: "20px 24px", background: "#f1f5f9", borderTop: "1px solid #e2e8f0", textAlign: "center" }}>
+        <p style={{ fontSize: 14, color: "#64748b", margin: 0 }}>
+          SchoolPilot uses <strong style={{ color: "#475569" }}>Anthropic's Claude API</strong> for AI-powered content classification to help keep students safe online.{" "}
+          <a href="/ai-transparency" style={{ color: "#3b5bdb", textDecoration: "underline" }}>Learn more</a>
+        </p>
+      </section>
+
       {/* Footer */}
       <footer style={{ background: "#0f172a", padding: "40px 24px" }}>
         <div style={{ maxWidth: 1200, margin: "0 auto", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 20 }}>
@@ -444,6 +452,7 @@ export default function SchoolpilotLanding() {
             <a href="/products/gopilot" style={{ color: "#64748b", textDecoration: "none", fontSize: 14 }}>GoPilot</a>
             <a href="/terms" style={{ color: "#64748b", textDecoration: "none", fontSize: 14 }}>Terms</a>
             <a href="/privacy" style={{ color: "#64748b", textDecoration: "none", fontSize: 14 }}>Privacy</a>
+            <a href="/ai-transparency" style={{ color: "#64748b", textDecoration: "none", fontSize: 14 }}>AI Transparency</a>
           </div>
 
           <p style={{ color: "#475569", fontSize: 13 }}>
