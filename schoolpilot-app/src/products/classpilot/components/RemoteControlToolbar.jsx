@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
-import { MonitorPlay, TabletSmartphone, Lock, Unlock, Layers, ListChecks, CheckSquare, XSquare, Users, BarChart3, Route, KeyRound } from "lucide-react";
+import { MonitorPlay, TabletSmartphone, Lock, Unlock, Layers, ListChecks, CheckSquare, XSquare, Users, BarChart3, Route, KeyRound, ChevronDown, Clock, Download } from "lucide-react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from 'recharts';
+import { startOfTodayInTimezone } from "../../../lib/date-utils";
 import { Button } from "../../../components/ui/button";
 import { Input } from "../../../components/ui/input";
 import { Label } from "../../../components/ui/label";
@@ -45,7 +46,8 @@ function RemoteControlToolbar({ selectedStudentIds, students, selectedGrade, onG
   const [lockUrl, setLockUrl] = useState("");
   const [tabLimit, setTabLimit] = useState("");
   const [selectedSceneId, setSelectedSceneId] = useState("");
-  const [selectedStudentForData, setSelectedStudentForData] = useState("all");
+  const [selectedStudentForData, setSelectedStudentForData] = useState(null); // null = class view, studentId = student view
+  const [studentDataTimePeriod, setStudentDataTimePeriod] = useState('today');
   const [tempUnblockDomain, setTempUnblockDomain] = useState("");
   const [tempUnblockDuration, setTempUnblockDuration] = useState("5");
   const [isLoading, setIsLoading] = useState(false);
@@ -341,72 +343,168 @@ function RemoteControlToolbar({ selectedStudentIds, students, selectedGrade, onG
     return nameA.localeCompare(nameB);
   });
 
-  // Fetch website duration analytics for a specific student
-  const { data: websiteDataRaw = [] } = useQuery({
-    queryKey: ['/api/student-analytics', selectedStudentForData],
-    queryFn: () => apiRequest('GET', `/student-analytics/${selectedStudentForData}`),
-    select: (data) => {
-      const heartbeats = Array.isArray(data) ? data : data?.heartbeats ?? [];
-      // Aggregate heartbeats by domain into { name, value } format
+  // Date range for student data
+  const studentDataDateStart = useMemo(() => {
+    const now = new Date();
+    switch (studentDataTimePeriod) {
+      case 'today': return startOfTodayInTimezone('America/New_York').toISOString();
+      case 'week': { const d = new Date(now); d.setDate(d.getDate() - 7); return d.toISOString(); }
+      case 'month': { const d = new Date(now); d.setMonth(d.getMonth() - 1); return d.toISOString(); }
+      case 'year': { const d = new Date(now); d.setFullYear(d.getFullYear() - 1); return d.toISOString(); }
+      default: return startOfTodayInTimezone('America/New_York').toISOString();
+    }
+  }, [studentDataTimePeriod]);
+
+  // Fetch heartbeats for selected student with date filtering
+  const { data: studentHeartbeats = [], isLoading: studentDataLoading } = useQuery({
+    queryKey: ['/api/student-analytics', selectedStudentForData, studentDataDateStart],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      params.append('startDate', studentDataDateStart);
+      params.append('limit', '2000');
+      return apiRequest('GET', `/student-analytics/${selectedStudentForData}?${params.toString()}`);
+    },
+    select: (data) => data?.heartbeats ?? (Array.isArray(data) ? data : []),
+    enabled: showStudentDataDialog && !!selectedStudentForData,
+  });
+
+  // Fetch heartbeats for ALL students in class view
+  const { data: allStudentHeartbeats = {}, isLoading: classDataLoading } = useQuery({
+    queryKey: ['/api/student-analytics-class', studentDataDateStart, showStudentDataDialog],
+    queryFn: async () => {
+      // Fetch heartbeats for each student in parallel
+      const results = {};
+      const fetches = sortedStudents.map(async (s) => {
+        const params = new URLSearchParams();
+        params.append('startDate', studentDataDateStart);
+        params.append('limit', '500');
+        try {
+          const data = await apiRequest('GET', `/student-analytics/${s.studentId}?${params.toString()}`);
+          results[s.studentId] = data?.heartbeats ?? (Array.isArray(data) ? data : []);
+        } catch { /* ignore */ }
+      });
+      await Promise.all(fetches);
+      return results;
+    },
+    enabled: showStudentDataDialog && !selectedStudentForData && sortedStudents.length > 0,
+    gcTime: 0,
+  });
+
+  // Class-wide computed stats
+  const classDataStats = useMemo(() => {
+    if (selectedStudentForData) return null;
+
+    const getLastName = (name) => {
+      const parts = (name || '').trim().split(/\s+/);
+      return parts.length > 1 ? parts[parts.length - 1] : parts[0] || '';
+    };
+
+    // Per-student domain aggregation
+    const studentList = sortedStudents.map(s => {
+      const hbs = allStudentHeartbeats[s.studentId] || [];
       const domainMap = {};
-      for (const hb of heartbeats) {
+      for (const hb of hbs) {
         if (!hb.activeTabUrl) continue;
         try {
           const domain = new URL(hb.activeTabUrl).hostname;
-          domainMap[domain] = (domainMap[domain] || 0) + 10; // 10s per heartbeat
-        } catch {
-          // skip invalid URLs
-        }
+          domainMap[domain] = (domainMap[domain] || 0) + 10;
+        } catch { /* skip */ }
       }
-      return Object.entries(domainMap)
-        .map(([name, value]) => ({ name, value }))
-        .sort((a, b) => b.value - a.value)
-        .slice(0, 10);
-    },
-    enabled: showStudentDataDialog && selectedStudentForData !== "all",
-  });
+      const topDomain = Object.entries(domainMap).sort((a, b) => b[1] - a[1])[0];
+      const totalTime = Object.values(domainMap).reduce((a, b) => a + b, 0);
+      return {
+        id: s.studentId,
+        name: s.studentName || 'Unknown',
+        totalTime,
+        topDomain: topDomain ? topDomain[0] : null,
+        siteCount: Object.keys(domainMap).length,
+      };
+    }).sort((a, b) => getLastName(a.name).localeCompare(getLastName(b.name)));
 
-  // Add colors to website data
-  const CHART_COLORS = [
-    '#3b82f6', // blue
-    '#10b981', // green
-    '#f59e0b', // amber
-    '#ef4444', // red
-    '#8b5cf6', // purple
-    '#ec4899', // pink
-    '#14b8a6', // teal
-    '#f97316', // orange
-    '#6366f1', // indigo
-    '#84cc16', // lime
-  ];
-
-  // For "Whole Class" view, aggregate current active URLs from all online students
-  const classWebsiteData = useMemo(() => {
-    if (selectedStudentForData !== "all") return [];
-    const domainMap = {};
-    students.forEach((s) => {
-      if (!s.activeTabUrl || s.status === "offline") return;
-      try {
-        const domain = new URL(s.activeTabUrl).hostname;
-        domainMap[domain] = (domainMap[domain] || 0) + 1;
-      } catch {
-        // skip invalid URLs
+    // Class-wide top domains
+    const classDomainMap = {};
+    Object.values(allStudentHeartbeats).forEach(hbs => {
+      for (const hb of hbs) {
+        if (!hb.activeTabUrl) continue;
+        try {
+          const domain = new URL(hb.activeTabUrl).hostname;
+          classDomainMap[domain] = (classDomainMap[domain] || 0) + 10;
+        } catch { /* skip */ }
       }
     });
-    return Object.entries(domainMap)
+    const topDomains = Object.entries(classDomainMap)
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value)
       .slice(0, 10);
-  }, [selectedStudentForData, students]);
 
-  const displayData = selectedStudentForData === "all" ? classWebsiteData : websiteDataRaw;
+    return { studentList, topDomains };
+  }, [selectedStudentForData, allStudentHeartbeats, sortedStudents]);
 
-  const studentDataStats = useMemo(() => {
-    return displayData.map((item, index) => ({
-      ...item,
-      color: CHART_COLORS[index % CHART_COLORS.length],
-    }));
-  }, [displayData]);
+  // Per-student computed stats
+  const selectedStudentData = useMemo(() => {
+    if (!selectedStudentForData) return null;
+    const domainMap = {};
+    for (const hb of studentHeartbeats) {
+      if (!hb.activeTabUrl) continue;
+      try {
+        const domain = new URL(hb.activeTabUrl).hostname;
+        domainMap[domain] = (domainMap[domain] || 0) + 10;
+      } catch { /* skip */ }
+    }
+    const domains = Object.entries(domainMap)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
+    const totalTime = domains.reduce((a, d) => a + d.value, 0);
+    return { domains, totalTime, totalSites: domains.length };
+  }, [selectedStudentForData, studentHeartbeats]);
+
+  // CSV export
+  const handleExportCSV = () => {
+    const BOM = '\uFEFF';
+    let csv = BOM;
+    const period = studentDataTimePeriod === 'today' ? 'Today' : studentDataTimePeriod === 'week' ? 'This_Week' : studentDataTimePeriod === 'month' ? 'This_Month' : 'This_Year';
+
+    if (!selectedStudentForData && classDataStats) {
+      // Class view export
+      csv += '"Student","Total Time","Top Domain","Sites Visited"\n';
+      classDataStats.studentList.forEach(s => {
+        const mins = Math.floor(s.totalTime / 60);
+        const secs = s.totalTime % 60;
+        const time = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+        csv += `"${s.name}","${time}","${s.topDomain || 'None'}","${s.siteCount}"\n`;
+      });
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `ClassPilot_Class_Data_${period}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } else if (selectedStudentForData && selectedStudentData) {
+      // Student view export
+      const studentName = sortedStudents.find(s => s.studentId === selectedStudentForData)?.studentName || 'Student';
+      csv += `"Student: ${studentName}"\n"Period: ${period}"\n\n`;
+      csv += '"Domain","Time Spent"\n';
+      selectedStudentData.domains.forEach(d => {
+        const mins = Math.floor(d.value / 60);
+        const secs = d.value % 60;
+        const time = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+        csv += `"${d.name}","${time}"\n`;
+      });
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `ClassPilot_${studentName.replace(/\s+/g, '_')}_${period}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+  };
+
+  const CHART_COLORS = [
+    '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6',
+    '#ec4899', '#14b8a6', '#f97316', '#6366f1', '#84cc16',
+  ];
 
   return (
     <>
@@ -728,126 +826,172 @@ function RemoteControlToolbar({ selectedStudentIds, students, selectedGrade, onG
       </Dialog>
 
       {/* Student Data Dialog */}
-      <Dialog open={showStudentDataDialog} onOpenChange={setShowStudentDataDialog}>
-        <DialogContent className="max-w-4xl max-h-[80vh]" data-testid="dialog-student-data">
+      <Dialog open={showStudentDataDialog} onOpenChange={(open) => {
+        setShowStudentDataDialog(open);
+        if (!open) setSelectedStudentForData(null);
+      }}>
+        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto" data-testid="dialog-student-data">
           <DialogHeader>
-            <DialogTitle>Student Data Analytics</DialogTitle>
+            <DialogTitle>Student Data</DialogTitle>
             <DialogDescription>
-              View activity statistics for your class or individual students
+              View browsing activity for your class or individual students
             </DialogDescription>
           </DialogHeader>
-          <div className="py-4 space-y-6">
-            {/* Student Selector */}
-            <div className="space-y-2">
-              <Label htmlFor="student-select">View Data For</Label>
-              <Select value={selectedStudentForData} onValueChange={setSelectedStudentForData}>
-                <SelectTrigger id="student-select" data-testid="select-student-data">
-                  <SelectValue placeholder="Select student or class" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all" data-testid="select-student-all">
-                    Whole Class
-                  </SelectItem>
-                  <DropdownMenuSeparator />
-                  {sortedStudents.map((student) => (
-                    <SelectItem key={student.studentId} value={student.studentId} data-testid={`select-student-${student.studentId}`}>
-                      {student.studentName || 'Unnamed Student'}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+          <div className="py-4 space-y-4">
+            {/* Time Period Selector */}
+            <div className="flex flex-wrap gap-2">
+              {[
+                { key: 'today', label: 'Today' },
+                { key: 'week', label: 'This Week' },
+                { key: 'month', label: 'This Month' },
+                { key: 'year', label: 'This Year' },
+              ].map(({ key, label }) => (
+                <Button
+                  key={key}
+                  variant={studentDataTimePeriod === key ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setStudentDataTimePeriod(key)}
+                >
+                  {label}
+                </Button>
+              ))}
             </div>
 
-            {/* Statistics Display */}
-            <div className="space-y-4">
-              <h3 className="text-lg font-semibold">
-                {selectedStudentForData === "all"
-                  ? "Current Class Activity"
-                  : `${sortedStudents.find(s => s.studentId === selectedStudentForData)?.studentName || 'Student'}'s Top Websites (Last 24h)`}
-              </h3>
+            {/* Class / Student Tab Switcher */}
+            <div className="flex items-center gap-2 border-b pb-2">
+              <Button
+                variant={!selectedStudentForData ? "default" : "ghost"}
+                size="sm"
+                onClick={() => setSelectedStudentForData(null)}
+              >
+                Class
+              </Button>
+              {selectedStudentForData && (
+                <Button variant="default" size="sm" className="pointer-events-none">
+                  {sortedStudents.find(s => s.studentId === selectedStudentForData)?.studentName || 'Student'}
+                </Button>
+              )}
+            </div>
 
-              {studentDataStats.length > 0 ? (
-                <div className="flex gap-6 items-start">
-                  {/* Website Duration List - Left Side */}
-                  <div className="w-80 flex-shrink-0">
-                    <div className="space-y-2 max-h-96 overflow-y-auto pr-2">
-                      {studentDataStats.map((stat, index) => {
-                        let displayValue;
-                        if (selectedStudentForData === "all") {
-                          displayValue = `${stat.value} student${stat.value !== 1 ? 's' : ''}`;
-                        } else {
-                          const minutes = Math.floor(stat.value / 60);
-                          const seconds = stat.value % 60;
-                          displayValue = minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
-                        }
-
+            {!selectedStudentForData ? (
+              /* ========== CLASS VIEW ========== */
+              classDataLoading ? (
+                <div className="text-center py-8 text-muted-foreground text-sm">Loading class data...</div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Students List */}
+                  <div className="space-y-2">
+                    <h4 className="text-sm font-semibold flex items-center gap-1.5">
+                      <Users className="w-4 h-4 text-blue-600" />
+                      Students
+                    </h4>
+                    <div className="space-y-1.5 max-h-80 overflow-y-auto">
+                      {(classDataStats?.studentList || []).map((s) => {
+                        const mins = Math.floor(s.totalTime / 60);
+                        const secs = s.totalTime % 60;
+                        const time = s.totalTime > 0 ? (mins > 0 ? `${mins}m ${secs}s` : `${secs}s`) : 'No activity';
                         return (
-                          <div key={stat.name} className="flex items-center gap-3 p-2 rounded-md hover-elevate">
-                            <div className="flex items-center gap-3 flex-1 min-w-0">
-                              <div className="flex-shrink-0 text-muted-foreground font-mono text-xs w-5">
-                                {index + 1}.
-                              </div>
-                              <div
-                                className="flex-shrink-0 w-3 h-3 rounded-full"
-                                style={{ backgroundColor: stat.color }}
-                              />
-                              <div className="text-sm font-medium truncate flex-1 min-w-0" title={stat.name}>
-                                {stat.name}
-                              </div>
-                            </div>
-                            <div className="flex-shrink-0 text-sm font-semibold text-muted-foreground">
-                              {displayValue}
-                            </div>
+                          <div
+                            key={s.id}
+                            className="flex items-center justify-between text-sm py-1.5 px-2 rounded bg-muted/50 cursor-pointer hover:bg-muted transition-colors"
+                            onClick={() => setSelectedStudentForData(s.id)}
+                          >
+                            <span className="font-medium">{s.name}</span>
+                            <span className={`text-xs ${s.totalTime === 0 ? 'text-muted-foreground/50' : 'text-muted-foreground'}`}>
+                              {time}
+                            </span>
+                          </div>
+                        );
+                      })}
+                      {(classDataStats?.studentList || []).length === 0 && (
+                        <p className="text-sm text-muted-foreground py-4 text-center">No students</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Top Domains */}
+                  <div className="space-y-2">
+                    <h4 className="text-sm font-semibold flex items-center gap-1.5">
+                      <Clock className="w-4 h-4 text-blue-600" />
+                      Top Domains (Class)
+                    </h4>
+                    <div className="space-y-1.5">
+                      {(classDataStats?.topDomains || []).length === 0 ? (
+                        <p className="text-sm text-muted-foreground py-4 text-center">No browsing data this period</p>
+                      ) : (classDataStats?.topDomains || []).map((d, i) => {
+                        const mins = Math.floor(d.value / 60);
+                        const secs = d.value % 60;
+                        const time = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+                        return (
+                          <div key={i} className="flex items-center justify-between text-sm py-1 px-2 rounded bg-muted/50">
+                            <span className="flex items-center gap-2">
+                              <span className="text-muted-foreground font-mono w-4 text-right">{i + 1}.</span>
+                              <span className="font-medium truncate" title={d.name}>{d.name}</span>
+                            </span>
+                            <span className="text-muted-foreground text-xs shrink-0">{time}</span>
                           </div>
                         );
                       })}
                     </div>
                   </div>
+                </div>
+              )
+            ) : (
+              /* ========== STUDENT VIEW ========== */
+              studentDataLoading ? (
+                <div className="text-center py-8 text-muted-foreground text-sm">Loading student data...</div>
+              ) : (
+                <div className="space-y-4">
+                  {/* Summary */}
+                  <div className="flex items-center gap-6 text-sm">
+                    <span className="font-medium">
+                      Total Time: <span className="text-blue-600">
+                        {selectedStudentData ? (() => {
+                          const m = Math.floor(selectedStudentData.totalTime / 60);
+                          const s = selectedStudentData.totalTime % 60;
+                          return m > 0 ? `${m}m ${s}s` : `${s}s`;
+                        })() : '0s'}
+                      </span>
+                    </span>
+                    <span className="font-medium">
+                      Sites Visited: <span className="text-blue-600">{selectedStudentData?.totalSites || 0}</span>
+                    </span>
+                  </div>
 
-                  {/* Pie Chart - Right Side */}
-                  <div className="flex-1 flex items-center justify-center">
-                    <ResponsiveContainer width="100%" height={350}>
-                      <PieChart>
-                        <Pie
-                          data={studentDataStats}
-                          cx="50%"
-                          cy="50%"
-                          labelLine={true}
-                          label={({ percent }) => {
-                            // Only show percentage on the slice itself
-                            return percent > 0.05 ? `${(percent * 100).toFixed(0)}%` : '';
-                          }}
-                          outerRadius={120}
-                          fill="#8884d8"
-                          dataKey="value"
-                        >
-                          {studentDataStats.map((entry, index) => (
-                            <Cell key={`cell-${index}`} fill={entry.color} />
-                          ))}
-                        </Pie>
-                        <Tooltip
-                          formatter={(value, name) => {
-                            if (selectedStudentForData === "all") {
-                              return [`${value} student${value !== 1 ? 's' : ''}`, name];
-                            }
-                            const minutes = Math.floor(value / 60);
-                            const seconds = value % 60;
-                            const timeStr = minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
-                            return [timeStr, name];
-                          }}
-                        />
-                      </PieChart>
-                    </ResponsiveContainer>
+                  {/* Domain list */}
+                  <div className="space-y-2">
+                    <h4 className="text-sm font-semibold flex items-center gap-1.5">
+                      <Clock className="w-4 h-4 text-blue-600" />
+                      Websites Visited
+                    </h4>
+                    <div className="space-y-1.5 max-h-64 overflow-y-auto">
+                      {(!selectedStudentData || selectedStudentData.domains.length === 0) ? (
+                        <p className="text-sm text-muted-foreground py-4 text-center">No browsing data this period</p>
+                      ) : selectedStudentData.domains.map((d, i) => {
+                        const mins = Math.floor(d.value / 60);
+                        const secs = d.value % 60;
+                        const time = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+                        return (
+                          <div key={i} className="flex items-center justify-between text-sm py-1 px-2 rounded bg-muted/50">
+                            <span className="flex items-center gap-2">
+                              <span className="text-muted-foreground font-mono w-4 text-right">{i + 1}.</span>
+                              <span className="font-medium truncate" title={d.name}>{d.name}</span>
+                            </span>
+                            <span className="text-muted-foreground text-xs shrink-0">{time}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
-              ) : (
-                <div className="p-8 text-center text-muted-foreground border rounded-lg">
-                  No browsing data available for the last 24 hours
-                </div>
-              )}
-            </div>
+              )
+            )}
           </div>
-          <DialogFooter>
+          <DialogFooter className="flex justify-between sm:justify-between">
+            <Button variant="outline" size="sm" onClick={handleExportCSV} className="flex items-center gap-1.5">
+              <Download className="h-4 w-4" />
+              Export CSV
+            </Button>
             <Button variant="outline" onClick={() => setShowStudentDataDialog(false)} data-testid="button-close-student-data">
               Close
             </Button>

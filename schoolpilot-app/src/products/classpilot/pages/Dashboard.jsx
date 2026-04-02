@@ -1270,9 +1270,6 @@ export default function Dashboard() {
               <button onClick={() => setShowAttendance(!showAttendance)} className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium border transition-colors ${showAttendance ? 'bg-primary text-primary-foreground border-primary' : 'bg-transparent border-slate-600 text-slate-400 hover:bg-slate-800'}`} data-testid="button-attendance">
                 <ClipboardCheck className="h-4 w-4" /> Attendance
               </button>
-              <button onClick={handleOpenExportDialog} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-transparent border border-slate-600 text-slate-400 hover:bg-slate-800 transition-colors" data-testid="button-export-excel">
-                <Download className="h-4 w-4" /> Export CSV
-              </button>
               {isTeacher && (
                 <button onClick={() => navigate("/classpilot/my-settings")} className="w-9 h-9 flex items-center justify-center rounded-lg bg-transparent border border-slate-600 text-slate-400 hover:bg-slate-800 transition-colors" data-testid="button-my-settings" title="My Settings">
                   <User className="h-[18px] w-[18px]" />

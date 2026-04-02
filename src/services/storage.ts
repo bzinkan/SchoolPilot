@@ -2469,12 +2469,17 @@ export async function getHeartbeatsByDeviceInRange(
 
 export async function getHeartbeatsByStudent(
   studentId: string,
-  limit = 50
+  limit = 50,
+  startDate?: Date,
+  endDate?: Date
 ): Promise<Heartbeat[]> {
+  const conditions: any[] = [eq(heartbeats.studentId, studentId)];
+  if (startDate) conditions.push(sql`${heartbeats.timestamp} >= ${startDate.toISOString()}`);
+  if (endDate) conditions.push(sql`${heartbeats.timestamp} <= ${endDate.toISOString()}`);
   return db
     .select()
     .from(heartbeats)
-    .where(eq(heartbeats.studentId, studentId))
+    .where(and(...conditions))
     .orderBy(desc(heartbeats.timestamp))
     .limit(limit);
 }

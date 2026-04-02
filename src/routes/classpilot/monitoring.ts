@@ -66,13 +66,15 @@ router.get("/student-analytics/:studentId", ...auth, async (req, res, next) => {
   try {
     const studentId = param(req, "studentId");
     const limit = parseInt(req.query.limit as string) || 100;
+    const startDate = req.query.startDate ? new Date(req.query.startDate as string) : undefined;
+    const endDate = req.query.endDate ? new Date(req.query.endDate as string) : undefined;
 
     const student = await getStudentById(studentId);
     if (!student) {
       return res.status(404).json({ error: "Student not found" });
     }
 
-    const heartbeats = await getHeartbeatsByStudent(studentId, limit);
+    const heartbeats = await getHeartbeatsByStudent(studentId, limit, startDate, endDate);
     const activeSession = await getActiveSessionByStudent(studentId);
 
     return res.json({
