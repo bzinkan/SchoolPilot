@@ -493,16 +493,6 @@ function MyClassTab() {
             );
           })}
           {currentActiveGrade && (
-            <>
-              <Button
-                variant={showAttendance ? "default" : "outline"}
-                size="sm"
-                onClick={() => setShowAttendance(!showAttendance)}
-                className="flex items-center gap-1.5"
-              >
-                <ClipboardCheck className="w-4 h-4" />
-                Attendance
-              </Button>
               <Button
                 variant={kioskGradeId === currentActiveGrade.id ? "default" : "outline"}
                 size="sm"
@@ -519,7 +509,6 @@ function MyClassTab() {
                 <Monitor className="w-4 h-4" />
                 {kioskGradeId === currentActiveGrade.id ? "On Kiosk" : "Send to Kiosk"}
               </Button>
-            </>
           )}
         </div>
       </div>
@@ -537,55 +526,64 @@ function MyClassTab() {
       {/* Show active grade content */}
       {currentActiveGrade && (
         <div className="space-y-6">
-          {/* Quick Stats */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center">
-                  <Users className="h-5 w-5 text-blue-600 mr-2" />
-                  <div>
-                    <p className="text-sm font-medium text-muted-foreground">Total Students</p>
-                    <p className="text-lg font-bold">{gradeStudents.length}</p>
+          {/* Quick Stats + Action Buttons */}
+          <div className="flex items-start gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 flex-1">
+              <Card>
+                <CardContent className="p-4">
+                  <div className="flex items-center">
+                    <Users className="h-5 w-5 text-blue-600 mr-2" />
+                    <div>
+                      <p className="text-sm font-medium text-muted-foreground">Total Students</p>
+                      <p className="text-lg font-bold">{gradeStudents.length}</p>
+                    </div>
                   </div>
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center">
-                  <Timer className="h-5 w-5 text-red-600 mr-2" />
-                  <div>
-                    <p className="text-sm font-medium text-muted-foreground">Currently Out</p>
-                    <p className="text-lg font-bold text-red-600">{sortedGradeOutPasses.length}</p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="p-4">
+                  <div className="flex items-center">
+                    <Timer className="h-5 w-5 text-red-600 mr-2" />
+                    <div>
+                      <p className="text-sm font-medium text-muted-foreground">Currently Out</p>
+                      <p className="text-lg font-bold text-red-600">{sortedGradeOutPasses.length}</p>
+                    </div>
                   </div>
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center">
-                  <UserCheck className="h-5 w-5 text-green-600 mr-2" />
-                  <div>
-                    <p className="text-sm font-medium text-muted-foreground">Available</p>
-                    <p className="text-lg font-bold text-green-600">{availableStudents.length}</p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="p-4">
+                  <div className="flex items-center">
+                    <UserCheck className="h-5 w-5 text-green-600 mr-2" />
+                    <div>
+                      <p className="text-sm font-medium text-muted-foreground">Available</p>
+                      <p className="text-lg font-bold text-green-600">{availableStudents.length}</p>
+                    </div>
                   </div>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Pass Data Toggle */}
-          <div>
-            <Button
-              variant={showPassData ? "default" : "outline"}
-              size="sm"
-              onClick={() => setShowPassData(!showPassData)}
-              className="flex items-center gap-2"
-            >
-              <BarChart3 className="w-4 h-4" />
-              Pass Data
-              <ChevronDown className={`w-4 h-4 transition-transform ${showPassData ? 'rotate-180' : ''}`} />
-            </Button>
+                </CardContent>
+              </Card>
+            </div>
+            <div className="flex flex-col gap-2 shrink-0">
+              <Button
+                variant={showPassData ? "default" : "outline"}
+                size="sm"
+                onClick={() => setShowPassData(!showPassData)}
+                className="flex items-center gap-1.5"
+              >
+                <BarChart3 className="w-4 h-4" />
+                Pass Data
+                <ChevronDown className={`w-3 h-3 transition-transform ${showPassData ? 'rotate-180' : ''}`} />
+              </Button>
+              <Button
+                variant={showAttendance ? "default" : "outline"}
+                size="sm"
+                onClick={() => setShowAttendance(!showAttendance)}
+                className="flex items-center gap-1.5"
+              >
+                <ClipboardCheck className="w-4 h-4" />
+                Attendance
+              </Button>
+            </div>
           </div>
 
           {showPassData && (
