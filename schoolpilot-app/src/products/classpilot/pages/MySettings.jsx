@@ -861,7 +861,7 @@ export default function MySettings() {
                       </span>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      {teacherSettings.schoolBlockedDomains.length} domain{teacherSettings.schoolBlockedDomains.length !== 1 ? 's' : ''} blocked school-wide by your admin. AI auto-blocks unsafe content.
+                      AI automatically blocks unsafe content. If a domain you need is being blocked, contact your school admin to have it added to the allowed list.
                     </p>
                   </div>
                 )}

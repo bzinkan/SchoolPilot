@@ -68,6 +68,8 @@ router.get("/student-analytics/:studentId", ...auth, async (req, res, next) => {
     const limit = parseInt(req.query.limit as string) || 100;
     const startDate = req.query.startDate ? new Date(req.query.startDate as string) : undefined;
     const endDate = req.query.endDate ? new Date(req.query.endDate as string) : undefined;
+    if (startDate && isNaN(startDate.getTime())) return res.status(400).json({ error: "Invalid startDate" });
+    if (endDate && isNaN(endDate.getTime())) return res.status(400).json({ error: "Invalid endDate" });
 
     const student = await getStudentById(studentId);
     if (!student) {

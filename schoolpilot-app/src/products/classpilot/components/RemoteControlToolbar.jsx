@@ -344,16 +344,17 @@ function RemoteControlToolbar({ selectedStudentIds, students, selectedGrade, onG
   });
 
   // Date range for student data
+  const schoolTz = settings?.schoolTimezone || 'America/New_York';
   const studentDataDateStart = useMemo(() => {
     const now = new Date();
     switch (studentDataTimePeriod) {
-      case 'today': return startOfTodayInTimezone('America/New_York').toISOString();
+      case 'today': return startOfTodayInTimezone(schoolTz).toISOString();
       case 'week': { const d = new Date(now); d.setDate(d.getDate() - 7); return d.toISOString(); }
       case 'month': { const d = new Date(now); d.setMonth(d.getMonth() - 1); return d.toISOString(); }
       case 'year': { const d = new Date(now); d.setFullYear(d.getFullYear() - 1); return d.toISOString(); }
-      default: return startOfTodayInTimezone('America/New_York').toISOString();
+      default: return startOfTodayInTimezone(schoolTz).toISOString();
     }
-  }, [studentDataTimePeriod]);
+  }, [studentDataTimePeriod, schoolTz]);
 
   // Fetch heartbeats for selected student with date filtering
   const { data: studentHeartbeats = [], isLoading: studentDataLoading } = useQuery({

@@ -386,6 +386,19 @@ export default function Settings() {
               </div>
 
               <div className="space-y-2">
+                <p className="text-sm font-medium">School-Wide Blocked Content</p>
+                <div className="flex flex-wrap gap-1.5">
+                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">Sexual Content</span>
+                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">Violent Content</span>
+                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">Drug-Related Content</span>
+                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">Self-Harm Content</span>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  AI automatically blocks unsafe content. If AI is blocking a domain you want to allow, add it to the Allowed Domains section below.
+                </p>
+              </div>
+
+              <div className="space-y-2">
                 <Label htmlFor="blockedDomains">Blocked Websites (comma-separated)</Label>
                 <Input
                   id="blockedDomains"
