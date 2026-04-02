@@ -70,7 +70,6 @@ export default function AITransparency() {
             </p>
             <ul className="list-disc pl-6 space-y-2 text-slate-700">
               <li>The tab is closed immediately on the student's device</li>
-              <li>The domain is added to the school's block list to prevent future access</li>
               <li>A safety alert is sent to the school administrator</li>
             </ul>
             <p className="text-slate-700 leading-relaxed mt-4">
