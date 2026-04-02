@@ -424,19 +424,6 @@ export default function Settings() {
                 </p>
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="ipAllowlist">IP Allowlist (comma-separated)</Label>
-                <Input
-                  id="ipAllowlist"
-                  data-testid="input-ip-allowlist"
-                  {...form.register("ipAllowlist")}
-                  placeholder="192.168.1.100, 10.0.0.50"
-                />
-                <p className="text-xs text-muted-foreground">
-                  Only these IPs can access the teacher dashboard (enforced in production only). Leave empty to allow all IPs.
-                </p>
-              </div>
-
               <div className="flex items-center space-x-3">
                 <input
                   type="checkbox"
