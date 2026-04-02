@@ -54,9 +54,6 @@ const settingsSchema = z.object({
 export default function Settings() {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const [showExportDialog, setShowExportDialog] = useState(false);
-  const [exportStartDate, setExportStartDate] = useState("");
-  const [exportEndDate, setExportEndDate] = useState("");
 
   // Flight Paths management state
   const [showSceneDialog, setShowSceneDialog] = useState(false);
@@ -246,37 +243,6 @@ export default function Settings() {
     }
   };
 
-  const handleOpenExportDialog = () => {
-    // Set default dates: last 7 days
-    const end = new Date();
-    const start = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-
-    setExportEndDate(end.toISOString().split('T')[0]);
-    setExportStartDate(start.toISOString().split('T')[0]);
-    setShowExportDialog(true);
-  };
-
-  const handleExportData = () => {
-    if (!exportStartDate || !exportEndDate) {
-      toast({
-        variant: "destructive",
-        title: "Invalid Dates",
-        description: "Please select both start and end dates",
-      });
-      return;
-    }
-
-    const startDate = new Date(exportStartDate).toISOString();
-    const endDate = new Date(exportEndDate + 'T23:59:59').toISOString();
-
-    window.location.href = `/api/export/activity?startDate=${startDate}&endDate=${endDate}`;
-    toast({
-      title: "Exporting Data",
-      description: `Downloading activity report from ${exportStartDate} to ${exportEndDate}...`,
-    });
-    setShowExportDialog(false);
-  };
-
   const onSubmit = (data) => {
     updateSettingsMutation.mutate(data);
   };
@@ -450,29 +416,6 @@ export default function Settings() {
           </CardContent>
         </Card>
 
-        {/* Data Export */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Download className="h-5 w-5" />
-              Export Data
-            </CardTitle>
-            <CardDescription>
-              Download activity data for compliance and reporting
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Button
-              variant="outline"
-              onClick={handleOpenExportDialog}
-              data-testid="button-export-data"
-            >
-              <Download className="h-4 w-4 mr-2" />
-              Export Activity CSV
-            </Button>
-          </CardContent>
-        </Card>
-
         {/* Flight Path Management */}
         <Card>
           <CardHeader>
@@ -590,49 +533,6 @@ export default function Settings() {
           </CardContent>
         </Card>
       </main>
-
-      {/* Export Dialog */}
-      <Dialog open={showExportDialog} onOpenChange={setShowExportDialog}>
-        <DialogContent data-testid="dialog-export-csv">
-          <DialogHeader>
-            <DialogTitle>Export Activity Report</DialogTitle>
-            <DialogDescription>
-              Select a date range to export student activity data as CSV
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="start-date-settings">Start Date</Label>
-              <Input
-                id="start-date-settings"
-                type="date"
-                value={exportStartDate}
-                onChange={(e) => setExportStartDate(e.target.value)}
-                data-testid="input-export-start-date"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="end-date-settings">End Date</Label>
-              <Input
-                id="end-date-settings"
-                type="date"
-                value={exportEndDate}
-                onChange={(e) => setExportEndDate(e.target.value)}
-                data-testid="input-export-end-date"
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowExportDialog(false)} data-testid="button-cancel-export">
-              Cancel
-            </Button>
-            <Button onClick={handleExportData} data-testid="button-confirm-export">
-              <Download className="h-4 w-4 mr-2" />
-              Export
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {/* Flight Path Create/Edit Dialog */}
       <Dialog open={showSceneDialog} onOpenChange={setShowSceneDialog}>

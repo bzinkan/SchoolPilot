@@ -7,7 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "../../../../lib/queryClient";
 import { usePassPilotAuth } from "../../../../hooks/usePassPilotAuth";
 import { formatTimeFull, startOfTodayInTimezone } from "../../../../lib/date-utils";
-import { Users, Clock, UserCheck, Timer, Heart, AlertTriangle, ChevronDown, Edit3, X, Search, Bath, Triangle, Monitor, ClipboardCheck, BarChart3 } from "lucide-react";
+import { Users, Clock, UserCheck, Timer, Heart, AlertTriangle, ChevronDown, Edit3, X, Search, Bath, Triangle, Monitor, ClipboardCheck, BarChart3, Download } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -192,6 +192,37 @@ function MyClassTab() {
 
     return { total: studentPasses.length, destinations, avgDuration };
   }, [selectedPassDataStudent, passHistory]);
+
+  const handlePassDataExportCSV = () => {
+    const BOM = '\uFEFF';
+    let csv = BOM;
+    const period = timePeriod === 'today' ? 'Today' : timePeriod === 'week' ? 'This_Week' : timePeriod === 'month' ? 'This_Month' : 'This_Year';
+    const gradeName = currentActiveGrade?.name || 'Class';
+
+    if (!selectedPassDataStudent) {
+      csv += '"Student","Total Passes","Avg Duration (min)"\n';
+      passDataStats.allStudents.forEach(s => {
+        csv += `"${s.name}","${s.count}",""\n`;
+      });
+    } else {
+      csv += `"Student: ${selectedPassDataStudent.name}"\n"Period: ${period}"\n\n`;
+      csv += '"Destination","Passes"\n';
+      (selectedStudentStats?.destinations || []).forEach(d => {
+        csv += `"${d.name}","${d.count}"\n`;
+      });
+    }
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const fileName = selectedPassDataStudent
+      ? `PassPilot_${selectedPassDataStudent.name.replace(/\s+/g, '_')}_${period}.csv`
+      : `PassPilot_${gradeName.replace(/\s+/g, '_')}_${period}.csv`;
+    a.download = fileName;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   const isLoading = studentsLoading || passesLoading;
 
@@ -766,6 +797,14 @@ function MyClassTab() {
                     </div>
                   </>
                 )}
+
+                {/* Export CSV */}
+                <div className="pt-2 border-t">
+                  <Button variant="outline" size="sm" onClick={handlePassDataExportCSV} className="flex items-center gap-1.5">
+                    <Download className="h-4 w-4" />
+                    Export CSV
+                  </Button>
+                </div>
               </CardContent>
             </Card>
           )}
