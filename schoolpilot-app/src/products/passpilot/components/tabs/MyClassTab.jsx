@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import * as React from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../../components/ui/card";
 import { Button } from "../../../../components/ui/button";
@@ -6,8 +6,8 @@ import { useToast } from "../../../../hooks/use-toast";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "../../../../lib/queryClient";
 import { usePassPilotAuth } from "../../../../hooks/usePassPilotAuth";
-import { formatTimeFull } from "../../../../lib/date-utils";
-import { Users, Clock, UserCheck, Timer, Heart, AlertTriangle, ChevronDown, Edit3, X, Search, Bath, Triangle, Monitor, ClipboardCheck } from "lucide-react";
+import { formatTimeFull, startOfTodayInTimezone } from "../../../../lib/date-utils";
+import { Users, Clock, UserCheck, Timer, Heart, AlertTriangle, ChevronDown, Edit3, X, Search, Bath, Triangle, Monitor, ClipboardCheck, BarChart3 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -33,6 +33,8 @@ function MyClassTab() {
   const [searchQuery, setSearchQuery] = useState('');
   const [kioskGradeId, setKioskGradeId] = useState(null);
   const [showAttendance, setShowAttendance] = useState(false);
+  const [showPassData, setShowPassData] = useState(false);
+  const [timePeriod, setTimePeriod] = useState('today');
 
   const { isAdmin, school } = usePassPilotAuth();
   const tz = school?.schoolTimezone ?? "America/New_York";
@@ -65,6 +67,96 @@ function MyClassTab() {
     refetchInterval: 3000,
     gcTime: 0,
   });
+
+  // Pass Data: fetch history for analytics
+  const passDataDateStart = useMemo(() => {
+    const now = new Date();
+    switch (timePeriod) {
+      case 'today':
+        return startOfTodayInTimezone(tz).toISOString();
+      case 'week': {
+        const d = new Date(now);
+        d.setDate(d.getDate() - 7);
+        return d.toISOString();
+      }
+      case 'month': {
+        const d = new Date(now);
+        d.setMonth(d.getMonth() - 1);
+        return d.toISOString();
+      }
+      case 'year': {
+        const d = new Date(now);
+        d.setFullYear(d.getFullYear() - 1);
+        return d.toISOString();
+      }
+      default:
+        return startOfTodayInTimezone(tz).toISOString();
+    }
+  }, [timePeriod, tz]);
+
+  const { data: passHistory = [], isLoading: historyLoading } = useQuery({
+    queryKey: ['/api/passes/history', activeGradeId, passDataDateStart],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      params.append('dateStart', passDataDateStart);
+      if (activeGradeId) params.append('gradeId', activeGradeId);
+      const data = await apiRequest('GET', `/passes/history?${params.toString()}`);
+      return Array.isArray(data) ? data : (data?.passes ?? []);
+    },
+    enabled: showPassData && !!activeGradeId,
+    gcTime: 0,
+  });
+
+  const passDataStats = useMemo(() => {
+    if (!passHistory.length) return { topStudents: [], topDestinations: [], total: 0, avgDuration: 0 };
+
+    // Top students
+    const studentCounts = new Map();
+    passHistory.forEach(pass => {
+      const key = pass.studentId;
+      const name = pass.student
+        ? `${pass.student.firstName} ${pass.student.lastName}`
+        : 'Unknown';
+      const existing = studentCounts.get(key);
+      if (existing) {
+        existing.count++;
+      } else {
+        studentCounts.set(key, { name, count: 1 });
+      }
+    });
+    const topStudents = [...studentCounts.values()].sort((a, b) => b.count - a.count).slice(0, 5);
+
+    // Top destinations
+    const destMap = {
+      bathroom: 'Bathroom', nurse: 'Nurse', office: 'Office',
+      counselor: 'Counselor', other_classroom: 'Other Classroom',
+    };
+    const destCounts = new Map();
+    passHistory.forEach(pass => {
+      const dest = pass.customDestination || destMap[pass.destination] || pass.destination || 'General';
+      destCounts.set(dest, (destCounts.get(dest) || 0) + 1);
+    });
+    const topDestinations = [...destCounts.entries()]
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+
+    // Average duration (completed passes only)
+    let totalDuration = 0;
+    let completedCount = 0;
+    passHistory.forEach(pass => {
+      if (pass.returnedAt && pass.issuedAt) {
+        const diff = (new Date(pass.returnedAt).getTime() - new Date(pass.issuedAt).getTime()) / 60000;
+        if (diff > 0) {
+          totalDuration += diff;
+          completedCount++;
+        }
+      }
+    });
+    const avgDuration = completedCount > 0 ? Math.round(totalDuration / completedCount) : 0;
+
+    return { topStudents, topDestinations, total: passHistory.length, avgDuration };
+  }, [passHistory]);
 
   const isLoading = studentsLoading || passesLoading;
 
@@ -481,6 +573,110 @@ function MyClassTab() {
               </CardContent>
             </Card>
           </div>
+
+          {/* Pass Data Toggle */}
+          <div>
+            <Button
+              variant={showPassData ? "default" : "outline"}
+              size="sm"
+              onClick={() => setShowPassData(!showPassData)}
+              className="flex items-center gap-2"
+            >
+              <BarChart3 className="w-4 h-4" />
+              Pass Data
+              <ChevronDown className={`w-4 h-4 transition-transform ${showPassData ? 'rotate-180' : ''}`} />
+            </Button>
+          </div>
+
+          {showPassData && (
+            <Card>
+              <CardContent className="p-4 space-y-4">
+                {/* Time Period Selector */}
+                <div className="flex flex-wrap gap-2">
+                  {[
+                    { key: 'today', label: 'Today' },
+                    { key: 'week', label: 'This Week' },
+                    { key: 'month', label: 'This Month' },
+                    { key: 'year', label: 'This Year' },
+                  ].map(({ key, label }) => (
+                    <Button
+                      key={key}
+                      variant={timePeriod === key ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setTimePeriod(key)}
+                    >
+                      {label}
+                    </Button>
+                  ))}
+                </div>
+
+                {historyLoading ? (
+                  <div className="text-center py-4 text-muted-foreground text-sm">Loading pass data...</div>
+                ) : passDataStats.total === 0 ? (
+                  <div className="text-center py-4 text-muted-foreground text-sm">No pass data for this period</div>
+                ) : (
+                  <>
+                    {/* Summary Stats */}
+                    <div className="flex items-center gap-6 text-sm">
+                      <span className="font-medium text-foreground">
+                        Total: <span className="text-blue-600">{passDataStats.total} passes</span>
+                      </span>
+                      {passDataStats.avgDuration > 0 && (
+                        <span className="font-medium text-foreground">
+                          Avg Duration: <span className="text-blue-600">{passDataStats.avgDuration} min</span>
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Two-column grid */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* Top Students */}
+                      <div className="space-y-2">
+                        <h4 className="text-sm font-semibold text-foreground flex items-center gap-1.5">
+                          <Users className="w-4 h-4 text-blue-600" />
+                          Top Students
+                        </h4>
+                        <div className="space-y-1.5">
+                          {passDataStats.topStudents.map((s, i) => (
+                            <div key={i} className="flex items-center justify-between text-sm py-1 px-2 rounded bg-muted/50">
+                              <span className="flex items-center gap-2">
+                                <span className="text-muted-foreground font-mono w-4 text-right">{i + 1}.</span>
+                                <span className="font-medium">{s.name}</span>
+                              </span>
+                              <span className="text-muted-foreground">{s.count} {s.count === 1 ? 'pass' : 'passes'}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Top Destinations */}
+                      <div className="space-y-2">
+                        <h4 className="text-sm font-semibold text-foreground flex items-center gap-1.5">
+                          <Clock className="w-4 h-4 text-blue-600" />
+                          Top Destinations
+                        </h4>
+                        <div className="space-y-1.5">
+                          {passDataStats.topDestinations.map((d, i) => (
+                            <div key={i} className="flex items-center justify-between text-sm py-1 px-2 rounded bg-muted/50">
+                              <span className="flex items-center gap-2">
+                                <span className="text-muted-foreground font-mono w-4 text-right">{i + 1}.</span>
+                                <span className="font-medium">{d.name}</span>
+                              </span>
+                              <span className="text-muted-foreground">{d.count} {d.count === 1 ? 'pass' : 'passes'}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    {passHistory.length >= 2000 && (
+                      <p className="text-xs text-muted-foreground">Showing data from the most recent 2,000 passes</p>
+                    )}
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          )}
 
           {/* Search Bar */}
           <div className="relative">

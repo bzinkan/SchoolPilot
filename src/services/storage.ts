@@ -938,7 +938,7 @@ export async function getPassHistory(
     .from(passes)
     .where(and(...conditions))
     .orderBy(desc(passes.issuedAt))
-    .limit(500);
+    .limit(2000);
 }
 
 export async function createPass(data: InsertPass): Promise<Pass> {
