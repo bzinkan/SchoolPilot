@@ -845,16 +845,23 @@ export default function MySettings() {
 
                 {teacherSettings?.schoolBlockedDomains?.length > 0 && (
                   <div className="space-y-2">
-                    <p className="text-sm font-medium">School-Wide Blocked Domains</p>
+                    <p className="text-sm font-medium">School-Wide Blocked Content</p>
                     <div className="flex flex-wrap gap-1.5">
-                      {teacherSettings.schoolBlockedDomains.map((domain, idx) => (
-                        <span key={idx} className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400">
-                          {domain}
-                        </span>
-                      ))}
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400">
+                        Sexual Content
+                      </span>
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400">
+                        Violent Content
+                      </span>
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400">
+                        Drug-Related Content
+                      </span>
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400">
+                        Self-Harm Content
+                      </span>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      Set by your school admin. These apply to all students school-wide.
+                      {teacherSettings.schoolBlockedDomains.length} domain{teacherSettings.schoolBlockedDomains.length !== 1 ? 's' : ''} blocked school-wide by your admin. AI auto-blocks unsafe content.
                     </p>
                   </div>
                 )}

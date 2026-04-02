@@ -45,6 +45,7 @@ const settingsSchema = z.object({
   retentionDays: z.string().min(1, "Retention period is required"),
   maxTabsPerStudent: z.string().optional(),
   blockedDomains: z.string(),
+  allowedDomains: z.string(),
   ipAllowlist: z.string(),
   aiSafetyEmailsEnabled: z.boolean().optional(),
   autoBlockUnsafeUrls: z.boolean().optional(),
@@ -84,6 +85,7 @@ export default function Settings() {
       retentionDays: settings?.retentionHours ? String(Math.round(parseInt(settings.retentionHours) / 24)) : "30",
       maxTabsPerStudent: settings?.maxTabsPerStudent || "",
       blockedDomains: settings?.blockedDomains?.join(", ") || "",
+      allowedDomains: settings?.allowedDomains?.join(", ") || "",
       ipAllowlist: settings?.ipAllowlist?.join(", ") || "",
       aiSafetyEmailsEnabled: settings?.aiSafetyEmailsEnabled !== false,
       autoBlockUnsafeUrls: settings?.autoBlockUnsafeUrls !== false,
@@ -98,6 +100,7 @@ export default function Settings() {
         retentionDays: String(Math.round(parseInt(settings.retentionHours) / 24)),
         maxTabsPerStudent: settings.maxTabsPerStudent || "",
         blockedDomains: settings.blockedDomains?.join(", ") || "",
+        allowedDomains: settings.allowedDomains?.join(", ") || "",
         ipAllowlist: settings.ipAllowlist?.join(", ") || "",
         aiSafetyEmailsEnabled: settings.aiSafetyEmailsEnabled !== false,
         autoBlockUnsafeUrls: settings.autoBlockUnsafeUrls !== false,
@@ -115,6 +118,10 @@ export default function Settings() {
         retentionHours,
         maxTabsPerStudent: data.maxTabsPerStudent || null,
         blockedDomains: data.blockedDomains
+          .split(",")
+          .map((d) => normalizeDomain(d))
+          .filter(Boolean),
+        allowedDomains: data.allowedDomains
           .split(",")
           .map((d) => normalizeDomain(d))
           .filter(Boolean),
@@ -433,6 +440,19 @@ export default function Settings() {
               <p className="text-xs text-muted-foreground -mt-4 ml-7">
                 Automatically block domains flagged by AI for self-harm, violence, sexual, or drug content. Blocked domains appear in your blocklist above.
               </p>
+
+              <div className="space-y-2">
+                <Label htmlFor="allowedDomains">Allowed Domains (comma-separated)</Label>
+                <Input
+                  id="allowedDomains"
+                  data-testid="input-allowed-domains"
+                  {...form.register("allowedDomains")}
+                  placeholder="youtube.com, wikipedia.org"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Domains listed here will never be auto-blocked by AI. Use this to bypass auto-blocking for sites you want to allow.
+                </p>
+              </div>
 
               <Button
                 type="submit"

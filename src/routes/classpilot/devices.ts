@@ -569,10 +569,11 @@ router.post("/device/heartbeat", requireDeviceAuth, async (req, res, next) => {
             });
           }
 
-          // Auto-block the flagged domain school-wide
+          // Auto-block the flagged domain school-wide (skip if in allowedDomains)
           if (schoolSettings?.autoBlockUnsafeUrls !== false) {
             const currentBlocked = schoolSettings?.blockedDomains || [];
-            if (!currentBlocked.includes(classification.domain)) {
+            const currentAllowed = schoolSettings?.allowedDomains || [];
+            if (!currentBlocked.includes(classification.domain) && !currentAllowed.includes(classification.domain)) {
               const updatedBlocked = [...currentBlocked, classification.domain];
               upsertSettings(schoolId, { blockedDomains: updatedBlocked }).then(() => {
                 console.log(`[Safety] Auto-blocked domain: ${classification.domain} for school ${schoolId}`);
