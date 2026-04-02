@@ -394,7 +394,20 @@ export default function Settings() {
                   <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">Self-Harm Content</span>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  AI automatically blocks unsafe content. If AI is blocking a domain you want to allow, add it to the Allowed Domains section below.
+                  AI automatically blocks unsafe content. If AI is blocking a domain you want to allow, add it to the Allowed Domains field below.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="allowedDomains">Allowed Domains (comma-separated)</Label>
+                <Input
+                  id="allowedDomains"
+                  data-testid="input-allowed-domains"
+                  {...form.register("allowedDomains")}
+                  placeholder="youtube.com, wikipedia.org"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Domains listed here will never be blocked by AI. Use this to allow sites that AI may flag as unsafe.
                 </p>
               </div>
 
@@ -438,19 +451,6 @@ export default function Settings() {
               <p className="text-xs text-muted-foreground -mt-4 ml-7">
                 Send email notifications to school admins when dangerous content (self-harm, violence, sexual) is detected.
               </p>
-
-              <div className="space-y-2">
-                <Label htmlFor="allowedDomains">Allowed Domains (comma-separated)</Label>
-                <Input
-                  id="allowedDomains"
-                  data-testid="input-allowed-domains"
-                  {...form.register("allowedDomains")}
-                  placeholder="youtube.com, wikipedia.org"
-                />
-                <p className="text-xs text-muted-foreground">
-                  Domains listed here will never be auto-blocked by AI. Use this to bypass auto-blocking for sites you want to allow.
-                </p>
-              </div>
 
               <Button
                 type="submit"
