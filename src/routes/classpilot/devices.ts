@@ -569,25 +569,8 @@ router.post("/device/heartbeat", requireDeviceAuth, async (req, res, next) => {
             });
           }
 
-          // Auto-block the flagged domain school-wide (skip if in allowedDomains)
-          if (schoolSettings?.autoBlockUnsafeUrls !== false) {
-            const currentBlocked = schoolSettings?.blockedDomains || [];
-            const currentAllowed = schoolSettings?.allowedDomains || [];
-            if (!currentBlocked.includes(classification.domain) && !currentAllowed.includes(classification.domain)) {
-              const updatedBlocked = [...currentBlocked, classification.domain];
-              upsertSettings(schoolId, { blockedDomains: updatedBlocked }).then(() => {
-                console.log(`[Safety] Auto-blocked domain: ${classification.domain} for school ${schoolId}`);
-                const blacklistMsg = {
-                  type: "update-global-blacklist",
-                  blockedDomains: updatedBlocked,
-                };
-                broadcastToStudentsLocal(schoolId, blacklistMsg);
-                void publishWS({ kind: "students", schoolId }, blacklistMsg);
-              }).catch((err) => {
-                console.error("[Safety] Failed to auto-block domain:", err);
-              });
-            }
-          }
+          // AI handles unsafe content in real-time (tab close + safety alert above).
+          // Domains are NOT auto-added to the school blocklist — only admin-entered domains go there.
         }
       }).catch(() => { /* non-blocking */ });
     }
