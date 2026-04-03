@@ -85,9 +85,6 @@ export default function Dashboard() {
   const [liveStreams, setLiveStreams] = useState(new Map());
   const [tileRevisions, setTileRevisions] = useState({});
   const [teacherAllowedDomains, setTeacherAllowedDomains] = useState(new Set());
-  const [showExportDialog, setShowExportDialog] = useState(false);
-  const [exportStartDate, setExportStartDate] = useState("");
-  const [exportEndDate, setExportEndDate] = useState("");
   const [showGradeDialog, setShowGradeDialog] = useState(false);
   const [newGrade, setNewGrade] = useState("");
   const [showOpenTabDialog, setShowOpenTabDialog] = useState(false);
@@ -675,26 +672,6 @@ export default function Dashboard() {
   }, [students, settings, toast]);
 
   const handleLogout = () => { logout(); navigate("/login"); };
-
-  const handleOpenExportDialog = () => {
-    const end = new Date();
-    const start = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-    setExportEndDate(end.toISOString().split('T')[0]);
-    setExportStartDate(start.toISOString().split('T')[0]);
-    setShowExportDialog(true);
-  };
-
-  const handleExportCSV = () => {
-    if (!exportStartDate || !exportEndDate) {
-      toast({ variant: "destructive", title: "Invalid Dates", description: "Please select both start and end dates" });
-      return;
-    }
-    const startDate = new Date(exportStartDate).toISOString();
-    const endDate = new Date(exportEndDate + 'T23:59:59').toISOString();
-    window.location.href = `/api/export/activity?startDate=${startDate}&endDate=${endDate}`;
-    toast({ title: "Exporting Data", description: `Downloading activity report from ${exportStartDate} to ${exportEndDate}...` });
-    setShowExportDialog(false);
-  };
 
   const updateGradesMutation = useMutation({
     mutationFn: async (gradeLevels) => {
@@ -1492,21 +1469,6 @@ export default function Dashboard() {
           activeClassName={effectiveSession ? groups.find(g => g.id === effectiveSession.groupId)?.name : null}
         />
       )}
-
-      {/* Export Dialog */}
-      <Dialog open={showExportDialog} onOpenChange={setShowExportDialog}>
-        <DialogContent data-testid="dialog-export-excel">
-          <DialogHeader><DialogTitle>Export Activity Report</DialogTitle><DialogDescription>Select a date range to export student activity data as CSV (.csv)</DialogDescription></DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2"><Label htmlFor="start-date">Start Date</Label><Input id="start-date" type="date" value={exportStartDate} onChange={(e) => setExportStartDate(e.target.value)} data-testid="input-export-start-date" /></div>
-            <div className="space-y-2"><Label htmlFor="end-date">End Date</Label><Input id="end-date" type="date" value={exportEndDate} onChange={(e) => setExportEndDate(e.target.value)} data-testid="input-export-end-date" /></div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowExportDialog(false)} data-testid="button-cancel-export">Cancel</Button>
-            <Button onClick={handleExportCSV} data-testid="button-confirm-export"><Download className="h-4 w-4 mr-2" />Export</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {/* Grade Management Dialog */}
       <Dialog open={showGradeDialog} onOpenChange={setShowGradeDialog}>
