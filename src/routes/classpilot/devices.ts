@@ -32,6 +32,7 @@ import {
   setActiveStudentForDevice,
   getAdminEmailsBySchool,
   upsertSettings,
+  getRecentMessagesForStudent,
 } from "../../services/storage.js";
 import { sendSafetyAlertEmail } from "../../services/email.js";
 import { createStudentToken } from "../../services/deviceJwt.js";
@@ -53,6 +54,8 @@ const router = Router();
 
 // Cooldown for safety alerts: deviceId:domain → timestamp. Prevents duplicate alerts/emails.
 const safetyAlertCooldown = new Map<string, number>();
+// Track delivered message IDs per device to avoid re-sending
+const deliveredMessages = new Map<string, Set<string>>();
 const SAFETY_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
 
 function param(req: any, key: string): string {
@@ -575,8 +578,35 @@ router.post("/device/heartbeat", requireDeviceAuth, async (req, res, next) => {
       }).catch(() => { /* non-blocking */ });
     }
 
+    // --- Deliver any missed messages (item #3b) ---
+    let pendingMessages: Array<{ id: string; message: string }> = [];
+    try {
+      const recent = await getRecentMessagesForStudent(studentId, 5);
+      if (recent.length > 0) {
+        let delivered = deliveredMessages.get(deviceId);
+        if (!delivered) {
+          delivered = new Set();
+          deliveredMessages.set(deviceId, delivered);
+        }
+        pendingMessages = recent
+          .filter(m => !delivered!.has(m.id))
+          .map(m => ({ id: m.id, message: m.message }));
+        // Mark as delivered
+        for (const m of pendingMessages) delivered!.add(m.id);
+        // Keep set from growing forever — prune old entries
+        if (delivered!.size > 200) {
+          const arr = Array.from(delivered!);
+          deliveredMessages.set(deviceId, new Set(arr.slice(-100)));
+        }
+      }
+    } catch { /* non-blocking */ }
+
     // --- Return planStatus (item #3) ---
-    return res.json({ ok: true, planStatus: school.planStatus || "active" });
+    return res.json({
+      ok: true,
+      planStatus: school.planStatus || "active",
+      ...(pendingMessages.length > 0 ? { pendingMessages } : {}),
+    });
   } catch (err) {
     next(err);
   }

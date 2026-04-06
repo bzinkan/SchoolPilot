@@ -3555,6 +3555,24 @@ export async function deleteMessage(messageId: string): Promise<boolean> {
   return (result.rowCount ?? 0) > 0;
 }
 
+export async function getRecentMessagesForStudent(
+  studentId: string,
+  sinceMinutesAgo = 5
+): Promise<MessageRecord[]> {
+  const since = new Date(Date.now() - sinceMinutesAgo * 60 * 1000);
+  return db
+    .select()
+    .from(messages)
+    .where(
+      and(
+        eq(messages.toStudentId, studentId),
+        sql`${messages.timestamp} >= ${since}`
+      )
+    )
+    .orderBy(desc(messages.timestamp))
+    .limit(10);
+}
+
 // ============================================================================
 // ClassPilot - Check-ins
 // ============================================================================
