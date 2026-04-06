@@ -201,7 +201,7 @@ function MyClassTab() {
 
     if (!selectedPassDataStudent) {
       csv += '"Student","Total Passes","Avg Duration (min)"\n';
-      passDataStats.allStudents.forEach(s => {
+      (passDataStats?.allStudents || []).forEach(s => {
         csv += `"${s.name}","${s.count}",""\n`;
       });
     } else {

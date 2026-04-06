@@ -235,12 +235,12 @@ router.post("/extension/register", async (req, res, next) => {
       school = await getSchoolById(resolvedSchoolId);
     }
 
-    if (!resolvedSchoolId) {
+    if (!resolvedSchoolId || !school) {
       return res.status(401).json({ error: "No school found for this email domain" });
     }
 
     // Check school is active
-    if (school && school.status !== "active" && school.status !== "trial") {
+    if (school.status !== "active" && school.status !== "trial") {
       return res.status(403).json({ error: "School is not active" });
     }
 

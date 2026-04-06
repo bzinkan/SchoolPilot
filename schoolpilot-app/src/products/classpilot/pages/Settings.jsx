@@ -94,7 +94,7 @@ export default function Settings() {
     if (settings) {
       form.reset({
         schoolName: settings.schoolName,
-        retentionDays: String(Math.round(parseInt(settings.retentionHours) / 24)),
+        retentionDays: settings.retentionHours ? String(Math.round(parseInt(settings.retentionHours) / 24)) : "30",
         maxTabsPerStudent: settings.maxTabsPerStudent || "",
         blockedDomains: settings.blockedDomains?.join(", ") || "",
         allowedDomains: settings.allowedDomains?.join(", ") || "",
