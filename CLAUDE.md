@@ -172,7 +172,10 @@ When a school has multiple products, priority order is: ClassPilot > PassPilot >
   - **Axios instance** from `shared/utils/api.js` — legacy pattern, auto-attaches JWT tokens.
 - **Role-aware hooks**: `useClassPilotAuth`, `usePassPilotAuth`, `useGoPilotAuth` map the generic `activeMembership.role` to product-specific role checks (isAdmin, isTeacher, etc.).
 - **Vite proxy**: The frontend dev server proxies `/api`, `/ws`, and `/gopilot-socket` to the backend on port 4000.
-- **Chrome extension**: The ClassPilot Chrome extension (MV3, separate repo at `ClassPilot/extension/`) uses a service worker (`service-worker.js`). Use `console.warn` instead of `console.error` — Chrome surfaces `console.error` calls as visible "Errors" on the chrome://extensions page, alarming school IT admins.
+- **Chrome extension**: The ClassPilot Chrome extension (MV3, separate repo at `ClassPilot/extension/`) uses a service worker (`service-worker.js`). Current version: 2.4.2. Use `console.warn` instead of `console.error` — Chrome surfaces `console.error` calls as visible "Errors" on the chrome://extensions page, alarming school IT admins.
+- **MV3 service worker limits**: `setInterval` doesn't survive service worker termination. Use `chrome.alarms` for periodic tasks. Screenshots use a separate `chrome.alarms` alarm (30s). Heartbeats also use `chrome.alarms`.
+- **Extension deployment**: Requires force-install via Google Admin (Devices → Chrome → Apps & extensions) for managed browsers/Chromebooks. Google Workspace screen capture policies needed for `captureVisibleTab`.
+- **Pending message delivery**: Backend includes undelivered messages in heartbeat response (`pendingMessages` field). Extension checks this on each heartbeat to recover messages missed during WebSocket disconnection.
 
 ### API Response Format Gotchas
 **IMPORTANT:** Backend and frontend use inconsistent field naming. Be careful:
@@ -191,6 +194,9 @@ Copy `.env.example` to `.env`. Required for local dev:
 - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` — Google OAuth
 - `SUPER_ADMIN_EMAIL` — Email address that gets super admin privileges
 - `CORS_ALLOWLIST` — Comma-separated frontend origins
+- `SENDGRID_API_KEY` — SendGrid email service (session reports, safety alerts, welcome emails)
+- `ANTHROPIC_API_KEY` — Anthropic Claude API for AI content classification
+- `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` — Stripe billing
 
 ## CI
 
@@ -333,7 +339,8 @@ Claude Haiku classifies student browsing activity on each heartbeat. Uses `ANTHR
 - **Safety alerts**: `sexual`, `violence`, `drugs`, `self-harm`
 - **Known lists**: `KNOWN_EDUCATIONAL` (Google, IXL, Khan Academy, etc.), `KNOWN_NON_EDUCATIONAL` (ESPN, YouTube, TikTok, etc.), `KNOWN_UNSAFE` (explicit sites → instant safety alert)
 - **Search query detection**: Catches unsafe Google/Bing/Yahoo searches (e.g., "porn", "how to kill")
-- **Auto-blocking**: Safety alerts auto-close the tab, add domain to school blacklist, email admins, alert teachers
+- **Real-time blocking**: Safety alerts auto-close the tab, email admins, alert teachers. Domains are NOT auto-added to the blocklist — AI blocks in real-time only
+- **Allowed domains**: Admin can add domains to `allowedDomains` in settings to prevent AI from blocking them
 - **Cooldown**: 10-min per device per domain to prevent alert spam
 - **Persistence**: `ai_category` and `safety_alert` columns on `heartbeats` table (auto-migrated in `index.ts`)
 - **Off-task overrides**: Teacher intent is respected — domains from Open Tab, Flight Path allowed domains, or manual dismiss are not flagged
@@ -343,6 +350,28 @@ The student sidebar (Screens, Timeline, History) is scoped to the active teachin
 - Heartbeat queries filter by `activeSession.startTime` to `activeSession.endTime`
 - Class name badge shows the active group name (e.g., "Science"), not "NO CLASS"
 - `/api/classpilot/heartbeats/:deviceId` accepts optional `startTime`/`endTime` query params
+
+### PassPilot Pass Data Analytics
+Teacher My Class tab includes a collapsible "Pass Data" section showing:
+- Time period filter (Today/Week/Month/Year), default Today
+- All students ranked by pass count (including 0 passes)
+- Click student for per-student destination breakdown with Class/Student tab switcher
+- Export CSV button for current view (class-wide or individual student)
+- Pass history API limit: 2000 records
+
+### ClassPilot Student Data Analytics
+Student Data dialog (accessible from dashboard toolbar) shows:
+- Time period filter (Today/Week/Month/Year) using school timezone
+- Class view: all students sorted by last name with browsing time and top domains
+- Click student for per-student domain breakdown
+- Export CSV button for current view
+- Backend: `/student-analytics/:studentId` supports `startDate`/`endDate` query params
+
+### ClassPilot Settings
+- **Teacher settings**: Shows category labels (Sexual, Violent, Drug, Self-Harm) instead of raw blocked domains
+- **Admin settings**: Allowed Domains field (bypasses AI blocking), Blocked Websites (admin-curated only), AI Safety Alert Emails toggle
+- IP Allowlist removed from UI (still in schema, not exposed)
+- Export Data card removed from admin settings (export lives inside Student Data dialog)
 
 ### Class Block Scheduling
 Optional time-based auto-start/end for ClassPilot classes. Schema columns on `groups`: `schedule_enabled`, `block_start_time` (HH:MM), `block_end_time` (HH:MM), `schedule_skipped_date` (YYYY-MM-DD).
