@@ -1,6 +1,6 @@
 import { useAuth } from "../contexts/AuthContext";
 import { useLicenses } from "../contexts/LicenseContext";
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useState } from "react";
 
 function PlaneCanvas() {
   const canvasRef = useRef(null);
@@ -181,6 +181,7 @@ export default function SchoolpilotLanding() {
   const { roleBasedDefaultPath } = useLicenses();
   const isSuperAdmin = user?.isSuperAdmin === true;
   const dashboardPath = isSuperAdmin ? '/super-admin/schools' : (roleBasedDefaultPath || '/classpilot');
+  const [showDemo, setShowDemo] = useState(false);
 
   return (
     <div style={{ fontFamily: "'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif", background: "#fafbfc", color: "#1a1a2e" }}>
@@ -227,6 +228,7 @@ export default function SchoolpilotLanding() {
 
           <div style={{ display: "flex", alignItems: "center", gap: 32 }}>
             <a href="#products" style={{ color: "#64748b", textDecoration: "none", fontSize: 15, fontWeight: 500 }}>Products</a>
+            <button onClick={() => setShowDemo(true)} style={{ color: "#64748b", background: "none", border: "none", fontSize: 15, fontWeight: 500, cursor: "pointer", padding: 0 }}>Demo</button>
             <a href="/get-started" style={{ color: "#64748b", textDecoration: "none", fontSize: 15, fontWeight: 500 }}>Get Started</a>
             {user ? (
               <a href={dashboardPath} style={{
@@ -460,6 +462,44 @@ export default function SchoolpilotLanding() {
           </p>
         </div>
       </footer>
+
+      {/* Demo Video Modal */}
+      {showDemo && (
+        <div
+          onClick={() => setShowDemo(false)}
+          style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            zIndex: 9999, padding: 24,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: "100%", maxWidth: 900, borderRadius: 16, overflow: "hidden", background: "#000" }}
+          >
+            <div style={{ position: "relative", paddingBottom: "56.25%", height: 0 }}>
+              <iframe
+                src="https://www.loom.com/embed/dba25564dff34974888694cdd2b7fc8c?autoplay=1"
+                frameBorder="0"
+                allowFullScreen
+                allow="autoplay"
+                style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%" }}
+              />
+            </div>
+            <button
+              onClick={() => setShowDemo(false)}
+              style={{
+                position: "absolute", top: 16, right: 16,
+                background: "rgba(0,0,0,0.6)", color: "#fff", border: "none",
+                width: 36, height: 36, borderRadius: "50%", fontSize: 20,
+                cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+              }}
+            >
+              &times;
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
