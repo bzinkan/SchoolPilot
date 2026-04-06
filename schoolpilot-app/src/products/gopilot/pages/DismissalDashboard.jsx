@@ -210,10 +210,17 @@ export default function DismissalDashboard() {
     joinRoom();
     socket.on('connect', joinRoom);
 
-    const handleQueueUpdate = () => {
+    const handleQueueUpdate = (data) => {
       if (session) {
-        api.get(`/sessions/${session.id}/queue`).then(r => setQueue(Array.isArray(r.data) ? r.data : (r.data?.queue ?? []))).catch(() => {});
-        api.get(`/sessions/${session.id}/stats`).then(r => setStats(r.data)).catch(() => {});
+        // Optimistic update: if the event includes an entry with updated status, apply immediately
+        if (data?.entry) {
+          setQueue(prev => prev.map(q => q.id === data.entry.id ? { ...q, status: data.entry.status, released_at: data.entry.releasedAt || data.entry.released_at, dismissed_at: data.entry.dismissedAt || data.entry.dismissed_at } : q));
+        }
+        // Also re-fetch from server to ensure consistency
+        setTimeout(() => {
+          api.get(`/sessions/${session.id}/queue`).then(r => setQueue(Array.isArray(r.data) ? r.data : (r.data?.queue ?? []))).catch(() => {});
+          api.get(`/sessions/${session.id}/stats`).then(r => setStats(r.data)).catch(() => {});
+        }, 300);
       }
     };
 
