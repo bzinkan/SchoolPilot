@@ -518,7 +518,7 @@ export default function ParentApp() {
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
           <Loader2 className="w-10 h-10 text-indigo-600 animate-spin mx-auto mb-4" />
-          <p className="text-gray-500">Loading...</p>
+          <p className="text-gray-700">Loading...</p>
         </div>
       </div>
     );
@@ -531,7 +531,7 @@ export default function ParentApp() {
         <Card className="p-6 max-w-sm w-full text-center">
           <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
           <p className="font-semibold text-lg mb-2">Something went wrong</p>
-          <p className="text-gray-500 text-sm mb-4">{error}</p>
+          <p className="text-gray-700 text-sm mb-4">{error}</p>
           <Button variant="primary" onClick={() => window.location.reload()}>
             <RefreshCw className="w-4 h-4 mr-2" />
             Retry
@@ -605,9 +605,9 @@ export default function ParentApp() {
             {!checkInStatus && sessionStatus !== 'active' && (
               <Card className="p-6 mb-4">
                 <div className="text-center">
-                  <Clock className="w-10 h-10 text-gray-300 mx-auto mb-3" />
+                  <Clock className="w-10 h-10 text-gray-500 mx-auto mb-3" />
                   <h2 className="font-semibold mb-1">Waiting for Dismissal</h2>
-                  <p className="text-sm text-gray-500">Dismissal will begin at the scheduled time</p>
+                  <p className="text-sm text-gray-700">Dismissal will begin at the scheduled time</p>
                 </div>
               </Card>
             )}
@@ -617,7 +617,7 @@ export default function ParentApp() {
                 <div className="text-center">
                   <Car className="w-10 h-10 text-indigo-500 mx-auto mb-3" />
                   <h2 className="font-semibold mb-1">Dismissal is Active</h2>
-                  <p className="text-sm text-gray-500 mb-4">Office will check you in when you arrive</p>
+                  <p className="text-sm text-gray-700 mb-4">Office will check you in when you arrive</p>
                   {currentSchool?.carNumber && (
                     <Badge variant="blue" className="text-lg px-4 py-1">
                       <Car className="w-4 h-4 mr-1" />
@@ -634,7 +634,7 @@ export default function ParentApp() {
                 <div className="text-center">
                   <Car className="w-10 h-10 text-blue-600 mx-auto mb-3" />
                   <h2 className="font-semibold text-lg mb-1">You're checked in!</h2>
-                  <p className="text-sm text-gray-500">Waiting for your children to be released</p>
+                  <p className="text-sm text-gray-700">Waiting for your children to be released</p>
                 </div>
               </div>
             )}
@@ -659,7 +659,7 @@ export default function ParentApp() {
                   </div>
                   <div>
                     <p className="font-medium text-sm">Change</p>
-                    <p className="text-xs text-gray-500">Today's pickup</p>
+                    <p className="text-xs text-gray-700">Today's pickup</p>
                   </div>
                 </div>
               </Card>
@@ -670,7 +670,7 @@ export default function ParentApp() {
                   </div>
                   <div>
                     <p className="font-medium text-sm">History</p>
-                    <p className="text-xs text-gray-500">Past pickups</p>
+                    <p className="text-xs text-gray-700">Past pickups</p>
                   </div>
                 </div>
               </Card>
@@ -699,7 +699,7 @@ export default function ParentApp() {
                         </div>
                         <div>
                           <p className="font-medium">{child.firstName} {child.lastName}</p>
-                          <p className="text-sm text-gray-500">Grade {child.grade} • {child.homeroom}</p>
+                          <p className="text-sm text-gray-700">Grade {child.grade} • {child.homeroom}</p>
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
@@ -731,11 +731,11 @@ export default function ParentApp() {
                   <div key={pickup.id} className="p-4 flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center">
-                        <User className="w-5 h-5 text-gray-500" />
+                        <User className="w-5 h-5 text-gray-700" />
                       </div>
                       <div>
                         <p className="font-medium">{pickup.name}</p>
-                        <p className="text-sm text-gray-500">{pickup.relationship}</p>
+                        <p className="text-sm text-gray-700">{pickup.relationship}</p>
                       </div>
                     </div>
                     <div className="flex items-center gap-1">
@@ -771,7 +771,7 @@ export default function ParentApp() {
                   key={item.id}
                   onClick={() => setCurrentView(item.id)}
                   className={`flex flex-col items-center py-2 px-4 rounded-lg ${
-                    currentView === item.id ? 'text-indigo-600' : 'text-gray-400'
+                    currentView === item.id ? 'text-indigo-600' : 'text-gray-600'
                   }`}
                 >
                   <item.icon className="w-6 h-6" />
@@ -787,7 +787,7 @@ export default function ParentApp() {
                   key={item.id}
                   onClick={() => setCurrentView(item.id)}
                   className={`flex flex-col items-center py-2 px-4 rounded-lg ${
-                    currentView === item.id ? 'text-indigo-600' : 'text-gray-400'
+                    currentView === item.id ? 'text-indigo-600' : 'text-gray-600'
                   }`}
                 >
                   <item.icon className="w-6 h-6" />
@@ -833,18 +833,18 @@ export default function ParentApp() {
                     <Badge variant="green" size="sm">Complete</Badge>
                   </div>
                   <div className="flex items-center justify-between text-sm">
-                    <div className="flex items-center gap-2 text-gray-500">
+                    <div className="flex items-center gap-2 text-gray-700">
                       <Car className="w-4 h-4" />
                       <span>{Array.isArray(item.children) ? item.children.join(', ') : item.children}</span>
                     </div>
-                    <div className="text-gray-500">
+                    <div className="text-gray-700">
                       {item.pickupTime} • {item.waitTime} wait
                     </div>
                   </div>
                 </Card>
               ))}
               {history.length === 0 && (
-                <div className="text-center py-12 text-gray-400">
+                <div className="text-center py-12 text-gray-600">
                   <History className="w-12 h-12 mx-auto mb-4 opacity-50" />
                   <p>No pickup history yet</p>
                 </div>
@@ -865,7 +865,7 @@ export default function ParentApp() {
                   key={item.id}
                   onClick={() => setCurrentView(item.id)}
                   className={`flex flex-col items-center py-2 px-4 rounded-lg ${
-                    currentView === item.id ? 'text-indigo-600' : 'text-gray-400'
+                    currentView === item.id ? 'text-indigo-600' : 'text-gray-600'
                   }`}
                 >
                   <item.icon className="w-6 h-6" />
@@ -911,21 +911,21 @@ export default function ParentApp() {
                         </div>
                         <div>
                           <p className="font-bold text-lg">{child.firstName} {child.lastName}</p>
-                          <p className="text-gray-500">{child.grade ? `Grade ${child.grade}` : 'Unassigned'}</p>
+                          <p className="text-gray-700">{child.grade ? `Grade ${child.grade}` : 'Unassigned'}</p>
                         </div>
                       </div>
 
                       <div className="space-y-2">
                         <div className="flex items-center justify-between py-2 border-t">
-                          <span className="text-gray-500">School</span>
+                          <span className="text-gray-700">School</span>
                           <span className="font-medium">{child.school}</span>
                         </div>
                         <div className="flex items-center justify-between py-2 border-t">
-                          <span className="text-gray-500">Homeroom</span>
+                          <span className="text-gray-700">Homeroom</span>
                           <span className="font-medium">{child.homeroom}</span>
                         </div>
                         <div className="flex items-center justify-between py-2 border-t">
-                          <span className="text-gray-500">Dismissal Today</span>
+                          <span className="text-gray-700">Dismissal Today</span>
                           <div className="flex items-center gap-2">
                             <Badge variant={typeVariant}>
                               <DismissalIcon className="w-3 h-3" />
@@ -936,13 +936,13 @@ export default function ParentApp() {
                         </div>
                         {isOverridden && (
                           <div className="flex items-center justify-between py-2 border-t">
-                            <span className="text-gray-500">Default</span>
-                            <span className="text-sm text-gray-400">{child.dismissalType}</span>
+                            <span className="text-gray-700">Default</span>
+                            <span className="text-sm text-gray-600">{child.dismissalType}</span>
                           </div>
                         )}
                         {isOverridden && overrides[child.id]?.reason && (
                           <div className="flex items-center justify-between py-2 border-t">
-                            <span className="text-gray-500">Reason</span>
+                            <span className="text-gray-700">Reason</span>
                             <span className="text-sm">{overrides[child.id].reason}</span>
                           </div>
                         )}
@@ -975,7 +975,7 @@ export default function ParentApp() {
                         <X className="w-5 h-5" />
                       </button>
                     </div>
-                    <p className="text-sm text-gray-500 mb-4">Enter your family car number to link your children.</p>
+                    <p className="text-sm text-gray-700 mb-4">Enter your family car number to link your children.</p>
                     {linkError && (
                       <div className="flex items-center gap-2 bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded-lg mb-3 text-sm">
                         <AlertCircle className="w-4 h-4 flex-shrink-0" />
@@ -1050,7 +1050,7 @@ export default function ParentApp() {
                   key={item.id}
                   onClick={() => setCurrentView(item.id)}
                   className={`flex flex-col items-center py-2 px-4 rounded-lg ${
-                    currentView === item.id ? 'text-indigo-600' : 'text-gray-400'
+                    currentView === item.id ? 'text-indigo-600' : 'text-gray-600'
                   }`}
                 >
                   <item.icon className="w-6 h-6" />
@@ -1083,7 +1083,7 @@ export default function ParentApp() {
                 </div>
                 <div className="flex-1">
                   <p className="font-bold text-lg">{user.firstName || user.first_name} {user.lastName || user.last_name}</p>
-                  <p className="text-sm text-gray-500">{user.email}</p>
+                  <p className="text-sm text-gray-700">{user.email}</p>
                 </div>
                 <Button variant="secondary" size="sm">Edit</Button>
               </div>
@@ -1100,10 +1100,10 @@ export default function ParentApp() {
                 ].map((item, index) => (
                   <div key={index} className={`p-4 flex items-center justify-between ${item.onClick ? 'cursor-pointer hover:bg-gray-50 active:bg-gray-100' : ''} transition-colors`} onClick={item.onClick}>
                     <div className="flex items-center gap-3">
-                      <item.icon className="w-5 h-5 text-gray-400" />
+                      <item.icon className="w-5 h-5 text-gray-600" />
                       <span>{item.label}</span>
                     </div>
-                    {item.value && <span className="text-gray-500 text-sm">{item.value}</span>}
+                    {item.value && <span className="text-gray-700 text-sm">{item.value}</span>}
                   </div>
                 ))}
               </div>
@@ -1141,7 +1141,7 @@ export default function ParentApp() {
               <button onClick={() => setShowOverrideFor(null)} className="p-2"><X className="w-5 h-5" /></button>
             </div>
             <div className="p-4 space-y-4">
-              <p className="text-sm text-gray-500">
+              <p className="text-sm text-gray-700">
                 This change only applies to today. Tomorrow will revert to the default.
               </p>
               <div className="grid grid-cols-2 gap-3">
@@ -1160,7 +1160,7 @@ export default function ParentApp() {
                         : 'border-gray-200 hover:border-gray-300'
                     }`}
                   >
-                    <opt.icon className={`w-6 h-6 ${overrideType === opt.id ? 'text-indigo-600' : 'text-gray-400'}`} />
+                    <opt.icon className={`w-6 h-6 ${overrideType === opt.id ? 'text-indigo-600' : 'text-gray-600'}`} />
                     <span className={`text-sm font-medium ${overrideType === opt.id ? 'text-indigo-600' : 'text-gray-600'}`}>{opt.label}</span>
                   </button>
                 ))}
@@ -1285,7 +1285,7 @@ function ChangeRequestModal({ children, onClose, onSubmit, error, schoolSettings
                         isSelected ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200'
                       }`}
                     >
-                      <option.icon className={`w-5 h-5 ${isSelected ? 'text-indigo-600' : 'text-gray-400'}`} />
+                      <option.icon className={`w-5 h-5 ${isSelected ? 'text-indigo-600' : 'text-gray-600'}`} />
                       <span className={isSelected ? 'font-medium' : ''}>{option.label}</span>
                     </button>
                   );
@@ -1404,13 +1404,13 @@ function AuthorizedPickupsModal({ pickups, children, onClose, onAdd, onDelete })
                 </button>
                 <button type="button" onClick={() => setShowForm(false)} className="px-4 py-2 border rounded-lg text-sm">Cancel</button>
               </div>
-              <p className="text-xs text-gray-500">This person will be authorized for all your children.</p>
+              <p className="text-xs text-gray-700">This person will be authorized for all your children.</p>
             </form>
           )}
           {pickups.length === 0 && !showForm ? (
             <div className="text-center py-8">
-              <Shield className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-              <p className="text-gray-500 mb-3">No authorized pickups added yet.</p>
+              <Shield className="w-12 h-12 text-gray-500 mx-auto mb-3" />
+              <p className="text-gray-700 mb-3">No authorized pickups added yet.</p>
               <button onClick={() => setShowForm(true)} className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium">
                 <Plus className="w-4 h-4 inline mr-1" /> Add Pickup Person
               </button>
@@ -1426,7 +1426,7 @@ function AuthorizedPickupsModal({ pickups, children, onClose, onAdd, onDelete })
                   </div>
                   <div className="flex-1">
                     <p className="font-medium">{p.name}</p>
-                    <p className="text-sm text-gray-500">{p.relationship}{p.phone ? ` • ${p.phone}` : ''}</p>
+                    <p className="text-sm text-gray-700">{p.relationship}{p.phone ? ` • ${p.phone}` : ''}</p>
                   </div>
                   <button
                     onClick={async () => {
@@ -1458,14 +1458,14 @@ function MyQrCodeModal({ children, schoolSlug, onClose }) {
         </div>
         <div className="p-4">
           {children.length === 0 ? (
-            <p className="text-gray-500 text-center py-8">No children linked yet.</p>
+            <p className="text-gray-700 text-center py-8">No children linked yet.</p>
           ) : (
             <div className="space-y-6">
-              <p className="text-sm text-gray-500 text-center">Show these QR codes to other parents/guardians so they can link to your children.</p>
+              <p className="text-sm text-gray-700 text-center">Show these QR codes to other parents/guardians so they can link to your children.</p>
               {children.map(child => (
                 <div key={child.id} className="text-center p-4 bg-gray-50 rounded-xl">
                   <p className="font-bold text-lg mb-1">{child.firstName} {child.lastName}</p>
-                  <p className="text-sm text-gray-500 mb-3">{child.homeroom} • Code: {child.student_code}</p>
+                  <p className="text-sm text-gray-700 mb-3">{child.homeroom} • Code: {child.student_code}</p>
                   <div className="flex justify-center">
                     <QRCodeSVG
                       value={`${window.location.origin}/gopilot/link?school=${schoolSlug}&code=${child.student_code}`}
