@@ -479,7 +479,7 @@ export default function SchoolpilotLanding() {
           >
             <div style={{ position: "relative", paddingBottom: "56.25%", height: 0 }}>
               <iframe
-                src="https://www.loom.com/embed/dba25564dff34974888694cdd2b7fc8c?autoplay=1"
+                src="https://www.loom.com/embed/30f5d4adb9cb4d9d8fc4b7a8e21bdd9e?autoplay=1"
                 frameBorder="0"
                 allowFullScreen
                 allow="autoplay"
