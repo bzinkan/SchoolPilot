@@ -27,7 +27,7 @@ export default function TrialRequests() {
       const params = {};
       if (statusFilter !== 'all') params.status = statusFilter;
       const res = await api.get('/super-admin/trial-requests', { params });
-      setRequests(Array.isArray(res.data) ? res.data : []);
+      setRequests(Array.isArray(res.data) ? res.data : (res.data?.requests ?? []));
     } catch (err) {
       console.error(err);
     } finally {
