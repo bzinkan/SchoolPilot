@@ -848,6 +848,48 @@ export default function ClassPilotLanding() {
         </div>
       </section>
 
+      {/* Demo Video Section */}
+      <section style={{
+        padding: '80px 48px',
+        background: '#0f172a',
+        textAlign: 'center',
+      }}>
+        <h2 className="cp-serif" style={{
+          fontSize: '40px',
+          fontWeight: 400,
+          color: '#fff',
+          marginBottom: '16px',
+          letterSpacing: '-0.5px',
+        }}>
+          See ClassPilot in Action
+        </h2>
+        <p style={{
+          fontSize: '17px',
+          color: '#94a3b8',
+          marginBottom: '40px',
+          maxWidth: '500px',
+          margin: '0 auto 40px',
+        }}>
+          Watch a quick demo of how teachers use ClassPilot to monitor their classroom.
+        </p>
+        <div style={{
+          maxWidth: '800px',
+          margin: '0 auto',
+          borderRadius: '16px',
+          overflow: 'hidden',
+          boxShadow: '0 25px 50px rgba(0,0,0,0.4)',
+        }}>
+          <div style={{ position: 'relative', paddingBottom: '56.25%', height: 0 }}>
+            <iframe
+              src="https://www.loom.com/embed/e2534ebdf9ee4023be1c31a077d626dd"
+              frameBorder="0"
+              allowFullScreen
+              style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' }}
+            />
+          </div>
+        </div>
+      </section>
+
       {/* CTA Section */}
       <section style={{
         padding: '120px 48px',
