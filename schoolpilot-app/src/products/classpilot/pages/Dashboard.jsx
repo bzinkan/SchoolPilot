@@ -708,7 +708,7 @@ export default function Dashboard() {
       queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
       queryClient.invalidateQueries({ queryKey: ['/api/groups'], exact: false });
       queryClient.invalidateQueries({ queryKey: ['/api/teacher/groups'], exact: false });
-      const group = groups.find(g => g.id === data.groupId);
+      const group = groups.find(g => g.id === (data.session?.groupId || data.groupId));
       toast({ title: "Class Started", description: `Now teaching: ${group?.name || 'Unknown Class'}` });
     },
     onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
