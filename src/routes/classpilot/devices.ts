@@ -33,6 +33,7 @@ import {
   getAdminEmailsBySchool,
   upsertSettings,
   getRecentMessagesForStudent,
+  getStudentByEmail,
 } from "../../services/storage.js";
 import { sendSafetyAlertEmail } from "../../services/email.js";
 import { createStudentToken } from "../../services/deviceJwt.js";
@@ -57,6 +58,18 @@ const safetyAlertCooldown = new Map<string, number>();
 // Track delivered message IDs per device to avoid re-sending
 const deliveredMessages = new Map<string, Set<string>>();
 const SAFETY_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
+
+// In-memory cache for school lookups (reduces DB queries on heartbeats)
+const schoolCache = new Map<string, { school: any; expires: number }>();
+const SCHOOL_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+async function getCachedSchool(schoolId: string) {
+  const cached = schoolCache.get(schoolId);
+  if (cached && cached.expires > Date.now()) return cached.school;
+  const school = await getSchoolById(schoolId);
+  if (school) schoolCache.set(schoolId, { school, expires: Date.now() + SCHOOL_CACHE_TTL });
+  return school;
+}
 
 function param(req: any, key: string): string {
   return String(req.params[key] ?? "");
@@ -257,8 +270,12 @@ router.post("/extension/register", async (req, res, next) => {
 
     // If studentEmail provided, also register the student and return a token
     if (studentEmail) {
-      const existing = await searchStudents(resolvedSchoolId, { search: studentEmail });
-      let student = existing[0];
+      // Exact email match first (precise), then fall back to fuzzy search
+      let student = await getStudentByEmail(resolvedSchoolId, studentEmail.toLowerCase());
+      if (!student) {
+        const existing = await searchStudents(resolvedSchoolId, { search: studentEmail });
+        student = existing[0];
+      }
 
       if (!student) {
         const nameParts = (studentName || studentEmail.split("@")[0]).split(/\s+/);
@@ -267,6 +284,7 @@ router.post("/extension/register", async (req, res, next) => {
           firstName: nameParts[0] || studentEmail.split("@")[0],
           lastName: nameParts.slice(1).join(" ") || "",
           email: studentEmail,
+          emailLc: studentEmail.toLowerCase(),
           gradeLevel: null,
           status: "active",
         });
@@ -332,6 +350,7 @@ router.post("/register-student", async (req, res, next) => {
         firstName: firstName || studentEmail.split("@")[0],
         lastName: lastName || "",
         email: studentEmail,
+        emailLc: studentEmail.toLowerCase(),
         gradeLevel: gradeLevel || null,
         status: "active",
       });
@@ -433,8 +452,8 @@ router.post("/device/heartbeat", requireDeviceAuth, async (req, res, next) => {
       // "limited" or "full" mode: continue processing
     }
 
-    // --- Get school for planStatus (item #3) ---
-    const school = await getSchoolById(schoolId);
+    // --- Get school for planStatus (item #3) — cached to reduce DB queries ---
+    const school = await getCachedSchool(schoolId);
     if (!school || (school.status !== "active" && school.status !== "trial")) {
       return res.status(402).json({ planStatus: "inactive" });
     }

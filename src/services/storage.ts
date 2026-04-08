@@ -463,6 +463,23 @@ export async function getStudentById(
   return student;
 }
 
+export async function getStudentByEmail(
+  schoolId: string,
+  emailLc: string
+): Promise<Student | undefined> {
+  const [student] = await db
+    .select()
+    .from(students)
+    .where(
+      and(
+        eq(students.schoolId, schoolId),
+        eq(students.emailLc, emailLc)
+      )
+    )
+    .limit(1);
+  return student;
+}
+
 export async function updateStudent(
   id: string,
   data: Partial<InsertStudent>
