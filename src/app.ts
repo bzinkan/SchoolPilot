@@ -114,8 +114,9 @@ export function createApp() {
     })
   );
 
-  // Global rate limit for API routes
-  app.use("/api", apiLimiter);
+  // Global rate limit disabled — CloudFront masks client IPs, causing false 429s
+  // Auth-specific rate limiting (authLimiter) still applies to login routes
+  // app.use("/api", apiLimiter);
 
   // Health check (no auth required)
   app.get("/health", async (_req, res) => {
