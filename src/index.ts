@@ -232,6 +232,30 @@ import { pool } from "./db.js";
   } catch (err) {
     console.warn("[migration] email alias update skipped:", (err as Error).message);
   }
+
+  // Backfill emailLc for students that have email but emailLc is NULL
+  try {
+    const { rowCount } = await pool.query(`UPDATE students SET email_lc = LOWER(email) WHERE email IS NOT NULL AND email_lc IS NULL`);
+    if (rowCount && rowCount > 0) {
+      console.log(`[migration] Backfilled emailLc for ${rowCount} students`);
+    }
+  } catch (err) {
+    console.warn("[migration] emailLc backfill skipped:", (err as Error).message);
+  }
+
+  // Clean up duplicate students created by extension (keep the one with gradeId set)
+  try {
+    await pool.query(`
+      DELETE FROM students WHERE id IN (
+        SELECT s2.id FROM students s1
+        JOIN students s2 ON s1.email_lc = s2.email_lc AND s1.school_id = s2.school_id AND s1.id != s2.id
+        WHERE s1.grade_id IS NOT NULL AND s2.grade_id IS NULL
+      )
+    `);
+    console.log("[migration] Cleaned up duplicate extension-created students");
+  } catch (err) {
+    console.warn("[migration] Duplicate student cleanup skipped:", (err as Error).message);
+  }
 })();
 
 const app = createApp();
