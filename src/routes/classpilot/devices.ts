@@ -441,7 +441,7 @@ router.post("/device/heartbeat", requireDeviceAuth, async (req, res, next) => {
       activeTabUrl, activeTabTitle, visibilityState, screenLocked,
       allOpenTabs, favicon, isScreenRecording, isScreenSharing,
       cameraActive, status: trackingStatus, activeStudentId,
-      flightPathActive, activeFlightPathName,
+      flightPathActive, activeFlightPathName, screenshotHealth,
     } = req.body;
     const schoolId = res.locals.schoolId as string;
     const studentId = res.locals.studentId as string;
@@ -510,6 +510,7 @@ router.post("/device/heartbeat", requireDeviceAuth, async (req, res, next) => {
       cameraActive: cameraActive || false,
       lastSeenAt: Date.now(),
       allOpenTabs: allOpenTabs || undefined,
+      screenshotHealth: screenshotHealth || undefined,
     });
 
     // --- Broadcast full student state to teachers (item #1) ---
@@ -661,6 +662,8 @@ router.post("/device/screenshot", requireDeviceAuth, async (req, res, next) => {
     const { screenshot, tabTitle, tabUrl, tabFavicon } = req.body;
     const deviceId = res.locals.deviceId as string;
     const schoolId = res.locals.schoolId as string;
+
+    console.log(`[Screenshot] Upload from device=${deviceId} school=${schoolId} size=${screenshot ? Math.round(screenshot.length / 1024) + 'KB' : 'empty'}`);
 
     if (!screenshot) {
       return res.status(400).json({ error: "screenshot data required" });
