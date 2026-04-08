@@ -4,10 +4,10 @@ import * as schema from "./schema/index.js";
 
 const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL,
-  max: 50,
-  idleTimeoutMillis: 10000,
-  connectionTimeoutMillis: 5000,
-  statement_timeout: 30000,
+  max: 15,
+  idleTimeoutMillis: 5000,
+  connectionTimeoutMillis: 3000,
+  statement_timeout: 15000,
   ...(process.env.DATABASE_URL?.includes("sslmode=require") && {
     ssl: { rejectUnauthorized: false },
   }),

@@ -75,6 +75,17 @@ function param(req: any, key: string): string {
   return String(req.params[key] ?? "");
 }
 
+// Per-IP rate limit for extension endpoints to prevent DB connection exhaustion
+import rateLimit from "express-rate-limit";
+const extensionLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10, // 10 requests per minute per IP for registration
+  message: { error: "Too many registration attempts, please wait" },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.ip || req.headers['x-forwarded-for'] as string || 'unknown',
+});
+
 const staffAuth = [
   authenticate,
   requireSchoolContext,
@@ -107,7 +118,7 @@ import { isWithinTrackingWindow } from "../../services/schoolHours.js";
 // ============================================================================
 
 // POST /api/classpilot/school/status - Check school status from email domain or token
-router.post("/school/status", async (req, res, next) => {
+router.post("/school/status", extensionLimiter, async (req, res, next) => {
   try {
     const { studentEmail, studentToken } = req.body;
 
@@ -225,7 +236,7 @@ router.post("/register", async (req, res, next) => {
 
 // POST /api/classpilot/extension/register - Register a device from the Chrome extension
 // Supports both email-based (ClassPilot extension) and schoolId-based registration
-router.post("/extension/register", async (req, res, next) => {
+router.post("/extension/register", extensionLimiter, async (req, res, next) => {
   try {
     const { deviceId, deviceName, studentEmail, studentName, schoolId: explicitSchoolId, classId } = req.body;
     if (!deviceId) {
