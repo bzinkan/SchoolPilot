@@ -2,18 +2,21 @@ import { createContext, useContext, useEffect, useRef, useSyncExternalStore } fr
 import { io } from 'socket.io-client';
 import { Capacitor } from '@capacitor/core';
 import { useAuth } from './AuthContext';
+import { useLicenses } from './LicenseContext';
 
 const SocketContext = createContext(null);
 
 export function SocketProvider({ children }) {
   const { token } = useAuth();
+  const { hasGoPilot } = useLicenses();
   const socketRef = useRef(null);
   const subscribersRef = useRef(new Set());
 
   const notify = () => subscribersRef.current.forEach((cb) => cb());
 
   useEffect(() => {
-    if (!token) {
+    // Only connect GoPilot socket if GoPilot is licensed
+    if (!token || !hasGoPilot) {
       if (socketRef.current) {
         socketRef.current.disconnect();
         socketRef.current = null;
@@ -53,7 +56,7 @@ export function SocketProvider({ children }) {
       s.disconnect();
       appListener?.remove();
     };
-  }, [token]);
+  }, [token, hasGoPilot]);
 
   const subscribe = (cb) => {
     subscribersRef.current.add(cb);
