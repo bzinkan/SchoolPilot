@@ -228,7 +228,8 @@ export default function SchoolpilotLanding() {
 
           <div style={{ display: "flex", alignItems: "center", gap: 32 }}>
             <a href="#products" style={{ color: "#64748b", textDecoration: "none", fontSize: 15, fontWeight: 500 }}>Products</a>
-            <button onClick={() => setShowDemo(true)} style={{ color: "#64748b", background: "none", border: "none", fontSize: 15, fontWeight: 500, cursor: "pointer", padding: 0 }}>Demo</button>
+            {/* Demo button hidden until new video is ready */}
+            {/* <button onClick={() => setShowDemo(true)} style={{ color: "#64748b", background: "none", border: "none", fontSize: 15, fontWeight: 500, cursor: "pointer", padding: 0 }}>Demo</button> */}
             <a href="/get-started" style={{ color: "#64748b", textDecoration: "none", fontSize: 15, fontWeight: 500 }}>Get Started</a>
             {user ? (
               <a href={dashboardPath} style={{
