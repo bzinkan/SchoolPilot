@@ -19,6 +19,14 @@ export interface DeviceRealtimeStatus {
   lastSeenAt: number;
   allOpenTabs?: Array<{ url: string; title: string; favicon?: string }>;
   aiClassification?: { category: string; safetyAlert: string | null };
+  screenshotHealth?: {
+    lastSuccessAt: number;
+    lastErrorAt: number;
+    lastError: string;
+    attempts: number;
+    successes: number;
+    alarmActive: boolean;
+  };
 }
 
 export function updateDeviceClassification(

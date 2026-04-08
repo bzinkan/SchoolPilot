@@ -39,9 +39,9 @@ import {
   getUserById,
 } from "../services/storage.js";
 import db from "../db.js";
-import { heartbeats, devices as deviceTable, teachingSessions, groups, groupStudents, dailyUsage } from "../schema/classpilot.js";
+import { heartbeats, devices as deviceTable, teachingSessions, groups, groupStudents, dailyUsage, studentDevices } from "../schema/classpilot.js";
 import { users } from "../schema/core.js";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, sql, inArray } from "drizzle-orm";
 import { createGradeSchema } from "../schema/validation.js";
 import { hashPassword } from "../util/password.js";
 import { logAudit, getAuditLogs, countAuditLogs } from "../services/audit.js";
@@ -904,13 +904,32 @@ router.get("/students-aggregated", ...schoolAuth, async (req, res, next) => {
         .map((s) => [s.studentEmail!.toLowerCase(), s])
     );
 
+    // Fallback: query student_devices for students without realtime status
+    // This ensures primaryDeviceId is always resolved even after server restart
+    const studentIds = dbStudents.map((s) => s.id);
+    const deviceMappings = studentIds.length > 0
+      ? await db.select({ studentId: studentDevices.studentId, deviceId: studentDevices.deviceId, lastSeenAt: studentDevices.lastSeenAt })
+          .from(studentDevices)
+          .where(inArray(studentDevices.studentId, studentIds))
+      : [];
+    // Build map: studentId → most recent deviceId
+    const deviceByStudent = new Map<string, string>();
+    for (const row of deviceMappings) {
+      const existing = deviceByStudent.get(row.studentId);
+      if (!existing) {
+        deviceByStudent.set(row.studentId, row.deviceId);
+      }
+      // student_devices rows are unordered; keep any mapping (typically one device per student)
+    }
+
     const aggregated = dbStudents.map((student) => {
       const rt =
         (student.deviceId ? statusByDevice.get(student.deviceId) : null) ||
         statusByStudent.get(student.id) ||
         (student.email ? statusByEmail.get(student.email.toLowerCase()) : null) ||
         null;
-      const deviceId = rt?.deviceId || student.deviceId || null;
+      // Fallback to student_devices table when realtime status has no device mapping
+      const deviceId = rt?.deviceId || student.deviceId || deviceByStudent.get(student.id) || null;
       const isConnected = deviceId ? connectedDevices.has(deviceId) : false;
       const timeSinceLastSeen = rt ? Date.now() - rt.lastSeenAt : Infinity;
       let status: "online" | "idle" | "offline" = "offline";
@@ -947,6 +966,7 @@ router.get("/students-aggregated", ...schoolAuth, async (req, res, next) => {
         activeFlightPathName: rt?.activeFlightPathName,
         cameraActive: rt?.cameraActive || false,
         aiClassification: rt?.aiClassification || undefined,
+        screenshotHealth: rt?.screenshotHealth || undefined,
       };
     });
 

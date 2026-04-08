@@ -105,32 +105,7 @@ router.post(
   requireRole("admin", "teacher", "office_staff"),
   async (req, res, next) => {
     try {
-      const body = { ...req.body };
-      // Handle snake_case → camelCase (GoPilot sends first_name, last_name, etc.)
-      if (body.first_name && !body.firstName) { body.firstName = body.first_name; delete body.first_name; }
-      if (body.last_name && !body.lastName) { body.lastName = body.last_name; delete body.last_name; }
-      if (body.grade_level && !body.gradeLevel) { body.gradeLevel = body.grade_level; delete body.grade_level; }
-      if (body.dismissal_type && !body.dismissalType) { body.dismissalType = body.dismissal_type; delete body.dismissal_type; }
-      if (body.bus_route && !body.busRoute) { body.busRoute = body.bus_route; delete body.bus_route; }
-      if (body.afterschool_reason && !body.afterschoolReason) { body.afterschoolReason = body.afterschool_reason; delete body.afterschool_reason; }
-      // Handle studentName → firstName/lastName (ClassPilot sends studentName)
-      if (body.studentName && !body.firstName) {
-        const parts = body.studentName.trim().split(/\s+/);
-        body.firstName = parts[0] || "";
-        body.lastName = parts.slice(1).join(" ") || "";
-        delete body.studentName;
-      }
-      if (body.name && !body.firstName) {
-        const parts = body.name.trim().split(/\s+/);
-        body.firstName = parts[0] || "";
-        body.lastName = parts.slice(1).join(" ") || "";
-        delete body.name;
-      }
-      // Handle studentEmail → email (ClassPilot sends studentEmail)
-      if (body.studentEmail && !body.email) {
-        body.email = body.studentEmail;
-        delete body.studentEmail;
-      }
+      const body = normalizeStudentBody(req.body);
       // Handle grade → gradeLevel (GoPilot sends grade)
       if (body.grade && !body.gradeLevel) { body.gradeLevel = body.grade; delete body.grade; }
 
@@ -393,6 +368,38 @@ router.get("/:studentId", ...schoolContext, async (req, res, next) => {
   }
 });
 
+// Normalize incoming student fields from any frontend (ClassPilot, GoPilot, PassPilot)
+// Each frontend sends different field conventions; this normalizes to DB column names.
+function normalizeStudentBody(raw: Record<string, unknown>): Record<string, unknown> {
+  const body = { ...raw };
+  // Handle snake_case → camelCase (GoPilot sends first_name, last_name, etc.)
+  if (body.first_name && !body.firstName) { body.firstName = body.first_name; delete body.first_name; }
+  if (body.last_name && !body.lastName) { body.lastName = body.last_name; delete body.last_name; }
+  if (body.grade_level && !body.gradeLevel) { body.gradeLevel = body.grade_level; delete body.grade_level; }
+  if (body.dismissal_type && !body.dismissalType) { body.dismissalType = body.dismissal_type; delete body.dismissal_type; }
+  if (body.bus_route && !body.busRoute) { body.busRoute = body.bus_route; delete body.bus_route; }
+  if (body.afterschool_reason && !body.afterschoolReason) { body.afterschoolReason = body.afterschool_reason; delete body.afterschool_reason; }
+  // Handle studentName → firstName/lastName (ClassPilot sends studentName)
+  if (body.studentName && !body.firstName) {
+    const parts = String(body.studentName).trim().split(/\s+/);
+    body.firstName = parts[0] || "";
+    body.lastName = parts.slice(1).join(" ") || "";
+    delete body.studentName;
+  }
+  if (body.name && !body.firstName) {
+    const parts = String(body.name).trim().split(/\s+/);
+    body.firstName = parts[0] || "";
+    body.lastName = parts.slice(1).join(" ") || "";
+    delete body.name;
+  }
+  // Handle studentEmail → email
+  if (body.studentEmail && !body.email) {
+    body.email = body.studentEmail;
+    delete body.studentEmail;
+  }
+  return body;
+}
+
 // PUT /api/students/:studentId
 router.put(
   "/:studentId",
@@ -405,7 +412,7 @@ router.put(
         return res.status(404).json({ error: "Student not found" });
       }
 
-      const parsed = updateStudentSchema.safeParse(req.body);
+      const parsed = updateStudentSchema.safeParse(normalizeStudentBody(req.body));
       if (!parsed.success) {
         return res
           .status(400)
@@ -444,7 +451,7 @@ router.patch(
         return res.status(404).json({ error: "Student not found" });
       }
 
-      const parsed = updateStudentSchema.safeParse(req.body);
+      const parsed = updateStudentSchema.safeParse(normalizeStudentBody(req.body));
       if (!parsed.success) {
         return res
           .status(400)
