@@ -14,6 +14,9 @@ const kioskLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
+import { eq, and } from "drizzle-orm";
+import { productLicenses } from "../../schema/core.js";
+import db from "../../db.js";
 import {
   getSchoolById,
   getStudentByIdNumber,
@@ -51,6 +54,9 @@ function getKioskSchoolId(req: { headers: Record<string, unknown>; query: Record
 async function validateKiosk(schoolId: string, kioskPin?: string) {
   const school = await getSchoolById(schoolId);
   if (!school) return { error: "School not found", status: 400, school: null };
+  // Check PassPilot license
+  const [license] = await db.select().from(productLicenses).where(and(eq(productLicenses.schoolId, schoolId), eq(productLicenses.product, "PASSPILOT"), eq(productLicenses.status, "active"))).limit(1);
+  if (!license) return { error: "PassPilot license required", status: 403, school: null };
   if (school.kioskEnabled === false) return { error: "Kiosk is not enabled", status: 403, school: null };
   // If the school has a kiosk PIN, require it on every request
   if ((school as any).kioskPin && (school as any).kioskPin !== kioskPin) {

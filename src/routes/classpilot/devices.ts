@@ -1,5 +1,8 @@
 import crypto from "crypto";
 import { Router } from "express";
+import { eq, and } from "drizzle-orm";
+import { productLicenses } from "../../schema/core.js";
+import db from "../../db.js";
 import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
@@ -452,6 +455,12 @@ router.post("/device/heartbeat", requireDeviceAuth, async (req, res, next) => {
       return res.status(204).send();
     }
     deviceLastHeartbeat.set(deviceId, now);
+
+    // --- ClassPilot license check (skip heartbeat processing if not licensed) ---
+    const [cpLicense] = await db.select().from(productLicenses).where(and(eq(productLicenses.schoolId, schoolId), eq(productLicenses.product, "CLASSPILOT"), eq(productLicenses.status, "active"))).limit(1);
+    if (!cpLicense) {
+      return res.status(403).json({ error: "school_not_entitled", planStatus: "inactive" });
+    }
 
     // --- Tracking window enforcement (item #2) ---
     const schoolSettings = await getSettingsForSchool(schoolId);

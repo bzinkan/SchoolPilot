@@ -3,6 +3,7 @@ import { authenticate } from "../middleware/authenticate.js";
 import { requireSchoolContext } from "../middleware/requireSchoolContext.js";
 import { requireRole } from "../middleware/requireRole.js";
 import { requireActiveSchool } from "../middleware/requireActiveSchool.js";
+import { requireProductLicense } from "../middleware/requireProductLicense.js";
 import {
   createStudentSchema,
   updateStudentSchema,
@@ -31,7 +32,7 @@ function param(req: { params: Record<string, unknown> }, key: string): string {
 
 router.use(authenticate);
 
-const schoolContext = [requireSchoolContext, requireActiveSchool] as const;
+const schoolContext = [requireSchoolContext, requireActiveSchool, requireProductLicense("CLASSPILOT", "PASSPILOT", "GOPILOT")] as const;
 
 // ============================================================================
 // Student CRUD

@@ -50,7 +50,7 @@ export const schools = pgTable("schools", {
   usedLicenses: integer("used_licenses").notNull().default(0),
 
   // PassPilot settings
-  kioskEnabled: boolean("kiosk_enabled").notNull().default(true),
+  kioskEnabled: boolean("kiosk_enabled").notNull().default(false),
   kioskRequiresApproval: boolean("kiosk_requires_approval").notNull().default(false),
   defaultPassDuration: integer("default_pass_duration").notNull().default(5),
   kioskGradeId: varchar("kiosk_grade_id"),
