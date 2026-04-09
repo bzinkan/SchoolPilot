@@ -4,9 +4,7 @@ import {
   getSchoolById,
   getOrCreateSession,
   updateSessionStatus,
-  upsertDailyUsage,
   getSettingsForSchool,
-  purgeOldHeartbeats,
   getScheduledGroupsReadyToStart,
   getScheduledGroupsReadyToEnd,
   hasActiveSessionForGroup,
@@ -17,14 +15,41 @@ import {
 } from "./storage.js";
 import { buildAndSendSessionSummary } from "../routes/classpilot/sessions.js";
 import db from "../db.js";
+import { schedulerDb } from "./schedulerDb.js";
 import { schools, productLicenses } from "../schema/core.js";
-import { heartbeats } from "../schema/classpilot.js";
+import { heartbeats, dailyUsage } from "../schema/classpilot.js";
 import { dismissalSessions } from "../schema/gopilot.js";
 import { eq, and, isNotNull, sql } from "drizzle-orm";
 
 let io: SocketServer | null = null;
 let intervalId: NodeJS.Timeout | null = null;
 let lastRollupHour = -1;
+let lastPurgeHour = -1;
+let heavyJobRunning = false; // Mutex: prevent rollup and purge from running concurrently
+
+async function runHeavyJobsSerially() {
+  if (heavyJobRunning) {
+    console.log("[Scheduler] Heavy job already running, skipping this tick");
+    return;
+  }
+  heavyJobRunning = true;
+  try {
+    const currentHour = new Date().getUTCHours();
+    // Rollup at top of hour
+    if (currentHour !== lastRollupHour) {
+      lastRollupHour = currentHour;
+      await rollupDailyUsage();
+    }
+    // Purge at 30min past the hour (staggered to avoid overlap with rollup)
+    const currentMinute = new Date().getUTCMinutes();
+    if (currentMinute >= 30 && currentHour !== lastPurgeHour) {
+      lastPurgeHour = currentHour;
+      await purgeExpiredHeartbeats();
+    }
+  } finally {
+    heavyJobRunning = false;
+  }
+}
 
 export function startScheduler(socketIo: SocketServer) {
   io = socketIo;
@@ -34,14 +59,10 @@ export function startScheduler(socketIo: SocketServer) {
     autoCompleteStaleGoPilotSessions();
     autoStartClassBlocks();
     autoEndClassBlocks();
-
-    // Run rollup and purge once per hour (when the hour changes)
-    const currentHour = new Date().getUTCHours();
-    if (currentHour !== lastRollupHour) {
-      lastRollupHour = currentHour;
-      rollupDailyUsage();
-      purgeExpiredHeartbeats();
-    }
+    // Fire and forget — runs through the mutex and dedicated pool
+    runHeavyJobsSerially().catch((err) =>
+      console.error("[Scheduler] Heavy job error:", err)
+    );
   }, 60 * 1000);
   checkDismissalTimes();
   autoCompleteStaleGoPilotSessions();
@@ -155,8 +176,8 @@ async function autoCompleteStaleGoPilotSessions() {
 
 async function rollupDailyUsage() {
   try {
-    // Find active schools with ClassPilot license
-    const activeSchools = await db
+    // Find active schools with ClassPilot license (uses dedicated scheduler pool)
+    const activeSchools = await schedulerDb
       .select({
         id: schools.id,
         schoolTimezone: schools.schoolTimezone,
@@ -174,6 +195,8 @@ async function rollupDailyUsage() {
 
     for (const school of activeSchools) {
       await rollupSchoolUsage(school.id, school.schoolTimezone || "America/New_York");
+      // Small yield between schools so other scheduler ticks can run
+      await new Promise((resolve) => setTimeout(resolve, 50));
     }
   } catch (err) {
     console.error("[ClassPilot] Daily usage rollup error:", err);
@@ -201,7 +224,8 @@ async function rollupSchoolUsage(schoolId: string, timezone: string) {
     );
 
     // Aggregate heartbeats per student for yesterday (use SQL timezone conversion for accuracy)
-    const studentTotals = await db
+    // All scheduler queries go through schedulerDb (dedicated pool, isolated from API requests)
+    const studentTotals = await schedulerDb
       .select({
         studentId: heartbeats.studentId,
         heartbeatCount: sql<number>`COUNT(*)::int`,
@@ -221,7 +245,7 @@ async function rollupSchoolUsage(schoolId: string, timezone: string) {
     if (studentTotals.length === 0) return;
 
     // Get top domains per student
-    const domainData = await db
+    const domainData = await schedulerDb
       .select({
         studentId: heartbeats.studentId,
         domain: sql<string>`SUBSTRING(${heartbeats.activeTabUrl} FROM '://([^/]+)')`,
@@ -250,19 +274,32 @@ async function rollupSchoolUsage(schoolId: string, timezone: string) {
       studentDomains.set(row.studentId, list);
     }
 
-    // Upsert daily usage for each student
+    // Upsert daily usage for each student (through scheduler pool)
     for (const row of studentTotals) {
       if (!row.studentId) continue;
-      await upsertDailyUsage({
-        schoolId,
-        studentId: row.studentId,
-        date: yesterdayStr,
-        totalSeconds: row.totalSeconds,
-        heartbeatCount: row.heartbeatCount,
-        topDomains: studentDomains.get(row.studentId) || [],
-        firstSeen: row.firstSeen,
-        lastSeen: row.lastSeen,
-      });
+      await schedulerDb
+        .insert(dailyUsage)
+        .values({
+          schoolId,
+          studentId: row.studentId,
+          date: yesterdayStr,
+          totalSeconds: row.totalSeconds,
+          heartbeatCount: row.heartbeatCount,
+          topDomains: studentDomains.get(row.studentId) || [],
+          firstSeen: row.firstSeen,
+          lastSeen: row.lastSeen,
+        })
+        .onConflictDoUpdate({
+          target: [dailyUsage.studentId, dailyUsage.date],
+          set: {
+            totalSeconds: row.totalSeconds,
+            heartbeatCount: row.heartbeatCount,
+            topDomains: studentDomains.get(row.studentId) || [],
+            firstSeen: row.firstSeen,
+            lastSeen: row.lastSeen,
+            computedAt: sql`now()`,
+          },
+        });
     }
 
     console.log(`[ClassPilot] Rolled up daily usage for school ${schoolId}: ${studentTotals.length} students (${yesterdayStr})`);
@@ -278,7 +315,8 @@ async function rollupSchoolUsage(schoolId: string, timezone: string) {
 
 async function purgeExpiredHeartbeats() {
   try {
-    const activeSchools = await db
+    // Uses dedicated scheduler pool — cannot starve API requests
+    const activeSchools = await schedulerDb
       .select({
         id: schools.id,
       })
@@ -298,10 +336,21 @@ async function purgeExpiredHeartbeats() {
       const retentionHours = parseInt(schoolSettings?.retentionHours as string || "720", 10);
       const cutoff = new Date(Date.now() - retentionHours * 60 * 60 * 1000);
 
-      const deleted = await purgeOldHeartbeats(school.id, cutoff);
+      const result = await schedulerDb
+        .delete(heartbeats)
+        .where(
+          and(
+            eq(heartbeats.schoolId, school.id),
+            sql`${heartbeats.timestamp} < ${cutoff}`
+          )
+        )
+        .returning({ id: heartbeats.id });
+      const deleted = result.length;
       if (deleted > 0) {
         console.log(`[ClassPilot] Purged ${deleted} expired heartbeats for school ${school.id} (retention: ${retentionHours}h)`);
       }
+      // Yield between schools
+      await new Promise((resolve) => setTimeout(resolve, 50));
     }
   } catch (err) {
     console.error("[ClassPilot] Heartbeat purge error:", err);
