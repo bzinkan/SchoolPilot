@@ -156,7 +156,7 @@ export async function publishWS(target: WsRedisTarget, message: unknown): Promis
 
 // Screenshot storage in Redis (for multi-instance deployments)
 const SCREENSHOT_KEY_PREFIX = `${redisPrefix}:screenshot:`;
-const SCREENSHOT_TTL_SECONDS = 60; // 60 seconds TTL
+const SCREENSHOT_TTL_SECONDS = 120; // 120 seconds — must outlive both the 30s capture interval and 30s dashboard poll
 
 export type ScreenshotData = {
   screenshot: string;
