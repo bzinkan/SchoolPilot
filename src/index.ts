@@ -233,6 +233,20 @@ import { pool } from "./db.js";
     console.warn("[migration] email alias update skipped:", (err as Error).message);
   }
 
+  // Composite index for heartbeat queries (purge, rollup, analytics) — critical for scale
+  try {
+    await pool.query(`CREATE INDEX CONCURRENTLY IF NOT EXISTS heartbeats_school_timestamp_idx ON heartbeats (school_id, timestamp DESC)`);
+    console.log("[migration] heartbeats (school_id, timestamp) index ready");
+  } catch (err) {
+    // CONCURRENTLY can't run inside a transaction, retry without it
+    try {
+      await pool.query(`CREATE INDEX IF NOT EXISTS heartbeats_school_timestamp_idx ON heartbeats (school_id, timestamp DESC)`);
+      console.log("[migration] heartbeats (school_id, timestamp) index ready (non-concurrent)");
+    } catch (err2) {
+      console.warn("[migration] heartbeats index skipped:", (err2 as Error).message);
+    }
+  }
+
   // Backfill emailLc for students that have email but emailLc is NULL
   try {
     const { rowCount } = await pool.query(`UPDATE students SET email_lc = LOWER(email) WHERE email IS NOT NULL AND email_lc IS NULL`);

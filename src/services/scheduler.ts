@@ -15,7 +15,7 @@ import {
 } from "./storage.js";
 import { buildAndSendSessionSummary } from "../routes/classpilot/sessions.js";
 import db from "../db.js";
-import { schedulerDb } from "./schedulerDb.js";
+import { schedulerDb, schedulerPool } from "./schedulerDb.js";
 import { schools, productLicenses } from "../schema/core.js";
 import { heartbeats, dailyUsage } from "../schema/classpilot.js";
 import { dismissalSessions } from "../schema/gopilot.js";
@@ -336,18 +336,27 @@ async function purgeExpiredHeartbeats() {
       const retentionHours = parseInt(schoolSettings?.retentionHours as string || "720", 10);
       const cutoff = new Date(Date.now() - retentionHours * 60 * 60 * 1000);
 
-      const result = await schedulerDb
-        .delete(heartbeats)
-        .where(
-          and(
-            eq(heartbeats.schoolId, school.id),
-            sql`${heartbeats.timestamp} < ${cutoff}`
-          )
-        )
-        .returning({ id: heartbeats.id });
-      const deleted = result.length;
-      if (deleted > 0) {
-        console.log(`[ClassPilot] Purged ${deleted} expired heartbeats for school ${school.id} (retention: ${retentionHours}h)`);
+      // Batch delete in chunks of 5000 to avoid long table locks and memory bloat.
+      // Uses raw SQL with row count instead of .returning() which loads all IDs into memory.
+      let totalDeleted = 0;
+      let batchDeleted = 0;
+      do {
+        const result = await schedulerPool.query(
+          `DELETE FROM heartbeats WHERE id IN (
+            SELECT id FROM heartbeats WHERE school_id = $1 AND timestamp < $2 LIMIT 5000
+          )`,
+          [school.id, cutoff]
+        );
+        batchDeleted = result.rowCount || 0;
+        totalDeleted += batchDeleted;
+        if (batchDeleted > 0) {
+          // Yield between batches so other queries can run
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+      } while (batchDeleted >= 5000);
+
+      if (totalDeleted > 0) {
+        console.log(`[ClassPilot] Purged ${totalDeleted} expired heartbeats for school ${school.id} (retention: ${retentionHours}h)`);
       }
       // Yield between schools
       await new Promise((resolve) => setTimeout(resolve, 50));

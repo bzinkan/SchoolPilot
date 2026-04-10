@@ -74,6 +74,19 @@ async function getCachedSchool(schoolId: string) {
   return school;
 }
 
+// In-memory cache for product license checks (saves 1 DB query per heartbeat)
+const licenseCache = new Map<string, { hasLicense: boolean; expires: number }>();
+const LICENSE_CACHE_TTL = 30 * 60 * 1000; // 30 minutes — licenses don't change often
+
+async function hasCachedClassPilotLicense(schoolId: string): Promise<boolean> {
+  const cached = licenseCache.get(schoolId);
+  if (cached && cached.expires > Date.now()) return cached.hasLicense;
+  const [row] = await db.select().from(productLicenses).where(and(eq(productLicenses.schoolId, schoolId), eq(productLicenses.product, "CLASSPILOT"), eq(productLicenses.status, "active"))).limit(1);
+  const hasLicense = !!row;
+  licenseCache.set(schoolId, { hasLicense, expires: Date.now() + LICENSE_CACHE_TTL });
+  return hasLicense;
+}
+
 function param(req: any, key: string): string {
   return String(req.params[key] ?? "");
 }
@@ -456,9 +469,8 @@ router.post("/device/heartbeat", requireDeviceAuth, async (req, res, next) => {
     }
     deviceLastHeartbeat.set(deviceId, now);
 
-    // --- ClassPilot license check (skip heartbeat processing if not licensed) ---
-    const [cpLicense] = await db.select().from(productLicenses).where(and(eq(productLicenses.schoolId, schoolId), eq(productLicenses.product, "CLASSPILOT"), eq(productLicenses.status, "active"))).limit(1);
-    if (!cpLicense) {
+    // --- ClassPilot license check (cached — saves 1 DB query per heartbeat) ---
+    if (!(await hasCachedClassPilotLicense(schoolId))) {
       return res.status(403).json({ error: "school_not_entitled", planStatus: "inactive" });
     }
 
@@ -627,27 +639,24 @@ router.post("/device/heartbeat", requireDeviceAuth, async (req, res, next) => {
     }
 
     // --- Deliver any missed messages (item #3b) ---
+    // Only check DB for pending messages on the FIRST heartbeat from a device
+    // (when deliveredMessages has no entry). After that, WebSocket handles delivery.
+    // This saves 1 DB query on every subsequent heartbeat (~99% of traffic).
     let pendingMessages: Array<{ id: string; message: string }> = [];
-    try {
-      const recent = await getRecentMessagesForStudent(studentId, 5);
-      if (recent.length > 0) {
-        let delivered = deliveredMessages.get(deviceId);
-        if (!delivered) {
-          delivered = new Set();
+    const isFirstHeartbeat = !deliveredMessages.has(deviceId);
+    if (isFirstHeartbeat) {
+      try {
+        const recent = await getRecentMessagesForStudent(studentId, 5);
+        if (recent.length > 0) {
+          const delivered = new Set<string>();
           deliveredMessages.set(deviceId, delivered);
+          pendingMessages = recent.map(m => ({ id: m.id, message: m.message }));
+          for (const m of pendingMessages) delivered.add(m.id);
+        } else {
+          deliveredMessages.set(deviceId, new Set());
         }
-        pendingMessages = recent
-          .filter(m => !delivered!.has(m.id))
-          .map(m => ({ id: m.id, message: m.message }));
-        // Mark as delivered
-        for (const m of pendingMessages) delivered!.add(m.id);
-        // Keep set from growing forever — prune old entries
-        if (delivered!.size > 200) {
-          const arr = Array.from(delivered!);
-          deliveredMessages.set(deviceId, new Set(arr.slice(-100)));
-        }
-      }
-    } catch { /* non-blocking */ }
+      } catch { /* non-blocking */ }
+    }
 
     // --- Return planStatus (item #3) ---
     return res.json({

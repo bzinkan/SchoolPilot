@@ -159,6 +159,12 @@ router.post("/schools", ...auth, async (req, res, next) => {
       return res.status(400).json({ error: "name is required" });
     }
 
+    // Validate domain format if provided (must look like a real domain)
+    const cleanDomain = domain?.trim().toLowerCase() || null;
+    if (cleanDomain && !/^[a-z0-9.-]+\.[a-z]{2,}$/.test(cleanDomain)) {
+      return res.status(400).json({ error: "Invalid domain format (e.g., school.org)" });
+    }
+
     // Resolve field names (frontend sends firstAdmin*, backend originally used admin*)
     const resolvedAdminEmail = adminEmail || firstAdminEmail;
     const resolvedAdminPassword = adminPassword || firstAdminPassword;
@@ -167,7 +173,7 @@ router.post("/schools", ...auth, async (req, res, next) => {
 
     const schoolData: Record<string, unknown> = {
       name,
-      domain: domain || null,
+      domain: cleanDomain,
       status: status || "active",
       billingEmail: billingEmail || null,
     };
@@ -331,7 +337,13 @@ router.patch("/schools/:id", ...auth, async (req, res, next) => {
 
     const data: Record<string, unknown> = {};
     if (name !== undefined) data.name = name;
-    if (domain !== undefined) data.domain = domain;
+    if (domain !== undefined) {
+      const cleanDomain = domain?.trim().toLowerCase() || null;
+      if (cleanDomain && !/^[a-z0-9.-]+\.[a-z]{2,}$/.test(cleanDomain)) {
+        return res.status(400).json({ error: "Invalid domain format (e.g., school.org)" });
+      }
+      data.domain = cleanDomain;
+    }
     if (status !== undefined) data.status = status;
     if (billingEmail !== undefined) data.billingEmail = billingEmail;
     if (schoolTimezone !== undefined) data.schoolTimezone = schoolTimezone;
