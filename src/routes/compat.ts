@@ -661,11 +661,17 @@ router.get("/admin/analytics/by-teacher", ...schoolAuth, requireRole("admin"), a
     }
 
     // Get teachers with their session stats
+    // For time calculation: clamp session start/end to the query window.
+    // Sessions without endTime use NOW() but are clamped to the cutoff start,
+    // so a stale session from yesterday doesn't inflate "Today" totals.
     const teacherStats = await db
       .select({
         id: teachingSessions.teacherId,
         sessionCount: sql<number>`COUNT(DISTINCT ${teachingSessions.id})::int`,
-        totalSessionMinutes: sql<number>`COALESCE(SUM(EXTRACT(EPOCH FROM (COALESCE(${teachingSessions.endTime}, NOW()) - ${teachingSessions.startTime})) / 60)::int, 0)`,
+        totalSessionMinutes: sql<number>`COALESCE(SUM(EXTRACT(EPOCH FROM (
+          LEAST(COALESCE(${teachingSessions.endTime}, NOW()), NOW())
+          - GREATEST(${teachingSessions.startTime}, ${cutoff})
+        )) / 60)::int, 0)`,
         groupCount: sql<number>`COUNT(DISTINCT ${teachingSessions.groupId})::int`,
       })
       .from(teachingSessions)
@@ -673,7 +679,8 @@ router.get("/admin/analytics/by-teacher", ...schoolAuth, requireRole("admin"), a
       .where(
         and(
           eq(groups.schoolId, schoolId),
-          sql`${teachingSessions.startTime} >= ${cutoff}`
+          // Include sessions that overlap with the period (started before cutoff but still running)
+          sql`COALESCE(${teachingSessions.endTime}, NOW()) >= ${cutoff}`
         )
       )
       .groupBy(teachingSessions.teacherId);
