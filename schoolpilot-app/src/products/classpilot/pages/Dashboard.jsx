@@ -1104,7 +1104,7 @@ export default function Dashboard() {
   useEffect(() => {
     if (selectedSubgroupId) {
       apiRequest('GET', `/subgroups/${selectedSubgroupId}/members`)
-        .then(data => { setSubgroupMembers(new Set(data.members || [])); })
+        .then(data => { setSubgroupMembers(new Set((data.members || []).map(m => m.studentId || m))); })
         .catch(err => { console.error('Error fetching subgroup members:', err); setSubgroupMembers(new Set()); });
     } else { setSubgroupMembers(new Set()); }
   }, [selectedSubgroupId]);
