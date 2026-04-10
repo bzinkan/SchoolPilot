@@ -336,10 +336,10 @@ export async function sendSessionSummaryEmail(options: {
         .slice(0, 5)
         .map((d) => `${d.domain} (${d.minutes}m)`)
         .join(", ");
-      const offTask = s.offTaskCount || 0;
-      const offTaskCell = offTask > 0
-        ? `<span style="color: #dc2626; font-weight: bold;">${offTask}</span>`
-        : `<span style="color: #16a34a;">0</span>`;
+      const offTaskMinutes = Math.round(((s.offTaskCount || 0) * 10) / 60);
+      const offTaskCell = offTaskMinutes > 0
+        ? `<span style="color: #dc2626; font-weight: bold;">${offTaskMinutes}m</span>`
+        : `<span style="color: #16a34a;">0m</span>`;
       const safetyCell = s.safetyAlerts && s.safetyAlerts.length > 0
         ? `<span style="color: #dc2626; font-weight: bold;">${s.safetyAlerts.join(", ")}</span>`
         : "";
