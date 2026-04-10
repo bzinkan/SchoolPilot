@@ -500,9 +500,18 @@ async function autoStartClassBlocks() {
       }).replace(/^24:/, "00:");
       const todayDate = now.toLocaleDateString("en-CA", { timeZone: tz });
 
+      // Debug: log every scheduled group check to diagnose auto-start failures
+      const allScheduledGroups = await db
+        .select({ id: groups.id, name: groups.name, blockStartTime: groups.blockStartTime, blockEndTime: groups.blockEndTime, scheduleSkippedDate: groups.scheduleSkippedDate })
+        .from(groups)
+        .where(and(eq(groups.schoolId, school.id), eq(groups.scheduleEnabled, true)));
+      if (allScheduledGroups.length > 0) {
+        console.log(`[ClassPilot] Schedule tick: school=${school.id.slice(0,8)}, time=${currentTimeHHMM} ${tz}, date=${todayDate}, groups=${JSON.stringify(allScheduledGroups.map(g => ({ name: g.name, start: g.blockStartTime, end: g.blockEndTime, skipped: g.scheduleSkippedDate })))}`);
+      }
+
       const readyGroups = await getScheduledGroupsReadyToStart(school.id, currentTimeHHMM, todayDate);
       if (readyGroups.length > 0) {
-        console.log(`[ClassPilot] Auto-start check: ${readyGroups.length} group(s) ready at ${currentTimeHHMM} ${tz}`);
+        console.log(`[ClassPilot] Auto-start: ${readyGroups.length} group(s) ready`);
       }
 
       for (const group of readyGroups) {

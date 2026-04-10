@@ -724,7 +724,7 @@ export default function Dashboard() {
       const group = groups.find(g => g.id === (data.session?.groupId || data.groupId));
       toast({ title: "Class Started", description: `Now teaching: ${group?.name || 'Unknown Class'}` });
     },
-    onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
+    onError: (error) => { toast({ variant: "destructive", title: "Cannot Start Class", description: error.response?.data?.error || error.message }); },
   });
 
   const endSessionMutation = useMutation({
