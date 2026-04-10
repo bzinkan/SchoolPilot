@@ -916,7 +916,7 @@ export default function Dashboard() {
     mutationFn: async ({ blockListId, targetDeviceIds }) => apiRequest('POST', `/block-lists/${blockListId}/apply`, { targetDeviceIds }),
     onSuccess: (data, variables) => {
       const blockList = blockLists.find(bl => bl.id === selectedBlockListId);
-      toast({ title: "Success", description: `Applied "${blockList?.name || 'Block List'}" to ${targetLabel(data.sentTo || 0)}` });
+      toast({ title: "Success", description: `Applied "${blockList?.name || 'Block List'}" to ${targetLabel(data.sent || data.sentTo || 0)}` });
       setShowApplyBlockListDialog(false); setSelectedBlockListId("");
       refreshScreenshotsForDevices(variables.targetDeviceIds);
     },
@@ -925,7 +925,7 @@ export default function Dashboard() {
 
   const removeBlockListMutation = useMutation({
     mutationFn: async ({ targetDeviceIds }) => apiRequest('POST', '/block-lists/remove', { targetDeviceIds }),
-    onSuccess: (data, variables) => { toast({ title: "Success", description: `Removed block list from ${targetLabel(data.sentTo || 0)}` }); refreshScreenshotsForDevices(variables.targetDeviceIds); },
+    onSuccess: (data, variables) => { toast({ title: "Success", description: `Removed block list from ${targetLabel(data.sent || data.sentTo || 0)}` }); refreshScreenshotsForDevices(variables.targetDeviceIds); },
     onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
   });
 
@@ -940,7 +940,7 @@ export default function Dashboard() {
     mutationFn: async ({ active, message, targetDeviceIds }) => apiRequest('POST', '/remote/attention-mode', { active, message, targetDeviceIds }),
     onSuccess: (data, variables) => {
       setAttentionActive(variables.active);
-      toast({ title: variables.active ? "Attention Mode Enabled" : "Attention Mode Disabled", description: variables.active ? `Showing "${variables.message}" to ${targetLabel(data.sentTo || 0)}` : `Released ${targetLabel(data.sentTo || 0)}` });
+      toast({ title: variables.active ? "Attention Mode Enabled" : "Attention Mode Disabled", description: variables.active ? `Showing "${variables.message}" to ${targetLabel(data.sent || data.sentTo || 0)}` : `Released ${targetLabel(data.sent || data.sentTo || 0)}` });
       if (!variables.active) setShowAttentionDialog(false);
       refreshScreenshotsForDevices(variables.targetDeviceIds);
     },
@@ -951,7 +951,7 @@ export default function Dashboard() {
     mutationFn: async ({ action, seconds, message, targetDeviceIds }) => apiRequest('POST', '/remote/timer', { action, seconds, message, targetDeviceIds }),
     onSuccess: (data, variables) => {
       setTimerActive(variables.action === 'start');
-      toast({ title: variables.action === 'start' ? "Timer Started" : "Timer Stopped", description: variables.action === 'start' ? `${Math.floor((variables.seconds || 0) / 60)}:${String((variables.seconds || 0) % 60).padStart(2, '0')} timer sent to ${targetLabel(data.sentTo || 0)}` : `Stopped timer for ${targetLabel(data.sentTo || 0)}` });
+      toast({ title: variables.action === 'start' ? "Timer Started" : "Timer Stopped", description: variables.action === 'start' ? `${Math.floor((variables.seconds || 0) / 60)}:${String((variables.seconds || 0) % 60).padStart(2, '0')} timer sent to ${targetLabel(data.sent || data.sentTo || 0)}` : `Stopped timer for ${targetLabel(data.sent || data.sentTo || 0)}` });
       if (variables.action === 'start') setShowTimerDialog(false);
     },
     onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
@@ -972,7 +972,7 @@ export default function Dashboard() {
     onSuccess: (data) => {
       setActivePoll({ id: data.poll.id, question: data.poll.question, options: data.poll.options });
       setPollResults([]); setPollTotalResponses(0);
-      toast({ title: "Poll Created", description: `Poll sent to ${targetLabel(data.sentTo || 0)}` });
+      toast({ title: "Poll Created", description: `Poll sent to ${targetLabel(data.sent || data.sentTo || 0)}` });
       setShowPollDialog(false); setPollQuestion(""); setPollOptions(["", ""]);
       startPollResultsPolling(data.poll.id);
     },
@@ -1022,7 +1022,7 @@ export default function Dashboard() {
       return { sentTo };
     },
     onSuccess: (data) => {
-      toast({ title: "Message Sent", description: `Sent to ${targetLabel(data.sentTo || 0)}` });
+      toast({ title: "Message Sent", description: `Sent to ${targetLabel(data.sent || data.sentTo || 0)}` });
       setShowSendMessageDialog(false); setSendMessageText("");
     },
     onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
