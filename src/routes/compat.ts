@@ -611,12 +611,29 @@ router.get("/admin/analytics/summary", ...schoolAuth, requireRole("admin"), asyn
 
     const teacherCount = staff.filter(s => s.role === "teacher" || s.role === "admin").length;
 
+    // Supplement daily_usage totals with today's live heartbeats (not yet rolled up)
+    const [todayLive] = await db.select({
+      activeStudents: sql<number>`COUNT(DISTINCT ${heartbeats.studentId})::int`,
+      totalSeconds: sql<number>`(COUNT(*) * 10)::int`,
+    })
+      .from(heartbeats)
+      .where(and(
+        eq(heartbeats.schoolId, schoolId),
+        sql`${heartbeats.timestamp}::date = CURRENT_DATE`
+      ));
+
+    const combinedActiveStudents = Math.max(
+      Number(usageSummary.activeStudents) || 0,
+      todayLive?.activeStudents || 0
+    );
+    const combinedTotalSeconds = (Number(usageSummary.totalSeconds) || 0) + (todayLive?.totalSeconds || 0);
+
     return res.json({
       summary: {
-        activeStudents: Number(usageSummary.activeStudents) || 0,
+        activeStudents: combinedActiveStudents,
         totalStudents: students.length,
         totalDevices: devices.length,
-        totalBrowsingMinutes: Math.round((Number(usageSummary.totalSeconds) || 0) / 60),
+        totalBrowsingMinutes: Math.round(combinedTotalSeconds / 60),
         totalTeachers: teacherCount,
       },
       hourlyActivity,
@@ -687,6 +704,7 @@ router.get("/admin/analytics/by-group", ...schoolAuth, requireRole("admin"), asy
     const startDate = cutoff.toISOString().slice(0, 10);
     const endDate = new Date().toISOString().slice(0, 10);
 
+    // Get rolled-up daily_usage for past days
     const rows = await db
       .select({
         groupId: groups.id,
@@ -712,11 +730,37 @@ router.get("/admin/analytics/by-group", ...schoolAuth, requireRole("admin"), asy
         )
       )
       .where(eq(groups.schoolId, schoolId))
-      .groupBy(groups.id, groups.name, groups.periodLabel, groups.gradeLevel, users.displayName, users.email)
-      .orderBy(sql`COALESCE(SUM(${dailyUsage.totalSeconds}), 0) DESC`);
+      .groupBy(groups.id, groups.name, groups.periodLabel, groups.gradeLevel, users.displayName, users.email);
+
+    // Supplement with today's live heartbeat data (not yet in daily_usage)
+    // This ensures Class Usage shows current-day activity
+    const todayLive = await db
+      .select({
+        groupId: groups.id,
+        activeStudentCount: sql<number>`COUNT(DISTINCT ${heartbeats.studentId})::int`,
+        totalSeconds: sql<number>`(COUNT(*) * 10)::int`,
+      })
+      .from(groups)
+      .leftJoin(groupStudents, eq(groupStudents.groupId, groups.id))
+      .leftJoin(
+        heartbeats,
+        and(
+          eq(heartbeats.studentId, groupStudents.studentId),
+          eq(heartbeats.schoolId, schoolId),
+          sql`${heartbeats.timestamp}::date = CURRENT_DATE`
+        )
+      )
+      .where(eq(groups.schoolId, schoolId))
+      .groupBy(groups.id);
+
+    const liveMap = new Map(todayLive.map((r) => [r.groupId, r]));
 
     const groupsList = rows.map((r) => {
-      const totalMinutes = Math.round(r.totalSeconds / 60);
+      const live = liveMap.get(r.groupId);
+      const combinedSeconds = r.totalSeconds + (live?.totalSeconds || 0);
+      // Use the higher of daily_usage active count vs live active count as a conservative estimate
+      const activeCount = Math.max(r.activeStudentCount, live?.activeStudentCount || 0);
+      const totalMinutes = Math.round(combinedSeconds / 60);
       return {
         groupId: r.groupId,
         groupName: r.groupName,
@@ -724,12 +768,13 @@ router.get("/admin/analytics/by-group", ...schoolAuth, requireRole("admin"), asy
         gradeLevel: r.gradeLevel,
         teacherName: r.teacherDisplayName || r.teacherEmail || "Unknown",
         studentCount: r.studentCount,
-        activeStudentCount: r.activeStudentCount,
+        activeStudentCount: activeCount,
         totalBrowsingMinutes: totalMinutes,
-        avgMinutesPerStudent: r.activeStudentCount > 0 ? Math.round(totalMinutes / r.activeStudentCount) : 0,
+        avgMinutesPerStudent: activeCount > 0 ? Math.round(totalMinutes / activeCount) : 0,
       };
     });
 
+    groupsList.sort((a, b) => b.totalBrowsingMinutes - a.totalBrowsingMinutes);
     return res.json({ groups: groupsList });
   } catch (err) {
     next(err);
