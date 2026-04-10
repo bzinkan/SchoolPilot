@@ -558,7 +558,10 @@ export default function Dashboard() {
   };
   const clearSelection = () => { setSelectedStudentIds(new Set()); };
 
-  // Live view handlers
+  // Live view handlers — auto-timeout after 15 minutes to protect student device CPU/battery
+  const LIVE_VIEW_TIMEOUT_MS = 15 * 60 * 1000;
+  const liveViewTimers = useRef(new Map());
+
   const handleStartLiveView = async (deviceId) => {
     if (!wsAuthenticated) {
       toast({ title: "Not Ready", description: "Please wait for connection to be established", variant: "destructive" });
@@ -567,6 +570,12 @@ export default function Dashboard() {
     await webrtc.startLiveView(deviceId, (stream) => {
       setLiveStreams((prev) => { const newMap = new Map(prev); newMap.set(deviceId, stream); return newMap; });
     });
+    // Clear any existing timer for this device and start a new one
+    if (liveViewTimers.current.has(deviceId)) clearTimeout(liveViewTimers.current.get(deviceId));
+    liveViewTimers.current.set(deviceId, setTimeout(() => {
+      handleStopLiveView(deviceId);
+      toast({ title: "Live View Ended", description: "Auto-stopped after 15 minutes to protect student device" });
+    }, LIVE_VIEW_TIMEOUT_MS));
   };
 
   const refreshTile = (deviceId) => {
@@ -576,6 +585,10 @@ export default function Dashboard() {
   const handleStopLiveView = (deviceId) => {
     webrtc.stopLiveView(deviceId, wsRef.current);
     setLiveStreams((prev) => { const newMap = new Map(prev); newMap.delete(deviceId); return newMap; });
+    if (liveViewTimers.current.has(deviceId)) {
+      clearTimeout(liveViewTimers.current.get(deviceId));
+      liveViewTimers.current.delete(deviceId);
+    }
     refreshTile(deviceId);
   };
 
