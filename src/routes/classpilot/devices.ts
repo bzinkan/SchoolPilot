@@ -462,6 +462,14 @@ router.post("/device/heartbeat", requireDeviceAuth, async (req, res, next) => {
       return res.status(403).json({ error: "school_not_entitled", planStatus: "inactive" });
     }
 
+    // --- Student existence check ---
+    // If the student was deleted (e.g., duplicate cleanup migration), return 401
+    // to force the extension to re-register and get a JWT pointing to the surviving record.
+    const student = await getStudentById(studentId);
+    if (!student) {
+      return res.status(401).json({ error: "Student not found — re-register required" });
+    }
+
     // --- Tracking window enforcement (item #2) ---
     const schoolSettings = await getSettingsForSchool(schoolId);
     if (schoolSettings && !isWithinTrackingWindow(schoolSettings)) {

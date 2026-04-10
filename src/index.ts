@@ -243,8 +243,44 @@ import { pool } from "./db.js";
     console.warn("[migration] emailLc backfill skipped:", (err as Error).message);
   }
 
-  // Clean up duplicate students created by extension (keep the one with gradeId set)
+  // Clean up duplicate students created by extension (keep the admin-imported one with gradeId)
+  // First reassign heartbeats and student_devices so data isn't orphaned, then delete.
   try {
+    // Reassign heartbeats from duplicate (no gradeId) to surviving (has gradeId) student
+    await pool.query(`
+      UPDATE heartbeats SET student_id = keeper.id
+      FROM (
+        SELECT s1.id, s2.id AS dup_id
+        FROM students s1
+        JOIN students s2 ON s1.email_lc = s2.email_lc AND s1.school_id = s2.school_id AND s1.id != s2.id
+        WHERE s1.grade_id IS NOT NULL AND s2.grade_id IS NULL
+      ) keeper
+      WHERE heartbeats.student_id = keeper.dup_id
+    `);
+    // Reassign student_devices
+    await pool.query(`
+      UPDATE student_devices SET student_id = keeper.id
+      FROM (
+        SELECT s1.id, s2.id AS dup_id
+        FROM students s1
+        JOIN students s2 ON s1.email_lc = s2.email_lc AND s1.school_id = s2.school_id AND s1.id != s2.id
+        WHERE s1.grade_id IS NOT NULL AND s2.grade_id IS NULL
+      ) keeper
+      WHERE student_devices.student_id = keeper.dup_id
+      ON CONFLICT (student_id, device_id) DO NOTHING
+    `);
+    // Reassign student_sessions
+    await pool.query(`
+      UPDATE student_sessions SET student_id = keeper.id
+      FROM (
+        SELECT s1.id, s2.id AS dup_id
+        FROM students s1
+        JOIN students s2 ON s1.email_lc = s2.email_lc AND s1.school_id = s2.school_id AND s1.id != s2.id
+        WHERE s1.grade_id IS NOT NULL AND s2.grade_id IS NULL
+      ) keeper
+      WHERE student_sessions.student_id = keeper.dup_id
+    `);
+    // Now delete the orphaned duplicates
     await pool.query(`
       DELETE FROM students WHERE id IN (
         SELECT s2.id FROM students s1
@@ -252,7 +288,7 @@ import { pool } from "./db.js";
         WHERE s1.grade_id IS NOT NULL AND s2.grade_id IS NULL
       )
     `);
-    console.log("[migration] Cleaned up duplicate extension-created students");
+    console.log("[migration] Cleaned up duplicate extension-created students (with data reassignment)");
   } catch (err) {
     console.warn("[migration] Duplicate student cleanup skipped:", (err as Error).message);
   }
