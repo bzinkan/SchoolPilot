@@ -46,6 +46,31 @@ router.post("/start", ...auth, async (req, res, next) => {
       return res.status(404).json({ error: "Group not found" });
     }
 
+    // Block manual start if scheduling is enabled and current time is OUTSIDE the scheduled window
+    // Teachers can freely start/stop within the window (e.g., accidental end mid-class)
+    if ((group as any).scheduleEnabled && (group as any).blockStartTime && (group as any).blockEndTime) {
+      const school = await getSchoolById(group.schoolId);
+      const tz = school?.schoolTimezone || "America/New_York";
+      const now = new Date();
+      const currentTimeHHMM = now.toLocaleString("en-US", {
+        timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false,
+      }).replace(/^24:/, "00:");
+      const isOutsideWindow = currentTimeHHMM < (group as any).blockStartTime || currentTimeHHMM >= (group as any).blockEndTime;
+      if (isOutsideWindow) {
+        const formatTime = (t: string) => {
+          const parts = t.split(":");
+          const hour = parseInt(parts[0] || "0", 10);
+          const m = parts[1] || "00";
+          const ampm = hour >= 12 ? "PM" : "AM";
+          const h12 = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
+          return `${h12}:${m} ${ampm}`;
+        };
+        return res.status(403).json({
+          error: `Class is scheduled for ${formatTime((group as any).blockStartTime)} – ${formatTime((group as any).blockEndTime)}. Cannot start outside the scheduled window.`,
+        });
+      }
+    }
+
     const existing = await getActiveTeachingSession(teacherId);
     if (existing) {
       await endTeachingSession(existing.id);
@@ -69,14 +94,23 @@ router.post("/end", ...auth, async (req, res, next) => {
     const session = await endTeachingSession(existing.id);
     res.json({ session });
 
-    // If this was a scheduled class, mark it as skipped so scheduler doesn't restart it today
+    // If this was a scheduled class and we're PAST the scheduled end time,
+    // mark as skipped so the scheduler doesn't restart it today.
+    // If ended DURING the window, don't skip — teacher might restart (accidental end).
     const group = await getGroupById(existing.groupId);
-    if (group && (group as any).scheduleEnabled) {
+    if (group && (group as any).scheduleEnabled && (group as any).blockEndTime) {
       try {
         const school = await getSchoolById(group.schoolId);
         const tz = school?.schoolTimezone || "America/New_York";
-        const todayDate = new Date().toLocaleDateString("en-CA", { timeZone: tz });
-        await setScheduleSkippedDate(group.id, todayDate);
+        const now = new Date();
+        const currentTimeHHMM = now.toLocaleString("en-US", {
+          timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false,
+        }).replace(/^24:/, "00:");
+        // Only skip if we're past the scheduled end time (class ran its full window)
+        if (currentTimeHHMM >= (group as any).blockEndTime) {
+          const todayDate = now.toLocaleDateString("en-CA", { timeZone: tz });
+          await setScheduleSkippedDate(group.id, todayDate);
+        }
       } catch (err) {
         console.warn("[Sessions] Failed to set scheduleSkippedDate:", err);
       }

@@ -501,11 +501,17 @@ async function autoStartClassBlocks() {
       const todayDate = now.toLocaleDateString("en-CA", { timeZone: tz });
 
       const readyGroups = await getScheduledGroupsReadyToStart(school.id, currentTimeHHMM, todayDate);
+      if (readyGroups.length > 0) {
+        console.log(`[ClassPilot] Auto-start check: ${readyGroups.length} group(s) ready at ${currentTimeHHMM} ${tz}`);
+      }
 
       for (const group of readyGroups) {
         // Check if session already exists for this group
         const alreadyActive = await hasActiveSessionForGroup(group.id);
-        if (alreadyActive) continue;
+        if (alreadyActive) {
+          console.log(`[ClassPilot] Skipping "${group.name}" — session already active`);
+          continue;
+        }
 
         // End any existing active session for this teacher
         const existingSession = await getActiveTeachingSession(group.teacherId);
