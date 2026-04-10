@@ -162,6 +162,8 @@ router.patch("/:id", ...auth, async (req, res, next) => {
         }
         data.blockStartTime = blockStartTime;
         data.blockEndTime = blockEndTime;
+        // Clear skip when schedule times are updated — allows auto-start with new times
+        data.scheduleSkippedDate = null;
       } else {
         data.blockStartTime = null;
         data.blockEndTime = null;
