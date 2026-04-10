@@ -648,10 +648,17 @@ router.get("/admin/analytics/by-teacher", ...schoolAuth, requireRole("admin"), a
   try {
     const schoolId = res.locals.schoolId!;
     const period = (req.query.period as string) || "7d";
-    const days = period === "30d" ? 30 : 7;
 
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - days);
+    let cutoff: Date;
+    if (period === "today") {
+      // Midnight today UTC — resets every day
+      cutoff = new Date();
+      cutoff.setUTCHours(0, 0, 0, 0);
+    } else {
+      const days = period === "30d" ? 30 : 7;
+      cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - days);
+    }
 
     // Get teachers with their session stats
     const teacherStats = await db
@@ -697,12 +704,17 @@ router.get("/admin/analytics/by-group", ...schoolAuth, requireRole("admin"), asy
   try {
     const schoolId = res.locals.schoolId!;
     const period = (req.query.period as string) || "7d";
-    const days = period === "30d" ? 30 : 7;
 
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - days);
-    const startDate = cutoff.toISOString().slice(0, 10);
+    let startDate: string;
     const endDate = new Date().toISOString().slice(0, 10);
+    if (period === "today") {
+      startDate = endDate; // Same day — daily_usage won't have it, live heartbeats will
+    } else {
+      const days = period === "30d" ? 30 : 7;
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - days);
+      startDate = cutoff.toISOString().slice(0, 10);
+    }
 
     // Get rolled-up daily_usage for past days
     const rows = await db
