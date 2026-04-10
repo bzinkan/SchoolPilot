@@ -47,9 +47,8 @@ router.post("/start", ...auth, async (req, res, next) => {
     }
 
     // Block manual start if scheduling is enabled and current time is OUTSIDE the scheduled window
-    // Only applies to the primary teacher — co-teachers (substitutes) can start anytime
-    const isPrimaryTeacher = group.teacherId === teacherId;
-    if (isPrimaryTeacher && (group as any).scheduleEnabled && (group as any).blockStartTime && (group as any).blockEndTime) {
+    // Applies to ALL teachers (primary and co-teachers) — same schedule boundaries for everyone
+    if ((group as any).scheduleEnabled && (group as any).blockStartTime && (group as any).blockEndTime) {
       const school = await getSchoolById(group.schoolId);
       const tz = school?.schoolTimezone || "America/New_York";
       const now = new Date();
