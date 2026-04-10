@@ -14,12 +14,13 @@ import {
   getUserById,
 } from "./storage.js";
 import { buildAndSendSessionSummary } from "../routes/classpilot/sessions.js";
+import { broadcastToTeachersLocal } from "../realtime/ws-broadcast.js";
 import db from "../db.js";
 import { schedulerDb, schedulerPool } from "./schedulerDb.js";
 import { schools, productLicenses } from "../schema/core.js";
-import { heartbeats, dailyUsage } from "../schema/classpilot.js";
+import { heartbeats, dailyUsage, teachingSessions, groups } from "../schema/classpilot.js";
 import { dismissalSessions } from "../schema/gopilot.js";
-import { eq, and, isNotNull, sql } from "drizzle-orm";
+import { eq, and, isNotNull, isNull, sql } from "drizzle-orm";
 
 let io: SocketServer | null = null;
 let intervalId: NodeJS.Timeout | null = null;
@@ -57,6 +58,7 @@ export function startScheduler(socketIo: SocketServer) {
   intervalId = setInterval(() => {
     checkDismissalTimes();
     autoCompleteStaleGoPilotSessions();
+    autoEndStaleClassPilotSessions();
     autoStartClassBlocks();
     autoEndClassBlocks();
     // Fire and forget — runs through the mutex and dedicated pool
@@ -167,6 +169,99 @@ async function autoCompleteStaleGoPilotSessions() {
   } catch (err) {
     console.error("[GoPilot] Failed to auto-complete stale sessions:", err);
     errorMonitor.trackError("scheduler_failure", err as Error, { job: "autoCompleteStaleGoPilotSessions" });
+  }
+}
+
+// ============================================================================
+// ClassPilot - Auto-end stale teaching sessions
+// Safety net for teachers who forget to click "End Class" without scheduling.
+// Two triggers: (1) after school hours + running ≥ 1h, (2) hard 12-hour cap.
+// ============================================================================
+
+const MAX_SESSION_HOURS = 12;
+const MIN_AGE_FOR_AFTER_HOURS_END = 1; // hours — don't cut off teachers who just started
+
+async function autoEndStaleClassPilotSessions() {
+  try {
+    // Find all open teaching sessions across all schools
+    const openSessions = await db
+      .select({
+        sessionId: teachingSessions.id,
+        teacherId: teachingSessions.teacherId,
+        groupId: teachingSessions.groupId,
+        startTime: teachingSessions.startTime,
+        schoolId: schools.id,
+        schoolTimezone: schools.schoolTimezone,
+      })
+      .from(teachingSessions)
+      .innerJoin(groups, eq(teachingSessions.groupId, groups.id))
+      .innerJoin(schools, eq(groups.schoolId, schools.id))
+      .where(isNull(teachingSessions.endTime));
+
+    if (openSessions.length === 0) return;
+
+    const now = new Date();
+
+    for (const s of openSessions) {
+      const ageMs = now.getTime() - new Date(s.startTime).getTime();
+      const ageHours = ageMs / (1000 * 60 * 60);
+
+      let shouldEnd = false;
+      let reason = "";
+
+      // Hard cap: 12 hours regardless of anything
+      if (ageHours >= MAX_SESSION_HOURS) {
+        shouldEnd = true;
+        reason = `exceeded ${MAX_SESSION_HOURS}-hour maximum`;
+      } else if (ageHours >= MIN_AGE_FOR_AFTER_HOURS_END) {
+        // After school hours check
+        try {
+          const settings = await getSettingsForSchool(s.schoolId);
+          if (settings?.enableTrackingHours && settings.trackingEndTime) {
+            const tz = s.schoolTimezone || "America/New_York";
+            const localTimeStr = now.toLocaleString("en-US", {
+              timeZone: tz,
+              hour: "2-digit",
+              minute: "2-digit",
+              hour12: false,
+            }).replace(/^24:/, "00:");
+            if (localTimeStr >= settings.trackingEndTime) {
+              shouldEnd = true;
+              reason = "school hours ended";
+            }
+          }
+        } catch { /* settings lookup failed, skip after-hours check */ }
+      }
+
+      if (shouldEnd) {
+        const session = await endTeachingSession(s.sessionId);
+        console.log(`[ClassPilot] Auto-ended stale session ${s.sessionId} for teacher ${s.teacherId} (${reason}, age: ${ageHours.toFixed(1)}h)`);
+
+        // Send session summary email (same as manual/scheduled end)
+        if (session?.startTime && session?.endTime) {
+          const teacher = await getUserById(s.teacherId);
+          if (teacher) {
+            buildAndSendSessionSummary(session, {
+              email: teacher.email,
+              firstName: (teacher as any).firstName,
+              lastName: (teacher as any).lastName,
+            }).catch((err) =>
+              console.error("[ClassPilot] Stale session summary email failed:", err)
+            );
+          }
+        }
+
+        // Notify teacher dashboard
+        broadcastToTeachersLocal(s.schoolId, {
+          type: "session-ended",
+          sessionId: s.sessionId,
+          reason: "auto-ended",
+        });
+      }
+    }
+  } catch (err) {
+    console.error("[ClassPilot] Auto-end stale sessions error:", err);
+    errorMonitor.trackError("scheduler_failure", err as Error, { job: "autoEndStaleClassPilotSessions" });
   }
 }
 
