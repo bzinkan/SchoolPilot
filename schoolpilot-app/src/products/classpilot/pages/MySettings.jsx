@@ -510,9 +510,6 @@ export default function MySettings() {
                         <div className="flex-1">
                           <div className="flex items-center gap-2 mb-1">
                             <h3 className="font-semibold">{fp.flightPathName}</h3>
-                            {fp.teacherId && (
-                              <Badge variant="secondary" className="text-xs">Personal</Badge>
-                            )}
                           </div>
                           {fp.description && (
                             <p className="text-sm text-muted-foreground mb-2">{fp.description}</p>
