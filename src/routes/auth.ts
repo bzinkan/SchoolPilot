@@ -18,6 +18,7 @@ import {
 } from "../services/storage.js";
 import { authenticate } from "../middleware/authenticate.js";
 import { authLimiter } from "../middleware/rateLimiter.js";
+import { sendEmail } from "../services/email.js";
 
 const router = Router();
 
@@ -154,6 +155,7 @@ router.post("/register", authLimiter, async (req, res, next) => {
       // Admin registration: create a new school
       school = await createSchool({
         name: schoolName,
+        domain: email.split("@")[1]?.toLowerCase() || null,
         status: "trial",
         planTier: "trial",
         schoolTimezone: timezone || "America/New_York",
@@ -164,6 +166,18 @@ router.post("/register", authLimiter, async (req, res, next) => {
         schoolId: school.id,
         role: "admin",
       });
+
+      // Notify super admin of new school registration
+      sendEmail({
+        to: "support@school-pilot.net",
+        subject: `New School Registration: ${schoolName}`,
+        html: `<h3>New School Registered</h3>
+          <p><strong>School:</strong> ${schoolName}</p>
+          <p><strong>Admin:</strong> ${email}</p>
+          <p><strong>Domain:</strong> ${email.split("@")[1] || "N/A"}</p>
+          <p><strong>Time:</strong> ${new Date().toLocaleString("en-US", { timeZone: "America/New_York" })}</p>
+          <p><a href="https://school-pilot.net/super-admin">View in Super Admin Dashboard</a></p>`,
+      }).catch(() => { /* non-blocking */ });
 
       req.session.userId = user.id;
       req.session.email = user.email;
