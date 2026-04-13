@@ -930,28 +930,6 @@ export default function ClassPilotLanding() {
             </p>
           </div>
 
-          <div>
-            <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '20px', letterSpacing: '0.5px', color: '#f8fafc' }}>Product</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <a href="/products/passpilot" style={{ color: '#64748b', textDecoration: 'none', fontSize: '14px' }}>PassPilot</a>
-              <a href="/products/gopilot" style={{ color: '#64748b', textDecoration: 'none', fontSize: '14px' }}>GoPilot</a>
-            </div>
-          </div>
-
-          <div>
-            <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '20px', letterSpacing: '0.5px', color: '#f8fafc' }}>Resources</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <a href="mailto:info@school-pilot.net" style={{ color: '#64748b', textDecoration: 'none', fontSize: '14px' }}>Contact Us</a>
-            </div>
-          </div>
-
-          <div>
-            <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '20px', letterSpacing: '0.5px', color: '#f8fafc' }}>Legal</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <a href="/privacy" style={{ color: '#64748b', textDecoration: 'none', fontSize: '14px' }}>Privacy Policy</a>
-              <a href="/terms" style={{ color: '#64748b', textDecoration: 'none', fontSize: '14px' }}>Terms of Service</a>
-            </div>
-          </div>
         </div>
 
         <div style={{
