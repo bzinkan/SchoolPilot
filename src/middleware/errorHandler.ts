@@ -6,13 +6,20 @@ export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
 
   // Track in error monitor for alerting
   const status = err.status || err.statusCode || 500;
+  const errMsg = String(err?.message || err);
+
+  // Ignore client-side network noise — not actionable server errors:
+  // - "request aborted" = client disconnected mid-request (WiFi drop, sleep)
+  // - "ECONNRESET" / "socket hang up" = transient TCP issues
+  const isClientNetworkNoise = /request aborted|ECONNRESET|socket hang up|aborted/i.test(errMsg);
+
   if (status >= 500) {
     errorMonitor.trackError("api_error", err, {
       method: req.method,
       path: req.originalUrl,
       userId: (req as any).authUser?.id,
     });
-  } else if (status >= 400) {
+  } else if (status >= 400 && !isClientNetworkNoise) {
     errorMonitor.trackError("client_error", err, {
       method: req.method,
       path: req.originalUrl,
