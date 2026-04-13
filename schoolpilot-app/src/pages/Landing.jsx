@@ -456,7 +456,11 @@ export default function SchoolpilotLanding() {
             <a href="/terms" style={{ color: "#64748b", textDecoration: "none", fontSize: 14 }}>Terms</a>
             <a href="/privacy" style={{ color: "#64748b", textDecoration: "none", fontSize: 14 }}>Privacy</a>
             <a href="/ai-transparency" style={{ color: "#64748b", textDecoration: "none", fontSize: 14 }}>AI Transparency</a>
-            <a href="mailto:hello@school-pilot.net" style={{ color: "#64748b", textDecoration: "none", fontSize: 14 }}>Contact</a>
+          </div>
+
+          <div style={{ textAlign: "center", color: "#94a3b8", fontSize: 13, lineHeight: 1.7 }}>
+            <div style={{ color: "#cbd5e1", fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Contact</div>
+            <a href="mailto:hello@school-pilot.net" style={{ color: "#94a3b8", textDecoration: "none" }}>hello@school-pilot.net</a>
           </div>
 
           <p style={{ color: "#475569", fontSize: 13 }}>
