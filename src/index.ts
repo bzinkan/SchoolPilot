@@ -220,6 +220,37 @@ import { pool } from "./db.js";
     console.warn("[migration] heartbeats AI classification migration skipped:", (err as Error).message);
   }
 
+  // Security events table — breach detection monitor findings
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS security_events (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        detected_at TIMESTAMP NOT NULL DEFAULT now(),
+        event_type TEXT NOT NULL,
+        severity TEXT NOT NULL,
+        school_id TEXT,
+        user_id TEXT,
+        user_email TEXT,
+        ip_address TEXT,
+        summary TEXT NOT NULL,
+        details JSONB,
+        status TEXT NOT NULL DEFAULT 'open',
+        resolved_at TIMESTAMP,
+        resolved_by TEXT,
+        resolution_notes TEXT,
+        alert_sent BOOLEAN NOT NULL DEFAULT false
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS security_events_detected_at_idx ON security_events (detected_at DESC)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS security_events_event_type_idx ON security_events (event_type)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS security_events_severity_idx ON security_events (severity)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS security_events_status_idx ON security_events (status)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS security_events_school_id_idx ON security_events (school_id)`);
+    console.log("[migration] security_events table ready");
+  } catch (err) {
+    console.warn("[migration] security_events migration skipped:", (err as Error).message);
+  }
+
   // One-time: update super-admin email alias in users + audit_logs
   try {
     const OLD_EMAIL = "bzinkan@school-pilot.net";

@@ -173,6 +173,49 @@ export type AuditLog = typeof auditLogs.$inferSelect;
 export type InsertAuditLog = typeof auditLogs.$inferInsert;
 
 // ============================================================================
+// Security Events - Breach detection monitor findings
+// Populated by the security monitor (runs every 5 min). Any detection here
+// should be reviewed by a human — automatic actions are intentionally limited.
+// ============================================================================
+export const securityEvents = pgTable(
+  "security_events",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    // Detection metadata
+    detectedAt: timestamp("detected_at").notNull().default(sql`now()`),
+    eventType: text("event_type").notNull(),
+    // "failed_auth_spike" | "cross_school_access" | "bulk_export" |
+    // "off_hours_admin" | "pii_in_error_log" | "unusual_student_query" | "rate_limit_abuse"
+    severity: text("severity").notNull(), // "low" | "medium" | "high" | "critical"
+    // What triggered it
+    schoolId: text("school_id"),
+    userId: text("user_id"),
+    userEmail: text("user_email"),
+    ipAddress: text("ip_address"),
+    // Evidence / context
+    summary: text("summary").notNull(),
+    details: jsonb("details"), // { count, threshold, sampleQuery, etc. }
+    // Response tracking
+    status: text("status").notNull().default("open"), // open | investigating | resolved | false_positive
+    resolvedAt: timestamp("resolved_at"),
+    resolvedBy: text("resolved_by"),
+    resolutionNotes: text("resolution_notes"),
+    // Alerting state
+    alertSent: boolean("alert_sent").notNull().default(false),
+  },
+  (table) => [
+    index("security_events_detected_at_idx").on(table.detectedAt),
+    index("security_events_event_type_idx").on(table.eventType),
+    index("security_events_severity_idx").on(table.severity),
+    index("security_events_status_idx").on(table.status),
+    index("security_events_school_id_idx").on(table.schoolId),
+  ]
+);
+
+export type SecurityEvent = typeof securityEvents.$inferSelect;
+export type InsertSecurityEvent = typeof securityEvents.$inferInsert;
+
+// ============================================================================
 // Trial Requests - Unified (superset of all three projects)
 // ============================================================================
 export const trialRequests = pgTable(

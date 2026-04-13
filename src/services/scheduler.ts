@@ -15,6 +15,7 @@ import {
 } from "./storage.js";
 import { buildAndSendSessionSummary } from "../routes/classpilot/sessions.js";
 import { broadcastToTeachersLocal } from "../realtime/ws-broadcast.js";
+import { runSecurityChecks } from "./securityMonitor.js";
 import db from "../db.js";
 import { schedulerDb, schedulerPool } from "./schedulerDb.js";
 import { schools, productLicenses } from "../schema/core.js";
@@ -52,15 +53,24 @@ async function runHeavyJobsSerially() {
   }
 }
 
+let tickCount = 0;
+
 export function startScheduler(socketIo: SocketServer) {
   io = socketIo;
   console.log("Dismissal scheduler started (checking every 60s)");
   intervalId = setInterval(() => {
+    tickCount++;
     checkDismissalTimes();
     autoCompleteStaleGoPilotSessions();
     autoEndStaleClassPilotSessions();
     autoStartClassBlocks();
     autoEndClassBlocks();
+    // Security monitor: run every 5 minutes (every 5th tick) — rule-based breach detection
+    if (tickCount % 5 === 0) {
+      runSecurityChecks().catch((err) =>
+        console.error("[Scheduler] Security monitor error:", err)
+      );
+    }
     // Fire and forget — runs through the mutex and dedicated pool
     runHeavyJobsSerially().catch((err) =>
       console.error("[Scheduler] Heavy job error:", err)
