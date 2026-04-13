@@ -28,7 +28,7 @@ export default function PrivacyPolicy() {
       {/* Content */}
       <div className="container mx-auto px-4 py-12 max-w-4xl">
         <h1 className="text-4xl font-bold text-slate-900 mb-8">Privacy Policy</h1>
-        <p className="text-slate-600 mb-8">Last updated: January 4, 2025</p>
+        <p className="text-slate-600 mb-8">Last updated: April 12, 2026</p>
 
         <div className="prose prose-slate max-w-none space-y-8">
           <section>
@@ -108,6 +108,22 @@ export default function PrivacyPolicy() {
             <p className="text-slate-700 leading-relaxed mt-4">
               Schools may request complete data deletion at any time by contacting us at privacy@school-pilot.net.
             </p>
+            <h3 className="text-xl font-medium text-slate-800 mb-3 mt-6">4.1 Data Return and Destruction on Contract Termination</h3>
+            <p className="text-slate-700 leading-relaxed">
+              Upon termination or expiration of a school's contract with Schoolpilot, all student personally
+              identifiable information (PII) and education records will be either <strong>returned to the school
+              in a standard export format or permanently destroyed</strong> at the school's written direction,
+              within <strong>thirty (30) days</strong> of the termination date. Schools may request a data export
+              at any time by contacting privacy@school-pilot.net. We will provide written confirmation of
+              destruction upon completion.
+            </p>
+            <h3 className="text-xl font-medium text-slate-800 mb-3 mt-6">4.2 No Data Mining, No Advertising</h3>
+            <p className="text-slate-700 leading-relaxed">
+              Schoolpilot <strong>does not use student data for commercial purposes</strong>. Specifically,
+              we will never: (a) use student PII for behavioral targeting, (b) use student PII to serve targeted
+              advertisements, (c) build user profiles for non-educational purposes, (d) sell, rent, or lease
+              student data to third parties, or (e) use student data to train third-party AI/ML models.
+            </p>
           </section>
 
           <section>
@@ -175,23 +191,75 @@ export default function PrivacyPolicy() {
           </section>
 
           <section>
-            <h2 className="text-2xl font-semibold text-slate-900 mb-4">10. Your Rights</h2>
+            <h2 className="text-2xl font-semibold text-slate-900 mb-4">10. Parental Rights: Access, Amendment, and Deletion</h2>
             <p className="text-slate-700 leading-relaxed mb-4">
-              Parents, students (where applicable), and school personnel have the right to:
+              Under FERPA, parents (and eligible students 18+) have the right to inspect, amend, and request
+              deletion of their child's education records. Because Schoolpilot acts as a "school official" under
+              the direct control of the school, these requests are coordinated through the school, but we commit
+              to the following response standards:
             </p>
-            <ul className="list-disc pl-6 text-slate-700 space-y-2">
-              <li>Access personal information we hold</li>
-              <li>Request correction of inaccurate data</li>
-              <li>Request deletion of data (subject to legal requirements)</li>
-              <li>Opt out of non-essential communications</li>
-            </ul>
+            <h3 className="text-xl font-medium text-slate-800 mb-3">10.1 Right of Access (45-Day Response)</h3>
+            <p className="text-slate-700 leading-relaxed mb-4">
+              Upon a verified request from a school on behalf of a parent, Schoolpilot will provide a complete
+              copy of the student's records held in our platform within <strong>forty-five (45) days</strong> of
+              the request. Records will be provided in a commonly readable format (CSV, PDF, or JSON).
+            </p>
+            <h3 className="text-xl font-medium text-slate-800 mb-3">10.2 Right to Amend / Correct</h3>
+            <p className="text-slate-700 leading-relaxed mb-4">
+              Parents may request correction of inaccurate information. The school submits the correction request
+              to privacy@school-pilot.net. We will correct verified inaccuracies within <strong>fifteen (15)
+              business days</strong>. If a correction is declined by the school, the parent retains the right to
+              a hearing under FERPA; Schoolpilot will comply with any resulting school directive.
+            </p>
+            <h3 className="text-xl font-medium text-slate-800 mb-3">10.3 Right to Deletion</h3>
+            <p className="text-slate-700 leading-relaxed mb-4">
+              Parents may request deletion of data not required for the school's legitimate educational interest.
+              Schoolpilot will honor verified deletion requests submitted by the school within
+              <strong> thirty (30) days</strong>, subject to legal retention requirements.
+            </p>
             <p className="text-slate-700 leading-relaxed mt-4">
               To exercise these rights, contact your school administrator or email us at privacy@school-pilot.net.
             </p>
           </section>
 
           <section>
-            <h2 className="text-2xl font-semibold text-slate-900 mb-4">11. Changes to This Policy</h2>
+            <h2 className="text-2xl font-semibold text-slate-900 mb-4">11. Data Breach Notification</h2>
+            <p className="text-slate-700 leading-relaxed mb-4">
+              Schoolpilot maintains an incident response program and commits to the following breach notification
+              standards:
+            </p>
+            <ul className="list-disc pl-6 text-slate-700 space-y-2">
+              <li>
+                <strong>Discovery to Initial Notification:</strong> Upon discovery of any unauthorized access,
+                acquisition, or disclosure of student personally identifiable information, Schoolpilot will notify
+                the affected school's designated data contact within <strong>seventy-two (72) hours</strong>.
+              </li>
+              <li>
+                <strong>Notification Contents:</strong> The initial notice will include, to the extent known:
+                (a) a description of the incident, (b) the types of information involved, (c) the approximate
+                number of affected individuals, (d) steps taken to contain the incident, and (e) recommended
+                protective actions.
+              </li>
+              <li>
+                <strong>Follow-up Report:</strong> A detailed post-incident report will be provided to affected
+                schools within <strong>thirty (30) days</strong>, including root cause analysis and remediation steps.
+              </li>
+              <li>
+                <strong>Regulatory Notifications:</strong> Schoolpilot will cooperate with the school on any
+                required state or federal notifications (including state data breach laws and FERPA).
+              </li>
+              <li>
+                <strong>Cost of Notification:</strong> If the breach is caused by Schoolpilot's negligence,
+                Schoolpilot will bear reasonable costs of required parent notifications.
+              </li>
+            </ul>
+            <p className="text-slate-700 leading-relaxed mt-4">
+              To report a suspected security incident, contact <strong>security@school-pilot.net</strong> immediately.
+            </p>
+          </section>
+
+          <section>
+            <h2 className="text-2xl font-semibold text-slate-900 mb-4">12. Changes to This Policy</h2>
             <p className="text-slate-700 leading-relaxed">
               We may update this Privacy Policy from time to time. We will notify schools of significant
               changes via email and update the "Last updated" date at the top of this page. Continued use
@@ -200,7 +268,7 @@ export default function PrivacyPolicy() {
           </section>
 
           <section>
-            <h2 className="text-2xl font-semibold text-slate-900 mb-4">12. Contact Us</h2>
+            <h2 className="text-2xl font-semibold text-slate-900 mb-4">13. Contact Us</h2>
             <p className="text-slate-700 leading-relaxed">
               If you have questions about this Privacy Policy or our data practices, please contact us:
             </p>
