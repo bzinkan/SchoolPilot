@@ -240,7 +240,7 @@ export default function GoPilotLanding() {
             </div>
 
             <p className="text-gray-400 text-sm mb-6">
-              Safe, simple school dismissal management for K-8 schools.
+              Safe, simple school dismissal management for K-12 schools.
             </p>
 
             <div className="flex justify-center gap-6 text-sm mb-6">
@@ -251,10 +251,10 @@ export default function GoPilotLanding() {
 
             <div className="mb-8">
               <a
-                href="mailto:info@school-pilot.net"
+                href="mailto:hello@school-pilot.net"
                 className="text-indigo-400 hover:text-indigo-300"
               >
-                info@school-pilot.net
+                hello@school-pilot.net
               </a>
             </div>
 

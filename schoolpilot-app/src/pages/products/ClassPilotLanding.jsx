@@ -902,48 +902,36 @@ export default function ClassPilotLanding() {
       </section>
 
       {/* Footer */}
-      <footer style={{
-        background: '#020617',
-        color: 'white',
-        padding: '80px 48px 40px',
-      }}>
-        <div className="cp-footer-grid" style={{
-          maxWidth: '1200px',
-          margin: '0 auto',
-          display: 'grid',
-          gridTemplateColumns: '2fr 1fr 1fr 1fr',
-          gap: '60px',
-          paddingBottom: '60px',
-          borderBottom: '1px solid #1e293b',
-        }}>
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
-              <svg width="36" height="36" viewBox="0 0 48 48" fill="none">
-                <rect width="48" height="48" rx="12" fill="#fbbf24"/>
-                <path d="M12 24L36 14L30 36L24 28L36 14" stroke="#0f172a" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
-                <path d="M24 28L26 34" stroke="#0f172a" strokeWidth="2.5" strokeLinecap="round"/>
+      <footer style={{ background: '#111827', color: 'white', padding: '48px 16px' }}>
+        <div style={{ maxWidth: '1200px', margin: '0 auto', textAlign: 'center' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', marginBottom: '24px' }}>
+            <div style={{ width: '32px', height: '32px', background: '#fbbf24', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0f172a" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M6 12L18 7L15 18L12 14L18 7" />
               </svg>
-              <span style={{ fontSize: '20px', fontWeight: 600 }}>ClassPilot</span>
             </div>
-            <p style={{ fontSize: '14px', color: '#64748b', lineHeight: 1.7, maxWidth: '280px' }}>
-              Real-time classroom monitoring for modern education. Simple, secure, and privacy-first.
-            </p>
+            <span style={{ fontSize: '20px', fontWeight: 700 }}>ClassPilot</span>
           </div>
 
-        </div>
+          <p style={{ fontSize: '14px', color: '#9ca3af', marginBottom: '24px' }}>
+            Real-time classroom monitoring for K-12 schools.
+          </p>
 
-        <div style={{
-          maxWidth: '1200px',
-          margin: '0 auto',
-          paddingTop: '32px',
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          flexWrap: 'wrap',
-          gap: '16px',
-        }}>
-          <div style={{ fontSize: '14px', color: '#475569' }}>&copy; {new Date().getFullYear()} ClassPilot. All rights reserved.</div>
-          <div style={{ fontSize: '14px', color: '#475569' }}>info@school-pilot.net</div>
+          <div style={{ display: 'flex', justifyContent: 'center', gap: '24px', fontSize: '14px', marginBottom: '24px', flexWrap: 'wrap' }}>
+            <a href="/privacy" style={{ color: '#9ca3af', textDecoration: 'none' }}>Privacy Policy</a>
+            <a href="/terms" style={{ color: '#9ca3af', textDecoration: 'none' }}>Terms of Service</a>
+            <a href="/" style={{ color: '#9ca3af', textDecoration: 'none' }}>Schoolpilot Home</a>
+          </div>
+
+          <div style={{ marginBottom: '32px' }}>
+            <a href="mailto:hello@school-pilot.net" style={{ color: '#fbbf24', textDecoration: 'none' }}>
+              hello@school-pilot.net
+            </a>
+          </div>
+
+          <div style={{ borderTop: '1px solid #1f2937', paddingTop: '32px' }}>
+            <p style={{ fontSize: '14px', color: '#9ca3af', margin: 0 }}>&copy; {new Date().getFullYear()} ClassPilot. All rights reserved.</p>
+          </div>
         </div>
       </footer>
     </div>

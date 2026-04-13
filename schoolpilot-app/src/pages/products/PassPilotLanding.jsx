@@ -143,15 +143,41 @@ export default function PassPilotLanding() {
       </section>
 
       {/* Footer */}
-      <footer className="border-t py-8 bg-white">
-        <div className="max-w-6xl mx-auto px-4 flex flex-col md:flex-row items-center justify-between gap-4">
-          <p className="text-sm text-slate-500">
-            &copy; {new Date().getFullYear()} PassPilot. All rights reserved.
-          </p>
-          <div className="flex gap-6 text-sm">
-            <a href="/privacy" className="text-slate-500 hover:text-blue-600 transition-colors">Privacy Policy</a>
-            <a href="/terms" className="text-slate-500 hover:text-blue-600 transition-colors">Terms of Service</a>
-            <a href="/" className="text-slate-500 hover:text-blue-600 transition-colors">Schoolpilot Home</a>
+      <footer className="bg-gray-900 text-white py-12">
+        <div className="container mx-auto px-4">
+          <div className="text-center">
+            <div className="flex items-center justify-center gap-2 mb-6">
+              <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 11l3 3L22 4"/>
+                  <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
+                </svg>
+              </div>
+              <span className="text-xl font-bold">PassPilot</span>
+            </div>
+
+            <p className="text-gray-400 text-sm mb-6">
+              Digital hall pass management for K-12 schools.
+            </p>
+
+            <div className="flex justify-center gap-6 text-sm mb-6">
+              <a href="/privacy" className="text-gray-400 hover:text-blue-400 transition-colors">Privacy Policy</a>
+              <a href="/terms" className="text-gray-400 hover:text-blue-400 transition-colors">Terms of Service</a>
+              <a href="/" className="text-gray-400 hover:text-blue-400 transition-colors">Schoolpilot Home</a>
+            </div>
+
+            <div className="mb-8">
+              <a
+                href="mailto:hello@school-pilot.net"
+                className="text-blue-400 hover:text-blue-300"
+              >
+                hello@school-pilot.net
+              </a>
+            </div>
+
+            <div className="border-t border-gray-800 pt-8">
+              <p className="text-sm text-gray-400">&copy; {new Date().getFullYear()} PassPilot. All rights reserved.</p>
+            </div>
           </div>
         </div>
       </footer>
