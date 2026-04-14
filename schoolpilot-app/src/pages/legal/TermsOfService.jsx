@@ -240,7 +240,7 @@ export default function TermsOfService() {
             <h2 className="text-2xl font-semibold text-slate-900 mb-4">17. Governing Law and Dispute Resolution</h2>
             <p className="text-slate-700 leading-relaxed mb-4">
               <strong>Governing Law.</strong> These Terms shall be governed by and construed in accordance
-              with the laws of the <strong>State of Delaware</strong>, without regard to its conflict of
+              with the laws of the <strong>State of Ohio</strong>, without regard to its conflict of
               law provisions. The United Nations Convention on Contracts for the International Sale of
               Goods does not apply.
             </p>
@@ -252,7 +252,7 @@ export default function TermsOfService() {
             <p className="text-slate-700 leading-relaxed mb-4">
               <strong>Binding Arbitration.</strong> Any dispute not resolved informally shall be resolved
               through final and binding arbitration administered by the American Arbitration Association
-              (AAA) under its Commercial Arbitration Rules. The arbitration shall take place in Delaware
+              (AAA) under its Commercial Arbitration Rules. The arbitration shall take place in Ohio
               (or remotely by mutual agreement). The arbitrator's decision shall be final and enforceable
               in any court of competent jurisdiction.
             </p>
