@@ -141,16 +141,36 @@ No base fees. Pure per-student pricing.
 - **Redis pub/sub** — Cross-instance message broadcasting for distributed deployments
 
 ### ClassPilot Data Pipeline
-1. **Heartbeats** — Chrome extension sends heartbeats every 10s to `/api/classpilot/heartbeat`. Stored in `heartbeats` table with studentId, schoolId, activeTabUrl, timestamp.
+1. **Heartbeats** — Chrome extension sends heartbeats every 10s to `/api/classpilot/heartbeat`. Stored in `heartbeats` table with studentId, schoolId, activeTabUrl, timestamp. Heartbeat handler caches `productLicenses` by schoolId (30min TTL) and only queries pending messages on the first heartbeat per device (WebSocket handles subsequent delivery). Reduces per-heartbeat DB queries from 7 to 5.
 2. **Daily usage rollup** — `scheduler.ts` runs `rollupDailyUsage()` hourly (hour-gated). For each school with ClassPilot license, aggregates yesterday's heartbeats into the `daily_usage` table (totalSeconds, heartbeatCount, topDomains JSONB, firstSeen/lastSeen). Uses upsert on `(studentId, date)` for idempotency.
-3. **Heartbeat purge** — `purgeExpiredHeartbeats()` runs hourly. Deletes heartbeats older than each school's `retentionHours` setting (default 720 = 30 days).
-4. **Auto-migration** — `index.ts` creates the `daily_usage` table with `CREATE TABLE IF NOT EXISTS` on startup (since production RDS is in a private VPC and can't be reached by `drizzle-kit push` directly).
+3. **Heartbeat purge** — `purgeExpiredHeartbeats()` runs at :30 past each hour (staggered from rollup). Deletes heartbeats in 5000-row batches using raw SQL (NO `.returning()` — that loads all IDs into memory). Deletes rows older than each school's `retentionHours` setting (default 720 = 30 days).
+4. **Auto-migration** — `index.ts` creates tables with `CREATE TABLE IF NOT EXISTS` on startup (since production RDS is in a private VPC and can't be reached by `drizzle-kit push` directly).
+5. **Scheduler isolation** — All heavy background jobs use `schedulerDb` from `src/services/schedulerDb.ts` (dedicated `pg.Pool` with `max: 3`), completely isolated from the main API pool (`max: 50`). Background jobs cannot starve API requests regardless of how long they take. When adding a new scheduled job, route it through `schedulerDb`, NOT the main `db` export.
+
+### Stale Session Auto-End (ClassPilot)
+`autoEndStaleClassPilotSessions()` in scheduler runs every 60s as a safety net for teachers who forget to end class:
+- **Hard 12-hour cap** on any open session
+- **After school hours**: if `trackingEndTime` passed AND session running ≥ 1 hour, auto-end
+- Sends same session summary email as manual end
+- Broadcasts `session-ended` to teacher dashboard
+
+### Auto-Schedule Window (ClassPilot Groups)
+Admin Class Management lets schools set `blockStartTime`/`blockEndTime` per group. When `scheduleEnabled = true`:
+- `autoStartClassBlocks()` creates a `teaching_session` at start time (primary teacher only)
+- `autoEndClassBlocks()` ends it at end time
+- **Manual start is BLOCKED outside the scheduled window** for all teachers (primary + co-teachers) — returns 403 with times shown
+- Manual end **during** the window does NOT set `scheduleSkippedDate` (teacher might restart accidentally)
+- Manual end **after** the window sets `scheduleSkippedDate = today` to prevent scheduler from restarting
+- Admin updating schedule times **clears** `scheduleSkippedDate` — required so stale skips from earlier ends don't block the new window
+
+### Security Monitor
+`src/services/securityMonitor.ts` runs every 5 minutes from the scheduler as a deterministic rule-based breach detector. Reads `audit_logs`, writes detections to `security_events` table, emails `security@school-pilot.net`. NEVER takes destructive action autonomously — read-only + alerting only. Current rules: failed auth spike, bulk student writes, off-hours admin burst, cross-school access. 30-minute dedup prevents alert spam. When adding rules, use `schedulerDb` and keep them deterministic (no LLM inference for security decisions). See `docs/WISP.md` for the Written Information Security Program this supports.
 
 ### Admin Analytics Endpoints
 All in `src/routes/compat.ts`, require admin role:
-- `GET /admin/analytics/summary?period=24h|7d|30d` — School-wide stats from `daily_usage`, hourly activity and top websites from `heartbeats`
-- `GET /admin/analytics/by-teacher?period=7d|30d` — Teacher session stats from `teaching_sessions` joined with `groups`
-- `GET /admin/analytics/by-group?period=7d|30d` — Per-class Chromebook usage from `daily_usage` joined with `groupStudents` → `groups` → `users`
+- `GET /admin/analytics/summary?period=24h|7d|30d` — School-wide stats from `daily_usage` + supplemental live `heartbeats` query for today (rollup only runs for yesterday, so today's activity must come from heartbeats directly)
+- `GET /admin/analytics/by-teacher?period=today|7d|30d` — Teacher session stats from `teaching_sessions`. Session times are clamped to the query window via `GREATEST(startTime, cutoff)` and `LEAST(endTime, NOW())` so an open session from yesterday doesn't inflate Today's total (e.g., "27h" on a 24h query)
+- `GET /admin/analytics/by-group?period=today|7d|30d` — Per-class Chromebook usage. Combines `daily_usage` (historical) + live `heartbeats` WHERE `timestamp::date = CURRENT_DATE` (today) so Class Usage reflects real-time activity. Active student count uses `MAX(rolled_up, live)` as a conservative dedup estimate.
 
 ### Frontend Product Pages
 Each product has its own header/navigation built into its pages (no shared shell wrapper). The unified app only provides routing, auth, and the landing page. Product pages are lazy-loaded via `React.lazy()`.
@@ -179,6 +199,13 @@ When a school has multiple products, priority order is: ClassPilot > PassPilot >
 - **Pending message delivery**: Backend includes undelivered messages in heartbeat response (`pendingMessages` field). Extension checks this on each heartbeat to recover messages missed during WebSocket disconnection.
 - **Screenshot pipeline**: Extension captures with `chrome.tabs.captureVisibleTab` (JPEG quality 50, ~30-50KB) every 30s → POST `/api/device/screenshot` → stored in Redis with **120s TTL** (must outlive both 30s capture interval AND 30s dashboard poll, with margin for jitter). Dashboard polls `GET /api/device/screenshot/:deviceId` every 30s. Extension also reports `screenshotHealth` diagnostics (lastSuccessAt, lastError, attempts, successes, alarmActive) in every heartbeat — visible on `/students-aggregated` for remote troubleshooting without console access.
 - **WebSocket reconnect for IDLE**: `connectWebSocket()` and `scheduleWsReconnect()` allow connections for both ACTIVE and IDLE tracking states. Only OFF blocks them. Otherwise students that go IDLE (180s no keyboard/mouse) and then lose their WebSocket can never reconnect, breaking all teacher FAB actions while heartbeats keep working.
+
+### Compliance & Legal Documents
+- **`docs/WISP.md`** — Written Information Security Program. Referenced by Privacy Policy for breach notification procedures. Provided to customers/assessors under NDA.
+- **Privacy Policy** (`schoolpilot-app/src/pages/legal/PrivacyPolicy.jsx`): FERPA School Official, COPPA, 45-day parent access, 72-hour breach notification, 30-day data return/destruction on contract end, no-data-mining clause.
+- **Terms of Service** (`schoolpilot-app/src/pages/legal/TermsOfService.jsx`): Ohio governing law, AAA arbitration (public school districts exempt), liability cap at fees paid in prior 12 months, DPA/SDPA/NDPA incorporation by reference.
+- **Entity**: Schoolpilot is an Ohio LLC. Use "Schoolpilot" in user-facing copy and "Schoolpilot LLC" in legal documents when the full legal name is required.
+- **iKeepSafe FERPA/COPPA certification**: demo parent accounts seeded in `seeds/005_demo_parents.ts` (parent1/2/3@lincoln.edu, password `Parent123!`) linked to students via `parent_student` table for assessor user-simulation testing.
 
 ### Student Identity Resolution (CRITICAL)
 The students table is shared across all 3 products. Several layers of identity resolution exist:
