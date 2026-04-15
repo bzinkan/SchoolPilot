@@ -192,3 +192,102 @@ Title: ${title || "Unknown"}`,
     return null;
   }
 }
+
+// ============================================================================
+// classifyEmail — Gmail safety classification (MailPilot)
+// ============================================================================
+export type EmailSafetyCategory = "self-harm" | "violence" | "sexual" | "drugs" | "bullying";
+
+export interface EmailClassification {
+  category: "educational" | "non-educational" | "unknown";
+  safetyAlert: EmailSafetyCategory | null;
+  bullying: boolean;
+  confidence: number; // 0-100
+  severity: "low" | "medium" | "high" | "critical";
+  reasoning: string;
+  classifiedAt: number;
+}
+
+const MAX_EMAIL_BODY_CHARS = 4000;
+
+/**
+ * Classify an email message for safety concerns in a K-12 school context.
+ * Covers self-harm, violence, sexual content, drug use, and bullying/harassment.
+ * Unlike classifyUrl, emails are NOT cached (each message is unique).
+ */
+export async function classifyEmail(input: {
+  subject?: string;
+  from: string;
+  to: string[];
+  body: string;
+  direction: "inbound" | "outbound";
+}): Promise<EmailClassification | null> {
+  if (!anthropic) return null;
+
+  const { subject = "", from, to, body, direction } = input;
+  const truncatedBody = body.length > MAX_EMAIL_BODY_CHARS
+    ? body.slice(0, MAX_EMAIL_BODY_CHARS) + "\n...[truncated]"
+    : body;
+
+  const prompt = `You are a K-12 student safety classifier reviewing a student's Gmail message. Classify for the following safety concerns:
+- self-harm: suicide ideation, self-injury, hopelessness
+- violence: threats of violence toward self or others, weapons, graphic violence
+- sexual: explicit sexual content, solicitation, grooming, sexting
+- drugs: drug use, sale, or acquisition (alcohol, cannabis, harder drugs)
+- bullying: harassment, cyberbullying, targeted insults, exclusion campaigns
+
+Respond ONLY with valid JSON, no other text:
+{
+  "category": "educational" | "non-educational" | "unknown",
+  "safetyAlert": "self-harm" | "violence" | "sexual" | "drugs" | "bullying" | null,
+  "bullying": boolean,
+  "confidence": 0-100,
+  "severity": "low" | "medium" | "high" | "critical",
+  "reasoning": "one short sentence on why (or why not) this was flagged"
+}
+
+Rules:
+- Do NOT flag normal peer conversation, academic content, or legitimate news/health topics.
+- "confidence" reflects how sure you are of the safetyAlert classification (high for clear cases, low if ambiguous).
+- "severity" reflects urgency: critical = imminent risk (explicit suicide plan, active violence threat); high = serious concern; medium = warrants review; low = borderline.
+- If safetyAlert is null, severity should be "low".
+- For outbound student-authored messages, weight threats/self-harm language more heavily (the student is expressing the content).
+- For inbound messages, flag predatory/grooming contact and adult-to-minor inappropriate content.
+
+Direction: ${direction}
+From: ${from}
+To: ${to.join(", ")}
+Subject: ${subject}
+Body:
+${truncatedBody}`;
+
+  try {
+    const response = await anthropic.messages.create({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 400,
+      messages: [{ role: "user", content: prompt }],
+    });
+
+    const text = response.content[0]?.type === "text" ? response.content[0].text.trim() : null;
+    if (!text) return null;
+
+    // Strip possible code-fence wrappers
+    const cleaned = text.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "");
+    const parsed = JSON.parse(cleaned);
+
+    return {
+      category: parsed.category === "educational" || parsed.category === "non-educational" ? parsed.category : "unknown",
+      safetyAlert: parsed.safetyAlert && ["self-harm", "violence", "sexual", "drugs", "bullying"].includes(parsed.safetyAlert)
+        ? parsed.safetyAlert
+        : null,
+      bullying: Boolean(parsed.bullying),
+      confidence: Math.max(0, Math.min(100, Number(parsed.confidence) || 0)),
+      severity: ["low", "medium", "high", "critical"].includes(parsed.severity) ? parsed.severity : "low",
+      reasoning: String(parsed.reasoning || "").slice(0, 500),
+      classifiedAt: Date.now(),
+    };
+  } catch (error) {
+    console.error("[AI Classification] classifyEmail error:", error);
+    return null;
+  }
+}

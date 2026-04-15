@@ -3,7 +3,7 @@ import { eq, and, inArray } from "drizzle-orm";
 import { schoolMemberships } from "../schema/core.js";
 import db from "../db.js";
 
-type Role = "admin" | "teacher" | "office_staff" | "parent";
+type Role = "admin" | "school_admin" | "teacher" | "office_staff" | "parent";
 
 /**
  * Role-based access control.

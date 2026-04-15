@@ -7,6 +7,7 @@ export default defineConfig({
     "./src/schema/passpilot.ts",
     "./src/schema/gopilot.ts",
     "./src/schema/classpilot.ts",
+    "./src/schema/mailpilot.ts",
     "./src/schema/shared.ts",
   ],
   out: "./migrations",

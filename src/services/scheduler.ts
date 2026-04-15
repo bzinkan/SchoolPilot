@@ -22,6 +22,12 @@ import { schools, productLicenses } from "../schema/core.js";
 import { heartbeats, dailyUsage, teachingSessions, groups } from "../schema/classpilot.js";
 import { dismissalSessions } from "../schema/gopilot.js";
 import { eq, and, isNotNull, isNull, sql } from "drizzle-orm";
+import {
+  getWatchesDueForRenewal,
+  upsertMailpilotWatch,
+  updateMailpilotWatchError,
+} from "./storage.js";
+import { startWatch, isMailpilotConfigured } from "./mailpilotGmail.js";
 
 let io: SocketServer | null = null;
 let intervalId: NodeJS.Timeout | null = null;
@@ -41,6 +47,7 @@ async function runHeavyJobsSerially() {
     if (currentHour !== lastRollupHour) {
       lastRollupHour = currentHour;
       await rollupDailyUsage();
+      await renewMailpilotWatches();
     }
     // Purge at 30min past the hour (staggered to avoid overlap with rollup)
     const currentMinute = new Date().getUTCMinutes();
@@ -602,5 +609,50 @@ async function autoEndClassBlocks() {
   } catch (err) {
     console.error("[ClassPilot] Auto-end class blocks error:", err);
     errorMonitor.trackError("scheduler_failure", err as Error, { job: "autoEndClassBlocks" });
+  }
+}
+
+// ============================================================================
+// MailPilot - Gmail watch renewal (watches expire after 7 days)
+// ============================================================================
+
+async function renewMailpilotWatches() {
+  if (!isMailpilotConfigured()) return;
+  try {
+    // Renew anything expiring within 24 hours
+    const dueForRenewal = await getWatchesDueForRenewal(24 * 60 * 60 * 1000);
+    if (dueForRenewal.length === 0) return;
+
+    console.log(`[MailPilot] Renewing ${dueForRenewal.length} Gmail watch(es)`);
+    let renewed = 0;
+    let failed = 0;
+    const concurrency = 5;
+    const queue = [...dueForRenewal];
+    async function worker() {
+      while (queue.length > 0) {
+        const w = queue.shift();
+        if (!w) continue;
+        try {
+          const result = await startWatch(w.studentEmail);
+          await upsertMailpilotWatch({
+            schoolId: w.schoolId,
+            studentId: w.studentId,
+            studentEmail: w.studentEmail,
+            historyId: result.historyId,
+            expiresAt: result.expiration,
+            status: "active",
+          });
+          renewed++;
+        } catch (err) {
+          failed++;
+          await updateMailpilotWatchError(w.id, (err as Error).message);
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: concurrency }, () => worker()));
+    console.log(`[MailPilot] Watch renewal: ${renewed} renewed, ${failed} failed`);
+  } catch (err) {
+    console.error("[MailPilot] renewMailpilotWatches error:", err);
+    errorMonitor.trackError("scheduler_failure", err as Error, { job: "renewMailpilotWatches" });
   }
 }

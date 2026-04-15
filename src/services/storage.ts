@@ -165,6 +165,16 @@ import {
   type TrialRequest,
   type InsertTrialRequest,
 } from "../schema/shared.js";
+import {
+  mailpilotWatches,
+  emailAlerts,
+  emailScanLog,
+  type MailpilotWatch,
+  type InsertMailpilotWatch,
+  type EmailAlert,
+  type InsertEmailAlert,
+  type InsertEmailScanLogEntry,
+} from "../schema/mailpilot.js";
 
 // ============================================================================
 // User operations
@@ -4081,3 +4091,262 @@ export async function getEffectiveDismissalTypes(
   return result;
 }
 
+
+// ============================================================================
+// MailPilot — Gmail watch + email alert queries
+// ============================================================================
+
+export async function upsertMailpilotWatch(
+  data: InsertMailpilotWatch
+): Promise<MailpilotWatch> {
+  const existing = await db
+    .select()
+    .from(mailpilotWatches)
+    .where(eq(mailpilotWatches.studentEmail, data.studentEmail))
+    .limit(1);
+
+  if (existing.length > 0) {
+    const [updated] = await db
+      .update(mailpilotWatches)
+      .set({
+        historyId: data.historyId ?? existing[0]!.historyId,
+        expiresAt: data.expiresAt,
+        lastRenewedAt: new Date(),
+        status: data.status ?? "active",
+        lastError: null,
+      })
+      .where(eq(mailpilotWatches.id, existing[0]!.id))
+      .returning();
+    return updated!;
+  }
+
+  const [inserted] = await db
+    .insert(mailpilotWatches)
+    .values(data)
+    .returning();
+  return inserted!;
+}
+
+export async function getMailpilotWatchByEmail(
+  studentEmail: string
+): Promise<MailpilotWatch | undefined> {
+  const [row] = await db
+    .select()
+    .from(mailpilotWatches)
+    .where(eq(mailpilotWatches.studentEmail, studentEmail.toLowerCase()))
+    .limit(1);
+  return row;
+}
+
+export async function getMailpilotWatchesBySchool(
+  schoolId: string
+): Promise<MailpilotWatch[]> {
+  return db
+    .select()
+    .from(mailpilotWatches)
+    .where(eq(mailpilotWatches.schoolId, schoolId))
+    .orderBy(asc(mailpilotWatches.studentEmail));
+}
+
+export async function getWatchesDueForRenewal(
+  withinMs: number
+): Promise<MailpilotWatch[]> {
+  const cutoff = new Date(Date.now() + withinMs);
+  return db
+    .select()
+    .from(mailpilotWatches)
+    .where(
+      and(
+        eq(mailpilotWatches.status, "active"),
+        sql`${mailpilotWatches.expiresAt} <= ${cutoff}`
+      )
+    );
+}
+
+export async function updateMailpilotWatchHistoryId(
+  id: string,
+  historyId: string,
+  lastPollAt: Date
+): Promise<void> {
+  await db
+    .update(mailpilotWatches)
+    .set({ historyId, lastPollAt })
+    .where(eq(mailpilotWatches.id, id));
+}
+
+export async function updateMailpilotWatchError(
+  id: string,
+  errorMessage: string,
+  status: "active" | "stopped" | "error" = "error"
+): Promise<void> {
+  await db
+    .update(mailpilotWatches)
+    .set({ status, lastError: errorMessage.slice(0, 500) })
+    .where(eq(mailpilotWatches.id, id));
+}
+
+export async function deleteMailpilotWatch(
+  studentEmail: string
+): Promise<void> {
+  await db
+    .delete(mailpilotWatches)
+    .where(eq(mailpilotWatches.studentEmail, studentEmail.toLowerCase()));
+}
+
+export async function createEmailAlert(
+  data: InsertEmailAlert
+): Promise<EmailAlert | undefined> {
+  try {
+    const [inserted] = await db
+      .insert(emailAlerts)
+      .values(data)
+      .returning();
+    return inserted;
+  } catch (err: any) {
+    // Duplicate gmail_message_id — already processed, ignore silently
+    if (err?.code === "23505" || /unique/i.test(err?.message || "")) return undefined;
+    throw err;
+  }
+}
+
+export async function listEmailAlertsForSchool(
+  schoolId: string,
+  options: {
+    limit?: number;
+    offset?: number;
+    reviewStatus?: "unreviewed" | "confirmed" | "dismissed" | "escalated" | "all";
+    severity?: string;
+    safetyAlert?: string;
+    studentId?: string;
+    since?: Date;
+  } = {}
+): Promise<EmailAlert[]> {
+  const limit = Math.min(options.limit ?? 50, 200);
+  const offset = options.offset ?? 0;
+
+  const conditions = [eq(emailAlerts.schoolId, schoolId)];
+  if (options.reviewStatus === "unreviewed") {
+    conditions.push(isNull(emailAlerts.reviewStatus));
+  } else if (options.reviewStatus && options.reviewStatus !== "all") {
+    conditions.push(eq(emailAlerts.reviewStatus, options.reviewStatus));
+  }
+  if (options.severity) conditions.push(eq(emailAlerts.severity, options.severity));
+  if (options.safetyAlert) conditions.push(eq(emailAlerts.safetyAlert, options.safetyAlert));
+  if (options.studentId) conditions.push(eq(emailAlerts.studentId, options.studentId));
+  if (options.since) conditions.push(sql`${emailAlerts.alertedAt} >= ${options.since}`);
+
+  return db
+    .select()
+    .from(emailAlerts)
+    .where(and(...conditions))
+    .orderBy(desc(emailAlerts.alertedAt))
+    .limit(limit)
+    .offset(offset);
+}
+
+export async function getEmailAlertById(id: string): Promise<EmailAlert | undefined> {
+  const [row] = await db
+    .select()
+    .from(emailAlerts)
+    .where(eq(emailAlerts.id, id))
+    .limit(1);
+  return row;
+}
+
+export async function updateEmailAlertReview(
+  id: string,
+  data: {
+    reviewStatus: "confirmed" | "dismissed" | "escalated";
+    reviewedBy: string;
+    reviewNote?: string;
+  }
+): Promise<EmailAlert | undefined> {
+  const [updated] = await db
+    .update(emailAlerts)
+    .set({
+      reviewStatus: data.reviewStatus,
+      reviewedBy: data.reviewedBy,
+      reviewNote: data.reviewNote || null,
+      reviewedAt: new Date(),
+    })
+    .where(eq(emailAlerts.id, id))
+    .returning();
+  return updated;
+}
+
+export async function getEmailAlertStats(schoolId: string, sinceDate: Date): Promise<{
+  total: number;
+  unreviewed: number;
+  byCategory: Record<string, number>;
+  bySeverity: Record<string, number>;
+}> {
+  const rows = await db
+    .select({
+      safetyAlert: emailAlerts.safetyAlert,
+      severity: emailAlerts.severity,
+      reviewStatus: emailAlerts.reviewStatus,
+    })
+    .from(emailAlerts)
+    .where(
+      and(
+        eq(emailAlerts.schoolId, schoolId),
+        sql`${emailAlerts.alertedAt} >= ${sinceDate}`
+      )
+    );
+
+  const byCategory: Record<string, number> = {};
+  const bySeverity: Record<string, number> = {};
+  let unreviewed = 0;
+  for (const r of rows) {
+    if (r.safetyAlert) byCategory[r.safetyAlert] = (byCategory[r.safetyAlert] || 0) + 1;
+    bySeverity[r.severity] = (bySeverity[r.severity] || 0) + 1;
+    if (!r.reviewStatus) unreviewed++;
+  }
+  return { total: rows.length, unreviewed, byCategory, bySeverity };
+}
+
+export async function upsertEmailScanLog(
+  data: InsertEmailScanLogEntry
+): Promise<void> {
+  await db
+    .insert(emailScanLog)
+    .values(data)
+    .onConflictDoUpdate({
+      target: [emailScanLog.schoolId, emailScanLog.date],
+      set: {
+        messagesScanned: sql`${emailScanLog.messagesScanned} + ${data.messagesScanned ?? 0}`,
+        alertsRaised: sql`${emailScanLog.alertsRaised} + ${data.alertsRaised ?? 0}`,
+        errors: sql`${emailScanLog.errors} + ${data.errors ?? 0}`,
+        updatedAt: new Date(),
+      },
+    });
+}
+
+export async function getStudentByEmailAnySchool(
+  email: string
+): Promise<Student | undefined> {
+  const [row] = await db
+    .select()
+    .from(students)
+    .where(eq(students.emailLc, email.toLowerCase()))
+    .limit(1);
+  return row;
+}
+
+export async function getSchoolAdminAndLeadershipEmails(
+  schoolId: string
+): Promise<string[]> {
+  const rows = await db
+    .select({ email: users.email })
+    .from(schoolMemberships)
+    .innerJoin(users, eq(schoolMemberships.userId, users.id))
+    .where(
+      and(
+        eq(schoolMemberships.schoolId, schoolId),
+        eq(schoolMemberships.status, "active"),
+        inArray(schoolMemberships.role, ["admin", "school_admin"])
+      )
+    );
+  // Deduplicate in case the same user holds multiple role rows
+  return Array.from(new Set(rows.map((r) => r.email)));
+}

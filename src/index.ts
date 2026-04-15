@@ -251,6 +251,95 @@ import { pool } from "./db.js";
     console.warn("[migration] security_events migration skipped:", (err as Error).message);
   }
 
+  // MailPilot — ClassPilot add-on: Gmail safety monitoring (watches, alerts, scan log)
+  try {
+    await pool.query(`ALTER TABLE schools ADD COLUMN IF NOT EXISTS classpilot_email_monitoring BOOLEAN NOT NULL DEFAULT false`);
+    await pool.query(`ALTER TABLE schools ADD COLUMN IF NOT EXISTS mailpilot_org_units TEXT`);
+    console.log("[migration] classpilot_email_monitoring column ready");
+  } catch (err) {
+    console.warn("[migration] classpilot_email_monitoring migration skipped:", (err as Error).message);
+  }
+
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS mailpilot_watches (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        school_id TEXT NOT NULL,
+        student_id TEXT NOT NULL,
+        student_email TEXT NOT NULL,
+        history_id TEXT,
+        expires_at TIMESTAMP NOT NULL,
+        started_at TIMESTAMP NOT NULL DEFAULT now(),
+        last_renewed_at TIMESTAMP NOT NULL DEFAULT now(),
+        last_poll_at TIMESTAMP,
+        status TEXT NOT NULL DEFAULT 'active',
+        last_error TEXT
+      )
+    `);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS mailpilot_watches_email_unique ON mailpilot_watches (student_email)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS mailpilot_watches_school_idx ON mailpilot_watches (school_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS mailpilot_watches_expires_idx ON mailpilot_watches (expires_at)`);
+    console.log("[migration] mailpilot_watches table ready");
+  } catch (err) {
+    console.warn("[migration] mailpilot_watches migration skipped:", (err as Error).message);
+  }
+
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS email_alerts (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        school_id TEXT NOT NULL,
+        student_id TEXT NOT NULL,
+        student_email TEXT NOT NULL,
+        gmail_message_id TEXT NOT NULL,
+        gmail_thread_id TEXT,
+        direction TEXT NOT NULL,
+        sender TEXT,
+        recipients JSONB,
+        subject TEXT,
+        snippet TEXT,
+        category TEXT,
+        safety_alert TEXT,
+        bullying TEXT,
+        confidence INTEGER,
+        severity TEXT NOT NULL DEFAULT 'medium',
+        reasoning TEXT,
+        message_date TIMESTAMP,
+        alerted_at TIMESTAMP NOT NULL DEFAULT now(),
+        reviewed_at TIMESTAMP,
+        reviewed_by TEXT,
+        review_status TEXT,
+        review_note TEXT
+      )
+    `);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS email_alerts_gmail_message_unique ON email_alerts (gmail_message_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS email_alerts_school_alerted_idx ON email_alerts (school_id, alerted_at DESC)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS email_alerts_student_alerted_idx ON email_alerts (student_id, alerted_at DESC)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS email_alerts_school_review_idx ON email_alerts (school_id, review_status)`);
+    console.log("[migration] email_alerts table ready");
+  } catch (err) {
+    console.warn("[migration] email_alerts migration skipped:", (err as Error).message);
+  }
+
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS email_scan_log (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        school_id TEXT NOT NULL,
+        date TEXT NOT NULL,
+        messages_scanned INTEGER NOT NULL DEFAULT 0,
+        alerts_raised INTEGER NOT NULL DEFAULT 0,
+        errors INTEGER NOT NULL DEFAULT 0,
+        updated_at TIMESTAMP NOT NULL DEFAULT now()
+      )
+    `);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS email_scan_log_school_date_unique ON email_scan_log (school_id, date)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS email_scan_log_school_idx ON email_scan_log (school_id)`);
+    console.log("[migration] email_scan_log table ready");
+  } catch (err) {
+    console.warn("[migration] email_scan_log migration skipped:", (err as Error).message);
+  }
+
   // One-time: update super-admin email alias in users + audit_logs
   try {
     const OLD_EMAIL = "bzinkan@school-pilot.net";

@@ -9,7 +9,7 @@ import { Button } from "../../../components/ui/button";
 import { Input } from "../../../components/ui/input";
 import { Label } from "../../../components/ui/label";
 import { useToast } from "../../../hooks/use-toast";
-import { Trash2, UserPlus, Users, ArrowLeft, AlertTriangle, Clock, Settings as SettingsIcon, Key, FileText, ChevronLeft, ChevronRight, BarChart3, LogOut, Upload, Search, Plus, Building2, Loader2, AlertCircle, RefreshCw, ClipboardCheck } from "lucide-react";
+import { Trash2, UserPlus, Users, ArrowLeft, AlertTriangle, Clock, Settings as SettingsIcon, Key, FileText, ChevronLeft, ChevronRight, BarChart3, LogOut, Upload, Search, Plus, Building2, Loader2, AlertCircle, RefreshCw, ClipboardCheck, ShieldAlert } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import {
   AlertDialog,
@@ -504,6 +504,13 @@ export default function Admin() {
           >
             <BarChart3 className="h-4 w-4 mr-2" />
             Analytics
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => navigate("/classpilot/admin/email-monitoring")}
+          >
+            <ShieldAlert className="h-4 w-4 mr-2" />
+            Email Monitor
           </Button>
           <Button
             variant="outline"

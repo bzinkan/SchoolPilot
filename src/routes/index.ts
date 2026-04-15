@@ -27,6 +27,9 @@ import googleClassroomRoutes from "./google/classroom.js";
 import googleDirectoryRoutes from "./google/directory.js";
 import compatRoutes from "./compat.js";
 import aiChatRoutes from "./chat.js";
+import mailpilotPubsubRoutes from "./mailpilot/pubsub.js";
+import mailpilotAlertsRoutes from "./mailpilot/alerts.js";
+import mailpilotSetupRoutes from "./mailpilot/setup.js";
 
 const router = Router();
 
@@ -360,6 +363,12 @@ router.use("/google/directory", googleDirectoryRoutes);
 
 // AI Chat assistant (must be before compat catch-all)
 router.use("/ai-chat", aiChatRoutes);
+
+// MailPilot — ClassPilot Email Safety Monitoring (add-on)
+// Pub/Sub webhook is public (bearer-token auth); setup + alerts require admin.
+router.use("/mailpilot/pubsub", mailpilotPubsubRoutes);
+router.use("/mailpilot", mailpilotSetupRoutes);
+router.use("/mailpilot", mailpilotAlertsRoutes);
 
 // Compatibility routes for missing features
 router.use("/compat", compatRoutes);

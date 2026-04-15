@@ -669,6 +669,44 @@ router.post("/schools/:id/products", ...auth, async (req, res, next) => {
   }
 });
 
+// POST /api/super-admin/schools/:id/email-monitoring - Toggle ClassPilot email monitoring add-on
+router.post("/schools/:id/email-monitoring", ...auth, async (req, res, next) => {
+  try {
+    const schoolId = param(req, "id");
+    const { enabled } = req.body as { enabled?: boolean };
+    if (typeof enabled !== "boolean") {
+      return res.status(400).json({ error: "enabled (boolean) required" });
+    }
+
+    const school = await getSchoolById(schoolId);
+    if (!school) return res.status(404).json({ error: "School not found" });
+
+    // Must have ClassPilot to enable the email monitoring add-on
+    if (enabled) {
+      const licenses = await getProductLicenses(schoolId);
+      const hasClassPilot = licenses.some((l) => l.product === "CLASSPILOT" && l.status === "active");
+      if (!hasClassPilot) {
+        return res.status(400).json({ error: "School must have ClassPilot license to enable email monitoring" });
+      }
+    }
+
+    const updated = await updateSchool(schoolId, { classpilotEmailMonitoring: enabled });
+
+    await logAudit({
+      schoolId,
+      userId: req.authUser!.id,
+      action: enabled ? "mailpilot.addon_enabled" : "mailpilot.addon_disabled",
+      entityType: "school",
+      entityId: schoolId,
+      entityName: school.name,
+    });
+
+    return res.json({ school: updated });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // DELETE /api/super-admin/schools/:id/products/:product - Remove product license
 router.delete("/schools/:id/products/:product", ...auth, async (req, res, next) => {
   try {

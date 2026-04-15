@@ -66,6 +66,9 @@ export const schools = pgTable("schools", {
   trackingStartHour: integer("tracking_start_hour").notNull().default(7),
   trackingEndHour: integer("tracking_end_hour").notNull().default(17),
   is24HourEnabled: boolean("is_24_hour_enabled").notNull().default(false),
+  // ClassPilot MailPilot add-on (student Gmail safety monitoring via DWD)
+  classpilotEmailMonitoring: boolean("classpilot_email_monitoring").notNull().default(false),
+  mailpilotOrgUnits: text("mailpilot_org_units"), // JSON array of OU paths being monitored
   disabledAt: timestamp("disabled_at"),
   disabledReason: text("disabled_reason"),
   lastActivityAt: timestamp("last_activity_at"),
