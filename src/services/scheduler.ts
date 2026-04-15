@@ -54,6 +54,7 @@ async function runHeavyJobsSerially() {
     if (currentMinute >= 30 && currentHour !== lastPurgeHour) {
       lastPurgeHour = currentHour;
       await purgeExpiredHeartbeats();
+      await purgeMailpilotRetention();
     }
   } finally {
     heavyJobRunning = false;
@@ -616,17 +617,62 @@ async function autoEndClassBlocks() {
 // MailPilot - Gmail watch renewal (watches expire after 7 days)
 // ============================================================================
 
+/**
+ * Delete reviewed email alerts and scan logs older than the retention window.
+ * Unreviewed alerts are NEVER auto-deleted (admins must resolve them).
+ * Window defaults to 90 days, override via MAILPILOT_RETENTION_DAYS.
+ * Uses schedulerDb (dedicated pool) and batched deletes to avoid long locks.
+ */
+async function purgeMailpilotRetention() {
+  try {
+    const retentionDays = Math.max(1, parseInt(process.env.MAILPILOT_RETENTION_DAYS || "90", 10));
+    const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
+
+    // Delete reviewed alerts older than cutoff, in batches
+    let totalAlerts = 0;
+    let batchDeleted = 0;
+    do {
+      const result = await schedulerPool.query(
+        `DELETE FROM email_alerts WHERE id IN (
+          SELECT id FROM email_alerts
+          WHERE review_status IS NOT NULL AND alerted_at < $1
+          LIMIT 2000
+        )`,
+        [cutoff]
+      );
+      batchDeleted = result.rowCount || 0;
+      totalAlerts += batchDeleted;
+      if (batchDeleted > 0) await new Promise((r) => setTimeout(r, 100));
+    } while (batchDeleted >= 2000);
+
+    // Scan log is small, single delete is fine
+    const scanLogResult = await schedulerPool.query(
+      `DELETE FROM email_scan_log WHERE date < TO_CHAR($1::date, 'YYYY-MM-DD')`,
+      [cutoff]
+    );
+
+    if (totalAlerts > 0 || (scanLogResult.rowCount || 0) > 0) {
+      console.log(
+        `[MailPilot] Retention purge (>${retentionDays}d): ${totalAlerts} reviewed alerts, ${scanLogResult.rowCount || 0} scan logs`
+      );
+    }
+  } catch (err) {
+    console.error("[MailPilot] Retention purge error:", err);
+    errorMonitor.trackError("scheduler_failure", err as Error, { job: "purgeMailpilotRetention" });
+  }
+}
+
 async function renewMailpilotWatches() {
   if (!isMailpilotConfigured()) return;
   try {
-    // Renew anything expiring within 24 hours
-    const dueForRenewal = await getWatchesDueForRenewal(24 * 60 * 60 * 1000);
+    // Use schedulerDb (dedicated pool, max 3) — never the main API pool
+    const dueForRenewal = await getWatchesDueForRenewal(24 * 60 * 60 * 1000, schedulerDb);
     if (dueForRenewal.length === 0) return;
 
     console.log(`[MailPilot] Renewing ${dueForRenewal.length} Gmail watch(es)`);
     let renewed = 0;
     let failed = 0;
-    const concurrency = 5;
+    const concurrency = Math.max(1, parseInt(process.env.MAILPILOT_RENEWAL_CONCURRENCY || "10", 10));
     const queue = [...dueForRenewal];
     async function worker() {
       while (queue.length > 0) {
@@ -641,11 +687,11 @@ async function renewMailpilotWatches() {
             historyId: result.historyId,
             expiresAt: result.expiration,
             status: "active",
-          });
+          }, schedulerDb);
           renewed++;
         } catch (err) {
           failed++;
-          await updateMailpilotWatchError(w.id, (err as Error).message);
+          await updateMailpilotWatchError(w.id, (err as Error).message, "error", schedulerDb);
         }
       }
     }

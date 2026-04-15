@@ -278,12 +278,15 @@ export async function listHistorySince(
   let newHistoryId = startHistoryId;
   let pageToken: string | undefined;
 
+  // Single pass with no labelId filter — captures both INBOX and SENT
+  // (the watch is already registered for those two labels only, so Gmail
+  // will not publish history for other labels). Previous version ran a
+  // redundant second pass; removed to halve Gmail quota usage per notification.
   do {
     const params: gmail_v1.Params$Resource$Users$History$List = {
       userId: "me",
       startHistoryId,
       historyTypes: ["messageAdded"],
-      labelId: "INBOX", // filter further in processing if needed
     };
     if (pageToken) params.pageToken = pageToken;
 
@@ -304,25 +307,6 @@ export async function listHistorySince(
     if (response.data.historyId) newHistoryId = String(response.data.historyId);
     pageToken = response.data.nextPageToken || undefined;
   } while (pageToken);
-
-  // Also check SENT by running a second pass without labelId filter (messageAdded includes SENT)
-  // Gmail history.list doesn't reliably accept multiple labelIds, so second pass with no filter
-  // is redundant — remove if it becomes a performance issue
-  try {
-    const secondPass = await gmail.users.history.list({
-      userId: "me",
-      startHistoryId,
-      historyTypes: ["messageAdded"],
-    });
-    for (const h of secondPass.data.history || []) {
-      for (const added of h.messagesAdded || []) {
-        if (added.message?.id) messageIds.add(added.message.id);
-      }
-    }
-    if (secondPass.data.historyId) newHistoryId = String(secondPass.data.historyId);
-  } catch {
-    /* best-effort second pass */
-  }
 
   return { messageIds: Array.from(messageIds), newHistoryId };
 }

@@ -94,6 +94,14 @@ async function processNotification(
     return;
   }
 
+  // Lightweight duplicate-burst suppression: if another worker polled this
+  // mailbox in the last 5s, skip. Alert dedup is already guaranteed by the
+  // UNIQUE index on email_alerts.gmail_message_id — this just avoids wasted
+  // Gmail/Claude calls when Pub/Sub fans out redundant notifications.
+  if (watch.lastPollAt && Date.now() - new Date(watch.lastPollAt).getTime() < 5000) {
+    return;
+  }
+
   // Verify the school still has email monitoring enabled
   const school = await getSchoolById(watch.schoolId);
   if (!school || !school.classpilotEmailMonitoring) {

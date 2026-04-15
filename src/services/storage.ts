@@ -4097,16 +4097,17 @@ export async function getEffectiveDismissalTypes(
 // ============================================================================
 
 export async function upsertMailpilotWatch(
-  data: InsertMailpilotWatch
+  data: InsertMailpilotWatch,
+  dbInstance: typeof db = db
 ): Promise<MailpilotWatch> {
-  const existing = await db
+  const existing = await dbInstance
     .select()
     .from(mailpilotWatches)
     .where(eq(mailpilotWatches.studentEmail, data.studentEmail))
     .limit(1);
 
   if (existing.length > 0) {
-    const [updated] = await db
+    const [updated] = await dbInstance
       .update(mailpilotWatches)
       .set({
         historyId: data.historyId ?? existing[0]!.historyId,
@@ -4120,7 +4121,7 @@ export async function upsertMailpilotWatch(
     return updated!;
   }
 
-  const [inserted] = await db
+  const [inserted] = await dbInstance
     .insert(mailpilotWatches)
     .values(data)
     .returning();
@@ -4138,6 +4139,28 @@ export async function getMailpilotWatchByEmail(
   return row;
 }
 
+/**
+ * Run `fn` inside a transaction that holds a row-level lock on the watch row.
+ * Serializes concurrent Pub/Sub notifications for the same mailbox — without
+ * this, two simultaneous pushes can read the same historyId, process
+ * overlapping ranges, and race on the write-back (missed or duplicated alerts).
+ */
+export async function withMailpilotWatchLock<T>(
+  studentEmail: string,
+  fn: (watch: MailpilotWatch, tx: typeof db) => Promise<T>
+): Promise<T | undefined> {
+  return db.transaction(async (tx) => {
+    const [watch] = await tx
+      .select()
+      .from(mailpilotWatches)
+      .where(eq(mailpilotWatches.studentEmail, studentEmail.toLowerCase()))
+      .limit(1)
+      .for("update");
+    if (!watch) return undefined;
+    return fn(watch, tx as unknown as typeof db);
+  });
+}
+
 export async function getMailpilotWatchesBySchool(
   schoolId: string
 ): Promise<MailpilotWatch[]> {
@@ -4149,10 +4172,11 @@ export async function getMailpilotWatchesBySchool(
 }
 
 export async function getWatchesDueForRenewal(
-  withinMs: number
+  withinMs: number,
+  dbInstance: typeof db = db
 ): Promise<MailpilotWatch[]> {
   const cutoff = new Date(Date.now() + withinMs);
-  return db
+  return dbInstance
     .select()
     .from(mailpilotWatches)
     .where(
@@ -4177,9 +4201,10 @@ export async function updateMailpilotWatchHistoryId(
 export async function updateMailpilotWatchError(
   id: string,
   errorMessage: string,
-  status: "active" | "stopped" | "error" = "error"
+  status: "active" | "stopped" | "error" = "error",
+  dbInstance: typeof db = db
 ): Promise<void> {
-  await db
+  await dbInstance
     .update(mailpilotWatches)
     .set({ status, lastError: errorMessage.slice(0, 500) })
     .where(eq(mailpilotWatches.id, id));
