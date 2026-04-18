@@ -9,6 +9,7 @@ import cookieParser from "cookie-parser";
 import { pool } from "./db.js";
 import { getIO } from "./realtime/socketio.js";
 import { errorHandler } from "./middleware/errorHandler.js";
+import { sessionIdleTimeout } from "./middleware/sessionIdleTimeout.js";
 import { apiLimiter } from "./middleware/rateLimiter.js";
 import routes from "./routes/index.js";
 import errorMonitor from "./services/errorMonitor.js";
@@ -170,6 +171,9 @@ export function createApp() {
       wsAvailable: true,
     });
   });
+
+  // Enforce tighter idle timeout for elevated roles (admin/super_admin)
+  app.use("/api", sessionIdleTimeout);
 
   // Routes
   app.use("/api", routes);

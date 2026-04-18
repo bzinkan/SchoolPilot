@@ -19,6 +19,7 @@ import {
 import { authenticate } from "../middleware/authenticate.js";
 import { authLimiter } from "../middleware/rateLimiter.js";
 import { sendEmail } from "../services/email.js";
+import { isLocked, recordFailedAttempt, clearAttempts } from "../services/accountLockout.js";
 
 const router = Router();
 
@@ -34,16 +35,35 @@ router.post("/login", authLimiter, async (req, res, next) => {
     }
 
     const { email, password } = parsed.data;
+
+    // Check account lockout before doing any work
+    const lockedUntil = isLocked(email);
+    if (lockedUntil) {
+      const minutesLeft = Math.ceil((lockedUntil - Date.now()) / 60000);
+      return res.status(429).json({
+        error: `Account temporarily locked due to too many failed attempts. Try again in ${minutesLeft} minutes or reset your password.`,
+      });
+    }
+
     const user = await getUserByEmail(email);
 
     if (!user || !user.password) {
+      recordFailedAttempt(email);
       return res.status(401).json({ error: "Invalid email or password" });
     }
 
     const valid = await comparePassword(password, user.password);
     if (!valid) {
+      const triggered = recordFailedAttempt(email);
+      if (triggered) {
+        // Audit-worthy event — fire alert to security monitor via existing error tracking
+        console.warn(`[Security] Account locked after failed attempts: ${email}`);
+      }
       return res.status(401).json({ error: "Invalid email or password" });
     }
+
+    // Success — clear any failed attempt tracking
+    clearAttempts(email);
 
     // Get memberships
     const membershipsWithSchool = await getMembershipsWithSchool(user.id);

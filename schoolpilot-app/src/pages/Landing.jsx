@@ -449,12 +449,14 @@ export default function SchoolpilotLanding() {
             </span>
           </div>
 
-          <div style={{ display: "flex", gap: 24 }}>
+          <div style={{ display: "flex", gap: 20, flexWrap: "wrap", justifyContent: "center" }}>
             <a href="/products/classpilot" style={{ color: "#64748b", textDecoration: "none", fontSize: 14 }}>ClassPilot</a>
             <a href="/products/passpilot" style={{ color: "#64748b", textDecoration: "none", fontSize: 14 }}>PassPilot</a>
             <a href="/products/gopilot" style={{ color: "#64748b", textDecoration: "none", fontSize: 14 }}>GoPilot</a>
             <a href="/terms" style={{ color: "#64748b", textDecoration: "none", fontSize: 14 }}>Terms</a>
             <a href="/privacy" style={{ color: "#64748b", textDecoration: "none", fontSize: 14 }}>Privacy</a>
+            <a href="/security" style={{ color: "#64748b", textDecoration: "none", fontSize: 14 }}>Security</a>
+            <a href="/subprocessors" style={{ color: "#64748b", textDecoration: "none", fontSize: 14 }}>Subprocessors</a>
             <a href="/ai-transparency" style={{ color: "#64748b", textDecoration: "none", fontSize: 14 }}>AI Transparency</a>
           </div>
 

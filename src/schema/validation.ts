@@ -3,6 +3,17 @@ import { z } from "zod";
 // ============================================================================
 // Auth validation
 // ============================================================================
+
+// Strong password: 10+ chars, 1 uppercase, 1 lowercase, 1 digit.
+// Aligned with common EdTech district IT requirements. Symbols not required
+// to avoid user frustration; length + character mix is what matters for entropy.
+const STRONG_PASSWORD = z
+  .string()
+  .min(10, "Password must be at least 10 characters")
+  .regex(/[A-Z]/, "Password must include an uppercase letter")
+  .regex(/[a-z]/, "Password must include a lowercase letter")
+  .regex(/[0-9]/, "Password must include a digit");
+
 export const loginSchema = z.object({
   email: z.string().email("Invalid email address"),
   password: z.string().min(1, "Password is required"),
@@ -11,7 +22,7 @@ export type LoginData = z.infer<typeof loginSchema>;
 
 export const registerSchema = z.object({
   email: z.string().email("Invalid email address"),
-  password: z.string().min(8, "Password must be at least 8 characters"),
+  password: STRONG_PASSWORD,
   firstName: z.string().min(1, "First name is required"),
   lastName: z.string().min(1, "Last name is required"),
   phone: z.string().optional(),
@@ -25,7 +36,7 @@ export type RegisterData = z.infer<typeof registerSchema>;
 
 export const registerParentSchema = z.object({
   email: z.string().email("Invalid email address"),
-  password: z.string().min(8, "Password must be at least 8 characters"),
+  password: STRONG_PASSWORD,
   firstName: z.string().min(1, "First name is required"),
   lastName: z.string().min(1, "Last name is required"),
   phone: z.string().optional(),
@@ -43,10 +54,7 @@ export const createTeacherSchema = z.object({
   lastName: z.string().min(1).optional(),
   role: z.enum(["admin", "teacher", "office_staff"]).optional(),
   gopilotRole: z.enum(["teacher", "office_staff"]).optional().nullable(),
-  password: z
-    .string()
-    .min(8, "Password must be at least 8 characters")
-    .optional(),
+  password: STRONG_PASSWORD.optional(),
 });
 export type CreateTeacherData = z.infer<typeof createTeacherSchema>;
 

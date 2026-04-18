@@ -55,6 +55,8 @@ const TermsOfService = lazy(() => import('./pages/legal/TermsOfService'));
 const PrivacyPolicy = lazy(() => import('./pages/legal/PrivacyPolicy'));
 const DeleteAccount = lazy(() => import('./pages/legal/DeleteAccount'));
 const AITransparency = lazy(() => import('./pages/legal/AITransparency'));
+const Subprocessors = lazy(() => import('./pages/legal/Subprocessors'));
+const Security = lazy(() => import('./pages/legal/Security'));
 
 // Super Admin pages (lazy-loaded)
 const SASchoolsList = lazy(() => import('./pages/super-admin/SchoolsList'));
@@ -118,6 +120,8 @@ function AppRoutes() {
             <Route path="/privacy" element={<PrivacyPolicy />} />
             <Route path="/delete-account" element={<DeleteAccount />} />
             <Route path="/ai-transparency" element={<AITransparency />} />
+            <Route path="/subprocessors" element={<Subprocessors />} />
+            <Route path="/security" element={<Security />} />
           </>
         )}
 
