@@ -1,0 +1,214 @@
+{
+    "taskDefinitionArn": "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api:19",
+    "containerDefinitions": [
+        {
+            "name": "api",
+            "image": "135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api:latest",
+            "cpu": 0,
+            "portMappings": [
+                {
+                    "containerPort": 4000,
+                    "hostPort": 4000,
+                    "protocol": "tcp"
+                }
+            ],
+            "essential": true,
+            "environment": [
+                {
+                    "name": "COOKIE_DOMAIN",
+                    "value": ".school-pilot.net"
+                },
+                {
+                    "name": "PORT",
+                    "value": "4000"
+                },
+                {
+                    "name": "TELEGRAM_BOT_TOKEN",
+                    "value": "8611462175:AAHASZQI0JYCVNx5St2tIHk4Dh7Lky4Wb8g"
+                },
+                {
+                    "name": "GOOGLE_CLIENT_ID",
+                    "value": "562964657318-l7k0b7iuh0e16m88nqqvngs83eh3ddki.apps.googleusercontent.com"
+                },
+                {
+                    "name": "PGSSLMODE",
+                    "value": "require"
+                },
+                {
+                    "name": "CLIENT_URL",
+                    "value": "https://school-pilot.net"
+                },
+                {
+                    "name": "MAILPILOT_RETENTION_DAYS",
+                    "value": "90"
+                },
+                {
+                    "name": "CORS_ALLOWLIST",
+                    "value": "https://school-pilot.net"
+                },
+                {
+                    "name": "ANTHROPIC_API_KEY",
+                    "value": "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"
+                },
+                {
+                    "name": "MAILPILOT_RENEWAL_CONCURRENCY",
+                    "value": "10"
+                },
+                {
+                    "name": "TELEGRAM_CHAT_ID",
+                    "value": "8061328979"
+                },
+                {
+                    "name": "GOOGLE_CALLBACK_URL",
+                    "value": "https://school-pilot.net/api/auth/google/callback"
+                },
+                {
+                    "name": "NODE_TLS_REJECT_UNAUTHORIZED",
+                    "value": "0"
+                },
+                {
+                    "name": "NODE_ENV",
+                    "value": "production"
+                },
+                {
+                    "name": "PUBLIC_BASE_URL",
+                    "value": "https://school-pilot.net"
+                },
+                {
+                    "name": "MAILPILOT_PUBSUB_TOPIC",
+                    "value": "projects/schoolpilot-487201/topics/mailpilot-gmail-events"
+                }
+            ],
+            "mountPoints": [],
+            "volumesFrom": [],
+            "secrets": [
+                {
+                    "name": "DATABASE_URL",
+                    "valueFrom": "arn:aws:ssm:us-east-1:135775632425:parameter/schoolpilot/production/DATABASE_URL"
+                },
+                {
+                    "name": "REDIS_URL",
+                    "valueFrom": "arn:aws:ssm:us-east-1:135775632425:parameter/schoolpilot/production/REDIS_URL"
+                },
+                {
+                    "name": "SESSION_SECRET",
+                    "valueFrom": "arn:aws:ssm:us-east-1:135775632425:parameter/schoolpilot/production/SESSION_SECRET"
+                },
+                {
+                    "name": "JWT_SECRET",
+                    "valueFrom": "arn:aws:ssm:us-east-1:135775632425:parameter/schoolpilot/production/JWT_SECRET"
+                },
+                {
+                    "name": "STUDENT_TOKEN_SECRET",
+                    "valueFrom": "arn:aws:ssm:us-east-1:135775632425:parameter/schoolpilot/production/STUDENT_TOKEN_SECRET"
+                },
+                {
+                    "name": "GOOGLE_CLIENT_SECRET",
+                    "valueFrom": "arn:aws:ssm:us-east-1:135775632425:parameter/schoolpilot/production/GOOGLE_CLIENT_SECRET"
+                },
+                {
+                    "name": "GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY",
+                    "valueFrom": "arn:aws:ssm:us-east-1:135775632425:parameter/schoolpilot/production/GOOGLE_OAUTH_ENCRYPTION_KEY"
+                },
+                {
+                    "name": "SENDGRID_API_KEY",
+                    "valueFrom": "arn:aws:ssm:us-east-1:135775632425:parameter/schoolpilot/production/SENDGRID_API_KEY"
+                },
+                {
+                    "name": "STRIPE_SECRET_KEY",
+                    "valueFrom": "arn:aws:ssm:us-east-1:135775632425:parameter/schoolpilot/production/STRIPE_SECRET_KEY"
+                },
+                {
+                    "name": "STRIPE_WEBHOOK_SECRET",
+                    "valueFrom": "arn:aws:ssm:us-east-1:135775632425:parameter/schoolpilot/production/STRIPE_WEBHOOK_SECRET"
+                },
+                {
+                    "name": "OPENAI_API_KEY",
+                    "valueFrom": "arn:aws:ssm:us-east-1:135775632425:parameter/schoolpilot/production/OPENAI_API_KEY"
+                },
+                {
+                    "name": "MAILPILOT_SA_KEY_JSON",
+                    "valueFrom": "arn:aws:ssm:us-east-1:135775632425:parameter/schoolpilot/production/MAILPILOT_SA_KEY_JSON"
+                },
+                {
+                    "name": "MAILPILOT_PUBSUB_VERIFY_TOKEN",
+                    "valueFrom": "arn:aws:ssm:us-east-1:135775632425:parameter/schoolpilot/production/MAILPILOT_PUBSUB_VERIFY_TOKEN"
+                }
+            ],
+            "logConfiguration": {
+                "logDriver": "awslogs",
+                "options": {
+                    "awslogs-group": "/ecs/schoolpilot-production-api",
+                    "awslogs-region": "us-east-1",
+                    "awslogs-stream-prefix": "api"
+                }
+            },
+            "healthCheck": {
+                "command": [
+                    "CMD-SHELL",
+                    "wget -qO- http://localhost:4000/health || exit 1"
+                ],
+                "interval": 30,
+                "timeout": 5,
+                "retries": 3,
+                "startPeriod": 10
+            },
+            "systemControls": []
+        }
+    ],
+    "family": "schoolpilot-production-api",
+    "taskRoleArn": "arn:aws:iam::135775632425:role/schoolpilot-production-ecs-task",
+    "executionRoleArn": "arn:aws:iam::135775632425:role/schoolpilot-production-ecs-execution",
+    "networkMode": "awsvpc",
+    "revision": 19,
+    "volumes": [],
+    "status": "ACTIVE",
+    "requiresAttributes": [
+        {
+            "name": "com.amazonaws.ecs.capability.logging-driver.awslogs"
+        },
+        {
+            "name": "ecs.capability.execution-role-awslogs"
+        },
+        {
+            "name": "com.amazonaws.ecs.capability.ecr-auth"
+        },
+        {
+            "name": "com.amazonaws.ecs.capability.docker-remote-api.1.19"
+        },
+        {
+            "name": "com.amazonaws.ecs.capability.task-iam-role"
+        },
+        {
+            "name": "ecs.capability.container-health-check"
+        },
+        {
+            "name": "ecs.capability.execution-role-ecr-pull"
+        },
+        {
+            "name": "ecs.capability.secrets.ssm.environment-variables"
+        },
+        {
+            "name": "com.amazonaws.ecs.capability.docker-remote-api.1.18"
+        },
+        {
+            "name": "ecs.capability.task-eni"
+        },
+        {
+            "name": "com.amazonaws.ecs.capability.docker-remote-api.1.29"
+        }
+    ],
+    "placementConstraints": [],
+    "compatibilities": [
+        "EC2",
+        "FARGATE",
+        "MANAGED_INSTANCES"
+    ],
+    "requiresCompatibilities": [
+        "FARGATE"
+    ],
+    "cpu": "256",
+    "memory": "512",
+    "registeredAt": "2026-04-14T23:14:36.301000-04:00",
+    "registeredBy": "arn:aws:iam::135775632425:user/classpilot-deployer"
+}

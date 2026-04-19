@@ -212,6 +212,23 @@ export default function SchoolpilotLanding() {
 
       `}</style>
 
+      {/* Temporary pause banner */}
+      <div style={{
+        background: "#fef3c7",
+        borderBottom: "1px solid #fcd34d",
+        padding: "10px 16px",
+        textAlign: "center",
+        fontSize: 14,
+        color: "#78350f",
+        lineHeight: 1.5,
+      }}>
+        <strong>SchoolPilot is temporarily unavailable while we prepare for our next phase.</strong>{" "}
+        Privacy Policy, Terms, and Security documentation remain accessible. For questions or early access inquiries, email{" "}
+        <a href="mailto:hello@school-pilot.net" style={{ color: "#78350f", textDecoration: "underline" }}>
+          hello@school-pilot.net
+        </a>.
+      </div>
+
       {/* Navigation */}
       <nav style={{
         background: "#fff",
