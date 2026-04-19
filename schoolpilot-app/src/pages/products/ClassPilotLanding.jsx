@@ -860,6 +860,82 @@ export default function ClassPilotLanding() {
       </section>
       */}
 
+      {/* FAQ — For IT & Procurement */}
+      <section style={{ padding: '96px 24px', background: '#fafafa', borderTop: '1px solid #e5e7eb' }}>
+        <div style={{ maxWidth: '900px', margin: '0 auto' }}>
+          <div style={{ textAlign: 'center', marginBottom: '48px' }}>
+            <div style={{ fontSize: '13px', fontWeight: 700, color: '#b45309', letterSpacing: '1.5px', marginBottom: '12px' }}>FOR IT & PROCUREMENT</div>
+            <h2 className="cp-serif" style={{ fontSize: '44px', fontWeight: 400, color: '#0f172a', margin: 0, letterSpacing: '-0.5px' }}>
+              Straight answers for district IT teams
+            </h2>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+
+            <div style={{ background: '#fff', padding: '28px', borderRadius: '12px', border: '1px solid #e5e7eb' }}>
+              <h3 style={{ fontSize: '18px', fontWeight: 700, color: '#0f172a', marginTop: 0, marginBottom: '12px' }}>
+                Is ClassPilot a content filter? Is it CIPA-compliant?
+              </h3>
+              <p style={{ fontSize: '15px', color: '#475569', lineHeight: 1.7, margin: 0 }}>
+                ClassPilot is a <strong>classroom visibility layer</strong>, not a network-level content filter.
+                It runs alongside your existing CIPA-compliant filter (Securly, GoGuardian DNS, Lightspeed, etc.) — not as a replacement.
+                ClassPilot complements CIPA compliance by adding per-student classroom visibility, AI-powered safety alerts,
+                and automatic tab-close on content that slips past the network filter. The primary filtering obligation under CIPA
+                should remain at your network perimeter.
+              </p>
+            </div>
+
+            <div style={{ background: '#fff', padding: '28px', borderRadius: '12px', border: '1px solid #e5e7eb' }}>
+              <h3 style={{ fontSize: '18px', fontWeight: 700, color: '#0f172a', marginTop: 0, marginBottom: '12px' }}>
+                How fast does the AI actually react to unsafe content?
+              </h3>
+              <p style={{ fontSize: '15px', color: '#475569', lineHeight: 1.7, margin: 0 }}>
+                Three tiers. <strong>Instant (0 seconds):</strong> a curated list of known-unsafe domains (pornography, graphic violence, drug marketplaces)
+                and unsafe search queries are blocked the moment the extension sees them. <strong>Within ~10 seconds:</strong> novel URLs are classified by Claude
+                on the next heartbeat cycle. If flagged unsafe, the tab is closed automatically and the teacher and administrator are alerted.
+                <strong> Never-blocked automatically:</strong> non-educational but safe sites (YouTube, news, etc.) are logged and shown to the teacher,
+                but not auto-closed — teachers decide what counts as off-task for their class.
+              </p>
+            </div>
+
+            <div style={{ background: '#fff', padding: '28px', borderRadius: '12px', border: '1px solid #e5e7eb' }}>
+              <h3 style={{ fontSize: '18px', fontWeight: 700, color: '#0f172a', marginTop: 0, marginBottom: '12px' }}>
+                What data do you send to third parties (like Anthropic)?
+              </h3>
+              <p style={{ fontSize: '15px', color: '#475569', lineHeight: 1.7, margin: 0 }}>
+                Only the <strong>URL string and page title</strong>. No student names, no emails, no student IDs, no PII.
+                Anthropic's API terms contractually prohibit training on customer data. See our{' '}
+                <a href="/ai-transparency" style={{ color: '#b45309' }}>AI Transparency</a> and{' '}
+                <a href="/subprocessors" style={{ color: '#b45309' }}>Subprocessors</a> pages for full details.
+              </p>
+            </div>
+
+            <div style={{ background: '#fff', padding: '28px', borderRadius: '12px', border: '1px solid #e5e7eb' }}>
+              <h3 style={{ fontSize: '18px', fontWeight: 700, color: '#0f172a', marginTop: 0, marginBottom: '12px' }}>
+                What's your FERPA / data ownership position?
+              </h3>
+              <p style={{ fontSize: '15px', color: '#475569', lineHeight: 1.7, margin: 0 }}>
+                We operate as a "school official" under FERPA with direct school control over all student data.
+                Schools own 100% of their data; we have no license to use it beyond providing the service.
+                We'll sign your NDPA, SDPA, or state-specific variant (CA, TX, IL, NY). On contract termination,
+                all student data is returned or destroyed within 30 days per your written direction.
+              </p>
+            </div>
+
+            <div style={{ background: '#fff', padding: '28px', borderRadius: '12px', border: '1px solid #e5e7eb' }}>
+              <h3 style={{ fontSize: '18px', fontWeight: 700, color: '#0f172a', marginTop: 0, marginBottom: '12px' }}>
+                Can I get a HECVAT, DPA, or WISP for our procurement review?
+              </h3>
+              <p style={{ fontSize: '15px', color: '#475569', lineHeight: 1.7, margin: 0 }}>
+                Yes — all pre-completed. Email <a href="mailto:privacy@school-pilot.net?subject=HECVAT%20Request" style={{ color: '#b45309' }}>privacy@school-pilot.net</a>.
+                Our full security posture is published at <a href="/security" style={{ color: '#b45309' }}>school-pilot.net/security</a>.
+              </p>
+            </div>
+
+          </div>
+        </div>
+      </section>
+
       {/* CTA Section */}
       <section style={{
         padding: '120px 48px',

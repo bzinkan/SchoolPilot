@@ -328,10 +328,10 @@ export default function SchoolpilotLanding() {
                 </div>
               </div>
               <p style={{ fontSize: 15, color: "#64748b", lineHeight: 1.7, marginBottom: 20 }}>
-                See every student screen in real-time. Block distracting sites, lock devices, and keep your class on task.
+                See every student screen, lock devices, and apply site allow-lists during class — all from one dashboard.
               </p>
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                {["Live screen thumbnails", "AI off-task detection", "Website blocking", "Teacher messaging"].map(f => (
+                {["Live screen thumbnails", "AI off-task detection", "Teacher site allow-lists", "Teacher messaging"].map(f => (
                   <div key={f} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14, color: "#64748b" }}>
                     <div style={{ width: 22, height: 22, borderRadius: 6, background: "#fef9c3", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                       <span style={{ color: "#eab308", fontSize: 13, fontWeight: 700 }}>✓</span>
