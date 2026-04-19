@@ -104,9 +104,36 @@ export default function Security() {
               <li><strong>FERPA</strong> — Operates as a "school official" with legitimate educational interest</li>
               <li><strong>COPPA</strong> — Relies on the school consent exception; no direct collection from children under 13</li>
               <li><strong>State data privacy laws</strong> — NDPA-compatible; honors state-specific notification requirements</li>
-              <li><strong>iKeepSafe FERPA/COPPA certification</strong> — Application in progress</li>
-              <li><strong>Infrastructure certifications (via AWS)</strong> — SOC 2 Type II, ISO 27001, FedRAMP Moderate</li>
+              <li><strong>Infrastructure certifications (via AWS)</strong> — SOC 2 Type II, ISO 27001, FedRAMP Moderate (AWS-maintained)</li>
             </ul>
+          </section>
+
+          <section className="bg-slate-100 p-6 rounded-lg border border-slate-200">
+            <h2 className="text-2xl font-semibold text-slate-900 mb-4">For School Procurement Teams</h2>
+            <p className="text-slate-700 leading-relaxed mb-4">
+              We streamline EdTech procurement by maintaining pre-completed assessment documents.
+              Contact us to receive:
+            </p>
+            <ul className="list-disc pl-6 text-slate-700 space-y-2 mb-4">
+              <li>
+                <strong>HECVAT Lite Self-Assessment</strong> — The EDUCAUSE-standard security questionnaire,
+                pre-completed for your review
+              </li>
+              <li>
+                <strong>Signed NDPA / SDPA / DPA</strong> — We honor the National Data Privacy Agreement
+                (v1.0a and v2.0) and state-specific variants (California CSDPA, Texas TX-NDPA, Illinois SOPPA,
+                New York Ed Law 2-d)
+              </li>
+              <li>
+                <strong>Written Information Security Program</strong> (WISP) summary — under NDA
+              </li>
+              <li>
+                <strong>Subprocessor list with executed DPAs</strong> — see <a href="/subprocessors" className="text-amber-600 hover:text-amber-700 underline">public Subprocessors page</a>
+              </li>
+            </ul>
+            <p className="text-slate-700 leading-relaxed">
+              Request documents: <a href="mailto:privacy@school-pilot.net?subject=Procurement%20%E2%80%94%20Security%20Documents%20Request" className="text-amber-600 hover:text-amber-700 underline">privacy@school-pilot.net</a>
+            </p>
           </section>
 
           <section>
