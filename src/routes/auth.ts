@@ -20,6 +20,13 @@ import { authenticate } from "../middleware/authenticate.js";
 import { authLimiter } from "../middleware/rateLimiter.js";
 import { sendEmail } from "../services/email.js";
 import { isLocked, recordFailedAttempt, clearAttempts } from "../services/accountLockout.js";
+import { issueAuthCode, consumeAuthCode } from "../services/authCodeExchange.js";
+import { logAudit } from "../services/audit.js";
+
+function clientIp(req: any): string | undefined {
+  // Trust proxy is set by the app — this gives us the client IP, not ALB
+  return (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.ip;
+}
 
 const router = Router();
 
@@ -37,9 +44,9 @@ router.post("/login", authLimiter, async (req, res, next) => {
     const { email, password } = parsed.data;
 
     // Check account lockout before doing any work
-    const lockedUntil = isLocked(email);
+    const lockedUntil = await isLocked(email);
     if (lockedUntil) {
-      const minutesLeft = Math.ceil((lockedUntil - Date.now()) / 60000);
+      const minutesLeft = Math.ceil((lockedUntil.getTime() - Date.now()) / 60000);
       return res.status(429).json({
         error: `Account temporarily locked due to too many failed attempts. Try again in ${minutesLeft} minutes or reset your password.`,
       });
@@ -48,22 +55,34 @@ router.post("/login", authLimiter, async (req, res, next) => {
     const user = await getUserByEmail(email);
 
     if (!user || !user.password) {
-      recordFailedAttempt(email);
+      await recordFailedAttempt(email);
+      // Audit: failed login for unknown email (no user, no school context)
+      await logAudit({
+        action: "auth.login.failed",
+        userEmail: email,
+        metadata: { reason: "user_not_found", ip: clientIp(req) },
+      });
       return res.status(401).json({ error: "Invalid email or password" });
     }
 
     const valid = await comparePassword(password, user.password);
     if (!valid) {
-      const triggered = recordFailedAttempt(email);
+      const triggered = await recordFailedAttempt(email);
+      // Audit: failed login for known user (wrong password)
+      await logAudit({
+        userId: user.id,
+        userEmail: email,
+        action: "auth.login.failed",
+        metadata: { reason: "bad_password", ip: clientIp(req), lockoutTriggered: triggered },
+      });
       if (triggered) {
-        // Audit-worthy event — fire alert to security monitor via existing error tracking
         console.warn(`[Security] Account locked after failed attempts: ${email}`);
       }
       return res.status(401).json({ error: "Invalid email or password" });
     }
 
     // Success — clear any failed attempt tracking
-    clearAttempts(email);
+    await clearAttempts(email);
 
     // Get memberships
     const membershipsWithSchool = await getMembershipsWithSchool(user.id);
@@ -93,6 +112,16 @@ router.post("/login", authLimiter, async (req, res, next) => {
 
     // Update last login
     await updateUser(user.id, { lastLoginAt: new Date() });
+
+    // Audit: successful login
+    await logAudit({
+      schoolId: firstMembership?.membership.schoolId ?? null,
+      userId: user.id,
+      userEmail: user.email,
+      userRole: user.isSuperAdmin ? "super_admin" : firstMembership?.membership.role,
+      action: "auth.login.success",
+      metadata: { ip: clientIp(req), method: "password" },
+    });
 
     const { password: _, ...safeUser } = user;
 
@@ -439,14 +468,20 @@ router.get("/google/callback", async (req, res, next) => {
       // else stays /gopilot (office/admin dashboard)
     }
 
+    // Issue a one-time code (60s TTL, single-use) and put THAT in the URL
+    // instead of the JWT. Client exchanges the code via POST /auth/exchange-code.
+    // Avoids leaking JWTs to browser history, Referer headers, server logs,
+    // and native deep-link logs.
+    const oneTimeCode = issueAuthCode(token);
+
     // Native GoPilot app: redirect via deep link back into the app
     if (redirectAfter.startsWith("/gopilot")) {
-      const deepLink = `com.schoolpilot.gopilot://auth/callback?token=${encodeURIComponent(token)}&redirect=${encodeURIComponent(redirectAfter)}`;
+      const deepLink = `com.schoolpilot.gopilot://auth/callback?code=${encodeURIComponent(oneTimeCode)}&redirect=${encodeURIComponent(redirectAfter)}`;
       return res.redirect(deepLink);
     }
 
     // Web login: go to /login as usual
-    return res.redirect(`${frontendUrl}/login?token=${encodeURIComponent(token)}`);
+    return res.redirect(`${frontendUrl}/login?code=${encodeURIComponent(oneTimeCode)}`);
   } catch (err) {
     console.error("[auth] Google OAuth callback error:", err);
     const frontendUrl = getFrontendUrl();
@@ -456,10 +491,39 @@ router.get("/google/callback", async (req, res, next) => {
 
 // POST /api/auth/logout
 router.post("/logout", (req, res) => {
+  // Capture before destroy
+  const userId = req.session?.userId;
+  const userEmail = req.session?.email;
+  const schoolId = req.session?.schoolId;
+  const role = req.session?.role;
   req.session.destroy(() => {
     res.clearCookie("schoolpilot.sid");
+    if (userId) {
+      logAudit({
+        schoolId: schoolId ?? null,
+        userId,
+        userEmail,
+        userRole: role,
+        action: "auth.logout",
+      }).catch(() => {});
+    }
     res.json({ ok: true });
   });
+});
+
+// POST /api/auth/exchange-code
+// Trade a one-time code (issued by Google OAuth callback) for the JWT.
+// Code is single-use and expires after 60 seconds. Returns 400 if invalid/expired.
+router.post("/exchange-code", (req, res) => {
+  const { code } = req.body || {};
+  if (typeof code !== "string" || !code) {
+    return res.status(400).json({ error: "code required" });
+  }
+  const token = consumeAuthCode(code);
+  if (!token) {
+    return res.status(400).json({ error: "Invalid or expired code" });
+  }
+  return res.json({ token });
 });
 
 // GET /api/auth/csrf

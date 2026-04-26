@@ -37,6 +37,7 @@ const CSRF_EXEMPT_PATHS = [
   "/auth/register",
   "/auth/register-parent",
   "/auth/csrf",
+  "/auth/exchange-code",
   "/auth/google",
   "/auth/forgot-password",
   "/auth/reset-password",

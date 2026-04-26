@@ -220,6 +220,33 @@ import { pool } from "./db.js";
     console.warn("[migration] heartbeats AI classification migration skipped:", (err as Error).message);
   }
 
+  // Allow audit_logs.school_id and user_id to be NULL for system-level events
+  // (e.g., failed-login attempts for non-existent users).
+  try {
+    await pool.query(`ALTER TABLE audit_logs ALTER COLUMN school_id DROP NOT NULL`);
+    await pool.query(`ALTER TABLE audit_logs ALTER COLUMN user_id DROP NOT NULL`);
+    console.log("[migration] audit_logs school_id/user_id nullable");
+  } catch (err) {
+    console.warn("[migration] audit_logs nullable migration skipped:", (err as Error).message);
+  }
+
+  // Auth lockouts — persistent across ECS task restarts and multi-instance
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS auth_lockouts (
+        email_lc TEXT PRIMARY KEY,
+        failed_attempts INT NOT NULL DEFAULT 0,
+        first_fail_at TIMESTAMP NOT NULL DEFAULT now(),
+        locked_until TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT now()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS auth_lockouts_locked_until_idx ON auth_lockouts (locked_until)`);
+    console.log("[migration] auth_lockouts table ready");
+  } catch (err) {
+    console.warn("[migration] auth_lockouts migration skipped:", (err as Error).message);
+  }
+
   // Security events table — breach detection monitor findings
   try {
     await pool.query(`

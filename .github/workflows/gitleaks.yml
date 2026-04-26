@@ -1,0 +1,27 @@
+name: Gitleaks
+
+# Free secret scanning. Catches accidentally committed API keys, tokens, and
+# credentials before they hit production. Runs on every push and PR.
+#
+# Findings become SOC 2 evidence ("we scan for secrets in source control").
+# A failed run blocks merge — fix the leak (rotate the secret + remove from history)
+# before merging.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  scan:
+    name: Scan for secrets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # need full history for diff scan
+
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

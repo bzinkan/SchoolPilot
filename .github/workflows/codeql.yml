@@ -1,0 +1,46 @@
+name: CodeQL
+
+# Free static analysis from GitHub Advanced Security.
+# Scans JavaScript/TypeScript for security bugs (SQL injection, XSS, prototype
+# pollution, hard-coded secrets, etc.) on every push to main, every PR, and
+# on a weekly schedule to catch new advisories.
+#
+# Results land in the Security tab → Code scanning alerts.
+# Findings here become SOC 2 evidence ("we run continuous SAST").
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 6 * * 1' # Mondays 06:00 UTC
+
+jobs:
+  analyze:
+    name: Analyze
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ['javascript-typescript']
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-extended
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"

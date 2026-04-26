@@ -17,14 +17,14 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
         run: npm ci
 
       - name: Audit dependencies
-        run: npm audit --audit-level=critical
+        run: npm audit --audit-level=high
 
       - name: TypeScript check
         run: npx tsc --noEmit
@@ -41,7 +41,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Install backend deps
         run: npm ci
@@ -52,7 +52,7 @@ jobs:
 
       - name: Audit frontend dependencies
         working-directory: schoolpilot-app
-        run: npm audit --audit-level=critical
+        run: npm audit --audit-level=high
 
       - name: Lint frontend
         working-directory: schoolpilot-app

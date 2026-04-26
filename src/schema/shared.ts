@@ -149,8 +149,11 @@ export const auditLogs = pgTable(
   "audit_logs",
   {
     id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-    schoolId: text("school_id").notNull(),
-    userId: text("user_id").notNull(),
+    // Nullable: system-level events like failed-login-for-unknown-user
+    // don't belong to a specific school.
+    schoolId: text("school_id"),
+    // Nullable: failed-login attempts may not have a user record.
+    userId: text("user_id"),
     userEmail: text("user_email"),
     userRole: text("user_role"),
     action: text("action").notNull(),

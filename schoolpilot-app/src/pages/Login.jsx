@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useNative } from '../contexts/NativeContext';
-import { setApiToken } from '../shared/utils/api';
+import api, { setApiToken } from '../shared/utils/api';
 import { saveToken } from '../native/storage';
 import { queryClient } from '../lib/queryClient';
 import { Capacitor } from '@capacitor/core';
@@ -27,14 +27,27 @@ export default function Login() {
   const [regPassword, setRegPassword] = useState('');
   const [regPhone, setRegPhone] = useState('');
 
-  // Handle OAuth token redirect — store JWT and trigger auth (web only)
+  // Handle OAuth one-time-code redirect — exchange for JWT (web only)
+  // Code is single-use, 60s TTL. JWT comes back in response body, never in URL.
   useEffect(() => {
-    const token = searchParams.get('token');
-    if (token) {
-      setApiToken(token);
-      queryClient.clear();
+    const code = searchParams.get('code');
+    if (code) {
+      // Strip the code from URL immediately so it doesn't end up in browser history
       window.history.replaceState({}, '', '/login');
-      refetchUser();
+      api.post('/auth/exchange-code', { code })
+        .then(res => {
+          const token = res.data?.token;
+          if (token) {
+            setApiToken(token);
+            queryClient.clear();
+            refetchUser();
+          } else {
+            setError('Sign-in code was invalid or expired. Please try again.');
+          }
+        })
+        .catch(() => {
+          setError('Sign-in code was invalid or expired. Please try again.');
+        });
       return;
     }
 
@@ -48,28 +61,34 @@ export default function Login() {
     }
   }, [searchParams, refetchUser]);
 
-  // Native: listen for deep link callback from OAuth (com.schoolpilot.gopilot://auth/callback?token=...&redirect=...)
+  // Native: listen for deep link callback from OAuth.
+  // Deep link contains a one-time code (not the JWT) — exchange via API for the JWT.
+  // (com.schoolpilot.gopilot://auth/callback?code=...&redirect=...)
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
     let listener;
     import('@capacitor/app').then(({ App }) => {
-      App.addListener('appUrlOpen', ({ url }) => {
+      App.addListener('appUrlOpen', async ({ url }) => {
         try {
           const parsed = new URL(url);
-          const token = parsed.searchParams.get('token');
+          const code = parsed.searchParams.get('code');
           const redirect = parsed.searchParams.get('redirect');
-          if (token) {
-            setApiToken(token);
-            saveToken(token);
-            queryClient.clear();
-            refetchUser().then(() => {
-              if (redirect && redirect.startsWith('/')) {
-                navigate(redirect, { replace: true });
-              }
-            });
+          if (!code) return;
+          const res = await api.post('/auth/exchange-code', { code });
+          const token = res.data?.token;
+          if (!token) {
+            console.error('[Login] Code exchange returned no token');
+            return;
+          }
+          setApiToken(token);
+          await saveToken(token);
+          queryClient.clear();
+          await refetchUser();
+          if (redirect && redirect.startsWith('/')) {
+            navigate(redirect, { replace: true });
           }
         } catch (err) {
-          console.error('[Login] Deep link parse error:', err);
+          console.error('[Login] Deep link / code exchange error:', err);
         }
       }).then(l => { listener = l; });
     });

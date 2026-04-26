@@ -3,8 +3,8 @@ import { auditLogs } from "../schema/shared.js";
 import { desc, eq, and, sql, count } from "drizzle-orm";
 
 export async function logAudit(entry: {
-  schoolId: string;
-  userId: string;
+  schoolId?: string | null;
+  userId?: string | null;
   userEmail?: string;
   userRole?: string;
   action: string;
@@ -16,8 +16,8 @@ export async function logAudit(entry: {
 }): Promise<void> {
   try {
     await db.insert(auditLogs).values({
-      schoolId: entry.schoolId,
-      userId: entry.userId,
+      schoolId: entry.schoolId ?? null,
+      userId: entry.userId ?? null,
       userEmail: entry.userEmail ?? null,
       userRole: entry.userRole ?? null,
       action: entry.action,
