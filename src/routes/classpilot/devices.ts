@@ -125,6 +125,31 @@ setInterval(() => {
 }, RATE_LIMIT_CLEANUP_INTERVAL_MS);
 
 // ============================================================================
+// Per-school auto-creation throttle — anti-spam guard
+// /extension/register can auto-create a student record when a Chromebook signs in
+// with an unrecognized email at a known school domain. To prevent abuse (someone
+// creating thousands of fake students at a school's domain), we cap auto-creations
+// at MAX_AUTO_CREATIONS per school per hour. Caps don't block real first-day-of-
+// school enrollment unless a single school enrolls >100 students in an hour, which
+// is rare and would surface as a legitimate signal worth investigating anyway.
+// ============================================================================
+const schoolAutoCreations = new Map<string, { count: number; windowStart: number }>();
+const AUTO_CREATE_WINDOW_MS = 60 * 60 * 1000; // 1 hour
+const MAX_AUTO_CREATIONS = 100;
+
+function recordAutoCreation(schoolId: string): boolean {
+  const now = Date.now();
+  const entry = schoolAutoCreations.get(schoolId);
+  if (!entry || now - entry.windowStart > AUTO_CREATE_WINDOW_MS) {
+    schoolAutoCreations.set(schoolId, { count: 1, windowStart: now });
+    return true;
+  }
+  if (entry.count >= MAX_AUTO_CREATIONS) return false;
+  entry.count++;
+  return true;
+}
+
+// ============================================================================
 // Tracking window enforcement (shared utility)
 // ============================================================================
 import { isWithinTrackingWindow } from "../../services/schoolHours.js";
@@ -134,11 +159,17 @@ import { isWithinTrackingWindow } from "../../services/schoolHours.js";
 // ============================================================================
 
 // POST /api/classpilot/school/status - Check school status from email domain or token
+//
+// Information disclosure note: when called WITHOUT a valid studentToken, this endpoint
+// is unauthenticated and reachable from any extension instance. We deliberately return
+// only the minimum fields needed for the extension to decide whether to keep heartbeating.
+// We do NOT leak schoolId, planStatus, or human-readable status strings to unauthenticated
+// callers — those would help an attacker enumerate schools and licensing tiers.
 router.post("/school/status", extensionLimiter, async (req, res, next) => {
   try {
     const { studentEmail, studentToken } = req.body;
 
-    // Try token-based lookup first
+    // Token-based lookup (authenticated): return full status
     if (studentToken) {
       try {
         const { verifyStudentToken } = await import("../../services/deviceJwt.js");
@@ -160,16 +191,17 @@ router.post("/school/status", extensionLimiter, async (req, res, next) => {
       return res.status(400).json({ error: "studentEmail required" });
     }
 
+    // Email-based lookup (unauthenticated): return minimal info to avoid enumeration
     const result = await resolveSchoolForStudent(studentEmail);
     if (!result) {
-      return res.status(401).json({ error: "Student not found — please ask your administrator to import students first" });
+      return res.status(401).json({ error: "Not eligible" });
     }
+    const isActive = result.school.status === "active" || result.school.status === "trial";
 
+    // Minimal response — schoolId, planStatus, and status omitted intentionally.
+    // The extension calls /extension/register next which returns the full JWT with schoolId.
     return res.json({
-      schoolId: result.school.id,
-      schoolActive: result.school.status === "active" || result.school.status === "trial",
-      planStatus: result.school.planStatus || "active",
-      status: result.school.status,
+      schoolActive: isActive,
       schoolSessionVersion: 1,
     });
   } catch (err) {
@@ -216,8 +248,10 @@ router.get("/extension/settings", requireDeviceAuth, async (_req, res, next) => 
 // Device & Student Registration
 // ============================================================================
 
-// POST /api/classpilot/register - Generic device registration (no student) (item #7)
-router.post("/register", async (req, res, next) => {
+// POST /api/classpilot/register - Generic device registration (no student) (legacy)
+// Kept for backwards compatibility with older extension builds. New extensions use
+// /extension/register exclusively. Rate-limited to prevent abuse.
+router.post("/register", extensionLimiter, async (req, res, next) => {
   try {
     const { deviceId, deviceName, classId, schoolId: explicitSchoolId } = req.body;
     if (!deviceId) {
@@ -305,6 +339,13 @@ router.post("/extension/register", extensionLimiter, async (req, res, next) => {
       }
 
       if (!student) {
+        // Anti-spam: cap auto-creations per school per hour
+        if (!recordAutoCreation(resolvedSchoolId)) {
+          console.warn(`[Security] Auto-creation rate limit hit for school ${resolvedSchoolId}; rejecting ${studentEmail}`);
+          return res.status(429).json({
+            error: "Auto-enrollment temporarily disabled — please ask your administrator to import students first.",
+          });
+        }
         const nameParts = (studentName || studentEmail.split("@")[0]).split(/\s+/);
         student = await createStudent({
           schoolId: resolvedSchoolId,
@@ -360,7 +401,8 @@ router.post("/extension/register", extensionLimiter, async (req, res, next) => {
 });
 
 // POST /api/classpilot/register-student - Register student and get device token (legacy)
-router.post("/register-student", async (req, res, next) => {
+// Kept for backwards compatibility. New extensions use /extension/register.
+router.post("/register-student", extensionLimiter, async (req, res, next) => {
   try {
     const { deviceId, studentEmail, gradeLevel, firstName, lastName, schoolId } = req.body;
     if (!deviceId || !studentEmail || !schoolId) {
@@ -372,6 +414,13 @@ router.post("/register-student", async (req, res, next) => {
     let student = existing[0];
 
     if (!student) {
+      // Anti-spam: cap auto-creations per school per hour
+      if (!recordAutoCreation(schoolId)) {
+        console.warn(`[Security] Auto-creation rate limit hit on /register-student for school ${schoolId}`);
+        return res.status(429).json({
+          error: "Auto-enrollment temporarily disabled — please ask your administrator to import students first.",
+        });
+      }
       student = await createStudent({
         schoolId,
         firstName: firstName || studentEmail.split("@")[0],

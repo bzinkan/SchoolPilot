@@ -10,6 +10,7 @@ import { pool } from "./db.js";
 import { getIO } from "./realtime/socketio.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import { sessionIdleTimeout } from "./middleware/sessionIdleTimeout.js";
+import { csrfProtection } from "./middleware/csrfProtection.js";
 import { apiLimiter } from "./middleware/rateLimiter.js";
 import routes from "./routes/index.js";
 import errorMonitor from "./services/errorMonitor.js";
@@ -174,6 +175,10 @@ export function createApp() {
 
   // Enforce tighter idle timeout for elevated roles (admin/super_admin)
   app.use("/api", sessionIdleTimeout);
+
+  // CSRF protection on cookie-authenticated state-changing requests
+  // (JWT bearer requests skip this — they have no CSRF vector)
+  app.use("/api", csrfProtection);
 
   // Routes
   app.use("/api", routes);
