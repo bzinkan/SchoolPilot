@@ -122,8 +122,6 @@ router.get("/settings", ...auth, async (req, res, next) => {
       blockedDomains: schoolSettings?.blockedDomains || [],
       maxTabsPerStudent: schoolSettings?.maxTabsPerStudent || null,
       aiSafetyEmailsEnabled: schoolSettings?.aiSafetyEmailsEnabled ?? true,
-      autoBlockUnsafeUrls: schoolSettings?.autoBlockUnsafeUrls ?? true,
-      enforcePersonalEmailBlock: schoolSettings?.enforcePersonalEmailBlock ?? true,
       // Teacher's own blocked domains (for MySettings editable field)
       teacherBlockedDomains: (teacherSettings as any)?.blockedDomains || [],
       // School-wide blocked domains (for MySettings read-only display)
@@ -140,7 +138,6 @@ router.post("/settings", ...auth, async (req, res, next) => {
     const {
       maxTabsPerStudent, allowedDomains, blockedDomains, defaultFlightPathId,
       schoolName, retentionHours, ipAllowlist, aiSafetyEmailsEnabled, autoBlockUnsafeUrls,
-      enforcePersonalEmailBlock,
     } = req.body;
 
     // Teacher-specific settings
@@ -156,8 +153,7 @@ router.post("/settings", ...auth, async (req, res, next) => {
     // The admin page sends schoolName/retentionHours/ipAllowlist/aiSafetyEmailsEnabled
     // which the teacher's MySettings page never includes.
     const isAdminSettingsRequest = schoolName !== undefined || retentionHours !== undefined
-      || ipAllowlist !== undefined || aiSafetyEmailsEnabled !== undefined || autoBlockUnsafeUrls !== undefined
-      || enforcePersonalEmailBlock !== undefined;
+      || ipAllowlist !== undefined || aiSafetyEmailsEnabled !== undefined || autoBlockUnsafeUrls !== undefined;
 
     if (isAdminSettingsRequest) {
       const schoolId = res.locals.schoolId!;
@@ -170,7 +166,6 @@ router.post("/settings", ...auth, async (req, res, next) => {
       if (maxTabsPerStudent !== undefined) schoolData.maxTabsPerStudent = maxTabsPerStudent || null;
       if (aiSafetyEmailsEnabled !== undefined) schoolData.aiSafetyEmailsEnabled = aiSafetyEmailsEnabled !== false;
       if (autoBlockUnsafeUrls !== undefined) schoolData.autoBlockUnsafeUrls = autoBlockUnsafeUrls !== false;
-      if (enforcePersonalEmailBlock !== undefined) schoolData.enforcePersonalEmailBlock = enforcePersonalEmailBlock !== false;
 
       if (Object.keys(schoolData).length > 0) {
         await upsertSettings(schoolId, schoolData);

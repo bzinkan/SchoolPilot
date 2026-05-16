@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { Router } from "express";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { productLicenses } from "../../schema/core.js";
 import db from "../../db.js";
 import { authenticate } from "../../middleware/authenticate.js";
@@ -215,144 +215,6 @@ router.get("/school/status", async (_req, res) => {
 });
 
 // ============================================================================
-// Non-school account detection (Tier 2 personal-email defense)
-// ============================================================================
-// Cooldown: don't email the school more than once per device per 24h.
-const nonSchoolAlertCooldown = new Map<string, number>();
-const NON_SCHOOL_ALERT_COOLDOWN_MS = 24 * 60 * 60 * 1000;
-
-// POST /api/classpilot/non-school-account-alert
-// Unauthenticated. Called by the extension when it detects a non-school email
-// signed into a managed device. The extension may also include a
-// chrome.enterprise.deviceAttributes directoryDeviceId — if present, we resolve
-// the school via device_enrollment instead of email domain.
-router.post("/non-school-account-alert", extensionLimiter, async (req, res, next) => {
-  try {
-    const { deviceId, directoryDeviceId, accountDomain } = req.body || {};
-    if (!deviceId && !directoryDeviceId) {
-      return res.status(400).json({ error: "deviceId or directoryDeviceId required" });
-    }
-
-    // Resolve school for this device, in order of preference
-    let schoolId: string | null = null;
-
-    if (directoryDeviceId) {
-      const result = await db.execute(sql`
-        SELECT school_id FROM device_enrollment
-        WHERE directory_device_id = ${directoryDeviceId}
-        LIMIT 1
-      `);
-      schoolId = (result.rows[0] as any)?.school_id ?? null;
-
-      // Update last-seen on the device enrollment
-      if (schoolId) {
-        await db.execute(sql`
-          UPDATE device_enrollment
-          SET last_seen_at = NOW(), last_seen_account_domain = ${accountDomain ?? null}
-          WHERE directory_device_id = ${directoryDeviceId}
-        `);
-      }
-    }
-
-    if (!schoolId && deviceId) {
-      const device = await getDeviceById(deviceId);
-      if (device) schoolId = device.schoolId;
-    }
-
-    if (!schoolId) {
-      // Device unknown — log to security events for review but don't email anyone
-      try {
-        await db.execute(sql`
-          INSERT INTO security_events (event_type, severity, summary, details, status)
-          VALUES (
-            'non_school_account_unknown_device',
-            'low',
-            'Non-school account detected on unrecognized device',
-            ${JSON.stringify({ deviceId, directoryDeviceId, accountDomain })}::jsonb,
-            'open'
-          )
-        `);
-      } catch { /* non-blocking */ }
-      return res.json({ ok: true, recognized: false });
-    }
-
-    // Cooldown check
-    const cooldownKey = `${schoolId}:${deviceId || directoryDeviceId}`;
-    const now = Date.now();
-    const last = nonSchoolAlertCooldown.get(cooldownKey) || 0;
-    if (now - last < NON_SCHOOL_ALERT_COOLDOWN_MS) {
-      return res.json({ ok: true, recognized: true, alertSuppressed: true });
-    }
-    nonSchoolAlertCooldown.set(cooldownKey, now);
-
-    // Persist a security event for the admin to review
-    try {
-      await db.execute(sql`
-        INSERT INTO security_events (event_type, severity, school_id, summary, details, status)
-        VALUES (
-          'non_school_account_on_managed_device',
-          'medium',
-          ${schoolId},
-          ${`Non-school account (${accountDomain || 'unknown'}) on device ${deviceId || directoryDeviceId}`},
-          ${JSON.stringify({ deviceId, directoryDeviceId, accountDomain })}::jsonb,
-          'open'
-        )
-      `);
-    } catch { /* non-blocking */ }
-
-    // Notify school admins
-    try {
-      const adminEmails = await getAdminEmailsBySchool(schoolId);
-      if (adminEmails.length > 0) {
-        const { sendEmail } = await import("../../services/email.js");
-        await sendEmail({
-          to: adminEmails.join(","),
-          subject: "ClassPilot: Non-school account detected on a managed device",
-          html: `<h3>Non-school account detected</h3>
-            <p>A student signed into a school Chromebook with a non-school Google account.</p>
-            <p><strong>Account domain:</strong> ${accountDomain || "unknown"}</p>
-            <p><strong>Device ID:</strong> ${deviceId || "(none)"}</p>
-            <p><strong>Directory Device ID:</strong> ${directoryDeviceId || "(none — extension reports device not enrolled in Google Admin Console)"}</p>
-            <p><strong>What this means:</strong> The Chromebook is not being monitored while this account is signed in. The student may be browsing without ClassPilot oversight.</p>
-            <p><strong>Recommended action:</strong> Verify Google Workspace Admin policies are restricting sign-in to school accounts only (Devices → Chrome → Settings → User & browser → Sign-in restriction). See your security setup guide for details.</p>
-            <p><em>Alert cooldown: you will not receive another email about this device for 24 hours.</em></p>`,
-        });
-      }
-    } catch (err) {
-      console.error("[non-school-account] admin email failed:", err);
-    }
-
-    return res.json({ ok: true, recognized: true });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// POST /api/classpilot/device-enrollment-register
-// Called by the extension on managed Chromebooks to register the device's
-// chrome.enterprise.deviceAttributes directoryDeviceId with its school.
-// Requires an active student token to establish school context (Tier 3).
-router.post("/device-enrollment-register", requireDeviceAuth, async (req, res, next) => {
-  try {
-    const { directoryDeviceId, accountDomain } = req.body || {};
-    if (!directoryDeviceId || typeof directoryDeviceId !== "string") {
-      return res.status(400).json({ error: "directoryDeviceId required" });
-    }
-    const schoolId = res.locals.schoolId as string;
-    await db.execute(sql`
-      INSERT INTO device_enrollment (directory_device_id, school_id, last_seen_account_domain)
-      VALUES (${directoryDeviceId}, ${schoolId}, ${accountDomain ?? null})
-      ON CONFLICT (directory_device_id) DO UPDATE SET
-        last_seen_at = NOW(),
-        last_seen_account_domain = EXCLUDED.last_seen_account_domain
-    `);
-    return res.json({ ok: true });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// ============================================================================
 // Extension Settings
 // ============================================================================
 
@@ -376,13 +238,6 @@ router.get("/extension/settings", requireDeviceAuth, async (_req, res, next) => 
       maxTabsPerStudent: schoolSettings?.maxTabsPerStudent
         ? parseInt(schoolSettings.maxTabsPerStudent, 10)
         : null,
-      // Tier 2 personal-email defense (defense-in-depth on top of Chrome OS policy).
-      // When true, the extension shows a lockdown overlay on non-school accounts
-      // and sends an alert to school admins.
-      enforcePersonalEmailBlock: schoolSettings?.enforcePersonalEmailBlock ?? true,
-      // The school's domain — extension uses this to decide if the signed-in
-      // Google account is a school account or a personal one.
-      schoolDomain: school.domain ?? null,
     });
   } catch (err) {
     next(err);
