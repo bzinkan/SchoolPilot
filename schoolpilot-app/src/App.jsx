@@ -27,6 +27,7 @@ const CPEmailMonitoringSetup = lazy(() => import('./products/classpilot/pages/Em
 const CPStudents = lazy(() => import('./products/classpilot/pages/Students'));
 const CPSettings = lazy(() => import('./products/classpilot/pages/Settings'));
 const CPMySettings = lazy(() => import('./products/classpilot/pages/MySettings'));
+const CPWorkspaceAudit = lazy(() => import('./products/classpilot/pages/WorkspaceAudit'));
 
 // PassPilot pages (lazy-loaded)
 const PPDashboard = lazy(() => import('./products/passpilot/pages/Dashboard'));
@@ -150,6 +151,7 @@ function AppRoutes() {
             <Route path="/classpilot/students" element={<CPStudents />} />
             <Route path="/classpilot/settings" element={<CPSettings />} />
             <Route path="/classpilot/my-settings" element={<CPMySettings />} />
+            <Route path="/classpilot/admin/workspace-audit" element={<CPWorkspaceAudit />} />
           </>
         )}
 

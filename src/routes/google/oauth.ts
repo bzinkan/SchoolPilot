@@ -23,6 +23,9 @@ const SCOPES = [
   "https://www.googleapis.com/auth/classroom.rosters.readonly",
   "https://www.googleapis.com/auth/admin.directory.user.readonly",
   "https://www.googleapis.com/auth/admin.directory.orgunit.readonly",
+  // Workspace Security Audit: read ChromeOS device inventory + Chrome policy values
+  "https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly",
+  "https://www.googleapis.com/auth/chrome.management.policy.readonly",
 ];
 
 // GET /api/google/auth-url - Get Google OAuth URL

@@ -25,6 +25,7 @@ import attendanceRoutes from "./admin/attendance.js";
 import googleOAuthRoutes from "./google/oauth.js";
 import googleClassroomRoutes from "./google/classroom.js";
 import googleDirectoryRoutes from "./google/directory.js";
+import googleWorkspaceAuditRoutes from "./google/workspaceAudit.js";
 import compatRoutes from "./compat.js";
 import aiChatRoutes from "./chat.js";
 import mailpilotPubsubRoutes from "./mailpilot/pubsub.js";
@@ -360,6 +361,7 @@ router.use("/admin/attendance", attendanceRoutes);
 router.use("/google", googleOAuthRoutes);
 router.use("/google/classroom", googleClassroomRoutes);
 router.use("/google/directory", googleDirectoryRoutes);
+router.use("/google/workspace-audit", googleWorkspaceAuditRoutes);
 
 // AI Chat assistant (must be before compat catch-all)
 router.use("/ai-chat", aiChatRoutes);
