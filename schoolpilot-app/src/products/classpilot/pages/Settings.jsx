@@ -49,6 +49,7 @@ const settingsSchema = z.object({
   ipAllowlist: z.string(),
   aiSafetyEmailsEnabled: z.boolean().optional(),
   autoBlockUnsafeUrls: z.boolean().optional(),
+  enforcePersonalEmailBlock: z.boolean().optional(),
 });
 
 export default function Settings() {
@@ -86,6 +87,7 @@ export default function Settings() {
       ipAllowlist: settings?.ipAllowlist?.join(", ") || "",
       aiSafetyEmailsEnabled: settings?.aiSafetyEmailsEnabled !== false,
       autoBlockUnsafeUrls: settings?.autoBlockUnsafeUrls !== false,
+      enforcePersonalEmailBlock: settings?.enforcePersonalEmailBlock !== false,
     },
   });
 
@@ -101,6 +103,7 @@ export default function Settings() {
         ipAllowlist: settings.ipAllowlist?.join(", ") || "",
         aiSafetyEmailsEnabled: settings.aiSafetyEmailsEnabled !== false,
         autoBlockUnsafeUrls: settings.autoBlockUnsafeUrls !== false,
+        enforcePersonalEmailBlock: settings.enforcePersonalEmailBlock !== false,
       });
     }
   }, [settings, form]);
@@ -128,6 +131,7 @@ export default function Settings() {
           .filter(Boolean),
         aiSafetyEmailsEnabled: data.aiSafetyEmailsEnabled !== false,
         autoBlockUnsafeUrls: data.autoBlockUnsafeUrls !== false,
+        enforcePersonalEmailBlock: data.enforcePersonalEmailBlock !== false,
       };
       return await apiRequest("POST", "/settings", payload);
     },
@@ -403,6 +407,21 @@ export default function Settings() {
               </div>
               <p className="text-xs text-muted-foreground -mt-4 ml-7">
                 Send email notifications to school admins when dangerous content (self-harm, violence, sexual) is detected.
+              </p>
+
+              <div className="flex items-center space-x-3">
+                <input
+                  type="checkbox"
+                  id="enforcePersonalEmailBlock"
+                  className="h-4 w-4 rounded border-gray-300"
+                  {...form.register("enforcePersonalEmailBlock")}
+                />
+                <Label htmlFor="enforcePersonalEmailBlock">
+                  Block personal Google accounts on school devices
+                </Label>
+              </div>
+              <p className="text-xs text-muted-foreground -mt-4 ml-7">
+                When a student signs into a school Chromebook with a personal Google account (gmail.com, yahoo.com, etc.), show a lockdown overlay and email school admins. This is a backstop — the primary mitigation is restricting sign-in to school accounts via Google Workspace Admin Console policies. <a href="/docs/google-workspace-policies" target="_blank" rel="noreferrer" className="underline">Setup guide</a>
               </p>
 
               <Button

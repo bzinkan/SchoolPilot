@@ -220,6 +220,35 @@ import { pool } from "./db.js";
     console.warn("[migration] heartbeats AI classification migration skipped:", (err as Error).message);
   }
 
+  // Personal-email enforcement setting (Tier 1 backstop for Google Workspace policy)
+  try {
+    await pool.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS enforce_personal_email_block BOOLEAN DEFAULT true`);
+    console.log("[migration] enforce_personal_email_block column ready");
+  } catch (err) {
+    console.warn("[migration] enforce_personal_email_block migration skipped:", (err as Error).message);
+  }
+
+  // Device-bound enrollment (Tier 3 — chrome.enterprise.deviceAttributes)
+  // Maps a Chrome managed-device directory ID to a school. Lets us identify
+  // school ownership of a device even when a student signs in with a personal
+  // Google account on it.
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS device_enrollment (
+        directory_device_id TEXT PRIMARY KEY,
+        school_id TEXT NOT NULL,
+        first_seen_at TIMESTAMP NOT NULL DEFAULT now(),
+        last_seen_at TIMESTAMP NOT NULL DEFAULT now(),
+        last_seen_account_domain TEXT,
+        notes TEXT
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS device_enrollment_school_id_idx ON device_enrollment (school_id)`);
+    console.log("[migration] device_enrollment table ready");
+  } catch (err) {
+    console.warn("[migration] device_enrollment migration skipped:", (err as Error).message);
+  }
+
   // Allow audit_logs.school_id and user_id to be NULL for system-level events
   // (e.g., failed-login attempts for non-existent users).
   try {

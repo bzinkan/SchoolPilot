@@ -18,6 +18,7 @@ import {
   type WsRedisTarget,
 } from "./ws-redis.js";
 import {
+  getSchoolById,
   getSchoolByDomain,
   resolveSchoolForStudent,
   searchStudents,
@@ -177,6 +178,7 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
 
                 // Send settings along with auth success
                 const schoolSettings = await getSettingsForSchool(schoolId);
+                const tokenSchool = await getSchoolById(schoolId);
                 ws.send(JSON.stringify({
                   type: "auth-success",
                   role: "student",
@@ -184,6 +186,8 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
                     maxTabsPerStudent: schoolSettings?.maxTabsPerStudent
                       ? parseInt(schoolSettings.maxTabsPerStudent, 10) : null,
                     globalBlockedDomains: schoolSettings?.blockedDomains || [],
+                    enforcePersonalEmailBlock: schoolSettings?.enforcePersonalEmailBlock ?? true,
+                    schoolDomain: tokenSchool?.domain ?? null,
                   },
                 }));
                 console.log(`[WebSocket] Student authenticated: device=${deviceId}, school=${schoolId}`);
@@ -266,6 +270,8 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
                     maxTabsPerStudent: schoolSettings?.maxTabsPerStudent
                       ? parseInt(schoolSettings.maxTabsPerStudent, 10) : null,
                     globalBlockedDomains: schoolSettings?.blockedDomains || [],
+                    enforcePersonalEmailBlock: schoolSettings?.enforcePersonalEmailBlock ?? true,
+                    schoolDomain: school.domain ?? null,
                   },
                 }));
                 console.log(`[WebSocket] Student auto-provisioned: email=${email}, device=${deviceId}, school=${school.id}`);

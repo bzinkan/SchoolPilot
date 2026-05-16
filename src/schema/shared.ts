@@ -53,6 +53,12 @@ export const settings = pgTable("settings", {
   studentMessagingEnabled: boolean("student_messaging_enabled").default(true),
   aiSafetyEmailsEnabled: boolean("ai_safety_emails_enabled").default(true),
   autoBlockUnsafeUrls: boolean("auto_block_unsafe_urls").default(true),
+  // Personal-email enforcement (Tier 1 backstop for missing Google Workspace policy).
+  // When enabled, the extension shows a lockdown overlay if a student signs into a
+  // managed Chromebook with a non-school email, and sends an alert to school admin.
+  // The PRIMARY mitigation is still Chrome OS policy (Restrict sign-in to a list of
+  // users); this is defense-in-depth for misconfigured deployments.
+  enforcePersonalEmailBlock: boolean("enforce_personal_email_block").default(true),
 });
 
 export type Settings = typeof settings.$inferSelect;
@@ -217,6 +223,27 @@ export const securityEvents = pgTable(
 
 export type SecurityEvent = typeof securityEvents.$inferSelect;
 export type InsertSecurityEvent = typeof securityEvents.$inferInsert;
+
+// ============================================================================
+// Device Enrollment — device-bound identity for managed Chromebooks (Tier 3)
+// Maps a Chrome managed-device directory ID to a school. The extension reads
+// the directory ID via chrome.enterprise.deviceAttributes.getDirectoryDeviceId()
+// and includes it on registration. This lets us identify school ownership of
+// a device even when a student signs in with a personal Google account on it.
+// ============================================================================
+export const deviceEnrollment = pgTable("device_enrollment", {
+  directoryDeviceId: text("directory_device_id").primaryKey(),
+  schoolId: text("school_id").notNull(),
+  firstSeenAt: timestamp("first_seen_at").notNull().default(sql`now()`),
+  lastSeenAt: timestamp("last_seen_at").notNull().default(sql`now()`),
+  lastSeenAccountDomain: text("last_seen_account_domain"),
+  notes: text("notes"),
+}, (table) => [
+  index("device_enrollment_school_id_idx").on(table.schoolId),
+]);
+
+export type DeviceEnrollment = typeof deviceEnrollment.$inferSelect;
+export type InsertDeviceEnrollment = typeof deviceEnrollment.$inferInsert;
 
 // ============================================================================
 // Trial Requests - Unified (superset of all three projects)
