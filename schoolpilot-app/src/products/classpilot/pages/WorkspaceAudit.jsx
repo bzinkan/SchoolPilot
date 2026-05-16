@@ -209,7 +209,8 @@ export default function WorkspaceAudit() {
 
   const connectGoogle = async () => {
     try {
-      const data = await apiRequest("GET", "/google/auth-url");
+      const returnTo = encodeURIComponent(window.location.href);
+      const data = await apiRequest("GET", `/google/auth-url?returnTo=${returnTo}`);
       if (data?.url) window.location.href = data.url;
     } catch (err) {
       toast({

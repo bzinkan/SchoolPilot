@@ -28,6 +28,16 @@ const SCOPES = [
   "https://www.googleapis.com/auth/chrome.management.policy.readonly",
 ];
 
+function getAllowedReturnUrl(returnTo: string | undefined, allowlist: string[]): URL | null {
+  if (!returnTo) return null;
+  try {
+    const url = new URL(returnTo);
+    return allowlist.includes(url.origin) ? url : null;
+  } catch {
+    return null;
+  }
+}
+
 // GET /api/google/auth-url - Get Google OAuth URL
 router.get("/auth-url", authenticate, requireSchoolContext, async (req, res, next) => {
   try {
@@ -76,21 +86,19 @@ router.get("/callback", async (req, res, next) => {
       expiryDate: tokens.expiry_date ? new Date(tokens.expiry_date) : undefined,
     });
 
-    // Redirect back to the frontend that initiated the OAuth flow
-    const allowlist = (process.env.CORS_ALLOWLIST || "").split(",").map((s) => s.trim());
-    let frontendUrl = allowlist[0] || "http://localhost:5173";
+    const allowlist = (process.env.CORS_ALLOWLIST || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const allowedReturnUrl = getAllowedReturnUrl(returnTo, allowlist);
 
-    // Use returnTo if it matches an allowed origin
-    if (returnTo) {
-      try {
-        const origin = new URL(returnTo).origin;
-        if (allowlist.includes(origin)) {
-          frontendUrl = origin;
-        }
-      } catch {}
+    if (allowedReturnUrl) {
+      allowedReturnUrl.searchParams.set("connected", "true");
+      return res.redirect(allowedReturnUrl.toString());
     }
 
-    return res.redirect(`${frontendUrl}/settings/google?connected=true`);
+    const fallbackOrigin = allowlist[0] || "http://localhost:5173";
+    return res.redirect(`${fallbackOrigin}/settings/google?connected=true`);
   } catch (err) {
     next(err);
   }
