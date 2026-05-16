@@ -2,10 +2,8 @@ import { Router } from "express";
 import { authenticate } from "../../middleware/authenticate.js";
 import { getSchoolById, updateSchool, getProductLicenses } from "../../services/storage.js";
 import { logAudit } from "../../services/audit.js";
-import db from "../../db.js";
-import { schools, productLicenses } from "../../schema/core.js";
-import { eq, and, sql } from "drizzle-orm";
 import { calculateInvoice, PRODUCT_PRICING, type ProductKey } from "../../config/pricing.js";
+import { handleBillingWebhookEvent } from "./billingWebhook.js";
 
 const router = Router();
 
@@ -102,153 +100,7 @@ router.post(
         return res.status(400).json({ error: "Webhook signature invalid" });
       }
 
-      switch (event.type) {
-        case "checkout.session.completed": {
-          const session = event.data.object as any;
-          const schoolId = session.metadata?.schoolId;
-          const studentCount = parseInt(session.metadata?.studentCount || "0", 10);
-          const amountPaid = session.amount_total || 0;
-
-          if (schoolId) {
-            const now = new Date();
-            const activeUntil = new Date(now);
-            activeUntil.setFullYear(activeUntil.getFullYear() + 1);
-
-            await db
-              .update(schools)
-              .set({
-                stripeCustomerId: session.customer,
-                status: "active",
-                planTier: "basic",
-                planStatus: "active",
-                activeUntil,
-                maxLicenses: studentCount || undefined,
-                lastPaymentAmount: amountPaid,
-                lastPaymentDate: now,
-                totalPaid: sql`COALESCE(${schools.totalPaid}, 0) + ${amountPaid}`,
-                updatedAt: now,
-              })
-              .where(eq(schools.id, schoolId));
-
-            await logAudit({
-              schoolId,
-              userId: "system",
-              action: "billing.checkout_completed",
-              entityType: "school",
-              entityId: schoolId,
-              metadata: { sessionId: session.id, amountPaid, studentCount },
-            });
-
-            console.log(`[Stripe] Checkout completed for school ${schoolId}: $${(amountPaid / 100).toFixed(2)}, ${studentCount} students`);
-          }
-          break;
-        }
-
-        case "invoice.paid": {
-          const invoice = event.data.object as any;
-          const schoolId = invoice.metadata?.schoolId;
-          const studentCount = parseInt(invoice.metadata?.studentCount || "0", 10);
-          const amountPaid = invoice.amount_paid || 0;
-          const products = (invoice.metadata?.products || "").split(",").filter(Boolean);
-
-          if (schoolId) {
-            const now = new Date();
-            const activeUntil = new Date(now);
-            activeUntil.setFullYear(activeUntil.getFullYear() + 1);
-
-            // Set plan tier based on product count
-            const planTier = products.length >= 3 ? "enterprise" : products.length >= 2 ? "pro" : "basic";
-
-            await db
-              .update(schools)
-              .set({
-                status: "active",
-                planTier,
-                planStatus: "active",
-                activeUntil,
-                maxLicenses: studentCount || undefined,
-                stripeSubscriptionId: invoice.subscription || invoice.id,
-                lastPaymentAmount: amountPaid,
-                lastPaymentDate: now,
-                totalPaid: sql`COALESCE(${schools.totalPaid}, 0) + ${amountPaid}`,
-                updatedAt: now,
-              })
-              .where(eq(schools.id, schoolId));
-
-            // Update product license expiry dates
-            for (const product of products) {
-              await db
-                .update(productLicenses)
-                .set({ expiresAt: activeUntil })
-                .where(
-                  and(
-                    eq(productLicenses.schoolId, schoolId),
-                    eq(productLicenses.product, product),
-                    eq(productLicenses.status, "active")
-                  )
-                );
-            }
-
-            await logAudit({
-              schoolId,
-              userId: "system",
-              action: "billing.invoice_paid",
-              entityType: "school",
-              entityId: schoolId,
-              metadata: { invoiceId: invoice.id, amountPaid, studentCount, products },
-            });
-
-            console.log(`[Stripe] Invoice paid for school ${schoolId}: $${(amountPaid / 100).toFixed(2)} (${products.join(", ")})`);
-          } else {
-            console.log(`[Stripe] Invoice paid (no schoolId): customer ${invoice.customer}`);
-          }
-          break;
-        }
-
-        case "invoice.payment_failed": {
-          const invoice = event.data.object as any;
-          const schoolId = invoice.metadata?.schoolId;
-
-          if (schoolId) {
-            await updateSchool(schoolId, { planStatus: "past_due" });
-
-            await logAudit({
-              schoolId,
-              userId: "system",
-              action: "billing.payment_failed",
-              entityType: "school",
-              entityId: schoolId,
-              metadata: { invoiceId: invoice.id },
-            });
-
-            console.log(`[Stripe] Payment failed for school ${schoolId}`);
-          }
-          break;
-        }
-
-        case "customer.subscription.deleted": {
-          const subscription = event.data.object as any;
-          const schoolId = subscription.metadata?.schoolId;
-
-          if (schoolId) {
-            await updateSchool(schoolId, {
-              planStatus: "canceled",
-              stripeSubscriptionId: null,
-            });
-
-            await logAudit({
-              schoolId,
-              userId: "system",
-              action: "billing.subscription_canceled",
-              entityType: "school",
-              entityId: schoolId,
-            });
-          }
-
-          console.log(`[Stripe] Subscription cancelled: ${subscription.customer}`);
-          break;
-        }
-      }
+      await handleBillingWebhookEvent(event);
 
       return res.json({ received: true });
     } catch (err) {

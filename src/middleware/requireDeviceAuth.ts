@@ -5,7 +5,7 @@ import {
   InvalidTokenError,
 } from "../services/deviceJwt.js";
 
-function extractBearerToken(rawHeader?: string | string[]): string | null {
+export function extractBearerToken(rawHeader?: string | string[]): string | null {
   if (!rawHeader) return null;
   const header = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader;
   if (!header) return null;

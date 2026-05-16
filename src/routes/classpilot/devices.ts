@@ -53,6 +53,11 @@ import {
   setFlightPathStatus,
 } from "../../realtime/ws-redis.js";
 import { classifyUrl, isAiAvailable } from "../../services/aiClassification.js";
+import {
+  buildHeartbeatResponse,
+  getPendingMessagesForFirstHeartbeat,
+  shouldAcceptHeartbeat,
+} from "./deviceHeartbeat.js";
 
 const router = Router();
 
@@ -511,12 +516,9 @@ router.post("/device/heartbeat", requireDeviceAuth, async (req, res, next) => {
     const studentEmail = res.locals.studentEmail as string;
 
     // --- Per-device rate limiting (item #9) ---
-    const lastHb = deviceLastHeartbeat.get(deviceId);
-    const now = Date.now();
-    if (lastHb && now - lastHb < HEARTBEAT_MIN_INTERVAL_MS) {
+    if (!shouldAcceptHeartbeat(deviceLastHeartbeat, deviceId, Date.now(), HEARTBEAT_MIN_INTERVAL_MS)) {
       return res.status(204).send();
     }
-    deviceLastHeartbeat.set(deviceId, now);
 
     // --- ClassPilot license check (cached — saves 1 DB query per heartbeat) ---
     if (!(await hasCachedClassPilotLicense(schoolId))) {
@@ -692,27 +694,17 @@ router.post("/device/heartbeat", requireDeviceAuth, async (req, res, next) => {
     // (when deliveredMessages has no entry). After that, WebSocket handles delivery.
     // This saves 1 DB query on every subsequent heartbeat (~99% of traffic).
     let pendingMessages: Array<{ id: string; message: string }> = [];
-    const isFirstHeartbeat = !deliveredMessages.has(deviceId);
-    if (isFirstHeartbeat) {
-      try {
-        const recent = await getRecentMessagesForStudent(studentId, 5);
-        if (recent.length > 0) {
-          const delivered = new Set<string>();
-          deliveredMessages.set(deviceId, delivered);
-          pendingMessages = recent.map(m => ({ id: m.id, message: m.message }));
-          for (const m of pendingMessages) delivered.add(m.id);
-        } else {
-          deliveredMessages.set(deviceId, new Set());
-        }
-      } catch { /* non-blocking */ }
-    }
+    try {
+      pendingMessages = await getPendingMessagesForFirstHeartbeat({
+        deliveredMessagesByDevice: deliveredMessages,
+        deviceId,
+        studentId,
+        loadRecentMessages: getRecentMessagesForStudent,
+      });
+    } catch { /* non-blocking */ }
 
     // --- Return planStatus (item #3) ---
-    return res.json({
-      ok: true,
-      planStatus: school.planStatus || "active",
-      ...(pendingMessages.length > 0 ? { pendingMessages } : {}),
-    });
+    return res.json(buildHeartbeatResponse(school.planStatus, pendingMessages));
   } catch (err) {
     next(err);
   }

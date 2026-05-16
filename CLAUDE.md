@@ -186,6 +186,7 @@ When a school has multiple products, priority order is: ClassPilot > PassPilot >
 ## Key Patterns
 
 - **All DB queries** live in `src/services/storage.ts`. Add new queries there rather than inline in routes. Exception: complex analytics queries with multi-table joins may live directly in route handlers (see `compat.ts` analytics endpoints).
+- **Extract policy helpers from large route/storage files when touching them.** Keep database writes in storage/routes as appropriate, but move decision logic into small modules that can be covered by Vitest. Current examples: `src/services/studentIdentity.ts`, `src/middleware/schoolContext.ts`, `src/routes/admin/billingWebhook.ts`, and `src/routes/classpilot/deviceHeartbeat.ts`.
 - **Schemas** are split by product: `core.ts` (users, schools, memberships), `classpilot.ts` (heartbeats, devices, groups, groupStudents, dailyUsage, teachingSessions), `passpilot.ts`, `gopilot.ts`, `students.ts`, `shared.ts`.
 - **Frontend API calls** use two patterns:
   - **TanStack React Query** with `apiRequest()` from `lib/queryClient.js` — preferred for newer pages (ClassPilot admin, analytics). Uses `useQuery` with `queryKey` and `queryFn`.
@@ -239,15 +240,15 @@ Copy `.env.example` to `.env`. Required for local dev:
 ## CI
 
 GitHub Actions (`.github/workflows/ci-build.yml`) runs on push/PR to main:
-- Backend: `npm audit --audit-level=high` + `tsc --noEmit` + `npm run build`
-- Frontend: `npm audit --audit-level=critical` + `npm run lint` + `vite build`
+- Backend: `npm audit --audit-level=high` + `tsc --noEmit` + `npm test` + `npm run build`
+- Frontend: `npm audit --audit-level=high` + `npm run lint` + `vite build`
 
 The frontend uses React Compiler lint rules. Common gotchas:
 - `form.watch()` from React Hook Form is incompatible — extract to a variable (e.g., `const watchedRole = form.watch("role")`)
 - Sync `setState` in `useEffect` triggers `set-state-in-effect` — wrap in `requestAnimationFrame()`
 - `useCallback` deps must match what the compiler infers — include state setters if referenced
 
-No test suite currently configured.
+Backend tests use Vitest (`npm test`) and focus on high-risk policy helpers: auth/session/device-token behavior, school-context source precedence, student identity resolution for shared Google Workspace domains, Stripe billing webhook state transitions, and ClassPilot heartbeat throttling/pending-message recovery.
 
 ## Native Mobile Apps (Capacitor)
 
