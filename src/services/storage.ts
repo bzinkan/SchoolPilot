@@ -175,6 +175,10 @@ import {
   type InsertEmailAlert,
   type InsertEmailScanLogEntry,
 } from "../schema/mailpilot.js";
+import {
+  normalizeStudentEmail,
+  selectSchoolForStudentEmail,
+} from "./studentIdentity.js";
 
 // ============================================================================
 // User operations
@@ -271,12 +275,13 @@ export async function getSchoolsByDomain(
 export async function resolveSchoolForStudent(
   email: string
 ): Promise<{ school: School; isSharedDomain: boolean } | undefined> {
-  const domain = email.split("@")[1]?.toLowerCase();
-  if (!domain) return undefined;
+  const normalized = normalizeStudentEmail(email);
+  if (!normalized) return undefined;
 
-  const matchingSchools = await getSchoolsByDomain(domain);
-  if (matchingSchools.length === 0) return undefined;
-  if (matchingSchools.length === 1) return { school: matchingSchools[0]!, isSharedDomain: false };
+  const matchingSchools = await getSchoolsByDomain(normalized.domain);
+  if (matchingSchools.length <= 1) {
+    return selectSchoolForStudentEmail(matchingSchools);
+  }
 
   // Multiple schools share this domain — find student by email
   const schoolIds = matchingSchools.map((s) => s.id);
@@ -285,16 +290,13 @@ export async function resolveSchoolForStudent(
     .from(students)
     .where(
       and(
-        eq(students.emailLc, email.toLowerCase()),
+        eq(students.emailLc, normalized.emailLc),
         inArray(students.schoolId, schoolIds)
       )
     )
     .limit(1);
 
-  if (!student) return undefined; // Student not imported yet
-
-  const school = matchingSchools.find((s) => s.id === student.schoolId);
-  return school ? { school, isSharedDomain: true } : undefined;
+  return selectSchoolForStudentEmail(matchingSchools, student?.schoolId);
 }
 
 function generateSlug(name: string): string {

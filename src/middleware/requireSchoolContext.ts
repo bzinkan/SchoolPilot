@@ -2,6 +2,7 @@ import type { RequestHandler } from "express";
 import { eq, and } from "drizzle-orm";
 import { schoolMemberships } from "../schema/core.js";
 import db from "../db.js";
+import { getRequestedSchoolId } from "./schoolContext.js";
 
 /**
  * Ensures a school context is available.
@@ -19,11 +20,7 @@ export const requireSchoolContext: RequestHandler = async (req, res, next) => {
 
   // Super admins can operate on any school
   if (req.authUser.isSuperAdmin) {
-    const schoolId =
-      String(req.params.schoolId || "") ||
-      (req.headers["x-school-id"] as string) ||
-      (req.query.schoolId as string) ||
-      req.session?.schoolId;
+    const schoolId = getRequestedSchoolId(req);
     if (schoolId) {
       res.locals.schoolId = schoolId as string;
     }
@@ -54,11 +51,7 @@ export const requireSchoolContext: RequestHandler = async (req, res, next) => {
   // NOTE: We intentionally skip req.body?.schoolId here. The school context should come
   // from trusted sources (session, header, params), not from the request body which
   // frontends may set incorrectly. The backend always overrides schoolId from res.locals.
-  const schoolId =
-    String(req.params.schoolId || "") ||
-    (req.headers["x-school-id"] as string) ||
-    (req.query.schoolId as string) ||
-    "";
+  const schoolId = getRequestedSchoolId(req);
 
   if (schoolId) {
     // Verify user has membership in this school
