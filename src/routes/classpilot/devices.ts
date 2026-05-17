@@ -92,14 +92,14 @@ function param(req: any, key: string): string {
 }
 
 // Per-IP rate limit for extension endpoints to prevent DB connection exhaustion
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 const extensionLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 10, // 10 requests per minute per IP for registration
   message: { error: "Too many registration attempts, please wait" },
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => req.ip || req.headers['x-forwarded-for'] as string || 'unknown',
+  keyGenerator: (req) => ipKeyGenerator(req.ip || req.socket.remoteAddress || "0.0.0.0"),
 });
 
 const staffAuth = [
@@ -457,9 +457,16 @@ router.post("/register-student", extensionLimiter, async (req, res, next) => {
 // ============================================================================
 
 // GET /api/classpilot/device/:deviceId/students - List students on a device
-router.get("/device/:deviceId/students", async (req, res, next) => {
+router.get("/device/:deviceId/students", requireDeviceAuth, async (req, res, next) => {
   try {
     const deviceId = param(req, "deviceId");
+    if (deviceId !== res.locals.deviceId) {
+      return res.status(403).json({ error: "Device token does not match requested device" });
+    }
+    if (!(await hasCachedClassPilotLicense(res.locals.schoolId as string))) {
+      return res.status(402).json({ planStatus: "inactive" });
+    }
+
     const students = await getStudentsForDevice(deviceId);
     const active = await getActiveStudentForDevice(deviceId);
     return res.json({
@@ -472,9 +479,17 @@ router.get("/device/:deviceId/students", async (req, res, next) => {
 });
 
 // POST /api/classpilot/device/:deviceId/active-student - Set active student on device
-router.post("/device/:deviceId/active-student", async (req, res, next) => {
+router.post("/device/:deviceId/active-student", requireDeviceAuth, async (req, res, next) => {
   try {
     const deviceId = param(req, "deviceId");
+    if (deviceId !== res.locals.deviceId) {
+      return res.status(403).json({ error: "Device token does not match requested device" });
+    }
+    const schoolId = res.locals.schoolId as string;
+    if (!(await hasCachedClassPilotLicense(schoolId))) {
+      return res.status(402).json({ planStatus: "inactive" });
+    }
+
     const { studentId } = req.body;
     if (!studentId) {
       return res.status(400).json({ error: "studentId required" });
@@ -483,6 +498,14 @@ router.post("/device/:deviceId/active-student", async (req, res, next) => {
     const student = await getStudentById(studentId);
     if (!student) {
       return res.status(404).json({ error: "Student not found" });
+    }
+    if (student.schoolId !== schoolId) {
+      return res.status(403).json({ error: "Student is not in this school" });
+    }
+
+    const linkedStudents = await getStudentsForDevice(deviceId);
+    if (!linkedStudents.some((s) => s.id === studentId)) {
+      return res.status(403).json({ error: "Student is not linked to this device" });
     }
 
     await setActiveStudentForDevice(deviceId, studentId);

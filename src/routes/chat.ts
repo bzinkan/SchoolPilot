@@ -1,5 +1,5 @@
 import { Router } from "express";
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { authenticate } from "../middleware/authenticate.js";
 import { requireSchoolContext } from "../middleware/requireSchoolContext.js";
 import {
@@ -16,7 +16,8 @@ const router = Router();
 const chatLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 20,
-  keyGenerator: (req: any) => req.authUser?.id?.toString() || req.ip,
+  keyGenerator: (req: any) =>
+    req.authUser?.id?.toString() || ipKeyGenerator(req.ip || req.socket.remoteAddress || "0.0.0.0"),
   message: { error: "Too many messages. Please wait a moment." },
 });
 
