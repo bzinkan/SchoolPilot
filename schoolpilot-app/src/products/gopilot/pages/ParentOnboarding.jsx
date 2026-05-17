@@ -111,33 +111,7 @@ export default function ParentOnboarding() {
     }
   }, []);
 
-  useEffect(() => {
-    fetchChildren();
-  }, [fetchChildren]);
-
-  // Auto-populate car number from school membership and auto-link children
-  useEffect(() => {
-    if (currentSchool?.carNumber && !autoLinked && children.length === 0) {
-      setCarNumber(currentSchool.carNumber);
-      setAutoLinked(true);
-      handleLinkByCarNumber(currentSchool.carNumber);
-    }
-  }, [currentSchool?.carNumber, autoLinked, children.length]);
-
-  useEffect(() => {
-    if (!currentSchool?.id) return;
-    api.get(`/schools/${currentSchool.id}/settings`).then(res => {
-      setSchoolCheckInMethod(res.data?.checkInMethod || 'app');
-    }).catch(() => {});
-  }, [currentSchool?.id]);
-
-  useEffect(() => {
-    if (children.length > 0) {
-      fetchPickups(children);
-    }
-  }, [children, fetchPickups]);
-
-  const handleLinkByCarNumber = async (num) => {
+  const handleLinkByCarNumber = useCallback(async (num) => {
     setIsLoading(true);
     setError(null);
     try {
@@ -157,7 +131,33 @@ export default function ParentOnboarding() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [currentSchool?.id, fetchChildren]);
+
+  useEffect(() => {
+    fetchChildren();
+  }, [fetchChildren]);
+
+  // Auto-populate car number from school membership and auto-link children
+  useEffect(() => {
+    if (currentSchool?.carNumber && !autoLinked && children.length === 0) {
+      setCarNumber(currentSchool.carNumber);
+      setAutoLinked(true);
+      handleLinkByCarNumber(currentSchool.carNumber);
+    }
+  }, [currentSchool?.carNumber, autoLinked, children.length, handleLinkByCarNumber]);
+
+  useEffect(() => {
+    if (!currentSchool?.id) return;
+    api.get(`/schools/${currentSchool.id}/settings`).then(res => {
+      setSchoolCheckInMethod(res.data?.checkInMethod || 'app');
+    }).catch(() => {});
+  }, [currentSchool?.id]);
+
+  useEffect(() => {
+    if (children.length > 0) {
+      fetchPickups(children);
+    }
+  }, [children, fetchPickups]);
 
   const handleAddAuthorizedPickup = async (pickup) => {
     setIsLoading(true);
