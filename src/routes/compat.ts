@@ -3,6 +3,7 @@ import { authenticate } from "../middleware/authenticate.js";
 import { requireSchoolContext } from "../middleware/requireSchoolContext.js";
 import { requireActiveSchool } from "../middleware/requireActiveSchool.js";
 import { requireRole } from "../middleware/requireRole.js";
+import { requireProductLicense } from "../middleware/requireProductLicense.js";
 import { updateSchoolSchema } from "../schema/validation.js";
 import { getSchoolDeviceStatuses } from "../realtime/student-statuses.js";
 import { getConnectedStudentDeviceIds } from "../realtime/ws-broadcast.js";
@@ -11,7 +12,6 @@ import {
   createGrade,
   updateGrade,
   deleteGrade,
-  getTeacherGrades,
   assignTeacherGrade,
   removeTeacherGrade,
   getUsersBySchool,
@@ -45,6 +45,15 @@ import { eq, and, sql, inArray } from "drizzle-orm";
 import { createGradeSchema } from "../schema/validation.js";
 import { hashPassword } from "../util/password.js";
 import { logAudit, getAuditLogs, countAuditLogs } from "../services/audit.js";
+import {
+  canAccessGrade,
+  getGradeForSchool,
+  getRequestPassPilotRole,
+  getTeacherGradeAssignments,
+  isPassPilotManager,
+  requirePassPilotRole,
+  userBelongsToSchool,
+} from "../services/passpilotAccess.js";
 
 const router = Router();
 
@@ -54,12 +63,17 @@ function param(req: any, key: string): string {
 
 const auth = [authenticate] as const;
 const schoolAuth = [authenticate, requireSchoolContext, requireActiveSchool] as const;
+const passPilotAuth = [
+  ...schoolAuth,
+  requireProductLicense("PASSPILOT"),
+  requirePassPilotRole("admin", "school_admin", "office_staff", "teacher"),
+] as const;
 
 // ============================================================================
 // Grades without school prefix (PassPilot calls GET /grades, POST /grades)
 // ============================================================================
 
-router.get("/grades", ...schoolAuth, async (req, res, next) => {
+router.get("/grades", ...passPilotAuth, async (req, res, next) => {
   try {
     const grades = await getGradesBySchool(res.locals.schoolId!);
     return res.json({ grades });
@@ -68,7 +82,7 @@ router.get("/grades", ...schoolAuth, async (req, res, next) => {
   }
 });
 
-router.get("/grades/available", ...schoolAuth, async (req, res, next) => {
+router.get("/grades/available", ...passPilotAuth, async (req, res, next) => {
   try {
     const grades = await getGradesBySchool(res.locals.schoolId!);
     return res.json({ grades });
@@ -77,7 +91,7 @@ router.get("/grades/available", ...schoolAuth, async (req, res, next) => {
   }
 });
 
-router.post("/grades", ...schoolAuth, requireRole("admin"), async (req, res, next) => {
+router.post("/grades", ...passPilotAuth, requirePassPilotRole("admin", "school_admin"), async (req, res, next) => {
   try {
     const parsed = createGradeSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -90,8 +104,10 @@ router.post("/grades", ...schoolAuth, requireRole("admin"), async (req, res, nex
   }
 });
 
-router.put("/grades/:id", ...schoolAuth, requireRole("admin"), async (req, res, next) => {
+router.put("/grades/:id", ...passPilotAuth, requirePassPilotRole("admin", "school_admin"), async (req, res, next) => {
   try {
+    const existing = await getGradeForSchool(param(req, "id"), res.locals.schoolId!);
+    if (!existing) return res.status(404).json({ error: "Grade not found" });
     const grade = await updateGrade(param(req, "id"), req.body);
     if (!grade) return res.status(404).json({ error: "Grade not found" });
     return res.json({ grade });
@@ -100,8 +116,10 @@ router.put("/grades/:id", ...schoolAuth, requireRole("admin"), async (req, res, 
   }
 });
 
-router.delete("/grades/:id", ...schoolAuth, requireRole("admin"), async (req, res, next) => {
+router.delete("/grades/:id", ...passPilotAuth, requirePassPilotRole("admin", "school_admin"), async (req, res, next) => {
   try {
+    const existing = await getGradeForSchool(param(req, "id"), res.locals.schoolId!);
+    if (!existing) return res.status(404).json({ error: "Grade not found" });
     const deleted = await deleteGrade(param(req, "id"));
     if (!deleted) return res.status(404).json({ error: "Grade not found" });
     return res.json({ ok: true });
@@ -114,9 +132,17 @@ router.delete("/grades/:id", ...schoolAuth, requireRole("admin"), async (req, re
 // Teacher-grades without school prefix (PassPilot)
 // ============================================================================
 
-router.get("/teacher-grades/:teacherId", ...schoolAuth, async (req, res, next) => {
+router.get("/teacher-grades/:teacherId", ...passPilotAuth, async (req, res, next) => {
   try {
-    const assignments = await getTeacherGrades(param(req, "teacherId"));
+    const teacherId = param(req, "teacherId");
+    const role = await getRequestPassPilotRole(req, res);
+    if (!isPassPilotManager(role) && teacherId !== req.authUser!.id) {
+      return res.status(403).json({ error: "Insufficient permissions" });
+    }
+    if (!(await userBelongsToSchool(teacherId, res.locals.schoolId!))) {
+      return res.status(404).json({ error: "Teacher not found" });
+    }
+    const assignments = await getTeacherGradeAssignments(teacherId, res.locals.schoolId!);
     return res.json({
       assignments: assignments.map((a) => ({
         id: a.teacherGrade.id,
@@ -130,16 +156,22 @@ router.get("/teacher-grades/:teacherId", ...schoolAuth, async (req, res, next) =
   }
 });
 
-router.post("/teacher-grades", ...schoolAuth, async (req, res, next) => {
+router.post("/teacher-grades", ...passPilotAuth, async (req, res, next) => {
   try {
     const { teacherId, gradeId } = req.body;
     if (!teacherId || !gradeId) {
       return res.status(400).json({ error: "teacherId and gradeId required" });
     }
     // Only admins can assign other teachers; teachers can only self-assign
-    const isAdmin = req.authUser?.isSuperAdmin || res.locals.membershipRole === "admin";
-    if (!isAdmin && teacherId !== req.authUser?.id) {
+    const role = await getRequestPassPilotRole(req, res);
+    if (!isPassPilotManager(role) && teacherId !== req.authUser?.id) {
       return res.status(403).json({ error: "You can only assign grades to yourself" });
+    }
+    if (!(await getGradeForSchool(gradeId, res.locals.schoolId!))) {
+      return res.status(404).json({ error: "Grade not found" });
+    }
+    if (!(await userBelongsToSchool(teacherId, res.locals.schoolId!))) {
+      return res.status(404).json({ error: "Teacher not found" });
     }
     const assignment = await assignTeacherGrade(teacherId, gradeId);
     return res.status(201).json({ assignment });
@@ -148,11 +180,14 @@ router.post("/teacher-grades", ...schoolAuth, async (req, res, next) => {
   }
 });
 
-router.delete("/teacher-grades", ...schoolAuth, requireRole("admin"), async (req, res, next) => {
+router.delete("/teacher-grades", ...passPilotAuth, requirePassPilotRole("admin", "school_admin"), async (req, res, next) => {
   try {
     const { teacherId, gradeId } = req.body;
     if (!teacherId || !gradeId) {
       return res.status(400).json({ error: "teacherId and gradeId required" });
+    }
+    if (!(await getGradeForSchool(gradeId, res.locals.schoolId!)) || !(await userBelongsToSchool(teacherId, res.locals.schoolId!))) {
+      return res.status(404).json({ error: "Assignment not found" });
     }
     const removed = await removeTeacherGrade(teacherId, gradeId);
     if (!removed) return res.status(404).json({ error: "Assignment not found" });
@@ -162,11 +197,14 @@ router.delete("/teacher-grades", ...schoolAuth, requireRole("admin"), async (req
   }
 });
 
-router.post("/teacher-grades/self-assign", ...schoolAuth, async (req, res, next) => {
+router.post("/teacher-grades/self-assign", ...passPilotAuth, async (req, res, next) => {
   try {
     const { gradeId } = req.body;
     if (!gradeId) {
       return res.status(400).json({ error: "gradeId required" });
+    }
+    if (!(await getGradeForSchool(gradeId, res.locals.schoolId!))) {
+      return res.status(404).json({ error: "Grade not found" });
     }
     const assignment = await assignTeacherGrade(req.authUser!.id, gradeId);
     return res.status(201).json({ assignment });
@@ -179,7 +217,7 @@ router.post("/teacher-grades/self-assign", ...schoolAuth, async (req, res, next)
 // Teachers list without prefix (PassPilot calls GET /teachers)
 // ============================================================================
 
-router.get("/teachers", ...schoolAuth, async (req, res, next) => {
+router.get("/teachers", ...passPilotAuth, async (req, res, next) => {
   try {
     // Include office_staff since they act as teachers in PassPilot/ClassPilot
     const allStaff = await getUsersBySchool(res.locals.schoolId!);
@@ -858,11 +896,11 @@ router.post("/admin/broadcast-email", ...schoolAuth, requireRole("admin"), async
 // Admin reports & settings (PassPilot)
 // ============================================================================
 
-router.get("/admin/reports", ...schoolAuth, requireRole("admin"), async (_req, res) => {
+router.get("/admin/reports", ...passPilotAuth, requirePassPilotRole("admin", "school_admin"), async (_req, res) => {
   return res.json({ reports: [] });
 });
 
-router.patch("/admin/settings", ...schoolAuth, requireRole("admin"), async (req, res, next) => {
+router.patch("/admin/settings", ...passPilotAuth, requirePassPilotRole("admin", "school_admin"), async (req, res, next) => {
   try {
     // Whitelist fields — prevents mass-assignment of billing/plan fields
     const parsed = updateSchoolSchema.safeParse(req.body);
@@ -892,13 +930,26 @@ router.patch("/admin/settings", ...schoolAuth, requireRole("admin"), async (req,
 // Kiosk config (PassPilot calls PUT /kiosk-config)
 // ============================================================================
 
-router.put("/kiosk-config", ...schoolAuth, requireRole("admin", "teacher"), async (req, res, next) => {
+router.put("/kiosk-config", ...passPilotAuth, async (req, res, next) => {
   try {
     const updates: Record<string, any> = {};
     if (req.body.kioskEnabled !== undefined) updates.kioskEnabled = req.body.kioskEnabled;
-    if (req.body.gradeId !== undefined) updates.kioskGradeId = req.body.gradeId;
-    if (req.body.kioskName !== undefined) updates.kioskName = req.body.kioskName;
+    if (req.body.gradeId !== undefined) {
+      const role = await getRequestPassPilotRole(req, res);
+      if (req.body.gradeId && !(await canAccessGrade(req.authUser!, res.locals.schoolId!, req.body.gradeId, role))) {
+        return res.status(403).json({ error: "Insufficient permissions" });
+      }
+      updates.kioskGradeId = req.body.gradeId;
+      updates.kioskActivatedByUserId = req.authUser!.id;
+    }
     const school = await updateSchool(res.locals.schoolId!, updates);
+    if (req.body.kioskName !== undefined) {
+      const membership = await getMembershipByUserAndSchool(req.authUser!.id, res.locals.schoolId!);
+      if (membership) {
+        await updateMembership(membership.id, { kioskName: req.body.kioskName || null });
+      }
+      await updateUser(req.authUser!.id, { displayName: req.body.kioskName || null });
+    }
     return res.json({ school });
   } catch (err) {
     next(err);
@@ -909,9 +960,9 @@ router.put("/kiosk-config", ...schoolAuth, requireRole("admin", "teacher"), asyn
 // My classes (PassPilot teacher dashboard)
 // ============================================================================
 
-router.get("/my-classes", ...schoolAuth, async (req, res, next) => {
+router.get("/my-classes", ...passPilotAuth, async (req, res, next) => {
   try {
-    const assignments = await getTeacherGrades(req.authUser!.id);
+    const assignments = await getTeacherGradeAssignments(req.authUser!.id, res.locals.schoolId!);
 
     return res.json({
       classes: assignments.map((a) => ({

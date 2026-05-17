@@ -169,6 +169,20 @@ async function runStartupMigrations(): Promise<void> {
     console.warn("[migration] student_attendance migration skipped:", (err as Error).message);
   }
 
+  // Unified student columns used across GoPilot, PassPilot kiosk, and ClassPilot.
+  try {
+    await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS dismissal_type TEXT DEFAULT 'car'`);
+    await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS afterschool_reason TEXT`);
+    await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS bus_route TEXT`);
+    await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS student_code TEXT`);
+    await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS external_id TEXT`);
+    await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS device_id TEXT`);
+    await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS student_status TEXT`);
+    console.log("[migration] unified student columns ready");
+  } catch (err) {
+    console.warn("[migration] unified student columns migration skipped:", (err as Error).message);
+  }
+
   // Dismissal overrides table (session-scoped daily type changes)
   try {
     await pool.query(`
