@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import { Router } from "express";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
@@ -43,6 +44,15 @@ const staffAuth = [
   requireActiveSchool,
   requireProductLicense("CLASSPILOT"),
 ] as const;
+
+const pollResponseLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => ipKeyGenerator(req.ip || req.socket.remoteAddress || "0.0.0.0"),
+  message: { error: "Too many poll responses. Please wait a moment." },
+});
 
 async function pollBelongsToSchool(poll: { sessionId: string }, schoolId: string): Promise<boolean> {
   if (poll.sessionId.startsWith(`${schoolId}-`)) {
@@ -407,7 +417,7 @@ router.get("/polls/:pollId/results", ...staffAuth, async (req, res, next) => {
 });
 
 // POST /api/classpilot/polls/:pollId/respond - Student responds to poll
-router.post("/polls/:pollId/respond", requireDeviceAuth, async (req, res, next) => {
+router.post("/polls/:pollId/respond", pollResponseLimiter, requireDeviceAuth, async (req, res, next) => {
   try {
     const pollId = param(req, "pollId");
     const { selectedOption } = req.body;

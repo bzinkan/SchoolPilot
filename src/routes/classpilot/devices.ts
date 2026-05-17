@@ -102,6 +102,15 @@ const extensionLimiter = rateLimit({
   keyGenerator: (req) => ipKeyGenerator(req.ip || req.socket.remoteAddress || "0.0.0.0"),
 });
 
+const deviceActionLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 120,
+  message: { error: "Too many device requests, please wait" },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => ipKeyGenerator(req.ip || req.socket.remoteAddress || "0.0.0.0"),
+});
+
 const staffAuth = [
   authenticate,
   requireSchoolContext,
@@ -457,7 +466,7 @@ router.post("/register-student", extensionLimiter, async (req, res, next) => {
 // ============================================================================
 
 // GET /api/classpilot/device/:deviceId/students - List students on a device
-router.get("/device/:deviceId/students", requireDeviceAuth, async (req, res, next) => {
+router.get("/device/:deviceId/students", deviceActionLimiter, requireDeviceAuth, async (req, res, next) => {
   try {
     const deviceId = param(req, "deviceId");
     if (deviceId !== res.locals.deviceId) {
@@ -479,7 +488,7 @@ router.get("/device/:deviceId/students", requireDeviceAuth, async (req, res, nex
 });
 
 // POST /api/classpilot/device/:deviceId/active-student - Set active student on device
-router.post("/device/:deviceId/active-student", requireDeviceAuth, async (req, res, next) => {
+router.post("/device/:deviceId/active-student", deviceActionLimiter, requireDeviceAuth, async (req, res, next) => {
   try {
     const deviceId = param(req, "deviceId");
     if (deviceId !== res.locals.deviceId) {
