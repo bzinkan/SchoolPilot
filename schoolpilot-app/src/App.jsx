@@ -117,6 +117,8 @@ function AppRoutes() {
             <Route path="/products/classpilot" element={<ClassPilotLanding />} />
             <Route path="/products/passpilot" element={<PassPilotLanding />} />
             <Route path="/products/gopilot" element={<GoPilotLanding />} />
+            <Route path="/passpilot/kiosk" element={<PPKiosk />} />
+            <Route path="/passpilot/kiosk/simple" element={<PPKioskSimple />} />
             <Route path="/terms" element={<TermsOfService />} />
             <Route path="/privacy" element={<PrivacyPolicy />} />
             <Route path="/delete-account" element={<DeleteAccount />} />
@@ -176,12 +178,6 @@ function AppRoutes() {
         {(!isNative || product === 'passpilot') && hasPassPilot && (
           <>
             <Route path="/passpilot" element={<PPDashboard />} />
-            {!isNative && (
-              <>
-                <Route path="/passpilot/kiosk" element={<PPKiosk />} />
-                <Route path="/passpilot/kiosk/simple" element={<PPKioskSimple />} />
-              </>
-            )}
           </>
         )}
 

@@ -11,6 +11,10 @@ import {
   createWalkerZone,
   searchStudents,
 } from "../../services/storage.js";
+import {
+  getBusRouteForSchool,
+  requireGoPilotRole,
+} from "../../services/gopilotAccess.js";
 
 const router = Router();
 
@@ -23,6 +27,11 @@ const auth = [
   requireSchoolContext,
   requireActiveSchool,
   requireProductLicense("GOPILOT"),
+] as const;
+
+const manageAuth = [
+  ...auth,
+  requireGoPilotRole("admin", "school_admin", "office_staff"),
 ] as const;
 
 // ============================================================================
@@ -57,7 +66,7 @@ router.get("/", ...auth, async (req, res, next) => {
 });
 
 // POST /api/gopilot/bus-routes
-router.post("/", ...auth, async (req, res, next) => {
+router.post("/", ...manageAuth, async (req, res, next) => {
   try {
     const { routeNumber, departureTime } = req.body;
     if (!routeNumber) {
@@ -77,8 +86,13 @@ router.post("/", ...auth, async (req, res, next) => {
 });
 
 // PUT /api/gopilot/bus-routes/:id
-router.put("/:id", ...auth, async (req, res, next) => {
+router.put("/:id", ...manageAuth, async (req, res, next) => {
   try {
+    const route = await getBusRouteForSchool(param(req, "id"), res.locals.schoolId!);
+    if (!route) {
+      return res.status(404).json({ error: "Bus route not found" });
+    }
+
     const { status, departureTime } = req.body;
     const updated = await updateBusRoute(param(req, "id"), {
       ...(status !== undefined && { status }),
@@ -109,7 +123,7 @@ router.get("/walker-zones", ...auth, async (req, res, next) => {
 });
 
 // POST /api/gopilot/bus-routes/walker-zones
-router.post("/walker-zones", ...auth, async (req, res, next) => {
+router.post("/walker-zones", ...manageAuth, async (req, res, next) => {
   try {
     const { name } = req.body;
     if (!name) {

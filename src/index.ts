@@ -47,7 +47,7 @@ const PORT = parseInt(process.env.PORT || "4000", 10);
 
 // Run lightweight auto-migrations for new tables
 import { pool } from "./db.js";
-(async () => {
+async function runStartupMigrations(): Promise<void> {
   try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS daily_usage (
@@ -169,6 +169,20 @@ import { pool } from "./db.js";
     console.warn("[migration] student_attendance migration skipped:", (err as Error).message);
   }
 
+  // Unified student columns used across GoPilot, PassPilot kiosk, and ClassPilot.
+  try {
+    await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS dismissal_type TEXT DEFAULT 'car'`);
+    await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS afterschool_reason TEXT`);
+    await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS bus_route TEXT`);
+    await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS student_code TEXT`);
+    await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS external_id TEXT`);
+    await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS device_id TEXT`);
+    await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS student_status TEXT`);
+    console.log("[migration] unified student columns ready");
+  } catch (err) {
+    console.warn("[migration] unified student columns migration skipped:", (err as Error).message);
+  }
+
   // Dismissal overrides table (session-scoped daily type changes)
   try {
     await pool.query(`
@@ -209,6 +223,17 @@ import { pool } from "./db.js";
     console.log("[migration] class block scheduling columns ready");
   } catch (err) {
     console.warn("[migration] class block scheduling migration skipped:", (err as Error).message);
+  }
+
+  // Add tax exemption metadata columns used by billing/admin school queries
+  try {
+    await pool.query(`ALTER TABLE schools ADD COLUMN IF NOT EXISTS tax_exempt_status TEXT`);
+    await pool.query(`ALTER TABLE schools ADD COLUMN IF NOT EXISTS tax_exempt_cert_url TEXT`);
+    await pool.query(`ALTER TABLE schools ADD COLUMN IF NOT EXISTS tax_exempt_cert_requested_at TIMESTAMP`);
+    await pool.query(`ALTER TABLE schools ADD COLUMN IF NOT EXISTS tax_exempt_cert_uploaded_at TIMESTAMP`);
+    console.log("[migration] tax exemption columns ready");
+  } catch (err) {
+    console.warn("[migration] tax exemption columns migration skipped:", (err as Error).message);
   }
 
   // Add AI classification columns to heartbeats table
@@ -418,17 +443,29 @@ import { pool } from "./db.js";
       ) keeper
       WHERE heartbeats.student_id = keeper.dup_id
     `);
-    // Reassign student_devices
+    // Reassign student_devices without tripping the unique(student_id, device_id) constraint
     await pool.query(`
-      UPDATE student_devices SET student_id = keeper.id
-      FROM (
+      INSERT INTO student_devices (student_id, device_id, first_seen_at, last_seen_at)
+      SELECT keeper.id, student_devices.device_id, MIN(student_devices.first_seen_at), MAX(student_devices.last_seen_at)
+      FROM student_devices
+      JOIN (
+        SELECT s1.id, s2.id AS dup_id
+        FROM students s1
+        JOIN students s2 ON s1.email_lc = s2.email_lc AND s1.school_id = s2.school_id AND s1.id != s2.id
+        WHERE s1.grade_id IS NOT NULL AND s2.grade_id IS NULL
+      ) keeper ON student_devices.student_id = keeper.dup_id
+      GROUP BY keeper.id, student_devices.device_id
+      ON CONFLICT (student_id, device_id) DO NOTHING
+    `);
+    await pool.query(`
+      DELETE FROM student_devices
+      USING (
         SELECT s1.id, s2.id AS dup_id
         FROM students s1
         JOIN students s2 ON s1.email_lc = s2.email_lc AND s1.school_id = s2.school_id AND s1.id != s2.id
         WHERE s1.grade_id IS NOT NULL AND s2.grade_id IS NULL
       ) keeper
       WHERE student_devices.student_id = keeper.dup_id
-      ON CONFLICT (student_id, device_id) DO NOTHING
     `);
     // Reassign student_sessions
     await pool.query(`
@@ -453,27 +490,37 @@ import { pool } from "./db.js";
   } catch (err) {
     console.warn("[migration] Duplicate student cleanup skipped:", (err as Error).message);
   }
-})();
+}
 
-const app = createApp();
-const server = http.createServer(app);
+async function startServer(): Promise<void> {
+  await runStartupMigrations();
 
-// Attach Socket.io for real-time events (GoPilot dismissal, etc.)
-const io = setupSocketIO(server);
-console.log("Socket.io attached");
+  const app = createApp();
+  const server = http.createServer(app);
 
-// Attach WebSocket server for ClassPilot device monitoring
-const wss = setupWebSocket(server);
-console.log("WebSocket server attached at /ws");
+  // Attach Socket.io for real-time events (GoPilot dismissal, etc.)
+  const io = setupSocketIO(server);
+  console.log("Socket.io attached");
 
-// Start dismissal auto-start scheduler
-startScheduler(io);
+  // Attach WebSocket server for ClassPilot device monitoring
+  const wss = setupWebSocket(server);
+  console.log("WebSocket server attached at /ws");
 
-// Start health monitoring (checks every 5 minutes, alerts via email)
-startHealthMonitor(wss);
+  // Start dismissal auto-start scheduler after startup migrations complete.
+  startScheduler(io);
 
-server.listen(PORT, () => {
-  console.log(`SchoolPilot API running on http://localhost:${PORT}`);
-  console.log(`Health check: http://localhost:${PORT}/health`);
-  console.log(`Environment: ${process.env.NODE_ENV || "development"}`);
+  // Start health monitoring after startup migrations complete.
+  startHealthMonitor(wss);
+
+  server.listen(PORT, () => {
+    console.log(`SchoolPilot API running on http://localhost:${PORT}`);
+    console.log(`Health check: http://localhost:${PORT}/health`);
+    console.log(`Environment: ${process.env.NODE_ENV || "development"}`);
+  });
+}
+
+startServer().catch((err) => {
+  errorMonitor.trackError("uncaught_exception", err instanceof Error ? err : new Error(String(err)));
+  console.error("[FATAL] Startup failed:", err);
+  process.exit(1);
 });

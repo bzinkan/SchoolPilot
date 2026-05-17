@@ -3,7 +3,7 @@ import rateLimit from "express-rate-limit";
 import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
-import { requireRole } from "../../middleware/requireRole.js";
+import { requireProductLicense } from "../../middleware/requireProductLicense.js";
 import { kioskLookupSchema, kioskCheckoutSchema } from "../../schema/validation.js";
 
 // Strict rate limiter for public kiosk endpoints
@@ -33,6 +33,11 @@ import {
   getSettingsForSchool,
 } from "../../services/storage.js";
 import { isWithinTrackingWindow } from "../../services/schoolHours.js";
+import {
+  canAccessGrade,
+  getRequestPassPilotRole,
+  requirePassPilotRole,
+} from "../../services/passpilotAccess.js";
 
 const router = Router();
 
@@ -282,10 +287,9 @@ router.get("/config", kioskLimiter, async (req, res, next) => {
       return res.status(400).json({ error: "School ID required" });
     }
 
-    const school = await getSchoolById(schoolId);
-    if (!school) {
-      return res.status(400).json({ error: "School not found" });
-    }
+    const kioskPin = req.headers["x-kiosk-pin"] as string | undefined;
+    const { error, status, school } = await validateKiosk(schoolId, kioskPin);
+    if (error || !school) return res.status(status).json({ error });
 
     let kioskName: string | null = null;
     if (school.kioskActivatedByUserId) {
@@ -315,14 +319,20 @@ router.put(
   authenticate,
   requireSchoolContext,
   requireActiveSchool,
-  requireRole("admin", "teacher"),
+  requireProductLicense("PASSPILOT"),
+  requirePassPilotRole("admin", "school_admin", "office_staff", "teacher"),
   async (req, res, next) => {
     try {
       const { gradeId, kioskName } = req.body;
+      const schoolId = res.locals.schoolId!;
+      const role = await getRequestPassPilotRole(req, res);
 
       // Update school kiosk settings
       if (gradeId !== undefined) {
-        await updateSchool(res.locals.schoolId!, {
+        if (gradeId && !(await canAccessGrade(req.authUser!, schoolId, gradeId, role))) {
+          return res.status(403).json({ error: "Insufficient permissions" });
+        }
+        await updateSchool(schoolId, {
           kioskGradeId: gradeId || null,
           kioskActivatedByUserId: req.authUser!.id,
         });
@@ -333,7 +343,7 @@ router.put(
         await updateUser(req.authUser!.id, { displayName: kioskName });
       }
 
-      const school = await getSchoolById(res.locals.schoolId!);
+      const school = await getSchoolById(schoolId);
       return res.json({
         ok: true,
         gradeId: school?.kioskGradeId || null,

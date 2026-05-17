@@ -492,7 +492,7 @@ export function WorkspaceImportModal({
       });
       setWsGradeMap(autoMap);
     }
-  }, [wsOrgUnits]);
+  }, [wsOrgUnits, wsGradeMap, setWsGradeMap]);
 
   const handleBulkImport = async () => {
     const selected = [...wsCheckedOUs].map(path => ({

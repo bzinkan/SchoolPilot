@@ -43,6 +43,46 @@ interface ResolvedPolicy {
   value: unknown;
   sourceKey?: string;
   raw: unknown;
+  error?: string;
+}
+
+export class WorkspaceAuditPermissionError extends Error {
+  code = "INSUFFICIENT_PERMISSIONS";
+  statusCode = 403;
+
+  constructor(message = "Workspace admin permissions required to run the audit.") {
+    super(message);
+    this.name = "WorkspaceAuditPermissionError";
+  }
+}
+
+function getGoogleErrorStatus(err: unknown): number | undefined {
+  const e = err as {
+    code?: number;
+    status?: number;
+    response?: { status?: number };
+  };
+  return e.response?.status ?? e.status ?? e.code;
+}
+
+function getGoogleErrorMessage(err: unknown): string {
+  const e = err as {
+    message?: string;
+    errors?: Array<{ message?: string }>;
+    response?: { data?: { error?: string; error_description?: string } };
+  };
+  return e.response?.data?.error_description
+    ?? e.response?.data?.error
+    ?? e.errors?.find((item) => item.message)?.message
+    ?? e.message
+    ?? "Unknown Google API error";
+}
+
+function assertNotPermissionError(err: unknown): void {
+  const status = getGoogleErrorStatus(err);
+  if (status === 401 || status === 403) {
+    throw new WorkspaceAuditPermissionError();
+  }
 }
 
 async function resolvePolicy(
@@ -67,8 +107,13 @@ async function resolvePolicy(
       sourceKey: resolved.sourceKey?.targetResource ?? undefined,
       raw: resolved,
     };
-  } catch (_err) {
-    return null;
+  } catch (err) {
+    assertNotPermissionError(err);
+    return {
+      value: null,
+      raw: null,
+      error: getGoogleErrorMessage(err),
+    };
   }
 }
 
@@ -103,12 +148,13 @@ function findingUnknown(
   title: string,
   description: string,
   severity: Severity,
-  fixUrl: string
+  fixUrl: string,
+  currentValue = "Unable to read this policy"
 ): AuditFinding {
   return {
     id, title, description, severity,
     status: "unknown",
-    currentValue: "Unable to read this policy",
+    currentValue,
     recommendedValue: "See admin console",
     fixUrl,
   };
@@ -133,6 +179,7 @@ export async function runWorkspaceAudit(userId: string): Promise<WorkspaceAuditR
     const customer = await directory.customers.get({ customerKey: "my_customer" });
     customerDomain = customer.data.customerDomain ?? null;
   } catch (err: unknown) {
+    assertNotPermissionError(err);
     errors.push(`Could not read customer info: ${(err as Error).message}`);
   }
 
@@ -143,6 +190,7 @@ export async function runWorkspaceAudit(userId: string): Promise<WorkspaceAuditR
     const root = ous.data.organizationUnits?.find((ou) => !ou.parentOrgUnitId || ou.parentOrgUnitPath === "/");
     rootOrgUnitId = (root?.orgUnitId ?? "").replace(/^id:/, "") || null;
   } catch (err: unknown) {
+    assertNotPermissionError(err);
     errors.push(`Could not list org units: ${(err as Error).message}`);
   }
 
@@ -166,6 +214,7 @@ export async function runWorkspaceAudit(userId: string): Promise<WorkspaceAuditR
       ?? devices.data.chromeosdevices?.length
       ?? 0;
   } catch (err: unknown) {
+    assertNotPermissionError(err);
     errors.push(`Could not list Chrome devices: ${(err as Error).message}`);
   }
 
@@ -191,28 +240,39 @@ export async function runWorkspaceAudit(userId: string): Promise<WorkspaceAuditR
     const policy = await resolvePolicy(auth, "chrome.devices.SignInRestriction", rootOrgUnitId);
     const restriction = (policy?.value as { signInRestriction?: string } | null)?.signInRestriction || "";
     const restricted = !!restriction && restriction.trim() !== "" && restriction !== "any_user";
-    findings.push(
-      restricted
-        ? findingOk(
-            "sign_in_restriction",
-            "Sign-in restricted to school domain",
-            "Chromebooks only allow users matching your domain pattern to log in.",
-            "critical",
-            restriction,
-            customerDomain ? `*@${customerDomain}` : "*@yourdomain.org",
-            deviceSettingsUrl
-          )
-        : findingProblem(
-            "sign_in_restriction",
-            "Sign-in is NOT restricted to your school domain",
-            "Anyone with any Google account can log into your Chromebooks. Students can bypass monitoring by signing in with a personal Gmail.",
-            "critical", "critical",
-            restriction || "Not configured (any user)",
-            customerDomain ? `*@${customerDomain}` : "*@yourdomain.org",
-            deviceSettingsUrl,
-            `In Admin Console → Devices → Chrome → Settings → Device → Sign-in settings, set "Sign-in restriction" to *@${customerDomain || "yourdomain.org"}.`
-          )
-    );
+    if (policy?.error) {
+      findings.push(findingUnknown(
+        "sign_in_restriction",
+        "Sign-in restriction setting",
+        "Couldn't read this policy. Without sign-in restriction, students may use personal Google accounts to bypass monitoring.",
+        "critical",
+        deviceSettingsUrl,
+        policy.error
+      ));
+    } else {
+      findings.push(
+        restricted
+          ? findingOk(
+              "sign_in_restriction",
+              "Sign-in restricted to school domain",
+              "Chromebooks only allow users matching your domain pattern to log in.",
+              "critical",
+              restriction,
+              customerDomain ? `*@${customerDomain}` : "*@yourdomain.org",
+              deviceSettingsUrl
+            )
+          : findingProblem(
+              "sign_in_restriction",
+              "Sign-in is NOT restricted to your school domain",
+              "Anyone with any Google account can log into your Chromebooks. Students can bypass monitoring by signing in with a personal Gmail.",
+              "critical", "critical",
+              restriction || "Not configured (any user)",
+              customerDomain ? `*@${customerDomain}` : "*@yourdomain.org",
+              deviceSettingsUrl,
+              `In Admin Console → Devices → Chrome → Settings → Device → Sign-in settings, set "Sign-in restriction" to *@${customerDomain || "yourdomain.org"}.`
+            )
+      );
+    }
   }
 
   // 2. Guest mode disabled
@@ -223,7 +283,7 @@ export async function runWorkspaceAudit(userId: string): Promise<WorkspaceAuditR
       findings.push(findingUnknown(
         "guest_mode", "Guest mode setting",
         "Couldn't read this policy. Guest mode lets anyone bypass all monitoring with one click.",
-        "critical", deviceSettingsUrl
+        "critical", deviceSettingsUrl, policy?.error
       ));
     } else if (enabled === true) {
       findings.push(findingProblem(
@@ -251,7 +311,7 @@ export async function runWorkspaceAudit(userId: string): Promise<WorkspaceAuditR
       findings.push(findingUnknown(
         "show_add_user", "'Add user' button setting",
         "Couldn't read this policy. The 'Add person' button at login lets students add personal Google accounts.",
-        "high", deviceSettingsUrl
+        "high", deviceSettingsUrl, policy?.error
       ));
     } else if (show === true) {
       findings.push(findingProblem(
@@ -279,7 +339,7 @@ export async function runWorkspaceAudit(userId: string): Promise<WorkspaceAuditR
       findings.push(findingUnknown(
         "incognito_mode", "Incognito mode setting",
         "Couldn't read this policy. Incognito mode hides browsing activity from the extension.",
-        "high", userSettingsUrl
+        "high", userSettingsUrl, policy?.error
       ));
     } else if (value === "INCOGNITO_MODE_DISABLED") {
       findings.push(findingOk(
@@ -307,7 +367,7 @@ export async function runWorkspaceAudit(userId: string): Promise<WorkspaceAuditR
       findings.push(findingUnknown(
         "developer_tools", "Developer tools setting",
         "Couldn't read this policy. DevTools lets students disable the extension or modify pages.",
-        "medium", userSettingsUrl
+        "medium", userSettingsUrl, policy?.error
       ));
     } else if (value === "DEVELOPER_TOOLS_DISALLOWED") {
       findings.push(findingOk(
@@ -341,6 +401,15 @@ export async function runWorkspaceAudit(userId: string): Promise<WorkspaceAuditR
         "CLASSPILOT_EXTENSION_ID is not configured on the server. Set this env var to enable the check.",
         "high", appsUrl
       ));
+    } else if (policy?.error) {
+      findings.push(findingUnknown(
+        "extension_forcelist",
+        "ClassPilot extension force-installed",
+        "Couldn't read the force-install policy. Without it, students may remove the extension or never receive it.",
+        "high",
+        appsUrl,
+        policy.error
+      ));
     } else if (containsClassPilot) {
       findings.push(findingOk(
         "extension_forcelist", "ClassPilot extension force-installed",
@@ -370,7 +439,7 @@ export async function runWorkspaceAudit(userId: string): Promise<WorkspaceAuditR
       findings.push(findingUnknown(
         "browser_signin", "Browser sign-in setting",
         "Couldn't read this policy.",
-        "low", userSettingsUrl
+        "low", userSettingsUrl, policy?.error
       ));
     } else if (value === "FORCE") {
       findings.push(findingOk(

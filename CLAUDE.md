@@ -233,8 +233,17 @@ Copy `.env.example` to `.env`. Required for local dev:
 - `SUPER_ADMIN_EMAIL` — Email address that gets super admin privileges
 - `CORS_ALLOWLIST` — Comma-separated frontend origins
 - `SENDGRID_API_KEY` — SendGrid email service (session reports, safety alerts, welcome emails)
-- `ANTHROPIC_API_KEY` — Anthropic Claude API for AI content classification
+- `ANTHROPIC_API_KEY` — Anthropic Claude API for AI content classification + chat assistant
+- `OPENAI_API_KEY` — OpenAI API (legacy classification path)
 - `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` — Stripe billing
+
+### Secrets hygiene — NEVER commit keys
+
+- `.env`, `.env.local`, `.env.production` are in `.gitignore` — keep all real secrets there.
+- **Never** paste API keys, passwords, or tokens into source files, commit messages, PR descriptions, GitHub issues, or `CLAUDE.md`. Gitleaks runs on every push and will fail CI if a secret pattern leaks.
+- Production secrets live in the ECS task definition (or AWS Secrets Manager) — not in any committed file.
+- If a key ever lands in the repo by accident: rotate it immediately in the provider console, then scrub history. Assume any key visible in a diff or chat transcript is already compromised.
+- When rotating: update `.env` locally and the ECS task definition in prod. There is no `.env` checked in to update.
 
 ## CI
 

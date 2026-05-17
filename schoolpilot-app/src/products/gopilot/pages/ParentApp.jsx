@@ -209,56 +209,33 @@ export default function ParentApp() {
     }
   }, [loading, children, currentSchool, navigate]);
 
-  // Get or create dismissal session when school is known
+  // Watch for an active dismissal session when school is known
   useEffect(() => {
     if (!currentSchool?.id) return;
     let cancelled = false;
     let pollInterval = null;
+
+    async function loadActiveSession() {
+      const res = await api.get(`/schools/${currentSchool.id}/sessions/active`);
+      if (cancelled) return null;
+      const activeSession = res.data?.session || null;
+      if (!activeSession) {
+        setSessionId(null);
+        setSessionStatus(null);
+        setCheckInStatus(null);
+        setQueueIds([]);
+        return null;
+      }
+      setSessionId(activeSession.id);
+      setSessionStatus('active');
+      return activeSession;
+    }
+
     async function initSession() {
       try {
-        const res = await api.post(`/schools/${currentSchool.id}/sessions`);
-        if (cancelled) return;
-        const sessionData = res.data.session || res.data;
+        const sessionData = await loadActiveSession();
+        if (cancelled || !sessionData) return;
         const sid = sessionData.id;
-        setSessionId(sid);
-        const status = sessionData.status || 'pending';
-        setSessionStatus(status === 'completed' ? null : status);
-
-        // If session is completed, don't restore anything — treat as no session
-        if (status === 'completed') {
-          setSessionId(null);
-          setCheckInStatus(null);
-          // Poll for new active session
-          pollInterval = setInterval(async () => {
-            try {
-              const r = await api.get(`/schools/${currentSchool.id}/sessions/active`);
-              if (cancelled) return;
-              if (r.data?.session) {
-                setSessionId(r.data.session.id);
-                setSessionStatus('active');
-                clearInterval(pollInterval);
-                pollInterval = null;
-              }
-            } catch { /* non-critical */ }
-          }, 30000);
-          return;
-        }
-
-        // Poll for active session if not yet active (fixes missed socket events)
-        if (status !== 'active') {
-          pollInterval = setInterval(async () => {
-            try {
-              const r = await api.get(`/schools/${currentSchool.id}/sessions/active`);
-              if (cancelled) return;
-              if (r.data?.session) {
-                setSessionId(r.data.session.id);
-                setSessionStatus('active');
-                clearInterval(pollInterval);
-                pollInterval = null;
-              }
-            } catch { /* non-critical */ }
-          }, 30000);
-        }
 
         // Fetch existing overrides for this session
         try {
@@ -273,7 +250,7 @@ export default function ParentApp() {
         } catch { /* non-critical */ }
 
         // Check if children are already in the queue (e.g. parent reopens app)
-        if (children.length > 0 && status === 'active') {
+        if (children.length > 0) {
           try {
             const queueRes = await api.get(`/sessions/${sid}/queue`);
             if (cancelled) return;
@@ -298,6 +275,9 @@ export default function ParentApp() {
       }
     }
     initSession();
+    pollInterval = setInterval(() => {
+      initSession();
+    }, 30000);
     return () => {
       cancelled = true;
       if (pollInterval) clearInterval(pollInterval);
