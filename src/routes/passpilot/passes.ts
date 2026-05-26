@@ -16,13 +16,23 @@ import {
   getStudentsBySchool,
   getUserById,
   getGradesBySchool,
-  getTeacherGrades,
   getSchoolById,
   getSettingsForSchool,
   getAbsentStudentIds,
 } from "../../services/storage.js";
 import { isWithinTrackingWindow } from "../../services/schoolHours.js";
 import type { Pass } from "../../schema/passpilot.js";
+import {
+  canAccessGrade,
+  canAccessPass,
+  canAccessStudent,
+  filterPassesForRole,
+  getGradeForSchool,
+  getPassForSchool,
+  getRequestPassPilotRole,
+  isPassPilotManager,
+  requirePassPilotRole,
+} from "../../services/passpilotAccess.js";
 
 const router = Router();
 
@@ -35,7 +45,8 @@ router.use(
   authenticate,
   requireSchoolContext,
   requireActiveSchool,
-  requireProductLicense("PASSPILOT")
+  requireProductLicense("PASSPILOT"),
+  requirePassPilotRole("admin", "school_admin", "office_staff", "teacher")
 );
 
 // Enrich passes with student/teacher/grade data
@@ -105,26 +116,15 @@ function mapPassTypeToDestination(passType?: string): string {
 // GET /api/passpilot/passes - List active passes
 router.get("/", async (req, res, next) => {
   try {
+    const schoolId = res.locals.schoolId!;
+    const role = await getRequestPassPilotRole(req, res);
+
     // Expire overdue passes first
-    await expireOverduePasses(res.locals.schoolId!);
+    await expireOverduePasses(schoolId);
 
-    let rawPasses = await getActivePassesBySchool(res.locals.schoolId!);
-
-    // Teachers only see passes for their assigned grades
-    if (
-      !req.authUser!.isSuperAdmin &&
-      req.session?.role !== "admin" &&
-      req.session?.role !== "school_admin"
-    ) {
-      const assignments = await getTeacherGrades(req.authUser!.id);
-      const assignedGradeIds = new Set(assignments.map((a) => a.teacherGrade.gradeId));
-
-      rawPasses = rawPasses.filter(
-        (p) => p.gradeId && assignedGradeIds.has(p.gradeId)
-      );
-    }
-
-    const enriched = await enrichPasses(rawPasses, res.locals.schoolId!);
+    const rawPasses = await getActivePassesBySchool(schoolId);
+    const scopedPasses = await filterPassesForRole(rawPasses, req.authUser!, schoolId, role);
+    const enriched = await enrichPasses(scopedPasses, schoolId);
     return res.json({ passes: enriched });
   } catch (err) {
     next(err);
@@ -134,9 +134,12 @@ router.get("/", async (req, res, next) => {
 // GET /api/passpilot/passes/active - Alias for active passes
 router.get("/active", async (req, res, next) => {
   try {
-    await expireOverduePasses(res.locals.schoolId!);
-    const rawPasses = await getActivePassesBySchool(res.locals.schoolId!);
-    const enriched = await enrichPasses(rawPasses, res.locals.schoolId!);
+    const schoolId = res.locals.schoolId!;
+    const role = await getRequestPassPilotRole(req, res);
+    await expireOverduePasses(schoolId);
+    const rawPasses = await getActivePassesBySchool(schoolId);
+    const scopedPasses = await filterPassesForRole(rawPasses, req.authUser!, schoolId, role);
+    const enriched = await enrichPasses(scopedPasses, schoolId);
     return res.json({ passes: enriched });
   } catch (err) {
     next(err);
@@ -146,6 +149,8 @@ router.get("/active", async (req, res, next) => {
 // GET /api/passpilot/passes/history - Pass history with filtering
 router.get("/history", async (req, res, next) => {
   try {
+    const schoolId = res.locals.schoolId!;
+    const role = await getRequestPassPilotRole(req, res);
     const {
       gradeId,
       studentId,
@@ -168,16 +173,27 @@ router.get("/history", async (req, res, next) => {
       if (matchedGrade) resolvedGradeId = matchedGrade.id;
     }
 
+    if (resolvedGradeId && !(await canAccessGrade(req.authUser!, schoolId, resolvedGradeId, role))) {
+      return res.status(403).json({ error: "Insufficient permissions" });
+    }
+    if (studentId && !(await canAccessStudent(req.authUser!, schoolId, studentId, role))) {
+      return res.status(403).json({ error: "Insufficient permissions" });
+    }
+    if (teacherId && !isPassPilotManager(role) && teacherId !== req.authUser!.id) {
+      return res.status(403).json({ error: "Insufficient permissions" });
+    }
+
     const start = startDate || dateStart;
     const end = endDate || dateEnd;
 
-    let rawPasses = await getPassHistory(res.locals.schoolId!, {
+    let rawPasses = await getPassHistory(schoolId, {
       gradeId: resolvedGradeId,
       studentId,
-      teacherId,
+      teacherId: isPassPilotManager(role) ? teacherId : undefined,
       startDate: start ? new Date(start) : undefined,
       endDate: end ? new Date(end) : undefined,
     });
+    rawPasses = await filterPassesForRole(rawPasses, req.authUser!, schoolId, role);
 
     // In-memory passType filtering (legacy)
     if (passType) {
@@ -195,7 +211,7 @@ router.get("/history", async (req, res, next) => {
       });
     }
 
-    const enriched = await enrichPasses(rawPasses, res.locals.schoolId!);
+    const enriched = await enrichPasses(rawPasses, schoolId);
     return res.json({ passes: enriched });
   } catch (err) {
     next(err);
@@ -224,42 +240,62 @@ router.post("/", async (req, res, next) => {
 
     const { studentId, destination, customDestination, duration, gradeId, notes } =
       parsed.data;
+    const schoolId = res.locals.schoolId!;
+    const role = await getRequestPassPilotRole(req, res);
 
     // Verify student exists in school
     const student = await getStudentById(studentId);
-    if (!student || student.schoolId !== res.locals.schoolId) {
+    if (!student || student.schoolId !== schoolId) {
       return res.status(400).json({ error: "Student not found" });
+    }
+    if (!(await canAccessStudent(req.authUser!, schoolId, studentId, role))) {
+      return res.status(403).json({ error: "Insufficient permissions" });
+    }
+
+    let passGradeId = student.gradeId || null;
+    if (gradeId) {
+      const grade = await getGradeForSchool(gradeId, schoolId);
+      if (!grade) {
+        return res.status(400).json({ error: "Class not found" });
+      }
+      if (student.gradeId && gradeId !== student.gradeId) {
+        return res.status(400).json({ error: "Class does not match student" });
+      }
+      if (!(await canAccessGrade(req.authUser!, schoolId, gradeId, role))) {
+        return res.status(403).json({ error: "Insufficient permissions" });
+      }
+      passGradeId = gradeId;
     }
 
     // Check if student is absent
     const today = new Date().toISOString().slice(0, 10);
-    const absentIds = await getAbsentStudentIds(res.locals.schoolId!, today);
+    const absentIds = await getAbsentStudentIds(schoolId, today);
     if (absentIds.has(studentId)) {
       return res.status(400).json({ error: "Cannot issue pass to absent student" });
     }
 
     // Check for existing active pass
-    const activePass = await getActivePassForStudent(studentId, res.locals.schoolId!);
+    const activePass = await getActivePassForStudent(studentId, schoolId);
     if (activePass) {
       return res.status(409).json({ error: "Student already has an active pass" });
     }
 
     // Enforce school hours
-    const schoolSettings = await getSettingsForSchool(res.locals.schoolId!);
+    const schoolSettings = await getSettingsForSchool(schoolId);
     if (schoolSettings && !isWithinTrackingWindow(schoolSettings)) {
       return res.status(403).json({ error: "Passes cannot be issued outside school hours" });
     }
 
     // Calculate duration and expiry
-    const school = res.locals.school || (await getSchoolById(res.locals.schoolId!));
+    const school = res.locals.school || (await getSchoolById(schoolId));
     const passDuration = duration || school?.defaultPassDuration || 5;
     const expiresAt = new Date(Date.now() + passDuration * 60 * 1000);
 
     const pass = await createPass({
-      schoolId: res.locals.schoolId!,
+      schoolId,
       studentId,
       teacherId: req.authUser!.id,
-      gradeId: gradeId || student.gradeId || null,
+      gradeId: passGradeId,
       destination,
       customDestination: destination === "custom" ? (customDestination || null) : null,
       status: "active",
@@ -278,7 +314,15 @@ router.post("/", async (req, res, next) => {
 // PATCH /api/passpilot/passes/:id/return - Return a pass
 router.patch("/:id/return", async (req, res, next) => {
   try {
-    const pass = await returnPass(param(req, "id"), res.locals.schoolId!);
+    const schoolId = res.locals.schoolId!;
+    const id = param(req, "id");
+    const role = await getRequestPassPilotRole(req, res);
+    const existing = await getPassForSchool(id, schoolId);
+    if (!existing || !(await canAccessPass(req.authUser!, schoolId, existing, role))) {
+      return res.status(404).json({ error: "Active pass not found" });
+    }
+
+    const pass = await returnPass(id, schoolId);
     if (!pass) {
       return res.status(400).json({ error: "Active pass not found" });
     }
@@ -291,7 +335,15 @@ router.patch("/:id/return", async (req, res, next) => {
 // PUT /api/passpilot/passes/:id/return - Alias
 router.put("/:id/return", async (req, res, next) => {
   try {
-    const pass = await returnPass(param(req, "id"), res.locals.schoolId!);
+    const schoolId = res.locals.schoolId!;
+    const id = param(req, "id");
+    const role = await getRequestPassPilotRole(req, res);
+    const existing = await getPassForSchool(id, schoolId);
+    if (!existing || !(await canAccessPass(req.authUser!, schoolId, existing, role))) {
+      return res.status(404).json({ error: "Active pass not found" });
+    }
+
+    const pass = await returnPass(id, schoolId);
     if (!pass) {
       return res.status(400).json({ error: "Active pass not found" });
     }
@@ -304,7 +356,15 @@ router.put("/:id/return", async (req, res, next) => {
 // PATCH /api/passpilot/passes/:id/cancel - Cancel a pass
 router.patch("/:id/cancel", async (req, res, next) => {
   try {
-    const pass = await cancelPass(param(req, "id"), res.locals.schoolId!);
+    const schoolId = res.locals.schoolId!;
+    const id = param(req, "id");
+    const role = await getRequestPassPilotRole(req, res);
+    const existing = await getPassForSchool(id, schoolId);
+    if (!existing || !(await canAccessPass(req.authUser!, schoolId, existing, role))) {
+      return res.status(404).json({ error: "Active pass not found" });
+    }
+
+    const pass = await cancelPass(id, schoolId);
     if (!pass) {
       return res.status(400).json({ error: "Active pass not found" });
     }
@@ -317,7 +377,17 @@ router.patch("/:id/cancel", async (req, res, next) => {
 // DELETE /api/passpilot/passes/:id - Cancel (alias)
 router.delete("/:id", async (req, res, next) => {
   try {
-    await cancelPass(param(req, "id"), res.locals.schoolId!);
+    const schoolId = res.locals.schoolId!;
+    const id = param(req, "id");
+    const role = await getRequestPassPilotRole(req, res);
+    const existing = await getPassForSchool(id, schoolId);
+    if (!existing || !(await canAccessPass(req.authUser!, schoolId, existing, role))) {
+      return res.status(404).json({ error: "Active pass not found" });
+    }
+    const pass = await cancelPass(id, schoolId);
+    if (!pass) {
+      return res.status(400).json({ error: "Active pass not found" });
+    }
     return res.json({ ok: true });
   } catch (err) {
     next(err);

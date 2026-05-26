@@ -25,6 +25,14 @@ import { Label } from "../../../../components/ui/label";
 import { useAbsentStudents } from "../../../../hooks/useAbsentStudents";
 import { AttendancePanel } from "../../../../components/AttendancePanel";
 
+const DESTINATION_LABELS = {
+  bathroom: 'Bathroom',
+  nurse: 'Nurse',
+  office: 'Office',
+  counselor: 'Counselor',
+  other_classroom: 'Other Classroom',
+};
+
 function MyClassTab() {
   const [activeGradeId, setActiveGradeId] = useState('');
   const [customReason, setCustomReason] = useState('');
@@ -108,11 +116,6 @@ function MyClassTab() {
     gcTime: 0,
   });
 
-  const destMap = {
-    bathroom: 'Bathroom', nurse: 'Nurse', office: 'Office',
-    counselor: 'Counselor', other_classroom: 'Other Classroom',
-  };
-
   const passDataStats = useMemo(() => {
     // Build student counts from pass history
     const studentCounts = new Map();
@@ -142,7 +145,7 @@ function MyClassTab() {
     // Top destinations (class-wide)
     const destCounts = new Map();
     passHistory.forEach(pass => {
-      const dest = pass.customDestination || destMap[pass.destination] || pass.destination || 'General';
+      const dest = pass.customDestination || DESTINATION_LABELS[pass.destination] || pass.destination || 'General';
       destCounts.set(dest, (destCounts.get(dest) || 0) + 1);
     });
     const topDestinations = [...destCounts.entries()]
@@ -173,7 +176,7 @@ function MyClassTab() {
     const studentPasses = passHistory.filter(p => p.studentId === selectedPassDataStudent.id);
     const destCounts = new Map();
     studentPasses.forEach(pass => {
-      const dest = pass.customDestination || destMap[pass.destination] || pass.destination || 'General';
+      const dest = pass.customDestination || DESTINATION_LABELS[pass.destination] || pass.destination || 'General';
       destCounts.set(dest, (destCounts.get(dest) || 0) + 1);
     });
     const destinations = [...destCounts.entries()]

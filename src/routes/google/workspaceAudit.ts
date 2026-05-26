@@ -28,9 +28,14 @@ router.post("/run", ...auth, async (req, res, next) => {
     if (err?.message === "Google not connected") {
       return res.status(400).json({ error: "Google not connected", code: "NO_TOKENS" });
     }
-    if (err?.code === 403 || err?.response?.status === 403) {
+    if (
+      err?.code === "INSUFFICIENT_PERMISSIONS" ||
+      err?.code === 403 ||
+      err?.response?.status === 403 ||
+      err?.statusCode === 403
+    ) {
       return res.status(403).json({
-        error: "Workspace admin permissions required to run the audit.",
+        error: err?.message || "Workspace admin permissions required to run the audit.",
         code: "INSUFFICIENT_PERMISSIONS",
       });
     }

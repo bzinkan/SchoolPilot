@@ -4,10 +4,8 @@ import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
 import { requireProductLicense } from "../../middleware/requireProductLicense.js";
-import { requireRole } from "../../middleware/requireRole.js";
 import {
   getFamilyGroupsBySchool,
-  getFamilyGroupById,
   createFamilyGroup,
   updateFamilyGroup,
   deleteFamilyGroup,
@@ -15,10 +13,14 @@ import {
   addStudentsToFamilyGroup,
   setFamilyGroupStudents,
   removeStudentFromFamilyGroup,
-  getUnassignedStudents,
   getHomeroomById,
   autoAssignFamilyGroups,
 } from "../../services/storage.js";
+import {
+  allStudentsBelongToSchool,
+  getFamilyGroupForSchool,
+  requireGoPilotRole,
+} from "../../services/gopilotAccess.js";
 import { generateFamilyGroupNumber } from "../../util/studentCode.js";
 
 const router = Router();
@@ -34,12 +36,17 @@ const auth = [
   requireProductLicense("GOPILOT"),
 ] as const;
 
+const manageAuth = [
+  ...auth,
+  requireGoPilotRole("admin", "school_admin", "office_staff"),
+] as const;
+
 // ============================================================================
 // Family Groups
 // ============================================================================
 
 // GET /api/gopilot/family-groups
-router.get("/family-groups", ...auth, async (req, res, next) => {
+router.get("/family-groups", ...manageAuth, async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
     const groups = await getFamilyGroupsBySchool(schoolId);
@@ -83,8 +90,7 @@ router.get("/family-groups", ...auth, async (req, res, next) => {
 // POST /api/gopilot/family-groups
 router.post(
   "/family-groups",
-  ...auth,
-  requireRole("admin", "office_staff"),
+  ...manageAuth,
   async (req, res, next) => {
     try {
       const schoolId = res.locals.schoolId!;
@@ -101,6 +107,9 @@ router.post(
       });
 
       if (Array.isArray(studentIds) && studentIds.length > 0) {
+        if (!(await allStudentsBelongToSchool(studentIds, schoolId))) {
+          return res.status(404).json({ error: "One or more students not found" });
+        }
         await addStudentsToFamilyGroup(group.id, studentIds);
       }
 
@@ -112,9 +121,14 @@ router.post(
 );
 
 // PUT /api/gopilot/family-groups/:id
-router.put("/family-groups/:id", ...auth, async (req, res, next) => {
+router.put("/family-groups/:id", ...manageAuth, async (req, res, next) => {
   try {
     const id = param(req, "id");
+    const existing = await getFamilyGroupForSchool(id, res.locals.schoolId!);
+    if (!existing) {
+      return res.status(404).json({ error: "Family group not found" });
+    }
+
     const { familyName, carNumber, studentIds } = req.body;
 
     const data: Record<string, unknown> = {};
@@ -127,6 +141,12 @@ router.put("/family-groups/:id", ...auth, async (req, res, next) => {
     }
 
     if (studentIds !== undefined) {
+      if (!Array.isArray(studentIds)) {
+        return res.status(400).json({ error: "studentIds must be an array" });
+      }
+      if (!(await allStudentsBelongToSchool(studentIds, res.locals.schoolId!))) {
+        return res.status(404).json({ error: "One or more students not found" });
+      }
       await setFamilyGroupStudents(id, studentIds);
     }
 
@@ -139,10 +159,20 @@ router.put("/family-groups/:id", ...auth, async (req, res, next) => {
 // POST /api/gopilot/family-groups/:id/students
 router.post(
   "/family-groups/:id/students",
-  ...auth,
+  ...manageAuth,
   async (req, res, next) => {
     try {
+      const group = await getFamilyGroupForSchool(param(req, "id"), res.locals.schoolId!);
+      if (!group) {
+        return res.status(404).json({ error: "Family group not found" });
+      }
       const { studentIds } = req.body;
+      if (!Array.isArray(studentIds) || studentIds.length === 0) {
+        return res.status(400).json({ error: "studentIds array required" });
+      }
+      if (!(await allStudentsBelongToSchool(studentIds, res.locals.schoolId!))) {
+        return res.status(404).json({ error: "One or more students not found" });
+      }
       await addStudentsToFamilyGroup(param(req, "id"), studentIds);
       return res.json({ ok: true });
     } catch (err) {
@@ -154,9 +184,13 @@ router.post(
 // DELETE /api/gopilot/family-groups/:groupId/students/:studentId
 router.delete(
   "/family-groups/:groupId/students/:studentId",
-  ...auth,
+  ...manageAuth,
   async (req, res, next) => {
     try {
+      const group = await getFamilyGroupForSchool(param(req, "groupId"), res.locals.schoolId!);
+      if (!group || !(await allStudentsBelongToSchool([param(req, "studentId")], res.locals.schoolId!))) {
+        return res.status(404).json({ error: "Family group or student not found" });
+      }
       await removeStudentFromFamilyGroup(
         param(req, "groupId"),
         param(req, "studentId")
@@ -169,8 +203,12 @@ router.delete(
 );
 
 // DELETE /api/gopilot/family-groups/:id
-router.delete("/family-groups/:id", ...auth, async (req, res, next) => {
+router.delete("/family-groups/:id", ...manageAuth, async (req, res, next) => {
   try {
+    const group = await getFamilyGroupForSchool(param(req, "id"), res.locals.schoolId!);
+    if (!group) {
+      return res.status(404).json({ error: "Family group not found" });
+    }
     await deleteFamilyGroup(param(req, "id"));
     return res.json({ ok: true });
   } catch (err) {
@@ -181,8 +219,7 @@ router.delete("/family-groups/:id", ...auth, async (req, res, next) => {
 // POST /api/gopilot/family-groups/auto-assign
 router.post(
   "/family-groups/auto-assign",
-  ...auth,
-  requireRole("admin", "office_staff"),
+  ...manageAuth,
   async (req, res, next) => {
     try {
       const schoolId = res.locals.schoolId!;

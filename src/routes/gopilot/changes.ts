@@ -6,13 +6,20 @@ import { requireProductLicense } from "../../middleware/requireProductLicense.js
 import {
   createDismissalChange,
   getChangesBySession,
-  getDismissalChangeById,
   updateDismissalChange,
   updateStudent,
   getSessionById,
   getStudentById,
 } from "../../services/storage.js";
 import { getIO } from "../../realtime/socketio.js";
+import {
+  canAccessStudent,
+  getDismissalChangeForSchool,
+  getRequestGoPilotRole,
+  getSessionForSchool,
+  getTeacherHomeroomIds,
+  isGoPilotManager,
+} from "../../services/gopilotAccess.js";
 
 const router = Router();
 
@@ -45,6 +52,9 @@ router.post(
       const session = await getSessionById(sessionId);
       if (!session || session.schoolId !== res.locals.schoolId) {
         return res.status(404).json({ error: "Session not found" });
+      }
+      if (!(await canAccessStudent(req.authUser!, res.locals.schoolId!, studentId, await getRequestGoPilotRole(req, res)))) {
+        return res.status(403).json({ error: "Insufficient permissions" });
       }
 
       const change = await createDismissalChange({
@@ -85,22 +95,40 @@ router.get(
   async (req, res, next) => {
     try {
       const sessionId = param(req, "sessionId");
-      const rows = await getChangesBySession(sessionId);
+      const session = await getSessionForSchool(sessionId, res.locals.schoolId!);
+      if (!session) {
+        return res.status(404).json({ error: "Session not found" });
+      }
 
-      const changes = rows.map((r) => ({
-        ...r.change,
-        student: {
-          id: r.student.id,
-          firstName: r.student.firstName,
-          lastName: r.student.lastName,
-        },
-        requester: {
-          id: r.requester.id,
-          firstName: r.requester.firstName,
-          lastName: r.requester.lastName,
-          name: `${r.requester.firstName} ${r.requester.lastName}`,
-        },
-      }));
+      const rows = await getChangesBySession(sessionId);
+      const role = await getRequestGoPilotRole(req, res);
+      const teacherHomerooms = role === "teacher"
+        ? await getTeacherHomeroomIds(req.authUser!.id, res.locals.schoolId!)
+        : null;
+
+      const changes = rows
+        .filter((r) => {
+          if (isGoPilotManager(role)) return true;
+          if (role === "parent") return r.change.requestedBy === req.authUser!.id;
+          if (role === "teacher" && r.student.homeroomId) {
+            return teacherHomerooms?.has(r.student.homeroomId);
+          }
+          return false;
+        })
+        .map((r) => ({
+          ...r.change,
+          student: {
+            id: r.student.id,
+            firstName: r.student.firstName,
+            lastName: r.student.lastName,
+          },
+          requester: {
+            id: r.requester.id,
+            firstName: r.requester.firstName,
+            lastName: r.requester.lastName,
+            name: `${r.requester.firstName} ${r.requester.lastName}`,
+          },
+        }));
 
       return res.json({ changes });
     } catch (err) {
@@ -114,10 +142,19 @@ router.put("/changes/:id", ...auth, async (req, res, next) => {
   try {
     const id = param(req, "id");
     const { status } = req.body;
+    if (!["approved", "rejected"].includes(status)) {
+      return res.status(400).json({ error: "status must be approved or rejected" });
+    }
 
-    const existing = await getDismissalChangeById(id);
+    const existing = await getDismissalChangeForSchool(id, res.locals.schoolId!);
     if (!existing) {
       return res.status(404).json({ error: "Change request not found" });
+    }
+    const role = await getRequestGoPilotRole(req, res);
+    const canReview = isGoPilotManager(role) ||
+      (role === "teacher" && await canAccessStudent(req.authUser!, res.locals.schoolId!, existing.studentId, role));
+    if (!canReview) {
+      return res.status(403).json({ error: "Insufficient permissions" });
     }
 
     const updated = await updateDismissalChange(id, {

@@ -12,6 +12,13 @@ import {
   createCustodyAlert,
   getStudentById,
 } from "../../services/storage.js";
+import {
+  canAccessStudent,
+  getPickupForSchool,
+  getRequestGoPilotRole,
+  isGoPilotManager,
+  requireGoPilotRole,
+} from "../../services/gopilotAccess.js";
 
 const router = Router();
 
@@ -26,12 +33,17 @@ const auth = [
   requireProductLicense("GOPILOT"),
 ] as const;
 
+const manageAuth = [
+  ...auth,
+  requireGoPilotRole("admin", "school_admin", "office_staff"),
+] as const;
+
 // ============================================================================
 // Authorized Pickups
 // ============================================================================
 
 // GET /api/gopilot/pickups/all — All pickups for this school (admin/office)
-router.get("/all", ...auth, async (req, res, next) => {
+router.get("/all", ...manageAuth, async (req, res, next) => {
   try {
     const { getPickupsBySchool } = await import("../../services/storage.js");
     const pickups = await getPickupsBySchool(res.locals.schoolId!);
@@ -44,7 +56,20 @@ router.get("/all", ...auth, async (req, res, next) => {
 // GET /api/gopilot/pickups/student/:studentId
 router.get("/student/:studentId", ...auth, async (req, res, next) => {
   try {
-    const pickups = await getPickupsForStudent(param(req, "studentId"));
+    const studentId = param(req, "studentId");
+    const schoolId = res.locals.schoolId!;
+    const role = await getRequestGoPilotRole(req, res);
+    const student = await getStudentById(studentId);
+    if (!student || student.schoolId !== schoolId) {
+      return res.status(404).json({ error: "Student not found" });
+    }
+    const allowed = isGoPilotManager(role) ||
+      (role === "parent" && await canAccessStudent(req.authUser!, schoolId, studentId, role));
+    if (!allowed) {
+      return res.status(403).json({ error: "Insufficient permissions" });
+    }
+
+    const pickups = await getPickupsForStudent(studentId);
     return res.json({ pickups });
   } catch (err) {
     next(err);
@@ -67,6 +92,12 @@ router.post("/student/:studentId", ...auth, async (req, res, next) => {
     if (!student || student.schoolId !== res.locals.schoolId) {
       return res.status(404).json({ error: "Student not found" });
     }
+    const role = await getRequestGoPilotRole(req, res);
+    const allowed = isGoPilotManager(role) ||
+      (role === "parent" && await canAccessStudent(req.authUser!, res.locals.schoolId!, studentId, role));
+    if (!allowed) {
+      return res.status(403).json({ error: "Insufficient permissions" });
+    }
 
     const pickup = await createPickup({
       studentId,
@@ -85,6 +116,17 @@ router.post("/student/:studentId", ...auth, async (req, res, next) => {
 // PUT /api/gopilot/pickups/:id
 router.put("/:id", ...auth, async (req, res, next) => {
   try {
+    const pickup = await getPickupForSchool(param(req, "id"), res.locals.schoolId!);
+    if (!pickup) {
+      return res.status(404).json({ error: "Pickup not found" });
+    }
+    const role = await getRequestGoPilotRole(req, res);
+    const allowed = isGoPilotManager(role) ||
+      (role === "parent" && await canAccessStudent(req.authUser!, res.locals.schoolId!, pickup.studentId, role));
+    if (!allowed) {
+      return res.status(403).json({ error: "Insufficient permissions" });
+    }
+
     const { status } = req.body;
     const updated = await updatePickupStatus(param(req, "id"), status);
     if (!updated) {
@@ -99,6 +141,17 @@ router.put("/:id", ...auth, async (req, res, next) => {
 // DELETE /api/gopilot/pickups/:id - Revoke (soft delete)
 router.delete("/:id", ...auth, async (req, res, next) => {
   try {
+    const pickup = await getPickupForSchool(param(req, "id"), res.locals.schoolId!);
+    if (!pickup) {
+      return res.status(404).json({ error: "Pickup not found" });
+    }
+    const role = await getRequestGoPilotRole(req, res);
+    const allowed = isGoPilotManager(role) ||
+      (role === "parent" && await canAccessStudent(req.authUser!, res.locals.schoolId!, pickup.studentId, role));
+    if (!allowed) {
+      return res.status(403).json({ error: "Insufficient permissions" });
+    }
+
     await revokePickup(param(req, "id"));
     return res.json({ ok: true });
   } catch (err) {
@@ -111,7 +164,7 @@ router.delete("/:id", ...auth, async (req, res, next) => {
 // ============================================================================
 
 // GET /api/gopilot/pickups/custody-alerts
-router.get("/custody-alerts", ...auth, async (req, res, next) => {
+router.get("/custody-alerts", ...manageAuth, async (req, res, next) => {
   try {
     const alerts = await getCustodyAlertsBySchool(res.locals.schoolId!);
     return res.json({ alerts });
@@ -123,7 +176,7 @@ router.get("/custody-alerts", ...auth, async (req, res, next) => {
 // POST /api/gopilot/pickups/student/:studentId/custody-alert
 router.post(
   "/student/:studentId/custody-alert",
-  ...auth,
+  ...manageAuth,
   async (req, res, next) => {
     try {
       const studentId = param(req, "studentId");

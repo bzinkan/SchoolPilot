@@ -3,10 +3,8 @@ import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
 import { requireProductLicense } from "../../middleware/requireProductLicense.js";
-import { requireRole } from "../../middleware/requireRole.js";
 import {
   getHomeroomsBySchool,
-  getHomeroomById,
   createHomeroom,
   updateHomeroom,
   deleteHomeroom,
@@ -17,6 +15,11 @@ import {
   addHomeroomTeacher,
   removeHomeroomTeacher,
 } from "../../services/storage.js";
+import {
+  allStudentsBelongToSchool,
+  getHomeroomForSchool,
+  requireGoPilotRole,
+} from "../../services/gopilotAccess.js";
 
 const router = Router();
 
@@ -29,6 +32,11 @@ const auth = [
   requireSchoolContext,
   requireActiveSchool,
   requireProductLicense("GOPILOT"),
+] as const;
+
+const manageAuth = [
+  ...auth,
+  requireGoPilotRole("admin", "school_admin", "office_staff"),
 ] as const;
 
 // GET /api/gopilot/homerooms/mine - Teacher's own homerooms
@@ -133,7 +141,7 @@ router.get("/", ...auth, async (req, res, next) => {
 });
 
 // POST /api/gopilot/homerooms - Create homeroom
-router.post("/", ...auth, async (req, res, next) => {
+router.post("/", ...manageAuth, async (req, res, next) => {
   try {
     const { name, grade, room, teacherId } = req.body;
     if (!name || !grade) {
@@ -162,9 +170,14 @@ router.post("/", ...auth, async (req, res, next) => {
 });
 
 // PUT /api/gopilot/homerooms/:id - Update homeroom
-router.put("/:id", ...auth, async (req, res, next) => {
+router.put("/:id", ...manageAuth, async (req, res, next) => {
   try {
     const id = param(req, "id");
+    const existing = await getHomeroomForSchool(id, res.locals.schoolId!);
+    if (!existing) {
+      return res.status(404).json({ error: "Homeroom not found" });
+    }
+
     const { name, grade, room, teacherId } = req.body;
 
     const updated = await updateHomeroom(id, {
@@ -185,9 +198,9 @@ router.put("/:id", ...auth, async (req, res, next) => {
 });
 
 // DELETE /api/gopilot/homerooms/:id - Delete homeroom
-router.delete("/:id", ...auth, async (req, res, next) => {
+router.delete("/:id", ...manageAuth, async (req, res, next) => {
   try {
-    const existing = await getHomeroomById(param(req, "id"));
+    const existing = await getHomeroomForSchool(param(req, "id"), res.locals.schoolId!);
     if (!existing) {
       return res.status(404).json({ error: "Homeroom not found" });
     }
@@ -199,7 +212,7 @@ router.delete("/:id", ...auth, async (req, res, next) => {
 });
 
 // POST /api/gopilot/homerooms/:id/assign - Bulk assign students
-router.post("/:id/assign", ...auth, async (req, res, next) => {
+router.post("/:id/assign", ...manageAuth, async (req, res, next) => {
   try {
     const id = param(req, "id");
     const { studentIds } = req.body;
@@ -208,9 +221,12 @@ router.post("/:id/assign", ...auth, async (req, res, next) => {
       return res.status(400).json({ error: "studentIds array required" });
     }
 
-    const homeroom = await getHomeroomById(id);
+    const homeroom = await getHomeroomForSchool(id, res.locals.schoolId!);
     if (!homeroom) {
       return res.status(404).json({ error: "Homeroom not found" });
+    }
+    if (!(await allStudentsBelongToSchool(studentIds, res.locals.schoolId!))) {
+      return res.status(404).json({ error: "One or more students not found" });
     }
 
     await assignStudentsToHomeroom(id, studentIds);
@@ -227,7 +243,7 @@ router.post("/:id/assign", ...auth, async (req, res, next) => {
 // GET /api/gopilot/homerooms/:id/teachers - List teachers for a homeroom
 router.get("/:id/teachers", ...auth, async (req, res, next) => {
   try {
-    const homeroom = await getHomeroomById(param(req, "id"));
+    const homeroom = await getHomeroomForSchool(param(req, "id"), res.locals.schoolId!);
     if (!homeroom) {
       return res.status(404).json({ error: "Homeroom not found" });
     }
@@ -257,14 +273,14 @@ router.get("/:id/teachers", ...auth, async (req, res, next) => {
 });
 
 // POST /api/gopilot/homerooms/:id/teachers - Add co-teacher
-router.post("/:id/teachers", ...auth, requireRole("admin"), async (req, res, next) => {
+router.post("/:id/teachers", ...manageAuth, async (req, res, next) => {
   try {
     const { teacherId, role } = req.body;
     if (!teacherId) {
       return res.status(400).json({ error: "teacherId is required" });
     }
 
-    const homeroom = await getHomeroomById(param(req, "id"));
+    const homeroom = await getHomeroomForSchool(param(req, "id"), res.locals.schoolId!);
     if (!homeroom) {
       return res.status(404).json({ error: "Homeroom not found" });
     }
@@ -281,9 +297,9 @@ router.post("/:id/teachers", ...auth, requireRole("admin"), async (req, res, nex
 });
 
 // DELETE /api/gopilot/homerooms/:id/teachers/:teacherId - Remove co-teacher
-router.delete("/:id/teachers/:teacherId", ...auth, requireRole("admin"), async (req, res, next) => {
+router.delete("/:id/teachers/:teacherId", ...manageAuth, async (req, res, next) => {
   try {
-    const homeroom = await getHomeroomById(param(req, "id"));
+    const homeroom = await getHomeroomForSchool(param(req, "id"), res.locals.schoolId!);
     if (!homeroom) {
       return res.status(404).json({ error: "Homeroom not found" });
     }

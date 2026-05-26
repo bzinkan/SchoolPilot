@@ -190,7 +190,7 @@ export default function DismissalDashboard() {
     } finally {
       setLoading(false);
     }
-  }, [currentSchool]);
+  }, [currentSchool, selectedZone]);
 
   useEffect(() => { loadData(); }, [loadData]);
 

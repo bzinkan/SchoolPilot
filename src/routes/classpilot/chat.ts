@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import { Router } from "express";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
@@ -19,8 +20,10 @@ import {
   deleteMessage,
   createCheckIn,
   getActiveTeachingSession,
+  getTeachingSessionById,
   getStudentById,
   getStudentDevices,
+  getGroupById,
 } from "../../services/storage.js";
 import {
   broadcastToTeachersLocal,
@@ -41,6 +44,29 @@ const staffAuth = [
   requireActiveSchool,
   requireProductLicense("CLASSPILOT"),
 ] as const;
+
+const pollResponseLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => ipKeyGenerator(req.ip || req.socket.remoteAddress || "0.0.0.0"),
+  message: { error: "Too many poll responses. Please wait a moment." },
+});
+
+async function pollBelongsToSchool(poll: { sessionId: string }, schoolId: string): Promise<boolean> {
+  if (poll.sessionId.startsWith(`${schoolId}-`)) {
+    return true;
+  }
+
+  const session = await getTeachingSessionById(poll.sessionId);
+  if (!session) {
+    return false;
+  }
+
+  const group = await getGroupById(session.groupId);
+  return group?.schoolId === schoolId;
+}
 
 // ============================================================================
 // Chat (Teacher broadcast)
@@ -364,11 +390,14 @@ router.get("/polls", ...staffAuth, async (req, res, next) => {
 });
 
 // GET /api/classpilot/polls/:pollId/results - Poll results
-router.get("/polls/:pollId/results", async (req, res, next) => {
+router.get("/polls/:pollId/results", ...staffAuth, async (req, res, next) => {
   try {
     const pollId = param(req, "pollId");
     const poll = await getPollById(pollId);
     if (!poll) {
+      return res.status(404).json({ error: "Poll not found" });
+    }
+    if (!(await pollBelongsToSchool(poll, res.locals.schoolId!))) {
       return res.status(404).json({ error: "Poll not found" });
     }
 
@@ -388,20 +417,33 @@ router.get("/polls/:pollId/results", async (req, res, next) => {
 });
 
 // POST /api/classpilot/polls/:pollId/respond - Student responds to poll
-router.post("/polls/:pollId/respond", async (req, res, next) => {
+router.post("/polls/:pollId/respond", pollResponseLimiter, requireDeviceAuth, async (req, res, next) => {
   try {
     const pollId = param(req, "pollId");
-    const { studentId, deviceId, selectedOption } = req.body;
+    const { selectedOption } = req.body;
+    const schoolId = res.locals.schoolId as string;
+    const studentId = res.locals.studentId as string;
+    const deviceId = res.locals.deviceId as string;
+
+    if (!Number.isInteger(selectedOption)) {
+      return res.status(400).json({ error: "selectedOption must be an integer" });
+    }
 
     const poll = await getPollById(pollId);
     if (!poll || !poll.isActive) {
       return res.status(400).json({ error: "Poll not found or closed" });
     }
+    if (selectedOption < 0 || selectedOption >= poll.options.length) {
+      return res.status(400).json({ error: "selectedOption is out of range" });
+    }
+    if (!(await pollBelongsToSchool(poll, schoolId))) {
+      return res.status(404).json({ error: "Poll not found" });
+    }
 
     const response = await createPollResponse({
       pollId,
-      studentId: studentId || "anonymous",
-      deviceId: deviceId || null,
+      studentId,
+      deviceId,
       selectedOption,
     });
 

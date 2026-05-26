@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useGoPilotAuth } from '../../../hooks/useGoPilotAuth';
 import { Car, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
@@ -13,19 +13,7 @@ export default function JoinSchool() {
   const [success, setSuccess] = useState(null);
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    if (!user) {
-      navigate(`/login?redirect=${encodeURIComponent(`/gopilot/join/${schoolSlug}`)}`);
-    }
-  }, [user, navigate, schoolSlug]);
-
-  useEffect(() => {
-    if (user && schoolSlug && !success && !loading) {
-      handleJoin();
-    }
-  }, [user, schoolSlug]);
-
-  const handleJoin = async () => {
+  const handleJoin = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
@@ -37,7 +25,19 @@ export default function JoinSchool() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [schoolSlug, refetchUser]);
+
+  useEffect(() => {
+    if (!user) {
+      navigate(`/login?redirect=${encodeURIComponent(`/gopilot/join/${schoolSlug}`)}`);
+    }
+  }, [user, navigate, schoolSlug]);
+
+  useEffect(() => {
+    if (user && schoolSlug && !success && !loading) {
+      handleJoin();
+    }
+  }, [user, schoolSlug, success, loading, handleJoin]);
 
   if (!user) return null;
 

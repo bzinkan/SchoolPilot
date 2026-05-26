@@ -3,14 +3,12 @@ import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
 import { requireProductLicense } from "../../middleware/requireProductLicense.js";
-import { requireRole } from "../../middleware/requireRole.js";
 import {
   getSchoolById,
   getSessionById,
   getOrCreateSession,
   updateSessionStatus,
   getQueueBySession,
-  getQueueEntryById,
   getMaxQueuePosition,
   isStudentInQueue,
   addToQueue,
@@ -43,6 +41,16 @@ import {
   getParentStudents,
   getHomeroomTeachers,
 } from "../../services/storage.js";
+import {
+  canAccessStudent,
+  getApprovedParentStudentIds,
+  getQueueEntryForSchool,
+  getRequestGoPilotRole,
+  getSessionForSchool,
+  getTeacherHomeroomIds,
+  isGoPilotManager,
+  requireGoPilotRole,
+} from "../../services/gopilotAccess.js";
 import { getIO } from "../../realtime/socketio.js";
 import { db } from "../../db.js";
 import { dismissalSessions, dismissalQueue, parentStudent } from "../../schema/gopilot.js";
@@ -61,6 +69,16 @@ const auth = [
   requireProductLicense("GOPILOT"),
 ] as const;
 
+const staffAuth = [
+  ...auth,
+  requireGoPilotRole("admin", "school_admin", "office_staff", "teacher"),
+] as const;
+
+const managerAuth = [
+  ...auth,
+  requireGoPilotRole("admin", "school_admin", "office_staff"),
+] as const;
+
 function emitToSchool(schoolId: string, room: string, event: string, data: unknown) {
   const io = getIO();
   if (io) io.to(`school:${schoolId}:${room}`).emit(event, data);
@@ -71,7 +89,7 @@ function emitToSchool(schoolId: string, room: string, event: string, data: unkno
 // ============================================================================
 
 // POST /api/gopilot/dismissal/sessions - Create or get today's session
-router.post("/sessions", ...auth, async (req, res, next) => {
+router.post("/sessions", ...staffAuth, async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
     const school = await getSchoolById(schoolId);
@@ -115,7 +133,7 @@ router.get("/sessions/active", ...auth, async (req, res, next) => {
 // GET /api/gopilot/dismissal/sessions/:id
 router.get("/sessions/:id", ...auth, async (req, res, next) => {
   try {
-    const session = await getSessionById(param(req, "id"));
+    const session = await getSessionForSchool(param(req, "id"), res.locals.schoolId!);
     if (!session) {
       return res.status(404).json({ error: "Session not found" });
     }
@@ -126,11 +144,18 @@ router.get("/sessions/:id", ...auth, async (req, res, next) => {
 });
 
 // PUT /api/gopilot/dismissal/sessions/:id - Update session status (start/pause/complete)
-router.put("/sessions/:id", ...auth, async (req, res, next) => {
+router.put("/sessions/:id", ...managerAuth, async (req, res, next) => {
   try {
     const id = param(req, "id");
     const { status } = req.body;
+    if (!["pending", "active", "paused", "completed"].includes(status)) {
+      return res.status(400).json({ error: "Invalid session status" });
+    }
 
+    const existing = await getSessionForSchool(id, res.locals.schoolId!);
+    if (!existing) {
+      return res.status(404).json({ error: "Session not found" });
+    }
     const session = await updateSessionStatus(id, status);
 
     // Notify all connected clients in this school's room
@@ -156,9 +181,21 @@ router.put("/sessions/:id", ...auth, async (req, res, next) => {
 router.get("/sessions/:id/queue", ...auth, async (req, res, next) => {
   try {
     const sessionId = param(req, "id");
+    const schoolId = res.locals.schoolId!;
+    const session = await getSessionForSchool(sessionId, schoolId);
+    if (!session) {
+      return res.status(404).json({ error: "Session not found" });
+    }
     const filterStatus = (req.query.status as string) || undefined;
 
     const entries = await getQueueBySession(sessionId, filterStatus);
+    const role = await getRequestGoPilotRole(req, res);
+    const parentStudentIds = role === "parent"
+      ? await getApprovedParentStudentIds(req.authUser!.id, schoolId)
+      : null;
+    const teacherHomeroomIds = role === "teacher"
+      ? await getTeacherHomeroomIds(req.authUser!.id, schoolId)
+      : null;
 
     // Get effective dismissal types (with overrides applied)
     const studentIds = entries.map((e) => e.studentId);
@@ -168,6 +205,10 @@ router.get("/sessions/:id/queue", ...auth, async (req, res, next) => {
     const queue = await Promise.all(
       entries.map(async (entry) => {
         const student = await getStudentById(entry.studentId);
+        if (!student || student.schoolId !== schoolId) return null;
+        if (role === "parent" && !parentStudentIds?.has(entry.studentId)) return null;
+        if (role === "teacher" && (!student.homeroomId || !teacherHomeroomIds?.has(student.homeroomId))) return null;
+        if (!isGoPilotManager(role) && role !== "parent" && role !== "teacher") return null;
         let homeroomName: string | null = null;
         if (student?.homeroomId) {
           const homeroom = await getHomeroomById(student.homeroomId);
@@ -203,7 +244,7 @@ router.get("/sessions/:id/queue", ...auth, async (req, res, next) => {
       })
     );
 
-    return res.json(queue);
+    return res.json(queue.filter(Boolean));
   } catch (err) {
     next(err);
   }
@@ -319,7 +360,7 @@ router.post("/sessions/:id/check-in", ...auth, async (req, res, next) => {
 // POST /api/gopilot/dismissal/sessions/:id/check-in-by-number - Car number check-in
 router.post(
   "/sessions/:id/check-in-by-number",
-  ...auth,
+  ...managerAuth,
   async (req, res, next) => {
     try {
       const sessionId = param(req, "id");
@@ -430,7 +471,7 @@ router.post(
 // POST /api/gopilot/dismissal/sessions/:id/check-in-by-bus - Bus number check-in
 router.post(
   "/sessions/:id/check-in-by-bus",
-  ...auth,
+  ...managerAuth,
   async (req, res, next) => {
     try {
       const sessionId = param(req, "id");
@@ -505,23 +546,28 @@ router.post(
 // ============================================================================
 
 // POST /api/gopilot/dismissal/sessions/:id/call - Call individual student
-router.post("/sessions/:id/call", ...auth, async (req, res, next) => {
+router.post("/sessions/:id/call", ...managerAuth, async (req, res, next) => {
   try {
+    const sessionId = param(req, "id");
+    const schoolId = res.locals.schoolId!;
     const { queueId, zone } = req.body;
     if (!queueId) {
       return res.status(400).json({ error: "queueId is required" });
     }
+    const session = await getSessionForSchool(sessionId, schoolId);
+    const original = await getQueueEntryForSchool(queueId, schoolId);
+    if (!session || !original || original.sessionId !== sessionId) {
+      return res.status(404).json({ error: "Queue entry not found" });
+    }
 
     const entry = await callQueueEntry(queueId, zone);
 
-    const schoolId = res.locals.schoolId!;
     emitToSchool(schoolId, "office", "queue:updated", {
       action: "called",
       entry,
     });
 
     // Notify teacher homeroom
-    const original = await getQueueEntryById(queueId);
     if (original) {
       const student = await getStudentById(original.studentId);
       if (student?.homeroomId) {
@@ -547,15 +593,19 @@ router.post("/sessions/:id/call", ...auth, async (req, res, next) => {
 });
 
 // POST /api/gopilot/dismissal/sessions/:id/call-batch - Call next batch
-router.post("/sessions/:id/call-batch", ...auth, async (req, res, next) => {
+router.post("/sessions/:id/call-batch", ...managerAuth, async (req, res, next) => {
   try {
     const sessionId = param(req, "id");
+    const schoolId = res.locals.schoolId!;
+    const session = await getSessionForSchool(sessionId, schoolId);
+    if (!session) {
+      return res.status(404).json({ error: "Session not found" });
+    }
     const count = req.body.count ?? 5;
     const zone = req.body.zone || null;
 
     const entries = await callNextBatch(sessionId, count, zone);
 
-    const schoolId = res.locals.schoolId!;
     emitToSchool(schoolId, "office", "queue:updated", {
       action: "batch_called",
       entries,
@@ -585,15 +635,24 @@ router.post("/sessions/:id/call-batch", ...auth, async (req, res, next) => {
 });
 
 // POST /api/gopilot/dismissal/queue/:id/release - Release student
-router.post("/queue/:id/release", ...auth, async (req, res, next) => {
+router.post("/queue/:id/release", ...staffAuth, async (req, res, next) => {
   try {
     const id = param(req, "id");
+    const schoolId = res.locals.schoolId!;
+    const original = await getQueueEntryForSchool(id, schoolId);
+    if (!original) {
+      return res.status(404).json({ error: "Queue entry not found" });
+    }
+    const role = await getRequestGoPilotRole(req, res);
+    if (!isGoPilotManager(role) && !(await canAccessStudent(req.authUser!, schoolId, original.studentId, role))) {
+      return res.status(403).json({ error: "Insufficient permissions" });
+    }
+
     const entry = await releaseQueueEntry(id);
     if (!entry) {
       return res.status(404).json({ error: "Queue entry not found or invalid status" });
     }
 
-    const schoolId = res.locals.schoolId!;
     emitToSchool(schoolId, "office", "queue:updated", {
       action: "released",
       entry,
@@ -618,15 +677,20 @@ router.post("/queue/:id/release", ...auth, async (req, res, next) => {
 });
 
 // POST /api/gopilot/dismissal/queue/:id/dismiss - Dismiss student
-router.post("/queue/:id/dismiss", ...auth, async (req, res, next) => {
+router.post("/queue/:id/dismiss", ...managerAuth, async (req, res, next) => {
   try {
     const id = param(req, "id");
+    const schoolId = res.locals.schoolId!;
+    const original = await getQueueEntryForSchool(id, schoolId);
+    if (!original) {
+      return res.status(404).json({ error: "Queue entry not found" });
+    }
+
     const entry = await dismissQueueEntry(id);
     if (!entry) {
       return res.status(404).json({ error: "Queue entry not found or invalid status" });
     }
 
-    const schoolId = res.locals.schoolId!;
     emitToSchool(schoolId, "office", "queue:updated", {
       action: "dismissed",
       entry,
@@ -651,16 +715,23 @@ router.post("/queue/:id/dismiss", ...auth, async (req, res, next) => {
 });
 
 // POST /api/gopilot/dismissal/queue/dismiss-batch - Batch dismiss
-router.post("/queue/dismiss-batch", ...auth, requireRole("admin", "office_staff", "teacher"), async (req, res, next) => {
+router.post("/queue/dismiss-batch", ...managerAuth, async (req, res, next) => {
   try {
     const { queueIds } = req.body;
     if (!Array.isArray(queueIds) || queueIds.length === 0) {
       return res.status(400).json({ error: "queueIds array required" });
     }
-
-    const entries = await batchDismiss(queueIds);
-
+    const ids = queueIds.map(String);
     const schoolId = res.locals.schoolId!;
+    const entriesForSchool = await Promise.all(
+      ids.map((id) => getQueueEntryForSchool(id, schoolId))
+    );
+    if (entriesForSchool.some((entry) => !entry)) {
+      return res.status(404).json({ error: "One or more queue entries not found" });
+    }
+
+    const entries = await batchDismiss(ids);
+
     emitToSchool(schoolId, "office", "queue:updated", {
       action: "batch_dismissed",
       entries,
@@ -673,14 +744,30 @@ router.post("/queue/dismiss-batch", ...auth, requireRole("admin", "office_staff"
 });
 
 // POST /api/gopilot/dismissal/queue/release-batch - Batch release
-router.post("/queue/release-batch", ...auth, requireRole("admin", "office_staff", "teacher"), async (req, res, next) => {
+router.post("/queue/release-batch", ...staffAuth, async (req, res, next) => {
   try {
     const { queueIds } = req.body;
     if (!Array.isArray(queueIds) || queueIds.length === 0) {
       return res.status(400).json({ error: "queueIds array required" });
     }
+    const ids = queueIds.map(String);
+    const schoolId = res.locals.schoolId!;
+    const role = await getRequestGoPilotRole(req, res);
+    const entriesForSchool = await Promise.all(
+      ids.map((id) => getQueueEntryForSchool(id, schoolId))
+    );
+    if (entriesForSchool.some((entry) => !entry)) {
+      return res.status(404).json({ error: "One or more queue entries not found" });
+    }
+    if (!isGoPilotManager(role)) {
+      for (const entry of entriesForSchool) {
+        if (!entry || !(await canAccessStudent(req.authUser!, schoolId, entry.studentId, role))) {
+          return res.status(403).json({ error: "Insufficient permissions" });
+        }
+      }
+    }
 
-    const entries = await batchRelease(queueIds);
+    const entries = await batchRelease(ids);
 
     return res.json({ released: entries.length, entries });
   } catch (err) {
@@ -695,11 +782,15 @@ router.post("/queue/release-batch", ...auth, requireRole("admin", "office_staff"
 // POST /api/gopilot/dismissal/sessions/:id/release-walkers
 router.post(
   "/sessions/:id/release-walkers",
-  ...auth,
+  ...managerAuth,
   async (req, res, next) => {
     try {
       const sessionId = param(req, "id");
       const schoolId = res.locals.schoolId!;
+      const session = await getSessionForSchool(sessionId, schoolId);
+      if (!session) {
+        return res.status(404).json({ error: "Session not found" });
+      }
 
       const walkers = await getStudentsByDismissalType(schoolId, "walker");
 
@@ -774,11 +865,15 @@ router.post(
 // POST /api/gopilot/dismissal/sessions/:id/release-walkers-by-filter
 router.post(
   "/sessions/:id/release-walkers-by-filter",
-  ...auth,
+  ...managerAuth,
   async (req, res, next) => {
     try {
       const sessionId = param(req, "id");
       const schoolId = res.locals.schoolId!;
+      const session = await getSessionForSchool(sessionId, schoolId);
+      if (!session) {
+        return res.status(404).json({ error: "Session not found" });
+      }
       const { filterType, filterValues } = req.body;
 
       if (!filterType || !Array.isArray(filterValues)) {
@@ -840,9 +935,13 @@ router.post(
 // ============================================================================
 
 // POST /api/gopilot/dismissal/queue/:id/hold - Hold student
-router.post("/queue/:id/hold", ...auth, async (req, res, next) => {
+router.post("/queue/:id/hold", ...managerAuth, async (req, res, next) => {
   try {
     const id = param(req, "id");
+    const original = await getQueueEntryForSchool(id, res.locals.schoolId!);
+    if (!original) {
+      return res.status(404).json({ error: "Queue entry not found" });
+    }
     const { reason } = req.body;
 
     const entry = await holdQueueEntry(id, reason);
@@ -853,9 +952,13 @@ router.post("/queue/:id/hold", ...auth, async (req, res, next) => {
 });
 
 // POST /api/gopilot/dismissal/queue/:id/delay - Delay student 2 minutes
-router.post("/queue/:id/delay", ...auth, async (req, res, next) => {
+router.post("/queue/:id/delay", ...managerAuth, async (req, res, next) => {
   try {
     const id = param(req, "id");
+    const original = await getQueueEntryForSchool(id, res.locals.schoolId!);
+    if (!original) {
+      return res.status(404).json({ error: "Queue entry not found" });
+    }
 
     const entry = await delayQueueEntry(id);
     return res.json({ entry });
@@ -869,9 +972,13 @@ router.post("/queue/:id/delay", ...auth, async (req, res, next) => {
 // ============================================================================
 
 // GET /api/gopilot/dismissal/sessions/:id/stats
-router.get("/sessions/:id/stats", ...auth, async (req, res, next) => {
+router.get("/sessions/:id/stats", ...staffAuth, async (req, res, next) => {
   try {
     const sessionId = param(req, "id");
+    const session = await getSessionForSchool(sessionId, res.locals.schoolId!);
+    if (!session) {
+      return res.status(404).json({ error: "Session not found" });
+    }
     const stats = await getSessionStats(sessionId);
     return res.json(stats);
   } catch (err) {
@@ -880,9 +987,13 @@ router.get("/sessions/:id/stats", ...auth, async (req, res, next) => {
 });
 
 // GET /api/gopilot/dismissal/sessions/:id/activity
-router.get("/sessions/:id/activity", ...auth, async (req, res, next) => {
+router.get("/sessions/:id/activity", ...staffAuth, async (req, res, next) => {
   try {
     const sessionId = param(req, "id");
+    const session = await getSessionForSchool(sessionId, res.locals.schoolId!);
+    if (!session) {
+      return res.status(404).json({ error: "Session not found" });
+    }
     const log = await getActivityLog(sessionId);
     return res.json(log);
   } catch (err) {
@@ -902,7 +1013,7 @@ router.post("/sessions/:id/override", ...auth, async (req, res, next) => {
     const sessionId = param(req, "id");
     const schoolId = res.locals.schoolId!;
     const userId = req.authUser!.id;
-    const role = res.locals.membershipRole as string;
+    const role = await getRequestGoPilotRole(req, res);
     const { studentId, overrideType, reason } = req.body;
 
     if (!studentId || !overrideType) {
@@ -938,13 +1049,16 @@ router.post("/sessions/:id/override", ...auth, async (req, res, next) => {
       }
     } else if (role === "teacher") {
       changedByRole = "teacher";
-      if (student.homeroomId) {
-        const teachers = await getHomeroomTeachers(student.homeroomId);
-        const isTeacher = teachers.some((t) => t.teacherId === userId);
-        if (!isTeacher) {
-          return res.status(403).json({ error: "Student is not in your homeroom" });
-        }
+      if (!student.homeroomId) {
+        return res.status(403).json({ error: "Student is not in your homeroom" });
       }
+      const teachers = await getHomeroomTeachers(student.homeroomId);
+      const isTeacher = teachers.some((t) => t.teacherId === userId);
+      if (!isTeacher) {
+        return res.status(403).json({ error: "Student is not in your homeroom" });
+      }
+    } else if (!isGoPilotManager(role)) {
+      return res.status(403).json({ error: "Insufficient permissions" });
     }
     // admin, school_admin, office_staff can override any student
 
@@ -1017,12 +1131,28 @@ router.post("/sessions/:id/override", ...auth, async (req, res, next) => {
 router.get("/sessions/:id/overrides", ...auth, async (req, res, next) => {
   try {
     const sessionId = param(req, "id");
+    const schoolId = res.locals.schoolId!;
+    const session = await getSessionForSchool(sessionId, schoolId);
+    if (!session) {
+      return res.status(404).json({ error: "Session not found" });
+    }
+    const role = await getRequestGoPilotRole(req, res);
+    const parentStudentIds = role === "parent"
+      ? await getApprovedParentStudentIds(req.authUser!.id, schoolId)
+      : null;
+    const teacherHomeroomIds = role === "teacher"
+      ? await getTeacherHomeroomIds(req.authUser!.id, schoolId)
+      : null;
     const overrides = await getOverridesForSession(sessionId);
 
     // Enrich with student names
     const enriched = await Promise.all(
       overrides.map(async (o) => {
         const student = await getStudentById(o.studentId);
+        if (!student || student.schoolId !== schoolId) return null;
+        if (role === "parent" && !parentStudentIds?.has(o.studentId)) return null;
+        if (role === "teacher" && (!student.homeroomId || !teacherHomeroomIds?.has(student.homeroomId))) return null;
+        if (!isGoPilotManager(role) && role !== "parent" && role !== "teacher") return null;
         const changer = await getUserById(o.changedBy);
         return {
           ...o,
@@ -1033,7 +1163,7 @@ router.get("/sessions/:id/overrides", ...auth, async (req, res, next) => {
       })
     );
 
-    return res.json({ overrides: enriched });
+    return res.json({ overrides: enriched.filter(Boolean) });
   } catch (err) {
     next(err);
   }
@@ -1049,6 +1179,10 @@ router.delete("/sessions/:id/override/:studentId", ...auth, async (req, res, nex
     const session = await getSessionById(sessionId);
     if (!session || session.schoolId !== schoolId) {
       return res.status(404).json({ error: "Session not found" });
+    }
+    const role = await getRequestGoPilotRole(req, res);
+    if (!(await canAccessStudent(req.authUser!, schoolId, studentId, role))) {
+      return res.status(403).json({ error: "Insufficient permissions" });
     }
 
     const deleted = await deleteDismissalOverride(sessionId, studentId);

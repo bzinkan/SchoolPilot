@@ -1,6 +1,15 @@
 import { Server as HttpServer } from "http";
 import { Server } from "socket.io";
 import { verifyUserToken } from "../services/jwt.js";
+import { getUserById } from "../services/storage.js";
+import {
+  effectiveGoPilotRole,
+  getGoPilotMembership,
+  getHomeroomForSchool,
+  getTeacherHomeroomIds,
+  hasActiveGoPilotLicense,
+  isGoPilotManager,
+} from "../services/gopilotAccess.js";
 
 let io: Server | null = null;
 
@@ -25,8 +34,11 @@ export function setupSocketIO(httpServer: HttpServer): Server {
     if (!token) return next(new Error("Authentication required"));
     try {
       const payload = verifyUserToken(token);
+      const user = await getUserById(payload.userId);
+      if (!user) return next(new Error("Invalid token"));
       socket.data.userId = payload.userId;
       socket.data.email = payload.email;
+      socket.data.isSuperAdmin = user.isSuperAdmin;
       next();
     } catch {
       next(new Error("Invalid token"));
@@ -37,16 +49,62 @@ export function setupSocketIO(httpServer: HttpServer): Server {
     const userId = socket.data.userId;
     console.log(`[Socket.io] Connected: user ${userId}`);
 
-    socket.on("join:school", ({ schoolId, role, homeroomId }) => {
-      if (role === "admin" || role === "office_staff") {
-        socket.join(`school:${schoolId}:office`);
-      }
-      if (role === "teacher" && homeroomId) {
-        socket.join(`school:${schoolId}:teacher:${homeroomId}`);
-      }
-      if (role === "parent") {
-        socket.join(`school:${schoolId}:parent:${userId}`);
-        socket.join(`school:${schoolId}:parents`);
+    socket.on("join:school", async ({ schoolId, homeroomId }) => {
+      try {
+        const requestedSchoolId = typeof schoolId === "string" ? schoolId : "";
+        if (!requestedSchoolId) {
+          socket.emit("join:error", { error: "School context required" });
+          return;
+        }
+
+        if (!socket.data.isSuperAdmin && !(await hasActiveGoPilotLicense(requestedSchoolId))) {
+          socket.emit("join:error", { error: "Product license required" });
+          return;
+        }
+
+        const membership = socket.data.isSuperAdmin
+          ? null
+          : await getGoPilotMembership(userId, requestedSchoolId);
+        if (!socket.data.isSuperAdmin && !membership) {
+          socket.emit("join:error", { error: "No access to this school" });
+          return;
+        }
+
+        const role = socket.data.isSuperAdmin
+          ? "super_admin"
+          : effectiveGoPilotRole(membership!);
+
+        socket.join(`school:${requestedSchoolId}`);
+
+        if (isGoPilotManager(role)) {
+          socket.join(`school:${requestedSchoolId}:office`);
+          return;
+        }
+
+        if (role === "teacher") {
+          const requestedHomeroomId = typeof homeroomId === "string" ? homeroomId : "";
+          if (!requestedHomeroomId) {
+            socket.emit("join:error", { error: "Homeroom context required" });
+            return;
+          }
+          const [homeroom, teacherHomeroomIds] = await Promise.all([
+            getHomeroomForSchool(requestedHomeroomId, requestedSchoolId),
+            getTeacherHomeroomIds(userId, requestedSchoolId),
+          ]);
+          if (!homeroom || !teacherHomeroomIds.has(requestedHomeroomId)) {
+            socket.emit("join:error", { error: "No access to this homeroom" });
+            return;
+          }
+          socket.join(`school:${requestedSchoolId}:teacher:${requestedHomeroomId}`);
+          return;
+        }
+
+        if (role === "parent") {
+          socket.join(`school:${requestedSchoolId}:parent:${userId}`);
+          socket.join(`school:${requestedSchoolId}:parents`);
+        }
+      } catch {
+        socket.emit("join:error", { error: "Failed to join school room" });
       }
     });
 
