@@ -4,12 +4,14 @@ import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
 import { requireProductLicense } from "../../middleware/requireProductLicense.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { auditLimiter } from "../../middleware/rateLimiter.js";
 import { runWorkspaceAudit } from "../../services/workspaceAudit.js";
 
 const router = Router();
 
 const auth = [
   authenticate,
+  auditLimiter,
   requireSchoolContext,
   requireActiveSchool,
   requireProductLicense("CLASSPILOT"),
