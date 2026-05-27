@@ -104,9 +104,11 @@ function ScoreSummary({ report }) {
   const pct = total > 0 ? Math.round((ok / total) * 100) : 0;
   const color =
     pct >= 85 ? "text-green-600" : pct >= 60 ? "text-yellow-600" : "text-red-600";
-  const criticalCount = report.findings.filter((f) => f.status === "critical").length;
-  const warningCount = report.findings.filter((f) => f.status === "warning").length;
-  const unknownCount = report.findings.filter((f) => f.status === "unknown").length;
+  const findings = Array.isArray(report.findings) ? report.findings : [];
+  const errors = Array.isArray(report.errors) ? report.errors : [];
+  const criticalCount = findings.filter((f) => f.status === "critical").length;
+  const warningCount = findings.filter((f) => f.status === "warning").length;
+  const unknownCount = findings.filter((f) => f.status === "unknown").length;
   return (
     <Card>
       <CardHeader>
@@ -151,11 +153,11 @@ function ScoreSummary({ report }) {
             </div>
           </div>
         </div>
-        {report.errors?.length > 0 && (
+        {errors.length > 0 && (
           <div className="mt-4 rounded-md bg-yellow-50 dark:bg-yellow-950/20 p-3 text-xs text-yellow-800 dark:text-yellow-200">
             <div className="font-medium mb-1">Some data could not be read:</div>
             <ul className="list-disc list-inside space-y-0.5">
-              {report.errors.map((e, i) => (
+              {errors.map((e, i) => (
                 <li key={i}>{e}</li>
               ))}
             </ul>
@@ -179,10 +181,24 @@ export default function WorkspaceAudit() {
   const runAuditMutation = useMutation({
     mutationFn: () => apiRequest("POST", "/google/workspace-audit/run"),
     onSuccess: (data) => {
-      setReport(data);
+      // Defensive normalization: any field can be missing if the audit short-
+      // circuits server-side (e.g. permission error during a sub-check). Render
+      // path assumes arrays exist, so guarantee them.
+      const normalized = {
+        scannedAt: data?.scannedAt ?? new Date().toISOString(),
+        customerDomain: data?.customerDomain ?? null,
+        deviceCount: data?.deviceCount ?? null,
+        orgUnitsCount: data?.orgUnitsCount ?? null,
+        extensionId: data?.extensionId ?? null,
+        findings: Array.isArray(data?.findings) ? data.findings : [],
+        errors: Array.isArray(data?.errors) ? data.errors : [],
+        scoreOk: typeof data?.scoreOk === "number" ? data.scoreOk : 0,
+        scoreTotal: typeof data?.scoreTotal === "number" ? data.scoreTotal : 0,
+      };
+      setReport(normalized);
       toast({
         title: "Audit complete",
-        description: `${data.scoreOk} of ${data.scoreTotal} checks passed.`,
+        description: `${normalized.scoreOk} of ${normalized.scoreTotal} checks passed.`,
       });
     },
     onError: (err) => {
@@ -317,7 +333,7 @@ export default function WorkspaceAudit() {
             </CardHeader>
           </Card>
 
-          {report && (
+          {report && Array.isArray(report.findings) && (
             <>
               <ScoreSummary report={report} />
               <div className="space-y-3">
