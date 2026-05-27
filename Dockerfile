@@ -25,6 +25,13 @@ FROM node:22-alpine
 
 WORKDIR /app
 
+# Bundle the AWS RDS global root CA chain for TLS verify-full (SOC 2 / SC-7).
+# Refreshed automatically on each image build. See:
+# https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.SSL.html
+RUN apk add --no-cache curl ca-certificates \
+    && curl -fsSL https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem -o /app/rds-ca.pem \
+    && apk del curl
+
 # Install production dependencies + drizzle-kit for schema migrations
 COPY package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force

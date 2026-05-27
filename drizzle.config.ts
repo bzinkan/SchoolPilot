@@ -1,4 +1,18 @@
 import { defineConfig } from "drizzle-kit";
+import { readFileSync, existsSync } from "fs";
+
+const RDS_CA_PATH = "/app/rds-ca.pem";
+const url = process.env.DATABASE_URL ?? "";
+
+function buildSsl() {
+  if (url.includes("sslmode=verify-full") && existsSync(RDS_CA_PATH)) {
+    return { ca: readFileSync(RDS_CA_PATH, "utf8"), rejectUnauthorized: true };
+  }
+  if (url.includes("sslmode=require") || url.includes("sslmode=no-verify")) {
+    return { rejectUnauthorized: false };
+  }
+  return undefined;
+}
 
 export default defineConfig({
   schema: [
@@ -13,9 +27,7 @@ export default defineConfig({
   out: "./migrations",
   dialect: "postgresql",
   dbCredentials: {
-    url: process.env.DATABASE_URL!,
-    ssl: process.env.DATABASE_URL?.includes("sslmode=require")
-      ? { rejectUnauthorized: false }
-      : undefined,
+    url: url,
+    ssl: buildSsl(),
   },
 });

@@ -176,36 +176,12 @@ export default function WorkspaceAudit() {
   // Gated to super-admin while the new OAuth scopes are pending Google
   // verification. Remove this block once verification completes and the
   // backend route is reopened to school admins.
-  if (currentUser && !currentUser.isSuperAdmin) {
-    return (
-      <div className="container mx-auto p-6 max-w-2xl">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <ShieldAlert className="h-5 w-5" />
-              Workspace Audit is not available for your account
-            </CardTitle>
-            <CardDescription>
-              This feature is currently in restricted preview while we complete
-              Google&apos;s OAuth verification for the additional scopes it
-              requires. It will be enabled for school administrators once
-              verification is complete.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Button variant="outline" onClick={() => navigate("/classpilot/admin")}>
-              <ArrowLeft className="h-4 w-4 mr-2" />
-              Back to Admin
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
+  const isRestrictedPreview = currentUser != null && !currentUser.isSuperAdmin;
 
   const { data: connectionStatus, isLoading: statusLoading } = useQuery({
     queryKey: ["/api/google/status"],
     queryFn: () => apiRequest("GET", "/google/status"),
+    enabled: !isRestrictedPreview,
   });
 
   const runAuditMutation = useMutation({
@@ -254,6 +230,33 @@ export default function WorkspaceAudit() {
   };
 
   const isConnected = connectionStatus?.connected === true;
+
+  if (isRestrictedPreview) {
+    return (
+      <div className="container mx-auto p-6 max-w-2xl">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <ShieldAlert className="h-5 w-5" />
+              Workspace Audit is not available for your account
+            </CardTitle>
+            <CardDescription>
+              This feature is currently in restricted preview while we complete
+              Google&apos;s OAuth verification for the additional scopes it
+              requires. It will be enabled for school administrators once
+              verification is complete.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button variant="outline" onClick={() => navigate("/classpilot/admin")}>
+              <ArrowLeft className="h-4 w-4 mr-2" />
+              Back to Admin
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="container mx-auto p-6 max-w-4xl space-y-6">
