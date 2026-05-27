@@ -1,0 +1,19 @@
+# One-off migration image — includes drizzle-kit + tsx for running db:push + seeds.
+# Used only for `aws ecs run-task` operations, never for the main service.
+FROM node:22-alpine
+
+WORKDIR /app
+
+# Install ALL deps (including devDeps for drizzle-kit + tsx)
+COPY package*.json ./
+RUN npm ci
+
+# Source needed for drizzle-kit to read schema + run seeds + run migrations
+COPY tsconfig.json drizzle.config.ts ./
+COPY src ./src
+COPY seeds ./seeds
+COPY migrations ./migrations
+COPY scripts ./scripts
+
+# Default: do nothing. Command is overridden at run-task time.
+CMD ["node", "-e", "console.log('Override with --overrides.containerOverrides.command'); process.exit(1);"]

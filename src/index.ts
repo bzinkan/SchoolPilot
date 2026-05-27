@@ -392,18 +392,11 @@ async function runStartupMigrations(): Promise<void> {
     console.warn("[migration] email_scan_log migration skipped:", (err as Error).message);
   }
 
-  // One-time: update super-admin email alias in users + audit_logs
-  try {
-    const OLD_EMAIL = "bzinkan@school-pilot.net";
-    const NEW_EMAIL = "support@school-pilot.net";
-    const { rowCount } = await pool.query(`UPDATE users SET email = $1 WHERE email = $2`, [NEW_EMAIL, OLD_EMAIL]);
-    if (rowCount && rowCount > 0) {
-      await pool.query(`UPDATE audit_logs SET user_email = $1 WHERE user_email = $2`, [NEW_EMAIL, OLD_EMAIL]);
-      console.log("[migration] email alias updated");
-    }
-  } catch (err) {
-    console.warn("[migration] email alias update skipped:", (err as Error).message);
-  }
+  // Note: the previous one-time email-alias migration (bzinkan@school-pilot.net
+  // → support@school-pilot.net) was removed because the canonical super-admin
+  // account is bzinkan@school-pilot.net, matching the Google Workspace owner's
+  // primary address. Re-applying that rename broke Google OAuth sign-in by
+  // creating a DB email that didn't match the Google profile.email.
 
   // Composite index for heartbeat queries (purge, rollup, analytics) — critical for scale
   try {

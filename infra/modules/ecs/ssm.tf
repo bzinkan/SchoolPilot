@@ -9,6 +9,15 @@ resource "aws_ssm_parameter" "database_url" {
   type  = "SecureString"
   value = var.database_url
   tags  = { Name = "${local.name}-database-url" }
+
+  # The DATABASE_URL is rebuilt out-of-band when RDS is restored from a snapshot
+  # or has its master password rotated (since the resulting endpoint + password
+  # are not available to Terraform without breaking manage_master_user_password
+  # semantics). Ignore drift on `value` so terraform apply doesn't clobber the
+  # operator-set URL with a stale tfvars value.
+  lifecycle {
+    ignore_changes = [value]
+  }
 }
 
 resource "aws_ssm_parameter" "redis_url" {
