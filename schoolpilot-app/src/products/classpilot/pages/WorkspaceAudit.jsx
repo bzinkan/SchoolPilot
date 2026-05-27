@@ -69,17 +69,17 @@ function FindingCard({ finding }) {
         <div className="grid grid-cols-2 gap-3">
           <div>
             <div className="text-xs font-medium text-muted-foreground">Current</div>
-            <div className="mt-0.5 font-mono break-words">{finding.currentValue}</div>
+            <div className="mt-0.5 font-mono break-words">{renderSafe(finding.currentValue)}</div>
           </div>
           <div>
             <div className="text-xs font-medium text-muted-foreground">Recommended</div>
-            <div className="mt-0.5 font-mono break-words">{finding.recommendedValue}</div>
+            <div className="mt-0.5 font-mono break-words">{renderSafe(finding.recommendedValue)}</div>
           </div>
         </div>
         {finding.fixInstructions && (
           <div className="rounded-md bg-muted p-3 text-xs">
             <span className="font-medium">How to fix: </span>
-            {finding.fixInstructions}
+            {renderSafe(finding.fixInstructions)}
           </div>
         )}
         {finding.fixUrl && finding.status !== "ok" && (
@@ -98,6 +98,15 @@ function FindingCard({ finding }) {
   );
 }
 
+// Render any value defensively as a string. Prevents React error #31 if a
+// dynamic field ever comes back as an object.
+const renderSafe = (v) => {
+  if (v == null) return "—";
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  try { return JSON.stringify(v); } catch { return "[unrenderable]"; }
+};
+
 function ScoreSummary({ report }) {
   const total = report.scoreTotal || 0;
   const ok = report.scoreOk || 0;
@@ -106,40 +115,49 @@ function ScoreSummary({ report }) {
     pct >= 85 ? "text-green-600" : pct >= 60 ? "text-yellow-600" : "text-red-600";
   const findings = Array.isArray(report.findings) ? report.findings : [];
   const errors = Array.isArray(report.errors) ? report.errors : [];
+  const isIncomplete = errors.length > 0 || total === 0;
   const criticalCount = findings.filter((f) => f.status === "critical").length;
   const warningCount = findings.filter((f) => f.status === "warning").length;
   const unknownCount = findings.filter((f) => f.status === "unknown").length;
   return (
-    <Card>
+    <Card className={isIncomplete ? "border-yellow-500/50" : ""}>
       <CardHeader>
         <div className="flex items-center justify-between">
           <div>
             <CardTitle className="flex items-center gap-2">
-              <ShieldCheck className="h-5 w-5" />
-              Workspace Security Score
+              {isIncomplete ? (
+                <AlertTriangle className="h-5 w-5 text-yellow-600" />
+              ) : (
+                <ShieldCheck className="h-5 w-5" />
+              )}
+              {isIncomplete ? "Workspace Audit Incomplete" : "Workspace Security Score"}
             </CardTitle>
             <CardDescription>
-              Last scanned: {new Date(report.scannedAt).toLocaleString()}
+              {isIncomplete
+                ? "The audit ran but could not read every policy. Details below."
+                : `Last scanned: ${new Date(report.scannedAt).toLocaleString()}`}
             </CardDescription>
           </div>
-          <div className={`text-4xl font-bold ${color}`}>
-            {ok}<span className="text-2xl text-muted-foreground">/{total}</span>
-          </div>
+          {!isIncomplete && (
+            <div className={`text-4xl font-bold ${color}`}>
+              {ok}<span className="text-2xl text-muted-foreground">/{total}</span>
+            </div>
+          )}
         </div>
       </CardHeader>
       <CardContent>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
           <div>
             <div className="text-xs text-muted-foreground">Domain</div>
-            <div className="font-medium">{report.customerDomain || "—"}</div>
+            <div className="font-medium">{renderSafe(report.customerDomain)}</div>
           </div>
           <div>
             <div className="text-xs text-muted-foreground">Enrolled Chromebooks</div>
-            <div className="font-medium">{report.deviceCount ?? "—"}</div>
+            <div className="font-medium">{renderSafe(report.deviceCount)}</div>
           </div>
           <div>
             <div className="text-xs text-muted-foreground">Org Units</div>
-            <div className="font-medium">{report.orgUnitsCount ?? "—"}</div>
+            <div className="font-medium">{renderSafe(report.orgUnitsCount)}</div>
           </div>
           <div>
             <div className="text-xs text-muted-foreground">Issues</div>
@@ -158,7 +176,7 @@ function ScoreSummary({ report }) {
             <div className="font-medium mb-1">Some data could not be read:</div>
             <ul className="list-disc list-inside space-y-0.5">
               {errors.map((e, i) => (
-                <li key={i}>{e}</li>
+                <li key={i}>{renderSafe(e)}</li>
               ))}
             </ul>
           </div>
@@ -238,6 +256,10 @@ export default function WorkspaceAudit() {
   };
 
   const isConnected = connectionStatus?.connected === true;
+  const auditReady = connectionStatus?.auditReady === true;
+  const auditScopesMissing = Array.isArray(connectionStatus?.auditScopesMissing)
+    ? connectionStatus.auditScopesMissing
+    : [];
 
   return (
     <div className="container mx-auto p-6 max-w-4xl space-y-6">
@@ -308,6 +330,31 @@ export default function WorkspaceAudit() {
         </Card>
       ) : (
         <>
+          {!auditReady && auditScopesMissing.length > 0 && (
+            <Card className="border-yellow-500/50 bg-yellow-50/30 dark:bg-yellow-950/10">
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <AlertTriangle className="h-5 w-5 text-yellow-600" />
+                  Workspace connected, but the audit needs additional scopes
+                </CardTitle>
+                <CardDescription>
+                  Your Google connection is active. The audit can run but some
+                  checks will return Unknown until you re-consent with the
+                  additional read-only scopes listed below.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="rounded-md bg-muted p-3 text-xs font-mono">
+                  {auditScopesMissing.map((scope) => (
+                    <div key={scope}>{renderSafe(scope)}</div>
+                  ))}
+                </div>
+                <Button variant="outline" size="sm" onClick={connectGoogle}>
+                  Re-connect to grant additional scopes
+                </Button>
+              </CardContent>
+            </Card>
+          )}
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between">

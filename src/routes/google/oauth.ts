@@ -79,9 +79,17 @@ router.get("/callback", async (req, res, next) => {
     const oauth2Client = getOAuth2Client();
     const { tokens } = await oauth2Client.getToken(code);
 
+    // Preserve the existing refresh_token on re-consent: Google sometimes
+    // omits refresh_token from the response when the user has already
+    // granted offline access, even though `access_type=offline + prompt=consent`
+    // normally forces it. If the response doesn't include a refresh_token,
+    // keep the one we already have rather than wiping it.
+    const existing = await getGoogleOAuthToken(userId);
+    const refreshToken = tokens.refresh_token || existing?.refreshToken || "";
+
     await upsertGoogleOAuthToken(userId, {
-      refreshToken: tokens.refresh_token || "",
-      scope: tokens.scope || SCOPES.join(" "),
+      refreshToken,
+      scope: tokens.scope || existing?.scope || SCOPES.join(" "),
       tokenType: tokens.token_type || "Bearer",
       expiryDate: tokens.expiry_date ? new Date(tokens.expiry_date) : undefined,
     });
@@ -104,11 +112,27 @@ router.get("/callback", async (req, res, next) => {
   }
 });
 
-// GET /api/google/status - Check Google connection status
+// GET /api/google/status - Check Google connection status + scope inventory
 router.get("/status", authenticate, async (req, res, next) => {
   try {
     const token = await getGoogleOAuthToken(req.authUser!.id);
-    return res.json({ connected: !!token });
+    if (!token?.refreshToken) {
+      return res.json({ connected: false });
+    }
+    const grantedScopes = (token.scope ?? "").split(/\s+/).filter(Boolean);
+    const grantedSet = new Set(grantedScopes);
+    const requiredForAudit = [
+      "https://www.googleapis.com/auth/admin.directory.orgunit.readonly",
+      "https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly",
+      "https://www.googleapis.com/auth/chrome.management.policy.readonly",
+    ];
+    const missingForAudit = requiredForAudit.filter((s) => !grantedSet.has(s));
+    return res.json({
+      connected: true,
+      scopesGranted: grantedScopes,
+      auditScopesMissing: missingForAudit,
+      auditReady: missingForAudit.length === 0,
+    });
   } catch (err) {
     next(err);
   }

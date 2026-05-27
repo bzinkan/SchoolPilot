@@ -100,15 +100,23 @@ async function resolvePolicy(
       },
     });
     const resolved = resp.data.resolvedPolicies?.[0];
-    if (!resolved) return null;
+    if (!resolved) {
+      console.log(`[workspaceAudit] resolve ${schemaName}: empty response`);
+      return null;
+    }
     const policyValue = resolved.value?.value as Record<string, unknown> | undefined;
+    console.log(`[workspaceAudit] resolve ${schemaName}: OK, value:`, JSON.stringify(policyValue));
     return {
       value: policyValue ?? null,
       sourceKey: resolved.sourceKey?.targetResource ?? undefined,
       raw: resolved,
     };
   } catch (err) {
-    assertNotPermissionError(err);
+    // Permission failures on individual policy resolves are NON-fatal: we
+    // record the error and produce an "Unknown" finding so the user at least
+    // sees the check list. The audit only aborts entirely if NO data at all
+    // can be read (e.g., user revoked the OAuth grant).
+    console.log(`[workspaceAudit] resolve ${schemaName}: FAILED:`, (err as Error).message);
     return {
       value: null,
       raw: null,
@@ -117,16 +125,35 @@ async function resolvePolicy(
   }
 }
 
+// Coerce anything (string | number | boolean | object | null | undefined) to a
+// safe display string. Prevents React error #31 when Chrome Policy API returns
+// values whose actual runtime shape doesn't match our TypeScript assertions.
+function asDisplay(v: unknown): string {
+  if (v == null) return "—";
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  try {
+    return JSON.stringify(v);
+  } catch {
+    return "[unrenderable]";
+  }
+}
+
 function findingOk(
   id: string,
   title: string,
   description: string,
   severity: Severity,
-  currentValue: string,
-  recommendedValue: string,
+  currentValue: unknown,
+  recommendedValue: unknown,
   fixUrl: string
 ): AuditFinding {
-  return { id, title, description, severity, status: "ok", currentValue, recommendedValue, fixUrl };
+  return {
+    id, title, description, severity, status: "ok",
+    currentValue: asDisplay(currentValue),
+    recommendedValue: asDisplay(recommendedValue),
+    fixUrl,
+  };
 }
 
 function findingProblem(
@@ -135,12 +162,18 @@ function findingProblem(
   description: string,
   severity: Severity,
   status: "warning" | "critical",
-  currentValue: string,
-  recommendedValue: string,
+  currentValue: unknown,
+  recommendedValue: unknown,
   fixUrl: string,
   fixInstructions?: string
 ): AuditFinding {
-  return { id, title, description, severity, status, currentValue, recommendedValue, fixUrl, fixInstructions };
+  return {
+    id, title, description, severity, status,
+    currentValue: asDisplay(currentValue),
+    recommendedValue: asDisplay(recommendedValue),
+    fixUrl,
+    fixInstructions,
+  };
 }
 
 function findingUnknown(
@@ -149,12 +182,12 @@ function findingUnknown(
   description: string,
   severity: Severity,
   fixUrl: string,
-  currentValue = "Unable to read this policy"
+  currentValue: unknown = "Unable to read this policy"
 ): AuditFinding {
   return {
     id, title, description, severity,
     status: "unknown",
-    currentValue,
+    currentValue: asDisplay(currentValue),
     recommendedValue: "See admin console",
     fixUrl,
   };
@@ -174,33 +207,51 @@ export async function runWorkspaceAudit(userId: string): Promise<WorkspaceAuditR
   let orgUnitsCount: number | null = null;
   let deviceCount: number | null = null;
 
+  console.log("[workspaceAudit] starting for userId:", userId);
+
+  // Metadata calls (customer.get / orgunits.list / chromeosdevices.list) are
+  // best-effort: permission failures here record an error and continue with
+  // null data. We do NOT call assertNotPermissionError on these because the
+  // audit's primary value is the chrome.management.policy resolutions; we'd
+  // rather return 7 "Unknown" findings than abort the whole audit.
+  //
+  // customers.get requires admin.directory.customer.readonly which we do not
+  // request. The customer domain can be derived from the OU response below.
   try {
     const directory = google.admin({ version: "directory_v1", auth });
     const customer = await directory.customers.get({ customerKey: "my_customer" });
     customerDomain = customer.data.customerDomain ?? null;
+    console.log("[workspaceAudit] customer.get OK, domain:", customerDomain);
   } catch (err: unknown) {
-    assertNotPermissionError(err);
+    console.log("[workspaceAudit] customer.get FAILED (non-fatal):", (err as Error).message);
     errors.push(`Could not read customer info: ${(err as Error).message}`);
   }
 
   try {
     const directory = google.admin({ version: "directory_v1", auth });
-    const ous = await directory.orgunits.list({ customerId: "my_customer", type: "all" });
+    // type:"allIncludingParent" with orgUnitPath:"/" returns the root OU
+    // alongside its descendants. This makes root id discovery deterministic.
+    const ous = await directory.orgunits.list({
+      customerId: "my_customer",
+      orgUnitPath: "/",
+      type: "allIncludingParent",
+    });
     orgUnitsCount = ous.data.organizationUnits?.length ?? 0;
+    console.log("[workspaceAudit] orgunits.list OK, count:", orgUnitsCount);
 
-    // The root OU itself is NOT returned in the list — only its descendants.
-    // Derive root's orgUnitId from any direct child's parentOrgUnitId. Direct
-    // children all have parentOrgUnitPath === "/" and parentOrgUnitId set to
-    // the root OU's ID. Fall back to ANY OU's parent chain if no direct child
-    // is found (very unusual but defends against deeper-only structures).
+    // Root is the entry with no parentOrgUnitId (returned thanks to
+    // allIncludingParent). Falls back to any child's parentOrgUnitId if Google
+    // omits root in older API versions.
+    const root = ous.data.organizationUnits?.find((ou) => !ou.parentOrgUnitId);
     const childOfRoot = ous.data.organizationUnits?.find(
       (ou) => ou.parentOrgUnitPath === "/" && ou.parentOrgUnitId
     );
-    const anyParent = ous.data.organizationUnits?.find((ou) => ou.parentOrgUnitId);
-    const candidate = childOfRoot?.parentOrgUnitId ?? anyParent?.parentOrgUnitId ?? "";
-    rootOrgUnitId = candidate.replace(/^id:/, "") || null;
+    const candidate =
+      root?.orgUnitId ?? childOfRoot?.parentOrgUnitId ?? "";
+    rootOrgUnitId = String(candidate).replace(/^id:/, "") || null;
+    console.log("[workspaceAudit] derived rootOrgUnitId:", rootOrgUnitId);
   } catch (err: unknown) {
-    assertNotPermissionError(err);
+    console.log("[workspaceAudit] orgunits.list FAILED (non-fatal):", (err as Error).message);
     errors.push(`Could not list org units: ${(err as Error).message}`);
   }
 
@@ -214,8 +265,9 @@ export async function runWorkspaceAudit(userId: string): Promise<WorkspaceAuditR
     deviceCount = (devices.data as { totalResults?: number }).totalResults
       ?? devices.data.chromeosdevices?.length
       ?? 0;
+    console.log("[workspaceAudit] chromeosdevices.list OK, count:", deviceCount);
   } catch (err: unknown) {
-    assertNotPermissionError(err);
+    console.log("[workspaceAudit] chromeosdevices.list FAILED (non-fatal):", (err as Error).message);
     errors.push(`Could not list Chrome devices: ${(err as Error).message}`);
   }
 
