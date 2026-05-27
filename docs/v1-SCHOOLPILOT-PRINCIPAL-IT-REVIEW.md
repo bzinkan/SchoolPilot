@@ -200,13 +200,21 @@ Every administrative action is logged with the actor, timestamp, role, action ve
 
 Examples of logged actions: login, logout, settings changes, user creation/deletion, student creation/deletion, role changes, session start/end, message send, lock/unlock, Flight Path applied.
 
-### 3.6 Workspace Security Audit (Restricted Preview)
+### 3.6 Workspace Security Audit (Built-in tool for IT)
 
-ClassPilot includes a Workspace Security Audit tool that connects (read-only) to a school's Google Workspace and produces a scorecard of Chrome management policies relevant to monitoring (sign-in restriction, guest mode, add-user, incognito, dev tools, extension force-install, browser sign-in). Each finding is rated and links to the exact Admin Console page for the fix.
+A standalone admin tool, available to school admins from the ClassPilot Admin Panel, that connects (read-only) to the school's Google Workspace and produces a scorecard of Chrome management policies that affect ClassPilot's effectiveness:
 
-This feature is currently in **restricted preview** while the additional Google OAuth scopes it requires complete Google's verification process. School admins do not see it in the current release. Once verification completes (typically 3–10 days for sensitive scopes), it will be opened to school admins as a built-in alternative to the manual checklist in §8.
+- Sign-in restricted to the school's domain (closes the "personal Gmail loophole")
+- Guest mode disabled
+- "Add user" button at login disabled
+- Incognito mode disabled
+- Developer tools blocked
+- ClassPilot extension force-installed
+- Browser sign-in forced
 
-In the meantime, the same configuration is documented in plain text in §8 (Required Google Workspace Configuration) — schools can follow that checklist directly in Google Admin Console.
+Each finding is rated critical / high / medium / low and includes a deep link to the exact Admin Console page where IT can fix it. **The audit never modifies a school's Workspace settings** — it only reads them. The admin can revoke ClassPilot's read-only access at any time from their Google account permissions page.
+
+This tool is the same content as the §8 checklist, produced automatically by reading the customer's live Workspace policy values rather than asking IT to walk through Admin Console by hand.
 
 ### 3.7 Email Monitoring Add-On (MailPilot)
 

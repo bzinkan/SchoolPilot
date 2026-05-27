@@ -3,24 +3,19 @@ import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
 import { requireProductLicense } from "../../middleware/requireProductLicense.js";
-import { requireSuperAdmin } from "../../middleware/requireRole.js";
+import { requireRole } from "../../middleware/requireRole.js";
 import { auditLimiter } from "../../middleware/rateLimiter.js";
 import { runWorkspaceAudit } from "../../services/workspaceAudit.js";
 
 const router = Router();
 
-// Workspace Audit is gated to super-admin only while the new OAuth scopes
-// (admin.directory.device.chromeos.readonly, chrome.management.policy.readonly)
-// progress through Google verification. Regular school admins do not see the
-// UI and cannot hit the endpoint. Flip requireSuperAdmin → requireRole("admin",
-// "school_admin") to re-open to all school admins after verification completes.
 const auth = [
   authenticate,
-  requireSuperAdmin,
   auditLimiter,
   requireSchoolContext,
   requireActiveSchool,
   requireProductLicense("CLASSPILOT"),
+  requireRole("admin", "school_admin"),
 ] as const;
 
 // POST /api/google/workspace-audit/run
