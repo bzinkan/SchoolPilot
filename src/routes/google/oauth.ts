@@ -23,9 +23,12 @@ const SCOPES = [
   "https://www.googleapis.com/auth/classroom.rosters.readonly",
   "https://www.googleapis.com/auth/admin.directory.user.readonly",
   "https://www.googleapis.com/auth/admin.directory.orgunit.readonly",
-  // Workspace Security Audit: read ChromeOS device inventory + Chrome policy values
-  "https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly",
-  "https://www.googleapis.com/auth/chrome.management.policy.readonly",
+  // Workspace Security Audit scopes intentionally omitted until that feature
+  // is re-enabled and Google verification of the new scopes completes:
+  //   admin.directory.device.chromeos.readonly
+  //   chrome.management.policy.readonly
+  // Backend service + route remain at src/services/workspaceAudit.ts and
+  // src/routes/google/workspaceAudit.ts for easy re-activation.
 ];
 
 function getAllowedReturnUrl(returnTo: string | undefined, allowlist: string[]): URL | null {
@@ -112,27 +115,11 @@ router.get("/callback", async (req, res, next) => {
   }
 });
 
-// GET /api/google/status - Check Google connection status + scope inventory
+// GET /api/google/status - Check Google connection status
 router.get("/status", authenticate, async (req, res, next) => {
   try {
     const token = await getGoogleOAuthToken(req.authUser!.id);
-    if (!token?.refreshToken) {
-      return res.json({ connected: false });
-    }
-    const grantedScopes = (token.scope ?? "").split(/\s+/).filter(Boolean);
-    const grantedSet = new Set(grantedScopes);
-    const requiredForAudit = [
-      "https://www.googleapis.com/auth/admin.directory.orgunit.readonly",
-      "https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly",
-      "https://www.googleapis.com/auth/chrome.management.policy.readonly",
-    ];
-    const missingForAudit = requiredForAudit.filter((s) => !grantedSet.has(s));
-    return res.json({
-      connected: true,
-      scopesGranted: grantedScopes,
-      auditScopesMissing: missingForAudit,
-      auditReady: missingForAudit.length === 0,
-    });
+    return res.json({ connected: !!token });
   } catch (err) {
     next(err);
   }
