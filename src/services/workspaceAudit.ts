@@ -187,20 +187,21 @@ export async function runWorkspaceAudit(userId: string): Promise<WorkspaceAuditR
     const directory = google.admin({ version: "directory_v1", auth });
     const ous = await directory.orgunits.list({ customerId: "my_customer", type: "all" });
     orgUnitsCount = ous.data.organizationUnits?.length ?? 0;
-    const root = ous.data.organizationUnits?.find((ou) => !ou.parentOrgUnitId || ou.parentOrgUnitPath === "/");
-    rootOrgUnitId = (root?.orgUnitId ?? "").replace(/^id:/, "") || null;
+
+    // The root OU itself is NOT returned in the list — only its descendants.
+    // Derive root's orgUnitId from any direct child's parentOrgUnitId. Direct
+    // children all have parentOrgUnitPath === "/" and parentOrgUnitId set to
+    // the root OU's ID. Fall back to ANY OU's parent chain if no direct child
+    // is found (very unusual but defends against deeper-only structures).
+    const childOfRoot = ous.data.organizationUnits?.find(
+      (ou) => ou.parentOrgUnitPath === "/" && ou.parentOrgUnitId
+    );
+    const anyParent = ous.data.organizationUnits?.find((ou) => ou.parentOrgUnitId);
+    const candidate = childOfRoot?.parentOrgUnitId ?? anyParent?.parentOrgUnitId ?? "";
+    rootOrgUnitId = candidate.replace(/^id:/, "") || null;
   } catch (err: unknown) {
     assertNotPermissionError(err);
     errors.push(`Could not list org units: ${(err as Error).message}`);
-  }
-
-  if (!rootOrgUnitId) {
-    try {
-      const directory = google.admin({ version: "directory_v1", auth });
-      const customer = await directory.customers.get({ customerKey: "my_customer" });
-      const id = (customer.data.id ?? "").replace(/^id:/, "");
-      if (id) rootOrgUnitId = id;
-    } catch { /* ignore */ }
   }
 
   try {
