@@ -3,6 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { apiRequest } from "../../../lib/queryClient";
 import { useToast } from "../../../hooks/use-toast";
+import { useClassPilotAuth } from "../../../hooks/useClassPilotAuth";
 import {
   Card,
   CardContent,
@@ -169,7 +170,38 @@ function ScoreSummary({ report }) {
 export default function WorkspaceAudit() {
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { currentUser } = useClassPilotAuth();
   const [report, setReport] = useState(null);
+
+  // Gated to super-admin while the new OAuth scopes are pending Google
+  // verification. Remove this block once verification completes and the
+  // backend route is reopened to school admins.
+  if (currentUser && !currentUser.isSuperAdmin) {
+    return (
+      <div className="container mx-auto p-6 max-w-2xl">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <ShieldAlert className="h-5 w-5" />
+              Workspace Audit is not available for your account
+            </CardTitle>
+            <CardDescription>
+              This feature is currently in restricted preview while we complete
+              Google&apos;s OAuth verification for the additional scopes it
+              requires. It will be enabled for school administrators once
+              verification is complete.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button variant="outline" onClick={() => navigate("/classpilot/admin")}>
+              <ArrowLeft className="h-4 w-4 mr-2" />
+              Back to Admin
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   const { data: connectionStatus, isLoading: statusLoading } = useQuery({
     queryKey: ["/api/google/status"],

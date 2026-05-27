@@ -512,13 +512,15 @@ export default function Admin() {
             <ShieldAlert className="h-4 w-4 mr-2" />
             Email Monitor
           </Button>
-          <Button
-            variant="outline"
-            onClick={() => navigate("/classpilot/admin/workspace-audit")}
-          >
-            <ShieldCheck className="h-4 w-4 mr-2" />
-            Workspace Audit
-          </Button>
+          {currentUser?.isSuperAdmin && (
+            <Button
+              variant="outline"
+              onClick={() => navigate("/classpilot/admin/workspace-audit")}
+            >
+              <ShieldCheck className="h-4 w-4 mr-2" />
+              Workspace Audit
+            </Button>
+          )}
           <Button
             variant="outline"
             onClick={() => navigate("/classpilot")}

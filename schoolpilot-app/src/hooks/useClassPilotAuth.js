@@ -23,6 +23,7 @@ export function useClassPilotAuth() {
         id: user.id,
         email: user.email,
         role,
+        isSuperAdmin: user.isSuperAdmin === true,
         schoolId: activeSchoolId,
         schoolName: activeMembership?.schoolName || '',
         displayName: user.firstName && user.lastName
