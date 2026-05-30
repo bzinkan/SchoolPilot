@@ -215,6 +215,16 @@ The students table is shared across all 3 products. Several layers of identity r
 - **Field name normalization**: Different frontends send different field conventions. The shared `normalizeStudentBody()` helper handles `studentName` → `firstName`/`lastName`, `studentEmail` → `email`, `first_name` → `firstName`, etc. Always use this helper for student create/update endpoints.
 - **School domain auto-set on registration**: `POST /api/auth/register` auto-extracts the domain from the admin's email so the extension can find the school by domain. Without this, new self-signup schools have broken extensions.
 
+### Google Workspace & Classroom Imports
+Student imports are shared setup paths for ClassPilot, PassPilot, and GoPilot. They must be reliable for IT onboarding.
+
+- **OAuth scopes**: Classroom roster import needs `classroom.courses.readonly`, `classroom.rosters.readonly`, and `classroom.profile.emails`. Directory import needs `admin.directory.user.readonly` and `admin.directory.orgunit.readonly`. If an older connected account lacks the Classroom email scope, force a Google reconnect rather than silently importing nameless/email-less students.
+- **Pagination is required**: Google Classroom courses/students and Workspace Directory users are paginated. Always loop `nextPageToken`; do not assume the first 100/500 results are the whole roster.
+- **Email upsert rule**: Imports must upsert students by exact `(schoolId, emailLc)`, never fuzzy `searchStudents(email)`, because partial email/name matches can update the wrong student. `createStudent`, `updateStudent`, and `bulkCreateStudents` normalize `emailLc` in `src/services/storage.ts`.
+- **Workspace import filtering**: Skip suspended, admin, and delegated-admin Google users when importing students. OU imports may include per-OU `gradeLevel` and `excludeEmails`.
+- **GoPilot Classroom sync**: `/google/classroom/sync` accepts `{ courseId, homeroomId, grade|gradeLevel }` and must assign imported/updated students to the mapped homeroom, not just create roster records.
+- **Production schema**: Google OAuth/Classroom tables and student Google fields must be represented both in Drizzle schema and startup auto-migrations in `src/index.ts`, because production RDS is private.
+
 ### API Response Format Gotchas
 **IMPORTANT:** Backend and frontend use inconsistent field naming. Be careful:
 - **Drizzle ORM** returns camelCase JS properties (`firstName`, `lastName`, `dismissalType`, `checkInMethod`).

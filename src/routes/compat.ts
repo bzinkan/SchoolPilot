@@ -533,8 +533,19 @@ router.get("/admin/classroom/courses-preview", ...schoolAuth, requireRole("admin
     );
     oauth2Client.setCredentials({ refresh_token: token.refreshToken });
     const classroom = google.classroom({ version: "v1", auth: oauth2Client });
-    const response = await classroom.courses.list({ teacherId: "me", courseStates: ["ACTIVE"] });
-    return res.json({ courses: response.data.courses || [] });
+    const courses: any[] = [];
+    let pageToken: string | undefined;
+    do {
+      const response = await classroom.courses.list({
+        teacherId: "me",
+        courseStates: ["ACTIVE"],
+        pageSize: 100,
+        pageToken,
+      });
+      courses.push(...(response.data.courses || []));
+      pageToken = response.data.nextPageToken || undefined;
+    } while (pageToken);
+    return res.json({ courses });
   } catch (err) {
     return res.json({ courses: [] });
   }

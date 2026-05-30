@@ -235,6 +235,7 @@ function StudentsContent() {
       orgUnitPath: params.orgUnitPath || undefined,
       gradeLevel: params.gradeLevel || undefined,
       entries: params.entries || undefined,
+      importAll: params.importAll || undefined,
     }),
     onSuccess: async (data) => {
       await queryClient.invalidateQueries({ queryKey: ["/api/admin/teacher-students"], exact: false });
@@ -1192,7 +1193,7 @@ function StudentsContent() {
                   ) : (
                     <Button
                       onClick={() => importDirectoryMutation.mutate({
-                        orgUnitPath: undefined,
+                        importAll: true,
                         gradeLevel: undefined,
                       })}
                       disabled={importDirectoryMutation.isPending || directoryUsers.length === 0}

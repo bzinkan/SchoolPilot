@@ -171,6 +171,13 @@ async function runStartupMigrations(): Promise<void> {
 
   // Unified student columns used across GoPilot, PassPilot kiosk, and ClassPilot.
   try {
+    await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS email_lc TEXT`);
+    await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS google_user_id TEXT`);
+    await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS photo_url TEXT`);
+    await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS grade_level TEXT`);
+    await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS student_id_number TEXT`);
+    await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS grade_id TEXT`);
+    await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS homeroom_id TEXT`);
     await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS dismissal_type TEXT DEFAULT 'car'`);
     await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS afterschool_reason TEXT`);
     await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS bus_route TEXT`);
@@ -178,9 +185,63 @@ async function runStartupMigrations(): Promise<void> {
     await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS external_id TEXT`);
     await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS device_id TEXT`);
     await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS student_status TEXT`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS students_school_email_idx ON students (school_id, email_lc)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS students_grade_id_idx ON students (grade_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS students_homeroom_id_idx ON students (homeroom_id)`);
     console.log("[migration] unified student columns ready");
   } catch (err) {
     console.warn("[migration] unified student columns migration skipped:", (err as Error).message);
+  }
+
+  // Google integration tables used by OAuth, Workspace Directory, and Classroom import.
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS google_oauth_tokens (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id TEXT NOT NULL UNIQUE,
+        refresh_token TEXT NOT NULL,
+        scope TEXT,
+        token_type TEXT,
+        expiry_date TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT now(),
+        updated_at TIMESTAMP NOT NULL DEFAULT now()
+      )
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS classroom_courses (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        school_id TEXT NOT NULL,
+        google_course_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        section TEXT,
+        room TEXT,
+        description_heading TEXT,
+        owner_id TEXT,
+        grade_id TEXT,
+        last_synced_at TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT now()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS classroom_courses_school_id_idx ON classroom_courses (school_id)`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS classroom_courses_school_google_unique ON classroom_courses (school_id, google_course_id)`);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS classroom_course_students (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        school_id TEXT NOT NULL,
+        course_id TEXT NOT NULL,
+        student_id TEXT NOT NULL,
+        google_user_id TEXT,
+        student_email_lc TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT now(),
+        last_seen_at TIMESTAMP NOT NULL DEFAULT now()
+      )
+    `);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS classroom_course_students_enrollment_unique ON classroom_course_students (school_id, course_id, student_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS classroom_course_students_school_course_idx ON classroom_course_students (school_id, course_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS classroom_course_students_school_student_idx ON classroom_course_students (school_id, student_id)`);
+    console.log("[migration] Google integration tables ready");
+  } catch (err) {
+    console.warn("[migration] Google integration tables migration skipped:", (err as Error).message);
   }
 
   // Dismissal overrides table (session-scoped daily type changes)

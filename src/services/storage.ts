@@ -445,6 +445,16 @@ export async function getSchoolCounts(): Promise<
 // Student operations (basic - Phase 3 will expand)
 // ============================================================================
 
+function normalizeStudentEmailFields<T extends Partial<InsertStudent>>(data: T): T {
+  if (data.email === undefined) return data;
+  const email = typeof data.email === "string" ? data.email.trim() : data.email;
+  return {
+    ...data,
+    email,
+    emailLc: email ? email.toLowerCase() : null,
+  };
+}
+
 export async function getStudentsBySchool(
   schoolId: string
 ): Promise<Student[]> {
@@ -458,7 +468,10 @@ export async function getStudentsBySchool(
 }
 
 export async function createStudent(data: InsertStudent): Promise<Student> {
-  const [student] = await db.insert(students).values(data).returning();
+  const [student] = await db
+    .insert(students)
+    .values(normalizeStudentEmailFields(data))
+    .returning();
   return student!;
 }
 
@@ -496,7 +509,7 @@ export async function updateStudent(
 ): Promise<Student | undefined> {
   const [student] = await db
     .update(students)
-    .set({ ...data, updatedAt: new Date() })
+    .set({ ...normalizeStudentEmailFields(data), updatedAt: new Date() })
     .where(eq(students.id, id))
     .returning();
   return student;
@@ -568,7 +581,7 @@ export async function bulkCreateStudents(
   data: InsertStudent[]
 ): Promise<Student[]> {
   if (data.length === 0) return [];
-  return db.insert(students).values(data).returning();
+  return db.insert(students).values(data.map(normalizeStudentEmailFields)).returning();
 }
 
 // ============================================================================

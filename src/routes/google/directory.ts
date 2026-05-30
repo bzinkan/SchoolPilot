@@ -8,8 +8,10 @@ import {
   updateStudent,
   createUser,
   createMembership,
-  searchStudents,
+  getStudentByEmail,
   getUserByEmail,
+  getProductLicenses,
+  autoAssignFamilyGroups,
 } from "../../services/storage.js";
 
 const router = Router();
@@ -27,9 +29,135 @@ function extractStudentId(user: any): string | undefined {
   return val ? String(val).trim() : undefined;
 }
 
+function routeError(message: string, status = 400) {
+  return Object.assign(new Error(message), { status });
+}
+
+function handleGoogleError(err: any, res: any, next: any) {
+  const statusCode = err.code || err.status || err.statusCode;
+  if (err.message === "Google not connected") {
+    return res.status(400).json({ error: "NO_TOKENS: Google not connected" });
+  }
+  if (statusCode === 401 || err.message?.includes("invalid_grant")) {
+    return res.status(400).json({ error: "NO_TOKENS: Reconnect your Google account" });
+  }
+  if (statusCode === 403) {
+    return res.status(403).json({
+      error:
+        "INSUFFICIENT_PERMISSIONS: Google Workspace administrator directory access is required.",
+    });
+  }
+  if (err.status) {
+    return res.status(err.status).json({ error: err.message });
+  }
+  next(err);
+}
+
+function escapeDirectoryQueryValue(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+}
+
+function buildDirectoryUsersParams(orgUnitPath?: string, projection: "basic" | "full" = "basic") {
+  const params: any = {
+    customer: "my_customer",
+    maxResults: 500,
+    projection,
+  };
+  if (orgUnitPath && orgUnitPath !== "/") {
+    params.query = `orgUnitPath='${escapeDirectoryQueryValue(orgUnitPath)}'`;
+  }
+  return params;
+}
+
+async function listDirectoryUsers(admin: any, params: any, paginateAll = true) {
+  const users: any[] = [];
+  let pageToken = params.pageToken as string | undefined;
+  let nextPageToken: string | null = null;
+
+  do {
+    const response = await admin.users.list({
+      ...params,
+      pageToken,
+      maxResults: Math.min(Number(params.maxResults || 500), 500),
+    });
+    users.push(...(response.data.users || []));
+    nextPageToken = response.data.nextPageToken || null;
+    pageToken = nextPageToken || undefined;
+  } while (paginateAll && pageToken);
+
+  return { users, nextPageToken: paginateAll ? null : nextPageToken };
+}
+
+async function maybeAutoAssignGoPilotFamilies(schoolId: string, imported: number) {
+  if (imported === 0) return undefined;
+  const licenses = await getProductLicenses(schoolId);
+  const hasGoPilot = licenses.some(
+    (license) => license.product === "GOPILOT" && license.status === "active"
+  );
+  return hasGoPilot ? autoAssignFamilyGroups(schoolId) : undefined;
+}
+
+async function importGoogleUsersAsStudents(
+  schoolId: string,
+  googleUsers: any[],
+  options: { gradeLevel?: string | null; excludeEmails?: string[] }
+) {
+  const excludeSet = new Set(
+    (options.excludeEmails || []).map((email) => String(email).toLowerCase())
+  );
+  let imported = 0;
+  let updated = 0;
+  let skipped = 0;
+
+  for (const u of googleUsers) {
+    if (u.suspended || u.isAdmin || u.isDelegatedAdmin) {
+      skipped++;
+      continue;
+    }
+    const email = u.primaryEmail?.trim();
+    if (!email) {
+      skipped++;
+      continue;
+    }
+    const emailLc = email.toLowerCase();
+    if (excludeSet.has(emailLc)) {
+      skipped++;
+      continue;
+    }
+
+    const studentIdNumber = extractStudentId(u);
+    const existing = await getStudentByEmail(schoolId, emailLc);
+    if (existing) {
+      await updateStudent(existing.id, {
+        firstName: u.name?.givenName || existing.firstName,
+        lastName: u.name?.familyName || existing.lastName,
+        email,
+        gradeLevel: options.gradeLevel || existing.gradeLevel || undefined,
+        googleUserId: u.id || existing.googleUserId || undefined,
+        studentIdNumber: studentIdNumber || existing.studentIdNumber || undefined,
+      });
+      updated++;
+    } else {
+      await createStudent({
+        schoolId,
+        firstName: u.name?.givenName || email.split("@")[0] || "",
+        lastName: u.name?.familyName || "",
+        email,
+        gradeLevel: options.gradeLevel || undefined,
+        googleUserId: u.id || undefined,
+        studentIdNumber: studentIdNumber || undefined,
+        status: "active",
+      });
+      imported++;
+    }
+  }
+
+  return { imported, updated, skipped };
+}
+
 async function getAuthedClient(userId: string) {
   const token = await getGoogleOAuthToken(userId);
-  if (!token) throw new Error("Google not connected");
+  if (!token) throw routeError("NO_TOKENS: Google not connected");
 
   const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
@@ -73,10 +201,7 @@ router.get("/orgunits", ...auth, async (req, res, next) => {
 
     return res.json({ orgUnits });
   } catch (err: any) {
-    if (err.message === "Google not connected") {
-      return res.status(400).json({ error: "Google not connected" });
-    }
-    next(err);
+    return handleGoogleError(err, res, next);
   }
 });
 
@@ -87,31 +212,27 @@ router.get("/users", ...auth, async (req, res, next) => {
     const { oauth2Client, google } = await getAuthedClient(req.authUser!.id);
     const admin = google.admin({ version: "directory_v1", auth: oauth2Client });
 
-    const params: any = {
-      customer: "my_customer",
-      maxResults: 100,
-    };
-    if (orgUnitPath) params.query = `orgUnitPath='${orgUnitPath}'`;
+    const params = buildDirectoryUsersParams(
+      typeof orgUnitPath === "string" ? orgUnitPath : undefined
+    );
     if (pageToken) params.pageToken = pageToken;
 
-    const response = await admin.users.list(params);
+    const response = await listDirectoryUsers(admin, params, !pageToken);
 
     return res.json({
-      users: (response.data.users || []).map((u: any) => ({
+      users: response.users.map((u: any) => ({
         id: u.id,
         email: u.primaryEmail,
         firstName: u.name?.givenName || "",
         lastName: u.name?.familyName || "",
         orgUnitPath: u.orgUnitPath,
         suspended: u.suspended,
+        isAdmin: Boolean(u.isAdmin || u.isDelegatedAdmin),
       })),
-      nextPageToken: response.data.nextPageToken || null,
+      nextPageToken: response.nextPageToken,
     });
   } catch (err: any) {
-    if (err.message === "Google not connected") {
-      return res.status(400).json({ error: "Google not connected" });
-    }
-    next(err);
+    return handleGoogleError(err, res, next);
   }
 });
 
@@ -122,7 +243,7 @@ router.get("/users", ...auth, async (req, res, next) => {
 //   { orgUnitPath, gradeLevel } — single OU import (PassPilot SetupView)
 router.post("/import", ...auth, async (req, res, next) => {
   try {
-    const { users, grade, entries, orgUnitPath, gradeLevel } = req.body;
+    const { users, grade, entries, orgUnitPath, gradeLevel, importAll } = req.body;
     const schoolId = res.locals.schoolId!;
 
     // OU-based import with entries array (ClassPilot Students page)
@@ -132,139 +253,81 @@ router.post("/import", ...auth, async (req, res, next) => {
 
       let totalImported = 0;
       let totalUpdated = 0;
+      let totalSkipped = 0;
+      const details: unknown[] = [];
 
       for (const entry of entries) {
-        const params: any = { customer: "my_customer", maxResults: 500, projection: "full" };
-        if (entry.orgUnitPath && entry.orgUnitPath !== "/") {
-          params.query = `orgUnitPath='${entry.orgUnitPath}'`;
-        }
+        const params = buildDirectoryUsersParams(entry.orgUnitPath, "full");
+        const { users: googleUsers } = await listDirectoryUsers(admin, params);
+        const result = await importGoogleUsersAsStudents(schoolId, googleUsers, {
+          gradeLevel: entry.gradeLevel || entry.grade || null,
+          excludeEmails: entry.excludeEmails,
+        });
 
-        const response = await admin.users.list(params);
-        const googleUsers = response.data.users || [];
-        const excludeSet = new Set(entry.excludeEmails || []);
-
-        for (const u of googleUsers) {
-          if (u.suspended) continue;
-          const email = u.primaryEmail;
-          if (!email) continue;
-          if (excludeSet.has(email)) continue;
-          const studentIdNumber = extractStudentId(u);
-
-          const existing = await searchStudents(schoolId, { search: email });
-          if (existing.length > 0) {
-            // Update existing student with latest data from Google + grade
-            const ex = existing[0]!;
-            await updateStudent(ex.id, {
-              firstName: u.name?.givenName || ex.firstName,
-              lastName: u.name?.familyName || ex.lastName,
-              email,
-              emailLc: email.toLowerCase(),
-              gradeLevel: entry.gradeLevel || ex.gradeLevel || undefined,
-              googleUserId: u.id || ex.googleUserId || undefined,
-              studentIdNumber: studentIdNumber || ex.studentIdNumber || undefined,
-            });
-            totalUpdated++;
-          } else {
-            await createStudent({
-              schoolId,
-              firstName: u.name?.givenName || email.split("@")[0] || "",
-              lastName: u.name?.familyName || "",
-              email,
-              emailLc: email.toLowerCase(),
-              gradeLevel: entry.gradeLevel || undefined,
-              googleUserId: u.id || undefined,
-              studentIdNumber: studentIdNumber || undefined,
-              status: "active",
-            });
-            totalImported++;
-          }
-        }
+        totalImported += result.imported;
+        totalUpdated += result.updated;
+        totalSkipped += result.skipped;
+        details.push({ orgUnitPath: entry.orgUnitPath || "all", ...result });
       }
 
-      return res.json({ imported: totalImported, updated: totalUpdated });
+      const autoAssigned = await maybeAutoAssignGoPilotFamilies(schoolId, totalImported);
+      return res.json({
+        imported: totalImported,
+        updated: totalUpdated,
+        skipped: totalSkipped,
+        details,
+        autoAssigned,
+      });
     }
 
-    // Single OU import (PassPilot SetupView)
-    if (orgUnitPath) {
+    // Single OU or all-domain import (PassPilot/ClassPilot setup)
+    if (orgUnitPath !== undefined || importAll === true) {
       const { oauth2Client, google } = await getAuthedClient(req.authUser!.id);
       const admin = google.admin({ version: "directory_v1", auth: oauth2Client });
+      const params = buildDirectoryUsersParams(orgUnitPath, "full");
+      const { users: googleUsers } = await listDirectoryUsers(admin, params);
+      const result = await importGoogleUsersAsStudents(schoolId, googleUsers, {
+        gradeLevel: gradeLevel || grade || null,
+      });
+      const autoAssigned = await maybeAutoAssignGoPilotFamilies(schoolId, result.imported);
 
-      const params: any = { customer: "my_customer", maxResults: 500, projection: "full" };
-      if (orgUnitPath !== "/") {
-        params.query = `orgUnitPath='${orgUnitPath}'`;
-      }
-
-      const response = await admin.users.list(params);
-      const googleUsers = response.data.users || [];
-      let imported = 0;
-      let updated = 0;
-
-      for (const u of googleUsers) {
-        if (u.suspended) continue;
-        const email = u.primaryEmail;
-        if (!email) continue;
-        const studentIdNumber = extractStudentId(u);
-
-        const existing = await searchStudents(schoolId, { search: email });
-        if (existing.length > 0) {
-          const ex = existing[0]!;
-          await updateStudent(ex.id, {
-            firstName: u.name?.givenName || ex.firstName,
-            lastName: u.name?.familyName || ex.lastName,
-            email,
-            emailLc: email.toLowerCase(),
-            gradeLevel: gradeLevel || ex.gradeLevel || undefined,
-            googleUserId: u.id || ex.googleUserId || undefined,
-            studentIdNumber: studentIdNumber || ex.studentIdNumber || undefined,
-          });
-          updated++;
-        } else {
-          await createStudent({
-            schoolId,
-            firstName: u.name?.givenName || email.split("@")[0] || "",
-            lastName: u.name?.familyName || "",
-            email,
-            emailLc: email.toLowerCase(),
-            gradeLevel: gradeLevel || undefined,
-            googleUserId: u.id || undefined,
-            studentIdNumber: studentIdNumber || undefined,
-            status: "active",
-          });
-          imported++;
-        }
-      }
-
-      return res.json({ imported, updated });
+      return res.json({ ...result, total: googleUsers.length, autoAssigned });
     }
 
     // Direct user array import (PassPilot)
     if (!Array.isArray(users) || users.length === 0) {
-      return res.status(400).json({ error: "users array, entries array, or orgUnitPath required" });
+      return res
+        .status(400)
+        .json({ error: "users array, entries array, orgUnitPath, or importAll required" });
     }
 
     let imported = 0;
     let updated = 0;
+    let skipped = 0;
 
     for (const u of users) {
-      const existing = await searchStudents(schoolId, { search: u.email });
-      if (existing.length > 0) {
-        const ex = existing[0]!;
-        await updateStudent(ex.id, {
-          firstName: u.firstName || ex.firstName,
-          lastName: u.lastName || ex.lastName,
-          email: u.email,
-          emailLc: u.email.toLowerCase(),
-          gradeLevel: grade || u.grade || ex.gradeLevel || undefined,
-          googleUserId: u.id || ex.googleUserId || undefined,
+      const email = u.email?.trim();
+      if (!email) {
+        skipped++;
+        continue;
+      }
+
+      const existing = await getStudentByEmail(schoolId, email.toLowerCase());
+      if (existing) {
+        await updateStudent(existing.id, {
+          firstName: u.firstName || existing.firstName,
+          lastName: u.lastName || existing.lastName,
+          email,
+          gradeLevel: grade || u.grade || existing.gradeLevel || undefined,
+          googleUserId: u.id || existing.googleUserId || undefined,
         });
         updated++;
       } else {
         await createStudent({
           schoolId,
-          firstName: u.firstName || u.email.split("@")[0],
+          firstName: u.firstName || email.split("@")[0],
           lastName: u.lastName || "",
-          email: u.email,
-          emailLc: u.email.toLowerCase(),
+          email,
           gradeLevel: grade || u.grade || undefined,
           googleUserId: u.id || undefined,
           status: "active",
@@ -273,12 +336,10 @@ router.post("/import", ...auth, async (req, res, next) => {
       }
     }
 
-    return res.json({ imported, updated, total: users.length });
+    const autoAssigned = await maybeAutoAssignGoPilotFamilies(schoolId, imported);
+    return res.json({ imported, updated, skipped, total: users.length, autoAssigned });
   } catch (err: any) {
-    if (err.message === "Google not connected") {
-      return res.status(400).json({ error: "Google not connected" });
-    }
-    next(err);
+    return handleGoogleError(err, res, next);
   }
 });
 
@@ -297,13 +358,8 @@ const importStaffHandler = async (req: any, res: any, next: any) => {
       const { oauth2Client, google } = await getAuthedClient(req.authUser!.id);
       const admin = google.admin({ version: "directory_v1", auth: oauth2Client });
 
-      const params: any = { customer: "my_customer", maxResults: 500 };
-      if (orgUnitPath && orgUnitPath !== "/") {
-        params.query = `orgUnitPath='${orgUnitPath}'`;
-      }
-
-      const response = await admin.users.list(params);
-      const googleUsers = response.data.users || [];
+      const params = buildDirectoryUsersParams(orgUnitPath);
+      const { users: googleUsers } = await listDirectoryUsers(admin, params);
       const filterIds = userIds ? new Set(userIds) : null;
 
       let imported = 0;
@@ -379,10 +435,7 @@ const importStaffHandler = async (req: any, res: any, next: any) => {
 
     return res.json({ imported, updated, total: users.length });
   } catch (err: any) {
-    if (err.message === "Google not connected") {
-      return res.status(400).json({ error: "Google not connected" });
-    }
-    next(err);
+    return handleGoogleError(err, res, next);
   }
 };
 
@@ -400,55 +453,35 @@ router.post("/import-orgunits", ...auth, async (req, res, next) => {
 
     let totalImported = 0;
     let totalUpdated = 0;
+    let totalSkipped = 0;
+    const details: unknown[] = [];
 
-    for (const ouPath of orgUnits) {
-      const params: any = { customer: "my_customer", maxResults: 500 };
-      if (ouPath && ouPath !== "/") {
-        params.query = `orgUnitPath='${ouPath}'`;
-      }
+    for (const entry of orgUnits) {
+      const orgUnitPath = typeof entry === "string" ? entry : entry?.orgUnitPath;
+      const gradeLevel = typeof entry === "string" ? grade : entry?.gradeLevel || entry?.grade || grade;
+      const params = buildDirectoryUsersParams(orgUnitPath, "full");
+      const { users: googleUsers } = await listDirectoryUsers(admin, params);
+      const result = await importGoogleUsersAsStudents(schoolId, googleUsers, {
+        gradeLevel,
+        excludeEmails: typeof entry === "string" ? undefined : entry?.excludeEmails,
+      });
 
-      const response = await admin.users.list(params);
-      const googleUsers = response.data.users || [];
-
-      for (const u of googleUsers) {
-        if (u.suspended) continue;
-        const email = u.primaryEmail;
-        if (!email) continue;
-
-        const existing = await searchStudents(schoolId, { search: email });
-        if (existing.length > 0) {
-          const ex = existing[0]!;
-          await updateStudent(ex.id, {
-            firstName: u.name?.givenName || ex.firstName,
-            lastName: u.name?.familyName || ex.lastName,
-            email,
-            emailLc: email.toLowerCase(),
-            gradeLevel: grade || ex.gradeLevel || undefined,
-            googleUserId: u.id || ex.googleUserId || undefined,
-          });
-          totalUpdated++;
-        } else {
-          await createStudent({
-            schoolId,
-            firstName: u.name?.givenName || email.split("@")[0] || "",
-            lastName: u.name?.familyName || "",
-            email,
-            emailLc: email.toLowerCase(),
-            gradeLevel: grade || undefined,
-            googleUserId: u.id || undefined,
-            status: "active",
-          });
-          totalImported++;
-        }
-      }
+      totalImported += result.imported;
+      totalUpdated += result.updated;
+      totalSkipped += result.skipped;
+      details.push({ orgUnitPath: orgUnitPath || "all", ...result });
     }
 
-    return res.json({ imported: totalImported, updated: totalUpdated });
+    const autoAssigned = await maybeAutoAssignGoPilotFamilies(schoolId, totalImported);
+    return res.json({
+      imported: totalImported,
+      updated: totalUpdated,
+      skipped: totalSkipped,
+      details,
+      autoAssigned,
+    });
   } catch (err: any) {
-    if (err.message === "Google not connected") {
-      return res.status(400).json({ error: "Google not connected" });
-    }
-    next(err);
+    return handleGoogleError(err, res, next);
   }
 });
 
