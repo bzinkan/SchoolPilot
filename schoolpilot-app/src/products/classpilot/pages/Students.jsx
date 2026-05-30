@@ -144,21 +144,33 @@ function StudentsContent() {
   const classroomCourses = classroomData?.courses || [];
 
   // Parse error code from classroom error (axios errors have response data in error.response.data)
+  // Treats both NO_TOKENS (never connected) and MISSING_GOOGLE_SCOPE (connected
+  // before the classroom.profile.emails scope was added — needs reconnect) as
+  // "not connected" so the reconnect prompt is shown for both.
   const classroomNotConnected = (() => {
     if (!classroomError) return false;
     const serverMsg = classroomError.response?.data?.error || "";
-    if (serverMsg.includes("Google not connected") || serverMsg.includes("NO_TOKENS")) return true;
+    if (
+      serverMsg.includes("Google not connected") ||
+      serverMsg.includes("NO_TOKENS") ||
+      serverMsg.includes("MISSING_GOOGLE_SCOPE")
+    ) {
+      return true;
+    }
     const errorMessage = classroomError.message || "";
     try {
       const jsonMatch = errorMessage.match(/\{.*\}/);
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0]);
-        return parsed.code === "NO_TOKENS";
+        return parsed.code === "NO_TOKENS" || parsed.code === "MISSING_GOOGLE_SCOPE";
       }
     } catch {
-      return errorMessage.includes("NO_TOKENS");
+      return (
+        errorMessage.includes("NO_TOKENS") ||
+        errorMessage.includes("MISSING_GOOGLE_SCOPE")
+      );
     }
-    return false;
+    return errorMessage.includes("MISSING_GOOGLE_SCOPE");
   })();
 
   // Sync Google Classroom roster mutation
@@ -726,7 +738,7 @@ function StudentsContent() {
                 </p>
                 <Button
                   variant="outline"
-                  onClick={() => window.location.href = "/auth/google"}
+                  onClick={() => window.location.href = "/api/auth/google?redirect=/classpilot/students"}
                   data-testid="button-reconnect-google"
                 >
                   Reconnect Google Account
@@ -899,7 +911,7 @@ function StudentsContent() {
                 </p>
                 <Button
                   variant="outline"
-                  onClick={() => window.location.href = "/auth/google"}
+                  onClick={() => window.location.href = "/api/auth/google?redirect=/classpilot/students"}
                   data-testid="button-reconnect-google-workspace"
                 >
                   Sign in with Google

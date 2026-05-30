@@ -205,13 +205,19 @@ router.post("/sync", ...auth, async (req, res, next) => {
         let updated = 0;
         let skipped = 0;
         for (const gs of googleStudents) {
-          const result = await upsertStudentFromClassroom(schoolId, gs, {
-            gradeLevel: gradeLevel || grade || null,
-            homeroomId: homeroomId || null,
-          });
-          if (result === "imported") imported++;
-          else if (result === "updated") updated++;
-          else skipped++;
+          // Per-student try/catch so one bad roster row doesn't abort the
+          // rest of the course's students.
+          try {
+            const result = await upsertStudentFromClassroom(schoolId, gs, {
+              gradeLevel: gradeLevel || grade || null,
+              homeroomId: homeroomId || null,
+            });
+            if (result === "imported") imported++;
+            else if (result === "updated") updated++;
+            else skipped++;
+          } catch {
+            skipped++;
+          }
         }
 
         await recordCourseSync(schoolId, courseId, courseMeta);
@@ -256,10 +262,14 @@ router.post("/courses/:courseId/sync", ...auth, async (req, res, next) => {
     let updated = 0;
     let skipped = 0;
     for (const gs of googleStudents) {
-      const result = await upsertStudentFromClassroom(schoolId, gs, { gradeLevel });
-      if (result === "imported") imported++;
-      else if (result === "updated") updated++;
-      else skipped++;
+      try {
+        const result = await upsertStudentFromClassroom(schoolId, gs, { gradeLevel });
+        if (result === "imported") imported++;
+        else if (result === "updated") updated++;
+        else skipped++;
+      } catch {
+        skipped++;
+      }
     }
 
     await recordCourseSync(schoolId, courseId, courseMeta);

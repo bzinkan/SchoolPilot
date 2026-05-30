@@ -108,6 +108,7 @@ async function importGoogleUsersAsStudents(
   let imported = 0;
   let updated = 0;
   let skipped = 0;
+  const errors: string[] = [];
 
   for (const u of googleUsers) {
     if (u.suspended || u.isAdmin || u.isDelegatedAdmin) {
@@ -125,34 +126,42 @@ async function importGoogleUsersAsStudents(
       continue;
     }
 
-    const studentIdNumber = extractStudentId(u);
-    const existing = await getStudentByEmail(schoolId, emailLc);
-    if (existing) {
-      await updateStudent(existing.id, {
-        firstName: u.name?.givenName || existing.firstName,
-        lastName: u.name?.familyName || existing.lastName,
-        email,
-        gradeLevel: options.gradeLevel || existing.gradeLevel || undefined,
-        googleUserId: u.id || existing.googleUserId || undefined,
-        studentIdNumber: studentIdNumber || existing.studentIdNumber || undefined,
-      });
-      updated++;
-    } else {
-      await createStudent({
-        schoolId,
-        firstName: u.name?.givenName || email.split("@")[0] || "",
-        lastName: u.name?.familyName || "",
-        email,
-        gradeLevel: options.gradeLevel || undefined,
-        googleUserId: u.id || undefined,
-        studentIdNumber: studentIdNumber || undefined,
-        status: "active",
-      });
-      imported++;
+    // Per-student try/catch: one bad row (unique-constraint race, malformed
+    // data) must NOT abort the whole roster import. Collect the error and
+    // continue so the IT admin gets partial success + a clear failure list.
+    try {
+      const studentIdNumber = extractStudentId(u);
+      const existing = await getStudentByEmail(schoolId, emailLc);
+      if (existing) {
+        await updateStudent(existing.id, {
+          firstName: u.name?.givenName || existing.firstName,
+          lastName: u.name?.familyName || existing.lastName,
+          email,
+          gradeLevel: options.gradeLevel || existing.gradeLevel || undefined,
+          googleUserId: u.id || existing.googleUserId || undefined,
+          studentIdNumber: studentIdNumber || existing.studentIdNumber || undefined,
+        });
+        updated++;
+      } else {
+        await createStudent({
+          schoolId,
+          firstName: u.name?.givenName || email.split("@")[0] || "",
+          lastName: u.name?.familyName || "",
+          email,
+          gradeLevel: options.gradeLevel || undefined,
+          googleUserId: u.id || undefined,
+          studentIdNumber: studentIdNumber || undefined,
+          status: "active",
+        });
+        imported++;
+      }
+    } catch (err) {
+      skipped++;
+      errors.push(`${email}: ${(err as Error).message}`);
     }
   }
 
-  return { imported, updated, skipped };
+  return { imported, updated, skipped, errors };
 }
 
 async function getAuthedClient(userId: string) {
@@ -255,6 +264,7 @@ router.post("/import", ...auth, async (req, res, next) => {
       let totalUpdated = 0;
       let totalSkipped = 0;
       const details: unknown[] = [];
+      const allErrors: string[] = [];
 
       for (const entry of entries) {
         const params = buildDirectoryUsersParams(entry.orgUnitPath, "full");
@@ -267,6 +277,7 @@ router.post("/import", ...auth, async (req, res, next) => {
         totalImported += result.imported;
         totalUpdated += result.updated;
         totalSkipped += result.skipped;
+        allErrors.push(...result.errors);
         details.push({ orgUnitPath: entry.orgUnitPath || "all", ...result });
       }
 
@@ -275,6 +286,7 @@ router.post("/import", ...auth, async (req, res, next) => {
         imported: totalImported,
         updated: totalUpdated,
         skipped: totalSkipped,
+        errors: allErrors,
         details,
         autoAssigned,
       });
@@ -304,6 +316,7 @@ router.post("/import", ...auth, async (req, res, next) => {
     let imported = 0;
     let updated = 0;
     let skipped = 0;
+    const errors: string[] = [];
 
     for (const u of users) {
       const email = u.email?.trim();
@@ -312,32 +325,38 @@ router.post("/import", ...auth, async (req, res, next) => {
         continue;
       }
 
-      const existing = await getStudentByEmail(schoolId, email.toLowerCase());
-      if (existing) {
-        await updateStudent(existing.id, {
-          firstName: u.firstName || existing.firstName,
-          lastName: u.lastName || existing.lastName,
-          email,
-          gradeLevel: grade || u.grade || existing.gradeLevel || undefined,
-          googleUserId: u.id || existing.googleUserId || undefined,
-        });
-        updated++;
-      } else {
-        await createStudent({
-          schoolId,
-          firstName: u.firstName || email.split("@")[0],
-          lastName: u.lastName || "",
-          email,
-          gradeLevel: grade || u.grade || undefined,
-          googleUserId: u.id || undefined,
-          status: "active",
-        });
-        imported++;
+      // Per-student try/catch — one bad row must not abort the batch.
+      try {
+        const existing = await getStudentByEmail(schoolId, email.toLowerCase());
+        if (existing) {
+          await updateStudent(existing.id, {
+            firstName: u.firstName || existing.firstName,
+            lastName: u.lastName || existing.lastName,
+            email,
+            gradeLevel: grade || u.grade || existing.gradeLevel || undefined,
+            googleUserId: u.id || existing.googleUserId || undefined,
+          });
+          updated++;
+        } else {
+          await createStudent({
+            schoolId,
+            firstName: u.firstName || email.split("@")[0],
+            lastName: u.lastName || "",
+            email,
+            gradeLevel: grade || u.grade || undefined,
+            googleUserId: u.id || undefined,
+            status: "active",
+          });
+          imported++;
+        }
+      } catch (err) {
+        skipped++;
+        errors.push(`${email}: ${(err as Error).message}`);
       }
     }
 
     const autoAssigned = await maybeAutoAssignGoPilotFamilies(schoolId, imported);
-    return res.json({ imported, updated, skipped, total: users.length, autoAssigned });
+    return res.json({ imported, updated, skipped, errors, total: users.length, autoAssigned });
   } catch (err: any) {
     return handleGoogleError(err, res, next);
   }
