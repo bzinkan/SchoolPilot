@@ -55,6 +55,7 @@ async function runHeavyJobsSerially() {
       lastPurgeHour = currentHour;
       await purgeExpiredHeartbeats();
       await purgeMailpilotRetention();
+      await purgeOldErrorLogs();
     }
   } finally {
     heavyJobRunning = false;
@@ -659,6 +660,31 @@ async function purgeMailpilotRetention() {
   } catch (err) {
     console.error("[MailPilot] Retention purge error:", err);
     errorMonitor.trackError("scheduler_failure", err as Error, { job: "purgeMailpilotRetention" });
+  }
+}
+
+// Error logs retention — keep 30 days, then purge in batches. Uses the
+// dedicated scheduler pool so it never starves the API connection pool.
+async function purgeOldErrorLogs() {
+  try {
+    const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    let batchDeleted = 0;
+    let total = 0;
+    do {
+      const result = await schedulerPool.query(
+        `DELETE FROM error_logs WHERE id IN (
+          SELECT id FROM error_logs WHERE created_at < $1 LIMIT 5000
+        )`,
+        [cutoff]
+      );
+      batchDeleted = result.rowCount || 0;
+      total += batchDeleted;
+      if (batchDeleted > 0) await new Promise((r) => setTimeout(r, 100));
+    } while (batchDeleted >= 5000);
+    if (total > 0) console.log(`[ErrorLogs] Purged ${total} error logs older than 30 days`);
+  } catch (err) {
+    console.error("[ErrorLogs] Retention purge error:", err);
+    errorMonitor.trackError("scheduler_failure", err as Error, { job: "purgeOldErrorLogs" });
   }
 }
 

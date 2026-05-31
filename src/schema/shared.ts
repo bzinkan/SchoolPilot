@@ -219,6 +219,43 @@ export type SecurityEvent = typeof securityEvents.$inferSelect;
 export type InsertSecurityEvent = typeof securityEvents.$inferInsert;
 
 // ============================================================================
+// Error Logs - Durable record of every error the ErrorMonitor sees.
+// The ErrorMonitor keeps only a 5-minute in-memory window for alerting; this
+// table is the persistent, queryable copy so a developer can pinpoint exactly
+// which request / user / school / line failed long after it happened.
+// Lives in the school's own database (not a third-party) — same FERPA posture
+// as audit_logs. Purged on a retention schedule by the scheduler.
+// ============================================================================
+export const errorLogs = pgTable(
+  "error_logs",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    category: text("category").notNull(), // ErrorCategory: api_error, uncaught_exception, etc.
+    message: text("message").notNull(),
+    stack: text("stack"),
+    // Request correlation — ties this error to a specific request + actor
+    requestId: text("request_id"),
+    method: text("method"),
+    path: text("path"),
+    statusCode: integer("status_code"),
+    schoolId: text("school_id"),
+    userId: text("user_id"),
+    // Any extra context passed to trackError() (job name, recipient, etc.)
+    context: jsonb("context"),
+    createdAt: timestamp("created_at").notNull().default(sql`now()`),
+  },
+  (table) => [
+    index("error_logs_created_at_idx").on(table.createdAt),
+    index("error_logs_category_idx").on(table.category),
+    index("error_logs_request_id_idx").on(table.requestId),
+    index("error_logs_school_id_idx").on(table.schoolId),
+  ]
+);
+
+export type ErrorLog = typeof errorLogs.$inferSelect;
+export type InsertErrorLog = typeof errorLogs.$inferInsert;
+
+// ============================================================================
 // Trial Requests - Unified (superset of all three projects)
 // ============================================================================
 export const trialRequests = pgTable(

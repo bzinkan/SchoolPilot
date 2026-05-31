@@ -9,6 +9,7 @@ import cookieParser from "cookie-parser";
 import { pool } from "./db.js";
 import { getIO } from "./realtime/socketio.js";
 import { errorHandler } from "./middleware/errorHandler.js";
+import { requestId } from "./middleware/requestId.js";
 import { sessionIdleTimeout } from "./middleware/sessionIdleTimeout.js";
 import { csrfProtection } from "./middleware/csrfProtection.js";
 import { apiLimiter } from "./middleware/rateLimiter.js";
@@ -23,6 +24,9 @@ export function createApp() {
 
   // Trust proxy for rate limiting behind reverse proxy
   app.set("trust proxy", 1);
+
+  // Correlation id on every request (first, so all downstream logs/errors carry it)
+  app.use(requestId);
 
   // Security headers
   app.use(

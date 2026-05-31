@@ -23,6 +23,9 @@ declare global {
         isSuperAdmin?: boolean;
       };
       rawBody?: Buffer;
+      // Per-request correlation id (set by requestId middleware, echoed in the
+      // X-Request-Id response header and recorded on any error for this request)
+      requestId?: string;
     }
 
     interface Locals {

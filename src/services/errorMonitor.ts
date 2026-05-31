@@ -1,7 +1,9 @@
-// Centralized error monitoring with developer alerts via email + Telegram
-// Tracks errors in a sliding window and sends alerts when thresholds are exceeded
+// Centralized error monitoring with developer alerts via email + Telegram.
+// Tracks errors in a sliding window for alerting AND persists every error to
+// the error_logs table (durable, queryable) + optionally to Sentry (gated).
 
 import { sendEmail } from "./email.js";
+import { captureError } from "./sentry.js";
 
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "bzinkan@school-pilot.net";
 const NODE_ENV = process.env.NODE_ENV || "development";
@@ -80,6 +82,17 @@ class ErrorMonitor {
 
     this.errors.push(entry);
     this.checkThreshold(category);
+
+    // Durable persistence + external capture (both fire-and-forget; a logging
+    // failure must never crash or block the caller).
+    const stack = error instanceof Error ? error.stack : undefined;
+    void persistErrorLog(category, message, stack, context);
+    captureError(error, {
+      category,
+      requestId: context?.requestId,
+      schoolId: context?.schoolId,
+      userId: context?.userId,
+    });
   }
 
   getErrorSummary(): Record<ErrorCategory, number> {
@@ -166,6 +179,68 @@ class ErrorMonitor {
 
     // Send Telegram alert (picked up by Claude Code Channels)
     await sendTelegramAlert(subject, text);
+  }
+}
+
+// Context keys that are safe to persist verbatim in the JSONB blob. Everything
+// else is dropped — context can carry PII (e.g. an email "to" field), and the
+// error_logs table must not become an unmanaged PII store. Correlation fields
+// (requestId/method/path/status/schoolId/userId) go to dedicated columns; only
+// these extra non-PII keys are kept in the JSONB.
+const SAFE_CONTEXT_KEYS = ["job"];
+
+// Bounded in-flight cap: during a DB outage, errors cascade. Even though writes
+// use the isolated scheduler pool (not the API pool), we cap concurrent persist
+// attempts so a storm can't pile up unbounded promises.
+let inFlightPersists = 0;
+const MAX_INFLIGHT_PERSISTS = 50;
+
+// Persist a single error to the durable error_logs table. Pulls known
+// correlation fields out of context into columns; keeps only whitelisted
+// non-PII keys as JSONB. Writes through the DEDICATED scheduler pool (max 3)
+// so an error storm can never starve the main API connection pool.
+// Fire-and-forget: any failure is swallowed (and must NOT re-enter trackError).
+async function persistErrorLog(
+  category: ErrorCategory,
+  message: string,
+  stack: string | undefined,
+  context?: Record<string, any>
+): Promise<void> {
+  if (inFlightPersists >= MAX_INFLIGHT_PERSISTS) return; // shed load during a storm
+  inFlightPersists++;
+  try {
+    const { schedulerDb } = await import("./schedulerDb.js");
+    const { errorLogs } = await import("../schema/shared.js");
+    const ctx = context || {};
+    const statusRaw = ctx.statusCode ?? ctx.status;
+    const statusCode =
+      typeof statusRaw === "number"
+        ? statusRaw
+        : typeof statusRaw === "string"
+          ? parseInt(statusRaw, 10) || null
+          : null;
+    // Whitelist (not blacklist) what goes into the JSONB to avoid leaking PII.
+    const safe: Record<string, unknown> = {};
+    for (const key of SAFE_CONTEXT_KEYS) {
+      if (ctx[key] !== undefined) safe[key] = ctx[key];
+    }
+    await schedulerDb.insert(errorLogs).values({
+      category,
+      message: message.slice(0, 4000),
+      stack: stack ? stack.slice(0, 8000) : null,
+      requestId: ctx.requestId ?? null,
+      method: ctx.method ?? null,
+      path: ctx.path ?? null,
+      statusCode,
+      schoolId: ctx.schoolId ?? null,
+      userId: ctx.userId ?? null,
+      context: Object.keys(safe).length > 0 ? safe : null,
+    });
+  } catch (err) {
+    // Never throw — a logging failure must not affect request handling.
+    console.error("[ErrorMonitor] Failed to persist error_log:", (err as Error).message);
+  } finally {
+    inFlightPersists--;
   }
 }
 

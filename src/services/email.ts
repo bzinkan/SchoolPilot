@@ -49,7 +49,9 @@ export async function sendEmail(options: {
     if (!options.subject.startsWith("[SchoolPilot ALERT]")) {
       try {
         const monitor = await getErrorMonitor();
-        monitor.trackError("email_failure", error, { to: options.to, subject: options.subject });
+        // Do NOT pass the recipient address — it's PII and not needed to debug
+        // a send failure. The error message itself carries the actionable cause.
+        monitor.trackError("email_failure", error);
       } catch { /* avoid recursion */ }
     }
     return false;

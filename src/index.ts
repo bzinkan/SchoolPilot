@@ -1,11 +1,16 @@
 import "dotenv/config";
 import http from "http";
+import { initSentry } from "./services/sentry.js";
 import { createApp } from "./app.js";
 import { setupSocketIO } from "./realtime/socketio.js";
 import { setupWebSocket } from "./realtime/websocket.js";
 import { startScheduler } from "./services/scheduler.js";
 import { startHealthMonitor } from "./services/healthMonitor.js";
 import errorMonitor from "./services/errorMonitor.js";
+
+// Initialize Sentry as early as possible. No-op unless SENTRY_DSN is set
+// (gated off until the DPA is signed + subprocessors list updated).
+initSentry();
 
 // ---------------------------------------------------------------------------
 // Global error handlers — catch crashes and alert developers
@@ -543,6 +548,35 @@ async function runStartupMigrations(): Promise<void> {
     console.log("[migration] Cleaned up duplicate extension-created students (with data reassignment)");
   } catch (err) {
     console.warn("[migration] Duplicate student cleanup skipped:", (err as Error).message);
+  }
+
+  // Error logs — durable copy of every tracked error (the ErrorMonitor only
+  // keeps a 5-minute in-memory window). Lets a developer pinpoint the exact
+  // request/user/school/line that failed long after the fact.
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS error_logs (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        category TEXT NOT NULL,
+        message TEXT NOT NULL,
+        stack TEXT,
+        request_id TEXT,
+        method TEXT,
+        path TEXT,
+        status_code INTEGER,
+        school_id TEXT,
+        user_id TEXT,
+        context JSONB,
+        created_at TIMESTAMP NOT NULL DEFAULT now()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS error_logs_created_at_idx ON error_logs (created_at)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS error_logs_category_idx ON error_logs (category)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS error_logs_request_id_idx ON error_logs (request_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS error_logs_school_id_idx ON error_logs (school_id)`);
+    console.log("[migration] error_logs table ready");
+  } catch (err) {
+    console.warn("[migration] error_logs migration skipped:", (err as Error).message);
   }
 }
 

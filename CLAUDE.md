@@ -246,6 +246,8 @@ Copy `.env.example` to `.env`. Required for local dev:
 - `ANTHROPIC_API_KEY` — Anthropic Claude API for AI content classification + chat assistant
 - `OPENAI_API_KEY` — OpenAI API (legacy classification path)
 - `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` — Stripe billing
+- `SENTRY_DSN` — (optional, gated off) Sentry error tracking. Leave unset until DPA signed + added to subprocessors. See "Sentry" section below.
+- `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` — (optional) developer error alerts via Telegram
 
 ### Secrets hygiene — NEVER commit keys
 
@@ -373,7 +375,7 @@ Daily attendance tracking with timezone-aware resets:
 - **Reset behavior**: No cron job needed — attendance "resets" naturally because queries filter by the current local date. Historical records are permanent.
 
 ### Error Monitoring
-Centralized error tracking in `src/services/errorMonitor.ts`. Tracks errors in a 5-minute sliding window and emails `ADMIN_EMAIL` (bzinkan@school-pilot.net) when thresholds are exceeded.
+Centralized error tracking in `src/services/errorMonitor.ts`. `trackError(category, error, context?)` does three things: (1) records the error in a 5-minute in-memory sliding window for threshold alerting, (2) **persists it durably** to the `error_logs` Postgres table, and (3) forwards it to Sentry **if** Sentry is enabled.
 
 **Wired into:**
 - `process.on("uncaughtException"/"unhandledRejection")` in `src/index.ts`
@@ -387,6 +389,13 @@ Centralized error tracking in `src/services/errorMonitor.ts`. Tracks errors in a
 **Alerts sent to:** Email (SendGrid → ADMIN_EMAIL) AND Telegram bot (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID env vars). Telegram alerts are picked up by Claude Code Channels for AI-powered diagnosis.
 
 **Health endpoint** (`/health`) includes `recentErrors` summary with counts per category.
+
+### Durable error logs + request correlation
+- **`error_logs` table** (`src/schema/shared.ts`) — every tracked error persisted with category, message, stack, `request_id`, method, path, status_code, school_id, user_id, and a JSONB `context`. Queryable in your own DB (same FERPA posture as `audit_logs`). Purged after 30 days by `purgeOldErrorLogs()` in the scheduler. This is the durable counterpart to the 5-minute in-memory window.
+- **Request correlation id** (`src/middleware/requestId.ts`) — mounted first; assigns/honors `X-Request-Id`, echoes it in the response header, and the error handler returns it in the JSON error body (`{ error, requestId }`). To trace a reported problem: get the `requestId` from the user → query `error_logs` by `request_id` or grep CloudWatch for `req:<id>`.
+
+### Sentry (GATED OFF until DPA signed)
+`src/services/sentry.ts`. **No-op unless `SENTRY_DSN` is set.** Sentry is a third-party subprocessor — do NOT set the DSN in production until (1) Sentry's DPA is signed and (2) Sentry is on the public subprocessors list. Even when enabled, `beforeSend` scrubs PII (emails, JWT/API tokens) and drops request bodies/cookies/headers/user identifiers so student data does not leave the system. The durable `error_logs` table captures everything regardless of whether Sentry is on.
 
 ### AI Content Classification (ClassPilot)
 Claude Haiku classifies student browsing activity on each heartbeat. Uses `ANTHROPIC_API_KEY` (same key as AI chat).
