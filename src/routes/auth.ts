@@ -392,6 +392,11 @@ router.get("/google/callback", async (req, res, next) => {
     const { data: profile } = await oauth2.userinfo.get();
 
     if (!profile.email) {
+      // Durable record of the silent failure (otherwise just a redirect).
+      await logAudit({
+        action: "auth.rejected",
+        metadata: { reason: "no_email", method: "google" },
+      });
       return res.redirect(`${frontendUrl}/login?error=no_email`);
     }
 
@@ -402,6 +407,13 @@ router.get("/google/callback", async (req, res, next) => {
     }
 
     if (!user) {
+      // The "Workspace admin email isn't connecting" case — record WHO tried
+      // and WHY so it can be pinpointed instead of vanishing into a redirect.
+      await logAudit({
+        action: "auth.rejected",
+        userEmail: profile.email,
+        metadata: { reason: "no_account", method: "google" },
+      });
       return res.redirect(`${frontendUrl}/login?error=no_account`);
     }
 

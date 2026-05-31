@@ -13,6 +13,7 @@ import {
   getProductLicenses,
   autoAssignFamilyGroups,
 } from "../../services/storage.js";
+import { recordImportRun } from "../../services/importLog.js";
 
 const router = Router();
 
@@ -263,12 +264,14 @@ router.post("/import", ...auth, async (req, res, next) => {
       let totalImported = 0;
       let totalUpdated = 0;
       let totalSkipped = 0;
+      let totalFound = 0;
       const details: unknown[] = [];
       const allErrors: string[] = [];
 
       for (const entry of entries) {
         const params = buildDirectoryUsersParams(entry.orgUnitPath, "full");
         const { users: googleUsers } = await listDirectoryUsers(admin, params);
+        totalFound += googleUsers.length;
         const result = await importGoogleUsersAsStudents(schoolId, googleUsers, {
           gradeLevel: entry.gradeLevel || entry.grade || null,
           excludeEmails: entry.excludeEmails,
@@ -282,6 +285,19 @@ router.post("/import", ...auth, async (req, res, next) => {
       }
 
       const autoAssigned = await maybeAutoAssignGoPilotFamilies(schoolId, totalImported);
+      // Fire-and-forget: never block/delay the import response on logging.
+      void recordImportRun({
+        schoolId,
+        userId: req.authUser?.id,
+        requestId: req.requestId,
+        source: "workspace_directory",
+        scope: entries.map((e: any) => e.orgUnitPath || "all").join(", "),
+        totalFound,
+        imported: totalImported,
+        updated: totalUpdated,
+        skipped: totalSkipped,
+        failures: allErrors,
+      });
       return res.json({
         imported: totalImported,
         updated: totalUpdated,
@@ -303,6 +319,18 @@ router.post("/import", ...auth, async (req, res, next) => {
       });
       const autoAssigned = await maybeAutoAssignGoPilotFamilies(schoolId, result.imported);
 
+      void recordImportRun({
+        schoolId,
+        userId: req.authUser?.id,
+        requestId: req.requestId,
+        source: "workspace_directory",
+        scope: importAll === true ? "all" : (orgUnitPath || "all"),
+        totalFound: googleUsers.length,
+        imported: result.imported,
+        updated: result.updated,
+        skipped: result.skipped,
+        failures: result.errors,
+      });
       return res.json({ ...result, total: googleUsers.length, autoAssigned });
     }
 
@@ -356,6 +384,18 @@ router.post("/import", ...auth, async (req, res, next) => {
     }
 
     const autoAssigned = await maybeAutoAssignGoPilotFamilies(schoolId, imported);
+    void recordImportRun({
+      schoolId,
+      userId: req.authUser?.id,
+      requestId: req.requestId,
+      source: "workspace_direct",
+      scope: null,
+      totalFound: users.length,
+      imported,
+      updated,
+      skipped,
+      failures: errors,
+    });
     return res.json({ imported, updated, skipped, errors, total: users.length, autoAssigned });
   } catch (err: any) {
     return handleGoogleError(err, res, next);
@@ -415,6 +455,17 @@ const importStaffHandler = async (req: any, res: any, next: any) => {
         }
       }
 
+      void recordImportRun({
+        schoolId,
+        userId: req.authUser?.id,
+        requestId: req.requestId,
+        source: "workspace_staff",
+        scope: orgUnitPath || "all",
+        totalFound: googleUsers.length,
+        imported,
+        updated: 0,
+        skipped,
+      });
       return res.json({ imported, skipped, updated: skipped, total: imported + skipped });
     }
 
@@ -452,6 +503,17 @@ const importStaffHandler = async (req: any, res: any, next: any) => {
       }
     }
 
+    void recordImportRun({
+      schoolId,
+      userId: req.authUser?.id,
+      requestId: req.requestId,
+      source: "workspace_staff",
+      scope: null,
+      totalFound: users.length,
+      imported,
+      updated,
+      skipped: 0,
+    });
     return res.json({ imported, updated, total: users.length });
   } catch (err: any) {
     return handleGoogleError(err, res, next);
@@ -473,13 +535,16 @@ router.post("/import-orgunits", ...auth, async (req, res, next) => {
     let totalImported = 0;
     let totalUpdated = 0;
     let totalSkipped = 0;
+    let totalFound = 0;
     const details: unknown[] = [];
+    const allErrors: string[] = [];
 
     for (const entry of orgUnits) {
       const orgUnitPath = typeof entry === "string" ? entry : entry?.orgUnitPath;
       const gradeLevel = typeof entry === "string" ? grade : entry?.gradeLevel || entry?.grade || grade;
       const params = buildDirectoryUsersParams(orgUnitPath, "full");
       const { users: googleUsers } = await listDirectoryUsers(admin, params);
+      totalFound += googleUsers.length;
       const result = await importGoogleUsersAsStudents(schoolId, googleUsers, {
         gradeLevel,
         excludeEmails: typeof entry === "string" ? undefined : entry?.excludeEmails,
@@ -488,10 +553,23 @@ router.post("/import-orgunits", ...auth, async (req, res, next) => {
       totalImported += result.imported;
       totalUpdated += result.updated;
       totalSkipped += result.skipped;
+      allErrors.push(...result.errors);
       details.push({ orgUnitPath: orgUnitPath || "all", ...result });
     }
 
     const autoAssigned = await maybeAutoAssignGoPilotFamilies(schoolId, totalImported);
+    void recordImportRun({
+      schoolId,
+      userId: req.authUser?.id,
+      requestId: req.requestId,
+      source: "workspace_directory",
+      scope: orgUnits.map((e: any) => (typeof e === "string" ? e : e?.orgUnitPath || "all")).join(", "),
+      totalFound,
+      imported: totalImported,
+      updated: totalUpdated,
+      skipped: totalSkipped,
+      failures: allErrors,
+    });
     return res.json({
       imported: totalImported,
       updated: totalUpdated,

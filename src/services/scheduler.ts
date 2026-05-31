@@ -56,6 +56,7 @@ async function runHeavyJobsSerially() {
       await purgeExpiredHeartbeats();
       await purgeMailpilotRetention();
       await purgeOldErrorLogs();
+      await purgeOldImportRuns();
     }
   } finally {
     heavyJobRunning = false;
@@ -685,6 +686,24 @@ async function purgeOldErrorLogs() {
   } catch (err) {
     console.error("[ErrorLogs] Retention purge error:", err);
     errorMonitor.trackError("scheduler_failure", err as Error, { job: "purgeOldErrorLogs" });
+  }
+}
+
+// Import-run history retention — keep 90 days (longer than error_logs since
+// these are infrequent admin actions and useful for support look-back).
+async function purgeOldImportRuns() {
+  try {
+    const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+    const result = await schedulerPool.query(
+      `DELETE FROM import_runs WHERE created_at < $1`,
+      [cutoff]
+    );
+    if ((result.rowCount || 0) > 0) {
+      console.log(`[ImportRuns] Purged ${result.rowCount} import runs older than 90 days`);
+    }
+  } catch (err) {
+    console.error("[ImportRuns] Retention purge error:", err);
+    errorMonitor.trackError("scheduler_failure", err as Error, { job: "purgeOldImportRuns" });
   }
 }
 

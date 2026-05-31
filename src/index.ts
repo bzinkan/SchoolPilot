@@ -578,6 +578,33 @@ async function runStartupMigrations(): Promise<void> {
   } catch (err) {
     console.warn("[migration] error_logs migration skipped:", (err as Error).message);
   }
+
+  // Import runs — durable outcome of every roster import (counts + per-row
+  // failures + zero-result warnings) so a botched import can be pinpointed.
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS import_runs (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        school_id TEXT NOT NULL,
+        user_id TEXT,
+        request_id TEXT,
+        source TEXT NOT NULL,
+        scope TEXT,
+        total_found INTEGER NOT NULL DEFAULT 0,
+        imported INTEGER NOT NULL DEFAULT 0,
+        updated INTEGER NOT NULL DEFAULT 0,
+        skipped INTEGER NOT NULL DEFAULT 0,
+        failures JSONB,
+        warnings JSONB,
+        created_at TIMESTAMP NOT NULL DEFAULT now()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS import_runs_school_created_idx ON import_runs (school_id, created_at)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS import_runs_created_at_idx ON import_runs (created_at)`);
+    console.log("[migration] import_runs table ready");
+  } catch (err) {
+    console.warn("[migration] import_runs migration skipped:", (err as Error).message);
+  }
 }
 
 async function startServer(): Promise<void> {

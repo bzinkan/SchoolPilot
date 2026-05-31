@@ -256,6 +256,43 @@ export type ErrorLog = typeof errorLogs.$inferSelect;
 export type InsertErrorLog = typeof errorLogs.$inferInsert;
 
 // ============================================================================
+// Import Runs - Durable outcome of every roster import (Workspace / Classroom
+// / direct). Answers "did the import work, and if not, which rows failed and
+// why" — including the silent case where Google returns 0 users (wrong OU /
+// missing permission). Lives in the school's own DB (same posture as
+// audit_logs, which already stores user emails). Purged on a retention
+// schedule by the scheduler.
+// ============================================================================
+export const importRuns = pgTable(
+  "import_runs",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
+    userId: text("user_id"), // who triggered the import
+    requestId: text("request_id"), // correlation id (ties to logs)
+    source: text("source").notNull(), // workspace_directory | workspace_direct | classroom
+    scope: text("scope"), // OU path / course id(s) / "all" — non-PII descriptor
+    totalFound: integer("total_found").notNull().default(0),
+    imported: integer("imported").notNull().default(0),
+    updated: integer("updated").notNull().default(0),
+    skipped: integer("skipped").notNull().default(0),
+    // Per-row failures: [{ email, reason }] — capped. Roster data the school
+    // owns (same as students.email / audit_logs.userEmail).
+    failures: jsonb("failures"),
+    // Non-PII flags, e.g. ["google_returned_zero_users"].
+    warnings: jsonb("warnings"),
+    createdAt: timestamp("created_at").notNull().default(sql`now()`),
+  },
+  (table) => [
+    index("import_runs_school_created_idx").on(table.schoolId, table.createdAt),
+    index("import_runs_created_at_idx").on(table.createdAt),
+  ]
+);
+
+export type ImportRun = typeof importRuns.$inferSelect;
+export type InsertImportRun = typeof importRuns.$inferInsert;
+
+// ============================================================================
 // Trial Requests - Unified (superset of all three projects)
 // ============================================================================
 export const trialRequests = pgTable(

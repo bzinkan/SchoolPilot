@@ -12,6 +12,7 @@ import {
   getClassroomCoursesBySchool,
   upsertClassroomCourse,
 } from "../../services/storage.js";
+import { recordImportRun } from "../../services/importLog.js";
 
 const router = Router();
 
@@ -193,13 +194,17 @@ router.post("/sync", ...auth, async (req, res, next) => {
 
     let totalImported = 0;
     let totalUpdated = 0;
+    let totalSkipped = 0;
+    let totalFound = 0;
     const results: unknown[] = [];
+    const failures: string[] = [];
 
     for (const course of courses) {
       const { courseId, grade, gradeLevel, homeroomId } = course;
       try {
         const courseMeta = await getCourseMetadata(classroom, courseId, course);
         const googleStudents = await listCourseStudents(classroom, courseId);
+        totalFound += googleStudents.length;
 
         let imported = 0;
         let updated = 0;
@@ -223,6 +228,7 @@ router.post("/sync", ...auth, async (req, res, next) => {
         await recordCourseSync(schoolId, courseId, courseMeta);
         totalImported += imported;
         totalUpdated += updated;
+        totalSkipped += skipped;
         results.push({
           courseId,
           courseName: courseMeta.name || course.courseName || courseId,
@@ -234,12 +240,25 @@ router.post("/sync", ...auth, async (req, res, next) => {
           studentsImported: imported,
         });
       } catch (error: any) {
+        failures.push(`course ${courseId}: ${error.message}`);
         results.push({ courseId, error: error.message });
       }
     }
 
     const autoAssigned = await maybeAutoAssignGoPilotFamilies(schoolId, totalImported);
 
+    void recordImportRun({
+      schoolId,
+      userId: req.authUser?.id,
+      requestId: req.requestId,
+      source: "classroom",
+      scope: courses.map((c: any) => c.courseId).filter(Boolean).join(", "),
+      totalFound,
+      imported: totalImported,
+      updated: totalUpdated,
+      skipped: totalSkipped,
+      failures,
+    });
     return res.json({ totalImported, totalUpdated, results, autoAssigned });
   } catch (err: any) {
     return handleGoogleError(err, res, next);
@@ -275,6 +294,17 @@ router.post("/courses/:courseId/sync", ...auth, async (req, res, next) => {
     await recordCourseSync(schoolId, courseId, courseMeta);
     const autoAssigned = await maybeAutoAssignGoPilotFamilies(schoolId, imported);
 
+    void recordImportRun({
+      schoolId,
+      userId: req.authUser?.id,
+      requestId: req.requestId,
+      source: "classroom",
+      scope: courseId,
+      totalFound: googleStudents.length,
+      imported,
+      updated,
+      skipped,
+    });
     return res.json({
       courseId,
       courseName: courseMeta.name || courseId,
