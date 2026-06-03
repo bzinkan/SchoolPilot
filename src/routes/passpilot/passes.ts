@@ -274,6 +274,10 @@ router.post("/", async (req, res, next) => {
       return res.status(400).json({ error: "Cannot issue pass to absent student" });
     }
 
+    // Expire any overdue passes FIRST, so a pass that already lapsed doesn't
+    // block issuing a new one (otherwise a stale "active" pass returns 409).
+    await expireOverduePasses(schoolId);
+
     // Check for existing active pass
     const activePass = await getActivePassForStudent(studentId, schoolId);
     if (activePass) {
@@ -291,19 +295,29 @@ router.post("/", async (req, res, next) => {
     const passDuration = duration || school?.defaultPassDuration || 5;
     const expiresAt = new Date(Date.now() + passDuration * 60 * 1000);
 
-    const pass = await createPass({
-      schoolId,
-      studentId,
-      teacherId: req.authUser!.id,
-      gradeId: passGradeId,
-      destination,
-      customDestination: destination === "custom" ? (customDestination || null) : null,
-      status: "active",
-      duration: passDuration,
-      expiresAt,
-      issuedVia: "teacher",
-      notes: notes || null,
-    });
+    let pass;
+    try {
+      pass = await createPass({
+        schoolId,
+        studentId,
+        teacherId: req.authUser!.id,
+        gradeId: passGradeId,
+        destination,
+        customDestination: destination === "custom" ? (customDestination || null) : null,
+        status: "active",
+        duration: passDuration,
+        expiresAt,
+        issuedVia: "teacher",
+        notes: notes || null,
+      });
+    } catch (err: any) {
+      // Partial unique index (one active pass per student) — a concurrent
+      // double-issue loses the race here. Surface it as the same 409.
+      if (err?.code === "23505") {
+        return res.status(409).json({ error: "Student already has an active pass" });
+      }
+      throw err;
+    }
 
     return res.status(201).json({ pass });
   } catch (err) {

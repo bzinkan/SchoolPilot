@@ -605,6 +605,44 @@ async function runStartupMigrations(): Promise<void> {
   } catch (err) {
     console.warn("[migration] import_runs migration skipped:", (err as Error).message);
   }
+
+  // PassPilot: guarantee at most ONE active pass per student per school.
+  // First collapse any pre-existing duplicates (race could have created them):
+  // keep the newest active pass, mark the rest expired. Then enforce with a
+  // partial unique index so the DB rejects a concurrent double-issue.
+  try {
+    const dedup = await pool.query(`
+      UPDATE passes SET status = 'expired'
+      WHERE id IN (
+        SELECT id FROM (
+          SELECT id, ROW_NUMBER() OVER (
+            PARTITION BY student_id, school_id ORDER BY issued_at DESC
+          ) AS rn
+          FROM passes WHERE status = 'active'
+        ) ranked WHERE rn > 1
+      )
+    `);
+    if ((dedup.rowCount || 0) > 0) {
+      console.log(`[migration] collapsed ${dedup.rowCount} duplicate active passes before constraint`);
+    }
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS passes_one_active_per_student
+      ON passes (student_id, school_id) WHERE status = 'active'
+    `);
+    // Verify the constraint actually exists — the route's 23505 handling
+    // depends on it. If it's missing, surface a loud warning (the route's
+    // getActivePassForStudent pre-check still prevents the common case).
+    const idx = await pool.query(
+      `SELECT 1 FROM pg_indexes WHERE indexname = 'passes_one_active_per_student'`
+    );
+    if (idx.rowCount && idx.rowCount > 0) {
+      console.log("[migration] passes one-active-per-student constraint ready");
+    } else {
+      console.warn("[migration] WARNING: passes one-active-per-student index NOT present after creation");
+    }
+  } catch (err) {
+    console.warn("[migration] passes active-unique migration skipped:", (err as Error).message);
+  }
 }
 
 async function startServer(): Promise<void> {

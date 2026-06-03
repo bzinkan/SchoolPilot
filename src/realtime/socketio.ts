@@ -5,6 +5,7 @@ import { getUserById } from "../services/storage.js";
 import {
   effectiveGoPilotRole,
   getGoPilotMembership,
+  getApprovedParentStudentIds,
   getHomeroomForSchool,
   getTeacherHomeroomIds,
   hasActiveGoPilotLicense,
@@ -100,6 +101,13 @@ export function setupSocketIO(httpServer: HttpServer): Server {
         }
 
         if (role === "parent") {
+          // Only parents with at least one APPROVED child at this school may
+          // join the broadcast parent room — a membership alone isn't enough.
+          const approved = await getApprovedParentStudentIds(userId, requestedSchoolId);
+          if (approved.size === 0) {
+            socket.emit("join:error", { error: "No approved children at this school" });
+            return;
+          }
           socket.join(`school:${requestedSchoolId}:parent:${userId}`);
           socket.join(`school:${requestedSchoolId}:parents`);
         }

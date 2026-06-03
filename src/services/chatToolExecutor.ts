@@ -10,6 +10,9 @@ import {
   getHomeroomsBySchool,
   createHomeroom,
   getActivePassesBySchool,
+  getActivePassForStudent,
+  expireOverduePasses,
+  getStudentById,
   createPass,
   addGroupTeacher,
   addHomeroomTeacher,
@@ -286,18 +289,40 @@ const executors: Record<string, ToolExecutor> = {
   },
 
   issue_pass: async (args, ctx) => {
+    // Verify the student belongs to this school (no cross-school pass writes).
+    const student = await getStudentById(args.studentId);
+    if (!student || student.schoolId !== ctx.schoolId) {
+      return { success: false, error: "Student not found" };
+    }
+
+    // Mirror the route safeguards: expire stale passes first, then enforce
+    // one active pass per student (route + DB partial unique index).
+    await expireOverduePasses(ctx.schoolId);
+    const active = await getActivePassForStudent(args.studentId, ctx.schoolId);
+    if (active) {
+      return { success: false, error: "Student already has an active pass" };
+    }
+
     const duration = args.duration || 5;
     const expiresAt = new Date(Date.now() + duration * 60 * 1000);
-    const pass = await createPass({
-      schoolId: ctx.schoolId,
-      studentId: args.studentId,
-      teacherId: ctx.userId,
-      destination: args.destination,
-      duration,
-      expiresAt,
-      status: "active",
-      issuedVia: "teacher",
-    });
+    let pass;
+    try {
+      pass = await createPass({
+        schoolId: ctx.schoolId,
+        studentId: args.studentId,
+        teacherId: ctx.userId,
+        destination: args.destination,
+        duration,
+        expiresAt,
+        status: "active",
+        issuedVia: "teacher",
+      });
+    } catch (err: any) {
+      if (err?.code === "23505") {
+        return { success: false, error: "Student already has an active pass" };
+      }
+      throw err;
+    }
     return {
       success: true,
       data: {

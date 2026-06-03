@@ -13,12 +13,12 @@ import {
   addStudentsToFamilyGroup,
   setFamilyGroupStudents,
   removeStudentFromFamilyGroup,
-  getHomeroomById,
   autoAssignFamilyGroups,
 } from "../../services/storage.js";
 import {
   allStudentsBelongToSchool,
   getFamilyGroupForSchool,
+  getHomeroomForSchool,
   requireGoPilotRole,
 } from "../../services/gopilotAccess.js";
 import { generateFamilyGroupNumber } from "../../util/studentCode.js";
@@ -59,7 +59,9 @@ router.get("/family-groups", ...manageAuth, async (req, res, next) => {
           students.map(async (s) => {
             let homeroomName: string | null = null;
             if (s.homeroomId) {
-              const homeroom = await getHomeroomById(s.homeroomId);
+              // School-scoped lookup so a stray cross-school homeroomId can't
+              // surface another school's homeroom name in this list.
+              const homeroom = await getHomeroomForSchool(s.homeroomId, schoolId);
               if (homeroom) {
                 homeroomName = homeroom.name;
               }

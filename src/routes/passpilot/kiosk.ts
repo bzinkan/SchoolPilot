@@ -25,6 +25,7 @@ import {
   getActivePassForStudent,
   getActivePassesByGrade,
   createPass,
+  expireOverduePasses,
   returnPass,
   getUserById,
   getGradesBySchool,
@@ -139,6 +140,9 @@ router.post("/checkout", kioskLimiter, async (req, res, next) => {
       return res.status(403).json({ error: "Passes cannot be issued outside school hours" });
     }
 
+    // Expire lapsed passes first so a stale one doesn't block a new checkout.
+    await expireOverduePasses(schoolId);
+
     // Check for existing active pass
     const activePass = await getActivePassForStudent(student.id, schoolId);
     if (activePass) {
@@ -168,22 +172,30 @@ router.post("/checkout", kioskLimiter, async (req, res, next) => {
     // Combine: "7th Science" or just "Science" or just "7th" or null
     const kioskLabel = [className, kioskName].filter(Boolean).join(" ");
 
-    const pass = await createPass({
-      schoolId,
-      studentId: student.id,
-      teacherId: school.kioskActivatedByUserId || null,
-      gradeId: student.gradeId || null,
-      destination: parsed.data.destination,
-      customDestination:
-        parsed.data.destination === "custom"
-          ? (parsed.data.customDestination || null)
-          : null,
-      status: "active",
-      duration: passDuration,
-      expiresAt,
-      issuedVia: "kiosk",
-      notes: kioskLabel || null,
-    });
+    let pass;
+    try {
+      pass = await createPass({
+        schoolId,
+        studentId: student.id,
+        teacherId: school.kioskActivatedByUserId || null,
+        gradeId: student.gradeId || null,
+        destination: parsed.data.destination,
+        customDestination:
+          parsed.data.destination === "custom"
+            ? (parsed.data.customDestination || null)
+            : null,
+        status: "active",
+        duration: passDuration,
+        expiresAt,
+        issuedVia: "kiosk",
+        notes: kioskLabel || null,
+      });
+    } catch (err: any) {
+      if (err?.code === "23505") {
+        return res.status(409).json({ error: "Student already has an active pass" });
+      }
+      throw err;
+    }
 
     return res.status(201).json({ pass });
   } catch (err) {
