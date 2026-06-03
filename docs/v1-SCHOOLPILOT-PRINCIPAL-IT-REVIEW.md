@@ -24,7 +24,7 @@ ClassPilot is positioned as a **"GoGuardian / Securely Light"** alternative: it 
 | Multi-tenancy | Hard school-domain isolation (every record scoped by `schoolId`) |
 | Compliance posture | FERPA-compliant, COPPA-aware, SOC 2 controls implemented (not yet certified — see §6) |
 | Data retention | Configurable per school (default 30 days) |
-| Pricing model | Per-school subscription, no per-seat surcharge |
+| Pricing model | Per-student/year, no base fee: $3 (1 product) / $5 (2) / $7 (all 3); +$1 for 24/7 monitoring — see §9 |
 
 ---
 
@@ -200,21 +200,11 @@ Every administrative action is logged with the actor, timestamp, role, action ve
 
 Examples of logged actions: login, logout, settings changes, user creation/deletion, student creation/deletion, role changes, session start/end, message send, lock/unlock, Flight Path applied.
 
-### 3.6 Workspace Security Audit (Built-in tool for IT)
+### 3.6 Workspace Security Audit (Planned / On Roadmap — not in current release)
 
-A standalone admin tool, available to school admins from the ClassPilot Admin Panel, that connects (read-only) to the school's Google Workspace and produces a scorecard of Chrome management policies that affect ClassPilot's effectiveness:
+A planned admin tool that will connect (read-only) to the school's Google Workspace and produce a scorecard of the Chrome management policies that affect ClassPilot's effectiveness (sign-in restriction, guest mode, add-user, incognito, developer tools, extension force-install, browser sign-in) — each finding rated and deep-linked to the exact Admin Console page to fix it.
 
-- Sign-in restricted to the school's domain (closes the "personal Gmail loophole")
-- Guest mode disabled
-- "Add user" button at login disabled
-- Incognito mode disabled
-- Developer tools blocked
-- ClassPilot extension force-installed
-- Browser sign-in forced
-
-Each finding is rated critical / high / medium / low and includes a deep link to the exact Admin Console page where IT can fix it. **The audit never modifies a school's Workspace settings** — it only reads them. The admin can revoke ClassPilot's read-only access at any time from their Google account permissions page.
-
-This tool is the same content as the §8 checklist, produced automatically by reading the customer's live Workspace policy values rather than asking IT to walk through Admin Console by hand.
+**Status:** the backend is built; the admin-panel UI and the two additional Google read-only scopes it needs are held until Google's verification of those scopes completes. It is **not exposed in the current release**. Until it ships, the same checks are documented as a plain-text checklist in §8 (Required Google Workspace Configuration) — a school's IT admin can walk through it directly in Admin Console in 10–15 minutes.
 
 ### 3.7 Email Monitoring Add-On (MailPilot)
 
@@ -386,8 +376,8 @@ ClassPilot integrates with Google Workspace using standard OAuth 2.0 with **read
 | `classroom.rosters.readonly` | Read student lists in courses you select for import |
 | `admin.directory.user.readonly` | One-click staff/student import from your Workspace directory |
 | `admin.directory.orgunit.readonly` | Filter imports by Organizational Unit (e.g., "Grade 8") |
-| `admin.directory.device.chromeos.readonly` | Count enrolled Chromebooks for the Workspace Security Audit |
-| `chrome.management.policy.readonly` | Read Chrome management policy values for the Workspace Security Audit |
+
+> The two additional read-only scopes for the planned Workspace Security Audit (`admin.directory.device.chromeos.readonly`, `chrome.management.policy.readonly`) are **not requested in the current release** — they are held until that feature ships and its Google scope verification completes.
 
 **What ClassPilot does NOT request:**
 - No write access to your directory (cannot create, delete, or modify users)
@@ -403,7 +393,7 @@ ClassPilot integrates with Google Workspace using standard OAuth 2.0 with **read
 
 **Verification status:** ClassPilot's OAuth client is **verified by Google.** Both brand verification and data-access (scope) verification are complete and shown in the Google Cloud Verification Center as approved. Users see Google's standard consent screen with no unverified-app warning.
 
-**Verified scopes include:** `classroom.courses.readonly`, `classroom.rosters.readonly`, `classroom.profile.emails`, `admin.directory.user.readonly`, `admin.directory.orgunit.readonly`, and standard `openid` / `userinfo` scopes. New scopes added for the Workspace Security Audit feature (`admin.directory.device.chromeos.readonly`, `chrome.management.policy.readonly`) are in the process of being submitted for the same lightweight sensitive-scope re-review; CASA (third-party security assessment) is **not required** because both are classified as sensitive rather than restricted.
+**Scopes requested in the current release:** `classroom.courses.readonly`, `classroom.rosters.readonly`, `classroom.profile.emails`, `admin.directory.user.readonly`, `admin.directory.orgunit.readonly`, and standard `openid` / `userinfo` scopes — all verified. The two additional scopes for the planned Workspace Security Audit are **not requested today**; they will be submitted for Google's lightweight sensitive-scope review when that feature is re-enabled (CASA / third-party assessment is **not required** — both are classified as sensitive, not restricted).
 
 **For IT directors:** all current ClassPilot flows are covered by the existing Google verification. There is no "unverified app" warning when an administrator connects their Workspace — they see the same standard consent screen they'd see for any verified third-party education app.
 
@@ -555,7 +545,13 @@ We have not yet undergone a SOC 2 audit. We can provide our WISP, HECVAT Lite qu
 Default: 30 days for browsing activity, indefinitely for audit logs. Retention is configurable by your school admin. Deletion requests honored within 30 days.
 
 **Q: What's the price?**
-Per-school annual subscription, scaled by enrolled student count. Contact `support@school-pilot.net` for a quote.
+Per-school annual subscription, scaled by enrolled student count, no base fee:
+- **1 product** (e.g., ClassPilot only): **$3 / student / year**
+- **Any 2 products**: **$5 / student / year**
+- **All 3 products** (ClassPilot + PassPilot + GoPilot): **$7 / student / year**
+- Optional **24/7 monitoring add-on**: **+$1 / student / year**
+
+Example: a 500-student school running ClassPilot = **$1,500 / year**. Contact `support@school-pilot.net` for volume or multi-year discounts.
 
 ---
 

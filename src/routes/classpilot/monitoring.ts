@@ -71,8 +71,10 @@ router.get("/student-analytics/:studentId", ...auth, async (req, res, next) => {
     if (startDate && isNaN(startDate.getTime())) return res.status(400).json({ error: "Invalid startDate" });
     if (endDate && isNaN(endDate.getTime())) return res.status(400).json({ error: "Invalid endDate" });
 
+    // School-isolation: a student id from another school must 404, never leak
+    // that school's monitoring data (heartbeats = screen activity, URLs, alerts).
     const student = await getStudentById(studentId);
-    if (!student) {
+    if (!student || student.schoolId !== res.locals.schoolId) {
       return res.status(404).json({ error: "Student not found" });
     }
 
@@ -95,7 +97,7 @@ router.get("/student-analytics/:studentId/usage", ...auth, async (req, res, next
     const studentId = param(req, "studentId");
 
     const student = await getStudentById(studentId);
-    if (!student) {
+    if (!student || student.schoolId !== res.locals.schoolId) {
       return res.status(404).json({ error: "Student not found" });
     }
 
@@ -199,6 +201,12 @@ router.patch("/students/:studentId", ...auth, async (req, res, next) => {
     const studentId = param(req, "studentId");
     const { firstName, lastName, email, gradeLevel } = req.body;
 
+    // School-isolation: verify the student belongs to this school before edit.
+    const existing = await getStudentById(studentId);
+    if (!existing || existing.schoolId !== res.locals.schoolId) {
+      return res.status(404).json({ error: "Student not found" });
+    }
+
     const data: Record<string, unknown> = {};
     if (firstName !== undefined) data.firstName = firstName;
     if (lastName !== undefined) data.lastName = lastName;
@@ -219,6 +227,12 @@ router.patch("/students/:studentId", ...auth, async (req, res, next) => {
 router.delete("/students/:studentId", ...auth, requireRole("admin"), async (req, res, next) => {
   try {
     const studentId = param(req, "studentId");
+
+    // School-isolation: verify ownership before delete.
+    const existing = await getStudentById(studentId);
+    if (!existing || existing.schoolId !== res.locals.schoolId) {
+      return res.status(404).json({ error: "Student not found" });
+    }
     await deleteStudent(studentId);
 
     logAudit({
@@ -229,6 +243,7 @@ router.delete("/students/:studentId", ...auth, requireRole("admin"), async (req,
       action: "student.delete",
       entityType: "student",
       entityId: studentId,
+      entityName: `${existing.firstName} ${existing.lastName}`,
     });
 
     return res.json({ ok: true });
@@ -237,10 +252,18 @@ router.delete("/students/:studentId", ...auth, requireRole("admin"), async (req,
   }
 });
 
-// GET /api/classpilot/sessions/active/:deviceId - Active session for device
+// GET /api/classpilot/sessions/active/:deviceId - Active session for a student
+// (param is a studentId; historically mislabeled "deviceId")
 router.get("/sessions/active/:deviceId", ...auth, async (req, res, next) => {
   try {
-    const session = await getActiveSessionByStudent(param(req, "deviceId"));
+    const id = param(req, "deviceId");
+    // School-isolation: only return the session if the student belongs to
+    // this school; never leak another school's session state.
+    const student = await getStudentById(id);
+    if (!student || student.schoolId !== res.locals.schoolId) {
+      return res.json({ session: null });
+    }
+    const session = await getActiveSessionByStudent(id);
     return res.json({ session: session || null });
   } catch (err) {
     next(err);

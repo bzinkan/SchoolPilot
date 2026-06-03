@@ -868,6 +868,16 @@ router.post("/admin/students/bulk-delete", ...schoolAuth, requireRole("admin"), 
         deleted++;
       }
     }
+    // Audit destructive bulk action (who deleted how many, when).
+    logAudit({
+      schoolId,
+      userId: req.authUser!.id,
+      userEmail: req.authUser!.email,
+      userRole: res.locals.membershipRole,
+      action: "student.bulk_delete",
+      entityType: "student",
+      metadata: { requested: studentIds.length, deleted },
+    });
     return res.json({ deleted });
   } catch (err) {
     next(err);
