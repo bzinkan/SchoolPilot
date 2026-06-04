@@ -13,6 +13,7 @@ import {
   getUserById,
   getStudentsBySchool,
   getSchoolById,
+  createStudentTimelineEvent,
 } from "../../services/storage.js";
 
 const router = Router();
@@ -150,6 +151,22 @@ router.post("/", ...staffAuth, async (req, res, next) => {
       notes: notes || null,
       markedBy: req.authUser!.id,
     });
+
+    await Promise.all(records.map((record) => createStudentTimelineEvent({
+      schoolId,
+      studentId: record.studentId,
+      eventType: "attendance",
+      sourceType: "attendance",
+      sourceId: record.id,
+      title: `Attendance marked ${record.status}`,
+      summary: record.reason || record.notes || null,
+      actorUserId: req.authUser!.id,
+      metadata: {
+        date: record.date,
+        status: record.status,
+        source: record.source,
+      },
+    })));
 
     return res.status(201).json({ records, count: records.length });
   } catch (err) {

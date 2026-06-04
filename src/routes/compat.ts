@@ -37,9 +37,12 @@ import {
   getGroupStudents,
   getSchoolUsageSummary,
   getUserById,
+  getAttendanceBySchool,
+  getActivePassesBySchool,
 } from "../services/storage.js";
 import db from "../db.js";
 import { heartbeats, devices as deviceTable, teachingSessions, groups, groupStudents, dailyUsage, studentDevices } from "../schema/classpilot.js";
+import { dismissalQueue, dismissalSessions } from "../schema/gopilot.js";
 import { users } from "../schema/core.js";
 import { eq, and, sql, inArray } from "drizzle-orm";
 import { createGradeSchema } from "../schema/validation.js";
@@ -68,6 +71,19 @@ const passPilotAuth = [
   requireProductLicense("PASSPILOT"),
   requirePassPilotRole("admin", "school_admin", "office_staff", "teacher"),
 ] as const;
+
+function todayInTimeZone(timeZone?: string | null): string {
+  try {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: timeZone || "America/New_York",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+  } catch {
+    return new Date().toISOString().slice(0, 10);
+  }
+}
 
 // ============================================================================
 // Grades without school prefix (PassPilot calls GET /grades, POST /grades)
@@ -1026,6 +1042,8 @@ router.get("/students-aggregated", ...schoolAuth, async (req, res, next) => {
 
     const realtimeStatuses = getSchoolDeviceStatuses(schoolId);
     const connectedDevices = getConnectedStudentDeviceIds(schoolId);
+    const school = await getSchoolById(schoolId);
+    const today = todayInTimeZone(school?.schoolTimezone);
 
     // Build lookups for real-time status
     const statusByDevice = new Map(
@@ -1048,6 +1066,33 @@ router.get("/students-aggregated", ...schoolAuth, async (req, res, next) => {
           .from(studentDevices)
           .where(inArray(studentDevices.studentId, studentIds))
       : [];
+    const [attendanceRows, activePasses, dismissalRows] = await Promise.all([
+      getAttendanceBySchool(schoolId, today),
+      getActivePassesBySchool(schoolId),
+      studentIds.length > 0
+        ? db
+            .select({ queue: dismissalQueue, session: dismissalSessions })
+            .from(dismissalQueue)
+            .innerJoin(dismissalSessions, eq(dismissalQueue.sessionId, dismissalSessions.id))
+            .where(
+              and(
+                eq(dismissalSessions.schoolId, schoolId),
+                eq(dismissalSessions.date, today),
+                inArray(dismissalQueue.studentId, studentIds),
+                inArray(dismissalSessions.status, ["active", "paused", "completed"])
+              )
+            )
+        : [],
+    ]);
+    const attendanceByStudent = new Map(attendanceRows.map((row) => [row.attendance.studentId, row.attendance]));
+    const activePassByStudent = new Map(activePasses.map((pass) => [pass.studentId, pass]));
+    const dismissalByStudent = new Map<string, any>();
+    for (const row of dismissalRows) {
+      const existing = dismissalByStudent.get(row.queue.studentId);
+      if (!existing || row.queue.createdAt > existing.queue.createdAt) {
+        dismissalByStudent.set(row.queue.studentId, row);
+      }
+    }
     // Build map: studentId → most recent deviceId
     const deviceByStudent = new Map<string, string>();
     for (const row of deviceMappings) {
@@ -1067,6 +1112,18 @@ router.get("/students-aggregated", ...schoolAuth, async (req, res, next) => {
       // Fallback to student_devices table when realtime status has no device mapping
       const deviceId = rt?.deviceId || student.deviceId || deviceByStudent.get(student.id) || null;
       const isConnected = deviceId ? connectedDevices.has(deviceId) : false;
+      const attendance = attendanceByStudent.get(student.id);
+      const attendanceStatus = attendance?.status || "present";
+      const activePass = activePassByStudent.get(student.id) || null;
+      const dismissal = dismissalByStudent.get(student.id)?.queue || null;
+      let suppressionReason: string | null = null;
+      if (attendanceStatus === "absent") suppressionReason = "Student is marked absent";
+      else if (attendanceStatus === "tardy") suppressionReason = "Student is marked tardy";
+      else if (attendanceStatus === "early_dismissal") suppressionReason = "Student checked out early";
+      else if (activePass) suppressionReason = "Student is on an active hall pass";
+      else if (dismissal?.status === "dismissed") suppressionReason = "Student is dismissed";
+      else if (dismissal?.status === "released") suppressionReason = "Student is released for dismissal";
+      else if (dismissal) suppressionReason = "Student is in the dismissal flow";
       const timeSinceLastSeen = rt ? Date.now() - rt.lastSeenAt : Infinity;
       let status: "online" | "idle" | "offline" = "offline";
       if (timeSinceLastSeen < 60000 || (isConnected && timeSinceLastSeen < 90000)) {
@@ -1103,6 +1160,25 @@ router.get("/students-aggregated", ...schoolAuth, async (req, res, next) => {
         cameraActive: rt?.cameraActive || false,
         aiClassification: rt?.aiClassification || undefined,
         screenshotHealth: rt?.screenshotHealth || undefined,
+        attendanceStatus,
+        activePass: activePass ? {
+          id: activePass.id,
+          destination: activePass.destination,
+          issuedAt: activePass.issuedAt,
+          expiresAt: activePass.expiresAt,
+          status: activePass.status,
+        } : null,
+        dismissalStatus: dismissal ? {
+          id: dismissal.id,
+          status: dismissal.status,
+          checkInMethod: dismissal.checkInMethod,
+          checkInTime: dismissal.checkInTime,
+        } : null,
+        monitoringContext: rt?.aiClassification?.safetyAlert
+          ? "safety_with_context"
+          : (suppressionReason ? "classroom_noise_suppressed" : "classroom"),
+        suppressionReason,
+        classroomNoiseSuppressed: !!suppressionReason,
       };
     });
 

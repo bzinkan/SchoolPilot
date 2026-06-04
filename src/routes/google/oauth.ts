@@ -22,6 +22,8 @@ const SCOPES = [
   "https://www.googleapis.com/auth/classroom.courses.readonly",
   "https://www.googleapis.com/auth/classroom.rosters.readonly",
   "https://www.googleapis.com/auth/classroom.profile.emails",
+  "https://www.googleapis.com/auth/classroom.coursework.students.readonly",
+  "https://www.googleapis.com/auth/classroom.courseworkmaterials.readonly",
   "https://www.googleapis.com/auth/admin.directory.user.readonly",
   "https://www.googleapis.com/auth/admin.directory.orgunit.readonly",
   // Workspace Security Audit scopes intentionally omitted until that feature

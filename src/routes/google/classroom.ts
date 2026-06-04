@@ -18,6 +18,10 @@ const router = Router();
 
 const auth = [authenticate, requireSchoolContext] as const;
 const CLASSROOM_EMAIL_SCOPE = "https://www.googleapis.com/auth/classroom.profile.emails";
+const CLASSROOM_RESOURCE_SCOPES = [
+  "https://www.googleapis.com/auth/classroom.coursework.students.readonly",
+  "https://www.googleapis.com/auth/classroom.courseworkmaterials.readonly",
+];
 
 function routeError(message: string, status = 400) {
   return Object.assign(new Error(message), { status });
@@ -50,13 +54,23 @@ function handleGoogleError(err: any, res: any, next: any) {
   }
   if (statusCode === 403) {
     return res.status(403).json({
-      error: "INSUFFICIENT_PERMISSIONS: Google Classroom roster access was denied.",
+      error: "INSUFFICIENT_PERMISSIONS: Google Classroom access was denied. Reconnect Google if resource scopes are missing.",
     });
   }
   if (err.status) {
     return res.status(err.status).json({ error: err.message });
   }
   next(err);
+}
+
+function ensureClassroomResourceScopes(tokenScope?: string | null) {
+  const scopes = new Set((tokenScope || "").split(/\s+/).filter(Boolean));
+  const missing = CLASSROOM_RESOURCE_SCOPES.filter((scope) => !scopes.has(scope));
+  if (missing.length > 0) {
+    throw routeError(
+      `MISSING_GOOGLE_SCOPE: Reconnect Google Classroom to grant resource access (${missing.join(", ")}).`
+    );
+  }
 }
 
 async function listActiveCourses(classroom: any) {
@@ -88,6 +102,61 @@ async function listCourseStudents(classroom: any, courseId: string) {
     pageToken = response.data.nextPageToken || undefined;
   } while (pageToken);
   return students;
+}
+
+function normalizeMaterialLinks(materials: any[] | undefined): Array<{ type: string; title: string | null; url: string }> {
+  const links: Array<{ type: string; title: string | null; url: string }> = [];
+  for (const material of materials || []) {
+    if (material.link?.url) {
+      links.push({ type: "link", title: material.link.title || null, url: material.link.url });
+    }
+    if (material.youtubeVideo) {
+      const video = material.youtubeVideo;
+      const url = video.id ? `https://www.youtube.com/watch?v=${video.id}` : video.alternateLink;
+      if (url) links.push({ type: "youtube", title: video.title || null, url });
+    }
+    if (material.driveFile?.driveFile?.alternateLink) {
+      links.push({
+        type: "drive",
+        title: material.driveFile.driveFile.title || null,
+        url: material.driveFile.driveFile.alternateLink,
+      });
+    }
+    if (material.form?.formUrl) {
+      links.push({ type: "form", title: material.form.title || null, url: material.form.formUrl });
+    }
+  }
+  return links;
+}
+
+async function listCourseWork(classroom: any, courseId: string) {
+  const items: any[] = [];
+  let pageToken: string | undefined;
+  do {
+    const response = await classroom.courses.courseWork.list({
+      courseId,
+      pageSize: 100,
+      pageToken,
+    });
+    items.push(...(response.data.courseWork || []));
+    pageToken = response.data.nextPageToken || undefined;
+  } while (pageToken);
+  return items;
+}
+
+async function listCourseMaterials(classroom: any, courseId: string) {
+  const items: any[] = [];
+  let pageToken: string | undefined;
+  do {
+    const response = await classroom.courses.courseWorkMaterials.list({
+      courseId,
+      pageSize: 100,
+      pageToken,
+    });
+    items.push(...(response.data.courseWorkMaterial || []));
+    pageToken = response.data.nextPageToken || undefined;
+  } while (pageToken);
+  return items;
 }
 
 async function maybeAutoAssignGoPilotFamilies(schoolId: string, imported: number) {
@@ -174,6 +243,58 @@ router.get("/courses", ...auth, async (req, res, next) => {
         ...course,
         lastSyncedAt: savedByGoogleId.get(course.id || "")?.lastSyncedAt || null,
       })),
+    });
+  } catch (err: any) {
+    return handleGoogleError(err, res, next);
+  }
+});
+
+// GET /api/google/classroom/courses/:courseId/resources
+router.get("/courses/:courseId/resources", ...auth, async (req, res, next) => {
+  try {
+    const courseId = String(req.params.courseId ?? "");
+    const token = await getGoogleOAuthToken(req.authUser!.id);
+    ensureClassroomResourceScopes(token?.scope);
+    const { oauth2Client, google } = await getAuthedClient(req.authUser!.id);
+    const classroom = google.classroom({ version: "v1", auth: oauth2Client });
+    const [course, courseWork, materials] = await Promise.all([
+      getCourseMetadata(classroom, courseId),
+      listCourseWork(classroom, courseId),
+      listCourseMaterials(classroom, courseId),
+    ]);
+
+    const resources = [
+      ...courseWork.map((item) => ({
+        id: item.id,
+        resourceType: "coursework",
+        title: item.title || "Untitled assignment",
+        description: item.description || null,
+        state: item.state || null,
+        updateTime: item.updateTime || null,
+        dueDate: item.dueDate || null,
+        links: [
+          ...(item.alternateLink ? [{ type: "classroom", title: "Classroom assignment", url: item.alternateLink }] : []),
+          ...normalizeMaterialLinks(item.materials),
+        ],
+      })),
+      ...materials.map((item) => ({
+        id: item.id,
+        resourceType: "material",
+        title: item.title || "Untitled material",
+        description: item.description || null,
+        state: item.state || null,
+        updateTime: item.updateTime || null,
+        dueDate: null,
+        links: [
+          ...(item.alternateLink ? [{ type: "classroom", title: "Classroom material", url: item.alternateLink }] : []),
+          ...normalizeMaterialLinks(item.materials),
+        ],
+      })),
+    ];
+
+    return res.json({
+      course: { id: courseId, name: course.name || course.courseName || courseId, section: course.section || null },
+      resources,
     });
   } catch (err: any) {
     return handleGoogleError(err, res, next);

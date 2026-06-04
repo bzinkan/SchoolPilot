@@ -20,14 +20,20 @@ import db from "../db.js";
 import { schedulerDb, schedulerPool } from "./schedulerDb.js";
 import { schools, productLicenses } from "../schema/core.js";
 import { heartbeats, dailyUsage, teachingSessions, groups } from "../schema/classpilot.js";
-import { dismissalSessions } from "../schema/gopilot.js";
-import { eq, and, isNotNull, isNull, sql } from "drizzle-orm";
+import { dismissalQueue, dismissalSessions, parentStudent } from "../schema/gopilot.js";
+import { passes } from "../schema/passpilot.js";
+import { students } from "../schema/students.js";
+import { users } from "../schema/core.js";
+import { settings as schoolSettings } from "../schema/shared.js";
+import { emailAlerts } from "../schema/mailpilot.js";
+import { eq, and, desc, gte, isNotNull, isNull, sql } from "drizzle-orm";
 import {
   getWatchesDueForRenewal,
   upsertMailpilotWatch,
   updateMailpilotWatchError,
 } from "./storage.js";
 import { startWatch, isMailpilotConfigured } from "./mailpilotGmail.js";
+import { sendEmail } from "./email.js";
 
 let io: SocketServer | null = null;
 let intervalId: NodeJS.Timeout | null = null;
@@ -48,6 +54,7 @@ async function runHeavyJobsSerially() {
       lastRollupHour = currentHour;
       await rollupDailyUsage();
       await renewMailpilotWatches();
+      await sendParentTransparencyDigests();
     }
     // Purge at 30min past the hour (staggered to avoid overlap with rollup)
     const currentMinute = new Date().getUTCMinutes();
@@ -421,6 +428,177 @@ async function rollupSchoolUsage(schoolId: string, timezone: string) {
   } catch (err) {
     console.error(`[ClassPilot] Rollup failed for school ${schoolId}:`, err);
     errorMonitor.trackError("scheduler_failure", err as Error, { job: "rollupSchoolUsage", schoolId });
+  }
+}
+
+// ============================================================================
+// ClassPilot - Parent transparency digest
+// Opt-in weekly digest using approved GoPilot parent-child links only.
+// ============================================================================
+
+function localDateParts(timeZone: string) {
+  const now = new Date();
+  return {
+    date: now.toLocaleDateString("en-CA", { timeZone }),
+    weekday: new Intl.DateTimeFormat("en-US", { timeZone, weekday: "short" }).format(now),
+  };
+}
+
+function escapeHtml(value: unknown): string {
+  return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  }[ch]!));
+}
+
+function digestHtml(options: {
+  schoolName: string;
+  studentName: string;
+  periodStart: string;
+  periodEnd: string;
+  totalSeconds: number;
+  topDomains: Array<{ domain: string; seconds: number }>;
+  passCount: number;
+  dismissalCount: number;
+  safetyNotes: Array<{ safetyAlert: string | null; severity: string; reviewNote: string | null }>;
+}) {
+  const hours = Math.round((options.totalSeconds / 3600) * 10) / 10;
+  const domains = options.topDomains.length
+    ? options.topDomains.map((d) => `<li>${escapeHtml(d.domain)} (${Math.round(d.seconds / 60)} min)</li>`).join("")
+    : "<li>No ClassPilot browsing rollup available for this period.</li>";
+  const safety = options.safetyNotes.length
+    ? options.safetyNotes.map((n) => `<li>${escapeHtml(n.safetyAlert || "reviewed concern")} (${escapeHtml(n.severity)})${n.reviewNote ? `: ${escapeHtml(n.reviewNote)}` : ""}</li>`).join("")
+    : "<li>No staff-approved safety notes for this period.</li>";
+
+  return `
+    <h2>${escapeHtml(options.schoolName)} weekly student digest</h2>
+    <p><strong>Student:</strong> ${escapeHtml(options.studentName)}</p>
+    <p><strong>Period:</strong> ${escapeHtml(options.periodStart)} to ${escapeHtml(options.periodEnd)}</p>
+    <h3>Learning activity</h3>
+    <p>ClassPilot recorded about ${hours} hour(s) of Chromebook learning activity.</p>
+    <ul>${domains}</ul>
+    <h3>School day context</h3>
+    <p>Hall passes issued: ${options.passCount}</p>
+    <p>Dismissal events: ${options.dismissalCount}</p>
+    <h3>Staff-approved safety notes</h3>
+    <ul>${safety}</ul>
+    <p>No screenshots, raw browsing timelines, or raw email content are included in this digest.</p>
+  `;
+}
+
+async function sendParentTransparencyDigests() {
+  try {
+    const eligible = await schedulerDb
+      .select({ settings: schoolSettings, school: schools })
+      .from(schoolSettings)
+      .innerJoin(schools, eq(schoolSettings.schoolId, schools.id))
+      .innerJoin(
+        productLicenses,
+        and(
+          eq(productLicenses.schoolId, schools.id),
+          eq(productLicenses.product, "CLASSPILOT"),
+          eq(productLicenses.status, "active")
+        )
+      )
+      .where(and(eq(schoolSettings.parentTransparencyEnabled, true), eq(schools.status, "active")));
+
+    for (const row of eligible) {
+      const timeZone = row.school.schoolTimezone || row.settings.schoolTimezone || "America/New_York";
+      const local = localDateParts(timeZone);
+      if (local.weekday !== "Mon") continue;
+      const lastSentDate = row.settings.parentDigestLastSentAt
+        ? row.settings.parentDigestLastSentAt.toLocaleDateString("en-CA", { timeZone })
+        : null;
+      if (lastSentDate === local.date) continue;
+      if (row.settings.parentDigestLastSentAt && Date.now() - row.settings.parentDigestLastSentAt.getTime() < 6 * 24 * 60 * 60 * 1000) {
+        continue;
+      }
+
+      const end = new Date();
+      const start = new Date(end.getTime() - 7 * 24 * 60 * 60 * 1000);
+      const startDate = start.toISOString().slice(0, 10);
+      const endDate = end.toISOString().slice(0, 10);
+
+      const links = await schedulerDb
+        .select({ link: parentStudent, parent: users, student: students })
+        .from(parentStudent)
+        .innerJoin(users, eq(parentStudent.parentId, users.id))
+        .innerJoin(students, eq(parentStudent.studentId, students.id))
+        .where(and(eq(students.schoolId, row.school.id), eq(parentStudent.status, "approved")));
+
+      for (const item of links) {
+        if (!item.parent.email) continue;
+        const [usage, passRows, dismissalRows, safetyRows] = await Promise.all([
+          schedulerDb
+            .select()
+            .from(dailyUsage)
+            .where(and(eq(dailyUsage.schoolId, row.school.id), eq(dailyUsage.studentId, item.student.id), sql`${dailyUsage.date} >= ${startDate}`, sql`${dailyUsage.date} <= ${endDate}`)),
+          row.settings.parentDigestIncludesPassDismissal !== false
+            ? schedulerDb.select().from(passes).where(and(eq(passes.schoolId, row.school.id), eq(passes.studentId, item.student.id), gte(passes.issuedAt, start)))
+            : Promise.resolve([]),
+          row.settings.parentDigestIncludesPassDismissal !== false
+            ? schedulerDb
+                .select({ queue: dismissalQueue })
+                .from(dismissalQueue)
+                .innerJoin(dismissalSessions, eq(dismissalQueue.sessionId, dismissalSessions.id))
+                .where(and(eq(dismissalSessions.schoolId, row.school.id), eq(dismissalQueue.studentId, item.student.id), sql`${dismissalSessions.date} >= ${startDate}`))
+            : Promise.resolve([]),
+          row.settings.parentDigestIncludesSafety
+            ? schedulerDb
+                .select()
+                .from(emailAlerts)
+                .where(and(eq(emailAlerts.schoolId, row.school.id), eq(emailAlerts.studentId, item.student.id), gte(emailAlerts.alertedAt, start), sql`${emailAlerts.reviewStatus} IN ('confirmed','escalated')`))
+                .orderBy(desc(emailAlerts.alertedAt))
+                .limit(10)
+            : Promise.resolve([]),
+        ]);
+
+        const domainTotals = new Map<string, number>();
+        for (const day of usage) {
+          for (const domain of ((day.topDomains as any[]) || [])) {
+            if (!domain?.domain) continue;
+            domainTotals.set(domain.domain, (domainTotals.get(domain.domain) || 0) + (domain.seconds || 0));
+          }
+        }
+        const topDomains = [...domainTotals.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 8)
+          .map(([domain, seconds]) => ({ domain, seconds }));
+        const studentName = `${item.student.firstName || ""} ${item.student.lastName || ""}`.trim() || item.student.email || "Student";
+
+        await sendEmail({
+          to: item.parent.email,
+          subject: `${row.school.name} weekly digest for ${studentName}`,
+          html: digestHtml({
+            schoolName: row.school.name,
+            studentName,
+            periodStart: startDate,
+            periodEnd: endDate,
+            totalSeconds: usage.reduce((sum, day) => sum + day.totalSeconds, 0),
+            topDomains,
+            passCount: passRows.length,
+            dismissalCount: dismissalRows.length,
+            safetyNotes: safetyRows.map((alert) => ({
+              safetyAlert: alert.safetyAlert,
+              severity: alert.severity,
+              reviewNote: alert.reviewNote,
+            })),
+          }),
+        });
+      }
+
+      await schedulerDb
+        .update(schoolSettings)
+        .set({ parentDigestLastSentAt: new Date() })
+        .where(eq(schoolSettings.schoolId, row.school.id));
+      console.log(`[ClassPilot] Parent transparency digests sent for ${row.school.name}`);
+    }
+  } catch (err) {
+    console.error("[ClassPilot] Parent transparency digest error:", err);
+    errorMonitor.trackError("scheduler_failure", err as Error, { job: "sendParentTransparencyDigests" });
   }
 }
 

@@ -22,6 +22,8 @@ const CPAdmin = lazy(() => import('./products/classpilot/pages/Admin'));
 const CPAdminClasses = lazy(() => import('./products/classpilot/pages/AdminClasses'));
 const CPAdminAnalytics = lazy(() => import('./products/classpilot/pages/AdminAnalytics'));
 const CPAdminAttendance = lazy(() => import('./products/classpilot/pages/AdminAttendance'));
+const CPITReadiness = lazy(() => import('./products/classpilot/pages/ITReadiness'));
+const CPSafetyCenter = lazy(() => import('./products/classpilot/pages/SafetyCenter'));
 const CPEmailMonitoring = lazy(() => import('./products/classpilot/pages/EmailMonitoring'));
 const CPEmailMonitoringSetup = lazy(() => import('./products/classpilot/pages/EmailMonitoringSetup'));
 const CPStudents = lazy(() => import('./products/classpilot/pages/Students'));
@@ -147,6 +149,8 @@ function AppRoutes() {
             <Route path="/classpilot/admin/classes" element={<CPAdminClasses />} />
             <Route path="/classpilot/admin/analytics" element={<CPAdminAnalytics />} />
             <Route path="/classpilot/admin/attendance" element={<CPAdminAttendance />} />
+            <Route path="/classpilot/admin/it-readiness" element={<CPITReadiness />} />
+            <Route path="/classpilot/admin/safety" element={<CPSafetyCenter />} />
             <Route path="/classpilot/admin/email-monitoring" element={<CPEmailMonitoring />} />
             <Route path="/classpilot/admin/email-monitoring/setup" element={<CPEmailMonitoringSetup />} />
             <Route path="/classpilot/students" element={<CPStudents />} />

@@ -19,6 +19,7 @@ import {
   getSchoolById,
   getSettingsForSchool,
   getAbsentStudentIds,
+  createStudentTimelineEvent,
 } from "../../services/storage.js";
 import { isWithinTrackingWindow } from "../../services/schoolHours.js";
 import type { Pass } from "../../schema/passpilot.js";
@@ -107,6 +108,27 @@ function mapPassTypeToDestination(passType?: string): string {
     case "general":
     default: return "bathroom";
   }
+}
+
+function recordPassTimeline(pass: Pass, action: "issued" | "returned" | "cancelled", actorUserId: string) {
+  return createStudentTimelineEvent({
+    schoolId: pass.schoolId,
+    studentId: pass.studentId,
+    eventType: "pass",
+    sourceType: "passpilot",
+    sourceId: pass.id,
+    title: `Hall pass ${action}: ${pass.destination}`,
+    summary: pass.customDestination || pass.notes || null,
+    actorUserId,
+    metadata: {
+      status: pass.status,
+      destination: pass.destination,
+      customDestination: pass.customDestination,
+      issuedAt: pass.issuedAt,
+      returnedAt: pass.returnedAt,
+      expiresAt: pass.expiresAt,
+    },
+  });
 }
 
 // ============================================================================
@@ -319,6 +341,7 @@ router.post("/", async (req, res, next) => {
       throw err;
     }
 
+    await recordPassTimeline(pass, "issued", req.authUser!.id);
     return res.status(201).json({ pass });
   } catch (err) {
     next(err);
@@ -340,6 +363,7 @@ router.patch("/:id/return", async (req, res, next) => {
     if (!pass) {
       return res.status(400).json({ error: "Active pass not found" });
     }
+    await recordPassTimeline(pass, "returned", req.authUser!.id);
     return res.json({ pass });
   } catch (err) {
     next(err);
@@ -361,6 +385,7 @@ router.put("/:id/return", async (req, res, next) => {
     if (!pass) {
       return res.status(400).json({ error: "Active pass not found" });
     }
+    await recordPassTimeline(pass, "returned", req.authUser!.id);
     return res.json({ pass });
   } catch (err) {
     next(err);
@@ -382,6 +407,7 @@ router.patch("/:id/cancel", async (req, res, next) => {
     if (!pass) {
       return res.status(400).json({ error: "Active pass not found" });
     }
+    await recordPassTimeline(pass, "cancelled", req.authUser!.id);
     return res.json({ pass });
   } catch (err) {
     next(err);
@@ -402,6 +428,7 @@ router.delete("/:id", async (req, res, next) => {
     if (!pass) {
       return res.status(400).json({ error: "Active pass not found" });
     }
+    await recordPassTimeline(pass, "cancelled", req.authUser!.id);
     return res.json({ ok: true });
   } catch (err) {
     next(err);

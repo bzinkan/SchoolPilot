@@ -37,6 +37,38 @@ const auth = [
   requireProductLicense("CLASSPILOT"),
 ] as const;
 
+function allowedEntryFromUrl(rawUrl: string): string | null {
+  try {
+    const url = new URL(rawUrl);
+    const host = url.hostname.replace(/^www\./, "");
+    if (host === "youtube.com" || host === "youtu.be" || host.endsWith(".youtube.com")) {
+      const videoId = url.hostname === "youtu.be"
+        ? url.pathname.replace(/^\//, "")
+        : url.searchParams.get("v");
+      if (videoId) return `https://www.youtube.com/watch?v=${videoId}`;
+    }
+    return host;
+  } catch {
+    const trimmed = String(rawUrl || "").trim();
+    return trimmed || null;
+  }
+}
+
+function extractAllowedEntries(resources: any[], fallbackLinks: string[] = []): string[] {
+  const entries = new Set<string>();
+  for (const url of fallbackLinks) {
+    const entry = allowedEntryFromUrl(url);
+    if (entry) entries.add(entry);
+  }
+  for (const resource of resources) {
+    for (const link of resource?.links || []) {
+      const entry = allowedEntryFromUrl(link?.url || "");
+      if (entry) entries.add(entry);
+    }
+  }
+  return [...entries].sort();
+}
+
 // ============================================================================
 // Block Lists (MUST come before /:id routes to avoid route conflicts)
 // ============================================================================
@@ -215,6 +247,68 @@ router.post("/", ...auth, async (req, res, next) => {
     });
 
     return res.status(201).json({ flightPath: fp });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/classpilot/flight-paths/from-classroom
+router.post("/from-classroom", ...auth, async (req, res, next) => {
+  try {
+    const {
+      courseId,
+      selectedResourceIds = [],
+      resources = [],
+      resourceLinks = [],
+      name,
+      flightPathName,
+      description,
+      blockedDomains,
+      isDefault,
+    } = req.body;
+    if (!courseId) return res.status(400).json({ error: "courseId is required" });
+
+    const selectedIds = Array.isArray(selectedResourceIds) ? selectedResourceIds.map(String) : [];
+    const providedResources = Array.isArray(resources) ? resources : [];
+    const selectedResources = selectedIds.length > 0
+      ? providedResources.filter((resource: any) => selectedIds.includes(String(resource?.id)))
+      : providedResources;
+    if (selectedIds.length > 0 && selectedResources.length === 0) {
+      return res.status(400).json({ error: "selected resources were not included in the request" });
+    }
+
+    const allowedDomains = extractAllowedEntries(
+      selectedResources,
+      Array.isArray(resourceLinks) ? resourceLinks : []
+    );
+    if (allowedDomains.length === 0) {
+      return res.status(400).json({ error: "No usable Classroom resource URLs were found" });
+    }
+
+    const fp = await createFlightPath({
+      schoolId: res.locals.schoolId!,
+      teacherId: req.authUser!.id,
+      flightPathName: flightPathName || name || "Classroom Flight Path",
+      description: description || null,
+      allowedDomains,
+      blockedDomains: Array.isArray(blockedDomains) ? blockedDomains : [],
+      isDefault: !!isDefault,
+      sourceType: "google_classroom",
+      sourceCourseId: String(courseId),
+      sourceResourceIds: selectedIds.length > 0
+        ? selectedIds
+        : selectedResources.map((resource: any) => String(resource?.id)).filter(Boolean),
+      sourceUpdatedAt: new Date(),
+    });
+
+    return res.status(201).json({
+      flightPath: fp,
+      extracted: {
+        allowedDomains,
+        resourceCount: selectedResources.length,
+        youtubeExactUrls: allowedDomains.filter((entry) => entry.startsWith("https://www.youtube.com/watch")),
+      },
+    });
   } catch (err) {
     next(err);
   }

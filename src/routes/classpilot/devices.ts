@@ -37,6 +37,8 @@ import {
   upsertSettings,
   getRecentMessagesForStudent,
   getStudentByEmail,
+  createEvidenceArtifact,
+  createStudentTimelineEvent,
 } from "../../services/storage.js";
 import { sendSafetyAlertEmail } from "../../services/email.js";
 import { createStudentToken } from "../../services/deviceJwt.js";
@@ -53,6 +55,7 @@ import {
   setFlightPathStatus,
 } from "../../realtime/ws-redis.js";
 import { classifyUrl, isAiAvailable } from "../../services/aiClassification.js";
+import { recordBrowserSafetyTimeline } from "./competitive.js";
 
 const router = Router();
 
@@ -117,6 +120,35 @@ const staffAuth = [
   requireActiveSchool,
   requireProductLicense("CLASSPILOT"),
 ] as const;
+
+async function recordRemoteActionTimeline(options: {
+  schoolId: string;
+  deviceIds: string[];
+  action: string;
+  actorUserId: string;
+  metadata?: Record<string, unknown>;
+}) {
+  await Promise.all(options.deviceIds.slice(0, 100).map(async (deviceId) => {
+    const active = await getActiveStudentForDevice(deviceId);
+    const studentId = active?.student.id;
+    if (!studentId) return;
+    await createStudentTimelineEvent({
+      schoolId: options.schoolId,
+      studentId,
+      eventType: "remote_action",
+      sourceType: "classpilot",
+      sourceId: deviceId,
+      title: `Remote action: ${options.action}`,
+      summary: null,
+      actorUserId: options.actorUserId,
+      metadata: {
+        deviceId,
+        action: options.action,
+        ...options.metadata,
+      },
+    });
+  }));
+}
 
 // ============================================================================
 // Per-device heartbeat rate limiting (item #9)
@@ -536,6 +568,7 @@ router.post("/device/heartbeat", requireDeviceAuth, async (req, res, next) => {
       allOpenTabs, favicon, isScreenRecording, isScreenSharing,
       cameraActive, status: trackingStatus, activeStudentId,
       flightPathActive, activeFlightPathName, screenshotHealth,
+      extensionVersion, chromeVersion,
     } = req.body;
     const schoolId = res.locals.schoolId as string;
     const studentId = res.locals.studentId as string;
@@ -593,7 +626,16 @@ router.post("/device/heartbeat", requireDeviceAuth, async (req, res, next) => {
       activeFlightPathName: activeFlightPathName || null,
       isSharing: isScreenSharing || isScreenRecording || false,
       cameraActive: cameraActive || false,
+      extensionVersion: extensionVersion || null,
+      chromeVersion: chromeVersion || null,
+      screenshotHealth: screenshotHealth || null,
     });
+
+    const deviceUpdate: Record<string, unknown> = { lastSeenAt: new Date() };
+    if (extensionVersion !== undefined) deviceUpdate.extensionVersion = extensionVersion || null;
+    if (chromeVersion !== undefined) deviceUpdate.chromeVersion = chromeVersion || null;
+    if (screenshotHealth !== undefined) deviceUpdate.lastScreenshotHealth = screenshotHealth || null;
+    void updateDevice(deviceId, deviceUpdate).catch(() => {});
 
     // --- Update in-memory real-time status ---
     updateDeviceStatus({
@@ -612,6 +654,8 @@ router.post("/device/heartbeat", requireDeviceAuth, async (req, res, next) => {
       lastSeenAt: Date.now(),
       allOpenTabs: allOpenTabs || undefined,
       screenshotHealth: screenshotHealth || undefined,
+      extensionVersion: extensionVersion || undefined,
+      chromeVersion: chromeVersion || undefined,
     });
 
     // --- Broadcast full student state to teachers (item #1) ---
@@ -640,7 +684,7 @@ router.post("/device/heartbeat", requireDeviceAuth, async (req, res, next) => {
 
     // --- AI content classification (item #8) — async, non-blocking ---
     if (isAiAvailable() && activeTabUrl && !activeTabUrl.startsWith("chrome")) {
-      classifyUrl(activeTabUrl, activeTabTitle).then((classification) => {
+      classifyUrl(activeTabUrl, activeTabTitle).then(async (classification) => {
         if (!classification) return;
 
         // Store classification in realtime status so students-aggregated includes it
@@ -680,6 +724,45 @@ router.post("/device/heartbeat", requireDeviceAuth, async (req, res, next) => {
             return; // Skip duplicate alert — tab close already sent above
           }
           safetyAlertCooldown.set(cooldownKey, Date.now());
+
+          const timelineRecord = await recordBrowserSafetyTimeline({
+            schoolId,
+            studentId,
+            deviceId,
+            heartbeatId: heartbeat.id,
+            url: activeTabUrl,
+            title: activeTabTitle,
+            classification,
+          }).catch((err) => {
+            console.warn("[Safety] Failed to record AI decision timeline:", err);
+            return null;
+          });
+
+          if (timelineRecord?.caseId) {
+            try {
+              const screenshotData = await getScreenshot(deviceId);
+              await createEvidenceArtifact({
+                schoolId,
+                studentId,
+                caseId: timelineRecord.caseId,
+                sourceType: "classpilot_screenshot",
+                sourceId: heartbeat.id,
+                artifactType: "screenshot",
+                status: screenshotData?.screenshot ? "available" : "unavailable",
+                label: screenshotData?.screenshot ? "Screenshot at safety alert" : "Screenshot unavailable at safety alert",
+                contentType: screenshotData?.screenshot ? "image/jpeg" : null,
+                content: screenshotData?.screenshot || null,
+                metadata: {
+                  deviceId,
+                  tabTitle: screenshotData?.tabTitle || activeTabTitle,
+                  tabUrl: screenshotData?.tabUrl || activeTabUrl,
+                  capturedFromRedis: !!screenshotData?.screenshot,
+                },
+              });
+            } catch (err) {
+              console.warn("[Safety] Failed to snapshot evidence artifact:", err);
+            }
+          }
 
           const alert = {
             type: "safety-alert",
@@ -1000,6 +1083,13 @@ function remoteCommand(type: string) {
           { kind: "students", schoolId, targetDeviceIds: resolvedDeviceIds },
           message
         );
+        await recordRemoteActionTimeline({
+          schoolId,
+          deviceIds: resolvedDeviceIds,
+          action: extensionType,
+          actorUserId: req.authUser!.id,
+          metadata: commandData,
+        });
         return res.json({ success: true, sent: resolvedDeviceIds.length });
       } else {
         // Broadcast to all connected students
@@ -1047,6 +1137,13 @@ router.post("/remote/apply-flight-path", ...staffAuth, async (req, res, next) =>
         });
       }
       await publishWS({ kind: "students", schoolId, targetDeviceIds: resolvedDeviceIds }, message);
+      await recordRemoteActionTimeline({
+        schoolId,
+        deviceIds: resolvedDeviceIds,
+        action: "apply-flight-path",
+        actorUserId: req.authUser!.id,
+        metadata: { flightPathId, flightPathName },
+      });
       return res.json({ success: true, sent: resolvedDeviceIds.length });
     } else {
       // Broadcast to all connected students
@@ -1074,6 +1171,12 @@ router.post("/remote/remove-flight-path", ...staffAuth, async (req, res, next) =
         await setFlightPathStatus(deviceId, { active: false, appliedAt: Date.now() });
       }
       await publishWS({ kind: "students", schoolId, targetDeviceIds: resolvedDeviceIds }, message);
+      await recordRemoteActionTimeline({
+        schoolId,
+        deviceIds: resolvedDeviceIds,
+        action: "remove-flight-path",
+        actorUserId: req.authUser!.id,
+      });
       return res.json({ success: true, sent: resolvedDeviceIds.length });
     } else {
       const sentCount = broadcastToStudentsLocal(schoolId, message);

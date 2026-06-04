@@ -40,6 +40,7 @@ import {
   getStudentsByHomeroomId,
   getParentStudents,
   getHomeroomTeachers,
+  createStudentTimelineEvent,
 } from "../../services/storage.js";
 import {
   canAccessStudent,
@@ -82,6 +83,37 @@ const managerAuth = [
 function emitToSchool(schoolId: string, room: string, event: string, data: unknown) {
   const io = getIO();
   if (io) io.to(`school:${schoolId}:${room}`).emit(event, data);
+}
+
+async function recordDismissalTimeline(options: {
+  schoolId: string;
+  entry?: any;
+  studentId?: string;
+  sourceId?: string;
+  action: string;
+  actorUserId?: string;
+  summary?: string | null;
+  metadata?: Record<string, unknown>;
+}) {
+  const studentId = options.studentId || options.entry?.studentId;
+  if (!studentId) return;
+  await createStudentTimelineEvent({
+    schoolId: options.schoolId,
+    studentId,
+    eventType: "dismissal",
+    sourceType: "gopilot",
+    sourceId: options.sourceId || options.entry?.id || null,
+    title: `Dismissal ${options.action}`,
+    summary: options.summary || options.entry?.guardianName || options.entry?.checkInMethod || null,
+    actorUserId: options.actorUserId || null,
+    metadata: {
+      status: options.entry?.status,
+      checkInMethod: options.entry?.checkInMethod,
+      sessionId: options.entry?.sessionId,
+      guardianName: options.entry?.guardianName,
+      ...options.metadata,
+    },
+  });
 }
 
 // ============================================================================
@@ -333,6 +365,7 @@ router.post("/sessions/:id/check-in", ...auth, async (req, res, next) => {
         position,
       });
       entries.push(entry);
+      await recordDismissalTimeline({ schoolId, entry, action: "checked in", actorUserId: userId });
 
       // Notify teacher homeroom
       if (student.homeroomId) {
@@ -434,6 +467,7 @@ router.post(
           position,
         });
         entries.push(entry);
+        await recordDismissalTimeline({ schoolId, entry, action: "checked in", actorUserId: req.authUser!.id, metadata: { carNumber } });
 
         if (s.homeroomId) {
           emitToSchool(schoolId, `teacher:${s.homeroomId}`, "student:checked-in", entry);
@@ -522,6 +556,7 @@ router.post(
           position,
         });
         entries.push(entry);
+        await recordDismissalTimeline({ schoolId, entry, action: "checked in", actorUserId: req.authUser!.id, metadata: { busNumber } });
 
         if (student.homeroomId) {
           emitToSchool(schoolId, `teacher:${student.homeroomId}`, "student:checked-in", entry);
@@ -652,6 +687,7 @@ router.post("/queue/:id/release", ...staffAuth, async (req, res, next) => {
     if (!entry) {
       return res.status(404).json({ error: "Queue entry not found or invalid status" });
     }
+    await recordDismissalTimeline({ schoolId, entry, action: "released", actorUserId: req.authUser!.id });
 
     emitToSchool(schoolId, "office", "queue:updated", {
       action: "released",
@@ -690,6 +726,7 @@ router.post("/queue/:id/dismiss", ...managerAuth, async (req, res, next) => {
     if (!entry) {
       return res.status(404).json({ error: "Queue entry not found or invalid status" });
     }
+    await recordDismissalTimeline({ schoolId, entry, action: "dismissed", actorUserId: req.authUser!.id });
 
     emitToSchool(schoolId, "office", "queue:updated", {
       action: "dismissed",
@@ -731,6 +768,9 @@ router.post("/queue/dismiss-batch", ...managerAuth, async (req, res, next) => {
     }
 
     const entries = await batchDismiss(ids);
+    await Promise.all(entries.map((entry) =>
+      recordDismissalTimeline({ schoolId, entry, action: "dismissed", actorUserId: req.authUser!.id })
+    ));
 
     emitToSchool(schoolId, "office", "queue:updated", {
       action: "batch_dismissed",
@@ -768,6 +808,9 @@ router.post("/queue/release-batch", ...staffAuth, async (req, res, next) => {
     }
 
     const entries = await batchRelease(ids);
+    await Promise.all(entries.map((entry) =>
+      recordDismissalTimeline({ schoolId, entry, action: "released", actorUserId: req.authUser!.id })
+    ));
 
     return res.json({ released: entries.length, entries });
   } catch (err) {
@@ -848,6 +891,7 @@ router.post(
           position,
         });
         entries.push(entry);
+        await recordDismissalTimeline({ schoolId, entry, action: "walker released", actorUserId: req.authUser!.id });
       }
 
       emitToSchool(schoolId, "office", "queue:updated", {
@@ -916,6 +960,7 @@ router.post(
           position,
         });
         entries.push(entry);
+        await recordDismissalTimeline({ schoolId, entry, action: "walker released", actorUserId: req.authUser!.id, metadata: { filterType, filterValues } });
       }
 
       emitToSchool(schoolId, "office", "queue:updated", {
@@ -1121,6 +1166,16 @@ router.post("/sessions/:id/override", ...auth, async (req, res, next) => {
       }
     }
 
+    await recordDismissalTimeline({
+      schoolId,
+      studentId,
+      sourceId: override.id,
+      action: "override",
+      actorUserId: userId,
+      summary: `${student.dismissalType ?? "car"} to ${overrideType}${reason ? `: ${reason}` : ""}`,
+      metadata: overrideEvent,
+    });
+
     return res.status(201).json({ override });
   } catch (err) {
     next(err);
@@ -1206,6 +1261,14 @@ router.delete("/sessions/:id/override/:studentId", ...auth, async (req, res, nex
       if (student.homeroomId) {
         emitToSchool(schoolId, `teacher:${student.homeroomId}`, "dismissal:override", revertEvent);
       }
+      await recordDismissalTimeline({
+        schoolId,
+        studentId,
+        action: "override reverted",
+        actorUserId: req.authUser!.id,
+        summary: "Dismissal override reverted",
+        metadata: revertEvent,
+      });
     }
 
     return res.json({ ok: true });

@@ -18,6 +18,7 @@ import groupRoutes from "./classpilot/groups.js";
 import flightPathRoutes from "./classpilot/flightPaths.js";
 import chatRoutes from "./classpilot/chat.js";
 import dashboardRoutes from "./classpilot/dashboard.js";
+import competitiveRoutes from "./classpilot/competitive.js";
 import superAdminRoutes from "./admin/superAdmin.js";
 import trialRequestRoutes from "./admin/trialRequests.js";
 import billingRoutes from "./admin/billing.js";
@@ -350,6 +351,7 @@ router.use("/classpilot/groups", groupRoutes);
 router.use("/classpilot/flight-paths", flightPathRoutes);
 router.use("/classpilot", chatRoutes);
 router.use("/classpilot/teacher", dashboardRoutes);
+router.use("/classpilot", competitiveRoutes);
 
 // Admin - Super admin panel
 router.use("/admin", superAdminRoutes);
