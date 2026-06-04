@@ -18,6 +18,8 @@ export interface DeviceRealtimeStatus {
   cameraActive: boolean;
   lastSeenAt: number;
   allOpenTabs?: Array<{ url: string; title: string; favicon?: string }>;
+  extensionVersion?: string;
+  chromeVersion?: string;
   aiClassification?: { category: string; safetyAlert: string | null };
   screenshotHealth?: {
     lastSuccessAt: number;

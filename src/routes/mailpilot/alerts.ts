@@ -12,6 +12,7 @@ import {
   getEmailAlertStats,
   getStudentById,
   getMailpilotWatchesBySchool,
+  createStudentTimelineEvent,
 } from "../../services/storage.js";
 import { logAudit } from "../../services/audit.js";
 
@@ -151,6 +152,17 @@ router.patch("/alerts/:id/review", ...auth, requireEmailMonitoringEnabled, async
       entityId: alert.id,
       schoolId,
       metadata: { studentEmail: alert.studentEmail, safetyAlert: alert.safetyAlert, reviewNote },
+    });
+    await createStudentTimelineEvent({
+      schoolId,
+      studentId: alert.studentId,
+      eventType: "mailpilot_review",
+      sourceType: "mailpilot",
+      sourceId: alert.id,
+      title: `Email alert ${reviewStatus}`,
+      summary: reviewNote || null,
+      actorUserId: req.authUser!.id,
+      metadata: { reviewStatus, reviewNote, safetyAlert: alert.safetyAlert },
     });
     return res.json({ alert: updated });
   } catch (err) {

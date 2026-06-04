@@ -18,7 +18,7 @@ import {
 } from "../../../components/ui/dialog";
 import { useToast } from "../../../hooks/use-toast";
 import { apiRequest, queryClient } from "../../../lib/queryClient";
-import { ArrowLeft, Download, Shield, Clock, AlertCircle, Layers, Plus, Pencil, Trash2, Star, Users } from "lucide-react";
+import { ArrowLeft, Download, Shield, Clock, AlertCircle, Layers, Plus, Pencil, Trash2, Star, Users, BookOpen, Eye } from "lucide-react";
 import { ThemeToggle } from "../../../components/ThemeToggle";
 
 // Helper function to normalize domain names
@@ -62,6 +62,10 @@ export default function Settings() {
   const [sceneDescription, setSceneDescription] = useState("");
   const [sceneAllowedDomains, setSceneAllowedDomains] = useState("");
   const [deleteSceneId, setDeleteSceneId] = useState(null);
+  const [showClassroomDialog, setShowClassroomDialog] = useState(false);
+  const [selectedCourseId, setSelectedCourseId] = useState("");
+  const [selectedResourceIds, setSelectedResourceIds] = useState(new Set());
+  const [classroomFlightPathName, setClassroomFlightPathName] = useState("");
 
 
   const { data: settings, isLoading } = useQuery({
@@ -73,6 +77,26 @@ export default function Settings() {
     queryKey: ['/api/flight-paths'],
     queryFn: () => apiRequest('GET', '/flight-paths'),
     select: (data) => Array.isArray(data) ? data : (data?.flightPaths ?? data?.scenes ?? []),
+  });
+
+  const { data: parentDigestSettings } = useQuery({
+    queryKey: ["/api/classpilot/parent-digests/settings"],
+    queryFn: () => apiRequest("GET", "/classpilot/parent-digests/settings"),
+    select: (data) => data?.settings ?? {},
+  });
+
+  const { data: classroomCourses = [], isLoading: classroomCoursesLoading } = useQuery({
+    queryKey: ["/api/classroom/courses"],
+    queryFn: () => apiRequest("GET", "/classroom/courses"),
+    select: (data) => data?.courses ?? [],
+    enabled: showClassroomDialog,
+  });
+
+  const { data: classroomResources = [], isLoading: classroomResourcesLoading } = useQuery({
+    queryKey: ["/api/classroom/resources", selectedCourseId],
+    queryFn: () => apiRequest("GET", `/classroom/courses/${selectedCourseId}/resources`),
+    select: (data) => data?.resources ?? [],
+    enabled: showClassroomDialog && !!selectedCourseId,
   });
 
   const form = useForm({
@@ -199,6 +223,41 @@ export default function Settings() {
     onError: (error) => {
       toast({ variant: "destructive", title: "Failed to delete flight path", description: error.message });
     },
+  });
+
+  const classroomFlightPathMutation = useMutation({
+    mutationFn: async () => {
+      const selectedResources = classroomResources.filter((resource) => selectedResourceIds.has(resource.id));
+      return apiRequest("POST", "/flight-paths/from-classroom", {
+        courseId: selectedCourseId,
+        selectedResourceIds: [...selectedResourceIds],
+        resources: selectedResources,
+        name: classroomFlightPathName || "Classroom Flight Path",
+        description: "Created from Google Classroom resources",
+      });
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/flight-paths"] });
+      toast({ title: "Flight path created", description: `${data.extracted?.allowedDomains?.length || 0} allowed entries extracted` });
+      setShowClassroomDialog(false);
+      setSelectedCourseId("");
+      setSelectedResourceIds(new Set());
+      setClassroomFlightPathName("");
+    },
+    onError: (error) => toast({ variant: "destructive", title: "Classroom import failed", description: error.message }),
+  });
+
+  const parentDigestMutation = useMutation({
+    mutationFn: (payload) => apiRequest("PATCH", "/classpilot/parent-digests/settings", {
+      parentTransparencyEnabled: !!payload.parentTransparencyEnabled,
+      parentDigestIncludesSafety: !!payload.parentDigestIncludesSafety,
+      parentDigestIncludesPassDismissal: payload.parentDigestIncludesPassDismissal !== false,
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/classpilot/parent-digests/settings"] });
+      toast({ title: "Parent digest settings saved" });
+    },
+    onError: (error) => toast({ variant: "destructive", title: "Digest settings failed", description: error.message }),
   });
 
   const resetSceneForm = () => {
@@ -405,6 +464,10 @@ export default function Settings() {
                 Send email notifications to school admins when dangerous content (self-harm, violence, sexual) is detected.
               </p>
 
+              <div className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground">
+                Attendance, hall pass, and dismissal context reduces classroom off-task noise in the dashboard. Critical student safety monitoring remains active and is still logged and routed to staff.
+              </div>
+
               <Button
                 type="submit"
                 data-testid="button-save-settings"
@@ -424,14 +487,25 @@ export default function Settings() {
                 <Layers className="h-5 w-5" />
                 Flight Path Management
               </div>
-              <Button
-                size="sm"
-                onClick={handleCreateScene}
-                data-testid="button-create-scene"
-              >
-                <Plus className="h-4 w-4 mr-2" />
-                Create Flight Path
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowClassroomDialog(true)}
+                  data-testid="button-import-classroom-flight-path"
+                >
+                  <BookOpen className="h-4 w-4 mr-2" />
+                  From Classroom
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={handleCreateScene}
+                  data-testid="button-create-scene"
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  Create Flight Path
+                </Button>
+              </div>
             </CardTitle>
             <CardDescription>
               Create browsing environments with allowed/blocked websites for different activities
@@ -509,6 +583,66 @@ export default function Settings() {
                 ))}
               </div>
             )}
+          </CardContent>
+        </Card>
+
+        {/* Parent Transparency */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Eye className="h-5 w-5" />
+              Parent Transparency Digest
+            </CardTitle>
+            <CardDescription>
+              Weekly opt-in summaries for approved GoPilot parent-child links
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <label className="flex items-start gap-3 rounded-md border p-3">
+              <input
+                type="checkbox"
+                className="mt-1 h-4 w-4"
+                checked={!!parentDigestSettings?.parentTransparencyEnabled}
+                onChange={(event) => parentDigestMutation.mutate({
+                  ...parentDigestSettings,
+                  parentTransparencyEnabled: event.target.checked,
+                })}
+              />
+              <span>
+                <span className="block text-sm font-medium">Enable weekly parent digests</span>
+                <span className="text-xs text-muted-foreground">Uses approved GoPilot parent links only.</span>
+              </span>
+            </label>
+            <label className="flex items-start gap-3 rounded-md border p-3">
+              <input
+                type="checkbox"
+                className="mt-1 h-4 w-4"
+                checked={parentDigestSettings?.parentDigestIncludesPassDismissal !== false}
+                onChange={(event) => parentDigestMutation.mutate({
+                  ...parentDigestSettings,
+                  parentDigestIncludesPassDismissal: event.target.checked,
+                })}
+              />
+              <span>
+                <span className="block text-sm font-medium">Include pass and dismissal summary</span>
+                <span className="text-xs text-muted-foreground">Shows counts and high-level school day context.</span>
+              </span>
+            </label>
+            <label className="flex items-start gap-3 rounded-md border p-3">
+              <input
+                type="checkbox"
+                className="mt-1 h-4 w-4"
+                checked={!!parentDigestSettings?.parentDigestIncludesSafety}
+                onChange={(event) => parentDigestMutation.mutate({
+                  ...parentDigestSettings,
+                  parentDigestIncludesSafety: event.target.checked,
+                })}
+              />
+              <span>
+                <span className="block text-sm font-medium">Include staff-approved safety notes</span>
+                <span className="text-xs text-muted-foreground">No screenshots, raw browsing timelines, or raw email content are included.</span>
+              </span>
+            </label>
           </CardContent>
         </Card>
 
@@ -602,6 +736,98 @@ export default function Settings() {
               data-testid="button-save-scene"
             >
               {createSceneMutation.isPending || updateSceneMutation.isPending ? "Saving..." : (editingScene ? "Update Flight Path" : "Create Flight Path")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Classroom Flight Path Dialog */}
+      <Dialog open={showClassroomDialog} onOpenChange={setShowClassroomDialog}>
+        <DialogContent className="max-w-3xl" data-testid="dialog-classroom-flight-path">
+          <DialogHeader>
+            <DialogTitle>Create Flight Path From Classroom</DialogTitle>
+            <DialogDescription>
+              Select Classroom resources and create a Flight Path from their linked websites.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 md:grid-cols-[240px_1fr]">
+            <div className="space-y-2">
+              <Label>Course</Label>
+              <div className="max-h-80 overflow-auto rounded-md border">
+                {classroomCoursesLoading ? (
+                  <p className="p-3 text-sm text-muted-foreground">Loading courses...</p>
+                ) : classroomCourses.length === 0 ? (
+                  <p className="p-3 text-sm text-muted-foreground">No Classroom courses found.</p>
+                ) : classroomCourses.map((course) => (
+                  <button
+                    key={course.id}
+                    type="button"
+                    className={`block w-full border-b px-3 py-2 text-left text-sm hover:bg-muted ${selectedCourseId === course.id ? "bg-muted font-medium" : ""}`}
+                    onClick={() => {
+                      setSelectedCourseId(course.id);
+                      setSelectedResourceIds(new Set());
+                      setClassroomFlightPathName(course.name ? `${course.name} Flight Path` : "Classroom Flight Path");
+                    }}
+                  >
+                    {course.name || course.courseName || course.id}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-3">
+              <div className="space-y-2">
+                <Label htmlFor="classroom-flight-path-name">Flight Path Name</Label>
+                <Input
+                  id="classroom-flight-path-name"
+                  value={classroomFlightPathName}
+                  onChange={(event) => setClassroomFlightPathName(event.target.value)}
+                  placeholder="Classroom Flight Path"
+                />
+              </div>
+              <div className="max-h-80 overflow-auto rounded-md border">
+                {!selectedCourseId ? (
+                  <p className="p-3 text-sm text-muted-foreground">Select a course to load assignments and materials.</p>
+                ) : classroomResourcesLoading ? (
+                  <p className="p-3 text-sm text-muted-foreground">Loading resources...</p>
+                ) : classroomResources.length === 0 ? (
+                  <p className="p-3 text-sm text-muted-foreground">No linked coursework or materials found.</p>
+                ) : classroomResources.map((resource) => {
+                  const checked = selectedResourceIds.has(resource.id);
+                  return (
+                    <label key={`${resource.resourceType}-${resource.id}`} className="flex cursor-pointer items-start gap-3 border-b p-3 text-sm hover:bg-muted/50">
+                      <input
+                        type="checkbox"
+                        className="mt-1 h-4 w-4"
+                        checked={checked}
+                        onChange={(event) => {
+                          setSelectedResourceIds((prev) => {
+                            const next = new Set(prev);
+                            if (event.target.checked) next.add(resource.id);
+                            else next.delete(resource.id);
+                            return next;
+                          });
+                        }}
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="block font-medium">{resource.title}</span>
+                        <span className="text-xs text-muted-foreground">{resource.resourceType} · {resource.links?.length || 0} link(s)</span>
+                        <span className="mt-1 block truncate text-xs text-muted-foreground">
+                          {(resource.links || []).map((link) => link.url).join(", ")}
+                        </span>
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowClassroomDialog(false)}>Cancel</Button>
+            <Button
+              onClick={() => classroomFlightPathMutation.mutate()}
+              disabled={!selectedCourseId || selectedResourceIds.size === 0 || classroomFlightPathMutation.isPending}
+            >
+              {classroomFlightPathMutation.isPending ? "Creating..." : "Create Flight Path"}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -411,6 +411,16 @@ Claude Haiku classifies student browsing activity on each heartbeat. Uses `ANTHR
 - **Persistence**: `ai_category` and `safety_alert` columns on `heartbeats` table (auto-migrated in `index.ts`)
 - **Off-task overrides**: Teacher intent is respected — domains from Open Tab, Flight Path allowed domains, or manual dismiss are not flagged
 
+### ClassPilot Competitive Safety Spine
+ClassPilot now has a shared cross-product safety/context layer for IT review readiness and incident workflows:
+- **Schemas**: `student_safety_cases`, `student_timeline_events`, `classpilot_ai_decisions`, and `evidence_artifacts` live in `src/schema/shared.ts` and MUST stay mirrored in startup auto-migrations in `src/index.ts`.
+- **Readiness/Safety routes**: `src/routes/classpilot/competitive.ts` mounts admin/readiness, AI decision review, unified timeline, evidence packet, and parent digest endpoints under `/api/classpilot/*`.
+- **Timeline producers**: Browser safety alerts, MailPilot alerts/reviews, attendance marks, PassPilot pass lifecycle, GoPilot dismissal/check-in/override events, and targeted ClassPilot remote actions write `student_timeline_events`.
+- **Evidence packets**: `POST /classpilot/evidence-packets` creates a packet manifest; `GET /classpilot/evidence-packets/:id/download` returns a ZIP with JSON, CSV, HTML, and available artifacts. Safety alerts snapshot the current Redis screenshot when available and record an unavailable artifact otherwise.
+- **Context-aware monitoring**: `/students-aggregated` includes `attendanceStatus`, `activePass`, `dismissalStatus`, `monitoringContext`, and `suppressionReason`. Classroom off-task noise is suppressed for absent/on-pass/dismissal states, but critical safety alerts still display and log.
+- **Parent transparency**: Opt-in only. Settings fields are on `settings` (`parent_transparency_enabled`, cadence/includes fields). Scheduler sends weekly digests using approved GoPilot `parent_student` links only, with no screenshots, raw browsing timeline, or raw email content.
+- **Classroom Flight Paths**: Google OAuth includes read-only coursework/material scopes. `/google/classroom/courses/:courseId/resources` extracts Classroom links, and `/classpilot/flight-paths/from-classroom` creates source-tagged Flight Paths with exact YouTube video URLs preserved.
+
 ### Student Detail Drawer (ClassPilot)
 The student sidebar (Screens, Timeline, History) is scoped to the active teaching session:
 - Heartbeat queries filter by `activeSession.startTime` to `activeSession.endTime`

@@ -9,6 +9,8 @@ import {
   upsertEmailScanLog,
   getSchoolAdminAndLeadershipEmails,
   getStudentById,
+  getOrCreateSafetyCaseForStudent,
+  createStudentTimelineEvent,
 } from "../../services/storage.js";
 import {
   fetchMessage,
@@ -250,6 +252,33 @@ async function processSingleMessage(
   });
 
   if (!alert) return "skipped"; // duplicate
+
+  const safetyCase = await getOrCreateSafetyCaseForStudent({
+    schoolId,
+    studentId,
+    title: `MailPilot safety alert: ${safetyType || "bullying"}`,
+    severity: classification.severity,
+    summary: message.subject || message.snippet || null,
+    metadata: { source: "mailpilot", safetyAlert: safetyType, bullying: classification.bullying },
+  });
+  await createStudentTimelineEvent({
+    schoolId,
+    studentId,
+    caseId: safetyCase.id,
+    eventType: "mailpilot_alert",
+    sourceType: "mailpilot",
+    sourceId: alert.id,
+    title: `Email safety alert: ${safetyType || "bullying"}`,
+    summary: message.subject || null,
+    severity: classification.severity,
+    metadata: {
+      direction,
+      safetyAlert: safetyType,
+      bullying: classification.bullying,
+      confidence: classification.confidence,
+      reasoning: classification.reasoning,
+    },
+  });
 
   // Notify school admins for medium+ severity
   if (["medium", "high", "critical"].includes(classification.severity)) {

@@ -152,6 +152,10 @@ import {
   classroomCourseStudents,
   auditLogs,
   trialRequests,
+  studentSafetyCases,
+  studentTimelineEvents,
+  classpilotAiDecisions,
+  evidenceArtifacts,
   type Settings,
   type InsertSettings,
   type GoogleOAuthToken,
@@ -164,6 +168,14 @@ import {
   type InsertAuditLog,
   type TrialRequest,
   type InsertTrialRequest,
+  type StudentSafetyCase,
+  type InsertStudentSafetyCase,
+  type StudentTimelineEvent,
+  type InsertStudentTimelineEvent,
+  type ClasspilotAiDecision,
+  type InsertClasspilotAiDecision,
+  type EvidenceArtifact,
+  type InsertEvidenceArtifact,
 } from "../schema/shared.js";
 import {
   mailpilotWatches,
@@ -2207,6 +2219,22 @@ export async function getParentStudentLinks(
   return rows.map((r) => ({ ...r.link, student: r.student }));
 }
 
+export async function getApprovedParentLinksForStudent(
+  studentId: string
+): Promise<(ParentStudent & { parent: User })[]> {
+  const rows = await db
+    .select({ link: parentStudent, parent: users })
+    .from(parentStudent)
+    .innerJoin(users, eq(parentStudent.parentId, users.id))
+    .where(
+      and(
+        eq(parentStudent.studentId, studentId),
+        eq(parentStudent.status, "approved")
+      )
+    );
+  return rows.map((r) => ({ ...r.link, parent: r.parent }));
+}
+
 export async function getMembershipByCarNumber(
   schoolId: string,
   carNumber: string
@@ -3923,7 +3951,7 @@ export async function markStudentsAbsentBulk(
   }
 ) {
   return await db.transaction(async (tx) => {
-    const results = [];
+    const results: StudentAttendance[] = [];
     for (const studentId of studentIds) {
       const [row] = await tx
         .insert(studentAttendance)
@@ -3949,7 +3977,7 @@ export async function markStudentsAbsentBulk(
           },
         })
         .returning();
-      results.push(row);
+      results.push(row!);
     }
     return results;
   });
@@ -4387,4 +4415,202 @@ export async function getSchoolAdminAndLeadershipEmails(
     );
   // Deduplicate in case the same user holds multiple role rows
   return Array.from(new Set(rows.map((r) => r.email)));
+}
+
+// ============================================================================
+// ClassPilot competitive safety spine
+// ============================================================================
+
+export async function createStudentSafetyCase(
+  data: InsertStudentSafetyCase
+): Promise<StudentSafetyCase> {
+  const [row] = await db.insert(studentSafetyCases).values(data).returning();
+  return row!;
+}
+
+export async function getOpenSafetyCaseForStudent(
+  schoolId: string,
+  studentId: string
+): Promise<StudentSafetyCase | undefined> {
+  const [row] = await db
+    .select()
+    .from(studentSafetyCases)
+    .where(
+      and(
+        eq(studentSafetyCases.schoolId, schoolId),
+        eq(studentSafetyCases.studentId, studentId),
+        eq(studentSafetyCases.status, "open")
+      )
+    )
+    .orderBy(desc(studentSafetyCases.openedAt))
+    .limit(1);
+  return row;
+}
+
+export async function getOrCreateSafetyCaseForStudent(options: {
+  schoolId: string;
+  studentId: string;
+  title: string;
+  severity?: string;
+  summary?: string | null;
+  openedBy?: string | null;
+  metadata?: unknown;
+}): Promise<StudentSafetyCase> {
+  const existing = await getOpenSafetyCaseForStudent(options.schoolId, options.studentId);
+  if (existing) return existing;
+  return createStudentSafetyCase({
+    schoolId: options.schoolId,
+    studentId: options.studentId,
+    title: options.title,
+    severity: options.severity || "medium",
+    summary: options.summary || null,
+    openedBy: options.openedBy || null,
+    metadata: options.metadata as any,
+  });
+}
+
+export async function listOpenSafetyCasesForSchool(
+  schoolId: string,
+  limit = 100
+): Promise<StudentSafetyCase[]> {
+  return db
+    .select()
+    .from(studentSafetyCases)
+    .where(and(eq(studentSafetyCases.schoolId, schoolId), eq(studentSafetyCases.status, "open")))
+    .orderBy(desc(studentSafetyCases.openedAt))
+    .limit(limit);
+}
+
+export async function createStudentTimelineEvent(
+  data: InsertStudentTimelineEvent
+): Promise<StudentTimelineEvent> {
+  const [row] = await db.insert(studentTimelineEvents).values(data).returning();
+  return row!;
+}
+
+export async function listStudentTimelineEvents(options: {
+  schoolId: string;
+  studentId: string;
+  caseId?: string;
+  from?: Date;
+  to?: Date;
+  types?: string[];
+  limit?: number;
+}): Promise<StudentTimelineEvent[]> {
+  const conditions: SQL[] = [
+    eq(studentTimelineEvents.schoolId, options.schoolId),
+    eq(studentTimelineEvents.studentId, options.studentId),
+  ];
+  if (options.caseId) conditions.push(eq(studentTimelineEvents.caseId, options.caseId));
+  if (options.from) conditions.push(sql`${studentTimelineEvents.occurredAt} >= ${options.from}`);
+  if (options.to) conditions.push(sql`${studentTimelineEvents.occurredAt} <= ${options.to}`);
+  if (options.types?.length) conditions.push(inArray(studentTimelineEvents.eventType, options.types));
+
+  return db
+    .select()
+    .from(studentTimelineEvents)
+    .where(and(...conditions))
+    .orderBy(desc(studentTimelineEvents.occurredAt))
+    .limit(Math.min(options.limit || 200, 500));
+}
+
+export async function createClasspilotAiDecision(
+  data: InsertClasspilotAiDecision
+): Promise<ClasspilotAiDecision> {
+  const [row] = await db.insert(classpilotAiDecisions).values(data).returning();
+  return row!;
+}
+
+export async function listClasspilotAiDecisions(options: {
+  schoolId: string;
+  studentId?: string;
+  from?: Date;
+  to?: Date;
+  limit?: number;
+}): Promise<ClasspilotAiDecision[]> {
+  const conditions: SQL[] = [eq(classpilotAiDecisions.schoolId, options.schoolId)];
+  if (options.studentId) conditions.push(eq(classpilotAiDecisions.studentId, options.studentId));
+  if (options.from) conditions.push(sql`${classpilotAiDecisions.createdAt} >= ${options.from}`);
+  if (options.to) conditions.push(sql`${classpilotAiDecisions.createdAt} <= ${options.to}`);
+
+  return db
+    .select()
+    .from(classpilotAiDecisions)
+    .where(and(...conditions))
+    .orderBy(desc(classpilotAiDecisions.createdAt))
+    .limit(Math.min(options.limit || 100, 500));
+}
+
+export async function getClasspilotAiDecisionById(
+  id: string
+): Promise<ClasspilotAiDecision | undefined> {
+  const [row] = await db
+    .select()
+    .from(classpilotAiDecisions)
+    .where(eq(classpilotAiDecisions.id, id))
+    .limit(1);
+  return row;
+}
+
+export async function updateClasspilotAiDecisionReview(
+  id: string,
+  data: {
+    reviewStatus: string;
+    reviewNote?: string | null;
+    reviewedBy: string;
+  }
+): Promise<ClasspilotAiDecision | undefined> {
+  const [row] = await db
+    .update(classpilotAiDecisions)
+    .set({
+      reviewStatus: data.reviewStatus,
+      reviewNote: data.reviewNote || null,
+      reviewedBy: data.reviewedBy,
+      reviewedAt: new Date(),
+    })
+    .where(eq(classpilotAiDecisions.id, id))
+    .returning();
+  return row;
+}
+
+export async function createEvidenceArtifact(
+  data: InsertEvidenceArtifact
+): Promise<EvidenceArtifact> {
+  const [row] = await db.insert(evidenceArtifacts).values(data).returning();
+  return row!;
+}
+
+export async function getEvidenceArtifactById(
+  id: string
+): Promise<EvidenceArtifact | undefined> {
+  const [row] = await db
+    .select()
+    .from(evidenceArtifacts)
+    .where(eq(evidenceArtifacts.id, id))
+    .limit(1);
+  return row;
+}
+
+export async function listEvidenceArtifactsForStudent(options: {
+  schoolId: string;
+  studentId: string;
+  caseId?: string;
+  from?: Date;
+  to?: Date;
+  limit?: number;
+}): Promise<EvidenceArtifact[]> {
+  const conditions: SQL[] = [
+    eq(evidenceArtifacts.schoolId, options.schoolId),
+    eq(evidenceArtifacts.studentId, options.studentId),
+  ];
+  if (options.caseId) conditions.push(eq(evidenceArtifacts.caseId, options.caseId));
+  if (options.from) conditions.push(sql`${evidenceArtifacts.capturedAt} >= ${options.from}`);
+  if (options.to) conditions.push(sql`${evidenceArtifacts.capturedAt} <= ${options.to}`);
+
+  return db
+    .select()
+    .from(evidenceArtifacts)
+    .where(and(...conditions))
+    .orderBy(desc(evidenceArtifacts.capturedAt))
+    .limit(Math.min(options.limit || 100, 500));
 }

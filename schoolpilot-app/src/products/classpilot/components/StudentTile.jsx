@@ -167,6 +167,8 @@ function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false,
   };
 
   const isBlocked = isBlockedDomain(student.activeTabUrl, blockedDomains);
+  const classroomNoiseSuppressed = Boolean(student.classroomNoiseSuppressed || isAbsent || student.suppressionReason);
+  const effectiveIsOffTask = isOffTask && !classroomNoiseSuppressed;
 
   // Unblock mutation for flight path
   const unblockForClassMutation = useMutation({
@@ -428,13 +430,18 @@ function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false,
         </div>
 
         {/* Alert Badges */}
-        {(isOffTask || isBlocked || isBlockedByFlightPath || student.flightPathActive || student.aiClassification?.safetyAlert) && (
+        {(effectiveIsOffTask || isBlocked || isBlockedByFlightPath || student.flightPathActive || student.aiClassification?.safetyAlert || classroomNoiseSuppressed) && (
           <div className="flex flex-col gap-2">
             <div className="flex flex-wrap gap-1.5">
               {student.aiClassification?.safetyAlert && (
                 <Badge variant="outline" className="text-xs px-2 py-0.5 bg-red-100 text-red-900 border-red-400 animate-pulse dark:bg-red-950 dark:text-red-400 dark:border-red-800" data-testid={`badge-safety-${student.primaryDeviceId}`}>
                   <AlertTriangle className="h-3 w-3 mr-1" />
                   Safety Alert: {student.aiClassification.safetyAlert}
+                </Badge>
+              )}
+              {classroomNoiseSuppressed && (
+                <Badge variant="outline" className="text-xs px-2 py-0.5 bg-slate-50 text-slate-700 border-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:border-slate-700" data-testid={`badge-context-${student.primaryDeviceId}`}>
+                  {student.suppressionReason || "Classroom noise suppressed"}
                 </Badge>
               )}
               {student.flightPathActive && student.activeFlightPathName && !isBlockedByFlightPath && (
@@ -449,7 +456,7 @@ function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false,
                   Blocked by {student.activeFlightPathName}
                 </Badge>
               )}
-              {isOffTask && !isBlockedByFlightPath && (
+              {effectiveIsOffTask && !isBlockedByFlightPath && (
                 <Badge variant="outline" className="text-xs px-2 py-0.5 bg-red-50 text-red-700 border-red-200 dark:bg-red-950 dark:text-red-400 dark:border-red-800" data-testid={`badge-offtask-${student.primaryDeviceId}`}>
                   <AlertTriangle className="h-3 w-3 mr-1" />
                   Off-Task
@@ -470,7 +477,7 @@ function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false,
                   )}
                 </Badge>
               )}
-              {isBlocked && !isOffTask && !isBlockedByFlightPath && (
+              {isBlocked && !effectiveIsOffTask && !isBlockedByFlightPath && (
                 <Badge variant="outline" className="text-xs px-2 py-0.5 bg-red-50 text-red-700 border-red-200 dark:bg-red-950 dark:text-red-400 dark:border-red-800" data-testid={`badge-blocked-${student.primaryDeviceId}`}>
                   <AlertTriangle className="h-3 w-3 mr-1" />
                   Blocked Domain

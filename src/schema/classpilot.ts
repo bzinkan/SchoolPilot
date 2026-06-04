@@ -20,6 +20,10 @@ export const devices = pgTable("devices", {
   deviceName: text("device_name"),
   schoolId: text("school_id").notNull(),
   classId: text("class_id").notNull(),
+  extensionVersion: text("extension_version"),
+  chromeVersion: text("chrome_version"),
+  lastScreenshotHealth: jsonb("last_screenshot_health"),
+  lastSeenAt: timestamp("last_seen_at"),
   registeredAt: timestamp("registered_at").notNull().default(sql`now()`),
 });
 
@@ -103,6 +107,9 @@ export const heartbeats = pgTable(
     cameraActive: boolean("camera_active").default(false),
     aiCategory: text("ai_category"),
     safetyAlert: text("safety_alert"),
+    extensionVersion: text("extension_version"),
+    chromeVersion: text("chrome_version"),
+    screenshotHealth: jsonb("screenshot_health"),
     timestamp: timestamp("timestamp").notNull().default(sql`now()`),
   },
   (table) => [
@@ -406,6 +413,12 @@ export const flightPaths = pgTable(
       .array()
       .default(sql`'{}'::text[]`),
     isDefault: boolean("is_default").default(false),
+    sourceType: text("source_type"),
+    sourceCourseId: text("source_course_id"),
+    sourceResourceIds: text("source_resource_ids")
+      .array()
+      .default(sql`'{}'::text[]`),
+    sourceUpdatedAt: timestamp("source_updated_at"),
     createdAt: timestamp("created_at").notNull().default(sql`now()`),
   },
   (table) => [

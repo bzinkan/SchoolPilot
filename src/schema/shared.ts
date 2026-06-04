@@ -53,6 +53,14 @@ export const settings = pgTable("settings", {
   studentMessagingEnabled: boolean("student_messaging_enabled").default(true),
   aiSafetyEmailsEnabled: boolean("ai_safety_emails_enabled").default(true),
   autoBlockUnsafeUrls: boolean("auto_block_unsafe_urls").default(true),
+  parentTransparencyEnabled: boolean("parent_transparency_enabled").default(false),
+  parentDigestCadence: text("parent_digest_cadence")
+    .notNull()
+    .default("weekly")
+    .$type<"weekly">(),
+  parentDigestIncludesSafety: boolean("parent_digest_includes_safety").default(false),
+  parentDigestIncludesPassDismissal: boolean("parent_digest_includes_pass_dismissal").default(true),
+  parentDigestLastSentAt: timestamp("parent_digest_last_sent_at"),
 });
 
 export type Settings = typeof settings.$inferSelect;
@@ -291,6 +299,125 @@ export const importRuns = pgTable(
 
 export type ImportRun = typeof importRuns.$inferSelect;
 export type InsertImportRun = typeof importRuns.$inferInsert;
+
+// ============================================================================
+// ClassPilot Competitive Safety Spine
+// ============================================================================
+export const studentSafetyCases = pgTable(
+  "student_safety_cases",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
+    studentId: text("student_id").notNull(),
+    title: text("title").notNull(),
+    severity: text("severity").notNull().default("medium"),
+    status: text("status").notNull().default("open"),
+    openedBy: text("opened_by"),
+    closedBy: text("closed_by"),
+    openedAt: timestamp("opened_at").notNull().default(sql`now()`),
+    closedAt: timestamp("closed_at"),
+    summary: text("summary"),
+    metadata: jsonb("metadata"),
+  },
+  (table) => [
+    index("student_safety_cases_school_status_idx").on(table.schoolId, table.status),
+    index("student_safety_cases_student_idx").on(table.studentId),
+    index("student_safety_cases_opened_idx").on(table.openedAt),
+  ]
+);
+
+export const studentTimelineEvents = pgTable(
+  "student_timeline_events",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
+    studentId: text("student_id").notNull(),
+    caseId: text("case_id"),
+    eventType: text("event_type").notNull(),
+    sourceType: text("source_type").notNull(),
+    sourceId: text("source_id"),
+    title: text("title").notNull(),
+    summary: text("summary"),
+    severity: text("severity"),
+    actorUserId: text("actor_user_id"),
+    metadata: jsonb("metadata"),
+    occurredAt: timestamp("occurred_at").notNull().default(sql`now()`),
+    createdAt: timestamp("created_at").notNull().default(sql`now()`),
+  },
+  (table) => [
+    index("student_timeline_events_school_occurred_idx").on(table.schoolId, table.occurredAt),
+    index("student_timeline_events_student_occurred_idx").on(table.studentId, table.occurredAt),
+    index("student_timeline_events_case_idx").on(table.caseId),
+    index("student_timeline_events_type_idx").on(table.eventType),
+  ]
+);
+
+export const classpilotAiDecisions = pgTable(
+  "classpilot_ai_decisions",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
+    studentId: text("student_id"),
+    deviceId: text("device_id"),
+    heartbeatId: text("heartbeat_id"),
+    url: text("url"),
+    title: text("title"),
+    domain: text("domain"),
+    category: text("category"),
+    safetyAlert: text("safety_alert"),
+    confidence: integer("confidence"),
+    reasoning: text("reasoning"),
+    matchedRule: text("matched_rule"),
+    actionTaken: text("action_taken"),
+    teacherIntentSource: text("teacher_intent_source"),
+    reviewStatus: text("review_status"),
+    reviewNote: text("review_note"),
+    reviewedBy: text("reviewed_by"),
+    reviewedAt: timestamp("reviewed_at"),
+    metadata: jsonb("metadata"),
+    createdAt: timestamp("created_at").notNull().default(sql`now()`),
+  },
+  (table) => [
+    index("classpilot_ai_decisions_school_created_idx").on(table.schoolId, table.createdAt),
+    index("classpilot_ai_decisions_student_created_idx").on(table.studentId, table.createdAt),
+    index("classpilot_ai_decisions_heartbeat_idx").on(table.heartbeatId),
+    index("classpilot_ai_decisions_review_idx").on(table.reviewStatus),
+  ]
+);
+
+export const evidenceArtifacts = pgTable(
+  "evidence_artifacts",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
+    studentId: text("student_id").notNull(),
+    caseId: text("case_id"),
+    sourceType: text("source_type").notNull(),
+    sourceId: text("source_id"),
+    artifactType: text("artifact_type").notNull(),
+    status: text("status").notNull().default("available"),
+    label: text("label"),
+    contentType: text("content_type"),
+    content: text("content"),
+    metadata: jsonb("metadata"),
+    capturedAt: timestamp("captured_at").notNull().default(sql`now()`),
+    createdBy: text("created_by"),
+  },
+  (table) => [
+    index("evidence_artifacts_school_student_idx").on(table.schoolId, table.studentId),
+    index("evidence_artifacts_case_idx").on(table.caseId),
+    index("evidence_artifacts_source_idx").on(table.sourceType, table.sourceId),
+  ]
+);
+
+export type StudentSafetyCase = typeof studentSafetyCases.$inferSelect;
+export type InsertStudentSafetyCase = typeof studentSafetyCases.$inferInsert;
+export type StudentTimelineEvent = typeof studentTimelineEvents.$inferSelect;
+export type InsertStudentTimelineEvent = typeof studentTimelineEvents.$inferInsert;
+export type ClasspilotAiDecision = typeof classpilotAiDecisions.$inferSelect;
+export type InsertClasspilotAiDecision = typeof classpilotAiDecisions.$inferInsert;
+export type EvidenceArtifact = typeof evidenceArtifacts.$inferSelect;
+export type InsertEvidenceArtifact = typeof evidenceArtifacts.$inferInsert;
 
 // ============================================================================
 // Trial Requests - Unified (superset of all three projects)

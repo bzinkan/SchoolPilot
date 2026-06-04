@@ -275,6 +275,11 @@ async function runStartupMigrations(): Promise<void> {
   // Add auto_block_unsafe_urls column to settings table
   try {
     await pool.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS auto_block_unsafe_urls BOOLEAN DEFAULT true`);
+    await pool.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS parent_transparency_enabled BOOLEAN DEFAULT false`);
+    await pool.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS parent_digest_cadence TEXT NOT NULL DEFAULT 'weekly'`);
+    await pool.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS parent_digest_includes_safety BOOLEAN DEFAULT false`);
+    await pool.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS parent_digest_includes_pass_dismissal BOOLEAN DEFAULT true`);
+    await pool.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS parent_digest_last_sent_at TIMESTAMP`);
     console.log("[migration] auto_block_unsafe_urls column ready");
   } catch (err) {
     console.warn("[migration] auto_block_unsafe_urls migration skipped:", (err as Error).message);
@@ -306,9 +311,121 @@ async function runStartupMigrations(): Promise<void> {
   try {
     await pool.query(`ALTER TABLE heartbeats ADD COLUMN IF NOT EXISTS ai_category TEXT`);
     await pool.query(`ALTER TABLE heartbeats ADD COLUMN IF NOT EXISTS safety_alert TEXT`);
-    console.log("[migration] heartbeats AI classification columns ready");
+    await pool.query(`ALTER TABLE heartbeats ADD COLUMN IF NOT EXISTS extension_version TEXT`);
+    await pool.query(`ALTER TABLE heartbeats ADD COLUMN IF NOT EXISTS chrome_version TEXT`);
+    await pool.query(`ALTER TABLE heartbeats ADD COLUMN IF NOT EXISTS screenshot_health JSONB`);
+    await pool.query(`ALTER TABLE devices ADD COLUMN IF NOT EXISTS extension_version TEXT`);
+    await pool.query(`ALTER TABLE devices ADD COLUMN IF NOT EXISTS chrome_version TEXT`);
+    await pool.query(`ALTER TABLE devices ADD COLUMN IF NOT EXISTS last_screenshot_health JSONB`);
+    await pool.query(`ALTER TABLE devices ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMP`);
+    await pool.query(`ALTER TABLE flight_paths ADD COLUMN IF NOT EXISTS source_type TEXT`);
+    await pool.query(`ALTER TABLE flight_paths ADD COLUMN IF NOT EXISTS source_course_id TEXT`);
+    await pool.query(`ALTER TABLE flight_paths ADD COLUMN IF NOT EXISTS source_resource_ids TEXT[] DEFAULT '{}'::text[]`);
+    await pool.query(`ALTER TABLE flight_paths ADD COLUMN IF NOT EXISTS source_updated_at TIMESTAMP`);
+    console.log("[migration] ClassPilot competitive metadata columns ready");
   } catch (err) {
     console.warn("[migration] heartbeats AI classification migration skipped:", (err as Error).message);
+  }
+
+  // ClassPilot competitive safety spine tables
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS student_safety_cases (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        school_id TEXT NOT NULL,
+        student_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        severity TEXT NOT NULL DEFAULT 'medium',
+        status TEXT NOT NULL DEFAULT 'open',
+        opened_by TEXT,
+        closed_by TEXT,
+        opened_at TIMESTAMP NOT NULL DEFAULT now(),
+        closed_at TIMESTAMP,
+        summary TEXT,
+        metadata JSONB
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS student_safety_cases_school_status_idx ON student_safety_cases (school_id, status)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS student_safety_cases_student_idx ON student_safety_cases (student_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS student_safety_cases_opened_idx ON student_safety_cases (opened_at DESC)`);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS student_timeline_events (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        school_id TEXT NOT NULL,
+        student_id TEXT NOT NULL,
+        case_id TEXT,
+        event_type TEXT NOT NULL,
+        source_type TEXT NOT NULL,
+        source_id TEXT,
+        title TEXT NOT NULL,
+        summary TEXT,
+        severity TEXT,
+        actor_user_id TEXT,
+        metadata JSONB,
+        occurred_at TIMESTAMP NOT NULL DEFAULT now(),
+        created_at TIMESTAMP NOT NULL DEFAULT now()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS student_timeline_events_school_occurred_idx ON student_timeline_events (school_id, occurred_at DESC)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS student_timeline_events_student_occurred_idx ON student_timeline_events (student_id, occurred_at DESC)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS student_timeline_events_case_idx ON student_timeline_events (case_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS student_timeline_events_type_idx ON student_timeline_events (event_type)`);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS classpilot_ai_decisions (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        school_id TEXT NOT NULL,
+        student_id TEXT,
+        device_id TEXT,
+        heartbeat_id TEXT,
+        url TEXT,
+        title TEXT,
+        domain TEXT,
+        category TEXT,
+        safety_alert TEXT,
+        confidence INTEGER,
+        reasoning TEXT,
+        matched_rule TEXT,
+        action_taken TEXT,
+        teacher_intent_source TEXT,
+        review_status TEXT,
+        review_note TEXT,
+        reviewed_by TEXT,
+        reviewed_at TIMESTAMP,
+        metadata JSONB,
+        created_at TIMESTAMP NOT NULL DEFAULT now()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_ai_decisions_school_created_idx ON classpilot_ai_decisions (school_id, created_at DESC)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_ai_decisions_student_created_idx ON classpilot_ai_decisions (student_id, created_at DESC)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_ai_decisions_heartbeat_idx ON classpilot_ai_decisions (heartbeat_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_ai_decisions_review_idx ON classpilot_ai_decisions (review_status)`);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS evidence_artifacts (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        school_id TEXT NOT NULL,
+        student_id TEXT NOT NULL,
+        case_id TEXT,
+        source_type TEXT NOT NULL,
+        source_id TEXT,
+        artifact_type TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'available',
+        label TEXT,
+        content_type TEXT,
+        content TEXT,
+        metadata JSONB,
+        captured_at TIMESTAMP NOT NULL DEFAULT now(),
+        created_by TEXT
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS evidence_artifacts_school_student_idx ON evidence_artifacts (school_id, student_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS evidence_artifacts_case_idx ON evidence_artifacts (case_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS evidence_artifacts_source_idx ON evidence_artifacts (source_type, source_id)`);
+    console.log("[migration] ClassPilot competitive safety spine tables ready");
+  } catch (err) {
+    console.warn("[migration] ClassPilot competitive safety spine migration skipped:", (err as Error).message);
   }
 
   // Allow audit_logs.school_id and user_id to be NULL for system-level events

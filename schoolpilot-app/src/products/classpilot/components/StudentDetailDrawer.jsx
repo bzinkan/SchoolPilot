@@ -98,6 +98,26 @@ function StudentDetailDrawer({
     staleTime: 60000,
   });
 
+  const unifiedTimelineRange = useMemo(() => {
+    const selectedDate = historyStartDate || new Date();
+    return {
+      from: startOfDay(selectedDate).toISOString(),
+      to: endOfDay(selectedDate).toISOString(),
+    };
+  }, [historyStartDate]);
+
+  const { data: unifiedTimeline = [] } = useQuery({
+    queryKey: ["/api/classpilot/student-timeline", student?.studentId, unifiedTimelineRange.from],
+    queryFn: () =>
+      apiRequest(
+        "GET",
+        `/classpilot/students/${student.studentId}/timeline?from=${encodeURIComponent(unifiedTimelineRange.from)}&to=${encodeURIComponent(unifiedTimelineRange.to)}`
+      ),
+    select: (data) => data?.events ?? [],
+    enabled: !!student?.studentId,
+    staleTime: 30000,
+  });
+
   if (!student) return null;
 
   const getStatusLabel = (status) => {
@@ -565,6 +585,39 @@ function StudentDetailDrawer({
                         </div>
                       );
                     })()}
+
+                    <Card>
+                      <CardHeader className="pb-3">
+                        <CardTitle className="text-sm font-medium">Unified Safety Timeline</CardTitle>
+                      </CardHeader>
+                      <Separator />
+                      <CardContent className="pt-4">
+                        {unifiedTimeline.length === 0 ? (
+                          <p className="text-sm text-muted-foreground">No cross-product safety or context events for this date.</p>
+                        ) : (
+                          <div className="space-y-2">
+                            {unifiedTimeline.slice(0, 12).map((event) => (
+                              <div key={event.id} className="rounded-md border p-3">
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <Badge variant={event.severity === "high" || event.severity === "critical" ? "destructive" : "secondary"} className="text-xs">
+                                        {event.eventType?.replaceAll("_", " ") || "event"}
+                                      </Badge>
+                                      <span className="text-xs text-muted-foreground">
+                                        {event.occurredAt ? format(new Date(event.occurredAt), "h:mm a") : ""}
+                                      </span>
+                                    </div>
+                                    <p className="mt-1 text-sm font-medium">{event.title}</p>
+                                    {event.summary && <p className="mt-1 text-xs text-muted-foreground">{event.summary}</p>}
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
 
                     {/* 7-Day Usage Trend */}
                     {weeklyUsage.length > 0 && (() => {
