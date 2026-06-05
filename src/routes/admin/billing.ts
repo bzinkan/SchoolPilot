@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { authenticate } from "../../middleware/authenticate.js";
 import { getSchoolById, updateSchool, getProductLicenses } from "../../services/storage.js";
+import { userBelongsToSchool } from "../../services/passpilotAccess.js";
 import { logAudit } from "../../services/audit.js";
 import db from "../../db.js";
 import { schools, productLicenses } from "../../schema/core.js";
@@ -40,6 +41,17 @@ router.post("/checkout/create-session", authenticate, async (req, res, next) => 
 
     if (!billingEmail) {
       return res.status(400).json({ error: "billingEmail required" });
+    }
+
+    // SECURITY: the schoolId flows into Stripe metadata and the webhook applies
+    // billing/plan changes to that school by id. Bind it to a school the caller
+    // actually belongs to (or is super-admin for) so an attacker can't pay for /
+    // alter another school's plan by supplying an arbitrary schoolId.
+    if (!schoolId) {
+      return res.status(400).json({ error: "schoolId required" });
+    }
+    if (!req.authUser!.isSuperAdmin && !(await userBelongsToSchool(req.authUser!.id, schoolId))) {
+      return res.status(403).json({ error: "Not authorized to bill for this school" });
     }
 
     const session = await stripe.checkout.sessions.create({

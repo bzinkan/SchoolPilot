@@ -576,6 +576,9 @@ router.post("/admin/classroom/create-class", ...schoolAuth, requireRole("admin")
     if (!courseId || !teacherId) {
       return res.status(400).json({ error: "courseId and teacherId required" });
     }
+    if (!(await userBelongsToSchool(teacherId, schoolId))) {
+      return res.status(404).json({ error: "Teacher not found in this school" });
+    }
     // Create a group for this course
     const [group] = await db.insert(groups).values({
       schoolId,
