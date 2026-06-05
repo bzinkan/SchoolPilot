@@ -3735,6 +3735,24 @@ export async function getTeacherStudentAssignments(
   return rows.map((r) => ({ ...r.assignment, student: r.student }));
 }
 
+// School-scoped — teacherStudents has no schoolId column, so partition by the
+// assigned student's school. Returns only the assignments whose student is in
+// the given school (so a multi-school teacher's list is scoped to the context).
+export async function getTeacherStudentAssignmentsForSchool(
+  teacherId: string,
+  schoolId: string
+): Promise<(TeacherStudent & { student: Student })[]> {
+  const rows = await db
+    .select({
+      assignment: teacherStudents,
+      student: students,
+    })
+    .from(teacherStudents)
+    .innerJoin(students, eq(teacherStudents.studentId, students.id))
+    .where(and(eq(teacherStudents.teacherId, teacherId), eq(students.schoolId, schoolId)));
+  return rows.map((r) => ({ ...r.assignment, student: r.student }));
+}
+
 export async function assignTeacherStudent(
   teacherId: string,
   studentId: string

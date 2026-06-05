@@ -29,6 +29,7 @@ import {
   removeGroupTeacher,
   getUserById,
 } from "../../services/storage.js";
+import { userBelongsToSchool } from "../../services/passpilotAccess.js";
 
 const router = Router();
 
@@ -481,6 +482,11 @@ router.post("/:id/teachers", ...auth, requireRole("admin"), async (req, res, nex
     const group = await getGroupByIdAndSchool(param(req, "id"), res.locals.schoolId!);
     if (!group) {
       return res.status(404).json({ error: "Group not found" });
+    }
+
+    // The co-teacher being added must belong to this school.
+    if (!(await userBelongsToSchool(teacherId, res.locals.schoolId!))) {
+      return res.status(404).json({ error: "Teacher not found in this school" });
     }
 
     const teacher = await addGroupTeacher(

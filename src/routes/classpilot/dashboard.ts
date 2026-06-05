@@ -13,11 +13,11 @@ import {
   upsertTeacherSettings,
   getSettingsForSchool,
   upsertSettings,
-  getTeacherStudentAssignments,
+  getTeacherStudentAssignmentsForSchool,
   assignTeacherStudent,
   unassignTeacherStudent,
   getStudentById,
-  getGroupsByTeacher,
+  getGroupsByTeacherAndSchool,
   getGroupsBySchool,
   createGroup,
 } from "../../services/storage.js";
@@ -209,7 +209,7 @@ router.post("/settings", ...auth, async (req, res, next) => {
 // GET /api/classpilot/teacher/students
 router.get("/students", ...auth, async (req, res, next) => {
   try {
-    const assignments = await getTeacherStudentAssignments(req.authUser!.id);
+    const assignments = await getTeacherStudentAssignmentsForSchool(req.authUser!.id, res.locals.schoolId!);
     return res.json({ students: assignments });
   } catch (err) {
     next(err);
@@ -309,7 +309,7 @@ router.get("/groups", ...auth, async (req, res, next) => {
     if (role === "admin" || role === "school_admin" || role === "super_admin") {
       groupsList = await getGroupsBySchool(schoolId);
     } else {
-      groupsList = await getGroupsByTeacher(req.authUser!.id);
+      groupsList = await getGroupsByTeacherAndSchool(req.authUser!.id, schoolId);
     }
     return res.json({ groups: groupsList });
   } catch (err) {
