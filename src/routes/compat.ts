@@ -23,7 +23,7 @@ import {
   getSchoolById,
   updateSchool,
   getPendingParentRequests,
-  updateParentStudentLink,
+  updateParentStudentLinkByIdAndSchool,
   getParentStudentLinkByIdAndSchool,
   getApprovedChildrenForParent,
   getUserByEmail,
@@ -1274,7 +1274,7 @@ router.put("/compat/parent-requests/:id", ...schoolAuth, requireRole("admin"), a
     }
     const link = await getParentStudentLinkByIdAndSchool(param(req, "id"), res.locals.schoolId!);
     if (!link) return res.status(404).json({ error: "Request not found" });
-    const updated = await updateParentStudentLink(param(req, "id"), { status });
+    const updated = await updateParentStudentLinkByIdAndSchool(param(req, "id"), res.locals.schoolId!, { status });
     return res.json({ request: updated });
   } catch (err) {
     next(err);

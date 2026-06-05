@@ -2169,6 +2169,30 @@ export async function updateParentStudentLink(
   return row;
 }
 
+// School-scoped update (parentStudent has no schoolId column — scope via the
+// linked student). Belt-and-suspenders so the mutation can't touch another
+// school's link even if a caller forgets the read-side ownership gate.
+export async function updateParentStudentLinkByIdAndSchool(
+  id: string,
+  schoolId: string,
+  data: Partial<InsertParentStudent>
+): Promise<ParentStudent | undefined> {
+  const [row] = await db
+    .update(parentStudent)
+    .set(data)
+    .where(
+      and(
+        eq(parentStudent.id, id),
+        inArray(
+          parentStudent.studentId,
+          db.select({ id: students.id }).from(students).where(eq(students.schoolId, schoolId))
+        )
+      )
+    )
+    .returning();
+  return row;
+}
+
 export async function createParentStudentLink(
   data: InsertParentStudent
 ): Promise<ParentStudent> {

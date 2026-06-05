@@ -164,6 +164,10 @@ router.post("/student/lower-hand", requireDeviceAuth, async (req, res, next) => 
   try {
     const schoolId = res.locals.schoolId as string;
     const studentId = res.locals.studentId as string;
+    const student = await getStudentById(studentId);
+    if (!student || student.schoolId !== schoolId) {
+      return res.status(404).json({ error: "Student not found" });
+    }
 
     const msg = { type: "hand-lowered", data: { studentId } };
     broadcastToTeachersLocal(schoolId, msg);
@@ -188,6 +192,9 @@ router.post("/student/send-message", requireDeviceAuth, async (req, res, next) =
     }
 
     const student = await getStudentById(studentId);
+    if (!student || student.schoolId !== schoolId) {
+      return res.status(404).json({ error: "Student not found" });
+    }
 
     const msg = await createMessage({
       fromUserId: null,
