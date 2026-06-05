@@ -172,6 +172,14 @@ router.get("/active", ...auth, async (req, res, next) => {
       return res.json({ session: null });
     }
 
+    // getActiveTeachingSession is keyed by teacherId only — for a multi-school
+    // teacher this could be a session in a different school. Only surface a
+    // session whose group is in the current school context.
+    const group = await getGroupByIdAndSchool(session.groupId, res.locals.schoolId!);
+    if (!group) {
+      return res.json({ session: null });
+    }
+
     const settings = await getSessionSettings(session.id);
     return res.json({ session, settings });
   } catch (err) {
