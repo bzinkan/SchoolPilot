@@ -334,20 +334,32 @@ router.post("/extension/register", extensionLimiter, async (req, res, next) => {
       return res.status(400).json({ error: "deviceId required" });
     }
 
-    // Resolve school: either explicit schoolId or from email domain
-    let resolvedSchoolId = explicitSchoolId;
+    // Resolve school. SECURITY: this endpoint is unauthenticated, so the school
+    // MUST be anchored to something the caller can't freely choose. When a
+    // studentEmail is present, the email domain is the trust anchor — the school
+    // is derived from it, and any client-supplied schoolId is only honored if it
+    // matches. A bare schoolId with no email can create a device shell but never
+    // mints a student token (see the studentEmail block below).
+    let resolvedSchoolId;
     let school;
 
-    if (!resolvedSchoolId && studentEmail) {
+    if (studentEmail) {
       const result = await resolveSchoolForStudent(studentEmail);
-      if (result) {
-        school = result.school;
-        resolvedSchoolId = school.id;
+      if (!result) {
+        return res.status(401).json({ error: "No school found for this email domain" });
       }
-    }
-
-    if (resolvedSchoolId && !school) {
-      school = await getSchoolById(resolvedSchoolId);
+      if (explicitSchoolId && explicitSchoolId !== result.school.id) {
+        // A caller cannot enroll an email into a school other than the one its
+        // domain maps to (prevents cross-school device/student injection).
+        return res.status(403).json({ error: "schoolId does not match email domain" });
+      }
+      school = result.school;
+      resolvedSchoolId = school.id;
+    } else {
+      resolvedSchoolId = explicitSchoolId;
+      if (resolvedSchoolId) {
+        school = await getSchoolById(resolvedSchoolId);
+      }
     }
 
     if (!resolvedSchoolId || !school) {
