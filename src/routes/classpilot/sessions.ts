@@ -7,10 +7,11 @@ import {
   createTeachingSession,
   endTeachingSession,
   getActiveTeachingSession,
-  getTeachingSessionById,
+  getTeachingSessionByIdAndSchool,
   getSessionSettings,
   upsertSessionSettings,
   getGroupById,
+  getGroupByIdAndSchool,
   getGroupStudents,
   getHeartbeatsForStudentsInRange,
   setScheduleSkippedDate,
@@ -41,7 +42,7 @@ router.post("/start", ...auth, async (req, res, next) => {
       return res.status(400).json({ error: "groupId is required" });
     }
 
-    const group = await getGroupById(groupId);
+    const group = await getGroupByIdAndSchool(groupId, res.locals.schoolId!);
     if (!group) {
       return res.status(404).json({ error: "Group not found" });
     }
@@ -137,7 +138,7 @@ router.post("/", ...auth, async (req, res, next) => {
       return res.status(400).json({ error: "groupId is required" });
     }
 
-    const group = await getGroupById(groupId);
+    const group = await getGroupByIdAndSchool(groupId, res.locals.schoolId!);
     if (!group) {
       return res.status(404).json({ error: "Group not found" });
     }
@@ -173,7 +174,7 @@ router.get("/active", ...auth, async (req, res, next) => {
 // GET /api/classpilot/teaching-sessions/:id - Get session by ID
 router.get("/:id", ...auth, async (req, res, next) => {
   try {
-    const session = await getTeachingSessionById(param(req, "id"));
+    const session = await getTeachingSessionByIdAndSchool(param(req, "id"), res.locals.schoolId!);
     if (!session) {
       return res.status(404).json({ error: "Session not found" });
     }
@@ -188,7 +189,12 @@ router.get("/:id", ...auth, async (req, res, next) => {
 // POST /api/classpilot/teaching-sessions/:id/end - End a teaching session
 router.post("/:id/end", ...auth, async (req, res, next) => {
   try {
-    const session = await endTeachingSession(param(req, "id"));
+    const sessionId = param(req, "id");
+    const owned = await getTeachingSessionByIdAndSchool(sessionId, res.locals.schoolId!);
+    if (!owned) {
+      return res.status(404).json({ error: "Session not found" });
+    }
+    const session = await endTeachingSession(sessionId);
     return res.json({ session });
   } catch (err) {
     next(err);
@@ -199,6 +205,10 @@ router.post("/:id/end", ...auth, async (req, res, next) => {
 router.put("/:id/settings", ...auth, async (req, res, next) => {
   try {
     const sessionId = param(req, "id");
+    const owned = await getTeachingSessionByIdAndSchool(sessionId, res.locals.schoolId!);
+    if (!owned) {
+      return res.status(404).json({ error: "Session not found" });
+    }
     const { chatEnabled, raiseHandEnabled } = req.body;
 
     const data: Record<string, unknown> = {};

@@ -7,7 +7,8 @@ import { requireRole } from "../../middleware/requireRole.js";
 import {
   getGroupsBySchool,
   getGroupsByTeacher,
-  getGroupById,
+  getGroupByIdAndSchool,
+  getSubgroupByIdAndSchool,
   createGroup,
   updateGroup,
   deleteGroup,
@@ -15,6 +16,7 @@ import {
   addGroupStudents,
   removeGroupStudent,
   setGroupStudents,
+  getStudentsByIds,
   getSubgroupsByGroup,
   createSubgroup,
   updateSubgroup,
@@ -32,6 +34,15 @@ const router = Router();
 
 function param(req: any, key: string): string {
   return String(req.params[key] ?? "");
+}
+
+// Filter a list of student ids down to those that actually belong to the
+// caller's school — prevents pulling another school's students into a group.
+async function studentsInSchool(studentIds: unknown, schoolId: string): Promise<string[]> {
+  if (!Array.isArray(studentIds) || studentIds.length === 0) return [];
+  const ids = studentIds.map(String);
+  const rows = await getStudentsByIds(ids);
+  return rows.filter((s) => s.schoolId === schoolId).map((s) => s.id);
 }
 
 const auth = [
@@ -79,7 +90,7 @@ router.get("/", ...auth, async (req, res, next) => {
 // GET /api/classpilot/groups/:id - Get group details with students
 router.get("/:id", ...auth, async (req, res, next) => {
   try {
-    const group = await getGroupById(param(req, "id"));
+    const group = await getGroupByIdAndSchool(param(req, "id"), res.locals.schoolId!);
     if (!group) {
       return res.status(404).json({ error: "Group not found" });
     }
@@ -128,8 +139,9 @@ router.post("/", ...auth, async (req, res, next) => {
     // Seed the junction table with the creator as primary teacher
     await addGroupTeacher(group.id, req.authUser!.id, "primary");
 
-    if (Array.isArray(studentIds) && studentIds.length > 0) {
-      await addGroupStudents(group.id, studentIds);
+    const validStudentIds = await studentsInSchool(studentIds, res.locals.schoolId!);
+    if (validStudentIds.length > 0) {
+      await addGroupStudents(group.id, validStudentIds);
     }
 
     return res.status(201).json({ group });
@@ -142,6 +154,10 @@ router.post("/", ...auth, async (req, res, next) => {
 router.patch("/:id", ...auth, async (req, res, next) => {
   try {
     const id = param(req, "id");
+    const existing = await getGroupByIdAndSchool(id, res.locals.schoolId!);
+    if (!existing) {
+      return res.status(404).json({ error: "Group not found" });
+    }
     const { name, description, periodLabel, gradeLevel, studentIds,
             scheduleEnabled, blockStartTime, blockEndTime } = req.body;
 
@@ -180,7 +196,7 @@ router.patch("/:id", ...auth, async (req, res, next) => {
     }
 
     if (studentIds !== undefined) {
-      await setGroupStudents(id, studentIds);
+      await setGroupStudents(id, await studentsInSchool(studentIds, res.locals.schoolId!));
     }
 
     return res.json({ group: updated });
@@ -192,7 +208,7 @@ router.patch("/:id", ...auth, async (req, res, next) => {
 // DELETE /api/classpilot/groups/:id - Delete group
 router.delete("/:id", ...auth, async (req, res, next) => {
   try {
-    const existing = await getGroupById(param(req, "id"));
+    const existing = await getGroupByIdAndSchool(param(req, "id"), res.locals.schoolId!);
     if (!existing) {
       return res.status(404).json({ error: "Group not found" });
     }
@@ -206,7 +222,11 @@ router.delete("/:id", ...auth, async (req, res, next) => {
 // GET /api/classpilot/groups/:id/students - List students in group
 router.get("/:id/students", ...auth, async (req, res, next) => {
   try {
-    const rows = await getGroupStudents(param(req, "id"));
+    const group = await getGroupByIdAndSchool(param(req, "id"), res.locals.schoolId!);
+    if (!group) {
+      return res.status(404).json({ error: "Group not found" });
+    }
+    const rows = await getGroupStudents(group.id);
     const students = rows.map((r) => ({
       id: r.student.id,
       studentName: [r.student.firstName, r.student.lastName].filter(Boolean).join(" ") || r.student.email || "",
@@ -229,7 +249,11 @@ router.post("/:id/students", ...auth, async (req, res, next) => {
     if (!Array.isArray(studentIds)) {
       return res.status(400).json({ error: "studentIds array required" });
     }
-    await addGroupStudents(param(req, "id"), studentIds);
+    const group = await getGroupByIdAndSchool(param(req, "id"), res.locals.schoolId!);
+    if (!group) {
+      return res.status(404).json({ error: "Group not found" });
+    }
+    await addGroupStudents(group.id, await studentsInSchool(studentIds, res.locals.schoolId!));
     return res.json({ ok: true });
   } catch (err) {
     next(err);
@@ -239,7 +263,15 @@ router.post("/:id/students", ...auth, async (req, res, next) => {
 // POST /api/classpilot/groups/:id/students/:studentId - Add single student to group
 router.post("/:id/students/:studentId", ...auth, async (req, res, next) => {
   try {
-    await addGroupStudents(param(req, "id"), [param(req, "studentId")]);
+    const group = await getGroupByIdAndSchool(param(req, "id"), res.locals.schoolId!);
+    if (!group) {
+      return res.status(404).json({ error: "Group not found" });
+    }
+    const valid = await studentsInSchool([param(req, "studentId")], res.locals.schoolId!);
+    if (valid.length === 0) {
+      return res.status(404).json({ error: "Student not found" });
+    }
+    await addGroupStudents(group.id, valid);
     return res.json({ ok: true });
   } catch (err) {
     next(err);
@@ -249,7 +281,11 @@ router.post("/:id/students/:studentId", ...auth, async (req, res, next) => {
 // DELETE /api/classpilot/groups/:groupId/students/:studentId - Remove student from group
 router.delete("/:groupId/students/:studentId", ...auth, async (req, res, next) => {
   try {
-    await removeGroupStudent(param(req, "groupId"), param(req, "studentId"));
+    const group = await getGroupByIdAndSchool(param(req, "groupId"), res.locals.schoolId!);
+    if (!group) {
+      return res.status(404).json({ error: "Group not found" });
+    }
+    await removeGroupStudent(group.id, param(req, "studentId"));
     return res.json({ ok: true });
   } catch (err) {
     next(err);
@@ -263,7 +299,11 @@ router.delete("/:groupId/students/:studentId", ...auth, async (req, res, next) =
 // GET /api/classpilot/groups/:groupId/subgroups - List subgroups
 router.get("/:groupId/subgroups", ...auth, async (req, res, next) => {
   try {
-    const subgroups = await getSubgroupsByGroup(param(req, "groupId"));
+    const group = await getGroupByIdAndSchool(param(req, "groupId"), res.locals.schoolId!);
+    if (!group) {
+      return res.status(404).json({ error: "Group not found" });
+    }
+    const subgroups = await getSubgroupsByGroup(group.id);
 
     const enriched = await Promise.all(
       subgroups.map(async (sg) => {
@@ -286,8 +326,13 @@ router.post("/:groupId/subgroups", ...auth, async (req, res, next) => {
       return res.status(400).json({ error: "name is required" });
     }
 
+    const group = await getGroupByIdAndSchool(param(req, "groupId"), res.locals.schoolId!);
+    if (!group) {
+      return res.status(404).json({ error: "Group not found" });
+    }
+
     const subgroup = await createSubgroup({
-      groupId: param(req, "groupId"),
+      groupId: group.id,
       name,
       color: color || null,
     });
@@ -301,12 +346,17 @@ router.post("/:groupId/subgroups", ...auth, async (req, res, next) => {
 // PUT /api/classpilot/subgroups/:subgroupId - Update subgroup
 router.put("/subgroups/:subgroupId", ...auth, async (req, res, next) => {
   try {
+    const subgroupId = param(req, "subgroupId");
+    const existing = await getSubgroupByIdAndSchool(subgroupId, res.locals.schoolId!);
+    if (!existing) {
+      return res.status(404).json({ error: "Subgroup not found" });
+    }
     const { name, color } = req.body;
     const data: Record<string, unknown> = {};
     if (name !== undefined) data.name = name;
     if (color !== undefined) data.color = color;
 
-    const updated = await updateSubgroup(param(req, "subgroupId"), data);
+    const updated = await updateSubgroup(subgroupId, data);
     if (!updated) {
       return res.status(404).json({ error: "Subgroup not found" });
     }
@@ -319,7 +369,12 @@ router.put("/subgroups/:subgroupId", ...auth, async (req, res, next) => {
 // DELETE /api/classpilot/subgroups/:subgroupId - Delete subgroup
 router.delete("/subgroups/:subgroupId", ...auth, async (req, res, next) => {
   try {
-    await deleteSubgroup(param(req, "subgroupId"));
+    const subgroupId = param(req, "subgroupId");
+    const existing = await getSubgroupByIdAndSchool(subgroupId, res.locals.schoolId!);
+    if (!existing) {
+      return res.status(404).json({ error: "Subgroup not found" });
+    }
+    await deleteSubgroup(subgroupId);
     return res.json({ ok: true });
   } catch (err) {
     next(err);
@@ -329,7 +384,12 @@ router.delete("/subgroups/:subgroupId", ...auth, async (req, res, next) => {
 // GET /api/classpilot/subgroups/:subgroupId/members - List members
 router.get("/subgroups/:subgroupId/members", ...auth, async (req, res, next) => {
   try {
-    const members = await getSubgroupMembers(param(req, "subgroupId"));
+    const subgroupId = param(req, "subgroupId");
+    const existing = await getSubgroupByIdAndSchool(subgroupId, res.locals.schoolId!);
+    if (!existing) {
+      return res.status(404).json({ error: "Subgroup not found" });
+    }
+    const members = await getSubgroupMembers(subgroupId);
     return res.json({ members });
   } catch (err) {
     next(err);
@@ -343,7 +403,12 @@ router.post("/subgroups/:subgroupId/members", ...auth, async (req, res, next) =>
     if (!Array.isArray(studentIds)) {
       return res.status(400).json({ error: "studentIds array required" });
     }
-    await addSubgroupMembers(param(req, "subgroupId"), studentIds);
+    const subgroupId = param(req, "subgroupId");
+    const existing = await getSubgroupByIdAndSchool(subgroupId, res.locals.schoolId!);
+    if (!existing) {
+      return res.status(404).json({ error: "Subgroup not found" });
+    }
+    await addSubgroupMembers(subgroupId, await studentsInSchool(studentIds, res.locals.schoolId!));
     return res.json({ ok: true });
   } catch (err) {
     next(err);
@@ -353,7 +418,12 @@ router.post("/subgroups/:subgroupId/members", ...auth, async (req, res, next) =>
 // DELETE /api/classpilot/subgroups/:subgroupId/members/:studentId - Remove member
 router.delete("/subgroups/:subgroupId/members/:studentId", ...auth, async (req, res, next) => {
   try {
-    await removeSubgroupMember(param(req, "subgroupId"), param(req, "studentId"));
+    const subgroupId = param(req, "subgroupId");
+    const existing = await getSubgroupByIdAndSchool(subgroupId, res.locals.schoolId!);
+    if (!existing) {
+      return res.status(404).json({ error: "Subgroup not found" });
+    }
+    await removeSubgroupMember(subgroupId, param(req, "studentId"));
     return res.json({ ok: true });
   } catch (err) {
     next(err);
@@ -367,7 +437,7 @@ router.delete("/subgroups/:subgroupId/members/:studentId", ...auth, async (req, 
 // GET /api/classpilot/groups/:id/teachers - List teachers for a group
 router.get("/:id/teachers", ...auth, async (req, res, next) => {
   try {
-    const group = await getGroupById(param(req, "id"));
+    const group = await getGroupByIdAndSchool(param(req, "id"), res.locals.schoolId!);
     if (!group) {
       return res.status(404).json({ error: "Group not found" });
     }
@@ -404,7 +474,7 @@ router.post("/:id/teachers", ...auth, requireRole("admin"), async (req, res, nex
       return res.status(400).json({ error: "teacherId is required" });
     }
 
-    const group = await getGroupById(param(req, "id"));
+    const group = await getGroupByIdAndSchool(param(req, "id"), res.locals.schoolId!);
     if (!group) {
       return res.status(404).json({ error: "Group not found" });
     }
@@ -423,7 +493,7 @@ router.post("/:id/teachers", ...auth, requireRole("admin"), async (req, res, nex
 // DELETE /api/classpilot/groups/:id/teachers/:teacherId - Remove co-teacher
 router.delete("/:id/teachers/:teacherId", ...auth, requireRole("admin"), async (req, res, next) => {
   try {
-    const group = await getGroupById(param(req, "id"));
+    const group = await getGroupByIdAndSchool(param(req, "id"), res.locals.schoolId!);
     if (!group) {
       return res.status(404).json({ error: "Group not found" });
     }

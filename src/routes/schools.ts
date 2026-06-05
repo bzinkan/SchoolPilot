@@ -19,6 +19,7 @@ import {
   deleteProductLicense,
   getGradesBySchool,
   createGrade,
+  getGradeById,
   updateGrade,
   deleteGrade,
   getTeacherGrades,
@@ -328,6 +329,10 @@ router.put(
   requireRole("admin"),
   async (req, res, next) => {
     try {
+      const existing = await getGradeById(param(req, "gradeId"));
+      if (!existing || existing.schoolId !== res.locals.schoolId) {
+        return res.status(404).json({ error: "Grade not found" });
+      }
       const grade = await updateGrade(param(req, "gradeId"), req.body);
       if (!grade) {
         return res.status(404).json({ error: "Grade not found" });
@@ -347,6 +352,10 @@ router.delete(
   requireRole("admin"),
   async (req, res, next) => {
     try {
+      const existing = await getGradeById(param(req, "gradeId"));
+      if (!existing || existing.schoolId !== res.locals.schoolId) {
+        return res.status(404).json({ error: "Grade not found" });
+      }
       const deleted = await deleteGrade(param(req, "gradeId"));
       if (!deleted) {
         return res.status(404).json({ error: "Grade not found" });

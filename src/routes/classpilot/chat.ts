@@ -18,6 +18,7 @@ import {
   getMessages,
   createMessage,
   deleteMessage,
+  getMessageByIdAndSchool,
   createCheckIn,
   getActiveTeachingSession,
   getTeachingSessionById,
@@ -54,18 +55,21 @@ const pollResponseLimiter = rateLimit({
   message: { error: "Too many poll responses. Please wait a moment." },
 });
 
-async function pollBelongsToSchool(poll: { sessionId: string }, schoolId: string): Promise<boolean> {
-  if (poll.sessionId.startsWith(`${schoolId}-`)) {
+async function sessionBelongsToSchool(sessionId: string, schoolId: string): Promise<boolean> {
+  // Sessionless / synthetic ids are namespaced with the school id prefix.
+  if (sessionId.startsWith(`${schoolId}-`)) {
     return true;
   }
-
-  const session = await getTeachingSessionById(poll.sessionId);
+  const session = await getTeachingSessionById(sessionId);
   if (!session) {
     return false;
   }
-
   const group = await getGroupById(session.groupId);
   return group?.schoolId === schoolId;
+}
+
+async function pollBelongsToSchool(poll: { sessionId: string }, schoolId: string): Promise<boolean> {
+  return sessionBelongsToSchool(poll.sessionId, schoolId);
 }
 
 // ============================================================================
@@ -78,6 +82,9 @@ router.post("/chat/send", ...staffAuth, async (req, res, next) => {
     const { sessionId, content, recipientId } = req.body;
     if (!sessionId || !content) {
       return res.status(400).json({ error: "sessionId and content required" });
+    }
+    if (!(await sessionBelongsToSchool(sessionId, res.locals.schoolId!))) {
+      return res.status(404).json({ error: "Session not found" });
     }
 
     const msg = await createChatMessage({
@@ -109,7 +116,11 @@ router.post("/chat/send", ...staffAuth, async (req, res, next) => {
 // GET /api/classpilot/chat/:sessionId - Get chat messages for session
 router.get("/chat/:sessionId", ...staffAuth, async (req, res, next) => {
   try {
-    const messages = await getChatMessages(param(req, "sessionId"));
+    const sessionId = param(req, "sessionId");
+    if (!(await sessionBelongsToSchool(sessionId, res.locals.schoolId!))) {
+      return res.status(404).json({ error: "Session not found" });
+    }
+    const messages = await getChatMessages(sessionId);
     return res.json({ messages });
   } catch (err) {
     next(err);
@@ -260,7 +271,12 @@ router.post("/teacher/reply", ...staffAuth, async (req, res, next) => {
 // DELETE /api/classpilot/teacher/messages/:messageId
 router.delete("/teacher/messages/:messageId", ...staffAuth, async (req, res, next) => {
   try {
-    await deleteMessage(param(req, "messageId"));
+    const messageId = param(req, "messageId");
+    const owned = await getMessageByIdAndSchool(messageId, res.locals.schoolId!);
+    if (!owned) {
+      return res.status(404).json({ error: "Message not found" });
+    }
+    await deleteMessage(messageId);
     return res.json({ ok: true });
   } catch (err) {
     next(err);

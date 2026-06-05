@@ -11,6 +11,7 @@ import {
   removeAbsence,
   getAttendanceStats,
   getUserById,
+  getStudentById,
   getStudentsBySchool,
   getSchoolById,
   createStudentTimelineEvent,
@@ -177,7 +178,7 @@ router.post("/", ...staffAuth, async (req, res, next) => {
 // DELETE /api/admin/attendance/:id — remove an absence record
 router.delete("/:id", ...staffAuth, async (req, res, next) => {
   try {
-    const removed = await removeAbsence(param(req, "id"));
+    const removed = await removeAbsence(param(req, "id"), res.locals.schoolId!);
     if (!removed) {
       return res.status(404).json({ error: "Attendance record not found" });
     }
@@ -195,6 +196,11 @@ router.get(
     try {
       const studentId = param(req, "studentId");
       const schoolId = res.locals.schoolId!;
+      // Verify the student belongs to the caller's school before returning history.
+      const student = await getStudentById(studentId);
+      if (!student || student.schoolId !== schoolId) {
+        return res.status(404).json({ error: "Student not found" });
+      }
       const start = (req.query.start as string) || "2020-01-01";
       const end = (req.query.end as string) || await todayForSchool(schoolId);
       const records = await getStudentAttendance(studentId, start, end);

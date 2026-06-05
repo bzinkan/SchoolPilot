@@ -16,6 +16,7 @@ import {
   getTeacherStudentAssignments,
   assignTeacherStudent,
   unassignTeacherStudent,
+  getStudentById,
   getGroupsByTeacher,
   getGroupsBySchool,
   createGroup,
@@ -84,7 +85,7 @@ router.patch("/dashboard-tabs/:id", ...auth, async (req, res, next) => {
     if (filterValue !== undefined) data.filterValue = filterValue;
     if (order !== undefined) data.order = order;
 
-    const updated = await updateDashboardTab(id, data);
+    const updated = await updateDashboardTab(id, req.authUser!.id, data);
     if (!updated) {
       return res.status(404).json({ error: "Tab not found" });
     }
@@ -97,7 +98,7 @@ router.patch("/dashboard-tabs/:id", ...auth, async (req, res, next) => {
 // DELETE /api/classpilot/teacher/dashboard-tabs/:id
 router.delete("/dashboard-tabs/:id", ...auth, async (req, res, next) => {
   try {
-    await deleteDashboardTab(param(req, "id"));
+    await deleteDashboardTab(param(req, "id"), req.authUser!.id);
     return res.json({ ok: true });
   } catch (err) {
     next(err);
@@ -218,7 +219,12 @@ router.get("/students", ...auth, async (req, res, next) => {
 // POST /api/classpilot/teacher/students/:studentId/assign
 router.post("/students/:studentId/assign", ...auth, async (req, res, next) => {
   try {
-    await assignTeacherStudent(req.authUser!.id, param(req, "studentId"));
+    const studentId = param(req, "studentId");
+    const student = await getStudentById(studentId);
+    if (!student || student.schoolId !== res.locals.schoolId) {
+      return res.status(404).json({ error: "Student not found" });
+    }
+    await assignTeacherStudent(req.authUser!.id, studentId);
     return res.json({ ok: true });
   } catch (err) {
     next(err);
@@ -228,7 +234,12 @@ router.post("/students/:studentId/assign", ...auth, async (req, res, next) => {
 // DELETE /api/classpilot/teacher/students/:studentId/unassign
 router.delete("/students/:studentId/unassign", ...auth, async (req, res, next) => {
   try {
-    await unassignTeacherStudent(req.authUser!.id, param(req, "studentId"));
+    const studentId = param(req, "studentId");
+    const student = await getStudentById(studentId);
+    if (!student || student.schoolId !== res.locals.schoolId) {
+      return res.status(404).json({ error: "Student not found" });
+    }
+    await unassignTeacherStudent(req.authUser!.id, studentId);
     return res.json({ ok: true });
   } catch (err) {
     next(err);

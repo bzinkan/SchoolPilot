@@ -24,14 +24,15 @@ import {
   updateSchool,
   getPendingParentRequests,
   updateParentStudentLink,
-  getParentStudentLinkById,
+  getParentStudentLinkByIdAndSchool,
   getApprovedChildrenForParent,
   getUserByEmail,
   createUser,
   createMembership,
   getMembershipByUserAndSchool,
-  deleteMembership,
+  deleteMembershipForSchool,
   updateMembership,
+  updateMembershipForSchool,
   updateUser,
   getActiveTeachingSession,
   getGroupStudents,
@@ -376,7 +377,7 @@ router.patch("/admin/users/:id", ...schoolAuth, requireRole("admin"), async (req
       data.role = role === "school_admin" ? "admin" : role;
     }
 
-    const membership = await updateMembership(id, data);
+    const membership = await updateMembershipForSchool(id, res.locals.schoolId!, data);
     if (!membership) {
       return res.status(404).json({ error: "Membership not found" });
     }
@@ -449,7 +450,7 @@ router.post("/admin/users/:id/password", ...schoolAuth, requireRole("admin"), as
 router.delete("/admin/users/:id", ...schoolAuth, requireRole("admin"), async (req, res, next) => {
   try {
     const membershipId = param(req, "id");
-    const deleted = await deleteMembership(membershipId);
+    const deleted = await deleteMembershipForSchool(membershipId, res.locals.schoolId!);
     if (!deleted) {
       return res.status(404).json({ error: "Membership not found" });
     }
@@ -494,7 +495,7 @@ router.get("/admin/audit-logs", ...schoolAuth, requireRole("admin"), async (req,
 router.delete("/admin/teachers/:id", ...schoolAuth, requireRole("admin"), async (req, res, next) => {
   try {
     const membershipId = param(req, "id");
-    const deleted = await deleteMembership(membershipId);
+    const deleted = await deleteMembershipForSchool(membershipId, res.locals.schoolId!);
     if (!deleted) return res.status(404).json({ error: "Staff member not found" });
     logAudit({
       schoolId: res.locals.schoolId!,
@@ -1268,7 +1269,7 @@ router.put("/compat/parent-requests/:id", ...schoolAuth, requireRole("admin"), a
     if (!status || !["approved", "rejected"].includes(status)) {
       return res.status(400).json({ error: "status must be 'approved' or 'rejected'" });
     }
-    const link = await getParentStudentLinkById(param(req, "id"));
+    const link = await getParentStudentLinkByIdAndSchool(param(req, "id"), res.locals.schoolId!);
     if (!link) return res.status(404).json({ error: "Request not found" });
     const updated = await updateParentStudentLink(param(req, "id"), { status });
     return res.json({ request: updated });

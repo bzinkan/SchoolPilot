@@ -758,6 +758,29 @@ export async function deleteMembership(id: string): Promise<boolean> {
   return (result.rowCount ?? 0) > 0;
 }
 
+// School-scoped variants — for school-admin (non-super-admin) handlers, so an
+// admin can never update/deactivate another school's staff membership by id.
+export async function updateMembershipForSchool(
+  id: string,
+  schoolId: string,
+  data: Partial<InsertSchoolMembership>
+): Promise<SchoolMembership | undefined> {
+  const [membership] = await db
+    .update(schoolMemberships)
+    .set(data)
+    .where(and(eq(schoolMemberships.id, id), eq(schoolMemberships.schoolId, schoolId)))
+    .returning();
+  return membership;
+}
+
+export async function deleteMembershipForSchool(id: string, schoolId: string): Promise<boolean> {
+  const result = await db
+    .update(schoolMemberships)
+    .set({ status: "inactive" })
+    .where(and(eq(schoolMemberships.id, id), eq(schoolMemberships.schoolId, schoolId)));
+  return (result.rowCount ?? 0) > 0;
+}
+
 // ============================================================================
 // Grade operations
 // ============================================================================
@@ -2119,6 +2142,21 @@ export async function getParentStudentLinkById(
   return row;
 }
 
+// parentStudent has no schoolId column — ownership derives from the linked
+// student. Returns the link only if its student belongs to the given school.
+export async function getParentStudentLinkByIdAndSchool(
+  id: string,
+  schoolId: string
+): Promise<ParentStudent | undefined> {
+  const [row] = await db
+    .select({ link: parentStudent })
+    .from(parentStudent)
+    .innerJoin(students, eq(parentStudent.studentId, students.id))
+    .where(and(eq(parentStudent.id, id), eq(students.schoolId, schoolId)))
+    .limit(1);
+  return row?.link;
+}
+
 export async function updateParentStudentLink(
   id: string,
   data: Partial<InsertParentStudent>
@@ -2866,6 +2904,21 @@ export async function getTeachingSessionById(
   return session;
 }
 
+// teachingSessions has no schoolId column — ownership derives from the parent
+// group. Returns the session only if its group belongs to the given school.
+export async function getTeachingSessionByIdAndSchool(
+  sessionId: string,
+  schoolId: string
+): Promise<TeachingSession | undefined> {
+  const [row] = await db
+    .select({ session: teachingSessions })
+    .from(teachingSessions)
+    .innerJoin(groups, eq(teachingSessions.groupId, groups.id))
+    .where(and(eq(teachingSessions.id, sessionId), eq(groups.schoolId, schoolId)))
+    .limit(1);
+  return row?.session;
+}
+
 export async function getSessionSettings(
   sessionId: string
 ): Promise<SessionSetting | undefined> {
@@ -3116,6 +3169,36 @@ export async function getGroupById(
     .where(eq(groups.id, groupId))
     .limit(1);
   return group;
+}
+
+// School-scoped variant — enforces multi-tenant isolation in the WHERE clause.
+// Use this in every handler that takes a groupId from the URL/body so a caller
+// can never read/mutate another school's group by guessing an id.
+export async function getGroupByIdAndSchool(
+  groupId: string,
+  schoolId: string
+): Promise<Group | undefined> {
+  const [group] = await db
+    .select()
+    .from(groups)
+    .where(and(eq(groups.id, groupId), eq(groups.schoolId, schoolId)))
+    .limit(1);
+  return group;
+}
+
+// Subgroups have no schoolId column — ownership derives from the parent group.
+// Returns the subgroup only if its parent group belongs to the given school.
+export async function getSubgroupByIdAndSchool(
+  subgroupId: string,
+  schoolId: string
+): Promise<Subgroup | undefined> {
+  const [row] = await db
+    .select({ subgroup: subgroups })
+    .from(subgroups)
+    .innerJoin(groups, eq(subgroups.groupId, groups.id))
+    .where(and(eq(subgroups.id, subgroupId), eq(groups.schoolId, schoolId)))
+    .limit(1);
+  return row?.subgroup;
 }
 
 export async function createGroup(
@@ -3502,20 +3585,21 @@ export async function createDashboardTab(
 
 export async function updateDashboardTab(
   tabId: string,
+  teacherId: string,
   data: Partial<InsertDashboardTab>
 ): Promise<DashboardTab | undefined> {
   const [tab] = await db
     .update(dashboardTabs)
     .set(data)
-    .where(eq(dashboardTabs.id, tabId))
+    .where(and(eq(dashboardTabs.id, tabId), eq(dashboardTabs.teacherId, teacherId)))
     .returning();
   return tab;
 }
 
-export async function deleteDashboardTab(tabId: string): Promise<boolean> {
+export async function deleteDashboardTab(tabId: string, teacherId: string): Promise<boolean> {
   const result = await db
     .delete(dashboardTabs)
-    .where(eq(dashboardTabs.id, tabId));
+    .where(and(eq(dashboardTabs.id, tabId), eq(dashboardTabs.teacherId, teacherId)));
   return (result.rowCount ?? 0) > 0;
 }
 
@@ -3634,6 +3718,22 @@ export async function createMessage(
 export async function deleteMessage(messageId: string): Promise<boolean> {
   const result = await db.delete(messages).where(eq(messages.id, messageId));
   return (result.rowCount ?? 0) > 0;
+}
+
+// messages has no schoolId column — ownership derives from the addressed
+// student (toStudentId). Returns the message only if its student belongs to
+// the given school.
+export async function getMessageByIdAndSchool(
+  messageId: string,
+  schoolId: string
+): Promise<MessageRecord | undefined> {
+  const [row] = await db
+    .select({ message: messages })
+    .from(messages)
+    .innerJoin(students, eq(messages.toStudentId, students.id))
+    .where(and(eq(messages.id, messageId), eq(students.schoolId, schoolId)))
+    .limit(1);
+  return row?.message;
 }
 
 export async function getRecentMessagesForStudent(
@@ -3997,10 +4097,10 @@ export async function markStudentsAbsentBulk(
 }
 
 /** Remove an absence record (student showed up) */
-export async function removeAbsence(id: string): Promise<boolean> {
+export async function removeAbsence(id: string, schoolId: string): Promise<boolean> {
   const result = await db
     .delete(studentAttendance)
-    .where(eq(studentAttendance.id, id));
+    .where(and(eq(studentAttendance.id, id), eq(studentAttendance.schoolId, schoolId)));
   return (result.rowCount ?? 0) > 0;
 }
 

@@ -882,6 +882,10 @@ router.post("/device/screenshot", requireDeviceAuth, async (req, res, next) => {
 router.get("/device/screenshot/:deviceId", ...staffAuth, async (req, res, next) => {
   try {
     const deviceId = param(req, "deviceId");
+    const device = await getDeviceById(deviceId);
+    if (!device || device.schoolId !== res.locals.schoolId) {
+      return res.status(404).json({ error: "Device not found" });
+    }
 
     let data = await getScreenshot(deviceId);
     if (!data) {
@@ -966,6 +970,10 @@ router.get("/devices", ...staffAuth, async (req, res, next) => {
 router.patch("/devices/:deviceId", ...staffAuth, async (req, res, next) => {
   try {
     const deviceId = param(req, "deviceId");
+    const device = await getDeviceById(deviceId);
+    if (!device || device.schoolId !== res.locals.schoolId) {
+      return res.status(404).json({ error: "Device not found" });
+    }
     const { deviceName, classId } = req.body;
     const data: Record<string, unknown> = {};
     if (deviceName !== undefined) data.deviceName = deviceName;
@@ -984,7 +992,12 @@ router.patch("/devices/:deviceId", ...staffAuth, async (req, res, next) => {
 // DELETE /api/classpilot/devices/:deviceId - Delete device
 router.delete("/devices/:deviceId", ...staffAuth, requireRole("admin"), async (req, res, next) => {
   try {
-    await deleteDevice(param(req, "deviceId"));
+    const deviceId = param(req, "deviceId");
+    const device = await getDeviceById(deviceId);
+    if (!device || device.schoolId !== res.locals.schoolId) {
+      return res.status(404).json({ error: "Device not found" });
+    }
+    await deleteDevice(deviceId);
     return res.json({ ok: true });
   } catch (err) {
     next(err);
@@ -1009,6 +1022,11 @@ router.get("/heartbeats", ...staffAuth, async (req, res, next) => {
 // GET /api/classpilot/heartbeats/:deviceId - Device heartbeat history
 router.get("/heartbeats/:deviceId", ...staffAuth, async (req, res, next) => {
   try {
+    const deviceId = param(req, "deviceId");
+    const device = await getDeviceById(deviceId);
+    if (!device || device.schoolId !== res.locals.schoolId) {
+      return res.status(404).json({ error: "Device not found" });
+    }
     const limit = parseInt(req.query.limit as string) || 50;
     const startTime = req.query.startTime as string | undefined;
     const endTime = req.query.endTime as string | undefined;
@@ -1018,9 +1036,9 @@ router.get("/heartbeats/:deviceId", ...staffAuth, async (req, res, next) => {
       // Filter by time range (for session-scoped views)
       const start = new Date(startTime);
       const end = endTime ? new Date(endTime) : new Date();
-      heartbeats = await getHeartbeatsByDeviceInRange(param(req, "deviceId"), start, end);
+      heartbeats = await getHeartbeatsByDeviceInRange(deviceId, start, end);
     } else {
-      heartbeats = await getHeartbeatsByDevice(param(req, "deviceId"), limit);
+      heartbeats = await getHeartbeatsByDevice(deviceId, limit);
     }
     return res.json({ heartbeats });
   } catch (err) {
@@ -1031,6 +1049,17 @@ router.get("/heartbeats/:deviceId", ...staffAuth, async (req, res, next) => {
 // ============================================================================
 // Remote Control Commands
 // ============================================================================
+
+// Filter a list of deviceIds down to those that belong to the caller's school.
+// Targeted remote commands record timeline/Redis state by deviceId, so an
+// unvalidated id from another school would corrupt that school's data even
+// though WS delivery itself is already school-scoped.
+async function devicesInSchool(deviceIds: string[], schoolId: string): Promise<string[]> {
+  if (deviceIds.length === 0) return [];
+  const schoolDevices = await getDevicesBySchool(schoolId);
+  const allowed = new Set(schoolDevices.map((d) => d.deviceId));
+  return deviceIds.filter((id) => allowed.has(id));
+}
 
 function remoteCommand(type: string) {
   return async (req: any, res: any, next: any) => {
@@ -1048,6 +1077,15 @@ function remoteCommand(type: string) {
         resolvedDeviceIds = [
           ...new Set(tabsToClose.map((t: any) => t.deviceId).filter(Boolean)),
         ] as string[];
+      }
+
+      // Reject device ids that don't belong to this school.
+      if (Array.isArray(resolvedDeviceIds) && resolvedDeviceIds.length > 0) {
+        const scoped = await devicesInSchool(resolvedDeviceIds, schoolId);
+        if (scoped.length === 0) {
+          return res.status(404).json({ error: "No accessible devices" });
+        }
+        resolvedDeviceIds = scoped;
       }
 
       // Build command in the format the extension expects:
@@ -1117,7 +1155,16 @@ router.post("/remote/apply-flight-path", ...staffAuth, async (req, res, next) =>
   try {
     const schoolId = res.locals.schoolId!;
     const { deviceIds, targetDeviceIds, flightPathId, flightPathName, allowedDomains } = req.body;
-    const resolvedDeviceIds: string[] | undefined = deviceIds || targetDeviceIds || undefined;
+    let resolvedDeviceIds: string[] | undefined = deviceIds || targetDeviceIds || undefined;
+
+    // Reject device ids that don't belong to this school.
+    if (Array.isArray(resolvedDeviceIds) && resolvedDeviceIds.length > 0) {
+      const scoped = await devicesInSchool(resolvedDeviceIds, schoolId);
+      if (scoped.length === 0) {
+        return res.status(404).json({ error: "No accessible devices" });
+      }
+      resolvedDeviceIds = scoped;
+    }
 
     const message = {
       type: "remote-control",
@@ -1161,7 +1208,16 @@ router.post("/remote/remove-flight-path", ...staffAuth, async (req, res, next) =
   try {
     const schoolId = res.locals.schoolId!;
     const { deviceIds, targetDeviceIds } = req.body;
-    const resolvedDeviceIds: string[] | undefined = deviceIds || targetDeviceIds || undefined;
+    let resolvedDeviceIds: string[] | undefined = deviceIds || targetDeviceIds || undefined;
+
+    // Reject device ids that don't belong to this school.
+    if (Array.isArray(resolvedDeviceIds) && resolvedDeviceIds.length > 0) {
+      const scoped = await devicesInSchool(resolvedDeviceIds, schoolId);
+      if (scoped.length === 0) {
+        return res.status(404).json({ error: "No accessible devices" });
+      }
+      resolvedDeviceIds = scoped;
+    }
 
     const message = { type: "remote-control", _msgId: crypto.randomUUID(), command: { type: "remove-flight-path", data: {} } };
 
