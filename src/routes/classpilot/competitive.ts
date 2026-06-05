@@ -31,6 +31,7 @@ import {
   getSettingsForSchool,
   getStudentAttendance,
   getStudentById,
+  getStudentsByIds,
   getStudentsBySchool,
   listClasspilotAiDecisions,
   listEmailAlertsForSchool,
@@ -164,6 +165,16 @@ async function buildTimeline(options: {
   const events: any[] = [];
   const typeSet = options.types?.length ? new Set(options.types) : null;
   const include = (type: string) => !typeSet || typeSet.has(type);
+
+  // Cap the queryable window. Some downstream sources (attendance, pass history)
+  // scan the full range without tight LIMITs, and an omitted `from` otherwise
+  // defaults to 2020-01-01, so an unbounded range is a DoS vector.
+  const MAX_RANGE_DAYS = 180;
+  const rangeEnd = options.to ?? new Date();
+  const minStart = new Date(rangeEnd.getTime() - MAX_RANGE_DAYS * 24 * 60 * 60 * 1000);
+  if (!options.from || options.from.getTime() < minStart.getTime()) {
+    options = { ...options, from: minStart };
+  }
 
   const persisted = await listStudentTimelineEvents({
     schoolId: options.schoolId,
@@ -421,9 +432,14 @@ router.get("/ai-decisions", ...staffAuth, async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
     const studentId = req.query.studentId as string | undefined;
+    // Without a studentId this lists the whole school's AI safety decisions —
+    // restrict that to admins. Teachers/office_staff must scope to a student
+    // they're authorized to view (enforced by canViewStudent below).
     if (studentId) {
       const access = await canViewStudent(req, res, studentId);
       if (!access.allowed) return res.status(403).json({ error: "Insufficient permissions" });
+    } else if (!isAdminRole(roleFrom(res, req))) {
+      return res.status(400).json({ error: "studentId is required" });
     }
     const decisions = await listClasspilotAiDecisions({
       schoolId,
@@ -442,13 +458,13 @@ router.get("/ai-decisions", ...staffAuth, async (req, res, next) => {
 router.patch("/ai-decisions/:id/review", ...adminAuth, async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
-    const decision = await getClasspilotAiDecisionById(String(req.params.id));
+    const decision = await getClasspilotAiDecisionById(String(req.params.id), schoolId);
     if (!decision || decision.schoolId !== schoolId) return res.status(404).json({ error: "AI decision not found" });
     const { reviewStatus, reviewNote } = req.body;
     if (!["confirmed", "dismissed", "escalated"].includes(reviewStatus)) {
       return res.status(400).json({ error: "reviewStatus must be confirmed | dismissed | escalated" });
     }
-    const updated = await updateClasspilotAiDecisionReview(decision.id, {
+    const updated = await updateClasspilotAiDecisionReview(decision.id, schoolId, {
       reviewStatus,
       reviewNote,
       reviewedBy: req.authUser!.id,
@@ -497,9 +513,12 @@ router.get("/students/:studentId/timeline", ...staffAuth, async (req, res, next)
 router.get("/safety-cases", ...adminAuth, async (_req, res, next) => {
   try {
     const cases = await listOpenSafetyCasesForSchool(res.locals.schoolId!, 100);
-    const enriched = await Promise.all(cases.map(async (c) => {
-      const student = await getStudentById(c.studentId);
-      return { ...c, studentName: studentName(student) };
+    const studentIds = [...new Set(cases.map((c) => c.studentId))];
+    const students = await getStudentsByIds(studentIds);
+    const studentMap = new Map(students.map((s) => [s.id, s]));
+    const enriched = cases.map((c) => ({
+      ...c,
+      studentName: studentName(studentMap.get(c.studentId)),
     }));
     return res.json({ cases: enriched });
   } catch (err) {
@@ -669,7 +688,7 @@ function artifactZipFiles(artifacts: any[]): { name: string; content: string | B
 // GET /api/classpilot/evidence-packets/:id/download
 router.get("/evidence-packets/:id/download", ...adminAuth, async (req, res, next) => {
   try {
-    const artifact = await getEvidenceArtifactById(String(req.params.id));
+    const artifact = await getEvidenceArtifactById(String(req.params.id), res.locals.schoolId!);
     if (!artifact || artifact.schoolId !== res.locals.schoolId! || artifact.sourceType !== "evidence_packet") {
       return res.status(404).json({ error: "Evidence packet not found" });
     }
@@ -752,7 +771,7 @@ router.get("/parent-digests/preview", ...staffAuth, async (req, res, next) => {
   }
 });
 
-// PATCH /api/classpilot/parent-digests/settings
+// GET /api/classpilot/parent-digests/settings
 router.get("/parent-digests/settings", ...staffAuth, async (_req, res, next) => {
   try {
     const settings = await getSettingsForSchool(res.locals.schoolId!);
@@ -772,9 +791,16 @@ router.get("/parent-digests/settings", ...staffAuth, async (_req, res, next) => 
 
 router.patch("/parent-digests/settings", ...adminAuth, async (req, res, next) => {
   try {
-    const settings = await upsertSettings(res.locals.schoolId!, {
-      schoolName: res.locals.school?.name || "School",
-      wsSharedKey: "configured",
+    const schoolId = res.locals.schoolId!;
+    // Preserve existing schoolName / wsSharedKey on update — res.locals.school
+    // is never populated, so the old code corrupted these to "School"/"configured"
+    // on every save. Only fall back to the real school name on first insert.
+    const existing = await getSettingsForSchool(schoolId);
+    const schoolName =
+      existing?.schoolName || (await getSchoolById(schoolId))?.name || "School";
+    const settings = await upsertSettings(schoolId, {
+      schoolName,
+      wsSharedKey: existing?.wsSharedKey || "configured",
       parentTransparencyEnabled: !!req.body.parentTransparencyEnabled,
       parentDigestCadence: "weekly",
       parentDigestIncludesSafety: !!req.body.parentDigestIncludesSafety,
