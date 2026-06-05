@@ -92,14 +92,22 @@ router.post("/end", ...auth, async (req, res, next) => {
       return res.status(404).json({ error: "No active session" });
     }
 
+    // getActiveTeachingSession is keyed by teacherId only, so a multi-school
+    // teacher's stale active session could belong to a DIFFERENT school. Only
+    // end / summarize (which emails the roster) a session whose group is in the
+    // current school context — otherwise treat as no active session here.
+    const group = await getGroupByIdAndSchool(existing.groupId, res.locals.schoolId!);
+    if (!group) {
+      return res.status(404).json({ error: "No active session" });
+    }
+
     const session = await endTeachingSession(existing.id);
     res.json({ session });
 
     // If this was a scheduled class and we're PAST the scheduled end time,
     // mark as skipped so the scheduler doesn't restart it today.
     // If ended DURING the window, don't skip — teacher might restart (accidental end).
-    const group = await getGroupById(existing.groupId);
-    if (group && (group as any).scheduleEnabled && (group as any).blockEndTime) {
+    if ((group as any).scheduleEnabled && (group as any).blockEndTime) {
       try {
         const school = await getSchoolById(group.schoolId);
         const tz = school?.schoolTimezone || "America/New_York";

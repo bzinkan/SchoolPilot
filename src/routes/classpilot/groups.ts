@@ -423,7 +423,11 @@ router.delete("/subgroups/:subgroupId/members/:studentId", ...auth, async (req, 
     if (!existing) {
       return res.status(404).json({ error: "Subgroup not found" });
     }
-    await removeSubgroupMember(subgroupId, param(req, "studentId"));
+    const valid = await studentsInSchool([param(req, "studentId")], res.locals.schoolId!);
+    if (valid.length === 0) {
+      return res.status(404).json({ error: "Student not found" });
+    }
+    await removeSubgroupMember(subgroupId, valid[0]!);
     return res.json({ ok: true });
   } catch (err) {
     next(err);
