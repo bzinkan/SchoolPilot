@@ -6,13 +6,13 @@ import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
 import { requireProductLicense } from "../../middleware/requireProductLicense.js";
 import {
   getFlightPathsBySchool,
-  getFlightPathsByTeacher,
+  getFlightPathsByTeacherAndSchool,
   getFlightPathById,
   createFlightPath,
   updateFlightPath,
   deleteFlightPath,
   getBlockListsBySchool,
-  getBlockListsByTeacher,
+  getBlockListsByTeacherAndSchool,
   getBlockListById,
   createBlockList,
   updateBlockList,
@@ -76,7 +76,7 @@ function extractAllowedEntries(resources: any[], fallbackLinks: string[] = []): 
 // GET /api/classpilot/block-lists
 router.get("/block-lists", ...auth, async (req, res, next) => {
   try {
-    const teacherLists = await getBlockListsByTeacher(req.authUser!.id);
+    const teacherLists = await getBlockListsByTeacherAndSchool(req.authUser!.id, res.locals.schoolId!);
     return res.json({ blockLists: teacherLists });
   } catch (err) {
     next(err);
@@ -221,7 +221,7 @@ router.post("/block-lists/remove", ...auth, async (req, res, next) => {
 // GET /api/classpilot/flight-paths
 router.get("/", ...auth, async (req, res, next) => {
   try {
-    const teacherPaths = await getFlightPathsByTeacher(req.authUser!.id);
+    const teacherPaths = await getFlightPathsByTeacherAndSchool(req.authUser!.id, res.locals.schoolId!);
     return res.json({ flightPaths: teacherPaths });
   } catch (err) {
     next(err);

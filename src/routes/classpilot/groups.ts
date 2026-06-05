@@ -6,7 +6,7 @@ import { requireProductLicense } from "../../middleware/requireProductLicense.js
 import { requireRole } from "../../middleware/requireRole.js";
 import {
   getGroupsBySchool,
-  getGroupsByTeacher,
+  getGroupsByTeacherAndSchool,
   getGroupByIdAndSchool,
   getSubgroupByIdAndSchool,
   createGroup,
@@ -70,7 +70,7 @@ router.get("/", ...auth, async (req, res, next) => {
     if (role === "admin" || role === "school_admin" || user.isSuperAdmin) {
       groups = await getGroupsBySchool(schoolId);
     } else {
-      groups = await getGroupsByTeacher(user.id);
+      groups = await getGroupsByTeacherAndSchool(user.id, schoolId);
     }
 
     // Enrich with student counts

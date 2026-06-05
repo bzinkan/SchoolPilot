@@ -34,7 +34,7 @@ import {
   updateMembership,
   updateMembershipForSchool,
   updateUser,
-  getActiveTeachingSession,
+  getActiveTeachingSessionForSchool,
   getGroupStudents,
   getGroupByIdAndSchool,
   getSchoolUsageSummary,
@@ -1033,7 +1033,7 @@ router.get("/students-aggregated", ...schoolAuth, async (req, res, next) => {
     // teacherId only, so for a multi-school teacher it can return a session that
     // belongs to a DIFFERENT school. Verify the session's group belongs to the
     // current school before exposing its students (cross-school PII guard).
-    const activeSession = await getActiveTeachingSession(userId);
+    const activeSession = await getActiveTeachingSessionForSchool(userId, schoolId);
     const activeGroup = activeSession?.groupId
       ? await getGroupByIdAndSchool(activeSession.groupId, schoolId)
       : undefined;

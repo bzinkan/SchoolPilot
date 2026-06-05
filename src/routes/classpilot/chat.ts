@@ -20,7 +20,7 @@ import {
   deleteMessage,
   getMessageByIdAndSchool,
   createCheckIn,
-  getActiveTeachingSession,
+  getActiveTeachingSessionForSchool,
   getTeachingSessionById,
   getStudentById,
   getStudentDevices,
@@ -381,15 +381,12 @@ router.post("/polls/create", ...staffAuth, async (req, res, next) => {
     const teacherId = req.authUser!.id;
     const schoolId = res.locals.schoolId!;
 
-    // Get active teaching session (or use a synthetic session ID). Guard against
-    // a multi-school teacher whose active session belongs to a different school —
-    // fall back to the school-namespaced synthetic id rather than tagging the poll
-    // with (and broadcasting under) a foreign school's session.
-    const activeSession = await getActiveTeachingSession(teacherId);
-    const sessionId =
-      activeSession && (await sessionBelongsToSchool(activeSession.id, schoolId))
-        ? activeSession.id
-        : `${schoolId}-${teacherId}`;
+    // Get active teaching session (or use a synthetic session ID). The
+    // school-scoped getter only returns a session whose group is in this school,
+    // so a multi-school teacher's foreign session can't tag the poll / misdirect
+    // the broadcast.
+    const activeSession = await getActiveTeachingSessionForSchool(teacherId, schoolId);
+    const sessionId = activeSession?.id || `${schoolId}-${teacherId}`;
 
     const poll = await createPoll({
       sessionId,

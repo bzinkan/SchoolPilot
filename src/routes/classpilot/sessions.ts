@@ -6,7 +6,7 @@ import { requireProductLicense } from "../../middleware/requireProductLicense.js
 import {
   createTeachingSession,
   endTeachingSession,
-  getActiveTeachingSession,
+  getActiveTeachingSessionForSchool,
   getTeachingSessionByIdAndSchool,
   getSessionSettings,
   upsertSessionSettings,
@@ -72,7 +72,7 @@ router.post("/start", ...auth, async (req, res, next) => {
       }
     }
 
-    const existing = await getActiveTeachingSession(teacherId);
+    const existing = await getActiveTeachingSessionForSchool(teacherId, res.locals.schoolId!);
     if (existing) {
       await endTeachingSession(existing.id);
     }
@@ -87,7 +87,7 @@ router.post("/start", ...auth, async (req, res, next) => {
 // POST /api/classpilot/teaching-sessions/end - End the active session
 router.post("/end", ...auth, async (req, res, next) => {
   try {
-    const existing = await getActiveTeachingSession(req.authUser!.id);
+    const existing = await getActiveTeachingSessionForSchool(req.authUser!.id, res.locals.schoolId!);
     if (!existing) {
       return res.status(404).json({ error: "No active session" });
     }
@@ -152,7 +152,7 @@ router.post("/", ...auth, async (req, res, next) => {
     }
 
     // End any existing active session for this teacher
-    const existing = await getActiveTeachingSession(teacherId);
+    const existing = await getActiveTeachingSessionForSchool(teacherId, res.locals.schoolId!);
     if (existing) {
       await endTeachingSession(existing.id);
     }
@@ -167,7 +167,7 @@ router.post("/", ...auth, async (req, res, next) => {
 // GET /api/classpilot/teaching-sessions/active - Get current active session
 router.get("/active", ...auth, async (req, res, next) => {
   try {
-    const session = await getActiveTeachingSession(req.authUser!.id);
+    const session = await getActiveTeachingSessionForSchool(req.authUser!.id, res.locals.schoolId!);
     if (!session) {
       return res.json({ session: null });
     }

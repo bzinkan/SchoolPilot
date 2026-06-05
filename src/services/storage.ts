@@ -2917,6 +2917,29 @@ export async function getActiveTeachingSession(
   return session;
 }
 
+// School-scoped active session — teachingSessions has no schoolId column, so a
+// multi-school teacher's active session could belong to another school. This
+// returns the teacher's active session only in the given school (one active
+// session per teacher PER SCHOOL), which is the correct multi-tenant semantics.
+export async function getActiveTeachingSessionForSchool(
+  teacherId: string,
+  schoolId: string
+): Promise<TeachingSession | undefined> {
+  const [row] = await db
+    .select({ session: teachingSessions })
+    .from(teachingSessions)
+    .innerJoin(groups, eq(teachingSessions.groupId, groups.id))
+    .where(
+      and(
+        eq(teachingSessions.teacherId, teacherId),
+        eq(groups.schoolId, schoolId),
+        isNull(teachingSessions.endTime)
+      )
+    )
+    .limit(1);
+  return row?.session;
+}
+
 export async function getTeachingSessionById(
   sessionId: string
 ): Promise<TeachingSession | undefined> {
@@ -3102,6 +3125,21 @@ export async function getGroupsByTeacher(
     .from(groupTeachers)
     .innerJoin(groups, eq(groups.id, groupTeachers.groupId))
     .where(eq(groupTeachers.teacherId, teacherId))
+    .orderBy(groups.name);
+  return rows.map((r) => r.group);
+}
+
+// School-scoped — a teacher's groups in a specific school only (so a multi-school
+// teacher's group list is partitioned by the school context they're viewing).
+export async function getGroupsByTeacherAndSchool(
+  teacherId: string,
+  schoolId: string
+): Promise<Group[]> {
+  const rows = await db
+    .select({ group: groups })
+    .from(groupTeachers)
+    .innerJoin(groups, eq(groups.id, groupTeachers.groupId))
+    .where(and(eq(groupTeachers.teacherId, teacherId), eq(groups.schoolId, schoolId)))
     .orderBy(groups.name);
   return rows.map((r) => r.group);
 }
@@ -3403,6 +3441,17 @@ export async function getFlightPathsByTeacher(
     .orderBy(flightPaths.flightPathName);
 }
 
+export async function getFlightPathsByTeacherAndSchool(
+  teacherId: string,
+  schoolId: string
+): Promise<FlightPath[]> {
+  return db
+    .select()
+    .from(flightPaths)
+    .where(and(eq(flightPaths.teacherId, teacherId), eq(flightPaths.schoolId, schoolId)))
+    .orderBy(flightPaths.flightPathName);
+}
+
 export async function getFlightPathById(
   flightPathId: string,
   schoolId: string
@@ -3463,6 +3512,17 @@ export async function getBlockListsByTeacher(
     .select()
     .from(blockLists)
     .where(eq(blockLists.teacherId, teacherId))
+    .orderBy(blockLists.name);
+}
+
+export async function getBlockListsByTeacherAndSchool(
+  teacherId: string,
+  schoolId: string
+): Promise<BlockList[]> {
+  return db
+    .select()
+    .from(blockLists)
+    .where(and(eq(blockLists.teacherId, teacherId), eq(blockLists.schoolId, schoolId)))
     .orderBy(blockLists.name);
 }
 
