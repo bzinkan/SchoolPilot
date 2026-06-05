@@ -86,7 +86,7 @@ router.get("/block-lists", ...auth, async (req, res, next) => {
 // GET /api/classpilot/block-lists/:id
 router.get("/block-lists/:id", ...auth, async (req, res, next) => {
   try {
-    const bl = await getBlockListById(param(req, "id"));
+    const bl = await getBlockListById(param(req, "id"), res.locals.schoolId!);
     if (!bl) {
       return res.status(404).json({ error: "Block list not found" });
     }
@@ -131,7 +131,7 @@ router.patch("/block-lists/:id", ...auth, async (req, res, next) => {
     if (blockedDomains !== undefined) data.blockedDomains = blockedDomains;
     if (isDefault !== undefined) data.isDefault = isDefault;
 
-    const updated = await updateBlockList(id, data);
+    const updated = await updateBlockList(id, res.locals.schoolId!, data);
     if (!updated) {
       return res.status(404).json({ error: "Block list not found" });
     }
@@ -144,11 +144,11 @@ router.patch("/block-lists/:id", ...auth, async (req, res, next) => {
 // DELETE /api/classpilot/block-lists/:id
 router.delete("/block-lists/:id", ...auth, async (req, res, next) => {
   try {
-    const existing = await getBlockListById(param(req, "id"));
+    const existing = await getBlockListById(param(req, "id"), res.locals.schoolId!);
     if (!existing) {
       return res.status(404).json({ error: "Block list not found" });
     }
-    await deleteBlockList(param(req, "id"));
+    await deleteBlockList(param(req, "id"), res.locals.schoolId!);
     return res.json({ ok: true });
   } catch (err) {
     next(err);
@@ -159,7 +159,7 @@ router.delete("/block-lists/:id", ...auth, async (req, res, next) => {
 router.post("/block-lists/:id/apply", ...auth, async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
-    const bl = await getBlockListById(param(req, "id"));
+    const bl = await getBlockListById(param(req, "id"), schoolId);
     if (!bl) {
       return res.status(404).json({ error: "Block list not found" });
     }
@@ -317,7 +317,7 @@ router.post("/from-classroom", ...auth, async (req, res, next) => {
 // GET /api/classpilot/flight-paths/:id
 router.get("/:id", ...auth, async (req, res, next) => {
   try {
-    const fp = await getFlightPathById(param(req, "id"));
+    const fp = await getFlightPathById(param(req, "id"), res.locals.schoolId!);
     if (!fp) {
       return res.status(404).json({ error: "Flight path not found" });
     }
@@ -340,7 +340,7 @@ router.patch("/:id", ...auth, async (req, res, next) => {
     if (blockedDomains !== undefined) data.blockedDomains = blockedDomains;
     if (isDefault !== undefined) data.isDefault = isDefault;
 
-    const updated = await updateFlightPath(id, data);
+    const updated = await updateFlightPath(id, res.locals.schoolId!, data);
     if (!updated) {
       return res.status(404).json({ error: "Flight path not found" });
     }
@@ -353,11 +353,11 @@ router.patch("/:id", ...auth, async (req, res, next) => {
 // DELETE /api/classpilot/flight-paths/:id
 router.delete("/:id", ...auth, async (req, res, next) => {
   try {
-    const existing = await getFlightPathById(param(req, "id"));
+    const existing = await getFlightPathById(param(req, "id"), res.locals.schoolId!);
     if (!existing) {
       return res.status(404).json({ error: "Flight path not found" });
     }
-    await deleteFlightPath(param(req, "id"));
+    await deleteFlightPath(param(req, "id"), res.locals.schoolId!);
     return res.json({ ok: true });
   } catch (err) {
     next(err);

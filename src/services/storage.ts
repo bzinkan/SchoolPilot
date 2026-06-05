@@ -498,6 +498,11 @@ export async function getStudentById(
   return student;
 }
 
+export async function getStudentsByIds(ids: string[]): Promise<Student[]> {
+  if (ids.length === 0) return [];
+  return db.select().from(students).where(inArray(students.id, ids));
+}
+
 export async function getStudentByEmail(
   schoolId: string,
   emailLc: string
@@ -3292,12 +3297,13 @@ export async function getFlightPathsByTeacher(
 }
 
 export async function getFlightPathById(
-  flightPathId: string
+  flightPathId: string,
+  schoolId: string
 ): Promise<FlightPath | undefined> {
   const [fp] = await db
     .select()
     .from(flightPaths)
-    .where(eq(flightPaths.id, flightPathId))
+    .where(and(eq(flightPaths.id, flightPathId), eq(flightPaths.schoolId, schoolId)))
     .limit(1);
   return fp;
 }
@@ -3311,18 +3317,21 @@ export async function createFlightPath(
 
 export async function updateFlightPath(
   id: string,
+  schoolId: string,
   data: Partial<InsertFlightPath>
 ): Promise<FlightPath | undefined> {
   const [fp] = await db
     .update(flightPaths)
     .set(data)
-    .where(eq(flightPaths.id, id))
+    .where(and(eq(flightPaths.id, id), eq(flightPaths.schoolId, schoolId)))
     .returning();
   return fp;
 }
 
-export async function deleteFlightPath(id: string): Promise<boolean> {
-  const result = await db.delete(flightPaths).where(eq(flightPaths.id, id));
+export async function deleteFlightPath(id: string, schoolId: string): Promise<boolean> {
+  const result = await db
+    .delete(flightPaths)
+    .where(and(eq(flightPaths.id, id), eq(flightPaths.schoolId, schoolId)));
   return (result.rowCount ?? 0) > 0;
 }
 
@@ -3351,12 +3360,13 @@ export async function getBlockListsByTeacher(
 }
 
 export async function getBlockListById(
-  id: string
+  id: string,
+  schoolId: string
 ): Promise<BlockList | undefined> {
   const [bl] = await db
     .select()
     .from(blockLists)
-    .where(eq(blockLists.id, id))
+    .where(and(eq(blockLists.id, id), eq(blockLists.schoolId, schoolId)))
     .limit(1);
   return bl;
 }
@@ -3370,18 +3380,21 @@ export async function createBlockList(
 
 export async function updateBlockList(
   id: string,
+  schoolId: string,
   data: Partial<InsertBlockList>
 ): Promise<BlockList | undefined> {
   const [bl] = await db
     .update(blockLists)
     .set(data)
-    .where(eq(blockLists.id, id))
+    .where(and(eq(blockLists.id, id), eq(blockLists.schoolId, schoolId)))
     .returning();
   return bl;
 }
 
-export async function deleteBlockList(id: string): Promise<boolean> {
-  const result = await db.delete(blockLists).where(eq(blockLists.id, id));
+export async function deleteBlockList(id: string, schoolId: string): Promise<boolean> {
+  const result = await db
+    .delete(blockLists)
+    .where(and(eq(blockLists.id, id), eq(blockLists.schoolId, schoolId)));
   return (result.rowCount ?? 0) > 0;
 }
 
@@ -4542,18 +4555,20 @@ export async function listClasspilotAiDecisions(options: {
 }
 
 export async function getClasspilotAiDecisionById(
-  id: string
+  id: string,
+  schoolId: string
 ): Promise<ClasspilotAiDecision | undefined> {
   const [row] = await db
     .select()
     .from(classpilotAiDecisions)
-    .where(eq(classpilotAiDecisions.id, id))
+    .where(and(eq(classpilotAiDecisions.id, id), eq(classpilotAiDecisions.schoolId, schoolId)))
     .limit(1);
   return row;
 }
 
 export async function updateClasspilotAiDecisionReview(
   id: string,
+  schoolId: string,
   data: {
     reviewStatus: string;
     reviewNote?: string | null;
@@ -4568,7 +4583,7 @@ export async function updateClasspilotAiDecisionReview(
       reviewedBy: data.reviewedBy,
       reviewedAt: new Date(),
     })
-    .where(eq(classpilotAiDecisions.id, id))
+    .where(and(eq(classpilotAiDecisions.id, id), eq(classpilotAiDecisions.schoolId, schoolId)))
     .returning();
   return row;
 }
@@ -4581,12 +4596,13 @@ export async function createEvidenceArtifact(
 }
 
 export async function getEvidenceArtifactById(
-  id: string
+  id: string,
+  schoolId: string
 ): Promise<EvidenceArtifact | undefined> {
   const [row] = await db
     .select()
     .from(evidenceArtifacts)
-    .where(eq(evidenceArtifacts.id, id))
+    .where(and(eq(evidenceArtifacts.id, id), eq(evidenceArtifacts.schoolId, schoolId)))
     .limit(1);
   return row;
 }
