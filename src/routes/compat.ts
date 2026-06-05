@@ -36,6 +36,7 @@ import {
   updateUser,
   getActiveTeachingSession,
   getGroupStudents,
+  getGroupByIdAndSchool,
   getSchoolUsageSummary,
   getUserById,
   getAttendanceBySchool,
@@ -1028,13 +1029,19 @@ router.get("/students-aggregated", ...schoolAuth, async (req, res, next) => {
     const membershipRole = res.locals.membershipRole as string | undefined;
     const isAdmin = membershipRole === "admin" || membershipRole === "school_admin" || membershipRole === "super_admin";
 
-    // Check for active teaching session
+    // Check for active teaching session. getActiveTeachingSession is keyed by
+    // teacherId only, so for a multi-school teacher it can return a session that
+    // belongs to a DIFFERENT school. Verify the session's group belongs to the
+    // current school before exposing its students (cross-school PII guard).
     const activeSession = await getActiveTeachingSession(userId);
+    const activeGroup = activeSession?.groupId
+      ? await getGroupByIdAndSchool(activeSession.groupId, schoolId)
+      : undefined;
 
     let dbStudents;
-    if (activeSession?.groupId) {
-      // Teacher/admin with active session → show only students in that group
-      const groupStudentRows = await getGroupStudents(activeSession.groupId);
+    if (activeGroup) {
+      // Teacher/admin with active in-school session → show only that group's students
+      const groupStudentRows = await getGroupStudents(activeGroup.id);
       dbStudents = groupStudentRows.map((gs) => gs.student);
     } else if (isAdmin) {
       // Admin without active session → show all students
