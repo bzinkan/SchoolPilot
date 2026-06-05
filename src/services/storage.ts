@@ -3736,6 +3736,18 @@ export async function getMessageByIdAndSchool(
   return row?.message;
 }
 
+// School-scoped message list (replaces an unfiltered getMessages({}) that would
+// return every school's messages). Joins through the addressed student.
+export async function getMessagesBySchool(schoolId: string): Promise<MessageRecord[]> {
+  const rows = await db
+    .select({ message: messages })
+    .from(messages)
+    .innerJoin(students, eq(messages.toStudentId, students.id))
+    .where(eq(students.schoolId, schoolId))
+    .orderBy(desc(messages.timestamp));
+  return rows.map((r) => r.message);
+}
+
 export async function getRecentMessagesForStudent(
   studentId: string,
   sinceMinutesAgo = 5
