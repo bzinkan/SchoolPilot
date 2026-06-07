@@ -76,6 +76,15 @@ async function runStartupMigrations(): Promise<void> {
     console.warn("[migration] daily_usage auto-migration skipped:", (err as Error).message);
   }
 
+  // Device enrollment secret columns (backward compatible — required defaults false)
+  try {
+    await pool.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS enrollment_key TEXT`);
+    await pool.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS enrollment_key_required BOOLEAN NOT NULL DEFAULT false`);
+    console.log("[migration] settings enrollment_key columns ready");
+  } catch (err) {
+    console.warn("[migration] enrollment_key migration skipped:", (err as Error).message);
+  }
+
   // Add gopilot_role column for per-product role overrides
   try {
     await pool.query(`ALTER TABLE school_memberships ADD COLUMN IF NOT EXISTS gopilot_role TEXT`);
