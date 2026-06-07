@@ -3954,6 +3954,28 @@ export async function getGoogleOAuthToken(
   return token;
 }
 
+// School-aware retrieval for Workspace DATA imports (directory/classroom). The
+// token table is keyed per-user (one Google identity per person), so on its own
+// a multi-school user's token could be used to import one school's Workspace into
+// another. Guard via the trust anchor: the connecting Google account's email
+// domain. If that domain is registered to a school OTHER than the current one,
+// refuse — the token belongs to a different tenant's Workspace. (Returns the
+// token when the domain isn't registered to any school, or includes this school —
+// e.g. shared-domain districts.)
+export async function getGoogleOAuthTokenForSchool(
+  userId: string,
+  schoolId: string
+): Promise<GoogleOAuthToken | undefined> {
+  const token = await getGoogleOAuthToken(userId);
+  if (!token) return undefined;
+  const user = await getUserById(userId);
+  const domain = user?.email?.split("@")[1]?.toLowerCase();
+  if (!domain) return token;
+  const schoolsForDomain = await getSchoolsByDomain(domain);
+  if (schoolsForDomain.length === 0) return token;
+  return schoolsForDomain.some((s) => s.id === schoolId) ? token : undefined;
+}
+
 export async function upsertGoogleOAuthToken(
   userId: string,
   data: {
