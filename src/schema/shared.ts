@@ -61,6 +61,12 @@ export const settings = pgTable("settings", {
   parentDigestIncludesSafety: boolean("parent_digest_includes_safety").default(false),
   parentDigestIncludesPassDismissal: boolean("parent_digest_includes_pass_dismissal").default(true),
   parentDigestLastSentAt: timestamp("parent_digest_last_sent_at"),
+  // Device enrollment secret — when enrollmentKeyRequired is true, the
+  // unauthenticated /extension/register endpoint requires the matching key
+  // (placed in the school's managed Chrome extension policy). Off by default so
+  // existing deployments are unaffected. See docs/SECURITY-device-enrollment-secret-spec.md
+  enrollmentKey: text("enrollment_key"),
+  enrollmentKeyRequired: boolean("enrollment_key_required").notNull().default(false),
 });
 
 export type Settings = typeof settings.$inferSelect;

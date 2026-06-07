@@ -30,6 +30,7 @@ import {
   resolveSchoolForStudent,
   getSchoolById,
   getSettingsForSchool,
+  updateEnrollmentSettings,
   getStudentsForDevice,
   getActiveStudentForDevice,
   setActiveStudentForDevice,
@@ -369,6 +370,22 @@ router.post("/extension/register", extensionLimiter, async (req, res, next) => {
     // Check school is active
     if (school.status !== "active" && school.status !== "trial") {
       return res.status(403).json({ error: "School is not active" });
+    }
+
+    // Per-school enrollment secret (defense beyond domain-binding). Backward
+    // compatible: only enforced once a school opts in (enrollmentKeyRequired).
+    // The key lives in the school's managed Chrome extension policy.
+    const regSettings = await getSettingsForSchool(resolvedSchoolId);
+    if (regSettings?.enrollmentKeyRequired) {
+      const provided = Buffer.from(String(req.body.enrollmentKey || ""));
+      const expected = Buffer.from(regSettings.enrollmentKey || "");
+      const ok =
+        expected.length > 0 &&
+        provided.length === expected.length &&
+        crypto.timingSafeEqual(provided, expected);
+      if (!ok) {
+        return res.status(401).json({ error: "Invalid or missing enrollment key" });
+      }
     }
 
     // Create or update device
@@ -1251,6 +1268,59 @@ router.post("/remote/remove-flight-path", ...staffAuth, async (req, res, next) =
       await publishWS({ kind: "students", schoolId }, message);
       return res.json({ success: true, sent: sentCount });
     }
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ============================================================================
+// Device enrollment secret (admin) — see docs/SECURITY-device-enrollment-secret-spec.md
+// ============================================================================
+
+const enrollAdminAuth = [
+  authenticate,
+  requireSchoolContext,
+  requireActiveSchool,
+  requireRole("admin", "school_admin"),
+] as const;
+
+// GET /api/classpilot/enrollment-key — current key + enforcement state
+router.get("/enrollment-key", ...enrollAdminAuth, async (_req, res, next) => {
+  try {
+    const s = await getSettingsForSchool(res.locals.schoolId!);
+    return res.json({ key: s?.enrollmentKey ?? null, required: !!s?.enrollmentKeyRequired });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/classpilot/enrollment-key/rotate — generate a new key
+router.post("/enrollment-key/rotate", ...enrollAdminAuth, async (_req, res, next) => {
+  try {
+    const key = crypto.randomBytes(24).toString("base64url");
+    const updated = await updateEnrollmentSettings(res.locals.schoolId!, { enrollmentKey: key });
+    if (!updated) {
+      return res.status(409).json({ error: "Configure school settings before enabling enrollment keys" });
+    }
+    return res.json({ key });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PATCH /api/classpilot/enrollment-key — toggle enforcement
+router.patch("/enrollment-key", ...enrollAdminAuth, async (req, res, next) => {
+  try {
+    const required = !!req.body.required;
+    const s = await getSettingsForSchool(res.locals.schoolId!);
+    if (required && !s?.enrollmentKey) {
+      return res.status(400).json({ error: "Generate an enrollment key before requiring it" });
+    }
+    const updated = await updateEnrollmentSettings(res.locals.schoolId!, { enrollmentKeyRequired: required });
+    if (!updated) {
+      return res.status(409).json({ error: "Configure school settings first" });
+    }
+    return res.json({ required });
   } catch (err) {
     next(err);
   }
