@@ -15,11 +15,12 @@ import {
   closePoll,
   getPollResponses,
   createPollResponse,
-  getMessages,
+  getMessagesBySchool,
   createMessage,
   deleteMessage,
+  getMessageByIdAndSchool,
   createCheckIn,
-  getActiveTeachingSession,
+  getActiveTeachingSessionForSchool,
   getTeachingSessionById,
   getStudentById,
   getStudentDevices,
@@ -54,18 +55,21 @@ const pollResponseLimiter = rateLimit({
   message: { error: "Too many poll responses. Please wait a moment." },
 });
 
-async function pollBelongsToSchool(poll: { sessionId: string }, schoolId: string): Promise<boolean> {
-  if (poll.sessionId.startsWith(`${schoolId}-`)) {
+async function sessionBelongsToSchool(sessionId: string, schoolId: string): Promise<boolean> {
+  // Sessionless / synthetic ids are namespaced with the school id prefix.
+  if (sessionId.startsWith(`${schoolId}-`)) {
     return true;
   }
-
-  const session = await getTeachingSessionById(poll.sessionId);
+  const session = await getTeachingSessionById(sessionId);
   if (!session) {
     return false;
   }
-
   const group = await getGroupById(session.groupId);
   return group?.schoolId === schoolId;
+}
+
+async function pollBelongsToSchool(poll: { sessionId: string }, schoolId: string): Promise<boolean> {
+  return sessionBelongsToSchool(poll.sessionId, schoolId);
 }
 
 // ============================================================================
@@ -78,6 +82,9 @@ router.post("/chat/send", ...staffAuth, async (req, res, next) => {
     const { sessionId, content, recipientId } = req.body;
     if (!sessionId || !content) {
       return res.status(400).json({ error: "sessionId and content required" });
+    }
+    if (!(await sessionBelongsToSchool(sessionId, res.locals.schoolId!))) {
+      return res.status(404).json({ error: "Session not found" });
     }
 
     const msg = await createChatMessage({
@@ -109,7 +116,11 @@ router.post("/chat/send", ...staffAuth, async (req, res, next) => {
 // GET /api/classpilot/chat/:sessionId - Get chat messages for session
 router.get("/chat/:sessionId", ...staffAuth, async (req, res, next) => {
   try {
-    const messages = await getChatMessages(param(req, "sessionId"));
+    const sessionId = param(req, "sessionId");
+    if (!(await sessionBelongsToSchool(sessionId, res.locals.schoolId!))) {
+      return res.status(404).json({ error: "Session not found" });
+    }
+    const messages = await getChatMessages(sessionId);
     return res.json({ messages });
   } catch (err) {
     next(err);
@@ -126,6 +137,9 @@ router.post("/student/raise-hand", requireDeviceAuth, async (req, res, next) => 
     const schoolId = res.locals.schoolId as string;
     const studentId = res.locals.studentId as string;
     const student = await getStudentById(studentId);
+    if (!student || student.schoolId !== schoolId) {
+      return res.status(404).json({ error: "Student not found" });
+    }
 
     const msg = {
       type: "hand-raised",
@@ -150,6 +164,10 @@ router.post("/student/lower-hand", requireDeviceAuth, async (req, res, next) => 
   try {
     const schoolId = res.locals.schoolId as string;
     const studentId = res.locals.studentId as string;
+    const student = await getStudentById(studentId);
+    if (!student || student.schoolId !== schoolId) {
+      return res.status(404).json({ error: "Student not found" });
+    }
 
     const msg = { type: "hand-lowered", data: { studentId } };
     broadcastToTeachersLocal(schoolId, msg);
@@ -174,6 +192,9 @@ router.post("/student/send-message", requireDeviceAuth, async (req, res, next) =
     }
 
     const student = await getStudentById(studentId);
+    if (!student || student.schoolId !== schoolId) {
+      return res.status(404).json({ error: "Student not found" });
+    }
 
     const msg = await createMessage({
       fromUserId: null,
@@ -212,7 +233,7 @@ router.post("/student/send-message", requireDeviceAuth, async (req, res, next) =
 // GET /api/classpilot/teacher/messages - Get student messages
 router.get("/teacher/messages", ...staffAuth, async (req, res, next) => {
   try {
-    const messages = await getMessages({});
+    const messages = await getMessagesBySchool(res.locals.schoolId!);
     return res.json({ messages });
   } catch (err) {
     next(err);
@@ -227,6 +248,13 @@ router.post("/teacher/reply", ...staffAuth, async (req, res, next) => {
 
     if (!message) {
       return res.status(400).json({ error: "message required" });
+    }
+
+    if (targetStudentId) {
+      const student = await getStudentById(targetStudentId);
+      if (!student || student.schoolId !== res.locals.schoolId) {
+        return res.status(404).json({ error: "Student not found" });
+      }
     }
 
     const msg = await createMessage({
@@ -260,7 +288,12 @@ router.post("/teacher/reply", ...staffAuth, async (req, res, next) => {
 // DELETE /api/classpilot/teacher/messages/:messageId
 router.delete("/teacher/messages/:messageId", ...staffAuth, async (req, res, next) => {
   try {
-    await deleteMessage(param(req, "messageId"));
+    const messageId = param(req, "messageId");
+    const owned = await getMessageByIdAndSchool(messageId, res.locals.schoolId!);
+    if (!owned) {
+      return res.status(404).json({ error: "Message not found" });
+    }
+    await deleteMessage(messageId);
     return res.json({ ok: true });
   } catch (err) {
     next(err);
@@ -272,6 +305,11 @@ router.post("/teacher/dismiss-hand/:studentId", ...staffAuth, async (req, res, n
   try {
     const studentId = param(req, "studentId");
     const schoolId = res.locals.schoolId!;
+
+    const student = await getStudentById(studentId);
+    if (!student || student.schoolId !== schoolId) {
+      return res.status(404).json({ error: "Student not found" });
+    }
 
     // Send to specific student device(s) in remote-control format (service-worker expects this)
     const rcMsg = {
@@ -301,6 +339,13 @@ router.post("/teacher/close-chat", ...staffAuth, async (req, res, next) => {
   try {
     const { studentId, deviceId: bodyDeviceId } = req.body;
     const schoolId = res.locals.schoolId!;
+
+    if (studentId) {
+      const student = await getStudentById(studentId);
+      if (!student || student.schoolId !== schoolId) {
+        return res.status(404).json({ error: "Student not found" });
+      }
+    }
 
     let targetDeviceId = bodyDeviceId;
     if (!targetDeviceId && studentId) {
@@ -336,8 +381,11 @@ router.post("/polls/create", ...staffAuth, async (req, res, next) => {
     const teacherId = req.authUser!.id;
     const schoolId = res.locals.schoolId!;
 
-    // Get active teaching session (or use a synthetic session ID)
-    const activeSession = await getActiveTeachingSession(teacherId);
+    // Get active teaching session (or use a synthetic session ID). The
+    // school-scoped getter only returns a session whose group is in this school,
+    // so a multi-school teacher's foreign session can't tag the poll / misdirect
+    // the broadcast.
+    const activeSession = await getActiveTeachingSessionForSchool(teacherId, schoolId);
     const sessionId = activeSession?.id || `${schoolId}-${teacherId}`;
 
     const poll = await createPoll({
@@ -381,6 +429,9 @@ router.get("/polls", ...staffAuth, async (req, res, next) => {
     const { sessionId } = req.query;
     if (!sessionId) {
       return res.status(400).json({ error: "sessionId query param required" });
+    }
+    if (!(await sessionBelongsToSchool(sessionId as string, res.locals.schoolId!))) {
+      return res.status(404).json({ error: "Session not found" });
     }
     const polls = await getPollsBySession(sessionId as string);
     return res.json({ polls });
@@ -460,6 +511,11 @@ router.post("/polls/:pollId/close", ...staffAuth, async (req, res, next) => {
     const { targetDeviceIds } = req.body;
     const schoolId = res.locals.schoolId!;
 
+    const existing = await getPollById(pollId);
+    if (!existing || !(await pollBelongsToSchool(existing, schoolId))) {
+      return res.status(404).json({ error: "Poll not found" });
+    }
+
     const poll = await closePoll(pollId);
     if (!poll) {
       return res.status(404).json({ error: "Poll not found" });
@@ -525,6 +581,11 @@ router.post("/checkin/respond", requireDeviceAuth, async (req, res, next) => {
     const studentId = res.locals.studentId as string;
     const schoolId = res.locals.schoolId as string;
     const { mood, message } = req.body;
+
+    const student = await getStudentById(studentId);
+    if (!student || student.schoolId !== schoolId) {
+      return res.status(404).json({ error: "Student not found" });
+    }
 
     const checkIn = await createCheckIn({
       studentId,

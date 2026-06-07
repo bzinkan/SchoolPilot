@@ -344,6 +344,9 @@ router.put(
       const results: unknown[] = [];
       for (const item of updates) {
         if (item.id) {
+          // Verify each student belongs to the caller's school before mutating.
+          const existing = await getStudentById(item.id);
+          if (!existing || existing.schoolId !== res.locals.schoolId) continue;
           const updated = await updateStudent(item.id, item);
           if (updated) results.push(updated);
         }

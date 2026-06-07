@@ -6,11 +6,12 @@ import { requireProductLicense } from "../../middleware/requireProductLicense.js
 import {
   createTeachingSession,
   endTeachingSession,
-  getActiveTeachingSession,
-  getTeachingSessionById,
+  getActiveTeachingSessionForSchool,
+  getTeachingSessionByIdAndSchool,
   getSessionSettings,
   upsertSessionSettings,
   getGroupById,
+  getGroupByIdAndSchool,
   getGroupStudents,
   getHeartbeatsForStudentsInRange,
   setScheduleSkippedDate,
@@ -41,7 +42,7 @@ router.post("/start", ...auth, async (req, res, next) => {
       return res.status(400).json({ error: "groupId is required" });
     }
 
-    const group = await getGroupById(groupId);
+    const group = await getGroupByIdAndSchool(groupId, res.locals.schoolId!);
     if (!group) {
       return res.status(404).json({ error: "Group not found" });
     }
@@ -71,7 +72,7 @@ router.post("/start", ...auth, async (req, res, next) => {
       }
     }
 
-    const existing = await getActiveTeachingSession(teacherId);
+    const existing = await getActiveTeachingSessionForSchool(teacherId, res.locals.schoolId!);
     if (existing) {
       await endTeachingSession(existing.id);
     }
@@ -86,8 +87,17 @@ router.post("/start", ...auth, async (req, res, next) => {
 // POST /api/classpilot/teaching-sessions/end - End the active session
 router.post("/end", ...auth, async (req, res, next) => {
   try {
-    const existing = await getActiveTeachingSession(req.authUser!.id);
+    const existing = await getActiveTeachingSessionForSchool(req.authUser!.id, res.locals.schoolId!);
     if (!existing) {
+      return res.status(404).json({ error: "No active session" });
+    }
+
+    // getActiveTeachingSession is keyed by teacherId only, so a multi-school
+    // teacher's stale active session could belong to a DIFFERENT school. Only
+    // end / summarize (which emails the roster) a session whose group is in the
+    // current school context — otherwise treat as no active session here.
+    const group = await getGroupByIdAndSchool(existing.groupId, res.locals.schoolId!);
+    if (!group) {
       return res.status(404).json({ error: "No active session" });
     }
 
@@ -97,8 +107,7 @@ router.post("/end", ...auth, async (req, res, next) => {
     // If this was a scheduled class and we're PAST the scheduled end time,
     // mark as skipped so the scheduler doesn't restart it today.
     // If ended DURING the window, don't skip — teacher might restart (accidental end).
-    const group = await getGroupById(existing.groupId);
-    if (group && (group as any).scheduleEnabled && (group as any).blockEndTime) {
+    if ((group as any).scheduleEnabled && (group as any).blockEndTime) {
       try {
         const school = await getSchoolById(group.schoolId);
         const tz = school?.schoolTimezone || "America/New_York";
@@ -137,13 +146,13 @@ router.post("/", ...auth, async (req, res, next) => {
       return res.status(400).json({ error: "groupId is required" });
     }
 
-    const group = await getGroupById(groupId);
+    const group = await getGroupByIdAndSchool(groupId, res.locals.schoolId!);
     if (!group) {
       return res.status(404).json({ error: "Group not found" });
     }
 
     // End any existing active session for this teacher
-    const existing = await getActiveTeachingSession(teacherId);
+    const existing = await getActiveTeachingSessionForSchool(teacherId, res.locals.schoolId!);
     if (existing) {
       await endTeachingSession(existing.id);
     }
@@ -158,8 +167,16 @@ router.post("/", ...auth, async (req, res, next) => {
 // GET /api/classpilot/teaching-sessions/active - Get current active session
 router.get("/active", ...auth, async (req, res, next) => {
   try {
-    const session = await getActiveTeachingSession(req.authUser!.id);
+    const session = await getActiveTeachingSessionForSchool(req.authUser!.id, res.locals.schoolId!);
     if (!session) {
+      return res.json({ session: null });
+    }
+
+    // getActiveTeachingSession is keyed by teacherId only — for a multi-school
+    // teacher this could be a session in a different school. Only surface a
+    // session whose group is in the current school context.
+    const group = await getGroupByIdAndSchool(session.groupId, res.locals.schoolId!);
+    if (!group) {
       return res.json({ session: null });
     }
 
@@ -173,7 +190,7 @@ router.get("/active", ...auth, async (req, res, next) => {
 // GET /api/classpilot/teaching-sessions/:id - Get session by ID
 router.get("/:id", ...auth, async (req, res, next) => {
   try {
-    const session = await getTeachingSessionById(param(req, "id"));
+    const session = await getTeachingSessionByIdAndSchool(param(req, "id"), res.locals.schoolId!);
     if (!session) {
       return res.status(404).json({ error: "Session not found" });
     }
@@ -188,7 +205,12 @@ router.get("/:id", ...auth, async (req, res, next) => {
 // POST /api/classpilot/teaching-sessions/:id/end - End a teaching session
 router.post("/:id/end", ...auth, async (req, res, next) => {
   try {
-    const session = await endTeachingSession(param(req, "id"));
+    const sessionId = param(req, "id");
+    const owned = await getTeachingSessionByIdAndSchool(sessionId, res.locals.schoolId!);
+    if (!owned) {
+      return res.status(404).json({ error: "Session not found" });
+    }
+    const session = await endTeachingSession(sessionId);
     return res.json({ session });
   } catch (err) {
     next(err);
@@ -199,6 +221,10 @@ router.post("/:id/end", ...auth, async (req, res, next) => {
 router.put("/:id/settings", ...auth, async (req, res, next) => {
   try {
     const sessionId = param(req, "id");
+    const owned = await getTeachingSessionByIdAndSchool(sessionId, res.locals.schoolId!);
+    if (!owned) {
+      return res.status(404).json({ error: "Session not found" });
+    }
     const { chatEnabled, raiseHandEnabled } = req.body;
 
     const data: Record<string, unknown> = {};

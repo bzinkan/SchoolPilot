@@ -19,8 +19,10 @@ import {
   deleteProductLicense,
   getGradesBySchool,
   createGrade,
+  getGradeById,
   updateGrade,
   deleteGrade,
+  getMembershipByUserAndSchool,
   getTeacherGrades,
   assignTeacherGrade,
   removeTeacherGrade,
@@ -328,6 +330,10 @@ router.put(
   requireRole("admin"),
   async (req, res, next) => {
     try {
+      const existing = await getGradeById(param(req, "gradeId"));
+      if (!existing || existing.schoolId !== res.locals.schoolId) {
+        return res.status(404).json({ error: "Grade not found" });
+      }
       const grade = await updateGrade(param(req, "gradeId"), req.body);
       if (!grade) {
         return res.status(404).json({ error: "Grade not found" });
@@ -347,6 +353,10 @@ router.delete(
   requireRole("admin"),
   async (req, res, next) => {
     try {
+      const existing = await getGradeById(param(req, "gradeId"));
+      if (!existing || existing.schoolId !== res.locals.schoolId) {
+        return res.status(404).json({ error: "Grade not found" });
+      }
       const deleted = await deleteGrade(param(req, "gradeId"));
       if (!deleted) {
         return res.status(404).json({ error: "Grade not found" });
@@ -370,8 +380,10 @@ router.get(
   async (req, res, next) => {
     try {
       const assignments = await getTeacherGrades(param(req, "teacherId"));
+      // Only expose assignments whose grade belongs to the caller's school.
+      const scoped = assignments.filter((a) => a.grade.schoolId === res.locals.schoolId);
       return res.json({
-        assignments: assignments.map((a) => ({
+        assignments: scoped.map((a) => ({
           id: a.teacherGrade.id,
           gradeId: a.teacherGrade.gradeId,
           gradeName: a.grade.name,
@@ -399,6 +411,16 @@ router.post(
           .json({ error: "teacherId and gradeId required" });
       }
 
+      // Both the grade and the teacher must belong to the caller's school.
+      const grade = await getGradeById(gradeId);
+      if (!grade || grade.schoolId !== res.locals.schoolId) {
+        return res.status(404).json({ error: "Grade not found" });
+      }
+      const membership = await getMembershipByUserAndSchool(teacherId, res.locals.schoolId!);
+      if (!membership) {
+        return res.status(404).json({ error: "Teacher not found" });
+      }
+
       const assignment = await assignTeacherGrade(teacherId, gradeId);
       return res.status(201).json({ assignment });
     } catch (err) {
@@ -420,6 +442,12 @@ router.delete(
         return res
           .status(400)
           .json({ error: "teacherId and gradeId required" });
+      }
+
+      // The grade must belong to the caller's school before unassigning.
+      const grade = await getGradeById(gradeId);
+      if (!grade || grade.schoolId !== res.locals.schoolId) {
+        return res.status(404).json({ error: "Grade not found" });
       }
 
       await removeTeacherGrade(teacherId, gradeId);

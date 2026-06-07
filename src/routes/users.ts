@@ -18,8 +18,8 @@ import {
   getMembershipsBySchool,
   getMembershipByUserAndSchool,
   createMembership,
-  updateMembership,
-  deleteMembership,
+  updateMembershipForSchool,
+  deleteMembershipForSchool,
   getMembershipsWithSchool,
   getApprovedChildrenForParent,
   createParentStudentLink,
@@ -325,8 +325,9 @@ router.put(
           .json({ error: parsed.error.errors[0]?.message || "Invalid input" });
       }
 
-      const membership = await updateMembership(
+      const membership = await updateMembershipForSchool(
         param(req, "membershipId"),
+        res.locals.schoolId!,
         parsed.data
       );
       if (!membership) {
@@ -364,7 +365,10 @@ router.delete(
   requireRole("admin"),
   async (req, res, next) => {
     try {
-      const deleted = await deleteMembership(param(req, "membershipId"));
+      const deleted = await deleteMembershipForSchool(
+        param(req, "membershipId"),
+        res.locals.schoolId!
+      );
       if (!deleted) {
         return res.status(404).json({ error: "Membership not found" });
       }

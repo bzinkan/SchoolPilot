@@ -23,18 +23,20 @@ import {
   getSchoolById,
   updateSchool,
   getPendingParentRequests,
-  updateParentStudentLink,
-  getParentStudentLinkById,
+  updateParentStudentLinkByIdAndSchool,
+  getParentStudentLinkByIdAndSchool,
   getApprovedChildrenForParent,
   getUserByEmail,
   createUser,
   createMembership,
   getMembershipByUserAndSchool,
-  deleteMembership,
+  deleteMembershipForSchool,
   updateMembership,
+  updateMembershipForSchool,
   updateUser,
-  getActiveTeachingSession,
+  getActiveTeachingSessionForSchool,
   getGroupStudents,
+  getGroupByIdAndSchool,
   getSchoolUsageSummary,
   getUserById,
   getAttendanceBySchool,
@@ -376,7 +378,7 @@ router.patch("/admin/users/:id", ...schoolAuth, requireRole("admin"), async (req
       data.role = role === "school_admin" ? "admin" : role;
     }
 
-    const membership = await updateMembership(id, data);
+    const membership = await updateMembershipForSchool(id, res.locals.schoolId!, data);
     if (!membership) {
       return res.status(404).json({ error: "Membership not found" });
     }
@@ -449,7 +451,7 @@ router.post("/admin/users/:id/password", ...schoolAuth, requireRole("admin"), as
 router.delete("/admin/users/:id", ...schoolAuth, requireRole("admin"), async (req, res, next) => {
   try {
     const membershipId = param(req, "id");
-    const deleted = await deleteMembership(membershipId);
+    const deleted = await deleteMembershipForSchool(membershipId, res.locals.schoolId!);
     if (!deleted) {
       return res.status(404).json({ error: "Membership not found" });
     }
@@ -494,7 +496,7 @@ router.get("/admin/audit-logs", ...schoolAuth, requireRole("admin"), async (req,
 router.delete("/admin/teachers/:id", ...schoolAuth, requireRole("admin"), async (req, res, next) => {
   try {
     const membershipId = param(req, "id");
-    const deleted = await deleteMembership(membershipId);
+    const deleted = await deleteMembershipForSchool(membershipId, res.locals.schoolId!);
     if (!deleted) return res.status(404).json({ error: "Staff member not found" });
     logAudit({
       schoolId: res.locals.schoolId!,
@@ -574,6 +576,9 @@ router.post("/admin/classroom/create-class", ...schoolAuth, requireRole("admin")
     const { courseId, teacherId, gradeLevel } = req.body;
     if (!courseId || !teacherId) {
       return res.status(400).json({ error: "courseId and teacherId required" });
+    }
+    if (!(await userBelongsToSchool(teacherId, schoolId))) {
+      return res.status(404).json({ error: "Teacher not found in this school" });
     }
     // Create a group for this course
     const [group] = await db.insert(groups).values({
@@ -1024,13 +1029,19 @@ router.get("/students-aggregated", ...schoolAuth, async (req, res, next) => {
     const membershipRole = res.locals.membershipRole as string | undefined;
     const isAdmin = membershipRole === "admin" || membershipRole === "school_admin" || membershipRole === "super_admin";
 
-    // Check for active teaching session
-    const activeSession = await getActiveTeachingSession(userId);
+    // Check for active teaching session. getActiveTeachingSession is keyed by
+    // teacherId only, so for a multi-school teacher it can return a session that
+    // belongs to a DIFFERENT school. Verify the session's group belongs to the
+    // current school before exposing its students (cross-school PII guard).
+    const activeSession = await getActiveTeachingSessionForSchool(userId, schoolId);
+    const activeGroup = activeSession?.groupId
+      ? await getGroupByIdAndSchool(activeSession.groupId, schoolId)
+      : undefined;
 
     let dbStudents;
-    if (activeSession?.groupId) {
-      // Teacher/admin with active session → show only students in that group
-      const groupStudentRows = await getGroupStudents(activeSession.groupId);
+    if (activeGroup) {
+      // Teacher/admin with active in-school session → show only that group's students
+      const groupStudentRows = await getGroupStudents(activeGroup.id);
       dbStudents = groupStudentRows.map((gs) => gs.student);
     } else if (isAdmin) {
       // Admin without active session → show all students
@@ -1268,9 +1279,9 @@ router.put("/compat/parent-requests/:id", ...schoolAuth, requireRole("admin"), a
     if (!status || !["approved", "rejected"].includes(status)) {
       return res.status(400).json({ error: "status must be 'approved' or 'rejected'" });
     }
-    const link = await getParentStudentLinkById(param(req, "id"));
+    const link = await getParentStudentLinkByIdAndSchool(param(req, "id"), res.locals.schoolId!);
     if (!link) return res.status(404).json({ error: "Request not found" });
-    const updated = await updateParentStudentLink(param(req, "id"), { status });
+    const updated = await updateParentStudentLinkByIdAndSchool(param(req, "id"), res.locals.schoolId!, { status });
     return res.json({ request: updated });
   } catch (err) {
     next(err);

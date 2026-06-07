@@ -8,7 +8,7 @@ import {
   getScheduledGroupsReadyToStart,
   getScheduledGroupsReadyToEnd,
   hasActiveSessionForGroup,
-  getActiveTeachingSession,
+  getActiveTeachingSessionForSchool,
   endTeachingSession,
   createTeachingSession,
   getUserById,
@@ -720,8 +720,10 @@ async function autoStartClassBlocks() {
           continue;
         }
 
-        // End any existing active session for this teacher
-        const existingSession = await getActiveTeachingSession(group.teacherId);
+        // End any existing active session for this teacher IN THIS SCHOOL.
+        // getActiveTeachingSession (teacherId only) would let one school's
+        // scheduler terminate a multi-school teacher's session in another school.
+        const existingSession = await getActiveTeachingSessionForSchool(group.teacherId, group.schoolId);
         if (existingSession) {
           await endTeachingSession(existingSession.id);
           console.log(`[ClassPilot] Auto-ended previous session for teacher ${group.teacherId} before starting "${group.name}"`);

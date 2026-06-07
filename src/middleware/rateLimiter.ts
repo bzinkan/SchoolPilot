@@ -1,4 +1,4 @@
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import type { Request } from "express";
 
 export const authLimiter = rateLimit({
@@ -32,6 +32,9 @@ export const auditLimiter = rateLimit({
   legacyHeaders: false,
   keyGenerator: (req: Request) => {
     const userId = (req as Request & { authUser?: { id?: string } }).authUser?.id;
-    return userId ? `user:${userId}` : `ip:${req.ip ?? "unknown"}`;
+    if (userId) return `user:${userId}`;
+    // ipKeyGenerator normalizes IPv6 (collapses to a /64) so a caller can't
+    // bypass the limit by rotating addresses within their prefix.
+    return `ip:${ipKeyGenerator(req.ip ?? req.socket?.remoteAddress ?? "unknown")}`;
   },
 });

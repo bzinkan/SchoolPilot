@@ -3,7 +3,7 @@ import { google } from "googleapis";
 import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import {
-  getGoogleOAuthToken,
+  getGoogleOAuthTokenForSchool,
   createStudent,
   updateStudent,
   createUser,
@@ -165,9 +165,9 @@ async function importGoogleUsersAsStudents(
   return { imported, updated, skipped, errors };
 }
 
-async function getAuthedClient(userId: string) {
-  const token = await getGoogleOAuthToken(userId);
-  if (!token) throw routeError("NO_TOKENS: Google not connected");
+async function getAuthedClient(userId: string, schoolId: string) {
+  const token = await getGoogleOAuthTokenForSchool(userId, schoolId);
+  if (!token) throw routeError("NO_TOKENS: Google not connected for this school");
 
   const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
@@ -180,7 +180,7 @@ async function getAuthedClient(userId: string) {
 // GET /api/google/workspace/orgunits - List org units
 router.get("/orgunits", ...auth, async (req, res, next) => {
   try {
-    const { oauth2Client, google } = await getAuthedClient(req.authUser!.id);
+    const { oauth2Client, google } = await getAuthedClient(req.authUser!.id, res.locals.schoolId!);
     const admin = google.admin({ version: "directory_v1", auth: oauth2Client });
 
     const response = await admin.orgunits.list({
@@ -219,7 +219,7 @@ router.get("/orgunits", ...auth, async (req, res, next) => {
 router.get("/users", ...auth, async (req, res, next) => {
   try {
     const { orgUnitPath, pageToken } = req.query;
-    const { oauth2Client, google } = await getAuthedClient(req.authUser!.id);
+    const { oauth2Client, google } = await getAuthedClient(req.authUser!.id, res.locals.schoolId!);
     const admin = google.admin({ version: "directory_v1", auth: oauth2Client });
 
     const params = buildDirectoryUsersParams(
@@ -258,7 +258,7 @@ router.post("/import", ...auth, async (req, res, next) => {
 
     // OU-based import with entries array (ClassPilot Students page)
     if (Array.isArray(entries) && entries.length > 0) {
-      const { oauth2Client, google } = await getAuthedClient(req.authUser!.id);
+      const { oauth2Client, google } = await getAuthedClient(req.authUser!.id, res.locals.schoolId!);
       const admin = google.admin({ version: "directory_v1", auth: oauth2Client });
 
       let totalImported = 0;
@@ -310,7 +310,7 @@ router.post("/import", ...auth, async (req, res, next) => {
 
     // Single OU or all-domain import (PassPilot/ClassPilot setup)
     if (orgUnitPath !== undefined || importAll === true) {
-      const { oauth2Client, google } = await getAuthedClient(req.authUser!.id);
+      const { oauth2Client, google } = await getAuthedClient(req.authUser!.id, res.locals.schoolId!);
       const admin = google.admin({ version: "directory_v1", auth: oauth2Client });
       const params = buildDirectoryUsersParams(orgUnitPath, "full");
       const { users: googleUsers } = await listDirectoryUsers(admin, params);
@@ -414,7 +414,7 @@ const importStaffHandler = async (req: any, res: any, next: any) => {
 
     // If orgUnitPath provided, fetch users from Google Directory
     if (orgUnitPath || (orgUnitPath === undefined && !users)) {
-      const { oauth2Client, google } = await getAuthedClient(req.authUser!.id);
+      const { oauth2Client, google } = await getAuthedClient(req.authUser!.id, res.locals.schoolId!);
       const admin = google.admin({ version: "directory_v1", auth: oauth2Client });
 
       const params = buildDirectoryUsersParams(orgUnitPath);
@@ -529,7 +529,7 @@ router.post("/import-orgunits", ...auth, async (req, res, next) => {
     }
 
     const schoolId = res.locals.schoolId!;
-    const { oauth2Client, google } = await getAuthedClient(req.authUser!.id);
+    const { oauth2Client, google } = await getAuthedClient(req.authUser!.id, res.locals.schoolId!);
     const admin = google.admin({ version: "directory_v1", auth: oauth2Client });
 
     let totalImported = 0;
