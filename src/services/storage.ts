@@ -3524,7 +3524,20 @@ export async function getSubgroupsByGroup(
 export async function createSubgroup(
   data: InsertSubgroup
 ): Promise<Subgroup> {
-  const [sg] = await db.insert(subgroups).values(data).returning();
+  // subgroups.school_id must mirror the parent group's school (RLS WITH CHECK).
+  // Derive it from the group so a caller can never omit or mismatch it.
+  const [group] = await db
+    .select({ schoolId: groups.schoolId })
+    .from(groups)
+    .where(eq(groups.id, data.groupId))
+    .limit(1);
+  if (!group) {
+    throw new Error(`createSubgroup: group ${data.groupId} not found`);
+  }
+  const [sg] = await db
+    .insert(subgroups)
+    .values({ ...data, schoolId: group.schoolId })
+    .returning();
   return sg!;
 }
 
@@ -3941,9 +3954,19 @@ export async function assignTeacherStudent(
   teacherId: string,
   studentId: string
 ): Promise<TeacherStudent> {
+  // teacher_students.school_id must mirror the linked student's school (RLS
+  // WITH CHECK). Derive it from the student so it can never be omitted.
+  const [student] = await db
+    .select({ schoolId: students.schoolId })
+    .from(students)
+    .where(eq(students.id, studentId))
+    .limit(1);
+  if (!student) {
+    throw new Error(`assignTeacherStudent: student ${studentId} not found`);
+  }
   const [row] = await db
     .insert(teacherStudents)
-    .values({ teacherId, studentId })
+    .values({ teacherId, studentId, schoolId: student.schoolId })
     .onConflictDoNothing()
     .returning();
   return row!;
