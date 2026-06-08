@@ -52,6 +52,7 @@ const PORT = parseInt(process.env.PORT || "4000", 10);
 
 // Run lightweight auto-migrations for new tables
 import { pool } from "./db.js";
+import { schedulerPool } from "./services/schedulerDb.js";
 import {
   RLS_GLOBAL_TABLES,
   isSafeIdentifier,
@@ -107,7 +108,10 @@ async function runStartupMigrations(): Promise<void> {
   // Auto-enroll policy: default OFF (students must be pre-imported by IT).
   try {
     await pool.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS auto_enroll_students BOOLEAN NOT NULL DEFAULT false`);
-    await pool.query(`
+    // RLS-exempt pool: this backfill WRITEs settings rows for every school and
+    // runs with no request GUC, so under per-school RLS WITH CHECK it would be
+    // rejected — route it through schedulerPool (app.is_super='on').
+    await schedulerPool.query(`
       INSERT INTO settings (school_id, school_name, ws_shared_key)
       SELECT s.id, COALESCE(s.name, ''), ''
       FROM schools s
@@ -759,7 +763,7 @@ async function runStartupMigrations(): Promise<void> {
 
   // Backfill emailLc for students that have email but emailLc is NULL
   try {
-    const { rowCount } = await pool.query(`UPDATE students SET email_lc = LOWER(email) WHERE email IS NOT NULL AND email_lc IS NULL`);
+    const { rowCount } = await schedulerPool.query(`UPDATE students SET email_lc = LOWER(email) WHERE email IS NOT NULL AND email_lc IS NULL`);
     if (rowCount && rowCount > 0) {
       console.log(`[migration] Backfilled emailLc for ${rowCount} students`);
     }
@@ -771,7 +775,8 @@ async function runStartupMigrations(): Promise<void> {
   // First reassign heartbeats and student_devices so data isn't orphaned, then delete.
   try {
     // Reassign heartbeats from duplicate (no gradeId) to surviving (has gradeId) student
-    await pool.query(`
+    // RLS-exempt pool: cross-school cleanup DML with no request GUC.
+    await schedulerPool.query(`
       UPDATE heartbeats SET student_id = keeper.id
       FROM (
         SELECT s1.id, s2.id AS dup_id
@@ -782,7 +787,7 @@ async function runStartupMigrations(): Promise<void> {
       WHERE heartbeats.student_id = keeper.dup_id
     `);
     // Reassign student_devices without tripping the unique(student_id, device_id) constraint
-    await pool.query(`
+    await schedulerPool.query(`
       INSERT INTO student_devices (student_id, device_id, first_seen_at, last_seen_at)
       SELECT keeper.id, student_devices.device_id, MIN(student_devices.first_seen_at), MAX(student_devices.last_seen_at)
       FROM student_devices
@@ -795,7 +800,7 @@ async function runStartupMigrations(): Promise<void> {
       GROUP BY keeper.id, student_devices.device_id
       ON CONFLICT (student_id, device_id) DO NOTHING
     `);
-    await pool.query(`
+    await schedulerPool.query(`
       DELETE FROM student_devices
       USING (
         SELECT s1.id, s2.id AS dup_id
@@ -806,7 +811,7 @@ async function runStartupMigrations(): Promise<void> {
       WHERE student_devices.student_id = keeper.dup_id
     `);
     // Reassign student_sessions
-    await pool.query(`
+    await schedulerPool.query(`
       UPDATE student_sessions SET student_id = keeper.id
       FROM (
         SELECT s1.id, s2.id AS dup_id
@@ -817,7 +822,7 @@ async function runStartupMigrations(): Promise<void> {
       WHERE student_sessions.student_id = keeper.dup_id
     `);
     // Now delete the orphaned duplicates
-    await pool.query(`
+    await schedulerPool.query(`
       DELETE FROM students WHERE id IN (
         SELECT s2.id FROM students s1
         JOIN students s2 ON s1.email_lc = s2.email_lc AND s1.school_id = s2.school_id AND s1.id != s2.id
@@ -890,7 +895,8 @@ async function runStartupMigrations(): Promise<void> {
   // keep the newest active pass, mark the rest expired. Then enforce with a
   // partial unique index so the DB rejects a concurrent double-issue.
   try {
-    const dedup = await pool.query(`
+    // RLS-exempt pool: cross-school dedup DML with no request GUC.
+    const dedup = await schedulerPool.query(`
       UPDATE passes SET status = 'expired'
       WHERE id IN (
         SELECT id FROM (

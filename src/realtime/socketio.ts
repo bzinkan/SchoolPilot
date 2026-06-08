@@ -11,6 +11,7 @@ import {
   hasActiveGoPilotLicense,
   isGoPilotManager,
 } from "../services/gopilotAccess.js";
+import { runWithTenantContext } from "../middleware/tenantContext.js";
 
 let io: Server | null = null;
 
@@ -77,6 +78,10 @@ export function setupSocketIO(httpServer: HttpServer): Server {
 
         socket.join(`school:${requestedSchoolId}`);
 
+        // Socket.IO handlers run outside Express/ALS, so bind this school's tenant
+        // context for the per-school access checks (students/homerooms reads) — RLS
+        // would otherwise hide every row and deny legitimate parents/teachers.
+        await runWithTenantContext({ schoolId: requestedSchoolId }, async () => {
         if (isGoPilotManager(role)) {
           socket.join(`school:${requestedSchoolId}:office`);
           return;
@@ -111,6 +116,7 @@ export function setupSocketIO(httpServer: HttpServer): Server {
           socket.join(`school:${requestedSchoolId}:parent:${userId}`);
           socket.join(`school:${requestedSchoolId}:parents`);
         }
+        });
       } catch {
         socket.emit("join:error", { error: "Failed to join school room" });
       }

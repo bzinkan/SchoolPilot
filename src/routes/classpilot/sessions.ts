@@ -19,6 +19,7 @@ import {
 } from "../../services/storage.js";
 import { sendSessionSummaryEmail } from "../../services/email.js";
 import db from "../../db.js";
+import { runWithTenantContext } from "../../middleware/tenantContext.js";
 
 const router = Router();
 
@@ -126,11 +127,15 @@ router.post("/end", ...auth, async (req, res, next) => {
       }
     }
 
-    // Fire-and-forget: send session summary email to teacher
+    // Fire-and-forget: send session summary email to teacher. This runs AFTER
+    // res.json above, so the request's tenant connection is already released —
+    // re-establish the school's context for the students/heartbeats reads inside
+    // the summary (otherwise RLS deny-by-default empties them).
     if (session?.startTime && session?.endTime) {
-      buildAndSendSessionSummary(session, req.authUser!).catch((err) =>
-        console.error("[SessionSummary] Failed to send:", err)
-      );
+      const summarySchoolId = res.locals.schoolId!;
+      void runWithTenantContext({ schoolId: summarySchoolId }, () =>
+        buildAndSendSessionSummary(session, req.authUser!)
+      ).catch((err) => console.error("[SessionSummary] Failed to send:", err));
     }
   } catch (err) {
     next(err);

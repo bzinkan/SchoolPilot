@@ -312,15 +312,20 @@ router.post("/register", extensionLimiter, async (req, res, next) => {
       return res.status(403).json({ error: "School is not active" });
     }
 
-    let device = await getDeviceById(deviceId);
-    if (!device) {
-      device = await createDevice({
-        deviceId,
-        deviceName: deviceName || null,
-        schoolId: resolvedSchoolId,
-        classId: classId || resolvedSchoolId,
-      });
-    }
+    // Unauthenticated route, but the school is validated above — scope the
+    // device read+write to it so RLS is satisfied (no request GUC otherwise).
+    let device;
+    await runWithTenantContext({ schoolId: resolvedSchoolId }, async () => {
+      device = await getDeviceById(deviceId);
+      if (!device) {
+        device = await createDevice({
+          deviceId,
+          deviceName: deviceName || null,
+          schoolId: resolvedSchoolId,
+          classId: classId || resolvedSchoolId,
+        });
+      }
+    });
 
     return res.json({ data: device });
   } catch (err) {
@@ -373,6 +378,11 @@ router.post("/extension/register", extensionLimiter, async (req, res, next) => {
     if (school.status !== "active" && school.status !== "trial") {
       return res.status(403).json({ error: "School is not active" });
     }
+
+    // Unauthenticated route: bind the resolved+validated school's tenant context
+    // for the rest of the handler so RLS is satisfied AND the enrollment-key gate
+    // (getSettingsForSchool below) reads real settings instead of failing open.
+    await runWithTenantContext({ schoolId: resolvedSchoolId }, async () => {
 
     // Per-school enrollment secret (defense beyond domain-binding). Backward
     // compatible: only enforced once a school opts in (enrollmentKeyRequired).
@@ -477,6 +487,7 @@ router.post("/extension/register", extensionLimiter, async (req, res, next) => {
     }
 
     return res.json({ device });
+    });
   } catch (err) {
     next(err);
   }
@@ -490,6 +501,10 @@ router.post("/register-student", extensionLimiter, async (req, res, next) => {
     if (!deviceId || !studentEmail || !schoolId) {
       return res.status(400).json({ error: "deviceId, studentEmail, and schoolId required" });
     }
+
+    // Unauthenticated legacy route: scope writes to the supplied school so RLS is
+    // satisfied (the school is the caller-supplied trust anchor, as before RLS).
+    await runWithTenantContext({ schoolId }, async () => {
 
     // Find or create student
     const existing = await searchStudents(schoolId, { search: studentEmail });
@@ -529,6 +544,7 @@ router.post("/register-student", extensionLimiter, async (req, res, next) => {
     });
 
     return res.json({ studentToken, student });
+    });
   } catch (err) {
     next(err);
   }
@@ -735,7 +751,11 @@ router.post("/device/heartbeat", requireDeviceAuth, async (req, res, next) => {
         });
 
         // Persist classification to the heartbeat record
-        updateHeartbeatClassification(heartbeat.id, classification.category, classification.safetyAlert).catch(() => {});
+        // Detached callback (request connection already released) → re-establish
+        // this school's context so classification persists under heartbeats RLS.
+        void runWithTenantContext({ schoolId }, async () => {
+          await updateHeartbeatClassification(heartbeat.id, classification.category, classification.safetyAlert);
+        }).catch(() => {});
 
         // Broadcast classification to teachers
         const classificationUpdate = {

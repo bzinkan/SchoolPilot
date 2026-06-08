@@ -29,6 +29,7 @@ import {
   getSettingsForSchool,
   getMembershipByUserAndSchool,
 } from "../services/storage.js";
+import { runWithTenantContext } from "../middleware/tenantContext.js";
 
 // Ping/pong keepalive constants
 const WS_PING_INTERVAL_MS = 30_000; // 30 seconds
@@ -176,7 +177,7 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
                 });
 
                 // Send settings along with auth success
-                const schoolSettings = await getSettingsForSchool(schoolId);
+                const schoolSettings = await runWithTenantContext({ schoolId }, () => getSettingsForSchool(schoolId));
                 ws.send(JSON.stringify({
                   type: "auth-success",
                   role: "student",
@@ -210,6 +211,7 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
                 }
                 const school = resolved.school;
 
+                await runWithTenantContext({ schoolId: school.id }, async () => {
                 // Auto-provision student and device (only for single-school domains)
                 const existing = await searchStudents(school.id, { search: email });
                 let student = existing[0];
@@ -281,6 +283,7 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
                   type: "student-registered",
                   studentId: student.id,
                   deviceId,
+                });
                 });
               } catch (error) {
                 console.error("[WebSocket] Email-first provisioning error:", error);

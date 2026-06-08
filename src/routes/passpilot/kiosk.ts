@@ -5,6 +5,7 @@ import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
 import { requireProductLicense } from "../../middleware/requireProductLicense.js";
 import { kioskLookupSchema, kioskCheckoutSchema } from "../../schema/validation.js";
+import { runWithTenantContext } from "../../middleware/tenantContext.js";
 
 // Strict rate limiter for public kiosk endpoints
 const kioskLimiter = rateLimit({
@@ -92,6 +93,7 @@ router.post("/lookup", kioskLimiter, async (req, res, next) => {
       return res.status(400).json({ error: "Student ID number required" });
     }
 
+    await runWithTenantContext({ schoolId }, async () => {
     const student = await getStudentByIdNumber(schoolId, parsed.data.studentIdNumber);
     if (!student) {
       return res.json({ error: "Student not found", student: null, activePass: null });
@@ -106,6 +108,7 @@ router.post("/lookup", kioskLimiter, async (req, res, next) => {
         lastName: student.lastName,
       },
       activePass: activePass || null,
+    });
     });
   } catch (err) {
     next(err);
@@ -129,6 +132,7 @@ router.post("/checkout", kioskLimiter, async (req, res, next) => {
       return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
     }
 
+    await runWithTenantContext({ schoolId }, async () => {
     const student = await getStudentById(parsed.data.studentId);
     if (!student || student.schoolId !== schoolId) {
       return res.status(400).json({ error: "Student not found" });
@@ -198,6 +202,7 @@ router.post("/checkout", kioskLimiter, async (req, res, next) => {
     }
 
     return res.status(201).json({ pass });
+    });
   } catch (err) {
     next(err);
   }
@@ -220,6 +225,7 @@ router.post("/checkin", kioskLimiter, async (req, res, next) => {
       return res.status(400).json({ error: "studentId required" });
     }
 
+    await runWithTenantContext({ schoolId }, async () => {
     const activePass = await getActivePassForStudent(studentId, schoolId);
     if (!activePass) {
       return res.status(400).json({ error: "No active pass found" });
@@ -227,6 +233,7 @@ router.post("/checkin", kioskLimiter, async (req, res, next) => {
 
     const pass = await returnPass(activePass.id, schoolId);
     return res.json({ pass });
+    });
   } catch (err) {
     next(err);
   }
@@ -268,10 +275,12 @@ router.get("/students", kioskLimiter, async (req, res, next) => {
     const { error, status } = await validateKiosk(schoolId, kioskPin);
     if (error) return res.status(status).json({ error });
 
-    const [studentsList, activePasses] = await Promise.all([
-      getStudentsByGrade(schoolId, gradeId),
-      getActivePassesByGrade(schoolId, gradeId),
-    ]);
+    const [studentsList, activePasses] = await runWithTenantContext({ schoolId }, () =>
+      Promise.all([
+        getStudentsByGrade(schoolId, gradeId),
+        getActivePassesByGrade(schoolId, gradeId),
+      ]),
+    );
 
     const passMap = new Map(activePasses.map((p) => [p.studentId, p]));
 
