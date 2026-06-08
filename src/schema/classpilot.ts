@@ -492,13 +492,15 @@ export const messages = pgTable("messages", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   fromUserId: text("from_user_id"),
   toStudentId: text("to_student_id"),
-  // Derived from the addressed student's school. Nullable — announcements have a
-  // null toStudentId, so messages RLS is deferred until that model is finalized.
+  // Derived from the addressed student or active school context. Legacy rows may
+  // be null and are hidden once RLS is enabled.
   schoolId: text("school_id"),
   message: text("message").notNull(),
   isAnnouncement: boolean("is_announcement").default(false),
   timestamp: timestamp("timestamp").notNull().default(sql`now()`),
-});
+}, (table) => [
+  index("messages_school_id_idx").on(table.schoolId),
+]);
 
 export type MessageRecord = typeof messages.$inferSelect;
 export type InsertMessage = typeof messages.$inferInsert;

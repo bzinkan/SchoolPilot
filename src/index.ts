@@ -124,11 +124,10 @@ async function runStartupMigrations(): Promise<void> {
     console.warn("[migration] auto_enroll_students migration skipped:", (err as Error).message);
   }
 
-  // RLS Phase 1: add school_id to the 6 derived tables + backfill from parents.
-  // Idempotent; nullable (legacy/ambiguous rows stay NULL by design). These become
-  // the basis for per-school RLS policies. messages.school_id is best-effort
-  // (announcements have null to_student_id); dashboard_tabs backfills only teachers
-  // with exactly one active membership (multi-school is ambiguous → left NULL).
+  // RLS Phase 1: add school_id to derived tables + backfill from parents.
+  // Idempotent; nullable legacy/ambiguous rows stay NULL by design and are hidden
+  // once table RLS is enabled. dashboard_tabs/messages can only infer teacher
+  // ownership when the sender has exactly one active membership.
   try {
     await pool.query(`ALTER TABLE subgroups ADD COLUMN IF NOT EXISTS school_id TEXT`);
     await pool.query(`UPDATE subgroups s SET school_id = g.school_id FROM groups g WHERE g.id = s.group_id AND s.school_id IS NULL`);
@@ -148,6 +147,25 @@ async function runStartupMigrations(): Promise<void> {
 
     await pool.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS school_id TEXT`);
     await pool.query(`UPDATE messages m SET school_id = st.school_id FROM students st WHERE st.id = m.to_student_id AND m.school_id IS NULL`);
+    await pool.query(`
+      WITH sender_school AS (
+        SELECT m.from_user_id, MIN(sm.school_id) AS school_id, COUNT(DISTINCT sm.school_id) AS school_count
+        FROM messages m
+        JOIN school_memberships sm ON sm.user_id = m.from_user_id
+        WHERE m.school_id IS NULL
+          AND m.to_student_id IS NULL
+          AND m.from_user_id IS NOT NULL
+          AND sm.status = 'active'
+        GROUP BY m.from_user_id
+      )
+      UPDATE messages m
+      SET school_id = ss.school_id
+      FROM sender_school ss
+      WHERE m.school_id IS NULL
+        AND m.to_student_id IS NULL
+        AND m.from_user_id = ss.from_user_id
+        AND ss.school_count = 1
+    `);
     await pool.query(`CREATE INDEX IF NOT EXISTS messages_school_id_idx ON messages (school_id)`);
 
     await pool.query(`ALTER TABLE dashboard_tabs ADD COLUMN IF NOT EXISTS school_id TEXT`);

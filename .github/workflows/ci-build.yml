@@ -73,6 +73,61 @@ jobs:
       - name: Cross-tenant isolation tests
         run: npm test
 
+  rls-enabled-cross-tenant-tests:
+    name: RLS-enabled cross-tenant tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: sptest
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      ADMIN_DATABASE_URL: postgres://postgres:test@localhost:5432/sptest
+      DATABASE_URL: postgres://schoolpilot_rls_test_user:test@localhost:5432/sptest
+      RLS_TEST_ROLE: schoolpilot_rls_test_user
+      RLS_TEST_PASSWORD: test
+      RLS_GUC_ENABLED: "true"
+      RLS_ENABLED_TABLES: activity_log,audit_logs,block_lists,bus_routes,classpilot_ai_decisions,classroom_course_students,classroom_courses,daily_usage,dashboard_tabs,devices,dismissal_sessions,email_alerts,email_scan_log,error_logs,evidence_artifacts,family_groups,flight_paths,grades,groups,heartbeats,homerooms,import_runs,mailpilot_watches,messages,parent_student,passes,security_events,settings,student_attendance,student_groups,student_safety_cases,student_timeline_events,students,subgroups,teacher_students,teaching_sessions,walker_zones
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Create test schema
+        env:
+          DATABASE_URL: ${{ env.ADMIN_DATABASE_URL }}
+        run: npx drizzle-kit push --force
+
+      - name: Build
+        env:
+          DATABASE_URL: ${{ env.ADMIN_DATABASE_URL }}
+        run: npm run build
+
+      - name: Enable RLS on app tables
+        env:
+          DATABASE_URL: ${{ env.ADMIN_DATABASE_URL }}
+        run: node --import tsx tests/setup-rls-ci.ts
+
+      - name: RLS-enabled cross-tenant isolation tests
+        run: node --import tsx --test tests/cross-tenant-isolation.test.ts
+
   frontend:
     name: Frontend (Vite Build)
     runs-on: ubuntu-latest
