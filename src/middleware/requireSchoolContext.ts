@@ -104,5 +104,8 @@ export const requireSchoolContext: RequestHandler = async (req, res, next) => {
 
   res.locals.schoolId = membership.schoolId;
   res.locals.membershipRole = membership.role;
-  return next();
+  // Bind the per-request tenant GUC on the fallback path too — the other four
+  // success branches above already do. Without this, a JWT user with no pinned
+  // school silently reads 0 rows / fails WITH CHECK on any RLS-enabled table.
+  return bindTenantContext(req, res, next);
 };
