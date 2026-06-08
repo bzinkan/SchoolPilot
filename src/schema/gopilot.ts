@@ -55,6 +55,7 @@ export const parentStudent = pgTable(
   },
   (table) => [
     unique("parent_student_unique").on(table.parentId, table.studentId),
+    index("parent_student_school_id_idx").on(table.schoolId),
     index("parent_student_parent_id_idx").on(table.parentId),
     index("parent_student_student_id_idx").on(table.studentId),
   ]

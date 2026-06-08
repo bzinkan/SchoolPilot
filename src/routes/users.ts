@@ -3,6 +3,7 @@ import { authenticate } from "../middleware/authenticate.js";
 import { requireSchoolContext } from "../middleware/requireSchoolContext.js";
 import { requireRole } from "../middleware/requireRole.js";
 import { requireActiveSchool } from "../middleware/requireActiveSchool.js";
+import { runWithTenantContext } from "../middleware/tenantContext.js";
 import {
   createTeacherSchema,
   updateUserSchema,
@@ -107,7 +108,17 @@ router.get("/me/children", async (req, res, next) => {
         return res.status(403).json({ error: "You do not have access to this school" });
       }
     }
-    const children = await getApprovedChildrenForParent(req.authUser!.id, schoolId);
+    const children = schoolId
+      ? await runWithTenantContext({ schoolId }, () => getApprovedChildrenForParent(req.authUser!.id, schoolId))
+      : (
+          await Promise.all(
+            (await getMembershipsWithSchool(req.authUser!.id)).map((m) =>
+              runWithTenantContext({ schoolId: m.membership.schoolId }, () =>
+                getApprovedChildrenForParent(req.authUser!.id, m.membership.schoolId)
+              )
+            )
+          )
+        ).flat();
     return res.json({ children });
   } catch (err) {
     next(err);
@@ -126,16 +137,21 @@ router.post("/me/children/link", async (req, res, next) => {
     if (!membership) {
       return res.status(403).json({ error: "You do not have access to this school" });
     }
-    // Look up student by code to get studentId
-    const student = await getStudentByCode(schoolId, studentCode);
-    if (!student) {
+    const link = await runWithTenantContext({ schoolId }, async () => {
+      // Look up student by code to get studentId
+      const student = await getStudentByCode(schoolId, studentCode);
+      if (!student) {
+        return undefined;
+      }
+      return createParentStudentLink({
+        parentId: req.authUser!.id,
+        studentId: student.id,
+        relationship: req.body.relationship || "parent",
+      });
+    });
+    if (!link) {
       return res.status(404).json({ error: "Student not found with that code" });
     }
-    const link = await createParentStudentLink({
-      parentId: req.authUser!.id,
-      studentId: student.id,
-      relationship: req.body.relationship || "parent",
-    });
     return res.status(201).json({ link });
   } catch (err) {
     next(err);
@@ -153,11 +169,13 @@ router.post("/me/children/link-by-car", async (req, res, next) => {
     if (!membership) {
       return res.status(403).json({ error: "You do not have access to this school" });
     }
-    const result = await linkParentByCarNumber(
-      req.authUser!.id,
-      schoolId,
-      carNumber,
-      membership.id
+    const result = await runWithTenantContext({ schoolId }, () =>
+      linkParentByCarNumber(
+        req.authUser!.id,
+        schoolId,
+        carNumber,
+        membership.id
+      )
     );
     return res.status(201).json({
       students: result.students,

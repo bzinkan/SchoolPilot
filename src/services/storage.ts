@@ -2292,53 +2292,68 @@ export async function getParentStudentLinkById(
   return row;
 }
 
-// parentStudent has no schoolId column — ownership derives from the linked
-// student. Returns the link only if its student belongs to the given school.
+async function getStudentSchoolIdForTenantWrite(studentId: string, expectedSchoolId?: string): Promise<string> {
+  const [student] = await db
+    .select({ schoolId: students.schoolId })
+    .from(students)
+    .where(eq(students.id, studentId))
+    .limit(1);
+  if (!student) {
+    throw new Error(`student ${studentId} not found`);
+  }
+  if (expectedSchoolId && student.schoolId !== expectedSchoolId) {
+    const err = new Error("student does not belong to the active school") as Error & { code?: string };
+    err.code = "STUDENT_SCHOOL_MISMATCH";
+    throw err;
+  }
+  return student.schoolId;
+}
+
+// parent_student.school_id is derived from the linked student. Returns the link
+// only if its stored tenant belongs to the given school.
 export async function getParentStudentLinkByIdAndSchool(
   id: string,
   schoolId: string
 ): Promise<ParentStudent | undefined> {
   const [row] = await db
-    .select({ link: parentStudent })
+    .select()
     .from(parentStudent)
-    .innerJoin(students, eq(parentStudent.studentId, students.id))
-    .where(and(eq(parentStudent.id, id), eq(students.schoolId, schoolId)))
+    .where(and(eq(parentStudent.id, id), eq(parentStudent.schoolId, schoolId)))
     .limit(1);
-  return row?.link;
+  return row;
 }
 
 export async function updateParentStudentLink(
   id: string,
   data: Partial<InsertParentStudent>
 ): Promise<ParentStudent | undefined> {
+  const values = { ...data };
+  if (values.studentId) {
+    values.schoolId = await getStudentSchoolIdForTenantWrite(values.studentId);
+  }
   const [row] = await db
     .update(parentStudent)
-    .set(data)
+    .set(values)
     .where(eq(parentStudent.id, id))
     .returning();
   return row;
 }
 
-// School-scoped update (parentStudent has no schoolId column — scope via the
-// linked student). Belt-and-suspenders so the mutation can't touch another
+// School-scoped update. Belt-and-suspenders so the mutation can't touch another
 // school's link even if a caller forgets the read-side ownership gate.
 export async function updateParentStudentLinkByIdAndSchool(
   id: string,
   schoolId: string,
   data: Partial<InsertParentStudent>
 ): Promise<ParentStudent | undefined> {
+  const values = { ...data };
+  if (values.studentId) {
+    values.schoolId = await getStudentSchoolIdForTenantWrite(values.studentId, schoolId);
+  }
   const [row] = await db
     .update(parentStudent)
-    .set(data)
-    .where(
-      and(
-        eq(parentStudent.id, id),
-        inArray(
-          parentStudent.studentId,
-          db.select({ id: students.id }).from(students).where(eq(students.schoolId, schoolId))
-        )
-      )
-    )
+    .set(values)
+    .where(and(eq(parentStudent.id, id), eq(parentStudent.schoolId, schoolId)))
     .returning();
   return row;
 }
@@ -2346,9 +2361,10 @@ export async function updateParentStudentLinkByIdAndSchool(
 export async function createParentStudentLink(
   data: InsertParentStudent
 ): Promise<ParentStudent> {
+  const schoolId = await getStudentSchoolIdForTenantWrite(data.studentId, data.schoolId ?? undefined);
   const [row] = await db
     .insert(parentStudent)
-    .values(data)
+    .values({ ...data, schoolId })
     .onConflictDoNothing()
     .returning();
   return row!;
@@ -3084,10 +3100,8 @@ export async function getActiveTeachingSession(
   return session;
 }
 
-// School-scoped active session — teachingSessions has no schoolId column, so a
-// multi-school teacher's active session could belong to another school. This
-// returns the teacher's active session only in the given school (one active
-// session per teacher PER SCHOOL), which is the correct multi-tenant semantics.
+// School-scoped active session. This returns the teacher's active session only
+// in the given school, which is the correct multi-tenant semantics.
 export async function getActiveTeachingSessionForSchool(
   teacherId: string,
   schoolId: string,
@@ -3119,8 +3133,7 @@ export async function getTeachingSessionById(
   return session;
 }
 
-// teachingSessions has no schoolId column — ownership derives from the parent
-// group. Returns the session only if its group belongs to the given school.
+// Returns the session only if it belongs to the given school.
 export async function getTeachingSessionByIdAndSchool(
   sessionId: string,
   schoolId: string
@@ -3420,8 +3433,7 @@ export async function getGroupByIdAndSchool(
   return group;
 }
 
-// Subgroups have no schoolId column — ownership derives from the parent group.
-// Returns the subgroup only if its parent group belongs to the given school.
+// Returns the subgroup only if it belongs to the given school.
 export async function getSubgroupByIdAndSchool(
   subgroupId: string,
   schoolId: string
@@ -3937,9 +3949,8 @@ export async function getTeacherStudentAssignments(
   return rows.map((r) => ({ ...r.assignment, student: r.student }));
 }
 
-// School-scoped — teacherStudents has no schoolId column, so partition by the
-// assigned student's school. Returns only the assignments whose student is in
-// the given school (so a multi-school teacher's list is scoped to the context).
+// Returns only the assignments whose student is in the given school, so a
+// multi-school teacher's list is scoped to the active context.
 export async function getTeacherStudentAssignmentsForSchool(
   teacherId: string,
   schoolId: string
@@ -4023,9 +4034,17 @@ export async function getMessages(
 }
 
 export async function createMessage(
-  data: InsertMessage
+  data: InsertMessage,
+  schoolId?: string
 ): Promise<MessageRecord> {
-  const [msg] = await db.insert(messages).values(data).returning();
+  let resolvedSchoolId = data.schoolId ?? schoolId;
+  if (!resolvedSchoolId && data.toStudentId) {
+    resolvedSchoolId = await getStudentSchoolIdForTenantWrite(data.toStudentId);
+  }
+  if (!resolvedSchoolId) {
+    throw new Error("createMessage: schoolId is required when no target student is present");
+  }
+  const [msg] = await db.insert(messages).values({ ...data, schoolId: resolvedSchoolId }).returning();
   return msg!;
 }
 
@@ -4034,32 +4053,28 @@ export async function deleteMessage(messageId: string): Promise<boolean> {
   return (result.rowCount ?? 0) > 0;
 }
 
-// messages has no schoolId column — ownership derives from the addressed
-// student (toStudentId). Returns the message only if its student belongs to
-// the given school.
+// messages.school_id is written from the addressed student or active school
+// context. Legacy null rows remain hidden once RLS is enabled.
 export async function getMessageByIdAndSchool(
   messageId: string,
   schoolId: string
 ): Promise<MessageRecord | undefined> {
-  const [row] = await db
-    .select({ message: messages })
+  const [message] = await db
+    .select()
     .from(messages)
-    .innerJoin(students, eq(messages.toStudentId, students.id))
-    .where(and(eq(messages.id, messageId), eq(students.schoolId, schoolId)))
+    .where(and(eq(messages.id, messageId), eq(messages.schoolId, schoolId)))
     .limit(1);
-  return row?.message;
+  return message;
 }
 
 // School-scoped message list (replaces an unfiltered getMessages({}) that would
-// return every school's messages). Joins through the addressed student.
+// return every school's messages).
 export async function getMessagesBySchool(schoolId: string): Promise<MessageRecord[]> {
-  const rows = await db
-    .select({ message: messages })
+  return db
+    .select()
     .from(messages)
-    .innerJoin(students, eq(messages.toStudentId, students.id))
-    .where(eq(students.schoolId, schoolId))
+    .where(eq(messages.schoolId, schoolId))
     .orderBy(desc(messages.timestamp));
-  return rows.map((r) => r.message);
 }
 
 export async function getRecentMessagesForStudent(

@@ -211,7 +211,7 @@ router.post("/student/send-message", requireDeviceAuth, async (req, res, next) =
       toStudentId: studentId,
       message,
       isAnnouncement: false,
-    });
+    }, schoolId);
 
     const broadcastPayload = {
       type: "student-message",
@@ -272,7 +272,7 @@ router.post("/teacher/reply", ...staffAuth, async (req, res, next) => {
       toStudentId: targetStudentId || null,
       message,
       isAnnouncement: false,
-    });
+    }, res.locals.schoolId!);
 
     // Look up deviceId if not provided
     let targetDeviceId: string | undefined = bodyDeviceId;
