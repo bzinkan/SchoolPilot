@@ -44,7 +44,7 @@ const auth = [
 // GET /api/classpilot/teacher/dashboard-tabs
 router.get("/dashboard-tabs", ...auth, async (req, res, next) => {
   try {
-    const tabs = await getDashboardTabs(req.authUser!.id);
+    const tabs = await getDashboardTabs(req.authUser!.id, res.locals.schoolId!);
     return res.json({ tabs });
   } catch (err) {
     next(err);
@@ -61,6 +61,7 @@ router.post("/dashboard-tabs", ...auth, async (req, res, next) => {
 
     const tab = await createDashboardTab({
       teacherId: req.authUser!.id,
+      schoolId: res.locals.schoolId!,
       label,
       filterType,
       filterValue: filterValue || null,
@@ -85,7 +86,7 @@ router.patch("/dashboard-tabs/:id", ...auth, async (req, res, next) => {
     if (filterValue !== undefined) data.filterValue = filterValue;
     if (order !== undefined) data.order = order;
 
-    const updated = await updateDashboardTab(id, req.authUser!.id, data);
+    const updated = await updateDashboardTab(id, req.authUser!.id, res.locals.schoolId!, data);
     if (!updated) {
       return res.status(404).json({ error: "Tab not found" });
     }
@@ -98,7 +99,7 @@ router.patch("/dashboard-tabs/:id", ...auth, async (req, res, next) => {
 // DELETE /api/classpilot/teacher/dashboard-tabs/:id
 router.delete("/dashboard-tabs/:id", ...auth, async (req, res, next) => {
   try {
-    await deleteDashboardTab(param(req, "id"), req.authUser!.id);
+    await deleteDashboardTab(param(req, "id"), req.authUser!.id, res.locals.schoolId!);
     return res.json({ ok: true });
   } catch (err) {
     next(err);

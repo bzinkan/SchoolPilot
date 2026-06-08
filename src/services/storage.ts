@@ -2887,6 +2887,7 @@ export async function getActiveTeachingSessions(
       id: teachingSessions.id,
       groupId: teachingSessions.groupId,
       teacherId: teachingSessions.teacherId,
+      schoolId: teachingSessions.schoolId,
       startTime: teachingSessions.startTime,
       endTime: teachingSessions.endTime,
       createdAt: teachingSessions.createdAt,
@@ -3650,18 +3651,21 @@ export async function createPollResponse(
 // ClassPilot - Dashboard Tab operations
 // ============================================================================
 
+// Dashboard tabs are scoped by BOTH teacher and school so a multi-school teacher
+// only sees the tabs for the school they're currently viewing.
 export async function getDashboardTabs(
-  teacherId: string
+  teacherId: string,
+  schoolId: string
 ): Promise<DashboardTab[]> {
   return db
     .select()
     .from(dashboardTabs)
-    .where(eq(dashboardTabs.teacherId, teacherId))
+    .where(and(eq(dashboardTabs.teacherId, teacherId), eq(dashboardTabs.schoolId, schoolId)))
     .orderBy(asc(dashboardTabs.order));
 }
 
 export async function createDashboardTab(
-  data: InsertDashboardTab
+  data: InsertDashboardTab & { schoolId: string }
 ): Promise<DashboardTab> {
   const [tab] = await db.insert(dashboardTabs).values(data).returning();
   return tab!;
@@ -3670,20 +3674,33 @@ export async function createDashboardTab(
 export async function updateDashboardTab(
   tabId: string,
   teacherId: string,
+  schoolId: string,
   data: Partial<InsertDashboardTab>
 ): Promise<DashboardTab | undefined> {
   const [tab] = await db
     .update(dashboardTabs)
     .set(data)
-    .where(and(eq(dashboardTabs.id, tabId), eq(dashboardTabs.teacherId, teacherId)))
+    .where(and(
+      eq(dashboardTabs.id, tabId),
+      eq(dashboardTabs.teacherId, teacherId),
+      eq(dashboardTabs.schoolId, schoolId)
+    ))
     .returning();
   return tab;
 }
 
-export async function deleteDashboardTab(tabId: string, teacherId: string): Promise<boolean> {
+export async function deleteDashboardTab(
+  tabId: string,
+  teacherId: string,
+  schoolId: string
+): Promise<boolean> {
   const result = await db
     .delete(dashboardTabs)
-    .where(and(eq(dashboardTabs.id, tabId), eq(dashboardTabs.teacherId, teacherId)));
+    .where(and(
+      eq(dashboardTabs.id, tabId),
+      eq(dashboardTabs.teacherId, teacherId),
+      eq(dashboardTabs.schoolId, schoolId)
+    ));
   return (result.rowCount ?? 0) > 0;
 }
 

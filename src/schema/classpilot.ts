@@ -272,6 +272,9 @@ export const teachingSessions = pgTable(
     id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
     groupId: text("group_id").notNull(),
     teacherId: text("teacher_id").notNull(),
+    // Derived from the parent group's school; backfilled + set on insert. Nullable
+    // for legacy rows. Basis for the per-school RLS policy.
+    schoolId: text("school_id"),
     startTime: timestamp("start_time").notNull().default(sql`now()`),
     endTime: timestamp("end_time"),
     createdAt: timestamp("created_at").notNull().default(sql`now()`),
@@ -374,6 +377,8 @@ export type InsertPollResponse = typeof pollResponses.$inferInsert;
 export const subgroups = pgTable("subgroups", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   groupId: varchar("group_id").notNull(),
+  // Derived from the parent group's school (backfilled + set on insert). Basis for RLS.
+  schoolId: text("school_id"),
   name: text("name").notNull(),
   color: text("color"),
   createdAt: timestamp("created_at").notNull().default(sql`now()`),
@@ -487,6 +492,9 @@ export const messages = pgTable("messages", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   fromUserId: text("from_user_id"),
   toStudentId: text("to_student_id"),
+  // Derived from the addressed student's school. Nullable — announcements have a
+  // null toStudentId, so messages RLS is deferred until that model is finalized.
+  schoolId: text("school_id"),
   message: text("message").notNull(),
   isAnnouncement: boolean("is_announcement").default(false),
   timestamp: timestamp("timestamp").notNull().default(sql`now()`),
@@ -515,6 +523,9 @@ export type InsertCheckIn = typeof checkIns.$inferInsert;
 export const dashboardTabs = pgTable("dashboard_tabs", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   teacherId: text("teacher_id").notNull(),
+  // Set from res.locals.schoolId at create time. Partitions a multi-school
+  // teacher's tabs by the school they're viewing (closes the deferred item).
+  schoolId: text("school_id"),
   label: text("label").notNull(),
   filterType: text("filter_type").notNull(), // grade | group | status | multi-group | all
   filterValue: jsonb("filter_value"),
@@ -555,6 +566,8 @@ export const teacherStudents = pgTable("teacher_students", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   teacherId: text("teacher_id").notNull(),
   studentId: text("student_id").notNull(),
+  // Derived from the assigned student's school (backfilled + set on insert). Basis for RLS.
+  schoolId: text("school_id"),
   assignedAt: timestamp("assigned_at").notNull().default(sql`now()`),
 });
 

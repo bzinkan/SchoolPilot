@@ -46,6 +46,8 @@ export const parentStudent = pgTable(
     id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
     parentId: text("parent_id").notNull(), // FK to users
     studentId: text("student_id").notNull(), // FK to students
+    // Derived from the linked student's school (backfilled + set on insert). Basis for RLS.
+    schoolId: text("school_id"),
     relationship: text("relationship").notNull(),
     isPrimary: boolean("is_primary").notNull().default(false),
     status: text("status").notNull().default("approved"), // pending | approved

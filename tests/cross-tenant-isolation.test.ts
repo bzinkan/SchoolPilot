@@ -17,6 +17,8 @@ import {
   createStudent,
   createGrade,
   getGradeById,
+  createDashboardTab,
+  getDashboardTabs,
 } from "../dist/services/storage.js";
 import { pool } from "../dist/db.js";
 
@@ -80,6 +82,16 @@ describe("cross-school isolation", () => {
     const fetched = await getGradeById(grade.id);
     assert.equal(fetched?.schoolId, schoolA.id);
     assert.notEqual(fetched?.schoolId, schoolB.id);
+  });
+
+  it("getDashboardTabs partitions a teacher's tabs by school", async () => {
+    await createDashboardTab({ teacherId: teacher.id, schoolId: schoolA.id, label: `${TAG}_tabA`, filterType: "all" } as any);
+    await createDashboardTab({ teacherId: teacher.id, schoolId: schoolB.id, label: `${TAG}_tabB`, filterType: "all" } as any);
+    const inA = await getDashboardTabs(teacher.id, schoolA.id);
+    const inB = await getDashboardTabs(teacher.id, schoolB.id);
+    assert.ok(inA.every((t: any) => t.schoolId === schoolA.id));
+    assert.ok(inB.every((t: any) => t.schoolId === schoolB.id));
+    assert.ok(!inA.some((t: any) => t.schoolId === schoolB.id));
   });
 
   it("a student created in School A carries School A's id, not B's", async () => {
