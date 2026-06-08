@@ -156,10 +156,10 @@ async function autoStartDismissal(schoolId: string, schoolName: string) {
     const now = new Date();
     const localDate = now.toLocaleDateString("en-CA", { timeZone: timezone });
 
-    const session = await getOrCreateSession(schoolId, localDate);
+    const session = await getOrCreateSession(schoolId, localDate, schedulerDb);
 
     if (session.status === "pending") {
-      await updateSessionStatus(session.id, "active");
+      await updateSessionStatus(session.id, "active", schedulerDb);
       console.log(`Auto-started dismissal for ${schoolName} (session ${session.id})`);
       const payload = { sessionId: session.id };
       io?.to(`school:${schoolId}:office`).emit("dismissal:started", payload);
@@ -174,7 +174,7 @@ async function autoStartDismissal(schoolId: string, schoolName: string) {
 async function autoCompleteStaleGoPilotSessions() {
   try {
     // Find active sessions whose date is before today (stale from previous days)
-    const staleSessions = await db
+    const staleSessions = await schedulerDb
       .select({
         id: dismissalSessions.id,
         schoolId: dismissalSessions.schoolId,
@@ -190,7 +190,7 @@ async function autoCompleteStaleGoPilotSessions() {
       );
 
     for (const session of staleSessions) {
-      await updateSessionStatus(session.id, "completed");
+      await updateSessionStatus(session.id, "completed", schedulerDb);
       console.log(`[GoPilot] Auto-completed stale session for school ${session.schoolId} (date: ${session.date})`);
     }
   } catch (err) {
@@ -211,7 +211,7 @@ const MIN_AGE_FOR_AFTER_HOURS_END = 1; // hours — don't cut off teachers who j
 async function autoEndStaleClassPilotSessions() {
   try {
     // Find all open teaching sessions across all schools
-    const openSessions = await db
+    const openSessions = await schedulerDb
       .select({
         sessionId: teachingSessions.id,
         teacherId: teachingSessions.teacherId,
@@ -243,7 +243,7 @@ async function autoEndStaleClassPilotSessions() {
       } else if (ageHours >= MIN_AGE_FOR_AFTER_HOURS_END) {
         // After school hours check
         try {
-          const settings = await getSettingsForSchool(s.schoolId);
+          const settings = await getSettingsForSchool(s.schoolId, schedulerDb);
           if (settings?.enableTrackingHours && settings.trackingEndTime) {
             const tz = s.schoolTimezone || "America/New_York";
             const localTimeStr = now.toLocaleString("en-US", {
@@ -261,7 +261,7 @@ async function autoEndStaleClassPilotSessions() {
       }
 
       if (shouldEnd) {
-        const session = await endTeachingSession(s.sessionId);
+        const session = await endTeachingSession(s.sessionId, schedulerDb);
         console.log(`[ClassPilot] Auto-ended stale session ${s.sessionId} for teacher ${s.teacherId} (${reason}, age: ${ageHours.toFixed(1)}h)`);
 
         // Send session summary email (same as manual/scheduled end)
@@ -272,7 +272,7 @@ async function autoEndStaleClassPilotSessions() {
               email: teacher.email,
               firstName: (teacher as any).firstName,
               lastName: (teacher as any).lastName,
-            }).catch((err) =>
+            }, schedulerDb).catch((err) =>
               console.error("[ClassPilot] Stale session summary email failed:", err)
             );
           }
@@ -625,7 +625,7 @@ async function purgeExpiredHeartbeats() {
       .where(eq(schools.status, "active"));
 
     for (const school of activeSchools) {
-      const schoolSettings = await getSettingsForSchool(school.id);
+      const schoolSettings = await getSettingsForSchool(school.id, schedulerDb);
       const retentionHours = parseInt(schoolSettings?.retentionHours as string || "720", 10);
       const cutoff = new Date(Date.now() - retentionHours * 60 * 60 * 1000);
 
@@ -699,7 +699,7 @@ async function autoStartClassBlocks() {
       const todayDate = now.toLocaleDateString("en-CA", { timeZone: tz });
 
       // Debug: log every scheduled group check to diagnose auto-start failures
-      const allScheduledGroups = await db
+      const allScheduledGroups = await schedulerDb
         .select({ id: groups.id, name: groups.name, blockStartTime: groups.blockStartTime, blockEndTime: groups.blockEndTime, scheduleSkippedDate: groups.scheduleSkippedDate })
         .from(groups)
         .where(and(eq(groups.schoolId, school.id), eq(groups.scheduleEnabled, true)));
@@ -707,14 +707,14 @@ async function autoStartClassBlocks() {
         console.log(`[ClassPilot] Schedule tick: school=${school.id.slice(0,8)}, time=${currentTimeHHMM} ${tz}, date=${todayDate}, groups=${JSON.stringify(allScheduledGroups.map(g => ({ name: g.name, start: g.blockStartTime, end: g.blockEndTime, skipped: g.scheduleSkippedDate })))}`);
       }
 
-      const readyGroups = await getScheduledGroupsReadyToStart(school.id, currentTimeHHMM, todayDate);
+      const readyGroups = await getScheduledGroupsReadyToStart(school.id, currentTimeHHMM, todayDate, schedulerDb);
       if (readyGroups.length > 0) {
         console.log(`[ClassPilot] Auto-start: ${readyGroups.length} group(s) ready`);
       }
 
       for (const group of readyGroups) {
         // Check if session already exists for this group
-        const alreadyActive = await hasActiveSessionForGroup(group.id);
+        const alreadyActive = await hasActiveSessionForGroup(group.id, schedulerDb);
         if (alreadyActive) {
           console.log(`[ClassPilot] Skipping "${group.name}" — session already active`);
           continue;
@@ -723,14 +723,14 @@ async function autoStartClassBlocks() {
         // End any existing active session for this teacher IN THIS SCHOOL.
         // getActiveTeachingSession (teacherId only) would let one school's
         // scheduler terminate a multi-school teacher's session in another school.
-        const existingSession = await getActiveTeachingSessionForSchool(group.teacherId, group.schoolId);
+        const existingSession = await getActiveTeachingSessionForSchool(group.teacherId, group.schoolId, schedulerDb);
         if (existingSession) {
-          await endTeachingSession(existingSession.id);
+          await endTeachingSession(existingSession.id, schedulerDb);
           console.log(`[ClassPilot] Auto-ended previous session for teacher ${group.teacherId} before starting "${group.name}"`);
         }
 
         // Create new session
-        await createTeachingSession({ groupId: group.id, teacherId: group.teacherId });
+        await createTeachingSession({ groupId: group.id, teacherId: group.teacherId }, schedulerDb);
         console.log(`[ClassPilot] Auto-started session for "${group.name}" (teacher ${group.teacherId}, school ${school.id})`);
       }
     }
@@ -768,10 +768,10 @@ async function autoEndClassBlocks() {
         hour12: false,
       }).replace(/^24:/, "00:");
 
-      const readyGroups = await getScheduledGroupsReadyToEnd(school.id, currentTimeHHMM);
+      const readyGroups = await getScheduledGroupsReadyToEnd(school.id, currentTimeHHMM, schedulerDb);
 
       for (const group of readyGroups) {
-        const session = await endTeachingSession(group.sessionId);
+        const session = await endTeachingSession(group.sessionId, schedulerDb);
         console.log(`[ClassPilot] Auto-ended session for "${group.name}" (teacher ${group.teacherId}, school ${school.id})`);
 
         // Send session summary email (same as manual end)
@@ -782,7 +782,7 @@ async function autoEndClassBlocks() {
               email: teacher.email,
               firstName: (teacher as any).firstName,
               lastName: (teacher as any).lastName,
-            }).catch((err) =>
+            }, schedulerDb).catch((err) =>
               console.error("[ClassPilot] Auto-end session summary email failed:", err)
             );
           }

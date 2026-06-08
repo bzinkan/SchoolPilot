@@ -8,6 +8,7 @@ import {
   createSchool,
   createUser,
   createGroup,
+  createTeachingSession,
   getGroupByIdAndSchool,
   getGroupsByTeacherAndSchool,
   createFlightPath,
@@ -63,6 +64,7 @@ after(async () => {
     await pool.query(`DELETE FROM block_lists WHERE school_id IN (SELECT id FROM schools WHERE name LIKE $1)`, [`${TAG}_%`]);
     await pool.query(`DELETE FROM group_students WHERE group_id IN (SELECT id FROM groups WHERE school_id IN (SELECT id FROM schools WHERE name LIKE $1))`, [`${TAG}_%`]);
     await pool.query(`DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id IN (SELECT id FROM schools WHERE name LIKE $1))`, [`${TAG}_%`]);
+    await pool.query(`DELETE FROM teaching_sessions WHERE school_id IN (SELECT id FROM schools WHERE name LIKE $1)`, [`${TAG}_%`]);
     await pool.query(`DELETE FROM groups WHERE school_id IN (SELECT id FROM schools WHERE name LIKE $1)`, [`${TAG}_%`]);
     await pool.query(`DELETE FROM grades WHERE school_id IN (SELECT id FROM schools WHERE name LIKE $1)`, [`${TAG}_%`]);
     await pool.query(`DELETE FROM students WHERE school_id IN (SELECT id FROM schools WHERE name LIKE $1)`, [`${TAG}_%`]);
@@ -80,6 +82,13 @@ describe("cross-school isolation", () => {
     const g = await createGroup({ schoolId: schoolA.id, teacherId: teacher.id, name: `${TAG}_grpA` } as any);
     assert.equal((await getGroupByIdAndSchool(g.id, schoolA.id))?.id, g.id);
     assert.equal(await getGroupByIdAndSchool(g.id, schoolB.id), undefined);
+  });
+
+  it("createTeachingSession derives school_id from the parent group (RLS WITH CHECK)", async () => {
+    const g = await createGroup({ schoolId: schoolA.id, teacherId: teacher.id, name: `${TAG}_tsgrp` } as any);
+    const ts = await createTeachingSession({ groupId: g.id, teacherId: teacher.id });
+    assert.equal(ts.schoolId, schoolA.id);
+    assert.notEqual(ts.schoolId, schoolB.id);
   });
 
   it("getGroupsByTeacherAndSchool partitions a teacher's groups by school", async () => {
