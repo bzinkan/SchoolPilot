@@ -409,11 +409,21 @@ router.post("/extension/register", extensionLimiter, async (req, res, next) => {
       }
 
       if (!student) {
-        // Anti-spam: cap auto-creations per school per hour
+        // POLICY: by default a student must be pre-imported by an IT admin — an
+        // unknown email is REJECTED, never auto-created. This is what stops a
+        // valid-domain-but-uninvited email (e.g. a student IT never added) from
+        // self-enrolling. A school can opt into zero-touch auto-enrollment by
+        // setting settings.autoEnrollStudents = true.
+        if (!regSettings?.autoEnrollStudents) {
+          return res.status(403).json({
+            error: "Student not enrolled. Ask your administrator to import this student before connecting a device.",
+          });
+        }
+        // Auto-enroll path (opt-in): cap auto-creations per school per hour.
         if (!recordAutoCreation(resolvedSchoolId)) {
           console.warn(`[Security] Auto-creation rate limit hit for school ${resolvedSchoolId}; rejecting ${studentEmail}`);
           return res.status(429).json({
-            error: "Auto-enrollment temporarily disabled — please ask your administrator to import students first.",
+            error: "Auto-enrollment rate limit reached — please ask your administrator to import students first.",
           });
         }
         const nameParts = (studentName || studentEmail.split("@")[0]).split(/\s+/);
@@ -1284,11 +1294,30 @@ const enrollAdminAuth = [
   requireRole("admin", "school_admin"),
 ] as const;
 
-// GET /api/classpilot/enrollment-key — current key + enforcement state
+// GET /api/classpilot/enrollment-key — current key + enforcement + auto-enroll state
 router.get("/enrollment-key", ...enrollAdminAuth, async (_req, res, next) => {
   try {
     const s = await getSettingsForSchool(res.locals.schoolId!);
-    return res.json({ key: s?.enrollmentKey ?? null, required: !!s?.enrollmentKeyRequired });
+    return res.json({
+      key: s?.enrollmentKey ?? null,
+      required: !!s?.enrollmentKeyRequired,
+      autoEnrollStudents: !!s?.autoEnrollStudents,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PATCH /api/classpilot/auto-enroll — toggle zero-touch auto-enrollment (default OFF;
+// when OFF, students must be imported by IT before a device can register).
+router.patch("/auto-enroll", ...enrollAdminAuth, async (req, res, next) => {
+  try {
+    const enabled = !!req.body.enabled;
+    const updated = await updateEnrollmentSettings(res.locals.schoolId!, { autoEnrollStudents: enabled });
+    if (!updated) {
+      return res.status(409).json({ error: "Configure school settings first" });
+    }
+    return res.json({ autoEnrollStudents: enabled });
   } catch (err) {
     next(err);
   }

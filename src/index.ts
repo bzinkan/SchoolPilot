@@ -85,6 +85,14 @@ async function runStartupMigrations(): Promise<void> {
     console.warn("[migration] enrollment_key migration skipped:", (err as Error).message);
   }
 
+  // Auto-enroll policy: default OFF (students must be pre-imported by IT).
+  try {
+    await pool.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS auto_enroll_students BOOLEAN NOT NULL DEFAULT false`);
+    console.log("[migration] settings auto_enroll_students column ready");
+  } catch (err) {
+    console.warn("[migration] auto_enroll_students migration skipped:", (err as Error).message);
+  }
+
   // Add gopilot_role column for per-product role overrides
   try {
     await pool.query(`ALTER TABLE school_memberships ADD COLUMN IF NOT EXISTS gopilot_role TEXT`);
