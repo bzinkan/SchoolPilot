@@ -93,6 +93,59 @@ async function runStartupMigrations(): Promise<void> {
     console.warn("[migration] auto_enroll_students migration skipped:", (err as Error).message);
   }
 
+  // RLS Phase 1: add school_id to the 6 derived tables + backfill from parents.
+  // Idempotent; nullable (legacy/ambiguous rows stay NULL by design). These become
+  // the basis for per-school RLS policies. messages.school_id is best-effort
+  // (announcements have null to_student_id); dashboard_tabs backfills only teachers
+  // with exactly one active membership (multi-school is ambiguous → left NULL).
+  try {
+    await pool.query(`ALTER TABLE subgroups ADD COLUMN IF NOT EXISTS school_id TEXT`);
+    await pool.query(`UPDATE subgroups s SET school_id = g.school_id FROM groups g WHERE g.id = s.group_id AND s.school_id IS NULL`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS subgroups_school_id_idx ON subgroups (school_id)`);
+
+    await pool.query(`ALTER TABLE teaching_sessions ADD COLUMN IF NOT EXISTS school_id TEXT`);
+    await pool.query(`UPDATE teaching_sessions ts SET school_id = g.school_id FROM groups g WHERE g.id = ts.group_id AND ts.school_id IS NULL`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS teaching_sessions_school_id_idx ON teaching_sessions (school_id)`);
+
+    await pool.query(`ALTER TABLE parent_student ADD COLUMN IF NOT EXISTS school_id TEXT`);
+    await pool.query(`UPDATE parent_student ps SET school_id = st.school_id FROM students st WHERE st.id = ps.student_id AND ps.school_id IS NULL`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS parent_student_school_id_idx ON parent_student (school_id)`);
+
+    await pool.query(`ALTER TABLE teacher_students ADD COLUMN IF NOT EXISTS school_id TEXT`);
+    await pool.query(`UPDATE teacher_students tx SET school_id = st.school_id FROM students st WHERE st.id = tx.student_id AND tx.school_id IS NULL`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS teacher_students_school_id_idx ON teacher_students (school_id)`);
+
+    await pool.query(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS school_id TEXT`);
+    await pool.query(`UPDATE messages m SET school_id = st.school_id FROM students st WHERE st.id = m.to_student_id AND m.school_id IS NULL`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS messages_school_id_idx ON messages (school_id)`);
+
+    await pool.query(`ALTER TABLE dashboard_tabs ADD COLUMN IF NOT EXISTS school_id TEXT`);
+    await pool.query(`
+      UPDATE dashboard_tabs dt SET school_id = m.school_id
+      FROM (
+        SELECT user_id, MIN(school_id) AS school_id
+        FROM school_memberships WHERE status = 'active'
+        GROUP BY user_id HAVING COUNT(*) = 1
+      ) m
+      WHERE m.user_id = dt.teacher_id AND dt.school_id IS NULL
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS dashboard_tabs_school_id_idx ON dashboard_tabs (school_id)`);
+
+    // Audit: log any rows left without a school_id so staging/prod can review.
+    const nullCounts = await pool.query(`
+      SELECT 'subgroups' t, count(*) n FROM subgroups WHERE school_id IS NULL
+      UNION ALL SELECT 'teaching_sessions', count(*) FROM teaching_sessions WHERE school_id IS NULL
+      UNION ALL SELECT 'parent_student', count(*) FROM parent_student WHERE school_id IS NULL
+      UNION ALL SELECT 'teacher_students', count(*) FROM teacher_students WHERE school_id IS NULL
+      UNION ALL SELECT 'messages', count(*) FROM messages WHERE school_id IS NULL
+      UNION ALL SELECT 'dashboard_tabs', count(*) FROM dashboard_tabs WHERE school_id IS NULL
+    `);
+    const residual = nullCounts.rows.filter((r: any) => Number(r.n) > 0).map((r: any) => `${r.t}=${r.n}`);
+    console.log(`[migration] derived-table school_id columns ready${residual.length ? ` (NULL remaining: ${residual.join(", ")})` : ""}`);
+  } catch (err) {
+    console.warn("[migration] derived-table school_id migration skipped:", (err as Error).message);
+  }
+
   // Add gopilot_role column for per-product role overrides
   try {
     await pool.query(`ALTER TABLE school_memberships ADD COLUMN IF NOT EXISTS gopilot_role TEXT`);
