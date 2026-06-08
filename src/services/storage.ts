@@ -4035,10 +4035,10 @@ export async function upsertSettings(
   return row!;
 }
 
-// Update only the device-enrollment-secret fields on an existing settings row.
+// Update only the device-enrollment / auto-enroll fields on an existing settings row.
 export async function updateEnrollmentSettings(
   schoolId: string,
-  data: { enrollmentKey?: string; enrollmentKeyRequired?: boolean }
+  data: { enrollmentKey?: string; enrollmentKeyRequired?: boolean; autoEnrollStudents?: boolean }
 ): Promise<Settings | undefined> {
   const [row] = await db
     .update(settings)

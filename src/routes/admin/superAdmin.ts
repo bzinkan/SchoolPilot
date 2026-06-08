@@ -235,18 +235,22 @@ router.post("/schools", ...auth, async (req, res, next) => {
       await sendWelcomeEmail(adminEmail, name, pwd);
     }
 
-    // Initialize school hours settings if provided
-    if (schoolHours) {
-      await upsertSettings(school.id, {
-        schoolName: name,
-        enableTrackingHours: schoolHours.enabled ?? false,
-        trackingStartTime: schoolHours.startTime ?? "08:00",
-        trackingEndTime: schoolHours.endTime ?? "15:00",
-        schoolTimezone: schoolHours.timezone ?? "America/New_York",
-        trackingDays: schoolHours.days ?? ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
-        afterHoursMode: schoolHours.afterHoursMode ?? "off",
-      });
-    }
+    // Always create a settings row so every school has one from creation (some
+    // features read settings and degrade without it). Merge school-hours config
+    // when provided.
+    await upsertSettings(school.id, {
+      schoolName: name,
+      ...(schoolHours
+        ? {
+            enableTrackingHours: schoolHours.enabled ?? false,
+            trackingStartTime: schoolHours.startTime ?? "08:00",
+            trackingEndTime: schoolHours.endTime ?? "15:00",
+            schoolTimezone: schoolHours.timezone ?? "America/New_York",
+            trackingDays: schoolHours.days ?? ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
+            afterHoursMode: schoolHours.afterHoursMode ?? "off",
+          }
+        : {}),
+    });
 
     await logAudit({
       schoolId: school.id,
