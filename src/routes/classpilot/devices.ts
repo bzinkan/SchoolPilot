@@ -57,6 +57,7 @@ import {
 } from "../../realtime/ws-redis.js";
 import { classifyUrl, isAiAvailable } from "../../services/aiClassification.js";
 import { recordBrowserSafetyTimeline } from "./competitive.js";
+import { runWithTenantContext } from "../../middleware/tenantContext.js";
 import { scopedDeviceTargets } from "../../services/classpilotDeviceScope.js";
 
 const router = Router();
@@ -765,6 +766,11 @@ router.post("/device/heartbeat", requireDeviceAuth, async (req, res, next) => {
           }
           safetyAlertCooldown.set(cooldownKey, Date.now());
 
+          // Detached callback: the request's tenant connection is already
+          // released, so re-establish this school's context for the safety-case
+          // / AI-decision / timeline / evidence writes (classpilot_ai_decisions,
+          // student_safety_cases, student_timeline_events, evidence_artifacts).
+          await runWithTenantContext({ schoolId }, async () => {
           const timelineRecord = await recordBrowserSafetyTimeline({
             schoolId,
             studentId,
@@ -803,6 +809,7 @@ router.post("/device/heartbeat", requireDeviceAuth, async (req, res, next) => {
               console.warn("[Safety] Failed to snapshot evidence artifact:", err);
             }
           }
+          });
 
           const alert = {
             type: "safety-alert",
