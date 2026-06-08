@@ -1,6 +1,7 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
 import * as schema from "../schema/index.js";
+import { buildPgSslConfig } from "../db/ssl.js";
 
 // Dedicated pool for scheduler/background jobs.
 // Isolated from the main API pool so long-running rollup/purge queries can never
@@ -20,9 +21,7 @@ const schedulerPool = new pg.Pool({
   idleTimeoutMillis: 10000,
   connectionTimeoutMillis: 10000,
   statement_timeout: 60000,
-  ...(schedulerConnectionString?.includes("sslmode=require") && {
-    ssl: { rejectUnauthorized: false },
-  }),
+  ssl: buildPgSslConfig(schedulerConnectionString),
 });
 
 // Mark each new scheduler connection as RLS-exempt. Harmless when RLS is off
