@@ -1,6 +1,7 @@
 import { Router } from "express";
 import crypto from "crypto";
 import { authenticate } from "../../middleware/authenticate.js";
+import { bindTenantContext } from "../../middleware/tenantContext.js";
 import {
   getAllSchools,
   getSchoolById,
@@ -45,7 +46,11 @@ function requireSuperAdmin(req: any, res: any, next: any) {
   next();
 }
 
-const auth = [authenticate, requireSuperAdmin] as const;
+// bindTenantContext sets app.is_super='on' for super-admins (req.authUser
+// .isSuperAdmin), so every super-admin route bypasses RLS and operates across
+// all schools — required for cross-tenant reads like the audit-log viewer and
+// per-school management once tables are RLS-enforced.
+const auth = [authenticate, requireSuperAdmin, bindTenantContext] as const;
 
 const TAX_CERT_BUCKET = process.env.TAX_CERT_BUCKET || "schoolpilot-documents";
 const s3 = new S3Client({ region: process.env.AWS_REGION || "us-east-1" });
@@ -809,7 +814,11 @@ router.post("/schools/:id/reset-login", ...auth, async (req, res, next) => {
   }
 });
 
-// GET /api/super-admin/audit-logs - Get audit logs
+// GET /api/super-admin/audit-logs - Get audit logs.
+// Cross-tenant read: depends on the `auth` chain binding app.is_super='on' (via
+// bindTenantContext) so the audit_logs RLS policy returns all schools' + system
+// (NULL-school) rows. If this route is ever moved off that chain, this Proxy-db
+// SELECT would silently return 0 rows under RLS deny-by-default.
 router.get("/audit-logs", ...auth, async (req, res, next) => {
   try {
     const { schoolId, action, entityType, limit } = req.query;

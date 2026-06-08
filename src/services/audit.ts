@@ -1,4 +1,5 @@
 import db from "../db.js";
+import { schedulerDb } from "./schedulerDb.js";
 import { auditLogs } from "../schema/shared.js";
 import { desc, eq, and, sql, count } from "drizzle-orm";
 
@@ -15,7 +16,13 @@ export async function logAudit(entry: {
   metadata?: unknown;
 }): Promise<void> {
   try {
-    await db.insert(auditLogs).values({
+    // Audit writes always go through the is_super scheduler pool so they can
+    // never be blocked by audit_logs RLS WITH CHECK — this covers system-origin
+    // writes with a NULL school_id and no request tenant context (public
+    // login/OAuth/logout, Stripe webhook) as well as normal per-school actions.
+    // Reads (getAuditLogs/countAuditLogs) stay on the GUC-scoped Proxy db so a
+    // school admin only ever sees their own school's trail.
+    await schedulerDb.insert(auditLogs).values({
       schoolId: entry.schoolId ?? null,
       userId: entry.userId ?? null,
       userEmail: entry.userEmail ?? null,
