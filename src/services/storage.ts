@@ -1343,10 +1343,11 @@ export async function getStudentsByHomeroom(
 
 export async function getOrCreateSession(
   schoolId: string,
-  date: string
+  date: string,
+  dbInstance: typeof db = db
 ): Promise<DismissalSession> {
   // Try to find existing
-  const [existing] = await db
+  const [existing] = await dbInstance
     .select()
     .from(dismissalSessions)
     .where(
@@ -1360,10 +1361,10 @@ export async function getOrCreateSession(
   if (existing && existing.status === "completed") {
     // Reset completed session so admin can start a new dismissal today
     // Clear old queue entries first
-    await db
+    await dbInstance
       .delete(dismissalQueue)
       .where(eq(dismissalQueue.sessionId, existing.id));
-    const [reset] = await db
+    const [reset] = await dbInstance
       .update(dismissalSessions)
       .set({ status: "pending", endedAt: null, startedAt: null })
       .where(eq(dismissalSessions.id, existing.id))
@@ -1373,7 +1374,7 @@ export async function getOrCreateSession(
   if (existing) return existing;
 
   // Create new with conflict handling
-  const [session] = await db
+  const [session] = await dbInstance
     .insert(dismissalSessions)
     .values({ schoolId, date, status: "pending" })
     .onConflictDoNothing()
@@ -1382,7 +1383,7 @@ export async function getOrCreateSession(
   if (session) return session;
 
   // Race condition: fetch again
-  const [raced] = await db
+  const [raced] = await dbInstance
     .select()
     .from(dismissalSessions)
     .where(
@@ -1408,7 +1409,8 @@ export async function getSessionById(
 
 export async function updateSessionStatus(
   id: string,
-  status: string
+  status: string,
+  dbInstance: typeof db = db
 ): Promise<DismissalSession | undefined> {
   const updates: Record<string, unknown> = { status };
   if (status === "active") {
@@ -1418,7 +1420,7 @@ export async function updateSessionStatus(
     updates.endedAt = new Date();
   }
 
-  const [s] = await db
+  const [s] = await dbInstance
     .update(dismissalSessions)
     .set(updates)
     .where(eq(dismissalSessions.id, id))
@@ -2765,10 +2767,11 @@ export async function getHeartbeatsByStudent(
 export async function getHeartbeatsForStudentsInRange(
   studentIds: string[],
   startTime: Date,
-  endTime: Date
+  endTime: Date,
+  dbInstance: typeof db = db
 ): Promise<Heartbeat[]> {
   if (studentIds.length === 0) return [];
-  return db
+  return dbInstance
     .select()
     .from(heartbeats)
     .where(
@@ -3002,19 +3005,34 @@ export async function getActiveSessions(
 // ============================================================================
 
 export async function createTeachingSession(
-  data: { groupId: string; teacherId: string }
+  data: { groupId: string; teacherId: string },
+  dbInstance: typeof db = db
 ): Promise<TeachingSession> {
-  const [session] = await db
+  // teaching_sessions.school_id must mirror the parent group's school (RLS
+  // WITH CHECK requires it). Derive it from the group rather than trusting the
+  // caller, so it can never be omitted or mismatched. Under a request GUC the
+  // group lookup only resolves the caller's own school; the scheduler passes
+  // schedulerDb (is_super) so it resolves across schools.
+  const [group] = await dbInstance
+    .select({ schoolId: groups.schoolId })
+    .from(groups)
+    .where(eq(groups.id, data.groupId))
+    .limit(1);
+  if (!group) {
+    throw new Error(`createTeachingSession: group ${data.groupId} not found`);
+  }
+  const [session] = await dbInstance
     .insert(teachingSessions)
-    .values(data)
+    .values({ ...data, schoolId: group.schoolId })
     .returning();
   return session!;
 }
 
 export async function endTeachingSession(
-  sessionId: string
+  sessionId: string,
+  dbInstance: typeof db = db
 ): Promise<TeachingSession | undefined> {
-  const [session] = await db
+  const [session] = await dbInstance
     .update(teachingSessions)
     .set({ endTime: new Date() })
     .where(eq(teachingSessions.id, sessionId))
@@ -3067,9 +3085,10 @@ export async function getActiveTeachingSession(
 // session per teacher PER SCHOOL), which is the correct multi-tenant semantics.
 export async function getActiveTeachingSessionForSchool(
   teacherId: string,
-  schoolId: string
+  schoolId: string,
+  dbInstance: typeof db = db
 ): Promise<TeachingSession | undefined> {
-  const [row] = await db
+  const [row] = await dbInstance
     .select({ session: teachingSessions })
     .from(teachingSessions)
     .innerJoin(groups, eq(teachingSessions.groupId, groups.id))
@@ -3143,9 +3162,10 @@ export async function upsertSessionSettings(
 export async function getScheduledGroupsReadyToStart(
   schoolId: string,
   currentTimeHHMM: string,
-  todayDate: string
+  todayDate: string,
+  dbInstance: typeof db = db
 ): Promise<Group[]> {
-  return db
+  return dbInstance
     .select({
       id: groups.id,
       schoolId: groups.schoolId,
@@ -3181,9 +3201,10 @@ export async function getScheduledGroupsReadyToStart(
 
 export async function getScheduledGroupsReadyToEnd(
   schoolId: string,
-  currentTimeHHMM: string
+  currentTimeHHMM: string,
+  dbInstance: typeof db = db
 ): Promise<(Group & { sessionId: string })[]> {
-  const rows = await db
+  const rows = await dbInstance
     .select({
       id: groups.id,
       schoolId: groups.schoolId,
@@ -3231,9 +3252,10 @@ export async function setScheduleSkippedDate(
 }
 
 export async function hasActiveSessionForGroup(
-  groupId: string
+  groupId: string,
+  dbInstance: typeof db = db
 ): Promise<boolean> {
-  const [row] = await db
+  const [row] = await dbInstance
     .select({ id: teachingSessions.id })
     .from(teachingSessions)
     .where(
@@ -3367,9 +3389,10 @@ export async function removeHomeroomTeacher(
 }
 
 export async function getGroupById(
-  groupId: string
+  groupId: string,
+  dbInstance: typeof db = db
 ): Promise<Group | undefined> {
-  const [group] = await db
+  const [group] = await dbInstance
     .select()
     .from(groups)
     .where(eq(groups.id, groupId))
@@ -3435,9 +3458,10 @@ export async function deleteGroup(groupId: string): Promise<boolean> {
 }
 
 export async function getGroupStudents(
-  groupId: string
+  groupId: string,
+  dbInstance: typeof db = db
 ): Promise<(GroupStudent & { student: Student })[]> {
-  const rows = await db
+  const rows = await dbInstance
     .select({
       groupStudent: groupStudents,
       student: students,
@@ -4189,9 +4213,10 @@ export async function deleteGoogleOAuthToken(
 // ============================================================================
 
 export async function getSettingsForSchool(
-  schoolId: string
+  schoolId: string,
+  dbInstance: typeof db = db
 ): Promise<Settings | undefined> {
-  const [row] = await db
+  const [row] = await dbInstance
     .select()
     .from(settings)
     .where(eq(settings.schoolId, schoolId))

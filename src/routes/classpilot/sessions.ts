@@ -18,6 +18,7 @@ import {
   getSchoolById,
 } from "../../services/storage.js";
 import { sendSessionSummaryEmail } from "../../services/email.js";
+import db from "../../db.js";
 
 const router = Router();
 
@@ -241,20 +242,26 @@ router.put("/:id/settings", ...auth, async (req, res, next) => {
 // Build and send session summary email (called async after response, or by scheduler)
 export async function buildAndSendSessionSummary(
   session: { id: string; groupId: string; startTime: Date; endTime: Date | null },
-  teacher: { email: string; firstName?: string; lastName?: string }
+  teacher: { email: string; firstName?: string; lastName?: string },
+  dbInstance: typeof db = db
 ) {
   const endTime = session.endTime ?? new Date();
-  const group = await getGroupById(session.groupId);
+  // Threads dbInstance through every tenant-table read so the scheduler's
+  // fire-and-forget callers (which run outside any request tenant context) can
+  // pass schedulerDb (app.is_super) and not hit RLS deny-by-default on the
+  // groups/students/heartbeats reads. Request callers use the default GUC db.
+  const group = await getGroupById(session.groupId, dbInstance);
   const className = (group as any)?.name || "Class";
 
-  // Use school timezone for formatting (instead of hardcoded America/New_York)
+  // Use school timezone for formatting (instead of hardcoded America/New_York).
+  // schools is a global (non-RLS) table, so it needs no dbInstance override.
   const school = await getSchoolById(group?.schoolId || "");
   const tz = school?.schoolTimezone || "America/New_York";
 
-  const groupStudentRows = await getGroupStudents(session.groupId);
+  const groupStudentRows = await getGroupStudents(session.groupId, dbInstance);
   const studentIds = groupStudentRows.map((gs) => gs.studentId);
 
-  const hbs = await getHeartbeatsForStudentsInRange(studentIds, session.startTime, endTime);
+  const hbs = await getHeartbeatsForStudentsInRange(studentIds, session.startTime, endTime, dbInstance);
 
   // Build per-student domain summaries
   const studentMap = new Map<string, { name: string; domainSeconds: Map<string, number>; count: number; offTaskCount: number; safetyAlerts: string[]; safetyUrls: string[] }>();
