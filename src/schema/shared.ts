@@ -85,6 +85,8 @@ export const googleOAuthTokens = pgTable("google_oauth_tokens", {
   refreshToken: text("refresh_token").notNull(), // Encrypted
   scope: text("scope"),
   tokenType: text("token_type"),
+  connectedEmail: text("connected_email"),
+  connectedDomain: text("connected_domain"),
   expiryDate: timestamp("expiry_date"),
   createdAt: timestamp("created_at").notNull().default(sql`now()`),
   updatedAt: timestamp("updated_at").notNull().default(sql`now()`),

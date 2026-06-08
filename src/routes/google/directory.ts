@@ -2,6 +2,8 @@ import { Router } from "express";
 import { google } from "googleapis";
 import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
+import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
+import { requireRole } from "../../middleware/requireRole.js";
 import {
   getGoogleOAuthTokenForSchool,
   createStudent,
@@ -12,12 +14,23 @@ import {
   getUserByEmail,
   getProductLicenses,
   autoAssignFamilyGroups,
+  validateStaffEmailDomainForSchool,
 } from "../../services/storage.js";
 import { recordImportRun } from "../../services/importLog.js";
 
 const router = Router();
 
-const auth = [authenticate, requireSchoolContext] as const;
+const adminAuth = [
+  authenticate,
+  requireSchoolContext,
+  requireActiveSchool,
+  requireRole("admin", "school_admin"),
+] as const;
+
+const DIRECTORY_SCOPES = [
+  "https://www.googleapis.com/auth/admin.directory.user.readonly",
+  "https://www.googleapis.com/auth/admin.directory.orgunit.readonly",
+];
 
 // Extract student ID from Google Workspace externalIds field
 function extractStudentId(user: any): string | undefined {
@@ -30,22 +43,26 @@ function extractStudentId(user: any): string | undefined {
   return val ? String(val).trim() : undefined;
 }
 
-function routeError(message: string, status = 400) {
-  return Object.assign(new Error(message), { status });
+function routeError(message: string, status = 400, code?: string) {
+  return Object.assign(new Error(message), { status, code, expose: true });
 }
 
 function handleGoogleError(err: any, res: any, next: any) {
   const statusCode = err.code || err.status || err.statusCode;
+  if (err.code && typeof err.code === "string") {
+    return res.status(err.status || 400).json({ error: err.message, code: err.code });
+  }
   if (err.message === "Google not connected") {
-    return res.status(400).json({ error: "NO_TOKENS: Google not connected" });
+    return res.status(400).json({ error: "NO_TOKENS: Google not connected", code: "NO_TOKENS" });
   }
   if (statusCode === 401 || err.message?.includes("invalid_grant")) {
-    return res.status(400).json({ error: "NO_TOKENS: Reconnect your Google account" });
+    return res.status(400).json({ error: "NO_TOKENS: Reconnect your Google account", code: "NO_TOKENS" });
   }
   if (statusCode === 403) {
     return res.status(403).json({
       error:
         "INSUFFICIENT_PERMISSIONS: Google Workspace administrator directory access is required.",
+      code: "INSUFFICIENT_PERMISSIONS",
     });
   }
   if (err.status) {
@@ -168,6 +185,15 @@ async function importGoogleUsersAsStudents(
 async function getAuthedClient(userId: string, schoolId: string) {
   const token = await getGoogleOAuthTokenForSchool(userId, schoolId);
   if (!token) throw routeError("NO_TOKENS: Google not connected for this school");
+  const granted = new Set((token.scope || "").split(/\s+/).filter(Boolean));
+  const missing = DIRECTORY_SCOPES.filter((scope) => !granted.has(scope));
+  if (missing.length > 0) {
+    throw routeError(
+      `MISSING_GOOGLE_SCOPE: Reconnect Google Workspace to grant Directory access (${missing.join(", ")}).`,
+      400,
+      "MISSING_GOOGLE_SCOPE"
+    );
+  }
 
   const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
@@ -178,7 +204,7 @@ async function getAuthedClient(userId: string, schoolId: string) {
 }
 
 // GET /api/google/workspace/orgunits - List org units
-router.get("/orgunits", ...auth, async (req, res, next) => {
+router.get("/orgunits", ...adminAuth, async (req, res, next) => {
   try {
     const { oauth2Client, google } = await getAuthedClient(req.authUser!.id, res.locals.schoolId!);
     const admin = google.admin({ version: "directory_v1", auth: oauth2Client });
@@ -216,7 +242,7 @@ router.get("/orgunits", ...auth, async (req, res, next) => {
 });
 
 // GET /api/google/workspace/users - List Workspace users
-router.get("/users", ...auth, async (req, res, next) => {
+router.get("/users", ...adminAuth, async (req, res, next) => {
   try {
     const { orgUnitPath, pageToken } = req.query;
     const { oauth2Client, google } = await getAuthedClient(req.authUser!.id, res.locals.schoolId!);
@@ -251,7 +277,7 @@ router.get("/users", ...auth, async (req, res, next) => {
 //   { users: [...], grade } — direct user array (PassPilot)
 //   { entries: [{orgUnitPath, gradeLevel, excludeEmails?}] } — OU-based import (ClassPilot)
 //   { orgUnitPath, gradeLevel } — single OU import (PassPilot SetupView)
-router.post("/import", ...auth, async (req, res, next) => {
+router.post("/import", ...adminAuth, async (req, res, next) => {
   try {
     const { users, grade, entries, orgUnitPath, gradeLevel, importAll } = req.body;
     const schoolId = res.locals.schoolId!;
@@ -411,6 +437,10 @@ const importStaffHandler = async (req: any, res: any, next: any) => {
     const { users, role, orgUnitPath, userIds } = req.body;
     const schoolId = res.locals.schoolId!;
     const staffRole = role || "teacher";
+    const errors: string[] = [];
+    if (!["admin", "school_admin", "teacher", "office_staff"].includes(staffRole)) {
+      return res.status(400).json({ error: "Invalid staff role", code: "INVALID_STAFF_ROLE" });
+    }
 
     // If orgUnitPath provided, fetch users from Google Directory
     if (orgUnitPath || (orgUnitPath === undefined && !users)) {
@@ -429,6 +459,12 @@ const importStaffHandler = async (req: any, res: any, next: any) => {
         const email = u.primaryEmail;
         if (!email) continue;
         if (filterIds && !filterIds.has(u.id)) continue;
+        const validation = await validateStaffEmailDomainForSchool(email, schoolId);
+        if (!validation.ok) {
+          skipped++;
+          errors.push(`${email}: ${validation.message}`);
+          continue;
+        }
 
         let user = await getUserByEmail(email);
         if (!user) {
@@ -465,8 +501,9 @@ const importStaffHandler = async (req: any, res: any, next: any) => {
         imported,
         updated: 0,
         skipped,
+        failures: errors,
       });
-      return res.json({ imported, skipped, updated: skipped, total: imported + skipped });
+      return res.json({ imported, skipped, updated: skipped, errors, total: imported + skipped });
     }
 
     // Direct user array import
@@ -476,8 +513,15 @@ const importStaffHandler = async (req: any, res: any, next: any) => {
 
     let imported = 0;
     let updated = 0;
+    let skipped = 0;
 
     for (const u of users) {
+      const validation = await validateStaffEmailDomainForSchool(u.email, schoolId);
+      if (!validation.ok) {
+        skipped++;
+        errors.push(`${u.email}: ${validation.message}`);
+        continue;
+      }
       let user = await getUserByEmail(u.email);
       if (!user) {
         user = await createUser({
@@ -512,16 +556,17 @@ const importStaffHandler = async (req: any, res: any, next: any) => {
       totalFound: users.length,
       imported,
       updated,
-      skipped: 0,
+      skipped,
+      failures: errors,
     });
-    return res.json({ imported, updated, total: users.length });
+    return res.json({ imported, updated, skipped, errors, total: users.length });
   } catch (err: any) {
     return handleGoogleError(err, res, next);
   }
 };
 
 // POST /api/google/workspace/import-orgunits - Bulk import users from multiple org units
-router.post("/import-orgunits", ...auth, async (req, res, next) => {
+router.post("/import-orgunits", ...adminAuth, async (req, res, next) => {
   try {
     const { orgUnits, grade } = req.body;
     if (!Array.isArray(orgUnits) || orgUnits.length === 0) {
@@ -583,9 +628,9 @@ router.post("/import-orgunits", ...auth, async (req, res, next) => {
 });
 
 // POST /api/google/workspace/import-staff - Import users as staff
-router.post("/import-staff", ...auth, importStaffHandler);
+router.post("/import-staff", ...adminAuth, importStaffHandler);
 
 // POST /import-teachers - Alias for import-staff (PassPilot compatibility)
-router.post("/import-teachers", ...auth, importStaffHandler);
+router.post("/import-teachers", ...adminAuth, importStaffHandler);
 
 export default router;

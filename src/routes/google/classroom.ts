@@ -2,8 +2,9 @@ import { Router } from "express";
 import { google } from "googleapis";
 import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
+import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
+import { requireRole } from "../../middleware/requireRole.js";
 import {
-  getGoogleOAuthToken,
   getGoogleOAuthTokenForSchool,
   createStudent,
   getStudentByEmail,
@@ -17,25 +18,51 @@ import { recordImportRun } from "../../services/importLog.js";
 
 const router = Router();
 
-const auth = [authenticate, requireSchoolContext] as const;
+const staffAuth = [
+  authenticate,
+  requireSchoolContext,
+  requireActiveSchool,
+  requireRole("teacher", "admin", "school_admin"),
+] as const;
+const adminAuth = [
+  authenticate,
+  requireSchoolContext,
+  requireActiveSchool,
+  requireRole("admin", "school_admin"),
+] as const;
 const CLASSROOM_EMAIL_SCOPE = "https://www.googleapis.com/auth/classroom.profile.emails";
+const CLASSROOM_COURSES_SCOPE = "https://www.googleapis.com/auth/classroom.courses.readonly";
+const CLASSROOM_ROSTER_SCOPES = [
+  CLASSROOM_COURSES_SCOPE,
+  "https://www.googleapis.com/auth/classroom.rosters.readonly",
+  CLASSROOM_EMAIL_SCOPE,
+];
 const CLASSROOM_RESOURCE_SCOPES = [
+  CLASSROOM_COURSES_SCOPE,
   "https://www.googleapis.com/auth/classroom.coursework.students.readonly",
   "https://www.googleapis.com/auth/classroom.courseworkmaterials.readonly",
 ];
 
-function routeError(message: string, status = 400) {
-  return Object.assign(new Error(message), { status });
+function routeError(message: string, status = 400, code?: string) {
+  return Object.assign(new Error(message), { status, code, expose: true });
 }
 
-async function getAuthedClient(userId: string, schoolId: string) {
-  const token = await getGoogleOAuthTokenForSchool(userId, schoolId);
-  if (!token) throw routeError("NO_TOKENS: Google not connected for this school");
-  if (token.scope && !token.scope.split(/\s+/).includes(CLASSROOM_EMAIL_SCOPE)) {
+function ensureScopes(tokenScope: string | null | undefined, requiredScopes: string[], label: string) {
+  const scopes = new Set((tokenScope || "").split(/\s+/).filter(Boolean));
+  const missing = requiredScopes.filter((scope) => !scopes.has(scope));
+  if (missing.length > 0) {
     throw routeError(
-      "MISSING_GOOGLE_SCOPE: Reconnect Google Classroom to grant roster email access."
+      `MISSING_GOOGLE_SCOPE: Reconnect Google Classroom to grant ${label} access (${missing.join(", ")}).`,
+      400,
+      "MISSING_GOOGLE_SCOPE"
     );
   }
+}
+
+async function getAuthedClient(userId: string, schoolId: string, requiredScopes: string[], label: string) {
+  const token = await getGoogleOAuthTokenForSchool(userId, schoolId);
+  if (!token) throw routeError("NO_TOKENS: Google not connected for this school");
+  ensureScopes(token.scope, requiredScopes, label);
 
   const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
@@ -47,31 +74,25 @@ async function getAuthedClient(userId: string, schoolId: string) {
 
 function handleGoogleError(err: any, res: any, next: any) {
   const statusCode = err.code || err.status || err.statusCode;
+  if (err.code && typeof err.code === "string") {
+    return res.status(err.status || 400).json({ error: err.message, code: err.code });
+  }
   if (err.message === "Google not connected") {
-    return res.status(400).json({ error: "NO_TOKENS: Google not connected" });
+    return res.status(400).json({ error: "NO_TOKENS: Google not connected", code: "NO_TOKENS" });
   }
   if (statusCode === 401 || err.message?.includes("invalid_grant")) {
-    return res.status(400).json({ error: "NO_TOKENS: Reconnect your Google account" });
+    return res.status(400).json({ error: "NO_TOKENS: Reconnect your Google account", code: "NO_TOKENS" });
   }
   if (statusCode === 403) {
     return res.status(403).json({
       error: "INSUFFICIENT_PERMISSIONS: Google Classroom access was denied. Reconnect Google if resource scopes are missing.",
+      code: "INSUFFICIENT_PERMISSIONS",
     });
   }
   if (err.status) {
     return res.status(err.status).json({ error: err.message });
   }
   next(err);
-}
-
-function ensureClassroomResourceScopes(tokenScope?: string | null) {
-  const scopes = new Set((tokenScope || "").split(/\s+/).filter(Boolean));
-  const missing = CLASSROOM_RESOURCE_SCOPES.filter((scope) => !scopes.has(scope));
-  if (missing.length > 0) {
-    throw routeError(
-      `MISSING_GOOGLE_SCOPE: Reconnect Google Classroom to grant resource access (${missing.join(", ")}).`
-    );
-  }
 }
 
 async function listActiveCourses(classroom: any) {
@@ -230,10 +251,15 @@ async function recordCourseSync(schoolId: string, courseId: string, course: any)
 }
 
 // GET /api/google/courses - List Google Classroom courses
-router.get("/courses", ...auth, async (req, res, next) => {
+router.get("/courses", ...staffAuth, async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
-    const { oauth2Client, google } = await getAuthedClient(req.authUser!.id, res.locals.schoolId!);
+    const { oauth2Client, google } = await getAuthedClient(
+      req.authUser!.id,
+      res.locals.schoolId!,
+      [CLASSROOM_COURSES_SCOPE],
+      "course"
+    );
     const classroom = google.classroom({ version: "v1", auth: oauth2Client });
     const courses = await listActiveCourses(classroom);
     const savedCourses = await getClassroomCoursesBySchool(schoolId);
@@ -251,12 +277,15 @@ router.get("/courses", ...auth, async (req, res, next) => {
 });
 
 // GET /api/google/classroom/courses/:courseId/resources
-router.get("/courses/:courseId/resources", ...auth, async (req, res, next) => {
+router.get("/courses/:courseId/resources", ...staffAuth, async (req, res, next) => {
   try {
     const courseId = String(req.params.courseId ?? "");
-    const token = await getGoogleOAuthToken(req.authUser!.id);
-    ensureClassroomResourceScopes(token?.scope);
-    const { oauth2Client, google } = await getAuthedClient(req.authUser!.id, res.locals.schoolId!);
+    const { oauth2Client, google } = await getAuthedClient(
+      req.authUser!.id,
+      res.locals.schoolId!,
+      CLASSROOM_RESOURCE_SCOPES,
+      "resource"
+    );
     const classroom = google.classroom({ version: "v1", auth: oauth2Client });
     const [course, courseWork, materials] = await Promise.all([
       getCourseMetadata(classroom, courseId),
@@ -303,7 +332,7 @@ router.get("/courses/:courseId/resources", ...auth, async (req, res, next) => {
 });
 
 // POST /api/google/sync - Sync Google Classroom roster
-router.post("/sync", ...auth, async (req, res, next) => {
+router.post("/sync", ...adminAuth, async (req, res, next) => {
   try {
     const { courses } = req.body;
     if (!Array.isArray(courses) || courses.length === 0) {
@@ -311,7 +340,12 @@ router.post("/sync", ...auth, async (req, res, next) => {
     }
 
     const schoolId = res.locals.schoolId!;
-    const { oauth2Client, google } = await getAuthedClient(req.authUser!.id, res.locals.schoolId!);
+    const { oauth2Client, google } = await getAuthedClient(
+      req.authUser!.id,
+      res.locals.schoolId!,
+      CLASSROOM_ROSTER_SCOPES,
+      "roster"
+    );
     const classroom = google.classroom({ version: "v1", auth: oauth2Client });
 
     let totalImported = 0;
@@ -388,12 +422,17 @@ router.post("/sync", ...auth, async (req, res, next) => {
 });
 
 // POST /api/google/courses/:courseId/sync - Sync a single course (PassPilot)
-router.post("/courses/:courseId/sync", ...auth, async (req, res, next) => {
+router.post("/courses/:courseId/sync", ...adminAuth, async (req, res, next) => {
   try {
     const courseId = String(req.params.courseId ?? "");
     const schoolId = res.locals.schoolId!;
     const gradeLevel = req.body?.gradeLevel || null;
-    const { oauth2Client, google } = await getAuthedClient(req.authUser!.id, res.locals.schoolId!);
+    const { oauth2Client, google } = await getAuthedClient(
+      req.authUser!.id,
+      res.locals.schoolId!,
+      CLASSROOM_ROSTER_SCOPES,
+      "roster"
+    );
     const classroom = google.classroom({ version: "v1", auth: oauth2Client });
 
     const courseMeta = await getCourseMetadata(classroom, courseId);

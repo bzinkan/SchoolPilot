@@ -22,7 +22,7 @@ const auth = [
 // Runs the audit against the connected Google Workspace and returns a scorecard.
 router.post("/run", ...auth, async (req, res, next) => {
   try {
-    const report = await runWorkspaceAudit(req.authUser!.id);
+    const report = await runWorkspaceAudit(req.authUser!.id, res.locals.schoolId!);
     return res.json(report);
   } catch (err: any) {
     if (err?.message === "Google not connected") {

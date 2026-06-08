@@ -22,6 +22,8 @@ import {
   getSettingsForSchool,
   upsertSettings,
   getSchoolCounts,
+  getEmailDomain,
+  validateStaffEmailDomainForSchool,
 } from "../../services/storage.js";
 import { hashPassword } from "../../util/password.js";
 import { sendWelcomeEmail, sendTaxCertificateRequestEmail, sendTrialExpirationEmail, sendTrialWelcomeEmail } from "../../services/email.js";
@@ -170,6 +172,23 @@ router.post("/schools", ...auth, async (req, res, next) => {
     const resolvedAdminPassword = adminPassword || firstAdminPassword;
     const resolvedAdminFirstName = adminFirstName || firstAdminName;
     const resolvedAdminLastName = adminLastName || "";
+    if (resolvedAdminEmail) {
+      if (!cleanDomain) {
+        return res.status(400).json({
+          error: "School domain is required before adding staff accounts.",
+          code: "SCHOOL_DOMAIN_REQUIRED",
+        });
+      }
+      const adminDomain = getEmailDomain(String(resolvedAdminEmail));
+      if (adminDomain !== cleanDomain) {
+        return res.status(400).json({
+          error: `Staff email must use the school's Google Workspace domain (${cleanDomain}).`,
+          code: "STAFF_EMAIL_DOMAIN_MISMATCH",
+          expectedDomain: cleanDomain,
+          actualDomain: adminDomain,
+        });
+      }
+    }
 
     const schoolData: Record<string, unknown> = {
       name,
@@ -469,6 +488,15 @@ router.post("/schools/:id/admins", ...auth, async (req, res, next) => {
 
     if (!email) {
       return res.status(400).json({ error: "email is required" });
+    }
+    const domainValidation = await validateStaffEmailDomainForSchool(email, schoolId);
+    if (!domainValidation.ok) {
+      return res.status(400).json({
+        error: domainValidation.message,
+        code: domainValidation.code,
+        expectedDomain: domainValidation.expectedDomain,
+        actualDomain: domainValidation.actualDomain,
+      });
     }
 
     // Resolve name: accept firstName/lastName or displayName (split on space)

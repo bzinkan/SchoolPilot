@@ -32,6 +32,7 @@ import {
   sendToDeviceLocal,
 } from "../../realtime/ws-broadcast.js";
 import { publishWS } from "../../realtime/ws-redis.js";
+import { deviceBelongsToSchoolAndStudent, scopedDeviceTargets } from "../../services/classpilotDeviceScope.js";
 
 const router = Router();
 
@@ -83,25 +84,34 @@ router.post("/chat/send", ...staffAuth, async (req, res, next) => {
     if (!sessionId || !content) {
       return res.status(400).json({ error: "sessionId and content required" });
     }
-    if (!(await sessionBelongsToSchool(sessionId, res.locals.schoolId!))) {
+    const schoolId = res.locals.schoolId!;
+    if (!(await sessionBelongsToSchool(sessionId, schoolId))) {
       return res.status(404).json({ error: "Session not found" });
+    }
+
+    let targetRecipientId: string | null = recipientId || null;
+    if (targetRecipientId) {
+      const scopedDeviceId = await deviceBelongsToSchoolAndStudent(targetRecipientId, schoolId);
+      if (!scopedDeviceId) {
+        return res.status(404).json({ error: "Device not found" });
+      }
+      targetRecipientId = scopedDeviceId;
     }
 
     const msg = await createChatMessage({
       sessionId,
       senderId: req.authUser!.id,
       senderType: "teacher",
-      recipientId: recipientId || null,
+      recipientId: targetRecipientId,
       content,
       messageType: "message",
     });
 
-    const schoolId = res.locals.schoolId!;
     const chatMsg = { type: "chat", message: msg };
 
-    if (recipientId) {
-      sendToDeviceLocal(schoolId, recipientId, chatMsg);
-      await publishWS({ kind: "device", schoolId, deviceId: recipientId }, chatMsg);
+    if (targetRecipientId) {
+      sendToDeviceLocal(schoolId, targetRecipientId, chatMsg);
+      await publishWS({ kind: "device", schoolId, deviceId: targetRecipientId }, chatMsg);
     } else {
       broadcastToStudentsLocal(schoolId, chatMsg);
       await publishWS({ kind: "students", schoolId }, chatMsg);
@@ -271,6 +281,17 @@ router.post("/teacher/reply", ...staffAuth, async (req, res, next) => {
       const firstDevice = devices[0];
       if (firstDevice) targetDeviceId = firstDevice.deviceId;
     }
+    if (targetDeviceId) {
+      const scopedDeviceId = await deviceBelongsToSchoolAndStudent(
+        targetDeviceId,
+        res.locals.schoolId!,
+        targetStudentId || null
+      );
+      if (!scopedDeviceId) {
+        return res.status(404).json({ error: "Device not found" });
+      }
+      targetDeviceId = scopedDeviceId;
+    }
 
     if (targetDeviceId) {
       const schoolId = res.locals.schoolId!;
@@ -353,6 +374,17 @@ router.post("/teacher/close-chat", ...staffAuth, async (req, res, next) => {
       const firstDevice = devices[0];
       if (firstDevice) targetDeviceId = firstDevice.deviceId;
     }
+    if (targetDeviceId) {
+      const scopedDeviceId = await deviceBelongsToSchoolAndStudent(
+        targetDeviceId,
+        schoolId,
+        studentId || null
+      );
+      if (!scopedDeviceId) {
+        return res.status(404).json({ error: "Device not found" });
+      }
+      targetDeviceId = scopedDeviceId;
+    }
 
     if (targetDeviceId) {
       const payload = { type: "chat-closed", _msgId: crypto.randomUUID() };
@@ -406,18 +438,24 @@ router.post("/polls/create", ...staffAuth, async (req, res, next) => {
     };
 
     let sentTo = 0;
+    let rejectedDeviceCount = 0;
     if (Array.isArray(targetDeviceIds) && targetDeviceIds.length > 0) {
-      for (const deviceId of targetDeviceIds) {
+      const scoped = await scopedDeviceTargets(targetDeviceIds, schoolId);
+      if (scoped.deviceIds.length === 0) {
+        return res.status(404).json({ error: "No accessible devices", rejectedDeviceCount: scoped.rejectedDeviceCount });
+      }
+      rejectedDeviceCount = scoped.rejectedDeviceCount;
+      for (const deviceId of scoped.deviceIds) {
         sendToDeviceLocal(schoolId, deviceId, message);
         sentTo++;
       }
-      await publishWS({ kind: "students", schoolId, targetDeviceIds }, message);
+      await publishWS({ kind: "students", schoolId, targetDeviceIds: scoped.deviceIds }, message);
     } else {
       sentTo = broadcastToStudentsLocal(schoolId, message);
       await publishWS({ kind: "students", schoolId }, message);
     }
 
-    return res.status(201).json({ success: true, poll, sentTo });
+    return res.status(201).json({ success: true, poll, sentTo, rejectedDeviceCount });
   } catch (err) {
     next(err);
   }
@@ -532,18 +570,24 @@ router.post("/polls/:pollId/close", ...staffAuth, async (req, res, next) => {
     };
 
     let sentTo = 0;
+    let rejectedDeviceCount = 0;
     if (Array.isArray(targetDeviceIds) && targetDeviceIds.length > 0) {
-      for (const deviceId of targetDeviceIds) {
+      const scoped = await scopedDeviceTargets(targetDeviceIds, schoolId);
+      if (scoped.deviceIds.length === 0) {
+        return res.status(404).json({ error: "No accessible devices", rejectedDeviceCount: scoped.rejectedDeviceCount });
+      }
+      rejectedDeviceCount = scoped.rejectedDeviceCount;
+      for (const deviceId of scoped.deviceIds) {
         sendToDeviceLocal(schoolId, deviceId, message);
         sentTo++;
       }
-      await publishWS({ kind: "students", schoolId, targetDeviceIds }, message);
+      await publishWS({ kind: "students", schoolId, targetDeviceIds: scoped.deviceIds }, message);
     } else {
       sentTo = broadcastToStudentsLocal(schoolId, message);
       await publishWS({ kind: "students", schoolId }, message);
     }
 
-    return res.json({ success: true, poll, sentTo });
+    return res.json({ success: true, poll, sentTo, rejectedDeviceCount });
   } catch (err) {
     next(err);
   }

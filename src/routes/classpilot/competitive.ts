@@ -21,6 +21,7 @@ import {
   getEvidenceArtifactById,
   getClassroomCoursesBySchool,
   getDevicesBySchool,
+  getEmailDomain,
   getGoogleOAuthToken,
   getGroupStudents,
   getGroupsByTeacher,
@@ -29,6 +30,7 @@ import {
   getPassHistory,
   getSchoolById,
   getSettingsForSchool,
+  getStaffEmailDomainMismatches,
   getStudentAttendance,
   getStudentById,
   getStudentsByIds,
@@ -318,7 +320,7 @@ function issue(status: "pass" | "warn" | "fail", category: string, title: string
 
 async function buildReadinessPayload(req: any, res: any) {
   const schoolId = res.locals.schoolId!;
-  const [school, settings, token, students, dbDevices, courses, watches, recentImports, cases] = await Promise.all([
+  const [school, settings, token, students, dbDevices, courses, watches, recentImports, cases, staffDomainMismatches] = await Promise.all([
     getSchoolById(schoolId),
     getSettingsForSchool(schoolId),
     getGoogleOAuthToken(req.authUser!.id),
@@ -328,10 +330,15 @@ async function buildReadinessPayload(req: any, res: any) {
     getMailpilotWatchesBySchool(schoolId),
     db.select().from(importRuns).where(eq(importRuns.schoolId, schoolId)).orderBy(desc(importRuns.createdAt)).limit(5),
     listOpenSafetyCasesForSchool(schoolId, 20),
+    getStaffEmailDomainMismatches(schoolId),
   ]);
 
   const now = Date.now();
   const scopes = new Set((token?.scope || "").split(/\s+/).filter(Boolean));
+  const schoolDomain = school?.domain?.trim().toLowerCase() || null;
+  const connectedDomain = token?.connectedDomain || getEmailDomain(token?.connectedEmail || null);
+  const googleDomainVerified = !!token && !!schoolDomain && !!connectedDomain && connectedDomain === schoolDomain;
+  const googleRequiresReconnect = !!token && (!token.connectedEmail || !connectedDomain);
   const realtime = getSchoolDeviceStatuses(schoolId);
   const connected = getConnectedStudentDeviceIds(schoolId);
   const realtimeByDevice = new Map(realtime.map((s) => [s.deviceId, s]));
@@ -354,8 +361,11 @@ async function buildReadinessPayload(req: any, res: any) {
 
   const issues = [
     issue(token ? "pass" : "fail", "Google", "Google account connected", token ? "OAuth token found for this admin." : "Reconnect Google from the admin setup flow.", "/classpilot/students"),
+    issue(schoolDomain ? "pass" : "fail", "Google", "School Workspace domain", schoolDomain ? `School domain is ${schoolDomain}.` : "Set the school Google Workspace domain before imports.", "/super-admin"),
+    issue(googleDomainVerified ? "pass" : "fail", "Google", "Connected Google domain", !token ? "Reconnect Google from the admin setup flow." : googleRequiresReconnect ? "Reconnect Google so SchoolPilot can verify the connected account domain." : googleDomainVerified ? `Connected domain ${connectedDomain} matches this school.` : `Connected domain ${connectedDomain || "unknown"} does not match ${schoolDomain || "the school domain"}.`, "/classpilot/students"),
     issue(CLASSROOM_SCOPES.every((s) => scopes.has(s)) ? "pass" : "fail", "Google", "Classroom roster scopes", CLASSROOM_SCOPES.filter((s) => !scopes.has(s)).join(", ") || "All Classroom scopes granted.", "/classpilot/students"),
     issue(DIRECTORY_SCOPES.every((s) => scopes.has(s)) ? "pass" : "warn", "Google", "Workspace Directory scopes", DIRECTORY_SCOPES.filter((s) => !scopes.has(s)).join(", ") || "All Directory scopes granted.", "/classpilot/students"),
+    issue(staffDomainMismatches.length === 0 ? "pass" : "fail", "Staff", "Staff email domain match", staffDomainMismatches.length === 0 ? "All staff emails match the school Workspace domain." : `${staffDomainMismatches.length} staff account(s) use the wrong or unverifiable domain.`, "/admin/users"),
     issue(courses.length > 0 ? "pass" : "warn", "Roster", "Classroom sync history", courses.length > 0 ? `${courses.length} Classroom course(s) synced.` : "No Classroom courses have been synced yet.", "/classpilot/admin/classes"),
     issue(recentImports.length > 0 ? "pass" : "warn", "Roster", "Import run log", recentImports.length > 0 ? "Recent import outcomes are available." : "No import runs recorded yet.", "/classpilot/students"),
     issue(missingEmail.length === 0 ? "pass" : "fail", "Roster", "Student identity emails", missingEmail.length === 0 ? "Every student has an email and emailLc." : `${missingEmail.length} student(s) need email repair.`, "/classpilot/students"),
@@ -390,6 +400,14 @@ async function buildReadinessPayload(req: any, res: any) {
       screenshotFailures: screenshotFailures.map((d) => ({ deviceId: d.deviceId, deviceName: d.deviceName, health: d.lastScreenshotHealth })),
       missingEmail: missingEmail.map((s) => ({ id: s.id, name: studentName(s), email: s.email })),
       unmappedStudents: unmappedStudents.map((s) => ({ id: s.id, name: studentName(s), email: s.email })),
+      google: {
+        connectedEmail: token?.connectedEmail || null,
+        connectedDomain,
+        schoolDomain,
+        domainVerified: googleDomainVerified,
+        requiresReconnect: googleRequiresReconnect,
+      },
+      staffDomainMismatches,
       mailpilot: {
         enabled: !!school?.classpilotEmailMonitoring,
         activeWatches: watches.filter((w) => w.status === "active").length,

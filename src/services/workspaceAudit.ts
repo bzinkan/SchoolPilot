@@ -1,5 +1,5 @@
 import { google } from "googleapis";
-import { getGoogleOAuthToken } from "./storage.js";
+import { getGoogleOAuthTokenForSchool } from "./storage.js";
 
 export type Severity = "critical" | "high" | "medium" | "low";
 export type Status = "ok" | "warning" | "critical" | "unknown";
@@ -193,8 +193,8 @@ function findingUnknown(
   };
 }
 
-export async function runWorkspaceAudit(userId: string): Promise<WorkspaceAuditReport> {
-  const token = await getGoogleOAuthToken(userId);
+export async function runWorkspaceAudit(userId: string, schoolId: string): Promise<WorkspaceAuditReport> {
+  const token = await getGoogleOAuthTokenForSchool(userId, schoolId);
   if (!token?.refreshToken) {
     throw new Error("Google not connected");
   }

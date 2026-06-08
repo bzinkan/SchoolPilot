@@ -19,7 +19,18 @@ import {
   getGradeById,
   createDashboardTab,
   getDashboardTabs,
+  createMembership,
+  upsertGoogleOAuthToken,
+  getGoogleOAuthTokenForSchool,
+  updateEnrollmentSettings,
+  getSettingsForSchool,
+  createDevice,
+  linkStudentDevice,
 } from "../dist/services/storage.js";
+import {
+  scopedDeviceTargets,
+  deviceBelongsToSchoolAndStudent,
+} from "../dist/services/classpilotDeviceScope.js";
 import { pool } from "../dist/db.js";
 
 // Cross-tenant isolation regression suite. Seeds two schools and asserts the
@@ -30,18 +41,34 @@ import { pool } from "../dist/db.js";
 const TAG = `xtest_${Date.now()}`;
 let schoolA: any;
 let schoolB: any;
+let schoolShared: any;
 let teacher: any;
 
 before(async () => {
   schoolA = await createSchool({ name: `${TAG}_A`, domain: `${TAG}-a.example.edu`, slug: `${TAG}-a` } as any);
   schoolB = await createSchool({ name: `${TAG}_B`, domain: `${TAG}-b.example.edu`, slug: `${TAG}-b` } as any);
+  schoolShared = await createSchool({ name: `${TAG}_Shared`, domain: `${TAG}-a.example.edu`, slug: `${TAG}-shared` } as any);
   teacher = await createUser({ email: `${TAG}-teacher@example.edu`, firstName: "T", lastName: "Teacher" } as any);
 });
 
 after(async () => {
   try {
+    await pool.query(`DELETE FROM google_oauth_tokens WHERE user_id IN (SELECT id FROM users WHERE email LIKE $1)`, [`${TAG}%@%`]);
+    await pool.query(`DELETE FROM school_memberships WHERE school_id IN (SELECT id FROM schools WHERE name LIKE $1)`, [`${TAG}_%`]);
+    await pool.query(`DELETE FROM student_devices WHERE student_id IN (SELECT id FROM students WHERE email_lc LIKE $1)`, [`${TAG}%@%`]);
+    await pool.query(`DELETE FROM devices WHERE device_id LIKE $1`, [`${TAG}-%`]);
+    await pool.query(`DELETE FROM settings WHERE school_id IN (SELECT id FROM schools WHERE name LIKE $1)`, [`${TAG}_%`]);
+    await pool.query(`DELETE FROM dashboard_tabs WHERE school_id IN (SELECT id FROM schools WHERE name LIKE $1)`, [`${TAG}_%`]);
+    await pool.query(`DELETE FROM flight_paths WHERE school_id IN (SELECT id FROM schools WHERE name LIKE $1)`, [`${TAG}_%`]);
+    await pool.query(`DELETE FROM block_lists WHERE school_id IN (SELECT id FROM schools WHERE name LIKE $1)`, [`${TAG}_%`]);
+    await pool.query(`DELETE FROM group_students WHERE group_id IN (SELECT id FROM groups WHERE school_id IN (SELECT id FROM schools WHERE name LIKE $1))`, [`${TAG}_%`]);
+    await pool.query(`DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id IN (SELECT id FROM schools WHERE name LIKE $1))`, [`${TAG}_%`]);
+    await pool.query(`DELETE FROM groups WHERE school_id IN (SELECT id FROM schools WHERE name LIKE $1)`, [`${TAG}_%`]);
+    await pool.query(`DELETE FROM grades WHERE school_id IN (SELECT id FROM schools WHERE name LIKE $1)`, [`${TAG}_%`]);
+    await pool.query(`DELETE FROM students WHERE school_id IN (SELECT id FROM schools WHERE name LIKE $1)`, [`${TAG}_%`]);
     await pool.query(`DELETE FROM schools WHERE name LIKE 'xtest_%'`);
     await pool.query(`DELETE FROM users WHERE email LIKE 'xtest_%@example.edu'`);
+    await pool.query(`DELETE FROM users WHERE email LIKE $1`, [`${TAG}%@%`]);
   } catch {
     /* ignore */
   }
@@ -105,5 +132,65 @@ describe("cross-school isolation", () => {
     } as any);
     assert.equal(s.schoolId, schoolA.id);
     assert.notEqual(s.schoolId, schoolB.id);
+  });
+
+  it("Google OAuth tokens must match the selected school domain, while shared domains are allowed", async () => {
+    const googleAdmin = await createUser({ email: `${TAG}-google@${TAG}-a.example.edu`, firstName: "G", lastName: "Admin" } as any);
+    await upsertGoogleOAuthToken(googleAdmin.id, {
+      refreshToken: `${TAG}-refresh`,
+      scope: "openid email https://www.googleapis.com/auth/classroom.courses.readonly",
+      connectedEmail: `admin@${TAG}-a.example.edu`,
+      connectedDomain: `${TAG}-a.example.edu`,
+    });
+
+    assert.equal((await getGoogleOAuthTokenForSchool(googleAdmin.id, schoolA.id))?.userId, googleAdmin.id);
+    assert.equal((await getGoogleOAuthTokenForSchool(googleAdmin.id, schoolShared.id))?.userId, googleAdmin.id);
+    await assert.rejects(
+      () => getGoogleOAuthTokenForSchool(googleAdmin.id, schoolB.id),
+      (err: any) => err?.code === "GOOGLE_DOMAIN_MISMATCH"
+    );
+  });
+
+  it("staff memberships require the school's email domain but parent memberships do not", async () => {
+    const matchingTeacher = await createUser({ email: `${TAG}-teacher@${TAG}-a.example.edu`, firstName: "T", lastName: "Match" } as any);
+    const outsideUser = await createUser({ email: `${TAG}-outside@outside.example.edu`, firstName: "O", lastName: "User" } as any);
+
+    const membership = await createMembership({ userId: matchingTeacher.id, schoolId: schoolA.id, role: "teacher", status: "active" } as any);
+    assert.equal(membership.schoolId, schoolA.id);
+
+    await assert.rejects(
+      () => createMembership({ userId: outsideUser.id, schoolId: schoolA.id, role: "teacher", status: "active" } as any),
+      (err: any) => err?.code === "STAFF_EMAIL_DOMAIN_MISMATCH"
+    );
+
+    const parentMembership = await createMembership({ userId: outsideUser.id, schoolId: schoolA.id, role: "parent", status: "active" } as any);
+    assert.equal(parentMembership.role, "parent");
+  });
+
+  it("device target helpers filter to school-owned devices and enforce student-device pairing", async () => {
+    const studentA = await createStudent({
+      schoolId: schoolA.id,
+      firstName: "Device",
+      lastName: "Owner",
+      email: `${TAG}-device-student@${TAG}-a.example.edu`,
+      emailLc: `${TAG}-device-student@${TAG}-a.example.edu`,
+      status: "active",
+    } as any);
+    await createDevice({ deviceId: `${TAG}-device-a`, schoolId: schoolA.id, classId: "default", deviceName: "A" } as any);
+    await createDevice({ deviceId: `${TAG}-device-b`, schoolId: schoolB.id, classId: "default", deviceName: "B" } as any);
+    await linkStudentDevice({ studentId: studentA.id, deviceId: `${TAG}-device-a` });
+
+    const scoped = await scopedDeviceTargets([`${TAG}-device-a`, `${TAG}-device-b`, `${TAG}-missing`], schoolA.id);
+    assert.deepEqual(scoped.deviceIds, [`${TAG}-device-a`]);
+    assert.equal(scoped.rejectedDeviceCount, 2);
+    assert.equal(await deviceBelongsToSchoolAndStudent(`${TAG}-device-a`, schoolA.id, studentA.id), `${TAG}-device-a`);
+    assert.equal(await deviceBelongsToSchoolAndStudent(`${TAG}-device-b`, schoolA.id, studentA.id), undefined);
+  });
+
+  it("updateEnrollmentSettings creates missing settings rows for legacy schools", async () => {
+    await pool.query(`DELETE FROM settings WHERE school_id = $1`, [schoolB.id]);
+    await updateEnrollmentSettings(schoolB.id, { autoEnrollStudents: true });
+    const settings = await getSettingsForSchool(schoolB.id);
+    assert.equal(settings?.autoEnrollStudents, true);
   });
 });

@@ -23,6 +23,7 @@ import {
   broadcastToStudentsLocal,
 } from "../../realtime/ws-broadcast.js";
 import { publishWS } from "../../realtime/ws-redis.js";
+import { scopedDeviceTargets } from "../../services/classpilotDeviceScope.js";
 
 const router = Router();
 
@@ -165,7 +166,7 @@ router.post("/block-lists/:id/apply", ...auth, async (req, res, next) => {
     }
 
     const { deviceIds, targetDeviceIds } = req.body;
-    const resolvedDeviceIds = deviceIds || targetDeviceIds;
+    let resolvedDeviceIds = deviceIds || targetDeviceIds;
     const message = {
       type: "remote-control",
       _msgId: crypto.randomUUID(),
@@ -173,7 +174,14 @@ router.post("/block-lists/:id/apply", ...auth, async (req, res, next) => {
     };
 
     let sentTo = 0;
+    let rejectedDeviceCount = 0;
     if (Array.isArray(resolvedDeviceIds) && resolvedDeviceIds.length > 0) {
+      const scoped = await scopedDeviceTargets(resolvedDeviceIds, schoolId);
+      if (scoped.deviceIds.length === 0) {
+        return res.status(404).json({ error: "No accessible devices", rejectedDeviceCount: scoped.rejectedDeviceCount });
+      }
+      resolvedDeviceIds = scoped.deviceIds;
+      rejectedDeviceCount = scoped.rejectedDeviceCount;
       for (const deviceId of resolvedDeviceIds) {
         sendToDeviceLocal(schoolId, deviceId, message);
         sentTo++;
@@ -184,7 +192,7 @@ router.post("/block-lists/:id/apply", ...auth, async (req, res, next) => {
       await publishWS({ kind: "students", schoolId }, message);
     }
 
-    return res.json({ success: true, sentTo, message: `Applied "${bl.name}" to ${sentTo} device(s)` });
+    return res.json({ success: true, sentTo, rejectedDeviceCount, message: `Applied "${bl.name}" to ${sentTo} device(s)` });
   } catch (err) {
     next(err);
   }
@@ -195,20 +203,29 @@ router.post("/block-lists/remove", ...auth, async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
     const { deviceIds, targetDeviceIds } = req.body;
-    const resolvedDeviceIds = deviceIds || targetDeviceIds;
+    let resolvedDeviceIds = deviceIds || targetDeviceIds;
     const message = { type: "remote-control", _msgId: crypto.randomUUID(), command: { type: "remove-block-list", data: {} } };
 
+    let sentTo = 0;
+    let rejectedDeviceCount = 0;
     if (Array.isArray(resolvedDeviceIds) && resolvedDeviceIds.length > 0) {
+      const scoped = await scopedDeviceTargets(resolvedDeviceIds, schoolId);
+      if (scoped.deviceIds.length === 0) {
+        return res.status(404).json({ error: "No accessible devices", rejectedDeviceCount: scoped.rejectedDeviceCount });
+      }
+      resolvedDeviceIds = scoped.deviceIds;
+      rejectedDeviceCount = scoped.rejectedDeviceCount;
       for (const deviceId of resolvedDeviceIds) {
         sendToDeviceLocal(schoolId, deviceId, message);
+        sentTo++;
       }
       await publishWS({ kind: "students", schoolId, targetDeviceIds: resolvedDeviceIds }, message);
     } else {
-      broadcastToStudentsLocal(schoolId, message);
+      sentTo = broadcastToStudentsLocal(schoolId, message);
       await publishWS({ kind: "students", schoolId }, message);
     }
 
-    return res.json({ ok: true });
+    return res.json({ ok: true, sentTo, rejectedDeviceCount });
   } catch (err) {
     next(err);
   }
