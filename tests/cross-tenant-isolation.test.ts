@@ -9,6 +9,8 @@ import {
   createUser,
   createGroup,
   createTeachingSession,
+  createSubgroup,
+  assignTeacherStudent,
   getGroupByIdAndSchool,
   getGroupsByTeacherAndSchool,
   createFlightPath,
@@ -64,9 +66,11 @@ after(async () => {
     await pool.query(`DELETE FROM block_lists WHERE school_id IN (SELECT id FROM schools WHERE name LIKE $1)`, [`${TAG}_%`]);
     await pool.query(`DELETE FROM group_students WHERE group_id IN (SELECT id FROM groups WHERE school_id IN (SELECT id FROM schools WHERE name LIKE $1))`, [`${TAG}_%`]);
     await pool.query(`DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id IN (SELECT id FROM schools WHERE name LIKE $1))`, [`${TAG}_%`]);
+    await pool.query(`DELETE FROM subgroups WHERE school_id IN (SELECT id FROM schools WHERE name LIKE $1)`, [`${TAG}_%`]);
     await pool.query(`DELETE FROM teaching_sessions WHERE school_id IN (SELECT id FROM schools WHERE name LIKE $1)`, [`${TAG}_%`]);
     await pool.query(`DELETE FROM groups WHERE school_id IN (SELECT id FROM schools WHERE name LIKE $1)`, [`${TAG}_%`]);
     await pool.query(`DELETE FROM grades WHERE school_id IN (SELECT id FROM schools WHERE name LIKE $1)`, [`${TAG}_%`]);
+    await pool.query(`DELETE FROM teacher_students WHERE school_id IN (SELECT id FROM schools WHERE name LIKE $1)`, [`${TAG}_%`]);
     await pool.query(`DELETE FROM students WHERE school_id IN (SELECT id FROM schools WHERE name LIKE $1)`, [`${TAG}_%`]);
     await pool.query(`DELETE FROM schools WHERE name LIKE 'xtest_%'`);
     await pool.query(`DELETE FROM users WHERE email LIKE 'xtest_%@example.edu'`);
@@ -89,6 +93,25 @@ describe("cross-school isolation", () => {
     const ts = await createTeachingSession({ groupId: g.id, teacherId: teacher.id });
     assert.equal(ts.schoolId, schoolA.id);
     assert.notEqual(ts.schoolId, schoolB.id);
+  });
+
+  it("createSubgroup derives school_id from the parent group (RLS WITH CHECK)", async () => {
+    const g = await createGroup({ schoolId: schoolA.id, teacherId: teacher.id, name: `${TAG}_sgGrp` } as any);
+    const sg = await createSubgroup({ groupId: g.id, name: `${TAG}_sg` } as any);
+    assert.equal(sg.schoolId, schoolA.id);
+  });
+
+  it("assignTeacherStudent derives school_id from the student (RLS WITH CHECK)", async () => {
+    const s = await createStudent({
+      schoolId: schoolA.id,
+      firstName: "AT",
+      lastName: "S",
+      email: `${TAG}-ats@example.edu`,
+      emailLc: `${TAG}-ats@example.edu`,
+      status: "active",
+    } as any);
+    const ts = await assignTeacherStudent(teacher.id, s.id);
+    assert.equal(ts.schoolId, schoolA.id);
   });
 
   it("getGroupsByTeacherAndSchool partitions a teacher's groups by school", async () => {
