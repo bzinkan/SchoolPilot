@@ -1,7 +1,7 @@
 import type { RequestHandler } from "express";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { pool } from "../db.js";
-import { tenantALS, rlsGucEnabled } from "../db/tenantContext.js";
+import { tenantALS, rlsGucEnabled, type TenantStore } from "../db/tenantContext.js";
 import * as schema from "../schema/index.js";
 
 // Binds a per-request tenant DB connection for Row-Level Security. Call this at
@@ -60,3 +60,36 @@ export const bindTenantContext: RequestHandler = async (req, res, next) => {
   };
   tenantALS.run(store, () => next());
 };
+
+// Establishes a tenant DB context OUTSIDE an HTTP request — for fire-and-forget
+// work that runs after the request's connection is already released: the
+// detached classifyUrl().then() heartbeat callback and the unauthenticated
+// MailPilot Pub/Sub webhook. Checks out one client, sets the GUC, runs `fn`
+// inside the AsyncLocalStorage scope so the Proxy `db` routes every query to it,
+// then resets + releases. Inert (just runs `fn`) when RLS_GUC_ENABLED !== "true".
+// Pass `schoolId` to scope to one school (the common case — keeps writes isolated
+// to that school), or `isSuper` for genuinely cross-school work.
+export async function runWithTenantContext<T>(
+  opts: { schoolId?: string; isSuper?: boolean },
+  fn: () => Promise<T>,
+): Promise<T> {
+  if (!rlsGucEnabled()) return fn();
+
+  const client = await pool.connect();
+  try {
+    await client.query("SELECT set_config('app.is_super', $1, false)", [opts.isSuper ? "on" : "off"]);
+    await client.query("SELECT set_config('app.school_id', $1, false)", [opts.schoolId ?? ""]);
+    const store: TenantStore = {
+      client,
+      db: drizzle(client, { schema }),
+      schoolId: opts.schoolId,
+      isSuper: opts.isSuper,
+    };
+    return await tenantALS.run(store, fn);
+  } finally {
+    await client
+      .query("SELECT set_config('app.school_id', '', false), set_config('app.is_super', 'off', false)")
+      .catch(() => {});
+    client.release();
+  }
+}

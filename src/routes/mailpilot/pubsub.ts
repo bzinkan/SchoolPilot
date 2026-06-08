@@ -21,6 +21,8 @@ import {
 import { classifyEmail } from "../../services/aiClassification.js";
 import { sendEmailSafetyAlert } from "../../services/email.js";
 import errorMonitor from "../../services/errorMonitor.js";
+import { runWithTenantContext } from "../../middleware/tenantContext.js";
+import { schedulerDb } from "../../services/schedulerDb.js";
 
 const router = Router();
 
@@ -87,7 +89,9 @@ async function processNotification(
   studentEmail: string,
   notificationHistoryId: string | null
 ): Promise<void> {
-  const watch = await getMailpilotWatchByEmail(studentEmail);
+  // Cross-school lookup: the unauthenticated webhook does not know the school
+  // yet, so this read must bypass RLS (app.is_super) via schedulerDb.
+  const watch = await getMailpilotWatchByEmail(studentEmail, schedulerDb);
   if (!watch) {
     console.warn(`[MailPilot] Received notification for unknown mailbox: ${studentEmail}`);
     return;
@@ -104,6 +108,19 @@ async function processNotification(
     return;
   }
 
+  // Once the school is resolved, run all per-school reads/writes inside that
+  // school's tenant context so every query satisfies RLS and stays scoped to the
+  // single school — without threading schedulerDb through each storage call.
+  await runWithTenantContext({ schoolId: watch.schoolId }, () =>
+    processActiveWatch(studentEmail, notificationHistoryId, watch)
+  );
+}
+
+async function processActiveWatch(
+  studentEmail: string,
+  notificationHistoryId: string | null,
+  watch: NonNullable<Awaited<ReturnType<typeof getMailpilotWatchByEmail>>>
+): Promise<void> {
   // Verify the school still has email monitoring enabled
   const school = await getSchoolById(watch.schoolId);
   if (!school || !school.classpilotEmailMonitoring) {

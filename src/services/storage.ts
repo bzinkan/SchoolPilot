@@ -4668,9 +4668,10 @@ export async function upsertMailpilotWatch(
 }
 
 export async function getMailpilotWatchByEmail(
-  studentEmail: string
+  studentEmail: string,
+  dbInstance: typeof db = db
 ): Promise<MailpilotWatch | undefined> {
-  const [row] = await db
+  const [row] = await dbInstance
     .select()
     .from(mailpilotWatches)
     .where(eq(mailpilotWatches.studentEmail, studentEmail.toLowerCase()))
