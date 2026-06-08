@@ -368,9 +368,132 @@ export async function getMembershipsWithSchool(userId: string) {
     );
 }
 
+const STAFF_DOMAIN_ROLES = new Set(["admin", "school_admin", "teacher", "office_staff"]);
+
+export function normalizeDomain(domain?: string | null): string | null {
+  const cleaned = String(domain || "").trim().toLowerCase();
+  return cleaned || null;
+}
+
+export function getEmailDomain(email?: string | null): string | null {
+  const domain = String(email || "").split("@")[1];
+  return normalizeDomain(domain);
+}
+
+export function isStaffDomainRole(role?: string | null): boolean {
+  return STAFF_DOMAIN_ROLES.has(String(role || ""));
+}
+
+function schoolIsolationError(code: string, message: string, status = 400) {
+  return Object.assign(new Error(message), { code, status, expose: true });
+}
+
+export async function validateStaffEmailDomainForSchool(
+  email: string,
+  schoolId: string
+): Promise<{
+  ok: boolean;
+  code?: string;
+  message?: string;
+  expectedDomain?: string | null;
+  actualDomain?: string | null;
+}> {
+  const school = await getSchoolById(schoolId);
+  const expectedDomain = normalizeDomain(school?.domain);
+  const actualDomain = getEmailDomain(email);
+
+  if (!expectedDomain) {
+    return {
+      ok: false,
+      code: "SCHOOL_DOMAIN_REQUIRED",
+      message: "School domain is required before adding staff accounts.",
+      expectedDomain,
+      actualDomain,
+    };
+  }
+
+  if (!actualDomain || actualDomain !== expectedDomain) {
+    return {
+      ok: false,
+      code: "STAFF_EMAIL_DOMAIN_MISMATCH",
+      message: `Staff email must use the school's Google Workspace domain (${expectedDomain}).`,
+      expectedDomain,
+      actualDomain,
+    };
+  }
+
+  return { ok: true, expectedDomain, actualDomain };
+}
+
+async function assertStaffMembershipEmailDomain(
+  data: Pick<InsertSchoolMembership, "userId" | "schoolId" | "role">
+): Promise<void> {
+  if (!isStaffDomainRole(data.role)) return;
+  const user = await getUserById(data.userId);
+  if (!user) return;
+  const validation = await validateStaffEmailDomainForSchool(user.email, data.schoolId);
+  if (!validation.ok) {
+    throw schoolIsolationError(validation.code!, validation.message!);
+  }
+}
+
+export async function getStaffEmailDomainMismatches(schoolId: string): Promise<Array<{
+  membershipId: string;
+  userId: string;
+  email: string;
+  role: string;
+  expectedDomain: string | null;
+  actualDomain: string | null;
+  reason: "missing_school_domain" | "domain_mismatch";
+}>> {
+  const school = await getSchoolById(schoolId);
+  const expectedDomain = normalizeDomain(school?.domain);
+  const rows = await db
+    .select({ membership: schoolMemberships, user: users })
+    .from(schoolMemberships)
+    .innerJoin(users, eq(schoolMemberships.userId, users.id))
+    .where(
+      and(
+        eq(schoolMemberships.schoolId, schoolId),
+        eq(schoolMemberships.status, "active"),
+        inArray(schoolMemberships.role, ["admin", "school_admin", "teacher", "office_staff"])
+      )
+    );
+
+  return rows
+    .map((row) => {
+      const actualDomain = getEmailDomain(row.user.email);
+      if (!expectedDomain) {
+        return {
+          membershipId: row.membership.id,
+          userId: row.user.id,
+          email: row.user.email,
+          role: row.membership.role,
+          expectedDomain,
+          actualDomain,
+          reason: "missing_school_domain" as const,
+        };
+      }
+      if (actualDomain !== expectedDomain) {
+        return {
+          membershipId: row.membership.id,
+          userId: row.user.id,
+          email: row.user.email,
+          role: row.membership.role,
+          expectedDomain,
+          actualDomain,
+          reason: "domain_mismatch" as const,
+        };
+      }
+      return null;
+    })
+    .filter((row): row is NonNullable<typeof row> => row !== null);
+}
+
 export async function createMembership(
   data: InsertSchoolMembership
 ): Promise<SchoolMembership> {
+  await assertStaffMembershipEmailDomain(data);
   const [membership] = await db
     .insert(schoolMemberships)
     .values(data)
@@ -742,6 +865,14 @@ export async function updateMembership(
   id: string,
   data: Partial<InsertSchoolMembership>
 ): Promise<SchoolMembership | undefined> {
+  const [existing] = await db.select().from(schoolMemberships).where(eq(schoolMemberships.id, id)).limit(1);
+  if (existing) {
+    await assertStaffMembershipEmailDomain({
+      userId: data.userId || existing.userId,
+      schoolId: data.schoolId || existing.schoolId,
+      role: data.role || existing.role,
+    });
+  }
   const [membership] = await db
     .update(schoolMemberships)
     .set(data)
@@ -765,6 +896,18 @@ export async function updateMembershipForSchool(
   schoolId: string,
   data: Partial<InsertSchoolMembership>
 ): Promise<SchoolMembership | undefined> {
+  const [existing] = await db
+    .select()
+    .from(schoolMemberships)
+    .where(and(eq(schoolMemberships.id, id), eq(schoolMemberships.schoolId, schoolId)))
+    .limit(1);
+  if (existing) {
+    await assertStaffMembershipEmailDomain({
+      userId: data.userId || existing.userId,
+      schoolId,
+      role: data.role || existing.role,
+    });
+  }
   const [membership] = await db
     .update(schoolMemberships)
     .set(data)
@@ -3971,26 +4114,43 @@ export async function getGoogleOAuthToken(
   return token;
 }
 
-// School-aware retrieval for Workspace DATA imports (directory/classroom). The
-// token table is keyed per-user (one Google identity per person), so on its own
-// a multi-school user's token could be used to import one school's Workspace into
-// another. Guard via the trust anchor: the connecting Google account's email
-// domain. If that domain is registered to a school OTHER than the current one,
-// refuse — the token belongs to a different tenant's Workspace. (Returns the
-// token when the domain isn't registered to any school, or includes this school —
-// e.g. shared-domain districts.)
+// School-aware retrieval for Workspace/Classroom data. The token table is keyed
+// per SchoolPilot user, so a multi-school user could otherwise reuse one Google
+// connection against another school. Strict+shared policy: the connected Google
+// account domain must equal the selected school's registered domain. Multiple
+// schools may share that same district domain.
 export async function getGoogleOAuthTokenForSchool(
   userId: string,
   schoolId: string
 ): Promise<GoogleOAuthToken | undefined> {
   const token = await getGoogleOAuthToken(userId);
   if (!token) return undefined;
-  const user = await getUserById(userId);
-  const domain = user?.email?.split("@")[1]?.toLowerCase();
-  if (!domain) return token;
-  const schoolsForDomain = await getSchoolsByDomain(domain);
-  if (schoolsForDomain.length === 0) return token;
-  return schoolsForDomain.some((s) => s.id === schoolId) ? token : undefined;
+  const school = await getSchoolById(schoolId);
+  const schoolDomain = normalizeDomain(school?.domain);
+  if (!schoolDomain) {
+    throw schoolIsolationError(
+      "SCHOOL_DOMAIN_REQUIRED",
+      "School domain is required before connecting Google Workspace."
+    );
+  }
+
+  const connectedEmail = token.connectedEmail;
+  const connectedDomain = normalizeDomain(token.connectedDomain || getEmailDomain(connectedEmail));
+  if (!connectedEmail || !connectedDomain) {
+    throw schoolIsolationError(
+      "GOOGLE_RECONNECT_REQUIRED",
+      "Reconnect Google so SchoolPilot can verify the connected Workspace domain."
+    );
+  }
+
+  if (connectedDomain !== schoolDomain) {
+    throw schoolIsolationError(
+      "GOOGLE_DOMAIN_MISMATCH",
+      `Connected Google account must use the school's Workspace domain (${schoolDomain}).`
+    );
+  }
+
+  return token;
 }
 
 export async function upsertGoogleOAuthToken(
@@ -3999,6 +4159,8 @@ export async function upsertGoogleOAuthToken(
     refreshToken: string;
     scope?: string;
     tokenType?: string;
+    connectedEmail?: string | null;
+    connectedDomain?: string | null;
     expiryDate?: Date;
   }
 ): Promise<GoogleOAuthToken> {
@@ -4056,13 +4218,22 @@ export async function upsertSettings(
 export async function updateEnrollmentSettings(
   schoolId: string,
   data: { enrollmentKey?: string; enrollmentKeyRequired?: boolean; autoEnrollStudents?: boolean }
-): Promise<Settings | undefined> {
+): Promise<Settings> {
+  const school = await getSchoolById(schoolId);
   const [row] = await db
-    .update(settings)
-    .set(data)
-    .where(eq(settings.schoolId, schoolId))
+    .insert(settings)
+    .values({
+      schoolId,
+      schoolName: school?.name || "",
+      wsSharedKey: "",
+      ...data,
+    })
+    .onConflictDoUpdate({
+      target: settings.schoolId,
+      set: data,
+    })
     .returning();
-  return row;
+  return row!;
 }
 
 // ============================================================================

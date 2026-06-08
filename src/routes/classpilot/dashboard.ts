@@ -20,6 +20,9 @@ import {
   getGroupsByTeacherAndSchool,
   getGroupsBySchool,
   createGroup,
+  getMembershipByUserAndSchool,
+  getUserById,
+  validateStaffEmailDomainForSchool,
 } from "../../services/storage.js";
 import { broadcastToStudentsLocal } from "../../realtime/ws-broadcast.js";
 import { publishWS } from "../../realtime/ws-redis.js";
@@ -324,9 +327,30 @@ router.post("/groups", ...auth, async (req, res, next) => {
     const { name, teacherId, gradeLevel, periodLabel, description, groupType,
             scheduleEnabled, blockStartTime, blockEndTime } = req.body;
     if (!name) return res.status(400).json({ error: "name required" });
+    const ownerTeacherId = teacherId || req.authUser!.id;
+    if (ownerTeacherId !== req.authUser!.id) {
+      const role = res.locals.membershipRole;
+      if (role !== "admin" && role !== "school_admin" && role !== "super_admin") {
+        return res.status(403).json({ error: "Only admins can assign a group to another teacher" });
+      }
+    }
+    const ownerMembership = await getMembershipByUserAndSchool(ownerTeacherId, res.locals.schoolId!);
+    const ownerUser = await getUserById(ownerTeacherId);
+    if (!ownerMembership || !ownerUser) {
+      return res.status(404).json({ error: "Teacher not found in this school" });
+    }
+    const domainValidation = await validateStaffEmailDomainForSchool(ownerUser.email, res.locals.schoolId!);
+    if (!domainValidation.ok) {
+      return res.status(400).json({
+        error: domainValidation.message,
+        code: domainValidation.code,
+        expectedDomain: domainValidation.expectedDomain,
+        actualDomain: domainValidation.actualDomain,
+      });
+    }
     const group = await createGroup({
       schoolId: res.locals.schoolId!,
-      teacherId: teacherId || req.authUser!.id,
+      teacherId: ownerTeacherId,
       name,
       gradeLevel: gradeLevel || undefined,
       periodLabel: periodLabel || undefined,

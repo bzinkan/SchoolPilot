@@ -28,6 +28,7 @@ import {
   addGroupTeacher,
   removeGroupTeacher,
   getUserById,
+  validateStaffEmailDomainForSchool,
 } from "../../services/storage.js";
 import { userBelongsToSchool } from "../../services/passpilotAccess.js";
 
@@ -487,6 +488,19 @@ router.post("/:id/teachers", ...auth, requireRole("admin"), async (req, res, nex
     // The co-teacher being added must belong to this school.
     if (!(await userBelongsToSchool(teacherId, res.locals.schoolId!))) {
       return res.status(404).json({ error: "Teacher not found in this school" });
+    }
+    const user = await getUserById(teacherId);
+    if (!user) {
+      return res.status(404).json({ error: "Teacher not found in this school" });
+    }
+    const domainValidation = await validateStaffEmailDomainForSchool(user.email, res.locals.schoolId!);
+    if (!domainValidation.ok) {
+      return res.status(400).json({
+        error: domainValidation.message,
+        code: domainValidation.code,
+        expectedDomain: domainValidation.expectedDomain,
+        actualDomain: domainValidation.actualDomain,
+      });
     }
 
     const teacher = await addGroupTeacher(

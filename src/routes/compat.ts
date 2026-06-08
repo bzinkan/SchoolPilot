@@ -41,6 +41,7 @@ import {
   getUserById,
   getAttendanceBySchool,
   getActivePassesBySchool,
+  validateStaffEmailDomainForSchool,
 } from "../services/storage.js";
 import db from "../db.js";
 import { heartbeats, devices as deviceTable, teachingSessions, groups, groupStudents, dailyUsage, studentDevices } from "../schema/classpilot.js";
@@ -322,6 +323,15 @@ router.post("/admin/users", ...schoolAuth, requireRole("admin"), async (req, res
     if (!["admin", "teacher", "office_staff"].includes(staffRole)) {
       return res.status(400).json({ error: "Invalid role" });
     }
+    const domainValidation = await validateStaffEmailDomainForSchool(email, res.locals.schoolId!);
+    if (!domainValidation.ok) {
+      return res.status(400).json({
+        error: domainValidation.message,
+        code: domainValidation.code,
+        expectedDomain: domainValidation.expectedDomain,
+        actualDomain: domainValidation.actualDomain,
+      });
+    }
 
     let user = await getUserByEmail(email.toLowerCase());
 
@@ -579,6 +589,19 @@ router.post("/admin/classroom/create-class", ...schoolAuth, requireRole("admin")
     }
     if (!(await userBelongsToSchool(teacherId, schoolId))) {
       return res.status(404).json({ error: "Teacher not found in this school" });
+    }
+    const teacher = await getUserById(teacherId);
+    if (!teacher) {
+      return res.status(404).json({ error: "Teacher not found in this school" });
+    }
+    const domainValidation = await validateStaffEmailDomainForSchool(teacher.email, schoolId);
+    if (!domainValidation.ok) {
+      return res.status(400).json({
+        error: domainValidation.message,
+        code: domainValidation.code,
+        expectedDomain: domainValidation.expectedDomain,
+        actualDomain: domainValidation.actualDomain,
+      });
     }
     // Create a group for this course
     const [group] = await db.insert(groups).values({

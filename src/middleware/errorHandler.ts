@@ -36,11 +36,11 @@ export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
   }
 
   const message =
-    process.env.NODE_ENV === "development"
+    status < 500 || err.expose || process.env.NODE_ENV === "development"
       ? err.message
       : "Internal server error";
 
   // Return the requestId so a user/IT admin can quote it when reporting an
   // issue — it ties directly to the error_logs row + CloudWatch line.
-  res.status(status).json({ error: message, requestId: reqId });
+  res.status(status).json({ error: message, code: err.code, requestId: reqId });
 };

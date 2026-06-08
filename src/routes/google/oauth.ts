@@ -2,8 +2,12 @@ import { Router } from "express";
 import { google } from "googleapis";
 import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
+import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
 import {
   getGoogleOAuthToken,
+  getSchoolById,
+  getEmailDomain,
+  normalizeDomain,
   upsertGoogleOAuthToken,
   deleteGoogleOAuthToken,
 } from "../../services/storage.js";
@@ -18,7 +22,9 @@ function getOAuth2Client() {
   );
 }
 
-const SCOPES = [
+const CORE_SCOPES = ["openid", "email"];
+
+const WORKSPACE_IMPORT_SCOPES = [
   "https://www.googleapis.com/auth/classroom.courses.readonly",
   "https://www.googleapis.com/auth/classroom.rosters.readonly",
   "https://www.googleapis.com/auth/classroom.profile.emails",
@@ -34,6 +40,34 @@ const SCOPES = [
   // src/routes/google/workspaceAudit.ts for easy re-activation.
 ];
 
+const CLASSROOM_RESOURCE_SCOPES = [
+  "https://www.googleapis.com/auth/classroom.courses.readonly",
+  "https://www.googleapis.com/auth/classroom.coursework.students.readonly",
+  "https://www.googleapis.com/auth/classroom.courseworkmaterials.readonly",
+];
+
+type GooglePurpose = "workspace_import" | "classroom_resources";
+
+function normalizePurpose(value: unknown): GooglePurpose {
+  return value === "classroom_resources" ? "classroom_resources" : "workspace_import";
+}
+
+function scopesForPurpose(purpose: GooglePurpose): string[] {
+  const scopes = purpose === "classroom_resources" ? CLASSROOM_RESOURCE_SCOPES : WORKSPACE_IMPORT_SCOPES;
+  return [...new Set([...CORE_SCOPES, ...scopes])];
+}
+
+function roleCanRequestPurpose(role: string | null | undefined, purpose: GooglePurpose): boolean {
+  if (role === "super_admin") return true;
+  if (purpose === "workspace_import") return role === "admin" || role === "school_admin";
+  return role === "teacher" || role === "admin" || role === "school_admin";
+}
+
+function missingScopes(tokenScope: string | null | undefined, required: string[]): string[] {
+  const granted = new Set((tokenScope || "").split(/\s+/).filter(Boolean));
+  return required.filter((scope) => !granted.has(scope));
+}
+
 function getAllowedReturnUrl(returnTo: string | undefined, allowlist: string[]): URL | null {
   if (!returnTo) return null;
   try {
@@ -45,7 +79,7 @@ function getAllowedReturnUrl(returnTo: string | undefined, allowlist: string[]):
 }
 
 // GET /api/google/auth-url - Get Google OAuth URL
-router.get("/auth-url", authenticate, requireSchoolContext, async (req, res, next) => {
+router.get("/auth-url", authenticate, requireSchoolContext, requireActiveSchool, async (req, res, next) => {
   try {
     if (!process.env.GOOGLE_CLIENT_ID) {
       return res.status(503).json({ error: "Google OAuth not configured" });
@@ -53,14 +87,22 @@ router.get("/auth-url", authenticate, requireSchoolContext, async (req, res, nex
 
     const oauth2Client = getOAuth2Client();
     const schoolId = res.locals.schoolId!;
+    const purpose = normalizePurpose(req.query.purpose);
+    if (!roleCanRequestPurpose(res.locals.membershipRole, purpose)) {
+      return res.status(403).json({
+        error: "INSUFFICIENT_GOOGLE_ROLE: You do not have permission to connect Google for this workflow.",
+        code: "INSUFFICIENT_GOOGLE_ROLE",
+      });
+    }
 
     const url = oauth2Client.generateAuthUrl({
       access_type: "offline",
       prompt: "consent",
-      scope: SCOPES,
+      scope: scopesForPurpose(purpose),
       state: JSON.stringify({
         userId: req.authUser!.id,
         schoolId,
+        purpose,
         returnTo: (req.query.returnTo as string) || req.headers.referer || "",
       }),
     });
@@ -81,9 +123,19 @@ router.get("/callback", async (req, res, next) => {
       return res.status(400).json({ error: "Missing code or state" });
     }
 
-    const { userId, returnTo } = JSON.parse(state);
+    const { userId, schoolId, purpose, returnTo } = JSON.parse(state);
     const oauth2Client = getOAuth2Client();
     const { tokens } = await oauth2Client.getToken(code);
+    oauth2Client.setCredentials(tokens);
+
+    let connectedEmail: string | null = null;
+    try {
+      const oauth2 = google.oauth2({ version: "v2", auth: oauth2Client });
+      const profile = await oauth2.userinfo.get();
+      connectedEmail = profile.data.email?.trim().toLowerCase() || null;
+    } catch (err) {
+      console.warn("[google-oauth] unable to read connected account email:", (err as Error).message);
+    }
 
     // Preserve the existing refresh_token on re-consent: Google sometimes
     // omits refresh_token from the response when the user has already
@@ -92,11 +144,16 @@ router.get("/callback", async (req, res, next) => {
     // keep the one we already have rather than wiping it.
     const existing = await getGoogleOAuthToken(userId);
     const refreshToken = tokens.refresh_token || existing?.refreshToken || "";
+    connectedEmail = connectedEmail || existing?.connectedEmail || null;
+    const connectedDomain = getEmailDomain(connectedEmail) || existing?.connectedDomain || null;
+    const selectedScopes = scopesForPurpose(normalizePurpose(purpose));
 
     await upsertGoogleOAuthToken(userId, {
       refreshToken,
-      scope: tokens.scope || existing?.scope || SCOPES.join(" "),
+      scope: tokens.scope || existing?.scope || selectedScopes.join(" "),
       tokenType: tokens.token_type || "Bearer",
+      connectedEmail,
+      connectedDomain,
       expiryDate: tokens.expiry_date ? new Date(tokens.expiry_date) : undefined,
     });
 
@@ -108,6 +165,13 @@ router.get("/callback", async (req, res, next) => {
 
     if (allowedReturnUrl) {
       allowedReturnUrl.searchParams.set("connected", "true");
+      if (schoolId) {
+        const school = await getSchoolById(schoolId);
+        const schoolDomain = normalizeDomain(school?.domain);
+        if (schoolDomain && connectedDomain && connectedDomain !== schoolDomain) {
+          allowedReturnUrl.searchParams.set("googleDomainMismatch", "true");
+        }
+      }
       return res.redirect(allowedReturnUrl.toString());
     }
 
@@ -119,10 +183,34 @@ router.get("/callback", async (req, res, next) => {
 });
 
 // GET /api/google/status - Check Google connection status
-router.get("/status", authenticate, async (req, res, next) => {
+router.get("/status", authenticate, requireSchoolContext, async (req, res, next) => {
   try {
     const token = await getGoogleOAuthToken(req.authUser!.id);
-    return res.json({ connected: !!token });
+    const school = res.locals.schoolId ? await getSchoolById(res.locals.schoolId) : undefined;
+    const schoolDomain = normalizeDomain(school?.domain);
+    const connectedEmail = token?.connectedEmail || null;
+    const connectedDomain = normalizeDomain(token?.connectedDomain || getEmailDomain(connectedEmail));
+    const domainVerified = !!token && !!schoolDomain && !!connectedDomain && connectedDomain === schoolDomain;
+    const requiresReconnect = !!token && (!connectedEmail || !connectedDomain);
+    const workspaceImportMissingScopes = missingScopes(token?.scope, scopesForPurpose("workspace_import"));
+    const classroomResourceMissingScopes = missingScopes(token?.scope, scopesForPurpose("classroom_resources"));
+
+    let errorCode: string | null = null;
+    if (token && !schoolDomain) errorCode = "SCHOOL_DOMAIN_REQUIRED";
+    else if (requiresReconnect) errorCode = "GOOGLE_RECONNECT_REQUIRED";
+    else if (token && !domainVerified) errorCode = "GOOGLE_DOMAIN_MISMATCH";
+
+    return res.json({
+      connected: !!token,
+      connectedEmail,
+      connectedDomain,
+      schoolDomain,
+      domainVerified,
+      requiresReconnect,
+      errorCode,
+      workspaceImportMissingScopes,
+      classroomResourceMissingScopes,
+    });
   } catch (err) {
     next(err);
   }

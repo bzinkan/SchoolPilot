@@ -53,6 +53,19 @@ const PORT = parseInt(process.env.PORT || "4000", 10);
 // Run lightweight auto-migrations for new tables
 import { pool } from "./db.js";
 async function runStartupMigrations(): Promise<void> {
+  // Schools can share a district Google Workspace domain. Older deployments had
+  // a single-column unique constraint on domain; remove it and keep uniqueness
+  // on (domain, name), matching the Drizzle schema.
+  try {
+    await pool.query(`ALTER TABLE schools DROP CONSTRAINT IF EXISTS schools_domain_unique`);
+    await pool.query(`DROP INDEX IF EXISTS schools_domain_unique`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS schools_domain_name_unique ON schools (domain, name)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS schools_domain_idx ON schools (domain)`);
+    console.log("[migration] schools shared-domain indexes ready");
+  } catch (err) {
+    console.warn("[migration] schools shared-domain migration skipped:", (err as Error).message);
+  }
+
   try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS daily_usage (
@@ -88,6 +101,14 @@ async function runStartupMigrations(): Promise<void> {
   // Auto-enroll policy: default OFF (students must be pre-imported by IT).
   try {
     await pool.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS auto_enroll_students BOOLEAN NOT NULL DEFAULT false`);
+    await pool.query(`
+      INSERT INTO settings (school_id, school_name, ws_shared_key)
+      SELECT s.id, COALESCE(s.name, ''), ''
+      FROM schools s
+      WHERE NOT EXISTS (
+        SELECT 1 FROM settings st WHERE st.school_id = s.id
+      )
+    `);
     console.log("[migration] settings auto_enroll_students column ready");
   } catch (err) {
     console.warn("[migration] auto_enroll_students migration skipped:", (err as Error).message);
@@ -277,11 +298,15 @@ async function runStartupMigrations(): Promise<void> {
         refresh_token TEXT NOT NULL,
         scope TEXT,
         token_type TEXT,
+        connected_email TEXT,
+        connected_domain TEXT,
         expiry_date TIMESTAMP,
         created_at TIMESTAMP NOT NULL DEFAULT now(),
         updated_at TIMESTAMP NOT NULL DEFAULT now()
       )
     `);
+    await pool.query(`ALTER TABLE google_oauth_tokens ADD COLUMN IF NOT EXISTS connected_email TEXT`);
+    await pool.query(`ALTER TABLE google_oauth_tokens ADD COLUMN IF NOT EXISTS connected_domain TEXT`);
     await pool.query(`
       CREATE TABLE IF NOT EXISTS classroom_courses (
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),

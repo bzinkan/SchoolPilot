@@ -26,6 +26,7 @@ import {
   getSchoolBySlug,
   getStudentByCode,
   linkParentByCarNumber,
+  validateStaffEmailDomainForSchool,
 } from "../services/storage.js";
 
 const router = Router();
@@ -264,6 +265,18 @@ router.post(
       }
 
       const role = parsed.data.role || "teacher";
+      const domainValidation = await validateStaffEmailDomainForSchool(
+        parsed.data.email,
+        res.locals.schoolId!
+      );
+      if (!domainValidation.ok) {
+        return res.status(400).json({
+          error: domainValidation.message,
+          code: domainValidation.code,
+          expectedDomain: domainValidation.expectedDomain,
+          actualDomain: domainValidation.actualDomain,
+        });
+      }
 
       let user = await getUserByEmail(parsed.data.email);
 
