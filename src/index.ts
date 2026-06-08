@@ -52,6 +52,12 @@ const PORT = parseInt(process.env.PORT || "4000", 10);
 
 // Run lightweight auto-migrations for new tables
 import { pool } from "./db.js";
+import {
+  RLS_GLOBAL_TABLES,
+  isSafeIdentifier,
+  parseRlsEnabledTables,
+  policySqlFor,
+} from "./db/rlsPolicies.js";
 async function runStartupMigrations(): Promise<void> {
   // Schools can share a district Google Workspace domain. Older deployments had
   // a single-column unique constraint on domain; remove it and keep uniqueness
@@ -165,6 +171,67 @@ async function runStartupMigrations(): Promise<void> {
     console.log(`[migration] derived-table school_id columns ready${residual.length ? ` (NULL remaining: ${residual.join(", ")})` : ""}`);
   } catch (err) {
     console.warn("[migration] derived-table school_id migration skipped:", (err as Error).message);
+  }
+
+  // RLS Phase 4: author per-school tenant-isolation policies (idempotent) for
+  // every table that has a school_id column, EXCEPT global/bootstrap tables. The
+  // policies + FORCE ROW LEVEL SECURITY are INERT until a table is named in the
+  // RLS_ENABLED_TABLES allowlist (then ENABLE ROW LEVEL SECURITY); dropping a
+  // table from the allowlist disables it again on the next boot. This block is
+  // DDL only (CREATE POLICY / ALTER TABLE), which is owner-privileged and NOT
+  // subject to RLS, so it is safe to re-run even on already-enabled tables.
+  //
+  // NOTE before enabling a table in Phase 5+: any migration above that DMLs that
+  // table runs on the main pool with no GUC, so under RLS it is denied (0 rows).
+  // The derived-table backfills are self-limiting (WHERE school_id IS NULL → a
+  // no-op once backfilled, and RLS+WITH CHECK prevents new NULL rows), but the
+  // settings INSERT backfill DOES write — settings must run its backfill under
+  // app.is_super (or be enabled only after that is addressed).
+  try {
+    const { rows: cols } = await pool.query<{ table_name: string }>(`
+      SELECT c.table_name
+      FROM information_schema.columns c
+      JOIN information_schema.tables t
+        ON t.table_schema = c.table_schema AND t.table_name = c.table_name
+      WHERE c.table_schema = 'public'
+        AND c.column_name = 'school_id'
+        AND t.table_type = 'BASE TABLE'
+      ORDER BY c.table_name
+    `);
+    const tenantTables = cols
+      .map((r) => r.table_name)
+      .filter((t) => !RLS_GLOBAL_TABLES.has(t) && isSafeIdentifier(t));
+
+    for (const table of tenantTables) {
+      for (const stmt of policySqlFor(table)) await pool.query(stmt);
+    }
+
+    const allowlist = parseRlsEnabledTables();
+    const { rows: enabledRows } = await pool.query<{ relname: string }>(`
+      SELECT relname FROM pg_class WHERE relkind = 'r' AND relrowsecurity = true
+    `);
+    const currentlyEnabled = new Set(enabledRows.map((r) => r.relname));
+
+    const desired = tenantTables.filter((t) => allowlist.has(t));
+    for (const table of desired) {
+      if (!currentlyEnabled.has(table)) {
+        await pool.query(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY`);
+      }
+    }
+    for (const table of tenantTables) {
+      if (currentlyEnabled.has(table) && !allowlist.has(table)) {
+        await pool.query(`ALTER TABLE ${table} DISABLE ROW LEVEL SECURITY`);
+      }
+    }
+
+    const unknown = [...allowlist].filter((t) => !tenantTables.includes(t));
+    console.log(
+      `[migration] RLS policies ready on ${tenantTables.length} tenant tables; ` +
+        `enforced: ${desired.length ? desired.join(", ") : "none"}` +
+        (unknown.length ? ` (ignored unknown RLS_ENABLED_TABLES: ${unknown.join(", ")})` : ""),
+    );
+  } catch (err) {
+    console.warn("[migration] RLS policy migration skipped:", (err as Error).message);
   }
 
   // Add gopilot_role column for per-product role overrides
