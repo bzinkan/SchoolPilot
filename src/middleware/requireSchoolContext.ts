@@ -2,6 +2,7 @@ import type { RequestHandler } from "express";
 import { eq, and } from "drizzle-orm";
 import { schoolMemberships } from "../schema/core.js";
 import db from "../db.js";
+import { bindTenantContext } from "./tenantContext.js";
 
 /**
  * Ensures a school context is available.
@@ -28,7 +29,7 @@ export const requireSchoolContext: RequestHandler = async (req, res, next) => {
       res.locals.schoolId = schoolId as string;
     }
     res.locals.membershipRole = "super_admin";
-    return next();
+    return bindTenantContext(req, res, next);
   }
 
   // Session-based: schoolId already in session
@@ -47,7 +48,7 @@ export const requireSchoolContext: RequestHandler = async (req, res, next) => {
       )
       .limit(1);
     res.locals.membershipRole = membership?.role || null;
-    return next();
+    return bindTenantContext(req, res, next);
   }
 
   // JWT-based or session without schoolId: look up from params, query, header, or first membership
@@ -82,7 +83,7 @@ export const requireSchoolContext: RequestHandler = async (req, res, next) => {
 
     res.locals.schoolId = schoolId;
     res.locals.membershipRole = membership.role;
-    return next();
+    return bindTenantContext(req, res, next);
   }
 
   // Fallback: use first active membership

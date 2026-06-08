@@ -2,6 +2,7 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
 import { readFileSync, existsSync } from "fs";
 import * as schema from "./schema/index.js";
+import { getTenantStore, rlsGucEnabled } from "./db/tenantContext.js";
 
 // SOC 2 / SC-7: enforce TLS verify-full to AWS RDS using the bundled CA chain.
 // The Docker image ships /app/rds-ca.pem from AWS' truststore so we can verify
@@ -37,9 +38,32 @@ pool.on("error", (err) => {
   console.error("Unexpected error on idle client", err);
 });
 
-export const db = drizzle(pool, {
+// The global (pool-backed) Drizzle instance. Used directly when RLS request
+// binding is off, and as the fallback when there's no per-request tenant context
+// (startup, scheduler via schedulerDb, pre-auth/bootstrap paths).
+const globalDb = drizzle(pool, {
   schema,
   logger: process.env.NODE_ENV === "development",
+});
+
+function resolveDb(): typeof globalDb {
+  if (rlsGucEnabled()) {
+    const store = getTenantStore();
+    if (store) return store.db as typeof globalDb;
+  }
+  return globalDb;
+}
+
+// `db` is a Proxy that transparently routes each query to the per-request,
+// GUC-scoped connection when one is bound (RLS on), else the global pool. This
+// keeps every storage function's `db.select()/insert()/...` unchanged — no
+// signature churn — while letting RLS enforce tenant isolation in the database.
+export const db: typeof globalDb = new Proxy(globalDb, {
+  get(_target, prop) {
+    const active = resolveDb();
+    const value = (active as unknown as Record<string | symbol, unknown>)[prop];
+    return typeof value === "function" ? (value as (...a: unknown[]) => unknown).bind(active) : value;
+  },
 });
 
 export { pool };

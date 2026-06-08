@@ -4,6 +4,7 @@ import {
   TokenExpiredError,
   InvalidTokenError,
 } from "../services/deviceJwt.js";
+import { bindTenantContext } from "./tenantContext.js";
 
 function extractBearerToken(rawHeader?: string | string[]): string | null {
   if (!rawHeader) return null;
@@ -38,7 +39,7 @@ export const requireDeviceAuth: RequestHandler = (req, res, next) => {
     res.locals.deviceId = payload.deviceId;
     res.locals.studentEmail = payload.studentEmail;
     res.locals.authType = "device";
-    return next();
+    return bindTenantContext(req, res, next);
   } catch (error) {
     if (error instanceof TokenExpiredError) {
       return res.status(401).json({ error: "Student token expired" });
