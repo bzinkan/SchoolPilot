@@ -23,6 +23,7 @@ import {
   stopWatch,
 } from "../../services/mailpilotGmail.js";
 import { logAudit } from "../../services/audit.js";
+import { runWithTenantContext } from "../../middleware/tenantContext.js";
 
 const router = Router();
 
@@ -71,8 +72,11 @@ router.post("/setup/verify", ...auth, async (req, res, next) => {
       return res.status(503).json({ error: "MailPilot service account not configured on server" });
     }
 
-    // Confirm the test email belongs to this school (or domain matches)
-    const student = await getStudentByEmailAnySchool(testEmail);
+    // Confirm the test email belongs to this school (or domain matches). This is
+    // a deliberate cross-school existence check — the guard below rejects emails
+    // owned by another school — so it must run super-scoped or RLS would hide the
+    // foreign row and the check would fail open.
+    const student = await runWithTenantContext({ isSuper: true }, () => getStudentByEmailAnySchool(testEmail));
     if (student && student.schoolId !== schoolId) {
       return res.status(400).json({ error: "testEmail does not belong to this school" });
     }

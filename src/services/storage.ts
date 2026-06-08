@@ -1,5 +1,6 @@
 import { eq, and, desc, asc, ilike, or, isNull, inArray, sql, ne, type SQL } from "drizzle-orm";
 import db from "../db.js";
+import { runWithTenantContext } from "../middleware/tenantContext.js";
 import {
   users,
   schools,
@@ -290,18 +291,22 @@ export async function resolveSchoolForStudent(
   if (matchingSchools.length === 0) return undefined;
   if (matchingSchools.length === 1) return { school: matchingSchools[0]!, isSharedDomain: false };
 
-  // Multiple schools share this domain — find student by email
+  // Multiple schools share this domain — find student by email. This is a
+  // genuinely cross-school read (we don't yet know which school the email maps
+  // to), so it must run super-scoped or RLS would hide all the candidate rows.
   const schoolIds = matchingSchools.map((s) => s.id);
-  const [student] = await db
-    .select({ schoolId: students.schoolId })
-    .from(students)
-    .where(
-      and(
-        eq(students.emailLc, email.toLowerCase()),
-        inArray(students.schoolId, schoolIds)
+  const [student] = await runWithTenantContext({ isSuper: true }, () =>
+    db
+      .select({ schoolId: students.schoolId })
+      .from(students)
+      .where(
+        and(
+          eq(students.emailLc, email.toLowerCase()),
+          inArray(students.schoolId, schoolIds)
+        )
       )
-    )
-    .limit(1);
+      .limit(1),
+  );
 
   if (!student) return undefined; // Student not imported yet
 
