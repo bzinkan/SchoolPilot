@@ -1,12 +1,11 @@
 name: CodeQL
 
-# Free static analysis from GitHub Advanced Security.
-# Scans JavaScript/TypeScript for security bugs (SQL injection, XSS, prototype
-# pollution, hard-coded secrets, etc.) on every push to main, every PR, and
-# on a weekly schedule to catch new advisories.
-#
-# Results land in the Security tab → Code scanning alerts.
-# Findings here become SOC 2 evidence ("we run continuous SAST").
+# Free CodeQL static analysis (SAST) for JavaScript/TypeScript.
+# NOTE: this repo is private on a plan without code scanning, so results can
+# NOT be uploaded to the Security tab. Instead, the "Fail on findings" step
+# parses the SARIF locally and FAILS the job if any error- or warning-severity
+# finding exists. Findings print in the job log.
+# SOC 2 evidence: "we run continuous SAST and block on findings".
 
 on:
   push:
@@ -23,7 +22,6 @@ jobs:
     permissions:
       actions: read
       contents: read
-      security-events: write
 
     strategy:
       fail-fast: false
@@ -41,7 +39,23 @@ jobs:
           queries: security-extended
 
       - name: Perform CodeQL Analysis
-        continue-on-error: true
         uses: github/codeql-action/analyze@v4
         with:
           category: "/language:${{ matrix.language }}"
+          upload: never
+          output: codeql-results
+
+      - name: Fail on findings (error/warning severity)
+        run: |
+          total=0
+          for f in codeql-results/*.sarif; do
+            n=$(jq '[.runs[].results[]? | select((.level // "warning") | IN("error","warning"))] | length' "$f")
+            if [ "$n" -gt 0 ]; then
+              echo "::error::$n CodeQL finding(s) in $f"
+              jq -r '.runs[].results[]? | select((.level // "warning") | IN("error","warning"))
+                | "\(.level // "warning"): \(.ruleId) at \(.locations[0].physicalLocation.artifactLocation.uri):\(.locations[0].physicalLocation.region.startLine // 0)\n  \(.message.text)"' "$f"
+            fi
+            total=$((total + n))
+          done
+          echo "Total error/warning findings: $total"
+          [ "$total" -eq 0 ]
