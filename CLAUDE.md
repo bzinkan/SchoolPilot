@@ -107,6 +107,20 @@ Routes use a middleware chain: `authenticate` → `requireSchoolContext` → `re
 
 Roles: `admin`, `school_admin`, `teacher`, `office_staff`. Super admins have `isSuperAdmin: true` on their user record.
 
+### Database-Level Tenant Isolation (RLS) — CRITICAL for new DB code
+SchoolPilot is multi-tenant. Beyond the app-code rule of filtering every query by `res.locals.schoolId`, **PostgreSQL Row-Level Security is the enforced backstop**: 33 of 37 tenant tables carry a per-school policy so the database itself refuses cross-school rows even if a handler forgets to filter. (Deferred, not yet enforced: `parent_student`, `messages` — pending NULL `school_id` cleanup.)
+
+**How it works:**
+- Each tenant table has a `tenant_isolation` policy + `FORCE ROW LEVEL SECURITY`: `USING (school_id = current_setting('app.school_id', true) OR current_setting('app.is_super', true) = 'on')` with a matching `WITH CHECK`. Policy SQL lives in `src/db/rlsPolicies.ts`; it is applied and enabled per-table in `runStartupMigrations` (`src/index.ts`). `school_id` columns are TEXT (compared as text — no `::uuid` cast).
+- **Deny-by-default**: with no GUC set, `current_setting('app.school_id', true)` is NULL, so reads return **0 rows silently** and writes fail `WITH CHECK` (sometimes a swallowed error). This is the #1 footgun.
+- **Request path (the common case)**: `requireSchoolContext` / `requireDeviceAuth` call `bindTenantContext` (`src/middleware/tenantContext.ts`), which checks out one dedicated `pg` client, sets `app.school_id` (or `app.is_super='on'` for super-admins), and stashes it in `AsyncLocalStorage`. The exported Proxy `db` (`src/db.ts`) transparently routes every query to that GUC-scoped connection, then releases it on response finish. **No storage-function signatures change** — `db.select()/insert()/…` just works.
+- **Global tables (NO RLS)**: `users`, `session`, `schools`, `school_memberships`, `product_licenses`, `trial_requests` — read during the auth bootstrap before a school is known; safe to query without a GUC.
+- **Background / cross-school work**: `schedulerDb` / `schedulerPool` (`src/services/schedulerDb.ts`) set `app.is_super='on'` on every connection → bypass RLS. Use them for scheduler jobs and cross-school boot migrations.
+- **Out-of-request DB access**: for code that runs OUTSIDE an Express request — WebSocket/Socket.IO handlers, unauthenticated routes (kiosk, device register), detached `.then()`/`.catch()` callbacks that outlive the response — wrap the DB work in **`runWithTenantContext({ schoolId }, fn)`** (or `{ isSuper: true }` for genuinely cross-school reads), from `src/middleware/tenantContext.ts`. It establishes the same tenant ALS scope on a fresh connection.
+- **Kill-switch / rollout**: gated by env on the ECS task def — `RLS_GUC_ENABLED` (master on/off) and `RLS_ENABLED_TABLES` (comma-list of enforced tables). Dropping a table from the list (or `RLS_GUC_ENABLED=false`) disables enforcement on the next deploy — no code change.
+
+**THE RULE when you add or change DB code:** any path that reads or writes a tenant table MUST run under a tenant context — a GUC-bound request, `schedulerDb` (is_super), or `runWithTenantContext`. A new unauthenticated route, WebSocket handler, detached callback, or boot migration that touches a tenant table on the bare `db`/`pool` will **silently return 0 rows or fail `WITH CHECK`** once that table is enforced. New `INSERT`s must set `school_id` (derive it from the parent/owner — never trust the request body). The cross-tenant regression suite (`tests/cross-tenant-isolation.test.ts`) wraps calls in `inSchool()` / `asSystem()` helpers around `runWithTenantContext` — extend it when you add school-scoped storage functions.
+
 ### URL Rewrite Layer
 `src/routes/index.ts` contains a complex URL rewrite middleware that maps frontend-friendly paths to canonical backend routes. This is critical — all product-specific routes go through rewrites before hitting handlers.
 
@@ -145,7 +159,7 @@ No base fees. Pure per-student pricing.
 2. **Daily usage rollup** — `scheduler.ts` runs `rollupDailyUsage()` hourly (hour-gated). For each school with ClassPilot license, aggregates yesterday's heartbeats into the `daily_usage` table (totalSeconds, heartbeatCount, topDomains JSONB, firstSeen/lastSeen). Uses upsert on `(studentId, date)` for idempotency.
 3. **Heartbeat purge** — `purgeExpiredHeartbeats()` runs at :30 past each hour (staggered from rollup). Deletes heartbeats in 5000-row batches using raw SQL (NO `.returning()` — that loads all IDs into memory). Deletes rows older than each school's `retentionHours` setting (default 720 = 30 days).
 4. **Auto-migration** — `index.ts` creates tables with `CREATE TABLE IF NOT EXISTS` on startup (since production RDS is in a private VPC and can't be reached by `drizzle-kit push` directly).
-5. **Scheduler isolation** — All heavy background jobs use `schedulerDb` from `src/services/schedulerDb.ts` (dedicated `pg.Pool` with `max: 3`), completely isolated from the main API pool (`max: 50`). Background jobs cannot starve API requests regardless of how long they take. When adding a new scheduled job, route it through `schedulerDb`, NOT the main `db` export.
+5. **Scheduler isolation** — All heavy background jobs use `schedulerDb` from `src/services/schedulerDb.ts` (dedicated `pg.Pool` with `max: 3`), completely isolated from the main API pool (`max: 50`). Background jobs cannot starve API requests regardless of how long they take. When adding a new scheduled job, route it through `schedulerDb`, NOT the main `db` export. `schedulerDb` also sets `app.is_super='on'` on every connection, so it **bypasses Row-Level Security** — correct for cross-school jobs, but it means a scheduler query is NOT school-scoped (see "Database-Level Tenant Isolation (RLS)").
 
 ### Stale Session Auto-End (ClassPilot)
 `autoEndStaleClassPilotSessions()` in scheduler runs every 60s as a safety net for teachers who forget to end class:
@@ -248,6 +262,7 @@ Copy `.env.example` to `.env`. Required for local dev:
 - `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` — Stripe billing
 - `SENTRY_DSN` — (optional, gated off) Sentry error tracking. Leave unset until DPA signed + added to subprocessors. See "Sentry" section below.
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` — (optional) developer error alerts via Telegram
+- `RLS_GUC_ENABLED` / `RLS_ENABLED_TABLES` — (prod, ECS task def) master switch + per-table allowlist for the Row-Level Security enforcement described under "Database-Level Tenant Isolation (RLS)". Leave unset locally unless testing RLS.
 
 ### Secrets hygiene — NEVER commit keys
 
