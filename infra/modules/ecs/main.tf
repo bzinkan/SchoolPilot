@@ -101,6 +101,10 @@ resource "aws_ecs_task_definition" "api" {
   execution_role_arn       = aws_iam_role.ecs_execution.arn
   task_role_arn            = aws_iam_role.ecs_task.arn
 
+  # NOTE: the LIVE task definition is managed out-of-band via the AWS CLI
+  # (aws_ecs_service ignores task_definition changes); this template is
+  # bootstrap-only and is far leaner than the running revision. Do not
+  # terraform-apply this module expecting it to update production config.
   container_definitions = jsonencode([{
     name  = "api"
     image = "${var.ecr_repository_url}:latest"
@@ -114,7 +118,6 @@ resource "aws_ecs_task_definition" "api" {
       { name = "NODE_ENV", value = "production" },
       { name = "PORT", value = tostring(var.container_port) },
       { name = "PGSSLMODE", value = "require" },
-      { name = "NODE_TLS_REJECT_UNAUTHORIZED", value = "0" },
       { name = "PUBLIC_BASE_URL", value = var.public_base_url },
       { name = "CORS_ALLOWLIST", value = var.cors_allowlist },
       { name = "COOKIE_DOMAIN", value = var.cookie_domain },

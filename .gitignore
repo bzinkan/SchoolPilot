@@ -1,11 +1,13 @@
 node_modules/
 dist/
-.env
-.env.local
-.env.production
+.env*
+!.env.example
 *.log
+*.keystore
 cookies.txt
 tmp_login.json
+temp_file.ts
+docs/*.docx
 
 # Frontend build output
 schoolpilot-app/dist/
