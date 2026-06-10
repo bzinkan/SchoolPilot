@@ -115,14 +115,50 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
   fi
   success "Image pushed: ${ECR_REPO}:${IMAGE_TAG}"
 
-  # Step 4: Force new ECS deployment
-  info "Triggering ECS deployment..."
+  # Step 4: Register a task-def revision pinned to the just-pushed image digest.
+  # ECR tags (incl. :latest) are mutable — pinning by digest makes every revision
+  # an exact, rollback-able image reference instead of "whatever :latest is now".
+  info "Resolving image digest for tag ${IMAGE_TAG}..."
+  DIGEST=$(aws ecr describe-images \
+    --repository-name "${NAME}-api" \
+    --image-ids imageTag="${IMAGE_TAG}" \
+    --query 'imageDetails[0].imageDigest' \
+    --output text \
+    --region "$REGION")
+  info "Digest: $DIGEST"
+
+  info "Rendering task definition from the service's current revision..."
+  aws ecs describe-task-definition \
+    --task-definition "${NAME}-api" \
+    --query taskDefinition \
+    --output json \
+    --region "$REGION" > .taskdef-current.json
+
+  # Relative paths so this works with Windows node under Git Bash too.
+  IMAGE_REF="${ECR_REPO}@${DIGEST}" node -e '
+    const fs = require("fs");
+    const td = JSON.parse(fs.readFileSync(".taskdef-current.json", "utf8"));
+    ["taskDefinitionArn","revision","status","requiresAttributes","compatibilities","registeredAt","registeredBy"].forEach(k => delete td[k]);
+    td.containerDefinitions[0].image = process.env.IMAGE_REF;
+    fs.writeFileSync(".taskdef-new.json", JSON.stringify(td));
+  '
+
+  NEW_REV=$(aws ecs register-task-definition \
+    --cli-input-json file://.taskdef-new.json \
+    --query 'taskDefinition.revision' \
+    --output text \
+    --region "$REGION")
+  rm -f .taskdef-current.json .taskdef-new.json
+  success "Registered ${NAME}-api:${NEW_REV} (image pinned by digest)"
+
+  # Step 5: Point the service at the new revision
+  info "Updating ECS service to revision ${NEW_REV}..."
   aws ecs update-service \
     --cluster "$CLUSTER" \
     --service "$SERVICE" \
-    --force-new-deployment \
+    --task-definition "${NAME}-api:${NEW_REV}" \
     --region "$REGION" \
-    --query 'service.{status:status,desired:desiredCount,running:runningCount}' \
+    --query 'service.{status:status,desired:desiredCount,running:runningCount,taskDef:taskDefinition}' \
     --output table
 
   if [[ "$SKIP_WAIT" == true ]]; then

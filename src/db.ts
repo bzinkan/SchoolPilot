@@ -8,6 +8,11 @@ import { buildPgSslConfig } from "./db/ssl.js";
 // The Docker image ships /app/rds-ca.pem from AWS' truststore so we can verify
 // both the hostname and the certificate chain.
 const url = process.env.DATABASE_URL ?? "";
+if (!url) {
+  throw new Error(
+    "FATAL: DATABASE_URL is not set. Refusing to fall back to pg defaults (localhost:5432 as the OS user)."
+  );
+}
 
 const pool = new pg.Pool({
   connectionString: url,

@@ -118,13 +118,20 @@ const socketUrl = Capacitor.isNativePlatform()
 
 ### NPM Scripts (added to package.json)
 ```json
-"build:gopilot": "VITE_APP_PRODUCT=gopilot vite build",
-"build:passpilot": "VITE_APP_PRODUCT=passpilot vite build",
-"cap:sync:gopilot": "npx cap sync --config capacitor.gopilot.config.ts",
-"cap:sync:passpilot": "npx cap sync --config capacitor.passpilot.config.ts",
+"build:gopilot": "cross-env VITE_APP_PRODUCT=gopilot vite build",
+"build:passpilot": "cross-env VITE_APP_PRODUCT=passpilot vite build",
+"cap:config:gopilot": "node -e \"require('fs').copyFileSync('capacitor.gopilot.config.ts','capacitor.config.ts')\"",
+"cap:config:passpilot": "node -e \"require('fs').copyFileSync('capacitor.passpilot.config.ts','capacitor.config.ts')\"",
+"cap:sync:gopilot": "npm run cap:config:gopilot && npx cap sync android",
+"cap:sync:passpilot": "npm run cap:config:passpilot && npx cap sync android",
 "mobile:gopilot": "npm run build:gopilot && npm run cap:sync:gopilot",
 "mobile:passpilot": "npm run build:passpilot && npm run cap:sync:passpilot"
 ```
+
+> The Capacitor CLI has no `--config`/`--project` flag — the per-product config is
+> selected by copying it over `capacitor.config.ts` before `cap sync`. Each config's
+> `android.path` points the sync at the right native project (`android-gopilot` /
+> `android-passpilot`).
 
 ## Phased Implementation
 
