@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
 
 ## Project Overview
 
@@ -269,7 +269,7 @@ Copy `.env.example` to `.env`. Required for local dev:
 - `SUPER_ADMIN_EMAIL` — Email address that gets super admin privileges
 - `CORS_ALLOWLIST` — Comma-separated frontend origins
 - `SENDGRID_API_KEY` — SendGrid email service (session reports, safety alerts, welcome emails)
-- `ANTHROPIC_API_KEY` — Anthropic Claude API for AI content classification + chat assistant
+- `ANTHROPIC_API_KEY` — Anthropic Codex API for AI content classification + chat assistant
 - `OPENAI_API_KEY` — OpenAI API (legacy classification path)
 - `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` — Stripe billing
 - `SENTRY_DSN` — (optional, gated off) Sentry error tracking. Leave unset until DPA signed + added to subprocessors. See "Sentry" section below.
@@ -279,7 +279,7 @@ Copy `.env.example` to `.env`. Required for local dev:
 ### Secrets hygiene — NEVER commit keys
 
 - `.env`, `.env.local`, `.env.production` are in `.gitignore` — keep all real secrets there.
-- **Never** paste API keys, passwords, or tokens into source files, commit messages, PR descriptions, GitHub issues, or `CLAUDE.md`. Gitleaks runs on every push and will fail CI if a secret pattern leaks.
+- **Never** paste API keys, passwords, or tokens into source files, commit messages, PR descriptions, GitHub issues, or `AGENTS.md`. Gitleaks runs on every push and will fail CI if a secret pattern leaks.
 - Production secrets live in the ECS task definition (or AWS Secrets Manager) — not in any committed file.
 - If a key ever lands in the repo by accident: rotate it immediately in the provider console, then scrub history. Assume any key visible in a diff or chat transcript is already compromised.
 - When rotating: update `.env` locally and the ECS task definition in prod. There is no `.env` checked in to update.
@@ -413,7 +413,7 @@ Centralized error tracking in `src/services/errorMonitor.ts`. `trackError(catego
 
 **Thresholds** (errors in 5-min window to trigger alert): uncaught_exception: 1, api_error: 5, client_error: 10, scheduler_failure: 2, email_failure: 3, websocket_error: 10, database_error: 3. Each category has a 15-30 min cooldown to prevent spam.
 
-**Alerts sent to:** Email (SendGrid → ADMIN_EMAIL) AND Telegram bot (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID env vars). Telegram alerts are picked up by Claude Code Channels for AI-powered diagnosis.
+**Alerts sent to:** Email (SendGrid → ADMIN_EMAIL) AND Telegram bot (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID env vars). Telegram alerts are picked up by Codex Channels for AI-powered diagnosis.
 
 **Health endpoint** (`/health`) includes `recentErrors` summary with counts per category.
 
@@ -425,7 +425,7 @@ Centralized error tracking in `src/services/errorMonitor.ts`. `trackError(catego
 `src/services/sentry.ts`. **No-op unless `SENTRY_DSN` is set.** Sentry is a third-party subprocessor — do NOT set the DSN in production until (1) Sentry's DPA is signed and (2) Sentry is on the public subprocessors list. Even when enabled, `beforeSend` scrubs PII (emails, JWT/API tokens) and drops request bodies/cookies/headers/user identifiers so student data does not leave the system. The durable `error_logs` table captures everything regardless of whether Sentry is on.
 
 ### AI Content Classification (ClassPilot)
-Claude Haiku classifies student browsing activity on each heartbeat. Uses `ANTHROPIC_API_KEY` (same key as AI chat).
+Codex Haiku classifies student browsing activity on each heartbeat. Uses `ANTHROPIC_API_KEY` (same key as AI chat).
 
 - **Service**: `src/services/aiClassification.ts` — `classifyUrl()` with 30-min domain cache
 - **Categories**: `educational`, `non-educational`, `unknown`
@@ -491,10 +491,10 @@ Optional time-based auto-start/end for ClassPilot classes. Schema columns on `gr
 - **Impersonation**: Session-based, stores `originalUserId` to restore after
 
 ### AI Chat (Backend Only — FAB Disabled)
-Claude-powered chat assistant at `/api/ai-chat/*`. Frontend FAB is commented out in `App.jsx` but backend routes remain mounted. Uses `ANTHROPIC_API_KEY` env var (set in ECS task definition).
+Codex-powered chat assistant at `/api/ai-chat/*`. Frontend FAB is commented out in `App.jsx` but backend routes remain mounted. Uses `ANTHROPIC_API_KEY` env var (set in ECS task definition).
 
 - **Route**: `src/routes/chat.ts` → mounted at `/ai-chat` (NOT `/chat` — that path is rewritten to ClassPilot student chat)
-- **Service**: `src/services/chatService.ts` — Claude Sonnet streaming via SSE, conversation memory (30-min TTL)
+- **Service**: `src/services/chatService.ts` — Codex Sonnet streaming via SSE, conversation memory (30-min TTL)
 - **Tools**: `src/services/chatTools.ts` + `chatToolExecutor.ts` — role-aware tools filtered by product license
 - **System prompt**: `src/prompts/systemPrompt.ts` — includes UI navigation docs and product feature descriptions
 - **Escalation**: Chat tool executor auto-emails dev team on unexpected tool errors
@@ -507,7 +507,7 @@ Gmail inbound + outbound scanning for K-12 safety concerns (self-harm, violence,
 Student Gmail ──► Gmail watch() ──► GCP Pub/Sub topic ──► webhook
                                                               │
                                                               ▼
-                                         history.list → fetch → classifyEmail (Claude Haiku)
+                                         history.list → fetch → classifyEmail (Codex Haiku)
                                                               │
                               ┌───────────────────────────────┼─────────────────────────────┐
                               ▼                               ▼                             ▼
@@ -523,7 +523,7 @@ Student Gmail ──► Gmail watch() ──► GCP Pub/Sub topic ──► webh
 **Key files:**
 - **Schema**: `src/schema/mailpilot.ts` — `mailpilot_watches`, `email_alerts`, `email_scan_log`
 - **Schema column**: `classpilot_email_monitoring` boolean + `mailpilot_org_units` on `schools` (auto-migrated in `index.ts`)
-- **AI classifier**: `classifyEmail()` in `src/services/aiClassification.ts` — Claude Haiku with severity + confidence + reasoning, no cache (emails are unique). Returns `safetyAlert`, `bullying`, `severity`, `confidence`, `reasoning`.
+- **AI classifier**: `classifyEmail()` in `src/services/aiClassification.ts` — Codex Haiku with severity + confidence + reasoning, no cache (emails are unique). Returns `safetyAlert`, `bullying`, `severity`, `confidence`, `reasoning`.
 - **Gmail client**: `src/services/mailpilotGmail.ts` — JWT impersonation via `new google.auth.JWT({ subject: studentEmail })`, `startWatch`/`stopWatch`, `listHistorySince`, `fetchMessage` (MIME walker: plain text preferred, HTML fallback with tag stripping)
 - **Pub/Sub webhook**: `src/routes/mailpilot/pubsub.ts` — bearer-token auth via `MAILPILOT_PUBSUB_VERIFY_TOKEN` (query string `?token=...`), fires async and always returns 2xx to prevent Pub/Sub retry storms. On `history_expired` error, auto-rebootstraps the watch.
 - **Setup routes**: `src/routes/mailpilot/setup.ts` — `/setup/info`, `/setup/verify` (tests DWD with one student), `/setup/enable` (flips flag + starts watches with concurrency cap of 5), `/setup/disable`, `/setup/resync` (diffs roster, adds/removes watches)
