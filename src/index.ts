@@ -44,6 +44,20 @@ function validateEnv(): void {
       }
     }
   }
+
+  // If MailPilot is configured (Pub/Sub topic set), the public push endpoint
+  // must have its verify token — otherwise the route 503s every notification
+  // and Gmail monitoring silently stops. Refuse to boot prod in that state.
+  if (
+    isProduction &&
+    process.env.MAILPILOT_PUBSUB_TOPIC &&
+    !process.env.MAILPILOT_PUBSUB_VERIFY_TOKEN
+  ) {
+    throw new Error(
+      "FATAL: MAILPILOT_PUBSUB_TOPIC is set but MAILPILOT_PUBSUB_VERIFY_TOKEN is not. " +
+        "The Pub/Sub push endpoint fails closed without it."
+    );
+  }
 }
 
 validateEnv();

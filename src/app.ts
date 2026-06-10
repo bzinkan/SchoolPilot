@@ -13,6 +13,7 @@ import { requestId } from "./middleware/requestId.js";
 import { sessionIdleTimeout } from "./middleware/sessionIdleTimeout.js";
 import { csrfProtection } from "./middleware/csrfProtection.js";
 import { apiLimiter } from "./middleware/rateLimiter.js";
+import { safeCompare } from "./utils/safeCompare.js";
 import routes from "./routes/index.js";
 import errorMonitor from "./services/errorMonitor.js";
 
@@ -22,8 +23,14 @@ const isProduction = process.env.NODE_ENV === "production";
 export function createApp() {
   const app = express();
 
-  // Trust proxy for rate limiting behind reverse proxy
-  app.set("trust proxy", 1);
+  // Trust proxy depth: in production the chain is CloudFront → ALB → app, so
+  // X-Forwarded-For ends with "<viewer>, <cloudfront-edge>" and we must trust
+  // 2 hops for req.ip to be the real viewer (1 hop made req.ip the CloudFront
+  // edge IP, which broke IP-keyed rate limiting). Locally/dev: 1 hop (Vite proxy).
+  app.set(
+    "trust proxy",
+    Number(process.env.TRUST_PROXY_HOPS ?? (isProduction ? 2 : 1))
+  );
 
   // Correlation id on every request (first, so all downstream logs/errors carry it)
   app.use(requestId);
@@ -45,17 +52,23 @@ export function createApp() {
     .map((s) => s.trim())
     .filter(Boolean);
 
-  // Capacitor native app origins (always allowed)
-  const capacitorOrigins = ["capacitor://localhost", "http://localhost", "https://localhost"];
-  for (const origin of capacitorOrigins) {
-    if (!allowlist.includes(origin)) allowlist.push(origin);
-  }
-
+  // Fail fast BEFORE the always-allowed Capacitor origins are added — otherwise
+  // the allowlist is never empty and a prod boot without CORS_ALLOWLIST would
+  // silently come up with only localhost origins (breaking the real frontend).
   if (isProduction && allowlist.length === 0) {
     throw new Error(
       "FATAL: CORS_ALLOWLIST must be set in production. " +
         "Provide a comma-separated list of allowed origins."
     );
+  }
+
+  // Capacitor native app origins (always allowed). Android WebView origin is
+  // https://localhost (androidScheme: 'https' in both capacitor configs);
+  // capacitor://localhost covers a future iOS build. Plain http://localhost is
+  // not used by any client and stays out of the prod allowlist.
+  const capacitorOrigins = ["capacitor://localhost", "https://localhost"];
+  for (const origin of capacitorOrigins) {
+    if (!allowlist.includes(origin)) allowlist.push(origin);
   }
 
   app.use(
@@ -120,12 +133,16 @@ export function createApp() {
     })
   );
 
-  // Global rate limit disabled — CloudFront masks client IPs, causing false 429s
-  // Auth-specific rate limiting (authLimiter) still applies to login routes
-  // app.use("/api", apiLimiter);
+  // Global API rate limit (Redis-backed, falls back to in-memory). The old
+  // "CloudFront masks client IPs" false-429 problem is fixed by trust proxy = 2
+  // above, so req.ip is the real viewer again.
+  app.use("/api", apiLimiter);
 
-  // Health check (no auth required)
-  app.get("/health", async (_req, res) => {
+  // Health check (no auth required). The ALB target check and the Docker
+  // HEALTHCHECK only consume the status code, so 200/503 semantics are public;
+  // the detailed body (pool stats, error counts, client counts) is operational
+  // intel and only returned when the caller presents HEALTH_TOKEN.
+  app.get("/health", async (req, res) => {
     const results: Record<string, any> = {};
     let allOk = true;
 
@@ -160,7 +177,17 @@ export function createApp() {
     results.timestamp = new Date().toISOString();
     results.recentErrors = errorMonitor.getErrorSummary();
 
-    res.status(allOk ? 200 : 503).json({ status: allOk ? "ok" : "degraded", checks: results });
+    const expected = process.env.HEALTH_TOKEN;
+    const provided = req.get("x-health-token") ?? req.query.token;
+    const detailed =
+      Boolean(expected) &&
+      typeof provided === "string" &&
+      safeCompare(provided, expected!);
+    res.status(allOk ? 200 : 503).json(
+      detailed
+        ? { status: allOk ? "ok" : "degraded", checks: results }
+        : { status: allOk ? "ok" : "degraded" }
+    );
   });
 
   // Client config for Chrome extension (public, no auth)
@@ -186,6 +213,12 @@ export function createApp() {
 
   // Routes
   app.use("/api", routes);
+
+  // JSON 404 for unknown API routes — otherwise Express emits an HTML
+  // "Cannot GET" page, which CloudFront used to mask as 200 + SPA shell.
+  app.use("/api", (_req, res) => {
+    res.status(404).json({ error: "Not found" });
+  });
 
   // Error handler (must be last)
   app.use(errorHandler);

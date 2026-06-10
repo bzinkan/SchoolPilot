@@ -23,6 +23,7 @@ import { sendEmailSafetyAlert } from "../../services/email.js";
 import errorMonitor from "../../services/errorMonitor.js";
 import { runWithTenantContext } from "../../middleware/tenantContext.js";
 import { schedulerDb } from "../../services/schedulerDb.js";
+import { safeCompare } from "../../utils/safeCompare.js";
 
 const router = Router();
 
@@ -39,16 +40,27 @@ const router = Router();
 router.post("/push", async (req, res) => {
   const verifyToken = process.env.MAILPILOT_PUBSUB_VERIFY_TOKEN;
 
-  // Bearer-token verification (set when creating the Pub/Sub subscription)
-  if (verifyToken) {
-    const header = req.header("authorization") || "";
-    const matched = header.startsWith("Bearer ") && header.slice(7) === verifyToken;
-    const queryTokenValue = Array.isArray(req.query.token) ? req.query.token[0] : req.query.token;
-    const queryToken = typeof queryTokenValue === "string" && queryTokenValue === verifyToken;
-    if (!matched && !queryToken) {
-      console.warn("[MailPilot] Pub/Sub push rejected: bad verify token");
-      return res.status(401).json({ error: "unauthorized" });
-    }
+  // Fail CLOSED: an unset verify token must never mean open access — this is a
+  // public endpoint that triggers Gmail fetches, AI classification, and admin
+  // alert emails. (validateEnv also refuses to boot prod with MailPilot
+  // configured but no token.)
+  if (!verifyToken) {
+    console.error("[MailPilot] MAILPILOT_PUBSUB_VERIFY_TOKEN not set — rejecting push");
+    return res.status(503).json({ error: "not configured" });
+  }
+
+  // Token verification, timing-safe on both transports. The live GCP push
+  // subscription delivers the token as ?token= in the URL (see CLAUDE.md
+  // MailPilot section); the Bearer path supports a future move to OIDC push
+  // auth. Note: query tokens appear in CDN/ALB access logs — OIDC migration
+  // is the eventual fix for that.
+  const header = req.header("authorization") || "";
+  const headerOk = header.startsWith("Bearer ") && safeCompare(header.slice(7), verifyToken);
+  const queryTokenValue = Array.isArray(req.query.token) ? req.query.token[0] : req.query.token;
+  const queryOk = typeof queryTokenValue === "string" && safeCompare(queryTokenValue, verifyToken);
+  if (!headerOk && !queryOk) {
+    console.warn("[MailPilot] Pub/Sub push rejected: bad verify token");
+    return res.status(401).json({ error: "unauthorized" });
   }
 
   const envelope = req.body;
