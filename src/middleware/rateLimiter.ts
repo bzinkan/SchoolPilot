@@ -21,15 +21,52 @@ if (redisUrl) {
     .catch((err) => console.warn("[RateLimit] Redis connect failed:", err.message));
 }
 
+// Wait (bounded) for the client to finish connecting instead of failing
+// commands issued during the boot window: RedisStore's constructor preloads
+// its Lua scripts immediately, before connect() has resolved, and a synchronous
+// throw there surfaces as an unhandled rejection (the store retries the load
+// on first use, so limiting still works — but boot logs a spurious FATAL).
+// If Redis is genuinely down, this rejects after the timeout and
+// passOnStoreError lets requests through.
+function waitForReady(timeoutMs = 2000): Promise<void> {
+  if (redisClient!.isReady) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const onReady = () => {
+      cleanup();
+      resolve();
+    };
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error("redis not ready"));
+    }, timeoutMs);
+    const cleanup = () => {
+      clearTimeout(timer);
+      redisClient!.off("ready", onReady);
+    };
+    redisClient!.once("ready", onReady);
+  });
+}
+
 function redisStore(prefix: string): Store | undefined {
   if (!redisClient) return undefined; // express-rate-limit defaults to MemoryStore
-  return new RedisStore({
+  const store = new RedisStore({
     prefix,
     sendCommand: async (...args: string[]) => {
-      if (!redisClient!.isReady) throw new Error("redis not ready");
+      await waitForReady();
       return redisClient!.sendCommand(args);
     },
   });
+  // The constructor preloads its Lua scripts and keeps the promises without a
+  // rejection handler; if Redis is down at boot they'd log as unhandled
+  // rejections. Mark them handled — awaiting the same promise later (the
+  // increment/get paths) still rejects there and triggers the store's retry.
+  for (const p of [
+    (store as unknown as Record<string, unknown>).incrementScriptSha,
+    (store as unknown as Record<string, unknown>).getScriptSha,
+  ]) {
+    if (p instanceof Promise) p.catch(() => {});
+  }
+  return store;
 }
 
 export const authLimiter = rateLimit({
