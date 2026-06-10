@@ -4,7 +4,10 @@ name: Trivy Container Scan
 # scans it for OS-level CVEs (Alpine packages) and language vulnerabilities.
 # Runs on every push to main and weekly to catch new advisories on existing images.
 #
-# Findings become SOC 2 evidence ("we scan container images for vulnerabilities").
+# NOTE: this repo is private on a plan without code scanning, so there is no
+# Security tab. Findings print as a table in the job log and FAIL the job
+# (fixable CRITICAL/HIGH only). SOC 2 evidence: "we scan container images and
+# block on fixable critical/high vulnerabilities".
 
 on:
   push:
@@ -24,7 +27,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      security-events: write
 
     steps:
       - uses: actions/checkout@v6
@@ -36,16 +38,7 @@ jobs:
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: 'schoolpilot-production-api:scan'
-          format: 'sarif'
-          output: 'trivy-results.sarif'
+          format: 'table' # results go to the job log — there is no Security tab on this plan
           severity: 'CRITICAL,HIGH'
           ignore-unfixed: true # only flag CVEs with available fixes
-          exit-code: '0' # don't fail the build yet — surface in Security tab first
-
-      - name: Upload SARIF to GitHub Security
-        if: always()
-        continue-on-error: true
-        uses: github/codeql-action/upload-sarif@v4
-        with:
-          sarif_file: 'trivy-results.sarif'
-          category: 'trivy-container'
+          exit-code: '1' # fail the job on findings
