@@ -10,6 +10,7 @@ import {
   updateMembershipSchema,
 } from "../schema/validation.js";
 import { hashPassword } from "../util/password.js";
+import { sanitizeSchool } from "../util/sanitizeSchool.js";
 import {
   getUserByEmail,
   createUser,
@@ -209,7 +210,7 @@ router.post("/me/join-school", async (req, res, next) => {
       schoolId: school.id,
       role: "parent",
     });
-    return res.status(201).json({ membership, school });
+    return res.status(201).json({ membership, school: sanitizeSchool(school) });
   } catch (err) {
     next(err);
   }

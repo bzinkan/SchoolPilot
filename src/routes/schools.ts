@@ -3,6 +3,8 @@ import { authenticate } from "../middleware/authenticate.js";
 import { requireSchoolContext } from "../middleware/requireSchoolContext.js";
 import { requireRole, requireSuperAdmin } from "../middleware/requireRole.js";
 import { requireActiveSchool } from "../middleware/requireActiveSchool.js";
+import { sanitizeSchool } from "../util/sanitizeSchool.js";
+import { toSchoolUpdate } from "../util/schoolUpdate.js";
 import {
   createSchoolSchema,
   updateSchoolSchema,
@@ -115,7 +117,7 @@ router.get("/:schoolId", requireSchoolContext, async (req, res, next) => {
     }
 
     const licenses = await getProductLicenses(school.id);
-    return res.json({ school, licenses });
+    return res.json({ school: sanitizeSchool(school), licenses });
   } catch (err) {
     next(err);
   }
@@ -135,12 +137,12 @@ router.put(
           .json({ error: parsed.error.errors[0]?.message || "Invalid input" });
       }
 
-      const school = await updateSchool(param(req, "schoolId"), parsed.data);
+      const school = await updateSchool(param(req, "schoolId"), await toSchoolUpdate(parsed.data));
       if (!school) {
         return res.status(404).json({ error: "School not found" });
       }
 
-      return res.json({ school });
+      return res.json({ school: sanitizeSchool(school) });
     } catch (err) {
       next(err);
     }
@@ -161,12 +163,12 @@ router.patch(
           .json({ error: parsed.error.errors[0]?.message || "Invalid input" });
       }
 
-      const school = await updateSchool(param(req, "schoolId"), parsed.data);
+      const school = await updateSchool(param(req, "schoolId"), await toSchoolUpdate(parsed.data));
       if (!school) {
         return res.status(404).json({ error: "School not found" });
       }
 
-      return res.json({ school });
+      return res.json({ school: sanitizeSchool(school) });
     } catch (err) {
       next(err);
     }
@@ -196,7 +198,7 @@ router.post("/:schoolId/suspend", requireSuperAdmin, async (req, res, next) => {
     if (!school) {
       return res.status(404).json({ error: "School not found" });
     }
-    return res.json({ school });
+    return res.json({ school: sanitizeSchool(school) });
   } catch (err) {
     next(err);
   }
@@ -212,7 +214,7 @@ router.post("/:schoolId/restore", requireSuperAdmin, async (req, res, next) => {
     if (!school) {
       return res.status(404).json({ error: "School not found" });
     }
-    return res.json({ school });
+    return res.json({ school: sanitizeSchool(school) });
   } catch (err) {
     next(err);
   }

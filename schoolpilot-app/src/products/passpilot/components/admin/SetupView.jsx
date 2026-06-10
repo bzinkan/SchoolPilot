@@ -2384,6 +2384,7 @@ function SettingsTab() {
   const [kioskEnabled, setKioskEnabled] = useState(school?.kioskEnabled ?? true);
   const [kioskRequiresApproval, setKioskRequiresApproval] = useState(school?.kioskRequiresApproval ?? false);
   const [schoolTimezone, setSchoolTimezone] = useState(school?.schoolTimezone ?? "America/New_York");
+  const [kioskPin, setKioskPin] = useState("");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -2397,6 +2398,10 @@ function SettingsTab() {
   }, [school]);
 
   const handleSave = async () => {
+    if (kioskPin && !/^\d{4,8}$/.test(kioskPin)) {
+      toast({ title: "Error", description: "Kiosk PIN must be 4-8 digits", variant: "destructive" });
+      return;
+    }
     setSaving(true);
     try {
       await apiRequest("PATCH", "/admin/settings", {
@@ -2404,6 +2409,9 @@ function SettingsTab() {
         kioskEnabled,
         kioskRequiresApproval,
         schoolTimezone,
+        // only send when the admin typed a new PIN — the current PIN is never
+        // returned by the API, so an empty field means "leave unchanged"
+        ...(kioskPin ? { kioskPin } : {}),
       });
       toast({ title: "Settings saved" });
       window.location.hash = "setup/settings";
@@ -2454,6 +2462,23 @@ function SettingsTab() {
               <p className="text-xs text-muted-foreground">Require teacher approval for kiosk checkouts</p>
             </div>
             <Switch checked={kioskRequiresApproval} onCheckedChange={setKioskRequiresApproval} />
+          </div>
+
+          <div className="space-y-1">
+            <Label>Kiosk PIN</Label>
+            <p className="text-xs text-muted-foreground">
+              Required to unlock kiosk devices. Staff enter it once per device.
+              Kiosks will not work until a PIN is set. Leave blank to keep the
+              current PIN.
+            </p>
+            <Input
+              type="password"
+              inputMode="numeric"
+              placeholder="4-8 digits"
+              value={kioskPin}
+              onChange={(e) => setKioskPin(e.target.value)}
+              autoComplete="new-password"
+            />
           </div>
 
           <Button onClick={handleSave} disabled={saving} className="w-full">

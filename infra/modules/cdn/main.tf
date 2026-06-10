@@ -72,6 +72,16 @@ resource "aws_s3_bucket_policy" "frontend" {
   })
 }
 
+# --- CloudFront Function: SPA route rewrite (default/S3 behavior only) ---
+
+resource "aws_cloudfront_function" "spa_rewrite" {
+  name    = "${local.name}-spa-rewrite"
+  runtime = "cloudfront-js-2.0"
+  publish = true
+  comment = "Rewrite extensionless SPA routes to /index.html (S3 behavior only)"
+  code    = file("${path.module}/spa-rewrite.js")
+}
+
 # --- CloudFront Distribution ---
 
 resource "aws_cloudfront_distribution" "main" {
@@ -116,6 +126,14 @@ resource "aws_cloudfront_distribution" "main" {
       cookies { forward = "none" }
     }
 
+    # SPA deep links rewrite to /index.html here, scoped to the S3 behavior —
+    # NOT via distribution-wide custom_error_response, which masked /api/*
+    # errors as 200 + HTML.
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.spa_rewrite.arn
+    }
+
     min_ttl     = 0
     default_ttl = 3600
     max_ttl     = 86400
@@ -132,7 +150,7 @@ resource "aws_cloudfront_distribution" "main" {
 
     forwarded_values {
       query_string = true
-      headers      = ["Authorization", "Origin", "X-School-Id", "Content-Type"]
+      headers      = ["Authorization", "Origin", "X-School-Id", "X-Kiosk-Pin", "Content-Type"]
       cookies { forward = "all" }
     }
 
@@ -195,19 +213,6 @@ resource "aws_cloudfront_distribution" "main" {
     min_ttl     = 0
     default_ttl = 0
     max_ttl     = 0
-  }
-
-  # SPA fallback — serve index.html for all unmatched routes
-  custom_error_response {
-    error_code         = 403
-    response_code      = 200
-    response_page_path = "/index.html"
-  }
-
-  custom_error_response {
-    error_code         = 404
-    response_code      = 200
-    response_page_path = "/index.html"
   }
 
   restrictions {
