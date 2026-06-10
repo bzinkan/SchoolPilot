@@ -35,6 +35,7 @@ import {
   getSettingsForSchool,
 } from "../../services/storage.js";
 import { isWithinTrackingWindow } from "../../services/schoolHours.js";
+import { comparePassword } from "../../util/password.js";
 import {
   canAccessGrade,
   getRequestPassPilotRole,
@@ -57,7 +58,10 @@ function getKioskSchoolId(req: { headers: Record<string, unknown>; query: Record
   );
 }
 
-// Helper: validate kiosk is enabled and PIN matches (if set)
+// Helper: validate kiosk is enabled and the kiosk PIN is correct.
+// These endpoints are PUBLIC (no auth) and return student data, so a PIN is
+// REQUIRED: a school UUID alone (visible in URLs/QR codes) must not unlock
+// badge-number → student lookup. Admins set the PIN in Setup → Settings.
 async function validateKiosk(schoolId: string, kioskPin?: string) {
   const school = await getSchoolById(schoolId);
   if (!school) return { error: "School not found", status: 400, school: null };
@@ -65,8 +69,14 @@ async function validateKiosk(schoolId: string, kioskPin?: string) {
   const [license] = await db.select().from(productLicenses).where(and(eq(productLicenses.schoolId, schoolId), eq(productLicenses.product, "PASSPILOT"), eq(productLicenses.status, "active"))).limit(1);
   if (!license) return { error: "PassPilot license required", status: 403, school: null };
   if (school.kioskEnabled === false) return { error: "Kiosk is not enabled", status: 403, school: null };
-  // If the school has a kiosk PIN, require it on every request
-  if ((school as any).kioskPin && (school as any).kioskPin !== kioskPin) {
+  if (!school.kioskPinHash) {
+    return {
+      error: "Kiosk PIN not configured. An administrator must set a kiosk PIN in PassPilot Setup → Settings.",
+      status: 403,
+      school: null,
+    };
+  }
+  if (!kioskPin || !(await comparePassword(kioskPin, school.kioskPinHash))) {
     return { error: "Invalid kiosk PIN", status: 401, school: null };
   }
   return { error: null, status: 200, school };

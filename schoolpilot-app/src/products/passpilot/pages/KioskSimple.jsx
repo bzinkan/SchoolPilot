@@ -28,8 +28,15 @@ function getDestinationLabel(dest, custom) {
   return dest;
 }
 
+// Kiosk PIN persistence: entered once by staff when setting up the kiosk
+// device, stored locally, sent on every kiosk API call. The backend requires
+// it on all public kiosk endpoints.
+const KIOSK_PIN_KEY = "pp_kiosk_pin";
+
 export default function KioskSimplePage() {
   const [schoolId] = useState(() => new URLSearchParams(window.location.search).get("school") ?? "");
+  const [kioskPin, setKioskPin] = useState(() => localStorage.getItem(KIOSK_PIN_KEY) ?? "");
+  const [pinInput, setPinInput] = useState("");
   const [grades, setGrades] = useState([]);
   const [selectedGradeId, setSelectedGradeId] = useState(null);
   const [students, setStudents] = useState([]);
@@ -55,20 +62,37 @@ export default function KioskSimplePage() {
     return () => { if (inactivityRef.current) clearTimeout(inactivityRef.current); };
   }, [checkoutStudentId, resetInactivity]);
 
+  const kioskHeaders = useCallback(() => ({
+    "Content-Type": "application/json",
+    "X-School-Id": schoolId,
+    "X-Kiosk-Pin": kioskPin,
+  }), [schoolId, kioskPin]);
+
+  // 401 = wrong PIN: clear it so the PIN screen re-prompts
+  const checkPinRejected = useCallback((r) => {
+    if (r.status === 401) {
+      localStorage.removeItem(KIOSK_PIN_KEY);
+      setKioskPin("");
+    }
+    return r;
+  }, []);
+
   // Fetch grades
   useEffect(() => {
-    if (!schoolId) return;
-    fetch(`/api/passpilot/kiosk/grades?school=${schoolId}`)
+    if (!schoolId || !kioskPin) return;
+    fetch(`/api/passpilot/kiosk/grades?school=${schoolId}`, { headers: kioskHeaders() })
+      .then(checkPinRejected)
       .then(r => r.ok ? r.json() : { grades: [] })
       .then(data => setGrades(data.grades || data || []))
       .catch(() => {});
-  }, [schoolId]);
+  }, [schoolId, kioskPin, kioskHeaders, checkPinRejected]);
 
   // Poll for teacher-controlled grade
   useEffect(() => {
-    if (!schoolId) return;
+    if (!schoolId || !kioskPin) return;
     const poll = () => {
-      fetch(`/api/passpilot/kiosk/config?school=${schoolId}`)
+      fetch(`/api/passpilot/kiosk/config?school=${schoolId}`, { headers: kioskHeaders() })
+        .then(checkPinRejected)
         .then(r => r.ok ? r.json() : null)
         .then(data => {
           if (data?.gradeId) {
@@ -83,14 +107,15 @@ export default function KioskSimplePage() {
     poll();
     const interval = setInterval(poll, 5000);
     return () => clearInterval(interval);
-  }, [schoolId]);
+  }, [schoolId, kioskPin, kioskHeaders, checkPinRejected]);
 
   // Poll students when grade selected
   useEffect(() => {
-    if (!schoolId || !selectedGradeId) return;
+    if (!schoolId || !selectedGradeId || !kioskPin) return;
     let active = true;
     const poll = () => {
-      fetch(`/api/passpilot/kiosk/students?school=${schoolId}&gradeId=${selectedGradeId}`)
+      fetch(`/api/passpilot/kiosk/students?school=${schoolId}&gradeId=${selectedGradeId}`, { headers: kioskHeaders() })
+        .then(checkPinRejected)
         .then(r => r.ok ? r.json() : { students: [] })
         .then(data => { if (active) setStudents(data.students || data || []); })
         .catch(() => {});
@@ -98,7 +123,7 @@ export default function KioskSimplePage() {
     poll();
     const interval = setInterval(poll, 5000);
     return () => { active = false; clearInterval(interval); };
-  }, [schoolId, selectedGradeId]);
+  }, [schoolId, selectedGradeId, kioskPin, kioskHeaders, checkPinRejected]);
 
   const showFeedback = (type, message) => {
     setFeedback({ type, message });
@@ -116,9 +141,10 @@ export default function KioskSimplePage() {
     try {
       const res = await fetch("/api/passpilot/kiosk/checkout", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-School-Id": schoolId },
+        headers: kioskHeaders(),
         body: JSON.stringify({ studentId, destination }),
       });
+      checkPinRejected(res);
       if (!res.ok) {
         let errMsg = "Failed to issue pass";
         try { const err = await res.json(); errMsg = err.error || errMsg; } catch { /* non-JSON */ }
@@ -131,7 +157,7 @@ export default function KioskSimplePage() {
       showFeedback("error", "Connection error");
     }
     setLoading(false);
-    fetch(`/api/passpilot/kiosk/students?school=${schoolId}&gradeId=${selectedGradeId}`)
+    fetch(`/api/passpilot/kiosk/students?school=${schoolId}&gradeId=${selectedGradeId}`, { headers: kioskHeaders() })
       .then(r => r.ok ? r.json() : { students: [] })
       .then(data => setStudents(data.students || data || []))
       .catch(() => {});
@@ -142,9 +168,10 @@ export default function KioskSimplePage() {
     try {
       const res = await fetch("/api/passpilot/kiosk/checkin", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-School-Id": schoolId },
+        headers: kioskHeaders(),
         body: JSON.stringify({ studentId }),
       });
+      checkPinRejected(res);
       if (!res.ok) {
         let errMsg = "Failed to check in";
         try { const err = await res.json(); errMsg = err.error || errMsg; } catch { /* non-JSON */ }
@@ -156,7 +183,7 @@ export default function KioskSimplePage() {
       showFeedback("error", "Connection error");
     }
     setLoading(false);
-    fetch(`/api/passpilot/kiosk/students?school=${schoolId}&gradeId=${selectedGradeId}`)
+    fetch(`/api/passpilot/kiosk/students?school=${schoolId}&gradeId=${selectedGradeId}`, { headers: kioskHeaders() })
       .then(r => r.ok ? r.json() : { students: [] })
       .then(data => setStudents(data.students || data || []))
       .catch(() => {});
@@ -170,6 +197,48 @@ export default function KioskSimplePage() {
           <p className="text-gray-400">
             Add <code className="bg-gray-800 px-2 py-1 rounded">?school=YOUR_SCHOOL_ID</code> to the URL.
           </p>
+        </div>
+      </div>
+    );
+  }
+
+  // PIN gate — staff unlocks the kiosk device once; PIN is required by the API
+  if (!kioskPin) {
+    return (
+      <div className="min-h-screen bg-gray-950 text-white flex items-center justify-center p-8">
+        <div className="max-w-md w-full text-center space-y-6">
+          <h1 className="text-3xl font-bold text-blue-400">PassPilot Kiosk</h1>
+          <p className="text-gray-400">
+            Staff: enter this school's kiosk PIN to unlock the kiosk on this
+            device. Admins set it in PassPilot Setup &rarr; Settings.
+          </p>
+          <input
+            type="password"
+            inputMode="numeric"
+            className="w-full text-center text-2xl h-16 bg-gray-800 border border-gray-600 rounded-xl text-white"
+            placeholder="PIN"
+            value={pinInput}
+            onChange={(e) => setPinInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && pinInput.trim()) {
+                localStorage.setItem(KIOSK_PIN_KEY, pinInput.trim());
+                setKioskPin(pinInput.trim());
+                setPinInput("");
+              }
+            }}
+            autoFocus
+          />
+          <button
+            className="w-full h-14 text-lg bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-xl font-semibold transition-colors"
+            disabled={!pinInput.trim()}
+            onClick={() => {
+              localStorage.setItem(KIOSK_PIN_KEY, pinInput.trim());
+              setKioskPin(pinInput.trim());
+              setPinInput("");
+            }}
+          >
+            Unlock Kiosk
+          </button>
         </div>
       </div>
     );
