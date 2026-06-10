@@ -239,6 +239,25 @@ export type SecurityEvent = typeof securityEvents.$inferSelect;
 export type InsertSecurityEvent = typeof securityEvents.$inferInsert;
 
 // ============================================================================
+// Auth Lockouts — email-keyed, global (no school_id), persists across restarts.
+// Written via raw SQL in services/accountLockout.ts and created by startup SQL
+// in index.ts; defined here so drizzle-kit push doesn't propose dropping it.
+// ============================================================================
+export const authLockouts = pgTable(
+  "auth_lockouts",
+  {
+    emailLc: text("email_lc").primaryKey(),
+    failedAttempts: integer("failed_attempts").notNull().default(0),
+    firstFailAt: timestamp("first_fail_at").notNull().default(sql`now()`),
+    lockedUntil: timestamp("locked_until"),
+    updatedAt: timestamp("updated_at").notNull().default(sql`now()`),
+  },
+  (table) => [index("auth_lockouts_locked_until_idx").on(table.lockedUntil)]
+);
+
+export type AuthLockout = typeof authLockouts.$inferSelect;
+
+// ============================================================================
 // Error Logs - Durable record of every error the ErrorMonitor sees.
 // The ErrorMonitor keeps only a 5-minute in-memory window for alerting; this
 // table is the persistent, queryable copy so a developer can pinpoint exactly

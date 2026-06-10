@@ -32,9 +32,16 @@ RUN apk add --no-cache curl ca-certificates \
     && curl -fsSL https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem -o /app/rds-ca.pem \
     && apk del curl
 
-# Install production dependencies + drizzle-kit for schema migrations
+# Install production dependencies
 COPY package*.json ./
-RUN npm ci --omit=dev && npm cache clean --force
+RUN npm ci --omit=dev && npm cache clean --force \
+    # Strip the package managers from the runtime image: nothing needs them after
+    # this RUN (CMD is plain node), and npm/yarn vendor their own node_modules
+    # (e.g. picomatch) that show up as container CVEs we can't otherwise fix.
+    && rm -rf /usr/local/lib/node_modules/npm \
+              /usr/local/bin/npm /usr/local/bin/npx \
+              /opt/yarn* /usr/local/bin/yarn /usr/local/bin/yarnpkg \
+              /usr/local/bin/corepack /usr/local/lib/node_modules/corepack
 
 # Copy compiled output
 COPY --from=builder /app/dist ./dist

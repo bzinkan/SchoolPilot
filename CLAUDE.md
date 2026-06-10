@@ -597,8 +597,16 @@ docker tag schoolpilot-production-api:latest 135775632425.dkr.ecr.us-east-1.amaz
 # Step 4: Push to ECR
 docker push 135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api:latest
 
-# Step 5: Force ECS to pull new image and redeploy
-MSYS_NO_PATHCONV=1 aws ecs update-service --cluster schoolpilot-production-cluster --service schoolpilot-production-api --force-new-deployment --region us-east-1
+# Step 5: Register a task-def revision pinned to the pushed image DIGEST, then
+# point the service at it. Preferred: `./scripts/deploy.sh --backend` does steps
+# 1-5 automatically (resolve digest → render revision → register → update-service).
+# ECR tags are mutable, so never deploy by tag/force-new-deployment — a digest-pinned
+# revision is exact and rollback is just `update-service --task-definition family:prevRev`.
+DIGEST=$(MSYS_NO_PATHCONV=1 aws ecr describe-images --repository-name schoolpilot-production-api --image-ids imageTag=latest --query 'imageDetails[0].imageDigest' --output text --region us-east-1)
+# Render: copy current task def JSON, strip read-only fields, set containerDefinitions[0].image
+# to 135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api@$DIGEST,
+# then: aws ecs register-task-definition --cli-input-json file://taskdef.json
+MSYS_NO_PATHCONV=1 aws ecs update-service --cluster schoolpilot-production-cluster --service schoolpilot-production-api --task-definition schoolpilot-production-api:<NEW_REV> --region us-east-1
 
 # Step 6: VERIFY — wait for new task to reach RUNNING, old task to stop
 MSYS_NO_PATHCONV=1 aws ecs describe-services --cluster schoolpilot-production-cluster --services schoolpilot-production-api --region us-east-1 --query 'services[0].deployments'
@@ -628,7 +636,7 @@ MSYS_NO_PATHCONV=1 aws cloudfront list-invalidations --distribution-id E1TPPJOD7
 1. **Wrong source directory** — ALWAYS build from `C:\GitHub\SchoolPilot`. The `C:\GoPilot\server` repo uses raw `pool.query()` with columns that don't exist in the production database.
 2. **ECR login expired** — `docker push` will fail with auth errors if you haven't run `ecr get-login-password` recently. Tokens last 12 hours.
 3. **ECS service name** — Must be exactly `schoolpilot-production-api` in cluster `schoolpilot-production-cluster`. There are no other services/clusters.
-4. **Task not starting** — If the new task fails to start after `force-new-deployment`, ECS rolls back automatically. Check CloudWatch logs for the failed task. Common causes: missing env vars, bad image, port mismatch.
+4. **Task not starting** — If the new task fails to start after a service update, ECS rolls back automatically. Check CloudWatch logs for the failed task. Common causes: missing env vars, bad image, port mismatch. Rollback is explicit now: `update-service --task-definition schoolpilot-production-api:<previousRev>`.
 5. **CloudFront invalidation costs** — Use targeted invalidation (`/index.html /assets/*`) instead of `/*`. Wildcard `/*` invalidates ALL cached objects, causing every request to refetch from origin, generating massive CloudFront + S3 request charges during development.
 6. **Windows path conversion** — Always prefix AWS CLI commands with `MSYS_NO_PATHCONV=1` in Git Bash on Windows, otherwise paths like `--paths "/*"` get mangled.
 7. **Task definition env vars** — The ECS task definition must include `CLIENT_URL=https://school-pilot.net` and `GOOGLE_CALLBACK_URL=https://school-pilot.net/api/auth/google/callback`. These are set in the task definition, not in the container.
