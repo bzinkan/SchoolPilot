@@ -5,6 +5,8 @@ import { requireActiveSchool } from "../middleware/requireActiveSchool.js";
 import { requireRole } from "../middleware/requireRole.js";
 import { requireProductLicense } from "../middleware/requireProductLicense.js";
 import { updateSchoolSchema } from "../schema/validation.js";
+import { sanitizeSchool } from "../util/sanitizeSchool.js";
+import { toSchoolUpdate } from "../util/schoolUpdate.js";
 import { getSchoolDeviceStatuses } from "../realtime/student-statuses.js";
 import { getConnectedStudentDeviceIds } from "../realtime/ws-broadcast.js";
 import {
@@ -972,7 +974,8 @@ router.patch("/admin/settings", ...passPilotAuth, requirePassPilotRole("admin", 
     if (!parsed.success) {
       return res.status(400).json({ error: parsed.error.errors[0]?.message || "Invalid input" });
     }
-    const school = await updateSchool(res.locals.schoolId!, parsed.data);
+    // toSchoolUpdate hashes the input-only kioskPin into kioskPinHash
+    const school = await updateSchool(res.locals.schoolId!, await toSchoolUpdate(parsed.data));
 
     logAudit({
       schoolId: res.locals.schoolId!,
@@ -982,10 +985,14 @@ router.patch("/admin/settings", ...passPilotAuth, requirePassPilotRole("admin", 
       action: "settings.update",
       entityType: "school",
       entityId: res.locals.schoolId!,
-      changes: req.body,
+      // never log the plaintext PIN
+      changes:
+        req.body?.kioskPin !== undefined
+          ? { ...req.body, kioskPin: "[redacted]" }
+          : req.body,
     });
 
-    return res.json({ school });
+    return res.json({ school: school ? sanitizeSchool(school) : school });
   } catch (err) {
     next(err);
   }
@@ -1015,7 +1022,7 @@ router.put("/kiosk-config", ...passPilotAuth, async (req, res, next) => {
       }
       await updateUser(req.authUser!.id, { displayName: req.body.kioskName || null });
     }
-    return res.json({ school });
+    return res.json({ school: school ? sanitizeSchool(school) : school });
   } catch (err) {
     next(err);
   }

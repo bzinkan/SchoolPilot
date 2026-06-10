@@ -55,6 +55,9 @@ export const schools = pgTable("schools", {
   defaultPassDuration: integer("default_pass_duration").notNull().default(5),
   kioskGradeId: varchar("kiosk_grade_id"),
   kioskActivatedByUserId: varchar("kiosk_activated_by_user_id"),
+  // bcrypt hash of the kiosk PIN — never store or return the plaintext.
+  // Required for the public kiosk endpoints (see routes/passpilot/kiosk.ts).
+  kioskPinHash: text("kiosk_pin_hash"),
   activeGradeLevels: text("active_grade_levels"), // JSON array
 
   // GoPilot settings

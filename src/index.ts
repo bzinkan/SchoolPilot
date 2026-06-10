@@ -679,6 +679,14 @@ async function runStartupMigrations(): Promise<void> {
     console.warn("[migration] classpilot_email_monitoring migration skipped:", (err as Error).message);
   }
 
+  // PassPilot kiosk PIN (bcrypt hash; required by the public kiosk endpoints)
+  try {
+    await pool.query(`ALTER TABLE schools ADD COLUMN IF NOT EXISTS kiosk_pin_hash TEXT`);
+    console.log("[migration] kiosk_pin_hash column ready");
+  } catch (err) {
+    console.warn("[migration] kiosk_pin_hash migration skipped:", (err as Error).message);
+  }
+
   try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS mailpilot_watches (

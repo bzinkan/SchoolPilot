@@ -15,6 +15,11 @@ const DESTINATIONS = [
 
 const INACTIVITY_TIMEOUT = 10000; // 10 seconds
 
+// Kiosk PIN persistence: entered once by staff when setting up the kiosk
+// device, stored locally, sent on every kiosk API call. The backend requires
+// it on all public kiosk endpoints.
+const KIOSK_PIN_KEY = "pp_kiosk_pin";
+
 export default function KioskPage() {
   const [state, setState] = useState("scan");
   const [idInput, setIdInput] = useState("");
@@ -22,8 +27,40 @@ export default function KioskPage() {
   const [activePass, setActivePass] = useState(null);
   const [message, setMessage] = useState("");
   const [schoolId] = useState(() => new URLSearchParams(window.location.search).get("school") ?? "");
+  const [kioskPin, setKioskPin] = useState(() => localStorage.getItem(KIOSK_PIN_KEY) ?? "");
+  const [pinInput, setPinInput] = useState("");
   const inputRef = useRef(null);
   const timeoutRef = useRef();
+
+  const kioskHeaders = () => ({
+    "Content-Type": "application/json",
+    "X-School-Id": schoolId,
+    "X-Kiosk-Pin": kioskPin,
+  });
+
+  const savePin = (pin) => {
+    localStorage.setItem(KIOSK_PIN_KEY, pin);
+    setKioskPin(pin);
+    setPinInput("");
+  };
+
+  const clearPin = () => {
+    localStorage.removeItem(KIOSK_PIN_KEY);
+    setKioskPin("");
+  };
+
+  // 401 = wrong PIN (clear and re-prompt); returns true if it handled the response
+  const handlePinRejection = (res, errMsg) => {
+    if (res.status === 401) {
+      clearPin();
+      setState("scan");
+      setMessage("");
+      return true;
+    }
+    setState("error");
+    setMessage(errMsg);
+    return true;
+  };
 
   const resetToScan = useCallback(() => {
     setState("scan");
@@ -55,7 +92,7 @@ export default function KioskPage() {
     try {
       const res = await fetch("/api/passpilot/kiosk/lookup", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-School-Id": schoolId },
+        headers: kioskHeaders(),
         body: JSON.stringify({ studentIdNumber: idInput.trim() }),
       });
 
@@ -65,8 +102,7 @@ export default function KioskPage() {
           const err = await res.json();
           errMsg = err.error || errMsg;
         } catch { /* non-JSON response */ }
-        setState("error");
-        setMessage(errMsg);
+        handlePinRejection(res, errMsg);
         return;
       }
 
@@ -91,15 +127,14 @@ export default function KioskPage() {
     try {
       const res = await fetch("/api/passpilot/kiosk/checkout", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-School-Id": schoolId },
+        headers: kioskHeaders(),
         body: JSON.stringify({ studentId: student.id, destination }),
       });
 
       if (!res.ok) {
         let errMsg = "Failed to issue pass";
         try { const err = await res.json(); errMsg = err.error || errMsg; } catch { /* non-JSON */ }
-        setState("error");
-        setMessage(errMsg);
+        handlePinRejection(res, errMsg);
         return;
       }
 
@@ -117,15 +152,14 @@ export default function KioskPage() {
     try {
       const res = await fetch("/api/passpilot/kiosk/checkin", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-School-Id": schoolId },
+        headers: kioskHeaders(),
         body: JSON.stringify({ studentId: student.id }),
       });
 
       if (!res.ok) {
         let errMsg = "Failed to check in";
         try { const err = await res.json(); errMsg = err.error || errMsg; } catch { /* non-JSON */ }
-        setState("error");
-        setMessage(errMsg);
+        handlePinRejection(res, errMsg);
         return;
       }
 
@@ -146,6 +180,40 @@ export default function KioskPage() {
             <p className="text-gray-400">
               Add <code className="bg-gray-800 px-2 py-1 rounded">?school=YOUR_SCHOOL_ID</code> to the URL.
             </p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  if (!kioskPin) {
+    return (
+      <div className="min-h-screen bg-black text-white flex items-center justify-center p-8">
+        <Card className="bg-gray-900 border-gray-700 max-w-md w-full">
+          <CardContent className="py-12 text-center space-y-6">
+            <h1 className="text-2xl font-bold">Enter Kiosk PIN</h1>
+            <p className="text-gray-400 text-sm">
+              Staff: enter this school's kiosk PIN to unlock the kiosk on this
+              device. Admins set it in PassPilot Setup &rarr; Settings.
+            </p>
+            <Input
+              type="password"
+              inputMode="numeric"
+              className="text-center text-2xl h-16 bg-gray-800 border-gray-600 text-white"
+              placeholder="PIN"
+              value={pinInput}
+              onChange={(e) => setPinInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && pinInput.trim() && savePin(pinInput.trim())}
+              autoFocus
+            />
+            <Button
+              size="lg"
+              className="w-full text-lg h-14"
+              disabled={!pinInput.trim()}
+              onClick={() => savePin(pinInput.trim())}
+            >
+              Unlock Kiosk
+            </Button>
           </CardContent>
         </Card>
       </div>
