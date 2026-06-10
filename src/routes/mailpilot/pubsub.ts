@@ -23,7 +23,7 @@ import { sendEmailSafetyAlert } from "../../services/email.js";
 import errorMonitor from "../../services/errorMonitor.js";
 import { runWithTenantContext } from "../../middleware/tenantContext.js";
 import { schedulerDb } from "../../services/schedulerDb.js";
-import { safeCompare } from "../../utils/safeCompare.js";
+import { safeCompare } from "../../util/safeCompare.js";
 
 const router = Router();
 

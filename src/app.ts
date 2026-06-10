@@ -13,7 +13,7 @@ import { requestId } from "./middleware/requestId.js";
 import { sessionIdleTimeout } from "./middleware/sessionIdleTimeout.js";
 import { csrfProtection } from "./middleware/csrfProtection.js";
 import { apiLimiter } from "./middleware/rateLimiter.js";
-import { safeCompare } from "./utils/safeCompare.js";
+import { safeCompare } from "./util/safeCompare.js";
 import routes from "./routes/index.js";
 import errorMonitor from "./services/errorMonitor.js";
 
