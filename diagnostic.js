@@ -9,10 +9,13 @@ let TOKEN = "";
 let results = { pass: 0, fail: 0, warn: 0, details: [] };
 
 async function login() {
+  const email = process.env.DIAG_EMAIL || "bzinkan@school-pilot.net";
+  const password = process.env.DIAG_PASSWORD;
+  if (!password) throw new Error("Set DIAG_PASSWORD (and optionally DIAG_EMAIL) to run this diagnostic");
   const res = await fetch(`${BASE}/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email: "bzinkan@school-pilot.net", password: "SuperAdmin123!" }),
+    body: JSON.stringify({ email, password }),
   });
   const data = await res.json();
   TOKEN = data.token;

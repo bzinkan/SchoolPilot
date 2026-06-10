@@ -28,7 +28,13 @@ export async function seedSuperAdmin() {
     return existing;
   }
 
-  const hashedPassword = await hashPassword("SuperAdmin123!");
+  const password = process.env.SUPER_ADMIN_PASSWORD;
+  if (!password) {
+    throw new Error(
+      "SUPER_ADMIN_PASSWORD env var is required to create the super admin account"
+    );
+  }
+  const hashedPassword = await hashPassword(password);
 
   const [superAdmin] = await db
     .insert(users)
