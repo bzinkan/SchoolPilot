@@ -25,6 +25,11 @@ FROM node:22-alpine
 
 WORKDIR /app
 
+# Patch base-image packages on every build so newly-published CVEs in the
+# pinned node:alpine tag (e.g. openssl libcrypto3/libssl3) don't sit unfixed
+# until the upstream tag is rebuilt. Trivy fails the build loudly otherwise.
+RUN apk upgrade --no-cache
+
 # Bundle the AWS RDS global root CA chain for TLS verify-full (SOC 2 / SC-7).
 # Refreshed automatically on each image build. See:
 # https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/UsingWithRDS.SSL.html
