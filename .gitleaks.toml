@@ -1,0 +1,11 @@
+# Gitleaks configuration — extends the default ruleset.
+#
+# .env.example contains only placeholder values by design (real secrets live in
+# SSM / local untracked .env files). The generic-api-key rule false-positives on
+# it by matching across adjacent KEY= lines, e.g. "JWT_SECRET=\nJWT_EXPIRY=7d".
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Placeholder-only example env file"
+paths = ['''(^|/)\.env\.example$''']
