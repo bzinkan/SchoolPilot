@@ -1,16 +1,23 @@
-# React + Vite
+# SchoolPilot App
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React 19 + Vite frontend for the SchoolPilot platform, served against the Express API in the repo root. The same codebase also produces the native GoPilot and PassPilot Android apps via Capacitor (`VITE_APP_PRODUCT` selects the product at build time; ClassPilot is desktop-only).
 
-Currently, two official plugins are available:
+Product areas live under `src/products/`:
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- `classpilot/` — classroom Chromebook monitoring dashboards
+- `passpilot/` — digital hall passes and kiosk mode
+- `gopilot/` — dismissal management for office staff, teachers, and parents
 
-## React Compiler
+Shared state (auth, licenses, native platform detection, sockets, theme) lives in `src/contexts/`; the Axios client and other cross-product utilities are in `src/shared/`.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Commands
 
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+```bash
+npm run dev               # Vite dev server on http://localhost:5173
+npm run lint              # ESLint over src
+npm run build             # production web build
+npm run build:gopilot     # GoPilot-only build (VITE_APP_PRODUCT=gopilot)
+npm run build:passpilot   # PassPilot-only build
+npm run mobile:gopilot    # product build + Capacitor sync (Android)
+npm run mobile:passpilot  # product build + Capacitor sync (Android)
+```

@@ -17,9 +17,12 @@ import { useNative } from '../../../contexts/NativeContext';
 
 const Badge = ({ children, variant = 'default', size = 'md', dot = false }) => {
   const variants = {
-    default: 'bg-gray-100 text-gray-800 dark:text-slate-200 dark:bg-slate-700 dark:text-slate-200', blue: 'bg-blue-100 text-blue-800 dark:bg-blue-950/50 dark:text-blue-300',
-    green: 'bg-green-100 dark:bg-green-950/50 text-green-800 dark:bg-green-950/50 dark:text-green-300', yellow: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-950/50 dark:text-yellow-300',
-    red: 'bg-red-100 text-red-800 dark:bg-red-950/50 dark:text-red-300', purple: 'bg-purple-100 text-purple-800 dark:bg-purple-950/50 dark:text-purple-300',
+    default: 'bg-gray-100 text-gray-800 dark:bg-slate-700 dark:text-slate-200',
+    blue: 'bg-blue-100 text-blue-800 dark:bg-blue-950/50 dark:text-blue-300',
+    green: 'bg-green-100 text-green-800 dark:bg-green-950/50 dark:text-green-300',
+    yellow: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-950/50 dark:text-yellow-300',
+    red: 'bg-red-100 text-red-800 dark:bg-red-950/50 dark:text-red-300',
+    purple: 'bg-purple-100 text-purple-800 dark:bg-purple-950/50 dark:text-purple-300',
     orange: 'bg-orange-100 text-orange-800 dark:bg-orange-950/50 dark:text-orange-300',
   };
   const sizes = { sm: 'px-2 py-0.5 text-xs', md: 'px-2.5 py-1 text-sm' };
@@ -34,7 +37,7 @@ const Badge = ({ children, variant = 'default', size = 'md', dot = false }) => {
 const Button = ({ children, variant = 'primary', size = 'md', onClick, disabled, className = '' }) => {
   const variants = {
     primary: 'bg-indigo-600 dark:bg-indigo-700 text-white hover:bg-indigo-700 disabled:bg-indigo-300',
-    secondary: 'bg-white dark:bg-slate-800 text-gray-700 dark:text-slate-200 border border-gray-300 dark:border-slate-600 hover:bg-gray-50 dark:bg-slate-800/50 dark:hover:bg-slate-800 dark:hover:bg-slate-700',
+    secondary: 'bg-white dark:bg-slate-800/50 text-gray-700 dark:text-slate-200 border border-gray-300 dark:border-slate-600 hover:bg-gray-50 dark:hover:bg-slate-800',
     success: 'bg-green-600 dark:bg-green-700 text-white hover:bg-green-700',
     danger: 'bg-red-600 text-white hover:bg-red-700',
     warning: 'bg-yellow-500 text-white hover:bg-yellow-600',

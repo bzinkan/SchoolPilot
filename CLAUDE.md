@@ -231,7 +231,7 @@ When a school has multiple products, priority order is: ClassPilot > PassPilot >
 - **Privacy Policy** (`schoolpilot-app/src/pages/legal/PrivacyPolicy.jsx`): FERPA School Official, COPPA, 45-day parent access, 72-hour breach notification, 30-day data return/destruction on contract end, no-data-mining clause.
 - **Terms of Service** (`schoolpilot-app/src/pages/legal/TermsOfService.jsx`): Ohio governing law, AAA arbitration (public school districts exempt), liability cap at fees paid in prior 12 months, DPA/SDPA/NDPA incorporation by reference.
 - **Entity**: Schoolpilot is an Ohio LLC. Use "Schoolpilot" in user-facing copy and "Schoolpilot LLC" in legal documents when the full legal name is required.
-- **iKeepSafe FERPA/COPPA certification**: demo parent accounts seeded in `seeds/005_demo_parents.ts` (parent1/2/3@lincoln.edu, password `Parent123!`) linked to students via `parent_student` table for assessor user-simulation testing.
+- **iKeepSafe FERPA/COPPA certification**: demo parent accounts are created by `seeds/005_demo_parents.ts` and linked to students via the `parent_student` table for assessor user-simulation testing. Look up the demo credentials in the seed script or your secrets store — per the secrets-hygiene policy below, never record passwords in this file.
 
 ### Student Identity Resolution (CRITICAL)
 The students table is shared across all 3 products. Several layers of identity resolution exist:
@@ -330,7 +330,7 @@ cd android-gopilot
 JAVA_HOME="C:/Program Files/Android/Android Studio/jbr" ./gradlew assembleDebug
 
 # 4. Install on device
-"C:/Users/zinka/AppData/Local/Android/Sdk/platform-tools/adb" install -r app/build/outputs/apk/debug/app-debug.apk
+"$ANDROID_HOME/platform-tools/adb" install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
 ### Native App Key Details
@@ -582,7 +582,7 @@ User → CloudFront (E1TPPJOD7C2CXR) → routes by path:
 
 ### Deploy Sequence — Backend
 
-**CRITICAL: Always deploy from `C:\GitHub\SchoolPilot\` (this repo). NEVER from `C:\GoPilot\server\`.**
+**CRITICAL: Always build and deploy from this repo's root. Never deploy from any older prototype checkout — their schemas are incompatible with the production database.**
 
 ```bash
 # Step 1: ECR login (required — tokens expire after 12 hours)
@@ -633,7 +633,7 @@ MSYS_NO_PATHCONV=1 aws cloudfront list-invalidations --distribution-id E1TPPJOD7
 
 ### Common Deployment Pitfalls
 
-1. **Wrong source directory** — ALWAYS build from `C:\GitHub\SchoolPilot`. The `C:\GoPilot\server` repo uses raw `pool.query()` with columns that don't exist in the production database.
+1. **Wrong source directory** — ALWAYS build from this repo. The obsolete GoPilot server prototype uses raw `pool.query()` with columns that don't exist in the production database.
 2. **ECR login expired** — `docker push` will fail with auth errors if you haven't run `ecr get-login-password` recently. Tokens last 12 hours.
 3. **ECS service name** — Must be exactly `schoolpilot-production-api` in cluster `schoolpilot-production-cluster`. There are no other services/clusters.
 4. **Task not starting** — If the new task fails to start after a service update, ECS rolls back automatically. Check CloudWatch logs for the failed task. Common causes: missing env vars, bad image, port mismatch. Rollback is explicit now: `update-service --task-definition schoolpilot-production-api:<previousRev>`.
