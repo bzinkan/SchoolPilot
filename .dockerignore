@@ -13,5 +13,5 @@ migrations
 docker-compose.yml
 cookies.txt
 tmp_login.json
-diagnostic.js
+scripts/diagnostic.js
 nul

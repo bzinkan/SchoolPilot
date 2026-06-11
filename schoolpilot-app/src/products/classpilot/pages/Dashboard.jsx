@@ -6,10 +6,6 @@ import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
 import { Badge } from '../../../components/ui/badge';
 import StudentTile from '../components/StudentTile';
-import StudentTileV0 from '../components/StudentTileV0';
-
-// Toggle this to test v0 dark theme tiles
-const USE_V0_TILE = false;
 import StudentDetailDrawer from '../components/StudentDetailDrawer';
 import RemoteControlToolbar from '../components/RemoteControlToolbar';
 import TeacherFab from '../components/TeacherFab';
@@ -1447,9 +1443,8 @@ export default function Dashboard() {
             {filteredStudents.map((student) => {
               const primaryDeviceId = student.primaryDeviceId ?? undefined;
               const tileRevision = primaryDeviceId ? tileRevisions[primaryDeviceId] ?? 0 : 0;
-              const TileComponent = USE_V0_TILE ? StudentTileV0 : StudentTile;
               return (
-                <TileComponent
+                <StudentTile
                   key={`${student.studentId}-${primaryDeviceId ?? "no-device"}-${tileRevision}`}
                   student={student}
                   onClick={() => setSelectedStudent(student)}
