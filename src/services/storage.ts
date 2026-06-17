@@ -389,6 +389,29 @@ export function isStaffDomainRole(role?: string | null): boolean {
   return STAFF_DOMAIN_ROLES.has(String(role || ""));
 }
 
+/**
+ * Guardrail for STUDENT email domains. Unlike staff, students may legitimately
+ * have no email at all (GoPilot dismissal / PassPilot hall-pass identify kids by
+ * name + badge/ID), so a blank email always passes. But if an email IS provided,
+ * its domain must match the school's domain — otherwise the ClassPilot extension
+ * (which resolves the school from the login email's domain) could never attribute
+ * that student to this school. Pure/synchronous so bulk imports can validate each
+ * row against a single pre-fetched school domain without a DB call per row.
+ */
+export function studentEmailDomainMatches(
+  email: string | null | undefined,
+  expectedDomain: string | null
+): { ok: boolean; expectedDomain: string | null; actualDomain: string | null } {
+  const normExpected = normalizeDomain(expectedDomain);
+  const actualDomain = getEmailDomain(email);
+  // No email → allowed (badge/ID-only students). No school domain set → can't
+  // validate, so don't block (a domainless school can't use ClassPilot anyway).
+  if (!email || !normExpected) {
+    return { ok: true, expectedDomain: normExpected, actualDomain };
+  }
+  return { ok: actualDomain === normExpected, expectedDomain: normExpected, actualDomain };
+}
+
 function schoolIsolationError(code: string, message: string, status = 400) {
   return Object.assign(new Error(message), { code, status, expose: true });
 }
