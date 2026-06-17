@@ -1,14 +1,19 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Upload, X, Users, Plus, Trash2, Edit, ChevronRight, Search, CheckCircle2, AlertCircle, ArrowLeft, Download, RefreshCw, Save, QrCode, Printer } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useGoPilotAuth } from '../../../../hooks/useGoPilotAuth';
 import api from '../../../../shared/utils/api';
 import { GoogleLogo, GRADES, PAGE_SIZE, detectGradeFromName } from './constants';
+import ImportInClassPilotNotice from '../../../../shared/components/ImportInClassPilotNotice';
+import { useStudentImportHome } from '../../../../shared/hooks/useStudentImportHome';
 
 // ─── STUDENT ROSTER TAB ──────────────────────────────────────────────
 
 export default function StudentRoster({ students, schoolId, onImport, onRefresh, onAdd, onUpdate, onDelete, onBulkDelete, googleConnected }) {
   const { currentSchool } = useGoPilotAuth();
+  const navigate = useNavigate();
+  const { consolidated, canLinkToClassPilot, importPath } = useStudentImportHome();
   const [gradeFilter, setGradeFilter] = useState('All');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedIds, setSelectedIds] = useState(new Set());
@@ -117,80 +122,105 @@ export default function StudentRoster({ students, schoolId, onImport, onRefresh,
   };
 
   const saveEdit = async () => {
-    await onUpdate(editingId, editData);
+    const payload = consolidated
+      ? {
+          grade: editData.grade,
+          dismissal_type: editData.dismissal_type,
+          afterschool_reason: editData.afterschool_reason,
+          bus_route: editData.bus_route,
+        }
+      : editData;
+    await onUpdate(editingId, payload);
     setEditingId(null);
   };
 
   return (
     <div className="space-y-4">
+      {consolidated && (
+        <ImportInClassPilotNotice
+          canLink={canLinkToClassPilot}
+          onGoToClassPilot={() => navigate(importPath)}
+        />
+      )}
+
       {/* Import Bar */}
-      <div className="bg-white dark:bg-slate-900 rounded-xl border dark:border-slate-700 p-4 flex flex-wrap items-center gap-3">
-        <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".csv" className="hidden" />
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          disabled={isImporting}
-          className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:bg-indigo-300"
-        >
-          {isImporting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-          {isImporting ? 'Importing...' : 'Upload CSV'}
-        </button>
-        <button onClick={downloadTemplate} className="flex items-center gap-2 px-4 py-2 border dark:border-slate-700 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-slate-800 dark:text-slate-200">
-          <Download className="w-4 h-4" />
-          Download Template
-        </button>
+      {(!consolidated || schoolSettings.checkInMethod === 'qr') && (
+        <div className="bg-white dark:bg-slate-900 rounded-xl border dark:border-slate-700 p-4 flex flex-wrap items-center gap-3">
+        {!consolidated && (
+          <>
+            <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".csv" className="hidden" />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isImporting}
+              className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:bg-indigo-300"
+            >
+              {isImporting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+              {isImporting ? 'Importing...' : 'Upload CSV'}
+            </button>
+            <button onClick={downloadTemplate} className="flex items-center gap-2 px-4 py-2 border dark:border-slate-700 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-slate-800 dark:text-slate-200">
+              <Download className="w-4 h-4" />
+              Download Template
+            </button>
+          </>
+        )}
         {schoolSettings.checkInMethod === 'qr' && (
           <button onClick={() => setShowQrPrint(true)} className="flex items-center gap-2 px-4 py-2 border dark:border-slate-700 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-slate-800 dark:text-slate-200">
             <QrCode className="w-4 h-4" />
             Print QR Codes
           </button>
         )}
-        {googleConnected ? (
-          <button
-            onClick={async () => {
-              setShowWorkspaceModal(true);
-              setWsStep('orgunits');
-              setWsLoading(true);
-              try {
-                const res = await api.get(`/schools/${schoolId}/google/org-units`);
-                setWsOrgUnits(res.data?.orgUnits || res.data || []);
-              } catch (err) {
-                console.error('Failed to load org units:', err);
-                setWsOrgUnits([]);
-              }
-              setWsLoading(false);
-            }}
-            className="flex items-center gap-2 px-4 py-2 border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20 rounded-lg text-sm font-medium text-green-700 dark:text-green-400 hover:bg-green-100 dark:hover:bg-green-900/30"
-          >
-            <GoogleLogo className="w-4 h-4" />
-            Import from Google Workspace
-          </button>
-        ) : (
-          <button
-            onClick={async () => {
-              try {
-                const res = await api.get(`/schools/${schoolId}/google/auth-url`);
-                window.location.href = res.data.url;
-              } catch (err) { console.error(err); }
-            }}
-            className="flex items-center gap-2 px-4 py-2 border dark:border-slate-700 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-slate-800 dark:text-slate-200"
-          >
-            <GoogleLogo className="w-4 h-4" />
-            Connect Google
-          </button>
+        {!consolidated && (
+          <>
+            {googleConnected ? (
+              <button
+                onClick={async () => {
+                  setShowWorkspaceModal(true);
+                  setWsStep('orgunits');
+                  setWsLoading(true);
+                  try {
+                    const res = await api.get(`/schools/${schoolId}/google/org-units`);
+                    setWsOrgUnits(res.data?.orgUnits || res.data || []);
+                  } catch (err) {
+                    console.error('Failed to load org units:', err);
+                    setWsOrgUnits([]);
+                  }
+                  setWsLoading(false);
+                }}
+                className="flex items-center gap-2 px-4 py-2 border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20 rounded-lg text-sm font-medium text-green-700 dark:text-green-400 hover:bg-green-100 dark:hover:bg-green-900/30"
+              >
+                <GoogleLogo className="w-4 h-4" />
+                Import from Google Workspace
+              </button>
+            ) : (
+              <button
+                onClick={async () => {
+                  try {
+                    const res = await api.get(`/schools/${schoolId}/google/auth-url`);
+                    window.location.href = res.data.url;
+                  } catch (err) { console.error(err); }
+                }}
+                className="flex items-center gap-2 px-4 py-2 border dark:border-slate-700 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-slate-800 dark:text-slate-200"
+              >
+                <GoogleLogo className="w-4 h-4" />
+                Connect Google
+              </button>
+            )}
+            <div className="ml-auto">
+              <button
+                onClick={() => setShowAddForm(!showAddForm)}
+                className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700"
+              >
+                <Plus className="w-4 h-4" />
+                Add Student
+              </button>
+            </div>
+          </>
         )}
-        <div className="ml-auto">
-          <button
-            onClick={() => setShowAddForm(!showAddForm)}
-            className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700"
-          >
-            <Plus className="w-4 h-4" />
-            Add Student
-          </button>
         </div>
-      </div>
+      )}
 
       {/* Add Student Form */}
-      {showAddForm && (
+      {!consolidated && showAddForm && (
         <AddStudentForm
           onAdd={onAdd}
           onClose={() => setShowAddForm(false)}
@@ -250,12 +280,14 @@ export default function StudentRoster({ students, schoolId, onImport, onRefresh,
               Assign Grade
             </button>
           </div>
-          <button
-            onClick={() => { onBulkDelete([...selectedIds]); setSelectedIds(new Set()); }}
-            className="flex items-center gap-1 px-3 py-1.5 bg-red-600 text-white rounded-lg text-sm hover:bg-red-700"
-          >
-            <Trash2 className="w-4 h-4" /> Delete Selected
-          </button>
+          {!consolidated && (
+            <button
+              onClick={() => { onBulkDelete([...selectedIds]); setSelectedIds(new Set()); }}
+              className="flex items-center gap-1 px-3 py-1.5 bg-red-600 text-white rounded-lg text-sm hover:bg-red-700"
+            >
+              <Trash2 className="w-4 h-4" /> Delete Selected
+            </button>
+          )}
           <button onClick={() => setSelectedIds(new Set())} className="text-sm text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200">
             Clear Selection
           </button>
@@ -288,7 +320,9 @@ export default function StudentRoster({ students, schoolId, onImport, onRefresh,
                 <td colSpan={6} className="text-center py-12 text-gray-400 dark:text-slate-500">
                   <Users className="w-12 h-12 mx-auto mb-2 text-gray-300 dark:text-slate-600" />
                   <p>No students found</p>
-                  <p className="text-sm">Import students via CSV or add them manually</p>
+                  <p className="text-sm">
+                    {consolidated ? 'Import students in ClassPilot to fill this GoPilot roster' : 'Import students via CSV or add them manually'}
+                  </p>
                 </td>
               </tr>
             ) : (
@@ -297,16 +331,24 @@ export default function StudentRoster({ students, schoolId, onImport, onRefresh,
                   <tr key={student.id} className="bg-yellow-50 dark:bg-yellow-900/20">
                     <td className="p-3"></td>
                     <td className="p-3">
-                      <div className="flex gap-2">
-                        <input value={editData.first_name} onChange={e => setEditData(d => ({ ...d, first_name: e.target.value }))}
-                          className="border dark:border-slate-600 rounded px-2 py-1 w-24 dark:bg-slate-800 dark:text-white" placeholder="First" />
-                        <input value={editData.last_name} onChange={e => setEditData(d => ({ ...d, last_name: e.target.value }))}
-                          className="border dark:border-slate-600 rounded px-2 py-1 w-24 dark:bg-slate-800 dark:text-white" placeholder="Last" />
-                      </div>
+                      {consolidated ? (
+                        <span className="font-medium dark:text-white">{editData.first_name} {editData.last_name}</span>
+                      ) : (
+                        <div className="flex gap-2">
+                          <input value={editData.first_name} onChange={e => setEditData(d => ({ ...d, first_name: e.target.value }))}
+                            className="border dark:border-slate-600 rounded px-2 py-1 w-24 dark:bg-slate-800 dark:text-white" placeholder="First" />
+                          <input value={editData.last_name} onChange={e => setEditData(d => ({ ...d, last_name: e.target.value }))}
+                            className="border dark:border-slate-600 rounded px-2 py-1 w-24 dark:bg-slate-800 dark:text-white" placeholder="Last" />
+                        </div>
+                      )}
                     </td>
                     <td className="p-3">
-                      <input value={editData.email} onChange={e => setEditData(d => ({ ...d, email: e.target.value }))}
-                        className="border dark:border-slate-600 rounded px-2 py-1 w-full dark:bg-slate-800 dark:text-white" placeholder="Email" />
+                      {consolidated ? (
+                        <span className="text-gray-500 dark:text-slate-400">{editData.email || '-'}</span>
+                      ) : (
+                        <input value={editData.email} onChange={e => setEditData(d => ({ ...d, email: e.target.value }))}
+                          className="border dark:border-slate-600 rounded px-2 py-1 w-full dark:bg-slate-800 dark:text-white" placeholder="Email" />
+                      )}
                     </td>
                     <td className="p-3">
                       <select value={editData.grade} onChange={e => setEditData(d => ({ ...d, grade: e.target.value }))}
@@ -364,9 +406,11 @@ export default function StudentRoster({ students, schoolId, onImport, onRefresh,
                       <button onClick={() => startEdit(student)} className="text-gray-400 dark:text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 mr-2">
                         <Edit className="w-4 h-4" />
                       </button>
-                      <button onClick={() => onDelete(student.id)} className="text-gray-400 dark:text-slate-500 hover:text-red-600 dark:hover:text-red-400">
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      {!consolidated && (
+                        <button onClick={() => onDelete(student.id)} className="text-gray-400 dark:text-slate-500 hover:text-red-600 dark:hover:text-red-400">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
                     </td>
                   </tr>
                 )
@@ -398,7 +442,7 @@ export default function StudentRoster({ students, schoolId, onImport, onRefresh,
       </div>
 
       {/* Google Workspace Import Modal */}
-      {showWorkspaceModal && (
+      {!consolidated && showWorkspaceModal && (
         <WorkspaceImportModal
           schoolId={schoolId}
           wsOrgUnits={wsOrgUnits}

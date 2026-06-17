@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../../components/ui/card";
 import { Button } from "../../../../components/ui/button";
 import { Input } from "../../../../components/ui/input";
@@ -10,11 +11,15 @@ import { useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "../../../../lib/queryClient";
 import { usePassPilotAuth } from "../../../../hooks/usePassPilotAuth";
 import { Trash2, Edit, Plus, Users, Eye } from "lucide-react";
+import ImportInClassPilotNotice from "../../../../shared/components/ImportInClassPilotNotice";
+import { useStudentImportHome } from "../../../../shared/hooks/useStudentImportHome";
 
 const GRADE_LEVELS = ['K', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'];
 
 function RosterTab() {
   const { isAdmin } = usePassPilotAuth();
+  const navigate = useNavigate();
+  const { consolidated, canLinkToClassPilot, importPath } = useStudentImportHome();
   const [showAddStudentModal, setShowAddStudentModal] = useState(false);
   const [showBulkAddStudentsModal, setShowBulkAddStudentsModal] = useState(false);
   const [showAddClassModal, setShowAddClassModal] = useState(false);
@@ -278,6 +283,15 @@ function RosterTab() {
 
   return (
     <div className="p-4">
+      {consolidated && (
+        <div className="mb-4">
+          <ImportInClassPilotNotice
+            canLink={canLinkToClassPilot}
+            onGoToClassPilot={() => navigate(importPath)}
+          />
+        </div>
+      )}
+
       <div className="mb-6">
         <h2 className="text-xl font-semibold text-foreground mb-2">My Classes</h2>
         <p className="text-sm text-muted-foreground">
@@ -374,14 +388,16 @@ function RosterTab() {
                       <p className="text-sm text-muted-foreground">
                         {gradeStudents.length} student{gradeStudents.length !== 1 ? 's' : ''}
                       </p>
-                      <div className="flex gap-1 mt-2">
-                        <Button size="sm" variant="outline" onClick={() => { setStudentForm({ name: '', grade: grade.id, studentId: '', gradeLevel: '' }); setShowAddStudentModal(true); }} className="h-6 text-xs px-2">
-                          Add Student
-                        </Button>
-                        <Button size="sm" variant="outline" onClick={() => { setBulkGrade(grade.name); setBulkGradeLevel(''); setShowBulkAddStudentsModal(true); }} className="h-6 text-xs px-2">
-                          Bulk Add
-                        </Button>
-                      </div>
+                      {!consolidated && (
+                        <div className="flex gap-1 mt-2">
+                          <Button size="sm" variant="outline" onClick={() => { setStudentForm({ name: '', grade: grade.id, studentId: '', gradeLevel: '' }); setShowAddStudentModal(true); }} className="h-6 text-xs px-2">
+                            Add Student
+                          </Button>
+                          <Button size="sm" variant="outline" onClick={() => { setBulkGrade(grade.name); setBulkGradeLevel(''); setShowBulkAddStudentsModal(true); }} className="h-6 text-xs px-2">
+                            Bulk Add
+                          </Button>
+                        </div>
+                      )}
                     </CardContent>
                   </Card>
                 );
@@ -392,7 +408,7 @@ function RosterTab() {
       </Card>
 
       {/* Add Student Dialog */}
-      <Dialog open={showAddStudentModal} onOpenChange={setShowAddStudentModal}>
+      <Dialog open={!consolidated && showAddStudentModal} onOpenChange={setShowAddStudentModal}>
         <DialogContent>
           <DialogHeader><DialogTitle>Add New Student</DialogTitle></DialogHeader>
           <form onSubmit={handleAddStudent} className="space-y-4">
@@ -435,7 +451,7 @@ function RosterTab() {
       </Dialog>
 
       {/* Bulk Add Students Dialog */}
-      <Dialog open={showBulkAddStudentsModal} onOpenChange={setShowBulkAddStudentsModal}>
+      <Dialog open={!consolidated && showBulkAddStudentsModal} onOpenChange={setShowBulkAddStudentsModal}>
         <DialogContent>
           <DialogHeader><DialogTitle>Bulk Add Students</DialogTitle></DialogHeader>
           <form onSubmit={handleBulkAddStudents} className="space-y-4">
@@ -502,7 +518,7 @@ function RosterTab() {
       )}
 
       {/* Edit Student Dialog */}
-      {editingStudent && (
+      {editingStudent && !consolidated && (
         <Dialog open={!!editingStudent} onOpenChange={() => setEditingStudent(null)}>
           <DialogContent>
             <DialogHeader><DialogTitle>Edit Student</DialogTitle></DialogHeader>
@@ -561,11 +577,15 @@ function RosterTab() {
                   return (
                     <div className="text-center py-8">
                       <Users className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-                      <p className="text-muted-foreground">No students in {viewingGrade.name} yet.</p>
-                      <div className="flex gap-2 justify-center mt-4">
-                        <Button onClick={() => { setStudentForm({ name: '', grade: viewingGrade.name, studentId: '', gradeLevel: '' }); setShowViewGradeModal(false); setShowAddStudentModal(true); }} size="sm">Add Student</Button>
-                        <Button onClick={() => { setBulkGrade(viewingGrade.name); setBulkGradeLevel(''); setShowViewGradeModal(false); setShowBulkAddStudentsModal(true); }} size="sm" variant="outline">Bulk Add Students</Button>
-                      </div>
+                      <p className="text-muted-foreground">
+                        {consolidated ? `No students assigned to ${viewingGrade.name} yet.` : `No students in ${viewingGrade.name} yet.`}
+                      </p>
+                      {!consolidated && (
+                        <div className="flex gap-2 justify-center mt-4">
+                          <Button onClick={() => { setStudentForm({ name: '', grade: viewingGrade.name, studentId: '', gradeLevel: '' }); setShowViewGradeModal(false); setShowAddStudentModal(true); }} size="sm">Add Student</Button>
+                          <Button onClick={() => { setBulkGrade(viewingGrade.name); setBulkGradeLevel(''); setShowViewGradeModal(false); setShowBulkAddStudentsModal(true); }} size="sm" variant="outline">Bulk Add Students</Button>
+                        </div>
+                      )}
                     </div>
                   );
                 }
@@ -574,10 +594,12 @@ function RosterTab() {
                   <div className="space-y-3">
                     <div className="flex justify-between items-center">
                       <p className="text-sm text-muted-foreground">{gradeStudents.length} student{gradeStudents.length !== 1 ? 's' : ''}</p>
-                      <div className="flex gap-2">
-                        <Button onClick={() => { setStudentForm({ name: '', grade: viewingGrade.name, studentId: '', gradeLevel: '' }); setShowViewGradeModal(false); setShowAddStudentModal(true); }} size="sm"><Plus className="w-4 h-4 mr-2" />Add Student</Button>
-                        <Button onClick={() => { setBulkGrade(viewingGrade.name); setBulkGradeLevel(''); setShowViewGradeModal(false); setShowBulkAddStudentsModal(true); }} size="sm" variant="outline"><Users className="w-4 h-4 mr-2" />Bulk Add</Button>
-                      </div>
+                      {!consolidated && (
+                        <div className="flex gap-2">
+                          <Button onClick={() => { setStudentForm({ name: '', grade: viewingGrade.name, studentId: '', gradeLevel: '' }); setShowViewGradeModal(false); setShowAddStudentModal(true); }} size="sm"><Plus className="w-4 h-4 mr-2" />Add Student</Button>
+                          <Button onClick={() => { setBulkGrade(viewingGrade.name); setBulkGradeLevel(''); setShowViewGradeModal(false); setShowBulkAddStudentsModal(true); }} size="sm" variant="outline"><Users className="w-4 h-4 mr-2" />Bulk Add</Button>
+                        </div>
+                      )}
                     </div>
                     {gradeStudents.map((student) => (
                       <div key={student.id} className="flex items-center justify-between p-3 bg-muted/30 rounded-lg">
@@ -590,14 +612,16 @@ function RosterTab() {
                             {student.studentIdNumber && <p className="text-sm text-muted-foreground">ID: {student.studentIdNumber}</p>}
                           </div>
                         </div>
-                        <div className="flex items-center space-x-2">
-                          <Button size="sm" variant="ghost" onClick={() => { handleEditStudent(student); setShowViewGradeModal(false); }}>
-                            <Edit className="h-4 w-4" />
-                          </Button>
-                          <Button size="sm" variant="ghost" onClick={() => handleDeleteStudent(student.id, `${student.firstName} ${student.lastName}`)} className="hover:text-red-600">
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
+                        {!consolidated && (
+                          <div className="flex items-center space-x-2">
+                            <Button size="sm" variant="ghost" onClick={() => { handleEditStudent(student); setShowViewGradeModal(false); }}>
+                              <Edit className="h-4 w-4" />
+                            </Button>
+                            <Button size="sm" variant="ghost" onClick={() => handleDeleteStudent(student.id, `${student.firstName} ${student.lastName}`)} className="hover:text-red-600">
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>

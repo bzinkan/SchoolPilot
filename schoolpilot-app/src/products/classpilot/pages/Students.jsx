@@ -45,6 +45,7 @@ import {
 } from "../../../components/ui/select";
 import { EditStudentDialog } from "../components/EditStudentDialog";
 import { useClassPilotAuth } from "../../../hooks/useClassPilotAuth";
+import { useLicenses } from "../../../contexts/LicenseContext";
 
 // Helper to normalize grade levels
 function normalizeGrade(grade) {
@@ -100,6 +101,7 @@ export default function StudentsPage() {
 function StudentsContent() {
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { hasPassPilot, hasGoPilot } = useLicenses();
   const [selectedGrade, setSelectedGrade] = useState("");
   const [csvFile, setCsvFile] = useState(null);
   const [importResults, setImportResults] = useState(null);
@@ -570,7 +572,23 @@ function StudentsContent() {
   };
 
   const downloadTemplate = () => {
-    const template = "Email,Name,Grade,Class\nstudent@school.edu,John Doe,8,8th Math (sarah)\nstudent2@school.edu,Jane Smith,7,7th Science (bob)";
+    const headers = ["Email", "Name", "Grade", "Class"];
+    const rowOne = ["student@school.edu", "John Doe", "8", "8th Math (sarah)"];
+    const rowTwo = ["student2@school.edu", "Jane Smith", "7", "7th Science (bob)"];
+
+    if (hasPassPilot) {
+      headers.push("Student ID");
+      rowOne.push("10001");
+      rowTwo.push("10002");
+    }
+
+    if (hasGoPilot) {
+      headers.push("Dismissal Type", "Bus #");
+      rowOne.push("car", "");
+      rowTwo.push("bus", "12");
+    }
+
+    const template = [headers.join(","), rowOne.join(","), rowTwo.join(",")].join("\n");
     const blob = new Blob([template], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -651,6 +669,8 @@ function StudentsContent() {
             <ul className="list-disc list-inside space-y-1">
               <li>Required columns: Email, Name</li>
               <li>Optional columns: Grade, Class</li>
+              {hasPassPilot && <li>PassPilot column: Student ID for badges or printed IDs</li>}
+              {hasGoPilot && <li>GoPilot columns: Dismissal Type and Bus #</li>}
               <li>Class names must match existing classes exactly</li>
               <li>Students with existing emails will be updated</li>
             </ul>
