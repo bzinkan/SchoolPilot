@@ -23,12 +23,11 @@ export const schools = pgTable("schools", {
   phone: text("phone"),
 
   // Status & plan
-  status: text("status").notNull().default("trial"), // trial | active | suspended
+  status: text("status").notNull().default("active"), // active | suspended
   isActive: boolean("is_active").notNull().default(true),
-  planTier: text("plan_tier").notNull().default("trial"), // trial | basic | pro | enterprise
+  planTier: text("plan_tier").notNull().default("basic"), // basic | pro | enterprise
   planStatus: text("plan_status").notNull().default("active"), // active | past_due | canceled
   activeUntil: timestamp("active_until"),
-  trialEndsAt: timestamp("trial_ends_at"),
 
   // Billing (Stripe)
   stripeCustomerId: text("stripe_customer_id"),

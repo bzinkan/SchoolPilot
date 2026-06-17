@@ -411,10 +411,10 @@ export default function SchoolpilotLanding() {
             fontFamily: "'Fraunces', serif", fontSize: 36, fontWeight: 700,
             color: "#fff", marginBottom: 16,
           }}>
-            Get Started Free
+            Request Information
           </h2>
           <p style={{ fontSize: 18, color: "#94a3b8", marginBottom: 40, lineHeight: 1.7 }}>
-            Try SchoolPilot free through the end of the school year. No credit card required.
+            Tell us what your school needs and we'll follow up with onboarding, IT, and billing details.
           </p>
           <a
             href="/get-started"
@@ -426,7 +426,7 @@ export default function SchoolpilotLanding() {
               textDecoration: "none", fontSize: 16, fontWeight: 700,
             }}
           >
-            Get Started
+            Request Information
           </a>
         </div>
       </section>

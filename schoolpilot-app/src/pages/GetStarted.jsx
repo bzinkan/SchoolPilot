@@ -7,7 +7,12 @@ export default function GetStarted() {
     domain: '',
     contactName: '',
     contactEmail: '',
+    contactPhone: '',
+    preferredContactMethod: 'email',
+    adminItEmail: '',
+    billingEmail: '',
     estimatedStudents: '',
+    questions: '',
   });
   const [products, setProducts] = useState([]);
   const [submitting, setSubmitting] = useState(false);
@@ -22,9 +27,9 @@ export default function GetStarted() {
     setError('');
     setSubmitting(true);
     try {
-      await api.post('/admin/trial-requests', {
+      await api.post('/admin/school-inquiries', {
         ...form,
-        product: products.join(',') || null,
+        interestedProducts: products,
       });
       setSubmitted(true);
     } catch (err) {
@@ -87,10 +92,10 @@ export default function GetStarted() {
             fontFamily: "'Fraunces', serif", fontSize: 36, fontWeight: 700,
             color: '#fff', marginBottom: 16,
           }}>
-            Get Started Free
+            Request Information
           </h1>
           <p style={{ fontSize: 18, color: '#94a3b8', lineHeight: 1.7 }}>
-            Try SchoolPilot free through the end of the school year. No credit card required.
+            Tell us about your school and what you want to set up. We'll follow up with onboarding, IT, and billing next steps.
           </p>
         </div>
 
@@ -105,7 +110,7 @@ export default function GetStarted() {
               We're on it!
             </h3>
             <p style={{ fontSize: 16, color: '#94a3b8', lineHeight: 1.7 }}>
-              Check your inbox for a confirmation email. We'll have your account ready within 24 hours.
+              Check your inbox for a confirmation email. We'll review your information and follow up with next steps.
             </p>
           </div>
         ) : (
@@ -133,6 +138,30 @@ export default function GetStarted() {
                 <label style={labelStyle}>Email *</label>
                 <input className="gs-input" required type="email" style={inputStyle} value={form.contactEmail} placeholder="jsmith@lincoln.k12.oh.us"
                   onChange={(e) => setForm({ ...form, contactEmail: e.target.value })} />
+              </div>
+              <div>
+                <label style={labelStyle}>Phone</label>
+                <input className="gs-input" style={inputStyle} value={form.contactPhone} placeholder="(555) 123-4567"
+                  onChange={(e) => setForm({ ...form, contactPhone: e.target.value })} />
+              </div>
+              <div>
+                <label style={labelStyle}>Preferred Way to Communicate</label>
+                <select className="gs-input" style={inputStyle} value={form.preferredContactMethod}
+                  onChange={(e) => setForm({ ...form, preferredContactMethod: e.target.value })}>
+                  <option style={{ color: '#0f172a' }} value="email">Email</option>
+                  <option style={{ color: '#0f172a' }} value="phone">Phone</option>
+                  <option style={{ color: '#0f172a' }} value="either">Either</option>
+                </select>
+              </div>
+              <div>
+                <label style={labelStyle}>Admin/IT Email</label>
+                <input className="gs-input" type="email" style={inputStyle} value={form.adminItEmail} placeholder="it@lincoln.k12.oh.us"
+                  onChange={(e) => setForm({ ...form, adminItEmail: e.target.value })} />
+              </div>
+              <div>
+                <label style={labelStyle}>Billing Email</label>
+                <input className="gs-input" type="email" style={inputStyle} value={form.billingEmail} placeholder="billing@lincoln.k12.oh.us"
+                  onChange={(e) => setForm({ ...form, billingEmail: e.target.value })} />
               </div>
               <div>
                 <label style={labelStyle}>Estimated Students *</label>
@@ -164,6 +193,12 @@ export default function GetStarted() {
                   })}
                 </div>
               </div>
+              <div>
+                <label style={labelStyle}>Questions or Notes</label>
+                <textarea className="gs-input" style={{ ...inputStyle, minHeight: 120, resize: 'vertical' }} value={form.questions}
+                  placeholder="Tell us about your setup timeline, IT requirements, billing questions, or anything else you'd like us to know."
+                  onChange={(e) => setForm({ ...form, questions: e.target.value })} />
+              </div>
             </div>
 
             {error && <p style={{ color: '#f87171', fontSize: 14, marginTop: 12 }}>{error}</p>}
@@ -174,12 +209,8 @@ export default function GetStarted() {
               border: 'none', cursor: submitting ? 'not-allowed' : 'pointer',
               opacity: submitting ? 0.7 : 1,
             }}>
-              {submitting ? 'Submitting...' : 'Start Your Free Trial'}
+              {submitting ? 'Submitting...' : 'Request Information'}
             </button>
-
-            <p style={{ textAlign: 'center', fontSize: 13, color: '#64748b', marginTop: 12 }}>
-              Free through end of school year. No credit card required.
-            </p>
           </form>
         )}
       </div>

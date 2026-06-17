@@ -120,7 +120,7 @@ async function checkDismissalTimes() {
       .from(schools)
       .where(
         and(
-          sql`${schools.status} IN ('active', 'trial')`,
+          eq(schools.status, "active"),
           isNotNull(schools.dismissalTime),
           sql`TO_CHAR(NOW() AT TIME ZONE COALESCE(${schools.schoolTimezone}, 'America/New_York'), 'HH24:MI') >= ${schools.dismissalTime}`
         )
@@ -680,7 +680,7 @@ async function autoStartClassBlocks() {
           eq(productLicenses.status, "active")
         )
       )
-      .where(sql`${schools.status} IN ('active', 'trial')`);
+      .where(eq(schools.status, "active"));
 
     for (const school of activeSchools) {
       const tz = school.schoolTimezone || "America/New_York";
@@ -756,7 +756,7 @@ async function autoEndClassBlocks() {
           eq(productLicenses.status, "active")
         )
       )
-      .where(sql`${schools.status} IN ('active', 'trial')`);
+      .where(eq(schools.status, "active"));
 
     for (const school of activeSchools) {
       const tz = school.schoolTimezone || "America/New_York";

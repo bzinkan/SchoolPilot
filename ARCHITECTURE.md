@@ -103,7 +103,7 @@ Express API (src/app.ts, src/index.ts)   |
 
 - MailPilot: `mailpilotWatches`, `emailAlerts`, `emailScanLog`.
 - Google: `googleOAuthTokens`, Classroom course tables.
-- Audit/compliance: `auditLogs`, `securityEvents`, `trialRequests`, `expressSessions`, `settings`.
+- Audit/compliance: `auditLogs`, `securityEvents`, `schoolInquiries`, `expressSessions`, `settings`.
 
 ## Frontend Architecture
 

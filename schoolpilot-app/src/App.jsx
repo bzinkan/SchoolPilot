@@ -64,7 +64,7 @@ const Security = lazy(() => import('./pages/legal/Security'));
 const SASchoolsList = lazy(() => import('./pages/super-admin/SchoolsList'));
 const SASchoolDetail = lazy(() => import('./pages/super-admin/SchoolDetail'));
 const SACreateSchool = lazy(() => import('./pages/super-admin/CreateSchool'));
-const SATrialRequests = lazy(() => import('./pages/super-admin/TrialRequests'));
+const SAInquiries = lazy(() => import('./pages/super-admin/Inquiries'));
 
 function PageLoader() {
   return (
@@ -135,7 +135,7 @@ function AppRoutes() {
             <Route path="/super-admin/schools" element={<SASchoolsList />} />
             <Route path="/super-admin/schools/new" element={<SACreateSchool />} />
             <Route path="/super-admin/schools/:id" element={<SASchoolDetail />} />
-            <Route path="/super-admin/trial-requests" element={<SATrialRequests />} />
+            <Route path="/super-admin/inquiries" element={<SAInquiries />} />
           </>
         )}
 

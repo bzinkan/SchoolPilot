@@ -32,10 +32,10 @@ export default function GoPilotLanding() {
                 href="/get-started"
                 className="bg-white text-indigo-600 px-8 py-4 rounded-lg font-semibold hover:bg-gray-50 transition duration-200 shadow-lg text-center no-underline"
               >
-                Get Started
+                Request Information
               </a>
               <a
-                href="/get-started"
+                href="/login"
                 className="bg-transparent border-2 border-white text-white px-8 py-4 rounded-lg font-semibold hover:bg-white hover:text-indigo-600 transition duration-200 text-center no-underline"
               >
                 Log In
@@ -188,17 +188,17 @@ export default function GoPilotLanding() {
               href="/get-started"
               className="bg-white text-indigo-600 px-8 py-4 rounded-lg font-semibold hover:bg-gray-50 transition duration-200 shadow-lg inline-flex items-center justify-center gap-2 no-underline"
             >
-              Get Started Free
+              Request Information
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <line x1="5" y1="12" x2="19" y2="12"/>
                 <polyline points="12 5 19 12 12 19"/>
               </svg>
             </a>
             <a
-              href="/get-started"
-              className="bg-transparent border-2 border-white text-white px-8 py-4 rounded-lg font-semibold hover:bg-white hover:text-indigo-600 transition duration-200 no-underline text-center"
-            >
-              Log In
+                href="/login"
+                className="bg-transparent border-2 border-white text-white px-8 py-4 rounded-lg font-semibold hover:bg-white hover:text-indigo-600 transition duration-200 no-underline text-center"
+              >
+                Log In
             </a>
           </div>
           <div className="flex flex-wrap items-center justify-center gap-6 text-sm opacity-80">
@@ -206,13 +206,13 @@ export default function GoPilotLanding() {
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="20 6 9 17 4 12"/>
               </svg>
-              No credit card required
+              School onboarding support
             </span>
             <span className="flex items-center gap-1">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="20 6 9 17 4 12"/>
               </svg>
-              Free through June
+              IT setup guidance
             </span>
             <span className="flex items-center gap-1">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

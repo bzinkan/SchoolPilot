@@ -23,11 +23,12 @@ import {
   getSettingsForSchool,
   upsertSettings,
   getSchoolCounts,
+  getSchoolInquiries,
   getEmailDomain,
   validateStaffEmailDomainForSchool,
 } from "../../services/storage.js";
 import { hashPassword } from "../../util/password.js";
-import { sendWelcomeEmail, sendTaxCertificateRequestEmail, sendTrialExpirationEmail, sendTrialWelcomeEmail } from "../../services/email.js";
+import { sendWelcomeEmail, sendTaxCertificateRequestEmail } from "../../services/email.js";
 import { logAudit } from "../../services/audit.js";
 import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
@@ -71,8 +72,8 @@ router.get("/stats", ...auth, async (req, res, next) => {
       getSchoolCounts(),
     ]);
     const active = schools.filter((s) => s.status === "active").length;
-    const trial = schools.filter((s) => s.status === "trial").length;
     const suspended = schools.filter((s) => s.status === "suspended").length;
+    const pendingInquiries = (await getSchoolInquiries({ status: "pending" })).length;
 
     let totalStudents = 0;
     for (const c of counts.values()) {
@@ -82,9 +83,9 @@ router.get("/stats", ...auth, async (req, res, next) => {
     return res.json({
       totalSchools: schools.length,
       activeSchools: active,
-      trialSchools: trial,
       suspendedSchools: suspended,
       totalStudents,
+      pendingInquiries,
     });
   } catch (err) {
     next(err);
@@ -165,6 +166,12 @@ router.post("/schools", ...auth, async (req, res, next) => {
     if (!name) {
       return res.status(400).json({ error: "name is required" });
     }
+    if (trialDays !== undefined) {
+      return res.status(400).json({ error: "trialDays is no longer supported", code: "TRIALS_REMOVED" });
+    }
+    if (status !== undefined && !["active", "suspended"].includes(status)) {
+      return res.status(400).json({ error: "status must be active or suspended", code: "INVALID_SCHOOL_STATUS" });
+    }
 
     // Validate domain format if provided (must look like a real domain)
     const cleanDomain = domain?.trim().toLowerCase() || null;
@@ -205,11 +212,6 @@ router.post("/schools", ...auth, async (req, res, next) => {
     if (maxLicenses !== undefined) schoolData.maxLicenses = maxLicenses;
     if (maxStudents !== undefined) schoolData.maxStudents = maxStudents;
     if (schoolHours?.timezone) schoolData.schoolTimezone = schoolHours.timezone;
-
-    if (trialDays) {
-      schoolData.status = "trial";
-      schoolData.trialEndsAt = new Date(Date.now() + trialDays * 86400000);
-    }
 
     const school = await createSchool(schoolData as any);
 
@@ -326,17 +328,8 @@ router.get("/schools/:id", ...auth, async (req, res, next) => {
       .filter((l) => l.status === "active")
       .map((l) => l.product);
 
-    // Calculate trial days remaining if applicable
-    let trialDaysRemaining: number | undefined;
-    if (school.status === "trial" && school.trialEndsAt) {
-      const now = new Date();
-      const end = new Date(school.trialEndsAt);
-      trialDaysRemaining = Math.max(0, Math.ceil((end.getTime() - now.getTime()) / 86400000));
-    }
-
     return res.json({
       ...school,
-      trialDaysRemaining,
       admins,
       teachers,
       staff: memberships.map(flattenMembership),
@@ -372,12 +365,22 @@ router.patch("/schools/:id", ...auth, async (req, res, next) => {
       }
       data.domain = cleanDomain;
     }
-    if (status !== undefined) data.status = status;
+    if (status !== undefined) {
+      if (!["active", "suspended"].includes(status)) {
+        return res.status(400).json({ error: "status must be active or suspended", code: "INVALID_SCHOOL_STATUS" });
+      }
+      data.status = status;
+    }
     if (billingEmail !== undefined) data.billingEmail = billingEmail;
     if (schoolTimezone !== undefined) data.schoolTimezone = schoolTimezone;
     if (maxStudents !== undefined) data.maxStudents = maxStudents;
     if (maxLicenses !== undefined) data.maxLicenses = maxLicenses;
-    if (planTier !== undefined) data.planTier = planTier;
+    if (planTier !== undefined) {
+      if (!["basic", "pro", "enterprise"].includes(planTier)) {
+        return res.status(400).json({ error: "planTier must be basic, pro, or enterprise", code: "INVALID_PLAN_TIER" });
+      }
+      data.planTier = planTier;
+    }
     if (planStatus !== undefined) data.planStatus = planStatus;
     if (activeUntil !== undefined) data.activeUntil = activeUntil ? new Date(activeUntil) : null;
 
@@ -1070,77 +1073,6 @@ router.delete("/schools/:id/tax-cert", ...auth, async (req, res, next) => {
     });
 
     return res.json({ ok: true });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// POST /api/super-admin/schools/:id/send-expiration-email - Send trial expiration reminder
-router.post("/schools/:id/send-expiration-email", ...auth, async (req, res, next) => {
-  try {
-    const school = await getSchoolById(param(req, "id"));
-    if (!school) return res.status(404).json({ error: "School not found" });
-
-    const members = await getMembershipsBySchool(school.id);
-    const adminMembership = members.find((m) => m.role === "admin") as any;
-    if (!adminMembership) return res.status(400).json({ error: "No admin found for this school" });
-
-    const adminEmail = adminMembership.user?.email || school.billingEmail;
-    const adminName = adminMembership.user?.displayName
-      || [adminMembership.user?.firstName, adminMembership.user?.lastName].filter(Boolean).join(" ")
-      || adminEmail;
-    if (!adminEmail) return res.status(400).json({ error: "No email found for school admin" });
-
-    const trialEnd = school.trialEndsAt
-      ? new Date(school.trialEndsAt).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })
-      : "soon";
-
-    await sendTrialExpirationEmail({
-      to: adminEmail,
-      contactName: adminName,
-      schoolName: school.name,
-      trialEndsAt: trialEnd,
-    });
-
-    return res.json({ ok: true, sentTo: adminEmail });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// POST /api/super-admin/schools/:id/send-trial-welcome - Send trial welcome onboarding email
-router.post("/schools/:id/send-trial-welcome", ...auth, async (req, res, next) => {
-  try {
-    const school = await getSchoolById(param(req, "id"));
-    if (!school) return res.status(404).json({ error: "School not found" });
-
-    const members = await getMembershipsBySchool(school.id);
-    const adminMembership = members.find((m) => m.role === "admin") as any;
-    if (!adminMembership) return res.status(400).json({ error: "No admin found for this school" });
-
-    const adminEmail = adminMembership.user?.email || school.billingEmail;
-    const adminName = adminMembership.user?.displayName
-      || [adminMembership.user?.firstName, adminMembership.user?.lastName].filter(Boolean).join(" ")
-      || adminEmail;
-    if (!adminEmail) return res.status(400).json({ error: "No email found for school admin" });
-
-    const trialEnd = school.trialEndsAt
-      ? new Date(school.trialEndsAt).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })
-      : undefined;
-
-    const products = (school as any).products
-      ? (school as any).products.split(",").map((p: string) => p.trim())
-      : ["CLASSPILOT", "PASSPILOT", "GOPILOT"];
-
-    await sendTrialWelcomeEmail({
-      to: adminEmail,
-      contactName: adminName,
-      schoolName: school.name,
-      products,
-      trialEndsAt: trialEnd,
-    });
-
-    return res.json({ ok: true, sentTo: adminEmail });
   } catch (err) {
     next(err);
   }

@@ -72,118 +72,56 @@ export async function sendWelcomeEmail(to: string, schoolName: string, tempPassw
   });
 }
 
-export async function sendTrialRequestNotification(request: {
+export async function sendSchoolInquiryNotification(request: {
   schoolName: string;
   contactName: string;
   contactEmail: string;
-  product?: string;
+  contactPhone?: string | null;
+  preferredContactMethod?: string | null;
+  adminItEmail?: string | null;
+  billingEmail?: string | null;
+  estimatedStudents?: string | null;
+  interestedProducts?: string | null;
+  questions?: string | null;
 }): Promise<boolean> {
   return sendEmail({
     to: ADMIN_EMAIL,
-    subject: `New Trial Request: ${request.schoolName}`,
+    subject: `New School Inquiry: ${request.schoolName}`,
     html: `
-      <h2>New Trial Request</h2>
+      <h2>New School Inquiry</h2>
       <p><strong>School:</strong> ${request.schoolName}</p>
       <p><strong>Contact:</strong> ${request.contactName} (${request.contactEmail})</p>
-      <p><strong>Product:</strong> ${request.product || "Not specified"}</p>
+      <p><strong>Phone:</strong> ${request.contactPhone || "Not provided"}</p>
+      <p><strong>Preferred contact:</strong> ${request.preferredContactMethod || "Not specified"}</p>
+      <p><strong>Admin/IT email:</strong> ${request.adminItEmail || "Not provided"}</p>
+      <p><strong>Billing email:</strong> ${request.billingEmail || "Not provided"}</p>
+      <p><strong>Estimated students:</strong> ${request.estimatedStudents || "Not provided"}</p>
+      <p><strong>Interested products:</strong> ${request.interestedProducts || "Not specified"}</p>
+      ${request.questions ? `<p><strong>Questions:</strong><br/>${request.questions}</p>` : ""}
     `,
   });
 }
 
-export async function sendTrialRequestConfirmation(request: {
+export async function sendSchoolInquiryConfirmation(request: {
   contactName: string;
   contactEmail: string;
   schoolName: string;
 }): Promise<boolean> {
   return sendEmail({
     to: request.contactEmail,
-    subject: "Welcome to SchoolPilot — we're setting you up",
+    subject: "SchoolPilot — we received your information",
     html: `
       <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2>Welcome to SchoolPilot!</h2>
+        <h2>Thanks for reaching out to SchoolPilot!</h2>
         <p>Hi ${request.contactName},</p>
-        <p>Thanks for signing up! We're getting <strong>${request.schoolName}</strong> set up now — you'll receive a confirmation within 24 hours to begin your free SchoolPilot trial.</p>
-        <p>Once activated, you'll log in with your school Google account — no extra passwords needed.</p>
-        <p>Here's what you'll get access to:</p>
+        <p>We received the information for <strong>${request.schoolName}</strong>. We'll review your setup needs and follow up with next steps for onboarding, billing, and any IT questions.</p>
+        <p>SchoolPilot includes:</p>
         <ul>
           <li><strong>ClassPilot</strong> — real-time Chromebook monitoring</li>
           <li><strong>PassPilot</strong> — digital hall passes</li>
           <li><strong>GoPilot</strong> — dismissal management</li>
         </ul>
         <p>Questions? Just reply to this email.</p>
-        <p style="margin-top: 24px;">— The SchoolPilot Team</p>
-      </div>
-    `,
-  });
-}
-
-export async function sendTrialExpirationEmail(options: {
-  to: string;
-  contactName: string;
-  schoolName: string;
-  trialEndsAt: string;
-}): Promise<boolean> {
-  return sendEmail({
-    to: options.to,
-    subject: "Your SchoolPilot trial is ending soon",
-    html: `
-      <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2>Your trial is ending soon</h2>
-        <p>Hi ${options.contactName},</p>
-        <p>Your free trial for <strong>${options.schoolName}</strong> ends on <strong>${options.trialEndsAt}</strong>.</p>
-        <p>If you'd like to keep using SchoolPilot, we'd love to set you up on an annual plan — just $3/student/year for any single app, $5/student for two, or $7/student for all three.</p>
-        <p>Reply to this email and we'll get you sorted.</p>
-        <p style="margin-top: 24px;">— The SchoolPilot Team</p>
-      </div>
-    `,
-  });
-}
-
-export async function sendTrialWelcomeEmail(options: {
-  to: string;
-  contactName: string;
-  schoolName: string;
-  products: string[];
-  trialEndsAt?: string;
-}): Promise<boolean> {
-  const productDescriptions: Record<string, { name: string; desc: string }> = {
-    CLASSPILOT: { name: "ClassPilot", desc: "Real-time Chromebook monitoring. View student screens, control web access, and keep your class on task." },
-    PASSPILOT: { name: "PassPilot", desc: "Digital hall passes. Track student movement, set limits, and eliminate paper passes." },
-    GOPILOT: { name: "GoPilot", desc: "Dismissal management. Coordinate car riders, buses, and walkers with real-time notifications." },
-  };
-
-  const productList = options.products
-    .map((p) => productDescriptions[p])
-    .filter((p): p is { name: string; desc: string } => Boolean(p))
-    .map((p) => `<li><strong>${p.name}</strong> — ${p.desc}</li>`)
-    .join("");
-
-  const trialNote = options.trialEndsAt
-    ? `Your free trial runs through <strong>${options.trialEndsAt}</strong>.`
-    : "Your free trial runs through the end of the school year.";
-
-  return sendEmail({
-    to: options.to,
-    subject: "Welcome to SchoolPilot — Your trial is ready!",
-    html: `
-      <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2>Welcome to SchoolPilot!</h2>
-        <p>Hi ${options.contactName},</p>
-        <p>Great news — your trial for <strong>${options.schoolName}</strong> is set up and ready to go!</p>
-        <p>Here's what's included in your trial:</p>
-        <ul>${productList}</ul>
-        <h3>Getting Started</h3>
-        <ol>
-          <li>Go to <a href="https://school-pilot.net">school-pilot.net</a></li>
-          <li>Click <strong>Sign In</strong> and log in with your school Google account</li>
-          <li>You're in! Start exploring your dashboard.</li>
-        </ol>${options.products.includes("CLASSPILOT") ? `
-        <h3>Install the ClassPilot Extension</h3>
-        <p>To monitor student Chromebooks, install the ClassPilot extension on your student devices:</p>
-        <p><a href="https://chromewebstore.google.com/detail/classpilot/iggbfegfcjkfieoemeolfmfnapepalca" style="display: inline-block; background: #4f46e5; color: #fff; padding: 10px 20px; border-radius: 6px; text-decoration: none;">Install ClassPilot Extension</a></p>
-        <p style="font-size: 13px; color: #666;">Tip: Use Google Admin to force-install the extension across all student Chromebooks for automatic deployment.</p>` : ""}
-        <p>${trialNote}</p>
-        <p>Questions? Just reply to this email — we're happy to help.</p>
         <p style="margin-top: 24px;">— The SchoolPilot Team</p>
       </div>
     `,

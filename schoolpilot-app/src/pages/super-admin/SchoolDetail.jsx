@@ -6,7 +6,6 @@ import { calculateInvoicePreview, formatCents, PRODUCT_PRICING, MONITORING_24_7_
 
 const statusColors = {
   active: 'bg-green-100 text-green-800',
-  trial: 'bg-blue-100 text-blue-800',
   suspended: 'bg-red-100 text-red-800',
 };
 
@@ -56,10 +55,6 @@ export default function SchoolDetail() {
   const [invoiceResult, setInvoiceResult] = useState(null);
   const [expandedInvoiceId, setExpandedInvoiceId] = useState(null);
   const [showNewInvoice, setShowNewInvoice] = useState(false);
-  const [sendingExpiration, setSendingExpiration] = useState(false);
-  const [expirationResult, setExpirationResult] = useState(null);
-  const [sendingWelcome, setSendingWelcome] = useState(false);
-  const [welcomeResult, setWelcomeResult] = useState(null);
 
   // Tax cert
   const [taxCertRequesting, setTaxCertRequesting] = useState(false);
@@ -468,59 +463,7 @@ export default function SchoolDetail() {
       <div className="bg-white rounded-xl border border-slate-200 p-6 mb-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="font-semibold text-slate-900">Billing & Invoicing</h2>
-          {school?.status === 'trial' && (
-            <div className="flex gap-2">
-              <button
-                onClick={async () => {
-                  setSendingWelcome(true);
-                  setWelcomeResult(null);
-                  try {
-                    const res = await api.post(`/super-admin/schools/${id}/send-trial-welcome`);
-                    setWelcomeResult({ ok: true, sentTo: res.data.sentTo });
-                  } catch (err) {
-                    setWelcomeResult({ ok: false, error: err.response?.data?.error || 'Failed to send' });
-                  } finally {
-                    setSendingWelcome(false);
-                  }
-                }}
-                disabled={sendingWelcome}
-                className="px-3 py-1.5 text-xs font-medium rounded-lg bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100 disabled:opacity-50"
-              >
-                {sendingWelcome ? 'Sending...' : 'Send Trial Welcome'}
-              </button>
-              <button
-                onClick={async () => {
-                  setSendingExpiration(true);
-                  setExpirationResult(null);
-                  try {
-                    const res = await api.post(`/super-admin/schools/${id}/send-expiration-email`);
-                    setExpirationResult({ ok: true, sentTo: res.data.sentTo });
-                  } catch (err) {
-                    setExpirationResult({ ok: false, error: err.response?.data?.error || 'Failed to send' });
-                  } finally {
-                    setSendingExpiration(false);
-                  }
-                }}
-                disabled={sendingExpiration}
-                className="px-3 py-1.5 text-xs font-medium rounded-lg bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 disabled:opacity-50"
-              >
-                {sendingExpiration ? 'Sending...' : 'Send Trial Expiration Reminder'}
-              </button>
-            </div>
-          )}
         </div>
-
-        {welcomeResult && (
-          <div className={`mb-4 p-3 rounded-lg text-sm ${welcomeResult.ok ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-red-50 border border-red-200 text-red-700'}`}>
-            {welcomeResult.ok ? `Trial welcome email sent to ${welcomeResult.sentTo}` : welcomeResult.error}
-          </div>
-        )}
-
-        {expirationResult && (
-          <div className={`mb-4 p-3 rounded-lg text-sm ${expirationResult.ok ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-red-50 border border-red-200 text-red-700'}`}>
-            {expirationResult.ok ? `Expiration reminder sent to ${expirationResult.sentTo}` : expirationResult.error}
-          </div>
-        )}
 
         {invoiceResult && (
           <div className="mb-4 p-4 bg-green-50 border border-green-200 rounded-lg">
@@ -944,7 +887,6 @@ export default function SchoolDetail() {
                 <label className="text-xs text-slate-500">Status</label>
                 <select value={editForm.status} onChange={(e) => setEditForm({...editForm, status: e.target.value})}
                   className="w-full px-3 py-1.5 border border-slate-300 rounded text-sm">
-                  <option value="trial">Trial</option>
                   <option value="active">Active</option>
                   <option value="suspended">Suspended</option>
                 </select>
@@ -965,9 +907,6 @@ export default function SchoolDetail() {
               <div className="flex justify-between"><span className="text-slate-500">Domain</span><span>{school.domain || '—'}</span></div>
               <div className="flex justify-between"><span className="text-slate-500">Max Licenses</span><span>{school.maxLicenses ?? '—'}</span></div>
               <div className="flex justify-between"><span className="text-slate-500">Billing Email</span><span className="text-xs">{school.billingEmail || '—'}</span></div>
-              {school.trialEndsAt && (
-                <div className="flex justify-between"><span className="text-slate-500">Trial Ends</span><span>{formatDate(school.trialEndsAt)}</span></div>
-              )}
               <div className="flex justify-between"><span className="text-slate-500">Created</span><span>{formatDate(school.createdAt)}</span></div>
               <div className="flex justify-between"><span className="text-slate-500">ID</span><span className="font-mono text-xs">{school.id?.substring(0, 8)}</span></div>
             </div>

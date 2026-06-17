@@ -222,7 +222,7 @@ router.post("/school/status", extensionLimiter, async (req, res, next) => {
         if (school) {
           return res.json({
             schoolId: school.id,
-            schoolActive: school.status === "active" || school.status === "trial",
+            schoolActive: school.status === "active",
             planStatus: school.planStatus || "active",
             status: school.status,
             schoolSessionVersion: 1,
@@ -240,7 +240,7 @@ router.post("/school/status", extensionLimiter, async (req, res, next) => {
     if (!result) {
       return res.status(401).json({ error: "Not eligible" });
     }
-    const isActive = result.school.status === "active" || result.school.status === "trial";
+    const isActive = result.school.status === "active";
 
     // Minimal response — schoolId, planStatus, and status omitted intentionally.
     // The extension calls /extension/register next which returns the full JWT with schoolId.
@@ -308,7 +308,7 @@ router.post("/register", extensionLimiter, async (req, res, next) => {
     }
 
     const school = await getSchoolById(resolvedSchoolId);
-    if (!school || (school.status !== "active" && school.status !== "trial")) {
+    if (!school || school.status !== "active") {
       return res.status(403).json({ error: "School is not active" });
     }
 
@@ -375,7 +375,7 @@ router.post("/extension/register", extensionLimiter, async (req, res, next) => {
     }
 
     // Check school is active
-    if (school.status !== "active" && school.status !== "trial") {
+    if (school.status !== "active") {
       return res.status(403).json({ error: "School is not active" });
     }
 
@@ -662,7 +662,7 @@ router.post("/device/heartbeat", requireDeviceAuth, async (req, res, next) => {
 
     // --- Get school for planStatus (item #3) — cached to reduce DB queries ---
     const school = await getCachedSchool(schoolId);
-    if (!school || (school.status !== "active" && school.status !== "trial")) {
+    if (!school || school.status !== "active") {
       return res.status(402).json({ planStatus: "inactive" });
     }
 
@@ -980,7 +980,7 @@ router.post("/device/event", requireDeviceAuth, async (req, res, next) => {
 
     // Check school active for planStatus
     const school = await getSchoolById(schoolId);
-    if (!school || (school.status !== "active" && school.status !== "trial")) {
+    if (!school || school.status !== "active") {
       return res.status(402).json({ planStatus: "inactive" });
     }
 

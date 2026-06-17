@@ -6,7 +6,6 @@ import api from '../../shared/utils/api';
 
 const statusColors = {
   active: 'bg-green-100 text-green-800',
-  trial: 'bg-blue-100 text-blue-800',
   suspended: 'bg-red-100 text-red-800',
 };
 
@@ -139,9 +138,9 @@ export default function SchoolsList() {
   const statCards = [
     { label: 'Total Schools', value: stats.totalSchools ?? stats.total_schools ?? 0, color: 'bg-slate-100 text-slate-700' },
     { label: 'Active', value: stats.activeSchools ?? stats.active_schools ?? stats.active ?? 0, color: 'bg-green-100 text-green-700' },
-    { label: 'Trial', value: stats.trialSchools ?? stats.trial_schools ?? stats.trial ?? 0, color: 'bg-blue-100 text-blue-700' },
     { label: 'Suspended', value: stats.suspendedSchools ?? stats.suspended_schools ?? stats.suspended ?? 0, color: 'bg-red-100 text-red-700' },
     { label: 'Total Students', value: stats.totalStudents ?? stats.total_students ?? 0, color: 'bg-purple-100 text-purple-700' },
+    { label: 'Pending Inquiries', value: stats.pendingInquiries ?? stats.pending_inquiries ?? 0, color: 'bg-amber-100 text-amber-700' },
   ];
 
   return (
@@ -162,11 +161,11 @@ export default function SchoolsList() {
             Broadcast
           </button>
           <button
-            onClick={() => navigate('/super-admin/trial-requests')}
+            onClick={() => navigate('/super-admin/inquiries')}
             className="flex items-center gap-1.5 px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
-            Trial Requests
+            Inquiries
           </button>
           <button
             onClick={() => navigate('/super-admin/schools/new')}
@@ -225,7 +224,7 @@ export default function SchoolsList() {
           ))}
         </div>
         <div className="flex gap-1 bg-slate-100 rounded-lg p-1">
-          {['all', 'active', 'trial', 'suspended'].map((s) => (
+          {['all', 'active', 'suspended'].map((s) => (
             <button
               key={s}
               onClick={() => setStatusFilter(s)}
