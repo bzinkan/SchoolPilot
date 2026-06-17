@@ -17,6 +17,9 @@ import {
   bulkCreateStudents,
   getProductLicenses,
   autoAssignFamilyGroups,
+  getSchoolById,
+  normalizeDomain,
+  studentEmailDomainMatches,
 } from "../services/storage.js";
 import type { InsertStudent } from "../schema/students.js";
 import db from "../db.js";
@@ -28,6 +31,18 @@ const router = Router();
 
 function param(req: { params: Record<string, unknown> }, key: string): string {
   return String(req.params[key] ?? "");
+}
+
+// Fetch the school's expected email domain once per request (so bulk/CSV imports
+// validate every row against it without a DB hit per row).
+async function schoolEmailDomain(schoolId: string): Promise<string | null> {
+  const school = await getSchoolById(schoolId);
+  return normalizeDomain(school?.domain);
+}
+
+// Human-readable rejection message for a student email whose domain doesn't match.
+function emailDomainError(expectedDomain: string | null, actualDomain: string | null): string {
+  return `Student email must use the school's domain (@${expectedDomain}); got @${actualDomain ?? "?"}.`;
 }
 
 router.use(authenticate);
@@ -116,6 +131,20 @@ router.post(
           .json({ error: parsed.error.errors[0]?.message || "Invalid input" });
       }
 
+      // Guardrail: a provided student email must match the school domain.
+      const dom = studentEmailDomainMatches(
+        parsed.data.email,
+        await schoolEmailDomain(res.locals.schoolId!)
+      );
+      if (!dom.ok) {
+        return res.status(400).json({
+          error: emailDomainError(dom.expectedDomain, dom.actualDomain),
+          code: "STUDENT_EMAIL_DOMAIN_MISMATCH",
+          expectedDomain: dom.expectedDomain,
+          actualDomain: dom.actualDomain,
+        });
+      }
+
       const data: InsertStudent = {
         schoolId: res.locals.schoolId!,
         firstName: parsed.data.firstName,
@@ -154,6 +183,7 @@ router.post(
 
       const toInsert: InsertStudent[] = [];
       const errors: { index: number; error: string }[] = [];
+      const expectedDomain = await schoolEmailDomain(res.locals.schoolId!);
 
       for (let i = 0; i < studentData.length; i++) {
         const item = { ...studentData[i] };
@@ -169,6 +199,13 @@ router.post(
             index: i,
             error: parsed.error.errors[0]?.message || "Invalid input",
           });
+          continue;
+        }
+
+        // Guardrail: reject (skip) rows whose email domain isn't the school's.
+        const dom = studentEmailDomainMatches(parsed.data.email, expectedDomain);
+        if (!dom.ok) {
+          errors.push({ index: i, error: emailDomainError(dom.expectedDomain, dom.actualDomain) });
           continue;
         }
 
@@ -237,6 +274,7 @@ const importCsvHandler = async (req: any, res: any, next: any) => {
 
     const toInsert: InsertStudent[] = [];
     const errors: { row: number; error: string }[] = [];
+    const expectedDomain = await schoolEmailDomain(res.locals.schoolId!);
 
     for (let i = 0; i < rows.length; i++) {
       const raw = rows[i];
@@ -264,6 +302,14 @@ const importCsvHandler = async (req: any, res: any, next: any) => {
       }
 
       const email = normalized["email"] || null;
+
+      // Guardrail: reject (skip) rows whose email domain isn't the school's.
+      const dom = studentEmailDomainMatches(email, expectedDomain);
+      if (!dom.ok) {
+        errors.push({ row: i + 1, error: emailDomainError(dom.expectedDomain, dom.actualDomain) });
+        continue;
+      }
+
       const studentIdNumber =
         normalized["studentidnumber"] ||
         normalized["studentid"] ||
@@ -342,16 +388,31 @@ router.put(
         return res.status(400).json({ error: "Array of updates required" });
       }
       const results: unknown[] = [];
+      const skipped: { id: string; error: string }[] = [];
+      const expectedDomain = await schoolEmailDomain(res.locals.schoolId!);
       for (const item of updates) {
         if (item.id) {
           // Verify each student belongs to the caller's school before mutating.
           const existing = await getStudentById(item.id);
           if (!existing || existing.schoolId !== res.locals.schoolId) continue;
+          // Guardrail: block an email change to a non-school domain.
+          const itemEmail = item.email ?? item.studentEmail;
+          if (itemEmail !== undefined) {
+            const dom = studentEmailDomainMatches(itemEmail, expectedDomain);
+            if (!dom.ok) {
+              skipped.push({ id: item.id, error: emailDomainError(dom.expectedDomain, dom.actualDomain) });
+              continue;
+            }
+          }
           const updated = await updateStudent(item.id, item);
           if (updated) results.push(updated);
         }
       }
-      return res.json({ updated: results.length, students: results });
+      return res.json({
+        updated: results.length,
+        students: results,
+        skipped: skipped.length > 0 ? skipped : undefined,
+      });
     } catch (err) {
       next(err);
     }
@@ -422,6 +483,22 @@ router.put(
           .json({ error: parsed.error.errors[0]?.message || "Invalid input" });
       }
 
+      // Guardrail: if the email is being set/changed, its domain must match the school.
+      if (parsed.data.email !== undefined) {
+        const dom = studentEmailDomainMatches(
+          parsed.data.email,
+          await schoolEmailDomain(res.locals.schoolId!)
+        );
+        if (!dom.ok) {
+          return res.status(400).json({
+            error: emailDomainError(dom.expectedDomain, dom.actualDomain),
+            code: "STUDENT_EMAIL_DOMAIN_MISMATCH",
+            expectedDomain: dom.expectedDomain,
+            actualDomain: dom.actualDomain,
+          });
+        }
+      }
+
       const updateData: Record<string, unknown> = { ...parsed.data };
       if (parsed.data.email !== undefined) {
         updateData.emailLc = parsed.data.email?.toLowerCase() || null;
@@ -459,6 +536,22 @@ router.patch(
         return res
           .status(400)
           .json({ error: parsed.error.errors[0]?.message || "Invalid input" });
+      }
+
+      // Guardrail: if the email is being set/changed, its domain must match the school.
+      if (parsed.data.email !== undefined) {
+        const dom = studentEmailDomainMatches(
+          parsed.data.email,
+          await schoolEmailDomain(res.locals.schoolId!)
+        );
+        if (!dom.ok) {
+          return res.status(400).json({
+            error: emailDomainError(dom.expectedDomain, dom.actualDomain),
+            code: "STUDENT_EMAIL_DOMAIN_MISMATCH",
+            expectedDomain: dom.expectedDomain,
+            actualDomain: dom.actualDomain,
+          });
+        }
       }
 
       const updateData: Record<string, unknown> = { ...parsed.data };
