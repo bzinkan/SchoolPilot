@@ -19,6 +19,8 @@ import {
   createBlockList,
   getBlockListById,
   createStudent,
+  getStudentByEmail,
+  searchStudents,
   createGrade,
   getGradeById,
   createDashboardTab,
@@ -210,6 +212,37 @@ describe("cross-school isolation", () => {
     );
     assert.equal(s.schoolId, schoolA.id);
     assert.notEqual(s.schoolId, schoolB.id);
+  });
+
+  it("extension roster lookup requires an exact email match, not fuzzy search", async () => {
+    const targetEmail = `${TAG}-target@${TAG}-a.example.edu`;
+    const fuzzyOnlyEmail = `${TAG}-fuzzy-${TAG}-target@${TAG}-a.example.edu`;
+    await inSchool(schoolA.id, () =>
+      createStudent({
+        schoolId: schoolA.id,
+        firstName: "Fuzzy",
+        lastName: "Only",
+        email: fuzzyOnlyEmail,
+        emailLc: fuzzyOnlyEmail,
+        status: "active",
+      } as any)
+    );
+
+    const fuzzyResults = await inSchool(schoolA.id, () => searchStudents(schoolA.id, { search: targetEmail }));
+    assert.ok(fuzzyResults.some((student: any) => student.emailLc === fuzzyOnlyEmail));
+    assert.equal(await inSchool(schoolA.id, () => getStudentByEmail(schoolA.id, targetEmail)), undefined);
+
+    const exact = await inSchool(schoolA.id, () =>
+      createStudent({
+        schoolId: schoolA.id,
+        firstName: "Exact",
+        lastName: "Match",
+        email: targetEmail,
+        emailLc: targetEmail,
+        status: "active",
+      } as any)
+    );
+    assert.equal((await inSchool(schoolA.id, () => getStudentByEmail(schoolA.id, targetEmail)))?.id, exact.id);
   });
 
   it("Google OAuth tokens must match the selected school domain, while shared domains are allowed", async () => {
