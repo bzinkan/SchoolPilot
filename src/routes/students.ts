@@ -45,6 +45,54 @@ function emailDomainError(expectedDomain: string | null, actualDomain: string | 
   return `Student email must use the school's domain (@${expectedDomain}); got @${actualDomain ?? "?"}.`;
 }
 
+// Per-request rules for student emails. A school running ClassPilot identifies
+// students by their school Google email (the extension reports the Chrome login
+// email), so email is REQUIRED when adding students there; PassPilot/GoPilot-only
+// schools keep it optional (badge/ID kids). Any provided email must match the
+// school domain. Fetched once per request so bulk imports stay one-DB-hit.
+async function studentEmailRules(
+  schoolId: string
+): Promise<{ requireEmail: boolean; expectedDomain: string | null }> {
+  const [school, licenses] = await Promise.all([
+    getSchoolById(schoolId),
+    getProductLicenses(schoolId),
+  ]);
+  const requireEmail = licenses.some(
+    (l) => l.product === "CLASSPILOT" && l.status === "active"
+  );
+  return { requireEmail, expectedDomain: normalizeDomain(school?.domain) };
+}
+
+// Validate one student email against the rules. Returns null when OK, otherwise a
+// 400-shaped error. A missing email is only rejected when required (ClassPilot).
+function checkStudentEmail(
+  email: string | null | undefined,
+  rules: { requireEmail: boolean; expectedDomain: string | null }
+): { code: string; error: string; expectedDomain: string | null; actualDomain: string | null } | null {
+  if (!email) {
+    if (rules.requireEmail) {
+      return {
+        code: "STUDENT_EMAIL_REQUIRED",
+        error:
+          "Student email is required — this school uses ClassPilot, which identifies students by their school Google email.",
+        expectedDomain: rules.expectedDomain,
+        actualDomain: null,
+      };
+    }
+    return null;
+  }
+  const dom = studentEmailDomainMatches(email, rules.expectedDomain);
+  if (!dom.ok) {
+    return {
+      code: "STUDENT_EMAIL_DOMAIN_MISMATCH",
+      error: emailDomainError(dom.expectedDomain, dom.actualDomain),
+      expectedDomain: dom.expectedDomain,
+      actualDomain: dom.actualDomain,
+    };
+  }
+  return null;
+}
+
 router.use(authenticate);
 
 const schoolContext = [requireSchoolContext, requireActiveSchool, requireProductLicense("CLASSPILOT", "PASSPILOT", "GOPILOT")] as const;
@@ -131,17 +179,17 @@ router.post(
           .json({ error: parsed.error.errors[0]?.message || "Invalid input" });
       }
 
-      // Guardrail: a provided student email must match the school domain.
-      const dom = studentEmailDomainMatches(
+      // Guardrail: email required for ClassPilot schools; any email must match domain.
+      const emailErr = checkStudentEmail(
         parsed.data.email,
-        await schoolEmailDomain(res.locals.schoolId!)
+        await studentEmailRules(res.locals.schoolId!)
       );
-      if (!dom.ok) {
+      if (emailErr) {
         return res.status(400).json({
-          error: emailDomainError(dom.expectedDomain, dom.actualDomain),
-          code: "STUDENT_EMAIL_DOMAIN_MISMATCH",
-          expectedDomain: dom.expectedDomain,
-          actualDomain: dom.actualDomain,
+          error: emailErr.error,
+          code: emailErr.code,
+          expectedDomain: emailErr.expectedDomain,
+          actualDomain: emailErr.actualDomain,
         });
       }
 
@@ -183,7 +231,7 @@ router.post(
 
       const toInsert: InsertStudent[] = [];
       const errors: { index: number; error: string }[] = [];
-      const expectedDomain = await schoolEmailDomain(res.locals.schoolId!);
+      const rules = await studentEmailRules(res.locals.schoolId!);
 
       for (let i = 0; i < studentData.length; i++) {
         const item = { ...studentData[i] };
@@ -202,10 +250,10 @@ router.post(
           continue;
         }
 
-        // Guardrail: reject (skip) rows whose email domain isn't the school's.
-        const dom = studentEmailDomainMatches(parsed.data.email, expectedDomain);
-        if (!dom.ok) {
-          errors.push({ index: i, error: emailDomainError(dom.expectedDomain, dom.actualDomain) });
+        // Guardrail: email required for ClassPilot; any email must match domain.
+        const emailErr = checkStudentEmail(parsed.data.email, rules);
+        if (emailErr) {
+          errors.push({ index: i, error: emailErr.error });
           continue;
         }
 
@@ -274,7 +322,7 @@ const importCsvHandler = async (req: any, res: any, next: any) => {
 
     const toInsert: InsertStudent[] = [];
     const errors: { row: number; error: string }[] = [];
-    const expectedDomain = await schoolEmailDomain(res.locals.schoolId!);
+    const rules = await studentEmailRules(res.locals.schoolId!);
 
     for (let i = 0; i < rows.length; i++) {
       const raw = rows[i];
@@ -303,10 +351,10 @@ const importCsvHandler = async (req: any, res: any, next: any) => {
 
       const email = normalized["email"] || null;
 
-      // Guardrail: reject (skip) rows whose email domain isn't the school's.
-      const dom = studentEmailDomainMatches(email, expectedDomain);
-      if (!dom.ok) {
-        errors.push({ row: i + 1, error: emailDomainError(dom.expectedDomain, dom.actualDomain) });
+      // Guardrail: email required for ClassPilot; any email must match domain.
+      const emailErr = checkStudentEmail(email, rules);
+      if (emailErr) {
+        errors.push({ row: i + 1, error: emailErr.error });
         continue;
       }
 
