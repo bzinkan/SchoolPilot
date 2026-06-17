@@ -48,6 +48,17 @@ function emailDomainError(expectedDomain: string | null, actualDomain: string | 
   return `Student email must use the school's domain (@${expectedDomain}); got @${actualDomain ?? "?"}.`;
 }
 
+// True only when an edit actually CHANGES the email (case-insensitive), vs merely
+// resubmitting the current value. Email guardrails run only on a real change, so
+// editing a pre-existing student whose legacy email doesn't conform (wrong domain,
+// or already used) never breaks an unrelated edit. Adding/genuine changes still
+// validate. `undefined` (field not sent) is never a change.
+function isEmailChanging(newEmail: unknown, existingEmailLc: string | null): boolean {
+  if (newEmail === undefined) return false;
+  const lc = newEmail == null ? null : String(newEmail).toLowerCase() || null;
+  return lc !== (existingEmailLc || null);
+}
+
 // Per-request rules for student emails. A school running ClassPilot identifies
 // students by their school Google email (the extension reports the Chrome login
 // email), so email is REQUIRED when adding students there; PassPilot/GoPilot-only
@@ -547,9 +558,10 @@ router.put(
           // Verify each student belongs to the caller's school before mutating.
           const existing = await getStudentById(item.id);
           if (!existing || existing.schoolId !== res.locals.schoolId) continue;
-          // Guardrail: block an email change to a non-school domain.
+          // Guardrail: only validate when the email actually changes (not on
+          // resubmit), so a grade/dismissal bulk-edit of a legacy student isn't blocked.
           const itemEmail = item.email ?? item.studentEmail;
-          if (itemEmail !== undefined) {
+          if (isEmailChanging(itemEmail, existing.emailLc)) {
             const dom = studentEmailDomainMatches(itemEmail, expectedDomain);
             if (!dom.ok) {
               skipped.push({ id: item.id, error: emailDomainError(dom.expectedDomain, dom.actualDomain) });
@@ -652,8 +664,10 @@ router.put(
           .json({ error: parsed.error.errors[0]?.message || "Invalid input" });
       }
 
-      // Guardrail: if the email is being set/changed, its domain must match the school.
-      if (parsed.data.email !== undefined) {
+      // Guardrail: only validate when the email actually changes (not on resubmit),
+      // so editing a pre-existing student with legacy data isn't blocked. Adding and
+      // genuine email changes still validate.
+      if (isEmailChanging(parsed.data.email, existing.emailLc)) {
         const dom = studentEmailDomainMatches(
           parsed.data.email,
           await schoolEmailDomain(res.locals.schoolId!)
@@ -724,8 +738,10 @@ router.patch(
           .json({ error: parsed.error.errors[0]?.message || "Invalid input" });
       }
 
-      // Guardrail: if the email is being set/changed, its domain must match the school.
-      if (parsed.data.email !== undefined) {
+      // Guardrail: only validate when the email actually changes (not on resubmit),
+      // so editing a pre-existing student with legacy data isn't blocked. Adding and
+      // genuine email changes still validate.
+      if (isEmailChanging(parsed.data.email, existing.emailLc)) {
         const dom = studentEmailDomainMatches(
           parsed.data.email,
           await schoolEmailDomain(res.locals.schoolId!)
