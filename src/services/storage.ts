@@ -864,11 +864,7 @@ export async function getStaffBySchool(
       and(
         eq(schoolMemberships.schoolId, schoolId),
         eq(schoolMemberships.status, "active"),
-        or(
-          eq(schoolMemberships.role, "admin"),
-          eq(schoolMemberships.role, "teacher"),
-          eq(schoolMemberships.role, "office_staff")
-        )
+        inArray(schoolMemberships.role, ["admin", "school_admin", "teacher", "office_staff"])
       )
     )
     .orderBy(users.lastName, users.firstName);

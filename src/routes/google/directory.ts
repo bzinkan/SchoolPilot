@@ -12,11 +12,17 @@ import {
   createMembership,
   getStudentByEmail,
   getUserByEmail,
+  getMembershipByUserAndSchool,
   getProductLicenses,
   autoAssignFamilyGroups,
-  validateStaffEmailDomainForSchool,
 } from "../../services/storage.js";
 import { recordImportRun } from "../../services/importLog.js";
+import {
+  checkStudentEmail,
+  studentEmailRules,
+  studentEmailTaken,
+  validateStaffImportEmailForSchool,
+} from "../../services/studentEmailPolicy.js";
 
 const router = Router();
 
@@ -87,6 +93,10 @@ function buildDirectoryUsersParams(orgUnitPath?: string, projection: "basic" | "
   return params;
 }
 
+function formatImportPolicyError(email: string, err: { code: string; error: string }) {
+  return `${email}: ${err.code}: ${err.error}`;
+}
+
 async function listDirectoryUsers(admin: any, params: any, paginateAll = true) {
   const users: any[] = [];
   let pageToken = params.pageToken as string | undefined;
@@ -127,6 +137,7 @@ async function importGoogleUsersAsStudents(
   let updated = 0;
   let skipped = 0;
   const errors: string[] = [];
+  const rules = await studentEmailRules(schoolId);
 
   for (const u of googleUsers) {
     if (u.suspended || u.isAdmin || u.isDelegatedAdmin) {
@@ -144,12 +155,25 @@ async function importGoogleUsersAsStudents(
       continue;
     }
 
+    const emailErr = checkStudentEmail(email, rules);
+    if (emailErr) {
+      skipped++;
+      errors.push(`${email}: ${emailErr.error}`);
+      continue;
+    }
+
     // Per-student try/catch: one bad row (unique-constraint race, malformed
     // data) must NOT abort the whole roster import. Collect the error and
     // continue so the IT admin gets partial success + a clear failure list.
     try {
       const studentIdNumber = extractStudentId(u);
       const existing = await getStudentByEmail(schoolId, emailLc);
+      const taken = await studentEmailTaken(schoolId, emailLc, existing?.id);
+      if (taken) {
+        skipped++;
+        errors.push(`${email}: ${taken}`);
+        continue;
+      }
       if (existing) {
         await updateStudent(existing.id, {
           firstName: u.name?.givenName || existing.firstName,
@@ -371,6 +395,7 @@ router.post("/import", ...adminAuth, async (req, res, next) => {
     let updated = 0;
     let skipped = 0;
     const errors: string[] = [];
+    const rules = await studentEmailRules(schoolId);
 
     for (const u of users) {
       const email = u.email?.trim();
@@ -381,7 +406,20 @@ router.post("/import", ...adminAuth, async (req, res, next) => {
 
       // Per-student try/catch — one bad row must not abort the batch.
       try {
-        const existing = await getStudentByEmail(schoolId, email.toLowerCase());
+        const emailLc = email.toLowerCase();
+        const emailErr = checkStudentEmail(email, rules);
+        if (emailErr) {
+          skipped++;
+          errors.push(`${email}: ${emailErr.error}`);
+          continue;
+        }
+        const existing = await getStudentByEmail(schoolId, emailLc);
+        const taken = await studentEmailTaken(schoolId, emailLc, existing?.id);
+        if (taken) {
+          skipped++;
+          errors.push(`${email}: ${taken}`);
+          continue;
+        }
         if (existing) {
           await updateStudent(existing.id, {
             firstName: u.firstName || existing.firstName,
@@ -456,17 +494,18 @@ const importStaffHandler = async (req: any, res: any, next: any) => {
 
       for (const u of googleUsers) {
         if (u.suspended) continue;
-        const email = u.primaryEmail;
+        const email = u.primaryEmail?.trim();
         if (!email) continue;
         if (filterIds && !filterIds.has(u.id)) continue;
-        const validation = await validateStaffEmailDomainForSchool(email, schoolId);
-        if (!validation.ok) {
+        const validation = await validateStaffImportEmailForSchool(email, schoolId);
+        if (validation) {
           skipped++;
-          errors.push(`${email}: ${validation.message}`);
+          errors.push(formatImportPolicyError(email, validation));
           continue;
         }
 
         let user = await getUserByEmail(email);
+        let createdUser = false;
         if (!user) {
           user = await createUser({
             email,
@@ -474,20 +513,29 @@ const importStaffHandler = async (req: any, res: any, next: any) => {
             lastName: u.name?.familyName || "",
             googleId: u.id || null,
           });
+          createdUser = true;
+        }
+
+        const existing = await getMembershipByUserAndSchool(user.id, schoolId);
+        if (!existing) {
+          try {
+            await createMembership({
+              userId: user.id,
+              schoolId,
+              role: staffRole,
+              status: "active",
+            });
+          } catch (err: any) {
+            skipped++;
+            errors.push(`${email}: ${err?.code || "MEMBERSHIP_CREATE_FAILED"}: ${err?.message || "Could not create staff membership."}`);
+            continue;
+          }
+        }
+
+        if (createdUser) {
           imported++;
         } else {
           skipped++;
-        }
-
-        const { getMembershipByUserAndSchool } = await import("../../services/storage.js");
-        const existing = await getMembershipByUserAndSchool(user.id, schoolId);
-        if (!existing) {
-          await createMembership({
-            userId: user.id,
-            schoolId,
-            role: staffRole,
-            status: "active",
-          });
         }
       }
 
@@ -516,35 +564,49 @@ const importStaffHandler = async (req: any, res: any, next: any) => {
     let skipped = 0;
 
     for (const u of users) {
-      const validation = await validateStaffEmailDomainForSchool(u.email, schoolId);
-      if (!validation.ok) {
+      const email = String(u.email || "").trim();
+      if (!email) {
         skipped++;
-        errors.push(`${u.email}: ${validation.message}`);
+        errors.push("missing email: Staff email is required.");
         continue;
       }
-      let user = await getUserByEmail(u.email);
+      const validation = await validateStaffImportEmailForSchool(email, schoolId);
+      if (validation) {
+        skipped++;
+        errors.push(formatImportPolicyError(email, validation));
+        continue;
+      }
+      let user = await getUserByEmail(email);
+      let createdUser = false;
       if (!user) {
         user = await createUser({
-          email: u.email,
-          firstName: u.firstName || u.email.split("@")[0],
+          email,
+          firstName: u.firstName || email.split("@")[0],
           lastName: u.lastName || "",
           googleId: u.id || null,
         });
-        imported++;
+        createdUser = true;
       } else {
         updated++;
       }
 
-      const { getMembershipByUserAndSchool } = await import("../../services/storage.js");
       const existing = await getMembershipByUserAndSchool(user.id, schoolId);
       if (!existing) {
-        await createMembership({
-          userId: user.id,
-          schoolId,
-          role: staffRole,
-          status: "active",
-        });
+        try {
+          await createMembership({
+            userId: user.id,
+            schoolId,
+            role: staffRole,
+            status: "active",
+          });
+        } catch (err: any) {
+          skipped++;
+          if (!createdUser) updated--;
+          errors.push(`${email}: ${err?.code || "MEMBERSHIP_CREATE_FAILED"}: ${err?.message || "Could not create staff membership."}`);
+          continue;
+        }
       }
+      if (createdUser) imported++;
     }
 
     void recordImportRun({

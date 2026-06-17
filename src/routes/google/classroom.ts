@@ -15,6 +15,12 @@ import {
   upsertClassroomCourse,
 } from "../../services/storage.js";
 import { recordImportRun } from "../../services/importLog.js";
+import {
+  checkStudentEmail,
+  studentEmailRules,
+  studentEmailTaken,
+  type StudentEmailRules,
+} from "../../services/studentEmailPolicy.js";
 
 const router = Router();
 
@@ -193,15 +199,23 @@ async function maybeAutoAssignGoPilotFamilies(schoolId: string, imported: number
 async function upsertStudentFromClassroom(
   schoolId: string,
   googleStudent: any,
-  options: { gradeLevel?: string | null; homeroomId?: string | null }
+  options: { gradeLevel?: string | null; homeroomId?: string | null; rules: StudentEmailRules }
 ): Promise<"imported" | "updated" | "skipped"> {
   const email = googleStudent.profile?.emailAddress?.trim();
   if (!email) return "skipped";
 
   const emailLc = email.toLowerCase();
+  const emailErr = checkStudentEmail(email, options.rules);
+  if (emailErr) {
+    throw Object.assign(new Error(emailErr.error), { code: emailErr.code });
+  }
   const firstName = googleStudent.profile?.name?.givenName || email.split("@")[0] || "";
   const lastName = googleStudent.profile?.name?.familyName || "";
   const existing = await getStudentByEmail(schoolId, emailLc);
+  const taken = await studentEmailTaken(schoolId, emailLc, existing?.id);
+  if (taken) {
+    throw Object.assign(new Error(taken), { code: "STUDENT_EMAIL_TAKEN" });
+  }
 
   if (existing) {
     await updateStudent(existing.id, {
@@ -354,6 +368,7 @@ router.post("/sync", ...adminAuth, async (req, res, next) => {
     let totalFound = 0;
     const results: unknown[] = [];
     const failures: string[] = [];
+    const rules = await studentEmailRules(schoolId);
 
     for (const course of courses) {
       const { courseId, grade, gradeLevel, homeroomId } = course;
@@ -372,12 +387,15 @@ router.post("/sync", ...adminAuth, async (req, res, next) => {
             const result = await upsertStudentFromClassroom(schoolId, gs, {
               gradeLevel: gradeLevel || grade || null,
               homeroomId: homeroomId || null,
+              rules,
             });
             if (result === "imported") imported++;
             else if (result === "updated") updated++;
             else skipped++;
-          } catch {
+          } catch (error: any) {
             skipped++;
+            const email = gs.profile?.emailAddress || gs.userId || "unknown student";
+            failures.push(`${email}: ${error?.code || "CLASSROOM_STUDENT_IMPORT_FAILED"}: ${error?.message || "Could not import Classroom student."}`);
           }
         }
 
@@ -437,18 +455,22 @@ router.post("/courses/:courseId/sync", ...adminAuth, async (req, res, next) => {
 
     const courseMeta = await getCourseMetadata(classroom, courseId);
     const googleStudents = await listCourseStudents(classroom, courseId);
+    const rules = await studentEmailRules(schoolId);
 
     let imported = 0;
     let updated = 0;
     let skipped = 0;
+    const failures: string[] = [];
     for (const gs of googleStudents) {
       try {
-        const result = await upsertStudentFromClassroom(schoolId, gs, { gradeLevel });
+        const result = await upsertStudentFromClassroom(schoolId, gs, { gradeLevel, rules });
         if (result === "imported") imported++;
         else if (result === "updated") updated++;
         else skipped++;
-      } catch {
+      } catch (error: any) {
         skipped++;
+        const email = gs.profile?.emailAddress || gs.userId || "unknown student";
+        failures.push(`${email}: ${error?.code || "CLASSROOM_STUDENT_IMPORT_FAILED"}: ${error?.message || "Could not import Classroom student."}`);
       }
     }
 
@@ -465,6 +487,7 @@ router.post("/courses/:courseId/sync", ...adminAuth, async (req, res, next) => {
       imported,
       updated,
       skipped,
+      failures,
     });
     return res.json({
       courseId,

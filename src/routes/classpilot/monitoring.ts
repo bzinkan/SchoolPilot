@@ -19,7 +19,16 @@ import {
   getActiveTeachingSessions,
   getDailyUsageForStudent,
 } from "../../services/storage.js";
+import {
+  checkStudentEmail,
+  duplicateEmailError,
+  existingEmailSets,
+  isUniqueViolation,
+  studentEmailRules,
+  studentEmailTaken,
+} from "../../services/studentEmailPolicy.js";
 import { logAudit } from "../../services/audit.js";
+import type { InsertStudent } from "../../schema/students.js";
 
 const router = Router();
 
@@ -143,18 +152,38 @@ router.post("/roster/student", ...auth, async (req, res, next) => {
     if (!firstName || !lastName) {
       return res.status(400).json({ error: "firstName and lastName required" });
     }
+    const schoolId = res.locals.schoolId!;
+    const normalizedEmail = typeof email === "string" ? email.trim() : "";
+    const emailErr = checkStudentEmail(
+      normalizedEmail || null,
+      await studentEmailRules(schoolId)
+    );
+    if (emailErr) {
+      return res.status(400).json({
+        error: emailErr.error,
+        code: emailErr.code,
+        expectedDomain: emailErr.expectedDomain,
+        actualDomain: emailErr.actualDomain,
+      });
+    }
+    if (normalizedEmail) {
+      const taken = await studentEmailTaken(schoolId, normalizedEmail.toLowerCase());
+      if (taken) {
+        return res.status(409).json({ error: taken, code: "STUDENT_EMAIL_TAKEN" });
+      }
+    }
 
     const student = await createStudent({
-      schoolId: res.locals.schoolId!,
+      schoolId,
       firstName,
       lastName,
-      email: email || null,
+      email: normalizedEmail || null,
       gradeLevel: gradeLevel || null,
       status: "active",
     });
 
     logAudit({
-      schoolId: res.locals.schoolId!,
+      schoolId,
       userId: req.authUser!.id,
       userEmail: req.authUser!.email,
       userRole: res.locals.membershipRole,
@@ -166,6 +195,12 @@ router.post("/roster/student", ...auth, async (req, res, next) => {
 
     return res.status(201).json({ student });
   } catch (err) {
+    if (isUniqueViolation(err)) {
+      return res.status(409).json({
+        error: "A student with this email, badge ID, or code already exists in this school.",
+        code: "STUDENT_DUPLICATE",
+      });
+    }
     next(err);
   }
 });
@@ -179,18 +214,57 @@ router.post("/roster/bulk", ...auth, requireRole("admin"), async (req, res, next
     }
 
     const schoolId = res.locals.schoolId!;
-    const rows = studentData.map((s: any) => ({
-      schoolId,
-      firstName: s.firstName,
-      lastName: s.lastName,
-      email: s.email || null,
-      gradeLevel: s.gradeLevel || null,
-      status: "active" as const,
-    }));
+    const rows: InsertStudent[] = [];
+    const errors: { index: number; error: string }[] = [];
+    const rules = await studentEmailRules(schoolId);
+    const emailSets = await existingEmailSets(schoolId);
+    const batchEmails = new Set<string>();
+
+    for (let i = 0; i < studentData.length; i++) {
+      const s = studentData[i];
+      if (!s?.firstName || !s?.lastName) {
+        errors.push({ index: i, error: "firstName and lastName required" });
+        continue;
+      }
+      const normalizedEmail = typeof s.email === "string" ? s.email.trim() : "";
+      const emailErr = checkStudentEmail(normalizedEmail || null, rules);
+      if (emailErr) {
+        errors.push({ index: i, error: emailErr.error });
+        continue;
+      }
+      if (normalizedEmail) {
+        const emailLc = normalizedEmail.toLowerCase();
+        const dupErr = duplicateEmailError(emailLc, emailSets, batchEmails);
+        if (dupErr) {
+          errors.push({ index: i, error: dupErr });
+          continue;
+        }
+        batchEmails.add(emailLc);
+      }
+      rows.push({
+        schoolId,
+        firstName: s.firstName,
+        lastName: s.lastName,
+        email: normalizedEmail || null,
+        gradeLevel: s.gradeLevel || null,
+        status: "active" as const,
+      });
+    }
 
     const created = await bulkCreateStudents(rows);
-    return res.json({ created: created.length, students: created });
+    return res.json({
+      created: created.length,
+      students: created,
+      errors: errors.length > 0 ? errors : undefined,
+      total: studentData.length,
+    });
   } catch (err) {
+    if (isUniqueViolation(err)) {
+      return res.status(409).json({
+        error: "A student with this email, badge ID, or code already exists in this school.",
+        code: "STUDENT_DUPLICATE",
+      });
+    }
     next(err);
   }
 });
