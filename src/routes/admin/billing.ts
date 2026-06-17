@@ -454,7 +454,6 @@ router.get(
         planTier: school.planTier,
         status: school.status,
         activeUntil: school.activeUntil,
-        trialEndsAt: school.trialEndsAt,
         totalPaid: school.totalPaid,
         lastPaymentAmount: school.lastPaymentAmount,
         lastPaymentDate: school.lastPaymentDate,

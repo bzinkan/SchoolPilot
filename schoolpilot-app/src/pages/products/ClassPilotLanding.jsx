@@ -257,7 +257,7 @@ export default function ClassPilotLanding() {
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
           <a href="/login" className="cp-nav-link">Sign in</a>
-          <a href="/get-started" className="cp-btn-primary">Start Free Trial</a>
+          <a href="/get-started" className="cp-btn-primary">Request Information</a>
         </div>
       </nav>
 
@@ -311,7 +311,7 @@ export default function ClassPilotLanding() {
 
           <div className="fade-4" style={{ display: 'flex', gap: '16px', marginBottom: '48px', flexWrap: 'wrap' }}>
             <a href="/get-started" className="cp-btn-primary" style={{ padding: '18px 36px', fontSize: '16px' }}>
-              Start Free Trial →
+              Request Information →
             </a>
             <a href="#features" className="cp-btn-secondary" style={{ padding: '18px 36px', fontSize: '16px' }}>
               Learn More
@@ -330,8 +330,8 @@ export default function ClassPilotLanding() {
               <div style={{ fontSize: '14px', color: '#64748b' }}>setup time</div>
             </div>
             <div>
-              <div style={{ fontSize: '28px', fontWeight: 600, letterSpacing: '-1px', color: '#f8fafc' }}>Free Trial</div>
-              <div style={{ fontSize: '14px', color: '#64748b' }}>no credit card</div>
+              <div style={{ fontSize: '28px', fontWeight: 600, letterSpacing: '-1px', color: '#f8fafc' }}>IT-ready</div>
+              <div style={{ fontSize: '14px', color: '#64748b' }}>onboarding support</div>
             </div>
           </div>
         </div>
@@ -958,7 +958,7 @@ export default function ClassPilotLanding() {
           maxWidth: '500px',
           margin: '0 auto 40px',
         }}>
-          Try ClassPilot with a free trial. No credit card required. Setup takes less than 10 minutes.
+          Tell us about your Chromebook environment and we'll follow up with deployment, roster, and pricing details.
         </p>
         <a href="/get-started" style={{
           background: '#0f172a',
@@ -973,7 +973,7 @@ export default function ClassPilotLanding() {
           textDecoration: 'none',
           display: 'inline-block',
         }}>
-          Start Free Trial →
+          Request Information →
         </a>
       </section>
 

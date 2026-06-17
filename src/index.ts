@@ -89,6 +89,89 @@ async function runStartupMigrations(): Promise<void> {
 
   try {
     await pool.query(`
+      CREATE TABLE IF NOT EXISTS school_inquiries (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        school_name TEXT NOT NULL,
+        domain TEXT,
+        contact_name TEXT NOT NULL,
+        contact_email TEXT NOT NULL,
+        contact_phone TEXT,
+        preferred_contact_method TEXT,
+        admin_it_email TEXT,
+        billing_email TEXT,
+        estimated_students TEXT,
+        interested_products TEXT,
+        questions TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        notes TEXT,
+        school_id TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT now(),
+        processed_at TIMESTAMP,
+        processed_by TEXT
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS school_inquiries_status_idx ON school_inquiries (status)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS school_inquiries_email_idx ON school_inquiries (contact_email)`);
+
+    const legacy = await pool.query<{ exists: string | null }>(`SELECT to_regclass('public.trial_requests') AS exists`);
+    if (legacy.rows[0]?.exists) {
+      const migrated = await pool.query(`
+        INSERT INTO school_inquiries (
+          id, school_name, domain, contact_name, contact_email, contact_phone,
+          estimated_students, interested_products, questions, status, notes,
+          school_id, created_at, processed_at, processed_by
+        )
+        SELECT
+          id,
+          school_name,
+          domain,
+          contact_name,
+          contact_email,
+          admin_phone,
+          estimated_students,
+          product,
+          message,
+          CASE
+            WHEN status = 'declined' THEN 'closed'
+            WHEN status IN ('pending', 'contacted', 'converted', 'closed') THEN status
+            ELSE 'pending'
+          END,
+          notes,
+          school_id,
+          created_at,
+          processed_at,
+          processed_by
+        FROM trial_requests tr
+        WHERE NOT EXISTS (
+          SELECT 1 FROM school_inquiries si WHERE si.id = tr.id
+        )
+      `);
+      if ((migrated.rowCount || 0) > 0) {
+        console.log(`[migration] migrated ${migrated.rowCount} legacy school inquiry rows`);
+      }
+    }
+
+    const normalized = await schedulerPool.query(`
+      UPDATE schools
+      SET
+        status = CASE WHEN status = 'trial' THEN 'active' ELSE status END,
+        plan_tier = CASE WHEN plan_tier = 'trial' THEN 'basic' ELSE plan_tier END,
+        trial_ends_at = NULL,
+        updated_at = now()
+      WHERE status = 'trial' OR plan_tier = 'trial' OR trial_ends_at IS NOT NULL
+    `);
+    if ((normalized.rowCount || 0) > 0) {
+      console.log(`[migration] normalized ${normalized.rowCount} schools to active/suspended lifecycle`);
+    }
+    await pool.query(`ALTER TABLE schools ALTER COLUMN status SET DEFAULT 'active'`);
+    await pool.query(`ALTER TABLE schools ALTER COLUMN plan_tier SET DEFAULT 'basic'`);
+    console.log("[migration] school inquiry table and active/suspended defaults ready");
+  } catch (err) {
+    console.warn("[migration] school inquiry migration skipped:", (err as Error).message);
+  }
+
+  try {
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS daily_usage (
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
         school_id TEXT NOT NULL,

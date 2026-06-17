@@ -19,9 +19,9 @@ export const TENANT_PREDICATE =
  * Tables that must NEVER get RLS: auth/bootstrap and cross-school registries that
  * are read before a school context exists (login, membership lookup, super-admin
  * billing) or that intentionally span schools. RLS here would break the auth
- * bootstrap chicken-and-egg. `trial_requests` is a public, pre-tenant sales
- * intake (nullable school_id, written by an unauthenticated flow and reviewed
- * cross-tenant by the super-admin) — deny-by-default would reject submissions.
+ * bootstrap chicken-and-egg. `school_inquiries` is public, pre-tenant intake
+ * written by an unauthenticated form and reviewed cross-tenant by super-admins.
+ * The legacy `trial_requests` table is retained only as a migration source.
  */
 export const RLS_GLOBAL_TABLES: ReadonlySet<string> = new Set([
   "users",
@@ -29,6 +29,7 @@ export const RLS_GLOBAL_TABLES: ReadonlySet<string> = new Set([
   "schools",
   "school_memberships",
   "product_licenses",
+  "school_inquiries",
   "trial_requests",
 ]);
 

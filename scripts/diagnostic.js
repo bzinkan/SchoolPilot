@@ -123,12 +123,12 @@ async function testPassPilot() {
   await test("PassPilot", "GET", `/super-admin/schools/${SCHOOL_ID}/billing`, [200, 404]);
   await test("PassPilot", "POST", `/super-admin/schools/${SCHOOL_ID}/impersonate`, [200, 404]);
   await test("PassPilot", "POST", `/super-admin/schools/${SCHOOL_ID}/reset-login`, [200, 404]);
-  await test("PassPilot", "GET", "/super-admin/trial-requests", [200, 404]);
+  await test("PassPilot", "GET", "/super-admin/inquiries", [200, 404]);
   await test("PassPilot", "GET", "/super-admin/admin-emails", [200, 404], "PP admin email list");
   await test("PassPilot", "POST", "/super-admin/broadcast-email", [200, 400, 404], "PP broadcast");
 
-  // Trial request (public)
-  await test("PassPilot", "POST", "/trial-request", [200, 400, 404], "PP trial request (singular)");
+  // School inquiry (public)
+  await test("PassPilot", "POST", "/admin/school-inquiries", [200, 400, 404], "PP school inquiry");
 
   // My classes
   await test("PassPilot", "GET", "/my-classes", [200, 404], "PP teacher my-classes dashboard");
@@ -234,8 +234,8 @@ async function testGoPilot() {
   // Super admin
   await test("GoPilot", "GET", "/super-admin/stats", [200, 404], "GP super admin stats");
   await test("GoPilot", "GET", "/super-admin/schools", [200, 404]);
-  await test("GoPilot", "POST", "/super-admin/trial-requests", [200, 400, 404], "GP trial request submit");
-  await test("GoPilot", "GET", "/super-admin/trial-requests", [200, 404]);
+  await test("GoPilot", "POST", "/admin/school-inquiries", [200, 400, 404], "GP school inquiry submit");
+  await test("GoPilot", "GET", "/super-admin/inquiries", [200, 404]);
 }
 
 async function testClassPilot() {
@@ -328,15 +328,15 @@ async function testClassPilot() {
 
   // Super admin (CP calls /super-admin/*)
   await test("ClassPilot", "GET", "/super-admin/schools", [200, 404], "CP super admin schools");
-  await test("ClassPilot", "GET", "/super-admin/trial-requests", [200, 404]);
+  await test("ClassPilot", "GET", "/super-admin/inquiries", [200, 404]);
   await test("ClassPilot", "POST", "/super-admin/stop-impersonate", [200, 404], "CP stop impersonate");
   await test("ClassPilot", "GET", "/super-admin/admin-emails", [200, 404], "CP admin emails");
 
   // Billing (CP calls /checkout/*)
   await test("ClassPilot", "POST", "/checkout/create-session", [200, 503, 404], "CP Stripe checkout");
 
-  // Trial requests (CP calls /trial-requests)
-  await test("ClassPilot", "POST", "/trial-requests", [200, 400, 404], "CP trial request");
+  // School inquiries
+  await test("ClassPilot", "POST", "/admin/school-inquiries", [200, 400, 404], "CP school inquiry");
 
   // Export
   await test("ClassPilot", "GET", "/export/activity", [200, 404], "CP activity export");

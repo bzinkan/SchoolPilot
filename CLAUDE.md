@@ -26,7 +26,7 @@ Backend lives at the root (`src/`), frontend in `schoolpilot-app/`. The ClassPil
 │   │   ├── passpilot/      # passes, kiosk
 │   │   ├── gopilot/        # dismissal, homerooms, pickups, bus-routes, families
 │   │   ├── google/         # OAuth, Classroom sync, Directory sync
-│   │   └── admin/          # Super admin, trial requests, billing
+│   │   └── admin/          # Super admin, school inquiries, billing
 │   ├── config/
 │   │   └── pricing.ts      # Product pricing constants, bundle discounts, calculateInvoice()
 │   ├── middleware/         # authenticate, requireRole, requireProductLicense, etc.
@@ -126,7 +126,7 @@ SchoolPilot is multi-tenant. Beyond the app-code rule of filtering every query b
 - Each tenant table has a `tenant_isolation` policy + `FORCE ROW LEVEL SECURITY`: `USING (school_id = current_setting('app.school_id', true) OR current_setting('app.is_super', true) = 'on')` with a matching `WITH CHECK`. Policy SQL lives in `src/db/rlsPolicies.ts`; it is applied and enabled per-table in `runStartupMigrations` (`src/index.ts`). `school_id` columns are TEXT (compared as text — no `::uuid` cast).
 - **Deny-by-default**: with no GUC set, `current_setting('app.school_id', true)` is NULL, so reads return **0 rows silently** and writes fail `WITH CHECK` (sometimes a swallowed error). This is the #1 footgun.
 - **Request path (the common case)**: `requireSchoolContext` / `requireDeviceAuth` call `bindTenantContext` (`src/middleware/tenantContext.ts`), which checks out one dedicated `pg` client, sets `app.school_id` (or `app.is_super='on'` for super-admins), and stashes it in `AsyncLocalStorage`. The exported Proxy `db` (`src/db.ts`) transparently routes every query to that GUC-scoped connection, then releases it on response finish. **No storage-function signatures change** — `db.select()/insert()/…` just works.
-- **Global tables (NO RLS)**: `users`, `session`, `schools`, `school_memberships`, `product_licenses`, `trial_requests` — read during the auth bootstrap before a school is known; safe to query without a GUC.
+- **Global tables (NO RLS)**: `users`, `session`, `schools`, `school_memberships`, `product_licenses`, `school_inquiries` — read during auth bootstrap or public pre-tenant intake before a school is known; safe to query without a GUC.
 - **Background / cross-school work**: `schedulerDb` / `schedulerPool` (`src/services/schedulerDb.ts`) set `app.is_super='on'` on every connection → bypass RLS. Use them for scheduler jobs and cross-school boot migrations.
 - **Out-of-request DB access**: for code that runs OUTSIDE an Express request — WebSocket/Socket.IO handlers, unauthenticated routes (kiosk, device register), detached `.then()`/`.catch()` callbacks that outlive the response — wrap the DB work in **`runWithTenantContext({ schoolId }, fn)`** (or `{ isSuper: true }` for genuinely cross-school reads), from `src/middleware/tenantContext.ts`. It establishes the same tenant ALS scope on a fresh connection.
 - **Kill-switch / rollout**: gated by env on the ECS task def — `RLS_GUC_ENABLED` (master on/off) and `RLS_ENABLED_TABLES` (comma-list of enforced tables). Dropping a table from the list (or `RLS_GUC_ENABLED=false`) disables enforcement on the next deploy — no code change.
@@ -486,7 +486,7 @@ Optional time-based auto-start/end for ClassPilot classes. Schema columns on `gr
 ### Super Admin Features
 - **Broadcast email**: POST `/super-admin/broadcast-email` sends to all school admins via SendGrid
 - **Reset login**: POST `/super-admin/schools/:id/reset-login` generates temp password AND emails it to the admin
-- **Trial management**: `trialDaysRemaining` computed field in school detail response
+- **School inquiries**: Public `/get-started` submissions are reviewed in Super Admin before creating an active or suspended school.
 - **Tax exemption**: Full S3 upload/download flow with Stripe tax-exempt status sync
 - **Impersonation**: Session-based, stores `originalUserId` to restore after
 

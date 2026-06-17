@@ -152,7 +152,7 @@ import {
   classroomCourses,
   classroomCourseStudents,
   auditLogs,
-  trialRequests,
+  schoolInquiries,
   studentSafetyCases,
   studentTimelineEvents,
   classpilotAiDecisions,
@@ -167,8 +167,8 @@ import {
   type InsertClassroomCourseStudent,
   type AuditLog,
   type InsertAuditLog,
-  type TrialRequest,
-  type InsertTrialRequest,
+  type SchoolInquiry,
+  type InsertSchoolInquiry,
   type StudentSafetyCase,
   type InsertStudentSafetyCase,
   type StudentTimelineEvent,
@@ -4148,62 +4148,62 @@ export async function createCheckIn(
 }
 
 // ============================================================================
-// Trial Request operations
+// School Inquiry operations
 // ============================================================================
 
-export async function createTrialRequest(
-  data: InsertTrialRequest
-): Promise<TrialRequest> {
-  const [request] = await db.insert(trialRequests).values(data).returning();
-  return request!;
+export async function createSchoolInquiry(
+  data: InsertSchoolInquiry
+): Promise<SchoolInquiry> {
+  const [inquiry] = await db.insert(schoolInquiries).values(data).returning();
+  return inquiry!;
 }
 
-export async function getTrialRequests(
+export async function getSchoolInquiries(
   filters: { status?: string; product?: string } = {}
-): Promise<TrialRequest[]> {
-  const conditions: ReturnType<typeof eq>[] = [];
+): Promise<SchoolInquiry[]> {
+  const conditions: SQL[] = [];
 
   if (filters.status) {
-    conditions.push(eq(trialRequests.status, filters.status));
+    conditions.push(eq(schoolInquiries.status, filters.status));
   }
   if (filters.product) {
-    conditions.push(eq(trialRequests.product, filters.product));
+    conditions.push(sql`${schoolInquiries.interestedProducts} ILIKE ${`%${filters.product}%`}`);
   }
 
   return db
     .select()
-    .from(trialRequests)
+    .from(schoolInquiries)
     .where(conditions.length > 0 ? and(...conditions) : undefined)
-    .orderBy(desc(trialRequests.createdAt));
+    .orderBy(desc(schoolInquiries.createdAt));
 }
 
-export async function getTrialRequestById(
+export async function getSchoolInquiryById(
   id: string
-): Promise<TrialRequest | undefined> {
-  const [request] = await db
+): Promise<SchoolInquiry | undefined> {
+  const [inquiry] = await db
     .select()
-    .from(trialRequests)
-    .where(eq(trialRequests.id, id))
+    .from(schoolInquiries)
+    .where(eq(schoolInquiries.id, id))
     .limit(1);
-  return request;
+  return inquiry;
 }
 
-export async function updateTrialRequest(
+export async function updateSchoolInquiry(
   id: string,
-  data: Partial<InsertTrialRequest>
-): Promise<TrialRequest | undefined> {
-  const [request] = await db
-    .update(trialRequests)
+  data: Partial<InsertSchoolInquiry>
+): Promise<SchoolInquiry | undefined> {
+  const [inquiry] = await db
+    .update(schoolInquiries)
     .set(data)
-    .where(eq(trialRequests.id, id))
+    .where(eq(schoolInquiries.id, id))
     .returning();
-  return request;
+  return inquiry;
 }
 
-export async function deleteTrialRequest(id: string): Promise<boolean> {
+export async function deleteSchoolInquiry(id: string): Promise<boolean> {
   const result = await db
-    .delete(trialRequests)
-    .where(eq(trialRequests.id, id));
+    .delete(schoolInquiries)
+    .where(eq(schoolInquiries.id, id));
   return (result.rowCount ?? 0) > 0;
 }
 

@@ -205,8 +205,8 @@ router.post("/register", authLimiter, async (req, res, next) => {
       school = await createSchool({
         name: schoolName,
         domain: email.split("@")[1]?.toLowerCase() || null,
-        status: "trial",
-        planTier: "trial",
+        status: "active",
+        planTier: "basic",
         schoolTimezone: timezone || "America/New_York",
       });
 

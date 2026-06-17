@@ -20,7 +20,7 @@ creation; the second is what the **school's IT admin** does before devices conne
    school. Only include what they paid for.
 4. **Admin account** — provide the school IT/admin's email (and name). This creates
    their login and emails them a temporary password. They are the school's admin.
-5. **Status** — `active` for paying, or set `trialDays` for a trial.
+5. **Status** — `active` for schools that should have access, `suspended` for schools that should be blocked.
 6. *(optional)* **School hours / timezone** — sets monitoring windows.
 
 A **settings row is now created automatically** for every school (you no longer need

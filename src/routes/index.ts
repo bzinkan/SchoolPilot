@@ -20,7 +20,7 @@ import chatRoutes from "./classpilot/chat.js";
 import dashboardRoutes from "./classpilot/dashboard.js";
 import competitiveRoutes from "./classpilot/competitive.js";
 import superAdminRoutes from "./admin/superAdmin.js";
-import trialRequestRoutes from "./admin/trialRequests.js";
+import schoolInquiryRoutes from "./admin/schoolInquiries.js";
 import billingRoutes from "./admin/billing.js";
 import attendanceRoutes from "./admin/attendance.js";
 import googleOAuthRoutes from "./google/oauth.js";
@@ -112,18 +112,6 @@ router.use((req: Request, _res: Response, next: NextFunction) => {
   // ClassPilot: /checkout/* → /admin/billing/checkout/*
   if (p === "/checkout" || p.startsWith("/checkout/")) {
     req.url = "/admin/billing/checkout" + req.url.slice("/checkout".length);
-    return next();
-  }
-
-  // --- Trial requests ---
-  // PassPilot: POST /trial-request (singular)
-  if (p === "/trial-request" && m === "POST") {
-    req.url = "/admin/trial-requests";
-    return next();
-  }
-  // ClassPilot: /trial-requests → /admin/trial-requests
-  if (p === "/trial-requests" || p.startsWith("/trial-requests/")) {
-    req.url = "/admin/trial-requests" + req.url.slice("/trial-requests".length);
     return next();
   }
 
@@ -355,7 +343,8 @@ router.use("/classpilot", competitiveRoutes);
 
 // Admin - Super admin panel
 router.use("/admin", superAdminRoutes);
-router.use("/admin/trial-requests", trialRequestRoutes);
+router.use("/admin/inquiries", schoolInquiryRoutes);
+router.use("/admin/school-inquiries", schoolInquiryRoutes);
 router.use("/admin/billing", billingRoutes);
 router.use("/admin/attendance", attendanceRoutes);
 

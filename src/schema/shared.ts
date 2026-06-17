@@ -451,39 +451,38 @@ export type EvidenceArtifact = typeof evidenceArtifacts.$inferSelect;
 export type InsertEvidenceArtifact = typeof evidenceArtifacts.$inferInsert;
 
 // ============================================================================
-// Trial Requests - Unified (superset of all three projects)
+// School Inquiries - Public informational intake for setup/sales follow-up
 // ============================================================================
-export const trialRequests = pgTable(
-  "trial_requests",
+export const schoolInquiries = pgTable(
+  "school_inquiries",
   {
     id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
     schoolName: text("school_name").notNull(),
     domain: text("domain"),
     contactName: text("contact_name").notNull(),
     contactEmail: text("contact_email").notNull(),
-    adminPhone: text("admin_phone"),
+    contactPhone: text("contact_phone"),
+    preferredContactMethod: text("preferred_contact_method"),
+    adminItEmail: text("admin_it_email"),
+    billingEmail: text("billing_email"),
     estimatedStudents: text("estimated_students"),
-    estimatedTeachers: text("estimated_teachers"),
-    message: text("message"),
-    zipCode: text("zip_code"),
-    product: text("product"), // Which product they're requesting: PASSPILOT | GOPILOT | CLASSPILOT | null (all)
-    status: text("status").notNull().default("pending"), // pending | contacted | converted | declined
+    interestedProducts: text("interested_products"), // Comma-separated PASSPILOT | GOPILOT | CLASSPILOT
+    questions: text("questions"),
+    status: text("status").notNull().default("pending"), // pending | contacted | converted | closed
     notes: text("notes"),
     schoolId: text("school_id"), // FK once provisioned
-    schoolStartTime: text("school_start_time"), // e.g. "08:00"
-    schoolEndTime: text("school_end_time"), // e.g. "16:00"
     createdAt: timestamp("created_at").notNull().default(sql`now()`),
     processedAt: timestamp("processed_at"),
     processedBy: text("processed_by"),
   },
   (table) => [
-    index("trial_requests_status_idx").on(table.status),
-    index("trial_requests_email_idx").on(table.contactEmail),
+    index("school_inquiries_status_idx").on(table.status),
+    index("school_inquiries_email_idx").on(table.contactEmail),
   ]
 );
 
-export type TrialRequest = typeof trialRequests.$inferSelect;
-export type InsertTrialRequest = typeof trialRequests.$inferInsert;
+export type SchoolInquiry = typeof schoolInquiries.$inferSelect;
+export type InsertSchoolInquiry = typeof schoolInquiries.$inferInsert;
 
 // ============================================================================
 // Express Sessions - For connect-pg-simple session store

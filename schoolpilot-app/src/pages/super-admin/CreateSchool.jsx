@@ -51,10 +51,9 @@ export default function CreateSchool() {
   const [form, setForm] = useState({
     name: searchParams.get('name') || '',
     domain: searchParams.get('domain') || '',
-    status: 'trial',
+    status: 'active',
     maxLicenses: 100,
-    trialDays: 30,
-    billingEmail: '',
+    billingEmail: searchParams.get('billingEmail') || '',
     firstAdminEmail: searchParams.get('email') || '',
     firstAdminName: searchParams.get('adminName') || '',
     firstAdminPassword: '',
@@ -229,8 +228,8 @@ export default function CreateSchool() {
               <label className="block text-sm font-medium text-slate-700 mb-1">Status</label>
               <select name="status" value={form.status} onChange={handleChange}
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
-                <option value="trial">Trial</option>
                 <option value="active">Active</option>
+                <option value="suspended">Suspended</option>
               </select>
             </div>
             <div>
@@ -238,13 +237,6 @@ export default function CreateSchool() {
               <input name="maxLicenses" type="number" value={form.maxLicenses} onChange={handleChange}
                 className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" />
             </div>
-            {form.status === 'trial' && (
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Trial Days</label>
-                <input name="trialDays" type="number" value={form.trialDays} onChange={handleChange}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm" />
-              </div>
-            )}
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Billing Email</label>
               <input name="billingEmail" value={form.billingEmail} onChange={handleChange}

@@ -131,7 +131,7 @@ export const createSchoolSchema = z.object({
       "Invalid domain format (e.g., school.org)"
     )
     .optional(),
-  status: z.enum(["trial", "active", "suspended"]).optional(),
+  status: z.enum(["active", "suspended"]).optional(),
   maxLicenses: z.number().min(1).optional(),
   maxTeachers: z.number().min(1).optional(),
   timezone: z.string().optional(),
@@ -146,8 +146,8 @@ export const updateSchoolSchema = z.object({
   domain: z.string().optional().nullable(),
   address: z.string().optional().nullable(),
   phone: z.string().optional().nullable(),
-  status: z.enum(["trial", "active", "suspended"]).optional(),
-  planTier: z.enum(["trial", "basic", "pro", "enterprise"]).optional(),
+  status: z.enum(["active", "suspended"]).optional(),
+  planTier: z.enum(["basic", "pro", "enterprise"]).optional(),
   maxTeachers: z.number().min(1).optional(),
   maxLicenses: z.number().min(1).optional(),
   billingEmail: z.string().email().optional().nullable(),
@@ -206,16 +206,19 @@ export const updateMembershipSchema = z.object({
 export type UpdateMembershipData = z.infer<typeof updateMembershipSchema>;
 
 // ============================================================================
-// Trial requests
+// School inquiries
 // ============================================================================
-export const trialRequestSchema = z.object({
+export const schoolInquirySchema = z.object({
   schoolName: z.string().min(2, "School name is required"),
   domain: z.string().optional(),
   contactName: z.string().min(2, "Your name is required"),
   contactEmail: z.string().email("Valid email is required"),
+  contactPhone: z.string().optional(),
+  preferredContactMethod: z.enum(["email", "phone", "either"]).optional(),
+  adminItEmail: z.string().email("Valid admin/IT email is required").optional().or(z.literal("")),
+  billingEmail: z.string().email("Valid billing email is required").optional().or(z.literal("")),
   estimatedStudents: z.string().optional(),
-  estimatedTeachers: z.string().optional(),
-  message: z.string().optional(),
-  product: z.enum(["PASSPILOT", "GOPILOT", "CLASSPILOT"]).optional(),
+  interestedProducts: z.array(z.enum(["PASSPILOT", "GOPILOT", "CLASSPILOT"])).optional(),
+  questions: z.string().optional(),
 });
-export type TrialRequestData = z.infer<typeof trialRequestSchema>;
+export type SchoolInquiryData = z.infer<typeof schoolInquirySchema>;

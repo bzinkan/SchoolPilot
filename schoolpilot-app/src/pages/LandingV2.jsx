@@ -242,7 +242,7 @@ export default function LandingV2() {
             onMouseOver={e => { e.target.style.transform = 'translateY(-2px)'; e.target.style.boxShadow = `0 8px 30px ${C.amberGlow}`; }}
             onMouseOut={e => { e.target.style.transform = 'translateY(0)'; e.target.style.boxShadow = `0 0 20px ${C.amberGlow}`; }}
           >
-            Get Started
+            Request Info
           </button>
         </div>
       </nav>
@@ -321,7 +321,7 @@ export default function LandingV2() {
               onMouseOver={e => { e.target.style.transform = 'translateY(-3px)'; e.target.style.boxShadow = `0 12px 40px ${C.amberGlow}`; }}
               onMouseOut={e => { e.target.style.transform = 'translateY(0)'; e.target.style.boxShadow = `0 4px 30px ${C.amberGlow}`; }}
             >
-              Start Free Trial
+              Request Information
             </button>
             <button
               style={{
@@ -559,7 +559,7 @@ export default function LandingV2() {
               Ready to simplify your school?
             </h2>
             <p style={{ color: C.textMuted, fontSize: 18, marginBottom: 40, position: 'relative' }}>
-              Start a free trial. No credit card required.
+              Tell us about your school and we'll follow up with onboarding, IT, and billing details.
             </p>
             <button
               onClick={() => navigate('/get-started')}
@@ -575,7 +575,7 @@ export default function LandingV2() {
               onMouseOver={e => { e.target.style.transform = 'translateY(-3px)'; e.target.style.boxShadow = `0 12px 50px ${C.amberGlow}`; }}
               onMouseOut={e => { e.target.style.transform = 'translateY(0)'; e.target.style.boxShadow = `0 4px 40px ${C.amberGlow}`; }}
             >
-              Get Started Free
+              Request Information
             </button>
           </div>
         </FadeIn>
