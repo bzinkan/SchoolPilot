@@ -1,9 +1,12 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 import { useTeachers, useGrades } from "../../../../hooks/use-students";
 import { usePassPilotAuth } from "../../../../hooks/usePassPilotAuth";
 import { apiRequest, queryClient } from "../../../../lib/queryClient";
 import api from "../../../../shared/utils/api";
+import ImportInClassPilotNotice from "../../../../shared/components/ImportInClassPilotNotice";
+import { useStudentImportHome } from "../../../../shared/hooks/useStudentImportHome";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../../components/ui/card";
 import { Button } from "../../../../components/ui/button";
 import { Input } from "../../../../components/ui/input";
@@ -401,6 +404,8 @@ function TeachersTab() {
 }
 
 function StudentRosterTab() {
+  const navigate = useNavigate();
+  const { consolidated, canLinkToClassPilot, importPath } = useStudentImportHome();
   const { school } = usePassPilotAuth();
   const [filterGrade, setFilterGrade] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
@@ -830,6 +835,13 @@ function StudentRosterTab() {
 
   return (
     <div className="space-y-4 mt-4">
+      {consolidated && (
+        <ImportInClassPilotNotice
+          canLink={canLinkToClassPilot}
+          onGoToClassPilot={() => navigate(importPath)}
+        />
+      )}
+
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
@@ -839,39 +851,41 @@ function StudentRosterTab() {
                 {filteredCount} student{filteredCount !== 1 ? "s" : ""}{selectedGradeLabel ? ` in ${selectedGradeLabel}` : ""}
               </p>
             </div>
-            <div className="flex items-center gap-2">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="outline">
-                    <Upload className="h-4 w-4 mr-1" />
-                    Import
-                    <ChevronDown className="h-3 w-3 ml-1" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={() => setCsvImportOpen(true)}>
-                    <FileSpreadsheet className="h-4 w-4 mr-2" />
-                    From CSV File
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => { setGoogleDirOpen(true); loadOrgUnits(); }}>
-                    <Cloud className="h-4 w-4 mr-2" />
-                    From Google Workspace
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => { setClassroomOpen(true); loadClassroomCourses(); }}>
-                    <GraduationCap className="h-4 w-4 mr-2" />
-                    From Google Classroom
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-              <Button variant="outline" onClick={() => setBulkOpen(true)}>
-                <Plus className="h-4 w-4 mr-1" />
-                Bulk Add
-              </Button>
-              <Button onClick={() => setAddOpen(true)}>
-                <Plus className="h-4 w-4 mr-1" />
-                Add Student
-              </Button>
-            </div>
+            {!consolidated && (
+              <div className="flex items-center gap-2">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline">
+                      <Upload className="h-4 w-4 mr-1" />
+                      Import
+                      <ChevronDown className="h-3 w-3 ml-1" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={() => setCsvImportOpen(true)}>
+                      <FileSpreadsheet className="h-4 w-4 mr-2" />
+                      From CSV File
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => { setGoogleDirOpen(true); loadOrgUnits(); }}>
+                      <Cloud className="h-4 w-4 mr-2" />
+                      From Google Workspace
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => { setClassroomOpen(true); loadClassroomCourses(); }}>
+                      <GraduationCap className="h-4 w-4 mr-2" />
+                      From Google Classroom
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                <Button variant="outline" onClick={() => setBulkOpen(true)}>
+                  <Plus className="h-4 w-4 mr-1" />
+                  Bulk Add
+                </Button>
+                <Button onClick={() => setAddOpen(true)}>
+                  <Plus className="h-4 w-4 mr-1" />
+                  Add Student
+                </Button>
+              </div>
+            )}
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -952,7 +966,11 @@ function StudentRosterTab() {
           {/* Student Table */}
           {filtered.length === 0 ? (
             <div className="py-8 text-center text-muted-foreground">
-              {(students ?? []).length === 0 ? "No students added yet." : "No students match the current filter."}
+              {(students ?? []).length === 0
+                ? consolidated
+                  ? "No students yet. Import students in ClassPilot to fill this roster."
+                  : "No students added yet."
+                : "No students match the current filter."}
             </div>
           ) : (
             <>
@@ -988,37 +1006,44 @@ function StudentRosterTab() {
                         </td>
                         <td className="py-3 px-4 text-right">
                           <div className="flex items-center justify-end gap-1">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-8 w-8 p-0"
-                              onClick={() => {
-                                setEditStudentId(student.id);
-                                setEditFirstName(student.firstName || "");
-                                setEditLastName(student.lastName || "");
-                                setEditGradeLevel(student.gradeLevel || "");
-                                setEditStudentOpen(true);
-                              }}
-                            >
-                              <Pencil className="h-4 w-4 text-blue-600" />
-                            </Button>
-                            <AlertDialog>
-                              <AlertDialogTrigger asChild>
-                                <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
-                                  <Trash2 className="h-4 w-4 text-destructive" />
+                            {consolidated && (
+                              <span className="text-xs text-muted-foreground">Managed in ClassPilot</span>
+                            )}
+                            {!consolidated && (
+                              <>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-8 w-8 p-0"
+                                  onClick={() => {
+                                    setEditStudentId(student.id);
+                                    setEditFirstName(student.firstName || "");
+                                    setEditLastName(student.lastName || "");
+                                    setEditGradeLevel(student.gradeLevel || "");
+                                    setEditStudentOpen(true);
+                                  }}
+                                >
+                                  <Pencil className="h-4 w-4 text-blue-600" />
                                 </Button>
-                              </AlertDialogTrigger>
-                              <AlertDialogContent>
-                                <AlertDialogHeader>
-                                  <AlertDialogTitle>Delete student?</AlertDialogTitle>
-                                  <AlertDialogDescription>This will permanently delete {student.firstName} {student.lastName}.</AlertDialogDescription>
-                                </AlertDialogHeader>
-                                <AlertDialogFooter>
-                                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                  <AlertDialogAction onClick={() => deleteStudent.mutate(student.id)}>Delete</AlertDialogAction>
-                                </AlertDialogFooter>
-                              </AlertDialogContent>
-                            </AlertDialog>
+                                <AlertDialog>
+                                  <AlertDialogTrigger asChild>
+                                    <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                                      <Trash2 className="h-4 w-4 text-destructive" />
+                                    </Button>
+                                  </AlertDialogTrigger>
+                                  <AlertDialogContent>
+                                    <AlertDialogHeader>
+                                      <AlertDialogTitle>Delete student?</AlertDialogTitle>
+                                      <AlertDialogDescription>This will permanently delete {student.firstName} {student.lastName}.</AlertDialogDescription>
+                                    </AlertDialogHeader>
+                                    <AlertDialogFooter>
+                                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                      <AlertDialogAction onClick={() => deleteStudent.mutate(student.id)}>Delete</AlertDialogAction>
+                                    </AlertDialogFooter>
+                                  </AlertDialogContent>
+                                </AlertDialog>
+                              </>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -1057,7 +1082,7 @@ function StudentRosterTab() {
       </Card>
 
       {/* Add Student Dialog */}
-      <Dialog open={addOpen} onOpenChange={setAddOpen}>
+      <Dialog open={!consolidated && addOpen} onOpenChange={setAddOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Add Student</DialogTitle></DialogHeader>
           <div className="space-y-3">
@@ -1110,7 +1135,7 @@ function StudentRosterTab() {
       </Dialog>
 
       {/* Bulk Add Dialog */}
-      <Dialog open={bulkOpen} onOpenChange={setBulkOpen}>
+      <Dialog open={!consolidated && bulkOpen} onOpenChange={setBulkOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Bulk Add Students</DialogTitle></DialogHeader>
           <div className="space-y-3">
@@ -1148,7 +1173,7 @@ function StudentRosterTab() {
       </Dialog>
 
       {/* Edit Student Dialog */}
-      <Dialog open={editStudentOpen} onOpenChange={setEditStudentOpen}>
+      <Dialog open={!consolidated && editStudentOpen} onOpenChange={setEditStudentOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Edit Student</DialogTitle></DialogHeader>
           <div className="space-y-3">
@@ -1265,7 +1290,7 @@ function StudentRosterTab() {
       </Dialog>
 
       {/* CSV Import Dialog */}
-      <Dialog open={csvImportOpen} onOpenChange={(open) => { setCsvImportOpen(open); if (!open) { setCsvFile(null); setCsvPreview([]); setCsvGradeLevel(""); setImportResult(null); } }}>
+      <Dialog open={!consolidated && csvImportOpen} onOpenChange={(open) => { setCsvImportOpen(open); if (!open) { setCsvFile(null); setCsvPreview([]); setCsvGradeLevel(""); setImportResult(null); } }}>
         <DialogContent className="max-w-2xl">
           <DialogHeader><DialogTitle>Import Students from CSV</DialogTitle></DialogHeader>
           <div className="space-y-4">
@@ -1348,7 +1373,7 @@ function StudentRosterTab() {
       </Dialog>
 
       {/* Google Workspace Directory Import Dialog */}
-      <Dialog open={googleDirOpen} onOpenChange={(open) => {
+      <Dialog open={!consolidated && googleDirOpen} onOpenChange={(open) => {
         setGoogleDirOpen(open);
         if (!open) {
           setOrgUnits([]); setSelectedOUs(new Set()); setExpandedOU(null);
@@ -1554,7 +1579,7 @@ function StudentRosterTab() {
       </Dialog>
 
       {/* Google Classroom Import Dialog */}
-      <Dialog open={classroomOpen} onOpenChange={(open) => { setClassroomOpen(open); if (!open) { setClassroomCourses([]); setClassroomSelectedCourse(""); setClassroomGradeLevel(""); setImportResult(null); } }}>
+      <Dialog open={!consolidated && classroomOpen} onOpenChange={(open) => { setClassroomOpen(open); if (!open) { setClassroomCourses([]); setClassroomSelectedCourse(""); setClassroomGradeLevel(""); setImportResult(null); } }}>
         <DialogContent className="max-w-2xl">
           <DialogHeader><DialogTitle>Import from Google Classroom</DialogTitle></DialogHeader>
           <div className="space-y-4">
@@ -1626,6 +1651,7 @@ function StudentRosterTab() {
 }
 
 function ClassesTab() {
+  const { consolidated } = useStudentImportHome();
   const { data: grades, isLoading } = useGrades();
   const [addOpen, setAddOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
@@ -1822,10 +1848,12 @@ function ClassesTab() {
   return (
     <div className="space-y-4 mt-4">
       <div className="flex justify-end gap-2">
-        <Button variant="outline" onClick={() => { setGcSyncOpen(true); loadGcCourses(); }}>
-          <GraduationCap className="h-4 w-4 mr-1" />
-          Sync from Google Classroom
-        </Button>
+        {!consolidated && (
+          <Button variant="outline" onClick={() => { setGcSyncOpen(true); loadGcCourses(); }}>
+            <GraduationCap className="h-4 w-4 mr-1" />
+            Sync from Google Classroom
+          </Button>
+        )}
         <Button onClick={() => setAddOpen(true)}>
           <Plus className="h-4 w-4 mr-1" />
           Add Class
@@ -1887,22 +1915,26 @@ function ClassesTab() {
                   {studentCountMap.get(grade.id) ?? 0} student{(studentCountMap.get(grade.id) ?? 0) !== 1 ? "s" : ""}
                 </p>
                 <div className="flex gap-1 mt-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => { setAddStudentGradeId(grade.id); setAddStudentGradeName(grade.name); setAddStudentOpen(true); }}
-                    className="h-6 text-xs px-2"
-                  >
-                    Add Student
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => { setBulkGradeId(grade.id); setBulkGradeName(grade.name); setBulkOpen(true); }}
-                    className="h-6 text-xs px-2"
-                  >
-                    Bulk Add
-                  </Button>
+                  {!consolidated && (
+                    <>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => { setAddStudentGradeId(grade.id); setAddStudentGradeName(grade.name); setAddStudentOpen(true); }}
+                        className="h-6 text-xs px-2"
+                      >
+                        Add Student
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => { setBulkGradeId(grade.id); setBulkGradeName(grade.name); setBulkOpen(true); }}
+                        className="h-6 text-xs px-2"
+                      >
+                        Bulk Add
+                      </Button>
+                    </>
+                  )}
                   <Button
                     size="sm"
                     variant="outline"
@@ -1968,24 +2000,30 @@ function ClassesTab() {
             {viewingStudents.length === 0 ? (
               <div className="text-center py-8">
                 <Users className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-                <p className="text-muted-foreground">No students in this class yet.</p>
-                <div className="flex gap-2 justify-center mt-4">
-                  <Button size="sm" onClick={() => { if (viewingGrade) { setAddStudentGradeId(viewingGrade.id); setAddStudentGradeName(viewingGrade.name); setViewOpen(false); setAddStudentOpen(true); } }}>Add Student</Button>
-                  <Button size="sm" variant="outline" onClick={() => { if (viewingGrade) { setBulkGradeId(viewingGrade.id); setBulkGradeName(viewingGrade.name); setViewOpen(false); setBulkOpen(true); } }}>Bulk Add</Button>
-                </div>
+                <p className="text-muted-foreground">
+                  {consolidated ? "No students assigned yet. Assign students from the shared ClassPilot roster." : "No students in this class yet."}
+                </p>
+                {!consolidated && (
+                  <div className="flex gap-2 justify-center mt-4">
+                    <Button size="sm" onClick={() => { if (viewingGrade) { setAddStudentGradeId(viewingGrade.id); setAddStudentGradeName(viewingGrade.name); setViewOpen(false); setAddStudentOpen(true); } }}>Add Student</Button>
+                    <Button size="sm" variant="outline" onClick={() => { if (viewingGrade) { setBulkGradeId(viewingGrade.id); setBulkGradeName(viewingGrade.name); setViewOpen(false); setBulkOpen(true); } }}>Bulk Add</Button>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
                   <p className="text-sm text-muted-foreground">{viewingStudents.length} student{viewingStudents.length !== 1 ? "s" : ""}</p>
-                  <div className="flex gap-2">
-                    <Button size="sm" onClick={() => { if (viewingGrade) { setAddStudentGradeId(viewingGrade.id); setAddStudentGradeName(viewingGrade.name); setViewOpen(false); setAddStudentOpen(true); } }}>
-                      <Plus className="w-4 h-4 mr-1" />Add Student
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => { if (viewingGrade) { setBulkGradeId(viewingGrade.id); setBulkGradeName(viewingGrade.name); setViewOpen(false); setBulkOpen(true); } }}>
-                      <Users className="w-4 h-4 mr-1" />Bulk Add
-                    </Button>
-                  </div>
+                  {!consolidated && (
+                    <div className="flex gap-2">
+                      <Button size="sm" onClick={() => { if (viewingGrade) { setAddStudentGradeId(viewingGrade.id); setAddStudentGradeName(viewingGrade.name); setViewOpen(false); setAddStudentOpen(true); } }}>
+                        <Plus className="w-4 h-4 mr-1" />Add Student
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => { if (viewingGrade) { setBulkGradeId(viewingGrade.id); setBulkGradeName(viewingGrade.name); setViewOpen(false); setBulkOpen(true); } }}>
+                        <Users className="w-4 h-4 mr-1" />Bulk Add
+                      </Button>
+                    </div>
+                  )}
                 </div>
                 {viewingStudents.map((student) => (
                   <div key={student.id} className="flex items-center justify-between p-3 bg-muted/30 rounded-lg">
@@ -2002,7 +2040,7 @@ function ClassesTab() {
       </Dialog>
 
       {/* Add Student to Class Dialog */}
-      <Dialog open={addStudentOpen} onOpenChange={setAddStudentOpen}>
+      <Dialog open={!consolidated && addStudentOpen} onOpenChange={setAddStudentOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Add Student to {addStudentGradeName}</DialogTitle></DialogHeader>
           <div className="space-y-3">
@@ -2033,7 +2071,7 @@ function ClassesTab() {
       </Dialog>
 
       {/* Bulk Add Students to Class Dialog */}
-      <Dialog open={bulkOpen} onOpenChange={setBulkOpen}>
+      <Dialog open={!consolidated && bulkOpen} onOpenChange={setBulkOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Bulk Add Students to {bulkGradeName}</DialogTitle></DialogHeader>
           <div className="space-y-3">
@@ -2172,7 +2210,7 @@ function ClassesTab() {
       </Dialog>
 
       {/* Google Classroom Sync Dialog */}
-      <Dialog open={gcSyncOpen} onOpenChange={(open) => {
+      <Dialog open={!consolidated && gcSyncOpen} onOpenChange={(open) => {
         setGcSyncOpen(open);
         if (!open) { setGcCourses([]); setGcSelected(new Set()); setGcCourseMapping({}); setGcResult(null); }
       }}>
