@@ -463,6 +463,15 @@ async function assertStaffMembershipEmailDomain(
   if (!validation.ok) {
     throw schoolIsolationError(validation.code!, validation.message!);
   }
+  // One email per person: a staff member can't reuse an email that already
+  // belongs to a student in this school (the reverse of the student-side guard).
+  const studentClash = await getStudentByEmail(data.schoolId, user.email.toLowerCase());
+  if (studentClash) {
+    throw schoolIsolationError(
+      "EMAIL_IN_USE_BY_STUDENT",
+      "This email is already assigned to a student in this school. Each person needs a unique email."
+    );
+  }
 }
 
 export async function getStaffEmailDomainMismatches(schoolId: string): Promise<Array<{
@@ -628,6 +637,19 @@ export async function getStudentsBySchool(
       and(eq(students.schoolId, schoolId), eq(students.status, "active"))
     )
     .orderBy(students.lastName, students.firstName);
+}
+
+// Lowercased emails of EVERY student in a school (any status) — used to detect
+// duplicate emails on bulk/CSV import without a DB hit per row. Inactive students
+// still hold the unique (school, email_lc) slot, so they count as conflicts.
+export async function getStudentEmailsBySchool(
+  schoolId: string
+): Promise<Set<string>> {
+  const rows = await db
+    .select({ emailLc: students.emailLc })
+    .from(students)
+    .where(eq(students.schoolId, schoolId));
+  return new Set(rows.map((r) => r.emailLc).filter((e): e is string => Boolean(e)));
 }
 
 export async function createStudent(data: InsertStudent): Promise<Student> {

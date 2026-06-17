@@ -20,6 +20,9 @@ import {
   getSchoolById,
   normalizeDomain,
   studentEmailDomainMatches,
+  getStudentByEmail,
+  getStudentEmailsBySchool,
+  getStaffBySchool,
 } from "../services/storage.js";
 import type { InsertStudent } from "../schema/students.js";
 import db from "../db.js";
@@ -61,6 +64,61 @@ async function studentEmailRules(
     (l) => l.product === "CLASSPILOT" && l.status === "active"
   );
   return { requireEmail, expectedDomain: normalizeDomain(school?.domain) };
+}
+
+// Postgres unique_violation — map a duplicate (email / badge / code) to a clear
+// 409 instead of the generic 500 the error handler would otherwise return.
+function isUniqueViolation(err: unknown): boolean {
+  return !!(err && typeof err === "object" && (err as { code?: string }).code === "23505");
+}
+
+// Single-record uniqueness check: reject if this email already belongs to another
+// student in the school (any status) or to a staff account here. One email per
+// person, student or teacher. excludeStudentId skips the record being edited.
+async function studentEmailTaken(
+  schoolId: string,
+  emailLc: string,
+  excludeStudentId?: string
+): Promise<string | null> {
+  const existing = await getStudentByEmail(schoolId, emailLc);
+  if (existing && existing.id !== excludeStudentId) {
+    return "A student with this email already exists in this school.";
+  }
+  const staff = await getStaffBySchool(schoolId);
+  if (staff.some((r) => (r.user.email || "").toLowerCase() === emailLc)) {
+    return "This email is already used by a staff account — each person needs a unique email.";
+  }
+  return null;
+}
+
+// Bulk variant: pre-fetch the school's existing student + staff emails once so
+// every row is checked against them (and earlier rows in the same file) with no
+// per-row DB hit.
+async function existingEmailSets(
+  schoolId: string
+): Promise<{ students: Set<string>; staff: Set<string> }> {
+  const [students, staffRows] = await Promise.all([
+    getStudentEmailsBySchool(schoolId),
+    getStaffBySchool(schoolId),
+  ]);
+  const staff = new Set(
+    staffRows.map((r) => (r.user.email || "").toLowerCase()).filter(Boolean)
+  );
+  return { students, staff };
+}
+
+function duplicateEmailError(
+  emailLc: string,
+  sets: { students: Set<string>; staff: Set<string> },
+  batch: Set<string>
+): string | null {
+  if (sets.staff.has(emailLc)) {
+    return "This email is already used by a staff account — each person needs a unique email.";
+  }
+  if (sets.students.has(emailLc) || batch.has(emailLc)) {
+    return "Duplicate student email — this address is already in use in this school.";
+  }
+  return null;
 }
 
 // Validate one student email against the rules. Returns null when OK, otherwise a
@@ -193,6 +251,17 @@ router.post(
         });
       }
 
+      // Uniqueness: one email per person (student or staff) within the school.
+      if (parsed.data.email) {
+        const taken = await studentEmailTaken(
+          res.locals.schoolId!,
+          parsed.data.email.toLowerCase()
+        );
+        if (taken) {
+          return res.status(409).json({ error: taken, code: "STUDENT_EMAIL_TAKEN" });
+        }
+      }
+
       const data: InsertStudent = {
         schoolId: res.locals.schoolId!,
         firstName: parsed.data.firstName,
@@ -210,6 +279,13 @@ router.post(
       const student = await createStudent(data);
       return res.status(201).json({ student });
     } catch (err) {
+      // Backstop for a race (or badge/code clash) that slipped past the pre-check.
+      if (isUniqueViolation(err)) {
+        return res.status(409).json({
+          error: "A student with this email, badge ID, or code already exists in this school.",
+          code: "STUDENT_DUPLICATE",
+        });
+      }
       next(err);
     }
   }
@@ -232,6 +308,8 @@ router.post(
       const toInsert: InsertStudent[] = [];
       const errors: { index: number; error: string }[] = [];
       const rules = await studentEmailRules(res.locals.schoolId!);
+      const emailSets = await existingEmailSets(res.locals.schoolId!);
+      const batchEmails = new Set<string>();
 
       for (let i = 0; i < studentData.length; i++) {
         const item = { ...studentData[i] };
@@ -255,6 +333,18 @@ router.post(
         if (emailErr) {
           errors.push({ index: i, error: emailErr.error });
           continue;
+        }
+
+        // Uniqueness: skip rows whose email already belongs to a student/staff
+        // in this school, or that repeats earlier in the same batch.
+        const emailLc = parsed.data.email?.toLowerCase();
+        if (emailLc) {
+          const dupErr = duplicateEmailError(emailLc, emailSets, batchEmails);
+          if (dupErr) {
+            errors.push({ index: i, error: dupErr });
+            continue;
+          }
+          batchEmails.add(emailLc);
         }
 
         toInsert.push({
@@ -323,6 +413,8 @@ const importCsvHandler = async (req: any, res: any, next: any) => {
     const toInsert: InsertStudent[] = [];
     const errors: { row: number; error: string }[] = [];
     const rules = await studentEmailRules(res.locals.schoolId!);
+    const emailSets = await existingEmailSets(res.locals.schoolId!);
+    const batchEmails = new Set<string>();
 
     for (let i = 0; i < rows.length; i++) {
       const raw = rows[i];
@@ -356,6 +448,18 @@ const importCsvHandler = async (req: any, res: any, next: any) => {
       if (emailErr) {
         errors.push({ row: i + 1, error: emailErr.error });
         continue;
+      }
+
+      // Uniqueness: skip rows duplicating an existing student/staff email or an
+      // earlier row in the same file.
+      const emailLc = email?.toLowerCase();
+      if (emailLc) {
+        const dupErr = duplicateEmailError(emailLc, emailSets, batchEmails);
+        if (dupErr) {
+          errors.push({ row: i + 1, error: dupErr });
+          continue;
+        }
+        batchEmails.add(emailLc);
       }
 
       const studentIdNumber =
@@ -451,9 +555,26 @@ router.put(
               skipped.push({ id: item.id, error: emailDomainError(dom.expectedDomain, dom.actualDomain) });
               continue;
             }
+            // Uniqueness: don't let an email change collide with another
+            // student/staff in the school.
+            if (itemEmail) {
+              const taken = await studentEmailTaken(res.locals.schoolId!, String(itemEmail).toLowerCase(), item.id);
+              if (taken) {
+                skipped.push({ id: item.id, error: taken });
+                continue;
+              }
+            }
           }
-          const updated = await updateStudent(item.id, item);
-          if (updated) results.push(updated);
+          try {
+            const updated = await updateStudent(item.id, item);
+            if (updated) results.push(updated);
+          } catch (err) {
+            if (isUniqueViolation(err)) {
+              skipped.push({ id: item.id, error: "Duplicate email, badge ID, or code." });
+              continue;
+            }
+            throw err;
+          }
         }
       }
       return res.json({
@@ -545,6 +666,17 @@ router.put(
             actualDomain: dom.actualDomain,
           });
         }
+        // Uniqueness: an email change can't collide with another student/staff.
+        if (parsed.data.email) {
+          const taken = await studentEmailTaken(
+            res.locals.schoolId!,
+            parsed.data.email.toLowerCase(),
+            param(req, "studentId")
+          );
+          if (taken) {
+            return res.status(409).json({ error: taken, code: "STUDENT_EMAIL_TAKEN" });
+          }
+        }
       }
 
       const updateData: Record<string, unknown> = { ...parsed.data };
@@ -562,6 +694,12 @@ router.put(
       const student = await updateStudent(param(req, "studentId"), updateData);
       return res.json({ student });
     } catch (err) {
+      if (isUniqueViolation(err)) {
+        return res.status(409).json({
+          error: "A student with this email, badge ID, or code already exists in this school.",
+          code: "STUDENT_DUPLICATE",
+        });
+      }
       next(err);
     }
   }
@@ -600,6 +738,17 @@ router.patch(
             actualDomain: dom.actualDomain,
           });
         }
+        // Uniqueness: an email change can't collide with another student/staff.
+        if (parsed.data.email) {
+          const taken = await studentEmailTaken(
+            res.locals.schoolId!,
+            parsed.data.email.toLowerCase(),
+            param(req, "studentId")
+          );
+          if (taken) {
+            return res.status(409).json({ error: taken, code: "STUDENT_EMAIL_TAKEN" });
+          }
+        }
       }
 
       const updateData: Record<string, unknown> = { ...parsed.data };
@@ -617,6 +766,12 @@ router.patch(
       const student = await updateStudent(param(req, "studentId"), updateData);
       return res.json({ student });
     } catch (err) {
+      if (isUniqueViolation(err)) {
+        return res.status(409).json({
+          error: "A student with this email, badge ID, or code already exists in this school.",
+          code: "STUDENT_DUPLICATE",
+        });
+      }
       next(err);
     }
   }
