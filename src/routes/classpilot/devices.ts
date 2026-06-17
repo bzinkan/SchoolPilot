@@ -413,12 +413,9 @@ router.post("/extension/register", extensionLimiter, async (req, res, next) => {
 
     // If studentEmail provided, also register the student and return a token
     if (studentEmail) {
-      // Exact email match first (precise), then fall back to fuzzy search
+      // Device enrollment must only link to an exact roster email. A fuzzy
+      // partial match can bind a Chromebook to the wrong student.
       let student = await getStudentByEmail(resolvedSchoolId, studentEmail.toLowerCase());
-      if (!student) {
-        const existing = await searchStudents(resolvedSchoolId, { search: studentEmail });
-        student = existing[0];
-      }
 
       if (!student) {
         // POLICY: by default a student must be pre-imported by an IT admin — an
