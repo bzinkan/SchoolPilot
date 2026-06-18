@@ -26,7 +26,7 @@ import { students } from "../schema/students.js";
 import { users } from "../schema/core.js";
 import { settings as schoolSettings } from "../schema/shared.js";
 import { emailAlerts } from "../schema/mailpilot.js";
-import { eq, and, desc, gte, isNotNull, isNull, sql } from "drizzle-orm";
+import { eq, and, desc, gte, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import {
   getWatchesDueForRenewal,
   upsertMailpilotWatch,
@@ -891,7 +891,21 @@ async function renewMailpilotWatches() {
   if (!isMailpilotConfigured()) return;
   try {
     // Use schedulerDb (dedicated pool, max 3) — never the main API pool
-    const dueForRenewal = await getWatchesDueForRenewal(24 * 60 * 60 * 1000, schedulerDb);
+    const allDueForRenewal = await getWatchesDueForRenewal(24 * 60 * 60 * 1000, schedulerDb);
+    if (allDueForRenewal.length === 0) return;
+    const schoolIds = Array.from(new Set(allDueForRenewal.map((w) => w.schoolId)));
+    const entitledSchools = await schedulerDb
+      .select({ id: schools.id })
+      .from(schools)
+      .where(
+        and(
+          inArray(schools.id, schoolIds),
+          eq(schools.mailpilotEntitled, true),
+          eq(schools.classpilotEmailMonitoring, true)
+        )
+      );
+    const entitledSchoolIds = new Set(entitledSchools.map((school) => school.id));
+    const dueForRenewal = allDueForRenewal.filter((watch) => entitledSchoolIds.has(watch.schoolId));
     if (dueForRenewal.length === 0) return;
 
     console.log(`[MailPilot] Renewing ${dueForRenewal.length} Gmail watch(es)`);

@@ -26,6 +26,8 @@ export function useClassPilotAuth() {
         isSuperAdmin: user.isSuperAdmin === true,
         schoolId: activeSchoolId,
         schoolName: activeMembership?.schoolName || '',
+        mailpilotEntitled: activeMembership?.mailpilotEntitled === true,
+        classpilotEmailMonitoring: activeMembership?.classpilotEmailMonitoring === true,
         displayName: user.firstName && user.lastName
           ? `${user.firstName} ${user.lastName}`
           : user.firstName || user.email,
@@ -40,6 +42,8 @@ export function useClassPilotAuth() {
         id: activeMembership.schoolId,
         name: activeMembership.schoolName || '',
         timezone: activeMembership.schoolTimezone || 'America/New_York',
+        mailpilotEntitled: activeMembership.mailpilotEntitled === true,
+        classpilotEmailMonitoring: activeMembership.classpilotEmailMonitoring === true,
       }
     : null;
 

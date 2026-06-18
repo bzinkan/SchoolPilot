@@ -6,24 +6,21 @@ import { requireProductLicense } from "../../middleware/requireProductLicense.js
 import { requireRole } from "../../middleware/requireRole.js";
 import {
   getSchoolById,
-  updateSchool,
-  getStudentsBySchool,
-  getStudentByEmailAnySchool,
   getMailpilotWatchesBySchool,
-  getMailpilotWatchByEmail,
-  upsertMailpilotWatch,
-  deleteMailpilotWatch,
 } from "../../services/storage.js";
 import {
   getServiceAccountClientId,
   getServiceAccountScope,
   isMailpilotConfigured,
-  getGmailClientForStudent,
-  startWatch,
-  stopWatch,
 } from "../../services/mailpilotGmail.js";
 import { logAudit } from "../../services/audit.js";
-import { runWithTenantContext } from "../../middleware/tenantContext.js";
+import {
+  MailpilotProvisioningError,
+  resyncMailpilotMonitoringForSchool,
+  startMailpilotMonitoringForSchool,
+  stopMailpilotMonitoringForSchool,
+  verifyMailpilotMailboxForSchool,
+} from "../../services/mailpilotProvisioning.js";
 
 const router = Router();
 
@@ -35,8 +32,30 @@ const auth = [
   requireRole("admin", "school_admin"),
 ] as const;
 
+function handleMailpilotError(err: unknown, res: any, next: any) {
+  if (err instanceof MailpilotProvisioningError) {
+    return res.status(err.status).json({
+      error: err.message,
+      ...(err.detail ? { detail: err.detail } : {}),
+    });
+  }
+  return next(err);
+}
+
+async function requireMailPilotEntitlement(_req: any, res: any, next: any) {
+  try {
+    const school = await getSchoolById(res.locals.schoolId!);
+    if (!school?.mailpilotEntitled) {
+      return res.status(403).json({ error: "MailPilot is not enabled for this school" });
+    }
+    next();
+  } catch (err) {
+    next(err);
+  }
+}
+
 // GET /api/mailpilot/setup/info - wizard info (SA client ID, scope, enabled flag)
-router.get("/setup/info", ...auth, async (_req, res, next) => {
+router.get("/setup/info", ...auth, requireMailPilotEntitlement, async (_req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
     const school = await getSchoolById(schoolId);
@@ -46,6 +65,7 @@ router.get("/setup/info", ...auth, async (_req, res, next) => {
     const watches = await getMailpilotWatchesBySchool(schoolId);
 
     return res.json({
+      entitled: Boolean(school?.mailpilotEntitled),
       enabled: Boolean(school?.classpilotEmailMonitoring),
       configured, // server has SA key + Pub/Sub topic configured
       serviceAccountClientId: clientId,
@@ -61,112 +81,25 @@ router.get("/setup/info", ...auth, async (_req, res, next) => {
 });
 
 // POST /api/mailpilot/setup/verify - test DWD by calling Gmail API for one student
-router.post("/setup/verify", ...auth, async (req, res, next) => {
+router.post("/setup/verify", ...auth, requireMailPilotEntitlement, async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
     const { testEmail } = req.body as { testEmail?: string };
-    if (!testEmail) {
-      return res.status(400).json({ error: "testEmail required" });
-    }
-    if (!isMailpilotConfigured()) {
-      return res.status(503).json({ error: "MailPilot service account not configured on server" });
-    }
-
-    // Confirm the test email belongs to this school (or domain matches). This is
-    // a deliberate cross-school existence check — the guard below rejects emails
-    // owned by another school — so it must run super-scoped or RLS would hide the
-    // foreign row and the check would fail open.
-    const student = await runWithTenantContext({ isSuper: true }, () => getStudentByEmailAnySchool(testEmail));
-    if (student && student.schoolId !== schoolId) {
-      return res.status(400).json({ error: "testEmail does not belong to this school" });
-    }
-
-    try {
-      const gmail = getGmailClientForStudent(testEmail);
-      await gmail.users.getProfile({ userId: "me" });
-      return res.json({ ok: true, email: testEmail });
-    } catch (err: any) {
-      const msg = err?.response?.data?.error_description
-        || err?.response?.data?.error
-        || err?.message
-        || "Unknown error";
-      const status = err?.code || err?.status || 500;
-      return res.status(400).json({
-        ok: false,
-        error: "Gmail API rejected impersonation. Check domain-wide delegation in Google Admin Console.",
-        detail: String(msg).slice(0, 500),
-        status,
-      });
-    }
+    return res.json(await verifyMailpilotMailboxForSchool(schoolId, testEmail));
   } catch (err) {
-    next(err);
+    return handleMailpilotError(err, res, next);
   }
 });
 
 // POST /api/mailpilot/setup/enable - turn monitoring ON + start watches
-router.post("/setup/enable", ...auth, async (req, res, next) => {
+router.post("/setup/enable", ...auth, requireMailPilotEntitlement, async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
-    const school = await getSchoolById(schoolId);
-    if (!school) return res.status(404).json({ error: "School not found" });
-
-    if (!isMailpilotConfigured()) {
-      return res.status(503).json({ error: "MailPilot service account not configured on server" });
-    }
-
     const { orgUnitPaths, studentIds } = req.body as {
       orgUnitPaths?: string[];
       studentIds?: string[];
     };
-
-    // Determine which student emails to watch
-    let targetStudents: Array<{ id: string; email: string | null }>;
-    const allStudents = await getStudentsBySchool(schoolId);
-    if (Array.isArray(studentIds) && studentIds.length > 0) {
-      const ids = new Set(studentIds);
-      targetStudents = allStudents.filter((s) => ids.has(s.id) && s.email);
-    } else {
-      // Default: every student with an email address
-      targetStudents = allStudents.filter((s) => Boolean(s.email));
-    }
-
-    if (targetStudents.length === 0) {
-      return res.status(400).json({ error: "No students with email addresses found" });
-    }
-
-    // Flip the flag
-    await updateSchool(schoolId, {
-      classpilotEmailMonitoring: true,
-      mailpilotOrgUnits: orgUnitPaths && orgUnitPaths.length > 0 ? JSON.stringify(orgUnitPaths) : null,
-    });
-
-    // Start Gmail watches (batch with concurrency cap to avoid quota bursts)
-    let started = 0;
-    let failed = 0;
-    const concurrency = 5;
-    const queue = [...targetStudents];
-    async function worker() {
-      while (queue.length > 0) {
-        const s = queue.shift();
-        if (!s || !s.email) continue;
-        try {
-          const result = await startWatch(s.email);
-          await upsertMailpilotWatch({
-            schoolId,
-            studentId: s.id,
-            studentEmail: s.email.toLowerCase(),
-            historyId: result.historyId,
-            expiresAt: result.expiration,
-            status: "active",
-          });
-          started++;
-        } catch (err: any) {
-          failed++;
-          console.error(`[MailPilot] startWatch failed for ${s.email}:`, err?.message || err);
-        }
-      }
-    }
-    await Promise.all(Array.from({ length: concurrency }, () => worker()));
+    const result = await startMailpilotMonitoringForSchool(schoolId, { orgUnitPaths, studentIds });
 
     await logAudit({
       userId: req.authUser!.id,
@@ -175,43 +108,24 @@ router.post("/setup/enable", ...auth, async (req, res, next) => {
       entityType: "school",
       entityId: schoolId,
       schoolId,
-      metadata: { studentsTargeted: targetStudents.length, started, failed },
+      metadata: {
+        studentsTargeted: result.studentsTargeted,
+        started: result.watchesStarted,
+        failed: result.failed,
+      },
     });
 
-    return res.json({ enabled: true, watchesStarted: started, failed });
+    return res.json(result);
   } catch (err) {
-    next(err);
+    return handleMailpilotError(err, res, next);
   }
 });
 
 // POST /api/mailpilot/setup/disable - turn monitoring OFF + stop all watches
-router.post("/setup/disable", ...auth, async (req, res, next) => {
+router.post("/setup/disable", ...auth, requireMailPilotEntitlement, async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
-    const watches = await getMailpilotWatchesBySchool(schoolId);
-
-    let stopped = 0;
-    const concurrency = 5;
-    const queue = [...watches];
-    async function worker() {
-      while (queue.length > 0) {
-        const w = queue.shift();
-        if (!w) continue;
-        try {
-          await stopWatch(w.studentEmail);
-        } catch (err) {
-          console.warn(`[MailPilot] stopWatch failed for ${w.studentEmail}:`, (err as Error).message);
-        }
-        await deleteMailpilotWatch(w.studentEmail);
-        stopped++;
-      }
-    }
-    await Promise.all(Array.from({ length: concurrency }, () => worker()));
-
-    await updateSchool(schoolId, {
-      classpilotEmailMonitoring: false,
-      mailpilotOrgUnits: null,
-    });
+    const result = await stopMailpilotMonitoringForSchool(schoolId);
 
     await logAudit({
       userId: req.authUser!.id,
@@ -220,76 +134,23 @@ router.post("/setup/disable", ...auth, async (req, res, next) => {
       entityType: "school",
       entityId: schoolId,
       schoolId,
-      metadata: { watchesStopped: stopped },
+      metadata: { watchesStopped: result.watchesStopped },
     });
 
-    return res.json({ enabled: false, watchesStopped: stopped });
+    return res.json(result);
   } catch (err) {
-    next(err);
+    return handleMailpilotError(err, res, next);
   }
 });
 
 // POST /api/mailpilot/setup/resync - re-enumerate students and sync watches (add new, stop removed)
-router.post("/setup/resync", ...auth, async (_req, res, next) => {
+router.post("/setup/resync", ...auth, requireMailPilotEntitlement, async (_req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
-    const school = await getSchoolById(schoolId);
-    if (!school?.classpilotEmailMonitoring) {
-      return res.status(400).json({ error: "Email monitoring not enabled" });
-    }
-
-    const students = await getStudentsBySchool(schoolId);
-    const withEmail = students.filter((s) => s.email);
-    const existingWatches = await getMailpilotWatchesBySchool(schoolId);
-    const existingByEmail = new Map(existingWatches.map((w) => [w.studentEmail.toLowerCase(), w]));
-    const currentStudentEmails = new Set(withEmail.map((s) => s.email!.toLowerCase()));
-
-    let added = 0;
-    let removed = 0;
-    const concurrency = 5;
-
-    // Stop watches for students no longer in the roster
-    const toRemove = existingWatches.filter((w) => !currentStudentEmails.has(w.studentEmail.toLowerCase()));
-    const removeQueue = [...toRemove];
-    async function removeWorker() {
-      while (removeQueue.length > 0) {
-        const w = removeQueue.shift();
-        if (!w) continue;
-        try { await stopWatch(w.studentEmail); } catch { /* best effort */ }
-        await deleteMailpilotWatch(w.studentEmail);
-        removed++;
-      }
-    }
-    await Promise.all(Array.from({ length: concurrency }, () => removeWorker()));
-
-    // Start watches for new students
-    const toAdd = withEmail.filter((s) => !existingByEmail.has(s.email!.toLowerCase()));
-    const addQueue = [...toAdd];
-    async function addWorker() {
-      while (addQueue.length > 0) {
-        const s = addQueue.shift();
-        if (!s || !s.email) continue;
-        try {
-          const result = await startWatch(s.email);
-          await upsertMailpilotWatch({
-            schoolId,
-            studentId: s.id,
-            studentEmail: s.email.toLowerCase(),
-            historyId: result.historyId,
-            expiresAt: result.expiration,
-            status: "active",
-          });
-          added++;
-        } catch (err) {
-          console.error(`[MailPilot] resync startWatch failed for ${s.email}:`, (err as Error).message);
-        }
-      }
-    }
-    await Promise.all(Array.from({ length: concurrency }, () => addWorker()));
-
-    return res.json({ added, removed, totalActive: existingWatches.length + added - removed });
+    const result = await resyncMailpilotMonitoringForSchool(schoolId);
+    return res.json(result);
   } catch (err) {
-    next(err);
+    return handleMailpilotError(err, res, next);
   }
 });
 

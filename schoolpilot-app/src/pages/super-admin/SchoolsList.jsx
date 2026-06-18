@@ -281,6 +281,9 @@ export default function SchoolsList() {
                       {(school.products || []).includes('GOPILOT') && (
                         <span className="inline-flex px-1.5 py-0.5 rounded text-[10px] font-semibold bg-indigo-500 text-white">GP</span>
                       )}
+                      {school.mailpilotEntitled && (
+                        <span className="inline-flex px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-600 text-white">MP</span>
+                      )}
                     </div>
                   </td>
                   <td className="p-4">

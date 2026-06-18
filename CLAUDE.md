@@ -500,7 +500,7 @@ Claude-powered chat assistant at `/api/ai-chat/*`. Frontend FAB is commented out
 - **Escalation**: Chat tool executor auto-emails dev team on unexpected tool errors
 
 ### MailPilot — ClassPilot Email Safety Monitoring Add-on
-Gmail inbound + outbound scanning for K-12 safety concerns (self-harm, violence, sexual content, drugs, bullying). Packaged as a **ClassPilot add-on**, not a standalone product — gated by the `classpilot_email_monitoring` boolean on `schools`, not a product license.
+Gmail inbound + outbound scanning for K-12 safety concerns (self-harm, violence, sexual content, drugs, bullying). Packaged as a **paid ClassPilot add-on**, not a standalone product. Super Admin entitlement is tracked by `schools.mailpilot_entitled`; school-admin operational monitoring is tracked separately by `schools.classpilot_email_monitoring`.
 
 **Architecture:**
 ```
@@ -522,14 +522,14 @@ Student Gmail ──► Gmail watch() ──► GCP Pub/Sub topic ──► webh
 
 **Key files:**
 - **Schema**: `src/schema/mailpilot.ts` — `mailpilot_watches`, `email_alerts`, `email_scan_log`
-- **Schema column**: `classpilot_email_monitoring` boolean + `mailpilot_org_units` on `schools` (auto-migrated in `index.ts`)
+- **Schema columns**: `mailpilot_entitled`, `classpilot_email_monitoring`, and `mailpilot_org_units` on `schools` (auto-migrated in `index.ts`)
 - **AI classifier**: `classifyEmail()` in `src/services/aiClassification.ts` — Claude Haiku with severity + confidence + reasoning, no cache (emails are unique). Returns `safetyAlert`, `bullying`, `severity`, `confidence`, `reasoning`.
 - **Gmail client**: `src/services/mailpilotGmail.ts` — JWT impersonation via `new google.auth.JWT({ subject: studentEmail })`, `startWatch`/`stopWatch`, `listHistorySince`, `fetchMessage` (MIME walker: plain text preferred, HTML fallback with tag stripping)
 - **Pub/Sub webhook**: `src/routes/mailpilot/pubsub.ts` — bearer-token auth via `MAILPILOT_PUBSUB_VERIFY_TOKEN` (query string `?token=...`), fires async and always returns 2xx to prevent Pub/Sub retry storms. On `history_expired` error, auto-rebootstraps the watch.
-- **Setup routes**: `src/routes/mailpilot/setup.ts` — `/setup/info`, `/setup/verify` (tests DWD with one student), `/setup/enable` (flips flag + starts watches with concurrency cap of 5), `/setup/disable`, `/setup/resync` (diffs roster, adds/removes watches)
-- **Alert routes**: `src/routes/mailpilot/alerts.ts` — list/stats/detail/review (confirmed | dismissed | escalated)
-- **Super admin toggle**: `POST /api/super-admin/schools/:id/email-monitoring` in `superAdmin.ts` — requires active CLASSPILOT license
-- **Scheduler**: `renewMailpilotWatches()` in `scheduler.ts` — hourly, renews any watch expiring within 24h (Gmail watches expire every 7 days)
+- **Setup routes**: `src/routes/mailpilot/setup.ts` — `/setup/info`, `/setup/verify` (tests DWD with one student), `/setup/enable` (flips operational monitoring + starts watches with concurrency cap of 5), `/setup/disable`, `/setup/resync` (diffs roster, adds/removes watches). All setup routes require `mailpilot_entitled=true`.
+- **Alert routes**: `src/routes/mailpilot/alerts.ts` — list/stats/detail/review (confirmed | dismissed | escalated). Alert routes require both `mailpilot_entitled=true` and `classpilot_email_monitoring=true`.
+- **Super admin toggle**: `POST /api/super-admin/schools/:id/email-monitoring` in `superAdmin.ts` — toggles paid MailPilot entitlement (`mailpilot_entitled`) and requires active CLASSPILOT license to enable. Disabling entitlement stops watches and clears operational monitoring.
+- **Scheduler**: `renewMailpilotWatches()` in `scheduler.ts` — hourly, renews any watch expiring within 24h (Gmail watches expire every 7 days) only for entitled schools with monitoring enabled.
 - **Frontend**: `schoolpilot-app/src/products/classpilot/pages/EmailMonitoring.jsx` (dashboard) + `EmailMonitoringSetup.jsx` (3-step wizard: Overview → Authorize DWD → Verify + Enable). Linked from Admin.jsx header via "Email Monitor" button.
 
 **Environment variables (ECS task definition):**
@@ -544,14 +544,14 @@ Student Gmail ──► Gmail watch() ──► GCP Pub/Sub topic ──► webh
 - Org policies overridden at project level to permit SA key creation (`iam.disableServiceAccountKeyCreation`) and cross-domain IAM members (`iam.allowedPolicyMemberDomains`)
 
 **Customer onboarding flow:**
-1. Super admin flips `classpilot_email_monitoring` via the toggle on SchoolDetail page (requires active CLASSPILOT license)
+1. Super admin enables MailPilot entitlement via the toggle on SchoolDetail page (requires active CLASSPILOT license)
 2. School admin opens ClassPilot → Admin → Email Monitor → Start setup
 3. Wizard shows Client ID + scope (auto-populated from `/mailpilot/setup/info`)
 4. School's Workspace super admin pastes them into `admin.google.com` → Security → API controls → Domain-wide delegation → Add new
 5. Wizard step 3: verify with a test student email → Enable → watches start on all students with email addresses
 6. Steady state: Gmail fires Pub/Sub notification → webhook classifies → alerts land in dashboard + email admins. Invisible to students.
 
-**Pricing model:** Paid add-on on top of ClassPilot license. School-level `classpilot_email_monitoring` boolean, billed via existing Stripe invoice flow. Same pattern Securly/GoGuardian use (separate SKU from classroom management).
+**Pricing model:** Paid add-on on top of ClassPilot license. Super Admin can include a custom MailPilot add-on line in the existing Stripe invoice flow; MailPilot does not change ClassPilot/PassPilot/GoPilot bundle pricing.
 
 ## AWS Infrastructure Architecture
 

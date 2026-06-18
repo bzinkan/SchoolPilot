@@ -31,6 +31,9 @@ async function requireEmailMonitoringEnabled(req: any, res: any, next: any) {
   if (req.authUser?.isSuperAdmin) return next();
   const schoolId = res.locals.schoolId;
   const school = await getSchoolById(schoolId);
+  if (!school?.mailpilotEntitled) {
+    return res.status(403).json({ error: "MailPilot is not enabled for this school" });
+  }
   if (!school?.classpilotEmailMonitoring) {
     return res.status(403).json({ error: "Email monitoring not enabled for this school" });
   }

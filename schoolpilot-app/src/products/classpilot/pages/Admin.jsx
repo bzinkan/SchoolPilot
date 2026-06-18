@@ -519,13 +519,15 @@ export default function Admin() {
             <BarChart3 className="h-4 w-4 mr-2" />
             Analytics
           </Button>
-          <Button
-            variant="outline"
-            onClick={() => navigate("/classpilot/admin/email-monitoring")}
-          >
-            <ShieldAlert className="h-4 w-4 mr-2" />
-            Email Monitor
-          </Button>
+          {currentUser?.mailpilotEntitled && (
+            <Button
+              variant="outline"
+              onClick={() => navigate("/classpilot/admin/email-monitoring")}
+            >
+              <ShieldAlert className="h-4 w-4 mr-2" />
+              Email Monitor
+            </Button>
+          )}
           <Button
             variant="outline"
             onClick={() => navigate("/classpilot")}

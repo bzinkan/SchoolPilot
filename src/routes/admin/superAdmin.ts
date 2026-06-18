@@ -30,6 +30,7 @@ import {
 import { hashPassword } from "../../util/password.js";
 import { sendWelcomeEmail, sendTaxCertificateRequestEmail } from "../../services/email.js";
 import { logAudit } from "../../services/audit.js";
+import { stopMailpilotMonitoringForSchool } from "../../services/mailpilotProvisioning.js";
 import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import multer from "multer";
@@ -709,7 +710,7 @@ router.post("/schools/:id/products", ...auth, async (req, res, next) => {
   }
 });
 
-// POST /api/super-admin/schools/:id/email-monitoring - Toggle ClassPilot email monitoring add-on
+// POST /api/super-admin/schools/:id/email-monitoring - Toggle paid MailPilot entitlement
 router.post("/schools/:id/email-monitoring", ...auth, async (req, res, next) => {
   try {
     const schoolId = param(req, "id");
@@ -721,7 +722,7 @@ router.post("/schools/:id/email-monitoring", ...auth, async (req, res, next) => 
     const school = await getSchoolById(schoolId);
     if (!school) return res.status(404).json({ error: "School not found" });
 
-    // Must have ClassPilot to enable the email monitoring add-on
+    // Must have ClassPilot to enable the MailPilot paid add-on.
     if (enabled) {
       const licenses = await getProductLicenses(schoolId);
       const hasClassPilot = licenses.some((l) => l.product === "CLASSPILOT" && l.status === "active");
@@ -730,7 +731,16 @@ router.post("/schools/:id/email-monitoring", ...auth, async (req, res, next) => 
       }
     }
 
-    const updated = await updateSchool(schoolId, { classpilotEmailMonitoring: enabled });
+    let stopped: number | undefined;
+    if (!enabled) {
+      const result = await stopMailpilotMonitoringForSchool(schoolId);
+      stopped = result.watchesStopped;
+    }
+
+    const updated = await updateSchool(schoolId, {
+      mailpilotEntitled: enabled,
+      ...(enabled ? {} : { classpilotEmailMonitoring: false, mailpilotOrgUnits: null }),
+    } as any);
 
     await logAudit({
       schoolId,
@@ -739,6 +749,7 @@ router.post("/schools/:id/email-monitoring", ...auth, async (req, res, next) => 
       entityType: "school",
       entityId: schoolId,
       entityName: school.name,
+      metadata: stopped === undefined ? undefined : { watchesStopped: stopped },
     });
 
     return res.json({ school: updated });

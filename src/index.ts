@@ -769,9 +769,11 @@ async function runStartupMigrations(): Promise<void> {
 
   // MailPilot — ClassPilot add-on: Gmail safety monitoring (watches, alerts, scan log)
   try {
+    await pool.query(`ALTER TABLE schools ADD COLUMN IF NOT EXISTS mailpilot_entitled BOOLEAN NOT NULL DEFAULT false`);
     await pool.query(`ALTER TABLE schools ADD COLUMN IF NOT EXISTS classpilot_email_monitoring BOOLEAN NOT NULL DEFAULT false`);
     await pool.query(`ALTER TABLE schools ADD COLUMN IF NOT EXISTS mailpilot_org_units TEXT`);
-    console.log("[migration] classpilot_email_monitoring column ready");
+    await pool.query(`UPDATE schools SET mailpilot_entitled = true WHERE classpilot_email_monitoring = true AND mailpilot_entitled = false`);
+    console.log("[migration] MailPilot entitlement columns ready");
   } catch (err) {
     console.warn("[migration] classpilot_email_monitoring migration skipped:", (err as Error).message);
   }

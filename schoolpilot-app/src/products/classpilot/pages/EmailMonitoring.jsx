@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { apiRequest, queryClient } from "../../../lib/queryClient";
@@ -49,10 +49,16 @@ export default function EmailMonitoring() {
   const [selectedAlert, setSelectedAlert] = useState(null);
   const [reviewNote, setReviewNote] = useState("");
 
-  const { data: setupInfo, isLoading: setupLoading } = useQuery({
+  const { data: setupInfo, isLoading: setupLoading, error: setupError } = useQuery({
     queryKey: ["/api/mailpilot/setup/info"],
     queryFn: () => apiRequest("GET", "/mailpilot/setup/info"),
   });
+
+  useEffect(() => {
+    if (setupError?.response?.status === 403) {
+      navigate("/classpilot/admin", { replace: true });
+    }
+  }, [navigate, setupError]);
 
   const isEnabled = setupInfo?.enabled === true;
 
@@ -89,7 +95,7 @@ export default function EmailMonitoring() {
     },
   });
 
-  if (setupLoading) {
+  if (setupLoading || setupError?.response?.status === 403) {
     return <div className="p-8 text-muted-foreground">Loading…</div>;
   }
 
