@@ -53,7 +53,7 @@ import {
   getScreenshot,
   setFlightPathStatus,
 } from "../../realtime/ws-redis.js";
-import { classifyUrl, isAiAvailable } from "../../services/aiClassification.js";
+import { classifyUrl } from "../../services/aiClassification.js";
 import { recordBrowserSafetyTimeline } from "./competitive.js";
 import { runWithTenantContext } from "../../middleware/tenantContext.js";
 import { scopedDeviceTargets } from "../../services/classpilotDeviceScope.js";
@@ -757,8 +757,8 @@ router.post("/device/heartbeat", requireDeviceAuth, async (req, res, next) => {
     await publishWS({ kind: "staff", schoolId }, update);
 
     // --- AI content classification (item #8) — async, non-blocking ---
-    if (isAiAvailable() && activeTabUrl && !activeTabUrl.startsWith("chrome")) {
-      classifyUrl(activeTabUrl, activeTabTitle).then(async (classification) => {
+    if (activeTabUrl && !activeTabUrl.startsWith("chrome")) {
+      classifyUrl(activeTabUrl, activeTabTitle, { schoolDomain: school.domain }).then(async (classification) => {
         if (!classification) return;
 
         // Store classification in realtime status so students-aggregated includes it

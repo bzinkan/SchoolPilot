@@ -14,6 +14,11 @@ export interface AiClassification {
   classifiedAt: number;
 }
 
+export interface AiClassificationOptions {
+  schoolDomain?: string | null;
+  useAiFallback?: boolean;
+}
+
 // Simple domain cache to avoid re-classifying the same URLs
 const classificationCache = new Map<string, AiClassification>();
 const CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
@@ -21,9 +26,9 @@ const MAX_CACHE_SIZE = 5000;
 
 function extractDomain(url: string): string {
   try {
-    return new URL(url).hostname.replace(/^www\./, "");
+    return normalizeDomainValue(new URL(url).hostname) || url;
   } catch {
-    return url;
+    return normalizeDomainValue(url) || url;
   }
 }
 
@@ -31,12 +36,19 @@ function extractDomain(url: string): string {
 const KNOWN_EDUCATIONAL = new Set([
   "google.com", "docs.google.com", "drive.google.com", "classroom.google.com",
   "slides.google.com", "sheets.google.com", "forms.google.com",
+  "sites.google.com", "meet.google.com",
   "khanacademy.org", "edpuzzle.com", "quizlet.com", "kahoot.it",
   "brainpop.com", "newsela.com", "readworks.org", "ixl.com",
   "prodigygame.com", "desmos.com", "geogebra.org", "scratch.mit.edu",
   "code.org", "typing.com", "schoology.com", "canvas.instructure.com",
-  "clever.com", "seesaw.me", "nearpod.com", "flipgrid.com",
-  "pear.deck", "wikipedia.org", "britannica.com",
+  "instructure.com", "blackboard.com", "moodle.org",
+  "clever.com", "classlink.com", "launchpad.classlink.com", "my.classlink.com",
+  "classlink.io", "seesaw.me", "nearpod.com", "flipgrid.com",
+  "peardeck.com", "wikipedia.org", "britannica.com",
+  "iready.com", "i-ready.com", "savvasrealize.com", "savvas.com",
+  "hmhco.com", "hmhcentral.com", "read180.com", "commonlit.org",
+  "noredink.com", "edulastic.com", "pearsonrealize.com", "achieve3000.com",
+  "mobymax.com", "zearn.org", "amplify.com", "ck12.org",
 ]);
 
 const KNOWN_NON_EDUCATIONAL = new Set([
@@ -65,71 +77,133 @@ export function isAiAvailable(): boolean {
   return anthropic !== null;
 }
 
+function normalizeDomainValue(value?: string | null): string | null {
+  const cleaned = String(value || "").trim().toLowerCase();
+  if (!cleaned) return null;
+
+  try {
+    const withProtocol = cleaned.includes("://") ? cleaned : `https://${cleaned}`;
+    return new URL(withProtocol).hostname.replace(/^www\./, "");
+  } catch {
+    return cleaned
+      .replace(/^https?:\/\//, "")
+      .split("/")[0]
+      ?.split(":")[0]
+      ?.replace(/^www\./, "") || null;
+  }
+}
+
+function domainMatches(domain: string, candidate?: string | null): boolean {
+  const normalized = normalizeDomainValue(candidate);
+  if (!normalized) return false;
+  return domain === normalized || domain.endsWith(`.${normalized}`);
+}
+
+function matchesAnyDomain(domain: string, candidates: Iterable<string>): boolean {
+  for (const candidate of candidates) {
+    if (domainMatches(domain, candidate)) return true;
+  }
+  return false;
+}
+
+function getUnsafeDomainType(domain: string): "sexual" | "violence" | "drugs" | "self-harm" | null {
+  for (const [unsafeDomain, unsafeType] of KNOWN_UNSAFE.entries()) {
+    if (domainMatches(domain, unsafeDomain)) return unsafeType;
+  }
+  return null;
+}
+
+function cacheClassification(cacheKey: string, result: AiClassification): AiClassification {
+  if (classificationCache.size >= MAX_CACHE_SIZE) {
+    const firstKey = classificationCache.keys().next().value;
+    if (firstKey) classificationCache.delete(firstKey);
+  }
+  classificationCache.set(cacheKey, result);
+  return result;
+}
+
+function classifyUnsafeSearch(url: string, domain: string): AiClassification | null {
+  if (domain !== "google.com" && domain !== "bing.com" && domain !== "search.yahoo.com") {
+    return null;
+  }
+
+  try {
+    const searchUrl = new URL(url);
+    const query = (searchUrl.searchParams.get("q") || searchUrl.searchParams.get("p") || "").toLowerCase();
+    const unsafeSearchTerms = [
+      "porn", "xxx", "hentai", "nude", "naked", "sex video", "onlyfans",
+      "how to kill", "how to make a bomb", "buy drugs", "buy weed",
+      "self harm", "suicide method",
+    ];
+    const matchedTerm = unsafeSearchTerms.find(term => query.includes(term));
+    if (!matchedTerm) return null;
+
+    const alertType: "sexual" | "violence" | "drugs" | "self-harm" =
+      ["porn", "xxx", "hentai", "nude", "naked", "sex video", "onlyfans"].includes(matchedTerm) ? "sexual" :
+      ["how to kill", "how to make a bomb"].includes(matchedTerm) ? "violence" :
+      ["buy drugs", "buy weed"].includes(matchedTerm) ? "drugs" : "self-harm";
+
+    return {
+      category: "non-educational",
+      safetyAlert: alertType,
+      domain: `search:${matchedTerm}`,
+      classifiedAt: Date.now(),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function classifyUrl(
   url: string,
-  title?: string
+  title?: string,
+  options: AiClassificationOptions = {}
 ): Promise<AiClassification | null> {
-  if (!anthropic) return null;
-
   const domain = extractDomain(url);
+  const schoolDomain = normalizeDomainValue(options.schoolDomain);
 
-  // Check cache first
-  const cached = classificationCache.get(domain);
+  // Unsafe searches are query-specific and must run before the domain cache,
+  // otherwise cached google.com = educational could hide a later risky search.
+  const unsafeSearch = classifyUnsafeSearch(url, domain);
+  if (unsafeSearch) return unsafeSearch;
+
+  const cacheKey = `${domain}|school:${schoolDomain || ""}|ai:${options.useAiFallback === false ? "off" : "on"}`;
+  const cached = classificationCache.get(cacheKey);
   if (cached && Date.now() - cached.classifiedAt < CACHE_TTL_MS) {
     return cached;
   }
 
-  // Check Google/Bing searches for unsafe queries before marking as educational
-  if (domain === "google.com" || domain === "bing.com" || domain === "search.yahoo.com") {
-    try {
-      const searchUrl = new URL(url);
-      const query = (searchUrl.searchParams.get("q") || searchUrl.searchParams.get("p") || "").toLowerCase();
-      const unsafeSearchTerms = [
-        "porn", "xxx", "hentai", "nude", "naked", "sex video", "onlyfans",
-        "how to kill", "how to make a bomb", "buy drugs", "buy weed",
-        "self harm", "suicide method",
-      ];
-      const matchedTerm = unsafeSearchTerms.find(term => query.includes(term));
-      if (matchedTerm) {
-        const alertType: "sexual" | "violence" | "drugs" | "self-harm" =
-          ["porn", "xxx", "hentai", "nude", "naked", "sex video", "onlyfans"].includes(matchedTerm) ? "sexual" :
-          ["how to kill", "how to make a bomb"].includes(matchedTerm) ? "violence" :
-          ["buy drugs", "buy weed"].includes(matchedTerm) ? "drugs" : "self-harm";
-        const result: AiClassification = {
-          category: "non-educational",
-          safetyAlert: alertType,
-          domain: `search:${matchedTerm}`,
-          classifiedAt: Date.now(),
-        };
-        return result; // Don't cache — each search is unique
-      }
-    } catch { /* fall through */ }
+  if (schoolDomain && domainMatches(domain, schoolDomain)) {
+    return cacheClassification(cacheKey, {
+      category: "educational",
+      safetyAlert: null,
+      domain,
+      classifiedAt: Date.now(),
+    });
   }
 
   // Known domains — instant classification
-  if (KNOWN_EDUCATIONAL.has(domain)) {
+  if (matchesAnyDomain(domain, KNOWN_EDUCATIONAL)) {
     const result: AiClassification = {
       category: "educational",
       safetyAlert: null,
       domain,
       classifiedAt: Date.now(),
     };
-    classificationCache.set(domain, result);
-    return result;
+    return cacheClassification(cacheKey, result);
   }
-  if (KNOWN_NON_EDUCATIONAL.has(domain)) {
+  if (matchesAnyDomain(domain, KNOWN_NON_EDUCATIONAL)) {
     const result: AiClassification = {
       category: "non-educational",
       safetyAlert: null,
       domain,
       classifiedAt: Date.now(),
     };
-    classificationCache.set(domain, result);
-    return result;
+    return cacheClassification(cacheKey, result);
   }
 
   // Known unsafe domains — instant safety alert
-  const unsafeType = KNOWN_UNSAFE.get(domain);
+  const unsafeType = getUnsafeDomainType(domain);
   if (unsafeType) {
     const result: AiClassification = {
       category: "non-educational",
@@ -137,13 +211,21 @@ export async function classifyUrl(
       domain,
       classifiedAt: Date.now(),
     };
-    classificationCache.set(domain, result);
-    return result;
+    return cacheClassification(cacheKey, result);
   }
 
   // Skip chrome-internal URLs
   if (url.startsWith("chrome://") || url.startsWith("chrome-extension://") || url.startsWith("about:")) {
     return null;
+  }
+
+  if (!anthropic || options.useAiFallback === false) {
+    return cacheClassification(cacheKey, {
+      category: "unknown",
+      safetyAlert: null,
+      domain,
+      classifiedAt: Date.now(),
+    });
   }
 
   try {
@@ -158,8 +240,9 @@ export async function classifyUrl(
 
 Rules:
 - "educational": academic content, research, school tools, learning platforms
-- "non-educational": social media, gaming, entertainment, shopping, sports, news
-- "unknown": can't determine
+- "non-educational": ONLY clearly distracting social media, gaming, streaming video, shopping, sports, chat, music, or entertainment
+- "unknown": can't determine, mixed-purpose, school/local organization pages, utilities, logins, curriculum vendors you do not recognize, or any ambiguous site
+- When unsure, choose "unknown" rather than "non-educational"
 - safetyAlert: ONLY flag genuinely concerning content (self-harm ideation, graphic violence, explicit sexual content, drug use/purchase). Do NOT flag normal news or health education.
 
 URL: ${url}
@@ -172,21 +255,20 @@ Title: ${title || "Unknown"}`,
     if (!text) return null;
 
     const parsed = JSON.parse(text);
+    const category = parsed.category === "educational" || parsed.category === "non-educational"
+      ? parsed.category
+      : "unknown";
+    const safetyAlert = ["self-harm", "violence", "sexual", "drugs"].includes(parsed.safetyAlert)
+      ? parsed.safetyAlert
+      : null;
     const result: AiClassification = {
-      category: parsed.category || "unknown",
-      safetyAlert: parsed.safetyAlert || null,
+      category,
+      safetyAlert,
       domain,
       classifiedAt: Date.now(),
     };
 
-    // Manage cache size
-    if (classificationCache.size >= MAX_CACHE_SIZE) {
-      const firstKey = classificationCache.keys().next().value;
-      if (firstKey) classificationCache.delete(firstKey);
-    }
-    classificationCache.set(domain, result);
-
-    return result;
+    return cacheClassification(cacheKey, result);
   } catch (error) {
     console.error("[AI Classification] Error:", error);
     return null;
