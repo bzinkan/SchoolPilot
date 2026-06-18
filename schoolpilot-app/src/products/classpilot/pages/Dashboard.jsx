@@ -38,6 +38,7 @@ import { ThemeToggle } from '../../../components/ThemeToggle';
 import ClassPilotSidebar from '../components/ClassPilotSidebar';
 import { useAbsentStudents } from '../../../hooks/useAbsentStudents';
 import { AttendancePanel } from '../../../components/AttendancePanel';
+import { isUrlAllowed } from '../../../lib/classpilot-utils';
 
 // Helper to normalize grade levels (strip "th", "rd", "st", "nd" suffixes)
 function normalizeGrade(grade) {
@@ -503,7 +504,7 @@ export default function Dashboard() {
         // Skip if domain is in active flight path's allowed list
         if (student.flightPathActive && student.activeFlightPathName) {
           const fp = flightPaths.find(f => f.flightPathName === student.activeFlightPathName);
-          if (fp?.allowedDomains?.some(d => domain.includes(d.toLowerCase().replace(/^www\./, '')))) return false;
+          if (isUrlAllowed(student.activeTabUrl, fp?.allowedDomains || [])) return false;
         }
         return true;
       } catch { return false; }
@@ -511,22 +512,7 @@ export default function Dashboard() {
 
     // Allowed domains list check (school settings)
     if (!settings?.allowedDomains || settings.allowedDomains.length === 0) return false;
-    try {
-      const hostname = new URL(student.activeTabUrl).hostname.toLowerCase();
-      const isOnAllowedDomain = settings.allowedDomains.some(allowed => {
-        const allowedLower = allowed.toLowerCase().trim();
-        return (
-          hostname === allowedLower ||
-          hostname.endsWith('.' + allowedLower) ||
-          hostname.includes('.' + allowedLower + '.') ||
-          hostname.startsWith(allowedLower + '.') ||
-          hostname.includes(allowedLower)
-        );
-      });
-      return !isOnAllowedDomain;
-    } catch {
-      return false;
-    }
+    return !isUrlAllowed(student.activeTabUrl, settings.allowedDomains);
   };
 
   const handleAllowDomain = (domain) => {
@@ -1473,6 +1459,7 @@ export default function Dashboard() {
           student={selectedStudent}
           urlHistory={urlHistory}
           allowedDomains={settings?.allowedDomains || []}
+          flightPaths={flightPaths}
           onClose={() => setSelectedStudent(null)}
           activeClassName={effectiveSession ? groups.find(g => g.id === effectiveSession.groupId)?.name : null}
         />

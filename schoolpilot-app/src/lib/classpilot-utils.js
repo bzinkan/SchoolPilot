@@ -106,6 +106,8 @@ export function calculateURLSessions(heartbeats, heartbeatIntervalSeconds = 10) 
         heartbeatCount: 1,
         aiCategory: heartbeat.aiCategory || null,
         safetyAlert: heartbeat.safetyAlert || null,
+        flightPathActive: Boolean(heartbeat.flightPathActive),
+        activeFlightPathName: heartbeat.activeFlightPathName || null,
       };
     } else {
       // Continue existing session
@@ -117,6 +119,8 @@ export function calculateURLSessions(heartbeats, heartbeatIntervalSeconds = 10) 
       if (heartbeat.favicon) {
         currentSession.favicon = heartbeat.favicon;
       }
+      currentSession.flightPathActive = Boolean(heartbeat.flightPathActive);
+      currentSession.activeFlightPathName = heartbeat.activeFlightPathName || null;
 
       // Calculate duration: time span + one interval for the final heartbeat
       const timeSpanSeconds = Math.floor(
@@ -167,11 +171,34 @@ export function isUrlAllowed(url, allowedDomains) {
   if (!allowedDomains || allowedDomains.length === 0) return true; // No restrictions = all allowed
 
   try {
-    const hostname = new URL(url).hostname.toLowerCase();
+    const parsedUrl = new URL(url);
+    const hostname = parsedUrl.hostname.toLowerCase().replace(/^www\./, '');
+    const href = parsedUrl.href.toLowerCase();
 
     // Check if URL is on any allowed domain (flexible matching)
     return allowedDomains.some(allowed => {
-      const allowedLower = allowed.toLowerCase().trim();
+      const allowedLower = String(allowed || '').toLowerCase().trim();
+      if (!allowedLower) return false;
+
+      try {
+        const allowedUrl = new URL(allowedLower.includes('://') ? allowedLower : `https://${allowedLower}`);
+        const allowedHostname = allowedUrl.hostname.toLowerCase().replace(/^www\./, '');
+
+        // Exact URL entries, such as a single YouTube video, should not allow the
+        // whole domain. Treat them as URL prefixes so harmless tracking params
+        // do not break a teacher-approved resource.
+        if (allowedUrl.pathname !== '/' || allowedUrl.search) {
+          return href.startsWith(allowedUrl.href.toLowerCase());
+        }
+
+        return (
+          hostname === allowedHostname ||
+          hostname.endsWith('.' + allowedHostname)
+        );
+      } catch {
+        // Fall back to loose domain matching for legacy entries that are not
+        // parseable URLs.
+      }
 
       // Flexible domain matching: check if the allowed domain appears in the hostname
       // This allows ixl.com to match: ixl.com, www.ixl.com, signin.ixl.com, etc.
@@ -199,14 +226,20 @@ export function isSessionOffTask(url, cameraActive, allowedDomains, aiCategory) 
   // Camera active = always off-task
   if (cameraActive) return true;
 
-  // AI classified as non-educational = off-task
-  if (aiCategory === 'non-educational') return true;
-
-  // No allowed domains configured = nothing is off-task (beyond AI check above)
-  if (!allowedDomains || allowedDomains.length === 0) return false;
+  // Teacher/admin-approved resources take precedence over generic off-task
+  // labels. Safety alerts are surfaced separately and are not suppressed here.
+  if (allowedDomains && allowedDomains.length > 0 && isUrlAllowed(url, allowedDomains)) {
+    return false;
+  }
 
   // Not on allowed domain = off-task
-  return !isUrlAllowed(url, allowedDomains);
+  if (allowedDomains && allowedDomains.length > 0) {
+    return true;
+  }
+
+  // AI classified as non-educational = off-task only when no allowlist has
+  // already approved this URL.
+  return aiCategory === 'non-educational';
 }
 
 /**

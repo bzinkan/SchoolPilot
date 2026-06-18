@@ -18,6 +18,7 @@ function StudentDetailDrawer({
   student,
   urlHistory,
   allowedDomains,
+  flightPaths = [],
   onClose,
   activeClassName,
 }) {
@@ -392,9 +393,17 @@ function StudentDetailDrawer({
                         // Check if this is a "no active tab" session
                         const isNoTab = !session.url || session.url.trim() === '';
 
-                        // Use shared off-task detection logic (checks camera AND allowed domains)
+                        const flightPathAllowedDomains = session.flightPathActive && session.activeFlightPathName
+                          ? flightPaths.find(fp => fp.flightPathName === session.activeFlightPathName)?.allowedDomains || []
+                          : [];
+                        const effectiveAllowedDomains = [
+                          ...(allowedDomains || []),
+                          ...flightPathAllowedDomains,
+                        ];
+
+                        // Use shared off-task detection logic (checks camera, allowed domains, and AI category)
                         // BUT skip off-task check for "no active tab" sessions - they're neutral, not off-task
-                        const hasOffTask = isNoTab ? false : isSessionOffTask(session.url, hasCamera, allowedDomains, session.aiCategory);
+                        const hasOffTask = isNoTab ? false : isSessionOffTask(session.url, hasCamera, effectiveAllowedDomains, session.aiCategory);
 
                         return {
                           ...session,
