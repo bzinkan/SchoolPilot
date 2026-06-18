@@ -34,6 +34,15 @@ export const requireSchoolContext: RequestHandler = async (req, res, next) => {
 
   // Session-based: schoolId already in session
   if (req.authMethod === "session" && req.session?.schoolId) {
+    const requestedSchoolId =
+      String(req.params.schoolId || "") ||
+      (req.headers["x-school-id"] as string) ||
+      (req.query.schoolId as string) ||
+      "";
+    if (requestedSchoolId && requestedSchoolId !== req.session.schoolId) {
+      return res.status(404).json({ error: "School not found" });
+    }
+
     res.locals.schoolId = req.session.schoolId;
     // Look up role for session users too
     const [membership] = await db

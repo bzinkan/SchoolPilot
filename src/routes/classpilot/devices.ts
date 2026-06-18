@@ -25,8 +25,6 @@ import {
   linkStudentDevice,
   createStudent,
   startStudentSession,
-  searchStudents,
-  getSchoolByDomain,
   resolveSchoolForStudent,
   getSchoolById,
   getSettingsForSchool,
@@ -499,48 +497,70 @@ router.post("/register-student", extensionLimiter, async (req, res, next) => {
       return res.status(400).json({ error: "deviceId, studentEmail, and schoolId required" });
     }
 
-    // Unauthenticated legacy route: scope writes to the supplied school so RLS is
-    // satisfied (the school is the caller-supplied trust anchor, as before RLS).
-    await runWithTenantContext({ schoolId }, async () => {
-
-    // Find or create student
-    const existing = await searchStudents(schoolId, { search: studentEmail });
-    let student = existing[0];
-
-    if (!student) {
-      // Anti-spam: cap auto-creations per school per hour
-      if (!recordAutoCreation(schoolId)) {
-        console.warn(`[Security] Auto-creation rate limit hit on /register-student for school ${schoolId}`);
-        return res.status(429).json({
-          error: "Auto-enrollment temporarily disabled — please ask your administrator to import students first.",
-        });
-      }
-      student = await createStudent({
-        schoolId,
-        firstName: firstName || studentEmail.split("@")[0],
-        lastName: lastName || "",
-        email: studentEmail,
-        emailLc: studentEmail.toLowerCase(),
-        gradeLevel: gradeLevel || null,
-        status: "active",
-      });
+    const emailLc = String(studentEmail).trim().toLowerCase();
+    const resolved = await resolveSchoolForStudent(emailLc);
+    if (!resolved) {
+      return res.status(401).json({ error: "No school found for this email domain" });
+    }
+    const resolvedSchoolId = resolved.school.id;
+    if (String(schoolId) !== resolvedSchoolId) {
+      return res.status(403).json({ error: "schoolId does not match email domain" });
+    }
+    if (resolved.school.status !== "active") {
+      return res.status(403).json({ error: "School is not active" });
+    }
+    if (!(await hasCachedClassPilotLicense(resolvedSchoolId))) {
+      return res.status(403).json({ error: "ClassPilot license required" });
     }
 
-    // Link student to device
-    await linkStudentDevice({ studentId: student.id, deviceId });
+    // Unauthenticated legacy route: the email domain above is the trust anchor.
+    // Bind the resolved school for RLS, settings, exact roster lookup, and writes.
+    await runWithTenantContext({ schoolId: resolvedSchoolId }, async () => {
+      const regSettings = await getSettingsForSchool(resolvedSchoolId);
 
-    // Start session
-    await startStudentSession(student.id, deviceId);
+      // Find or create student by exact roster email only. Fuzzy matches can bind
+      // a Chromebook to the wrong student.
+      let student = await getStudentByEmail(resolvedSchoolId, emailLc);
 
-    // Generate device JWT
-    const studentToken = createStudentToken({
-      studentId: student.id,
-      deviceId,
-      schoolId,
-      studentEmail,
-    });
+      if (!student) {
+        if (!regSettings?.autoEnrollStudents) {
+          return res.status(403).json({
+            error: "Student not enrolled. Ask your administrator to import this student before connecting a device.",
+          });
+        }
+        // Anti-spam: cap auto-creations per school per hour
+        if (!recordAutoCreation(resolvedSchoolId)) {
+          console.warn(`[Security] Auto-creation rate limit hit on /register-student for school ${resolvedSchoolId}`);
+          return res.status(429).json({
+            error: "Auto-enrollment temporarily disabled — please ask your administrator to import students first.",
+          });
+        }
+        student = await createStudent({
+          schoolId: resolvedSchoolId,
+          firstName: firstName || emailLc.split("@")[0],
+          lastName: lastName || "",
+          email: emailLc,
+          emailLc,
+          gradeLevel: gradeLevel || null,
+          status: "active",
+        });
+      }
 
-    return res.json({ studentToken, student });
+      // Link student to device
+      await linkStudentDevice({ studentId: student.id, deviceId });
+
+      // Start session
+      await startStudentSession(student.id, deviceId);
+
+      // Generate device JWT
+      const studentToken = createStudentToken({
+        studentId: student.id,
+        deviceId,
+        schoolId: resolvedSchoolId,
+        studentEmail: emailLc,
+      });
+
+      return res.json({ studentToken, student });
     });
   } catch (err) {
     next(err);
