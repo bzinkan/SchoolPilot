@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { apiRequest, queryClient } from "../../../lib/queryClient";
@@ -17,10 +17,16 @@ export default function EmailMonitoringSetup() {
   const [testEmail, setTestEmail] = useState("");
   const [verifyResult, setVerifyResult] = useState(null);
 
-  const { data: info, isLoading, refetch } = useQuery({
+  const { data: info, isLoading, error: infoError, refetch } = useQuery({
     queryKey: ["/api/mailpilot/setup/info"],
     queryFn: () => apiRequest("GET", "/mailpilot/setup/info"),
   });
+
+  useEffect(() => {
+    if (infoError?.response?.status === 403) {
+      navigate("/classpilot/admin", { replace: true });
+    }
+  }, [infoError, navigate]);
 
   const verifyMutation = useMutation({
     mutationFn: (email) => apiRequest("POST", "/mailpilot/setup/verify", { testEmail: email }),
@@ -72,7 +78,7 @@ export default function EmailMonitoringSetup() {
     },
   });
 
-  if (isLoading) {
+  if (isLoading || infoError?.response?.status === 403) {
     return <div className="p-8 text-muted-foreground">Loading…</div>;
   }
 

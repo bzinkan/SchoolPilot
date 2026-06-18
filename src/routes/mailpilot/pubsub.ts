@@ -135,7 +135,7 @@ async function processActiveWatch(
 ): Promise<void> {
   // Verify the school still has email monitoring enabled
   const school = await getSchoolById(watch.schoolId);
-  if (!school || !school.classpilotEmailMonitoring) {
+  if (!school || !school.mailpilotEntitled || !school.classpilotEmailMonitoring) {
     console.log(`[MailPilot] School ${watch.schoolId} no longer has monitoring enabled — skipping`);
     return;
   }

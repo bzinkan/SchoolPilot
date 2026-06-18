@@ -372,7 +372,9 @@ async function buildReadinessPayload(req: any, res: any) {
     issue(unmappedStudents.length === 0 ? "pass" : "warn", "Devices", "Student device mappings", unmappedStudents.length === 0 ? "All students have a known device mapping." : `${unmappedStudents.length} student(s) have no seen device yet.`, "/classpilot/roster"),
     issue(staleDevices.length === 0 ? "pass" : "warn", "Devices", "Stale devices", staleDevices.length === 0 ? "No stale devices older than 48 hours." : `${staleDevices.length} device(s) have not checked in recently.`, "/classpilot/roster"),
     issue(screenshotFailures.length === 0 ? "pass" : "warn", "Screenshots", "Screenshot health", screenshotFailures.length === 0 ? "No screenshot errors reported." : `${screenshotFailures.length} device(s) reported screenshot issues.`, "/classpilot"),
-    issue(school?.classpilotEmailMonitoring ? (watches.filter((w) => w.status === "active").length > 0 ? "pass" : "warn") : "warn", "MailPilot", "Gmail safety monitoring", school?.classpilotEmailMonitoring ? `${watches.filter((w) => w.status === "active").length} active Gmail watch(es).` : "MailPilot is not enabled for this school.", "/classpilot/email-monitoring"),
+    ...(school?.mailpilotEntitled
+      ? [issue(school.classpilotEmailMonitoring ? (watches.filter((w) => w.status === "active").length > 0 ? "pass" : "warn") : "warn", "MailPilot", "Gmail safety monitoring", school.classpilotEmailMonitoring ? `${watches.filter((w) => w.status === "active").length} active Gmail watch(es).` : "MailPilot setup is pending.", "/classpilot/admin/email-monitoring")]
+      : []),
     issue(settings?.aiSafetyEmailsEnabled !== false ? "pass" : "warn", "Safety", "AI safety email alerts", settings?.aiSafetyEmailsEnabled !== false ? "Safety emails are enabled." : "Safety emails are disabled.", "/classpilot/settings"),
   ];
 
@@ -409,6 +411,7 @@ async function buildReadinessPayload(req: any, res: any) {
       },
       staffDomainMismatches,
       mailpilot: {
+        entitled: !!school?.mailpilotEntitled,
         enabled: !!school?.classpilotEmailMonitoring,
         activeWatches: watches.filter((w) => w.status === "active").length,
         errorWatches: watches.filter((w) => w.status === "error").length,

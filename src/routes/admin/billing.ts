@@ -292,6 +292,8 @@ router.post(
         daysUntilDue = 30,
         billingEmail,
         has24x7Monitoring,
+        mailpilotAddonCents,
+        mailpilotAddonDescription,
       } = req.body;
 
       if (!studentCount || studentCount < 1) {
@@ -334,8 +336,17 @@ router.post(
         await updateSchool(school.id, { stripeCustomerId: customerId, billingEmail: email });
       }
 
+      const customMailpilotAddonCents = Math.max(0, Math.round(Number(mailpilotAddonCents || 0)));
+      if (customMailpilotAddonCents > 0 && !school.classpilotEmailMonitoring && !school.mailpilotEntitled) {
+        return res.status(400).json({ error: "MailPilot add-on can only be invoiced after MailPilot is enabled for the school" });
+      }
+
       // Calculate pricing
-      const pricing = calculateInvoice(invoiceProducts, studentCount, { has24x7Monitoring: !!has24x7Monitoring });
+      const pricing = calculateInvoice(invoiceProducts, studentCount, {
+        has24x7Monitoring: !!has24x7Monitoring,
+        mailpilotAddonCents: customMailpilotAddonCents,
+        mailpilotAddonDescription,
+      });
 
       // Create invoice
       const productLabels = invoiceProducts.map((p) => PRODUCT_PRICING[p].label).join(", ");
@@ -387,18 +398,17 @@ router.post(
         }
       }
 
-      // 24/7 monitoring add-on
-      if (pricing.addonCents > 0) {
+      for (const addon of pricing.addonItems) {
         await stripe.invoiceItems.create({
           customer: customerId,
           invoice: invoice.id,
           price_data: {
             product: PRODUCT_PRICING.CLASSPILOT.stripeProductId,
             currency: "usd",
-            unit_amount: 100,
+            unit_amount: addon.unitAmountCents,
           },
-          quantity: studentCount,
-          description: `24/7 Monitoring Add-On ($1.00/student)`,
+          quantity: addon.quantity,
+          description: addon.description,
         });
       }
 
@@ -417,6 +427,7 @@ router.post(
           amount: pricing.totalCents,
           studentCount,
           products: invoiceProducts,
+          addonItems: pricing.addonItems,
           discountRate: pricing.discountRate,
         },
       });

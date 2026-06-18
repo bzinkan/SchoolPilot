@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ThemeToggle } from '../../components/ThemeToggle';
 import api from '../../shared/utils/api';
-import { calculateInvoicePreview, formatCents, PRODUCT_PRICING, MONITORING_24_7_PER_STUDENT } from '../../shared/utils/pricing';
+import { calculateInvoicePreview, formatCents } from '../../shared/utils/pricing';
 
 const statusColors = {
   active: 'bg-green-100 text-green-800',
@@ -55,6 +55,8 @@ export default function SchoolDetail() {
   const [invoiceResult, setInvoiceResult] = useState(null);
   const [expandedInvoiceId, setExpandedInvoiceId] = useState(null);
   const [showNewInvoice, setShowNewInvoice] = useState(false);
+  const [mailpilotAddonAmount, setMailpilotAddonAmount] = useState('');
+  const [mailpilotAddonDescription, setMailpilotAddonDescription] = useState('MailPilot Email Safety Add-On');
 
   // Tax cert
   const [taxCertRequesting, setTaxCertRequesting] = useState(false);
@@ -266,8 +268,20 @@ export default function SchoolDetail() {
 
   const has24x7 = !hoursForm.enabled;
 
+  const getInvoiceOptions = () => {
+    const mailpilotAddonCents = school?.mailpilotEntitled
+      ? Math.max(0, Math.round((parseFloat(mailpilotAddonAmount) || 0) * 100))
+      : 0;
+    return {
+      has24x7Monitoring: has24x7,
+      mailpilotAddonCents,
+      mailpilotAddonDescription,
+    };
+  };
+
   const handleSendInvoice = async () => {
-    const preview = calculateInvoicePreview(activeProducts, invoiceStudentCount, { has24x7Monitoring: has24x7 });
+    const invoiceOptions = getInvoiceOptions();
+    const preview = calculateInvoicePreview(activeProducts, invoiceStudentCount, invoiceOptions);
     if (!window.confirm(`Send invoice for ${formatCents(preview.totalCents)} to ${school.billingEmail || 'the school billing email'}?`)) return;
     try {
       setSendingInvoice(true);
@@ -275,7 +289,7 @@ export default function SchoolDetail() {
       const res = await api.post(`/super-admin/schools/${id}/send-invoice`, {
         studentCount: invoiceStudentCount,
         products: activeProducts,
-        has24x7Monitoring: has24x7,
+        ...invoiceOptions,
       });
       setInvoiceResult(res.data);
       loadBilling();
@@ -441,18 +455,23 @@ export default function SchoolDetail() {
           <div className="mt-4 pt-4 border-t border-slate-200">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <p className="font-medium text-slate-900 text-sm">ClassPilot Email Monitoring</p>
-                <p className="text-xs text-slate-500 mt-0.5">Paid add-on: AI-powered Gmail safety scanning for this school.</p>
+                <p className="font-medium text-slate-900 text-sm">MailPilot entitlement</p>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Paid add-on. When enabled, school admins can complete Google setup and manage Gmail watches.
+                </p>
+                <p className="text-xs text-slate-400 mt-1">
+                  Monitoring status: {school.classpilotEmailMonitoring ? 'active' : school.mailpilotEntitled ? 'setup pending or paused' : 'hidden from school admins'}
+                </p>
               </div>
               <button
-                onClick={() => handleToggleEmailMonitoring(!school.classpilotEmailMonitoring)}
+                onClick={() => handleToggleEmailMonitoring(!school.mailpilotEntitled)}
                 className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-all ${
-                  school.classpilotEmailMonitoring
+                  school.mailpilotEntitled
                     ? 'bg-emerald-600 text-white'
                     : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                 }`}
               >
-                {school.classpilotEmailMonitoring ? 'Enabled' : 'Enable add-on'}
+                {school.mailpilotEntitled ? 'Enabled for school' : 'Enable add-on'}
               </button>
             </div>
           </div>
@@ -567,7 +586,7 @@ export default function SchoolDetail() {
                 </div>
 
                 {(() => {
-                  const preview = calculateInvoicePreview(activeProducts, invoiceStudentCount, { has24x7Monitoring: has24x7 });
+                  const preview = calculateInvoicePreview(activeProducts, invoiceStudentCount, getInvoiceOptions());
                   return (
                     <div className="border border-slate-200 rounded-lg overflow-hidden mb-4">
                       <table className="w-full text-sm">
@@ -588,15 +607,17 @@ export default function SchoolDetail() {
                               <td className="px-4 py-2 text-right text-slate-900 font-medium">{formatCents(item.subtotalCents)}</td>
                             </tr>
                           ))}
-                          {preview.addonCents > 0 && (
-                            <tr className="border-t border-slate-100">
-                              <td className="px-4 py-2 font-medium text-slate-900">{preview.addonLabel}</td>
+                          {(preview.addonItems || []).map((addon) => (
+                            <tr key={addon.key} className="border-t border-slate-100">
+                              <td className="px-4 py-2 font-medium text-slate-900">{addon.label}</td>
                               <td className="px-4 py-2 text-right text-slate-700">
-                                {invoiceStudentCount} × $1.00
+                                {addon.quantity > 1
+                                  ? `${addon.quantity} × ${formatCents(addon.unitAmountCents)}`
+                                  : 'Custom add-on'}
                               </td>
-                              <td className="px-4 py-2 text-right text-slate-900 font-medium">{formatCents(preview.addonCents)}</td>
+                              <td className="px-4 py-2 text-right text-slate-900 font-medium">{formatCents(addon.totalCents)}</td>
                             </tr>
-                          )}
+                          ))}
                         </tbody>
                         <tfoot>
                           {activeProducts.length > 1 && (
@@ -616,6 +637,35 @@ export default function SchoolDetail() {
                     </div>
                   );
                 })()}
+
+                {school.mailpilotEntitled && (
+                  <div className="grid sm:grid-cols-[160px_1fr] gap-3 mb-4">
+                    <div>
+                      <label className="text-xs text-slate-500 block mb-1">MailPilot Add-On</label>
+                      <div className="flex items-center">
+                        <span className="px-2 py-1.5 border border-r-0 border-slate-300 rounded-l text-sm bg-slate-50 text-slate-500">$</span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={mailpilotAddonAmount}
+                          onChange={(e) => setMailpilotAddonAmount(e.target.value)}
+                          className="w-full px-3 py-1.5 border border-slate-300 rounded-r text-sm"
+                          placeholder="0.00"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-xs text-slate-500 block mb-1">MailPilot Description</label>
+                      <input
+                        type="text"
+                        value={mailpilotAddonDescription}
+                        onChange={(e) => setMailpilotAddonDescription(e.target.value)}
+                        className="w-full px-3 py-1.5 border border-slate-300 rounded text-sm"
+                      />
+                    </div>
+                  </div>
+                )}
 
                 <p className="text-sm text-slate-500 mb-3">
                   Invoice will be sent to: <span className="font-medium text-slate-700">{school.billingEmail || 'No billing email set'}</span>

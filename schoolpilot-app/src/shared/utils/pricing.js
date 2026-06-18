@@ -34,10 +34,42 @@ export function calculateInvoicePreview(products, studentCount, options) {
   }).filter(Boolean);
 
   const subtotalCents = lineItems.reduce((sum, item) => sum + item.subtotalCents, 0);
-  const addonCents = options?.has24x7Monitoring ? MONITORING_24_7_PER_STUDENT * 100 * studentCount : 0;
+  const addonItems = [];
+  if (options?.has24x7Monitoring) {
+    addonItems.push({
+      key: '24x7_monitoring',
+      label: '24/7 Monitoring',
+      description: '24/7 Monitoring Add-On ($1.00/student)',
+      unitAmountCents: MONITORING_24_7_PER_STUDENT * 100,
+      quantity: studentCount,
+      totalCents: MONITORING_24_7_PER_STUDENT * 100 * studentCount,
+    });
+  }
+  const mailpilotAddonCents = Math.max(0, Math.round(options?.mailpilotAddonCents || 0));
+  if (mailpilotAddonCents > 0) {
+    const description = options?.mailpilotAddonDescription?.trim() || 'MailPilot Email Safety Add-On';
+    addonItems.push({
+      key: 'mailpilot',
+      label: description,
+      description,
+      unitAmountCents: mailpilotAddonCents,
+      quantity: 1,
+      totalCents: mailpilotAddonCents,
+    });
+  }
+  const addonCents = addonItems.reduce((sum, item) => sum + item.totalCents, 0);
   const totalCents = subtotalCents + addonCents;
 
-  return { lineItems, subtotalCents, addonCents, addonLabel: options?.has24x7Monitoring ? '24/7 Monitoring' : null, discountRate: 0, discountCents: 0, totalCents };
+  return {
+    lineItems,
+    addonItems,
+    subtotalCents,
+    addonCents,
+    addonLabel: addonItems.length === 1 ? addonItems[0].label : addonItems.length > 1 ? 'Add-ons' : null,
+    discountRate: 0,
+    discountCents: 0,
+    totalCents,
+  };
 }
 
 export function formatCents(cents) {

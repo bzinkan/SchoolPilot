@@ -135,6 +135,8 @@ router.post("/login", authLimiter, async (req, res, next) => {
         gopilotRole: m.membership.gopilotRole,
         schoolName: m.school.name,
         schoolTimezone: m.school.schoolTimezone,
+        mailpilotEntitled: m.school.mailpilotEntitled,
+        classpilotEmailMonitoring: m.school.classpilotEmailMonitoring,
         dismissalTime: m.school.dismissalTime,
       })),
     });
