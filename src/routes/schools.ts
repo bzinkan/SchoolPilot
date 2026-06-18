@@ -38,6 +38,10 @@ function param(req: { params: Record<string, unknown> }, key: string): string {
   return String(req.params[key] ?? "");
 }
 
+function scopedSchoolId(req: any, res: any): string {
+  return req.authUser?.isSuperAdmin ? param(req, "schoolId") : res.locals.schoolId;
+}
+
 // All school routes require authentication
 router.use(authenticate);
 
@@ -94,7 +98,8 @@ router.post("/", requireSuperAdmin, async (req, res, next) => {
 // GET /api/schools/:schoolId - Get school details
 router.get("/:schoolId", requireSchoolContext, async (req, res, next) => {
   try {
-    let school = await getSchoolById(param(req, "schoolId"));
+    const schoolId = scopedSchoolId(req, res);
+    let school = await getSchoolById(schoolId);
     if (!school || school.deletedAt) {
       return res.status(404).json({ error: "School not found" });
     }
@@ -137,7 +142,7 @@ router.put(
           .json({ error: parsed.error.errors[0]?.message || "Invalid input" });
       }
 
-      const school = await updateSchool(param(req, "schoolId"), await toSchoolUpdate(parsed.data));
+      const school = await updateSchool(scopedSchoolId(req, res), await toSchoolUpdate(parsed.data));
       if (!school) {
         return res.status(404).json({ error: "School not found" });
       }
@@ -163,7 +168,7 @@ router.patch(
           .json({ error: parsed.error.errors[0]?.message || "Invalid input" });
       }
 
-      const school = await updateSchool(param(req, "schoolId"), await toSchoolUpdate(parsed.data));
+      const school = await updateSchool(scopedSchoolId(req, res), await toSchoolUpdate(parsed.data));
       if (!school) {
         return res.status(404).json({ error: "School not found" });
       }
@@ -231,7 +236,7 @@ router.get(
   requireRole("admin"),
   async (req, res, next) => {
     try {
-      const licenses = await getProductLicenses(param(req, "schoolId"));
+      const licenses = await getProductLicenses(scopedSchoolId(req, res));
       return res.json({ licenses });
     } catch (err) {
       next(err);
