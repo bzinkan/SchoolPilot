@@ -176,6 +176,13 @@ function PlaneCanvas() {
   );
 }
 
+// TEMP (test-school launch): show test schools a clean sign-in page. This hides
+// the marketing sections — products grid + "Better together" banner, the
+// "Request Information" CTA, the nav "Products"/"Get Started" links, and the hero
+// subtitle. ALL of that code is preserved below; flip SHOW_MARKETING back to true
+// to restore the full landing page after the first batch of test schools.
+const SHOW_MARKETING = false;
+
 export default function SchoolpilotLanding() {
   const { user } = useAuth();
   const { roleBasedDefaultPath } = useLicenses();
@@ -227,10 +234,14 @@ export default function SchoolpilotLanding() {
           </div>
 
           <div style={{ display: "flex", alignItems: "center", gap: 32 }}>
-            <a href="#products" style={{ color: "#64748b", textDecoration: "none", fontSize: 15, fontWeight: 500 }}>Products</a>
-            {/* Demo button hidden until new video is ready */}
-            {/* <button onClick={() => setShowDemo(true)} style={{ color: "#64748b", background: "none", border: "none", fontSize: 15, fontWeight: 500, cursor: "pointer", padding: 0 }}>Demo</button> */}
-            <a href="/get-started" style={{ color: "#64748b", textDecoration: "none", fontSize: 15, fontWeight: 500 }}>Get Started</a>
+            {SHOW_MARKETING && (
+              <>
+                <a href="#products" style={{ color: "#64748b", textDecoration: "none", fontSize: 15, fontWeight: 500 }}>Products</a>
+                {/* Demo button hidden until new video is ready */}
+                {/* <button onClick={() => setShowDemo(true)} style={{ color: "#64748b", background: "none", border: "none", fontSize: 15, fontWeight: 500, cursor: "pointer", padding: 0 }}>Demo</button> */}
+                <a href="/get-started" style={{ color: "#64748b", textDecoration: "none", fontSize: 15, fontWeight: 500 }}>Get Started</a>
+              </>
+            )}
             {user ? (
               <a href={dashboardPath} style={{
                 background: "#1e3a5f", color: "#fff", padding: "10px 20px",
@@ -270,6 +281,7 @@ export default function SchoolpilotLanding() {
             </span>
           </h1>
 
+          {SHOW_MARKETING && (
           <p className="fade-in delay-2" style={{
             fontSize: 20, color: "#64748b", lineHeight: 1.7,
             maxWidth: 600, margin: "0 auto",
@@ -277,10 +289,12 @@ export default function SchoolpilotLanding() {
             Classroom monitoring, digital hall passes, and dismissal management —
             built for K-12 schools. Simple. Affordable. Effective.
           </p>
+          )}
         </div>
       </section>
 
       {/* Products Section */}
+      {SHOW_MARKETING && (
       <section id="products" style={{ padding: "100px 24px", background: "#fff" }}>
         <div style={{ maxWidth: 1100, margin: "0 auto" }}>
           <div style={{ textAlign: "center", marginBottom: 64 }}>
@@ -403,8 +417,10 @@ export default function SchoolpilotLanding() {
           </div>
         </div>
       </section>
+      )}
 
       {/* CTA Section */}
+      {SHOW_MARKETING && (
       <section style={{ padding: "100px 24px", background: "#1e3a5f" }}>
         <div style={{ maxWidth: 520, margin: "0 auto", textAlign: "center" }}>
           <h2 style={{
@@ -430,6 +446,7 @@ export default function SchoolpilotLanding() {
           </a>
         </div>
       </section>
+      )}
 
       {/* AI Transparency one-liner */}
       <section style={{ padding: "20px 24px", background: "#f1f5f9", borderTop: "1px solid #e2e8f0", textAlign: "center" }}>
