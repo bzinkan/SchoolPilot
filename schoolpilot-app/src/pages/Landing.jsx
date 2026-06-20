@@ -293,10 +293,13 @@ export default function SchoolpilotLanding() {
         </div>
       </section>
 
-      {/* Products Section */}
-      {SHOW_MARKETING && (
+      {/* Products Section — the three product cards are ALWAYS shown so test
+          schools can see which products are involved. Only the marketing wrapper
+          (the "Our Products" header + the "Better together" banner) stays gated
+          behind SHOW_MARKETING. */}
       <section id="products" style={{ padding: "100px 24px", background: "#fff" }}>
         <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+          {SHOW_MARKETING && (
           <div style={{ textAlign: "center", marginBottom: 64 }}>
             <h2 style={{
               fontFamily: "'Fraunces', serif", fontSize: 36, fontWeight: 700,
@@ -308,6 +311,7 @@ export default function SchoolpilotLanding() {
               Three tools designed to make your school run smoother.
             </p>
           </div>
+          )}
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 24 }}>
 
@@ -396,6 +400,7 @@ export default function SchoolpilotLanding() {
             </a>
           </div>
 
+          {SHOW_MARKETING && (
           <div className="fade-in delay-3" style={{
             textAlign: "center", marginTop: 56, padding: "32px 24px",
             background: "linear-gradient(135deg, #1e3a5f 0%, #0f172a 100%)",
@@ -415,9 +420,9 @@ export default function SchoolpilotLanding() {
               , but great on their own.
             </p>
           </div>
+          )}
         </div>
       </section>
-      )}
 
       {/* CTA Section */}
       {SHOW_MARKETING && (
