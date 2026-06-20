@@ -519,4 +519,57 @@ describe("multi-school readiness route hardening", () => {
       }
     }
   });
+
+  it("teacher at a non-GoPilot school keeps the full roster (no homeroom scoping)", async () => {
+    // Regression guard for the cross-product landmine: /students is shared across
+    // products. A PassPilot/ClassPilot-only school has no homerooms, so GoPilot-style
+    // teacher scoping must NOT apply there — otherwise the roster wrongly returns [].
+    let ppSchool: any;
+    let ppTeacher: any;
+    try {
+      ppSchool = await createSchool({
+        name: `${TAG}_PP`,
+        domain: `${TAG}-pp.example.edu`,
+        slug: `${TAG}-pp`,
+        status: "active",
+      } as any);
+      await createProductLicense({ schoolId: ppSchool.id, product: "PASSPILOT", status: "active" } as any);
+      ppTeacher = await createUser({
+        email: `${TAG}-pp-teacher@${TAG}-pp.example.edu`,
+        password: await hashPassword("TeacherPass123!"),
+        firstName: "PP",
+        lastName: "Teacher",
+      } as any);
+      let ppStudent: any;
+      await inSchool(ppSchool.id, async () => {
+        await createMembership({ userId: ppTeacher.id, schoolId: ppSchool.id, role: "teacher", status: "active" } as any);
+        ppStudent = await createStudent({
+          schoolId: ppSchool.id,
+          firstName: "Pass",
+          lastName: "Kid",
+          email: `kid@${TAG}-pp.example.edu`,
+          status: "active",
+        } as any);
+      });
+
+      const auth = authFor(ppTeacher, ppSchool.id);
+      const res = await requestJson("GET", "/students", undefined, auth);
+      assert.equal(res.status, 200);
+      const ids = new Set((res.body.students || []).map((s: any) => s.id));
+      assert.ok(ids.has(ppStudent.id), "PassPilot teacher should see the school roster, not an empty list");
+    } finally {
+      await asSystem(async () => {
+        if (ppSchool?.id) {
+          await db.execute(sql`DELETE FROM settings WHERE school_id = ${ppSchool.id}`);
+          await db.execute(sql`DELETE FROM product_licenses WHERE school_id = ${ppSchool.id}`);
+          await db.execute(sql`DELETE FROM school_memberships WHERE school_id = ${ppSchool.id}`);
+          await db.execute(sql`DELETE FROM students WHERE school_id = ${ppSchool.id}`);
+          await db.execute(sql`DELETE FROM schools WHERE id = ${ppSchool.id}`);
+        }
+        if (ppTeacher?.id) {
+          await db.execute(sql`DELETE FROM users WHERE id = ${ppTeacher.id}`);
+        }
+      });
+    }
+  });
 });
