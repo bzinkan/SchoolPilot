@@ -220,12 +220,14 @@ if [[ "$DEPLOY_FRONTEND" == true ]]; then
   done
   success "S3 sync complete"
 
-  # Step 3: Invalidate CloudFront
+  # Step 3: Invalidate CloudFront. CloudFront only allows a trailing '*' wildcard,
+  # so "/*.json" was rejected (InvalidArgument). index.html is no-cache and
+  # references the hashed asset bundles, so invalidating it + root is sufficient;
+  # the short-cached JSON manifests expire on their own.
   info "Invalidating CloudFront cache..."
   aws cloudfront create-invalidation \
     --distribution-id "$CF_DIST_ID" \
-    --paths "/index.html" "/*.json" \
-    --region "$REGION" \
+    --paths "/index.html" "/" \
     --query 'Invalidation.{Id:Id,Status:Status}' \
     --output table
   success "CloudFront invalidation created"
