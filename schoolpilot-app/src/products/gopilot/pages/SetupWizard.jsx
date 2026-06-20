@@ -21,6 +21,7 @@ import SchoolSettingsTab from './setup/SchoolSettingsTab';
 export default function SchoolSetupWizard() {
   const navigate = useNavigate();
   const { currentSchool, currentRole } = useGoPilotAuth();
+  const canManageSetup = currentRole === 'admin' || currentRole === 'school_admin';
 
   const [activeTab, setActiveTab] = useState('staff');
   const [students, setStudents] = useState([]);
@@ -36,9 +37,15 @@ export default function SchoolSetupWizard() {
   const schoolId = currentSchool?.id;
   const schoolName = currentSchool?.name || '';
 
+  useEffect(() => {
+    if (!currentRole || canManageSetup) return;
+    navigate(currentRole === 'teacher' ? '/gopilot/teacher' : '/gopilot', { replace: true });
+  }, [canManageSetup, currentRole, navigate]);
+
   // Fetch data on mount
   useEffect(() => {
     if (!schoolId) { setShowCreateSchool(true); return; }
+    if (!canManageSetup) return;
     setShowCreateSchool(false);
     const fetchData = async () => {
       setLoading(true);
@@ -65,7 +72,7 @@ export default function SchoolSetupWizard() {
       }
     };
     fetchData();
-  }, [schoolId]);
+  }, [canManageSetup, schoolId]);
 
   // Student CRUD
   const handleAddStudent = async (data) => {
@@ -239,6 +246,10 @@ export default function SchoolSetupWizard() {
         </div>
       </div>
     );
+  }
+
+  if (schoolId && !canManageSetup) {
+    return null;
   }
 
   if (loading) {
