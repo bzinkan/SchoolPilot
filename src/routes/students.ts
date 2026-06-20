@@ -35,6 +35,7 @@ import { homerooms } from "../schema/gopilot.js";
 import {
   getRequestGoPilotRole,
   getTeacherHomeroomIds,
+  hasActiveGoPilotLicense,
 } from "../services/gopilotAccess.js";
 
 const router = Router();
@@ -62,6 +63,14 @@ async function searchStudentsVisibleToRequest(
   }
 
   if (role !== "teacher") {
+    return searchStudents(schoolId, options);
+  }
+
+  // Per-homeroom teacher scoping is a GoPilot-only model. At a PassPilot/ClassPilot
+  // school (no active GoPilot license) there are no homerooms, so scoping here would
+  // wrongly empty a teacher's roster — those teachers keep the normal full view
+  // (pre-#84 behavior). Only GoPilot-licensed schools get per-homeroom scoping.
+  if (!(await hasActiveGoPilotLicense(schoolId))) {
     return searchStudents(schoolId, options);
   }
 
@@ -105,6 +114,11 @@ async function canAccessStudentForRequest(
     return false;
   }
   if (role !== "teacher") {
+    return true;
+  }
+  // Non-GoPilot school: teacher retains normal access (no homeroom model). See
+  // searchStudentsVisibleToRequest for the rationale.
+  if (!(await hasActiveGoPilotLicense(res.locals.schoolId!))) {
     return true;
   }
   if (!student.homeroomId) {
