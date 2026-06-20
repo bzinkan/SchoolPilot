@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type Request, type Response } from "express";
 import { authenticate } from "../middleware/authenticate.js";
 import { requireSchoolContext } from "../middleware/requireSchoolContext.js";
 import { requireRole } from "../middleware/requireRole.js";
@@ -27,11 +27,15 @@ import {
   studentEmailRules,
   studentEmailTaken,
 } from "../services/studentEmailPolicy.js";
-import type { InsertStudent } from "../schema/students.js";
+import type { InsertStudent, Student } from "../schema/students.js";
 import db from "../db.js";
 import { eq } from "drizzle-orm";
 import { familyGroups, familyGroupStudents } from "../schema/gopilot.js";
 import { homerooms } from "../schema/gopilot.js";
+import {
+  getRequestGoPilotRole,
+  getTeacherHomeroomIds,
+} from "../services/gopilotAccess.js";
 
 const router = Router();
 
@@ -43,6 +47,73 @@ router.use(authenticate);
 
 const schoolContext = [requireSchoolContext, requireActiveSchool, requireProductLicense("CLASSPILOT", "PASSPILOT", "GOPILOT")] as const;
 
+type StudentSearchOptions = Parameters<typeof searchStudents>[1];
+
+async function searchStudentsVisibleToRequest(
+  req: Request,
+  res: Response,
+  options: StudentSearchOptions
+) {
+  const schoolId = res.locals.schoolId!;
+  const role = await getRequestGoPilotRole(req, res);
+
+  if (!role || role === "parent") {
+    return [];
+  }
+
+  if (role !== "teacher") {
+    return searchStudents(schoolId, options);
+  }
+
+  const allowedHomeroomIds = await getTeacherHomeroomIds(req.authUser!.id, schoolId);
+  if (allowedHomeroomIds.size === 0) {
+    return [];
+  }
+
+  if (options?.homeroomId) {
+    if (!allowedHomeroomIds.has(options.homeroomId)) {
+      return [];
+    }
+    return searchStudents(schoolId, options);
+  }
+
+  const rowsById = new Map<string, Awaited<ReturnType<typeof searchStudents>>[number]>();
+  for (const allowedHomeroomId of allowedHomeroomIds) {
+    const rows = await searchStudents(schoolId, {
+      ...options,
+      homeroomId: allowedHomeroomId,
+    });
+    for (const row of rows) {
+      rowsById.set(row.id, row);
+    }
+  }
+
+  return [...rowsById.values()].sort((a, b) => {
+    const byLast = (a.lastName || "").localeCompare(b.lastName || "");
+    if (byLast !== 0) return byLast;
+    return (a.firstName || "").localeCompare(b.firstName || "");
+  });
+}
+
+async function canAccessStudentForRequest(
+  req: Request,
+  res: Response,
+  student: Pick<Student, "homeroomId">
+): Promise<boolean> {
+  const role = await getRequestGoPilotRole(req, res);
+  if (!role || role === "parent") {
+    return false;
+  }
+  if (role !== "teacher") {
+    return true;
+  }
+  if (!student.homeroomId) {
+    return false;
+  }
+  const allowedHomeroomIds = await getTeacherHomeroomIds(req.authUser!.id, res.locals.schoolId!);
+  return allowedHomeroomIds.has(student.homeroomId);
+}
+
 // ============================================================================
 // Student CRUD
 // ============================================================================
@@ -52,7 +123,7 @@ router.get("/", ...schoolContext, async (req, res, next) => {
   try {
     const { search, gradeLevel, gradeId, homeroomId, status, dismissalType } = req.query as Record<string, string | undefined>;
 
-    const studentsList = await searchStudents(res.locals.schoolId!, {
+    const studentsList = await searchStudentsVisibleToRequest(req, res, {
       search,
       gradeLevel,
       gradeId,
@@ -484,6 +555,9 @@ router.get("/:studentId", ...schoolContext, async (req, res, next) => {
     if (!student || student.schoolId !== res.locals.schoolId) {
       return res.status(404).json({ error: "Student not found" });
     }
+    if (!(await canAccessStudentForRequest(req, res, student))) {
+      return res.status(404).json({ error: "Student not found" });
+    }
     return res.json({ student });
   } catch (err) {
     next(err);
@@ -531,6 +605,9 @@ router.put(
     try {
       const existing = await getStudentById(param(req, "studentId"));
       if (!existing || existing.schoolId !== res.locals.schoolId) {
+        return res.status(404).json({ error: "Student not found" });
+      }
+      if (!(await canAccessStudentForRequest(req, res, existing))) {
         return res.status(404).json({ error: "Student not found" });
       }
 
@@ -605,6 +682,9 @@ router.patch(
     try {
       const existing = await getStudentById(param(req, "studentId"));
       if (!existing || existing.schoolId !== res.locals.schoolId) {
+        return res.status(404).json({ error: "Student not found" });
+      }
+      if (!(await canAccessStudentForRequest(req, res, existing))) {
         return res.status(404).json({ error: "Student not found" });
       }
 

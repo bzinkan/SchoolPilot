@@ -17,7 +17,10 @@ import {
 } from "../../services/storage.js";
 import {
   allStudentsBelongToSchool,
+  getRequestGoPilotRole,
   getHomeroomForSchool,
+  getTeacherHomeroomIds,
+  isGoPilotManager,
   requireGoPilotRole,
 } from "../../services/gopilotAccess.js";
 
@@ -102,10 +105,26 @@ router.get("/mine", ...auth, async (req, res, next) => {
 router.get("/", ...auth, async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
-    const rows = await getHomeroomsBySchool(schoolId);
+    const role = await getRequestGoPilotRole(req, res);
+    if (!role || (role !== "teacher" && !isGoPilotManager(role))) {
+      return res.status(403).json({ error: "Insufficient permissions" });
+    }
+
+    const allRows = await getHomeroomsBySchool(schoolId);
+    let rows = allRows;
+    if (role === "teacher") {
+      const allowedHomeroomIds = await getTeacherHomeroomIds(req.authUser!.id, schoolId);
+      rows = allRows.filter((row) => allowedHomeroomIds.has(row.id));
+    }
 
     // Get student counts per homeroom
-    const allStudents = await searchStudents(schoolId, { status: "active" });
+    const allStudents = role === "teacher"
+      ? (
+          await Promise.all(
+            rows.map((row) => searchStudents(schoolId, { status: "active", homeroomId: row.id }))
+          )
+        ).flat()
+      : await searchStudents(schoolId, { status: "active" });
     const countMap = new Map<string, number>();
     for (const s of allStudents) {
       if (s.homeroomId) {

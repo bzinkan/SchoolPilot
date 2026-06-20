@@ -9,11 +9,13 @@ import { runWithTenantContext } from "../dist/middleware/tenantContext.js";
 import {
   createMembership,
   createProductLicense,
+  createHomeroom,
   createSchool,
   createStudent,
   createUser,
   getSchoolById,
   getStudentByEmail,
+  addHomeroomTeacher,
   updateEnrollmentSettings,
 } from "../dist/services/storage.js";
 import { signUserToken } from "../dist/services/jwt.js";
@@ -26,6 +28,15 @@ let schoolA: any;
 let schoolB: any;
 let adminUser: any;
 let superUser: any;
+let teacherA: any;
+let teacherB: any;
+let multiSchoolTeacher: any;
+let homeroomA: any;
+let homeroomB: any;
+let multiHomeroomA: any;
+let teacherAStudent: any;
+let teacherBStudent: any;
+let multiStudentA: any;
 let server: Server;
 let baseUrl: string;
 let originalRedisUrl: string | undefined;
@@ -79,6 +90,18 @@ async function registerStudent(body: Record<string, unknown>) {
   return requestJson("POST", "/classpilot/register-student", body);
 }
 
+function authFor(user: any, schoolId: string): Record<string, string> {
+  const token = signUserToken({
+    userId: user.id,
+    email: user.email,
+    isSuperAdmin: !!user.isSuperAdmin,
+  });
+  return {
+    authorization: `Bearer ${token}`,
+    "x-school-id": schoolId,
+  };
+}
+
 before(async () => {
   originalRedisUrl = process.env.REDIS_URL;
   process.env.REDIS_URL = "";
@@ -105,9 +128,10 @@ before(async () => {
     slug: `${TAG}-b`,
     status: "active",
   } as any);
-
   await createProductLicense({ schoolId: schoolA.id, product: "CLASSPILOT", status: "active" } as any);
   await createProductLicense({ schoolId: schoolB.id, product: "CLASSPILOT", status: "active" } as any);
+  await createProductLicense({ schoolId: schoolA.id, product: "GOPILOT", status: "active" } as any);
+  await createProductLicense({ schoolId: schoolB.id, product: "GOPILOT", status: "active" } as any);
   await inSchool(schoolA.id, () => updateEnrollmentSettings(schoolA.id, { autoEnrollStudents: false }));
   await inSchool(schoolB.id, () => updateEnrollmentSettings(schoolB.id, { autoEnrollStudents: false }));
 
@@ -153,6 +177,78 @@ before(async () => {
     isSuperAdmin: true,
   } as any);
 
+  teacherA = await createUser({
+    email: `${TAG}-teacher-a@${TAG}-a.example.edu`,
+    password: await hashPassword("TeacherPass123!"),
+    firstName: "Teacher",
+    lastName: "A",
+  } as any);
+  teacherB = await createUser({
+    email: `${TAG}-teacher-b@${TAG}-a.example.edu`,
+    password: await hashPassword("TeacherPass123!"),
+    firstName: "Teacher",
+    lastName: "B",
+  } as any);
+  multiSchoolTeacher = await createUser({
+    email: `${TAG}-multi-teacher@${TAG}-a.example.edu`,
+    password: await hashPassword("TeacherPass123!"),
+    firstName: "Multi",
+    lastName: "Teacher",
+  } as any);
+
+  await inSchool(schoolA.id, async () => {
+    await createMembership({ userId: teacherA.id, schoolId: schoolA.id, role: "teacher", status: "active" } as any);
+    await createMembership({ userId: teacherB.id, schoolId: schoolA.id, role: "teacher", status: "active" } as any);
+    await createMembership({ userId: multiSchoolTeacher.id, schoolId: schoolA.id, role: "teacher", status: "active" } as any);
+
+    homeroomA = await createHomeroom({
+      schoolId: schoolA.id,
+      teacherId: teacherA.id,
+      name: `${TAG}_Teacher_A`,
+      grade: "6",
+    } as any);
+    homeroomB = await createHomeroom({
+      schoolId: schoolA.id,
+      teacherId: teacherB.id,
+      name: `${TAG}_Teacher_B`,
+      grade: "6",
+    } as any);
+    multiHomeroomA = await createHomeroom({
+      schoolId: schoolA.id,
+      teacherId: multiSchoolTeacher.id,
+      name: `${TAG}_Multi_A`,
+      grade: "7",
+    } as any);
+    await addHomeroomTeacher(homeroomA.id, teacherA.id, "primary");
+    await addHomeroomTeacher(homeroomB.id, teacherB.id, "primary");
+    await addHomeroomTeacher(multiHomeroomA.id, multiSchoolTeacher.id, "primary");
+
+    teacherAStudent = await createStudent({
+      schoolId: schoolA.id,
+      firstName: "Assigned",
+      lastName: "Alpha",
+      email: `assigned.alpha@${TAG}-a.example.edu`,
+      homeroomId: homeroomA.id,
+      status: "active",
+    } as any);
+    teacherBStudent = await createStudent({
+      schoolId: schoolA.id,
+      firstName: "Assigned",
+      lastName: "Beta",
+      email: `assigned.beta@${TAG}-a.example.edu`,
+      homeroomId: homeroomB.id,
+      status: "active",
+    } as any);
+    multiStudentA = await createStudent({
+      schoolId: schoolA.id,
+      firstName: "Multi",
+      lastName: "Alpha",
+      email: `multi.alpha@${TAG}-a.example.edu`,
+      homeroomId: multiHomeroomA.id,
+      status: "active",
+    } as any);
+  });
+
   const { createApp } = await import("../dist/app.js");
   const app = createApp();
   server = createServer(app);
@@ -178,6 +274,8 @@ after(async () => {
       await db.execute(sql`DELETE FROM product_licenses WHERE school_id IN (${schoolA.id}, ${schoolB.id})`);
       await db.execute(sql`DELETE FROM school_memberships WHERE school_id IN (${schoolA.id}, ${schoolB.id})`);
       await db.execute(sql`DELETE FROM students WHERE school_id IN (${schoolA.id}, ${schoolB.id})`);
+      await db.execute(sql`DELETE FROM homeroom_teachers WHERE homeroom_id IN (SELECT id FROM homerooms WHERE school_id IN (${schoolA.id}, ${schoolB.id}))`);
+      await db.execute(sql`DELETE FROM homerooms WHERE school_id IN (${schoolA.id}, ${schoolB.id})`);
       await db.execute(sql`DELETE FROM schools WHERE id IN (${schoolA.id}, ${schoolB.id})`);
       await db.execute(sql`DELETE FROM users WHERE email LIKE ${`${TAG}%@%`}`);
       await db.execute(sql`DELETE FROM "session" WHERE sess::text LIKE ${`%${TAG}%`}`);
@@ -306,5 +404,119 @@ describe("multi-school readiness route hardening", () => {
 
     const changed = await getSchoolById(schoolB.id);
     assert.equal(changed?.name, `${TAG}_B_super_updated`);
+  });
+
+  it("GoPilot teachers cannot list another same-school teacher's homeroom or students", async () => {
+    const auth = authFor(teacherA, schoolA.id);
+
+    const homerooms = await requestJson("GET", "/gopilot/homerooms", undefined, auth);
+    assert.equal(homerooms.status, 200);
+    const homeroomIds = new Set((homerooms.body.homerooms || []).map((h: any) => h.id));
+    assert.ok(homeroomIds.has(homeroomA.id));
+    assert.ok(!homeroomIds.has(homeroomB.id));
+
+    const assignedStudents = await requestJson("GET", "/students", undefined, auth);
+    assert.equal(assignedStudents.status, 200);
+    const assignedIds = new Set((assignedStudents.body.students || []).map((s: any) => s.id));
+    assert.ok(assignedIds.has(teacherAStudent.id));
+    assert.ok(!assignedIds.has(teacherBStudent.id));
+
+    const foreignHomeroomStudents = await requestJson("GET", `/students?homeroomId=${homeroomB.id}`, undefined, auth);
+    assert.equal(foreignHomeroomStudents.status, 200);
+    assert.deepEqual(foreignHomeroomStudents.body.students, []);
+
+    const ownStudent = await requestJson("GET", `/students/${teacherAStudent.id}`, undefined, auth);
+    assert.equal(ownStudent.status, 200);
+    assert.equal(ownStudent.body.student.id, teacherAStudent.id);
+
+    const foreignStudent = await requestJson("GET", `/students/${teacherBStudent.id}`, undefined, auth);
+    assert.equal(foreignStudent.status, 404);
+
+    const foreignUpdate = await requestJson(
+      "PATCH",
+      `/students/${teacherBStudent.id}`,
+      { firstName: "Changed" },
+      auth
+    );
+    assert.equal(foreignUpdate.status, 404);
+  });
+
+  it("GoPilot multi-school teachers only see assignments for the active school context", async () => {
+    let districtSchool: any;
+    try {
+      districtSchool = await createSchool({
+        name: `${TAG}_C`,
+        domain: schoolA.domain,
+        slug: `${TAG}-c`,
+        status: "active",
+      } as any);
+      await createProductLicense({ schoolId: districtSchool.id, product: "GOPILOT", status: "active" } as any);
+      await inSchool(districtSchool.id, () => updateEnrollmentSettings(districtSchool.id, { autoEnrollStudents: false }));
+
+      let districtHomeroom: any;
+      let districtStudent: any;
+      await inSchool(districtSchool.id, async () => {
+        await createMembership({
+          userId: multiSchoolTeacher.id,
+          schoolId: districtSchool.id,
+          role: "teacher",
+          status: "active",
+        } as any);
+        districtHomeroom = await createHomeroom({
+          schoolId: districtSchool.id,
+          teacherId: multiSchoolTeacher.id,
+          name: `${TAG}_Multi_C`,
+          grade: "8",
+        } as any);
+        await addHomeroomTeacher(districtHomeroom.id, multiSchoolTeacher.id, "primary");
+        districtStudent = await createStudent({
+          schoolId: districtSchool.id,
+          firstName: "Multi",
+          lastName: "Charlie",
+          email: `multi.charlie@${TAG}-a.example.edu`,
+          homeroomId: districtHomeroom.id,
+          status: "active",
+        } as any);
+      });
+
+      const schoolAAuth = authFor(multiSchoolTeacher, schoolA.id);
+      const districtAuth = authFor(multiSchoolTeacher, districtSchool.id);
+
+      const homeroomsA = await requestJson("GET", "/gopilot/homerooms", undefined, schoolAAuth);
+      assert.equal(homeroomsA.status, 200);
+      const homeroomIdsA = new Set((homeroomsA.body.homerooms || []).map((h: any) => h.id));
+      assert.ok(homeroomIdsA.has(multiHomeroomA.id));
+      assert.ok(!homeroomIdsA.has(districtHomeroom.id));
+
+      const studentsA = await requestJson("GET", "/students", undefined, schoolAAuth);
+      assert.equal(studentsA.status, 200);
+      const studentIdsA = new Set((studentsA.body.students || []).map((s: any) => s.id));
+      assert.ok(studentIdsA.has(multiStudentA.id));
+      assert.ok(!studentIdsA.has(districtStudent.id));
+
+      const homeroomsC = await requestJson("GET", "/gopilot/homerooms", undefined, districtAuth);
+      assert.equal(homeroomsC.status, 200);
+      const homeroomIdsC = new Set((homeroomsC.body.homerooms || []).map((h: any) => h.id));
+      assert.ok(homeroomIdsC.has(districtHomeroom.id));
+      assert.ok(!homeroomIdsC.has(multiHomeroomA.id));
+
+      const studentsC = await requestJson("GET", "/students", undefined, districtAuth);
+      assert.equal(studentsC.status, 200);
+      const studentIdsC = new Set((studentsC.body.students || []).map((s: any) => s.id));
+      assert.ok(studentIdsC.has(districtStudent.id));
+      assert.ok(!studentIdsC.has(multiStudentA.id));
+    } finally {
+      if (districtSchool?.id) {
+        await asSystem(async () => {
+          await db.execute(sql`DELETE FROM settings WHERE school_id = ${districtSchool.id}`);
+          await db.execute(sql`DELETE FROM product_licenses WHERE school_id = ${districtSchool.id}`);
+          await db.execute(sql`DELETE FROM school_memberships WHERE school_id = ${districtSchool.id}`);
+          await db.execute(sql`DELETE FROM students WHERE school_id = ${districtSchool.id}`);
+          await db.execute(sql`DELETE FROM homeroom_teachers WHERE homeroom_id IN (SELECT id FROM homerooms WHERE school_id = ${districtSchool.id})`);
+          await db.execute(sql`DELETE FROM homerooms WHERE school_id = ${districtSchool.id}`);
+          await db.execute(sql`DELETE FROM schools WHERE id = ${districtSchool.id}`);
+        });
+      }
+    }
   });
 });

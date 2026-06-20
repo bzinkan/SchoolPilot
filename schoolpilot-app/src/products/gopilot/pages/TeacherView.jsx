@@ -58,11 +58,9 @@ export default function TeacherView() {
         setLoading(true);
         setError(null);
 
-        const homeroomsRes = await api.get(`/schools/${currentSchool.id}/homerooms`);
+        const homeroomsRes = await api.get('/gopilot/homerooms/mine');
         const homerooms = Array.isArray(homeroomsRes.data) ? homeroomsRes.data : homeroomsRes.data?.homerooms || [];
-        const myHomeroom = homerooms.find(
-          (h) => h.teacher_id == user?.id || h.teacherId == user?.id || h.userId == user?.id
-        );
+        const myHomeroom = homerooms[0];
 
         if (!myHomeroom) {
           if (!cancelled) setError('No homeroom found for your account.');
