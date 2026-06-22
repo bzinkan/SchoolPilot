@@ -25,8 +25,10 @@ import {
   linkStudentDevice,
   createStudent,
   startStudentSession,
+  touchStudentSession,
   resolveSchoolForStudent,
   getSchoolById,
+  getSchoolBySlug,
   getSettingsForSchool,
   updateEnrollmentSettings,
   getStudentsForDevice,
@@ -38,10 +40,14 @@ import {
   getStudentByEmail,
   createEvidenceArtifact,
   createStudentTimelineEvent,
+  endStudentSession,
+  getGroupByIdAndSchool,
+  getGroupStudents,
 } from "../../services/storage.js";
 import { sendSafetyAlertEmail } from "../../services/email.js";
 import { createStudentToken } from "../../services/deviceJwt.js";
-import { updateDeviceStatus, updateDeviceClassification } from "../../realtime/student-statuses.js";
+import { comparePassword } from "../../util/password.js";
+import { updateDeviceStatus, updateDeviceClassification, removeDeviceStatus } from "../../realtime/student-statuses.js";
 import {
   broadcastToTeachersLocal,
   broadcastToStudentsLocal,
@@ -121,6 +127,117 @@ const staffAuth = [
   requireActiveSchool,
   requireProductLicense("CLASSPILOT"),
 ] as const;
+
+function stripStudentCredentialHash<T extends { classpilotPinHash?: string | null }>(
+  student: T
+): Omit<T, "classpilotPinHash"> {
+  const { classpilotPinHash: _classpilotPinHash, ...safeStudent } = student;
+  return safeStudent;
+}
+
+function normalizeGradeLevel(value: unknown): string | null {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  const normalized = raw.replace(/^grade\s+/i, "").replace(/(\d+)(st|nd|rd|th)$/i, "$1");
+  const lower = normalized.toLowerCase();
+  if (lower === "k" || lower === "kg" || lower === "kindergarten") return "K";
+  return normalized;
+}
+
+function enrollmentKeyMatches(expected: string | null | undefined, providedRaw: unknown): boolean {
+  const provided = Buffer.from(String(providedRaw || ""));
+  const expectedBuffer = Buffer.from(expected || "");
+  return (
+    expectedBuffer.length > 0 &&
+    provided.length === expectedBuffer.length &&
+    crypto.timingSafeEqual(provided, expectedBuffer)
+  );
+}
+
+function validateEnrollmentKeyForSettings(
+  settings: Awaited<ReturnType<typeof getSettingsForSchool>>,
+  provided: unknown,
+  options: { requireConfiguredKey?: boolean } = {}
+): { ok: true } | { ok: false; status: number; error: string } {
+  const hasConfiguredKey = !!settings?.enrollmentKey;
+  if (options.requireConfiguredKey && !hasConfiguredKey) {
+    return { ok: false, status: 403, error: "Shared sign-in is not configured for this school" };
+  }
+  if (settings?.enrollmentKeyRequired || options.requireConfiguredKey || hasConfiguredKey) {
+    if (!enrollmentKeyMatches(settings?.enrollmentKey, provided)) {
+      return { ok: false, status: 401, error: "Invalid or missing enrollment key" };
+    }
+  }
+  return { ok: true };
+}
+
+async function ensureDeviceForSchool(options: {
+  deviceId: string;
+  deviceName?: string | null;
+  schoolId: string;
+  classId?: string | null;
+}) {
+  let device = await getDeviceById(options.deviceId);
+  if (!device) {
+    device = await createDevice({
+      deviceId: options.deviceId,
+      deviceName: options.deviceName || null,
+      schoolId: options.schoolId,
+      classId: options.classId || options.schoolId,
+    });
+  }
+  return device;
+}
+
+async function completeStudentDeviceLogin(options: {
+  schoolId: string;
+  deviceId: string;
+  deviceName?: string | null;
+  classId?: string | null;
+  student: Awaited<ReturnType<typeof getStudentByEmail>>;
+}) {
+  if (!options.student) {
+    throw new Error("Student required");
+  }
+
+  const device = await ensureDeviceForSchool({
+    deviceId: options.deviceId,
+    deviceName: options.deviceName,
+    schoolId: options.schoolId,
+    classId: options.classId,
+  });
+  await linkStudentDevice({ studentId: options.student.id, deviceId: options.deviceId });
+  await startStudentSession(options.student.id, options.deviceId);
+
+  const studentEmail = options.student.email || undefined;
+  const studentToken = createStudentToken({
+    studentId: options.student.id,
+    deviceId: options.deviceId,
+    schoolId: options.schoolId,
+    studentEmail,
+  });
+
+  broadcastToTeachersLocal(options.schoolId, {
+    type: "student-registered",
+    studentId: options.student.id,
+    deviceId: options.deviceId,
+    studentEmail,
+    studentName: `${options.student.firstName || ""} ${options.student.lastName || ""}`.trim() || options.student.email || "Student",
+  });
+  await publishWS({ kind: "staff", schoolId: options.schoolId }, {
+    type: "student-registered",
+    studentId: options.student.id,
+    deviceId: options.deviceId,
+  });
+
+  return {
+    success: true,
+    device,
+    student: stripStudentCredentialHash(options.student),
+    studentToken,
+    manualExpiresInSeconds: 300,
+  };
+}
 
 async function recordRemoteActionTimeline(options: {
   schoolId: string;
@@ -256,6 +373,65 @@ router.get("/school/status", async (_req, res) => {
   return res.json({ status: "ok", message: "Use POST with studentEmail" });
 });
 
+// GET /api/classpilot/extension/login-roster - Minimal roster for optional Name + PIN login
+router.get("/extension/login-roster", extensionLimiter, async (req, res, next) => {
+  try {
+    const schoolIdParam = String(req.query.schoolId || "").trim();
+    const schoolSlug = String(req.query.schoolSlug || "").trim();
+    const gradeLevel = normalizeGradeLevel(req.query.gradeLevel);
+    const groupId = String(req.query.groupId || "").trim();
+    const enrollmentKey = req.query.enrollmentKey;
+
+    const school = schoolIdParam
+      ? await getSchoolById(schoolIdParam)
+      : schoolSlug
+        ? await getSchoolBySlug(schoolSlug)
+        : undefined;
+    if (!school || school.status !== "active") {
+      return res.status(404).json({ error: "Shared sign-in is not configured" });
+    }
+
+    await runWithTenantContext({ schoolId: school.id }, async () => {
+      const regSettings = await getSettingsForSchool(school.id);
+      if (!regSettings?.sharedChromebookPinLoginEnabled) {
+        return res.status(403).json({ error: "PIN login is not enabled for this school", pinLoginEnabled: false });
+      }
+
+      const keyCheck = validateEnrollmentKeyForSettings(regSettings, enrollmentKey, {
+        requireConfiguredKey: true,
+      });
+      if (!keyCheck.ok) {
+        return res.status(keyCheck.status).json({ error: keyCheck.error });
+      }
+
+      let students = await getStudentsBySchool(school.id);
+      if (groupId) {
+        const group = await getGroupByIdAndSchool(groupId, school.id);
+        if (!group) {
+          return res.status(404).json({ error: "Class roster not found" });
+        }
+        const rows = await getGroupStudents(group.id);
+        students = rows.map((row) => row.student);
+      }
+
+      const roster = students
+        .filter((student) => student.status === "active")
+        .filter((student) => !gradeLevel || normalizeGradeLevel(student.gradeLevel) === gradeLevel)
+        .map((student) => ({
+          id: student.id,
+          name: `${student.firstName || ""} ${student.lastName || ""}`.trim() || student.email || "Student",
+          gradeLevel: student.gradeLevel,
+          hasPin: !!student.classpilotPinHash,
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+
+      return res.json({ students: roster, pinLoginEnabled: true });
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ============================================================================
 // Extension Settings
 // ============================================================================
@@ -277,6 +453,7 @@ router.get("/extension/settings", requireDeviceAuth, async (_req, res, next) => 
       trackingDays: schoolSettings?.trackingDays ?? null,
       schoolTimezone: schoolSettings?.schoolTimezone || school.schoolTimezone || null,
       afterHoursMode: schoolSettings?.afterHoursMode ?? "off",
+      sharedChromebookPinLoginEnabled: !!schoolSettings?.sharedChromebookPinLoginEnabled,
       maxTabsPerStudent: schoolSettings?.maxTabsPerStudent
         ? parseInt(schoolSettings.maxTabsPerStudent, 10)
         : null,
@@ -289,6 +466,140 @@ router.get("/extension/settings", requireDeviceAuth, async (_req, res, next) => 
 // ============================================================================
 // Device & Student Registration
 // ============================================================================
+
+// POST /api/classpilot/extension/student-login - Shared Chromebook fallback login
+router.post("/extension/student-login", extensionLimiter, async (req, res, next) => {
+  try {
+    const {
+      deviceId,
+      deviceName,
+      classId,
+      studentEmail,
+      studentIdNumber,
+      studentId,
+      pin,
+      schoolId: explicitSchoolId,
+      schoolSlug,
+      enrollmentKey,
+    } = req.body;
+
+    if (!deviceId) {
+      return res.status(400).json({ error: "deviceId required" });
+    }
+
+    // Upper-grade fallback: email + Student ID Number.
+    if (studentEmail || studentIdNumber) {
+      const emailLc = String(studentEmail || "").trim().toLowerCase();
+      const idNumber = String(studentIdNumber || "").trim();
+      if (!emailLc || !idNumber) {
+        return res.status(400).json({ error: "Email and Student ID are required" });
+      }
+
+      const resolved = await resolveSchoolForStudent(emailLc);
+      if (!resolved || resolved.school.status !== "active") {
+        return res.status(401).json({ error: "Invalid student credentials" });
+      }
+
+      await runWithTenantContext({ schoolId: resolved.school.id }, async () => {
+        const student = await getStudentByEmail(resolved.school.id, emailLc);
+        if (
+          !student ||
+          student.status !== "active" ||
+          String(student.studentIdNumber || "").trim() !== idNumber
+        ) {
+          return res.status(401).json({ error: "Invalid student credentials" });
+        }
+
+        const login = await completeStudentDeviceLogin({
+          schoolId: resolved.school.id,
+          deviceId,
+          deviceName,
+          classId,
+          student,
+        });
+        return res.json(login);
+      });
+      return;
+    }
+
+    // Optional fallback: roster-selected student + 3-digit PIN.
+    const selectedStudentId = String(studentId || "").trim();
+    const enteredPin = String(pin || "").trim();
+    const school = explicitSchoolId
+      ? await getSchoolById(String(explicitSchoolId))
+      : schoolSlug
+        ? await getSchoolBySlug(String(schoolSlug))
+        : undefined;
+
+    if (!school || school.status !== "active" || !selectedStudentId || !/^\d{3}$/.test(enteredPin)) {
+      return res.status(401).json({ error: "Invalid student credentials" });
+    }
+
+    await runWithTenantContext({ schoolId: school.id }, async () => {
+      const regSettings = await getSettingsForSchool(school.id);
+      if (!regSettings?.sharedChromebookPinLoginEnabled) {
+        return res.status(403).json({ error: "PIN login is not enabled for this school" });
+      }
+
+      const keyCheck = validateEnrollmentKeyForSettings(regSettings, enrollmentKey, {
+        requireConfiguredKey: true,
+      });
+      if (!keyCheck.ok) {
+        return res.status(keyCheck.status).json({ error: keyCheck.error });
+      }
+
+      const student = await getStudentById(selectedStudentId);
+      if (
+        !student ||
+        student.schoolId !== school.id ||
+        student.status !== "active" ||
+        !student.classpilotPinHash ||
+        !(await comparePassword(enteredPin, student.classpilotPinHash))
+      ) {
+        return res.status(401).json({ error: "Invalid student credentials" });
+      }
+
+      const login = await completeStudentDeviceLogin({
+        schoolId: school.id,
+        deviceId,
+        deviceName,
+        classId,
+        student,
+      });
+      return res.json(login);
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/classpilot/extension/sign-out - End the active student session for this token/device
+router.post("/extension/sign-out", requireDeviceAuth, async (_req, res, next) => {
+  try {
+    const deviceId = res.locals.deviceId as string;
+    const studentId = res.locals.studentId as string;
+    const schoolId = res.locals.schoolId as string;
+    const active = await getActiveStudentForDevice(deviceId);
+    if (active?.student.id === studentId) {
+      await endStudentSession(active.session.id);
+    }
+    removeDeviceStatus(schoolId, deviceId);
+    const update = {
+      type: "student-signed-out",
+      studentId,
+      deviceId,
+      schoolId,
+      status: "offline",
+      reason: "explicit_sign_out",
+      timestamp: new Date().toISOString(),
+    };
+    broadcastToTeachersLocal(schoolId, update);
+    await publishWS({ kind: "staff", schoolId }, update);
+    return res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
 
 // POST /api/classpilot/register - Generic device registration (no student) (legacy)
 // Kept for backwards compatibility with older extension builds. New extensions use
@@ -476,7 +787,7 @@ router.post("/extension/register", extensionLimiter, async (req, res, next) => {
       return res.json({
         success: true,
         device,
-        student,
+        student: stripStudentCredentialHash(student),
         studentToken,
       });
     }
@@ -560,7 +871,7 @@ router.post("/register-student", extensionLimiter, async (req, res, next) => {
         studentEmail: emailLc,
       });
 
-      return res.json({ studentToken, student });
+      return res.json({ studentToken, student: stripStudentCredentialHash(student) });
     });
   } catch (err) {
     next(err);
@@ -647,7 +958,7 @@ router.post("/device/heartbeat", requireDeviceAuth, async (req, res, next) => {
     const schoolId = res.locals.schoolId as string;
     const studentId = res.locals.studentId as string;
     const deviceId = res.locals.deviceId as string;
-    const studentEmail = res.locals.studentEmail as string;
+    const tokenStudentEmail = res.locals.studentEmail as string | undefined;
 
     // --- Per-device rate limiting (item #9) ---
     const lastHb = deviceLastHeartbeat.get(deviceId);
@@ -669,6 +980,7 @@ router.post("/device/heartbeat", requireDeviceAuth, async (req, res, next) => {
     if (!student) {
       return res.status(401).json({ error: "Student not found — re-register required" });
     }
+    const studentEmail = tokenStudentEmail || student.email || "";
 
     // --- Tracking window enforcement (item #2) ---
     const schoolSettings = await getSettingsForSchool(schoolId);
@@ -710,6 +1022,7 @@ router.post("/device/heartbeat", requireDeviceAuth, async (req, res, next) => {
     if (chromeVersion !== undefined) deviceUpdate.chromeVersion = chromeVersion || null;
     if (screenshotHealth !== undefined) deviceUpdate.lastScreenshotHealth = screenshotHealth || null;
     void updateDevice(deviceId, deviceUpdate).catch(() => {});
+    void touchStudentSession(studentId, deviceId).catch(() => {});
 
     // --- Update in-memory real-time status ---
     updateDeviceStatus({

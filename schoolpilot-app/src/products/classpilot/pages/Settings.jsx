@@ -49,6 +49,7 @@ const settingsSchema = z.object({
   ipAllowlist: z.string(),
   aiSafetyEmailsEnabled: z.boolean().optional(),
   autoBlockUnsafeUrls: z.boolean().optional(),
+  sharedChromebookPinLoginEnabled: z.boolean().optional(),
 });
 
 export default function Settings() {
@@ -110,6 +111,7 @@ export default function Settings() {
       ipAllowlist: settings?.ipAllowlist?.join(", ") || "",
       aiSafetyEmailsEnabled: settings?.aiSafetyEmailsEnabled !== false,
       autoBlockUnsafeUrls: settings?.autoBlockUnsafeUrls !== false,
+      sharedChromebookPinLoginEnabled: settings?.sharedChromebookPinLoginEnabled === true,
     },
   });
 
@@ -125,6 +127,7 @@ export default function Settings() {
         ipAllowlist: settings.ipAllowlist?.join(", ") || "",
         aiSafetyEmailsEnabled: settings.aiSafetyEmailsEnabled !== false,
         autoBlockUnsafeUrls: settings.autoBlockUnsafeUrls !== false,
+        sharedChromebookPinLoginEnabled: settings.sharedChromebookPinLoginEnabled === true,
       });
     }
   }, [settings, form]);
@@ -152,6 +155,7 @@ export default function Settings() {
           .filter(Boolean),
         aiSafetyEmailsEnabled: data.aiSafetyEmailsEnabled !== false,
         autoBlockUnsafeUrls: data.autoBlockUnsafeUrls !== false,
+        sharedChromebookPinLoginEnabled: data.sharedChromebookPinLoginEnabled === true,
       };
       return await apiRequest("POST", "/settings", payload);
     },
@@ -466,6 +470,26 @@ export default function Settings() {
 
               <div className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground">
                 Attendance, hall pass, and dismissal context reduces classroom off-task noise in the dashboard. Critical student safety monitoring remains active and is still logged and routed to staff.
+              </div>
+
+              <div className="rounded-md border p-4 space-y-3">
+                <div>
+                  <p className="text-sm font-medium">Shared Chromebook Sign-In</p>
+                  <p className="text-xs text-muted-foreground">
+                    Email + Student ID stays available by default. Enable Name + PIN only for stations where students need a roster picker.
+                  </p>
+                </div>
+                <div className="flex items-center space-x-3">
+                  <input
+                    type="checkbox"
+                    id="sharedChromebookPinLoginEnabled"
+                    className="h-4 w-4 rounded border-gray-300"
+                    {...form.register("sharedChromebookPinLoginEnabled")}
+                  />
+                  <Label htmlFor="sharedChromebookPinLoginEnabled">
+                    Enable Name + PIN login
+                  </Label>
+                </div>
               </div>
 
               <Button

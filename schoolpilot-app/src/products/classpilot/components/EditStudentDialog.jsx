@@ -26,6 +26,8 @@ import { Button } from "../../../components/ui/button";
 const editStudentSchema = z.object({
   studentName: z.string().min(1, "Name is required"),
   studentEmail: z.string().email("Invalid email format"),
+  studentIdNumber: z.string().optional(),
+  classpilotPin: z.string().regex(/^\d{3}$/, "PIN must be exactly 3 digits").optional().or(z.literal("")),
   gradeLevel: z.string().optional(),
 });
 
@@ -41,6 +43,8 @@ export function EditStudentDialog({
     defaultValues: {
       studentName: student.studentName,
       studentEmail: student.studentEmail,
+      studentIdNumber: student.studentIdNumber || "",
+      classpilotPin: "",
       gradeLevel: student.gradeLevel || "",
     },
   });
@@ -77,7 +81,17 @@ export function EditStudentDialog({
           </DialogDescription>
         </DialogHeader>
         <Form {...form}>
-          <form onSubmit={form.handleSubmit((data) => editMutation.mutate(data))} className="space-y-4">
+          <form onSubmit={form.handleSubmit((data) => {
+            const { classpilotPin, ...rest } = data;
+            const payload = {
+              ...rest,
+              studentIdNumber: rest.studentIdNumber?.trim() || null,
+            };
+            if (classpilotPin?.trim()) {
+              payload.classpilotPin = classpilotPin.trim();
+            }
+            editMutation.mutate(payload);
+          })} className="space-y-4">
             <FormField
               control={form.control}
               name="studentName"
@@ -117,6 +131,41 @@ export function EditStudentDialog({
                 </FormItem>
               )}
             />
+            <div className="grid gap-4 sm:grid-cols-2">
+              <FormField
+                control={form.control}
+                name="studentIdNumber"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Student ID Number</FormLabel>
+                    <FormControl>
+                      <Input {...field} placeholder="10001" data-testid="input-edit-student-id-number" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="classpilotPin"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>ClassPilot PIN</FormLabel>
+                    <FormControl>
+                      <Input
+                        {...field}
+                        inputMode="numeric"
+                        maxLength={3}
+                        placeholder={student.hasClassPilotPin ? "PIN set" : "123"}
+                        onChange={(event) => field.onChange(event.target.value.replace(/\D/g, "").slice(0, 3))}
+                        data-testid="input-edit-classpilot-pin"
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
             <DialogFooter>
               <Button
                 type="button"

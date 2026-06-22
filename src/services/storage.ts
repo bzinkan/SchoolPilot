@@ -3011,6 +3011,22 @@ export async function endStudentSession(
   return session;
 }
 
+export async function touchStudentSession(
+  studentId: string,
+  deviceId: string
+): Promise<void> {
+  await db
+    .update(studentSessions)
+    .set({ lastSeenAt: new Date() })
+    .where(
+      and(
+        eq(studentSessions.studentId, studentId),
+        eq(studentSessions.deviceId, deviceId),
+        eq(studentSessions.isActive, true)
+      )
+    );
+}
+
 export async function getActiveSessionByStudent(
   studentId: string
 ): Promise<StudentSession | undefined> {

@@ -67,6 +67,7 @@ export const settings = pgTable("settings", {
   // existing deployments are unaffected. See docs/SECURITY-device-enrollment-secret-spec.md
   enrollmentKey: text("enrollment_key"),
   enrollmentKeyRequired: boolean("enrollment_key_required").notNull().default(false),
+  sharedChromebookPinLoginEnabled: boolean("shared_chromebook_pin_login_enabled").notNull().default(false),
   // When false (default), device registration only succeeds for students an IT
   // admin has already imported — an unknown email is rejected, never auto-created.
   // A school can opt into zero-touch auto-enrollment by setting this true.

@@ -46,7 +46,7 @@ import {
   validateStaffEmailDomainForSchool,
 } from "../services/storage.js";
 import db from "../db.js";
-import { heartbeats, devices as deviceTable, teachingSessions, groups, groupStudents, dailyUsage, studentDevices } from "../schema/classpilot.js";
+import { heartbeats, devices as deviceTable, teachingSessions, groups, groupStudents, dailyUsage, studentDevices, studentSessions } from "../schema/classpilot.js";
 import { dismissalQueue, dismissalSessions } from "../schema/gopilot.js";
 import { users } from "../schema/core.js";
 import { eq, and, sql, inArray } from "drizzle-orm";
@@ -625,6 +625,8 @@ router.get("/admin/teacher-students", ...schoolAuth, requireRole("admin"), async
     // Include studentName/studentEmail for ClassPilot frontend compatibility
     const mapped = students.map((s: any) => ({
       ...s,
+      classpilotPinHash: undefined,
+      hasClassPilotPin: !!s.classpilotPinHash,
       studentName: [s.firstName, s.lastName].filter(Boolean).join(" ") || s.email || "",
       studentEmail: s.email || "",
     }));
@@ -1107,7 +1109,18 @@ router.get("/students-aggregated", ...schoolAuth, async (req, res, next) => {
           .from(studentDevices)
           .where(inArray(studentDevices.studentId, studentIds))
       : [];
-    const [attendanceRows, activePasses, dismissalRows] = await Promise.all([
+    const [activeStudentSessions, attendanceRows, activePasses, dismissalRows] = await Promise.all([
+      studentIds.length > 0
+        ? db
+            .select()
+            .from(studentSessions)
+            .where(
+              and(
+                inArray(studentSessions.studentId, studentIds),
+                eq(studentSessions.isActive, true)
+              )
+            )
+        : [],
       getAttendanceBySchool(schoolId, today),
       getActivePassesBySchool(schoolId),
       studentIds.length > 0
@@ -1127,6 +1140,7 @@ router.get("/students-aggregated", ...schoolAuth, async (req, res, next) => {
     ]);
     const attendanceByStudent = new Map(attendanceRows.map((row) => [row.attendance.studentId, row.attendance]));
     const activePassByStudent = new Map(activePasses.map((pass) => [pass.studentId, pass]));
+    const activeSessionByStudent = new Map(activeStudentSessions.map((session) => [session.studentId, session]));
     const dismissalByStudent = new Map<string, any>();
     for (const row of dismissalRows) {
       const existing = dismissalByStudent.get(row.queue.studentId);
@@ -1150,8 +1164,9 @@ router.get("/students-aggregated", ...schoolAuth, async (req, res, next) => {
         statusByStudent.get(student.id) ||
         (student.email ? statusByEmail.get(student.email.toLowerCase()) : null) ||
         null;
+      const activeStudentSession = activeSessionByStudent.get(student.id);
       // Fallback to student_devices table when realtime status has no device mapping
-      const deviceId = rt?.deviceId || student.deviceId || deviceByStudent.get(student.id) || null;
+      const deviceId = rt?.deviceId || activeStudentSession?.deviceId || student.deviceId || deviceByStudent.get(student.id) || null;
       const isConnected = deviceId ? connectedDevices.has(deviceId) : false;
       const attendance = attendanceByStudent.get(student.id);
       const attendanceStatus = attendance?.status || "present";
@@ -1165,12 +1180,20 @@ router.get("/students-aggregated", ...schoolAuth, async (req, res, next) => {
       else if (dismissal?.status === "dismissed") suppressionReason = "Student is dismissed";
       else if (dismissal?.status === "released") suppressionReason = "Student is released for dismissal";
       else if (dismissal) suppressionReason = "Student is in the dismissal flow";
-      const timeSinceLastSeen = rt ? Date.now() - rt.lastSeenAt : Infinity;
+      const sessionLastSeenAt = activeStudentSession?.lastSeenAt
+        ? activeStudentSession.lastSeenAt.getTime()
+        : 0;
+      const lastActivityAt = rt?.lastSeenAt || sessionLastSeenAt || 0;
+      const timeSinceLastSeen = lastActivityAt ? Date.now() - lastActivityAt : Infinity;
+      const isLoggedIn = !!activeStudentSession && timeSinceLastSeen < 300000;
       let status: "online" | "idle" | "offline" = "offline";
       if (timeSinceLastSeen < 60000 || (isConnected && timeSinceLastSeen < 90000)) {
         status = "online";
-      } else if (timeSinceLastSeen < 180000) {
+      } else if (timeSinceLastSeen < 300000) {
         status = "idle";
+      }
+      if (!isLoggedIn) {
+        status = "offline";
       }
 
       return {
@@ -1184,10 +1207,12 @@ router.get("/students-aggregated", ...schoolAuth, async (req, res, next) => {
         classId: "",
         deviceCount: deviceId ? 1 : 0,
         devices: deviceId
-          ? [{ deviceId, deviceName: undefined, status, lastSeenAt: rt?.lastSeenAt || 0 }]
+          ? [{ deviceId, deviceName: undefined, status, lastSeenAt: lastActivityAt }]
           : [],
         status,
-        lastSeenAt: rt?.lastSeenAt || 0,
+        loginState: isLoggedIn ? "logged_in" : "not_logged_in",
+        isLoggedIn,
+        lastSeenAt: lastActivityAt,
         primaryDeviceId: deviceId,
         deviceName: undefined,
         activeTabTitle: rt?.activeTabTitle || "",
@@ -1355,7 +1380,7 @@ router.get("/compat/parents", ...schoolAuth, requireRole("admin"), async (req, r
 router.get("/students/csv-template", ...schoolAuth, async (_req, res) => {
   res.setHeader("Content-Type", "text/csv");
   res.setHeader("Content-Disposition", "attachment; filename=students-template.csv");
-  return res.send("firstName,lastName,studentIdNumber,gradeLevel\n");
+  return res.send("firstName,lastName,email,studentIdNumber,gradeLevel,classpilotPin\n");
 });
 
 export default router;

@@ -7,7 +7,7 @@ import { Button } from "../../../components/ui/button";
 import { Input } from "../../../components/ui/input";
 import { Label } from "../../../components/ui/label";
 import { Checkbox } from "../../../components/ui/checkbox";
-import { ArrowLeft, Upload, Download, Edit, Trash2, FileSpreadsheet, GraduationCap, RefreshCw, Users, Loader2, Building2, AlertCircle, Plus, Search, ChevronRight, ChevronDown } from "lucide-react";
+import { ArrowLeft, Upload, Download, Edit, Trash2, FileSpreadsheet, GraduationCap, RefreshCw, Users, Loader2, Building2, AlertCircle, Plus, Search, ChevronRight, ChevronDown, KeyRound } from "lucide-react";
 import { ThemeToggle } from "../../../components/ThemeToggle";
 import { useNavigate } from "react-router-dom";
 import { Tabs, TabsList, TabsTrigger } from "../../../components/ui/tabs";
@@ -101,7 +101,7 @@ export default function StudentsPage() {
 function StudentsContent() {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { hasPassPilot, hasGoPilot } = useLicenses();
+  const { hasGoPilot } = useLicenses();
   const [selectedGrade, setSelectedGrade] = useState("");
   const [csvFile, setCsvFile] = useState(null);
   const [importResults, setImportResults] = useState(null);
@@ -125,6 +125,9 @@ function StudentsContent() {
   const [newStudentName, setNewStudentName] = useState("");
   const [newStudentEmail, setNewStudentEmail] = useState("");
   const [newStudentGrade, setNewStudentGrade] = useState("");
+  const [newStudentIdNumber, setNewStudentIdNumber] = useState("");
+  const [newClassPilotPin, setNewClassPilotPin] = useState("");
+  const [generatedPins, setGeneratedPins] = useState([]);
   const [showAddGradeDialog, setShowAddGradeDialog] = useState(false);
   const [manualGrades, setManualGrades] = useState([]); // Manually added grade categories
   const [showBulkGradeDialog, setShowBulkGradeDialog] = useState(false);
@@ -134,6 +137,11 @@ function StudentsContent() {
   const { data: studentsData, isLoading } = useQuery({
     queryKey: ["/api/admin/teacher-students"],
     queryFn: () => apiRequest("GET", "/admin/teacher-students"),
+  });
+
+  const { data: settings } = useQuery({
+    queryKey: ["/api/settings"],
+    queryFn: () => apiRequest("GET", "/settings"),
   });
 
   // Fetch Google Classroom courses (only when dialog is open)
@@ -269,6 +277,12 @@ function StudentsContent() {
   });
 
   const allStudents = studentsData?.students || [];
+  const activeStudents = allStudents.filter((student) => !student.status || student.status === "active");
+  const pinLoginEnabled = settings?.sharedChromebookPinLoginEnabled === true;
+  const studentsMissingIds = activeStudents.filter((student) => !student.studentIdNumber);
+  const pinLoginStudentsMissingPins = pinLoginEnabled
+    ? activeStudents.filter((student) => !student.hasClassPilotPin)
+    : [];
 
   // All possible grades for the Add Grade dialog (K-12)
   const allPossibleGrades = ["K", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"];
@@ -313,7 +327,8 @@ function StudentsContent() {
       const query = searchQuery.toLowerCase();
       const nameMatch = student.studentName?.toLowerCase().includes(query);
       const emailMatch = student.studentEmail?.toLowerCase().includes(query);
-      return nameMatch || emailMatch;
+      const idMatch = student.studentIdNumber?.toLowerCase().includes(query);
+      return nameMatch || emailMatch || idMatch;
     }
     return true;
   });
@@ -468,6 +483,36 @@ function StudentsContent() {
     },
   });
 
+  const bulkGeneratePinsMutation = useMutation({
+    mutationFn: async (input = []) => {
+      const studentIds = Array.isArray(input) ? input : [];
+      const gradeLevel = !Array.isArray(input) ? input.gradeLevel : undefined;
+      return await apiRequest("POST", "/students/classpilot-pins/bulk-generate", {
+        studentIds: studentIds.length ? studentIds : undefined,
+        gradeLevel,
+        onlyMissing: true,
+      });
+    },
+    onSuccess: async (data) => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/admin/teacher-students"], exact: false });
+      const pins = data.generated || [];
+      setGeneratedPins(pins);
+      toast({
+        title: "ClassPilot PINs generated",
+        description: pins.length
+          ? `Generated ${pins.length} PIN${pins.length !== 1 ? "s" : ""}. Download or record them now.`
+          : "No active students needed new PINs.",
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "PIN generation failed",
+        description: error.message || "Could not generate ClassPilot PINs",
+        variant: "destructive",
+      });
+    },
+  });
+
   // Add student mutation
   const addStudentMutation = useMutation({
     mutationFn: async (data) => {
@@ -483,6 +528,8 @@ function StudentsContent() {
       setNewStudentName("");
       setNewStudentEmail("");
       setNewStudentGrade("");
+      setNewStudentIdNumber("");
+      setNewClassPilotPin("");
     },
     onError: (error) => {
       toast({
@@ -496,6 +543,8 @@ function StudentsContent() {
   const handleAddStudent = () => {
     const name = newStudentName.trim();
     const email = newStudentEmail.trim();
+    const studentIdNumber = newStudentIdNumber.trim();
+    const classPilotPin = newClassPilotPin.trim();
 
     // Validate name
     if (!name) {
@@ -528,11 +577,28 @@ function StudentsContent() {
       return;
     }
 
+    if (classPilotPin && !/^\d{3}$/.test(classPilotPin)) {
+      toast({
+        title: "Validation Error",
+        description: "ClassPilot PIN must be exactly 3 digits",
+        variant: "destructive",
+      });
+      return;
+    }
+
     // Build mutation data with optional grade
     const mutationData = {
       studentName: name,
       studentEmail: email,
     };
+
+    if (studentIdNumber) {
+      mutationData.studentIdNumber = studentIdNumber;
+    }
+
+    if (classPilotPin) {
+      mutationData.classpilotPin = classPilotPin;
+    }
 
     if (newStudentGrade) {
       mutationData.gradeLevel = newStudentGrade;
@@ -572,15 +638,9 @@ function StudentsContent() {
   };
 
   const downloadTemplate = () => {
-    const headers = ["Email", "Name", "Grade", "Class"];
-    const rowOne = ["student@school.edu", "John Doe", "8", "8th Math (sarah)"];
-    const rowTwo = ["student2@school.edu", "Jane Smith", "7", "7th Science (bob)"];
-
-    if (hasPassPilot) {
-      headers.push("Student ID");
-      rowOne.push("10001");
-      rowTwo.push("10002");
-    }
+    const headers = ["Email", "Name", "Grade", "Class", "Student ID", "ClassPilot PIN"];
+    const rowOne = ["student@school.edu", "John Doe", "8", "8th Math (sarah)", "10001", ""];
+    const rowTwo = ["student2@school.edu", "Jane Smith", "2", "2nd Homeroom (lee)", "20002", "123"];
 
     if (hasGoPilot) {
       headers.push("Dismissal Type", "Bus #");
@@ -594,6 +654,23 @@ function StudentsContent() {
     const a = document.createElement('a');
     a.href = url;
     a.download = 'student_import_template.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadGeneratedPins = () => {
+    const headers = ["Student Name", "Grade", "ClassPilot PIN"];
+    const rows = generatedPins.map((pin) => [
+      `"${String(pin.studentName || "").replace(/"/g, '""')}"`,
+      pin.gradeLevel || "",
+      pin.pin,
+    ]);
+    const csv = [headers.join(","), ...rows.map((row) => row.join(","))].join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "classpilot-k4-pins.csv";
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -668,8 +745,9 @@ function StudentsContent() {
             <p className="font-medium">CSV Format:</p>
             <ul className="list-disc list-inside space-y-1">
               <li>Required columns: Email, Name</li>
-              <li>Optional columns: Grade, Class</li>
-              {hasPassPilot && <li>PassPilot column: Student ID for badges or printed IDs</li>}
+              <li>Optional columns: Grade, Class, Student ID, ClassPilot PIN</li>
+              <li>Student ID is used for default shared-Chromebook sign-in</li>
+              <li>ClassPilot PIN is optional and must be exactly 3 digits</li>
               {hasGoPilot && <li>GoPilot columns: Dismissal Type and Bus #</li>}
               <li>Class names must match existing classes exactly</li>
               <li>Students with existing emails will be updated</li>
@@ -698,6 +776,110 @@ function StudentsContent() {
                     ))}
                   </ul>
                 </div>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <KeyRound className="h-5 w-5" />
+            ClassPilot Shared Device Readiness
+          </CardTitle>
+          <CardDescription>
+            Student IDs and optional PINs are used only when Chrome profile email is not detected.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 md:grid-cols-2">
+            <div className={`rounded-md border p-3 ${studentsMissingIds.length ? "bg-amber-50 border-amber-200 dark:bg-amber-950/20" : "bg-muted/30"}`}>
+              <div className="flex items-start gap-2">
+                {studentsMissingIds.length > 0 && <AlertCircle className="h-4 w-4 text-amber-600 mt-0.5" />}
+                <div>
+                  <p className="text-sm font-medium">Student IDs</p>
+                  <p className="text-sm text-muted-foreground">
+                    {studentsMissingIds.length
+                      ? `${studentsMissingIds.length} student${studentsMissingIds.length !== 1 ? "s" : ""} missing Student ID Number`
+                      : "Ready for email + Student ID sign-in"}
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className={`rounded-md border p-3 ${pinLoginStudentsMissingPins.length ? "bg-amber-50 border-amber-200 dark:bg-amber-950/20" : "bg-muted/30"}`}>
+              <div className="flex items-start gap-2">
+                {pinLoginStudentsMissingPins.length > 0 && <AlertCircle className="h-4 w-4 text-amber-600 mt-0.5" />}
+                <div>
+                  <p className="text-sm font-medium">PIN Login</p>
+                  <p className="text-sm text-muted-foreground">
+                    {!pinLoginEnabled
+                      ? "Name + PIN login is currently disabled in ClassPilot Settings"
+                      : pinLoginStudentsMissingPins.length
+                        ? `${pinLoginStudentsMissingPins.length} student${pinLoginStudentsMissingPins.length !== 1 ? "s" : ""} missing a 3-digit PIN`
+                        : "Ready for roster picker + PIN sign-in"}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={() => bulkGeneratePinsMutation.mutate([])}
+              disabled={bulkGeneratePinsMutation.isPending || activeStudents.length === 0}
+              data-testid="button-generate-pins"
+            >
+              {bulkGeneratePinsMutation.isPending ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <KeyRound className="h-4 w-4 mr-2" />
+              )}
+              Generate Missing PINs
+            </Button>
+            {selectedGrade && selectedGrade !== "__no_grade__" && (
+              <Button
+                variant="outline"
+                onClick={() => bulkGeneratePinsMutation.mutate({ gradeLevel: selectedGrade })}
+                disabled={bulkGeneratePinsMutation.isPending}
+                data-testid="button-generate-grade-pins"
+              >
+                {bulkGeneratePinsMutation.isPending ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <KeyRound className="h-4 w-4 mr-2" />
+                )}
+                Generate Grade {selectedGrade} PINs
+              </Button>
+            )}
+            {generatedPins.length > 0 && (
+              <Button
+                variant="outline"
+                onClick={downloadGeneratedPins}
+                data-testid="button-download-generated-pins"
+              >
+                <Download className="h-4 w-4 mr-2" />
+                Download Generated PINs
+              </Button>
+            )}
+          </div>
+
+          {generatedPins.length > 0 && (
+            <div className="rounded-md border p-3 bg-blue-50 dark:bg-blue-950/20" data-testid="generated-pins-panel">
+              <p className="text-sm font-medium mb-2">Generated PINs</p>
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                {generatedPins.slice(0, 12).map((pin) => (
+                  <div key={pin.studentId} className="flex items-center justify-between rounded border bg-background px-3 py-2 text-sm">
+                    <span className="truncate">{pin.studentName}</span>
+                    <span className="font-mono font-semibold">{pin.pin}</span>
+                  </div>
+                ))}
+              </div>
+              {generatedPins.length > 12 && (
+                <p className="text-xs text-muted-foreground mt-2">
+                  Showing 12 of {generatedPins.length}. Download the CSV for the full list.
+                </p>
               )}
             </div>
           )}
@@ -1362,6 +1544,20 @@ function StudentsContent() {
                   Assign Grade
                 </Button>
                 <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => bulkGeneratePinsMutation.mutate(Array.from(selectedStudents))}
+                  disabled={bulkGeneratePinsMutation.isPending}
+                  data-testid="button-generate-selected-pins"
+                >
+                  {bulkGeneratePinsMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <KeyRound className="h-4 w-4 mr-2" />
+                  )}
+                  Generate PINs
+                </Button>
+                <Button
                   variant="destructive"
                   size="sm"
                   onClick={() => bulkDeleteMutation.mutate(Array.from(selectedStudents))}
@@ -1417,7 +1613,9 @@ function StudentsContent() {
                     </TableHead>
                     <TableHead>Name</TableHead>
                     <TableHead>Email</TableHead>
+                    <TableHead>Student ID</TableHead>
                     <TableHead>Grade</TableHead>
+                    <TableHead>PIN Login</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -1438,8 +1636,16 @@ function StudentsContent() {
                       </TableCell>
                       <TableCell className="font-medium">{student.studentName}</TableCell>
                       <TableCell>{student.studentEmail}</TableCell>
+                      <TableCell>{student.studentIdNumber || '-'}</TableCell>
                       <TableCell>
                         {student.gradeLevel ? `Grade ${student.gradeLevel}` : '-'}
+                      </TableCell>
+                      <TableCell>
+                        {student.hasClassPilotPin ? (
+                          <span className="text-green-700 dark:text-green-400">Set</span>
+                        ) : (
+                          <span className="text-amber-700 dark:text-amber-400">Missing</span>
+                        )}
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-2">
@@ -1513,6 +1719,8 @@ function StudentsContent() {
           setNewStudentName("");
           setNewStudentEmail("");
           setNewStudentGrade("");
+          setNewStudentIdNumber("");
+          setNewClassPilotPin("");
         }
       }}>
         <DialogContent data-testid="dialog-add-student">
@@ -1543,6 +1751,30 @@ function StudentsContent() {
                 onChange={(e) => setNewStudentEmail(e.target.value)}
                 data-testid="input-new-student-email"
               />
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="studentIdNumber">Student ID Number</Label>
+                <Input
+                  id="studentIdNumber"
+                  placeholder="10001"
+                  value={newStudentIdNumber}
+                  onChange={(e) => setNewStudentIdNumber(e.target.value)}
+                  data-testid="input-new-student-id-number"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="classpilotPin">ClassPilot PIN</Label>
+                <Input
+                  id="classpilotPin"
+                  inputMode="numeric"
+                  maxLength={3}
+                  placeholder="123"
+                  value={newClassPilotPin}
+                  onChange={(e) => setNewClassPilotPin(e.target.value.replace(/\D/g, "").slice(0, 3))}
+                  data-testid="input-new-classpilot-pin"
+                />
+              </div>
             </div>
             <div className="space-y-2">
               <Label htmlFor="gradeLevel">Grade Level</Label>

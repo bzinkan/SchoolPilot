@@ -1,4 +1,5 @@
 import { Router, type Request, type Response } from "express";
+import { randomInt } from "crypto";
 import { authenticate } from "../middleware/authenticate.js";
 import { requireSchoolContext } from "../middleware/requireSchoolContext.js";
 import { requireRole } from "../middleware/requireRole.js";
@@ -14,6 +15,7 @@ import {
   updateStudent,
   deleteStudent,
   searchStudents,
+  getStudentsBySchool,
   bulkCreateStudents,
   getProductLicenses,
   autoAssignFamilyGroups,
@@ -37,6 +39,7 @@ import {
   getTeacherHomeroomIds,
   hasActiveGoPilotLicense,
 } from "../services/gopilotAccess.js";
+import { hashPassword } from "../util/password.js";
 
 const router = Router();
 
@@ -49,6 +52,35 @@ router.use(authenticate);
 const schoolContext = [requireSchoolContext, requireActiveSchool, requireProductLicense("CLASSPILOT", "PASSPILOT", "GOPILOT")] as const;
 
 type StudentSearchOptions = Parameters<typeof searchStudents>[1];
+
+function stripStudentCredentialHash<T extends { classpilotPinHash?: string | null }>(
+  student: T
+): Omit<T, "classpilotPinHash"> {
+  const { classpilotPinHash: _classpilotPinHash, ...safeStudent } = student;
+  return safeStudent;
+}
+
+function randomThreeDigitPin(): string {
+  return String(randomInt(0, 1000)).padStart(3, "0");
+}
+
+function normalizeGradeLevel(value: unknown): string {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+  const normalized = raw.replace(/^grade\s+/i, "").replace(/(\d+)(st|nd|rd|th)$/i, "$1");
+  if (/^(k|kg|kindergarten)$/i.test(normalized)) return "K";
+  return normalized;
+}
+
+async function classpilotPinHashFromInput(
+  classpilotPin: string | null | undefined
+): Promise<{ classpilotPinHash?: string | null }> {
+  if (classpilotPin === undefined) return {};
+  if (classpilotPin === null || classpilotPin === "") {
+    return { classpilotPinHash: null };
+  }
+  return { classpilotPinHash: await hashPassword(classpilotPin) };
+}
 
 async function searchStudentsVisibleToRequest(
   req: Request,
@@ -186,7 +218,7 @@ router.get("/", ...schoolContext, async (req, res, next) => {
       };
     });
 
-    return res.json({ students: enriched });
+    return res.json({ students: enriched.map(stripStudentCredentialHash) });
   } catch (err) {
     next(err);
   }
@@ -247,10 +279,11 @@ router.post(
         homeroomId: parsed.data.homeroomId || null,
         dismissalType: parsed.data.dismissalType || "car",
         busRoute: parsed.data.busRoute || null,
+        ...(await classpilotPinHashFromInput(parsed.data.classpilotPin)),
       };
 
       const student = await createStudent(data);
-      return res.status(201).json({ student });
+      return res.status(201).json({ student: stripStudentCredentialHash(student) });
     } catch (err) {
       // Backstop for a race (or badge/code clash) that slipped past the pre-check.
       if (isUniqueViolation(err)) {
@@ -332,6 +365,7 @@ router.post(
           homeroomId: parsed.data.homeroomId || null,
           dismissalType: parsed.data.dismissalType || "car",
           busRoute: parsed.data.busRoute || null,
+          ...(await classpilotPinHashFromInput(parsed.data.classpilotPin)),
         });
       }
 
@@ -369,7 +403,7 @@ router.get(
   async (_req, res) => {
     res.setHeader("Content-Type", "text/csv");
     res.setHeader("Content-Disposition", "attachment; filename=students-template.csv");
-    return res.send("firstName,lastName,studentIdNumber,gradeLevel\n");
+    return res.send("firstName,lastName,email,studentIdNumber,gradeLevel,classpilotPin\n");
   }
 );
 
@@ -445,6 +479,15 @@ const importCsvHandler = async (req: any, res: any, next: any) => {
       const dismissalType = normalized["dismissaltype"] || normalized["dismissal"] || null;
       const busRoute =
         normalized["busroute"] || normalized["bus"] || normalized["bus#"] || null;
+      const classpilotPin =
+        normalized["classpilotpin"] ||
+        normalized["classpilotstudentpin"] ||
+        normalized["pin"] ||
+        null;
+      if (classpilotPin && !/^\d{3}$/.test(classpilotPin)) {
+        errors.push({ row: i + 1, error: "ClassPilot PIN must be 3 digits" });
+        continue;
+      }
 
       toInsert.push({
         schoolId: res.locals.schoolId!,
@@ -456,6 +499,7 @@ const importCsvHandler = async (req: any, res: any, next: any) => {
         gradeLevel,
         dismissalType: dismissalType || "car",
         busRoute,
+        classpilotPinHash: classpilotPin ? await hashPassword(classpilotPin) : null,
       });
     }
 
@@ -540,8 +584,17 @@ router.put(
             }
           }
           try {
-            const updated = await updateStudent(item.id, item);
-            if (updated) results.push(updated);
+            const normalized = normalizeStudentBody(item);
+            const { classpilotPin, ...safeItem } = normalized;
+            const updated = await updateStudent(item.id, {
+              ...safeItem,
+              ...(await classpilotPinHashFromInput(
+                typeof classpilotPin === "string" || classpilotPin === null
+                  ? classpilotPin
+                  : undefined
+              )),
+            });
+            if (updated) results.push(stripStudentCredentialHash(updated));
           } catch (err) {
             if (isUniqueViolation(err)) {
               skipped.push({ id: item.id, error: "Duplicate email, badge ID, or code." });
@@ -562,6 +615,50 @@ router.put(
   }
 );
 
+// POST /api/students/classpilot-pins/bulk-generate - Generate 3-digit shared-login PINs
+router.post(
+  "/classpilot-pins/bulk-generate",
+  ...schoolContext,
+  requireRole("admin"),
+  async (req, res, next) => {
+    try {
+      const requestedIds = Array.isArray(req.body?.studentIds)
+        ? new Set(req.body.studentIds.map((id: unknown) => String(id)))
+        : null;
+      const requestedGrade = normalizeGradeLevel(req.body?.gradeLevel);
+      const onlyMissing = req.body?.onlyMissing !== false;
+      const students = await getStudentsBySchool(res.locals.schoolId!);
+      const eligible = students.filter((student) => {
+        if (student.status !== "active") return false;
+        if (requestedIds && !requestedIds.has(student.id)) return false;
+        if (requestedGrade && normalizeGradeLevel(student.gradeLevel) !== requestedGrade) return false;
+        if (onlyMissing && student.classpilotPinHash) return false;
+        return true;
+      });
+
+      const generated: Array<{ studentId: string; studentName: string; gradeLevel: string | null; pin: string }> = [];
+      for (const student of eligible) {
+        const pin = randomThreeDigitPin();
+        const updated = await updateStudent(student.id, {
+          classpilotPinHash: await hashPassword(pin),
+        });
+        if (updated) {
+          generated.push({
+            studentId: updated.id,
+            studentName: `${updated.firstName || ""} ${updated.lastName || ""}`.trim() || updated.email || "Student",
+            gradeLevel: updated.gradeLevel,
+            pin,
+          });
+        }
+      }
+
+      return res.json({ generated });
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
 // GET /api/students/:studentId
 router.get("/:studentId", ...schoolContext, async (req, res, next) => {
   try {
@@ -572,7 +669,7 @@ router.get("/:studentId", ...schoolContext, async (req, res, next) => {
     if (!(await canAccessStudentForRequest(req, res, student))) {
       return res.status(404).json({ error: "Student not found" });
     }
-    return res.json({ student });
+    return res.json({ student: stripStudentCredentialHash(student) });
   } catch (err) {
     next(err);
   }
@@ -661,7 +758,11 @@ router.put(
         }
       }
 
-      const updateData: Record<string, unknown> = { ...parsed.data };
+      const { classpilotPin, ...parsedUpdateData } = parsed.data;
+      const updateData: Record<string, unknown> = {
+        ...parsedUpdateData,
+        ...(await classpilotPinHashFromInput(classpilotPin)),
+      };
       if (parsed.data.email !== undefined) {
         updateData.emailLc = parsed.data.email?.toLowerCase() || null;
       }
@@ -674,7 +775,7 @@ router.put(
       }
 
       const student = await updateStudent(param(req, "studentId"), updateData);
-      return res.json({ student });
+      return res.json({ student: student ? stripStudentCredentialHash(student) : student });
     } catch (err) {
       if (isUniqueViolation(err)) {
         return res.status(409).json({
@@ -738,7 +839,11 @@ router.patch(
         }
       }
 
-      const updateData: Record<string, unknown> = { ...parsed.data };
+      const { classpilotPin, ...parsedUpdateData } = parsed.data;
+      const updateData: Record<string, unknown> = {
+        ...parsedUpdateData,
+        ...(await classpilotPinHashFromInput(classpilotPin)),
+      };
       if (parsed.data.email !== undefined) {
         updateData.emailLc = parsed.data.email?.toLowerCase() || null;
       }
@@ -751,7 +856,7 @@ router.patch(
       }
 
       const student = await updateStudent(param(req, "studentId"), updateData);
-      return res.json({ student });
+      return res.json({ student: student ? stripStudentCredentialHash(student) : student });
     } catch (err) {
       if (isUniqueViolation(err)) {
         return res.status(409).json({

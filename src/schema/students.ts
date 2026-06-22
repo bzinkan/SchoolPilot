@@ -35,6 +35,7 @@ export const students = pgTable(
     busRoute: text("bus_route"),
     studentCode: text("student_code"), // GoPilot numeric car-rider code
     externalId: text("external_id"), // SIS integration ID
+    classpilotPinHash: text("classpilot_pin_hash"), // Optional shared Chromebook PIN hash
 
     // ClassPilot fields
     deviceId: text("device_id"), // Legacy FK to devices (ClassPilot)
