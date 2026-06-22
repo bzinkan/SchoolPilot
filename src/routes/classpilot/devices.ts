@@ -43,8 +43,6 @@ import {
   createEvidenceArtifact,
   createStudentTimelineEvent,
   endStudentSession,
-  getGroupByIdAndSchool,
-  getGroupStudents,
 } from "../../services/storage.js";
 import { sendSafetyAlertEmail } from "../../services/email.js";
 import { createStudentToken } from "../../services/deviceJwt.js";
@@ -436,13 +434,59 @@ router.get("/school/status", async (_req, res) => {
   return res.json({ status: "ok", message: "Use POST with studentEmail" });
 });
 
+// GET /api/classpilot/extension/login-config - Shared Chromebook login capabilities
+router.get("/extension/login-config", extensionLimiter, async (req, res, next) => {
+  try {
+    const schoolIdParam = String(req.query.schoolId || "").trim();
+    const schoolSlug = String(req.query.schoolSlug || "").trim();
+    const enrollmentKey = req.query.enrollmentKey;
+
+    const school = schoolIdParam
+      ? await getSchoolById(schoolIdParam)
+      : schoolSlug
+        ? await getSchoolBySlug(schoolSlug)
+        : undefined;
+    if (!school || school.status !== "active") {
+      return res.status(404).json({ error: "Shared sign-in is not configured", setupRequired: true });
+    }
+
+    await runWithTenantContext({ schoolId: school.id }, async () => {
+      if (!(await hasCachedClassPilotLicense(school.id))) {
+        return res.status(403).json({ error: "ClassPilot license is not active" });
+      }
+
+      const regSettings = await getSettingsForSchool(school.id);
+      const keyCheck = validateEnrollmentKeyForSettings(regSettings, enrollmentKey, {
+        requireConfiguredKey: true,
+      });
+      if (!keyCheck.ok) {
+        return res.status(keyCheck.status).json({ error: keyCheck.error, setupRequired: true });
+      }
+      if (!regSettings?.sharedChromebookSignInEnabled) {
+        return res.status(403).json({
+          error: "Shared Chromebook sign-in is not enabled for this school",
+          sharedSignInEnabled: false,
+          pinLoginEnabled: false,
+        });
+      }
+
+      return res.json({
+        sharedSignInEnabled: true,
+        pinLoginEnabled: !!regSettings.sharedChromebookPinLoginEnabled,
+        schoolName: regSettings.schoolName || school.name,
+      });
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /api/classpilot/extension/login-roster - Minimal roster for optional Name + PIN login
 router.get("/extension/login-roster", extensionLimiter, async (req, res, next) => {
   try {
     const schoolIdParam = String(req.query.schoolId || "").trim();
     const schoolSlug = String(req.query.schoolSlug || "").trim();
     const gradeLevel = normalizeGradeLevel(req.query.gradeLevel);
-    const groupId = String(req.query.groupId || "").trim();
     const enrollmentKey = req.query.enrollmentKey;
 
     const school = schoolIdParam
@@ -473,25 +517,17 @@ router.get("/extension/login-roster", extensionLimiter, async (req, res, next) =
       if (!keyCheck.ok) {
         return res.status(keyCheck.status).json({ error: keyCheck.error });
       }
-      if (!gradeLevel && !groupId) {
+      if (!gradeLevel) {
         return res.status(400).json({
-          error: "Station grade or class filter is required for PIN roster login",
+          error: "Select a grade to load the PIN roster",
         });
       }
 
       let students = await getStudentsBySchool(school.id);
-      if (groupId) {
-        const group = await getGroupByIdAndSchool(groupId, school.id);
-        if (!group) {
-          return res.status(404).json({ error: "Class roster not found" });
-        }
-        const rows = await getGroupStudents(group.id);
-        students = rows.map((row) => row.student);
-      }
 
       const roster = students
         .filter((student) => student.status === "active")
-        .filter((student) => !gradeLevel || normalizeGradeLevel(student.gradeLevel) === gradeLevel)
+        .filter((student) => normalizeGradeLevel(student.gradeLevel) === gradeLevel)
         .map((student) => ({
           id: student.id,
           name: `${student.firstName || ""} ${student.lastName || ""}`.trim() || student.email || "Student",
@@ -1787,11 +1823,17 @@ const enrollAdminAuth = [
 // GET /api/classpilot/enrollment-key — current key + enforcement + auto-enroll state
 router.get("/enrollment-key", ...enrollAdminAuth, async (_req, res, next) => {
   try {
+    const school = await getSchoolById(res.locals.schoolId!);
     const s = await getSettingsForSchool(res.locals.schoolId!);
     return res.json({
       key: s?.enrollmentKey ?? null,
       required: !!s?.enrollmentKeyRequired,
       autoEnrollStudents: !!s?.autoEnrollStudents,
+      schoolId: school?.id ?? res.locals.schoolId!,
+      schoolSlug: school?.slug ?? null,
+      schoolName: s?.schoolName || school?.name || "",
+      sharedChromebookSignInEnabled: !!s?.sharedChromebookSignInEnabled,
+      sharedChromebookPinLoginEnabled: !!s?.sharedChromebookPinLoginEnabled,
     });
   } catch (err) {
     next(err);

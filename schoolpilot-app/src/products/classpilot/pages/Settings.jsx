@@ -18,7 +18,7 @@ import {
 } from "../../../components/ui/dialog";
 import { useToast } from "../../../hooks/use-toast";
 import { apiRequest, queryClient } from "../../../lib/queryClient";
-import { ArrowLeft, Download, Shield, Clock, AlertCircle, Layers, Plus, Pencil, Trash2, Star, Users, BookOpen, Eye } from "lucide-react";
+import { ArrowLeft, Download, Shield, Clock, AlertCircle, Layers, Plus, Pencil, Trash2, Star, Users, BookOpen, Eye, Copy, RefreshCw, KeyRound } from "lucide-react";
 import { ThemeToggle } from "../../../components/ThemeToggle";
 
 // Helper function to normalize domain names
@@ -38,6 +38,24 @@ function normalizeDomain(domain) {
   normalized = normalized.split(':')[0];
 
   return normalized;
+}
+
+function buildManagedPolicy(enrollmentKeySettings) {
+  const serverUrl = typeof window !== "undefined" ? window.location.origin : "https://school-pilot.net";
+  const policy = {
+    serverUrl,
+  };
+
+  if (enrollmentKeySettings?.schoolSlug) {
+    policy.schoolSlug = enrollmentKeySettings.schoolSlug;
+  } else if (enrollmentKeySettings?.schoolId) {
+    policy.schoolId = enrollmentKeySettings.schoolId;
+  } else {
+    policy.schoolSlug = "your-school-slug";
+  }
+
+  policy.enrollmentKey = enrollmentKeySettings?.key || "generate-a-setup-key-first";
+  return JSON.stringify(policy, null, 2);
 }
 
 const settingsSchema = z.object({
@@ -85,6 +103,11 @@ export default function Settings() {
     queryKey: ["/api/classpilot/parent-digests/settings"],
     queryFn: () => apiRequest("GET", "/classpilot/parent-digests/settings"),
     select: (data) => data?.settings ?? {},
+  });
+
+  const { data: enrollmentKeySettings, isLoading: enrollmentKeyLoading } = useQuery({
+    queryKey: ["/api/classpilot/enrollment-key"],
+    queryFn: () => apiRequest("GET", "/classpilot/enrollment-key"),
   });
 
   const { data: classroomCourses = [], isLoading: classroomCoursesLoading } = useQuery({
@@ -174,6 +197,24 @@ export default function Settings() {
       toast({
         variant: "destructive",
         title: "Failed to save settings",
+        description: error.message,
+      });
+    },
+  });
+
+  const rotateEnrollmentKeyMutation = useMutation({
+    mutationFn: () => apiRequest("POST", "/classpilot/enrollment-key/rotate"),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/classpilot/enrollment-key"] });
+      toast({
+        title: "Setup key ready",
+        description: "The managed extension policy has been updated with the new key.",
+      });
+    },
+    onError: (error) => {
+      toast({
+        variant: "destructive",
+        title: "Failed to generate setup key",
         description: error.message,
       });
     },
@@ -312,6 +353,24 @@ export default function Settings() {
 
   const onSubmit = (data) => {
     updateSettingsMutation.mutate(data);
+  };
+
+  const sharedSignInEnabled = form.watch("sharedChromebookSignInEnabled");
+  const pinLoginEnabled = form.watch("sharedChromebookPinLoginEnabled");
+  const managedPolicy = buildManagedPolicy(enrollmentKeySettings);
+  const setupKey = enrollmentKeySettings?.key || "";
+
+  const copyText = async (text, label) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast({ title: label });
+    } catch {
+      toast({
+        variant: "destructive",
+        title: "Copy failed",
+        description: "Select the text and copy it manually.",
+      });
+    }
   };
 
   if (isLoading) {
@@ -478,9 +537,12 @@ export default function Settings() {
 
               <div className="rounded-md border p-4 space-y-3">
                 <div>
-                  <p className="text-sm font-medium">Shared Chromebook Sign-In</p>
+                  <p className="text-sm font-medium flex items-center gap-2">
+                    <KeyRound className="h-4 w-4" />
+                    Shared Chromebook Sign-In
+                  </p>
                   <p className="text-xs text-muted-foreground">
-                    Enable manual sign-in when the extension cannot detect a Chrome profile email. Managed extension policy must include the school and enrollment key. Name + PIN can be added for stations where students need a roster picker.
+                    Enable manual sign-in when the extension cannot detect a Chrome profile email. IT only needs to apply one managed policy to the student Chromebook OU.
                   </p>
                 </div>
                 <div className="flex items-center space-x-3">
@@ -494,6 +556,9 @@ export default function Settings() {
                     Enable Email + Student ID fallback
                   </Label>
                 </div>
+                <p className="text-xs text-muted-foreground ml-7">
+                  Students enter their school email and Student ID Number from the SchoolPilot roster.
+                </p>
                 <div className="flex items-center space-x-3">
                   <input
                     type="checkbox"
@@ -504,6 +569,86 @@ export default function Settings() {
                   <Label htmlFor="sharedChromebookPinLoginEnabled">
                     Enable Name + PIN login
                   </Label>
+                </div>
+                <p className="text-xs text-muted-foreground ml-7">
+                  Optional. Students choose their grade, pick their name, and enter their 4-digit PIN.
+                </p>
+
+                <div className="rounded-md border bg-muted/30 p-3 space-y-3">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <p className="text-sm font-medium">Shared Chromebook setup key</p>
+                      <p className="text-xs text-muted-foreground">
+                        Generate once, then copy the policy below into Google Admin for the ClassPilot extension.
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => rotateEnrollmentKeyMutation.mutate()}
+                      disabled={rotateEnrollmentKeyMutation.isPending || enrollmentKeyLoading}
+                    >
+                      <RefreshCw className={`h-4 w-4 mr-2 ${rotateEnrollmentKeyMutation.isPending ? "animate-spin" : ""}`} />
+                      {setupKey ? "Rotate Key" : "Generate Key"}
+                    </Button>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="shared-chromebook-setup-key">Setup key</Label>
+                    <div className="flex gap-2">
+                      <Input
+                        id="shared-chromebook-setup-key"
+                        readOnly
+                        value={setupKey || "No setup key generated yet"}
+                        className="font-mono text-xs"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        onClick={() => setupKey && copyText(setupKey, "Setup key copied")}
+                        disabled={!setupKey}
+                        aria-label="Copy setup key"
+                      >
+                        <Copy className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <Label htmlFor="shared-chromebook-policy">Google Admin managed policy</Label>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setupKey && copyText(managedPolicy, "Managed policy copied")}
+                        disabled={!setupKey}
+                      >
+                        <Copy className="h-4 w-4 mr-2" />
+                        Copy
+                      </Button>
+                    </div>
+                    <pre
+                      id="shared-chromebook-policy"
+                      className="max-h-56 overflow-auto rounded-md border bg-background p-3 text-xs"
+                    >
+{managedPolicy}
+                    </pre>
+                    <p className="text-xs text-muted-foreground">
+                      Apply this once to the student Chromebook organizational unit. Do not add grade, class, or Chromebook-specific fields; students choose their grade during PIN sign-in.
+                    </p>
+                  </div>
+
+                  <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
+                    <div className="rounded-md border bg-background p-2">
+                      Email + ID: {sharedSignInEnabled ? "enabled after saving settings" : "off"}
+                    </div>
+                    <div className="rounded-md border bg-background p-2">
+                      Name + PIN: {pinLoginEnabled ? "enabled after saving settings" : "off"}
+                    </div>
+                  </div>
                 </div>
               </div>
 
