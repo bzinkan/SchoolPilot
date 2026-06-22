@@ -225,6 +225,26 @@ async function ensureDeviceForSchool(options: {
   return device;
 }
 
+async function broadcastStudentSignedOut(options: {
+  schoolId: string;
+  studentId: string;
+  deviceId: string;
+  reason: string;
+}) {
+  removeDeviceStatus(options.schoolId, options.deviceId);
+  const signOutUpdate = {
+    type: "student-signed-out",
+    studentId: options.studentId,
+    deviceId: options.deviceId,
+    schoolId: options.schoolId,
+    status: "offline",
+    reason: options.reason,
+    timestamp: new Date().toISOString(),
+  };
+  broadcastToTeachersLocal(options.schoolId, signOutUpdate);
+  await publishWS({ kind: "staff", schoolId: options.schoolId }, signOutUpdate);
+}
+
 async function completeStudentDeviceLogin(options: {
   schoolId: string;
   deviceId: string;
@@ -242,7 +262,8 @@ async function completeStudentDeviceLogin(options: {
     schoolId: options.schoolId,
     classId: options.classId,
   });
-  const previousSession = await getActiveSessionByStudent(options.student.id);
+  const previousStudentSession = await getActiveSessionByStudent(options.student.id);
+  const previousDeviceSession = await getActiveSessionByDevice(options.deviceId);
   await linkStudentDevice({ studentId: options.student.id, deviceId: options.deviceId });
   await startStudentSession(options.student.id, options.deviceId);
 
@@ -253,6 +274,33 @@ async function completeStudentDeviceLogin(options: {
     schoolId: options.schoolId,
     studentEmail,
   });
+
+  if (previousDeviceSession && previousDeviceSession.studentId !== options.student.id) {
+    await broadcastStudentSignedOut({
+      schoolId: options.schoolId,
+      studentId: previousDeviceSession.studentId,
+      deviceId: options.deviceId,
+      reason: "session_replaced",
+    });
+  }
+
+  if (previousStudentSession && previousStudentSession.deviceId !== options.deviceId) {
+    const replacedMessage = {
+      type: "student-session-replaced",
+      studentId: options.student.id,
+      deviceId: previousStudentSession.deviceId,
+      replacementDeviceId: options.deviceId,
+      timestamp: new Date().toISOString(),
+    };
+    sendToDeviceLocal(options.schoolId, previousStudentSession.deviceId, replacedMessage);
+    await publishWS({ kind: "device", schoolId: options.schoolId, deviceId: previousStudentSession.deviceId }, replacedMessage);
+    await broadcastStudentSignedOut({
+      schoolId: options.schoolId,
+      studentId: options.student.id,
+      deviceId: previousStudentSession.deviceId,
+      reason: "session_replaced",
+    });
+  }
 
   broadcastToTeachersLocal(options.schoolId, {
     type: "student-registered",
@@ -266,30 +314,6 @@ async function completeStudentDeviceLogin(options: {
     studentId: options.student.id,
     deviceId: options.deviceId,
   });
-
-  if (previousSession && previousSession.deviceId !== options.deviceId) {
-    const replacedMessage = {
-      type: "student-session-replaced",
-      studentId: options.student.id,
-      deviceId: previousSession.deviceId,
-      replacementDeviceId: options.deviceId,
-      timestamp: new Date().toISOString(),
-    };
-    sendToDeviceLocal(options.schoolId, previousSession.deviceId, replacedMessage);
-    await publishWS({ kind: "device", schoolId: options.schoolId, deviceId: previousSession.deviceId }, replacedMessage);
-    removeDeviceStatus(options.schoolId, previousSession.deviceId);
-    const signOutUpdate = {
-      type: "student-signed-out",
-      studentId: options.student.id,
-      deviceId: previousSession.deviceId,
-      schoolId: options.schoolId,
-      status: "offline",
-      reason: "session_replaced",
-      timestamp: new Date().toISOString(),
-    };
-    broadcastToTeachersLocal(options.schoolId, signOutUpdate);
-    await publishWS({ kind: "staff", schoolId: options.schoolId }, signOutUpdate);
-  }
 
   return {
     success: true,

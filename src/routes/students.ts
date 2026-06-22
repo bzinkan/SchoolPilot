@@ -31,7 +31,7 @@ import {
 } from "../services/studentEmailPolicy.js";
 import type { InsertStudent, Student } from "../schema/students.js";
 import db from "../db.js";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { familyGroups, familyGroupStudents } from "../schema/gopilot.js";
 import { homerooms } from "../schema/gopilot.js";
 import {
@@ -40,8 +40,10 @@ import {
   hasActiveGoPilotLicense,
 } from "../services/gopilotAccess.js";
 import { hashPassword } from "../util/password.js";
+import { students as studentsTable } from "../schema/students.js";
 
 const router = Router();
+const CLASSPILOT_PIN_HASH_CONCURRENCY = 4;
 
 function param(req: { params: Record<string, unknown> }, key: string): string {
   return String(req.params[key] ?? "");
@@ -70,6 +72,24 @@ function randomFourDigitPin(usedPins?: Set<string>): string {
   } while (usedPins?.has(pin));
   usedPins?.add(pin);
   return pin;
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(Math.max(concurrency, 1), items.length);
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex++;
+      results[index] = await mapper(items[index]!, index);
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }
 
 function normalizeGradeLevel(value: unknown): string {
@@ -644,22 +664,45 @@ router.post(
         return true;
       });
 
-      const generated: Array<{ studentId: string; studentName: string; gradeLevel: string | null; pin: string }> = [];
       const generatedPins = new Set<string>();
-      for (const student of eligible) {
-        const pin = randomFourDigitPin(generatedPins);
-        const updated = await updateStudent(student.id, {
-          classpilotPinHash: await hashPassword(pin),
-        });
-        if (updated) {
-          generated.push({
+      const pinPlans = eligible.map((student) => ({
+        student,
+        pin: randomFourDigitPin(generatedPins),
+      }));
+      const hashedPlans = await mapWithConcurrency(
+        pinPlans,
+        CLASSPILOT_PIN_HASH_CONCURRENCY,
+        async (plan) => ({
+          ...plan,
+          classpilotPinHash: await hashPassword(plan.pin),
+        })
+      );
+
+      const generated = await db.transaction(async (tx) => {
+        const rows: Array<{ studentId: string; studentName: string; gradeLevel: string | null; pin: string }> = [];
+        for (const plan of hashedPlans) {
+          const [updated] = await tx
+            .update(studentsTable)
+            .set({ classpilotPinHash: plan.classpilotPinHash, updatedAt: new Date() })
+            .where(
+              and(
+                eq(studentsTable.id, plan.student.id),
+                eq(studentsTable.schoolId, res.locals.schoolId!)
+              )
+            )
+            .returning();
+          if (!updated) {
+            throw new Error("Could not update one or more student PINs");
+          }
+          rows.push({
             studentId: updated.id,
             studentName: `${updated.firstName || ""} ${updated.lastName || ""}`.trim() || updated.email || "Student",
             gradeLevel: updated.gradeLevel,
-            pin,
+            pin: plan.pin,
           });
         }
-      }
+        return rows;
+      });
 
       return res.json({ generated });
     } catch (err) {
