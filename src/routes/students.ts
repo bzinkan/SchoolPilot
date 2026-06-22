@@ -31,7 +31,7 @@ import {
 } from "../services/studentEmailPolicy.js";
 import type { InsertStudent, Student } from "../schema/students.js";
 import db from "../db.js";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { familyGroups, familyGroupStudents } from "../schema/gopilot.js";
 import { homerooms } from "../schema/gopilot.js";
 import {
@@ -90,6 +90,20 @@ async function mapWithConcurrency<T, R>(
   });
   await Promise.all(workers);
   return results;
+}
+
+function prepareStudentUpdateData(data: Record<string, unknown>): Partial<InsertStudent> {
+  const updateData = { ...data } as Partial<InsertStudent> & Record<string, unknown>;
+  delete updateData.id;
+  delete updateData.schoolId;
+
+  if (updateData.email !== undefined) {
+    const email = typeof updateData.email === "string" ? updateData.email.trim() : updateData.email;
+    updateData.email = email;
+    updateData.emailLc = email ? String(email).toLowerCase() : null;
+  }
+
+  return updateData;
 }
 
 function normalizeGradeLevel(value: unknown): string {
@@ -584,60 +598,109 @@ router.put(
       if (!Array.isArray(updates)) {
         return res.status(400).json({ error: "Array of updates required" });
       }
-      const results: unknown[] = [];
       const skipped: { id: string; error: string }[] = [];
       const rules = await studentEmailRules(res.locals.schoolId!);
-      for (const item of updates) {
-        if (item.id) {
-          // Verify each student belongs to the caller's school before mutating.
-          const existing = await getStudentById(item.id);
-          if (!existing || existing.schoolId !== res.locals.schoolId) continue;
-          // Guardrail: only validate when the email actually changes (not on
-          // resubmit), so a grade/dismissal bulk-edit of a legacy student isn't blocked.
-          const itemEmail = item.email ?? item.studentEmail;
-          if (isEmailChanging(itemEmail, existing.emailLc)) {
-            const emailErr = checkStudentEmail(itemEmail, rules);
-            if (emailErr) {
-              skipped.push({ id: item.id, error: emailErr.error });
-              continue;
-            }
-            // Uniqueness: don't let an email change collide with another
-            // student/staff in the school.
-            if (itemEmail) {
-              const taken = await studentEmailTaken(res.locals.schoolId!, String(itemEmail).toLowerCase(), item.id);
-              if (taken) {
-                skipped.push({ id: item.id, error: taken });
-                continue;
-              }
-            }
+      const updateItems = updates.filter((item): item is Record<string, unknown> & { id: string } => {
+        return Boolean(item && typeof item === "object" && "id" in item && item.id);
+      });
+      const updateIds = [...new Set(updateItems.map((item) => String(item.id)))];
+      const existingStudents = updateIds.length
+        ? await db
+            .select()
+            .from(studentsTable)
+            .where(
+              and(
+                eq(studentsTable.schoolId, res.locals.schoolId!),
+                inArray(studentsTable.id, updateIds)
+              )
+            )
+        : [];
+      const existingById = new Map(existingStudents.map((student) => [student.id, student]));
+      const preparedUpdates: Array<{
+        id: string;
+        data: Record<string, unknown>;
+        classpilotPin: string | null | undefined;
+      }> = [];
+
+      for (const item of updateItems) {
+        const id = String(item.id);
+        const existing = existingById.get(id);
+        if (!existing) continue;
+
+        // Guardrail: only validate when the email actually changes (not on
+        // resubmit), so a grade/dismissal bulk-edit of a legacy student isn't blocked.
+        const rawItemEmail = item.email ?? item.studentEmail;
+        const itemEmail = rawItemEmail == null ? rawItemEmail : String(rawItemEmail);
+        if (isEmailChanging(itemEmail, existing.emailLc)) {
+          const emailErr = checkStudentEmail(itemEmail, rules);
+          if (emailErr) {
+            skipped.push({ id, error: emailErr.error });
+            continue;
           }
-          try {
-            const normalized = normalizeStudentBody(item);
-            const { classpilotPin, ...safeItem } = normalized;
-            const updated = await updateStudent(item.id, {
-              ...safeItem,
-              ...(await classpilotPinHashFromInput(
-                typeof classpilotPin === "string" || classpilotPin === null
-                  ? classpilotPin
-                  : undefined
-              )),
-            });
-            if (updated) results.push(stripStudentCredentialHash(updated));
-          } catch (err) {
-            if (isUniqueViolation(err)) {
-              skipped.push({ id: item.id, error: "Duplicate email, badge ID, or code." });
+          // Uniqueness: don't let an email change collide with another
+          // student/staff in the school.
+          if (itemEmail) {
+            const taken = await studentEmailTaken(res.locals.schoolId!, itemEmail.toLowerCase(), id);
+            if (taken) {
+              skipped.push({ id, error: taken });
               continue;
             }
-            throw err;
           }
         }
+        const normalized = normalizeStudentBody(item);
+        const { classpilotPin, ...safeItem } = normalized;
+        preparedUpdates.push({
+          id,
+          data: safeItem,
+          classpilotPin:
+            typeof classpilotPin === "string" || classpilotPin === null
+              ? classpilotPin
+              : undefined,
+        });
       }
+
+      const hashedUpdates = await mapWithConcurrency(
+        preparedUpdates,
+        CLASSPILOT_PIN_HASH_CONCURRENCY,
+        async (item) => ({
+          ...item,
+          data: {
+            ...item.data,
+            ...(await classpilotPinHashFromInput(item.classpilotPin)),
+          },
+        })
+      );
+
+      const results = await db.transaction(async (tx) => {
+        const rows: unknown[] = [];
+        for (const item of hashedUpdates) {
+          const [updated] = await tx
+            .update(studentsTable)
+            .set({ ...prepareStudentUpdateData(item.data), updatedAt: new Date() })
+            .where(
+              and(
+                eq(studentsTable.id, item.id),
+                eq(studentsTable.schoolId, res.locals.schoolId!)
+              )
+            )
+            .returning();
+          if (updated) rows.push(stripStudentCredentialHash(updated));
+        }
+        return rows;
+      });
+
       return res.json({
         updated: results.length,
         students: results,
         skipped: skipped.length > 0 ? skipped : undefined,
       });
     } catch (err) {
+      if (isUniqueViolation(err)) {
+        return res.status(409).json({
+          error: "Duplicate email, badge ID, or code.",
+          code: "STUDENT_DUPLICATE",
+        });
+      }
       next(err);
     }
   }
