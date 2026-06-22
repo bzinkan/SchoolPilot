@@ -430,6 +430,11 @@ router.get("/extension/login-roster", extensionLimiter, async (req, res, next) =
       if (!keyCheck.ok) {
         return res.status(keyCheck.status).json({ error: keyCheck.error });
       }
+      if (!gradeLevel && !groupId) {
+        return res.status(400).json({
+          error: "Station grade or class filter is required for PIN roster login",
+        });
+      }
 
       let students = await getStudentsBySchool(school.id);
       if (groupId) {

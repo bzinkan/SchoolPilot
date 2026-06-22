@@ -476,7 +476,7 @@ export default function Settings() {
                 <div>
                   <p className="text-sm font-medium">Shared Chromebook Sign-In</p>
                   <p className="text-xs text-muted-foreground">
-                    Email + Student ID stays available by default. Enable Name + PIN only for stations where students need a roster picker.
+                    Email + Student ID stays available by default. Enable Name + PIN only for stations where students need a roster picker. Managed extension policy still needs the school and enrollment key; grade can be selected at sign-in or locked by IT policy.
                   </p>
                 </div>
                 <div className="flex items-center space-x-3">
