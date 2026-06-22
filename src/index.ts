@@ -563,6 +563,7 @@ async function runStartupMigrations(): Promise<void> {
     await pool.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS parent_digest_includes_safety BOOLEAN DEFAULT false`);
     await pool.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS parent_digest_includes_pass_dismissal BOOLEAN DEFAULT true`);
     await pool.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS parent_digest_last_sent_at TIMESTAMP`);
+    await pool.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS shared_chromebook_sign_in_enabled BOOLEAN NOT NULL DEFAULT false`);
     console.log("[migration] auto_block_unsafe_urls column ready");
   } catch (err) {
     console.warn("[migration] auto_block_unsafe_urls migration skipped:", (err as Error).message);

@@ -49,6 +49,7 @@ const settingsSchema = z.object({
   ipAllowlist: z.string(),
   aiSafetyEmailsEnabled: z.boolean().optional(),
   autoBlockUnsafeUrls: z.boolean().optional(),
+  sharedChromebookSignInEnabled: z.boolean().optional(),
   sharedChromebookPinLoginEnabled: z.boolean().optional(),
 });
 
@@ -111,6 +112,7 @@ export default function Settings() {
       ipAllowlist: settings?.ipAllowlist?.join(", ") || "",
       aiSafetyEmailsEnabled: settings?.aiSafetyEmailsEnabled !== false,
       autoBlockUnsafeUrls: settings?.autoBlockUnsafeUrls !== false,
+      sharedChromebookSignInEnabled: settings?.sharedChromebookSignInEnabled === true,
       sharedChromebookPinLoginEnabled: settings?.sharedChromebookPinLoginEnabled === true,
     },
   });
@@ -127,6 +129,7 @@ export default function Settings() {
         ipAllowlist: settings.ipAllowlist?.join(", ") || "",
         aiSafetyEmailsEnabled: settings.aiSafetyEmailsEnabled !== false,
         autoBlockUnsafeUrls: settings.autoBlockUnsafeUrls !== false,
+        sharedChromebookSignInEnabled: settings.sharedChromebookSignInEnabled === true,
         sharedChromebookPinLoginEnabled: settings.sharedChromebookPinLoginEnabled === true,
       });
     }
@@ -155,6 +158,7 @@ export default function Settings() {
           .filter(Boolean),
         aiSafetyEmailsEnabled: data.aiSafetyEmailsEnabled !== false,
         autoBlockUnsafeUrls: data.autoBlockUnsafeUrls !== false,
+        sharedChromebookSignInEnabled: data.sharedChromebookSignInEnabled === true,
         sharedChromebookPinLoginEnabled: data.sharedChromebookPinLoginEnabled === true,
       };
       return await apiRequest("POST", "/settings", payload);
@@ -476,8 +480,19 @@ export default function Settings() {
                 <div>
                   <p className="text-sm font-medium">Shared Chromebook Sign-In</p>
                   <p className="text-xs text-muted-foreground">
-                    Email + Student ID stays available by default. Enable Name + PIN only for stations where students need a roster picker. Managed extension policy still needs the school and enrollment key; grade can be selected at sign-in or locked by IT policy.
+                    Enable manual sign-in when the extension cannot detect a Chrome profile email. Managed extension policy must include the school and enrollment key. Name + PIN can be added for stations where students need a roster picker.
                   </p>
+                </div>
+                <div className="flex items-center space-x-3">
+                  <input
+                    type="checkbox"
+                    id="sharedChromebookSignInEnabled"
+                    className="h-4 w-4 rounded border-gray-300"
+                    {...form.register("sharedChromebookSignInEnabled")}
+                  />
+                  <Label htmlFor="sharedChromebookSignInEnabled">
+                    Enable Email + Student ID fallback
+                  </Label>
                 </div>
                 <div className="flex items-center space-x-3">
                   <input

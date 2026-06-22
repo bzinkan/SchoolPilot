@@ -27,7 +27,7 @@ const editStudentSchema = z.object({
   studentName: z.string().min(1, "Name is required"),
   studentEmail: z.string().email("Invalid email format"),
   studentIdNumber: z.string().optional(),
-  classpilotPin: z.string().regex(/^\d{3}$/, "PIN must be exactly 3 digits").optional().or(z.literal("")),
+  classpilotPin: z.string().regex(/^\d{4}$/, "PIN must be exactly 4 digits").optional().or(z.literal("")),
   gradeLevel: z.string().optional(),
 });
 
@@ -155,9 +155,9 @@ export function EditStudentDialog({
                       <Input
                         {...field}
                         inputMode="numeric"
-                        maxLength={3}
-                        placeholder={student.hasClassPilotPin ? "PIN set" : "123"}
-                        onChange={(event) => field.onChange(event.target.value.replace(/\D/g, "").slice(0, 3))}
+                        maxLength={4}
+                        placeholder={student.hasClassPilotPin ? "PIN set" : "1234"}
+                        onChange={(event) => field.onChange(event.target.value.replace(/\D/g, "").slice(0, 4))}
                         data-testid="input-edit-classpilot-pin"
                       />
                     </FormControl>

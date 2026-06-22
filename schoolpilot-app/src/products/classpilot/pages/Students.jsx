@@ -278,7 +278,8 @@ function StudentsContent() {
 
   const allStudents = studentsData?.students || [];
   const activeStudents = allStudents.filter((student) => !student.status || student.status === "active");
-  const pinLoginEnabled = settings?.sharedChromebookPinLoginEnabled === true;
+  const sharedSignInEnabled = settings?.sharedChromebookSignInEnabled === true;
+  const pinLoginEnabled = sharedSignInEnabled && settings?.sharedChromebookPinLoginEnabled === true;
   const studentsMissingIds = activeStudents.filter((student) => !student.studentIdNumber);
   const pinLoginStudentsMissingPins = pinLoginEnabled
     ? activeStudents.filter((student) => !student.hasClassPilotPin)
@@ -577,10 +578,10 @@ function StudentsContent() {
       return;
     }
 
-    if (classPilotPin && !/^\d{3}$/.test(classPilotPin)) {
+    if (classPilotPin && !/^\d{4}$/.test(classPilotPin)) {
       toast({
         title: "Validation Error",
-        description: "ClassPilot PIN must be exactly 3 digits",
+        description: "ClassPilot PIN must be exactly 4 digits",
         variant: "destructive",
       });
       return;
@@ -640,7 +641,7 @@ function StudentsContent() {
   const downloadTemplate = () => {
     const headers = ["Email", "Name", "Grade", "Class", "Student ID", "ClassPilot PIN"];
     const rowOne = ["student@school.edu", "John Doe", "8", "8th Math (sarah)", "10001", ""];
-    const rowTwo = ["student2@school.edu", "Jane Smith", "2", "2nd Homeroom (lee)", "20002", "123"];
+    const rowTwo = ["student2@school.edu", "Jane Smith", "2", "2nd Homeroom (lee)", "20002", "1234"];
 
     if (hasGoPilot) {
       headers.push("Dismissal Type", "Bus #");
@@ -670,7 +671,7 @@ function StudentsContent() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "classpilot-k4-pins.csv";
+    a.download = "classpilot-pins.csv";
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -747,7 +748,7 @@ function StudentsContent() {
               <li>Required columns: Email, Name</li>
               <li>Optional columns: Grade, Class, Student ID, ClassPilot PIN</li>
               <li>Student ID is used for default shared-Chromebook sign-in</li>
-              <li>ClassPilot PIN is optional and must be exactly 3 digits</li>
+              <li>ClassPilot PIN is optional and must be exactly 4 digits</li>
               {hasGoPilot && <li>GoPilot columns: Dismissal Type and Bus #</li>}
               <li>Class names must match existing classes exactly</li>
               <li>Students with existing emails will be updated</li>
@@ -813,10 +814,12 @@ function StudentsContent() {
                 <div>
                   <p className="text-sm font-medium">PIN Login</p>
                   <p className="text-sm text-muted-foreground">
-                    {!pinLoginEnabled
-                      ? "Name + PIN login is currently disabled in ClassPilot Settings"
+                    {!sharedSignInEnabled
+                      ? "Shared Chromebook Sign-In is disabled in ClassPilot Settings"
+                      : !pinLoginEnabled
+                        ? "Name + PIN login is currently disabled in ClassPilot Settings"
                       : pinLoginStudentsMissingPins.length
-                        ? `${pinLoginStudentsMissingPins.length} student${pinLoginStudentsMissingPins.length !== 1 ? "s" : ""} missing a 3-digit PIN`
+                        ? `${pinLoginStudentsMissingPins.length} student${pinLoginStudentsMissingPins.length !== 1 ? "s" : ""} missing a 4-digit PIN`
                         : "Ready for roster picker + PIN sign-in"}
                   </p>
                 </div>
@@ -1768,10 +1771,10 @@ function StudentsContent() {
                 <Input
                   id="classpilotPin"
                   inputMode="numeric"
-                  maxLength={3}
-                  placeholder="123"
+                  maxLength={4}
+                  placeholder="1234"
                   value={newClassPilotPin}
-                  onChange={(e) => setNewClassPilotPin(e.target.value.replace(/\D/g, "").slice(0, 3))}
+                  onChange={(e) => setNewClassPilotPin(e.target.value.replace(/\D/g, "").slice(0, 4))}
                   data-testid="input-new-classpilot-pin"
                 />
               </div>

@@ -60,8 +60,16 @@ function stripStudentCredentialHash<T extends { classpilotPinHash?: string | nul
   return safeStudent;
 }
 
-function randomThreeDigitPin(): string {
-  return String(randomInt(0, 1000)).padStart(3, "0");
+function randomFourDigitPin(usedPins?: Set<string>): string {
+  if (usedPins && usedPins.size >= 10000) {
+    throw new Error("No unique PINs available");
+  }
+  let pin = "";
+  do {
+    pin = String(randomInt(0, 10000)).padStart(4, "0");
+  } while (usedPins?.has(pin));
+  usedPins?.add(pin);
+  return pin;
 }
 
 function normalizeGradeLevel(value: unknown): string {
@@ -484,8 +492,8 @@ const importCsvHandler = async (req: any, res: any, next: any) => {
         normalized["classpilotstudentpin"] ||
         normalized["pin"] ||
         null;
-      if (classpilotPin && !/^\d{3}$/.test(classpilotPin)) {
-        errors.push({ row: i + 1, error: "ClassPilot PIN must be 3 digits" });
+      if (classpilotPin && !/^\d{4}$/.test(classpilotPin)) {
+        errors.push({ row: i + 1, error: "ClassPilot PIN must be 4 digits" });
         continue;
       }
 
@@ -615,7 +623,7 @@ router.put(
   }
 );
 
-// POST /api/students/classpilot-pins/bulk-generate - Generate 3-digit shared-login PINs
+// POST /api/students/classpilot-pins/bulk-generate - Generate 4-digit shared-login PINs
 router.post(
   "/classpilot-pins/bulk-generate",
   ...schoolContext,
@@ -637,8 +645,9 @@ router.post(
       });
 
       const generated: Array<{ studentId: string; studentName: string; gradeLevel: string | null; pin: string }> = [];
+      const generatedPins = new Set<string>();
       for (const student of eligible) {
-        const pin = randomThreeDigitPin();
+        const pin = randomFourDigitPin(generatedPins);
         const updated = await updateStudent(student.id, {
           classpilotPinHash: await hashPassword(pin),
         });

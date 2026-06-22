@@ -73,6 +73,9 @@ const safetyAlertCooldown = new Map<string, number>();
 // Track delivered message IDs per device to avoid re-sending
 const deliveredMessages = new Map<string, Set<string>>();
 const SAFETY_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
+const PIN_LOGIN_MAX_FAILURES = 5;
+const PIN_LOGIN_LOCKOUT_MS = 10 * 60 * 1000;
+const pinLoginFailures = new Map<string, { count: number; lockedUntil: number }>();
 
 // In-memory cache for school lookups (reduces DB queries on heartbeats)
 const schoolCache = new Map<string, { school: any; expires: number }>();
@@ -171,6 +174,39 @@ function validateEnrollmentKeyForSettings(
     }
   }
   return { ok: true };
+}
+
+function getPinFailureKey(schoolId: string, studentId: string): string {
+  return `${schoolId}:${studentId}`;
+}
+
+function getPinLockout(schoolId: string, studentId: string): { ok: true } | { ok: false; retryAfterSeconds: number } {
+  const key = getPinFailureKey(schoolId, studentId);
+  const failure = pinLoginFailures.get(key);
+  if (!failure || failure.lockedUntil <= Date.now()) {
+    if (failure) pinLoginFailures.delete(key);
+    return { ok: true };
+  }
+  return {
+    ok: false,
+    retryAfterSeconds: Math.ceil((failure.lockedUntil - Date.now()) / 1000),
+  };
+}
+
+function recordPinFailure(schoolId: string, studentId: string) {
+  const key = getPinFailureKey(schoolId, studentId);
+  const current = pinLoginFailures.get(key);
+  const count = (current?.lockedUntil && current.lockedUntil > Date.now())
+    ? current.count
+    : (current?.count || 0) + 1;
+  pinLoginFailures.set(key, {
+    count,
+    lockedUntil: count >= PIN_LOGIN_MAX_FAILURES ? Date.now() + PIN_LOGIN_LOCKOUT_MS : 0,
+  });
+}
+
+function clearPinFailures(schoolId: string, studentId: string) {
+  pinLoginFailures.delete(getPinFailureKey(schoolId, studentId));
 }
 
 async function ensureDeviceForSchool(options: {
@@ -419,7 +455,14 @@ router.get("/extension/login-roster", extensionLimiter, async (req, res, next) =
     }
 
     await runWithTenantContext({ schoolId: school.id }, async () => {
+      if (!(await hasCachedClassPilotLicense(school.id))) {
+        return res.status(403).json({ error: "ClassPilot license is not active" });
+      }
+
       const regSettings = await getSettingsForSchool(school.id);
+      if (!regSettings?.sharedChromebookSignInEnabled) {
+        return res.status(403).json({ error: "Shared Chromebook sign-in is not enabled for this school", sharedSignInEnabled: false });
+      }
       if (!regSettings?.sharedChromebookPinLoginEnabled) {
         return res.status(403).json({ error: "PIN login is not enabled for this school", pinLoginEnabled: false });
       }
@@ -485,6 +528,7 @@ router.get("/extension/settings", requireDeviceAuth, async (_req, res, next) => 
       trackingDays: schoolSettings?.trackingDays ?? null,
       schoolTimezone: schoolSettings?.schoolTimezone || school.schoolTimezone || null,
       afterHoursMode: schoolSettings?.afterHoursMode ?? "off",
+      sharedChromebookSignInEnabled: !!schoolSettings?.sharedChromebookSignInEnabled,
       sharedChromebookPinLoginEnabled: !!schoolSettings?.sharedChromebookPinLoginEnabled,
       maxTabsPerStudent: schoolSettings?.maxTabsPerStudent
         ? parseInt(schoolSettings.maxTabsPerStudent, 10)
@@ -531,8 +575,33 @@ router.post("/extension/student-login", extensionLimiter, async (req, res, next)
       if (!resolved || resolved.school.status !== "active") {
         return res.status(401).json({ error: "Invalid student credentials" });
       }
+      if (explicitSchoolId && String(explicitSchoolId) !== resolved.school.id) {
+        return res.status(403).json({ error: "School context does not match student email" });
+      }
+      if (schoolSlug) {
+        const explicitSchool = await getSchoolBySlug(String(schoolSlug));
+        if (!explicitSchool || explicitSchool.id !== resolved.school.id) {
+          return res.status(403).json({ error: "School context does not match student email" });
+        }
+      }
 
       await runWithTenantContext({ schoolId: resolved.school.id }, async () => {
+        if (!(await hasCachedClassPilotLicense(resolved.school.id))) {
+          return res.status(403).json({ error: "ClassPilot license is not active" });
+        }
+
+        const regSettings = await getSettingsForSchool(resolved.school.id);
+        if (!regSettings?.sharedChromebookSignInEnabled) {
+          return res.status(403).json({ error: "Shared Chromebook sign-in is not enabled for this school" });
+        }
+
+        const keyCheck = validateEnrollmentKeyForSettings(regSettings, enrollmentKey, {
+          requireConfiguredKey: true,
+        });
+        if (!keyCheck.ok) {
+          return res.status(keyCheck.status).json({ error: keyCheck.error });
+        }
+
         const student = await getStudentByEmail(resolved.school.id, emailLc);
         if (
           !student ||
@@ -554,7 +623,7 @@ router.post("/extension/student-login", extensionLimiter, async (req, res, next)
       return;
     }
 
-    // Optional fallback: roster-selected student + 3-digit PIN.
+    // Optional fallback: roster-selected student + 4-digit PIN.
     const selectedStudentId = String(studentId || "").trim();
     const enteredPin = String(pin || "").trim();
     const school = explicitSchoolId
@@ -563,12 +632,19 @@ router.post("/extension/student-login", extensionLimiter, async (req, res, next)
         ? await getSchoolBySlug(String(schoolSlug))
         : undefined;
 
-    if (!school || school.status !== "active" || !selectedStudentId || !/^\d{3}$/.test(enteredPin)) {
+    if (!school || school.status !== "active" || !selectedStudentId || !/^\d{4}$/.test(enteredPin)) {
       return res.status(401).json({ error: "Invalid student credentials" });
     }
 
     await runWithTenantContext({ schoolId: school.id }, async () => {
+      if (!(await hasCachedClassPilotLicense(school.id))) {
+        return res.status(403).json({ error: "ClassPilot license is not active" });
+      }
+
       const regSettings = await getSettingsForSchool(school.id);
+      if (!regSettings?.sharedChromebookSignInEnabled) {
+        return res.status(403).json({ error: "Shared Chromebook sign-in is not enabled for this school" });
+      }
       if (!regSettings?.sharedChromebookPinLoginEnabled) {
         return res.status(403).json({ error: "PIN login is not enabled for this school" });
       }
@@ -581,6 +657,13 @@ router.post("/extension/student-login", extensionLimiter, async (req, res, next)
       }
 
       const student = await getStudentById(selectedStudentId);
+      const lockout = getPinLockout(school.id, selectedStudentId);
+      if (!lockout.ok) {
+        return res.status(429).json({
+          error: "Too many PIN attempts. Try again later.",
+          retryAfterSeconds: lockout.retryAfterSeconds,
+        });
+      }
       if (
         !student ||
         student.schoolId !== school.id ||
@@ -588,8 +671,10 @@ router.post("/extension/student-login", extensionLimiter, async (req, res, next)
         !student.classpilotPinHash ||
         !(await comparePassword(enteredPin, student.classpilotPinHash))
       ) {
+        recordPinFailure(school.id, selectedStudentId);
         return res.status(401).json({ error: "Invalid student credentials" });
       }
+      clearPinFailures(school.id, selectedStudentId);
 
       const login = await completeStudentDeviceLogin({
         schoolId: school.id,

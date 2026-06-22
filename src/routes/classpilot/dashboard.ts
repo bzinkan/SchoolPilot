@@ -127,6 +127,7 @@ router.get("/settings", ...auth, async (req, res, next) => {
       blockedDomains: schoolSettings?.blockedDomains || [],
       maxTabsPerStudent: schoolSettings?.maxTabsPerStudent || null,
       aiSafetyEmailsEnabled: schoolSettings?.aiSafetyEmailsEnabled ?? true,
+      sharedChromebookSignInEnabled: !!schoolSettings?.sharedChromebookSignInEnabled,
       sharedChromebookPinLoginEnabled: !!schoolSettings?.sharedChromebookPinLoginEnabled,
       // Teacher's own blocked domains (for MySettings editable field)
       teacherBlockedDomains: (teacherSettings as any)?.blockedDomains || [],
@@ -144,7 +145,7 @@ router.post("/settings", ...auth, async (req, res, next) => {
     const {
       maxTabsPerStudent, allowedDomains, blockedDomains, defaultFlightPathId,
       schoolName, retentionHours, ipAllowlist, aiSafetyEmailsEnabled, autoBlockUnsafeUrls,
-      sharedChromebookPinLoginEnabled,
+      sharedChromebookSignInEnabled, sharedChromebookPinLoginEnabled,
     } = req.body;
 
     // Teacher-specific settings
@@ -154,14 +155,21 @@ router.post("/settings", ...auth, async (req, res, next) => {
     if (blockedDomains !== undefined) data.blockedDomains = blockedDomains;
     if (defaultFlightPathId !== undefined) data.defaultFlightPathId = defaultFlightPathId;
 
-    const settings = await upsertTeacherSettings(req.authUser!.id, data);
-
     // School-wide settings — only when the admin settings page sends them.
     // The admin page sends schoolName/retentionHours/ipAllowlist/aiSafetyEmailsEnabled
     // which the teacher's MySettings page never includes.
     const isAdminSettingsRequest = schoolName !== undefined || retentionHours !== undefined
       || ipAllowlist !== undefined || aiSafetyEmailsEnabled !== undefined || autoBlockUnsafeUrls !== undefined
-      || sharedChromebookPinLoginEnabled !== undefined;
+      || sharedChromebookSignInEnabled !== undefined || sharedChromebookPinLoginEnabled !== undefined;
+
+    if (isAdminSettingsRequest) {
+      const role = res.locals.membershipRole;
+      if (!req.authUser?.isSuperAdmin && role !== "admin" && role !== "school_admin") {
+        return res.status(403).json({ error: "Admin access required to update school settings" });
+      }
+    }
+
+    const settings = await upsertTeacherSettings(req.authUser!.id, data);
 
     if (isAdminSettingsRequest) {
       const schoolId = res.locals.schoolId!;
@@ -174,6 +182,9 @@ router.post("/settings", ...auth, async (req, res, next) => {
       if (maxTabsPerStudent !== undefined) schoolData.maxTabsPerStudent = maxTabsPerStudent || null;
       if (aiSafetyEmailsEnabled !== undefined) schoolData.aiSafetyEmailsEnabled = aiSafetyEmailsEnabled !== false;
       if (autoBlockUnsafeUrls !== undefined) schoolData.autoBlockUnsafeUrls = autoBlockUnsafeUrls !== false;
+      if (sharedChromebookSignInEnabled !== undefined) {
+        schoolData.sharedChromebookSignInEnabled = sharedChromebookSignInEnabled === true;
+      }
       if (sharedChromebookPinLoginEnabled !== undefined) {
         schoolData.sharedChromebookPinLoginEnabled = sharedChromebookPinLoginEnabled === true;
       }
