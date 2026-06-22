@@ -26,6 +26,8 @@ import {
   createStudent,
   startStudentSession,
   touchStudentSession,
+  getActiveSessionByStudent,
+  getActiveSessionByDevice,
   resolveSchoolForStudent,
   getSchoolById,
   getSchoolBySlug,
@@ -206,6 +208,7 @@ async function completeStudentDeviceLogin(options: {
     schoolId: options.schoolId,
     classId: options.classId,
   });
+  const previousSession = await getActiveSessionByStudent(options.student.id);
   await linkStudentDevice({ studentId: options.student.id, deviceId: options.deviceId });
   await startStudentSession(options.student.id, options.deviceId);
 
@@ -229,6 +232,30 @@ async function completeStudentDeviceLogin(options: {
     studentId: options.student.id,
     deviceId: options.deviceId,
   });
+
+  if (previousSession && previousSession.deviceId !== options.deviceId) {
+    const replacedMessage = {
+      type: "student-session-replaced",
+      studentId: options.student.id,
+      deviceId: previousSession.deviceId,
+      replacementDeviceId: options.deviceId,
+      timestamp: new Date().toISOString(),
+    };
+    sendToDeviceLocal(options.schoolId, previousSession.deviceId, replacedMessage);
+    await publishWS({ kind: "device", schoolId: options.schoolId, deviceId: previousSession.deviceId }, replacedMessage);
+    removeDeviceStatus(options.schoolId, previousSession.deviceId);
+    const signOutUpdate = {
+      type: "student-signed-out",
+      studentId: options.student.id,
+      deviceId: previousSession.deviceId,
+      schoolId: options.schoolId,
+      status: "offline",
+      reason: "session_replaced",
+      timestamp: new Date().toISOString(),
+    };
+    broadcastToTeachersLocal(options.schoolId, signOutUpdate);
+    await publishWS({ kind: "staff", schoolId: options.schoolId }, signOutUpdate);
+  }
 
   return {
     success: true,
@@ -996,6 +1023,26 @@ router.post("/device/heartbeat", requireDeviceAuth, async (req, res, next) => {
     const school = await getCachedSchool(schoolId);
     if (!school || school.status !== "active") {
       return res.status(402).json({ planStatus: "inactive" });
+    }
+
+    const activeSession = await getActiveSessionByDevice(deviceId);
+    if (!activeSession || activeSession.studentId !== studentId) {
+      removeDeviceStatus(schoolId, deviceId);
+      const signOutUpdate = {
+        type: "student-signed-out",
+        studentId,
+        deviceId,
+        schoolId,
+        status: "offline",
+        reason: "session_replaced",
+        timestamp: new Date().toISOString(),
+      };
+      broadcastToTeachersLocal(schoolId, signOutUpdate);
+      await publishWS({ kind: "staff", schoolId }, signOutUpdate);
+      return res.status(409).json({
+        error: "student_session_replaced",
+        message: "This student is signed in on another Chromebook.",
+      });
     }
 
     // --- Save heartbeat to DB (item #1 — capture all fields) ---
