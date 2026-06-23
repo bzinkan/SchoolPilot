@@ -43,18 +43,18 @@ function normalizeDomain(domain) {
 function buildManagedPolicy(enrollmentKeySettings) {
   const serverUrl = typeof window !== "undefined" ? window.location.origin : "https://school-pilot.net";
   const policy = {
-    serverUrl,
+    serverUrl: { Value: serverUrl },
   };
 
   if (enrollmentKeySettings?.schoolSlug) {
-    policy.schoolSlug = enrollmentKeySettings.schoolSlug;
+    policy.schoolSlug = { Value: enrollmentKeySettings.schoolSlug };
   } else if (enrollmentKeySettings?.schoolId) {
-    policy.schoolId = enrollmentKeySettings.schoolId;
+    policy.schoolId = { Value: enrollmentKeySettings.schoolId };
   } else {
-    policy.schoolSlug = "your-school-slug";
+    policy.schoolSlug = { Value: "your-school-slug" };
   }
 
-  policy.enrollmentKey = enrollmentKeySettings?.key || "generate-a-setup-key-first";
+  policy.enrollmentKey = { Value: enrollmentKeySettings?.key || "generate-a-setup-key-first" };
   return JSON.stringify(policy, null, 2);
 }
 
