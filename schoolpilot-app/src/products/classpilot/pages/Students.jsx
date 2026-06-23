@@ -410,8 +410,12 @@ function StudentsContent() {
 
   const getDirectoryErrorCode = (error) => {
     if (!error) return null;
+    const serverCode = error.response?.data?.code;
+    if (serverCode) return serverCode;
     const serverMsg = error.response?.data?.error || "";
     if (serverMsg.includes("Google not connected") || serverMsg.includes("NO_TOKENS")) return "NO_TOKENS";
+    if (serverMsg.includes("Reconnect Google") || serverMsg.includes("GOOGLE_RECONNECT_REQUIRED")) return "GOOGLE_RECONNECT_REQUIRED";
+    if (serverMsg.includes("GOOGLE_DOMAIN_MISMATCH")) return "GOOGLE_DOMAIN_MISMATCH";
     if (serverMsg.includes("INSUFFICIENT_PERMISSIONS")) return "INSUFFICIENT_PERMISSIONS";
     const errorMessage = error.message || "";
     try {
@@ -422,16 +426,40 @@ function StudentsContent() {
       }
     } catch {
       if (errorMessage.includes("NO_TOKENS")) return "NO_TOKENS";
+      if (errorMessage.includes("GOOGLE_RECONNECT_REQUIRED")) return "GOOGLE_RECONNECT_REQUIRED";
+      if (errorMessage.includes("GOOGLE_DOMAIN_MISMATCH")) return "GOOGLE_DOMAIN_MISMATCH";
       if (errorMessage.includes("INSUFFICIENT_PERMISSIONS")) return "INSUFFICIENT_PERMISSIONS";
     }
+    if (errorMessage.includes("GOOGLE_RECONNECT_REQUIRED")) return "GOOGLE_RECONNECT_REQUIRED";
+    if (errorMessage.includes("GOOGLE_DOMAIN_MISMATCH")) return "GOOGLE_DOMAIN_MISMATCH";
     return "UNKNOWN_ERROR";
   };
 
   const directoryErrorCode = getDirectoryErrorCode(directoryError) || getDirectoryErrorCode(orgUnitsError);
-  const directoryNotConnected = directoryErrorCode === "NO_TOKENS";
+  const directoryNeedsReconnect = directoryErrorCode === "NO_TOKENS" || directoryErrorCode === "GOOGLE_RECONNECT_REQUIRED";
   const directoryNoPermission = directoryErrorCode === "INSUFFICIENT_PERMISSIONS";
+  const directoryDomainMismatch = directoryErrorCode === "GOOGLE_DOMAIN_MISMATCH";
   const directoryUnknownError = directoryErrorCode === "UNKNOWN_ERROR";
   const directoryEmptyDiagnostics = directoryUsers.length === 0 && !directoryError && !orgUnitsError ? directoryData?.diagnostics : null;
+
+  const connectGoogleWorkspace = async () => {
+    try {
+      const params = new URLSearchParams({
+        purpose: "workspace_import",
+        returnTo: `${window.location.origin}/classpilot/students`,
+      });
+      const data = await apiRequest("GET", `/google/auth-url?${params.toString()}`);
+      if (data?.url) {
+        window.location.href = data.url;
+      }
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "Google Reconnect Failed",
+        description: getApiErrorMessage(error),
+      });
+    }
+  };
 
   // Import from Google Workspace Directory mutation
   const importDirectoryMutation = useMutation({
@@ -1380,22 +1408,41 @@ function StudentsContent() {
           </DialogHeader>
 
           <div className="space-y-4">
-            {isLoadingDirectory ? (
+            {isLoadingDirectory || isLoadingOrgUnits ? (
               <div className="flex items-center justify-center py-8">
                 <Loader2 className="h-6 w-6 animate-spin mr-2" />
                 <span className="text-muted-foreground">Loading users from Google Workspace...</span>
               </div>
-            ) : directoryNotConnected ? (
+            ) : directoryNeedsReconnect ? (
               <div className="text-center py-8 space-y-4">
                 <p className="text-muted-foreground">
-                  Google Workspace is not connected. Please sign out and sign back in with Google to grant directory access.
+                  {directoryErrorCode === "GOOGLE_RECONNECT_REQUIRED"
+                    ? "Google Workspace needs to be reconnected so SchoolPilot can verify the connected domain."
+                    : "Google Workspace is not connected. Connect your Google Workspace admin account to import students."}
                 </p>
                 <Button
                   variant="outline"
-                  onClick={() => window.location.href = "/api/auth/google?redirect=/classpilot/students"}
+                  onClick={connectGoogleWorkspace}
                   data-testid="button-reconnect-google-workspace"
                 >
-                  Sign in with Google
+                  {directoryErrorCode === "GOOGLE_RECONNECT_REQUIRED" ? "Reconnect Google Workspace" : "Connect Google Workspace"}
+                </Button>
+              </div>
+            ) : directoryDomainMismatch ? (
+              <div className="text-center py-8 space-y-4">
+                <div className="flex items-center justify-center gap-2 text-destructive">
+                  <AlertCircle className="h-5 w-5" />
+                  <span className="font-medium">Google Workspace Domain Mismatch</span>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  {getApiErrorMessage(directoryError || orgUnitsError)}
+                </p>
+                <Button
+                  variant="outline"
+                  onClick={connectGoogleWorkspace}
+                  data-testid="button-reconnect-google-workspace-domain"
+                >
+                  Reconnect Google Workspace
                 </Button>
               </div>
             ) : directoryNoPermission ? (

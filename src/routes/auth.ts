@@ -14,6 +14,8 @@ import {
   getProductLicenses,
   updateUser,
   getSchoolBySlug,
+  getEmailDomain,
+  getGoogleOAuthToken,
   upsertGoogleOAuthToken,
 } from "../services/storage.js";
 import { authenticate } from "../middleware/authenticate.js";
@@ -448,13 +450,21 @@ router.get("/google/callback", async (req, res, next) => {
       updates.profileImageUrl = profile.picture;
     await updateUser(user.id, updates);
 
-    // Save Google OAuth refresh token so Workspace directory import works immediately
-    if (tokens.refresh_token) {
+    // Save Google OAuth metadata so Workspace directory import can verify the
+    // connected domain instead of treating a valid token as stale.
+    const existingGoogleToken = await getGoogleOAuthToken(user.id);
+    const refreshToken = tokens.refresh_token || existingGoogleToken?.refreshToken;
+    if (refreshToken) {
+      const connectedEmail = profile.email.trim().toLowerCase();
       await upsertGoogleOAuthToken(user.id, {
-        refreshToken: tokens.refresh_token,
-        scope: tokens.scope || "",
-        tokenType: tokens.token_type || "Bearer",
-        expiryDate: tokens.expiry_date ? new Date(tokens.expiry_date) : undefined,
+        refreshToken,
+        scope: tokens.scope || existingGoogleToken?.scope || "",
+        tokenType: tokens.token_type || existingGoogleToken?.tokenType || "Bearer",
+        connectedEmail,
+        connectedDomain: getEmailDomain(connectedEmail),
+        expiryDate: tokens.expiry_date
+          ? new Date(tokens.expiry_date)
+          : existingGoogleToken?.expiryDate ?? undefined,
       });
     }
 
