@@ -23,6 +23,7 @@ import {
   getMembershipByUserAndSchool,
   getUserById,
   validateStaffEmailDomainForSchool,
+  addGroupTeacher,
 } from "../../services/storage.js";
 import { broadcastToStudentsLocal } from "../../realtime/ws-broadcast.js";
 import { publishWS } from "../../realtime/ws-redis.js";
@@ -342,13 +343,16 @@ router.post("/settings/student-messaging", ...auth, async (req, res, next) => {
 // Teacher groups (ClassPilot frontend calls /teacher/groups)
 // ============================================================================
 
-// GET /teacher/groups - Groups for the current teacher (admins see all school groups)
+// GET /teacher/groups - Groups for the current teacher (admins see all school groups unless scope=mine)
 router.get("/groups", ...auth, async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
     const role = res.locals.membershipRole;
+    const scope = String(req.query.scope ?? "");
     let groupsList;
-    if (role === "admin" || role === "school_admin" || role === "super_admin") {
+    if (scope === "mine") {
+      groupsList = await getGroupsByTeacherAndSchool(req.authUser!.id, schoolId);
+    } else if (role === "admin" || role === "school_admin" || role === "super_admin") {
       groupsList = await getGroupsBySchool(schoolId);
     } else {
       groupsList = await getGroupsByTeacherAndSchool(req.authUser!.id, schoolId);
@@ -398,6 +402,7 @@ router.post("/groups", ...auth, async (req, res, next) => {
       blockStartTime: scheduleEnabled ? blockStartTime : undefined,
       blockEndTime: scheduleEnabled ? blockEndTime : undefined,
     });
+    await addGroupTeacher(group.id, ownerTeacherId, "primary");
     return res.status(201).json({ group });
   } catch (err) {
     next(err);

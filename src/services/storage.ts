@@ -3374,14 +3374,17 @@ export async function getGroupsBySchool(
 export async function getGroupsByTeacher(
   teacherId: string
 ): Promise<Group[]> {
-  // Query via group_teachers junction table (co-teacher support)
-  const rows = await db
+  const primaryGroups = await db
+    .select()
+    .from(groups)
+    .where(eq(groups.teacherId, teacherId));
+  const coTeacherRows = await db
     .select({ group: groups })
     .from(groupTeachers)
     .innerJoin(groups, eq(groups.id, groupTeachers.groupId))
     .where(eq(groupTeachers.teacherId, teacherId))
     .orderBy(groups.name);
-  return rows.map((r) => r.group);
+  return dedupeAndSortGroups(primaryGroups, coTeacherRows.map((r) => r.group));
 }
 
 // School-scoped — a teacher's groups in a specific school only (so a multi-school
@@ -3390,13 +3393,27 @@ export async function getGroupsByTeacherAndSchool(
   teacherId: string,
   schoolId: string
 ): Promise<Group[]> {
-  const rows = await db
+  const primaryGroups = await db
+    .select()
+    .from(groups)
+    .where(and(eq(groups.teacherId, teacherId), eq(groups.schoolId, schoolId)));
+  const coTeacherRows = await db
     .select({ group: groups })
     .from(groupTeachers)
     .innerJoin(groups, eq(groups.id, groupTeachers.groupId))
     .where(and(eq(groupTeachers.teacherId, teacherId), eq(groups.schoolId, schoolId)))
     .orderBy(groups.name);
-  return rows.map((r) => r.group);
+  return dedupeAndSortGroups(primaryGroups, coTeacherRows.map((r) => r.group));
+}
+
+function dedupeAndSortGroups(...lists: Group[][]): Group[] {
+  const byId = new Map<string, Group>();
+  for (const list of lists) {
+    for (const group of list) {
+      byId.set(group.id, group);
+    }
+  }
+  return Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name));
 }
 
 // ============================================================================
