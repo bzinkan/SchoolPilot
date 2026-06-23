@@ -661,18 +661,32 @@ router.post("/schools/:id/impersonate", ...auth, async (req, res, next) => {
 });
 
 // POST /api/super-admin/stop-impersonate - Stop impersonating
-router.post("/stop-impersonate", ...auth, async (req, res, next) => {
+router.post("/stop-impersonate", authenticate, async (req, res, next) => {
   try {
-    if (req.session) {
-      const originalUserId = (req.session as any).originalUserId;
-      if (originalUserId) {
-        (req.session as any).userId = originalUserId;
-        delete (req.session as any).originalUserId;
-        delete (req.session as any).impersonating;
-        delete (req.session as any).schoolId;
-        delete (req.session as any).role;
-      }
+    const originalUserId = req.session ? (req.session as any).originalUserId : null;
+    if (!req.session || !originalUserId) {
+      return res.status(400).json({ error: "No active impersonation session" });
     }
+
+    const impersonatedUserId = (req.session as any).userId || req.authUser?.id || null;
+    (req.session as any).userId = originalUserId;
+    delete (req.session as any).originalUserId;
+    delete (req.session as any).impersonating;
+    delete (req.session as any).schoolId;
+    delete (req.session as any).role;
+
+    await new Promise<void>((resolve, reject) => {
+      req.session!.save((err) => (err ? reject(err) : resolve()));
+    });
+
+    await logAudit({
+      userId: originalUserId,
+      action: "admin.stop_impersonate",
+      entityType: "user",
+      entityId: impersonatedUserId ?? undefined,
+      metadata: { impersonatedUserId },
+    });
+
     return res.json({ ok: true });
   } catch (err) {
     next(err);

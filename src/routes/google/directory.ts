@@ -24,6 +24,7 @@ import {
   validateStaffImportEmailForSchool,
 } from "../../services/studentEmailPolicy.js";
 import {
+  encryptClassPilotPin,
   generatedPinForStudent,
   hashClassPilotPin,
   randomFourDigitClassPilotPin,
@@ -212,6 +213,7 @@ async function importGoogleUsersAsStudents(
           googleUserId: u.id || undefined,
           studentIdNumber: studentIdNumber || undefined,
           classpilotPinHash: pin ? await hashClassPilotPin(pin) : undefined,
+          classpilotPinEncrypted: pin ? encryptClassPilotPin(pin) : undefined,
           status: "active",
         });
         if (pin) generatedPins.push(generatedPinForStudent(student, pin));
@@ -468,6 +470,7 @@ router.post("/import", ...adminAuth, async (req, res, next) => {
             gradeLevel: grade || u.grade || undefined,
             googleUserId: u.id || undefined,
             classpilotPinHash: pin ? await hashClassPilotPin(pin) : undefined,
+            classpilotPinEncrypted: pin ? encryptClassPilotPin(pin) : undefined,
             status: "active",
           });
           if (pin) generatedPins.push(generatedPinForStudent(student, pin));

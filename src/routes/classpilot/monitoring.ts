@@ -31,6 +31,7 @@ import { logAudit } from "../../services/audit.js";
 import type { InsertStudent } from "../../schema/students.js";
 import { safeStudent, safeStudents } from "../../util/safeStudent.js";
 import {
+  encryptClassPilotPin,
   generatedPinForStudent,
   hashClassPilotPin,
   randomFourDigitClassPilotPin,
@@ -188,6 +189,7 @@ router.post("/roster/student", ...auth, async (req, res, next) => {
       email: normalizedEmail || null,
       gradeLevel: gradeLevel || null,
       classpilotPinHash: await hashClassPilotPin(pin),
+      classpilotPinEncrypted: encryptClassPilotPin(pin),
       status: "active",
     });
 
@@ -264,6 +266,7 @@ router.post("/roster/bulk", ...auth, requireRole("admin"), async (req, res, next
         email: normalizedEmail || null,
         gradeLevel: s.gradeLevel || null,
         classpilotPinHash: await hashClassPilotPin(pin),
+        classpilotPinEncrypted: encryptClassPilotPin(pin),
         status: "active" as const,
       });
     }

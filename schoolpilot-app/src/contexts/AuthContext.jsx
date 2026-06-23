@@ -111,6 +111,15 @@ export function AuthProvider({ children }) {
     localStorage.removeItem('sp_activeSchoolId');
   };
 
+  const stopImpersonating = async () => {
+    setToken(null);
+    setApiToken(null);
+    await clearToken();
+    const res = await api.post('/super-admin/stop-impersonate');
+    await fetchUser();
+    return res.data;
+  };
+
   const switchSchool = (schoolId) => {
     setActiveSchoolId(schoolId);
     localStorage.setItem('sp_activeSchoolId', schoolId);
@@ -131,6 +140,7 @@ export function AuthProvider({ children }) {
         login,
         register,
         logout,
+        stopImpersonating,
         switchSchool,
         activeSchoolId,
         activeMembership,

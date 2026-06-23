@@ -8,6 +8,7 @@ import { updateSchoolSchema } from "../schema/validation.js";
 import { sanitizeSchool } from "../util/sanitizeSchool.js";
 import { toSchoolUpdate } from "../util/schoolUpdate.js";
 import { safeStudent } from "../util/safeStudent.js";
+import { decryptClassPilotPin } from "../services/classpilotPins.js";
 import { getSchoolDeviceStatuses } from "../realtime/student-statuses.js";
 import { getConnectedStudentDeviceIds } from "../realtime/ws-broadcast.js";
 import {
@@ -627,6 +628,7 @@ router.get("/admin/teacher-students", ...schoolAuth, requireRole("admin"), async
     const mapped = students.map((s: any) => ({
       ...safeStudent(s),
       hasClassPilotPin: !!s.classpilotPinHash,
+      classpilotPin: decryptClassPilotPin(s.classpilotPinEncrypted),
       studentName: [s.firstName, s.lastName].filter(Boolean).join(" ") || s.email || "",
       studentEmail: s.email || "",
     }));

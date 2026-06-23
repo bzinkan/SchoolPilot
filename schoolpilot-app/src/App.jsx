@@ -1,5 +1,5 @@
-import { lazy, Suspense } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { lazy, Suspense, useState } from 'react';
+import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { queryClient } from './lib/queryClient';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
@@ -70,6 +70,50 @@ function PageLoader() {
   return (
     <div className="flex min-h-[50vh] items-center justify-center">
       <Spinner size="lg" />
+    </div>
+  );
+}
+
+function ImpersonationBanner() {
+  const { user, stopImpersonating } = useAuth();
+  const navigate = useNavigate();
+  const [isStopping, setIsStopping] = useState(false);
+  const [error, setError] = useState('');
+
+  if (!user?.impersonating) return null;
+
+  const displayName = [user.firstName, user.lastName].filter(Boolean).join(' ') || user.email || 'this user';
+
+  const handleStop = async () => {
+    setIsStopping(true);
+    setError('');
+    try {
+      await stopImpersonating();
+      navigate('/super-admin/schools', { replace: true });
+    } catch (err) {
+      setError(err.response?.data?.error || 'Could not stop impersonating. Please try again.');
+    } finally {
+      setIsStopping(false);
+    }
+  };
+
+  return (
+    <div className="fixed left-1/2 top-3 z-[1000] w-[calc(100vw-24px)] max-w-3xl -translate-x-1/2 rounded-lg border border-amber-300 bg-amber-100 px-4 py-3 text-slate-950 shadow-lg">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-sm font-semibold">You are impersonating {displayName}</p>
+          {error && <p className="mt-1 text-xs text-red-700">{error}</p>}
+        </div>
+        <button
+          type="button"
+          onClick={handleStop}
+          disabled={isStopping}
+          className="rounded-md bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70"
+          data-testid="button-global-stop-impersonating"
+        >
+          {isStopping ? 'Stopping...' : 'Stop impersonating'}
+        </button>
+      </div>
     </div>
   );
 }
@@ -199,6 +243,7 @@ export default function App() {
             <AuthProvider>
               <LicenseProvider>
                 <SocketProvider>
+                  <ImpersonationBanner />
                   <AppRoutes />
                   <Toaster />
                   {/* <AIChatButton /> — AI Chat FAB disabled, using backend-only monitoring */}
