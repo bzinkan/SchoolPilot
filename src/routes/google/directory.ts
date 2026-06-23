@@ -343,10 +343,15 @@ router.get("/orgunits", ...adminAuth, async (req, res, next) => {
 
     const response = await admin.orgunits.list({
       customerId: "my_customer",
+      orgUnitPath: "/",
+      type: "allIncludingParent",
     });
 
+    const rawOrgUnits = response.data.organizationUnits || [];
     // Auto-detect grade level from OU name (e.g. "Grade 7", "7th Grade", "8th")
-    const orgUnits = (response.data.organizationUnits || []).map((ou: any) => {
+    const orgUnits = rawOrgUnits
+      .filter((ou: any) => ou.orgUnitPath && ou.orgUnitPath !== "/")
+      .map((ou: any) => {
       const name = ou.name || "";
       let detectedGrade: string | null = null;
       // Match patterns: "Grade 7", "Grade 8", "grade 12"
@@ -367,7 +372,13 @@ router.get("/orgunits", ...adminAuth, async (req, res, next) => {
       return { ...ou, detectedGrade };
     });
 
-    return res.json({ orgUnits });
+    return res.json({
+      orgUnits,
+      diagnostics: {
+        rawOrgUnitsCount: rawOrgUnits.length,
+        returnedRootOrgUnit: rawOrgUnits.some((ou: any) => ou.orgUnitPath === "/"),
+      },
+    });
   } catch (err: any) {
     return handleGoogleError(err, res, next);
   }
@@ -387,6 +398,22 @@ router.get("/users", ...adminAuth, async (req, res, next) => {
       pageToken: pageTokenValue,
       paginateAll: !pageTokenValue,
     });
+
+    if (response.users.length === 0 && !pageTokenValue) {
+      console.warn(
+        "[googleDirectory] users.list returned zero users",
+        JSON.stringify({
+          requestId: req.requestId,
+          schoolId,
+          orgUnitPath: optionalString(orgUnitPath) || null,
+          source: response.source,
+          customerUserCount: response.customerUserCount,
+          domainFallbackAttempted: response.domainFallbackAttempted,
+          domainUserCount: response.domainUserCount,
+          queriedDomain: response.queriedDomain,
+        })
+      );
+    }
 
     return res.json({
       users: response.users.map((u: any) => ({

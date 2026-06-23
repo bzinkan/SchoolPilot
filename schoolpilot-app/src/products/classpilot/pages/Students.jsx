@@ -396,7 +396,7 @@ function StudentsContent() {
   });
 
   // Fetch organizational units (only when dialog is open)
-  const { data: orgUnitsData, isLoading: isLoadingOrgUnits } = useQuery({
+  const { data: orgUnitsData, isLoading: isLoadingOrgUnits, error: orgUnitsError, refetch: refetchOrgUnits } = useQuery({
     queryKey: ["/api/directory/orgunits"],
     queryFn: () => apiRequest("GET", "/directory/orgunits"),
     enabled: showWorkspaceDialog,
@@ -406,12 +406,14 @@ function StudentsContent() {
   const orgUnits = orgUnitsData?.orgUnits || [];
 
   // Parse error codes from the error (axios errors have response data in error.response.data)
-  const getDirectoryErrorCode = () => {
-    if (!directoryError) return null;
-    const serverMsg = directoryError.response?.data?.error || "";
+  const getApiErrorMessage = (error) => error?.response?.data?.error || error?.message || "Unknown error";
+
+  const getDirectoryErrorCode = (error) => {
+    if (!error) return null;
+    const serverMsg = error.response?.data?.error || "";
     if (serverMsg.includes("Google not connected") || serverMsg.includes("NO_TOKENS")) return "NO_TOKENS";
     if (serverMsg.includes("INSUFFICIENT_PERMISSIONS")) return "INSUFFICIENT_PERMISSIONS";
-    const errorMessage = directoryError.message || "";
+    const errorMessage = error.message || "";
     try {
       const jsonMatch = errorMessage.match(/\{.*\}/);
       if (jsonMatch) {
@@ -425,9 +427,11 @@ function StudentsContent() {
     return "UNKNOWN_ERROR";
   };
 
-  const directoryErrorCode = getDirectoryErrorCode();
+  const directoryErrorCode = getDirectoryErrorCode(directoryError) || getDirectoryErrorCode(orgUnitsError);
   const directoryNotConnected = directoryErrorCode === "NO_TOKENS";
   const directoryNoPermission = directoryErrorCode === "INSUFFICIENT_PERMISSIONS";
+  const directoryUnknownError = directoryErrorCode === "UNKNOWN_ERROR";
+  const directoryEmptyDiagnostics = directoryUsers.length === 0 && !directoryError && !orgUnitsError ? directoryData?.diagnostics : null;
 
   // Import from Google Workspace Directory mutation
   const importDirectoryMutation = useMutation({
@@ -1408,6 +1412,16 @@ function StudentsContent() {
                   Alternatively, use the Google Classroom import or CSV upload options above.
                 </p>
               </div>
+            ) : directoryUnknownError ? (
+              <div className="text-center py-8 space-y-4">
+                <div className="flex items-center justify-center gap-2 text-destructive">
+                  <AlertCircle className="h-5 w-5" />
+                  <span className="font-medium">Google Workspace Import Error</span>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  {getApiErrorMessage(directoryError || orgUnitsError)}
+                </p>
+              </div>
             ) : workspaceImportResult ? (
               <div className="space-y-4">
                 <div className="p-4 border rounded-md space-y-3">
@@ -1455,13 +1469,25 @@ function StudentsContent() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => refetchDirectory()}
+                    onClick={() => {
+                      refetchDirectory();
+                      refetchOrgUnits();
+                    }}
                     data-testid="button-refresh-directory"
                   >
                     <RefreshCw className="h-4 w-4 mr-2" />
                     Refresh
                   </Button>
                 </div>
+
+                {directoryEmptyDiagnostics && (
+                  <div className="rounded-md bg-muted p-3 text-xs text-muted-foreground">
+                    Google returned 0 users
+                    {directoryEmptyDiagnostics.domainFallbackAttempted
+                      ? ` after checking the Workspace customer and ${directoryEmptyDiagnostics.queriedDomain || "the school domain"}.`
+                      : " from the connected Workspace customer."}
+                  </div>
+                )}
 
                 {expandedOU ? (
                   /* Expanded OU - individual user selection */
@@ -1538,6 +1564,10 @@ function StudentsContent() {
                       <div className="flex items-center justify-center py-4">
                         <Loader2 className="h-4 w-4 animate-spin mr-2" />
                         <span className="text-sm text-muted-foreground">Loading organizational units...</span>
+                      </div>
+                    ) : orgUnitsError ? (
+                      <div className="text-center py-4 text-sm text-destructive">
+                        Could not load organizational units: {getApiErrorMessage(orgUnitsError)}
                       </div>
                     ) : orgUnits.length === 0 ? (
                       <div className="text-center py-4 text-sm text-muted-foreground">
