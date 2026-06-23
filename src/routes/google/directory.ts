@@ -14,6 +14,8 @@ import {
   getUserByEmail,
   getMembershipByUserAndSchool,
   getProductLicenses,
+  getSchoolById,
+  normalizeDomain,
   autoAssignFamilyGroups,
 } from "../../services/storage.js";
 import { recordImportRun } from "../../services/importLog.js";
@@ -88,14 +90,33 @@ function escapeDirectoryQueryValue(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 }
 
-function buildDirectoryUsersParams(orgUnitPath?: string, projection: "basic" | "full" = "basic") {
+type DirectoryUsersProjection = "basic" | "full";
+type DirectoryUsersSource = "customer" | "domain_fallback";
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function buildDirectoryUsersParams(options: {
+  orgUnitPath?: string;
+  projection?: DirectoryUsersProjection;
+  domain?: string | null;
+  pageToken?: string;
+}) {
   const params: any = {
-    customer: "my_customer",
     maxResults: 500,
-    projection,
+    projection: options.projection || "basic",
   };
-  if (orgUnitPath && orgUnitPath !== "/") {
-    params.query = `orgUnitPath='${escapeDirectoryQueryValue(orgUnitPath)}'`;
+  if (options.domain) {
+    params.domain = options.domain;
+  } else {
+    params.customer = "my_customer";
+  }
+  if (options.pageToken) {
+    params.pageToken = options.pageToken;
+  }
+  if (options.orgUnitPath && options.orgUnitPath !== "/") {
+    params.query = `orgUnitPath='${escapeDirectoryQueryValue(options.orgUnitPath)}'`;
   }
   return params;
 }
@@ -121,6 +142,71 @@ async function listDirectoryUsers(admin: any, params: any, paginateAll = true) {
   } while (paginateAll && pageToken);
 
   return { users, nextPageToken: paginateAll ? null : nextPageToken };
+}
+
+async function listDirectoryUsersForSchool(
+  admin: any,
+  schoolId: string,
+  options: {
+    orgUnitPath?: string;
+    projection?: DirectoryUsersProjection;
+    pageToken?: string;
+    paginateAll?: boolean;
+  } = {}
+): Promise<{
+  users: any[];
+  nextPageToken: string | null;
+  source: DirectoryUsersSource;
+  customerUserCount: number;
+  domainFallbackAttempted: boolean;
+  domainUserCount?: number;
+  queriedDomain?: string;
+}> {
+  const paginateAll = options.paginateAll ?? true;
+  const customerParams = buildDirectoryUsersParams({
+    orgUnitPath: options.orgUnitPath,
+    projection: options.projection,
+    pageToken: options.pageToken,
+  });
+  const customerResponse = await listDirectoryUsers(admin, customerParams, paginateAll);
+
+  // A page token belongs to the original customer query, so do not switch query
+  // modes mid-pagination.
+  if (customerResponse.users.length > 0 || options.pageToken) {
+    return {
+      ...customerResponse,
+      source: "customer",
+      customerUserCount: customerResponse.users.length,
+      domainFallbackAttempted: false,
+    };
+  }
+
+  const school = await getSchoolById(schoolId);
+  const schoolDomain = normalizeDomain(school?.domain);
+  if (!schoolDomain) {
+    return {
+      ...customerResponse,
+      source: "customer",
+      customerUserCount: customerResponse.users.length,
+      domainFallbackAttempted: false,
+    };
+  }
+
+  const domainParams = buildDirectoryUsersParams({
+    orgUnitPath: options.orgUnitPath,
+    projection: options.projection,
+    domain: schoolDomain,
+  });
+  const domainResponse = await listDirectoryUsers(admin, domainParams, paginateAll);
+
+  return {
+    ...domainResponse,
+    source: "domain_fallback",
+    customerUserCount: customerResponse.users.length,
+    domainFallbackAttempted: true,
+    domainUserCount: domainResponse.users.length,
+    queriedDomain: schoolDomain,
+  };
 }
 
 async function maybeAutoAssignGoPilotFamilies(schoolId: string, imported: number) {
@@ -291,15 +377,16 @@ router.get("/orgunits", ...adminAuth, async (req, res, next) => {
 router.get("/users", ...adminAuth, async (req, res, next) => {
   try {
     const { orgUnitPath, pageToken } = req.query;
+    const schoolId = res.locals.schoolId!;
+    const pageTokenValue = optionalString(pageToken);
     const { oauth2Client, google } = await getAuthedClient(req.authUser!.id, res.locals.schoolId!);
     const admin = google.admin({ version: "directory_v1", auth: oauth2Client });
 
-    const params = buildDirectoryUsersParams(
-      typeof orgUnitPath === "string" ? orgUnitPath : undefined
-    );
-    if (pageToken) params.pageToken = pageToken;
-
-    const response = await listDirectoryUsers(admin, params, !pageToken);
+    const response = await listDirectoryUsersForSchool(admin, schoolId, {
+      orgUnitPath: optionalString(orgUnitPath),
+      pageToken: pageTokenValue,
+      paginateAll: !pageTokenValue,
+    });
 
     return res.json({
       users: response.users.map((u: any) => ({
@@ -312,6 +399,13 @@ router.get("/users", ...adminAuth, async (req, res, next) => {
         isAdmin: Boolean(u.isAdmin || u.isDelegatedAdmin),
       })),
       nextPageToken: response.nextPageToken,
+      source: response.source,
+      diagnostics: {
+        customerUserCount: response.customerUserCount,
+        domainFallbackAttempted: response.domainFallbackAttempted,
+        domainUserCount: response.domainUserCount,
+        queriedDomain: response.queriedDomain,
+      },
     });
   } catch (err: any) {
     return handleGoogleError(err, res, next);
@@ -343,8 +437,10 @@ router.post("/import", ...adminAuth, async (req, res, next) => {
       const autoGenerateClassPilotPins = await hasActiveClassPilotLicense(schoolId);
 
       for (const entry of entries) {
-        const params = buildDirectoryUsersParams(entry.orgUnitPath, "full");
-        const { users: googleUsers } = await listDirectoryUsers(admin, params);
+        const { users: googleUsers } = await listDirectoryUsersForSchool(admin, schoolId, {
+          orgUnitPath: optionalString(entry.orgUnitPath),
+          projection: "full",
+        });
         totalFound += googleUsers.length;
         const result = await importGoogleUsersAsStudents(schoolId, googleUsers, {
           gradeLevel: entry.gradeLevel || entry.grade || null,
@@ -389,8 +485,10 @@ router.post("/import", ...adminAuth, async (req, res, next) => {
     if (orgUnitPath !== undefined || importAll === true) {
       const { oauth2Client, google } = await getAuthedClient(req.authUser!.id, res.locals.schoolId!);
       const admin = google.admin({ version: "directory_v1", auth: oauth2Client });
-      const params = buildDirectoryUsersParams(orgUnitPath, "full");
-      const { users: googleUsers } = await listDirectoryUsers(admin, params);
+      const { users: googleUsers } = await listDirectoryUsersForSchool(admin, schoolId, {
+        orgUnitPath: optionalString(orgUnitPath),
+        projection: "full",
+      });
       const result = await importGoogleUsersAsStudents(schoolId, googleUsers, {
         gradeLevel: gradeLevel || grade || null,
         autoGenerateClassPilotPins: await hasActiveClassPilotLicense(schoolId),
@@ -520,8 +618,9 @@ const importStaffHandler = async (req: any, res: any, next: any) => {
       const { oauth2Client, google } = await getAuthedClient(req.authUser!.id, res.locals.schoolId!);
       const admin = google.admin({ version: "directory_v1", auth: oauth2Client });
 
-      const params = buildDirectoryUsersParams(orgUnitPath);
-      const { users: googleUsers } = await listDirectoryUsers(admin, params);
+      const { users: googleUsers } = await listDirectoryUsersForSchool(admin, schoolId, {
+        orgUnitPath: optionalString(orgUnitPath),
+      });
       const filterIds = userIds ? new Set(userIds) : null;
 
       let imported = 0;
@@ -686,8 +785,10 @@ router.post("/import-orgunits", ...adminAuth, async (req, res, next) => {
     for (const entry of orgUnits) {
       const orgUnitPath = typeof entry === "string" ? entry : entry?.orgUnitPath;
       const gradeLevel = typeof entry === "string" ? grade : entry?.gradeLevel || entry?.grade || grade;
-      const params = buildDirectoryUsersParams(orgUnitPath, "full");
-      const { users: googleUsers } = await listDirectoryUsers(admin, params);
+      const { users: googleUsers } = await listDirectoryUsersForSchool(admin, schoolId, {
+        orgUnitPath: optionalString(orgUnitPath),
+        projection: "full",
+      });
       totalFound += googleUsers.length;
       const result = await importGoogleUsersAsStudents(schoolId, googleUsers, {
         gradeLevel,
