@@ -186,10 +186,52 @@ const staffAuth = [
 function normalizeGradeLevel(value: unknown): string | null {
   const raw = String(value ?? "").trim();
   if (!raw) return null;
-  const normalized = raw.replace(/^grade\s+/i, "").replace(/(\d+)(st|nd|rd|th)$/i, "$1");
+  const normalized = raw
+    .replace(/^grade\s+/i, "")
+    .replace(/\s+grade$/i, "")
+    .replace(/(\d+)(st|nd|rd|th)$/i, "$1");
   const lower = normalized.toLowerCase();
   if (lower === "k" || lower === "kg" || lower === "kindergarten") return "K";
   return normalized;
+}
+
+function gradeSortValue(grade: string): number {
+  if (grade === "K") return 0;
+  const numeric = Number(grade);
+  return Number.isFinite(numeric) ? numeric : Number.POSITIVE_INFINITY;
+}
+
+function gradeLabel(grade: string): string {
+  if (grade === "K") return "Kindergarten";
+  const lower = grade.toLowerCase();
+  if (lower === "pk" || lower === "pre-k" || lower === "prek") return "Pre-K";
+  return /^(\d+)$/.test(grade) ? `Grade ${grade}` : grade;
+}
+
+function rosterGradesForStudents(students: Awaited<ReturnType<typeof getStudentsBySchool>>) {
+  const counts = new Map<string, { studentCount: number; pinReadyCount: number }>();
+  for (const student of students) {
+    if (student.status !== "active") continue;
+    const grade = normalizeGradeLevel(student.gradeLevel);
+    if (!grade) continue;
+    const current = counts.get(grade) || { studentCount: 0, pinReadyCount: 0 };
+    current.studentCount += 1;
+    if (student.classpilotPinHash) current.pinReadyCount += 1;
+    counts.set(grade, current);
+  }
+
+  return Array.from(counts.entries())
+    .sort(([a], [b]) => {
+      const aSort = gradeSortValue(a);
+      const bSort = gradeSortValue(b);
+      if (aSort !== bSort) return aSort - bSort;
+      return a.localeCompare(b);
+    })
+    .map(([value, countsForGrade]) => ({
+      value,
+      label: gradeLabel(value),
+      ...countsForGrade,
+    }));
 }
 
 function getPinFailureKey(schoolId: string, studentId: string): string {
@@ -554,13 +596,17 @@ router.get("/extension/login-roster", extensionRosterLimiter, async (req, res, n
       if (!keyCheck.ok) {
         return res.status(keyCheck.status).json({ error: keyCheck.error });
       }
+      let students = await getStudentsBySchool(school.id);
+      const grades = rosterGradesForStudents(students);
+
       if (!gradeLevel) {
-        return res.status(400).json({
-          error: "Select a grade to load the PIN roster",
+        return res.json({
+          students: [],
+          grades,
+          loginMethod,
+          pinLoginEnabled: true,
         });
       }
-
-      let students = await getStudentsBySchool(school.id);
 
       const roster = students
         .filter((student) => student.status === "active")
@@ -573,7 +619,7 @@ router.get("/extension/login-roster", extensionRosterLimiter, async (req, res, n
         }))
         .sort((a, b) => a.name.localeCompare(b.name));
 
-      return res.json({ students: roster, loginMethod, pinLoginEnabled: true });
+      return res.json({ students: roster, grades, loginMethod, pinLoginEnabled: true });
     });
   } catch (err) {
     next(err);
