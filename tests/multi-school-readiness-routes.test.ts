@@ -23,6 +23,8 @@ import { verifyStudentToken } from "../dist/services/deviceJwt.js";
 import { hashPassword } from "../dist/util/password.js";
 
 const TAG = `msready${Date.now()}`;
+const schoolAEnrollmentKey = `${TAG}-school-a-setup-key`;
+const schoolBEnrollmentKey = `${TAG}-school-b-setup-key`;
 
 let schoolA: any;
 let schoolB: any;
@@ -86,8 +88,16 @@ async function loginAsSchoolAdmin(): Promise<{ cookie: string; csrfToken: string
   return { cookie, csrfToken: csrf.body.csrfToken };
 }
 
-async function registerStudent(body: Record<string, unknown>) {
-  return requestJson("POST", "/classpilot/register-student", body);
+async function registerStudent(
+  body: Record<string, unknown>,
+  enrollmentKey: string | null = schoolAEnrollmentKey
+) {
+  return requestJson(
+    "POST",
+    "/classpilot/register-student",
+    body,
+    enrollmentKey ? { "x-classpilot-enrollment-key": enrollmentKey } : {}
+  );
 }
 
 function authFor(user: any, schoolId: string): Record<string, string> {
@@ -132,8 +142,20 @@ before(async () => {
   await createProductLicense({ schoolId: schoolB.id, product: "CLASSPILOT", status: "active" } as any);
   await createProductLicense({ schoolId: schoolA.id, product: "GOPILOT", status: "active" } as any);
   await createProductLicense({ schoolId: schoolB.id, product: "GOPILOT", status: "active" } as any);
-  await inSchool(schoolA.id, () => updateEnrollmentSettings(schoolA.id, { autoEnrollStudents: false }));
-  await inSchool(schoolB.id, () => updateEnrollmentSettings(schoolB.id, { autoEnrollStudents: false }));
+  await inSchool(schoolA.id, () =>
+    updateEnrollmentSettings(schoolA.id, {
+      autoEnrollStudents: false,
+      enrollmentKey: schoolAEnrollmentKey,
+      enrollmentKeyRequired: true,
+    })
+  );
+  await inSchool(schoolB.id, () =>
+    updateEnrollmentSettings(schoolB.id, {
+      autoEnrollStudents: false,
+      enrollmentKey: schoolBEnrollmentKey,
+      enrollmentKeyRequired: true,
+    })
+  );
 
   await inSchool(schoolA.id, () =>
     createStudent({
@@ -305,6 +327,21 @@ describe("multi-school readiness route hardening", () => {
     const token = verifyStudentToken(response.body.studentToken);
     assert.equal(token.schoolId, schoolA.id);
     assert.equal(token.studentId, response.body.student.id);
+    assert.ok(token.sessionId);
+  });
+
+  it("legacy register-student requires the managed setup key before minting a token", async () => {
+    const response = await registerStudent(
+      {
+        deviceId: `${TAG}-missing-key-device`,
+        studentEmail: `exact@${TAG}-a.example.edu`,
+        schoolId: schoolA.id,
+      },
+      null
+    );
+
+    assert.equal(response.status, 401);
+    assert.match(response.body.error, /enrollment key/i);
   });
 
   it("legacy register-student rejects a foreign supplied schoolId even when the email resolves", async () => {
