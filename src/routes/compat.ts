@@ -7,6 +7,7 @@ import { requireProductLicense } from "../middleware/requireProductLicense.js";
 import { updateSchoolSchema } from "../schema/validation.js";
 import { sanitizeSchool } from "../util/sanitizeSchool.js";
 import { toSchoolUpdate } from "../util/schoolUpdate.js";
+import { safeStudent } from "../util/safeStudent.js";
 import { getSchoolDeviceStatuses } from "../realtime/student-statuses.js";
 import { getConnectedStudentDeviceIds } from "../realtime/ws-broadcast.js";
 import {
@@ -624,8 +625,7 @@ router.get("/admin/teacher-students", ...schoolAuth, requireRole("admin"), async
     const students = await getStudentsBySchool(res.locals.schoolId!);
     // Include studentName/studentEmail for ClassPilot frontend compatibility
     const mapped = students.map((s: any) => ({
-      ...s,
-      classpilotPinHash: undefined,
+      ...safeStudent(s),
       hasClassPilotPin: !!s.classpilotPinHash,
       studentName: [s.firstName, s.lastName].filter(Boolean).join(" ") || s.email || "",
       studentEmail: s.email || "",

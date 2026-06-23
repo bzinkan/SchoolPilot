@@ -3059,6 +3059,22 @@ export async function getActiveSessionByDevice(
   return session;
 }
 
+export async function getActiveSessionById(
+  sessionId: string
+): Promise<StudentSession | undefined> {
+  const [session] = await db
+    .select()
+    .from(studentSessions)
+    .where(
+      and(
+        eq(studentSessions.id, sessionId),
+        eq(studentSessions.isActive, true)
+      )
+    )
+    .limit(1);
+  return session;
+}
+
 export async function getActiveSessions(
   schoolId: string
 ): Promise<(StudentSession & { student: Student })[]> {

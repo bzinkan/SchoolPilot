@@ -41,6 +41,8 @@ import {
 } from "../services/gopilotAccess.js";
 import { hashPassword } from "../util/password.js";
 import { students as studentsTable } from "../schema/students.js";
+import { safeStudent as stripStudentCredentialHash } from "../util/safeStudent.js";
+import { logAudit } from "../services/audit.js";
 
 const router = Router();
 const CLASSPILOT_PIN_HASH_CONCURRENCY = 4;
@@ -54,13 +56,6 @@ router.use(authenticate);
 const schoolContext = [requireSchoolContext, requireActiveSchool, requireProductLicense("CLASSPILOT", "PASSPILOT", "GOPILOT")] as const;
 
 type StudentSearchOptions = Parameters<typeof searchStudents>[1];
-
-function stripStudentCredentialHash<T extends { classpilotPinHash?: string | null }>(
-  student: T
-): Omit<T, "classpilotPinHash"> {
-  const { classpilotPinHash: _classpilotPinHash, ...safeStudent } = student;
-  return safeStudent;
-}
 
 function randomFourDigitPin(usedPins?: Set<string>): string {
   if (usedPins && usedPins.size >= 10000) {
@@ -321,7 +316,6 @@ router.post(
         homeroomId: parsed.data.homeroomId || null,
         dismissalType: parsed.data.dismissalType || "car",
         busRoute: parsed.data.busRoute || null,
-        ...(await classpilotPinHashFromInput(parsed.data.classpilotPin)),
       };
 
       const student = await createStudent(data);
@@ -464,6 +458,7 @@ const importCsvHandler = async (req: any, res: any, next: any) => {
     const rules = await studentEmailRules(res.locals.schoolId!);
     const emailSets = await existingEmailSets(res.locals.schoolId!);
     const batchEmails = new Set<string>();
+    let importedPinCount = 0;
 
     for (let i = 0; i < rows.length; i++) {
       const raw = rows[i];
@@ -530,6 +525,7 @@ const importCsvHandler = async (req: any, res: any, next: any) => {
         errors.push({ row: i + 1, error: "ClassPilot PIN must be 4 digits" });
         continue;
       }
+      if (classpilotPin) importedPinCount++;
 
       toInsert.push({
         schoolId: res.locals.schoolId!,
@@ -558,6 +554,21 @@ const importCsvHandler = async (req: any, res: any, next: any) => {
         const result = await autoAssignFamilyGroups(res.locals.schoolId!);
         autoAssigned = result.assigned;
       }
+    }
+
+    if (importedPinCount > 0) {
+      await logAudit({
+        schoolId: res.locals.schoolId!,
+        userId: req.authUser?.id ?? null,
+        userEmail: req.authUser?.email,
+        userRole: res.locals.membershipRole,
+        action: "classpilot.pin.import",
+        entityType: "student",
+        metadata: {
+          pinCount: importedPinCount,
+          importedCount: created.length,
+        },
+      });
     }
 
     return res.status(201).json({
@@ -689,6 +700,24 @@ router.put(
         return rows;
       });
 
+      const pinResetIds = preparedUpdates
+        .filter((item) => item.classpilotPin !== undefined)
+        .map((item) => item.id);
+      if (pinResetIds.length > 0) {
+        await logAudit({
+          schoolId: res.locals.schoolId!,
+          userId: req.authUser?.id ?? null,
+          userEmail: req.authUser?.email,
+          userRole: res.locals.membershipRole,
+          action: "classpilot.pin.bulk_update",
+          entityType: "student",
+          metadata: {
+            studentIds: pinResetIds,
+            resetCount: pinResetIds.length,
+          },
+        });
+      }
+
       return res.json({
         updated: results.length,
         students: results,
@@ -765,6 +794,22 @@ router.post(
           });
         }
         return rows;
+      });
+
+      await logAudit({
+        schoolId: res.locals.schoolId!,
+        userId: req.authUser?.id ?? null,
+        userEmail: req.authUser?.email,
+        userRole: res.locals.membershipRole,
+        action: "classpilot.pin.bulk_generate",
+        entityType: "student",
+        metadata: {
+          generatedCount: generated.length,
+          onlyMissing,
+          gradeLevel: requestedGrade || null,
+          selectedStudentCount: requestedIds?.size ?? null,
+          studentIds: generated.map((row) => row.studentId),
+        },
       });
 
       return res.json({ generated });
@@ -873,10 +918,9 @@ router.put(
         }
       }
 
-      const { classpilotPin, ...parsedUpdateData } = parsed.data;
+      const { classpilotPin: _classpilotPin, ...parsedUpdateData } = parsed.data;
       const updateData: Record<string, unknown> = {
         ...parsedUpdateData,
-        ...(await classpilotPinHashFromInput(classpilotPin)),
       };
       if (parsed.data.email !== undefined) {
         updateData.emailLc = parsed.data.email?.toLowerCase() || null;
@@ -954,10 +998,9 @@ router.patch(
         }
       }
 
-      const { classpilotPin, ...parsedUpdateData } = parsed.data;
+      const { classpilotPin: _classpilotPin, ...parsedUpdateData } = parsed.data;
       const updateData: Record<string, unknown> = {
         ...parsedUpdateData,
-        ...(await classpilotPinHashFromInput(classpilotPin)),
       };
       if (parsed.data.email !== undefined) {
         updateData.emailLc = parsed.data.email?.toLowerCase() || null;

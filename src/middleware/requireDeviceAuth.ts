@@ -4,7 +4,8 @@ import {
   TokenExpiredError,
   InvalidTokenError,
 } from "../services/deviceJwt.js";
-import { bindTenantContext } from "./tenantContext.js";
+import { bindTenantContext, runWithTenantContext } from "./tenantContext.js";
+import { verifyActiveStudentTokenSession } from "../services/classpilotStudentAuth.js";
 
 function extractBearerToken(rawHeader?: string | string[]): string | null {
   if (!rawHeader) return null;
@@ -20,7 +21,7 @@ function extractBearerToken(rawHeader?: string | string[]): string | null {
  * Device authentication middleware for ClassPilot Chrome extension.
  * Validates student JWT tokens from either Authorization header or request body.
  */
-export const requireDeviceAuth: RequestHandler = (req, res, next) => {
+export const requireDeviceAuth: RequestHandler = async (req, res, next) => {
   const headerToken = extractBearerToken(req.headers.authorization);
   const bodyToken =
     typeof req.body?.studentToken === "string"
@@ -34,9 +35,17 @@ export const requireDeviceAuth: RequestHandler = (req, res, next) => {
 
   try {
     const payload = verifyStudentToken(token);
+    const hasActiveSession = await runWithTenantContext(
+      { schoolId: payload.schoolId },
+      () => verifyActiveStudentTokenSession(payload)
+    );
+    if (!hasActiveSession) {
+      return res.status(401).json({ error: "Student session is no longer active" });
+    }
     res.locals.schoolId = payload.schoolId;
     res.locals.studentId = payload.studentId;
     res.locals.deviceId = payload.deviceId;
+    res.locals.studentSessionId = payload.sessionId;
     res.locals.studentEmail = payload.studentEmail;
     res.locals.authType = "device";
     return bindTenantContext(req, res, next);

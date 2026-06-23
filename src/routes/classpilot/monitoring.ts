@@ -29,6 +29,7 @@ import {
 } from "../../services/studentEmailPolicy.js";
 import { logAudit } from "../../services/audit.js";
 import type { InsertStudent } from "../../schema/students.js";
+import { safeStudent, safeStudents } from "../../util/safeStudent.js";
 
 const router = Router();
 
@@ -54,7 +55,7 @@ router.get("/students", ...auth, async (req, res, next) => {
     if (search) filters.search = search as string;
 
     const students = await searchStudents(schoolId, filters);
-    return res.json({ students });
+    return res.json({ students: safeStudents(students) });
   } catch (err) {
     next(err);
   }
@@ -91,7 +92,7 @@ router.get("/student-analytics/:studentId", ...auth, async (req, res, next) => {
     const activeSession = await getActiveSessionByStudent(studentId);
 
     return res.json({
-      student,
+      student: safeStudent(student),
       heartbeats,
       activeSession,
     });
@@ -129,7 +130,7 @@ router.get("/student-analytics/:studentId/usage", ...auth, async (req, res, next
 router.get("/roster/students", ...auth, async (req, res, next) => {
   try {
     const students = await getStudentsBySchool(res.locals.schoolId!);
-    return res.json({ students });
+    return res.json({ students: safeStudents(students) });
   } catch (err) {
     next(err);
   }
@@ -193,7 +194,7 @@ router.post("/roster/student", ...auth, async (req, res, next) => {
       entityName: `${firstName} ${lastName}`,
     });
 
-    return res.status(201).json({ student });
+    return res.status(201).json({ student: safeStudent(student) });
   } catch (err) {
     if (isUniqueViolation(err)) {
       return res.status(409).json({
@@ -254,7 +255,7 @@ router.post("/roster/bulk", ...auth, requireRole("admin"), async (req, res, next
     const created = await bulkCreateStudents(rows);
     return res.json({
       created: created.length,
-      students: created,
+      students: safeStudents(created),
       errors: errors.length > 0 ? errors : undefined,
       total: studentData.length,
     });
@@ -291,7 +292,7 @@ router.patch("/students/:studentId", ...auth, async (req, res, next) => {
     if (!updated) {
       return res.status(404).json({ error: "Student not found" });
     }
-    return res.json({ student: updated });
+    return res.json({ student: updated ? safeStudent(updated) : updated });
   } catch (err) {
     next(err);
   }

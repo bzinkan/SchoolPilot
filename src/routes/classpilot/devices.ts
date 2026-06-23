@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { Router } from "express";
+import { Router, type Request } from "express";
 import { eq, and } from "drizzle-orm";
 import { productLicenses } from "../../schema/core.js";
 import db from "../../db.js";
@@ -22,11 +22,8 @@ import {
   createEvent,
   getStudentById,
   getStudentsBySchool,
-  linkStudentDevice,
   createStudent,
-  startStudentSession,
   touchStudentSession,
-  getActiveSessionByStudent,
   getActiveSessionByDevice,
   resolveSchoolForStudent,
   getSchoolById,
@@ -45,7 +42,7 @@ import {
   endStudentSession,
 } from "../../services/storage.js";
 import { sendSafetyAlertEmail } from "../../services/email.js";
-import { createStudentToken } from "../../services/deviceJwt.js";
+import { verifyStudentToken } from "../../services/deviceJwt.js";
 import { comparePassword } from "../../util/password.js";
 import { updateDeviceStatus, updateDeviceClassification, removeDeviceStatus } from "../../realtime/student-statuses.js";
 import {
@@ -63,6 +60,14 @@ import { classifyUrl } from "../../services/aiClassification.js";
 import { recordBrowserSafetyTimeline } from "./competitive.js";
 import { runWithTenantContext } from "../../middleware/tenantContext.js";
 import { scopedDeviceTargets } from "../../services/classpilotDeviceScope.js";
+import { safeStudent, safeStudents } from "../../util/safeStudent.js";
+import {
+  enrollmentKeyFromRequest,
+  issueStudentDeviceSessionToken,
+  setClassPilotNoStore,
+  validateEnrollmentKeyForSettings,
+  verifyActiveStudentTokenSession,
+} from "../../services/classpilotStudentAuth.js";
 
 const router = Router();
 
@@ -106,13 +111,57 @@ function param(req: any, key: string): string {
 
 // Per-IP rate limit for extension endpoints to prevent DB connection exhaustion
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
-const extensionLimiter = rateLimit({
+function extensionIp(req: Request): string {
+  return ipKeyGenerator(req.ip || req.socket.remoteAddress || "0.0.0.0");
+}
+
+const extensionConfigLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 10, // 10 requests per minute per IP for registration
+  max: 180,
+  message: { error: "Too many setup/config requests, please wait" },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: extensionIp,
+});
+
+const extensionRosterLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 90,
+  message: { error: "Too many roster requests, please wait" },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => [
+    extensionIp(req),
+    String(req.query.schoolId || req.query.schoolSlug || ""),
+    normalizeGradeLevel(req.query.gradeLevel) || "",
+  ].join(":"),
+});
+
+const extensionLoginLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  message: { error: "Too many login attempts, please wait" },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => [
+    extensionIp(req),
+    String(req.body?.schoolId || req.body?.schoolSlug || ""),
+    String(req.body?.deviceId || ""),
+    String(req.body?.studentId || req.body?.studentEmail || "").toLowerCase(),
+  ].join(":"),
+});
+
+const extensionRegisterLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
   message: { error: "Too many registration attempts, please wait" },
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => ipKeyGenerator(req.ip || req.socket.remoteAddress || "0.0.0.0"),
+  keyGenerator: (req) => [
+    extensionIp(req),
+    String(req.body?.schoolId || req.body?.schoolSlug || ""),
+    String(req.body?.deviceId || ""),
+  ].join(":"),
 });
 
 const deviceActionLimiter = rateLimit({
@@ -131,13 +180,6 @@ const staffAuth = [
   requireProductLicense("CLASSPILOT"),
 ] as const;
 
-function stripStudentCredentialHash<T extends { classpilotPinHash?: string | null }>(
-  student: T
-): Omit<T, "classpilotPinHash"> {
-  const { classpilotPinHash: _classpilotPinHash, ...safeStudent } = student;
-  return safeStudent;
-}
-
 function normalizeGradeLevel(value: unknown): string | null {
   const raw = String(value ?? "").trim();
   if (!raw) return null;
@@ -147,33 +189,6 @@ function normalizeGradeLevel(value: unknown): string | null {
   return normalized;
 }
 
-function enrollmentKeyMatches(expected: string | null | undefined, providedRaw: unknown): boolean {
-  const provided = Buffer.from(String(providedRaw || ""));
-  const expectedBuffer = Buffer.from(expected || "");
-  return (
-    expectedBuffer.length > 0 &&
-    provided.length === expectedBuffer.length &&
-    crypto.timingSafeEqual(provided, expectedBuffer)
-  );
-}
-
-function validateEnrollmentKeyForSettings(
-  settings: Awaited<ReturnType<typeof getSettingsForSchool>>,
-  provided: unknown,
-  options: { requireConfiguredKey?: boolean } = {}
-): { ok: true } | { ok: false; status: number; error: string } {
-  const hasConfiguredKey = !!settings?.enrollmentKey;
-  if (options.requireConfiguredKey && !hasConfiguredKey) {
-    return { ok: false, status: 403, error: "Shared sign-in is not configured for this school" };
-  }
-  if (settings?.enrollmentKeyRequired || options.requireConfiguredKey || hasConfiguredKey) {
-    if (!enrollmentKeyMatches(settings?.enrollmentKey, provided)) {
-      return { ok: false, status: 401, error: "Invalid or missing enrollment key" };
-    }
-  }
-  return { ok: true };
-}
-
 function getPinFailureKey(schoolId: string, studentId: string): string {
   return `${schoolId}:${studentId}`;
 }
@@ -181,8 +196,14 @@ function getPinFailureKey(schoolId: string, studentId: string): string {
 function getPinLockout(schoolId: string, studentId: string): { ok: true } | { ok: false; retryAfterSeconds: number } {
   const key = getPinFailureKey(schoolId, studentId);
   const failure = pinLoginFailures.get(key);
-  if (!failure || failure.lockedUntil <= Date.now()) {
-    if (failure) pinLoginFailures.delete(key);
+  if (!failure) {
+    return { ok: true };
+  }
+  if (failure.lockedUntil > 0 && failure.lockedUntil <= Date.now()) {
+    pinLoginFailures.delete(key);
+    return { ok: true };
+  }
+  if (failure.lockedUntil === 0) {
     return { ok: true };
   }
   return {
@@ -194,35 +215,17 @@ function getPinLockout(schoolId: string, studentId: string): { ok: true } | { ok
 function recordPinFailure(schoolId: string, studentId: string) {
   const key = getPinFailureKey(schoolId, studentId);
   const current = pinLoginFailures.get(key);
-  const count = (current?.lockedUntil && current.lockedUntil > Date.now())
-    ? current.count
-    : (current?.count || 0) + 1;
+  const now = Date.now();
+  if (current?.lockedUntil && current.lockedUntil > now) return;
+  const count = (current?.count || 0) + 1;
   pinLoginFailures.set(key, {
     count,
-    lockedUntil: count >= PIN_LOGIN_MAX_FAILURES ? Date.now() + PIN_LOGIN_LOCKOUT_MS : 0,
+    lockedUntil: count >= PIN_LOGIN_MAX_FAILURES ? now + PIN_LOGIN_LOCKOUT_MS : 0,
   });
 }
 
 function clearPinFailures(schoolId: string, studentId: string) {
   pinLoginFailures.delete(getPinFailureKey(schoolId, studentId));
-}
-
-async function ensureDeviceForSchool(options: {
-  deviceId: string;
-  deviceName?: string | null;
-  schoolId: string;
-  classId?: string | null;
-}) {
-  let device = await getDeviceById(options.deviceId);
-  if (!device) {
-    device = await createDevice({
-      deviceId: options.deviceId,
-      deviceName: options.deviceName || null,
-      schoolId: options.schoolId,
-      classId: options.classId || options.schoolId,
-    });
-  }
-  return device;
 }
 
 async function broadcastStudentSignedOut(options: {
@@ -256,24 +259,19 @@ async function completeStudentDeviceLogin(options: {
     throw new Error("Student required");
   }
 
-  const device = await ensureDeviceForSchool({
+  const {
+    device,
+    previousStudentSession,
+    previousDeviceSession,
+    studentToken,
+  } = await issueStudentDeviceSessionToken({
+    schoolId: options.schoolId,
     deviceId: options.deviceId,
     deviceName: options.deviceName,
-    schoolId: options.schoolId,
     classId: options.classId,
+    student: options.student,
   });
-  const previousStudentSession = await getActiveSessionByStudent(options.student.id);
-  const previousDeviceSession = await getActiveSessionByDevice(options.deviceId);
-  await linkStudentDevice({ studentId: options.student.id, deviceId: options.deviceId });
-  await startStudentSession(options.student.id, options.deviceId);
-
   const studentEmail = options.student.email || undefined;
-  const studentToken = createStudentToken({
-    studentId: options.student.id,
-    deviceId: options.deviceId,
-    schoolId: options.schoolId,
-    studentEmail,
-  });
 
   if (previousDeviceSession && previousDeviceSession.studentId !== options.student.id) {
     await broadcastStudentSignedOut({
@@ -318,7 +316,7 @@ async function completeStudentDeviceLogin(options: {
   return {
     success: true,
     device,
-    student: stripStudentCredentialHash(options.student),
+    student: safeStudent(options.student),
     studentToken,
     manualExpiresInSeconds: 300,
   };
@@ -409,15 +407,21 @@ import { isWithinTrackingWindow } from "../../services/schoolHours.js";
 // only the minimum fields needed for the extension to decide whether to keep heartbeating.
 // We do NOT leak schoolId, planStatus, or human-readable status strings to unauthenticated
 // callers — those would help an attacker enumerate schools and licensing tiers.
-router.post("/school/status", extensionLimiter, async (req, res, next) => {
+router.post("/school/status", extensionConfigLimiter, async (req, res, next) => {
   try {
     const { studentEmail, studentToken } = req.body;
 
     // Token-based lookup (authenticated): return full status
     if (studentToken) {
       try {
-        const { verifyStudentToken } = await import("../../services/deviceJwt.js");
         const payload = verifyStudentToken(studentToken);
+        const hasActiveSession = await runWithTenantContext(
+          { schoolId: payload.schoolId },
+          () => verifyActiveStudentTokenSession(payload)
+        );
+        if (!hasActiveSession) {
+          return res.status(401).json({ error: "Student session is no longer active" });
+        }
         const school = await getSchoolById(payload.schoolId);
         if (school) {
           return res.json({
@@ -459,11 +463,12 @@ router.get("/school/status", async (_req, res) => {
 });
 
 // GET /api/classpilot/extension/login-config - Shared Chromebook login capabilities
-router.get("/extension/login-config", extensionLimiter, async (req, res, next) => {
+router.get("/extension/login-config", extensionConfigLimiter, async (req, res, next) => {
   try {
+    setClassPilotNoStore(res);
     const schoolIdParam = String(req.query.schoolId || "").trim();
     const schoolSlug = String(req.query.schoolSlug || "").trim();
-    const enrollmentKey = req.query.enrollmentKey;
+    const enrollmentKey = enrollmentKeyFromRequest(req);
 
     const school = schoolIdParam
       ? await getSchoolById(schoolIdParam)
@@ -506,12 +511,13 @@ router.get("/extension/login-config", extensionLimiter, async (req, res, next) =
 });
 
 // GET /api/classpilot/extension/login-roster - Minimal roster for optional Name + PIN login
-router.get("/extension/login-roster", extensionLimiter, async (req, res, next) => {
+router.get("/extension/login-roster", extensionRosterLimiter, async (req, res, next) => {
   try {
+    setClassPilotNoStore(res);
     const schoolIdParam = String(req.query.schoolId || "").trim();
     const schoolSlug = String(req.query.schoolSlug || "").trim();
     const gradeLevel = normalizeGradeLevel(req.query.gradeLevel);
-    const enrollmentKey = req.query.enrollmentKey;
+    const enrollmentKey = enrollmentKeyFromRequest(req);
 
     const school = schoolIdParam
       ? await getSchoolById(schoolIdParam)
@@ -604,8 +610,9 @@ router.get("/extension/settings", requireDeviceAuth, async (_req, res, next) => 
 // ============================================================================
 
 // POST /api/classpilot/extension/student-login - Shared Chromebook fallback login
-router.post("/extension/student-login", extensionLimiter, async (req, res, next) => {
+router.post("/extension/student-login", extensionLoginLimiter, async (req, res, next) => {
   try {
+    setClassPilotNoStore(res);
     const {
       deviceId,
       deviceName,
@@ -616,8 +623,8 @@ router.post("/extension/student-login", extensionLimiter, async (req, res, next)
       pin,
       schoolId: explicitSchoolId,
       schoolSlug,
-      enrollmentKey,
     } = req.body;
+    const enrollmentKey = enrollmentKeyFromRequest(req, { allowBody: true });
 
     if (!deviceId) {
       return res.status(400).json({ error: "deviceId required" });
@@ -753,6 +760,7 @@ router.post("/extension/student-login", extensionLimiter, async (req, res, next)
 // POST /api/classpilot/extension/sign-out - End the active student session for this token/device
 router.post("/extension/sign-out", requireDeviceAuth, async (_req, res, next) => {
   try {
+    setClassPilotNoStore(res);
     const deviceId = res.locals.deviceId as string;
     const studentId = res.locals.studentId as string;
     const schoolId = res.locals.schoolId as string;
@@ -781,8 +789,9 @@ router.post("/extension/sign-out", requireDeviceAuth, async (_req, res, next) =>
 // POST /api/classpilot/register - Generic device registration (no student) (legacy)
 // Kept for backwards compatibility with older extension builds. New extensions use
 // /extension/register exclusively. Rate-limited to prevent abuse.
-router.post("/register", extensionLimiter, async (req, res, next) => {
+router.post("/register", extensionRegisterLimiter, async (req, res, next) => {
   try {
+    setClassPilotNoStore(res);
     const { deviceId, deviceName, classId, schoolId: explicitSchoolId } = req.body;
     if (!deviceId) {
       return res.status(400).json({ error: "deviceId required" });
@@ -821,9 +830,11 @@ router.post("/register", extensionLimiter, async (req, res, next) => {
 
 // POST /api/classpilot/extension/register - Register a device from the Chrome extension
 // Supports both email-based (ClassPilot extension) and schoolId-based registration
-router.post("/extension/register", extensionLimiter, async (req, res, next) => {
+router.post("/extension/register", extensionRegisterLimiter, async (req, res, next) => {
   try {
+    setClassPilotNoStore(res);
     const { deviceId, deviceName, studentEmail, studentName, schoolId: explicitSchoolId, classId } = req.body;
+    const enrollmentKey = enrollmentKeyFromRequest(req, { allowBody: true });
     if (!deviceId) {
       return res.status(400).json({ error: "deviceId required" });
     }
@@ -869,21 +880,18 @@ router.post("/extension/register", extensionLimiter, async (req, res, next) => {
     // for the rest of the handler so RLS is satisfied AND the enrollment-key gate
     // (getSettingsForSchool below) reads real settings instead of failing open.
     await runWithTenantContext({ schoolId: resolvedSchoolId }, async () => {
+    if (studentEmail && !(await hasCachedClassPilotLicense(resolvedSchoolId))) {
+      return res.status(403).json({ error: "ClassPilot license is not active" });
+    }
 
-    // Per-school enrollment secret (defense beyond domain-binding). Backward
-    // compatible: only enforced once a school opts in (enrollmentKeyRequired).
-    // The key lives in the school's managed Chrome extension policy.
+    // Per-school managed setup key. Any route that mints a student monitoring
+    // token must prove it came from the managed extension deployment.
     const regSettings = await getSettingsForSchool(resolvedSchoolId);
-    if (regSettings?.enrollmentKeyRequired) {
-      const provided = Buffer.from(String(req.body.enrollmentKey || ""));
-      const expected = Buffer.from(regSettings.enrollmentKey || "");
-      const ok =
-        expected.length > 0 &&
-        provided.length === expected.length &&
-        crypto.timingSafeEqual(provided, expected);
-      if (!ok) {
-        return res.status(401).json({ error: "Invalid or missing enrollment key" });
-      }
+    const keyCheck = validateEnrollmentKeyForSettings(regSettings, enrollmentKey, {
+      requireConfiguredKey: !!studentEmail,
+    });
+    if (!keyCheck.ok) {
+      return res.status(keyCheck.status).json({ error: keyCheck.error });
     }
 
     // Create or update device
@@ -933,39 +941,17 @@ router.post("/extension/register", extensionLimiter, async (req, res, next) => {
         });
       }
 
-      // Link student to device
-      await linkStudentDevice({ studentId: student.id, deviceId });
-
-      // Start session
-      await startStudentSession(student.id, deviceId);
-
-      // Generate device JWT
-      const studentToken = createStudentToken({
-        studentId: student.id,
-        deviceId,
+      const login = await completeStudentDeviceLogin({
         schoolId: resolvedSchoolId,
-        studentEmail,
-      });
-
-      // Broadcast to teachers
-      broadcastToTeachersLocal(resolvedSchoolId, {
-        type: "student-registered",
-        studentId: student.id,
         deviceId,
-        studentEmail,
-        studentName: studentName || student.firstName,
-      });
-      await publishWS({ kind: "staff", schoolId: resolvedSchoolId }, {
-        type: "student-registered",
-        studentId: student.id,
-        deviceId,
+        deviceName,
+        classId,
+        student,
       });
 
       return res.json({
-        success: true,
-        device,
-        student: stripStudentCredentialHash(student),
-        studentToken,
+        ...login,
+        studentName: studentName || `${student.firstName || ""} ${student.lastName || ""}`.trim() || student.email,
       });
     }
 
@@ -978,9 +964,11 @@ router.post("/extension/register", extensionLimiter, async (req, res, next) => {
 
 // POST /api/classpilot/register-student - Register student and get device token (legacy)
 // Kept for backwards compatibility. New extensions use /extension/register.
-router.post("/register-student", extensionLimiter, async (req, res, next) => {
+router.post("/register-student", extensionRegisterLimiter, async (req, res, next) => {
   try {
+    setClassPilotNoStore(res);
     const { deviceId, studentEmail, gradeLevel, firstName, lastName, schoolId } = req.body;
+    const enrollmentKey = enrollmentKeyFromRequest(req, { allowBody: true });
     if (!deviceId || !studentEmail || !schoolId) {
       return res.status(400).json({ error: "deviceId, studentEmail, and schoolId required" });
     }
@@ -1005,6 +993,12 @@ router.post("/register-student", extensionLimiter, async (req, res, next) => {
     // Bind the resolved school for RLS, settings, exact roster lookup, and writes.
     await runWithTenantContext({ schoolId: resolvedSchoolId }, async () => {
       const regSettings = await getSettingsForSchool(resolvedSchoolId);
+      const keyCheck = validateEnrollmentKeyForSettings(regSettings, enrollmentKey, {
+        requireConfiguredKey: true,
+      });
+      if (!keyCheck.ok) {
+        return res.status(keyCheck.status).json({ error: keyCheck.error });
+      }
 
       // Find or create student by exact roster email only. Fuzzy matches can bind
       // a Chromebook to the wrong student.
@@ -1034,21 +1028,17 @@ router.post("/register-student", extensionLimiter, async (req, res, next) => {
         });
       }
 
-      // Link student to device
-      await linkStudentDevice({ studentId: student.id, deviceId });
-
-      // Start session
-      await startStudentSession(student.id, deviceId);
-
-      // Generate device JWT
-      const studentToken = createStudentToken({
-        studentId: student.id,
-        deviceId,
+      const login = await completeStudentDeviceLogin({
         schoolId: resolvedSchoolId,
-        studentEmail: emailLc,
+        deviceId,
+        student,
       });
 
-      return res.json({ studentToken, student: stripStudentCredentialHash(student) });
+      return res.json({
+        studentToken: login.studentToken,
+        student: login.student,
+        manualExpiresInSeconds: login.manualExpiresInSeconds,
+      });
     });
   } catch (err) {
     next(err);
@@ -1073,7 +1063,7 @@ router.get("/device/:deviceId/students", deviceActionLimiter, requireDeviceAuth,
     const students = await getStudentsForDevice(deviceId);
     const active = await getActiveStudentForDevice(deviceId);
     return res.json({
-      students,
+      students: safeStudents(students),
       activeStudentId: active?.student.id || null,
     });
   } catch (err) {
