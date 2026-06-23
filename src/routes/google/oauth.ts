@@ -11,6 +11,10 @@ import {
   upsertGoogleOAuthToken,
   deleteGoogleOAuthToken,
 } from "../../services/storage.js";
+import {
+  exchangeGoogleAuthCode,
+  fetchGoogleUserInfo,
+} from "../../util/googleOAuthTokenExchange.js";
 
 const router = Router();
 
@@ -18,8 +22,12 @@ function getOAuth2Client() {
   return new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
-    `${process.env.PUBLIC_BASE_URL || "http://localhost:4000"}/api/google/callback`
+    getRedirectUri()
   );
+}
+
+function getRedirectUri(): string {
+  return `${process.env.PUBLIC_BASE_URL || "http://localhost:4000"}/api/google/callback`;
 }
 
 const CORE_SCOPES = ["openid", "email"];
@@ -125,14 +133,17 @@ router.get("/callback", async (req, res, next) => {
 
     const { userId, schoolId, purpose, returnTo } = JSON.parse(state);
     const oauth2Client = getOAuth2Client();
-    const { tokens } = await oauth2Client.getToken(code);
+    const tokens = await exchangeGoogleAuthCode({
+      code,
+      redirectUri: getRedirectUri(),
+      context: "google-connect",
+    });
     oauth2Client.setCredentials(tokens);
 
     let connectedEmail: string | null = null;
     try {
-      const oauth2 = google.oauth2({ version: "v2", auth: oauth2Client });
-      const profile = await oauth2.userinfo.get();
-      connectedEmail = profile.data.email?.trim().toLowerCase() || null;
+      const profile = await fetchGoogleUserInfo(tokens.access_token, "google-connect");
+      connectedEmail = profile.email?.trim().toLowerCase() || null;
     } catch (err) {
       console.warn("[google-oauth] unable to read connected account email:", (err as Error).message);
     }

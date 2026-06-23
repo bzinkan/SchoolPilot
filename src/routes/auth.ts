@@ -22,6 +22,10 @@ import { sendEmail } from "../services/email.js";
 import { isLocked, recordFailedAttempt, clearAttempts } from "../services/accountLockout.js";
 import { issueAuthCode, consumeAuthCode } from "../services/authCodeExchange.js";
 import { logAudit } from "../services/audit.js";
+import {
+  exchangeGoogleAuthCode,
+  fetchGoogleUserInfo,
+} from "../util/googleOAuthTokenExchange.js";
 
 function clientIp(req: any): string | undefined {
   // Trust proxy is set by the app — this gives us the client IP, not ALB
@@ -332,6 +336,13 @@ function getLoginOAuth2Client() {
   return new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
+    getLoginRedirectUri()
+  );
+}
+
+function getLoginRedirectUri(): string {
+  return (
+    process.env.GOOGLE_CALLBACK_URL ||
     `${process.env.PUBLIC_BASE_URL || "http://localhost:4000"}/api/auth/google/callback`
   );
 }
@@ -386,12 +397,15 @@ router.get("/google/callback", async (req, res, next) => {
     }
 
     const oauth2Client = getLoginOAuth2Client();
-    const { tokens } = await oauth2Client.getToken(code);
+    const tokens = await exchangeGoogleAuthCode({
+      code,
+      redirectUri: getLoginRedirectUri(),
+      context: "auth-login",
+    });
     oauth2Client.setCredentials(tokens);
 
     // Get user info from Google
-    const oauth2 = google.oauth2({ version: "v2", auth: oauth2Client });
-    const { data: profile } = await oauth2.userinfo.get();
+    const profile = await fetchGoogleUserInfo(tokens.access_token, "auth-login");
 
     if (!profile.email) {
       // Durable record of the silent failure (otherwise just a redirect).
