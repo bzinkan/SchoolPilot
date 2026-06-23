@@ -22,6 +22,7 @@ import {
   type StudentEmailRules,
 } from "../../services/studentEmailPolicy.js";
 import {
+  encryptClassPilotPin,
   generatedPinForStudent,
   hashClassPilotPin,
   randomFourDigitClassPilotPin,
@@ -265,6 +266,7 @@ async function upsertStudentFromClassroom(
     homeroomId: options.homeroomId || undefined,
     googleUserId: googleStudent.userId || undefined,
     classpilotPinHash: pin ? await hashClassPilotPin(pin) : undefined,
+    classpilotPinEncrypted: pin ? encryptClassPilotPin(pin) : undefined,
     status: "active",
   });
   return {

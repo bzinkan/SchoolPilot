@@ -279,6 +279,11 @@ router.get("/me", authenticate, async (req, res, next) => {
     );
 
     const { password: _, ...safeUser } = req.authUser;
+    const isImpersonating = Boolean(
+      req.authMethod === "session" &&
+      (req.session as any)?.impersonating &&
+      (req.session as any).originalUserId
+    );
 
     // Resolve product licenses for the active school
     const schoolId =
@@ -304,7 +309,10 @@ router.get("/me", authenticate, async (req, res, next) => {
     });
 
     return res.json({
-      user: safeUser,
+      user: {
+        ...safeUser,
+        impersonating: isImpersonating,
+      },
       token,
       licenses,
       memberships: membershipsWithSchool.map((m) => ({

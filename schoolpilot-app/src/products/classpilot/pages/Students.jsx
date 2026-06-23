@@ -459,6 +459,22 @@ function StudentsContent() {
   const activeStudents = allStudents.filter((student) => !student.status || student.status === "active");
   const sharedSignInEnabled = settings?.sharedChromebookSignInEnabled === true;
   const pinLoginStudentsMissingPins = activeStudents.filter((student) => !student.hasClassPilotPin);
+  const pinLoginStudentsNeedReset = activeStudents.filter((student) => student.hasClassPilotPin && !student.classpilotPin);
+  const pinRosterRows = activeStudents
+    .filter((student) => student.classpilotPin)
+    .map((student) => ({
+      studentId: student.id,
+      studentName: student.studentName || "",
+      gradeLevel: student.gradeLevel || "",
+      pin: student.classpilotPin,
+    }))
+    .sort((a, b) => {
+      const gradeA = normalizeGrade(a.gradeLevel) || "";
+      const gradeB = normalizeGrade(b.gradeLevel) || "";
+      const byGrade = gradeA.localeCompare(gradeB, undefined, { numeric: true });
+      if (byGrade !== 0) return byGrade;
+      return a.studentName.localeCompare(b.studentName);
+    });
 
   // All possible grades for the Add Grade dialog (K-12)
   const allPossibleGrades = ["K", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"];
@@ -660,13 +676,16 @@ function StudentsContent() {
   });
 
   const bulkGeneratePinsMutation = useMutation({
-    mutationFn: async (input = []) => {
-      const studentIds = Array.isArray(input) ? input : [];
+    mutationFn: async (input = {}) => {
+      const studentIds = Array.isArray(input) ? input : (input.studentIds || []);
       const gradeLevel = !Array.isArray(input) ? input.gradeLevel : undefined;
+      const onlyMissing = !Array.isArray(input) && input.onlyMissing !== undefined
+        ? input.onlyMissing
+        : false;
       return await apiRequest("POST", "/students/classpilot-pins/bulk-generate", {
         studentIds: studentIds.length ? studentIds : undefined,
         gradeLevel,
-        onlyMissing: true,
+        onlyMissing,
       });
     },
     onSuccess: async (data) => {
@@ -676,7 +695,7 @@ function StudentsContent() {
       toast({
         title: "ClassPilot PINs generated",
         description: pins.length
-          ? `Generated ${pins.length} PIN${pins.length !== 1 ? "s" : ""}. Download or record them now.`
+          ? `Generated ${pins.length} PIN${pins.length !== 1 ? "s" : ""}. The roster, print sheet, CSV, and Excel export are updated.`
           : "No active students needed new PINs.",
       });
     },
@@ -817,25 +836,41 @@ function StudentsContent() {
     URL.revokeObjectURL(url);
   };
 
-  const downloadGeneratedPins = () => {
+  const downloadPinRoster = (rows = pinRosterRows, filename = "classpilot-pin-roster.csv") => {
+    if (!rows.length) {
+      toast({
+        title: "No PINs available",
+        description: "Generate or reset PINs before exporting the roster.",
+        variant: "destructive",
+      });
+      return;
+    }
     const headers = ["Student Name", "Grade", "ClassPilot PIN"];
-    const rows = generatedPins.map((pin) => [
+    const csvRows = rows.map((pin) => [
       `"${String(pin.studentName || "").replace(/"/g, '""')}"`,
       pin.gradeLevel || "",
       pin.pin,
     ]);
-    const csv = [headers.join(","), ...rows.map((row) => row.join(","))].join("\n");
+    const csv = [headers.join(","), ...csvRows.map((row) => row.join(","))].join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "classpilot-pins.csv";
+    a.download = filename;
     a.click();
     URL.revokeObjectURL(url);
   };
 
-  const printGeneratedPins = () => {
-    const rows = generatedPins.map((pin) => `
+  const printPinRoster = (rowsToPrint = pinRosterRows) => {
+    if (!rowsToPrint.length) {
+      toast({
+        title: "No PINs available",
+        description: "Generate or reset PINs before printing the roster.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const rows = rowsToPrint.map((pin) => `
       <tr>
         <td>${escapeHtml(pin.studentName || "")}</td>
         <td>${escapeHtml(pin.gradeLevel || "")}</td>
@@ -846,7 +881,7 @@ function StudentsContent() {
     if (!printWindow) {
       toast({
         title: "Pop-up blocked",
-        description: "Allow pop-ups to print the generated PIN sheet.",
+        description: "Allow pop-ups to print the PIN roster.",
         variant: "destructive",
       });
       return;
@@ -868,7 +903,7 @@ function StudentsContent() {
         </head>
         <body>
           <h1>ClassPilot PIN Roster</h1>
-          <p>Print or save this sheet now. PINs cannot be viewed again after this page is closed.</p>
+          <p>Admin roster copy for shared Chromebook sign-in.</p>
           <table>
             <thead><tr><th>Student Name</th><th>Grade</th><th>ClassPilot PIN</th></tr></thead>
             <tbody>${rows}</tbody>
@@ -881,16 +916,24 @@ function StudentsContent() {
     printWindow.print();
   };
 
-  const downloadGeneratedPinsExcel = () => {
+  const downloadPinRosterExcel = (rowsToExport = pinRosterRows, filename = "classpilot-pin-roster.xlsx") => {
+    if (!rowsToExport.length) {
+      toast({
+        title: "No PINs available",
+        description: "Generate or reset PINs before exporting the roster.",
+        variant: "destructive",
+      });
+      return;
+    }
     const rows = [
       ["Student Name", "Grade", "ClassPilot PIN"],
-      ...generatedPins.map((pin) => [pin.studentName || "", pin.gradeLevel || "", pin.pin || ""]),
+      ...rowsToExport.map((pin) => [pin.studentName || "", pin.gradeLevel || "", pin.pin || ""]),
     ];
     const blob = buildXlsxBlob(rows, "ClassPilot PINs");
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "classpilot-pins.xlsx";
+    a.download = filename;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -1012,9 +1055,9 @@ function StudentsContent() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className={`rounded-md border p-3 ${pinLoginStudentsMissingPins.length ? "bg-amber-50 border-amber-200 dark:bg-amber-950/20" : "bg-muted/30"}`}>
+          <div className={`rounded-md border p-3 ${pinLoginStudentsMissingPins.length || pinLoginStudentsNeedReset.length ? "bg-amber-50 border-amber-200 dark:bg-amber-950/20" : "bg-muted/30"}`}>
             <div className="flex items-start gap-2">
-              {pinLoginStudentsMissingPins.length > 0 && <AlertCircle className="h-4 w-4 text-amber-600 mt-0.5" />}
+              {(pinLoginStudentsMissingPins.length > 0 || pinLoginStudentsNeedReset.length > 0) && <AlertCircle className="h-4 w-4 text-amber-600 mt-0.5" />}
               <div>
                 <p className="text-sm font-medium">PIN readiness</p>
                 <p className="text-sm text-muted-foreground">
@@ -1022,8 +1065,15 @@ function StudentsContent() {
                     ? "Shared Chromebook Sign-In is disabled in ClassPilot Settings"
                     : pinLoginStudentsMissingPins.length
                       ? `${pinLoginStudentsMissingPins.length} student${pinLoginStudentsMissingPins.length !== 1 ? "s" : ""} missing a 4-digit PIN`
+                      : pinLoginStudentsNeedReset.length
+                        ? `${pinLoginStudentsNeedReset.length} existing PIN${pinLoginStudentsNeedReset.length !== 1 ? "s" : ""} need to be reset before the number can be shown`
                       : "Ready for Grade, Name, and PIN sign-in"}
                 </p>
+                {pinLoginStudentsNeedReset.length > 0 && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {pinLoginStudentsNeedReset.length} older PIN{pinLoginStudentsNeedReset.length !== 1 ? "s" : ""} must be reset once before the number can be shown.
+                  </p>
+                )}
               </div>
             </div>
           </div>
@@ -1031,7 +1081,7 @@ function StudentsContent() {
           <div className="flex flex-wrap items-center gap-2">
             <Button
               variant="outline"
-              onClick={() => bulkGeneratePinsMutation.mutate([])}
+              onClick={() => bulkGeneratePinsMutation.mutate({ onlyMissing: true })}
               disabled={bulkGeneratePinsMutation.isPending || activeStudents.length === 0}
               data-testid="button-generate-pins"
             >
@@ -1045,7 +1095,7 @@ function StudentsContent() {
             {selectedGrade && selectedGrade !== "__no_grade__" && (
               <Button
                 variant="outline"
-                onClick={() => bulkGeneratePinsMutation.mutate({ gradeLevel: selectedGrade })}
+                onClick={() => bulkGeneratePinsMutation.mutate({ gradeLevel: selectedGrade, onlyMissing: false })}
                 disabled={bulkGeneratePinsMutation.isPending}
                 data-testid="button-generate-grade-pins"
               >
@@ -1054,14 +1104,14 @@ function StudentsContent() {
                 ) : (
                   <KeyRound className="h-4 w-4 mr-2" />
                 )}
-                Generate Grade {selectedGrade} PINs
+                Reset Grade {selectedGrade} PINs
               </Button>
             )}
-            {generatedPins.length > 0 && (
+            {pinRosterRows.length > 0 && (
               <>
                 <Button
                   variant="outline"
-                  onClick={printGeneratedPins}
+                  onClick={() => printPinRoster(pinRosterRows)}
                   data-testid="button-print-generated-pins"
                 >
                   <Printer className="h-4 w-4 mr-2" />
@@ -1069,7 +1119,7 @@ function StudentsContent() {
                 </Button>
                 <Button
                   variant="outline"
-                  onClick={downloadGeneratedPins}
+                  onClick={() => downloadPinRoster(pinRosterRows)}
                   data-testid="button-download-generated-pins"
                 >
                   <Download className="h-4 w-4 mr-2" />
@@ -1077,7 +1127,7 @@ function StudentsContent() {
                 </Button>
                 <Button
                   variant="outline"
-                  onClick={downloadGeneratedPinsExcel}
+                  onClick={() => downloadPinRosterExcel(pinRosterRows)}
                   data-testid="button-download-generated-pins-excel"
                 >
                   <FileSpreadsheet className="h-4 w-4 mr-2" />
@@ -1089,7 +1139,7 @@ function StudentsContent() {
 
           {generatedPins.length > 0 && (
             <div className="rounded-md border p-3 bg-blue-50 dark:bg-blue-950/20" data-testid="generated-pins-panel">
-              <p className="text-sm font-medium mb-2">Generated PINs</p>
+              <p className="text-sm font-medium mb-2">Newly generated/reset PINs</p>
               <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                 {generatedPins.slice(0, 12).map((pin) => (
                   <div key={pin.studentId} className="flex items-center justify-between rounded border bg-background px-3 py-2 text-sm">
@@ -1100,11 +1150,11 @@ function StudentsContent() {
               </div>
               {generatedPins.length > 12 && (
                 <p className="text-xs text-muted-foreground mt-2">
-                  Showing 12 of {generatedPins.length}. Download CSV or Excel for the full list.
+                  Showing 12 of {generatedPins.length}. Use CSV or Excel export for the full roster.
                 </p>
               )}
               <p className="text-xs text-muted-foreground mt-2">
-                Save or print these PINs now. Plaintext PINs cannot be viewed again after this list is cleared.
+                These PINs also remain visible in the admin roster table for future print and export.
               </p>
             </div>
           )}
@@ -1771,7 +1821,7 @@ function StudentsContent() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => bulkGeneratePinsMutation.mutate(Array.from(selectedStudents))}
+                  onClick={() => bulkGeneratePinsMutation.mutate({ studentIds: Array.from(selectedStudents), onlyMissing: false })}
                   disabled={bulkGeneratePinsMutation.isPending}
                   data-testid="button-generate-selected-pins"
                 >
@@ -1864,8 +1914,12 @@ function StudentsContent() {
                         {student.gradeLevel ? `Grade ${student.gradeLevel}` : '-'}
                       </TableCell>
                       <TableCell>
-                        {student.hasClassPilotPin ? (
-                          <span className="text-green-700 dark:text-green-400">Set</span>
+                        {student.classpilotPin ? (
+                          <span className="font-mono font-semibold text-green-700 dark:text-green-400">
+                            {student.classpilotPin}
+                          </span>
+                        ) : student.hasClassPilotPin ? (
+                          <span className="text-amber-700 dark:text-amber-400">Reset to view</span>
                         ) : (
                           <span className="text-amber-700 dark:text-amber-400">Missing</span>
                         )}

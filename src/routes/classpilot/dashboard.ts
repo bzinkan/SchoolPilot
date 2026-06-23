@@ -30,6 +30,7 @@ import {
   effectiveSharedChromebookLoginMethod,
   normalizeSharedChromebookLoginMethod,
 } from "../../services/classpilotSharedChromebook.js";
+import { safeStudent } from "../../util/safeStudent.js";
 
 const router = Router();
 
@@ -246,7 +247,12 @@ router.post("/settings", ...auth, async (req, res, next) => {
 router.get("/students", ...auth, async (req, res, next) => {
   try {
     const assignments = await getTeacherStudentAssignmentsForSchool(req.authUser!.id, res.locals.schoolId!);
-    return res.json({ students: assignments });
+    return res.json({
+      students: assignments.map((assignment) => ({
+        ...assignment,
+        student: safeStudent(assignment.student),
+      })),
+    });
   } catch (err) {
     next(err);
   }

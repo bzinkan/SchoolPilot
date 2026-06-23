@@ -42,6 +42,7 @@ import { students as studentsTable } from "../schema/students.js";
 import { safeStudent as stripStudentCredentialHash } from "../util/safeStudent.js";
 import { logAudit } from "../services/audit.js";
 import {
+  encryptClassPilotPin,
   generatedPinForStudent,
   hashClassPilotPin,
   randomFourDigitClassPilotPin,
@@ -103,12 +104,15 @@ function normalizeGradeLevel(value: unknown): string {
 
 async function classpilotPinHashFromInput(
   classpilotPin: string | null | undefined
-): Promise<{ classpilotPinHash?: string | null }> {
+): Promise<{ classpilotPinHash?: string | null; classpilotPinEncrypted?: string | null }> {
   if (classpilotPin === undefined) return {};
   if (classpilotPin === null || classpilotPin === "") {
-    return { classpilotPinHash: null };
+    return { classpilotPinHash: null, classpilotPinEncrypted: null };
   }
-  return { classpilotPinHash: await hashClassPilotPin(classpilotPin) };
+  return {
+    classpilotPinHash: await hashClassPilotPin(classpilotPin),
+    classpilotPinEncrypted: encryptClassPilotPin(classpilotPin),
+  };
 }
 
 async function hasActiveClassPilotLicense(schoolId: string): Promise<boolean> {
@@ -120,10 +124,15 @@ async function classpilotPinForStudentCreate(
   classpilotPin: string | null | undefined,
   autoGenerate: boolean,
   usedPins: Set<string>
-): Promise<{ classpilotPinHash?: string | null; plaintextPin: string | null }> {
+): Promise<{
+  classpilotPinHash?: string | null;
+  classpilotPinEncrypted?: string | null;
+  plaintextPin: string | null;
+}> {
   if (classpilotPin) {
     return {
       classpilotPinHash: await hashClassPilotPin(classpilotPin),
+      classpilotPinEncrypted: encryptClassPilotPin(classpilotPin),
       plaintextPin: classpilotPin,
     };
   }
@@ -133,6 +142,7 @@ async function classpilotPinForStudentCreate(
   const pin = randomFourDigitClassPilotPin(usedPins);
   return {
     classpilotPinHash: await hashClassPilotPin(pin),
+    classpilotPinEncrypted: encryptClassPilotPin(pin),
     plaintextPin: pin,
   };
 }
@@ -344,6 +354,7 @@ router.post(
       const student = await createStudent({
         ...data,
         classpilotPinHash: pinPlan.classpilotPinHash,
+        classpilotPinEncrypted: pinPlan.classpilotPinEncrypted,
       });
       const generatedPins = pinPlan.plaintextPin
         ? [generatedPinForStudent(student, pinPlan.plaintextPin)]
@@ -441,6 +452,7 @@ router.post(
           dismissalType: parsed.data.dismissalType || "car",
           busRoute: parsed.data.busRoute || null,
           ...(pinPlan.classpilotPinHash !== undefined ? { classpilotPinHash: pinPlan.classpilotPinHash } : {}),
+          ...(pinPlan.classpilotPinEncrypted !== undefined ? { classpilotPinEncrypted: pinPlan.classpilotPinEncrypted } : {}),
         });
       }
 
@@ -593,6 +605,7 @@ const importCsvHandler = async (req: any, res: any, next: any) => {
         dismissalType: dismissalType || "car",
         busRoute,
         ...(pinPlan.classpilotPinHash !== undefined ? { classpilotPinHash: pinPlan.classpilotPinHash } : {}),
+        ...(pinPlan.classpilotPinEncrypted !== undefined ? { classpilotPinEncrypted: pinPlan.classpilotPinEncrypted } : {}),
       });
     }
 
@@ -829,6 +842,7 @@ router.post(
         async (plan) => ({
           ...plan,
           classpilotPinHash: await hashClassPilotPin(plan.pin),
+          classpilotPinEncrypted: encryptClassPilotPin(plan.pin),
         })
       );
 
@@ -837,7 +851,11 @@ router.post(
         for (const plan of hashedPlans) {
           const [updated] = await tx
             .update(studentsTable)
-            .set({ classpilotPinHash: plan.classpilotPinHash, updatedAt: new Date() })
+            .set({
+              classpilotPinHash: plan.classpilotPinHash,
+              classpilotPinEncrypted: plan.classpilotPinEncrypted,
+              updatedAt: new Date(),
+            })
             .where(
               and(
                 eq(studentsTable.id, plan.student.id),

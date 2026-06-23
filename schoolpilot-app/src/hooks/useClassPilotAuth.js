@@ -32,7 +32,7 @@ export function useClassPilotAuth() {
           ? `${user.firstName} ${user.lastName}`
           : user.firstName || user.email,
         profileImageUrl: user.profileImageUrl || null,
-        impersonating: false,
+        impersonating: user.impersonating === true,
       }
     : null;
 

@@ -31,6 +31,7 @@ import {
   validateStaffEmailDomainForSchool,
 } from "../../services/storage.js";
 import { userBelongsToSchool } from "../../services/passpilotAccess.js";
+import { safeStudent } from "../../util/safeStudent.js";
 
 const router = Router();
 
@@ -97,7 +98,10 @@ router.get("/:id", ...auth, async (req, res, next) => {
       return res.status(404).json({ error: "Group not found" });
     }
 
-    const students = await getGroupStudents(group.id);
+    const students = (await getGroupStudents(group.id)).map((row) => ({
+      ...row,
+      student: safeStudent(row.student),
+    }));
     const subgroups = await getSubgroupsByGroup(group.id);
 
     return res.json({ group, students, subgroups });

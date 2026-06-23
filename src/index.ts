@@ -474,6 +474,7 @@ async function runStartupMigrations(): Promise<void> {
     await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS student_code TEXT`);
     await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS external_id TEXT`);
     await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS classpilot_pin_hash TEXT`);
+    await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS classpilot_pin_encrypted TEXT`);
     await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS device_id TEXT`);
     await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS student_status TEXT`);
     await pool.query(`CREATE INDEX IF NOT EXISTS students_school_email_idx ON students (school_id, email_lc)`);

@@ -1,6 +1,7 @@
 import { randomInt } from "crypto";
 import type { Student } from "../schema/students.js";
 import { hashPassword } from "../util/password.js";
+import { decryptSecret, encryptSecret } from "./crypto.js";
 
 export type GeneratedClassPilotPin = {
   studentId: string;
@@ -24,6 +25,20 @@ export function randomFourDigitClassPilotPin(usedPins?: Set<string>): string {
 
 export async function hashClassPilotPin(pin: string): Promise<string> {
   return hashPassword(pin);
+}
+
+export function encryptClassPilotPin(pin: string): string {
+  return encryptSecret(pin);
+}
+
+export function decryptClassPilotPin(encryptedPin: string | null | undefined): string | null {
+  if (!encryptedPin) return null;
+  try {
+    const pin = decryptSecret(encryptedPin);
+    return /^\d{4}$/.test(pin) ? pin : null;
+  } catch {
+    return null;
+  }
 }
 
 export function generatedPinForStudent(
