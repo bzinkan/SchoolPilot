@@ -23,6 +23,12 @@ import {
   studentEmailTaken,
   validateStaffImportEmailForSchool,
 } from "../../services/studentEmailPolicy.js";
+import {
+  generatedPinForStudent,
+  hashClassPilotPin,
+  randomFourDigitClassPilotPin,
+  type GeneratedClassPilotPin,
+} from "../../services/classpilotPins.js";
 
 const router = Router();
 
@@ -125,10 +131,17 @@ async function maybeAutoAssignGoPilotFamilies(schoolId: string, imported: number
   return hasGoPilot ? autoAssignFamilyGroups(schoolId) : undefined;
 }
 
+async function hasActiveClassPilotLicense(schoolId: string): Promise<boolean> {
+  const licenses = await getProductLicenses(schoolId);
+  return licenses.some(
+    (license) => license.product === "CLASSPILOT" && license.status === "active"
+  );
+}
+
 async function importGoogleUsersAsStudents(
   schoolId: string,
   googleUsers: any[],
-  options: { gradeLevel?: string | null; excludeEmails?: string[] }
+  options: { gradeLevel?: string | null; excludeEmails?: string[]; autoGenerateClassPilotPins?: boolean }
 ) {
   const excludeSet = new Set(
     (options.excludeEmails || []).map((email) => String(email).toLowerCase())
@@ -137,6 +150,8 @@ async function importGoogleUsersAsStudents(
   let updated = 0;
   let skipped = 0;
   const errors: string[] = [];
+  const generatedPins: GeneratedClassPilotPin[] = [];
+  const usedPins = new Set<string>();
   const rules = await studentEmailRules(schoolId);
 
   for (const u of googleUsers) {
@@ -185,7 +200,10 @@ async function importGoogleUsersAsStudents(
         });
         updated++;
       } else {
-        await createStudent({
+        const pin = options.autoGenerateClassPilotPins
+          ? randomFourDigitClassPilotPin(usedPins)
+          : null;
+        const student = await createStudent({
           schoolId,
           firstName: u.name?.givenName || email.split("@")[0] || "",
           lastName: u.name?.familyName || "",
@@ -193,8 +211,10 @@ async function importGoogleUsersAsStudents(
           gradeLevel: options.gradeLevel || undefined,
           googleUserId: u.id || undefined,
           studentIdNumber: studentIdNumber || undefined,
+          classpilotPinHash: pin ? await hashClassPilotPin(pin) : undefined,
           status: "active",
         });
+        if (pin) generatedPins.push(generatedPinForStudent(student, pin));
         imported++;
       }
     } catch (err) {
@@ -203,7 +223,7 @@ async function importGoogleUsersAsStudents(
     }
   }
 
-  return { imported, updated, skipped, errors };
+  return { imported, updated, skipped, errors, generatedPins };
 }
 
 async function getAuthedClient(userId: string, schoolId: string) {
@@ -317,6 +337,8 @@ router.post("/import", ...adminAuth, async (req, res, next) => {
       let totalFound = 0;
       const details: unknown[] = [];
       const allErrors: string[] = [];
+      const generatedPins: GeneratedClassPilotPin[] = [];
+      const autoGenerateClassPilotPins = await hasActiveClassPilotLicense(schoolId);
 
       for (const entry of entries) {
         const params = buildDirectoryUsersParams(entry.orgUnitPath, "full");
@@ -325,12 +347,14 @@ router.post("/import", ...adminAuth, async (req, res, next) => {
         const result = await importGoogleUsersAsStudents(schoolId, googleUsers, {
           gradeLevel: entry.gradeLevel || entry.grade || null,
           excludeEmails: entry.excludeEmails,
+          autoGenerateClassPilotPins,
         });
 
         totalImported += result.imported;
         totalUpdated += result.updated;
         totalSkipped += result.skipped;
         allErrors.push(...result.errors);
+        generatedPins.push(...result.generatedPins);
         details.push({ orgUnitPath: entry.orgUnitPath || "all", ...result });
       }
 
@@ -355,6 +379,7 @@ router.post("/import", ...adminAuth, async (req, res, next) => {
         errors: allErrors,
         details,
         autoAssigned,
+        generatedPins,
       });
     }
 
@@ -366,6 +391,7 @@ router.post("/import", ...adminAuth, async (req, res, next) => {
       const { users: googleUsers } = await listDirectoryUsers(admin, params);
       const result = await importGoogleUsersAsStudents(schoolId, googleUsers, {
         gradeLevel: gradeLevel || grade || null,
+        autoGenerateClassPilotPins: await hasActiveClassPilotLicense(schoolId),
       });
       const autoAssigned = await maybeAutoAssignGoPilotFamilies(schoolId, result.imported);
 
@@ -395,6 +421,9 @@ router.post("/import", ...adminAuth, async (req, res, next) => {
     let updated = 0;
     let skipped = 0;
     const errors: string[] = [];
+    const generatedPins: GeneratedClassPilotPin[] = [];
+    const usedPins = new Set<string>();
+    const autoGenerateClassPilotPins = await hasActiveClassPilotLicense(schoolId);
     const rules = await studentEmailRules(schoolId);
 
     for (const u of users) {
@@ -430,15 +459,18 @@ router.post("/import", ...adminAuth, async (req, res, next) => {
           });
           updated++;
         } else {
-          await createStudent({
+          const pin = autoGenerateClassPilotPins ? randomFourDigitClassPilotPin(usedPins) : null;
+          const student = await createStudent({
             schoolId,
             firstName: u.firstName || email.split("@")[0],
             lastName: u.lastName || "",
             email,
             gradeLevel: grade || u.grade || undefined,
             googleUserId: u.id || undefined,
+            classpilotPinHash: pin ? await hashClassPilotPin(pin) : undefined,
             status: "active",
           });
+          if (pin) generatedPins.push(generatedPinForStudent(student, pin));
           imported++;
         }
       } catch (err) {
@@ -460,7 +492,7 @@ router.post("/import", ...adminAuth, async (req, res, next) => {
       skipped,
       failures: errors,
     });
-    return res.json({ imported, updated, skipped, errors, total: users.length, autoAssigned });
+    return res.json({ imported, updated, skipped, errors, total: users.length, autoAssigned, generatedPins });
   } catch (err: any) {
     return handleGoogleError(err, res, next);
   }
@@ -645,6 +677,8 @@ router.post("/import-orgunits", ...adminAuth, async (req, res, next) => {
     let totalFound = 0;
     const details: unknown[] = [];
     const allErrors: string[] = [];
+    const generatedPins: GeneratedClassPilotPin[] = [];
+    const autoGenerateClassPilotPins = await hasActiveClassPilotLicense(schoolId);
 
     for (const entry of orgUnits) {
       const orgUnitPath = typeof entry === "string" ? entry : entry?.orgUnitPath;
@@ -655,12 +689,14 @@ router.post("/import-orgunits", ...adminAuth, async (req, res, next) => {
       const result = await importGoogleUsersAsStudents(schoolId, googleUsers, {
         gradeLevel,
         excludeEmails: typeof entry === "string" ? undefined : entry?.excludeEmails,
+        autoGenerateClassPilotPins,
       });
 
       totalImported += result.imported;
       totalUpdated += result.updated;
       totalSkipped += result.skipped;
       allErrors.push(...result.errors);
+      generatedPins.push(...result.generatedPins);
       details.push({ orgUnitPath: orgUnitPath || "all", ...result });
     }
 
@@ -683,6 +719,7 @@ router.post("/import-orgunits", ...adminAuth, async (req, res, next) => {
       skipped: totalSkipped,
       details,
       autoAssigned,
+      generatedPins,
     });
   } catch (err: any) {
     return handleGoogleError(err, res, next);

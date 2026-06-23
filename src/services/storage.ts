@@ -767,9 +767,7 @@ export async function searchStudents(
   return query;
 }
 
-export async function bulkCreateStudents(
-  data: InsertStudent[]
-): Promise<Student[]> {
+export async function bulkCreateStudents(data: InsertStudent[]): Promise<Student[]> {
   if (data.length === 0) return [];
   return db.insert(students).values(data.map(normalizeStudentEmailFields)).returning();
 }
@@ -4344,12 +4342,31 @@ export async function upsertSettings(
   schoolId: string,
   data: Partial<InsertSettings>
 ): Promise<Settings> {
+  const settingsData: Partial<InsertSettings> = {
+    ...data,
+  };
+
+  if (
+    data.sharedChromebookSignInEnabled === true &&
+    data.sharedChromebookLoginMethod === undefined &&
+    data.sharedChromebookPinLoginEnabled === undefined
+  ) {
+    settingsData.sharedChromebookLoginMethod = "name_pin";
+    settingsData.sharedChromebookPinLoginEnabled = true;
+  }
+
   const [row] = await db
     .insert(settings)
-    .values({ schoolId, schoolName: data.schoolName || "", wsSharedKey: data.wsSharedKey || "", ...data })
+    .values({
+      schoolId,
+      schoolName: settingsData.schoolName || "",
+      wsSharedKey: settingsData.wsSharedKey || "",
+      sharedChromebookLoginMethod: "name_pin",
+      ...settingsData,
+    })
     .onConflictDoUpdate({
       target: settings.schoolId,
-      set: data,
+      set: settingsData,
     })
     .returning();
   return row!;
@@ -4367,6 +4384,7 @@ export async function updateEnrollmentSettings(
       schoolId,
       schoolName: school?.name || "",
       wsSharedKey: "",
+      sharedChromebookLoginMethod: "name_pin",
       ...data,
     })
     .onConflictDoUpdate({

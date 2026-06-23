@@ -68,7 +68,6 @@ const settingsSchema = z.object({
   aiSafetyEmailsEnabled: z.boolean().optional(),
   autoBlockUnsafeUrls: z.boolean().optional(),
   sharedChromebookSignInEnabled: z.boolean().optional(),
-  sharedChromebookPinLoginEnabled: z.boolean().optional(),
 });
 
 export default function Settings() {
@@ -136,7 +135,6 @@ export default function Settings() {
       aiSafetyEmailsEnabled: settings?.aiSafetyEmailsEnabled !== false,
       autoBlockUnsafeUrls: settings?.autoBlockUnsafeUrls !== false,
       sharedChromebookSignInEnabled: settings?.sharedChromebookSignInEnabled === true,
-      sharedChromebookPinLoginEnabled: settings?.sharedChromebookPinLoginEnabled === true,
     },
   });
 
@@ -153,7 +151,6 @@ export default function Settings() {
         aiSafetyEmailsEnabled: settings.aiSafetyEmailsEnabled !== false,
         autoBlockUnsafeUrls: settings.autoBlockUnsafeUrls !== false,
         sharedChromebookSignInEnabled: settings.sharedChromebookSignInEnabled === true,
-        sharedChromebookPinLoginEnabled: settings.sharedChromebookPinLoginEnabled === true,
       });
     }
   }, [settings, form]);
@@ -182,7 +179,6 @@ export default function Settings() {
         aiSafetyEmailsEnabled: data.aiSafetyEmailsEnabled !== false,
         autoBlockUnsafeUrls: data.autoBlockUnsafeUrls !== false,
         sharedChromebookSignInEnabled: data.sharedChromebookSignInEnabled === true,
-        sharedChromebookPinLoginEnabled: data.sharedChromebookPinLoginEnabled === true,
       };
       return await apiRequest("POST", "/settings", payload);
     },
@@ -356,7 +352,6 @@ export default function Settings() {
   };
 
   const sharedSignInEnabled = form.watch("sharedChromebookSignInEnabled");
-  const pinLoginEnabled = form.watch("sharedChromebookPinLoginEnabled");
   const managedPolicy = buildManagedPolicy(enrollmentKeySettings);
   const setupKey = enrollmentKeySettings?.key || "";
 
@@ -553,26 +548,18 @@ export default function Settings() {
                     {...form.register("sharedChromebookSignInEnabled")}
                   />
                   <Label htmlFor="sharedChromebookSignInEnabled">
-                    Enable Email + Student ID fallback
+                    Enable Shared Chromebook Sign-In
                   </Label>
                 </div>
                 <p className="text-xs text-muted-foreground ml-7">
-                  Students enter their school email and Student ID Number from the SchoolPilot roster.
+                  When Chrome cannot identify a student, ClassPilot requires Grade, Name, and 4-digit PIN sign-in before browsing can start.
                 </p>
-                <div className="flex items-center space-x-3">
-                  <input
-                    type="checkbox"
-                    id="sharedChromebookPinLoginEnabled"
-                    className="h-4 w-4 rounded border-gray-300"
-                    {...form.register("sharedChromebookPinLoginEnabled")}
-                  />
-                  <Label htmlFor="sharedChromebookPinLoginEnabled">
-                    Enable Name + PIN login
-                  </Label>
+                <div className="rounded-md border bg-background p-3">
+                  <p className="text-sm font-medium">Student sign-in method</p>
+                  <p className="text-xs text-muted-foreground">
+                    Students choose their grade, pick their name from the roster, and enter their 4-digit ClassPilot PIN.
+                  </p>
                 </div>
-                <p className="text-xs text-muted-foreground ml-7">
-                  Optional. Students choose their grade, pick their name, and enter their 4-digit PIN.
-                </p>
 
                 <div className="rounded-md border bg-muted/30 p-3 space-y-3">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -637,16 +624,16 @@ export default function Settings() {
 {managedPolicy}
                     </pre>
                     <p className="text-xs text-muted-foreground">
-                      Apply this once to the student Chromebook organizational unit. Do not add grade, class, or Chromebook-specific fields; students choose their grade during PIN sign-in.
+                      Apply this once to the student Chromebook organizational unit. The selected login method is controlled here in SchoolPilot, not in Google Admin.
                     </p>
                   </div>
 
                   <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
                     <div className="rounded-md border bg-background p-2">
-                      Email + ID: {sharedSignInEnabled ? "enabled after saving settings" : "off"}
+                      Shared sign-in: {sharedSignInEnabled ? "enabled after saving settings" : "off"}
                     </div>
                     <div className="rounded-md border bg-background p-2">
-                      Name + PIN: {pinLoginEnabled ? "enabled after saving settings" : "off"}
+                      Login method: Name + PIN
                     </div>
                   </div>
                 </div>

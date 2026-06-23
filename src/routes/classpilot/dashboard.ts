@@ -26,6 +26,10 @@ import {
 } from "../../services/storage.js";
 import { broadcastToStudentsLocal } from "../../realtime/ws-broadcast.js";
 import { publishWS } from "../../realtime/ws-redis.js";
+import {
+  effectiveSharedChromebookLoginMethod,
+  normalizeSharedChromebookLoginMethod,
+} from "../../services/classpilotSharedChromebook.js";
 
 const router = Router();
 
@@ -128,7 +132,8 @@ router.get("/settings", ...auth, async (req, res, next) => {
       maxTabsPerStudent: schoolSettings?.maxTabsPerStudent || null,
       aiSafetyEmailsEnabled: schoolSettings?.aiSafetyEmailsEnabled ?? true,
       sharedChromebookSignInEnabled: !!schoolSettings?.sharedChromebookSignInEnabled,
-      sharedChromebookPinLoginEnabled: !!schoolSettings?.sharedChromebookPinLoginEnabled,
+      sharedChromebookLoginMethod: effectiveSharedChromebookLoginMethod(schoolSettings),
+      sharedChromebookPinLoginEnabled: effectiveSharedChromebookLoginMethod(schoolSettings) === "name_pin",
       // Teacher's own blocked domains (for MySettings editable field)
       teacherBlockedDomains: (teacherSettings as any)?.blockedDomains || [],
       // School-wide blocked domains (for MySettings read-only display)
@@ -145,7 +150,7 @@ router.post("/settings", ...auth, async (req, res, next) => {
     const {
       maxTabsPerStudent, allowedDomains, blockedDomains, defaultFlightPathId,
       schoolName, retentionHours, ipAllowlist, aiSafetyEmailsEnabled, autoBlockUnsafeUrls,
-      sharedChromebookSignInEnabled, sharedChromebookPinLoginEnabled,
+      sharedChromebookSignInEnabled, sharedChromebookLoginMethod, sharedChromebookPinLoginEnabled,
     } = req.body;
 
     // Teacher-specific settings
@@ -160,7 +165,8 @@ router.post("/settings", ...auth, async (req, res, next) => {
     // which the teacher's MySettings page never includes.
     const isAdminSettingsRequest = schoolName !== undefined || retentionHours !== undefined
       || ipAllowlist !== undefined || aiSafetyEmailsEnabled !== undefined || autoBlockUnsafeUrls !== undefined
-      || sharedChromebookSignInEnabled !== undefined || sharedChromebookPinLoginEnabled !== undefined;
+      || sharedChromebookSignInEnabled !== undefined || sharedChromebookLoginMethod !== undefined
+      || sharedChromebookPinLoginEnabled !== undefined;
 
     if (isAdminSettingsRequest) {
       const role = res.locals.membershipRole;
@@ -184,9 +190,18 @@ router.post("/settings", ...auth, async (req, res, next) => {
       if (autoBlockUnsafeUrls !== undefined) schoolData.autoBlockUnsafeUrls = autoBlockUnsafeUrls !== false;
       if (sharedChromebookSignInEnabled !== undefined) {
         schoolData.sharedChromebookSignInEnabled = sharedChromebookSignInEnabled === true;
+        if (sharedChromebookSignInEnabled === true && sharedChromebookLoginMethod === undefined && sharedChromebookPinLoginEnabled === undefined) {
+          schoolData.sharedChromebookLoginMethod = "name_pin";
+          schoolData.sharedChromebookPinLoginEnabled = true;
+        }
       }
-      if (sharedChromebookPinLoginEnabled !== undefined) {
-        schoolData.sharedChromebookPinLoginEnabled = sharedChromebookPinLoginEnabled === true;
+      if (sharedChromebookLoginMethod !== undefined || sharedChromebookPinLoginEnabled !== undefined) {
+        const method = normalizeSharedChromebookLoginMethod(
+          sharedChromebookLoginMethod,
+          sharedChromebookPinLoginEnabled === false ? "email_id" : "name_pin"
+        );
+        schoolData.sharedChromebookLoginMethod = method;
+        schoolData.sharedChromebookPinLoginEnabled = method === "name_pin";
       }
 
       if (Object.keys(schoolData).length > 0) {

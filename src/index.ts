@@ -197,7 +197,14 @@ async function runStartupMigrations(): Promise<void> {
   try {
     await pool.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS enrollment_key TEXT`);
     await pool.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS enrollment_key_required BOOLEAN NOT NULL DEFAULT false`);
+    await pool.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS shared_chromebook_login_method TEXT NOT NULL DEFAULT 'name_pin'`);
     await pool.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS shared_chromebook_pin_login_enabled BOOLEAN NOT NULL DEFAULT false`);
+    await pool.query(`
+      UPDATE settings
+      SET shared_chromebook_login_method = 'name_pin'
+      WHERE shared_chromebook_login_method IS NULL
+         OR shared_chromebook_login_method NOT IN ('email_id', 'name_pin')
+    `);
     console.log("[migration] settings enrollment_key columns ready");
   } catch (err) {
     console.warn("[migration] enrollment_key migration skipped:", (err as Error).message);

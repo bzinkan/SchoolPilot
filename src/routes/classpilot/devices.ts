@@ -68,6 +68,9 @@ import {
   validateEnrollmentKeyForSettings,
   verifyActiveStudentTokenSession,
 } from "../../services/classpilotStudentAuth.js";
+import {
+  effectiveSharedChromebookLoginMethod,
+} from "../../services/classpilotSharedChromebook.js";
 
 const router = Router();
 
@@ -495,13 +498,16 @@ router.get("/extension/login-config", extensionConfigLimiter, async (req, res, n
         return res.status(403).json({
           error: "Shared Chromebook sign-in is not enabled for this school",
           sharedSignInEnabled: false,
+          loginMethod: "name_pin",
           pinLoginEnabled: false,
         });
       }
+      const loginMethod = effectiveSharedChromebookLoginMethod(regSettings);
 
       return res.json({
         sharedSignInEnabled: true,
-        pinLoginEnabled: !!regSettings.sharedChromebookPinLoginEnabled,
+        loginMethod,
+        pinLoginEnabled: loginMethod === "name_pin",
         schoolName: regSettings.schoolName || school.name,
       });
     });
@@ -537,7 +543,8 @@ router.get("/extension/login-roster", extensionRosterLimiter, async (req, res, n
       if (!regSettings?.sharedChromebookSignInEnabled) {
         return res.status(403).json({ error: "Shared Chromebook sign-in is not enabled for this school", sharedSignInEnabled: false });
       }
-      if (!regSettings?.sharedChromebookPinLoginEnabled) {
+      const loginMethod = effectiveSharedChromebookLoginMethod(regSettings);
+      if (loginMethod !== "name_pin") {
         return res.status(403).json({ error: "PIN login is not enabled for this school", pinLoginEnabled: false });
       }
 
@@ -566,7 +573,7 @@ router.get("/extension/login-roster", extensionRosterLimiter, async (req, res, n
         }))
         .sort((a, b) => a.name.localeCompare(b.name));
 
-      return res.json({ students: roster, pinLoginEnabled: true });
+      return res.json({ students: roster, loginMethod, pinLoginEnabled: true });
     });
   } catch (err) {
     next(err);
@@ -595,7 +602,8 @@ router.get("/extension/settings", requireDeviceAuth, async (_req, res, next) => 
       schoolTimezone: schoolSettings?.schoolTimezone || school.schoolTimezone || null,
       afterHoursMode: schoolSettings?.afterHoursMode ?? "off",
       sharedChromebookSignInEnabled: !!schoolSettings?.sharedChromebookSignInEnabled,
-      sharedChromebookPinLoginEnabled: !!schoolSettings?.sharedChromebookPinLoginEnabled,
+      sharedChromebookLoginMethod: effectiveSharedChromebookLoginMethod(schoolSettings),
+      sharedChromebookPinLoginEnabled: effectiveSharedChromebookLoginMethod(schoolSettings) === "name_pin",
       maxTabsPerStudent: schoolSettings?.maxTabsPerStudent
         ? parseInt(schoolSettings.maxTabsPerStudent, 10)
         : null,
@@ -661,6 +669,9 @@ router.post("/extension/student-login", extensionLoginLimiter, async (req, res, 
         if (!regSettings?.sharedChromebookSignInEnabled) {
           return res.status(403).json({ error: "Shared Chromebook sign-in is not enabled for this school" });
         }
+        if (effectiveSharedChromebookLoginMethod(regSettings) !== "email_id") {
+          return res.status(403).json({ error: "Email + Student ID login is not enabled for this school" });
+        }
 
         const keyCheck = validateEnrollmentKeyForSettings(regSettings, enrollmentKey, {
           requireConfiguredKey: true,
@@ -712,7 +723,7 @@ router.post("/extension/student-login", extensionLoginLimiter, async (req, res, 
       if (!regSettings?.sharedChromebookSignInEnabled) {
         return res.status(403).json({ error: "Shared Chromebook sign-in is not enabled for this school" });
       }
-      if (!regSettings?.sharedChromebookPinLoginEnabled) {
+      if (effectiveSharedChromebookLoginMethod(regSettings) !== "name_pin") {
         return res.status(403).json({ error: "PIN login is not enabled for this school" });
       }
 
@@ -1847,7 +1858,8 @@ router.get("/enrollment-key", ...enrollAdminAuth, async (_req, res, next) => {
       schoolSlug: school?.slug ?? null,
       schoolName: s?.schoolName || school?.name || "",
       sharedChromebookSignInEnabled: !!s?.sharedChromebookSignInEnabled,
-      sharedChromebookPinLoginEnabled: !!s?.sharedChromebookPinLoginEnabled,
+      sharedChromebookLoginMethod: effectiveSharedChromebookLoginMethod(s),
+      sharedChromebookPinLoginEnabled: effectiveSharedChromebookLoginMethod(s) === "name_pin",
     });
   } catch (err) {
     next(err);
