@@ -393,6 +393,28 @@ export default function Dashboard() {
             if (message.type === 'student-registered') {
               queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
             }
+            if (message.type === 'student-signed-out') {
+              queryClient.setQueryData(['/api/students-aggregated'], (old) =>
+                Array.isArray(old)
+                  ? old.map((student) => (
+                    student.studentId === message.studentId || student.primaryDeviceId === message.deviceId
+                      ? {
+                        ...student,
+                        status: 'offline',
+                        loginState: 'not_logged_in',
+                        isLoggedIn: false,
+                        activeTabTitle: '',
+                        activeTabUrl: '',
+                        allOpenTabs: [],
+                        isSharing: false,
+                        cameraActive: false,
+                      }
+                      : student
+                  ))
+                  : old
+              );
+              queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
+            }
             if (message.type === 'ai-classification') {
               queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
             }
@@ -1313,7 +1335,7 @@ export default function Dashboard() {
             <div className="p-5 rounded-xl bg-slate-500/10 border border-slate-500/20 dark:bg-slate-500/10 dark:border-slate-500/20 transition-all duration-300">
               <div className="flex items-center gap-4">
                 <div className="h-12 w-12 rounded-xl bg-slate-500 flex items-center justify-center"><WifiOff className="h-6 w-6 text-white" /></div>
-                <div><p className="text-[28px] font-bold text-foreground" data-testid="text-offline-count">{offlineCount}</p><p className="text-[13px] text-muted-foreground font-medium">Offline</p></div>
+                <div><p className="text-[28px] font-bold text-foreground" data-testid="text-offline-count">{offlineCount}</p><p className="text-[13px] text-muted-foreground font-medium">Not logged in</p></div>
               </div>
             </div>
             <div className="p-5 rounded-xl bg-red-500/10 border border-red-500/20 dark:bg-red-500/10 dark:border-red-500/20 transition-all duration-300">

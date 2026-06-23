@@ -767,9 +767,7 @@ export async function searchStudents(
   return query;
 }
 
-export async function bulkCreateStudents(
-  data: InsertStudent[]
-): Promise<Student[]> {
+export async function bulkCreateStudents(data: InsertStudent[]): Promise<Student[]> {
   if (data.length === 0) return [];
   return db.insert(students).values(data.map(normalizeStudentEmailFields)).returning();
 }
@@ -3011,6 +3009,22 @@ export async function endStudentSession(
   return session;
 }
 
+export async function touchStudentSession(
+  studentId: string,
+  deviceId: string
+): Promise<void> {
+  await db
+    .update(studentSessions)
+    .set({ lastSeenAt: new Date() })
+    .where(
+      and(
+        eq(studentSessions.studentId, studentId),
+        eq(studentSessions.deviceId, deviceId),
+        eq(studentSessions.isActive, true)
+      )
+    );
+}
+
 export async function getActiveSessionByStudent(
   studentId: string
 ): Promise<StudentSession | undefined> {
@@ -3036,6 +3050,22 @@ export async function getActiveSessionByDevice(
     .where(
       and(
         eq(studentSessions.deviceId, deviceId),
+        eq(studentSessions.isActive, true)
+      )
+    )
+    .limit(1);
+  return session;
+}
+
+export async function getActiveSessionById(
+  sessionId: string
+): Promise<StudentSession | undefined> {
+  const [session] = await db
+    .select()
+    .from(studentSessions)
+    .where(
+      and(
+        eq(studentSessions.id, sessionId),
         eq(studentSessions.isActive, true)
       )
     )
@@ -4312,12 +4342,31 @@ export async function upsertSettings(
   schoolId: string,
   data: Partial<InsertSettings>
 ): Promise<Settings> {
+  const settingsData: Partial<InsertSettings> = {
+    ...data,
+  };
+
+  if (
+    data.sharedChromebookSignInEnabled === true &&
+    data.sharedChromebookLoginMethod === undefined &&
+    data.sharedChromebookPinLoginEnabled === undefined
+  ) {
+    settingsData.sharedChromebookLoginMethod = "name_pin";
+    settingsData.sharedChromebookPinLoginEnabled = true;
+  }
+
   const [row] = await db
     .insert(settings)
-    .values({ schoolId, schoolName: data.schoolName || "", wsSharedKey: data.wsSharedKey || "", ...data })
+    .values({
+      schoolId,
+      schoolName: settingsData.schoolName || "",
+      wsSharedKey: settingsData.wsSharedKey || "",
+      sharedChromebookLoginMethod: "name_pin",
+      ...settingsData,
+    })
     .onConflictDoUpdate({
       target: settings.schoolId,
-      set: data,
+      set: settingsData,
     })
     .returning();
   return row!;
@@ -4335,6 +4384,7 @@ export async function updateEnrollmentSettings(
       schoolId,
       schoolName: school?.name || "",
       wsSharedKey: "",
+      sharedChromebookLoginMethod: "name_pin",
       ...data,
     })
     .onConflictDoUpdate({

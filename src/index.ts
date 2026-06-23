@@ -197,6 +197,14 @@ async function runStartupMigrations(): Promise<void> {
   try {
     await pool.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS enrollment_key TEXT`);
     await pool.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS enrollment_key_required BOOLEAN NOT NULL DEFAULT false`);
+    await pool.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS shared_chromebook_login_method TEXT NOT NULL DEFAULT 'name_pin'`);
+    await pool.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS shared_chromebook_pin_login_enabled BOOLEAN NOT NULL DEFAULT false`);
+    await pool.query(`
+      UPDATE settings
+      SET shared_chromebook_login_method = 'name_pin'
+      WHERE shared_chromebook_login_method IS NULL
+         OR shared_chromebook_login_method NOT IN ('email_id', 'name_pin')
+    `);
     console.log("[migration] settings enrollment_key columns ready");
   } catch (err) {
     console.warn("[migration] enrollment_key migration skipped:", (err as Error).message);
@@ -465,6 +473,7 @@ async function runStartupMigrations(): Promise<void> {
     await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS bus_route TEXT`);
     await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS student_code TEXT`);
     await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS external_id TEXT`);
+    await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS classpilot_pin_hash TEXT`);
     await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS device_id TEXT`);
     await pool.query(`ALTER TABLE students ADD COLUMN IF NOT EXISTS student_status TEXT`);
     await pool.query(`CREATE INDEX IF NOT EXISTS students_school_email_idx ON students (school_id, email_lc)`);
@@ -561,6 +570,7 @@ async function runStartupMigrations(): Promise<void> {
     await pool.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS parent_digest_includes_safety BOOLEAN DEFAULT false`);
     await pool.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS parent_digest_includes_pass_dismissal BOOLEAN DEFAULT true`);
     await pool.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS parent_digest_last_sent_at TIMESTAMP`);
+    await pool.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS shared_chromebook_sign_in_enabled BOOLEAN NOT NULL DEFAULT false`);
     console.log("[migration] auto_block_unsafe_urls column ready");
   } catch (err) {
     console.warn("[migration] auto_block_unsafe_urls migration skipped:", (err as Error).message);

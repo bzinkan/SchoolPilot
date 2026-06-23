@@ -16,6 +16,7 @@ import {
   getSchoolById,
   getStudentByEmail,
   addHomeroomTeacher,
+  upsertSettings,
   updateEnrollmentSettings,
 } from "../dist/services/storage.js";
 import { signUserToken } from "../dist/services/jwt.js";
@@ -23,6 +24,8 @@ import { verifyStudentToken } from "../dist/services/deviceJwt.js";
 import { hashPassword } from "../dist/util/password.js";
 
 const TAG = `msready${Date.now()}`;
+const schoolAEnrollmentKey = `${TAG}-school-a-setup-key`;
+const schoolBEnrollmentKey = `${TAG}-school-b-setup-key`;
 
 let schoolA: any;
 let schoolB: any;
@@ -86,8 +89,16 @@ async function loginAsSchoolAdmin(): Promise<{ cookie: string; csrfToken: string
   return { cookie, csrfToken: csrf.body.csrfToken };
 }
 
-async function registerStudent(body: Record<string, unknown>) {
-  return requestJson("POST", "/classpilot/register-student", body);
+async function registerStudent(
+  body: Record<string, unknown>,
+  enrollmentKey: string | null = schoolAEnrollmentKey
+) {
+  return requestJson(
+    "POST",
+    "/classpilot/register-student",
+    body,
+    enrollmentKey ? { "x-classpilot-enrollment-key": enrollmentKey } : {}
+  );
 }
 
 function authFor(user: any, schoolId: string): Record<string, string> {
@@ -132,8 +143,20 @@ before(async () => {
   await createProductLicense({ schoolId: schoolB.id, product: "CLASSPILOT", status: "active" } as any);
   await createProductLicense({ schoolId: schoolA.id, product: "GOPILOT", status: "active" } as any);
   await createProductLicense({ schoolId: schoolB.id, product: "GOPILOT", status: "active" } as any);
-  await inSchool(schoolA.id, () => updateEnrollmentSettings(schoolA.id, { autoEnrollStudents: false }));
-  await inSchool(schoolB.id, () => updateEnrollmentSettings(schoolB.id, { autoEnrollStudents: false }));
+  await inSchool(schoolA.id, () =>
+    updateEnrollmentSettings(schoolA.id, {
+      autoEnrollStudents: false,
+      enrollmentKey: schoolAEnrollmentKey,
+      enrollmentKeyRequired: true,
+    })
+  );
+  await inSchool(schoolB.id, () =>
+    updateEnrollmentSettings(schoolB.id, {
+      autoEnrollStudents: false,
+      enrollmentKey: schoolBEnrollmentKey,
+      enrollmentKeyRequired: true,
+    })
+  );
 
   await inSchool(schoolA.id, () =>
     createStudent({
@@ -305,6 +328,123 @@ describe("multi-school readiness route hardening", () => {
     const token = verifyStudentToken(response.body.studentToken);
     assert.equal(token.schoolId, schoolA.id);
     assert.equal(token.studentId, response.body.student.id);
+    assert.ok(token.sessionId);
+  });
+
+  it("legacy register-student requires the managed setup key before minting a token", async () => {
+    const response = await registerStudent(
+      {
+        deviceId: `${TAG}-missing-key-device`,
+        studentEmail: `exact@${TAG}-a.example.edu`,
+        schoolId: schoolA.id,
+      },
+      null
+    );
+
+    assert.equal(response.status, 401);
+    assert.match(response.body.error, /enrollment key/i);
+  });
+
+  it("extension login-config defaults shared Chromebook sign-in to Name + PIN", async () => {
+    await inSchool(schoolA.id, () =>
+      upsertSettings(schoolA.id, {
+        enrollmentKey: schoolAEnrollmentKey,
+        enrollmentKeyRequired: true,
+        sharedChromebookSignInEnabled: true,
+      } as any)
+    );
+
+    const pinConfig = await requestJson(
+      "GET",
+      `/classpilot/extension/login-config?schoolSlug=${schoolA.slug}`,
+      undefined,
+      { "x-classpilot-enrollment-key": schoolAEnrollmentKey }
+    );
+    assert.equal(pinConfig.status, 200);
+    assert.equal(pinConfig.body.loginMethod, "name_pin");
+    assert.equal(pinConfig.body.pinLoginEnabled, true);
+
+    await inSchool(schoolA.id, () =>
+      upsertSettings(schoolA.id, {
+        sharedChromebookLoginMethod: "email_id",
+        sharedChromebookPinLoginEnabled: false,
+      } as any)
+    );
+
+    const emailConfig = await requestJson(
+      "GET",
+      `/classpilot/extension/login-config?schoolSlug=${schoolA.slug}`,
+      undefined,
+      { "x-classpilot-enrollment-key": schoolAEnrollmentKey }
+    );
+    assert.equal(emailConfig.status, 200);
+    assert.equal(emailConfig.body.loginMethod, "email_id");
+    assert.equal(emailConfig.body.pinLoginEnabled, false);
+  });
+
+  it("admin student creation auto-generates ClassPilot PINs but not Student ID Numbers", async () => {
+    const manualId = "8700001";
+    const manual = await requestJson(
+      "POST",
+      "/students",
+      {
+        firstName: "Manual",
+        lastName: "Id",
+        email: `manual.id@${TAG}-a.example.edu`,
+        studentIdNumber: manualId,
+      },
+      authFor(adminUser, schoolA.id)
+    );
+    assert.equal(manual.status, 201);
+    assert.equal(manual.body.student.studentIdNumber, manualId);
+    assert.equal(manual.body.generatedPins.length, 1);
+    assert.match(manual.body.generatedPins[0].pin, /^\d{4}$/);
+
+    const generated = await requestJson(
+      "POST",
+      "/students",
+      {
+        firstName: "Generated",
+        lastName: "Id",
+        email: `generated.id@${TAG}-a.example.edu`,
+      },
+      authFor(adminUser, schoolA.id)
+    );
+    assert.equal(generated.status, 201);
+    assert.equal(generated.body.student.studentIdNumber, null);
+    assert.equal(generated.body.generatedPins.length, 1);
+    assert.match(generated.body.generatedPins[0].pin, /^\d{4}$/);
+
+    const bulk = await requestJson(
+      "POST",
+      "/students/bulk",
+      {
+        students: [
+          {
+            firstName: "Bulk",
+            lastName: "Manual",
+            email: `bulk.manual.id@${TAG}-a.example.edu`,
+            studentIdNumber: "8700002",
+          },
+          {
+            firstName: "Bulk",
+            lastName: "Generated",
+            email: `bulk.generated.id@${TAG}-a.example.edu`,
+          },
+        ],
+      },
+      authFor(adminUser, schoolA.id)
+    );
+    assert.equal(bulk.status, 201);
+    assert.equal(bulk.body.generatedPins.length, 2);
+    assert.ok(bulk.body.generatedPins.every((row: any) => /^\d{4}$/.test(row.pin)));
+
+    const bulkManual = await inSchool(schoolA.id, () => getStudentByEmail(schoolA.id, `bulk.manual.id@${TAG}-a.example.edu`));
+    const bulkGenerated = await inSchool(schoolA.id, () => getStudentByEmail(schoolA.id, `bulk.generated.id@${TAG}-a.example.edu`));
+    assert.equal(bulkManual?.studentIdNumber, "8700002");
+    assert.equal(bulkGenerated?.studentIdNumber, null);
+    assert.ok(bulkManual?.classpilotPinHash);
+    assert.ok(bulkGenerated?.classpilotPinHash);
   });
 
   it("legacy register-student rejects a foreign supplied schoolId even when the email resolves", async () => {

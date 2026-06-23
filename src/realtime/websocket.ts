@@ -1,6 +1,6 @@
 import { WebSocketServer, WebSocket } from "ws";
 import type { Server } from "http";
-import { verifyStudentToken, createStudentToken } from "../services/deviceJwt.js";
+import { verifyStudentToken } from "../services/deviceJwt.js";
 import { verifyUserToken } from "../services/jwt.js";
 import errorMonitor from "../services/errorMonitor.js";
 import {
@@ -19,17 +19,11 @@ import {
 } from "./ws-redis.js";
 import {
   getSchoolByDomain,
-  resolveSchoolForStudent,
-  searchStudents,
-  createStudent,
-  createDevice,
-  getDeviceById,
-  linkStudentDevice,
-  startStudentSession,
   getSettingsForSchool,
   getMembershipByUserAndSchool,
 } from "../services/storage.js";
 import { runWithTenantContext } from "../middleware/tenantContext.js";
+import { verifyActiveStudentTokenSession } from "../services/classpilotStudentAuth.js";
 
 // Ping/pong keepalive constants
 const WS_PING_INTERVAL_MS = 30_000; // 30 seconds
@@ -161,14 +155,24 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
 
         // --- Auth handling ---
         if (message.type === "auth") {
-          // Student auth via studentToken or email-first auto-provisioning (item #10)
+          // Student auth requires an already issued, active student session token.
+          // Email-only WebSocket provisioning is intentionally disabled because
+          // it cannot prove the request came from the managed extension deployment.
           if (message.role === "student" && message.deviceId) {
-            // Token-based auth (primary)
             if (message.studentToken) {
               try {
                 const payload = verifyStudentToken(message.studentToken);
                 const schoolId = payload.schoolId;
                 const deviceId = payload.deviceId;
+                const hasActiveSession = await runWithTenantContext(
+                  { schoolId },
+                  () => verifyActiveStudentTokenSession(payload)
+                );
+                if (!hasActiveSession) {
+                  ws.send(JSON.stringify({ type: "auth-error", message: "Student session is no longer active" }));
+                  ws.close();
+                  return;
+                }
 
                 authenticateWsClient(ws, {
                   role: "student",
@@ -196,105 +200,8 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
                 ws.close();
                 return;
               }
-            }
-            // Email-first auto-provisioning (item #10): auth with just email, no prior registration
-            else if (message.studentEmail) {
-              try {
-                const email = message.studentEmail as string;
-                const deviceId = message.deviceId as string;
-
-                const resolved = await resolveSchoolForStudent(email);
-                if (!resolved) {
-                  ws.send(JSON.stringify({ type: "auth-error", message: "Student not found — please ask your administrator to import students first" }));
-                  ws.close();
-                  return;
-                }
-                const school = resolved.school;
-
-                await runWithTenantContext({ schoolId: school.id }, async () => {
-                // Auto-provision student and device (only for single-school domains)
-                const existing = await searchStudents(school.id, { search: email });
-                let student = existing[0];
-                if (!student && resolved.isSharedDomain) {
-                  ws.send(JSON.stringify({ type: "auth-error", message: "Student not found — please ask your administrator to import students first" }));
-                  ws.close();
-                  return;
-                }
-                if (!student) {
-                  const name = message.studentName || email.split("@")[0];
-                  const parts = (name as string).split(/\s+/);
-                  student = await createStudent({
-                    schoolId: school.id,
-                    firstName: parts[0] ?? email.split("@")[0] ?? "Student",
-                    lastName: parts.slice(1).join(" ") || "",
-                    email,
-                    gradeLevel: null,
-                    status: "active",
-                  });
-                }
-
-                let device = await getDeviceById(deviceId);
-                if (!device) {
-                  device = await createDevice({
-                    deviceId,
-                    deviceName: null,
-                    schoolId: school.id,
-                    classId: school.id,
-                  });
-                }
-
-                await linkStudentDevice({ studentId: student.id, deviceId });
-                await startStudentSession(student.id, deviceId);
-
-                const token = createStudentToken({
-                  studentId: student.id,
-                  deviceId,
-                  schoolId: school.id,
-                  studentEmail: email,
-                });
-
-                authenticateWsClient(ws, {
-                  role: "student",
-                  deviceId,
-                  schoolId: school.id,
-                });
-
-                const schoolSettings = await getSettingsForSchool(school.id);
-                ws.send(JSON.stringify({
-                  type: "auth-success",
-                  role: "student",
-                  studentToken: token,
-                  settings: {
-                    maxTabsPerStudent: schoolSettings?.maxTabsPerStudent
-                      ? parseInt(schoolSettings.maxTabsPerStudent, 10) : null,
-                    globalBlockedDomains: schoolSettings?.blockedDomains || [],
-                  },
-                }));
-                console.log(`[WebSocket] Student auto-provisioned: email=${email}, device=${deviceId}, school=${school.id}`);
-
-                // Notify teachers
-                broadcastToTeachersLocal(school.id, {
-                  type: "student-registered",
-                  studentId: student.id,
-                  deviceId,
-                  studentEmail: email,
-                });
-                void publishWS({ kind: "staff", schoolId: school.id }, {
-                  type: "student-registered",
-                  studentId: student.id,
-                  deviceId,
-                });
-                });
-              } catch (error) {
-                console.error("[WebSocket] Email-first provisioning error:", error);
-                ws.send(JSON.stringify({ type: "auth-error", message: "Auto-provisioning failed" }));
-                ws.close();
-                return;
-              }
-            }
-            // No token and no email — reject
-            else {
-              ws.send(JSON.stringify({ type: "auth-error", message: "Student token or email required" }));
+            } else {
+              ws.send(JSON.stringify({ type: "auth-error", message: "Student token required" }));
               ws.close();
               return;
             }

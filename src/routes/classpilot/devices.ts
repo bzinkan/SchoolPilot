@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { Router } from "express";
+import { Router, type Request } from "express";
 import { eq, and } from "drizzle-orm";
 import { productLicenses } from "../../schema/core.js";
 import db from "../../db.js";
@@ -22,11 +22,12 @@ import {
   createEvent,
   getStudentById,
   getStudentsBySchool,
-  linkStudentDevice,
   createStudent,
-  startStudentSession,
+  touchStudentSession,
+  getActiveSessionByDevice,
   resolveSchoolForStudent,
   getSchoolById,
+  getSchoolBySlug,
   getSettingsForSchool,
   updateEnrollmentSettings,
   getStudentsForDevice,
@@ -38,10 +39,12 @@ import {
   getStudentByEmail,
   createEvidenceArtifact,
   createStudentTimelineEvent,
+  endStudentSession,
 } from "../../services/storage.js";
 import { sendSafetyAlertEmail } from "../../services/email.js";
-import { createStudentToken } from "../../services/deviceJwt.js";
-import { updateDeviceStatus, updateDeviceClassification } from "../../realtime/student-statuses.js";
+import { verifyStudentToken } from "../../services/deviceJwt.js";
+import { comparePassword } from "../../util/password.js";
+import { updateDeviceStatus, updateDeviceClassification, removeDeviceStatus } from "../../realtime/student-statuses.js";
 import {
   broadcastToTeachersLocal,
   broadcastToStudentsLocal,
@@ -57,6 +60,17 @@ import { classifyUrl } from "../../services/aiClassification.js";
 import { recordBrowserSafetyTimeline } from "./competitive.js";
 import { runWithTenantContext } from "../../middleware/tenantContext.js";
 import { scopedDeviceTargets } from "../../services/classpilotDeviceScope.js";
+import { safeStudent, safeStudents } from "../../util/safeStudent.js";
+import {
+  enrollmentKeyFromRequest,
+  issueStudentDeviceSessionToken,
+  setClassPilotNoStore,
+  validateEnrollmentKeyForSettings,
+  verifyActiveStudentTokenSession,
+} from "../../services/classpilotStudentAuth.js";
+import {
+  effectiveSharedChromebookLoginMethod,
+} from "../../services/classpilotSharedChromebook.js";
 
 const router = Router();
 
@@ -65,6 +79,9 @@ const safetyAlertCooldown = new Map<string, number>();
 // Track delivered message IDs per device to avoid re-sending
 const deliveredMessages = new Map<string, Set<string>>();
 const SAFETY_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
+const PIN_LOGIN_MAX_FAILURES = 5;
+const PIN_LOGIN_LOCKOUT_MS = 10 * 60 * 1000;
+const pinLoginFailures = new Map<string, { count: number; lockedUntil: number }>();
 
 // In-memory cache for school lookups (reduces DB queries on heartbeats)
 const schoolCache = new Map<string, { school: any; expires: number }>();
@@ -97,13 +114,57 @@ function param(req: any, key: string): string {
 
 // Per-IP rate limit for extension endpoints to prevent DB connection exhaustion
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
-const extensionLimiter = rateLimit({
+function extensionIp(req: Request): string {
+  return ipKeyGenerator(req.ip || req.socket.remoteAddress || "0.0.0.0");
+}
+
+const extensionConfigLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 10, // 10 requests per minute per IP for registration
+  max: 180,
+  message: { error: "Too many setup/config requests, please wait" },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: extensionIp,
+});
+
+const extensionRosterLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 90,
+  message: { error: "Too many roster requests, please wait" },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => [
+    extensionIp(req),
+    String(req.query.schoolId || req.query.schoolSlug || ""),
+    normalizeGradeLevel(req.query.gradeLevel) || "",
+  ].join(":"),
+});
+
+const extensionLoginLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  message: { error: "Too many login attempts, please wait" },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => [
+    extensionIp(req),
+    String(req.body?.schoolId || req.body?.schoolSlug || ""),
+    String(req.body?.deviceId || ""),
+    String(req.body?.studentId || req.body?.studentEmail || "").toLowerCase(),
+  ].join(":"),
+});
+
+const extensionRegisterLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
   message: { error: "Too many registration attempts, please wait" },
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => ipKeyGenerator(req.ip || req.socket.remoteAddress || "0.0.0.0"),
+  keyGenerator: (req) => [
+    extensionIp(req),
+    String(req.body?.schoolId || req.body?.schoolSlug || ""),
+    String(req.body?.deviceId || ""),
+  ].join(":"),
 });
 
 const deviceActionLimiter = rateLimit({
@@ -121,6 +182,148 @@ const staffAuth = [
   requireActiveSchool,
   requireProductLicense("CLASSPILOT"),
 ] as const;
+
+function normalizeGradeLevel(value: unknown): string | null {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  const normalized = raw.replace(/^grade\s+/i, "").replace(/(\d+)(st|nd|rd|th)$/i, "$1");
+  const lower = normalized.toLowerCase();
+  if (lower === "k" || lower === "kg" || lower === "kindergarten") return "K";
+  return normalized;
+}
+
+function getPinFailureKey(schoolId: string, studentId: string): string {
+  return `${schoolId}:${studentId}`;
+}
+
+function getPinLockout(schoolId: string, studentId: string): { ok: true } | { ok: false; retryAfterSeconds: number } {
+  const key = getPinFailureKey(schoolId, studentId);
+  const failure = pinLoginFailures.get(key);
+  if (!failure) {
+    return { ok: true };
+  }
+  if (failure.lockedUntil > 0 && failure.lockedUntil <= Date.now()) {
+    pinLoginFailures.delete(key);
+    return { ok: true };
+  }
+  if (failure.lockedUntil === 0) {
+    return { ok: true };
+  }
+  return {
+    ok: false,
+    retryAfterSeconds: Math.ceil((failure.lockedUntil - Date.now()) / 1000),
+  };
+}
+
+function recordPinFailure(schoolId: string, studentId: string) {
+  const key = getPinFailureKey(schoolId, studentId);
+  const current = pinLoginFailures.get(key);
+  const now = Date.now();
+  if (current?.lockedUntil && current.lockedUntil > now) return;
+  const count = (current?.count || 0) + 1;
+  pinLoginFailures.set(key, {
+    count,
+    lockedUntil: count >= PIN_LOGIN_MAX_FAILURES ? now + PIN_LOGIN_LOCKOUT_MS : 0,
+  });
+}
+
+function clearPinFailures(schoolId: string, studentId: string) {
+  pinLoginFailures.delete(getPinFailureKey(schoolId, studentId));
+}
+
+async function broadcastStudentSignedOut(options: {
+  schoolId: string;
+  studentId: string;
+  deviceId: string;
+  reason: string;
+}) {
+  removeDeviceStatus(options.schoolId, options.deviceId);
+  const signOutUpdate = {
+    type: "student-signed-out",
+    studentId: options.studentId,
+    deviceId: options.deviceId,
+    schoolId: options.schoolId,
+    status: "offline",
+    reason: options.reason,
+    timestamp: new Date().toISOString(),
+  };
+  broadcastToTeachersLocal(options.schoolId, signOutUpdate);
+  await publishWS({ kind: "staff", schoolId: options.schoolId }, signOutUpdate);
+}
+
+async function completeStudentDeviceLogin(options: {
+  schoolId: string;
+  deviceId: string;
+  deviceName?: string | null;
+  classId?: string | null;
+  student: Awaited<ReturnType<typeof getStudentByEmail>>;
+}) {
+  if (!options.student) {
+    throw new Error("Student required");
+  }
+
+  const {
+    device,
+    previousStudentSession,
+    previousDeviceSession,
+    studentToken,
+  } = await issueStudentDeviceSessionToken({
+    schoolId: options.schoolId,
+    deviceId: options.deviceId,
+    deviceName: options.deviceName,
+    classId: options.classId,
+    student: options.student,
+  });
+  const studentEmail = options.student.email || undefined;
+
+  if (previousDeviceSession && previousDeviceSession.studentId !== options.student.id) {
+    await broadcastStudentSignedOut({
+      schoolId: options.schoolId,
+      studentId: previousDeviceSession.studentId,
+      deviceId: options.deviceId,
+      reason: "session_replaced",
+    });
+  }
+
+  if (previousStudentSession && previousStudentSession.deviceId !== options.deviceId) {
+    const replacedMessage = {
+      type: "student-session-replaced",
+      studentId: options.student.id,
+      deviceId: previousStudentSession.deviceId,
+      replacementDeviceId: options.deviceId,
+      timestamp: new Date().toISOString(),
+    };
+    sendToDeviceLocal(options.schoolId, previousStudentSession.deviceId, replacedMessage);
+    await publishWS({ kind: "device", schoolId: options.schoolId, deviceId: previousStudentSession.deviceId }, replacedMessage);
+    await broadcastStudentSignedOut({
+      schoolId: options.schoolId,
+      studentId: options.student.id,
+      deviceId: previousStudentSession.deviceId,
+      reason: "session_replaced",
+    });
+  }
+
+  broadcastToTeachersLocal(options.schoolId, {
+    type: "student-registered",
+    studentId: options.student.id,
+    deviceId: options.deviceId,
+    studentEmail,
+    studentName: `${options.student.firstName || ""} ${options.student.lastName || ""}`.trim() || options.student.email || "Student",
+  });
+  await publishWS({ kind: "staff", schoolId: options.schoolId }, {
+    type: "student-registered",
+    studentId: options.student.id,
+    deviceId: options.deviceId,
+  });
+
+  return {
+    success: true,
+    device,
+    student: safeStudent(options.student),
+    studentToken,
+    manualExpiresInSeconds: 300,
+  };
+}
 
 async function recordRemoteActionTimeline(options: {
   schoolId: string;
@@ -207,15 +410,21 @@ import { isWithinTrackingWindow } from "../../services/schoolHours.js";
 // only the minimum fields needed for the extension to decide whether to keep heartbeating.
 // We do NOT leak schoolId, planStatus, or human-readable status strings to unauthenticated
 // callers — those would help an attacker enumerate schools and licensing tiers.
-router.post("/school/status", extensionLimiter, async (req, res, next) => {
+router.post("/school/status", extensionConfigLimiter, async (req, res, next) => {
   try {
     const { studentEmail, studentToken } = req.body;
 
     // Token-based lookup (authenticated): return full status
     if (studentToken) {
       try {
-        const { verifyStudentToken } = await import("../../services/deviceJwt.js");
         const payload = verifyStudentToken(studentToken);
+        const hasActiveSession = await runWithTenantContext(
+          { schoolId: payload.schoolId },
+          () => verifyActiveStudentTokenSession(payload)
+        );
+        if (!hasActiveSession) {
+          return res.status(401).json({ error: "Student session is no longer active" });
+        }
         const school = await getSchoolById(payload.schoolId);
         if (school) {
           return res.json({
@@ -256,6 +465,121 @@ router.get("/school/status", async (_req, res) => {
   return res.json({ status: "ok", message: "Use POST with studentEmail" });
 });
 
+// GET /api/classpilot/extension/login-config - Shared Chromebook login capabilities
+router.get("/extension/login-config", extensionConfigLimiter, async (req, res, next) => {
+  try {
+    setClassPilotNoStore(res);
+    const schoolIdParam = String(req.query.schoolId || "").trim();
+    const schoolSlug = String(req.query.schoolSlug || "").trim();
+    const enrollmentKey = enrollmentKeyFromRequest(req);
+
+    const school = schoolIdParam
+      ? await getSchoolById(schoolIdParam)
+      : schoolSlug
+        ? await getSchoolBySlug(schoolSlug)
+        : undefined;
+    if (!school || school.status !== "active") {
+      return res.status(404).json({ error: "Shared sign-in is not configured", setupRequired: true });
+    }
+
+    await runWithTenantContext({ schoolId: school.id }, async () => {
+      if (!(await hasCachedClassPilotLicense(school.id))) {
+        return res.status(403).json({ error: "ClassPilot license is not active" });
+      }
+
+      const regSettings = await getSettingsForSchool(school.id);
+      const keyCheck = validateEnrollmentKeyForSettings(regSettings, enrollmentKey, {
+        requireConfiguredKey: true,
+      });
+      if (!keyCheck.ok) {
+        return res.status(keyCheck.status).json({ error: keyCheck.error, setupRequired: true });
+      }
+      if (!regSettings?.sharedChromebookSignInEnabled) {
+        return res.status(403).json({
+          error: "Shared Chromebook sign-in is not enabled for this school",
+          sharedSignInEnabled: false,
+          loginMethod: "name_pin",
+          pinLoginEnabled: false,
+        });
+      }
+      const loginMethod = effectiveSharedChromebookLoginMethod(regSettings);
+
+      return res.json({
+        sharedSignInEnabled: true,
+        loginMethod,
+        pinLoginEnabled: loginMethod === "name_pin",
+        schoolName: regSettings.schoolName || school.name,
+      });
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/classpilot/extension/login-roster - Minimal roster for optional Name + PIN login
+router.get("/extension/login-roster", extensionRosterLimiter, async (req, res, next) => {
+  try {
+    setClassPilotNoStore(res);
+    const schoolIdParam = String(req.query.schoolId || "").trim();
+    const schoolSlug = String(req.query.schoolSlug || "").trim();
+    const gradeLevel = normalizeGradeLevel(req.query.gradeLevel);
+    const enrollmentKey = enrollmentKeyFromRequest(req);
+
+    const school = schoolIdParam
+      ? await getSchoolById(schoolIdParam)
+      : schoolSlug
+        ? await getSchoolBySlug(schoolSlug)
+        : undefined;
+    if (!school || school.status !== "active") {
+      return res.status(404).json({ error: "Shared sign-in is not configured" });
+    }
+
+    await runWithTenantContext({ schoolId: school.id }, async () => {
+      if (!(await hasCachedClassPilotLicense(school.id))) {
+        return res.status(403).json({ error: "ClassPilot license is not active" });
+      }
+
+      const regSettings = await getSettingsForSchool(school.id);
+      if (!regSettings?.sharedChromebookSignInEnabled) {
+        return res.status(403).json({ error: "Shared Chromebook sign-in is not enabled for this school", sharedSignInEnabled: false });
+      }
+      const loginMethod = effectiveSharedChromebookLoginMethod(regSettings);
+      if (loginMethod !== "name_pin") {
+        return res.status(403).json({ error: "PIN login is not enabled for this school", pinLoginEnabled: false });
+      }
+
+      const keyCheck = validateEnrollmentKeyForSettings(regSettings, enrollmentKey, {
+        requireConfiguredKey: true,
+      });
+      if (!keyCheck.ok) {
+        return res.status(keyCheck.status).json({ error: keyCheck.error });
+      }
+      if (!gradeLevel) {
+        return res.status(400).json({
+          error: "Select a grade to load the PIN roster",
+        });
+      }
+
+      let students = await getStudentsBySchool(school.id);
+
+      const roster = students
+        .filter((student) => student.status === "active")
+        .filter((student) => normalizeGradeLevel(student.gradeLevel) === gradeLevel)
+        .map((student) => ({
+          id: student.id,
+          name: `${student.firstName || ""} ${student.lastName || ""}`.trim() || student.email || "Student",
+          gradeLevel: student.gradeLevel,
+          hasPin: !!student.classpilotPinHash,
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+
+      return res.json({ students: roster, loginMethod, pinLoginEnabled: true });
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ============================================================================
 // Extension Settings
 // ============================================================================
@@ -277,6 +601,9 @@ router.get("/extension/settings", requireDeviceAuth, async (_req, res, next) => 
       trackingDays: schoolSettings?.trackingDays ?? null,
       schoolTimezone: schoolSettings?.schoolTimezone || school.schoolTimezone || null,
       afterHoursMode: schoolSettings?.afterHoursMode ?? "off",
+      sharedChromebookSignInEnabled: !!schoolSettings?.sharedChromebookSignInEnabled,
+      sharedChromebookLoginMethod: effectiveSharedChromebookLoginMethod(schoolSettings),
+      sharedChromebookPinLoginEnabled: effectiveSharedChromebookLoginMethod(schoolSettings) === "name_pin",
       maxTabsPerStudent: schoolSettings?.maxTabsPerStudent
         ? parseInt(schoolSettings.maxTabsPerStudent, 10)
         : null,
@@ -290,11 +617,192 @@ router.get("/extension/settings", requireDeviceAuth, async (_req, res, next) => 
 // Device & Student Registration
 // ============================================================================
 
+// POST /api/classpilot/extension/student-login - Shared Chromebook fallback login
+router.post("/extension/student-login", extensionLoginLimiter, async (req, res, next) => {
+  try {
+    setClassPilotNoStore(res);
+    const {
+      deviceId,
+      deviceName,
+      classId,
+      studentEmail,
+      studentIdNumber,
+      studentId,
+      pin,
+      schoolId: explicitSchoolId,
+      schoolSlug,
+    } = req.body;
+    const enrollmentKey = enrollmentKeyFromRequest(req, { allowBody: true });
+
+    if (!deviceId) {
+      return res.status(400).json({ error: "deviceId required" });
+    }
+
+    // Upper-grade fallback: email + Student ID Number.
+    if (studentEmail || studentIdNumber) {
+      const emailLc = String(studentEmail || "").trim().toLowerCase();
+      const idNumber = String(studentIdNumber || "").trim();
+      if (!emailLc || !idNumber) {
+        return res.status(400).json({ error: "Email and Student ID are required" });
+      }
+
+      const resolved = await resolveSchoolForStudent(emailLc);
+      if (!resolved || resolved.school.status !== "active") {
+        return res.status(401).json({ error: "Invalid student credentials" });
+      }
+      if (explicitSchoolId && String(explicitSchoolId) !== resolved.school.id) {
+        return res.status(403).json({ error: "School context does not match student email" });
+      }
+      if (schoolSlug) {
+        const explicitSchool = await getSchoolBySlug(String(schoolSlug));
+        if (!explicitSchool || explicitSchool.id !== resolved.school.id) {
+          return res.status(403).json({ error: "School context does not match student email" });
+        }
+      }
+
+      await runWithTenantContext({ schoolId: resolved.school.id }, async () => {
+        if (!(await hasCachedClassPilotLicense(resolved.school.id))) {
+          return res.status(403).json({ error: "ClassPilot license is not active" });
+        }
+
+        const regSettings = await getSettingsForSchool(resolved.school.id);
+        if (!regSettings?.sharedChromebookSignInEnabled) {
+          return res.status(403).json({ error: "Shared Chromebook sign-in is not enabled for this school" });
+        }
+        if (effectiveSharedChromebookLoginMethod(regSettings) !== "email_id") {
+          return res.status(403).json({ error: "Email + Student ID login is not enabled for this school" });
+        }
+
+        const keyCheck = validateEnrollmentKeyForSettings(regSettings, enrollmentKey, {
+          requireConfiguredKey: true,
+        });
+        if (!keyCheck.ok) {
+          return res.status(keyCheck.status).json({ error: keyCheck.error });
+        }
+
+        const student = await getStudentByEmail(resolved.school.id, emailLc);
+        if (
+          !student ||
+          student.status !== "active" ||
+          String(student.studentIdNumber || "").trim() !== idNumber
+        ) {
+          return res.status(401).json({ error: "Invalid student credentials" });
+        }
+
+        const login = await completeStudentDeviceLogin({
+          schoolId: resolved.school.id,
+          deviceId,
+          deviceName,
+          classId,
+          student,
+        });
+        return res.json(login);
+      });
+      return;
+    }
+
+    // Optional fallback: roster-selected student + 4-digit PIN.
+    const selectedStudentId = String(studentId || "").trim();
+    const enteredPin = String(pin || "").trim();
+    const school = explicitSchoolId
+      ? await getSchoolById(String(explicitSchoolId))
+      : schoolSlug
+        ? await getSchoolBySlug(String(schoolSlug))
+        : undefined;
+
+    if (!school || school.status !== "active" || !selectedStudentId || !/^\d{4}$/.test(enteredPin)) {
+      return res.status(401).json({ error: "Invalid student credentials" });
+    }
+
+    await runWithTenantContext({ schoolId: school.id }, async () => {
+      if (!(await hasCachedClassPilotLicense(school.id))) {
+        return res.status(403).json({ error: "ClassPilot license is not active" });
+      }
+
+      const regSettings = await getSettingsForSchool(school.id);
+      if (!regSettings?.sharedChromebookSignInEnabled) {
+        return res.status(403).json({ error: "Shared Chromebook sign-in is not enabled for this school" });
+      }
+      if (effectiveSharedChromebookLoginMethod(regSettings) !== "name_pin") {
+        return res.status(403).json({ error: "PIN login is not enabled for this school" });
+      }
+
+      const keyCheck = validateEnrollmentKeyForSettings(regSettings, enrollmentKey, {
+        requireConfiguredKey: true,
+      });
+      if (!keyCheck.ok) {
+        return res.status(keyCheck.status).json({ error: keyCheck.error });
+      }
+
+      const student = await getStudentById(selectedStudentId);
+      const lockout = getPinLockout(school.id, selectedStudentId);
+      if (!lockout.ok) {
+        return res.status(429).json({
+          error: "Too many PIN attempts. Try again later.",
+          retryAfterSeconds: lockout.retryAfterSeconds,
+        });
+      }
+      if (
+        !student ||
+        student.schoolId !== school.id ||
+        student.status !== "active" ||
+        !student.classpilotPinHash ||
+        !(await comparePassword(enteredPin, student.classpilotPinHash))
+      ) {
+        recordPinFailure(school.id, selectedStudentId);
+        return res.status(401).json({ error: "Invalid student credentials" });
+      }
+      clearPinFailures(school.id, selectedStudentId);
+
+      const login = await completeStudentDeviceLogin({
+        schoolId: school.id,
+        deviceId,
+        deviceName,
+        classId,
+        student,
+      });
+      return res.json(login);
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/classpilot/extension/sign-out - End the active student session for this token/device
+router.post("/extension/sign-out", requireDeviceAuth, async (_req, res, next) => {
+  try {
+    setClassPilotNoStore(res);
+    const deviceId = res.locals.deviceId as string;
+    const studentId = res.locals.studentId as string;
+    const schoolId = res.locals.schoolId as string;
+    const active = await getActiveStudentForDevice(deviceId);
+    if (active?.student.id === studentId) {
+      await endStudentSession(active.session.id);
+    }
+    removeDeviceStatus(schoolId, deviceId);
+    const update = {
+      type: "student-signed-out",
+      studentId,
+      deviceId,
+      schoolId,
+      status: "offline",
+      reason: "explicit_sign_out",
+      timestamp: new Date().toISOString(),
+    };
+    broadcastToTeachersLocal(schoolId, update);
+    await publishWS({ kind: "staff", schoolId }, update);
+    return res.json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // POST /api/classpilot/register - Generic device registration (no student) (legacy)
 // Kept for backwards compatibility with older extension builds. New extensions use
 // /extension/register exclusively. Rate-limited to prevent abuse.
-router.post("/register", extensionLimiter, async (req, res, next) => {
+router.post("/register", extensionRegisterLimiter, async (req, res, next) => {
   try {
+    setClassPilotNoStore(res);
     const { deviceId, deviceName, classId, schoolId: explicitSchoolId } = req.body;
     if (!deviceId) {
       return res.status(400).json({ error: "deviceId required" });
@@ -333,9 +841,11 @@ router.post("/register", extensionLimiter, async (req, res, next) => {
 
 // POST /api/classpilot/extension/register - Register a device from the Chrome extension
 // Supports both email-based (ClassPilot extension) and schoolId-based registration
-router.post("/extension/register", extensionLimiter, async (req, res, next) => {
+router.post("/extension/register", extensionRegisterLimiter, async (req, res, next) => {
   try {
+    setClassPilotNoStore(res);
     const { deviceId, deviceName, studentEmail, studentName, schoolId: explicitSchoolId, classId } = req.body;
+    const enrollmentKey = enrollmentKeyFromRequest(req, { allowBody: true });
     if (!deviceId) {
       return res.status(400).json({ error: "deviceId required" });
     }
@@ -381,21 +891,18 @@ router.post("/extension/register", extensionLimiter, async (req, res, next) => {
     // for the rest of the handler so RLS is satisfied AND the enrollment-key gate
     // (getSettingsForSchool below) reads real settings instead of failing open.
     await runWithTenantContext({ schoolId: resolvedSchoolId }, async () => {
+    if (studentEmail && !(await hasCachedClassPilotLicense(resolvedSchoolId))) {
+      return res.status(403).json({ error: "ClassPilot license is not active" });
+    }
 
-    // Per-school enrollment secret (defense beyond domain-binding). Backward
-    // compatible: only enforced once a school opts in (enrollmentKeyRequired).
-    // The key lives in the school's managed Chrome extension policy.
+    // Per-school managed setup key. Any route that mints a student monitoring
+    // token must prove it came from the managed extension deployment.
     const regSettings = await getSettingsForSchool(resolvedSchoolId);
-    if (regSettings?.enrollmentKeyRequired) {
-      const provided = Buffer.from(String(req.body.enrollmentKey || ""));
-      const expected = Buffer.from(regSettings.enrollmentKey || "");
-      const ok =
-        expected.length > 0 &&
-        provided.length === expected.length &&
-        crypto.timingSafeEqual(provided, expected);
-      if (!ok) {
-        return res.status(401).json({ error: "Invalid or missing enrollment key" });
-      }
+    const keyCheck = validateEnrollmentKeyForSettings(regSettings, enrollmentKey, {
+      requireConfiguredKey: !!studentEmail,
+    });
+    if (!keyCheck.ok) {
+      return res.status(keyCheck.status).json({ error: keyCheck.error });
     }
 
     // Create or update device
@@ -445,39 +952,17 @@ router.post("/extension/register", extensionLimiter, async (req, res, next) => {
         });
       }
 
-      // Link student to device
-      await linkStudentDevice({ studentId: student.id, deviceId });
-
-      // Start session
-      await startStudentSession(student.id, deviceId);
-
-      // Generate device JWT
-      const studentToken = createStudentToken({
-        studentId: student.id,
-        deviceId,
+      const login = await completeStudentDeviceLogin({
         schoolId: resolvedSchoolId,
-        studentEmail,
-      });
-
-      // Broadcast to teachers
-      broadcastToTeachersLocal(resolvedSchoolId, {
-        type: "student-registered",
-        studentId: student.id,
         deviceId,
-        studentEmail,
-        studentName: studentName || student.firstName,
-      });
-      await publishWS({ kind: "staff", schoolId: resolvedSchoolId }, {
-        type: "student-registered",
-        studentId: student.id,
-        deviceId,
+        deviceName,
+        classId,
+        student,
       });
 
       return res.json({
-        success: true,
-        device,
-        student,
-        studentToken,
+        ...login,
+        studentName: studentName || `${student.firstName || ""} ${student.lastName || ""}`.trim() || student.email,
       });
     }
 
@@ -490,9 +975,11 @@ router.post("/extension/register", extensionLimiter, async (req, res, next) => {
 
 // POST /api/classpilot/register-student - Register student and get device token (legacy)
 // Kept for backwards compatibility. New extensions use /extension/register.
-router.post("/register-student", extensionLimiter, async (req, res, next) => {
+router.post("/register-student", extensionRegisterLimiter, async (req, res, next) => {
   try {
+    setClassPilotNoStore(res);
     const { deviceId, studentEmail, gradeLevel, firstName, lastName, schoolId } = req.body;
+    const enrollmentKey = enrollmentKeyFromRequest(req, { allowBody: true });
     if (!deviceId || !studentEmail || !schoolId) {
       return res.status(400).json({ error: "deviceId, studentEmail, and schoolId required" });
     }
@@ -517,6 +1004,12 @@ router.post("/register-student", extensionLimiter, async (req, res, next) => {
     // Bind the resolved school for RLS, settings, exact roster lookup, and writes.
     await runWithTenantContext({ schoolId: resolvedSchoolId }, async () => {
       const regSettings = await getSettingsForSchool(resolvedSchoolId);
+      const keyCheck = validateEnrollmentKeyForSettings(regSettings, enrollmentKey, {
+        requireConfiguredKey: true,
+      });
+      if (!keyCheck.ok) {
+        return res.status(keyCheck.status).json({ error: keyCheck.error });
+      }
 
       // Find or create student by exact roster email only. Fuzzy matches can bind
       // a Chromebook to the wrong student.
@@ -546,21 +1039,17 @@ router.post("/register-student", extensionLimiter, async (req, res, next) => {
         });
       }
 
-      // Link student to device
-      await linkStudentDevice({ studentId: student.id, deviceId });
-
-      // Start session
-      await startStudentSession(student.id, deviceId);
-
-      // Generate device JWT
-      const studentToken = createStudentToken({
-        studentId: student.id,
-        deviceId,
+      const login = await completeStudentDeviceLogin({
         schoolId: resolvedSchoolId,
-        studentEmail: emailLc,
+        deviceId,
+        student,
       });
 
-      return res.json({ studentToken, student });
+      return res.json({
+        studentToken: login.studentToken,
+        student: login.student,
+        manualExpiresInSeconds: login.manualExpiresInSeconds,
+      });
     });
   } catch (err) {
     next(err);
@@ -585,7 +1074,7 @@ router.get("/device/:deviceId/students", deviceActionLimiter, requireDeviceAuth,
     const students = await getStudentsForDevice(deviceId);
     const active = await getActiveStudentForDevice(deviceId);
     return res.json({
-      students,
+      students: safeStudents(students),
       activeStudentId: active?.student.id || null,
     });
   } catch (err) {
@@ -647,7 +1136,7 @@ router.post("/device/heartbeat", requireDeviceAuth, async (req, res, next) => {
     const schoolId = res.locals.schoolId as string;
     const studentId = res.locals.studentId as string;
     const deviceId = res.locals.deviceId as string;
-    const studentEmail = res.locals.studentEmail as string;
+    const tokenStudentEmail = res.locals.studentEmail as string | undefined;
 
     // --- Per-device rate limiting (item #9) ---
     const lastHb = deviceLastHeartbeat.get(deviceId);
@@ -669,6 +1158,7 @@ router.post("/device/heartbeat", requireDeviceAuth, async (req, res, next) => {
     if (!student) {
       return res.status(401).json({ error: "Student not found — re-register required" });
     }
+    const studentEmail = tokenStudentEmail || student.email || "";
 
     // --- Tracking window enforcement (item #2) ---
     const schoolSettings = await getSettingsForSchool(schoolId);
@@ -684,6 +1174,26 @@ router.post("/device/heartbeat", requireDeviceAuth, async (req, res, next) => {
     const school = await getCachedSchool(schoolId);
     if (!school || school.status !== "active") {
       return res.status(402).json({ planStatus: "inactive" });
+    }
+
+    const activeSession = await getActiveSessionByDevice(deviceId);
+    if (!activeSession || activeSession.studentId !== studentId) {
+      removeDeviceStatus(schoolId, deviceId);
+      const signOutUpdate = {
+        type: "student-signed-out",
+        studentId,
+        deviceId,
+        schoolId,
+        status: "offline",
+        reason: "session_replaced",
+        timestamp: new Date().toISOString(),
+      };
+      broadcastToTeachersLocal(schoolId, signOutUpdate);
+      await publishWS({ kind: "staff", schoolId }, signOutUpdate);
+      return res.status(409).json({
+        error: "student_session_replaced",
+        message: "This student is signed in on another Chromebook.",
+      });
     }
 
     // --- Save heartbeat to DB (item #1 — capture all fields) ---
@@ -710,6 +1220,7 @@ router.post("/device/heartbeat", requireDeviceAuth, async (req, res, next) => {
     if (chromeVersion !== undefined) deviceUpdate.chromeVersion = chromeVersion || null;
     if (screenshotHealth !== undefined) deviceUpdate.lastScreenshotHealth = screenshotHealth || null;
     void updateDevice(deviceId, deviceUpdate).catch(() => {});
+    void touchStudentSession(studentId, deviceId).catch(() => {});
 
     // --- Update in-memory real-time status ---
     updateDeviceStatus({
@@ -1337,11 +1848,18 @@ const enrollAdminAuth = [
 // GET /api/classpilot/enrollment-key — current key + enforcement + auto-enroll state
 router.get("/enrollment-key", ...enrollAdminAuth, async (_req, res, next) => {
   try {
+    const school = await getSchoolById(res.locals.schoolId!);
     const s = await getSettingsForSchool(res.locals.schoolId!);
     return res.json({
       key: s?.enrollmentKey ?? null,
       required: !!s?.enrollmentKeyRequired,
       autoEnrollStudents: !!s?.autoEnrollStudents,
+      schoolId: school?.id ?? res.locals.schoolId!,
+      schoolSlug: school?.slug ?? null,
+      schoolName: s?.schoolName || school?.name || "",
+      sharedChromebookSignInEnabled: !!s?.sharedChromebookSignInEnabled,
+      sharedChromebookLoginMethod: effectiveSharedChromebookLoginMethod(s),
+      sharedChromebookPinLoginEnabled: effectiveSharedChromebookLoginMethod(s) === "name_pin",
     });
   } catch (err) {
     next(err);

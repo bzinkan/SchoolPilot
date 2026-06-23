@@ -7,7 +7,7 @@ import { Button } from "../../../components/ui/button";
 import { Input } from "../../../components/ui/input";
 import { Label } from "../../../components/ui/label";
 import { Checkbox } from "../../../components/ui/checkbox";
-import { ArrowLeft, Upload, Download, Edit, Trash2, FileSpreadsheet, GraduationCap, RefreshCw, Users, Loader2, Building2, AlertCircle, Plus, Search, ChevronRight, ChevronDown } from "lucide-react";
+import { ArrowLeft, Upload, Download, Edit, Trash2, FileSpreadsheet, GraduationCap, RefreshCw, Users, Loader2, Building2, AlertCircle, Plus, Search, ChevronRight, ChevronDown, KeyRound, Printer } from "lucide-react";
 import { ThemeToggle } from "../../../components/ThemeToggle";
 import { useNavigate } from "react-router-dom";
 import { Tabs, TabsList, TabsTrigger } from "../../../components/ui/tabs";
@@ -53,6 +53,185 @@ function normalizeGrade(grade) {
   const trimmed = grade.trim();
   if (!trimmed) return null;
   return trimmed.replace(/(\d+)(st|nd|rd|th)\b/gi, '$1');
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function escapeXml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function columnName(index) {
+  let name = "";
+  let n = index + 1;
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    name = String.fromCharCode(65 + rem) + name;
+    n = Math.floor((n - 1) / 26);
+  }
+  return name;
+}
+
+const crcTable = (() => {
+  const table = new Uint32Array(256);
+  for (let i = 0; i < 256; i++) {
+    let c = i;
+    for (let j = 0; j < 8; j++) {
+      c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    }
+    table[i] = c >>> 0;
+  }
+  return table;
+})();
+
+function crc32(bytes) {
+  let crc = 0xffffffff;
+  for (const byte of bytes) {
+    crc = crcTable[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function writeUint16(view, offset, value) {
+  view.setUint16(offset, value, true);
+}
+
+function writeUint32(view, offset, value) {
+  view.setUint32(offset, value, true);
+}
+
+function concatBytes(parts) {
+  const total = parts.reduce((sum, part) => sum + part.length, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const part of parts) {
+    out.set(part, offset);
+    offset += part.length;
+  }
+  return out;
+}
+
+function zipDateParts(date = new Date()) {
+  const year = Math.max(date.getFullYear(), 1980);
+  const time = (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2);
+  const day = ((year - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate();
+  return { time, day };
+}
+
+function buildZip(files) {
+  const encoder = new TextEncoder();
+  const localParts = [];
+  const centralParts = [];
+  const { time, day } = zipDateParts();
+  let offset = 0;
+
+  for (const file of files) {
+    const nameBytes = encoder.encode(file.name);
+    const dataBytes = encoder.encode(file.content);
+    const crc = crc32(dataBytes);
+
+    const localHeader = new Uint8Array(30 + nameBytes.length);
+    const localView = new DataView(localHeader.buffer);
+    writeUint32(localView, 0, 0x04034b50);
+    writeUint16(localView, 4, 20);
+    writeUint16(localView, 6, 0x0800);
+    writeUint16(localView, 8, 0);
+    writeUint16(localView, 10, time);
+    writeUint16(localView, 12, day);
+    writeUint32(localView, 14, crc);
+    writeUint32(localView, 18, dataBytes.length);
+    writeUint32(localView, 22, dataBytes.length);
+    writeUint16(localView, 26, nameBytes.length);
+    writeUint16(localView, 28, 0);
+    localHeader.set(nameBytes, 30);
+    localParts.push(localHeader, dataBytes);
+
+    const centralHeader = new Uint8Array(46 + nameBytes.length);
+    const centralView = new DataView(centralHeader.buffer);
+    writeUint32(centralView, 0, 0x02014b50);
+    writeUint16(centralView, 4, 20);
+    writeUint16(centralView, 6, 20);
+    writeUint16(centralView, 8, 0x0800);
+    writeUint16(centralView, 10, 0);
+    writeUint16(centralView, 12, time);
+    writeUint16(centralView, 14, day);
+    writeUint32(centralView, 16, crc);
+    writeUint32(centralView, 20, dataBytes.length);
+    writeUint32(centralView, 24, dataBytes.length);
+    writeUint16(centralView, 28, nameBytes.length);
+    writeUint16(centralView, 30, 0);
+    writeUint16(centralView, 32, 0);
+    writeUint16(centralView, 34, 0);
+    writeUint16(centralView, 36, 0);
+    writeUint32(centralView, 38, 0);
+    writeUint32(centralView, 42, offset);
+    centralHeader.set(nameBytes, 46);
+    centralParts.push(centralHeader);
+
+    offset += localHeader.length + dataBytes.length;
+  }
+
+  const localData = concatBytes(localParts);
+  const centralData = concatBytes(centralParts);
+  const end = new Uint8Array(22);
+  const endView = new DataView(end.buffer);
+  writeUint32(endView, 0, 0x06054b50);
+  writeUint16(endView, 8, files.length);
+  writeUint16(endView, 10, files.length);
+  writeUint32(endView, 12, centralData.length);
+  writeUint32(endView, 16, localData.length);
+  return concatBytes([localData, centralData, end]);
+}
+
+function buildXlsxBlob(rows, sheetName) {
+  const sheetData = rows.map((row, rowIndex) => {
+    const rowNumber = rowIndex + 1;
+    const cells = row.map((value, colIndex) => {
+      const ref = `${columnName(colIndex)}${rowNumber}`;
+      return `<c r="${ref}" t="inlineStr"><is><t>${escapeXml(value)}</t></is></c>`;
+    }).join("");
+    return `<row r="${rowNumber}">${cells}</row>`;
+  }).join("");
+  const safeSheetName = escapeXml(sheetName).slice(0, 31) || "Sheet1";
+  const files = [
+    {
+      name: "[Content_Types].xml",
+      content: `<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>`,
+    },
+    {
+      name: "_rels/.rels",
+      content: `<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`,
+    },
+    {
+      name: "xl/workbook.xml",
+      content: `<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="${safeSheetName}" sheetId="1" r:id="rId1"/></sheets></workbook>`,
+    },
+    {
+      name: "xl/_rels/workbook.xml.rels",
+      content: `<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`,
+    },
+    {
+      name: "xl/styles.xml",
+      content: `<?xml version="1.0" encoding="UTF-8"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts><fills count="1"><fill><patternFill patternType="none"/></fill></fills><borders count="1"><border/></borders><cellStyleXfs count="1"><xf/></cellStyleXfs><cellXfs count="1"><xf xfId="0"/></cellXfs></styleSheet>`,
+    },
+    {
+      name: "xl/worksheets/sheet1.xml",
+      content: `<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><cols><col min="1" max="1" width="28" customWidth="1"/><col min="2" max="2" width="12" customWidth="1"/><col min="3" max="3" width="18" customWidth="1"/></cols><sheetData>${sheetData}</sheetData></worksheet>`,
+    },
+  ];
+  return new Blob([buildZip(files)], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
 }
 
 // Admin Guard Wrapper - Only checks auth, doesn't run any queries/mutations
@@ -101,7 +280,7 @@ export default function StudentsPage() {
 function StudentsContent() {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { hasPassPilot, hasGoPilot } = useLicenses();
+  const { hasGoPilot } = useLicenses();
   const [selectedGrade, setSelectedGrade] = useState("");
   const [csvFile, setCsvFile] = useState(null);
   const [importResults, setImportResults] = useState(null);
@@ -125,6 +304,7 @@ function StudentsContent() {
   const [newStudentName, setNewStudentName] = useState("");
   const [newStudentEmail, setNewStudentEmail] = useState("");
   const [newStudentGrade, setNewStudentGrade] = useState("");
+  const [generatedPins, setGeneratedPins] = useState([]);
   const [showAddGradeDialog, setShowAddGradeDialog] = useState(false);
   const [manualGrades, setManualGrades] = useState([]); // Manually added grade categories
   const [showBulkGradeDialog, setShowBulkGradeDialog] = useState(false);
@@ -134,6 +314,11 @@ function StudentsContent() {
   const { data: studentsData, isLoading } = useQuery({
     queryKey: ["/api/admin/teacher-students"],
     queryFn: () => apiRequest("GET", "/admin/teacher-students"),
+  });
+
+  const { data: settings } = useQuery({
+    queryKey: ["/api/settings"],
+    queryFn: () => apiRequest("GET", "/settings"),
   });
 
   // Fetch Google Classroom courses (only when dialog is open)
@@ -186,6 +371,7 @@ function StudentsContent() {
       await queryClient.invalidateQueries({ queryKey: ["/api/groups"], exact: false });
       await queryClient.invalidateQueries({ queryKey: ["/api/teacher/groups"], exact: false });
       await queryClient.invalidateQueries({ queryKey: ["/api/classroom/courses"] });
+      setGeneratedPins(data.generatedPins || []);
       toast({
         title: "Import Complete",
         description: `Imported ${data.imported || 0} students from Google Classroom`,
@@ -254,6 +440,7 @@ function StudentsContent() {
     onSuccess: async (data) => {
       await queryClient.invalidateQueries({ queryKey: ["/api/admin/teacher-students"], exact: false });
       setWorkspaceImportResult(data);
+      setGeneratedPins(data.generatedPins || []);
       toast({
         title: "Import Complete",
         description: `Imported ${data.imported} new students, updated ${data.updated} existing`,
@@ -269,6 +456,9 @@ function StudentsContent() {
   });
 
   const allStudents = studentsData?.students || [];
+  const activeStudents = allStudents.filter((student) => !student.status || student.status === "active");
+  const sharedSignInEnabled = settings?.sharedChromebookSignInEnabled === true;
+  const pinLoginStudentsMissingPins = activeStudents.filter((student) => !student.hasClassPilotPin);
 
   // All possible grades for the Add Grade dialog (K-12)
   const allPossibleGrades = ["K", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"];
@@ -381,6 +571,7 @@ function StudentsContent() {
       await queryClient.invalidateQueries({ queryKey: ["/api/groups"], exact: false });
       await queryClient.invalidateQueries({ queryKey: ["/api/teacher/groups"], exact: false });
       setImportResults(data);
+      setGeneratedPins(data.generatedPins || []);
       const errorMsg = data.errors?.length ? `, ${data.errors.length} errors` : "";
       toast({
         title: "Import Complete",
@@ -468,16 +659,49 @@ function StudentsContent() {
     },
   });
 
+  const bulkGeneratePinsMutation = useMutation({
+    mutationFn: async (input = []) => {
+      const studentIds = Array.isArray(input) ? input : [];
+      const gradeLevel = !Array.isArray(input) ? input.gradeLevel : undefined;
+      return await apiRequest("POST", "/students/classpilot-pins/bulk-generate", {
+        studentIds: studentIds.length ? studentIds : undefined,
+        gradeLevel,
+        onlyMissing: true,
+      });
+    },
+    onSuccess: async (data) => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/admin/teacher-students"], exact: false });
+      const pins = data.generated || [];
+      setGeneratedPins(pins);
+      toast({
+        title: "ClassPilot PINs generated",
+        description: pins.length
+          ? `Generated ${pins.length} PIN${pins.length !== 1 ? "s" : ""}. Download or record them now.`
+          : "No active students needed new PINs.",
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "PIN generation failed",
+        description: error.message || "Could not generate ClassPilot PINs",
+        variant: "destructive",
+      });
+    },
+  });
+
   // Add student mutation
   const addStudentMutation = useMutation({
     mutationFn: async (data) => {
       return await apiRequest("POST", "/students", data);
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/admin/teacher-students"] });
+      setGeneratedPins(data.generatedPins || []);
       toast({
         title: "Student Added",
-        description: "Student has been added to the roster",
+        description: data.generatedPins?.length
+          ? "Student has been added and a ClassPilot PIN was generated"
+          : "Student has been added to the roster",
       });
       setShowAddStudentDialog(false);
       setNewStudentName("");
@@ -546,6 +770,7 @@ function StudentsContent() {
     if (file) {
       setCsvFile(file);
       setImportResults(null);
+      setGeneratedPins([]);
     }
   };
 
@@ -572,15 +797,9 @@ function StudentsContent() {
   };
 
   const downloadTemplate = () => {
-    const headers = ["Email", "Name", "Grade", "Class"];
-    const rowOne = ["student@school.edu", "John Doe", "8", "8th Math (sarah)"];
-    const rowTwo = ["student2@school.edu", "Jane Smith", "7", "7th Science (bob)"];
-
-    if (hasPassPilot) {
-      headers.push("Student ID");
-      rowOne.push("10001");
-      rowTwo.push("10002");
-    }
+    const headers = ["Email", "Name", "Grade", "Class", "ClassPilot PIN"];
+    const rowOne = ["student@school.edu", "John Doe", "8", "8th Math (sarah)", ""];
+    const rowTwo = ["student2@school.edu", "Jane Smith", "2", "2nd Homeroom (lee)", "1234"];
 
     if (hasGoPilot) {
       headers.push("Dismissal Type", "Bus #");
@@ -594,6 +813,84 @@ function StudentsContent() {
     const a = document.createElement('a');
     a.href = url;
     a.download = 'student_import_template.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadGeneratedPins = () => {
+    const headers = ["Student Name", "Grade", "ClassPilot PIN"];
+    const rows = generatedPins.map((pin) => [
+      `"${String(pin.studentName || "").replace(/"/g, '""')}"`,
+      pin.gradeLevel || "",
+      pin.pin,
+    ]);
+    const csv = [headers.join(","), ...rows.map((row) => row.join(","))].join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "classpilot-pins.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const printGeneratedPins = () => {
+    const rows = generatedPins.map((pin) => `
+      <tr>
+        <td>${escapeHtml(pin.studentName || "")}</td>
+        <td>${escapeHtml(pin.gradeLevel || "")}</td>
+        <td class="pin">${escapeHtml(pin.pin || "")}</td>
+      </tr>
+    `).join("");
+    const printWindow = window.open("", "_blank", "noopener,noreferrer");
+    if (!printWindow) {
+      toast({
+        title: "Pop-up blocked",
+        description: "Allow pop-ups to print the generated PIN sheet.",
+        variant: "destructive",
+      });
+      return;
+    }
+    printWindow.document.write(`
+      <!doctype html>
+      <html>
+        <head>
+          <title>ClassPilot PIN Roster</title>
+          <style>
+            body { font-family: Arial, sans-serif; color: #111827; margin: 32px; }
+            h1 { font-size: 22px; margin: 0 0 6px; }
+            p { margin: 0 0 20px; color: #4b5563; }
+            table { width: 100%; border-collapse: collapse; }
+            th, td { border: 1px solid #d1d5db; padding: 10px 12px; text-align: left; }
+            th { background: #f3f4f6; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+            .pin { font-family: "Courier New", monospace; font-size: 18px; font-weight: 700; letter-spacing: .08em; }
+          </style>
+        </head>
+        <body>
+          <h1>ClassPilot PIN Roster</h1>
+          <p>Print or save this sheet now. PINs cannot be viewed again after this page is closed.</p>
+          <table>
+            <thead><tr><th>Student Name</th><th>Grade</th><th>ClassPilot PIN</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
+  };
+
+  const downloadGeneratedPinsExcel = () => {
+    const rows = [
+      ["Student Name", "Grade", "ClassPilot PIN"],
+      ...generatedPins.map((pin) => [pin.studentName || "", pin.gradeLevel || "", pin.pin || ""]),
+    ];
+    const blob = buildXlsxBlob(rows, "ClassPilot PINs");
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "classpilot-pins.xlsx";
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -668,8 +965,8 @@ function StudentsContent() {
             <p className="font-medium">CSV Format:</p>
             <ul className="list-disc list-inside space-y-1">
               <li>Required columns: Email, Name</li>
-              <li>Optional columns: Grade, Class</li>
-              {hasPassPilot && <li>PassPilot column: Student ID for badges or printed IDs</li>}
+              <li>Optional columns: Grade, Class, ClassPilot PIN</li>
+              <li>If ClassPilot PIN is blank, SchoolPilot generates a 4-digit PIN automatically</li>
               {hasGoPilot && <li>GoPilot columns: Dismissal Type and Bus #</li>}
               <li>Class names must match existing classes exactly</li>
               <li>Students with existing emails will be updated</li>
@@ -699,6 +996,116 @@ function StudentsContent() {
                   </ul>
                 </div>
               )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <KeyRound className="h-5 w-5" />
+            ClassPilot Shared Device Readiness
+          </CardTitle>
+          <CardDescription>
+            Shared Chromebook Sign-In uses Grade, Name, and 4-digit PIN when Chrome profile email is not detected.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className={`rounded-md border p-3 ${pinLoginStudentsMissingPins.length ? "bg-amber-50 border-amber-200 dark:bg-amber-950/20" : "bg-muted/30"}`}>
+            <div className="flex items-start gap-2">
+              {pinLoginStudentsMissingPins.length > 0 && <AlertCircle className="h-4 w-4 text-amber-600 mt-0.5" />}
+              <div>
+                <p className="text-sm font-medium">PIN readiness</p>
+                <p className="text-sm text-muted-foreground">
+                  {!sharedSignInEnabled
+                    ? "Shared Chromebook Sign-In is disabled in ClassPilot Settings"
+                    : pinLoginStudentsMissingPins.length
+                      ? `${pinLoginStudentsMissingPins.length} student${pinLoginStudentsMissingPins.length !== 1 ? "s" : ""} missing a 4-digit PIN`
+                      : "Ready for Grade, Name, and PIN sign-in"}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={() => bulkGeneratePinsMutation.mutate([])}
+              disabled={bulkGeneratePinsMutation.isPending || activeStudents.length === 0}
+              data-testid="button-generate-pins"
+            >
+              {bulkGeneratePinsMutation.isPending ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <KeyRound className="h-4 w-4 mr-2" />
+              )}
+              Generate Missing PINs
+            </Button>
+            {selectedGrade && selectedGrade !== "__no_grade__" && (
+              <Button
+                variant="outline"
+                onClick={() => bulkGeneratePinsMutation.mutate({ gradeLevel: selectedGrade })}
+                disabled={bulkGeneratePinsMutation.isPending}
+                data-testid="button-generate-grade-pins"
+              >
+                {bulkGeneratePinsMutation.isPending ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <KeyRound className="h-4 w-4 mr-2" />
+                )}
+                Generate Grade {selectedGrade} PINs
+              </Button>
+            )}
+            {generatedPins.length > 0 && (
+              <>
+                <Button
+                  variant="outline"
+                  onClick={printGeneratedPins}
+                  data-testid="button-print-generated-pins"
+                >
+                  <Printer className="h-4 w-4 mr-2" />
+                  Print PIN Roster
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={downloadGeneratedPins}
+                  data-testid="button-download-generated-pins"
+                >
+                  <Download className="h-4 w-4 mr-2" />
+                  Download CSV
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={downloadGeneratedPinsExcel}
+                  data-testid="button-download-generated-pins-excel"
+                >
+                  <FileSpreadsheet className="h-4 w-4 mr-2" />
+                  Download Excel
+                </Button>
+              </>
+            )}
+          </div>
+
+          {generatedPins.length > 0 && (
+            <div className="rounded-md border p-3 bg-blue-50 dark:bg-blue-950/20" data-testid="generated-pins-panel">
+              <p className="text-sm font-medium mb-2">Generated PINs</p>
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                {generatedPins.slice(0, 12).map((pin) => (
+                  <div key={pin.studentId} className="flex items-center justify-between rounded border bg-background px-3 py-2 text-sm">
+                    <span className="truncate">{pin.studentName}</span>
+                    <span className="font-mono font-semibold">{pin.pin}</span>
+                  </div>
+                ))}
+              </div>
+              {generatedPins.length > 12 && (
+                <p className="text-xs text-muted-foreground mt-2">
+                  Showing 12 of {generatedPins.length}. Download CSV or Excel for the full list.
+                </p>
+              )}
+              <p className="text-xs text-muted-foreground mt-2">
+                Save or print these PINs now. Plaintext PINs cannot be viewed again after this list is cleared.
+              </p>
             </div>
           )}
         </CardContent>
@@ -1362,6 +1769,20 @@ function StudentsContent() {
                   Assign Grade
                 </Button>
                 <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => bulkGeneratePinsMutation.mutate(Array.from(selectedStudents))}
+                  disabled={bulkGeneratePinsMutation.isPending}
+                  data-testid="button-generate-selected-pins"
+                >
+                  {bulkGeneratePinsMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <KeyRound className="h-4 w-4 mr-2" />
+                  )}
+                  Generate PINs
+                </Button>
+                <Button
                   variant="destructive"
                   size="sm"
                   onClick={() => bulkDeleteMutation.mutate(Array.from(selectedStudents))}
@@ -1418,6 +1839,7 @@ function StudentsContent() {
                     <TableHead>Name</TableHead>
                     <TableHead>Email</TableHead>
                     <TableHead>Grade</TableHead>
+                    <TableHead>PIN Login</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -1440,6 +1862,13 @@ function StudentsContent() {
                       <TableCell>{student.studentEmail}</TableCell>
                       <TableCell>
                         {student.gradeLevel ? `Grade ${student.gradeLevel}` : '-'}
+                      </TableCell>
+                      <TableCell>
+                        {student.hasClassPilotPin ? (
+                          <span className="text-green-700 dark:text-green-400">Set</span>
+                        ) : (
+                          <span className="text-amber-700 dark:text-amber-400">Missing</span>
+                        )}
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-2">
@@ -1543,6 +1972,9 @@ function StudentsContent() {
                 onChange={(e) => setNewStudentEmail(e.target.value)}
                 data-testid="input-new-student-email"
               />
+            </div>
+            <div className="rounded-md border bg-muted/30 p-3 text-sm text-muted-foreground">
+              A 4-digit ClassPilot PIN will be generated after the student is added.
             </div>
             <div className="space-y-2">
               <Label htmlFor="gradeLevel">Grade Level</Label>

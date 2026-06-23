@@ -14,6 +14,7 @@ import {
   updateStudent,
   deleteStudent,
   searchStudents,
+  getStudentsBySchool,
   bulkCreateStudents,
   getProductLicenses,
   autoAssignFamilyGroups,
@@ -29,7 +30,7 @@ import {
 } from "../services/studentEmailPolicy.js";
 import type { InsertStudent, Student } from "../schema/students.js";
 import db from "../db.js";
-import { eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { familyGroups, familyGroupStudents } from "../schema/gopilot.js";
 import { homerooms } from "../schema/gopilot.js";
 import {
@@ -37,8 +38,18 @@ import {
   getTeacherHomeroomIds,
   hasActiveGoPilotLicense,
 } from "../services/gopilotAccess.js";
+import { students as studentsTable } from "../schema/students.js";
+import { safeStudent as stripStudentCredentialHash } from "../util/safeStudent.js";
+import { logAudit } from "../services/audit.js";
+import {
+  generatedPinForStudent,
+  hashClassPilotPin,
+  randomFourDigitClassPilotPin,
+  type GeneratedClassPilotPin,
+} from "../services/classpilotPins.js";
 
 const router = Router();
+const CLASSPILOT_PIN_HASH_CONCURRENCY = 4;
 
 function param(req: { params: Record<string, unknown> }, key: string): string {
   return String(req.params[key] ?? "");
@@ -49,6 +60,82 @@ router.use(authenticate);
 const schoolContext = [requireSchoolContext, requireActiveSchool, requireProductLicense("CLASSPILOT", "PASSPILOT", "GOPILOT")] as const;
 
 type StudentSearchOptions = Parameters<typeof searchStudents>[1];
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(Math.max(concurrency, 1), items.length);
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex++;
+      results[index] = await mapper(items[index]!, index);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+function prepareStudentUpdateData(data: Record<string, unknown>): Partial<InsertStudent> {
+  const updateData = { ...data } as Partial<InsertStudent> & Record<string, unknown>;
+  delete updateData.id;
+  delete updateData.schoolId;
+
+  if (updateData.email !== undefined) {
+    const email = typeof updateData.email === "string" ? updateData.email.trim() : updateData.email;
+    updateData.email = email;
+    updateData.emailLc = email ? String(email).toLowerCase() : null;
+  }
+
+  return updateData;
+}
+
+function normalizeGradeLevel(value: unknown): string {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+  const normalized = raw.replace(/^grade\s+/i, "").replace(/(\d+)(st|nd|rd|th)$/i, "$1");
+  if (/^(k|kg|kindergarten)$/i.test(normalized)) return "K";
+  return normalized;
+}
+
+async function classpilotPinHashFromInput(
+  classpilotPin: string | null | undefined
+): Promise<{ classpilotPinHash?: string | null }> {
+  if (classpilotPin === undefined) return {};
+  if (classpilotPin === null || classpilotPin === "") {
+    return { classpilotPinHash: null };
+  }
+  return { classpilotPinHash: await hashClassPilotPin(classpilotPin) };
+}
+
+async function hasActiveClassPilotLicense(schoolId: string): Promise<boolean> {
+  const licenses = await getProductLicenses(schoolId);
+  return licenses.some((license) => license.product === "CLASSPILOT" && license.status === "active");
+}
+
+async function classpilotPinForStudentCreate(
+  classpilotPin: string | null | undefined,
+  autoGenerate: boolean,
+  usedPins: Set<string>
+): Promise<{ classpilotPinHash?: string | null; plaintextPin: string | null }> {
+  if (classpilotPin) {
+    return {
+      classpilotPinHash: await hashClassPilotPin(classpilotPin),
+      plaintextPin: classpilotPin,
+    };
+  }
+  if (!autoGenerate) {
+    return { plaintextPin: null };
+  }
+  const pin = randomFourDigitClassPilotPin(usedPins);
+  return {
+    classpilotPinHash: await hashClassPilotPin(pin),
+    plaintextPin: pin,
+  };
+}
 
 async function searchStudentsVisibleToRequest(
   req: Request,
@@ -186,7 +273,7 @@ router.get("/", ...schoolContext, async (req, res, next) => {
       };
     });
 
-    return res.json({ students: enriched });
+    return res.json({ students: enriched.map(stripStudentCredentialHash) });
   } catch (err) {
     next(err);
   }
@@ -249,8 +336,19 @@ router.post(
         busRoute: parsed.data.busRoute || null,
       };
 
-      const student = await createStudent(data);
-      return res.status(201).json({ student });
+      const pinPlan = await classpilotPinForStudentCreate(
+        parsed.data.classpilotPin,
+        await hasActiveClassPilotLicense(res.locals.schoolId!),
+        new Set<string>()
+      );
+      const student = await createStudent({
+        ...data,
+        classpilotPinHash: pinPlan.classpilotPinHash,
+      });
+      const generatedPins = pinPlan.plaintextPin
+        ? [generatedPinForStudent(student, pinPlan.plaintextPin)]
+        : [];
+      return res.status(201).json({ student: stripStudentCredentialHash(student), generatedPins });
     } catch (err) {
       // Backstop for a race (or badge/code clash) that slipped past the pre-check.
       if (isUniqueViolation(err)) {
@@ -283,6 +381,9 @@ router.post(
       const rules = await studentEmailRules(res.locals.schoolId!);
       const emailSets = await existingEmailSets(res.locals.schoolId!);
       const batchEmails = new Set<string>();
+      const autoGenerateClassPilotPins = await hasActiveClassPilotLicense(res.locals.schoolId!);
+      const usedPins = new Set<string>();
+      const plaintextPins: Array<string | null> = [];
 
       for (let i = 0; i < studentData.length; i++) {
         const item = { ...studentData[i] };
@@ -320,6 +421,13 @@ router.post(
           batchEmails.add(emailLc);
         }
 
+        const pinPlan = await classpilotPinForStudentCreate(
+          parsed.data.classpilotPin,
+          autoGenerateClassPilotPins,
+          usedPins
+        );
+        plaintextPins.push(pinPlan.plaintextPin);
+
         toInsert.push({
           schoolId: res.locals.schoolId!,
           firstName: parsed.data.firstName,
@@ -332,10 +440,17 @@ router.post(
           homeroomId: parsed.data.homeroomId || null,
           dismissalType: parsed.data.dismissalType || "car",
           busRoute: parsed.data.busRoute || null,
+          ...(pinPlan.classpilotPinHash !== undefined ? { classpilotPinHash: pinPlan.classpilotPinHash } : {}),
         });
       }
 
       const created = await bulkCreateStudents(toInsert);
+      const generatedPins: GeneratedClassPilotPin[] = created
+        .map((student, index) => {
+          const pin = plaintextPins[index];
+          return pin ? generatedPinForStudent(student, pin) : null;
+        })
+        .filter((pin): pin is GeneratedClassPilotPin => Boolean(pin));
 
       // Auto-assign car numbers if school has GoPilot
       let autoAssigned: number | undefined;
@@ -355,6 +470,7 @@ router.post(
         errors: errors.length > 0 ? errors : undefined,
         total: studentData.length,
         autoAssigned,
+        generatedPins,
       });
     } catch (err) {
       next(err);
@@ -369,7 +485,7 @@ router.get(
   async (_req, res) => {
     res.setHeader("Content-Type", "text/csv");
     res.setHeader("Content-Disposition", "attachment; filename=students-template.csv");
-    return res.send("firstName,lastName,studentIdNumber,gradeLevel\n");
+    return res.send("firstName,lastName,email,studentIdNumber,gradeLevel,classpilotPin\n");
   }
 );
 
@@ -388,6 +504,10 @@ const importCsvHandler = async (req: any, res: any, next: any) => {
     const rules = await studentEmailRules(res.locals.schoolId!);
     const emailSets = await existingEmailSets(res.locals.schoolId!);
     const batchEmails = new Set<string>();
+    const autoGenerateClassPilotPins = await hasActiveClassPilotLicense(res.locals.schoolId!);
+    const usedPins = new Set<string>();
+    const plaintextPins: Array<string | null> = [];
+    let assignedPinCount = 0;
 
     for (let i = 0; i < rows.length; i++) {
       const raw = rows[i];
@@ -445,6 +565,22 @@ const importCsvHandler = async (req: any, res: any, next: any) => {
       const dismissalType = normalized["dismissaltype"] || normalized["dismissal"] || null;
       const busRoute =
         normalized["busroute"] || normalized["bus"] || normalized["bus#"] || null;
+      const classpilotPin =
+        normalized["classpilotpin"] ||
+        normalized["classpilotstudentpin"] ||
+        normalized["pin"] ||
+        null;
+      if (classpilotPin && !/^\d{4}$/.test(classpilotPin)) {
+        errors.push({ row: i + 1, error: "ClassPilot PIN must be 4 digits" });
+        continue;
+      }
+      const pinPlan = await classpilotPinForStudentCreate(
+        classpilotPin,
+        autoGenerateClassPilotPins,
+        usedPins
+      );
+      plaintextPins.push(pinPlan.plaintextPin);
+      if (pinPlan.plaintextPin) assignedPinCount++;
 
       toInsert.push({
         schoolId: res.locals.schoolId!,
@@ -456,10 +592,17 @@ const importCsvHandler = async (req: any, res: any, next: any) => {
         gradeLevel,
         dismissalType: dismissalType || "car",
         busRoute,
+        ...(pinPlan.classpilotPinHash !== undefined ? { classpilotPinHash: pinPlan.classpilotPinHash } : {}),
       });
     }
 
     const created = await bulkCreateStudents(toInsert);
+    const generatedPins: GeneratedClassPilotPin[] = created
+      .map((student, index) => {
+        const pin = plaintextPins[index];
+        return pin ? generatedPinForStudent(student, pin) : null;
+      })
+      .filter((pin): pin is GeneratedClassPilotPin => Boolean(pin));
 
     // Auto-assign car numbers if school has GoPilot
     let autoAssigned: number | undefined;
@@ -474,11 +617,27 @@ const importCsvHandler = async (req: any, res: any, next: any) => {
       }
     }
 
+    if (assignedPinCount > 0) {
+      await logAudit({
+        schoolId: res.locals.schoolId!,
+        userId: req.authUser?.id ?? null,
+        userEmail: req.authUser?.email,
+        userRole: res.locals.membershipRole,
+        action: "classpilot.pin.import",
+        entityType: "student",
+        metadata: {
+          pinCount: assignedPinCount,
+          importedCount: created.length,
+        },
+      });
+    }
+
     return res.status(201).json({
       imported: created.length,
       errors: errors.length > 0 ? errors : undefined,
       total: rows.length,
       autoAssigned,
+      generatedPins,
     });
   } catch (err) {
     next(err);
@@ -512,50 +671,205 @@ router.put(
       if (!Array.isArray(updates)) {
         return res.status(400).json({ error: "Array of updates required" });
       }
-      const results: unknown[] = [];
       const skipped: { id: string; error: string }[] = [];
       const rules = await studentEmailRules(res.locals.schoolId!);
-      for (const item of updates) {
-        if (item.id) {
-          // Verify each student belongs to the caller's school before mutating.
-          const existing = await getStudentById(item.id);
-          if (!existing || existing.schoolId !== res.locals.schoolId) continue;
-          // Guardrail: only validate when the email actually changes (not on
-          // resubmit), so a grade/dismissal bulk-edit of a legacy student isn't blocked.
-          const itemEmail = item.email ?? item.studentEmail;
-          if (isEmailChanging(itemEmail, existing.emailLc)) {
-            const emailErr = checkStudentEmail(itemEmail, rules);
-            if (emailErr) {
-              skipped.push({ id: item.id, error: emailErr.error });
-              continue;
-            }
-            // Uniqueness: don't let an email change collide with another
-            // student/staff in the school.
-            if (itemEmail) {
-              const taken = await studentEmailTaken(res.locals.schoolId!, String(itemEmail).toLowerCase(), item.id);
-              if (taken) {
-                skipped.push({ id: item.id, error: taken });
-                continue;
-              }
-            }
+      const updateItems = updates.filter((item): item is Record<string, unknown> & { id: string } => {
+        return Boolean(item && typeof item === "object" && "id" in item && item.id);
+      });
+      const updateIds = [...new Set(updateItems.map((item) => String(item.id)))];
+      const existingStudents = updateIds.length
+        ? await db
+            .select()
+            .from(studentsTable)
+            .where(
+              and(
+                eq(studentsTable.schoolId, res.locals.schoolId!),
+                inArray(studentsTable.id, updateIds)
+              )
+            )
+        : [];
+      const existingById = new Map(existingStudents.map((student) => [student.id, student]));
+      const preparedUpdates: Array<{
+        id: string;
+        data: Record<string, unknown>;
+        classpilotPin: string | null | undefined;
+      }> = [];
+
+      for (const item of updateItems) {
+        const id = String(item.id);
+        const existing = existingById.get(id);
+        if (!existing) continue;
+
+        // Guardrail: only validate when the email actually changes (not on
+        // resubmit), so a grade/dismissal bulk-edit of a legacy student isn't blocked.
+        const rawItemEmail = item.email ?? item.studentEmail;
+        const itemEmail = rawItemEmail == null ? rawItemEmail : String(rawItemEmail);
+        if (isEmailChanging(itemEmail, existing.emailLc)) {
+          const emailErr = checkStudentEmail(itemEmail, rules);
+          if (emailErr) {
+            skipped.push({ id, error: emailErr.error });
+            continue;
           }
-          try {
-            const updated = await updateStudent(item.id, item);
-            if (updated) results.push(updated);
-          } catch (err) {
-            if (isUniqueViolation(err)) {
-              skipped.push({ id: item.id, error: "Duplicate email, badge ID, or code." });
+          // Uniqueness: don't let an email change collide with another
+          // student/staff in the school.
+          if (itemEmail) {
+            const taken = await studentEmailTaken(res.locals.schoolId!, itemEmail.toLowerCase(), id);
+            if (taken) {
+              skipped.push({ id, error: taken });
               continue;
             }
-            throw err;
           }
         }
+        const normalized = normalizeStudentBody(item);
+        const { classpilotPin, ...safeItem } = normalized;
+        preparedUpdates.push({
+          id,
+          data: safeItem,
+          classpilotPin:
+            typeof classpilotPin === "string" || classpilotPin === null
+              ? classpilotPin
+              : undefined,
+        });
       }
+
+      const hashedUpdates = await mapWithConcurrency(
+        preparedUpdates,
+        CLASSPILOT_PIN_HASH_CONCURRENCY,
+        async (item) => ({
+          ...item,
+          data: {
+            ...item.data,
+            ...(await classpilotPinHashFromInput(item.classpilotPin)),
+          },
+        })
+      );
+
+      const results = await db.transaction(async (tx) => {
+        const rows: unknown[] = [];
+        for (const item of hashedUpdates) {
+          const [updated] = await tx
+            .update(studentsTable)
+            .set({ ...prepareStudentUpdateData(item.data), updatedAt: new Date() })
+            .where(
+              and(
+                eq(studentsTable.id, item.id),
+                eq(studentsTable.schoolId, res.locals.schoolId!)
+              )
+            )
+            .returning();
+          if (updated) rows.push(stripStudentCredentialHash(updated));
+        }
+        return rows;
+      });
+
+      const pinResetIds = preparedUpdates
+        .filter((item) => item.classpilotPin !== undefined)
+        .map((item) => item.id);
+      if (pinResetIds.length > 0) {
+        await logAudit({
+          schoolId: res.locals.schoolId!,
+          userId: req.authUser?.id ?? null,
+          userEmail: req.authUser?.email,
+          userRole: res.locals.membershipRole,
+          action: "classpilot.pin.bulk_update",
+          entityType: "student",
+          metadata: {
+            studentIds: pinResetIds,
+            resetCount: pinResetIds.length,
+          },
+        });
+      }
+
       return res.json({
         updated: results.length,
         students: results,
         skipped: skipped.length > 0 ? skipped : undefined,
       });
+    } catch (err) {
+      if (isUniqueViolation(err)) {
+        return res.status(409).json({
+          error: "Duplicate email, badge ID, or code.",
+          code: "STUDENT_DUPLICATE",
+        });
+      }
+      next(err);
+    }
+  }
+);
+
+// POST /api/students/classpilot-pins/bulk-generate - Generate 4-digit shared-login PINs
+router.post(
+  "/classpilot-pins/bulk-generate",
+  ...schoolContext,
+  requireRole("admin"),
+  async (req, res, next) => {
+    try {
+      const requestedIds = Array.isArray(req.body?.studentIds)
+        ? new Set(req.body.studentIds.map((id: unknown) => String(id)))
+        : null;
+      const requestedGrade = normalizeGradeLevel(req.body?.gradeLevel);
+      const onlyMissing = req.body?.onlyMissing !== false;
+      const students = await getStudentsBySchool(res.locals.schoolId!);
+      const eligible = students.filter((student) => {
+        if (student.status !== "active") return false;
+        if (requestedIds && !requestedIds.has(student.id)) return false;
+        if (requestedGrade && normalizeGradeLevel(student.gradeLevel) !== requestedGrade) return false;
+        if (onlyMissing && student.classpilotPinHash) return false;
+        return true;
+      });
+
+      const generatedPins = new Set<string>();
+      const pinPlans = eligible.map((student) => ({
+        student,
+        pin: randomFourDigitClassPilotPin(generatedPins),
+      }));
+      const hashedPlans = await mapWithConcurrency(
+        pinPlans,
+        CLASSPILOT_PIN_HASH_CONCURRENCY,
+        async (plan) => ({
+          ...plan,
+          classpilotPinHash: await hashClassPilotPin(plan.pin),
+        })
+      );
+
+      const generated = await db.transaction(async (tx) => {
+        const rows: Array<{ studentId: string; studentName: string; gradeLevel: string | null; pin: string }> = [];
+        for (const plan of hashedPlans) {
+          const [updated] = await tx
+            .update(studentsTable)
+            .set({ classpilotPinHash: plan.classpilotPinHash, updatedAt: new Date() })
+            .where(
+              and(
+                eq(studentsTable.id, plan.student.id),
+                eq(studentsTable.schoolId, res.locals.schoolId!)
+              )
+            )
+            .returning();
+          if (!updated) {
+            throw new Error("Could not update one or more student PINs");
+          }
+          rows.push(generatedPinForStudent(updated, plan.pin));
+        }
+        return rows;
+      });
+
+      await logAudit({
+        schoolId: res.locals.schoolId!,
+        userId: req.authUser?.id ?? null,
+        userEmail: req.authUser?.email,
+        userRole: res.locals.membershipRole,
+        action: "classpilot.pin.bulk_generate",
+        entityType: "student",
+        metadata: {
+          generatedCount: generated.length,
+          onlyMissing,
+          gradeLevel: requestedGrade || null,
+          selectedStudentCount: requestedIds?.size ?? null,
+          studentIds: generated.map((row) => row.studentId),
+        },
+      });
+
+      return res.json({ generated });
     } catch (err) {
       next(err);
     }
@@ -572,7 +886,7 @@ router.get("/:studentId", ...schoolContext, async (req, res, next) => {
     if (!(await canAccessStudentForRequest(req, res, student))) {
       return res.status(404).json({ error: "Student not found" });
     }
-    return res.json({ student });
+    return res.json({ student: stripStudentCredentialHash(student) });
   } catch (err) {
     next(err);
   }
@@ -661,7 +975,10 @@ router.put(
         }
       }
 
-      const updateData: Record<string, unknown> = { ...parsed.data };
+      const { classpilotPin: _classpilotPin, ...parsedUpdateData } = parsed.data;
+      const updateData: Record<string, unknown> = {
+        ...parsedUpdateData,
+      };
       if (parsed.data.email !== undefined) {
         updateData.emailLc = parsed.data.email?.toLowerCase() || null;
       }
@@ -674,7 +991,7 @@ router.put(
       }
 
       const student = await updateStudent(param(req, "studentId"), updateData);
-      return res.json({ student });
+      return res.json({ student: student ? stripStudentCredentialHash(student) : student });
     } catch (err) {
       if (isUniqueViolation(err)) {
         return res.status(409).json({
@@ -738,7 +1055,10 @@ router.patch(
         }
       }
 
-      const updateData: Record<string, unknown> = { ...parsed.data };
+      const { classpilotPin: _classpilotPin, ...parsedUpdateData } = parsed.data;
+      const updateData: Record<string, unknown> = {
+        ...parsedUpdateData,
+      };
       if (parsed.data.email !== undefined) {
         updateData.emailLc = parsed.data.email?.toLowerCase() || null;
       }
@@ -751,7 +1071,7 @@ router.patch(
       }
 
       const student = await updateStudent(param(req, "studentId"), updateData);
-      return res.json({ student });
+      return res.json({ student: student ? stripStudentCredentialHash(student) : student });
     } catch (err) {
       if (isUniqueViolation(err)) {
         return res.status(409).json({

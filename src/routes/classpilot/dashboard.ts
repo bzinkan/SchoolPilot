@@ -26,6 +26,10 @@ import {
 } from "../../services/storage.js";
 import { broadcastToStudentsLocal } from "../../realtime/ws-broadcast.js";
 import { publishWS } from "../../realtime/ws-redis.js";
+import {
+  effectiveSharedChromebookLoginMethod,
+  normalizeSharedChromebookLoginMethod,
+} from "../../services/classpilotSharedChromebook.js";
 
 const router = Router();
 
@@ -127,6 +131,9 @@ router.get("/settings", ...auth, async (req, res, next) => {
       blockedDomains: schoolSettings?.blockedDomains || [],
       maxTabsPerStudent: schoolSettings?.maxTabsPerStudent || null,
       aiSafetyEmailsEnabled: schoolSettings?.aiSafetyEmailsEnabled ?? true,
+      sharedChromebookSignInEnabled: !!schoolSettings?.sharedChromebookSignInEnabled,
+      sharedChromebookLoginMethod: effectiveSharedChromebookLoginMethod(schoolSettings),
+      sharedChromebookPinLoginEnabled: effectiveSharedChromebookLoginMethod(schoolSettings) === "name_pin",
       // Teacher's own blocked domains (for MySettings editable field)
       teacherBlockedDomains: (teacherSettings as any)?.blockedDomains || [],
       // School-wide blocked domains (for MySettings read-only display)
@@ -143,6 +150,7 @@ router.post("/settings", ...auth, async (req, res, next) => {
     const {
       maxTabsPerStudent, allowedDomains, blockedDomains, defaultFlightPathId,
       schoolName, retentionHours, ipAllowlist, aiSafetyEmailsEnabled, autoBlockUnsafeUrls,
+      sharedChromebookSignInEnabled, sharedChromebookLoginMethod, sharedChromebookPinLoginEnabled,
     } = req.body;
 
     // Teacher-specific settings
@@ -152,13 +160,22 @@ router.post("/settings", ...auth, async (req, res, next) => {
     if (blockedDomains !== undefined) data.blockedDomains = blockedDomains;
     if (defaultFlightPathId !== undefined) data.defaultFlightPathId = defaultFlightPathId;
 
-    const settings = await upsertTeacherSettings(req.authUser!.id, data);
-
     // School-wide settings — only when the admin settings page sends them.
     // The admin page sends schoolName/retentionHours/ipAllowlist/aiSafetyEmailsEnabled
     // which the teacher's MySettings page never includes.
     const isAdminSettingsRequest = schoolName !== undefined || retentionHours !== undefined
-      || ipAllowlist !== undefined || aiSafetyEmailsEnabled !== undefined || autoBlockUnsafeUrls !== undefined;
+      || ipAllowlist !== undefined || aiSafetyEmailsEnabled !== undefined || autoBlockUnsafeUrls !== undefined
+      || sharedChromebookSignInEnabled !== undefined || sharedChromebookLoginMethod !== undefined
+      || sharedChromebookPinLoginEnabled !== undefined;
+
+    if (isAdminSettingsRequest) {
+      const role = res.locals.membershipRole;
+      if (!req.authUser?.isSuperAdmin && role !== "admin" && role !== "school_admin") {
+        return res.status(403).json({ error: "Admin access required to update school settings" });
+      }
+    }
+
+    const settings = await upsertTeacherSettings(req.authUser!.id, data);
 
     if (isAdminSettingsRequest) {
       const schoolId = res.locals.schoolId!;
@@ -171,6 +188,21 @@ router.post("/settings", ...auth, async (req, res, next) => {
       if (maxTabsPerStudent !== undefined) schoolData.maxTabsPerStudent = maxTabsPerStudent || null;
       if (aiSafetyEmailsEnabled !== undefined) schoolData.aiSafetyEmailsEnabled = aiSafetyEmailsEnabled !== false;
       if (autoBlockUnsafeUrls !== undefined) schoolData.autoBlockUnsafeUrls = autoBlockUnsafeUrls !== false;
+      if (sharedChromebookSignInEnabled !== undefined) {
+        schoolData.sharedChromebookSignInEnabled = sharedChromebookSignInEnabled === true;
+        if (sharedChromebookSignInEnabled === true && sharedChromebookLoginMethod === undefined && sharedChromebookPinLoginEnabled === undefined) {
+          schoolData.sharedChromebookLoginMethod = "name_pin";
+          schoolData.sharedChromebookPinLoginEnabled = true;
+        }
+      }
+      if (sharedChromebookLoginMethod !== undefined || sharedChromebookPinLoginEnabled !== undefined) {
+        const method = normalizeSharedChromebookLoginMethod(
+          sharedChromebookLoginMethod,
+          sharedChromebookPinLoginEnabled === false ? "email_id" : "name_pin"
+        );
+        schoolData.sharedChromebookLoginMethod = method;
+        schoolData.sharedChromebookPinLoginEnabled = method === "name_pin";
+      }
 
       if (Object.keys(schoolData).length > 0) {
         await upsertSettings(schoolId, schoolData);

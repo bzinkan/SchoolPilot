@@ -283,6 +283,7 @@ function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false,
 
   const getStatusLabel = (status) => {
     if (isAbsent) return 'Absent';
+    if (student.loginState === 'not_logged_in') return 'Not logged in';
     switch (status) {
       case 'online':
         return 'Online';

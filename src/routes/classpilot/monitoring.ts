@@ -29,6 +29,13 @@ import {
 } from "../../services/studentEmailPolicy.js";
 import { logAudit } from "../../services/audit.js";
 import type { InsertStudent } from "../../schema/students.js";
+import { safeStudent, safeStudents } from "../../util/safeStudent.js";
+import {
+  generatedPinForStudent,
+  hashClassPilotPin,
+  randomFourDigitClassPilotPin,
+  type GeneratedClassPilotPin,
+} from "../../services/classpilotPins.js";
 
 const router = Router();
 
@@ -54,7 +61,7 @@ router.get("/students", ...auth, async (req, res, next) => {
     if (search) filters.search = search as string;
 
     const students = await searchStudents(schoolId, filters);
-    return res.json({ students });
+    return res.json({ students: safeStudents(students) });
   } catch (err) {
     next(err);
   }
@@ -91,7 +98,7 @@ router.get("/student-analytics/:studentId", ...auth, async (req, res, next) => {
     const activeSession = await getActiveSessionByStudent(studentId);
 
     return res.json({
-      student,
+      student: safeStudent(student),
       heartbeats,
       activeSession,
     });
@@ -129,7 +136,7 @@ router.get("/student-analytics/:studentId/usage", ...auth, async (req, res, next
 router.get("/roster/students", ...auth, async (req, res, next) => {
   try {
     const students = await getStudentsBySchool(res.locals.schoolId!);
-    return res.json({ students });
+    return res.json({ students: safeStudents(students) });
   } catch (err) {
     next(err);
   }
@@ -173,12 +180,14 @@ router.post("/roster/student", ...auth, async (req, res, next) => {
       }
     }
 
+    const pin = randomFourDigitClassPilotPin();
     const student = await createStudent({
       schoolId,
       firstName,
       lastName,
       email: normalizedEmail || null,
       gradeLevel: gradeLevel || null,
+      classpilotPinHash: await hashClassPilotPin(pin),
       status: "active",
     });
 
@@ -193,7 +202,10 @@ router.post("/roster/student", ...auth, async (req, res, next) => {
       entityName: `${firstName} ${lastName}`,
     });
 
-    return res.status(201).json({ student });
+    return res.status(201).json({
+      student: safeStudent(student),
+      generatedPins: [generatedPinForStudent(student, pin)],
+    });
   } catch (err) {
     if (isUniqueViolation(err)) {
       return res.status(409).json({
@@ -219,6 +231,8 @@ router.post("/roster/bulk", ...auth, requireRole("admin"), async (req, res, next
     const rules = await studentEmailRules(schoolId);
     const emailSets = await existingEmailSets(schoolId);
     const batchEmails = new Set<string>();
+    const usedPins = new Set<string>();
+    const plaintextPins: string[] = [];
 
     for (let i = 0; i < studentData.length; i++) {
       const s = studentData[i];
@@ -241,22 +255,29 @@ router.post("/roster/bulk", ...auth, requireRole("admin"), async (req, res, next
         }
         batchEmails.add(emailLc);
       }
+      const pin = randomFourDigitClassPilotPin(usedPins);
+      plaintextPins.push(pin);
       rows.push({
         schoolId,
         firstName: s.firstName,
         lastName: s.lastName,
         email: normalizedEmail || null,
         gradeLevel: s.gradeLevel || null,
+        classpilotPinHash: await hashClassPilotPin(pin),
         status: "active" as const,
       });
     }
 
     const created = await bulkCreateStudents(rows);
+    const generatedPins: GeneratedClassPilotPin[] = created.map((student, index) =>
+      generatedPinForStudent(student, plaintextPins[index]!)
+    );
     return res.json({
       created: created.length,
-      students: created,
+      students: safeStudents(created),
       errors: errors.length > 0 ? errors : undefined,
       total: studentData.length,
+      generatedPins,
     });
   } catch (err) {
     if (isUniqueViolation(err)) {
@@ -291,7 +312,7 @@ router.patch("/students/:studentId", ...auth, async (req, res, next) => {
     if (!updated) {
       return res.status(404).json({ error: "Student not found" });
     }
-    return res.json({ student: updated });
+    return res.json({ student: updated ? safeStudent(updated) : updated });
   } catch (err) {
     next(err);
   }

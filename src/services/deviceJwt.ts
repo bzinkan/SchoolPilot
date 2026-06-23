@@ -11,6 +11,7 @@ export interface StudentTokenPayload {
   studentId: string;
   deviceId: string;
   schoolId: string;
+  sessionId: string;
   studentEmail?: string;
   iat?: number;
   exp?: number;
@@ -20,6 +21,7 @@ export function createStudentToken(payload: {
   studentId: string;
   deviceId: string;
   schoolId: string;
+  sessionId: string;
   studentEmail?: string;
 }): string {
   return jwt.sign(
@@ -27,6 +29,7 @@ export function createStudentToken(payload: {
       studentId: payload.studentId,
       deviceId: payload.deviceId,
       schoolId: payload.schoolId,
+      sessionId: payload.sessionId,
       studentEmail: payload.studentEmail,
     },
     STUDENT_TOKEN_SECRET,
