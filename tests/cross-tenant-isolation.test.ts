@@ -153,10 +153,17 @@ describe("cross-school isolation", () => {
   });
 
   it("getGroupsByTeacherAndSchool partitions a teacher's groups by school", async () => {
-    await inSchool(schoolA.id, () => createGroup({ schoolId: schoolA.id, teacherId: teacher.id, name: `${TAG}_grpA2` } as any));
-    await inSchool(schoolB.id, () => createGroup({ schoolId: schoolB.id, teacherId: teacher.id, name: `${TAG}_grpB` } as any));
+    const groupA = await inSchool(schoolA.id, () =>
+      createGroup({ schoolId: schoolA.id, teacherId: teacher.id, name: `${TAG}_grpA2` } as any)
+    );
+    const groupB = await inSchool(schoolB.id, () =>
+      createGroup({ schoolId: schoolB.id, teacherId: teacher.id, name: `${TAG}_grpB` } as any)
+    );
     const inA = await inSchool(schoolA.id, () => getGroupsByTeacherAndSchool(teacher.id, schoolA.id));
     const inB = await inSchool(schoolB.id, () => getGroupsByTeacherAndSchool(teacher.id, schoolB.id));
+    assert.ok(inA.some((x: any) => x.id === groupA.id));
+    assert.ok(inB.some((x: any) => x.id === groupB.id));
+    assert.ok(!inA.some((x: any) => x.id === groupB.id));
     assert.ok(inA.every((x: any) => x.schoolId === schoolA.id));
     assert.ok(inB.every((x: any) => x.schoolId === schoolB.id));
     assert.ok(!inA.some((x: any) => x.schoolId === schoolB.id));

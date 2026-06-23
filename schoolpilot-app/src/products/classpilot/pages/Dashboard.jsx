@@ -194,6 +194,13 @@ export default function Dashboard() {
     select: (data) => Array.isArray(data) ? data : data?.groups ?? [],
   });
 
+  const { data: adminTeachingGroups = [], isLoading: adminTeachingGroupsLoading } = useQuery({
+    queryKey: ['/api/teacher/groups', 'mine'],
+    queryFn: () => apiRequest('GET', '/teacher/groups?scope=mine'),
+    select: (data) => Array.isArray(data) ? data : data?.groups ?? [],
+    enabled: isAdmin,
+  });
+
   const { data: allActiveSessions = [] } = useQuery({
     queryKey: ['/api/sessions/all'],
     queryFn: () => apiRequest('GET', '/sessions/all'),
@@ -1206,6 +1213,42 @@ export default function Dashboard() {
                       </button>
                     </>
                   )}
+                  {!activeSession && (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="default"
+                          size="sm"
+                          disabled={adminTeachingGroupsLoading || adminTeachingGroups.length === 0 || startSessionMutation.isPending}
+                          title={adminTeachingGroupsLoading ? "Loading your classes" : adminTeachingGroups.length === 0 ? "No classes assigned to you" : "Choose a class to teach"}
+                          data-testid="button-admin-start-session"
+                        >
+                          <Plus className="h-4 w-4 mr-2" />
+                          Teach Class
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-64">
+                        <DropdownMenuLabel>Your Classes</DropdownMenuLabel>
+                        <DropdownMenuSeparator />
+                        {adminTeachingGroups.map((group) => (
+                          <DropdownMenuItem
+                            key={group.id}
+                            onSelect={() => startSessionMutation.mutate(group.id)}
+                            data-testid={`menu-item-admin-teach-${group.id}`}
+                          >
+                            <div className="flex flex-col">
+                              <span className="font-medium">{group.name}</span>
+                              {(group.gradeLevel || group.periodLabel) && (
+                                <span className="text-xs text-muted-foreground">
+                                  {[group.periodLabel, group.gradeLevel ? `Grade ${group.gradeLevel}` : null].filter(Boolean).join(" · ")}
+                                </span>
+                              )}
+                            </div>
+                          </DropdownMenuItem>
+                        ))}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  )}
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <button className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${observedSession ? 'bg-slate-700 border-slate-600 text-slate-200' : 'bg-transparent border-slate-600 text-slate-400 hover:bg-slate-800'}`} data-testid="button-admin-observe">
@@ -1241,13 +1284,6 @@ export default function Dashboard() {
                           })}
                         </>
                       )}
-                      <DropdownMenuSeparator />
-                      <DropdownMenuLabel className="text-xs text-muted-foreground font-normal">Start your own class</DropdownMenuLabel>
-                      {!activeSession && groups.filter(g => g.teacherId === currentUser?.id || g.teacherId === null).map((group) => (
-                        <DropdownMenuCheckboxItem key={`start-${group.id}`} onSelect={() => startSessionMutation.mutate(group.id)} data-testid={`menu-item-admin-start-${group.id}`}>
-                          <Plus className="h-4 w-4 mr-2 text-green-600" /><span>{group.name}</span>
-                        </DropdownMenuCheckboxItem>
-                      ))}
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </>
