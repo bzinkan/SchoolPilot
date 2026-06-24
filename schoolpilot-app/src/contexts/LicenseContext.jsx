@@ -31,8 +31,9 @@ export function LicenseProvider({ children }) {
     if (hasGoPilot && gopilotRole === 'parent') {
       roleBasedDefaultPath = '/gopilot/parent';
     }
-    // Teachers with GoPilot (regardless of which product has priority) go to teacher view
-    else if (hasGoPilot && !isAdmin && gopilotRole === 'teacher') {
+    // Teachers default into GoPilot only when GoPilot is the selected product.
+    // Shared-product schools may have ClassPilot teachers without GoPilot homerooms.
+    else if (hasGoPilot && defaultProduct === 'GOPILOT' && !isAdmin && gopilotRole === 'teacher') {
       roleBasedDefaultPath = '/gopilot/teacher';
     }
 
