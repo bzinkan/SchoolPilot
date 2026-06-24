@@ -231,14 +231,6 @@ export default function Dashboard() {
     effectiveSessionIdRef.current = effectiveSession?.id || null;
   }, [effectiveSession?.id]);
 
-  const { data: recentCommands = [] } = useQuery({
-    queryKey: ['/api/commands/recent', effectiveSession?.id],
-    queryFn: () => apiRequest('GET', `/commands/recent?limit=6&teachingSessionId=${encodeURIComponent(effectiveSession.id)}`),
-    select: (data) => data?.commands ?? [],
-    enabled: !!effectiveSession,
-    refetchInterval: 5000,
-  });
-
   const { data: activeClassroomStates = [] } = useQuery({
     queryKey: ['/api/commands/active-state', effectiveSession?.id],
     queryFn: () => apiRequest('GET', `/commands/active-state?teachingSessionId=${encodeURIComponent(effectiveSession.id)}`),
@@ -443,9 +435,6 @@ export default function Dashboard() {
                 queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
                 invalidateTimeoutRef.current = null;
               }, 300);
-            }
-            if (message.type === 'classpilot-command-update') {
-              queryClient.invalidateQueries({ queryKey: ['/api/commands/recent'], exact: false });
             }
             if (message.type === 'answer') {
               webrtc.handleAnswer(message.from, message.sdp);
@@ -1366,20 +1355,6 @@ export default function Dashboard() {
     sendMessageMutation.mutate({ message: sendMessageText.trim() });
   };
 
-  const handleRetryCommand = async (command) => {
-    const retryStudentIds = (command.targets || [])
-      .filter((target) => target.status === 'failed' || target.status === 'unavailable')
-      .map((target) => target.studentId);
-    if (retryStudentIds.length === 0) return;
-    try {
-      const data = await postClassroomCommand(command.commandType, command.commandPayload || {}, { studentIds: retryStudentIds });
-      toast({ title: "Retry Sent", description: data.message });
-      queryClient.invalidateQueries({ queryKey: ['/api/commands/recent'], exact: false });
-    } catch (error) {
-      toast({ variant: "destructive", title: "Retry Failed", description: error.message });
-    }
-  };
-
   const markMessageRead = (messageId) => { setStudentMessages(prev => prev.map(msg => msg.id === messageId ? { ...msg, read: true } : msg)); };
 
   const dismissMessage = async (messageId) => {
@@ -1825,48 +1800,6 @@ export default function Dashboard() {
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
-          </div>
-        )}
-
-        {((isTeacher && activeSession) || (isAdmin && isAdminTeaching)) && recentCommands.length > 0 && (
-          <div className="mb-8 rounded-lg border bg-card">
-            <div className="flex items-center justify-between px-4 py-3 border-b">
-              <div className="flex items-center gap-2 text-sm font-semibold">
-                <History className="h-4 w-4 text-muted-foreground" />Recent Commands
-              </div>
-              <span className="text-xs text-muted-foreground">Per-student results</span>
-            </div>
-            <div className="divide-y">
-              {recentCommands.map((command) => {
-                const retryCount = (command.targets || []).filter((target) => target.status === 'failed' || target.status === 'unavailable').length;
-                return (
-                  <div key={command.id} className="flex items-center justify-between gap-3 px-4 py-3">
-                    <div className="min-w-0">
-                      <div className="text-sm font-medium truncate">{command.message || command.commandType}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {command.summary?.sent || 0} sent · {command.summary?.completed || 0} completed · {command.summary?.unavailable || 0} unavailable · {command.summary?.failed || 0} failed
-                      </div>
-                      <div className="mt-1 flex flex-wrap gap-1">
-                        {(command.targets || []).slice(0, 4).map((target) => {
-                          const studentName = students.find((student) => student.studentId === target.studentId)?.studentName || target.studentId;
-                          return (
-                            <Badge key={target.id} variant={target.status === 'failed' || target.status === 'unavailable' ? 'destructive' : 'secondary'} className="text-[10px] font-normal">
-                              {studentName}: {target.status}
-                            </Badge>
-                          );
-                        })}
-                        {(command.targets || []).length > 4 && <Badge variant="outline" className="text-[10px] font-normal">+{command.targets.length - 4}</Badge>}
-                      </div>
-                    </div>
-                    {retryCount > 0 && (
-                      <Button size="sm" variant="outline" onClick={() => handleRetryCommand(command)} data-testid={`button-retry-command-${command.id}`}>
-                        <RotateCcw className="h-3 w-3 mr-1" />Retry {retryCount}
-                      </Button>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
           </div>
         )}
 
