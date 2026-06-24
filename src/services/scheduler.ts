@@ -17,6 +17,8 @@ import {
 import { buildAndSendSessionSummary } from "../routes/classpilot/sessions.js";
 import { broadcastToTeachersLocal } from "../realtime/ws-broadcast.js";
 import { runSecurityChecks } from "./securityMonitor.js";
+import { runWithTenantContext } from "../middleware/tenantContext.js";
+import { broadcastFabStateToSessionRoster, type FabStateReason } from "./classpilotFab.js";
 import db from "../db.js";
 import { schedulerDb, schedulerPool } from "./schedulerDb.js";
 import { schools, productLicenses } from "../schema/core.js";
@@ -38,6 +40,20 @@ import { sendEmail } from "./email.js";
 
 let io: SocketServer | null = null;
 let intervalId: NodeJS.Timeout | null = null;
+
+async function broadcastScheduledFabState(
+  schoolId: string,
+  session: { id: string; groupId: string },
+  reason: FabStateReason
+): Promise<void> {
+  try {
+    await runWithTenantContext({ schoolId }, () =>
+      broadcastFabStateToSessionRoster({ schoolId, session, reason })
+    );
+  } catch (err) {
+    console.warn(`[ClassPilot] Failed to broadcast FAB ${reason} for session ${session.id}:`, err);
+  }
+}
 let lastRollupHour = -1;
 let lastPurgeHour = -1;
 let heavyJobRunning = false; // Mutex: prevent rollup and purge from running concurrently
@@ -266,6 +282,7 @@ async function autoEndStaleClassPilotSessions() {
       if (shouldEnd) {
         const session = await endTeachingSession(s.sessionId, schedulerDb);
         await clearClasspilotActiveHandsForSession(s.schoolId, s.sessionId, schedulerDb);
+        await broadcastScheduledFabState(s.schoolId, { id: s.sessionId, groupId: s.groupId }, "session-ended");
         console.log(`[ClassPilot] Auto-ended stale session ${s.sessionId} for teacher ${s.teacherId} (${reason}, age: ${ageHours.toFixed(1)}h)`);
 
         // Send session summary email (same as manual/scheduled end)
@@ -731,11 +748,13 @@ async function autoStartClassBlocks() {
         if (existingSession) {
           await endTeachingSession(existingSession.id, schedulerDb);
           await clearClasspilotActiveHandsForSession(group.schoolId, existingSession.id, schedulerDb);
+          await broadcastScheduledFabState(group.schoolId, existingSession, "session-replaced");
           console.log(`[ClassPilot] Auto-ended previous session for teacher ${group.teacherId} before starting "${group.name}"`);
         }
 
         // Create new session
-        await createTeachingSession({ groupId: group.id, teacherId: group.teacherId }, schedulerDb);
+        const session = await createTeachingSession({ groupId: group.id, teacherId: group.teacherId }, schedulerDb);
+        await broadcastScheduledFabState(group.schoolId, session, "session-started");
         console.log(`[ClassPilot] Auto-started session for "${group.name}" (teacher ${group.teacherId}, school ${school.id})`);
       }
     }
@@ -778,6 +797,7 @@ async function autoEndClassBlocks() {
       for (const group of readyGroups) {
         const session = await endTeachingSession(group.sessionId, schedulerDb);
         await clearClasspilotActiveHandsForSession(school.id, group.sessionId, schedulerDb);
+        await broadcastScheduledFabState(school.id, { id: group.sessionId, groupId: group.id }, "session-ended");
         console.log(`[ClassPilot] Auto-ended session for "${group.name}" (teacher ${group.teacherId}, school ${school.id})`);
 
         // Send session summary email (same as manual end)

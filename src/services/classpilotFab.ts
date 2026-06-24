@@ -1,7 +1,11 @@
+import { randomUUID } from "crypto";
 import type { TeachingSession } from "../schema/classpilot.js";
 import type { Student } from "../schema/students.js";
+import { sendToDeviceLocal } from "../realtime/ws-broadcast.js";
+import { publishWS } from "../realtime/ws-redis.js";
 import {
   getActiveHandsForStudent,
+  getActiveStudentSessionsForStudents,
   getActiveTeachingSessionsForStudent,
   getGroupStudents,
   getSessionSettings,
@@ -11,8 +15,10 @@ import {
 } from "./storage.js";
 
 export type FabFeature = "chat" | "hand";
+export type FabStateReason = "session-started" | "session-ended" | "session-replaced";
 
 export const FAB_HAND_TTL_MS = 12 * 60 * 60 * 1000;
+const FAB_STATE_BUILD_CONCURRENCY = 8;
 
 export class FabContractError extends Error {
   status: number;
@@ -138,4 +144,87 @@ export async function getSessionStudentDeviceIds(session: TeachingSession): Prom
     devices.forEach((device) => deviceIds.add(device.deviceId));
   }
   return [...deviceIds];
+}
+
+export async function broadcastFabStateToSessionRoster(options: {
+  schoolId: string;
+  session: Pick<TeachingSession, "id" | "groupId">;
+  reason: FabStateReason;
+}): Promise<{ studentCount: number; deviceCount: number }> {
+  try {
+    const roster = await getGroupStudents(options.session.groupId);
+    const studentIds = [...new Set(roster.map((row) => row.studentId).filter(Boolean))];
+    if (studentIds.length === 0) {
+      return { studentCount: 0, deviceCount: 0 };
+    }
+
+    const activeStudentSessions = await getActiveStudentSessionsForStudents(studentIds);
+    const activeDevicesByStudent = new Map<string, Set<string>>();
+    for (const studentSession of activeStudentSessions) {
+      const existing = activeDevicesByStudent.get(studentSession.studentId) ?? new Set<string>();
+      existing.add(studentSession.deviceId);
+      activeDevicesByStudent.set(studentSession.studentId, existing);
+    }
+
+    const studentsWithDevices = studentIds
+      .map((studentId) => ({
+        studentId,
+        deviceIds: [...(activeDevicesByStudent.get(studentId) ?? [])],
+      }))
+      .filter(({ deviceIds }) => deviceIds.length > 0);
+
+    const studentFabStates: Array<{
+      studentId: string;
+      deviceIds: string[];
+      fab: Awaited<ReturnType<typeof buildStudentFabState>>;
+    }> = [];
+
+    for (let i = 0; i < studentsWithDevices.length; i += FAB_STATE_BUILD_CONCURRENCY) {
+      const batch = studentsWithDevices.slice(i, i + FAB_STATE_BUILD_CONCURRENCY);
+      const batchStates = await Promise.all(
+        batch.map(async ({ studentId, deviceIds }) => {
+          try {
+            const fab = await buildStudentFabState(options.schoolId, studentId);
+            return { studentId, deviceIds, fab };
+          } catch (error) {
+            console.warn(`[FAB] Failed to build lifecycle state for student ${studentId}:`, error);
+            return null;
+          }
+        })
+      );
+      for (const state of batchStates) {
+        if (state) {
+          studentFabStates.push(state);
+        }
+      }
+    }
+
+    let deviceCount = 0;
+    const publishPromises: Promise<void>[] = [];
+    for (const { deviceIds, fab } of studentFabStates) {
+      for (const deviceId of deviceIds) {
+        const payload = {
+          type: "remote-control",
+          _msgId: randomUUID(),
+          command: {
+            type: "fab-state",
+            data: {
+              sessionId: options.session.id,
+              reason: options.reason,
+              ...fab,
+            },
+          },
+        };
+        sendToDeviceLocal(options.schoolId, deviceId, payload);
+        publishPromises.push(publishWS({ kind: "device", schoolId: options.schoolId, deviceId }, payload));
+        deviceCount++;
+      }
+    }
+    await Promise.all(publishPromises);
+
+    return { studentCount: studentIds.length, deviceCount };
+  } catch (error) {
+    console.warn(`[FAB] Failed to broadcast ${options.reason} state for session ${options.session.id}:`, error);
+    return { studentCount: 0, deviceCount: 0 };
+  }
 }
