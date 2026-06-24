@@ -16,6 +16,24 @@ import { useAbsentStudents } from '../../../hooks/useAbsentStudents';
 import { AttendancePanel } from '../../../components/AttendancePanel';
 import { Badge, Button, Card } from '../components/ui';
 
+const normalizeChangeRequest = (change, fallbackStudentName = '') => ({
+  id: change.id,
+  studentId: change.studentId,
+  studentName: change.student
+    ? `${change.student.firstName} ${change.student.lastName}`.trim()
+    : fallbackStudentName,
+  fromType: change.fromType,
+  toType: change.toType,
+  busRoute: change.busRoute,
+  note: change.note,
+  status: change.status || 'pending',
+  acknowledgedAt: change.acknowledgedAt,
+  acknowledgedBy: change.acknowledgedBy,
+  reviewedAt: change.reviewedAt,
+  reviewedBy: change.reviewedBy,
+  createdAt: change.createdAt,
+});
+
 // Main Teacher View Component
 export default function TeacherView() {
   const { currentSchool, user, logout } = useGoPilotAuth();
@@ -39,6 +57,7 @@ export default function TeacherView() {
   const [showNotifications, setShowNotifications] = useState(false);
   const [showNoteFor, setShowNoteFor] = useState(null);
   const [unreadChangeCount, setUnreadChangeCount] = useState(0);
+  const [changeActionId, setChangeActionId] = useState(null);
   const [showOverrideFor, setShowOverrideFor] = useState(null);
   const [overrideType, setOverrideType] = useState('');
   const [overrideReason, setOverrideReason] = useState('');
@@ -117,16 +136,7 @@ export default function TeacherView() {
           const changesRes = await api.get(`/sessions/${sessionData.id}/changes`);
           if (!cancelled) {
             const changes = changesRes.data?.changes || [];
-            setChangeRequests(changes.map(c => ({
-              id: c.id,
-              studentId: c.studentId,
-              studentName: c.student ? `${c.student.firstName} ${c.student.lastName}` : '',
-              fromType: c.fromType,
-              toType: c.toType,
-              note: c.note,
-              status: c.status || 'pending',
-              createdAt: c.createdAt,
-            })));
+            setChangeRequests(changes.map(c => normalizeChangeRequest(c)));
           }
         } catch { /* non-critical */ }
 
@@ -179,7 +189,7 @@ export default function TeacherView() {
       setStudents((prev) =>
         prev.map((s) =>
           s.id === studentId
-            ? { ...s, queueStatus: 'waiting', queueId: queueId || s.queueId, guardian: guardianName, checkInMethod }
+            ? { ...s, queueStatus: 'waiting', queueId: queueId || s.queueId, guardian: guardianName || s.guardian, checkInMethod: checkInMethod || s.checkInMethod }
             : s
         )
       );
@@ -245,8 +255,8 @@ export default function TeacherView() {
               dismissedAt: q.dismissed_at ? new Date(q.dismissed_at) : null,
               releasedAt: q.released_at ? new Date(q.released_at) : null,
               zone: q.zone || null,
-              guardian: q.guardian_name || null,
-              checkInMethod: q.check_in_method || null,
+              guardian: q.guardian_name || q.guardianName || s.guardian || null,
+              checkInMethod: q.check_in_method || q.checkInMethod || s.checkInMethod || null,
               holdReason: q.hold_reason || null,
             };
           })
@@ -262,17 +272,19 @@ export default function TeacherView() {
       }
     };
 
+    const upsertChangeRequest = ({ change, studentName }) => {
+      const normalized = normalizeChangeRequest(change, studentName || '');
+      setChangeRequests(prev => {
+        const idx = prev.findIndex(cr => cr.id === normalized.id);
+        if (idx === -1) return [normalized, ...prev];
+        const next = [...prev];
+        next[idx] = { ...next[idx], ...normalized, studentName: normalized.studentName || next[idx].studentName };
+        return next;
+      });
+    };
+
     const handleChangeRequested = ({ change, studentName }) => {
-      setChangeRequests(prev => [...prev, {
-        id: change.id,
-        studentId: change.studentId,
-        studentName: studentName || '',
-        fromType: change.fromType,
-        toType: change.toType,
-        note: change.note,
-        status: change.status || 'pending',
-        createdAt: change.createdAt,
-      }]);
+      upsertChangeRequest({ change, studentName });
       setUnreadChangeCount(prev => prev + 1);
     };
 
@@ -289,6 +301,8 @@ export default function TeacherView() {
     socket.on('queue:updated', handleQueueUpdated);
     socket.on('dismissal:override', handleOverride);
     socket.on('change:requested', handleChangeRequested);
+    socket.on('change:acknowledged', upsertChangeRequest);
+    socket.on('change:resolved', upsertChangeRequest);
     socket.on('student:typeUpdated', handleTypeUpdated);
 
     return () => {
@@ -299,6 +313,8 @@ export default function TeacherView() {
       socket.off('queue:updated', handleQueueUpdated);
       socket.off('dismissal:override', handleOverride);
       socket.off('change:requested', handleChangeRequested);
+      socket.off('change:acknowledged', upsertChangeRequest);
+      socket.off('change:resolved', upsertChangeRequest);
       socket.off('student:typeUpdated', handleTypeUpdated);
     };
   }, [socket, session?.id, homeroom?.id]);
@@ -374,6 +390,19 @@ export default function TeacherView() {
       setOverrideReason('');
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to change dismissal type');
+    }
+  };
+
+  const handleAcknowledgeChangeRequest = async (changeId) => {
+    setChangeActionId(changeId);
+    try {
+      const res = await api.post(`/changes/${changeId}/acknowledge`);
+      const updated = normalizeChangeRequest(res.data?.change || {}, '');
+      setChangeRequests(prev => prev.map(cr => cr.id === changeId ? { ...cr, ...updated, studentName: updated.studentName || cr.studentName } : cr));
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to acknowledge request');
+    } finally {
+      setChangeActionId(null);
     }
   };
 
@@ -528,21 +557,38 @@ export default function TeacherView() {
                       <div className="p-4 text-center text-sm text-gray-400">No change requests</div>
                     ) : (
                       changeRequests.map((cr, i) => (
-                        <div key={cr.id || i} className={`p-3 border-b last:border-b-0 ${cr.status === 'approved' ? 'opacity-60' : ''} hover:bg-gray-50`}>
+                        <div key={cr.id || i} className={`p-3 border-b last:border-b-0 ${cr.status !== 'pending' ? 'opacity-70' : ''} hover:bg-gray-50`}>
                           <div className="flex items-center justify-between">
                             <p className="text-sm font-medium flex items-center gap-1.5">
                               {cr.studentName}
                               {cr.status === 'approved' && <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />}
+                              {cr.status === 'rejected' && <X className="w-3.5 h-3.5 text-red-500" />}
                             </p>
                             <span className="text-xs text-gray-400">{cr.createdAt ? new Date(cr.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</span>
                           </div>
-                          <p className="text-xs text-gray-500 mt-0.5">
-                            <span className="capitalize">{cr.fromType}</span> → <span className="capitalize">{cr.toType}</span>
-                          </p>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <p className="text-xs text-gray-500">
+                              <span className="capitalize">{cr.fromType}</span> → <span className="capitalize">{cr.toType}</span>
+                              {cr.busRoute && <span> #{cr.busRoute}</span>}
+                            </p>
+                            <span className={`text-[10px] uppercase px-1.5 py-0.5 rounded ${cr.status === 'approved' ? 'bg-green-100 text-green-700' : cr.status === 'rejected' ? 'bg-red-100 text-red-700' : cr.acknowledgedAt ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'}`}>
+                              {cr.status === 'pending' && cr.acknowledgedAt ? 'Acknowledged' : cr.status}
+                            </span>
+                          </div>
                           {cr.note && (
                             <p className="text-xs bg-amber-50 text-amber-800 rounded px-2 py-1 mt-1">
                               <MessageSquare className="w-3 h-3 inline mr-1" />{cr.note}
                             </p>
+                          )}
+                          {cr.status === 'pending' && !cr.acknowledgedAt && (
+                            <button
+                              type="button"
+                              disabled={changeActionId === cr.id}
+                              onClick={() => handleAcknowledgeChangeRequest(cr.id)}
+                              className="mt-2 px-2 py-1 text-xs rounded bg-blue-50 text-blue-700 hover:bg-blue-100 disabled:opacity-60"
+                            >
+                              Acknowledge
+                            </button>
                           )}
                         </div>
                       ))

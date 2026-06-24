@@ -13,6 +13,7 @@ import {
   getStudentByEmail,
   getUserByEmail,
   getMembershipByUserAndSchool,
+  updateMembershipForSchool,
   getProductLicenses,
   getSchoolById,
   normalizeDomain,
@@ -638,6 +639,7 @@ const importStaffHandler = async (req: any, res: any, next: any) => {
     const fromGoPilotSetup = req.headers["x-gopilot-setup"] === "true" || req.body?.source === "gopilot_setup";
     const membershipRole = fromGoPilotSetup && staffRole === "office_staff" ? "teacher" : staffRole;
     const gopilotRole = fromGoPilotSetup && staffRole === "office_staff" ? "office_staff" : null;
+    const shouldNormalizeExistingOffice = fromGoPilotSetup && staffRole === "office_staff";
     const errors: string[] = [];
     if (!["admin", "school_admin", "teacher", "office_staff"].includes(staffRole)) {
       return res.status(400).json({ error: "Invalid staff role", code: "INVALID_STAFF_ROLE" });
@@ -654,6 +656,7 @@ const importStaffHandler = async (req: any, res: any, next: any) => {
       const filterIds = userIds ? new Set(userIds) : null;
 
       let imported = 0;
+      let updated = 0;
       let skipped = 0;
 
       for (const u of googleUsers) {
@@ -681,7 +684,22 @@ const importStaffHandler = async (req: any, res: any, next: any) => {
         }
 
         const existing = await getMembershipByUserAndSchool(user.id, schoolId);
-        if (!existing) {
+        if (existing && shouldNormalizeExistingOffice) {
+          try {
+            await updateMembershipForSchool(existing.id, schoolId, {
+              role: membershipRole,
+              gopilotRole,
+              status: "active",
+            });
+            updated++;
+          } catch (err: any) {
+            skipped++;
+            errors.push(`${email}: ${err?.code || "MEMBERSHIP_UPDATE_FAILED"}: ${err?.message || "Could not update staff membership."}`);
+            continue;
+          }
+        } else if (existing) {
+          skipped++;
+        } else {
           try {
             await createMembership({
               userId: user.id,
@@ -699,8 +717,6 @@ const importStaffHandler = async (req: any, res: any, next: any) => {
 
         if (createdUser) {
           imported++;
-        } else {
-          skipped++;
         }
       }
 
@@ -712,11 +728,11 @@ const importStaffHandler = async (req: any, res: any, next: any) => {
         scope: orgUnitPath || "all",
         totalFound: googleUsers.length,
         imported,
-        updated: 0,
+        updated,
         skipped,
         failures: errors,
       });
-      return res.json({ imported, skipped, updated: skipped, errors, total: imported + skipped });
+      return res.json({ imported, skipped, updated, errors, total: googleUsers.length });
     }
 
     // Direct user array import
@@ -756,7 +772,22 @@ const importStaffHandler = async (req: any, res: any, next: any) => {
       }
 
       const existing = await getMembershipByUserAndSchool(user.id, schoolId);
-      if (!existing) {
+      if (existing && shouldNormalizeExistingOffice) {
+        try {
+          await updateMembershipForSchool(existing.id, schoolId, {
+            role: membershipRole,
+            gopilotRole,
+            status: "active",
+          });
+        } catch (err: any) {
+          skipped++;
+          if (!createdUser) updated--;
+          errors.push(`${email}: ${err?.code || "MEMBERSHIP_UPDATE_FAILED"}: ${err?.message || "Could not update staff membership."}`);
+          continue;
+        }
+      } else if (existing) {
+        // Existing non-GoPilot-setup staff import preserves the current membership role.
+      } else {
         try {
           await createMembership({
             userId: user.id,

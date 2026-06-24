@@ -75,10 +75,11 @@ async function getAttendanceScope(req: any, res: any): Promise<AttendanceScope |
   const role = await getRequestGoPilotRole(req, res);
   if (isGoPilotManager(role)) return { kind: "all" };
   if (role === "teacher") {
-    return {
-      kind: "homerooms",
-      homeroomIds: await getTeacherHomeroomIds(req.authUser!.id, schoolId),
-    };
+    const homeroomIds = await getTeacherHomeroomIds(req.authUser!.id, schoolId);
+    if (homeroomIds.size > 0) {
+      return { kind: "homerooms", homeroomIds };
+    }
+    return { kind: "all" };
   }
 
   return null;

@@ -1552,11 +1552,17 @@ export async function callQueueEntry(
 ): Promise<DismissalQueueEntry | undefined> {
   const [entry] = await db
     .update(dismissalQueue)
-    .set({ status: "called", zone, calledAt: new Date() })
+    .set({
+      status: "called",
+      zone,
+      calledAt: new Date(),
+      holdReason: null,
+      delayedUntil: null,
+    })
     .where(
       and(
         eq(dismissalQueue.id, id),
-        inArray(dismissalQueue.status, ["waiting", "called"])
+        inArray(dismissalQueue.status, ["waiting", "called", "held", "delayed"])
       )
     )
     .returning();
@@ -1568,14 +1574,20 @@ export async function callNextBatch(
   count: number,
   zone: string | null
 ): Promise<DismissalQueueEntry[]> {
-  // Get IDs of next waiting entries
+  // Get IDs of next waiting entries, plus delayed entries whose delay expired.
   const waiting = await db
     .select({ id: dismissalQueue.id })
     .from(dismissalQueue)
     .where(
       and(
         eq(dismissalQueue.sessionId, sessionId),
-        eq(dismissalQueue.status, "waiting")
+        or(
+          eq(dismissalQueue.status, "waiting"),
+          and(
+            eq(dismissalQueue.status, "delayed"),
+            sql`${dismissalQueue.delayedUntil} <= NOW()`
+          )
+        )
       )
     )
     .orderBy(dismissalQueue.position)
@@ -1586,7 +1598,13 @@ export async function callNextBatch(
   const ids = waiting.map((w) => w.id);
   return db
     .update(dismissalQueue)
-    .set({ status: "called", zone, calledAt: new Date() })
+    .set({
+      status: "called",
+      zone,
+      calledAt: new Date(),
+      holdReason: null,
+      delayedUntil: null,
+    })
     .where(inArray(dismissalQueue.id, ids))
     .returning();
 }
@@ -5065,6 +5083,7 @@ export async function upsertDismissalOverride(data: {
   studentId: string;
   originalType: string;
   overrideType: string;
+  busRoute?: string | null;
   reason?: string | null;
   changedBy: string;
   changedByRole: string;
@@ -5076,6 +5095,7 @@ export async function upsertDismissalOverride(data: {
       target: [dismissalOverrides.sessionId, dismissalOverrides.studentId],
       set: {
         overrideType: sql`EXCLUDED.override_type`,
+        busRoute: sql`EXCLUDED.bus_route`,
         reason: sql`EXCLUDED.reason`,
         changedBy: sql`EXCLUDED.changed_by`,
         changedByRole: sql`EXCLUDED.changed_by_role`,

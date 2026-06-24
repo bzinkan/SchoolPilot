@@ -549,6 +549,7 @@ async function runStartupMigrations(): Promise<void> {
         student_id TEXT NOT NULL,
         original_type TEXT NOT NULL,
         override_type TEXT NOT NULL,
+        bus_route TEXT,
         reason TEXT,
         changed_by TEXT NOT NULL,
         changed_by_role TEXT NOT NULL,
@@ -556,6 +557,7 @@ async function runStartupMigrations(): Promise<void> {
         UNIQUE(session_id, student_id)
       )
     `);
+    await pool.query(`ALTER TABLE IF EXISTS dismissal_overrides ADD COLUMN IF NOT EXISTS bus_route TEXT`);
     await pool.query(`CREATE INDEX IF NOT EXISTS dismissal_overrides_session_id_idx ON dismissal_overrides (session_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS dismissal_overrides_student_id_idx ON dismissal_overrides (student_id)`);
     console.log("[migration] dismissal_overrides table ready");

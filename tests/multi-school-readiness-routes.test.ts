@@ -19,6 +19,7 @@ import {
   getOverrideForStudent,
   getStudentById,
   getStudentByEmail,
+  getMembershipByUserAndSchool,
   addHomeroomTeacher,
   addStudentToFamilyGroup,
   upsertSettings,
@@ -136,6 +137,7 @@ before(async () => {
   await db.execute(sql`ALTER TABLE IF EXISTS students ADD COLUMN IF NOT EXISTS classpilot_pin_encrypted TEXT`);
   await db.execute(sql`ALTER TABLE IF EXISTS dismissal_changes ADD COLUMN IF NOT EXISTS acknowledged_by TEXT`);
   await db.execute(sql`ALTER TABLE IF EXISTS dismissal_changes ADD COLUMN IF NOT EXISTS acknowledged_at TIMESTAMP`);
+  await db.execute(sql`ALTER TABLE IF EXISTS dismissal_overrides ADD COLUMN IF NOT EXISTS bus_route TEXT`);
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS student_timeline_events (
       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -679,6 +681,50 @@ describe("multi-school readiness route hardening", () => {
     assert.equal(duplicateIdentity?.capabilities.parentStudentAccess, false);
   });
 
+  it("GoPilot Workspace office re-import updates existing teacher memberships", async () => {
+    const adminAuth = authFor(adminUser, schoolA.id);
+    const existingTeacher = await createUser({
+      email: `${TAG}-office-reimport@${TAG}-a.example.edu`,
+      firstName: "Office",
+      lastName: "Reimport",
+    } as any);
+    await inSchool(schoolA.id, () =>
+      createMembership({
+        userId: existingTeacher.id,
+        schoolId: schoolA.id,
+        role: "teacher",
+        status: "active",
+      } as any)
+    );
+
+    const res = await requestJson(
+      "POST",
+      "/google/workspace/import-staff",
+      {
+        users: [{
+          email: existingTeacher.email,
+          firstName: existingTeacher.firstName,
+          lastName: existingTeacher.lastName,
+        }],
+        role: "office_staff",
+        source: "gopilot_setup",
+      },
+      adminAuth
+    );
+    assert.equal(res.status, 200);
+    assert.equal(res.body.updated, 1);
+
+    const membership = await inSchool(schoolA.id, () =>
+      getMembershipByUserAndSchool(existingTeacher.id, schoolA.id)
+    );
+    assert.equal(membership?.role, "teacher");
+    assert.equal(membership?.gopilotRole, "office_staff");
+
+    const identity = await resolveGoPilotIdentity(existingTeacher.id, schoolA.id);
+    assert.equal(identity?.primaryRole, "office_staff");
+    assert.equal(identity?.capabilities.manageDismissal, true);
+  });
+
   it("GoPilot teachers can manage attendance only for assigned homerooms", async () => {
     const adminAuth = authFor(adminUser, schoolA.id);
     const teacherAuth = authFor(teacherA, schoolA.id);
@@ -766,9 +812,89 @@ describe("multi-school readiness route hardening", () => {
 
     const override = await inSchool(schoolA.id, () => getOverrideForStudent(sessionId, teacherAStudent.id));
     assert.equal(override?.overrideType, "bus");
+    assert.equal(override?.busRoute, "42");
     const student = await inSchool(schoolA.id, () => getStudentById(teacherAStudent.id));
     assert.equal(student?.dismissalType, "car");
     assert.equal(student?.busRoute, null);
+
+    const busCheckIn = await requestJson(
+      "POST",
+      `/gopilot/dismissal/sessions/${sessionId}/check-in-by-bus`,
+      { busNumber: "42" },
+      adminAuth
+    );
+    assert.equal(busCheckIn.status, 200);
+    assert.ok(
+      busCheckIn.body.entries.some((entry: any) => entry.studentId === teacherAStudent.id),
+      "approved bus-route override should be eligible for bus check-in"
+    );
+
+    const afterschoolStudent = await inSchool(schoolA.id, () =>
+      createStudent({
+        schoolId: schoolA.id,
+        firstName: "After",
+        lastName: "School",
+        email: `after.school@${TAG}-a.example.edu`,
+        homeroomId: homeroomA.id,
+        dismissalType: "car",
+        status: "active",
+      } as any)
+    );
+    const afterschoolFamily = await inSchool(schoolA.id, () =>
+      createFamilyGroup({
+        schoolId: schoolA.id,
+        familyName: "After Family",
+        carNumber: `${TAG}-202`,
+      } as any)
+    );
+    await inSchool(schoolA.id, () => addStudentToFamilyGroup(afterschoolFamily.id, afterschoolStudent.id));
+    const afterschoolCheckIn = await requestJson(
+      "POST",
+      `/gopilot/dismissal/sessions/${sessionId}/check-in-by-number`,
+      { carNumber: afterschoolFamily.carNumber },
+      adminAuth
+    );
+    assert.equal(afterschoolCheckIn.status, 200);
+    assert.ok(afterschoolCheckIn.body.entries.some((entry: any) => entry.studentId === afterschoolStudent.id));
+
+    const afterschoolChange = await inSchool(schoolA.id, () =>
+      createDismissalChange({
+        sessionId,
+        studentId: afterschoolStudent.id,
+        requestedBy: parent.id,
+        fromType: "car",
+        toType: "afterschool",
+        note: "club today",
+      } as any)
+    );
+    const afterschoolReview = await requestJson(
+      "PUT",
+      `/gopilot/changes/${afterschoolChange.id}`,
+      { status: "approved" },
+      adminAuth
+    );
+    assert.equal(afterschoolReview.status, 200);
+    const queueAfterOverride = await requestJson(
+      "GET",
+      `/gopilot/dismissal/sessions/${sessionId}/queue`,
+      undefined,
+      adminAuth
+    );
+    assert.equal(queueAfterOverride.status, 200);
+    assert.ok(
+      !(queueAfterOverride.body || []).some((entry: any) => entry.student_id === afterschoolStudent.id),
+      "approved afterschool override should remove the student from the active queue"
+    );
+    const timeline = await inSchool(schoolA.id, () =>
+      db.execute(sql`
+        SELECT id FROM student_timeline_events
+        WHERE school_id = ${schoolA.id}
+          AND student_id = ${afterschoolStudent.id}
+          AND source_type = 'gopilot'
+          AND title = 'Dismissal override'
+      `)
+    );
+    assert.ok(timeline.rows.length > 0, "approved request should record an override timeline event");
   });
 
   it("GoPilot queue lifecycle and check-in responses enforce safe transitions", async () => {
@@ -825,6 +951,10 @@ describe("multi-school readiness route hardening", () => {
     const earlyPickup = await requestJson("POST", `/queue/${queueId}/dismiss`, undefined, adminAuth);
     assert.equal(earlyPickup.status, 409);
 
+    const hold = await requestJson("POST", `/queue/${queueId}/hold`, { reason: "Waiting for ID" }, adminAuth);
+    assert.equal(hold.status, 200);
+    assert.equal(hold.body.entry.status, "held");
+
     const call = await requestJson(
       "POST",
       `/gopilot/dismissal/sessions/${sessionId}/call`,
@@ -833,6 +963,32 @@ describe("multi-school readiness route hardening", () => {
     );
     assert.equal(call.status, 200);
     assert.equal(call.body.entry.status, "called");
+    assert.equal(call.body.entry.holdReason, null);
+
+    const teacherQueueAfterCall = await requestJson(
+      "GET",
+      `/gopilot/dismissal/sessions/${sessionId}/queue`,
+      undefined,
+      teacherAuth
+    );
+    assert.equal(teacherQueueAfterCall.status, 200);
+    assert.equal(
+      (teacherQueueAfterCall.body || []).find((entry: any) => entry.id === queueId)?.status,
+      "called"
+    );
+
+    const delay = await requestJson("POST", `/queue/${queueId}/delay`, undefined, adminAuth);
+    assert.equal(delay.status, 200);
+    assert.equal(delay.body.entry.status, "delayed");
+    const recallDelayed = await requestJson(
+      "POST",
+      `/gopilot/dismissal/sessions/${sessionId}/call`,
+      { queueId, zone: "B" },
+      adminAuth
+    );
+    assert.equal(recallDelayed.status, 200);
+    assert.equal(recallDelayed.body.entry.status, "called");
+    assert.equal(recallDelayed.body.entry.delayedUntil, null);
 
     const release = await requestJson("POST", `/queue/${queueId}/release`, undefined, teacherAuth);
     assert.equal(release.status, 200);
@@ -982,7 +1138,7 @@ describe("multi-school readiness route hardening", () => {
     }
   });
 
-  it("teacher at a non-GoPilot school keeps the full roster (no homeroom scoping)", async () => {
+  it("shared-product teachers without GoPilot homerooms keep school-wide attendance access", async () => {
     // Regression guard for the cross-product landmine: /students is shared across
     // products. A PassPilot/ClassPilot-only school has no homerooms, so GoPilot-style
     // teacher scoping must NOT apply there — otherwise the roster wrongly returns [].
@@ -996,6 +1152,7 @@ describe("multi-school readiness route hardening", () => {
         status: "active",
       } as any);
       await createProductLicense({ schoolId: ppSchool.id, product: "PASSPILOT", status: "active" } as any);
+      await createProductLicense({ schoolId: ppSchool.id, product: "GOPILOT", status: "active" } as any);
       ppTeacher = await createUser({
         email: `${TAG}-pp-teacher@${TAG}-pp.example.edu`,
         password: await hashPassword("TeacherPass123!"),
@@ -1019,9 +1176,25 @@ describe("multi-school readiness route hardening", () => {
       assert.equal(res.status, 200);
       const ids = new Set((res.body.students || []).map((s: any) => s.id));
       assert.ok(ids.has(ppStudent.id), "PassPilot teacher should see the school roster, not an empty list");
+
+      const attendance = await requestJson(
+        "POST",
+        "/attendance",
+        { studentIds: [ppStudent.id], date: "2099-02-01", status: "absent" },
+        auth
+      );
+      assert.equal(attendance.status, 201);
+
+      const attendanceRead = await requestJson("GET", "/attendance?date=2099-02-01", undefined, auth);
+      assert.equal(attendanceRead.status, 200);
+      assert.ok(
+        (attendanceRead.body.records || []).some((record: any) => record.studentId === ppStudent.id),
+        "shared-product teacher should keep attendance visibility without a GoPilot homeroom"
+      );
     } finally {
       await asSystem(async () => {
         if (ppSchool?.id) {
+          await db.execute(sql`DELETE FROM student_attendance WHERE school_id = ${ppSchool.id}`);
           await db.execute(sql`DELETE FROM settings WHERE school_id = ${ppSchool.id}`);
           await db.execute(sql`DELETE FROM product_licenses WHERE school_id = ${ppSchool.id}`);
           await db.execute(sql`DELETE FROM school_memberships WHERE school_id = ${ppSchool.id}`);

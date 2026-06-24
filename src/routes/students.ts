@@ -163,17 +163,17 @@ async function searchStudentsVisibleToRequest(
     return searchStudents(schoolId, options);
   }
 
-  // Per-homeroom teacher scoping is a GoPilot-only model. At a PassPilot/ClassPilot
-  // school (no active GoPilot license) there are no homerooms, so scoping here would
-  // wrongly empty a teacher's roster — those teachers keep the normal full view
-  // (pre-#84 behavior). Only GoPilot-licensed schools get per-homeroom scoping.
+  // Per-homeroom teacher scoping is a GoPilot-only model. At a shared-product
+  // school, a ClassPilot/PassPilot teacher may have no GoPilot homeroom; those
+  // teachers keep the normal full roster view while assigned GoPilot homeroom
+  // teachers are scoped below.
   if (!(await hasActiveGoPilotLicense(schoolId))) {
     return searchStudents(schoolId, options);
   }
 
   const allowedHomeroomIds = await getTeacherHomeroomIds(req.authUser!.id, schoolId);
   if (allowedHomeroomIds.size === 0) {
-    return [];
+    return searchStudents(schoolId, options);
   }
 
   if (options?.homeroomId) {
@@ -213,15 +213,18 @@ async function canAccessStudentForRequest(
   if (role !== "teacher") {
     return true;
   }
-  // Non-GoPilot school: teacher retains normal access (no homeroom model). See
-  // searchStudentsVisibleToRequest for the rationale.
+  // Non-GoPilot school or shared-product teacher without a GoPilot homeroom:
+  // retain normal access. See searchStudentsVisibleToRequest for the rationale.
   if (!(await hasActiveGoPilotLicense(res.locals.schoolId!))) {
+    return true;
+  }
+  const allowedHomeroomIds = await getTeacherHomeroomIds(req.authUser!.id, res.locals.schoolId!);
+  if (allowedHomeroomIds.size === 0) {
     return true;
   }
   if (!student.homeroomId) {
     return false;
   }
-  const allowedHomeroomIds = await getTeacherHomeroomIds(req.authUser!.id, res.locals.schoolId!);
   return allowedHomeroomIds.has(student.homeroomId);
 }
 

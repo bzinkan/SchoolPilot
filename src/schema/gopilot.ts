@@ -351,6 +351,7 @@ export const dismissalOverrides = pgTable(
     studentId: text("student_id").notNull(),
     originalType: text("original_type").notNull(),
     overrideType: text("override_type").notNull(), // car | bus | walker | afterschool
+    busRoute: text("bus_route"),
     reason: text("reason"),
     changedBy: text("changed_by").notNull(), // FK to users
     changedByRole: text("changed_by_role").notNull(), // parent | teacher | office
