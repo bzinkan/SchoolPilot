@@ -3265,6 +3265,11 @@ export async function getScheduledGroupsReadyToStart(
       gradeLevel: groups.gradeLevel,
       groupType: groups.groupType,
       parentGroupId: groups.parentGroupId,
+      status: groups.status,
+      archivedAt: groups.archivedAt,
+      schoolYear: groups.schoolYear,
+      term: groups.term,
+      googleClassroomCourseId: groups.googleClassroomCourseId,
       scheduleEnabled: groups.scheduleEnabled,
       blockStartTime: groups.blockStartTime,
       blockEndTime: groups.blockEndTime,
@@ -3371,6 +3376,104 @@ export async function getGroupsBySchool(
     .orderBy(groups.name);
 }
 
+export type AdminClassSummary = Group & {
+  studentCount: number;
+};
+
+export type GroupTeacherSummary = {
+  id: string;
+  teacherId: string;
+  relationshipRole: string;
+  assignedAt: Date;
+  teacher: {
+    id: string;
+    email: string;
+    displayName: string | null;
+    firstName: string | null;
+    lastName: string | null;
+    role: string | null;
+  };
+};
+
+export async function getAdminClassSummariesBySchool(
+  schoolId: string,
+  options: {
+    status?: string;
+    schoolYear?: string;
+    term?: string;
+    search?: string;
+  } = {}
+): Promise<AdminClassSummary[]> {
+  const conditions: SQL[] = [
+    eq(groups.schoolId, schoolId),
+    eq(groups.groupType, "admin_class"),
+  ];
+  if (options.status && options.status !== "all") {
+    conditions.push(eq(groups.status, options.status));
+  }
+  if (options.schoolYear) conditions.push(eq(groups.schoolYear, options.schoolYear));
+  if (options.term) conditions.push(eq(groups.term, options.term));
+  if (options.search?.trim()) {
+    const pattern = `%${options.search.trim()}%`;
+    conditions.push(
+      or(
+        ilike(groups.name, pattern),
+        ilike(groups.periodLabel, pattern),
+        ilike(groups.gradeLevel, pattern)
+      )!
+    );
+  }
+
+  return db
+    .select({
+      id: groups.id,
+      schoolId: groups.schoolId,
+      teacherId: groups.teacherId,
+      name: groups.name,
+      description: groups.description,
+      periodLabel: groups.periodLabel,
+      gradeLevel: groups.gradeLevel,
+      groupType: groups.groupType,
+      parentGroupId: groups.parentGroupId,
+      status: groups.status,
+      archivedAt: groups.archivedAt,
+      schoolYear: groups.schoolYear,
+      term: groups.term,
+      googleClassroomCourseId: groups.googleClassroomCourseId,
+      scheduleEnabled: groups.scheduleEnabled,
+      blockStartTime: groups.blockStartTime,
+      blockEndTime: groups.blockEndTime,
+      scheduleSkippedDate: groups.scheduleSkippedDate,
+      createdAt: groups.createdAt,
+      studentCount: sql<number>`COUNT(DISTINCT ${groupStudents.studentId})::int`,
+    })
+    .from(groups)
+    .leftJoin(groupStudents, eq(groupStudents.groupId, groups.id))
+    .where(and(...conditions))
+    .groupBy(
+      groups.id,
+      groups.schoolId,
+      groups.teacherId,
+      groups.name,
+      groups.description,
+      groups.periodLabel,
+      groups.gradeLevel,
+      groups.groupType,
+      groups.parentGroupId,
+      groups.status,
+      groups.archivedAt,
+      groups.schoolYear,
+      groups.term,
+      groups.googleClassroomCourseId,
+      groups.scheduleEnabled,
+      groups.blockStartTime,
+      groups.blockEndTime,
+      groups.scheduleSkippedDate,
+      groups.createdAt
+    )
+    .orderBy(asc(groups.status), asc(groups.name));
+}
+
 export async function getGroupsByTeacher(
   teacherId: string
 ): Promise<Group[]> {
@@ -3430,6 +3533,51 @@ export async function getGroupTeachers(
     .orderBy(groupTeachers.role, groupTeachers.assignedAt);
 }
 
+export async function getGroupTeacherSummaries(
+  groupId: string,
+  schoolId: string
+): Promise<GroupTeacherSummary[]> {
+  const rows = await db
+    .select({
+      id: groupTeachers.id,
+      teacherId: groupTeachers.teacherId,
+      relationshipRole: groupTeachers.role,
+      assignedAt: groupTeachers.assignedAt,
+      teacherIdValue: users.id,
+      email: users.email,
+      displayName: users.displayName,
+      firstName: users.firstName,
+      lastName: users.lastName,
+      membershipRole: schoolMemberships.role,
+    })
+    .from(groupTeachers)
+    .innerJoin(users, eq(users.id, groupTeachers.teacherId))
+    .leftJoin(
+      schoolMemberships,
+      and(
+        eq(schoolMemberships.userId, users.id),
+        eq(schoolMemberships.schoolId, schoolId)
+      )
+    )
+    .where(eq(groupTeachers.groupId, groupId))
+    .orderBy(groupTeachers.role, users.lastName, users.firstName, users.email);
+
+  return rows.map((row) => ({
+    id: row.id,
+    teacherId: row.teacherId,
+    relationshipRole: row.relationshipRole,
+    assignedAt: row.assignedAt,
+    teacher: {
+      id: row.teacherIdValue,
+      email: row.email,
+      displayName: row.displayName,
+      firstName: row.firstName,
+      lastName: row.lastName,
+      role: row.membershipRole,
+    },
+  }));
+}
+
 export async function addGroupTeacher(
   groupId: string,
   teacherId: string,
@@ -3441,6 +3589,29 @@ export async function addGroupTeacher(
     .onConflictDoNothing()
     .returning();
   return row!;
+}
+
+export async function replaceGroupTeachers(
+  groupId: string,
+  primaryTeacherId: string,
+  coTeacherIds: string[]
+): Promise<void> {
+  const uniqueCoTeachers = Array.from(
+    new Set(coTeacherIds.filter((id) => id && id !== primaryTeacherId))
+  );
+  await db.transaction(async (tx) => {
+    await tx
+      .delete(groupTeachers)
+      .where(eq(groupTeachers.groupId, groupId));
+    await tx.insert(groupTeachers).values([
+      { groupId, teacherId: primaryTeacherId, role: "primary" },
+      ...uniqueCoTeachers.map((teacherId) => ({
+        groupId,
+        teacherId,
+        role: "co-teacher",
+      })),
+    ]);
+  });
 }
 
 export async function removeGroupTeacher(
@@ -3542,6 +3713,35 @@ export async function createGroup(
   return group!;
 }
 
+export async function findOverlappingScheduledAdminClass(options: {
+  schoolId: string;
+  teacherId: string;
+  blockStartTime: string;
+  blockEndTime: string;
+  excludeGroupId?: string;
+}): Promise<Group | undefined> {
+  const conditions: SQL[] = [
+    eq(groups.schoolId, options.schoolId),
+    eq(groups.teacherId, options.teacherId),
+    eq(groups.groupType, "admin_class"),
+    eq(groups.status, "active"),
+    eq(groups.scheduleEnabled, true),
+    sql`${groups.blockStartTime} IS NOT NULL`,
+    sql`${groups.blockEndTime} IS NOT NULL`,
+    sql`${groups.blockStartTime} < ${options.blockEndTime}`,
+    sql`${groups.blockEndTime} > ${options.blockStartTime}`,
+  ];
+  if (options.excludeGroupId) {
+    conditions.push(ne(groups.id, options.excludeGroupId));
+  }
+  const [group] = await db
+    .select()
+    .from(groups)
+    .where(and(...conditions))
+    .limit(1);
+  return group;
+}
+
 export async function updateGroup(
   groupId: string,
   data: Partial<InsertGroup>
@@ -3554,12 +3754,88 @@ export async function updateGroup(
   return group;
 }
 
+export async function updateAdminClassWithTeachers(options: {
+  groupId: string;
+  data: Partial<InsertGroup>;
+  primaryTeacherId: string;
+  coTeacherIds: string[];
+}): Promise<Group | undefined> {
+  const uniqueCoTeachers = Array.from(
+    new Set(options.coTeacherIds.filter((id) => id && id !== options.primaryTeacherId))
+  );
+  return db.transaction(async (tx) => {
+    const [group] = await tx
+      .update(groups)
+      .set({
+        ...options.data,
+        teacherId: options.primaryTeacherId,
+      })
+      .where(eq(groups.id, options.groupId))
+      .returning();
+    if (!group) return undefined;
+
+    await tx
+      .delete(groupTeachers)
+      .where(eq(groupTeachers.groupId, options.groupId));
+    await tx.insert(groupTeachers).values([
+      {
+        groupId: options.groupId,
+        teacherId: options.primaryTeacherId,
+        role: "primary",
+      },
+      ...uniqueCoTeachers.map((teacherId) => ({
+        groupId: options.groupId,
+        teacherId,
+        role: "co-teacher",
+      })),
+    ]);
+    return group;
+  });
+}
+
 export async function deleteGroup(groupId: string): Promise<boolean> {
   await db
     .delete(groupStudents)
     .where(eq(groupStudents.groupId, groupId));
   const result = await db.delete(groups).where(eq(groups.id, groupId));
   return (result.rowCount ?? 0) > 0;
+}
+
+export async function archiveGroup(groupId: string): Promise<Group | undefined> {
+  const [group] = await db
+    .update(groups)
+    .set({ status: "archived", archivedAt: new Date(), scheduleEnabled: false })
+    .where(eq(groups.id, groupId))
+    .returning();
+  return group;
+}
+
+export async function groupHasTeachingHistory(groupId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ value: sql<number>`COUNT(*)::int` })
+    .from(teachingSessions)
+    .where(eq(teachingSessions.groupId, groupId));
+  return (row?.value ?? 0) > 0;
+}
+
+export async function hardDeleteGroupWithCleanup(groupId: string): Promise<boolean> {
+  await db.transaction(async (tx) => {
+    const subgroupRows = await tx
+      .select({ id: subgroups.id })
+      .from(subgroups)
+      .where(eq(subgroups.groupId, groupId));
+    const subgroupIds = subgroupRows.map((row) => row.id);
+    if (subgroupIds.length > 0) {
+      await tx
+        .delete(subgroupMembers)
+        .where(inArray(subgroupMembers.subgroupId, subgroupIds));
+    }
+    await tx.delete(subgroups).where(eq(subgroups.groupId, groupId));
+    await tx.delete(groupTeachers).where(eq(groupTeachers.groupId, groupId));
+    await tx.delete(groupStudents).where(eq(groupStudents.groupId, groupId));
+    await tx.delete(groups).where(eq(groups.id, groupId));
+  });
+  return true;
 }
 
 export async function getGroupStudents(
@@ -3575,6 +3851,37 @@ export async function getGroupStudents(
     .innerJoin(students, eq(groupStudents.studentId, students.id))
     .where(eq(groupStudents.groupId, groupId));
   return rows.map((r) => ({ ...r.groupStudent, student: r.student }));
+}
+
+export async function getGroupStudentIds(groupId: string): Promise<string[]> {
+  const rows = await db
+    .select({ studentId: groupStudents.studentId })
+    .from(groupStudents)
+    .where(eq(groupStudents.groupId, groupId));
+  return rows.map((row) => row.studentId);
+}
+
+export async function addGroupStudentsDetailed(
+  groupId: string,
+  studentIds: string[]
+): Promise<{
+  added: string[];
+  alreadyPresent: string[];
+}> {
+  const uniqueIds = Array.from(new Set(studentIds));
+  if (uniqueIds.length === 0) return { added: [], alreadyPresent: [] };
+  const before = new Set(await getGroupStudentIds(groupId));
+  const inserted = await db
+    .insert(groupStudents)
+    .values(uniqueIds.map((studentId) => ({ groupId, studentId })))
+    .onConflictDoNothing()
+    .returning({ studentId: groupStudents.studentId });
+  const added = inserted.map((row) => row.studentId);
+  const addedSet = new Set(added);
+  return {
+    added,
+    alreadyPresent: uniqueIds.filter((id) => before.has(id) && !addedSet.has(id)),
+  };
 }
 
 export async function addGroupStudents(

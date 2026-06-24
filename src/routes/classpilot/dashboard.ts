@@ -39,6 +39,11 @@ function param(req: any, key: string): string {
   return String(req.params[key] ?? "");
 }
 
+function isAdminRole(req: any, res: any): boolean {
+  const role = res.locals.membershipRole;
+  return req.authUser?.isSuperAdmin || role === "admin" || role === "school_admin";
+}
+
 const auth = [
   authenticate,
   requireSchoolContext,
@@ -369,10 +374,25 @@ router.post("/groups", ...auth, async (req, res, next) => {
     const { name, teacherId, gradeLevel, periodLabel, description, groupType,
             scheduleEnabled, blockStartTime, blockEndTime } = req.body;
     if (!name) return res.status(400).json({ error: "name required" });
+    if (groupType === "admin_class") {
+      return res.status(403).json({
+        error: "Official classes must be created through the admin class management API.",
+      });
+    }
+    if (scheduleEnabled) {
+      if (!blockStartTime || !blockEndTime) {
+        return res.status(400).json({ error: "blockStartTime and blockEndTime are required when scheduling is enabled" });
+      }
+      if (!/^\d{2}:\d{2}$/.test(String(blockStartTime)) || !/^\d{2}:\d{2}$/.test(String(blockEndTime))) {
+        return res.status(400).json({ error: "Schedule times must be HH:MM" });
+      }
+      if (String(blockStartTime) >= String(blockEndTime)) {
+        return res.status(400).json({ error: "blockStartTime must be before blockEndTime" });
+      }
+    }
     const ownerTeacherId = teacherId || req.authUser!.id;
     if (ownerTeacherId !== req.authUser!.id) {
-      const role = res.locals.membershipRole;
-      if (role !== "admin" && role !== "school_admin" && role !== "super_admin") {
+      if (!isAdminRole(req, res)) {
         return res.status(403).json({ error: "Only admins can assign a group to another teacher" });
       }
     }

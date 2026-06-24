@@ -228,6 +228,11 @@ export const groups = pgTable(
     gradeLevel: text("grade_level"),
     groupType: text("group_type").notNull().default("teacher_created"), // admin_class | teacher_small_group | teacher_created
     parentGroupId: text("parent_group_id"), // FK to groups for nested small groups
+    status: text("status").notNull().default("active"), // active | archived
+    archivedAt: timestamp("archived_at"),
+    schoolYear: text("school_year"),
+    term: text("term"),
+    googleClassroomCourseId: text("google_classroom_course_id"),
     scheduleEnabled: boolean("schedule_enabled").notNull().default(false),
     blockStartTime: text("block_start_time"), // HH:MM 24h format, e.g. "10:10"
     blockEndTime: text("block_end_time"),     // HH:MM 24h format, e.g. "10:55"
@@ -237,6 +242,10 @@ export const groups = pgTable(
   (table) => [
     index("groups_school_id_idx").on(table.schoolId),
     index("groups_teacher_id_idx").on(table.teacherId),
+    index("groups_status_idx").on(table.status),
+    uniqueIndex("groups_school_google_course_unique")
+      .on(table.schoolId, table.googleClassroomCourseId)
+      .where(sql`${table.googleClassroomCourseId} IS NOT NULL`),
   ]
 );
 
@@ -255,6 +264,7 @@ export const groupStudents = pgTable(
     assignedAt: timestamp("assigned_at").notNull().default(sql`now()`),
   },
   (table) => [
+    uniqueIndex("group_students_unique").on(table.groupId, table.studentId),
     index("group_students_group_id_idx").on(table.groupId),
     index("group_students_student_id_idx").on(table.studentId),
   ]
