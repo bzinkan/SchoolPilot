@@ -7,9 +7,9 @@ import {
   createDismissalChange,
   getChangesBySession,
   updateDismissalChange,
-  updateStudent,
   getSessionById,
   getStudentById,
+  upsertDismissalOverride,
 } from "../../services/storage.js";
 import { getIO } from "../../realtime/socketio.js";
 import {
@@ -138,6 +138,32 @@ router.get(
 );
 
 // PUT /api/gopilot/changes/:id - Approve/reject change
+router.post("/changes/:id/acknowledge", ...auth, async (req, res, next) => {
+  try {
+    const id = param(req, "id");
+    const existing = await getDismissalChangeForSchool(id, res.locals.schoolId!);
+    if (!existing) {
+      return res.status(404).json({ error: "Change request not found" });
+    }
+
+    const role = await getRequestGoPilotRole(req, res);
+    const canAcknowledge = isGoPilotManager(role) ||
+      (role === "teacher" && await canAccessStudent(req.authUser!, res.locals.schoolId!, existing.studentId, role));
+    if (!canAcknowledge) {
+      return res.status(403).json({ error: "Insufficient permissions" });
+    }
+
+    const updated = await updateDismissalChange(id, {
+      acknowledgedBy: req.authUser!.id,
+      acknowledgedAt: new Date(),
+    });
+
+    return res.json({ change: updated });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.put("/changes/:id", ...auth, async (req, res, next) => {
   try {
     const id = param(req, "id");
@@ -151,9 +177,7 @@ router.put("/changes/:id", ...auth, async (req, res, next) => {
       return res.status(404).json({ error: "Change request not found" });
     }
     const role = await getRequestGoPilotRole(req, res);
-    const canReview = isGoPilotManager(role) ||
-      (role === "teacher" && await canAccessStudent(req.authUser!, res.locals.schoolId!, existing.studentId, role));
-    if (!canReview) {
+    if (!isGoPilotManager(role)) {
       return res.status(403).json({ error: "Insufficient permissions" });
     }
 
@@ -163,14 +187,20 @@ router.put("/changes/:id", ...auth, async (req, res, next) => {
       reviewedAt: new Date(),
     });
 
-    // If approved, update student's dismissal type and notify all parties
+    // If approved, create/update today's session-scoped override. Permanent
+    // roster defaults are changed only through setup/admin roster workflows.
     if (status === "approved" && existing) {
-      await updateStudent(existing.studentId, {
-        dismissalType: existing.toType,
-        ...(existing.busRoute && { busRoute: existing.busRoute }),
+      await upsertDismissalOverride({
+        sessionId: existing.sessionId,
+        studentId: existing.studentId,
+        originalType: existing.fromType,
+        overrideType: existing.toType,
+        reason: existing.note || null,
+        changedBy: req.authUser!.id,
+        changedByRole: "office",
       });
 
-      // Notify teacher/office that student type changed so roster updates
+      // Notify teacher/office that the effective type changed so roster updates.
       const io = getIO();
       if (io) {
         const student = await getStudentById(existing.studentId);
@@ -178,6 +208,7 @@ router.put("/changes/:id", ...auth, async (req, res, next) => {
           studentId: existing.studentId,
           dismissalType: existing.toType,
           busRoute: existing.busRoute,
+          isOverride: true,
         };
         io.to(`school:${res.locals.schoolId}:office`).emit("student:typeUpdated", typePayload);
         if (student?.homeroomId) {

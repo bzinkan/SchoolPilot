@@ -171,10 +171,11 @@ export default function TeacherView() {
 
     // student:checked-in — office entered car/bus/walker, student goes to center as RED
     const handleStudentCheckedIn = (data) => {
-      const studentId = data.student_id || data.studentId;
-      const guardianName = data.guardian_name || data.guardianName || null;
-      const queueId = data.id || data.queueId;
-      const checkInMethod = data.check_in_method || data.checkInMethod || null;
+      const entry = data.entry || data;
+      const studentId = entry.student_id || entry.studentId;
+      const guardianName = entry.guardian_name || entry.guardianName || null;
+      const queueId = entry.id || entry.queueId;
+      const checkInMethod = entry.check_in_method || entry.checkInMethod || null;
       setStudents((prev) =>
         prev.map((s) =>
           s.id === studentId
@@ -184,22 +185,23 @@ export default function TeacherView() {
       );
     };
 
-    // student:called — legacy, treat same as checked-in
     const handleStudentCalled = (data) => {
-      const studentId = data.student_id || data.studentId;
-      const guardianName = data.guardian_name || data.guardianName || null;
-      const queueId = data.id || data.queueId;
+      const entry = data.entry || data;
+      const studentId = entry.student_id || entry.studentId;
+      const guardianName = entry.guardian_name || entry.guardianName || null;
+      const queueId = entry.id || entry.queueId;
       setStudents((prev) =>
         prev.map((s) =>
           s.id === studentId
-            ? { ...s, queueStatus: data.status || 'called', calledAt: new Date(), guardian: guardianName, queueId: queueId || s.queueId }
+            ? { ...s, queueStatus: entry.status || 'called', calledAt: new Date(), guardian: guardianName || s.guardian, queueId: queueId || s.queueId, zone: data.zone || entry.zone || s.zone }
             : s
         )
       );
     };
 
     const handleStudentReleased = (data) => {
-      const studentId = data.student_id || data.studentId;
+      const entry = data.entry || data;
+      const studentId = entry.student_id || entry.studentId;
       setStudents((prev) =>
         prev.map((s) =>
           s.id === studentId
@@ -211,7 +213,8 @@ export default function TeacherView() {
 
     // student:dismissed — picked up by office/parent, move to roster as blue
     const handleStudentDismissed = (data) => {
-      const studentId = data.student_id || data.studentId;
+      const entry = data.entry || data;
+      const studentId = entry.student_id || entry.studentId;
       setStudents((prev) =>
         prev.map((s) =>
           s.id === studentId
@@ -305,9 +308,9 @@ export default function TeacherView() {
     return () => clearInterval(interval);
   }, []);
 
-  // Teacher dismisses student from class (waiting/called -> released)
+  // Teacher releases a called student from class.
   const handleDismissFromClass = async (student) => {
-    if (!student.queueId) return;
+    if (!student.queueId || student.queueStatus !== 'called') return;
     try {
       await api.post(`/queue/${student.queueId}/release`);
       setStudents((prev) =>
@@ -322,7 +325,7 @@ export default function TeacherView() {
 
   // Batch dismiss all students in a group
   const handleDismissAll = async (studentList) => {
-    const queueIds = studentList.filter(s => s.queueId && (s.queueStatus === 'waiting' || s.queueStatus === 'called')).map(s => s.queueId);
+    const queueIds = studentList.filter(s => s.queueId && s.queueStatus === 'called').map(s => s.queueId);
     if (queueIds.length === 0) return;
     try {
       await api.post('/queue/release-batch', { queueIds });
@@ -337,8 +340,8 @@ export default function TeacherView() {
   };
 
   // Categorize students
-  // CENTER panel: students in queue (waiting/called = RED, released = GREEN)
-  const calledStudents = students.filter(s => s.queueStatus === 'waiting' || s.queueStatus === 'called');
+  const waitingStudents = students.filter(s => s.queueStatus === 'waiting');
+  const calledStudents = students.filter(s => s.queueStatus === 'called');
   const inTransitStudents = students.filter(s => s.queueStatus === 'released');
   // LEFT panel: roster (not in queue = grey, dismissed = blue "picked up")
   const rosterStudents = students.filter(s => !s.queueStatus || s.queueStatus === 'dismissed');
@@ -348,6 +351,12 @@ export default function TeacherView() {
     const key = s.guardian || 'Unknown';
     if (!calledByReason[key]) calledByReason[key] = [];
     calledByReason[key].push(s);
+  });
+  const waitingByReason = {};
+  waitingStudents.forEach(s => {
+    const key = s.guardian || 'Unknown';
+    if (!waitingByReason[key]) waitingByReason[key] = [];
+    waitingByReason[key].push(s);
   });
 
   // Override handler
@@ -472,6 +481,10 @@ export default function TeacherView() {
                   <span className="font-medium text-red-600">{calledStudents.length} Called</span>
                 </div>
                 <div className="flex items-center gap-1.5">
+                  <div className="w-2.5 h-2.5 rounded-full bg-yellow-500" />
+                  <span className="font-medium text-yellow-700">{waitingStudents.length} Waiting</span>
+                </div>
+                <div className="flex items-center gap-1.5">
                   <div className="w-2.5 h-2.5 rounded-full bg-green-500" />
                   <span className="font-medium text-green-600">{inTransitStudents.length} In Transit</span>
                 </div>
@@ -494,12 +507,6 @@ export default function TeacherView() {
                     setShowNotifications(opening);
                     if (opening) {
                       setUnreadChangeCount(0);
-                      changeRequests.forEach(cr => {
-                        if (cr.status !== 'approved') {
-                          api.put(`/changes/${cr.id}`, { status: 'approved' }).catch(err => console.warn('Failed to approve change:', err));
-                        }
-                      });
-                      setChangeRequests(prev => prev.map(cr => ({ ...cr, status: 'approved' })));
                     }
                   }}
                   className="p-1.5 sm:p-2 rounded-lg hover:bg-gray-100 relative"
@@ -569,6 +576,10 @@ export default function TeacherView() {
             <span className="font-medium text-red-600">{calledStudents.length} Called</span>
           </div>
           <div className="flex items-center gap-1">
+            <div className="w-2 h-2 rounded-full bg-yellow-500" />
+            <span className="font-medium text-yellow-700">{waitingStudents.length} Waiting</span>
+          </div>
+          <div className="flex items-center gap-1">
             <div className="w-2 h-2 rounded-full bg-green-500" />
             <span className="font-medium text-green-600">{inTransitStudents.length} In Transit</span>
           </div>
@@ -633,12 +644,6 @@ export default function TeacherView() {
                         <button onClick={(e) => {
                           e.stopPropagation();
                           setShowNoteFor(showNoteFor === student.id ? null : student.id);
-                          // Auto-approve this student's pending change request
-                          const pending = changeRequests.find(cr => cr.studentId === student.id && cr.status !== 'approved');
-                          if (pending) {
-                            api.put(`/changes/${pending.id}`, { status: 'approved' }).catch(() => {});
-                            setChangeRequests(prev => prev.map(cr => cr.id === pending.id ? { ...cr, status: 'approved' } : cr));
-                          }
                         }} className="flex-shrink-0">
                           <MessageSquare className="w-3.5 h-3.5 text-amber-500" />
                         </button>
@@ -684,8 +689,46 @@ export default function TeacherView() {
           </div>
         </aside>
 
-        {/* CENTER PANEL - Called Students (grouped by reason) */}
+        {/* CENTER PANEL - Dismissal queue */}
         <main className="flex-1 overflow-y-auto p-4">
+          {/* Checked-in Students - waiting for office call */}
+          {Object.keys(waitingByReason).length > 0 && (
+            <div className="mb-6">
+              <div className="flex items-center gap-2 mb-3">
+                <Clock className="w-5 h-5 text-yellow-500" />
+                <h2 className="font-semibold text-yellow-700">Checked In - Awaiting Call</h2>
+              </div>
+              <div className="space-y-3">
+                {Object.entries(waitingByReason).map(([reason, groupStudents]) => (
+                  <Card key={reason} className="border-2 border-yellow-200 bg-yellow-50">
+                    <div className="p-3 border-b border-yellow-200 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-yellow-800">{reason}</span>
+                        <Badge variant="yellow" size="sm">{groupStudents.length} waiting</Badge>
+                      </div>
+                    </div>
+                    <div className="divide-y divide-yellow-100">
+                      {groupStudents.map(student => (
+                        <div key={student.id} className="p-3 flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 bg-yellow-100 rounded-full flex items-center justify-center">
+                              <Clock className="w-5 h-5 text-yellow-600" />
+                            </div>
+                            <div>
+                              <p className="font-medium text-gray-900">{student.first_name || student.firstName} {student.last_name || student.lastName}</p>
+                              <p className="text-xs text-yellow-700">Office has not called this student yet</p>
+                            </div>
+                          </div>
+                          <Badge variant="yellow" size="sm">Waiting</Badge>
+                        </div>
+                      ))}
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Called Students - RED */}
           {Object.keys(calledByReason).length > 0 && (
             <div className="mb-6">
@@ -765,12 +808,12 @@ export default function TeacherView() {
           )}
 
           {/* Empty state */}
-          {calledStudents.length === 0 && inTransitStudents.length === 0 && (
+          {waitingStudents.length === 0 && calledStudents.length === 0 && inTransitStudents.length === 0 && (
             <div className="flex items-center justify-center h-64">
               <div className="text-center text-gray-400">
                 <Bell className="w-16 h-16 mx-auto mb-4 opacity-30" />
                 <p className="text-lg font-medium">No students called yet</p>
-                <p className="text-sm">Students will appear here when the office enters their car number, bus number, or releases walkers</p>
+                <p className="text-sm">Students will appear here when the office checks them in and calls them</p>
               </div>
             </div>
           )}
@@ -927,7 +970,11 @@ export default function TeacherView() {
                   <span className="font-medium text-green-600">{inTransitStudents.length}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-gray-500">Waiting to Dismiss</span>
+                  <span className="text-gray-500">Checked In</span>
+                  <span className="font-medium text-yellow-700">{waitingStudents.length}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Called to Dismiss</span>
                   <span className="font-medium text-red-600">{calledStudents.length}</span>
                 </div>
                 <div className="flex justify-between">

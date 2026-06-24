@@ -1553,7 +1553,12 @@ export async function callQueueEntry(
   const [entry] = await db
     .update(dismissalQueue)
     .set({ status: "called", zone, calledAt: new Date() })
-    .where(eq(dismissalQueue.id, id))
+    .where(
+      and(
+        eq(dismissalQueue.id, id),
+        inArray(dismissalQueue.status, ["waiting", "called"])
+      )
+    )
     .returning();
   return entry;
 }
@@ -1595,10 +1600,7 @@ export async function releaseQueueEntry(
     .where(
       and(
         eq(dismissalQueue.id, id),
-        or(
-          eq(dismissalQueue.status, "called"),
-          eq(dismissalQueue.status, "waiting")
-        )
+        eq(dismissalQueue.status, "called")
       )
     )
     .returning();
@@ -1614,13 +1616,7 @@ export async function dismissQueueEntry(
     .where(
       and(
         eq(dismissalQueue.id, id),
-        inArray(dismissalQueue.status, [
-          "waiting",
-          "called",
-          "released",
-          "delayed",
-          "held",
-        ])
+        eq(dismissalQueue.status, "released")
       )
     )
     .returning();
@@ -1636,13 +1632,7 @@ export async function batchDismiss(
     .where(
       and(
         inArray(dismissalQueue.id, queueIds),
-        inArray(dismissalQueue.status, [
-          "waiting",
-          "called",
-          "released",
-          "delayed",
-          "held",
-        ])
+        eq(dismissalQueue.status, "released")
       )
     )
     .returning();
@@ -1657,10 +1647,7 @@ export async function batchRelease(
     .where(
       and(
         inArray(dismissalQueue.id, queueIds),
-        or(
-          eq(dismissalQueue.status, "waiting"),
-          eq(dismissalQueue.status, "called")
-        )
+        eq(dismissalQueue.status, "called")
       )
     )
     .returning();
@@ -4938,6 +4925,18 @@ export async function getStudentAttendance(
     )
     .orderBy(desc(studentAttendance.date));
   return rows;
+}
+
+export async function getAttendanceRecordById(
+  id: string,
+  schoolId: string
+): Promise<StudentAttendance | undefined> {
+  const [row] = await db
+    .select()
+    .from(studentAttendance)
+    .where(and(eq(studentAttendance.id, id), eq(studentAttendance.schoolId, schoolId)))
+    .limit(1);
+  return row;
 }
 
 /** Mark a student absent (upsert — updates if already marked for that date) */

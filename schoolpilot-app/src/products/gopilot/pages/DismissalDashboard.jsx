@@ -364,7 +364,7 @@ export default function DismissalDashboard() {
   };
 
   const handlePickupAll = async (students) => {
-    const eligible = students.filter(s => s.status === 'waiting' || s.status === 'called' || s.status === 'released');
+    const eligible = students.filter(s => s.status === 'released');
     if (eligible.length === 0) return;
     try {
       await api.post('/queue/dismiss-batch', { queueIds: eligible.map(s => s.id) });
@@ -451,24 +451,51 @@ export default function DismissalDashboard() {
     }
   };
 
+  const formatCheckInResult = (data, fallbackLabel) => {
+    const entries = Array.isArray(data?.entries) ? data.entries : [];
+    const skippedAbsent = Array.isArray(data?.skippedAbsent) ? data.skippedAbsent : [];
+    const groupLabel = data?.groupLabel || fallbackLabel;
+    const names = entries
+      .map(e => e.studentName || [e.first_name, e.last_name].filter(Boolean).join(' ') || e.studentId)
+      .filter(Boolean)
+      .join(', ');
+    const skippedNames = skippedAbsent
+      .map(s => s.studentName || s.studentId)
+      .filter(Boolean)
+      .join(', ');
+
+    if (data?.outcome === 'duplicate') {
+      return { type: 'info', message: `${groupLabel} already in queue`, createdCount: 0 };
+    }
+    if (entries.length === 0) {
+      return {
+        type: skippedAbsent.length > 0 ? 'info' : 'error',
+        message: skippedAbsent.length > 0
+          ? `${groupLabel} — no students checked in; skipped absent: ${skippedNames}`
+          : `${groupLabel} — no students checked in`,
+        createdCount: 0,
+      };
+    }
+
+    const skippedText = skippedAbsent.length > 0 ? `; skipped absent: ${skippedNames}` : '';
+    return {
+      type: data?.outcome === 'partial' ? 'info' : 'success',
+      message: `${groupLabel} — checked in: ${names}${skippedText}`,
+      createdCount: entries.length,
+    };
+  };
+
   const handleCarNumberCheckIn = async () => {
     if (!carNumberInput.trim() || !session) return;
     setCarNumberLoading(true);
     setCarNumberResult(null);
     try {
       const res = await api.post(`/sessions/${session.id}/check-in-by-number`, { carNumber: carNumberInput.trim() });
-      if (res.data.alreadySubmitted) {
-        setCarNumberResult({ type: 'info', message: 'Car ID already submitted' });
-        setCarNumberInput('');
-        setTimeout(() => setCarNumberResult(null), 5000);
-      } else {
-        const names = res.data.entries.map(e => `${e.first_name} ${e.last_name}`).join(', ');
-        const label = res.data.parent ? `${res.data.parent.firstName} ${res.data.parent.lastName}` : `Car #${res.data.carNumber}`;
-        setCarNumberResult({ type: 'success', message: `${label} — checked in: ${names}` });
-        setCarNumberInput('');
-        await refreshQueue();
-        setTimeout(() => setCarNumberResult(null), 5000);
-      }
+      const result = formatCheckInResult(res.data, `Car #${carNumberInput.trim()}`);
+      setCarNumberResult({ type: result.type, message: result.message });
+      setCarNumberInput('');
+      if (result.createdCount > 0) await refreshQueue();
+      setTimeout(() => setCarNumberResult(null), 5000);
     } catch (err) {
       setCarNumberResult({ type: 'error', message: err.response?.data?.error || 'Check-in failed' });
     } finally {
@@ -482,17 +509,11 @@ export default function DismissalDashboard() {
     setBusNumberResult(null);
     try {
       const res = await api.post(`/sessions/${session.id}/check-in-by-bus`, { busNumber: busNumberInput.trim() });
-      if (res.data.alreadySubmitted) {
-        setBusNumberResult({ type: 'info', message: 'Bus # already submitted' });
-        setBusNumberInput('');
-        setTimeout(() => setBusNumberResult(null), 5000);
-      } else {
-        const names = res.data.entries.map(e => `${e.first_name} ${e.last_name}`).join(', ');
-        setBusNumberResult({ type: 'success', message: `Bus #${res.data.busNumber} — checked in: ${names}` });
-        setBusNumberInput('');
-        await refreshQueue();
-        setTimeout(() => setBusNumberResult(null), 5000);
-      }
+      const result = formatCheckInResult(res.data, `Bus #${busNumberInput.trim()}`);
+      setBusNumberResult({ type: result.type, message: result.message });
+      setBusNumberInput('');
+      if (result.createdCount > 0) await refreshQueue();
+      setTimeout(() => setBusNumberResult(null), 5000);
     } catch (err) {
       setBusNumberResult({ type: 'error', message: err.response?.data?.error || 'Check-in failed' });
     } finally {
@@ -520,18 +541,11 @@ export default function DismissalDashboard() {
         setCarNumberResult(null);
         try {
           const res = await api.post(`/sessions/${session.id}/check-in-by-number`, { carNumber });
-          if (res.data.alreadySubmitted) {
-            setCarNumberResult({ type: 'info', message: 'Car ID already submitted' });
-            setCarNumberInput('');
-            setTimeout(() => setCarNumberResult(null), 5000);
-          } else {
-            const names = res.data.entries.map(e => `${e.first_name} ${e.last_name}`).join(', ');
-            const label = res.data.parent ? `${res.data.parent.firstName} ${res.data.parent.lastName}` : `Car #${res.data.carNumber}`;
-            setCarNumberResult({ type: 'success', message: `${label} — checked in: ${names}` });
-            setCarNumberInput('');
-            await refreshQueue();
-            setTimeout(() => setCarNumberResult(null), 5000);
-          }
+          const result = formatCheckInResult(res.data, `Car #${carNumber}`);
+          setCarNumberResult({ type: result.type, message: result.message });
+          setCarNumberInput('');
+          if (result.createdCount > 0) await refreshQueue();
+          setTimeout(() => setCarNumberResult(null), 5000);
         } catch (err) {
           setCarNumberResult({ type: 'error', message: err.response?.data?.error || 'Check-in failed' });
         } finally {
@@ -711,13 +725,6 @@ export default function DismissalDashboard() {
                       setShowChangeNotifications(opening);
                       if (opening) {
                         setUnreadChangeCount(0);
-                        // Auto-approve pending change requests
-                        changeRequests.forEach(cr => {
-                          if (cr.status !== 'approved') {
-                            api.put(`/changes/${cr.id}`, { status: 'approved' }).catch(() => {});
-                          }
-                        });
-                        setChangeRequests(prev => prev.map(cr => ({ ...cr, status: 'approved' })));
                       }
                     }}
                     className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 relative"
@@ -954,7 +961,8 @@ export default function DismissalDashboard() {
                         <select value={filterType} onChange={(e) => setFilterType(e.target.value)}
                           className="border dark:border-slate-600 rounded-lg px-2 sm:px-3 py-1.5 text-sm bg-white dark:bg-slate-800 dark:text-white">
                           <option value="all">All</option>
-                          <option value="waiting">In Queue</option>
+                          <option value="waiting">Waiting</option>
+                          <option value="called">Called</option>
                           <option value="released">In Transit</option>
                         </select>
                       )}
@@ -1131,12 +1139,6 @@ export default function DismissalDashboard() {
                                           <button onClick={(e) => {
                                             e.stopPropagation();
                                             setShowNoteFor(showNoteFor === student.id ? null : student.id);
-                                            // Auto-approve this student's pending change request
-                                            const pending = changeRequests.find(cr => cr.studentId === student.id && cr.status !== 'approved');
-                                            if (pending) {
-                                              api.put(`/changes/${pending.id}`, { status: 'approved' }).catch(() => {});
-                                              setChangeRequests(prev => prev.map(cr => cr.id === pending.id ? { ...cr, status: 'approved' } : cr));
-                                            }
                                           }} className="flex-shrink-0">
                                             <MessageSquare className="w-3.5 h-3.5 text-amber-500" />
                                           </button>
@@ -1780,7 +1782,7 @@ function QrScannerModal({ onScan, onClose }) {
 }
 
 function QueueGroup({ name, students, onPickupAll, onCall, onPickup, pickupsByStudent }) {
-  const eligible = students.filter(s => s.status === 'waiting' || s.status === 'called' || s.status === 'released');
+  const eligible = students.filter(s => s.status === 'released');
 
   if (students.length === 1) {
     return (
@@ -1815,10 +1817,10 @@ function QueueGroup({ name, students, onPickupAll, onCall, onPickup, pickupsBySt
   );
 }
 
-function QueueItem({ item, position, onPickup, authorizedPickups }) {
+function QueueItem({ item, position, onCall, onPickup, authorizedPickups }) {
   const getStatusColor = (status) => {
     switch (status) {
-      case 'waiting': return 'red';
+      case 'waiting': return 'yellow';
       case 'called': return 'red';
       case 'released': return 'green';
 
@@ -1850,7 +1852,7 @@ function QueueItem({ item, position, onPickup, authorizedPickups }) {
   const waitTime = getWaitTime();
 
   return (
-    <div className={`p-3 sm:p-4 ${item.status === 'called' || item.status === 'waiting' ? 'bg-red-50 dark:bg-red-950/30' : item.status === 'released' ? 'bg-green-50 dark:bg-green-950/30' : 'hover:bg-gray-50 dark:hover:bg-slate-800'}`}>
+    <div className={`p-3 sm:p-4 ${item.status === 'called' ? 'bg-red-50 dark:bg-red-950/30' : item.status === 'waiting' ? 'bg-yellow-50 dark:bg-yellow-950/30' : item.status === 'released' ? 'bg-green-50 dark:bg-green-950/30' : 'hover:bg-gray-50 dark:hover:bg-slate-800'}`}>
       <div className="flex items-start sm:items-center gap-3 sm:gap-4">
         <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-gray-100 dark:bg-slate-800 flex items-center justify-center text-xs sm:text-sm font-medium text-gray-500 dark:text-slate-400 flex-shrink-0">
           {position}
@@ -1859,7 +1861,7 @@ function QueueItem({ item, position, onPickup, authorizedPickups }) {
           <div className="flex items-center gap-2 flex-wrap">
             <p className="font-medium text-sm sm:text-base truncate">{item.first_name} {item.last_name}</p>
             <Badge variant={getStatusColor(item.status)} size="sm">
-              {item.status === 'released' ? 'In Transit' : item.status === 'waiting' ? 'In Queue' : item.status === 'called' ? 'In Queue' : item.status}
+              {item.status === 'released' ? 'In Transit' : item.status === 'waiting' ? 'Waiting' : item.status === 'called' ? 'Called' : item.status}
             </Badge>
             {(item.isOverridden || item.is_overridden) && (
               <Badge variant="orange" size="sm">Override</Badge>
@@ -1871,6 +1873,15 @@ function QueueItem({ item, position, onPickup, authorizedPickups }) {
             <span className="hidden sm:inline">{item.homeroom_name || 'No homeroom'}</span>
             <span>•</span>
             <span className="truncate">{item.guardian_name}</span>
+            {item.zone && (
+              <>
+                <span>•</span>
+                <span className="flex items-center gap-1">
+                  <MapPin className="w-3 h-3" />
+                  {item.zone}
+                </span>
+              </>
+            )}
             <span className="flex items-center gap-1 ml-auto sm:ml-0">
               <Timer className="w-3 h-3" />
               {waitTime}m
@@ -1890,7 +1901,17 @@ function QueueItem({ item, position, onPickup, authorizedPickups }) {
           )}
         </div>
         <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
-          {item.status !== 'dismissed' && (
+          {item.status === 'waiting' && (
+            <Button variant="primary" size="sm" onClick={() => onCall(item.id)}>
+              <Send className="w-4 h-4" /><span className="hidden sm:inline ml-1">Call</span>
+            </Button>
+          )}
+          {item.status === 'called' && (
+            <Button variant="secondary" size="sm" onClick={() => onCall(item.id)}>
+              <Send className="w-4 h-4" /><span className="hidden sm:inline ml-1">Re-call</span>
+            </Button>
+          )}
+          {item.status === 'released' && (
             <Button variant="success" size="sm" onClick={() => onPickup(item.id)}>
               <Check className="w-4 h-4" /><span className="hidden sm:inline ml-1">Pickup Complete</span>
             </Button>

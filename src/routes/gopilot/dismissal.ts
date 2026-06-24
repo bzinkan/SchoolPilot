@@ -85,6 +85,48 @@ function emitToSchool(schoolId: string, room: string, event: string, data: unkno
   if (io) io.to(`school:${schoolId}:${room}`).emit(event, data);
 }
 
+type CheckInStudentSummary = {
+  id: string;
+  firstName?: string | null;
+  lastName?: string | null;
+};
+
+function studentName(student: CheckInStudentSummary): string {
+  return `${student.firstName || ""} ${student.lastName || ""}`.trim() || student.id;
+}
+
+function checkInOutcome(
+  createdCount: number,
+  duplicateCount: number,
+  skippedAbsentCount: number
+): "created" | "duplicate" | "partial" {
+  if (createdCount === 0 && duplicateCount > 0 && skippedAbsentCount === 0) return "duplicate";
+  if (duplicateCount > 0 || skippedAbsentCount > 0) return "partial";
+  return "created";
+}
+
+function buildCheckInResponse(options: {
+  groupLabel: string;
+  entries: Array<{ entry: any; student: CheckInStudentSummary }>;
+  duplicateCount: number;
+  skippedAbsent: CheckInStudentSummary[];
+}) {
+  return {
+    outcome: checkInOutcome(options.entries.length, options.duplicateCount, options.skippedAbsent.length),
+    groupLabel: options.groupLabel,
+    entries: options.entries.map(({ entry, student }) => ({
+      queueId: entry.id,
+      studentId: entry.studentId,
+      studentName: studentName(student),
+      status: entry.status,
+    })),
+    skippedAbsent: options.skippedAbsent.map((student) => ({
+      studentId: student.id,
+      studentName: studentName(student),
+    })),
+  };
+}
+
 async function recordDismissalTimeline(options: {
   schoolId: string;
   entry?: any;
@@ -446,17 +488,19 @@ router.post(
       // Filter out absent students
       const today = new Date().toISOString().slice(0, 10);
       const absentIds = await getAbsentStudentIds(schoolId, today);
-      const skippedAbsent = studentList
-        .filter((s) => absentIds.has(s.id))
-        .map((s) => `${s.firstName} ${s.lastName}`);
+      const skippedAbsent = studentList.filter((s) => absentIds.has(s.id));
       studentList = studentList.filter((s) => !absentIds.has(s.id));
 
       let position = await getMaxQueuePosition(sessionId);
-      const entries: unknown[] = [];
+      const entries: Array<{ entry: any; student: CheckInStudentSummary }> = [];
+      let duplicateCount = 0;
 
       for (const s of studentList) {
         const alreadyInQueue = await isStudentInQueue(sessionId, s.id);
-        if (alreadyInQueue) continue;
+        if (alreadyInQueue) {
+          duplicateCount++;
+          continue;
+        }
 
         position++;
         const entry = await addToQueue({
@@ -466,7 +510,7 @@ router.post(
           checkInMethod: "car_number",
           position,
         });
-        entries.push(entry);
+        entries.push({ entry, student: s });
         await recordDismissalTimeline({ schoolId, entry, action: "checked in", actorUserId: req.authUser!.id, metadata: { carNumber } });
 
         if (s.homeroomId) {
@@ -477,25 +521,23 @@ router.post(
       // Notify parent app so QR check-in triggers the same queued flow
       if (group.claimedByUserId) {
         emitToSchool(schoolId, `parent:${group.claimedByUserId}`, "student:checked-in", {
-          entries,
+          entries: entries.map(({ entry }) => entry),
           carNumber,
         });
       }
 
       emitToSchool(schoolId, "office", "queue:updated", {
         action: "check_in",
-        entries,
+        entries: entries.map(({ entry }) => entry),
         carNumber,
       });
 
-      return res.json({
+      return res.json(buildCheckInResponse({
+        groupLabel: guardianName || `Car #${carNumber}`,
         entries,
-        position,
-        carNumber,
-        ...(skippedAbsent.length > 0 && {
-          warning: `Skipped absent students: ${skippedAbsent.join(", ")}`,
-        }),
-      });
+        duplicateCount,
+        skippedAbsent,
+      }));
     } catch (err) {
       next(err);
     }
@@ -538,14 +580,19 @@ router.post(
       // Filter out absent students
       const today = new Date().toISOString().slice(0, 10);
       const absentIds = await getAbsentStudentIds(schoolId, today);
+      const skippedAbsent = effectiveBusStudents.filter((s) => absentIds.has(s.id));
       const presentStudents = effectiveBusStudents.filter((s) => !absentIds.has(s.id));
 
       let position = await getMaxQueuePosition(sessionId);
-      const entries: unknown[] = [];
+      const entries: Array<{ entry: any; student: CheckInStudentSummary }> = [];
+      let duplicateCount = 0;
 
       for (const student of presentStudents) {
         const alreadyInQueue = await isStudentInQueue(sessionId, student.id);
-        if (alreadyInQueue) continue;
+        if (alreadyInQueue) {
+          duplicateCount++;
+          continue;
+        }
 
         position++;
         const entry = await addToQueue({
@@ -555,7 +602,7 @@ router.post(
           checkInMethod: "bus_number",
           position,
         });
-        entries.push(entry);
+        entries.push({ entry, student });
         await recordDismissalTimeline({ schoolId, entry, action: "checked in", actorUserId: req.authUser!.id, metadata: { busNumber } });
 
         if (student.homeroomId) {
@@ -565,11 +612,16 @@ router.post(
 
       emitToSchool(schoolId, "office", "queue:updated", {
         action: "check_in",
-        entries,
+        entries: entries.map(({ entry }) => entry),
         busNumber,
       });
 
-      return res.json({ entries, position, busNumber });
+      return res.json(buildCheckInResponse({
+        groupLabel: `Bus #${busNumber}`,
+        entries,
+        duplicateCount,
+        skippedAbsent,
+      }));
     } catch (err) {
       next(err);
     }
@@ -594,8 +646,14 @@ router.post("/sessions/:id/call", ...managerAuth, async (req, res, next) => {
     if (!session || !original || original.sessionId !== sessionId) {
       return res.status(404).json({ error: "Queue entry not found" });
     }
+    if (!["waiting", "called"].includes(original.status)) {
+      return res.status(409).json({ error: "Only waiting or called students can be called" });
+    }
 
     const entry = await callQueueEntry(queueId, zone);
+    if (!entry) {
+      return res.status(409).json({ error: "Queue entry is not eligible to be called" });
+    }
 
     emitToSchool(schoolId, "office", "queue:updated", {
       action: "called",
@@ -678,6 +736,9 @@ router.post("/queue/:id/release", ...staffAuth, async (req, res, next) => {
     if (!original) {
       return res.status(404).json({ error: "Queue entry not found" });
     }
+    if (original.status !== "called") {
+      return res.status(409).json({ error: "Student must be called before release" });
+    }
     const role = await getRequestGoPilotRole(req, res);
     if (!isGoPilotManager(role) && !(await canAccessStudent(req.authUser!, schoolId, original.studentId, role))) {
       return res.status(403).json({ error: "Insufficient permissions" });
@@ -720,6 +781,9 @@ router.post("/queue/:id/dismiss", ...managerAuth, async (req, res, next) => {
     const original = await getQueueEntryForSchool(id, schoolId);
     if (!original) {
       return res.status(404).json({ error: "Queue entry not found" });
+    }
+    if (original.status !== "released") {
+      return res.status(409).json({ error: "Student must be released before pickup completion" });
     }
 
     const entry = await dismissQueueEntry(id);
@@ -766,6 +830,9 @@ router.post("/queue/dismiss-batch", ...managerAuth, async (req, res, next) => {
     if (entriesForSchool.some((entry) => !entry)) {
       return res.status(404).json({ error: "One or more queue entries not found" });
     }
+    if (entriesForSchool.some((entry) => entry!.status !== "released")) {
+      return res.status(409).json({ error: "All students must be released before pickup completion" });
+    }
 
     const entries = await batchDismiss(ids);
     await Promise.all(entries.map((entry) =>
@@ -798,6 +865,9 @@ router.post("/queue/release-batch", ...staffAuth, async (req, res, next) => {
     );
     if (entriesForSchool.some((entry) => !entry)) {
       return res.status(404).json({ error: "One or more queue entries not found" });
+    }
+    if (entriesForSchool.some((entry) => entry!.status !== "called")) {
+      return res.status(409).json({ error: "All students must be called before release" });
     }
     if (!isGoPilotManager(role)) {
       for (const entry of entriesForSchool) {

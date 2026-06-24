@@ -3,13 +3,12 @@ import { Server } from "socket.io";
 import { verifyUserToken } from "../services/jwt.js";
 import { getUserById } from "../services/storage.js";
 import {
-  effectiveGoPilotRole,
-  getGoPilotMembership,
   getApprovedParentStudentIds,
   getHomeroomForSchool,
   getTeacherHomeroomIds,
   hasActiveGoPilotLicense,
   isGoPilotManager,
+  resolveGoPilotIdentity,
 } from "../services/gopilotAccess.js";
 import { runWithTenantContext } from "../middleware/tenantContext.js";
 
@@ -64,17 +63,17 @@ export function setupSocketIO(httpServer: HttpServer): Server {
           return;
         }
 
-        const membership = socket.data.isSuperAdmin
+        const identity = socket.data.isSuperAdmin
           ? null
-          : await getGoPilotMembership(userId, requestedSchoolId);
-        if (!socket.data.isSuperAdmin && !membership) {
+          : await resolveGoPilotIdentity(userId, requestedSchoolId);
+        if (!socket.data.isSuperAdmin && !identity) {
           socket.emit("join:error", { error: "No access to this school" });
           return;
         }
 
         const role = socket.data.isSuperAdmin
           ? "super_admin"
-          : effectiveGoPilotRole(membership!);
+          : identity!.primaryRole;
 
         socket.join(`school:${requestedSchoolId}`);
 

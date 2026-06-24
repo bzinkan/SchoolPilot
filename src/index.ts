@@ -563,6 +563,15 @@ async function runStartupMigrations(): Promise<void> {
     console.warn("[migration] dismissal_overrides migration skipped:", (err as Error).message);
   }
 
+  // Dismissal change acknowledgment fields (read/ack is separate from review).
+  try {
+    await pool.query(`ALTER TABLE IF EXISTS dismissal_changes ADD COLUMN IF NOT EXISTS acknowledged_by TEXT`);
+    await pool.query(`ALTER TABLE IF EXISTS dismissal_changes ADD COLUMN IF NOT EXISTS acknowledged_at TIMESTAMP`);
+    console.log("[migration] dismissal_changes acknowledgment columns ready");
+  } catch (err) {
+    console.warn("[migration] dismissal_changes acknowledgment migration skipped:", (err as Error).message);
+  }
+
   // Add auto_block_unsafe_urls column to settings table
   try {
     await pool.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS auto_block_unsafe_urls BOOLEAN DEFAULT true`);
