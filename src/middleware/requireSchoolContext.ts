@@ -1,6 +1,6 @@
 import type { RequestHandler } from "express";
 import { eq, and } from "drizzle-orm";
-import { schoolMemberships } from "../schema/core.js";
+import { schoolMemberships, schools } from "../schema/core.js";
 import db from "../db.js";
 import { bindTenantContext } from "./tenantContext.js";
 
@@ -39,8 +39,32 @@ export const requireSchoolContext: RequestHandler = async (req, res, next) => {
       (req.headers["x-school-id"] as string) ||
       (req.query.schoolId as string) ||
       "";
+
     if (requestedSchoolId && requestedSchoolId !== req.session.schoolId) {
-      return res.status(404).json({ error: "School not found" });
+      const [requestedMembership] = await db
+        .select({
+          membership: schoolMemberships,
+          school: schools,
+        })
+        .from(schoolMemberships)
+        .innerJoin(schools, eq(schoolMemberships.schoolId, schools.id))
+        .where(
+          and(
+            eq(schoolMemberships.userId, req.authUser.id),
+            eq(schoolMemberships.schoolId, requestedSchoolId),
+            eq(schoolMemberships.status, "active")
+          )
+        )
+        .limit(1);
+
+      if (!requestedMembership) {
+        return res.status(404).json({ error: "School not found" });
+      }
+
+      req.session.schoolId = requestedMembership.membership.schoolId;
+      req.session.role = requestedMembership.membership.role;
+      req.session.schoolSessionVersion =
+        requestedMembership.school.schoolSessionVersion ?? 1;
     }
 
     res.locals.schoolId = req.session.schoolId;

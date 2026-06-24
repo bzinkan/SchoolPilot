@@ -1,5 +1,5 @@
 import { Server as HttpServer } from "http";
-import { Server } from "socket.io";
+import { Server, type Socket } from "socket.io";
 import { verifyUserToken } from "../services/jwt.js";
 import { getUserById } from "../services/storage.js";
 import {
@@ -13,6 +13,15 @@ import {
 import { runWithTenantContext } from "../middleware/tenantContext.js";
 
 let io: Server | null = null;
+
+function joinValidatedSchoolRoom(socket: Socket, schoolId: string) {
+  for (const room of Array.from(socket.rooms)) {
+    if (room.startsWith("school:")) {
+      socket.leave(room);
+    }
+  }
+  socket.join(`school:${schoolId}`);
+}
 
 export function setupSocketIO(httpServer: HttpServer): Server {
   const origins = (process.env.CORS_ALLOWLIST || "http://localhost:3000,http://localhost:5000,http://localhost:5173")
@@ -75,46 +84,47 @@ export function setupSocketIO(httpServer: HttpServer): Server {
           ? "super_admin"
           : identity!.primaryRole;
 
-        socket.join(`school:${requestedSchoolId}`);
-
         // Socket.IO handlers run outside Express/ALS, so bind this school's tenant
         // context for the per-school access checks (students/homerooms reads) — RLS
         // would otherwise hide every row and deny legitimate parents/teachers.
         await runWithTenantContext({ schoolId: requestedSchoolId }, async () => {
-        if (isGoPilotManager(role)) {
-          socket.join(`school:${requestedSchoolId}:office`);
-          return;
-        }
+          if (isGoPilotManager(role)) {
+            joinValidatedSchoolRoom(socket, requestedSchoolId);
+            socket.join(`school:${requestedSchoolId}:office`);
+            return;
+          }
 
-        if (role === "teacher") {
-          const requestedHomeroomId = typeof homeroomId === "string" ? homeroomId : "";
-          if (!requestedHomeroomId) {
-            socket.emit("join:error", { error: "Homeroom context required" });
+          if (role === "teacher") {
+            const requestedHomeroomId = typeof homeroomId === "string" ? homeroomId : "";
+            if (!requestedHomeroomId) {
+              socket.emit("join:error", { error: "Homeroom context required" });
+              return;
+            }
+            const [homeroom, teacherHomeroomIds] = await Promise.all([
+              getHomeroomForSchool(requestedHomeroomId, requestedSchoolId),
+              getTeacherHomeroomIds(userId, requestedSchoolId),
+            ]);
+            if (!homeroom || !teacherHomeroomIds.has(requestedHomeroomId)) {
+              socket.emit("join:error", { error: "No access to this homeroom" });
+              return;
+            }
+            joinValidatedSchoolRoom(socket, requestedSchoolId);
+            socket.join(`school:${requestedSchoolId}:teacher:${requestedHomeroomId}`);
             return;
           }
-          const [homeroom, teacherHomeroomIds] = await Promise.all([
-            getHomeroomForSchool(requestedHomeroomId, requestedSchoolId),
-            getTeacherHomeroomIds(userId, requestedSchoolId),
-          ]);
-          if (!homeroom || !teacherHomeroomIds.has(requestedHomeroomId)) {
-            socket.emit("join:error", { error: "No access to this homeroom" });
-            return;
-          }
-          socket.join(`school:${requestedSchoolId}:teacher:${requestedHomeroomId}`);
-          return;
-        }
 
-        if (role === "parent") {
-          // Only parents with at least one APPROVED child at this school may
-          // join the broadcast parent room — a membership alone isn't enough.
-          const approved = await getApprovedParentStudentIds(userId, requestedSchoolId);
-          if (approved.size === 0) {
-            socket.emit("join:error", { error: "No approved children at this school" });
-            return;
+          if (role === "parent") {
+            // Only parents with at least one APPROVED child at this school may
+            // join the broadcast parent room — a membership alone isn't enough.
+            const approved = await getApprovedParentStudentIds(userId, requestedSchoolId);
+            if (approved.size === 0) {
+              socket.emit("join:error", { error: "No approved children at this school" });
+              return;
+            }
+            joinValidatedSchoolRoom(socket, requestedSchoolId);
+            socket.join(`school:${requestedSchoolId}:parent:${userId}`);
+            socket.join(`school:${requestedSchoolId}:parents`);
           }
-          socket.join(`school:${requestedSchoolId}:parent:${userId}`);
-          socket.join(`school:${requestedSchoolId}:parents`);
-        }
         });
       } catch {
         socket.emit("join:error", { error: "Failed to join school room" });

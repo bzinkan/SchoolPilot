@@ -34,6 +34,10 @@ function clientIp(req: any): string | undefined {
   return (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || req.ip;
 }
 
+function headerString(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
 const router = Router();
 
 // POST /api/auth/login
@@ -291,9 +295,25 @@ router.get("/me", authenticate, async (req, res, next) => {
       (req.session as any).originalUserId
     );
 
-    // Resolve product licenses for the active school
-    const schoolId =
-      req.session?.schoolId || membershipsWithSchool[0]?.membership.schoolId;
+    const requestedSchoolId = headerString(req.headers["x-school-id"]);
+    const requestedMembership = requestedSchoolId
+      ? membershipsWithSchool.find((m) => m.membership.schoolId === requestedSchoolId)
+      : undefined;
+    const sessionMembership = req.session?.schoolId
+      ? membershipsWithSchool.find((m) => m.membership.schoolId === req.session.schoolId)
+      : undefined;
+    const activeMembership =
+      requestedMembership || sessionMembership || membershipsWithSchool[0];
+
+    if (req.authMethod === "session" && activeMembership) {
+      req.session.schoolId = activeMembership.membership.schoolId;
+      req.session.role = activeMembership.membership.role;
+      req.session.schoolSessionVersion =
+        activeMembership.school.schoolSessionVersion ?? 1;
+    }
+
+    // Resolve product licenses for the verified active school.
+    const schoolId = activeMembership?.membership.schoolId;
     let licenses = { classPilot: false, passPilot: false, goPilot: false };
     if (schoolId) {
       const productLicenses = await getProductLicenses(schoolId);

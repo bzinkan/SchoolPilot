@@ -617,6 +617,7 @@ export default function TeacherView() {
   // Error state
   if (error && students.length === 0) {
     const isNoGoPilotHomeroom = error === 'No GoPilot homeroom found for your account.';
+    const canOpenClassPilot = isNoGoPilotHomeroom && hasClassPilot && !isNative;
     return (
       <div className="min-h-screen bg-gray-100 flex items-center justify-center">
         <Card className="max-w-md mx-auto">
@@ -627,7 +628,9 @@ export default function TeacherView() {
             </h2>
             <p className="text-gray-600 mb-4">
               {isNoGoPilotHomeroom
-                ? 'GoPilot dismissal teacher view needs an assigned homeroom. You can still open ClassPilot if your school has ClassPilot enabled.'
+                ? canOpenClassPilot
+                  ? 'GoPilot dismissal teacher view needs an assigned homeroom. You can still open ClassPilot.'
+                  : 'GoPilot dismissal teacher view needs an assigned homeroom. Ask an admin to assign your GoPilot homeroom.'
                 : error}
             </p>
             <div className="flex flex-col sm:flex-row justify-center gap-2">
@@ -635,7 +638,7 @@ export default function TeacherView() {
                 <RefreshCw className="w-4 h-4 mr-2" />
                 Retry
               </Button>
-              {isNoGoPilotHomeroom && hasClassPilot && !isNative && (
+              {canOpenClassPilot && (
                 <Button onClick={() => navigate('/classpilot')}>
                   Open ClassPilot
                   <ArrowRight className="w-4 h-4 ml-2" />
