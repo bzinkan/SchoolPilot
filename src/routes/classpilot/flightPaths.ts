@@ -20,7 +20,6 @@ import {
 } from "../../services/storage.js";
 import {
   sendToDeviceLocal,
-  broadcastToStudentsLocal,
 } from "../../realtime/ws-broadcast.js";
 import { publishWS } from "../../realtime/ws-redis.js";
 import { scopedDeviceTargets } from "../../services/classpilotDeviceScope.js";
@@ -167,6 +166,11 @@ router.post("/block-lists/:id/apply", ...auth, async (req, res, next) => {
 
     const { deviceIds, targetDeviceIds } = req.body;
     let resolvedDeviceIds = deviceIds || targetDeviceIds;
+    if (!Array.isArray(resolvedDeviceIds) || resolvedDeviceIds.length === 0) {
+      return res.status(400).json({
+        error: "Explicit targetDeviceIds are required. Use /classpilot/commands for class-scoped teacher commands.",
+      });
+    }
     const message = {
       type: "remote-control",
       _msgId: crypto.randomUUID(),
@@ -188,8 +192,7 @@ router.post("/block-lists/:id/apply", ...auth, async (req, res, next) => {
       }
       await publishWS({ kind: "students", schoolId, targetDeviceIds: resolvedDeviceIds }, message);
     } else {
-      sentTo = broadcastToStudentsLocal(schoolId, message);
-      await publishWS({ kind: "students", schoolId }, message);
+      return res.status(400).json({ error: "No target devices resolved" });
     }
 
     return res.json({ success: true, sentTo, rejectedDeviceCount, message: `Applied "${bl.name}" to ${sentTo} device(s)` });
@@ -204,6 +207,11 @@ router.post("/block-lists/remove", ...auth, async (req, res, next) => {
     const schoolId = res.locals.schoolId!;
     const { deviceIds, targetDeviceIds } = req.body;
     let resolvedDeviceIds = deviceIds || targetDeviceIds;
+    if (!Array.isArray(resolvedDeviceIds) || resolvedDeviceIds.length === 0) {
+      return res.status(400).json({
+        error: "Explicit targetDeviceIds are required. Use /classpilot/commands for class-scoped teacher commands.",
+      });
+    }
     const message = { type: "remote-control", _msgId: crypto.randomUUID(), command: { type: "remove-block-list", data: {} } };
 
     let sentTo = 0;
@@ -221,8 +229,7 @@ router.post("/block-lists/remove", ...auth, async (req, res, next) => {
       }
       await publishWS({ kind: "students", schoolId, targetDeviceIds: resolvedDeviceIds }, message);
     } else {
-      sentTo = broadcastToStudentsLocal(schoolId, message);
-      await publishWS({ kind: "students", schoolId }, message);
+      return res.status(400).json({ error: "No target devices resolved" });
     }
 
     return res.json({ ok: true, sentTo, rejectedDeviceCount });

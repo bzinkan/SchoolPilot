@@ -3,7 +3,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { Card } from "../../../components/ui/card";
 import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
-import { Monitor, ExternalLink, AlertTriangle, Lock, Unlock, Video, Layers, Maximize2, X } from "lucide-react";
+import { Monitor, ExternalLink, AlertTriangle, Lock, Unlock, Video, Layers, Maximize2, X, List } from "lucide-react";
 import { Checkbox } from "../../../components/ui/checkbox";
 import { useToast } from "../../../hooks/use-toast";
 import { apiRequest, queryClient } from "../../../lib/queryClient";
@@ -34,7 +34,7 @@ function isBlockedDomain(url, blockedDomains) {
   }
 }
 
-function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false, isAbsent = false, isSelected = false, onToggleSelect, liveStream, onStartLiveView, onStopLiveView, onBlockRefetches, onAllowDomain }) {
+function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false, isAbsent = false, isSelected = false, onToggleSelect, liveStream, onStartLiveView, onStopLiveView, onBlockRefetches, onAllowDomain, teachingSessionId, onManageTabs }) {
   const [expanded, setExpanded] = useState(false);
   const { toast } = useToast();
   const tileVideoSlotRef = useRef(null);
@@ -173,11 +173,15 @@ function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false,
   // Unblock mutation for flight path
   const unblockForClassMutation = useMutation({
     mutationFn: async () => {
-      if (!student.primaryDeviceId) {
-        throw new Error("Student does not have a primary device assigned.");
+      if (!teachingSessionId) {
+        throw new Error("Start a class session before sending commands.");
       }
-      return await apiRequest("POST", "/remote/unlock-screen", {
-        targetDeviceIds: [student.primaryDeviceId]
+      return await apiRequest("POST", "/commands", {
+        teachingSessionId,
+        targetScope: "students",
+        targetStudentIds: [student.studentId],
+        commandType: "unlock-screen",
+        commandPayload: {},
       });
     },
     onSuccess: () => {
@@ -195,12 +199,15 @@ function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false,
       if (!student.activeTabUrl) {
         throw new Error("No active tab to lock to");
       }
-      if (!student.primaryDeviceId) {
-        throw new Error("Student does not have a primary device assigned.");
+      if (!teachingSessionId) {
+        throw new Error("Start a class session before sending commands.");
       }
-      return await apiRequest("POST", "/remote/lock-screen", {
-        url: student.activeTabUrl,
-        targetDeviceIds: [student.primaryDeviceId]
+      return await apiRequest("POST", "/commands", {
+        teachingSessionId,
+        targetScope: "students",
+        targetStudentIds: [student.studentId],
+        commandType: "lock-screen",
+        commandPayload: { url: student.activeTabUrl },
       });
     },
     onMutate: async () => {
@@ -242,11 +249,15 @@ function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false,
   // Unlock screen mutation
   const unlockScreenMutation = useMutation({
     mutationFn: async () => {
-      if (!student.primaryDeviceId) {
-        throw new Error("Student does not have a primary device assigned.");
+      if (!teachingSessionId) {
+        throw new Error("Start a class session before sending commands.");
       }
-      return await apiRequest("POST", "/remote/unlock-screen", {
-        targetDeviceIds: [student.primaryDeviceId]
+      return await apiRequest("POST", "/commands", {
+        teachingSessionId,
+        targetScope: "students",
+        targetStudentIds: [student.studentId],
+        commandType: "unlock-screen",
+        commandPayload: {},
       });
     },
     onMutate: async () => {
@@ -608,6 +619,22 @@ function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false,
 
         {/* Footer Zone - Actions Only */}
         <div className="flex items-center justify-end gap-2 pt-2 border-t border-border/20">
+          {onManageTabs && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 px-3 text-xs"
+              onClick={(e) => {
+                e.stopPropagation();
+                onManageTabs();
+              }}
+              title="Manage this student's open tabs"
+              data-testid={`button-manage-tabs-${student.primaryDeviceId ?? "unknown-device"}`}
+            >
+              <List className="h-3.5 w-3.5 mr-1" />
+              Tabs
+            </Button>
+          )}
           {onStartLiveView && onStopLiveView && (
             <Button
               variant={liveStream ? "default" : "outline"}

@@ -300,6 +300,88 @@ async function runStartupMigrations(): Promise<void> {
     console.warn("[migration] derived-table school_id migration skipped:", (err as Error).message);
   }
 
+  // ClassPilot teacher command tracking. These tables are school-scoped and
+  // participate in the generic RLS policy authoring block below.
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS classpilot_commands (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        school_id TEXT NOT NULL,
+        teaching_session_id VARCHAR NOT NULL,
+        teacher_id TEXT NOT NULL,
+        target_scope TEXT NOT NULL,
+        subgroup_id VARCHAR,
+        command_type TEXT NOT NULL,
+        command_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+        status TEXT NOT NULL DEFAULT 'requested',
+        requested_count INTEGER NOT NULL DEFAULT 0,
+        sent_count INTEGER NOT NULL DEFAULT 0,
+        received_count INTEGER NOT NULL DEFAULT 0,
+        completed_count INTEGER NOT NULL DEFAULT 0,
+        failed_count INTEGER NOT NULL DEFAULT 0,
+        unavailable_count INTEGER NOT NULL DEFAULT 0,
+        expires_at TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT now(),
+        updated_at TIMESTAMP NOT NULL DEFAULT now()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_commands_school_session_idx ON classpilot_commands (school_id, teaching_session_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_commands_teacher_created_idx ON classpilot_commands (teacher_id, created_at)`);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS classpilot_command_targets (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        command_id VARCHAR NOT NULL,
+        school_id TEXT NOT NULL,
+        teaching_session_id VARCHAR NOT NULL,
+        student_id TEXT NOT NULL,
+        student_session_id VARCHAR,
+        device_id TEXT,
+        status TEXT NOT NULL DEFAULT 'requested',
+        ack_state TEXT,
+        error_message TEXT,
+        result JSONB,
+        sent_at TIMESTAMP,
+        received_at TIMESTAMP,
+        completed_at TIMESTAMP,
+        failed_at TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT now(),
+        updated_at TIMESTAMP NOT NULL DEFAULT now()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_command_targets_command_idx ON classpilot_command_targets (command_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_command_targets_school_student_idx ON classpilot_command_targets (school_id, student_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_command_targets_device_idx ON classpilot_command_targets (device_id)`);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS classpilot_classroom_states (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        school_id TEXT NOT NULL,
+        teaching_session_id VARCHAR NOT NULL,
+        student_id TEXT,
+        state_type TEXT NOT NULL,
+        state_key TEXT NOT NULL,
+        payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+        command_id VARCHAR,
+        applied_by TEXT NOT NULL,
+        applied_at TIMESTAMP NOT NULL DEFAULT now(),
+        expires_at TIMESTAMP,
+        cleared_at TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT now()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_classroom_states_session_idx ON classpilot_classroom_states (school_id, teaching_session_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_classroom_states_student_idx ON classpilot_classroom_states (school_id, student_id)`);
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS classpilot_classroom_states_active_unique
+      ON classpilot_classroom_states (teaching_session_id, student_id, state_type, state_key)
+      WHERE cleared_at IS NULL
+    `);
+    console.log("[migration] ClassPilot teacher command tables ready");
+  } catch (err) {
+    console.warn("[migration] ClassPilot teacher command migration skipped:", (err as Error).message);
+  }
+
   // RLS Phase 4: author per-school tenant-isolation policies (idempotent) for
   // every table that has a school_id column, EXCEPT global/bootstrap tables. The
   // policies + FORCE ROW LEVEL SECURITY are INERT until a table is named in the

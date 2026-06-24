@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useNavigate } from 'react-router-dom';
-import { Monitor, Users, Activity, Settings as SettingsIcon, LogOut, Download, Calendar, Shield, AlertTriangle, UserCog, Plus, X, GraduationCap, WifiOff, Video, MonitorPlay, TabletSmartphone, Lock, Unlock, Layers, Route, CheckSquare, XSquare, User, List, ShieldBan, Eye, EyeOff, Timer, Clock, BarChart3, Trash2, UsersRound, Filter, Hand, MessageSquareOff, MessageSquare, Send, ClipboardCheck } from "lucide-react";
+import { Monitor, Users, Activity, Settings as SettingsIcon, LogOut, Download, Calendar, Shield, AlertTriangle, UserCog, Plus, X, GraduationCap, WifiOff, Video, MonitorPlay, TabletSmartphone, Lock, Unlock, Layers, Route, CheckSquare, XSquare, User, List, ShieldBan, Eye, EyeOff, Timer, Clock, BarChart3, Trash2, UsersRound, Filter, Hand, MessageSquareOff, MessageSquare, Send, ClipboardCheck, ChevronDown, History, RotateCcw } from "lucide-react";
 import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
 import { Badge } from '../../../components/ui/badge';
@@ -48,6 +48,8 @@ function normalizeGrade(grade) {
   return trimmed.replace(/(\d+)(st|nd|rd|th)\b/gi, '$1');
 }
 
+const optimisticUpdateDeadline = () => Date.now() + 15000;
+
 export default function Dashboard() {
   const navigate = useNavigate();
   const { currentUser, isAdmin, isTeacher, token, logout } = useClassPilotAuth();
@@ -86,8 +88,11 @@ export default function Dashboard() {
   const [newGrade, setNewGrade] = useState("");
   const [showOpenTabDialog, setShowOpenTabDialog] = useState(false);
   const [openTabUrl, setOpenTabUrl] = useState("");
+  const [showLockUrlDialog, setShowLockUrlDialog] = useState(false);
+  const [lockUrl, setLockUrl] = useState("");
   const [showCloseTabsDialog, setShowCloseTabsDialog] = useState(false);
   const [selectedTabsToClose, setSelectedTabsToClose] = useState(new Set());
+  const [manageTabsStudentIds, setManageTabsStudentIds] = useState(null);
   const [showApplyFlightPathDialog, setShowApplyFlightPathDialog] = useState(false);
   const [selectedFlightPathId, setSelectedFlightPathId] = useState("");
   const [showFlightPathViewerDialog, setShowFlightPathViewerDialog] = useState(false);
@@ -219,6 +224,22 @@ export default function Dashboard() {
   );
   const effectiveSession = isAdmin ? (observedSession || activeSession) : activeSession;
 
+  const { data: recentCommands = [] } = useQuery({
+    queryKey: ['/api/commands/recent', effectiveSession?.id],
+    queryFn: () => apiRequest('GET', `/commands/recent?limit=6&teachingSessionId=${encodeURIComponent(effectiveSession.id)}`),
+    select: (data) => data?.commands ?? [],
+    enabled: !!effectiveSession,
+    refetchInterval: 5000,
+  });
+
+  const { data: activeClassroomStates = [] } = useQuery({
+    queryKey: ['/api/commands/active-state', effectiveSession?.id],
+    queryFn: () => apiRequest('GET', `/commands/active-state?teachingSessionId=${encodeURIComponent(effectiveSession.id)}`),
+    select: (data) => data?.states ?? [],
+    enabled: !!effectiveSession?.id,
+    refetchInterval: 30000,
+  });
+
   const { data: urlHistory = [] } = useQuery({
     queryKey: ['/api/heartbeats', selectedStudent?.primaryDeviceId, effectiveSession?.startTime],
     queryFn: () => {
@@ -347,6 +368,9 @@ export default function Dashboard() {
                 queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
                 invalidateTimeoutRef.current = null;
               }, 300);
+            }
+            if (message.type === 'classpilot-command-update') {
+              queryClient.invalidateQueries({ queryKey: ['/api/commands/recent'], exact: false });
             }
             if (message.type === 'answer') {
               webrtc.handleAnswer(message.from, message.sdp);
@@ -632,38 +656,113 @@ export default function Dashboard() {
   const offlineCount = statsStudents.filter((s) => s.status === 'offline').length;
   const offTaskCount = statsStudents.filter(isStudentOffTask).length;
 
-  const getTargetDeviceIds = () => {
-    if (selectedStudentIds.size === 0) return undefined;
-    const deviceIds = [];
-    students.forEach(student => {
-      if (selectedStudentIds.has(student.studentId)) {
-        student.devices.forEach(device => { if (device.deviceId) deviceIds.push(device.deviceId); });
-        if (student.primaryDeviceId && !deviceIds.includes(student.primaryDeviceId)) {
-          deviceIds.push(student.primaryDeviceId);
-        }
-      }
-    });
-    return deviceIds.length > 0 ? deviceIds : undefined;
+  const isConnectedStudent = (student) => student.status === 'online' || student.status === 'idle';
+
+  const getStudentsForCommandTarget = (overrideStudentIds = null) => {
+    const overrideSet = overrideStudentIds ? new Set(overrideStudentIds) : null;
+    if (overrideSet) return sessionFilteredStudents.filter((student) => overrideSet.has(student.studentId));
+    if (selectedStudentIds.size > 0) return sessionFilteredStudents.filter((student) => selectedStudentIds.has(student.studentId));
+    if (selectedSubgroupId) return sessionFilteredStudents.filter((student) => subgroupMembers.has(student.studentId));
+    return sessionFilteredStudents;
   };
 
-  const targetLabel = (count) => selectedStudentIds.size > 0 ? `${count} selected student(s)` : `all ${count} online student(s)`;
+  const targetStudents = getStudentsForCommandTarget();
+  const connectedTargetCount = targetStudents.filter(isConnectedStudent).length;
+  const unavailableTargetCount = Math.max(0, targetStudents.length - connectedTargetCount);
+  const activeClassName = groups.find(g => g.id === effectiveSession?.groupId)?.name || (effectiveSession ? "Active Class" : "Class");
+  const subgroupName = selectedSubgroupId ? subgroups.find(s => s.id === selectedSubgroupId)?.name : null;
+  const targetBannerLabel = selectedStudentIds.size > 0
+    ? `${selectedStudentIds.size} selected student${selectedStudentIds.size === 1 ? "" : "s"}`
+    : selectedSubgroupId
+      ? `${subgroupName || "Subgroup"} - ${targetStudents.length} student${targetStudents.length === 1 ? "" : "s"}`
+      : `All ${targetStudents.length} student${targetStudents.length === 1 ? "" : "s"}`;
+  const targetConnectionLabel = `${connectedTargetCount} connected · ${unavailableTargetCount} not signed in`;
 
-  const relevantStudents = selectedStudentIds.size > 0
-    ? students.filter(s => selectedStudentIds.has(s.studentId))
-    : students;
+  const deviceIdsForStudentIds = (studentIds) => {
+    const ids = new Set(studentIds || []);
+    const deviceIds = [];
+    students.forEach((student) => {
+      if (!ids.has(student.studentId)) return;
+      student.devices?.forEach(device => { if (device.deviceId) deviceIds.push(device.deviceId); });
+      if (student.primaryDeviceId && !deviceIds.includes(student.primaryDeviceId)) {
+        deviceIds.push(student.primaryDeviceId);
+      }
+    });
+    return deviceIds;
+  };
 
-  const openTabs = relevantStudents
+  const commandStudentIdsFromRequest = (request) => {
+    if (request.targetScope === "students") return request.targetStudentIds || [];
+    if (request.targetScope === "subgroup") return getStudentsForCommandTarget().map((student) => student.studentId);
+    return sessionFilteredStudents.map((student) => student.studentId);
+  };
+
+  const buildCommandRequest = (commandType, commandPayload = {}, options = {}) => {
+    if (!effectiveSession?.id) {
+      throw new Error("Start or select an active class session before sending classroom commands.");
+    }
+    const overrideStudentIds = options.studentIds
+      ? [...new Set(options.studentIds.map(String).filter(Boolean))]
+      : null;
+    const request = {
+      teachingSessionId: effectiveSession.id,
+      targetScope: "class",
+      commandType,
+      commandPayload,
+    };
+    if (overrideStudentIds) {
+      if (overrideStudentIds.length === 0) throw new Error("Select at least one student.");
+      request.targetScope = "students";
+      request.targetStudentIds = overrideStudentIds;
+    } else if (selectedStudentIds.size > 0) {
+      request.targetScope = "students";
+      request.targetStudentIds = Array.from(selectedStudentIds);
+    } else if (selectedSubgroupId) {
+      request.targetScope = "subgroup";
+      request.subgroupId = selectedSubgroupId;
+    }
+    return request;
+  };
+
+  const makeTabKey = (tab) => JSON.stringify({
+    studentId: tab.studentId,
+    deviceId: tab.deviceId,
+    url: tab.url,
+  });
+
+  const parseTabKey = (key) => {
+    try {
+      const parsed = JSON.parse(key);
+      if (!parsed.studentId || !parsed.url) return null;
+      return parsed;
+    } catch {
+      return null;
+    }
+  };
+
+  const manageTabsStudents = getStudentsForCommandTarget(manageTabsStudentIds);
+  const openTabs = manageTabsStudents
     .flatMap(s => {
       if (s.allOpenTabs && s.allOpenTabs.length > 0) {
         return s.allOpenTabs
           .filter((tab) => tab.url && !tab.url.startsWith('chrome://'))
-          .map((tab) => ({ url: tab.url, title: tab.title || 'Untitled', studentName: s.studentName, studentId: s.studentId, deviceId: tab.deviceId }));
+          .map((tab) => ({ url: tab.url, title: tab.title || 'Untitled', studentName: s.studentName, studentId: s.studentId, deviceId: tab.deviceId || s.primaryDeviceId, active: tab.url === s.activeTabUrl }));
       } else if (s.activeTabUrl && s.activeTabUrl.trim() && !s.activeTabUrl.startsWith('chrome://') && s.primaryDeviceId) {
-        return [{ url: s.activeTabUrl, title: s.activeTabTitle || 'Untitled', studentName: s.studentName, studentId: s.studentId, deviceId: s.primaryDeviceId }];
+        return [{ url: s.activeTabUrl, title: s.activeTabTitle || 'Untitled', studentName: s.studentName, studentId: s.studentId, deviceId: s.primaryDeviceId, active: true }];
       }
       return [];
     })
-    .sort((a, b) => a.title.localeCompare(b.title));
+    .sort((a, b) => a.studentName.localeCompare(b.studentName) || a.title.localeCompare(b.title));
+
+  const openTabsByStudent = openTabs.reduce((groups, tab) => {
+    const key = tab.studentId;
+    if (!groups[key]) groups[key] = { studentId: tab.studentId, studentName: tab.studentName, tabs: [] };
+    groups[key].tabs.push(tab);
+    return groups;
+  }, {});
+  const manageTabsTargetLabel = manageTabsStudentIds?.length === 1
+    ? (students.find((student) => student.studentId === manageTabsStudentIds[0])?.studentName || "Selected student")
+    : targetBannerLabel;
 
   // Check for blocked domain violations
   useEffect(() => {
@@ -694,6 +793,27 @@ export default function Dashboard() {
       }
     });
   }, [students, settings, toast]);
+
+  useEffect(() => {
+    if (!activeClassroomStates.length) {
+      setAttentionActive(false);
+      setTimerActive(false);
+      return;
+    }
+
+    const hasAttention = activeClassroomStates.some((state) => state.stateType === 'attention');
+    const hasTimer = activeClassroomStates.some((state) => state.stateType === 'timer');
+    const pollState = activeClassroomStates.find((state) => state.stateType === 'poll' && state.payload?.pollId);
+    setAttentionActive(hasAttention);
+    setTimerActive(hasTimer);
+    if (pollState?.payload?.pollId) {
+      setActivePoll((current) => current?.id === pollState.payload.pollId ? current : {
+        id: pollState.payload.pollId,
+        question: pollState.payload.question,
+        options: pollState.payload.options || [],
+      });
+    }
+  }, [activeClassroomStates]);
 
   const handleLogout = () => { logout(); navigate("/login"); };
 
@@ -772,13 +892,41 @@ export default function Dashboard() {
     }
   };
 
+  const postClassroomCommand = async (commandType, commandPayload, options = {}) => {
+    const request = buildCommandRequest(commandType, commandPayload, options);
+    const data = await apiRequest('POST', '/commands', request);
+    const targetStudentIds = commandStudentIdsFromRequest(request);
+    return {
+      ...data,
+      request,
+      targetStudentIds,
+      targetDeviceIds: deviceIdsForStudentIds(targetStudentIds),
+    };
+  };
+
+  const getSentStudentIdsFromCommand = (data) => new Set(
+    (data?.command?.targets || [])
+      .filter((target) => ['sent', 'received', 'completed'].includes(target.status))
+      .map((target) => target.studentId)
+  );
+
+  const reconcileOptimisticStudentState = (data, context, applySentUpdate) => {
+    const requestedStudentIds = new Set((data?.command?.targets || []).map((target) => target.studentId));
+    const sentStudentIds = getSentStudentIdsFromCommand(data);
+    const previousByStudentId = new Map((context?.previousStudents || []).map((student) => [student.studentId, student]));
+    queryClient.setQueryData(['/api/students-aggregated'], (old) =>
+      old?.map((student) => {
+        if (!requestedStudentIds.has(student.studentId)) return student;
+        if (!sentStudentIds.has(student.studentId)) return previousByStudentId.get(student.studentId) || student;
+        return applySentUpdate(student);
+      })
+    );
+  };
+
   const openTabMutation = useMutation({
-    mutationFn: async ({ url, targetDeviceIds }) => {
-      const data = await apiRequest('POST', '/remote/open-tab', { url, targetDeviceIds });
-      return { ...data, targetDeviceIds };
-    },
+    mutationFn: async ({ url }) => postClassroomCommand('open-tab', { url }),
     onSuccess: (data, variables) => {
-      toast({ title: "Success", description: data.message }); setShowOpenTabDialog(false);
+      toast({ title: "Open URL", description: data.message }); setShowOpenTabDialog(false);
       // Auto-allow the opened domain so it's not flagged as off-task
       try { const d = new URL(variables.url).hostname.toLowerCase().replace(/^www\./, ''); handleAllowDomain(d); } catch { /* ignore invalid URL */ }
       setOpenTabUrl(""); refreshScreenshotsForDevices(data.targetDeviceIds);
@@ -787,31 +935,37 @@ export default function Dashboard() {
   });
 
   const closeTabsMutation = useMutation({
-    mutationFn: async ({ closeAll, pattern, specificUrls, targetDeviceIds, tabsToClose }) => {
-      const data = await apiRequest('POST', '/remote/close-tabs', { closeAll, pattern, specificUrls, targetDeviceIds, tabsToClose });
-      const affectedDeviceIds = tabsToClose?.map(t => t.deviceId) || targetDeviceIds;
-      return { ...data, affectedDeviceIds };
+    mutationFn: async ({ closeAll, pattern, specificUrls, tabsToClose, studentIds }) => {
+      const payload = { closeAll, pattern, specificUrls, tabsToClose };
+      return postClassroomCommand('close-tabs', payload, { studentIds });
     },
-    onSuccess: (data) => { toast({ title: "Success", description: data.message }); setShowCloseTabsDialog(false); setSelectedTabsToClose(new Set()); if (data.affectedDeviceIds) refreshScreenshotsForDevices(data.affectedDeviceIds); },
+    onSuccess: (data) => {
+      toast({ title: "Manage Tabs", description: data.message });
+      setShowCloseTabsDialog(false);
+      setSelectedTabsToClose(new Set());
+      setManageTabsStudentIds(null);
+      refreshScreenshotsForDevices(data.targetDeviceIds);
+    },
     onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
   });
 
   const lockScreenMutation = useMutation({
-    mutationFn: async ({ url, targetDeviceIds, devicesToLock }) => {
-      const data = await apiRequest('POST', '/remote/lock-screen', { url, targetDeviceIds });
-      return { ...data, deviceCount: devicesToLock.length };
-    },
-    onMutate: async ({ targetDeviceIds }) => {
-      optimisticUpdateUntilRef.current = Date.now() + 15000;
+    mutationFn: async ({ url }) => postClassroomCommand('lock-screen', { url }),
+    onMutate: async () => {
+      optimisticUpdateUntilRef.current = optimisticUpdateDeadline();
       await queryClient.cancelQueries({ queryKey: ['/api/students-aggregated'] });
       const previousStudents = queryClient.getQueryData(['/api/students-aggregated']);
-      const devicesToLock = targetDeviceIds || students.filter(s => s.status === 'online' || s.status === 'idle').map(s => s.primaryDeviceId).filter(Boolean);
+      const devicesToLock = deviceIdsForStudentIds(getStudentsForCommandTarget().map((student) => student.studentId));
       queryClient.setQueryData(['/api/students-aggregated'], (old) =>
         old?.map(s => devicesToLock.includes(s.primaryDeviceId ?? '') ? { ...s, screenLocked: true } : s)
       );
       return { previousStudents, devicesToLock };
     },
-    onSuccess: (data, variables) => { toast({ title: "Success", description: `Locked screen for ${targetLabel(data.deviceCount)}` }); refreshScreenshotsForDevices(variables.devicesToLock); },
+    onSuccess: (data, _variables, context) => {
+      reconcileOptimisticStudentState(data, context, (student) => ({ ...student, screenLocked: true }));
+      toast({ title: "Screen Control", description: data.message });
+      refreshScreenshotsForDevices(data.targetDeviceIds);
+    },
     onError: (error, _, context) => {
       optimisticUpdateUntilRef.current = 0;
       if (context?.previousStudents) queryClient.setQueryData(['/api/students-aggregated'], context.previousStudents);
@@ -820,21 +974,22 @@ export default function Dashboard() {
   });
 
   const unlockScreenMutation = useMutation({
-    mutationFn: async ({ targetDeviceIds, devicesToUnlock }) => {
-      const data = await apiRequest('POST', '/remote/unlock-screen', { targetDeviceIds });
-      return { ...data, deviceCount: devicesToUnlock.length };
-    },
-    onMutate: async ({ targetDeviceIds }) => {
-      optimisticUpdateUntilRef.current = Date.now() + 15000;
+    mutationFn: async ({ studentIds } = {}) => postClassroomCommand('unlock-screen', {}, { studentIds }),
+    onMutate: async ({ studentIds } = {}) => {
+      optimisticUpdateUntilRef.current = optimisticUpdateDeadline();
       await queryClient.cancelQueries({ queryKey: ['/api/students-aggregated'] });
       const previousStudents = queryClient.getQueryData(['/api/students-aggregated']);
-      const devicesToUnlock = targetDeviceIds || students.filter(s => s.status === 'online' || s.status === 'idle').map(s => s.primaryDeviceId).filter(Boolean);
+      const devicesToUnlock = deviceIdsForStudentIds((studentIds && studentIds.length > 0 ? studentIds : getStudentsForCommandTarget().map((student) => student.studentId)));
       queryClient.setQueryData(['/api/students-aggregated'], (old) =>
         old?.map(s => devicesToUnlock.includes(s.primaryDeviceId ?? '') ? { ...s, screenLocked: false } : s)
       );
       return { previousStudents, devicesToUnlock };
     },
-    onSuccess: (data, variables) => { toast({ title: "Success", description: `Unlocked screen for ${targetLabel(data.deviceCount)}` }); refreshScreenshotsForDevices(variables.devicesToUnlock); },
+    onSuccess: (data, _variables, context) => {
+      reconcileOptimisticStudentState(data, context, (student) => ({ ...student, screenLocked: false }));
+      toast({ title: "Screen Control", description: data.message });
+      refreshScreenshotsForDevices(data.targetDeviceIds);
+    },
     onError: (error, _, context) => {
       optimisticUpdateUntilRef.current = 0;
       if (context?.previousStudents) queryClient.setQueryData(['/api/students-aggregated'], context.previousStudents);
@@ -846,55 +1001,75 @@ export default function Dashboard() {
     if (!openTabUrl.trim()) { toast({ variant: "destructive", title: "Invalid URL", description: "Please enter a valid URL" }); return; }
     let normalizedUrl = openTabUrl.trim();
     if (!normalizedUrl.match(/^https?:\/\//i)) normalizedUrl = 'https://' + normalizedUrl;
-    openTabMutation.mutate({ url: normalizedUrl, targetDeviceIds: getTargetDeviceIds() });
+    openTabMutation.mutate({ url: normalizedUrl });
   };
 
   const handleCloseTabs = () => {
     if (selectedTabsToClose.size === 0) { toast({ variant: "destructive", title: "No Tabs Selected", description: "Please select at least one tab to close" }); return; }
     const tabsToClose = [];
     selectedTabsToClose.forEach(compositeKey => {
-      const parts = compositeKey.split('|');
-      if (parts.length === 3) tabsToClose.push({ deviceId: parts[1], url: parts[2] });
+      const parsed = parseTabKey(compositeKey);
+      if (parsed) tabsToClose.push(parsed);
     });
-    closeTabsMutation.mutate({ tabsToClose });
+    closeTabsMutation.mutate({
+      tabsToClose,
+      studentIds: [...new Set(tabsToClose.map((tab) => tab.studentId))],
+    });
     setSelectedTabsToClose(new Set());
   };
 
-  const handleCloseSingleTab = (deviceId, url) => { closeTabsMutation.mutate({ tabsToClose: [{ deviceId, url }] }); };
+  const handleCloseSingleTab = (tab) => {
+    closeTabsMutation.mutate({
+      tabsToClose: [tab],
+      studentIds: [tab.studentId],
+    });
+  };
 
   const handleLockScreen = () => {
-    const targetDeviceIds = getTargetDeviceIds();
-    const devicesToLock = targetDeviceIds || students.filter(s => s.status === 'online' || s.status === 'idle').map(s => s.primaryDeviceId).filter(Boolean);
-    lockScreenMutation.mutate({ url: "CURRENT_URL", targetDeviceIds, devicesToLock });
+    lockScreenMutation.mutate({ url: "CURRENT_URL" });
+  };
+
+  const handleLockToUrl = () => {
+    if (!lockUrl.trim()) { toast({ variant: "destructive", title: "Invalid URL", description: "Please enter a valid URL" }); return; }
+    let normalizedUrl = lockUrl.trim();
+    if (!normalizedUrl.match(/^https?:\/\//i)) normalizedUrl = 'https://' + normalizedUrl;
+    lockScreenMutation.mutate({ url: normalizedUrl });
+    setShowLockUrlDialog(false);
+    setLockUrl("");
   };
 
   const handleUnlockScreen = () => {
-    const targetDeviceIds = getTargetDeviceIds();
-    const devicesToUnlock = targetDeviceIds || students.filter(s => s.status === 'online' || s.status === 'idle').map(s => s.primaryDeviceId).filter(Boolean);
-    unlockScreenMutation.mutate({ targetDeviceIds, devicesToUnlock });
+    unlockScreenMutation.mutate({});
+  };
+
+  const openManageTabs = (studentIds = null) => {
+    setManageTabsStudentIds(studentIds);
+    setSelectedTabsToClose(new Set());
+    setShowCloseTabsDialog(true);
   };
 
   const applyFlightPathMutation = useMutation({
-    mutationFn: async ({ flightPathId, allowedDomains, targetDeviceIds, flightPathName, devicesToApply }) => {
-      const data = await apiRequest('POST', '/remote/apply-flight-path', { flightPathId, allowedDomains, targetDeviceIds });
-      return { ...data, deviceCount: devicesToApply.length, flightPathName, devicesToApply };
+    mutationFn: async ({ flightPathId, allowedDomains, flightPathName }) => {
+      const data = await postClassroomCommand('apply-flight-path', { flightPathId });
+      return { ...data, flightPathName, allowedDomains };
     },
-    onMutate: async ({ targetDeviceIds, flightPathName }) => {
-      optimisticUpdateUntilRef.current = Date.now() + 15000;
+    onMutate: async ({ flightPathName }) => {
+      optimisticUpdateUntilRef.current = optimisticUpdateDeadline();
       await queryClient.cancelQueries({ queryKey: ['/api/students-aggregated'] });
       const previousStudents = queryClient.getQueryData(['/api/students-aggregated']);
-      const devicesToApply = targetDeviceIds || students.filter(s => s.status === 'online' || s.status === 'idle').map(s => s.primaryDeviceId).filter(Boolean);
+      const devicesToApply = deviceIdsForStudentIds(getStudentsForCommandTarget().map((student) => student.studentId));
       queryClient.setQueryData(['/api/students-aggregated'], (old) =>
         old?.map(s => devicesToApply.includes(s.primaryDeviceId ?? '') ? { ...s, flightPathActive: true, activeFlightPathName: flightPathName } : s)
       );
       return { previousStudents, devicesToApply };
     },
-    onSuccess: (data, variables) => {
-      toast({ title: "Success", description: `Applied "${data.flightPathName}" to ${targetLabel(data.deviceCount)}` });
+    onSuccess: (data, variables, context) => {
+      reconcileOptimisticStudentState(data, context, (student) => ({ ...student, flightPathActive: true, activeFlightPathName: variables.flightPathName }));
+      toast({ title: "Web Access", description: data.message });
       setShowApplyFlightPathDialog(false); setSelectedFlightPathId("");
       // Auto-allow all domains in the flight path so they're not flagged as off-task
       (variables.allowedDomains || []).forEach(d => { try { handleAllowDomain(d.toLowerCase().replace(/^www\./, '')); } catch { /* ignore */ } });
-      refreshScreenshotsForDevices(data.devicesToApply);
+      refreshScreenshotsForDevices(data.targetDeviceIds);
     },
     onError: (error, _, context) => {
       optimisticUpdateUntilRef.current = 0;
@@ -904,20 +1079,22 @@ export default function Dashboard() {
   });
 
   const removeFlightPathMutation = useMutation({
-    mutationFn: async ({ targetDeviceIds }) => {
-      const data = await apiRequest('POST', '/remote/remove-flight-path', { targetDeviceIds });
-      return { ...data, deviceCount: targetDeviceIds.length };
-    },
-    onMutate: async ({ targetDeviceIds }) => {
-      optimisticUpdateUntilRef.current = Date.now() + 15000;
+    mutationFn: async ({ studentIds } = {}) => postClassroomCommand('remove-flight-path', {}, { studentIds }),
+    onMutate: async ({ studentIds } = {}) => {
+      optimisticUpdateUntilRef.current = optimisticUpdateDeadline();
       await queryClient.cancelQueries({ queryKey: ['/api/students-aggregated'] });
       const previousStudents = queryClient.getQueryData(['/api/students-aggregated']);
+      const targetDeviceIds = deviceIdsForStudentIds(studentIds || getStudentsForCommandTarget().map((student) => student.studentId));
       queryClient.setQueryData(['/api/students-aggregated'], (old) =>
         old?.map(s => targetDeviceIds.includes(s.primaryDeviceId ?? '') ? { ...s, flightPathActive: false, activeFlightPathName: undefined } : s)
       );
       return { previousStudents };
     },
-    onSuccess: (data, variables) => { toast({ title: "Success", description: `Removed flight path from ${targetLabel(data.deviceCount)}` }); refreshScreenshotsForDevices(variables.targetDeviceIds); },
+    onSuccess: (data, _variables, context) => {
+      reconcileOptimisticStudentState(data, context, (student) => ({ ...student, flightPathActive: false, activeFlightPathName: undefined }));
+      toast({ title: "Web Access", description: data.message });
+      refreshScreenshotsForDevices(data.targetDeviceIds);
+    },
     onError: (error, _, context) => {
       optimisticUpdateUntilRef.current = 0;
       if (context?.previousStudents) queryClient.setQueryData(['/api/students-aggregated'], context.previousStudents);
@@ -929,83 +1106,95 @@ export default function Dashboard() {
     if (!selectedFlightPathId) { toast({ variant: "destructive", title: "No Flight Path Selected", description: "Please select a flight path to apply" }); return; }
     const flightPath = flightPaths.find(fp => fp.id === selectedFlightPathId);
     if (!flightPath) { toast({ variant: "destructive", title: "Error", description: "Selected flight path not found" }); return; }
-    const targetDeviceIds = getTargetDeviceIds();
-    const devicesToApply = targetDeviceIds || students.filter(s => s.status === 'online' || s.status === 'idle').map(s => s.primaryDeviceId).filter(Boolean);
-    applyFlightPathMutation.mutate({ flightPathId: flightPath.id, allowedDomains: flightPath.allowedDomains || [], targetDeviceIds, flightPathName: flightPath.flightPathName, devicesToApply });
+    applyFlightPathMutation.mutate({ flightPathId: flightPath.id, allowedDomains: flightPath.allowedDomains || [], flightPathName: flightPath.flightPathName });
   };
 
-  const handleRemoveFlightPath = (deviceId) => { removeFlightPathMutation.mutate({ targetDeviceIds: [deviceId] }); };
+  const handleRemoveFlightPath = (studentId) => { removeFlightPathMutation.mutate({ studentIds: [studentId] }); };
 
   const applyBlockListMutation = useMutation({
-    mutationFn: async ({ blockListId, targetDeviceIds }) => apiRequest('POST', `/block-lists/${blockListId}/apply`, { targetDeviceIds }),
-    onSuccess: (data, variables) => {
-      const blockList = blockLists.find(bl => bl.id === selectedBlockListId);
-      toast({ title: "Success", description: `Applied "${blockList?.name || 'Block List'}" to ${targetLabel(data.sent || data.sentTo || 0)}` });
+    mutationFn: async ({ blockListId }) => postClassroomCommand('apply-block-list', { blockListId }),
+    onSuccess: (data) => {
+      toast({ title: "Web Access", description: data.message });
       setShowApplyBlockListDialog(false); setSelectedBlockListId("");
-      refreshScreenshotsForDevices(variables.targetDeviceIds);
+      refreshScreenshotsForDevices(data.targetDeviceIds);
     },
     onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
   });
 
   const removeBlockListMutation = useMutation({
-    mutationFn: async ({ targetDeviceIds }) => apiRequest('POST', '/block-lists/remove', { targetDeviceIds }),
-    onSuccess: (data, variables) => { toast({ title: "Success", description: `Removed block list from ${targetLabel(data.sent || data.sentTo || 0)}` }); refreshScreenshotsForDevices(variables.targetDeviceIds); },
+    mutationFn: async ({ studentIds } = {}) => postClassroomCommand('remove-block-list', {}, { studentIds }),
+    onSuccess: (data) => {
+      toast({ title: "Web Access", description: data.message });
+      refreshScreenshotsForDevices(data.targetDeviceIds);
+    },
     onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
   });
 
   const handleApplyBlockList = () => {
     if (!selectedBlockListId) { toast({ variant: "destructive", title: "No Block List Selected", description: "Please select a block list to apply" }); return; }
-    applyBlockListMutation.mutate({ blockListId: selectedBlockListId, targetDeviceIds: getTargetDeviceIds() });
+    applyBlockListMutation.mutate({ blockListId: selectedBlockListId });
   };
 
-  const handleRemoveBlockList = () => { removeBlockListMutation.mutate({ targetDeviceIds: getTargetDeviceIds() }); };
+  const handleRemoveBlockList = () => { removeBlockListMutation.mutate({}); };
+
+  const handleClearRestrictions = () => {
+    removeFlightPathMutation.mutate({});
+    removeBlockListMutation.mutate({});
+  };
 
   const attentionModeMutation = useMutation({
-    mutationFn: async ({ active, message, targetDeviceIds }) => apiRequest('POST', '/remote/attention-mode', { active, message, targetDeviceIds }),
+    mutationFn: async ({ active, message }) => postClassroomCommand('attention-mode', { active, message }),
     onSuccess: (data, variables) => {
-      setAttentionActive(variables.active);
-      toast({ title: variables.active ? "Attention Mode Enabled" : "Attention Mode Disabled", description: variables.active ? `Showing "${variables.message}" to ${targetLabel(data.sent || data.sentTo || 0)}` : `Released ${targetLabel(data.sent || data.sentTo || 0)}` });
+      setAttentionActive(Boolean(variables.active && (data.summary?.sent || 0) > 0));
+      toast({ title: variables.active ? "Attention Mode Enabled" : "Attention Mode Disabled", description: data.message });
       if (!variables.active) setShowAttentionDialog(false);
-      refreshScreenshotsForDevices(variables.targetDeviceIds);
+      refreshScreenshotsForDevices(data.targetDeviceIds);
     },
     onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
   });
 
   const timerMutation = useMutation({
-    mutationFn: async ({ action, seconds, message, targetDeviceIds }) => apiRequest('POST', '/remote/timer', { action, seconds, message, targetDeviceIds }),
+    mutationFn: async ({ action, seconds, message }) => postClassroomCommand('timer', { action, seconds, message }),
     onSuccess: (data, variables) => {
-      setTimerActive(variables.action === 'start');
-      toast({ title: variables.action === 'start' ? "Timer Started" : "Timer Stopped", description: variables.action === 'start' ? `${Math.floor((variables.seconds || 0) / 60)}:${String((variables.seconds || 0) % 60).padStart(2, '0')} timer sent to ${targetLabel(data.sent || data.sentTo || 0)}` : `Stopped timer for ${targetLabel(data.sent || data.sentTo || 0)}` });
+      setTimerActive(variables.action === 'start' && (data.summary?.sent || 0) > 0);
+      toast({ title: variables.action === 'start' ? "Timer Started" : "Timer Stopped", description: data.message });
       if (variables.action === 'start') setShowTimerDialog(false);
     },
     onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
   });
 
-  const handleAttentionMode = (active) => { attentionModeMutation.mutate({ active, message: attentionMessage, targetDeviceIds: getTargetDeviceIds() }); };
+  const handleAttentionMode = (active) => { attentionModeMutation.mutate({ active, message: attentionMessage }); };
 
   const handleStartTimer = () => {
     const totalSeconds = (timerMinutes * 60) + timerSeconds;
     if (totalSeconds <= 0) { toast({ variant: "destructive", title: "Invalid Timer", description: "Please set a time greater than 0" }); return; }
-    timerMutation.mutate({ action: 'start', seconds: totalSeconds, message: timerMessage, targetDeviceIds: getTargetDeviceIds() });
+    timerMutation.mutate({ action: 'start', seconds: totalSeconds, message: timerMessage });
   };
 
-  const handleStopTimer = () => { timerMutation.mutate({ action: 'stop', targetDeviceIds: getTargetDeviceIds() }); };
+  const handleStopTimer = () => { timerMutation.mutate({ action: 'stop' }); };
 
   const pollMutation = useMutation({
-    mutationFn: async ({ question, options, targetDeviceIds }) => apiRequest('POST', '/polls/create', { question, options, targetDeviceIds }),
+    mutationFn: async ({ question, options }) => postClassroomCommand('poll', { action: 'start', question, options }),
     onSuccess: (data) => {
-      setActivePoll({ id: data.poll.id, question: data.poll.question, options: data.poll.options });
+      const poll = data.extra?.poll || data.poll;
+      if (!poll || (data.summary?.sent || 0) === 0) {
+        setActivePoll(null);
+        toast({ title: "Poll Not Sent", description: data.message });
+        setShowPollDialog(false); setPollQuestion(""); setPollOptions(["", ""]);
+        return;
+      }
+      setActivePoll({ id: poll.id, question: poll.question, options: poll.options });
       setPollResults([]); setPollTotalResponses(0);
-      toast({ title: "Poll Created", description: `Poll sent to ${targetLabel(data.sent || data.sentTo || 0)}` });
+      toast({ title: "Poll Created", description: data.message });
       setShowPollDialog(false); setPollQuestion(""); setPollOptions(["", ""]);
-      startPollResultsPolling(data.poll.id);
+      startPollResultsPolling(poll.id);
     },
     onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
   });
 
   const closePollMutation = useMutation({
-    mutationFn: async ({ pollId, targetDeviceIds }) => apiRequest('POST', `/polls/${pollId}/close`, { targetDeviceIds }),
-    onSuccess: () => { setActivePoll(null); setShowPollResultsDialog(false); toast({ title: "Poll Closed", description: "Poll has been closed" }); },
+    mutationFn: async ({ pollId }) => postClassroomCommand('poll', { action: 'close', pollId }),
+    onSuccess: (data) => { setActivePoll(null); setShowPollResultsDialog(false); toast({ title: "Poll Closed", description: data.message }); },
     onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
   });
 
@@ -1031,22 +1220,9 @@ export default function Dashboard() {
   });
 
   const sendMessageMutation = useMutation({
-    mutationFn: async ({ message, targetDeviceIds }) => {
-      const onlineStudents = students.filter(s => s.status === 'online' || s.status === 'idle');
-      const targets = targetDeviceIds
-        ? onlineStudents.filter(s => targetDeviceIds.includes(s.primaryDeviceId))
-        : onlineStudents;
-      let sentTo = 0;
-      for (const student of targets) {
-        if (student.primaryDeviceId) {
-          await apiRequest('POST', '/teacher/reply', { studentId: student.studentId, message, deviceId: student.primaryDeviceId });
-          sentTo++;
-        }
-      }
-      return { sentTo };
-    },
+    mutationFn: async ({ message }) => postClassroomCommand('teacher-message', { message }),
     onSuccess: (data) => {
-      toast({ title: "Message Sent", description: `Sent to ${targetLabel(data.sent || data.sentTo || 0)}` });
+      toast({ title: "Message Sent", description: data.message });
       setShowSendMessageDialog(false); setSendMessageText("");
     },
     onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
@@ -1054,7 +1230,21 @@ export default function Dashboard() {
 
   const handleSendMessage = () => {
     if (!sendMessageText.trim()) { toast({ variant: "destructive", title: "Empty Message", description: "Please enter a message" }); return; }
-    sendMessageMutation.mutate({ message: sendMessageText.trim(), targetDeviceIds: getTargetDeviceIds() });
+    sendMessageMutation.mutate({ message: sendMessageText.trim() });
+  };
+
+  const handleRetryCommand = async (command) => {
+    const retryStudentIds = (command.targets || [])
+      .filter((target) => target.status === 'failed' || target.status === 'unavailable')
+      .map((target) => target.studentId);
+    if (retryStudentIds.length === 0) return;
+    try {
+      const data = await postClassroomCommand(command.commandType, command.commandPayload || {}, { studentIds: retryStudentIds });
+      toast({ title: "Retry Sent", description: data.message });
+      queryClient.invalidateQueries({ queryKey: ['/api/commands/recent'], exact: false });
+    } catch (error) {
+      toast({ variant: "destructive", title: "Retry Failed", description: error.message });
+    }
   };
 
   const markMessageRead = (messageId) => { setStudentMessages(prev => prev.map(msg => msg.id === messageId ? { ...msg, read: true } : msg)); };
@@ -1124,12 +1314,12 @@ export default function Dashboard() {
     const validOptions = pollOptions.filter(opt => opt.trim() !== '');
     if (!pollQuestion.trim()) { toast({ variant: "destructive", title: "Invalid Poll", description: "Please enter a question" }); return; }
     if (validOptions.length < 2) { toast({ variant: "destructive", title: "Invalid Poll", description: "Please enter at least 2 options" }); return; }
-    pollMutation.mutate({ question: pollQuestion.trim(), options: validOptions, targetDeviceIds: getTargetDeviceIds() });
+    pollMutation.mutate({ question: pollQuestion.trim(), options: validOptions });
   };
 
   const handleClosePoll = () => {
     if (!activePoll) return;
-    closePollMutation.mutate({ pollId: activePoll.id, targetDeviceIds: getTargetDeviceIds() });
+    closePollMutation.mutate({ pollId: activePoll.id });
   };
 
   const addPollOption = () => { if (pollOptions.length < 5) setPollOptions([...pollOptions, ""]); };
@@ -1388,8 +1578,9 @@ export default function Dashboard() {
           <div className="flex items-center justify-between gap-4 flex-wrap mb-5">
             <input type="text" placeholder="Search student" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} data-testid="input-search-students" className="w-[300px] px-4 py-3 text-sm rounded-lg border border-border bg-card text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-amber-400 transition-colors" />
             <div className="flex items-center gap-3">
-              <div className="px-4 py-2 rounded-lg text-[13px] font-semibold bg-amber-400 text-slate-900" data-testid="badge-selection-count">
-                Target: {selectedStudentIds.size > 0 ? `${selectedStudentIds.size} selected` : "All students"}
+              <div className="px-4 py-2 rounded-lg bg-amber-400 text-slate-900" data-testid="badge-selection-count">
+                <div className="text-[13px] font-semibold">Target: {activeClassName} - {targetBannerLabel}</div>
+                <div className="text-[11px] font-medium opacity-80">{targetConnectionLabel}</div>
               </div>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -1428,15 +1619,58 @@ export default function Dashboard() {
 
         {/* Control Buttons */}
         {((isTeacher && activeSession) || (isAdmin && isAdminTeaching)) && (
-          <div className="flex items-center gap-2 flex-wrap mb-8">
-            <Button size="sm" variant="outline" onClick={() => setShowOpenTabDialog(true)} data-testid="button-open-tab" className="text-blue-600 dark:text-blue-400"><MonitorPlay className="h-4 w-4 mr-2" />Open Tab</Button>
-            <Button size="sm" variant="outline" onClick={() => setShowCloseTabsDialog(true)} data-testid="button-tabs" className="text-blue-600 dark:text-blue-400"><List className="h-4 w-4 mr-2" />Tabs</Button>
-            <Button size="sm" variant="outline" onClick={handleLockScreen} disabled={lockScreenMutation.isPending} data-testid="button-lock-screen" className="text-amber-600 dark:text-amber-400"><Lock className="h-4 w-4 mr-2" />Lock Screen</Button>
-            <Button size="sm" variant="outline" onClick={handleUnlockScreen} disabled={unlockScreenMutation.isPending} data-testid="button-unlock-screen" className="text-amber-600 dark:text-amber-400"><Unlock className="h-4 w-4 mr-2" />Unlock Screen</Button>
-            <Button size="sm" variant="outline" onClick={() => setShowApplyFlightPathDialog(true)} data-testid="button-apply-flight-path" className="text-purple-600 dark:text-purple-400"><Layers className="h-4 w-4 mr-2" />Apply Flight Path</Button>
-            <Button size="sm" variant="outline" onClick={() => setShowFlightPathViewerDialog(true)} data-testid="button-flight-path" className="text-purple-600 dark:text-purple-400"><Route className="h-4 w-4 mr-2" />Flight Path</Button>
-            <Button size="sm" variant="outline" onClick={() => setShowApplyBlockListDialog(true)} data-testid="button-apply-block-list" className="text-red-600 dark:text-red-400"><ShieldBan className="h-4 w-4 mr-2" />Apply Block List</Button>
-            <Button size="sm" variant="outline" onClick={() => setShowBlockListViewerDialog(true)} data-testid="button-block-list" className="text-red-600 dark:text-red-400"><Shield className="h-4 w-4 mr-2" />Block List</Button>
+          <div className="flex items-center gap-2 flex-wrap mb-4">
+            <Button size="sm" variant="outline" data-testid="button-target-model" disabled>
+              <Users className="h-4 w-4 mr-2" />Target
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => setShowOpenTabDialog(true)} data-testid="button-open-tab" className="text-blue-600 dark:text-blue-400"><MonitorPlay className="h-4 w-4 mr-2" />Open URL</Button>
+            <Button size="sm" variant="outline" onClick={() => openManageTabs(null)} data-testid="button-tabs" className="text-blue-600 dark:text-blue-400"><List className="h-4 w-4 mr-2" />Manage Tabs</Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" variant="outline" data-testid="button-screen-control" className="text-amber-600 dark:text-amber-400">
+                  <Lock className="h-4 w-4 mr-2" />Screen Control<ChevronDown className="h-3 w-3 ml-2" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-56">
+                <DropdownMenuLabel>Screen Control</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={handleLockScreen} disabled={lockScreenMutation.isPending}>
+                  <Lock className="h-4 w-4 mr-2" />Lock current site
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setShowLockUrlDialog(true)}>
+                  <MonitorPlay className="h-4 w-4 mr-2" />Lock to URL
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleUnlockScreen} disabled={unlockScreenMutation.isPending}>
+                  <Unlock className="h-4 w-4 mr-2" />Unlock
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setShowFlightPathViewerDialog(true)}>
+                  <Eye className="h-4 w-4 mr-2" />View locked students
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" variant="outline" data-testid="button-web-access" className="text-purple-600 dark:text-purple-400">
+                  <Shield className="h-4 w-4 mr-2" />Web Access<ChevronDown className="h-3 w-3 ml-2" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-56">
+                <DropdownMenuLabel>Web Access</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => setShowApplyFlightPathDialog(true)}>
+                  <Route className="h-4 w-4 mr-2" />Flight Paths
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setShowApplyBlockListDialog(true)}>
+                  <ShieldBan className="h-4 w-4 mr-2" />Block Lists
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setShowFlightPathViewerDialog(true)}>
+                  <History className="h-4 w-4 mr-2" />Active Restrictions
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleClearRestrictions} disabled={removeFlightPathMutation.isPending || removeBlockListMutation.isPending}>
+                  <RotateCcw className="h-4 w-4 mr-2" />Clear Restrictions
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             {subgroups.length > 0 && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -1458,6 +1692,48 @@ export default function Dashboard() {
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
+          </div>
+        )}
+
+        {((isTeacher && activeSession) || (isAdmin && isAdminTeaching)) && recentCommands.length > 0 && (
+          <div className="mb-8 rounded-lg border bg-card">
+            <div className="flex items-center justify-between px-4 py-3 border-b">
+              <div className="flex items-center gap-2 text-sm font-semibold">
+                <History className="h-4 w-4 text-muted-foreground" />Recent Commands
+              </div>
+              <span className="text-xs text-muted-foreground">Per-student results</span>
+            </div>
+            <div className="divide-y">
+              {recentCommands.map((command) => {
+                const retryCount = (command.targets || []).filter((target) => target.status === 'failed' || target.status === 'unavailable').length;
+                return (
+                  <div key={command.id} className="flex items-center justify-between gap-3 px-4 py-3">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium truncate">{command.message || command.commandType}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {command.summary?.sent || 0} sent · {command.summary?.completed || 0} completed · {command.summary?.unavailable || 0} unavailable · {command.summary?.failed || 0} failed
+                      </div>
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {(command.targets || []).slice(0, 4).map((target) => {
+                          const studentName = students.find((student) => student.studentId === target.studentId)?.studentName || target.studentId;
+                          return (
+                            <Badge key={target.id} variant={target.status === 'failed' || target.status === 'unavailable' ? 'destructive' : 'secondary'} className="text-[10px] font-normal">
+                              {studentName}: {target.status}
+                            </Badge>
+                          );
+                        })}
+                        {(command.targets || []).length > 4 && <Badge variant="outline" className="text-[10px] font-normal">+{command.targets.length - 4}</Badge>}
+                      </div>
+                    </div>
+                    {retryCount > 0 && (
+                      <Button size="sm" variant="outline" onClick={() => handleRetryCommand(command)} data-testid={`button-retry-command-${command.id}`}>
+                        <RotateCcw className="h-3 w-3 mr-1" />Retry {retryCount}
+                      </Button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
 
@@ -1501,8 +1777,10 @@ export default function Dashboard() {
                   onStartLiveView={primaryDeviceId ? () => handleStartLiveView(primaryDeviceId) : undefined}
                   onStopLiveView={primaryDeviceId ? () => handleStopLiveView(primaryDeviceId) : undefined}
                   onEndLiveRefresh={primaryDeviceId ? () => refreshTile(primaryDeviceId) : undefined}
-                  onBlockRefetches={() => { optimisticUpdateUntilRef.current = Date.now() + 15000; }}
+                  onBlockRefetches={() => { optimisticUpdateUntilRef.current = optimisticUpdateDeadline(); }}
                   onAllowDomain={handleAllowDomain}
+                  teachingSessionId={effectiveSession?.id}
+                  onManageTabs={() => openManageTabs([student.studentId])}
                 />
               );
             })}
@@ -1567,37 +1845,70 @@ export default function Dashboard() {
         </DialogContent>
       </Dialog>
 
+      {/* Lock URL Dialog */}
+      <Dialog open={showLockUrlDialog} onOpenChange={setShowLockUrlDialog}>
+        <DialogContent data-testid="dialog-lock-url">
+          <DialogHeader><DialogTitle>Lock Students to URL</DialogTitle><DialogDescription>{targetBannerLabel}</DialogDescription></DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="lock-url">URL to Lock</Label>
+              <Input id="lock-url" type="url" placeholder="https://example.com" value={lockUrl} onChange={(e) => setLockUrl(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !lockScreenMutation.isPending) handleLockToUrl(); }} data-testid="input-lock-url" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowLockUrlDialog(false)} data-testid="button-cancel-lock-url">Cancel</Button>
+            <Button onClick={handleLockToUrl} disabled={lockScreenMutation.isPending} data-testid="button-confirm-lock-url"><Lock className="h-4 w-4 mr-2" />Lock to URL</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Tabs Dialog */}
-      <Dialog open={showCloseTabsDialog} onOpenChange={setShowCloseTabsDialog}>
+      <Dialog open={showCloseTabsDialog} onOpenChange={(open) => {
+        setShowCloseTabsDialog(open);
+        if (!open) {
+          setManageTabsStudentIds(null);
+          setSelectedTabsToClose(new Set());
+        }
+      }}>
         <DialogContent className="max-w-2xl" data-testid="dialog-tabs">
-          <DialogHeader><DialogTitle>Open Tabs ({openTabs.length})</DialogTitle><DialogDescription>{selectedStudentIds.size > 0 ? `Viewing tabs from ${selectedStudentIds.size} selected student(s)` : "Viewing tabs from all students"}</DialogDescription></DialogHeader>
+          <DialogHeader><DialogTitle>Manage Tabs ({openTabs.length})</DialogTitle><DialogDescription>{manageTabsTargetLabel}</DialogDescription></DialogHeader>
           <div className="space-y-4 py-4">
             {openTabs.length === 0 ? (
-              <p className="text-sm text-muted-foreground py-8 text-center">No tabs are currently open on {selectedStudentIds.size > 0 ? 'selected students' : 'any student devices'}</p>
+              <p className="text-sm text-muted-foreground py-8 text-center">No tabs are currently open for this target</p>
             ) : (
               <>
                 <div className="flex items-center gap-2 mb-2">
-                  <Button type="button" variant="outline" size="sm" onClick={() => setSelectedTabsToClose(new Set(openTabs.map(t => `${t.studentId}|${t.deviceId}|${t.url}`)))} data-testid="button-select-all-tabs" className="h-8"><CheckSquare className="h-3 w-3 mr-1" />Select All</Button>
+                  <Button type="button" variant="outline" size="sm" onClick={() => setSelectedTabsToClose(new Set(openTabs.map(makeTabKey)))} data-testid="button-select-all-tabs" className="h-8"><CheckSquare className="h-3 w-3 mr-1" />Select All</Button>
                   <Button type="button" variant="outline" size="sm" onClick={() => setSelectedTabsToClose(new Set())} data-testid="button-clear-tabs" className="h-8"><XSquare className="h-3 w-3 mr-1" />Clear</Button>
                   <span className="text-xs text-muted-foreground ml-auto">{selectedTabsToClose.size} selected</span>
                 </div>
-                <div className="border rounded-md max-h-80 overflow-y-auto">
-                  {openTabs.map((tab) => {
-                    const compositeKey = `${tab.studentId}|${tab.deviceId}|${tab.url}`;
-                    const hostname = (() => { try { return new URL(tab.url).hostname; } catch { return tab.url; } })();
-                    return (
-                      <div key={compositeKey} className="flex items-center gap-3 p-3 hover:bg-muted/50 border-b last:border-b-0 group" data-testid={`tab-row-${tab.deviceId}-${encodeURIComponent(tab.url)}`}>
-                        <input type="checkbox" className="h-4 w-4 shrink-0" checked={selectedTabsToClose.has(compositeKey)} onChange={(e) => { const newSet = new Set(selectedTabsToClose); if (e.target.checked) newSet.add(compositeKey); else newSet.delete(compositeKey); setSelectedTabsToClose(newSet); }} data-testid={`checkbox-tab-${encodeURIComponent(tab.url)}`} />
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2"><span className="text-sm font-medium truncate">{tab.title}</span></div>
-                          <div className="flex items-center gap-1.5 text-xs text-muted-foreground"><span className="truncate">{hostname}</span><span>&bull;</span><span className="shrink-0">{tab.studentName}</span></div>
-                        </div>
-                        <Button type="button" variant="ghost" size="icon" className="h-7 w-7 shrink-0 opacity-50 group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive" onClick={() => handleCloseSingleTab(tab.deviceId, tab.url)} disabled={closeTabsMutation.isPending} title="Close this tab" data-testid={`button-close-tab-${encodeURIComponent(tab.url)}`}>
-                          <X className="h-4 w-4" />
+                <div className="border rounded-md max-h-80 overflow-y-auto divide-y">
+                  {Object.values(openTabsByStudent).map((group) => (
+                    <div key={group.studentId} className="bg-background">
+                      <div className="flex items-center justify-between gap-2 px-3 py-2 bg-muted/40">
+                        <div className="text-sm font-semibold">{group.studentName || "Unnamed Student"}</div>
+                        <Button type="button" variant="ghost" size="sm" className="h-7 text-xs text-destructive hover:text-destructive" onClick={() => closeTabsMutation.mutate({ closeAll: true, studentIds: [group.studentId] })} disabled={closeTabsMutation.isPending}>
+                          Close all
                         </Button>
                       </div>
-                    );
-                  })}
+                      {group.tabs.map((tab) => {
+                        const compositeKey = makeTabKey(tab);
+                        const hostname = (() => { try { return new URL(tab.url).hostname; } catch { return tab.url; } })();
+                        return (
+                          <div key={compositeKey} className="flex items-center gap-3 p-3 hover:bg-muted/50 group" data-testid={`tab-row-${tab.deviceId}-${encodeURIComponent(tab.url)}`}>
+                            <input type="checkbox" className="h-4 w-4 shrink-0" checked={selectedTabsToClose.has(compositeKey)} onChange={(e) => { const newSet = new Set(selectedTabsToClose); if (e.target.checked) newSet.add(compositeKey); else newSet.delete(compositeKey); setSelectedTabsToClose(newSet); }} data-testid={`checkbox-tab-${encodeURIComponent(tab.url)}`} />
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2"><span className="text-sm font-medium truncate">{tab.title}</span>{tab.active && <Badge variant="secondary" className="text-[10px] px-1.5 py-0">Active</Badge>}</div>
+                              <div className="text-xs text-muted-foreground truncate">{hostname}</div>
+                            </div>
+                            <Button type="button" variant="ghost" size="icon" className="h-7 w-7 shrink-0 opacity-50 group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive" onClick={() => handleCloseSingleTab(tab)} disabled={closeTabsMutation.isPending} title="Close this tab" data-testid={`button-close-tab-${encodeURIComponent(tab.url)}`}>
+                              <X className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ))}
                 </div>
               </>
             )}
@@ -1605,7 +1916,7 @@ export default function Dashboard() {
           <DialogFooter className="flex-col sm:flex-row gap-2">
             <Button variant="outline" onClick={() => setShowCloseTabsDialog(false)} data-testid="button-close-tabs-dialog">Done</Button>
             {selectedTabsToClose.size > 0 && <Button variant="destructive" onClick={handleCloseTabs} disabled={closeTabsMutation.isPending} data-testid="button-close-selected-tabs"><X className="h-4 w-4 mr-2" />Close Selected ({selectedTabsToClose.size})</Button>}
-            {openTabs.length > 0 && <Button variant="destructive" onClick={() => { closeTabsMutation.mutate({ closeAll: true, targetDeviceIds: getTargetDeviceIds() }); }} disabled={closeTabsMutation.isPending} data-testid="button-close-all-tabs"><TabletSmartphone className="h-4 w-4 mr-2" />Close All Tabs</Button>}
+            {openTabs.length > 0 && <Button variant="destructive" onClick={() => { closeTabsMutation.mutate({ closeAll: true, studentIds: manageTabsStudents.map((student) => student.studentId) }); }} disabled={closeTabsMutation.isPending} data-testid="button-close-all-tabs"><TabletSmartphone className="h-4 w-4 mr-2" />Close All Tabs</Button>}
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1660,9 +1971,9 @@ export default function Dashboard() {
                       <td className="p-2"><Badge variant={student.status === 'online' ? 'default' : student.status === 'idle' ? 'secondary' : 'outline'} className="text-xs" data-testid={`badge-status-${student.studentId}`}>{student.status}</Badge></td>
                       <td className="p-2">
                         {student.flightPathActive && primaryDeviceId ? (
-                          <Button size="sm" variant="ghost" onClick={() => handleRemoveFlightPath(primaryDeviceId)} disabled={removeFlightPathMutation.isPending} data-testid={`button-remove-flight-path-${student.studentId}`} className="h-7 px-2 text-xs text-destructive hover:text-destructive hover:bg-destructive/10"><X className="h-3 w-3 mr-1" />Remove</Button>
+                          <Button size="sm" variant="ghost" onClick={() => handleRemoveFlightPath(student.studentId)} disabled={removeFlightPathMutation.isPending} data-testid={`button-remove-flight-path-${student.studentId}`} className="h-7 px-2 text-xs text-destructive hover:text-destructive hover:bg-destructive/10"><X className="h-3 w-3 mr-1" />Remove</Button>
                         ) : student.screenLocked && primaryDeviceId ? (
-                          <Button size="sm" variant="outline" onClick={() => unlockScreenMutation.mutate({ targetDeviceIds: [primaryDeviceId], devicesToUnlock: [primaryDeviceId] })} disabled={unlockScreenMutation.isPending} data-testid={`button-unlock-screen-${student.studentId}`} className="h-7 px-2 text-xs"><Unlock className="h-3 w-3 mr-1" />Unlock</Button>
+                          <Button size="sm" variant="outline" onClick={() => unlockScreenMutation.mutate({ studentIds: [student.studentId] })} disabled={unlockScreenMutation.isPending} data-testid={`button-unlock-screen-${student.studentId}`} className="h-7 px-2 text-xs"><Unlock className="h-3 w-3 mr-1" />Unlock</Button>
                         ) : <span className="text-xs text-muted-foreground">&mdash;</span>}
                       </td>
                     </tr>

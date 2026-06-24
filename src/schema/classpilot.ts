@@ -382,6 +382,125 @@ export type PollResponse = typeof pollResponses.$inferSelect;
 export type InsertPollResponse = typeof pollResponses.$inferInsert;
 
 // ============================================================================
+// Teacher Commands - Explicit class-scoped command tracking
+// ============================================================================
+export const classpilotCommands = pgTable(
+  "classpilot_commands",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
+    teachingSessionId: varchar("teaching_session_id").notNull(),
+    teacherId: text("teacher_id").notNull(),
+    targetScope: text("target_scope")
+      .notNull()
+      .$type<"class" | "subgroup" | "students">(),
+    subgroupId: varchar("subgroup_id"),
+    commandType: text("command_type").notNull(),
+    commandPayload: jsonb("command_payload")
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    status: text("status")
+      .notNull()
+      .default("requested")
+      .$type<"requested" | "sent" | "received" | "completed" | "failed" | "unavailable" | "expired">(),
+    requestedCount: integer("requested_count").notNull().default(0),
+    sentCount: integer("sent_count").notNull().default(0),
+    receivedCount: integer("received_count").notNull().default(0),
+    completedCount: integer("completed_count").notNull().default(0),
+    failedCount: integer("failed_count").notNull().default(0),
+    unavailableCount: integer("unavailable_count").notNull().default(0),
+    expiresAt: timestamp("expires_at"),
+    createdAt: timestamp("created_at").notNull().default(sql`now()`),
+    updatedAt: timestamp("updated_at").notNull().default(sql`now()`),
+  },
+  (table) => [
+    index("classpilot_commands_school_session_idx").on(
+      table.schoolId,
+      table.teachingSessionId
+    ),
+    index("classpilot_commands_teacher_created_idx").on(
+      table.teacherId,
+      table.createdAt
+    ),
+  ]
+);
+
+export type ClasspilotCommand = typeof classpilotCommands.$inferSelect;
+export type InsertClasspilotCommand = typeof classpilotCommands.$inferInsert;
+
+export const classpilotCommandTargets = pgTable(
+  "classpilot_command_targets",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    commandId: varchar("command_id").notNull(),
+    schoolId: text("school_id").notNull(),
+    teachingSessionId: varchar("teaching_session_id").notNull(),
+    studentId: text("student_id").notNull(),
+    studentSessionId: varchar("student_session_id"),
+    deviceId: text("device_id"),
+    status: text("status")
+      .notNull()
+      .default("requested")
+      .$type<"requested" | "sent" | "received" | "completed" | "failed" | "unavailable" | "expired">(),
+    ackState: text("ack_state"),
+    errorMessage: text("error_message"),
+    result: jsonb("result"),
+    sentAt: timestamp("sent_at"),
+    receivedAt: timestamp("received_at"),
+    completedAt: timestamp("completed_at"),
+    failedAt: timestamp("failed_at"),
+    createdAt: timestamp("created_at").notNull().default(sql`now()`),
+    updatedAt: timestamp("updated_at").notNull().default(sql`now()`),
+  },
+  (table) => [
+    index("classpilot_command_targets_command_idx").on(table.commandId),
+    index("classpilot_command_targets_school_student_idx").on(
+      table.schoolId,
+      table.studentId
+    ),
+    index("classpilot_command_targets_device_idx").on(table.deviceId),
+  ]
+);
+
+export type ClasspilotCommandTarget = typeof classpilotCommandTargets.$inferSelect;
+export type InsertClasspilotCommandTarget = typeof classpilotCommandTargets.$inferInsert;
+
+export const classpilotClassroomStates = pgTable(
+  "classpilot_classroom_states",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
+    teachingSessionId: varchar("teaching_session_id").notNull(),
+    studentId: text("student_id"),
+    stateType: text("state_type").notNull(),
+    stateKey: text("state_key").notNull(),
+    payload: jsonb("payload").notNull().default(sql`'{}'::jsonb`),
+    commandId: varchar("command_id"),
+    appliedBy: text("applied_by").notNull(),
+    appliedAt: timestamp("applied_at").notNull().default(sql`now()`),
+    expiresAt: timestamp("expires_at"),
+    clearedAt: timestamp("cleared_at"),
+    updatedAt: timestamp("updated_at").notNull().default(sql`now()`),
+  },
+  (table) => [
+    index("classpilot_classroom_states_session_idx").on(
+      table.schoolId,
+      table.teachingSessionId
+    ),
+    index("classpilot_classroom_states_student_idx").on(
+      table.schoolId,
+      table.studentId
+    ),
+    uniqueIndex("classpilot_classroom_states_active_unique")
+      .on(table.teachingSessionId, table.studentId, table.stateType, table.stateKey)
+      .where(sql`cleared_at IS NULL`),
+  ]
+);
+
+export type ClasspilotClassroomState = typeof classpilotClassroomStates.$inferSelect;
+export type InsertClasspilotClassroomState = typeof classpilotClassroomStates.$inferInsert;
+
+// ============================================================================
 // Subgroups - Within-class differentiation
 // ============================================================================
 export const subgroups = pgTable("subgroups", {

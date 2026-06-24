@@ -409,6 +409,11 @@ router.post("/polls/create", ...staffAuth, async (req, res, next) => {
     if (!question || !Array.isArray(options) || options.length < 2) {
       return res.status(400).json({ error: "Question and at least 2 options are required" });
     }
+    if (!Array.isArray(targetDeviceIds) || targetDeviceIds.length === 0) {
+      return res.status(400).json({
+        error: "Explicit targetDeviceIds are required. Use /classpilot/commands for class-scoped teacher commands.",
+      });
+    }
 
     const teacherId = req.authUser!.id;
     const schoolId = res.locals.schoolId!;
@@ -451,8 +456,7 @@ router.post("/polls/create", ...staffAuth, async (req, res, next) => {
       }
       await publishWS({ kind: "students", schoolId, targetDeviceIds: scoped.deviceIds }, message);
     } else {
-      sentTo = broadcastToStudentsLocal(schoolId, message);
-      await publishWS({ kind: "students", schoolId }, message);
+      return res.status(400).json({ error: "No target devices resolved" });
     }
 
     return res.status(201).json({ success: true, poll, sentTo, rejectedDeviceCount });
@@ -548,6 +552,11 @@ router.post("/polls/:pollId/close", ...staffAuth, async (req, res, next) => {
     const pollId = param(req, "pollId");
     const { targetDeviceIds } = req.body;
     const schoolId = res.locals.schoolId!;
+    if (!Array.isArray(targetDeviceIds) || targetDeviceIds.length === 0) {
+      return res.status(400).json({
+        error: "Explicit targetDeviceIds are required. Use /classpilot/commands for class-scoped teacher commands.",
+      });
+    }
 
     const existing = await getPollById(pollId);
     if (!existing || !(await pollBelongsToSchool(existing, schoolId))) {
@@ -583,8 +592,7 @@ router.post("/polls/:pollId/close", ...staffAuth, async (req, res, next) => {
       }
       await publishWS({ kind: "students", schoolId, targetDeviceIds: scoped.deviceIds }, message);
     } else {
-      sentTo = broadcastToStudentsLocal(schoolId, message);
-      await publishWS({ kind: "students", schoolId }, message);
+      return res.status(400).json({ error: "No target devices resolved" });
     }
 
     return res.json({ success: true, poll, sentTo, rejectedDeviceCount });
