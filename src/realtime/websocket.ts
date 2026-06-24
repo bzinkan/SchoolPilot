@@ -8,9 +8,12 @@ import {
   removeWsClient,
   authenticateWsClient,
   broadcastToTeachersLocal,
+  broadcastToStaffSessionLocal,
   broadcastToStudentsLocal,
   sendToDeviceLocal,
   sendToRoleLocal,
+  subscribeWsClientToSession,
+  unsubscribeWsClientFromSession,
 } from "./ws-broadcast.js";
 import {
   publishWS,
@@ -22,9 +25,14 @@ import {
   getMembershipByUserAndSchool,
   getClasspilotCommandByIdAndSchool,
   updateClasspilotCommandTargetAck,
+  getTeachingSessionByIdAndSchool,
+  getGroupTeachers,
+  updateChatMessageDelivery,
+  getChatMessageByIdAndSchool,
 } from "../services/storage.js";
 import { runWithTenantContext } from "../middleware/tenantContext.js";
 import { verifyActiveStudentTokenSession } from "../services/classpilotStudentAuth.js";
+import { buildStudentFabState } from "../services/classpilotFab.js";
 
 // Ping/pong keepalive constants
 const WS_PING_INTERVAL_MS = 30_000; // 30 seconds
@@ -43,6 +51,9 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
     switch (target.kind) {
       case "staff":
         broadcastToTeachersLocal(target.schoolId, message);
+        break;
+      case "staff-session":
+        broadcastToStaffSessionLocal(target.schoolId, target.sessionId, message);
         break;
       case "students":
         broadcastToStudentsLocal(target.schoolId, message, undefined, target.targetDeviceIds);
@@ -183,6 +194,9 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
 
                 // Send settings along with auth success
                 const schoolSettings = await runWithTenantContext({ schoolId }, () => getSettingsForSchool(schoolId));
+                const fab = await runWithTenantContext({ schoolId }, () =>
+                  buildStudentFabState(schoolId, payload.studentId)
+                );
                 ws.send(JSON.stringify({
                   type: "auth-success",
                   role: "student",
@@ -190,6 +204,7 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
                     maxTabsPerStudent: schoolSettings?.maxTabsPerStudent
                       ? parseInt(schoolSettings.maxTabsPerStudent, 10) : null,
                     globalBlockedDomains: schoolSettings?.blockedDomains || [],
+                    fab,
                   },
                 }));
                 console.log(`[WebSocket] Student authenticated: device=${deviceId}, school=${schoolId}`);
@@ -266,6 +281,81 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
 
         // All remaining message types require authentication
         if (!client.authenticated) return;
+
+        // --- Staff session subscriptions for session-scoped FAB events ---
+        if (
+          (message.type === "subscribe-session" || message.type === "unsubscribe-session") &&
+          client.schoolId &&
+          (client.role === "teacher" || client.role === "school_admin" || client.role === "super_admin")
+        ) {
+          const sessionId = String(message.sessionId || message.teachingSessionId || "").trim();
+          if (!sessionId) {
+            ws.send(JSON.stringify({ type: "session-subscription-error", error: "sessionId required" }));
+            return;
+          }
+
+          const allowed = await runWithTenantContext({ schoolId: client.schoolId }, async () => {
+            const session = await getTeachingSessionByIdAndSchool(sessionId, client.schoolId!);
+            if (!session) return false;
+            if (client.role === "school_admin" || client.role === "super_admin") return true;
+            if (session.teacherId === client.userId) return true;
+            const teachers = await getGroupTeachers(session.groupId);
+            return teachers.some((teacher) => teacher.teacherId === client.userId);
+          });
+
+          if (!allowed) {
+            ws.send(JSON.stringify({ type: "session-subscription-error", sessionId, error: "Session not found" }));
+            return;
+          }
+
+          if (message.type === "subscribe-session") {
+            subscribeWsClientToSession(ws, sessionId);
+            ws.send(JSON.stringify({ type: "session-subscription-success", sessionId }));
+          } else {
+            unsubscribeWsClientFromSession(ws, sessionId);
+            ws.send(JSON.stringify({ type: "session-unsubscription-success", sessionId }));
+          }
+          return;
+        }
+
+        // --- Student FAB chat delivery acknowledgements ---
+        if (
+          client.role === "student" &&
+          client.schoolId &&
+          client.deviceId &&
+          (message.type === "chat-message-ack" || message.type === "chat_delivery_ack")
+        ) {
+          const messageId = String(message.messageId || message.chatMessageId || "").trim();
+          const rawStatus = String(message.deliveryStatus || message.status || "").trim();
+          const deliveryStatus = rawStatus === "failed" ? "failed" : rawStatus === "delivered" ? "delivered" : null;
+          if (!messageId || !deliveryStatus) return;
+
+          const chatMessage = await runWithTenantContext({ schoolId: client.schoolId }, async () => {
+            await updateChatMessageDelivery({
+              messageId,
+              schoolId: client.schoolId!,
+              deviceId: client.deviceId!,
+              deliveryStatus,
+              errorMessage: message.error || message.errorMessage || null,
+            });
+            return getChatMessageByIdAndSchool(messageId, client.schoolId!);
+          });
+
+          if (chatMessage?.sessionId) {
+            const payload = {
+              type: "chat-message-delivery",
+              sessionId: chatMessage.sessionId,
+              messageId,
+              studentId: chatMessage.studentId,
+              deviceId: client.deviceId,
+              deliveryStatus,
+              errorMessage: message.error || message.errorMessage || null,
+            };
+            broadcastToStaffSessionLocal(client.schoolId, chatMessage.sessionId, payload);
+            void publishWS({ kind: "staff-session", schoolId: client.schoolId, sessionId: chatMessage.sessionId }, payload);
+          }
+          return;
+        }
 
         // --- ClassPilot teacher command acknowledgements ---
         if (

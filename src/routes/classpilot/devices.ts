@@ -70,6 +70,7 @@ import {
 import {
   effectiveSharedChromebookLoginMethod,
 } from "../../services/classpilotSharedChromebook.js";
+import { buildStudentFabState } from "../../services/classpilotFab.js";
 
 const router = Router();
 
@@ -633,11 +634,13 @@ router.get("/extension/login-roster", extensionRosterLimiter, async (req, res, n
 router.get("/extension/settings", requireDeviceAuth, async (_req, res, next) => {
   try {
     const schoolId = res.locals.schoolId as string;
+    const studentId = res.locals.studentId as string;
     const schoolSettings = await getSettingsForSchool(schoolId);
     const school = await getSchoolById(schoolId);
     if (!school) {
       return res.status(404).json({ error: "School not found" });
     }
+    const fab = await buildStudentFabState(schoolId, studentId);
 
     return res.json({
       enableTrackingHours: schoolSettings?.enableTrackingHours ?? false,
@@ -652,6 +655,10 @@ router.get("/extension/settings", requireDeviceAuth, async (_req, res, next) => 
       maxTabsPerStudent: schoolSettings?.maxTabsPerStudent
         ? parseInt(schoolSettings.maxTabsPerStudent, 10)
         : null,
+      fab,
+      messagingEnabled: fab.messagingEnabled,
+      handRaisingEnabled: fab.handRaisingEnabled,
+      handRaised: fab.handRaised,
     });
   } catch (err) {
     next(err);

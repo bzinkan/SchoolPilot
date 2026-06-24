@@ -17,6 +17,7 @@ import {
   setScheduleSkippedDate,
   getSchoolById,
   clearClasspilotClassroomStates,
+  clearClasspilotActiveHandsForSession,
 } from "../../services/storage.js";
 import { sendSessionSummaryEmail } from "../../services/email.js";
 import db from "../../db.js";
@@ -79,6 +80,7 @@ router.post("/start", ...auth, async (req, res, next) => {
     if (existing) {
       await endTeachingSession(existing.id);
       await clearClasspilotClassroomStates({ schoolId: res.locals.schoolId!, teachingSessionId: existing.id });
+      await clearClasspilotActiveHandsForSession(res.locals.schoolId!, existing.id);
     }
 
     const session = await createTeachingSession({ groupId, teacherId });
@@ -107,6 +109,7 @@ router.post("/end", ...auth, async (req, res, next) => {
 
     const session = await endTeachingSession(existing.id);
     await clearClasspilotClassroomStates({ schoolId: res.locals.schoolId!, teachingSessionId: existing.id });
+    await clearClasspilotActiveHandsForSession(res.locals.schoolId!, existing.id);
     res.json({ session });
 
     // If this was a scheduled class and we're PAST the scheduled end time,
@@ -165,6 +168,7 @@ router.post("/", ...auth, async (req, res, next) => {
     if (existing) {
       await endTeachingSession(existing.id);
       await clearClasspilotClassroomStates({ schoolId: res.locals.schoolId!, teachingSessionId: existing.id });
+      await clearClasspilotActiveHandsForSession(res.locals.schoolId!, existing.id);
     }
 
     const session = await createTeachingSession({ groupId, teacherId });
@@ -222,6 +226,7 @@ router.post("/:id/end", ...auth, async (req, res, next) => {
     }
     const session = await endTeachingSession(sessionId);
     await clearClasspilotClassroomStates({ schoolId: res.locals.schoolId!, teachingSessionId: sessionId });
+    await clearClasspilotActiveHandsForSession(res.locals.schoolId!, sessionId);
     return res.json({ session });
   } catch (err) {
     next(err);

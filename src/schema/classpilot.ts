@@ -319,7 +319,10 @@ export const chatMessages = pgTable(
   "chat_messages",
   {
     id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
     sessionId: varchar("session_id").notNull(),
+    studentId: text("student_id"),
+    deviceId: text("device_id"),
     senderId: text("sender_id").notNull(),
     senderType: text("sender_type").notNull().$type<"teacher" | "student">(),
     recipientId: text("recipient_id"), // null = broadcast
@@ -327,15 +330,52 @@ export const chatMessages = pgTable(
     messageType: text("message_type")
       .notNull()
       .$type<"message" | "raise_hand" | "question">(),
+    deliveryStatus: text("delivery_status")
+      .notNull()
+      .default("sent")
+      .$type<"sent" | "delivered" | "failed">(),
+    deliveredAt: timestamp("delivered_at"),
+    failedAt: timestamp("failed_at"),
+    errorMessage: text("error_message"),
     createdAt: timestamp("created_at").notNull().default(sql`now()`),
   },
   (table) => [
     index("chat_messages_session_id_idx").on(table.sessionId),
+    index("chat_messages_school_session_idx").on(table.schoolId, table.sessionId),
+    index("chat_messages_school_student_idx").on(table.schoolId, table.studentId),
   ]
 );
 
 export type ChatMessage = typeof chatMessages.$inferSelect;
 export type InsertChatMessage = typeof chatMessages.$inferInsert;
+
+// ============================================================================
+// Active Hands - Recoverable per-session raised hand state
+// ============================================================================
+export const classpilotActiveHands = pgTable(
+  "classpilot_active_hands",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
+    teachingSessionId: varchar("teaching_session_id").notNull(),
+    studentId: text("student_id").notNull(),
+    deviceId: text("device_id").notNull(),
+    raisedAt: timestamp("raised_at").notNull().default(sql`now()`),
+    expiresAt: timestamp("expires_at"),
+    clearedAt: timestamp("cleared_at"),
+    updatedAt: timestamp("updated_at").notNull().default(sql`now()`),
+  },
+  (table) => [
+    index("classpilot_active_hands_session_idx").on(table.schoolId, table.teachingSessionId),
+    index("classpilot_active_hands_student_idx").on(table.schoolId, table.studentId),
+    uniqueIndex("classpilot_active_hands_active_unique")
+      .on(table.teachingSessionId, table.studentId)
+      .where(sql`cleared_at IS NULL`),
+  ]
+);
+
+export type ClasspilotActiveHand = typeof classpilotActiveHands.$inferSelect;
+export type InsertClasspilotActiveHand = typeof classpilotActiveHands.$inferInsert;
 
 // ============================================================================
 // Polls - Quick pulse checks

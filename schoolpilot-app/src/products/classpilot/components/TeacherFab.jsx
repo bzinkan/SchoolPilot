@@ -170,11 +170,15 @@ function TeacherFab({
   const handsCount = raisedHands.size;
   const totalNotifications = unreadCount + handsCount;
 
-  const handleReply = (studentId) => {
+  const handleReply = async (studentId) => {
     const text = (replyTexts[studentId] || "").trim();
     if (text) {
-      onReplyToMessage(studentId, text);
-      setReplyTexts(prev => ({ ...prev, [studentId]: "" }));
+      try {
+        await onReplyToMessage(studentId, text);
+        setReplyTexts(prev => ({ ...prev, [studentId]: "" }));
+      } catch {
+        // Keep the draft in place; the parent mutation surfaces the error toast.
+      }
     }
   };
 
@@ -312,7 +316,7 @@ function TeacherFab({
                 // Merge student messages + teacher replies into a timeline
                 const thread = [
                   ...group.messages.map(m => ({ id: m.id, message: m.message, timestamp: m.timestamp, sender: 'student' })),
-                  ...(chatReplies[sid] || []).map((r, i) => ({ id: `reply-${sid}-${i}`, message: r.message, timestamp: r.timestamp, sender: 'teacher' })),
+                  ...(chatReplies[sid] || []).map((r, i) => ({ id: r.id || `reply-${sid}-${i}`, message: r.message, timestamp: r.timestamp, sender: 'teacher', status: r.status, errorMessage: r.errorMessage })),
                 ].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
                 return (
@@ -338,15 +342,25 @@ function TeacherFab({
                             item.sender === 'teacher' ? "justify-end" : "justify-start"
                           )}
                         >
-                          <div
-                            className={cn(
-                              "max-w-[80%] px-3 py-1.5 rounded-2xl text-sm break-words",
-                              item.sender === 'teacher'
-                                ? "bg-blue-500 text-white rounded-br-md"
-                                : "bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-bl-md"
+                          <div className="max-w-[80%]">
+                            <div
+                              className={cn(
+                                "px-3 py-1.5 rounded-2xl text-sm break-words",
+                                item.sender === 'teacher'
+                                  ? "bg-blue-500 text-white rounded-br-md"
+                                  : "bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-bl-md"
+                              )}
+                            >
+                              {item.message}
+                            </div>
+                            {item.sender === 'teacher' && item.status && (
+                              <div className={cn(
+                                "mt-0.5 text-[10px] text-right",
+                                item.status === 'failed' ? "text-red-500" : "text-gray-400 dark:text-gray-500"
+                              )}>
+                                {item.status === 'delivered' ? 'Delivered' : item.status === 'failed' ? (item.errorMessage || 'Failed') : 'Sending'}
+                              </div>
                             )}
-                          >
-                            {item.message}
                           </div>
                         </div>
                       ))}

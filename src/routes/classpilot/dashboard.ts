@@ -13,6 +13,10 @@ import {
   upsertTeacherSettings,
   getSettingsForSchool,
   upsertSettings,
+  getActiveTeachingSessionForSchool,
+  getTeachingSessionByIdAndSchool,
+  getActiveHandsBySession,
+  upsertSessionSettings,
   getTeacherStudentAssignmentsForSchool,
   assignTeacherStudent,
   unassignTeacherStudent,
@@ -27,6 +31,10 @@ import {
 } from "../../services/storage.js";
 import { broadcastToStudentsLocal } from "../../realtime/ws-broadcast.js";
 import { publishWS } from "../../realtime/ws-redis.js";
+import {
+  getEffectiveFabToggles,
+  getSessionStudentDeviceIds,
+} from "../../services/classpilotFab.js";
 import {
   effectiveSharedChromebookLoginMethod,
   normalizeSharedChromebookLoginMethod,
@@ -128,9 +136,19 @@ router.delete("/dashboard-tabs/:id", ...auth, async (req, res, next) => {
 router.get("/settings", ...auth, async (req, res, next) => {
   try {
     const teacherSettings = await getTeacherSettings(req.authUser!.id);
-    const schoolSettings = await getSettingsForSchool(res.locals.schoolId!);
+    const schoolId = res.locals.schoolId!;
+    const schoolSettings = await getSettingsForSchool(schoolId);
+    const activeSession = await getActiveTeachingSessionForSchool(req.authUser!.id, schoolId);
+    const fabToggles = await getEffectiveFabToggles(schoolId, activeSession?.id || null);
     return res.json({
       ...(teacherSettings || {}),
+      handRaisingEnabled: fabToggles.handRaisingEnabled,
+      studentMessagingEnabled: fabToggles.messagingEnabled,
+      sessionHandRaisingEnabled: fabToggles.sessionHandRaisingEnabled,
+      sessionStudentMessagingEnabled: fabToggles.sessionMessagingEnabled,
+      schoolHandRaisingEnabled: fabToggles.schoolHandRaisingEnabled,
+      schoolStudentMessagingEnabled: fabToggles.schoolMessagingEnabled,
+      activeSessionId: activeSession?.id || null,
       // School-wide settings (from settings table)
       schoolName: schoolSettings?.schoolName || "",
       retentionHours: schoolSettings?.retentionHours || "720",
@@ -303,19 +321,40 @@ router.post("/settings/hand-raising", ...auth, async (req, res, next) => {
   try {
     const { enabled } = req.body;
     const schoolId = res.locals.schoolId!;
-    const handRaisingEnabled = enabled !== false;
+    const requestedEnabled = enabled !== false;
+    const session = await getActiveTeachingSessionForSchool(req.authUser!.id, schoolId);
+    if (!session) {
+      return res.status(409).json({ error: "No active teaching session" });
+    }
 
-    await upsertTeacherSettings(req.authUser!.id, { handRaisingEnabled });
+    const settings = await upsertSessionSettings(session.id, { raiseHandEnabled: requestedEnabled });
+    const toggles = await getEffectiveFabToggles(schoolId, session.id);
+    const targetDeviceIds = await getSessionStudentDeviceIds(session);
 
     const msg = {
       type: "remote-control",
       _msgId: crypto.randomUUID(),
-      command: { type: "hand-raising-toggle", data: { enabled: handRaisingEnabled } },
+      command: {
+        type: "hand-raising-toggle",
+        data: {
+          sessionId: session.id,
+          enabled: toggles.handRaisingEnabled,
+          handRaisingEnabled: toggles.handRaisingEnabled,
+        },
+      },
     };
-    broadcastToStudentsLocal(schoolId, msg);
-    await publishWS({ kind: "students", schoolId }, msg);
+    if (targetDeviceIds.length > 0) {
+      broadcastToStudentsLocal(schoolId, msg, undefined, targetDeviceIds);
+      await publishWS({ kind: "students", schoolId, targetDeviceIds }, msg);
+    }
 
-    return res.json({ ok: true, handRaisingEnabled, enabled: handRaisingEnabled });
+    return res.json({
+      ok: true,
+      sessionId: session.id,
+      settings,
+      handRaisingEnabled: toggles.handRaisingEnabled,
+      enabled: toggles.handRaisingEnabled,
+    });
   } catch (err) {
     next(err);
   }
@@ -326,19 +365,40 @@ router.post("/settings/student-messaging", ...auth, async (req, res, next) => {
   try {
     const { enabled } = req.body;
     const schoolId = res.locals.schoolId!;
-    const studentMessagingEnabled = enabled !== false;
+    const requestedEnabled = enabled !== false;
+    const session = await getActiveTeachingSessionForSchool(req.authUser!.id, schoolId);
+    if (!session) {
+      return res.status(409).json({ error: "No active teaching session" });
+    }
 
-    await upsertTeacherSettings(req.authUser!.id, { studentMessagingEnabled });
+    const settings = await upsertSessionSettings(session.id, { chatEnabled: requestedEnabled });
+    const toggles = await getEffectiveFabToggles(schoolId, session.id);
+    const targetDeviceIds = await getSessionStudentDeviceIds(session);
 
     const msg = {
       type: "remote-control",
       _msgId: crypto.randomUUID(),
-      command: { type: "messaging-toggle", data: { enabled: studentMessagingEnabled, messagingEnabled: studentMessagingEnabled } },
+      command: {
+        type: "messaging-toggle",
+        data: {
+          sessionId: session.id,
+          enabled: toggles.messagingEnabled,
+          messagingEnabled: toggles.messagingEnabled,
+        },
+      },
     };
-    broadcastToStudentsLocal(schoolId, msg);
-    await publishWS({ kind: "students", schoolId }, msg);
+    if (targetDeviceIds.length > 0) {
+      broadcastToStudentsLocal(schoolId, msg, undefined, targetDeviceIds);
+      await publishWS({ kind: "students", schoolId, targetDeviceIds }, msg);
+    }
 
-    return res.json({ ok: true, studentMessagingEnabled, enabled: studentMessagingEnabled });
+    return res.json({
+      ok: true,
+      sessionId: session.id,
+      settings,
+      studentMessagingEnabled: toggles.messagingEnabled,
+      enabled: toggles.messagingEnabled,
+    });
   } catch (err) {
     next(err);
   }
@@ -433,9 +493,34 @@ router.post("/groups", ...auth, async (req, res, next) => {
 // Raised hands (ClassPilot frontend)
 // ============================================================================
 
-// GET /teacher/raised-hands - Students with raised hands (stub)
-router.get("/raised-hands", ...auth, async (_req, res) => {
-  return res.json({ raisedHands: [] });
+// GET /teacher/raised-hands - Active raised hands for a teaching session
+router.get("/raised-hands", ...auth, async (req, res, next) => {
+  try {
+    const schoolId = res.locals.schoolId!;
+    const requestedSessionId = String(req.query.sessionId || "").trim();
+    const session = requestedSessionId
+      ? await getTeachingSessionByIdAndSchool(requestedSessionId, schoolId)
+      : await getActiveTeachingSessionForSchool(req.authUser!.id, schoolId);
+    if (!session) {
+      return res.status(requestedSessionId ? 404 : 409).json({ error: "Session not found" });
+    }
+
+    const hands = await getActiveHandsBySession(schoolId, session.id);
+    return res.json({
+      sessionId: session.id,
+      raisedHands: hands.map((hand) => ({
+        sessionId: session.id,
+        studentId: hand.studentId,
+        deviceId: hand.deviceId,
+        studentName: [hand.student.firstName, hand.student.lastName].filter(Boolean).join(" ").trim() || hand.student.email || hand.studentId,
+        studentEmail: hand.student.email || "",
+        timestamp: hand.raisedAt.toISOString(),
+        expiresAt: hand.expiresAt?.toISOString() || null,
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
 });
 
 export default router;

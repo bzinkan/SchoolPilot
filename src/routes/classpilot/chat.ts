@@ -15,24 +15,32 @@ import {
   closePoll,
   getPollResponses,
   createPollResponse,
-  getMessagesBySchool,
-  createMessage,
-  deleteMessage,
-  getMessageByIdAndSchool,
   createCheckIn,
   getActiveTeachingSessionForSchool,
-  getTeachingSessionById,
+  getTeachingSessionByIdAndSchool,
+  getTeachingSessionForStudent,
   getStudentById,
   getStudentDevices,
-  getGroupById,
+  getChatMessageByIdAndSchool,
+  deleteChatMessage,
+  getActiveHandsForStudent,
+  upsertClasspilotActiveHand,
+  clearClasspilotActiveHand,
 } from "../../services/storage.js";
 import {
   broadcastToTeachersLocal,
+  broadcastToStaffSessionLocal,
   broadcastToStudentsLocal,
   sendToDeviceLocal,
 } from "../../realtime/ws-broadcast.js";
 import { publishWS } from "../../realtime/ws-redis.js";
 import { deviceBelongsToSchoolAndStudent, scopedDeviceTargets } from "../../services/classpilotDeviceScope.js";
+import {
+  FAB_HAND_TTL_MS,
+  FabContractError,
+  resolveStudentFabSessions,
+  studentDisplayName,
+} from "../../services/classpilotFab.js";
 
 const router = Router();
 
@@ -61,16 +69,19 @@ async function sessionBelongsToSchool(sessionId: string, schoolId: string): Prom
   if (sessionId.startsWith(`${schoolId}-`)) {
     return true;
   }
-  const session = await getTeachingSessionById(sessionId);
-  if (!session) {
-    return false;
-  }
-  const group = await getGroupById(session.groupId);
-  return group?.schoolId === schoolId;
+  return !!(await getTeachingSessionByIdAndSchool(sessionId, schoolId));
 }
 
 async function pollBelongsToSchool(poll: { sessionId: string }, schoolId: string): Promise<boolean> {
   return sessionBelongsToSchool(poll.sessionId, schoolId);
+}
+
+function handleFabContractError(error: unknown, res: any): boolean {
+  if (error instanceof FabContractError) {
+    res.status(error.status).json({ error: error.message, code: error.code });
+    return true;
+  }
+  return false;
 }
 
 // ============================================================================
@@ -99,10 +110,13 @@ router.post("/chat/send", ...staffAuth, async (req, res, next) => {
     }
 
     const msg = await createChatMessage({
+      schoolId,
       sessionId,
       senderId: req.authUser!.id,
       senderType: "teacher",
       recipientId: targetRecipientId,
+      studentId: null,
+      deviceId: targetRecipientId,
       content,
       messageType: "message",
     });
@@ -130,7 +144,7 @@ router.get("/chat/:sessionId", ...staffAuth, async (req, res, next) => {
     if (!(await sessionBelongsToSchool(sessionId, res.locals.schoolId!))) {
       return res.status(404).json({ error: "Session not found" });
     }
-    const messages = await getChatMessages(sessionId);
+    const messages = await getChatMessages(sessionId, res.locals.schoolId!);
     return res.json({ messages });
   } catch (err) {
     next(err);
@@ -146,25 +160,41 @@ router.post("/student/raise-hand", requireDeviceAuth, async (req, res, next) => 
   try {
     const schoolId = res.locals.schoolId as string;
     const studentId = res.locals.studentId as string;
-    const student = await getStudentById(studentId);
-    if (!student || student.schoolId !== schoolId) {
-      return res.status(404).json({ error: "Student not found" });
+    const deviceId = res.locals.deviceId as string;
+    const { student, sessions } = await resolveStudentFabSessions({ schoolId, studentId, feature: "hand" });
+    const expiresAt = new Date(Date.now() + FAB_HAND_TTL_MS);
+    const raisedHands = [];
+
+    for (const session of sessions) {
+      const activeHand = await upsertClasspilotActiveHand({
+        schoolId,
+        teachingSessionId: session.id,
+        studentId,
+        deviceId,
+        raisedAt: new Date(),
+        expiresAt,
+        clearedAt: null,
+      });
+      const payload = {
+        type: "hand-raised",
+        sessionId: session.id,
+        data: {
+          sessionId: session.id,
+          studentId,
+          studentName: studentDisplayName(student),
+          studentEmail: (res.locals.studentEmail as string) || student.email || "",
+          deviceId,
+          timestamp: activeHand.raisedAt.toISOString(),
+        },
+      };
+      broadcastToStaffSessionLocal(schoolId, session.id, payload);
+      await publishWS({ kind: "staff-session", schoolId, sessionId: session.id }, payload);
+      raisedHands.push({ sessionId: session.id, raisedAt: activeHand.raisedAt });
     }
 
-    const msg = {
-      type: "hand-raised",
-      data: {
-        studentId,
-        studentName: student ? `${student.firstName} ${student.lastName}` : studentId,
-        studentEmail: (res.locals.studentEmail as string) || student?.email || "",
-        timestamp: new Date().toISOString(),
-      },
-    };
-    broadcastToTeachersLocal(schoolId, msg);
-    await publishWS({ kind: "staff", schoolId }, msg);
-
-    return res.json({ ok: true });
+    return res.json({ ok: true, handRaised: true, raisedHands });
   } catch (err) {
+    if (handleFabContractError(err, res)) return;
     next(err);
   }
 });
@@ -178,12 +208,24 @@ router.post("/student/lower-hand", requireDeviceAuth, async (req, res, next) => 
     if (!student || student.schoolId !== schoolId) {
       return res.status(404).json({ error: "Student not found" });
     }
+    const activeHands = await getActiveHandsForStudent(schoolId, studentId);
 
-    const msg = { type: "hand-lowered", data: { studentId } };
-    broadcastToTeachersLocal(schoolId, msg);
-    await publishWS({ kind: "staff", schoolId }, msg);
+    for (const hand of activeHands) {
+      await clearClasspilotActiveHand({
+        schoolId,
+        teachingSessionId: hand.teachingSessionId,
+        studentId,
+      });
+      const payload = {
+        type: "hand-lowered",
+        sessionId: hand.teachingSessionId,
+        data: { sessionId: hand.teachingSessionId, studentId },
+      };
+      broadcastToStaffSessionLocal(schoolId, hand.teachingSessionId, payload);
+      await publishWS({ kind: "staff-session", schoolId, sessionId: hand.teachingSessionId }, payload);
+    }
 
-    return res.json({ ok: true });
+    return res.json({ ok: true, handRaised: false, clearedSessions: activeHands.map((hand) => hand.teachingSessionId) });
   } catch (err) {
     next(err);
   }
@@ -196,42 +238,54 @@ router.post("/student/send-message", requireDeviceAuth, async (req, res, next) =
     const studentId = res.locals.studentId as string;
     const deviceId = res.locals.deviceId as string;
     const { message } = req.body;
+    const content = String(message || "").trim();
 
-    if (!message) {
+    if (!content) {
       return res.status(400).json({ error: "message required" });
     }
 
-    const student = await getStudentById(studentId);
-    if (!student || student.schoolId !== schoolId) {
-      return res.status(404).json({ error: "Student not found" });
+    const { student, sessions } = await resolveStudentFabSessions({ schoolId, studentId, feature: "chat" });
+    const messages = [];
+
+    for (const session of sessions) {
+      const msg = await createChatMessage({
+        schoolId,
+        sessionId: session.id,
+        studentId,
+        deviceId,
+        senderId: studentId,
+        senderType: "student",
+        recipientId: null,
+        content,
+        messageType: "message",
+        deliveryStatus: "delivered",
+        deliveredAt: new Date(),
+      });
+
+      const broadcastPayload = {
+        type: "student-message",
+        sessionId: session.id,
+        data: {
+          id: msg.id,
+          sessionId: session.id,
+          studentId,
+          studentName: studentDisplayName(student),
+          studentEmail: (res.locals.studentEmail as string) || student.email || "",
+          deviceId,
+          message: content,
+          messageType: "message",
+          timestamp: msg.createdAt.toISOString(),
+        },
+      };
+
+      broadcastToStaffSessionLocal(schoolId, session.id, broadcastPayload);
+      await publishWS({ kind: "staff-session", schoolId, sessionId: session.id }, broadcastPayload);
+      messages.push(msg);
     }
 
-    const msg = await createMessage({
-      fromUserId: null,
-      toStudentId: studentId,
-      message,
-      isAnnouncement: false,
-    }, schoolId);
-
-    const broadcastPayload = {
-      type: "student-message",
-      data: {
-        id: msg.id,
-        studentId,
-        studentName: student ? `${student.firstName} ${student.lastName}` : studentId,
-        studentEmail: (res.locals.studentEmail as string) || student?.email || "",
-        deviceId,
-        message,
-        messageType: "message",
-        timestamp: new Date().toISOString(),
-      },
-    };
-
-    broadcastToTeachersLocal(schoolId, broadcastPayload);
-    await publishWS({ kind: "staff", schoolId }, broadcastPayload);
-
-    return res.json({ message: msg });
+    return res.json({ message: messages[0], messageId: messages[0]?.id, messages });
   } catch (err) {
+    if (handleFabContractError(err, res)) return;
     next(err);
   }
 });
@@ -243,7 +297,15 @@ router.post("/student/send-message", requireDeviceAuth, async (req, res, next) =
 // GET /api/classpilot/teacher/messages - Get student messages
 router.get("/teacher/messages", ...staffAuth, async (req, res, next) => {
   try {
-    const messages = await getMessagesBySchool(res.locals.schoolId!);
+    const sessionId = String(req.query.sessionId || "").trim();
+    if (!sessionId) {
+      return res.status(400).json({ error: "sessionId query param required" });
+    }
+    const schoolId = res.locals.schoolId!;
+    if (!(await getTeachingSessionByIdAndSchool(sessionId, schoolId))) {
+      return res.status(404).json({ error: "Session not found" });
+    }
+    const messages = await getChatMessages(sessionId, schoolId);
     return res.json({ messages });
   } catch (err) {
     next(err);
@@ -253,26 +315,25 @@ router.get("/teacher/messages", ...staffAuth, async (req, res, next) => {
 // POST /api/classpilot/teacher/reply - Reply to student message
 router.post("/teacher/reply", ...staffAuth, async (req, res, next) => {
   try {
-    const { toStudentId, studentId: bodyStudentId, message, deviceId: bodyDeviceId } = req.body;
+    const { sessionId, toStudentId, studentId: bodyStudentId, message, deviceId: bodyDeviceId } = req.body;
     const targetStudentId = toStudentId || bodyStudentId;
+    const schoolId = res.locals.schoolId!;
+    const content = String(message || "").trim();
 
-    if (!message) {
+    if (!sessionId) {
+      return res.status(400).json({ error: "sessionId required" });
+    }
+    if (!targetStudentId) {
+      return res.status(400).json({ error: "studentId required" });
+    }
+    if (!content) {
       return res.status(400).json({ error: "message required" });
     }
 
-    if (targetStudentId) {
-      const student = await getStudentById(targetStudentId);
-      if (!student || student.schoolId !== res.locals.schoolId) {
-        return res.status(404).json({ error: "Student not found" });
-      }
+    const session = await getTeachingSessionForStudent(schoolId, sessionId, targetStudentId);
+    if (!session) {
+      return res.status(409).json({ error: "Student is not in an active matching session" });
     }
-
-    const msg = await createMessage({
-      fromUserId: req.authUser!.id,
-      toStudentId: targetStudentId || null,
-      message,
-      isAnnouncement: false,
-    }, res.locals.schoolId!);
 
     // Look up deviceId if not provided
     let targetDeviceId: string | undefined = bodyDeviceId;
@@ -284,7 +345,7 @@ router.post("/teacher/reply", ...staffAuth, async (req, res, next) => {
     if (targetDeviceId) {
       const scopedDeviceId = await deviceBelongsToSchoolAndStudent(
         targetDeviceId,
-        res.locals.schoolId!,
+        schoolId,
         targetStudentId || null
       );
       if (!scopedDeviceId) {
@@ -293,9 +354,32 @@ router.post("/teacher/reply", ...staffAuth, async (req, res, next) => {
       targetDeviceId = scopedDeviceId;
     }
 
+    const msg = await createChatMessage({
+      schoolId,
+      sessionId: session.id,
+      studentId: targetStudentId,
+      deviceId: targetDeviceId || null,
+      senderId: req.authUser!.id,
+      senderType: "teacher",
+      recipientId: targetDeviceId || null,
+      content,
+      messageType: "message",
+      deliveryStatus: targetDeviceId ? "sent" : "failed",
+      failedAt: targetDeviceId ? null : new Date(),
+      errorMessage: targetDeviceId ? null : "No registered student device",
+    });
+
     if (targetDeviceId) {
-      const schoolId = res.locals.schoolId!;
-      const replyPayload = { type: "teacher-message", _msgId: crypto.randomUUID(), message: message, fromName: "Teacher" };
+      const replyPayload = {
+        type: "teacher-message",
+        _msgId: crypto.randomUUID(),
+        chatMessageId: msg.id,
+        messageId: msg.id,
+        sessionId: session.id,
+        studentId: targetStudentId,
+        message: content,
+        fromName: "Teacher",
+      };
       sendToDeviceLocal(schoolId, targetDeviceId, replyPayload);
       await publishWS({ kind: "device", schoolId, deviceId: targetDeviceId }, replyPayload);
     }
@@ -310,11 +394,11 @@ router.post("/teacher/reply", ...staffAuth, async (req, res, next) => {
 router.delete("/teacher/messages/:messageId", ...staffAuth, async (req, res, next) => {
   try {
     const messageId = param(req, "messageId");
-    const owned = await getMessageByIdAndSchool(messageId, res.locals.schoolId!);
+    const owned = await getChatMessageByIdAndSchool(messageId, res.locals.schoolId!);
     if (!owned) {
       return res.status(404).json({ error: "Message not found" });
     }
-    await deleteMessage(messageId);
+    await deleteChatMessage(messageId, res.locals.schoolId!);
     return res.json({ ok: true });
   } catch (err) {
     next(err);
@@ -326,17 +410,24 @@ router.post("/teacher/dismiss-hand/:studentId", ...staffAuth, async (req, res, n
   try {
     const studentId = param(req, "studentId");
     const schoolId = res.locals.schoolId!;
+    const sessionId = String(req.body?.sessionId || req.query.sessionId || "").trim();
 
-    const student = await getStudentById(studentId);
-    if (!student || student.schoolId !== schoolId) {
-      return res.status(404).json({ error: "Student not found" });
+    if (!sessionId) {
+      return res.status(400).json({ error: "sessionId required" });
     }
+
+    const session = await getTeachingSessionForStudent(schoolId, sessionId, studentId);
+    if (!session) {
+      return res.status(409).json({ error: "Student is not in an active matching session" });
+    }
+
+    await clearClasspilotActiveHand({ schoolId, teachingSessionId: session.id, studentId });
 
     // Send to specific student device(s) in remote-control format (service-worker expects this)
     const rcMsg = {
       type: "remote-control",
       _msgId: crypto.randomUUID(),
-      command: { type: "hand-dismissed", data: { studentId } },
+      command: { type: "hand-dismissed", data: { sessionId: session.id, studentId } },
     };
     const devices = await getStudentDevices(studentId);
     for (const d of devices) {
@@ -345,9 +436,9 @@ router.post("/teacher/dismiss-hand/:studentId", ...staffAuth, async (req, res, n
     }
 
     // Teacher notification — top-level for Dashboard WS handler
-    const teacherMsg = { type: "hand-dismissed", studentId };
-    broadcastToTeachersLocal(schoolId, teacherMsg);
-    await publishWS({ kind: "staff", schoolId }, teacherMsg);
+    const teacherMsg = { type: "hand-dismissed", sessionId: session.id, studentId };
+    broadcastToStaffSessionLocal(schoolId, session.id, teacherMsg);
+    await publishWS({ kind: "staff-session", schoolId, sessionId: session.id }, teacherMsg);
 
     return res.json({ ok: true });
   } catch (err) {
@@ -358,14 +449,19 @@ router.post("/teacher/dismiss-hand/:studentId", ...staffAuth, async (req, res, n
 // POST /api/classpilot/teacher/close-chat - Close chat with student
 router.post("/teacher/close-chat", ...staffAuth, async (req, res, next) => {
   try {
-    const { studentId, deviceId: bodyDeviceId } = req.body;
+    const { sessionId, studentId, deviceId: bodyDeviceId } = req.body;
     const schoolId = res.locals.schoolId!;
 
-    if (studentId) {
-      const student = await getStudentById(studentId);
-      if (!student || student.schoolId !== schoolId) {
-        return res.status(404).json({ error: "Student not found" });
-      }
+    if (!sessionId) {
+      return res.status(400).json({ error: "sessionId required" });
+    }
+    if (!studentId) {
+      return res.status(400).json({ error: "studentId required" });
+    }
+
+    const session = await getTeachingSessionForStudent(schoolId, sessionId, studentId);
+    if (!session) {
+      return res.status(409).json({ error: "Student is not in an active matching session" });
     }
 
     let targetDeviceId = bodyDeviceId;
@@ -387,7 +483,7 @@ router.post("/teacher/close-chat", ...staffAuth, async (req, res, next) => {
     }
 
     if (targetDeviceId) {
-      const payload = { type: "chat-closed", _msgId: crypto.randomUUID() };
+      const payload = { type: "chat-closed", _msgId: crypto.randomUUID(), sessionId: session.id, studentId };
       sendToDeviceLocal(schoolId, targetDeviceId, payload);
       await publishWS({ kind: "device", schoolId, deviceId: targetDeviceId }, payload);
     }

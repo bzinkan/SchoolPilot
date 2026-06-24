@@ -86,6 +86,7 @@ import {
   teachingSessions,
   sessionSettings,
   chatMessages,
+  classpilotActiveHands,
   polls,
   pollResponses,
   classpilotCommands,
@@ -121,6 +122,8 @@ import {
   type InsertSessionSetting,
   type ChatMessage,
   type InsertChatMessage,
+  type ClasspilotActiveHand,
+  type InsertClasspilotActiveHand,
   type Poll,
   type InsertPoll,
   type PollResponse,
@@ -3232,6 +3235,48 @@ export async function getTeachingSessionByIdAndSchool(
   return row?.session;
 }
 
+export async function getActiveTeachingSessionsForStudent(
+  schoolId: string,
+  studentId: string
+): Promise<TeachingSession[]> {
+  const rows = await db
+    .select({ session: teachingSessions })
+    .from(teachingSessions)
+    .innerJoin(groups, eq(teachingSessions.groupId, groups.id))
+    .innerJoin(groupStudents, eq(groupStudents.groupId, groups.id))
+    .where(
+      and(
+        eq(groups.schoolId, schoolId),
+        eq(groupStudents.studentId, studentId),
+        isNull(teachingSessions.endTime)
+      )
+    )
+    .orderBy(desc(teachingSessions.startTime));
+  return rows.map((row) => row.session);
+}
+
+export async function getTeachingSessionForStudent(
+  schoolId: string,
+  sessionId: string,
+  studentId: string
+): Promise<TeachingSession | undefined> {
+  const [row] = await db
+    .select({ session: teachingSessions })
+    .from(teachingSessions)
+    .innerJoin(groups, eq(teachingSessions.groupId, groups.id))
+    .innerJoin(groupStudents, eq(groupStudents.groupId, groups.id))
+    .where(
+      and(
+        eq(teachingSessions.id, sessionId),
+        eq(groups.schoolId, schoolId),
+        eq(groupStudents.studentId, studentId),
+        isNull(teachingSessions.endTime)
+      )
+    )
+    .limit(1);
+  return row?.session;
+}
+
 export async function getSessionSettings(
   sessionId: string
 ): Promise<SessionSetting | undefined> {
@@ -4264,12 +4309,15 @@ export async function deleteBlockList(id: string, schoolId: string): Promise<boo
 // ============================================================================
 
 export async function getChatMessages(
-  sessionId: string
+  sessionId: string,
+  schoolId?: string
 ): Promise<ChatMessage[]> {
+  const conditions: SQL[] = [eq(chatMessages.sessionId, sessionId)];
+  if (schoolId) conditions.push(eq(chatMessages.schoolId, schoolId));
   return db
     .select()
     .from(chatMessages)
-    .where(eq(chatMessages.sessionId, sessionId))
+    .where(and(...conditions))
     .orderBy(asc(chatMessages.createdAt));
 }
 
@@ -4278,6 +4326,193 @@ export async function createChatMessage(
 ): Promise<ChatMessage> {
   const [msg] = await db.insert(chatMessages).values(data).returning();
   return msg!;
+}
+
+export async function getChatMessageByIdAndSchool(
+  messageId: string,
+  schoolId: string
+): Promise<ChatMessage | undefined> {
+  const [message] = await db
+    .select()
+    .from(chatMessages)
+    .where(and(eq(chatMessages.id, messageId), eq(chatMessages.schoolId, schoolId)))
+    .limit(1);
+  return message;
+}
+
+export async function deleteChatMessage(
+  messageId: string,
+  schoolId: string
+): Promise<boolean> {
+  const result = await db
+    .delete(chatMessages)
+    .where(and(eq(chatMessages.id, messageId), eq(chatMessages.schoolId, schoolId)));
+  return (result.rowCount ?? 0) > 0;
+}
+
+export async function updateChatMessageDelivery(options: {
+  messageId: string;
+  schoolId: string;
+  deviceId?: string | null;
+  deliveryStatus: "delivered" | "failed";
+  errorMessage?: string | null;
+}): Promise<ChatMessage | undefined> {
+  const update: Partial<InsertChatMessage> & Record<string, unknown> = {
+    deliveryStatus: options.deliveryStatus,
+    errorMessage: options.errorMessage || null,
+  };
+  if (options.deliveryStatus === "delivered") {
+    update.deliveredAt = new Date();
+  }
+  if (options.deliveryStatus === "failed") {
+    update.failedAt = new Date();
+  }
+  const conditions: SQL[] = [
+    eq(chatMessages.id, options.messageId),
+    eq(chatMessages.schoolId, options.schoolId),
+  ];
+  if (options.deviceId) {
+    conditions.push(eq(chatMessages.deviceId, options.deviceId));
+  }
+  const [message] = await db
+    .update(chatMessages)
+    .set(update)
+    .where(and(...conditions))
+    .returning();
+  return message;
+}
+
+// ============================================================================
+// ClassPilot - Active hand operations
+// ============================================================================
+
+export type ClasspilotActiveHandWithStudent = ClasspilotActiveHand & {
+  student: Student;
+};
+
+export async function clearExpiredClasspilotActiveHands(
+  schoolId: string
+): Promise<void> {
+  await db
+    .update(classpilotActiveHands)
+    .set({ clearedAt: new Date(), updatedAt: new Date() })
+    .where(
+      and(
+        eq(classpilotActiveHands.schoolId, schoolId),
+        isNull(classpilotActiveHands.clearedAt),
+        sql`${classpilotActiveHands.expiresAt} IS NOT NULL`,
+        sql`${classpilotActiveHands.expiresAt} <= now()`
+      )
+    );
+}
+
+export async function getActiveHandsBySession(
+  schoolId: string,
+  teachingSessionId: string
+): Promise<ClasspilotActiveHandWithStudent[]> {
+  await clearExpiredClasspilotActiveHands(schoolId);
+  const rows = await db
+    .select({ hand: classpilotActiveHands, student: students })
+    .from(classpilotActiveHands)
+    .innerJoin(students, eq(classpilotActiveHands.studentId, students.id))
+    .where(
+      and(
+        eq(classpilotActiveHands.schoolId, schoolId),
+        eq(classpilotActiveHands.teachingSessionId, teachingSessionId),
+        isNull(classpilotActiveHands.clearedAt)
+      )
+    )
+    .orderBy(asc(classpilotActiveHands.raisedAt));
+  return rows.map((row) => ({ ...row.hand, student: row.student }));
+}
+
+export async function getActiveHandsForStudent(
+  schoolId: string,
+  studentId: string
+): Promise<ClasspilotActiveHand[]> {
+  await clearExpiredClasspilotActiveHands(schoolId);
+  return db
+    .select()
+    .from(classpilotActiveHands)
+    .where(
+      and(
+        eq(classpilotActiveHands.schoolId, schoolId),
+        eq(classpilotActiveHands.studentId, studentId),
+        isNull(classpilotActiveHands.clearedAt)
+      )
+    )
+    .orderBy(desc(classpilotActiveHands.raisedAt));
+}
+
+export async function upsertClasspilotActiveHand(
+  data: InsertClasspilotActiveHand
+): Promise<ClasspilotActiveHand> {
+  const [existing] = await db
+    .select()
+    .from(classpilotActiveHands)
+    .where(
+      and(
+        eq(classpilotActiveHands.schoolId, data.schoolId),
+        eq(classpilotActiveHands.teachingSessionId, data.teachingSessionId),
+        eq(classpilotActiveHands.studentId, data.studentId),
+        isNull(classpilotActiveHands.clearedAt)
+      )
+    )
+    .limit(1);
+
+  if (existing) {
+    const [row] = await db
+      .update(classpilotActiveHands)
+      .set({
+        deviceId: data.deviceId,
+        raisedAt: data.raisedAt || new Date(),
+        expiresAt: data.expiresAt || null,
+        updatedAt: new Date(),
+      })
+      .where(eq(classpilotActiveHands.id, existing.id))
+      .returning();
+    return row!;
+  }
+
+  const [row] = await db.insert(classpilotActiveHands).values(data).returning();
+  return row!;
+}
+
+export async function clearClasspilotActiveHand(options: {
+  schoolId: string;
+  teachingSessionId?: string;
+  studentId: string;
+}): Promise<ClasspilotActiveHand[]> {
+  const conditions: SQL[] = [
+    eq(classpilotActiveHands.schoolId, options.schoolId),
+    eq(classpilotActiveHands.studentId, options.studentId),
+    isNull(classpilotActiveHands.clearedAt),
+  ];
+  if (options.teachingSessionId) {
+    conditions.push(eq(classpilotActiveHands.teachingSessionId, options.teachingSessionId));
+  }
+  return db
+    .update(classpilotActiveHands)
+    .set({ clearedAt: new Date(), updatedAt: new Date() })
+    .where(and(...conditions))
+    .returning();
+}
+
+export async function clearClasspilotActiveHandsForSession(
+  schoolId: string,
+  teachingSessionId: string,
+  dbInstance: typeof db = db
+): Promise<void> {
+  await dbInstance
+    .update(classpilotActiveHands)
+    .set({ clearedAt: new Date(), updatedAt: new Date() })
+    .where(
+      and(
+        eq(classpilotActiveHands.schoolId, schoolId),
+        eq(classpilotActiveHands.teachingSessionId, teachingSessionId),
+        isNull(classpilotActiveHands.clearedAt)
+      )
+    );
 }
 
 // ============================================================================

@@ -48,7 +48,9 @@ function normalizeGrade(grade) {
   return trimmed.replace(/(\d+)(st|nd|rd|th)\b/gi, '$1');
 }
 
-const optimisticUpdateDeadline = () => Date.now() + 15000;
+function optimisticUpdateDeadline(durationMs = 15000) {
+  return Date.now() + durationMs;
+}
 
 export default function Dashboard() {
   const navigate = useNavigate();
@@ -150,6 +152,7 @@ export default function Dashboard() {
   const optimisticUpdateUntilRef = useRef(0);
   const maxReconnectDelay = 30000;
   const [wsAuthenticated, setWsAuthenticated] = useState(false);
+  const effectiveSessionIdRef = useRef(null);
 
   // WebRTC hook for live video streaming
   // eslint-disable-next-line react-hooks/refs
@@ -224,6 +227,10 @@ export default function Dashboard() {
   );
   const effectiveSession = isAdmin ? (observedSession || activeSession) : activeSession;
 
+  useEffect(() => {
+    effectiveSessionIdRef.current = effectiveSession?.id || null;
+  }, [effectiveSession?.id]);
+
   const { data: recentCommands = [] } = useQuery({
     queryKey: ['/api/commands/recent', effectiveSession?.id],
     queryFn: () => apiRequest('GET', `/commands/recent?limit=6&teachingSessionId=${encodeURIComponent(effectiveSession.id)}`),
@@ -274,28 +281,96 @@ export default function Dashboard() {
   });
 
   const { data: initialRaisedHands } = useQuery({
-    queryKey: ['/api/teacher/raised-hands'],
-    queryFn: () => apiRequest('GET', '/teacher/raised-hands'),
+    queryKey: ['/api/teacher/raised-hands', effectiveSession?.id],
+    queryFn: () => apiRequest('GET', `/teacher/raised-hands?sessionId=${encodeURIComponent(effectiveSession.id)}`),
+    enabled: !!effectiveSession?.id,
     refetchInterval: 30000,
   });
 
-  // Student messages are ephemeral (WS-only, cleared on refresh)
+  const { data: initialChatMessages } = useQuery({
+    queryKey: ['/api/teacher/messages', effectiveSession?.id],
+    queryFn: () => apiRequest('GET', `/teacher/messages?sessionId=${encodeURIComponent(effectiveSession.id)}`),
+    select: (data) => data?.messages ?? [],
+    enabled: !!effectiveSession?.id,
+    refetchInterval: 30000,
+  });
 
   // Sync initial raised hands to state
   useEffect(() => {
+    if (!effectiveSession?.id) {
+      setRaisedHands(new Map());
+      return;
+    }
     if (initialRaisedHands?.raisedHands) {
       const handsMap = new Map();
       initialRaisedHands.raisedHands.forEach(hand => {
         handsMap.set(hand.studentId, {
+          sessionId: hand.sessionId,
           studentId: hand.studentId,
           studentName: hand.studentName,
           studentEmail: hand.studentEmail,
+          deviceId: hand.deviceId,
           timestamp: hand.timestamp,
         });
       });
       setRaisedHands(handsMap);
     }
-  }, [initialRaisedHands]);
+  }, [initialRaisedHands, effectiveSession?.id]);
+
+  // Hydrate FAB chat from the canonical session chat store after refresh/reconnect.
+  useEffect(() => {
+    if (!effectiveSession?.id) {
+      setStudentMessages([]);
+      setChatReplies({});
+      return;
+    }
+    if (!Array.isArray(initialChatMessages)) return;
+
+    const studentLookup = new Map();
+    students.forEach((student) => {
+      const key = student.studentId || student.id;
+      if (!key) return;
+      studentLookup.set(key, student);
+    });
+    const nameFor = (studentId) => {
+      const student = studentLookup.get(studentId);
+      return student?.studentName || student?.name || [student?.firstName, student?.lastName].filter(Boolean).join(" ").trim() || student?.email || studentId;
+    };
+    const emailFor = (studentId) => studentLookup.get(studentId)?.studentEmail || studentLookup.get(studentId)?.email || "";
+    const sorted = [...initialChatMessages].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+    const hydratedStudentMessages = sorted
+      .filter((msg) => msg.senderType === 'student' && !dismissedMessageIds.current.has(msg.id))
+      .map((msg) => ({
+        id: msg.id,
+        sessionId: msg.sessionId,
+        studentId: msg.studentId,
+        studentName: nameFor(msg.studentId),
+        studentEmail: emailFor(msg.studentId),
+        deviceId: msg.deviceId,
+        message: msg.content,
+        messageType: msg.messageType || 'message',
+        timestamp: msg.createdAt,
+        read: true,
+      }));
+    const hydratedReplies = {};
+    sorted
+      .filter((msg) => msg.senderType === 'teacher' && msg.studentId)
+      .forEach((msg) => {
+        hydratedReplies[msg.studentId] = [
+          ...(hydratedReplies[msg.studentId] || []),
+          {
+            id: msg.id,
+            message: msg.content,
+            timestamp: msg.createdAt,
+            status: msg.deliveryStatus || 'sent',
+            errorMessage: msg.errorMessage,
+          },
+        ];
+      });
+
+    setStudentMessages(hydratedStudentMessages);
+    setChatReplies(hydratedReplies);
+  }, [initialChatMessages, effectiveSession?.id, students]);
 
   // WebSocket connection with automatic reconnection
   useEffect(() => {
@@ -379,12 +454,16 @@ export default function Dashboard() {
               webrtc.handleIceCandidate(message.from, message.candidate);
             }
             if (message.type === 'hand-raised') {
+              const eventSessionId = message.sessionId || message.data?.sessionId;
+              if (eventSessionId && effectiveSessionIdRef.current && eventSessionId !== effectiveSessionIdRef.current) return;
               setRaisedHands(prev => {
                 const newMap = new Map(prev);
                 newMap.set(message.data.studentId, {
+                  sessionId: eventSessionId,
                   studentId: message.data.studentId,
                   studentName: message.data.studentName,
                   studentEmail: message.data.studentEmail,
+                  deviceId: message.data.deviceId,
                   timestamp: message.data.timestamp,
                 });
                 return newMap;
@@ -392,17 +471,31 @@ export default function Dashboard() {
               toast({ title: "Hand Raised", description: `${message.data.studentName} is asking for help` });
             }
             if (message.type === 'hand-lowered') {
+              const eventSessionId = message.sessionId || message.data?.sessionId;
+              if (eventSessionId && effectiveSessionIdRef.current && eventSessionId !== effectiveSessionIdRef.current) return;
               setRaisedHands(prev => {
                 const newMap = new Map(prev);
                 newMap.delete(message.data.studentId);
                 return newMap;
               });
             }
+            if (message.type === 'hand-dismissed') {
+              const eventSessionId = message.sessionId || message.data?.sessionId;
+              if (eventSessionId && effectiveSessionIdRef.current && eventSessionId !== effectiveSessionIdRef.current) return;
+              setRaisedHands(prev => {
+                const newMap = new Map(prev);
+                newMap.delete(message.studentId || message.data?.studentId);
+                return newMap;
+              });
+            }
             if (message.type === 'student-message') {
+              const eventSessionId = message.sessionId || message.data?.sessionId;
+              if (eventSessionId && effectiveSessionIdRef.current && eventSessionId !== effectiveSessionIdRef.current) return;
               const msgId = message.data.id;
               if (dismissedMessageIds.current.has(msgId)) return;
               const newMsg = {
                 id: msgId,
+                sessionId: eventSessionId,
                 studentId: message.data.studentId,
                 studentName: message.data.studentName,
                 studentEmail: message.data.studentEmail,
@@ -419,6 +512,23 @@ export default function Dashboard() {
               toast({
                 title: message.data.messageType === 'question' ? "Question" : "Message",
                 description: `${message.data.studentName}: ${message.data.message.slice(0, 50)}${message.data.message.length > 50 ? '...' : ''}`,
+              });
+            }
+            if (message.type === 'chat-message-delivery') {
+              const eventSessionId = message.sessionId || message.data?.sessionId;
+              if (eventSessionId && effectiveSessionIdRef.current && eventSessionId !== effectiveSessionIdRef.current) return;
+              const messageId = message.messageId || message.data?.messageId;
+              if (!messageId) return;
+              setChatReplies(prev => {
+                const next = {};
+                Object.entries(prev).forEach(([studentId, replies]) => {
+                  next[studentId] = replies.map((reply) => (
+                    reply.id === messageId
+                      ? { ...reply, status: message.deliveryStatus || message.data?.deliveryStatus, errorMessage: message.errorMessage || message.data?.errorMessage }
+                      : reply
+                  ));
+                });
+                return next;
               });
             }
             if (message.type === 'student-registered') {
@@ -525,6 +635,18 @@ export default function Dashboard() {
       schoolId: currentUser.schoolId,
     }));
   }, [currentUser?.id, currentUser?.role, currentUser?.schoolId, token, wsConnected, wsAuthenticated]);
+
+  useEffect(() => {
+    const sessionId = effectiveSession?.id;
+    const socket = wsRef.current;
+    if (!sessionId || !wsAuthenticated || !socket || socket.readyState !== WebSocket.OPEN) return undefined;
+    socket.send(JSON.stringify({ type: 'subscribe-session', sessionId }));
+    return () => {
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: 'unsubscribe-session', sessionId }));
+      }
+    };
+  }, [effectiveSession?.id, wsAuthenticated, wsConnected]);
 
   // Set initial grade when settings load
   useEffect(() => {
@@ -1199,22 +1321,33 @@ export default function Dashboard() {
   });
 
   const dismissHandMutation = useMutation({
-    mutationFn: async (studentId) => apiRequest('POST', `/teacher/dismiss-hand/${studentId}`),
+    mutationFn: async (studentId) => apiRequest('POST', `/teacher/dismiss-hand/${studentId}`, { sessionId: effectiveSession?.id }),
     onSuccess: (_, studentId) => { setRaisedHands(prev => { const newMap = new Map(prev); newMap.delete(studentId); return newMap; }); },
     onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
   });
 
   const replyToMessageMutation = useMutation({
-    mutationFn: async ({ studentId, message, deviceId }) => apiRequest('POST', '/teacher/reply', { studentId, message, deviceId }),
-    onSuccess: (_, variables) => {
+    mutationFn: async ({ sessionId, studentId, message, deviceId }) => apiRequest('POST', '/teacher/reply', { sessionId, studentId, message, deviceId }),
+    onSuccess: (data, variables) => {
+      const reply = data?.message || {};
       setChatReplies(prev => ({
         ...prev,
         [variables.studentId]: [
           ...(prev[variables.studentId] || []),
-          { message: variables.message, timestamp: new Date().toISOString() },
+          {
+            id: reply.id,
+            message: reply.content || variables.message,
+            timestamp: reply.createdAt || new Date().toISOString(),
+            status: reply.deliveryStatus || 'sent',
+            errorMessage: reply.errorMessage,
+          },
         ],
       }));
-      toast({ title: "Reply Sent" });
+      toast({
+        title: reply.deliveryStatus === 'failed' ? "Reply Not Delivered" : "Reply Queued",
+        description: reply.deliveryStatus === 'failed' ? (reply.errorMessage || "No student device was available") : "Waiting for device confirmation",
+        variant: reply.deliveryStatus === 'failed' ? "destructive" : undefined,
+      });
     },
     onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
   });
@@ -1263,7 +1396,7 @@ export default function Dashboard() {
     setStudentMessages(prev => prev.filter(m => m.studentId !== studentId));
     setChatReplies(prev => { const next = { ...prev }; delete next[studentId]; return next; });
     if (msg?.deviceId) {
-      try { await apiRequest('POST', '/teacher/close-chat', { studentId, deviceId: msg.deviceId }); } catch (error) {
+      try { await apiRequest('POST', '/teacher/close-chat', { sessionId: effectiveSession?.id, studentId, deviceId: msg.deviceId }); } catch (error) {
         console.error('Failed to send close-chat:', error);
       }
     }
@@ -2235,7 +2368,7 @@ export default function Dashboard() {
           onDismissMessage={dismissMessage}
           onReplyToMessage={(studentId, message) => {
             const msg = studentMessages.find(m => m.studentId === studentId);
-            replyToMessageMutation.mutate({ studentId, message, deviceId: msg?.deviceId });
+            return replyToMessageMutation.mutateAsync({ sessionId: effectiveSession?.id, studentId, message, deviceId: msg?.deviceId });
           }}
           replyPending={replyToMessageMutation.isPending}
           studentMessagingEnabled={settings?.studentMessagingEnabled !== false}

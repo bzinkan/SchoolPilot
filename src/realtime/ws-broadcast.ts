@@ -8,6 +8,7 @@ export type WSClient = {
   deviceId?: string;
   userId?: string;
   schoolId?: string;
+  subscribedSessionIds: Set<string>;
   authenticated: boolean;
 };
 
@@ -64,6 +65,7 @@ export function registerWsClient(ws: WebSocket): WSClient {
   const client: WSClient = {
     ws,
     role: "student",
+    subscribedSessionIds: new Set(),
     authenticated: false,
   };
   wsClients.set(ws, client);
@@ -96,6 +98,7 @@ export function authenticateWsClient(
   client.deviceId = auth.deviceId;
   client.userId = auth.userId;
   client.authenticated = true;
+  client.subscribedSessionIds.clear();
 
   if (auth.role === "student") {
     addSocket(studentSocketsBySchool, auth.schoolId, ws);
@@ -115,6 +118,24 @@ export function removeWsClient(ws: WebSocket) {
   wsClients.delete(ws);
 }
 
+export function subscribeWsClientToSession(ws: WebSocket, sessionId: string): boolean {
+  const client = wsClients.get(ws);
+  if (!client || !client.authenticated || !isStaffRole(client.role)) {
+    return false;
+  }
+  client.subscribedSessionIds.add(sessionId);
+  return true;
+}
+
+export function unsubscribeWsClientFromSession(ws: WebSocket, sessionId: string): boolean {
+  const client = wsClients.get(ws);
+  if (!client || !client.authenticated || !isStaffRole(client.role)) {
+    return false;
+  }
+  client.subscribedSessionIds.delete(sessionId);
+  return true;
+}
+
 export function broadcastToTeachersLocal(schoolId: string, message: unknown): number {
   const sockets = teacherSocketsBySchool.get(schoolId);
   if (!sockets) {
@@ -125,6 +146,33 @@ export function broadcastToTeachersLocal(schoolId: string, message: unknown): nu
   sockets.forEach((ws) => {
     const client = wsClients.get(ws);
     if (!client || !client.authenticated || !isStaffRole(client.role)) {
+      return;
+    }
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(messageStr);
+      sentCount++;
+    }
+  });
+  return sentCount;
+}
+
+export function broadcastToStaffSessionLocal(
+  schoolId: string,
+  sessionId: string,
+  message: unknown
+): number {
+  const sockets = teacherSocketsBySchool.get(schoolId);
+  if (!sockets) {
+    return 0;
+  }
+  const messageStr = JSON.stringify(message);
+  let sentCount = 0;
+  sockets.forEach((ws) => {
+    const client = wsClients.get(ws);
+    if (!client || !client.authenticated || !isStaffRole(client.role)) {
+      return;
+    }
+    if (!client.subscribedSessionIds.has(sessionId)) {
       return;
     }
     if (ws.readyState === WebSocket.OPEN) {
