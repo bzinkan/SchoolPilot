@@ -23,11 +23,12 @@ import { ClipboardCheck, Loader2, Search, X } from "lucide-react";
  * @param {Object} props
  * @param {Array<{id: string, firstName: string, lastName: string}>} props.students - Class roster
  * @param {() => void} props.onClose - Close the panel
+ * @param {string} [props.productContext] - Product-specific backend attendance policy
  */
-export function AttendancePanel({ students, onClose }) {
+export function AttendancePanel({ students, onClose, productContext }) {
   const { toast } = useToast();
   const { activeMembership } = useAuth();
-  const { absentIds, records } = useAbsentStudents();
+  const { recordedIds, records } = useAbsentStudents(productContext);
 
   const [selectedStudents, setSelectedStudents] = useState(new Set());
   const [markStatus, setMarkStatus] = useState("absent");
@@ -42,14 +43,14 @@ export function AttendancePanel({ students, onClose }) {
     today = new Date().toISOString().slice(0, 10);
   }
 
-  // Split students into absent and present for this class
+  // Split students into recorded and unrecorded attendance for this class
   const classAbsentRecords = useMemo(
     () => records.filter((r) => students.some((s) => s.id === r.studentId)),
     [records, students]
   );
 
   const presentStudents = useMemo(() => {
-    let list = students.filter((s) => !absentIds.has(s.id));
+    let list = students.filter((s) => !recordedIds.has(s.id));
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
       list = list.filter(
@@ -61,7 +62,7 @@ export function AttendancePanel({ students, onClose }) {
     return list.sort((a, b) =>
       (a.lastName || "").localeCompare(b.lastName || "")
     );
-  }, [students, absentIds, searchQuery]);
+  }, [students, recordedIds, searchQuery]);
 
   const markMutation = useMutation({
     mutationFn: (data) => apiRequest("POST", "/admin/attendance", data),
@@ -87,7 +88,10 @@ export function AttendancePanel({ students, onClose }) {
   });
 
   const removeMutation = useMutation({
-    mutationFn: (id) => apiRequest("DELETE", `/admin/attendance/${id}`),
+    mutationFn: (id) => {
+      const suffix = productContext ? `?productContext=${encodeURIComponent(productContext)}` : "";
+      return apiRequest("DELETE", `/admin/attendance/${id}${suffix}`);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({
         queryKey: ["/api/admin/attendance"],
@@ -113,6 +117,7 @@ export function AttendancePanel({ students, onClose }) {
       date: today,
       status: markStatus,
       reason: markReason || undefined,
+      ...(productContext ? { productContext } : {}),
     });
   }
 
@@ -139,7 +144,7 @@ export function AttendancePanel({ students, onClose }) {
           </span>
           {classAbsentRecords.length > 0 && (
             <Badge variant="destructive" className="text-xs">
-              {classAbsentRecords.length} absent
+              {classAbsentRecords.length} recorded
             </Badge>
           )}
         </div>
@@ -149,11 +154,11 @@ export function AttendancePanel({ students, onClose }) {
       </div>
 
       <div className="p-4 space-y-4">
-        {/* Absent Today */}
+        {/* Attendance Recorded Today */}
         {classAbsentRecords.length > 0 && (
           <div>
             <p className="text-xs font-medium text-muted-foreground mb-2">
-              ABSENT TODAY
+              RECORDED TODAY
             </p>
             <div className="space-y-1.5">
               {classAbsentRecords.map((r) => (
@@ -192,10 +197,10 @@ export function AttendancePanel({ students, onClose }) {
           </div>
         )}
 
-        {/* Mark Absent */}
+        {/* Mark Attendance */}
         <div>
           <p className="text-xs font-medium text-muted-foreground mb-2">
-            MARK ABSENT
+            MARK ATTENDANCE
           </p>
 
           {/* Search + controls */}
@@ -243,7 +248,7 @@ export function AttendancePanel({ students, onClose }) {
               <div className="text-center py-6 text-sm text-muted-foreground">
                 {searchQuery
                   ? "No matching students"
-                  : "All students are marked absent"}
+                  : "All students have attendance recorded"}
               </div>
             ) : (
               <div className="divide-y">
@@ -300,7 +305,7 @@ export function AttendancePanel({ students, onClose }) {
                 {markMutation.isPending && (
                   <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
                 )}
-                Mark {selectedStudents.size} Absent
+                Mark {selectedStudents.size} {statusLabel[markStatus]}
               </Button>
             </div>
           )}

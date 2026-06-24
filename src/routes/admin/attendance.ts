@@ -4,7 +4,6 @@ import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import {
-  getAbsentStudentIds,
   getAttendanceBySchool,
   getAttendanceRecordById,
   getStudentAttendance,
@@ -66,6 +65,10 @@ type AttendanceScope =
   | { kind: "all" }
   | { kind: "homerooms"; homeroomIds: Set<string> };
 
+function isGoPilotAttendanceContext(req: any): boolean {
+  return req.query?.productContext === "gopilot" || req.body?.productContext === "gopilot";
+}
+
 async function getAttendanceScope(req: any, res: any): Promise<AttendanceScope | null> {
   const schoolId = res.locals.schoolId!;
   if (req.authUser?.isSuperAdmin || !(await hasActiveGoPilotLicense(schoolId))) {
@@ -78,6 +81,9 @@ async function getAttendanceScope(req: any, res: any): Promise<AttendanceScope |
     const homeroomIds = await getTeacherHomeroomIds(req.authUser!.id, schoolId);
     if (homeroomIds.size > 0) {
       return { kind: "homerooms", homeroomIds };
+    }
+    if (isGoPilotAttendanceContext(req)) {
+      return null;
     }
     return { kind: "all" };
   }

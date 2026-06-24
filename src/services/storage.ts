@@ -5174,7 +5174,7 @@ export async function upsertClassroomCourseStudents(
 // Student Attendance
 // ============================================================================
 
-/** Returns a Set of student IDs marked absent (or tardy/early_dismissal) for a given date */
+/** Returns a Set of student IDs unavailable for dismissal/movement on a given date. */
 export async function getAbsentStudentIds(
   schoolId: string,
   date: string
@@ -5185,7 +5185,8 @@ export async function getAbsentStudentIds(
     .where(
       and(
         eq(studentAttendance.schoolId, schoolId),
-        eq(studentAttendance.date, date)
+        eq(studentAttendance.date, date),
+        inArray(studentAttendance.status, ["absent", "early_dismissal"])
       )
     );
   return new Set(rows.map((r) => r.studentId));
