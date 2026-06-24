@@ -12,6 +12,7 @@ import {
   endTeachingSession,
   createTeachingSession,
   getUserById,
+  clearClasspilotActiveHandsForSession,
 } from "./storage.js";
 import { buildAndSendSessionSummary } from "../routes/classpilot/sessions.js";
 import { broadcastToTeachersLocal } from "../realtime/ws-broadcast.js";
@@ -264,6 +265,7 @@ async function autoEndStaleClassPilotSessions() {
 
       if (shouldEnd) {
         const session = await endTeachingSession(s.sessionId, schedulerDb);
+        await clearClasspilotActiveHandsForSession(s.schoolId, s.sessionId, schedulerDb);
         console.log(`[ClassPilot] Auto-ended stale session ${s.sessionId} for teacher ${s.teacherId} (${reason}, age: ${ageHours.toFixed(1)}h)`);
 
         // Send session summary email (same as manual/scheduled end)
@@ -728,6 +730,7 @@ async function autoStartClassBlocks() {
         const existingSession = await getActiveTeachingSessionForSchool(group.teacherId, group.schoolId, schedulerDb);
         if (existingSession) {
           await endTeachingSession(existingSession.id, schedulerDb);
+          await clearClasspilotActiveHandsForSession(group.schoolId, existingSession.id, schedulerDb);
           console.log(`[ClassPilot] Auto-ended previous session for teacher ${group.teacherId} before starting "${group.name}"`);
         }
 
@@ -774,6 +777,7 @@ async function autoEndClassBlocks() {
 
       for (const group of readyGroups) {
         const session = await endTeachingSession(group.sessionId, schedulerDb);
+        await clearClasspilotActiveHandsForSession(school.id, group.sessionId, schedulerDb);
         console.log(`[ClassPilot] Auto-ended session for "${group.name}" (teacher ${group.teacherId}, school ${school.id})`);
 
         // Send session summary email (same as manual end)

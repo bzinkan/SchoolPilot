@@ -382,6 +382,71 @@ async function runStartupMigrations(): Promise<void> {
     console.warn("[migration] ClassPilot teacher command migration skipped:", (err as Error).message);
   }
 
+  // ClassPilot FAB production state: session-scoped chat + recoverable raised hands.
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS chat_messages (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        school_id TEXT NOT NULL,
+        session_id VARCHAR NOT NULL,
+        student_id TEXT,
+        device_id TEXT,
+        sender_id TEXT NOT NULL,
+        sender_type TEXT NOT NULL,
+        recipient_id TEXT,
+        content TEXT NOT NULL,
+        message_type TEXT NOT NULL,
+        delivery_status TEXT NOT NULL DEFAULT 'sent',
+        delivered_at TIMESTAMP,
+        failed_at TIMESTAMP,
+        error_message TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT now()
+      )
+    `);
+    await pool.query(`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS school_id TEXT`);
+    await pool.query(`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS student_id TEXT`);
+    await pool.query(`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS device_id TEXT`);
+    await pool.query(`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS delivery_status TEXT NOT NULL DEFAULT 'sent'`);
+    await pool.query(`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMP`);
+    await pool.query(`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS failed_at TIMESTAMP`);
+    await pool.query(`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS error_message TEXT`);
+    await schedulerPool.query(`
+      UPDATE chat_messages cm
+      SET school_id = COALESCE(ts.school_id, g.school_id)
+      FROM teaching_sessions ts
+      JOIN groups g ON g.id = ts.group_id
+      WHERE cm.session_id = ts.id
+        AND cm.school_id IS NULL
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS chat_messages_session_id_idx ON chat_messages (session_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS chat_messages_school_session_idx ON chat_messages (school_id, session_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS chat_messages_school_student_idx ON chat_messages (school_id, student_id)`);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS classpilot_active_hands (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        school_id TEXT NOT NULL,
+        teaching_session_id VARCHAR NOT NULL,
+        student_id TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        raised_at TIMESTAMP NOT NULL DEFAULT now(),
+        expires_at TIMESTAMP,
+        cleared_at TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT now()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_active_hands_session_idx ON classpilot_active_hands (school_id, teaching_session_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_active_hands_student_idx ON classpilot_active_hands (school_id, student_id)`);
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS classpilot_active_hands_active_unique
+      ON classpilot_active_hands (teaching_session_id, student_id)
+      WHERE cleared_at IS NULL
+    `);
+    console.log("[migration] ClassPilot FAB chat and active hand tables ready");
+  } catch (err) {
+    console.warn("[migration] ClassPilot FAB migration skipped:", (err as Error).message);
+  }
+
   // RLS Phase 4: author per-school tenant-isolation policies (idempotent) for
   // every table that has a school_id column, EXCEPT global/bootstrap tables. The
   // policies + FORCE ROW LEVEL SECURITY are INERT until a table is named in the
