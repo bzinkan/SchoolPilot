@@ -21,6 +21,15 @@ export function setApiToken(token) {
   _token = token;
 }
 
+function getActiveSchoolId() {
+  if (typeof window === 'undefined') return null;
+  try {
+    return window.localStorage.getItem('sp_activeSchoolId');
+  } catch {
+    return null;
+  }
+}
+
 const STATE_CHANGING_METHODS = new Set(['post', 'put', 'patch', 'delete']);
 
 async function ensureCsrfToken() {
@@ -46,6 +55,15 @@ export function clearCsrfToken() {
 api.interceptors.request.use(async (config) => {
   if (_token) {
     config.headers.Authorization = `Bearer ${_token}`;
+  }
+
+  const activeSchoolId = getActiveSchoolId();
+  if (
+    activeSchoolId &&
+    !config.headers['X-School-Id'] &&
+    !config.headers['x-school-id']
+  ) {
+    config.headers['X-School-Id'] = activeSchoolId;
   }
 
   // Attach CSRF token on cookie-authenticated state-changing requests.

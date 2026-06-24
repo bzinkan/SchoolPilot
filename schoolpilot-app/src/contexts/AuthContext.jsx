@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import api, { setApiToken } from '../shared/utils/api';
 import { saveToken, loadToken, clearToken } from '../native/storage';
 
@@ -29,6 +30,7 @@ function selectMembershipForSchool(memberships, activeSchoolId) {
 }
 
 export function AuthProvider({ children }) {
+  const queryClient = useQueryClient();
   const [user, setUser] = useState(null);
   const [memberships, setMemberships] = useState([]);
   const [licenses, setLicenses] = useState({});
@@ -51,8 +53,9 @@ export function AuthProvider({ children }) {
       }
 
       const res = await api.get('/auth/me');
+      const nextMemberships = res.data.memberships || [];
       setUser(res.data.user);
-      setMemberships(res.data.memberships || []);
+      setMemberships(nextMemberships);
       setLicenses(res.data.licenses || {});
 
       // Store JWT token in memory (returned by /me for WebSocket auth)
@@ -61,9 +64,13 @@ export function AuthProvider({ children }) {
         saveToken(res.data.token); // persist for native app relaunch
       }
 
-      // Default to first membership's school if none selected
-      if (!activeSchoolId && res.data.memberships?.length > 0) {
-        const defaultSchool = res.data.memberships[0].schoolId;
+      const selectedSchoolIsValid =
+        activeSchoolId && nextMemberships.some((m) => m.schoolId === activeSchoolId);
+
+      // Default to first membership's school if none selected, or repair a stale
+      // local selection after membership changes.
+      if ((!activeSchoolId || !selectedSchoolIsValid) && nextMemberships.length > 0) {
+        const defaultSchool = nextMemberships[0].schoolId;
         setActiveSchoolId(defaultSchool);
         localStorage.setItem('sp_activeSchoolId', defaultSchool);
       }
@@ -147,6 +154,7 @@ export function AuthProvider({ children }) {
   const switchSchool = (schoolId) => {
     setActiveSchoolId(schoolId);
     localStorage.setItem('sp_activeSchoolId', schoolId);
+    queryClient.clear();
     // Refetch to get new school's licenses
     fetchUser();
   };
