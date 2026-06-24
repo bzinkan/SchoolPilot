@@ -14,7 +14,12 @@ import {
   createStudent,
   createUser,
   createDismissalChange,
+  createCustodyAlert,
   createFamilyGroup,
+  createParentStudentLink,
+  getOrCreateSession,
+  addToQueue,
+  getQueueBySession,
   getSchoolById,
   getOverrideForStudent,
   getStudentById,
@@ -137,6 +142,8 @@ before(async () => {
   await db.execute(sql`ALTER TABLE IF EXISTS students ADD COLUMN IF NOT EXISTS classpilot_pin_encrypted TEXT`);
   await db.execute(sql`ALTER TABLE IF EXISTS dismissal_changes ADD COLUMN IF NOT EXISTS acknowledged_by TEXT`);
   await db.execute(sql`ALTER TABLE IF EXISTS dismissal_changes ADD COLUMN IF NOT EXISTS acknowledged_at TIMESTAMP`);
+  await db.execute(sql`ALTER TABLE IF EXISTS dismissal_queue ADD COLUMN IF NOT EXISTS pickup_group_id TEXT`);
+  await db.execute(sql`ALTER TABLE IF EXISTS dismissal_queue ADD COLUMN IF NOT EXISTS pickup_group_label TEXT`);
   await db.execute(sql`ALTER TABLE IF EXISTS dismissal_overrides ADD COLUMN IF NOT EXISTS bus_route TEXT`);
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS student_timeline_events (
@@ -333,6 +340,7 @@ after(async () => {
       await db.execute(sql`DELETE FROM dismissal_queue WHERE session_id IN (SELECT id FROM dismissal_sessions WHERE school_id IN (${schoolA.id}, ${schoolB.id}))`);
       await db.execute(sql`DELETE FROM dismissal_sessions WHERE school_id IN (${schoolA.id}, ${schoolB.id})`);
       await db.execute(sql`DELETE FROM student_attendance WHERE school_id IN (${schoolA.id}, ${schoolB.id})`);
+      await db.execute(sql`DELETE FROM custody_alerts WHERE student_id IN (SELECT id FROM students WHERE school_id IN (${schoolA.id}, ${schoolB.id}))`);
       await db.execute(sql`DELETE FROM family_group_students WHERE family_group_id IN (SELECT id FROM family_groups WHERE school_id IN (${schoolA.id}, ${schoolB.id}))`);
       await db.execute(sql`DELETE FROM family_groups WHERE school_id IN (${schoolA.id}, ${schoolB.id})`);
       await db.execute(sql`DELETE FROM parent_student WHERE school_id IN (${schoolA.id}, ${schoolB.id})`);
@@ -806,6 +814,9 @@ describe("multi-school readiness route hardening", () => {
     const teacherReview = await requestJson("PUT", `/gopilot/changes/${change.id}`, { status: "approved" }, teacherAuth);
     assert.equal(teacherReview.status, 403);
 
+    const resume = await requestJson("PUT", `/gopilot/dismissal/sessions/${sessionId}`, { status: "active" }, adminAuth);
+    assert.equal(resume.status, 200);
+
     const adminReview = await requestJson("PUT", `/gopilot/changes/${change.id}`, { status: "approved" }, adminAuth);
     assert.equal(adminReview.status, 200);
     assert.equal(adminReview.body.change.status, "approved");
@@ -924,6 +935,9 @@ describe("multi-school readiness route hardening", () => {
     );
     await inSchool(schoolA.id, () => addStudentToFamilyGroup(family.id, carStudent.id));
 
+    const initialStart = await requestJson("PUT", `/gopilot/dismissal/sessions/${sessionId}`, { status: "active" }, adminAuth);
+    assert.equal(initialStart.status, 200);
+
     const checkIn = await requestJson(
       "POST",
       `/gopilot/dismissal/sessions/${sessionId}/check-in-by-number`,
@@ -935,6 +949,7 @@ describe("multi-school readiness route hardening", () => {
     assert.equal(checkIn.body.groupLabel, "Lifecycle Family");
     assert.equal(checkIn.body.entries.length, 1);
     assert.equal(checkIn.body.entries[0].studentName, "Lifecycle Car");
+    assert.equal(checkIn.body.entries[0].pickupGroupId, `family:${family.id}`);
     const queueId = checkIn.body.entries[0].queueId;
 
     const duplicate = await requestJson(
@@ -945,6 +960,25 @@ describe("multi-school readiness route hardening", () => {
     );
     assert.equal(duplicate.status, 200);
     assert.equal(duplicate.body.outcome, "duplicate");
+
+    const busOverrideMissingRoute = await requestJson(
+      "POST",
+      `/gopilot/dismissal/sessions/${sessionId}/override`,
+      { studentId: carStudent.id, overrideType: "bus" },
+      teacherAuth
+    );
+    assert.equal(busOverrideMissingRoute.status, 400);
+    const busOverride = await requestJson(
+      "POST",
+      `/gopilot/dismissal/sessions/${sessionId}/override`,
+      { studentId: carStudent.id, overrideType: "bus", busRoute: `${TAG}-ROUTE-9` },
+      teacherAuth
+    );
+    assert.equal(busOverride.status, 201);
+    assert.equal(busOverride.body.override.busRoute, `${TAG}-ROUTE-9`);
+
+    const pauseBeforeActions = await requestJson("PUT", `/gopilot/dismissal/sessions/${sessionId}`, { status: "paused" }, adminAuth);
+    assert.equal(pauseBeforeActions.status, 200);
 
     const pendingCall = await requestJson(
       "POST",
@@ -977,22 +1011,6 @@ describe("multi-school readiness route hardening", () => {
     const start = await requestJson("PUT", `/gopilot/dismissal/sessions/${sessionId}`, { status: "active" }, adminAuth);
     assert.equal(start.status, 200);
     assert.equal(start.body.session.status, "active");
-
-    const busOverrideMissingRoute = await requestJson(
-      "POST",
-      `/gopilot/dismissal/sessions/${sessionId}/override`,
-      { studentId: carStudent.id, overrideType: "bus" },
-      teacherAuth
-    );
-    assert.equal(busOverrideMissingRoute.status, 400);
-    const busOverride = await requestJson(
-      "POST",
-      `/gopilot/dismissal/sessions/${sessionId}/override`,
-      { studentId: carStudent.id, overrideType: "bus", busRoute: `${TAG}-ROUTE-9` },
-      teacherAuth
-    );
-    assert.equal(busOverride.status, 201);
-    assert.equal(busOverride.body.override.busRoute, `${TAG}-ROUTE-9`);
 
     const call = await requestJson(
       "POST",
@@ -1050,6 +1068,170 @@ describe("multi-school readiness route hardening", () => {
     const pickup = await requestJson("POST", `/queue/${queueId}/dismiss`, undefined, adminAuth);
     assert.equal(pickup.status, 200);
     assert.equal(pickup.body.entry.status, "dismissed");
+  });
+
+  it("GoPilot getOrCreateSession does not reset completed sessions or delete queue history", async () => {
+    const date = `2099-02-${String(10 + Math.floor(Math.random() * 10)).padStart(2, "0")}`;
+    const session = await inSchool(schoolA.id, () => getOrCreateSession(schoolA.id, date));
+    const entry = await inSchool(schoolA.id, () =>
+      addToQueue({
+        sessionId: session.id,
+        studentId: teacherAStudent.id,
+        guardianName: "History Guardian",
+        pickupGroupId: "test-history-group",
+        pickupGroupLabel: "History Guardian",
+        checkInMethod: "car_number",
+        status: "dismissed",
+        dismissedAt: new Date(),
+        position: 1,
+      } as any)
+    );
+
+    await db.execute(sql`UPDATE dismissal_sessions SET status = 'completed', ended_at = NOW() WHERE id = ${session.id}`);
+    const again = await inSchool(schoolA.id, () => getOrCreateSession(schoolA.id, date));
+    const queue = await inSchool(schoolA.id, () => getQueueBySession(session.id));
+
+    assert.equal(again.id, session.id);
+    assert.equal(again.status, "completed");
+    assert.ok(queue.some((item: any) => item.id === entry.id));
+  });
+
+  it("GoPilot office pickup uses stable groups and custody acknowledgement", async () => {
+    const adminAuth = authFor(adminUser, schoolA.id);
+    const sessionRes = await requestJson("POST", "/gopilot/dismissal/sessions", undefined, adminAuth);
+    assert.equal(sessionRes.status, 200);
+    const sessionId = sessionRes.body.session.id;
+    const start = await requestJson("PUT", `/gopilot/dismissal/sessions/${sessionId}`, { status: "active" }, adminAuth);
+    assert.equal(start.status, 200);
+
+    const studentOne = await inSchool(schoolA.id, () =>
+      createStudent({
+        schoolId: schoolA.id,
+        firstName: "Shared",
+        lastName: "One",
+        email: `shared.one@${TAG}-a.example.edu`,
+        homeroomId: homeroomA.id,
+        dismissalType: "car",
+        status: "active",
+      } as any)
+    );
+    const studentTwo = await inSchool(schoolA.id, () =>
+      createStudent({
+        schoolId: schoolA.id,
+        firstName: "Shared",
+        lastName: "Two",
+        email: `shared.two@${TAG}-a.example.edu`,
+        homeroomId: homeroomA.id,
+        dismissalType: "car",
+        status: "active",
+      } as any)
+    );
+    const parentOne = await createUser({
+      email: `${TAG}-same-guardian-1@${TAG}-a.example.edu`,
+      firstName: "Same",
+      lastName: "Guardian",
+    } as any);
+    const parentTwo = await createUser({
+      email: `${TAG}-same-guardian-2@${TAG}-a.example.edu`,
+      firstName: "Same",
+      lastName: "Guardian",
+    } as any);
+    await inSchool(schoolA.id, () =>
+      createMembership({ userId: parentOne.id, schoolId: schoolA.id, role: "parent", status: "active" } as any)
+    );
+    await inSchool(schoolA.id, () =>
+      createMembership({ userId: parentTwo.id, schoolId: schoolA.id, role: "parent", status: "active" } as any)
+    );
+    await inSchool(schoolA.id, () =>
+      createParentStudentLink({
+        parentId: parentOne.id,
+        studentId: studentOne.id,
+        schoolId: schoolA.id,
+        relationship: "guardian",
+        isPrimary: true,
+        status: "approved",
+      } as any)
+    );
+    await inSchool(schoolA.id, () =>
+      createParentStudentLink({
+        parentId: parentTwo.id,
+        studentId: studentTwo.id,
+        schoolId: schoolA.id,
+        relationship: "guardian",
+        isPrimary: true,
+        status: "approved",
+      } as any)
+    );
+    await inSchool(schoolA.id, () =>
+      createCustodyAlert({
+        studentId: studentTwo.id,
+        personName: "Restricted Adult",
+        alertType: "custody_restriction",
+        notes: "Must confirm identity",
+        createdBy: adminUser.id,
+        active: true,
+      } as any)
+    );
+
+    const checkInOne = await requestJson(
+      "POST",
+      `/gopilot/dismissal/sessions/${sessionId}/check-in`,
+      undefined,
+      authFor(parentOne, schoolA.id)
+    );
+    const checkInTwo = await requestJson(
+      "POST",
+      `/gopilot/dismissal/sessions/${sessionId}/check-in`,
+      undefined,
+      authFor(parentTwo, schoolA.id)
+    );
+    assert.equal(checkInOne.status, 200);
+    assert.equal(checkInTwo.status, 200);
+    assert.equal(checkInOne.body.groupLabel, "Same Guardian");
+    assert.equal(checkInTwo.body.groupLabel, "Same Guardian");
+    assert.notEqual(checkInOne.body.entries[0].pickupGroupId, checkInTwo.body.entries[0].pickupGroupId);
+
+    const queueOne = checkInOne.body.entries[0].queueId;
+    const queueTwo = checkInTwo.body.entries[0].queueId;
+    for (const queueId of [queueOne, queueTwo]) {
+      const call = await requestJson("POST", `/gopilot/dismissal/sessions/${sessionId}/call`, { queueId, zone: "A" }, adminAuth);
+      assert.equal(call.status, 200);
+      const release = await requestJson("POST", `/queue/${queueId}/release`, undefined, adminAuth);
+      assert.equal(release.status, 200);
+    }
+
+    const mixedBatch = await requestJson(
+      "POST",
+      "/queue/dismiss-batch",
+      { queueIds: [queueOne, queueTwo], pickupGroupId: checkInOne.body.entries[0].pickupGroupId },
+      adminAuth
+    );
+    assert.equal(mixedBatch.status, 409);
+
+    await inSchool(schoolA.id, () => db.execute(sql`UPDATE dismissal_queue SET pickup_group_id = NULL WHERE id = ${queueOne}`));
+    const legacyBatch = await requestJson(
+      "POST",
+      "/queue/dismiss-batch",
+      { queueIds: [queueOne], pickupGroupId: checkInOne.body.entries[0].pickupGroupId },
+      adminAuth
+    );
+    assert.equal(legacyBatch.status, 409);
+
+    const pickupOne = await requestJson("POST", `/queue/${queueOne}/dismiss`, undefined, adminAuth);
+    assert.equal(pickupOne.status, 200);
+
+    const custodyBlocked = await requestJson("POST", `/queue/${queueTwo}/dismiss`, undefined, adminAuth);
+    assert.equal(custodyBlocked.status, 409);
+    assert.equal(custodyBlocked.body.custodyAlerts[0].studentName, "Shared Two");
+
+    const custodyAcknowledged = await requestJson(
+      "POST",
+      `/queue/${queueTwo}/dismiss`,
+      { custodyAcknowledged: true, pickupPersonName: "Verified Guardian", pickupNote: "ID checked" },
+      adminAuth
+    );
+    assert.equal(custodyAcknowledged.status, 200);
+    assert.equal(custodyAcknowledged.body.entry.status, "dismissed");
   });
 
   it("GoPilot bus check-in response reports partial absent skips", async () => {
@@ -1159,6 +1341,28 @@ describe("multi-school readiness route hardening", () => {
 
     const start = await requestJson("PUT", `/gopilot/dismissal/sessions/${sessionId}`, { status: "active" }, adminAuth);
     assert.equal(start.status, 200);
+
+    const queueRes = await requestJson("GET", `/gopilot/dismissal/sessions/${sessionId}/queue`, undefined, adminAuth);
+    assert.equal(queueRes.status, 200);
+    for (const entry of queueRes.body || []) {
+      if (entry.status === "dismissed") continue;
+      if (entry.status !== "released") {
+        if (entry.status !== "called") {
+          const call = await requestJson(
+            "POST",
+            `/gopilot/dismissal/sessions/${sessionId}/call`,
+            { queueId: entry.id, zone: "A" },
+            adminAuth
+          );
+          assert.equal(call.status, 200);
+        }
+        const release = await requestJson("POST", `/queue/${entry.id}/release`, undefined, adminAuth);
+        assert.equal(release.status, 200);
+      }
+      const pickup = await requestJson("POST", `/queue/${entry.id}/dismiss`, { custodyAcknowledged: true }, adminAuth);
+      assert.equal(pickup.status, 200);
+    }
+
     const complete = await requestJson("PUT", `/gopilot/dismissal/sessions/${sessionId}`, { status: "completed" }, adminAuth);
     assert.equal(complete.status, 200);
 
