@@ -22,6 +22,7 @@ import {
 import { sendSessionSummaryEmail } from "../../services/email.js";
 import db from "../../db.js";
 import { runWithTenantContext } from "../../middleware/tenantContext.js";
+import { broadcastFabStateToSessionRoster } from "../../services/classpilotFab.js";
 
 const router = Router();
 
@@ -41,12 +42,13 @@ router.post("/start", ...auth, async (req, res, next) => {
   try {
     const { groupId } = req.body;
     const teacherId = req.authUser!.id;
+    const schoolId = res.locals.schoolId!;
 
     if (!groupId) {
       return res.status(400).json({ error: "groupId is required" });
     }
 
-    const group = await getGroupByIdAndSchool(groupId, res.locals.schoolId!);
+    const group = await getGroupByIdAndSchool(groupId, schoolId);
     if (!group) {
       return res.status(404).json({ error: "Group not found" });
     }
@@ -76,14 +78,16 @@ router.post("/start", ...auth, async (req, res, next) => {
       }
     }
 
-    const existing = await getActiveTeachingSessionForSchool(teacherId, res.locals.schoolId!);
+    const existing = await getActiveTeachingSessionForSchool(teacherId, schoolId);
     if (existing) {
       await endTeachingSession(existing.id);
-      await clearClasspilotClassroomStates({ schoolId: res.locals.schoolId!, teachingSessionId: existing.id });
-      await clearClasspilotActiveHandsForSession(res.locals.schoolId!, existing.id);
+      await clearClasspilotClassroomStates({ schoolId, teachingSessionId: existing.id });
+      await clearClasspilotActiveHandsForSession(schoolId, existing.id);
+      await broadcastFabStateToSessionRoster({ schoolId, session: existing, reason: "session-replaced" });
     }
 
     const session = await createTeachingSession({ groupId, teacherId });
+    await broadcastFabStateToSessionRoster({ schoolId, session, reason: "session-started" });
     return res.status(201).json({ session });
   } catch (err) {
     next(err);
@@ -93,7 +97,8 @@ router.post("/start", ...auth, async (req, res, next) => {
 // POST /api/classpilot/teaching-sessions/end - End the active session
 router.post("/end", ...auth, async (req, res, next) => {
   try {
-    const existing = await getActiveTeachingSessionForSchool(req.authUser!.id, res.locals.schoolId!);
+    const schoolId = res.locals.schoolId!;
+    const existing = await getActiveTeachingSessionForSchool(req.authUser!.id, schoolId);
     if (!existing) {
       return res.status(404).json({ error: "No active session" });
     }
@@ -102,14 +107,15 @@ router.post("/end", ...auth, async (req, res, next) => {
     // teacher's stale active session could belong to a DIFFERENT school. Only
     // end / summarize (which emails the roster) a session whose group is in the
     // current school context — otherwise treat as no active session here.
-    const group = await getGroupByIdAndSchool(existing.groupId, res.locals.schoolId!);
+    const group = await getGroupByIdAndSchool(existing.groupId, schoolId);
     if (!group) {
       return res.status(404).json({ error: "No active session" });
     }
 
     const session = await endTeachingSession(existing.id);
-    await clearClasspilotClassroomStates({ schoolId: res.locals.schoolId!, teachingSessionId: existing.id });
-    await clearClasspilotActiveHandsForSession(res.locals.schoolId!, existing.id);
+    await clearClasspilotClassroomStates({ schoolId, teachingSessionId: existing.id });
+    await clearClasspilotActiveHandsForSession(schoolId, existing.id);
+    await broadcastFabStateToSessionRoster({ schoolId, session: existing, reason: "session-ended" });
     res.json({ session });
 
     // If this was a scheduled class and we're PAST the scheduled end time,
@@ -138,8 +144,7 @@ router.post("/end", ...auth, async (req, res, next) => {
     // re-establish the school's context for the students/heartbeats reads inside
     // the summary (otherwise RLS deny-by-default empties them).
     if (session?.startTime && session?.endTime) {
-      const summarySchoolId = res.locals.schoolId!;
-      void runWithTenantContext({ schoolId: summarySchoolId }, () =>
+      void runWithTenantContext({ schoolId }, () =>
         buildAndSendSessionSummary(session, req.authUser!)
       ).catch((err) => console.error("[SessionSummary] Failed to send:", err));
     }
@@ -153,25 +158,28 @@ router.post("/", ...auth, async (req, res, next) => {
   try {
     const { groupId } = req.body;
     const teacherId = req.authUser!.id;
+    const schoolId = res.locals.schoolId!;
 
     if (!groupId) {
       return res.status(400).json({ error: "groupId is required" });
     }
 
-    const group = await getGroupByIdAndSchool(groupId, res.locals.schoolId!);
+    const group = await getGroupByIdAndSchool(groupId, schoolId);
     if (!group) {
       return res.status(404).json({ error: "Group not found" });
     }
 
     // End any existing active session for this teacher
-    const existing = await getActiveTeachingSessionForSchool(teacherId, res.locals.schoolId!);
+    const existing = await getActiveTeachingSessionForSchool(teacherId, schoolId);
     if (existing) {
       await endTeachingSession(existing.id);
-      await clearClasspilotClassroomStates({ schoolId: res.locals.schoolId!, teachingSessionId: existing.id });
-      await clearClasspilotActiveHandsForSession(res.locals.schoolId!, existing.id);
+      await clearClasspilotClassroomStates({ schoolId, teachingSessionId: existing.id });
+      await clearClasspilotActiveHandsForSession(schoolId, existing.id);
+      await broadcastFabStateToSessionRoster({ schoolId, session: existing, reason: "session-replaced" });
     }
 
     const session = await createTeachingSession({ groupId, teacherId });
+    await broadcastFabStateToSessionRoster({ schoolId, session, reason: "session-started" });
     return res.status(201).json({ session });
   } catch (err) {
     next(err);
@@ -220,13 +228,15 @@ router.get("/:id", ...auth, async (req, res, next) => {
 router.post("/:id/end", ...auth, async (req, res, next) => {
   try {
     const sessionId = param(req, "id");
-    const owned = await getTeachingSessionByIdAndSchool(sessionId, res.locals.schoolId!);
+    const schoolId = res.locals.schoolId!;
+    const owned = await getTeachingSessionByIdAndSchool(sessionId, schoolId);
     if (!owned) {
       return res.status(404).json({ error: "Session not found" });
     }
     const session = await endTeachingSession(sessionId);
-    await clearClasspilotClassroomStates({ schoolId: res.locals.schoolId!, teachingSessionId: sessionId });
-    await clearClasspilotActiveHandsForSession(res.locals.schoolId!, sessionId);
+    await clearClasspilotClassroomStates({ schoolId, teachingSessionId: sessionId });
+    await clearClasspilotActiveHandsForSession(schoolId, sessionId);
+    await broadcastFabStateToSessionRoster({ schoolId, session: owned, reason: "session-ended" });
     return res.json({ session });
   } catch (err) {
     next(err);

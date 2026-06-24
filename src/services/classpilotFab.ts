@@ -1,7 +1,11 @@
+import { randomUUID } from "crypto";
 import type { TeachingSession } from "../schema/classpilot.js";
 import type { Student } from "../schema/students.js";
+import { sendToDeviceLocal } from "../realtime/ws-broadcast.js";
+import { publishWS } from "../realtime/ws-redis.js";
 import {
   getActiveHandsForStudent,
+  getActiveStudentSessionsForStudents,
   getActiveTeachingSessionsForStudent,
   getGroupStudents,
   getSessionSettings,
@@ -11,6 +15,7 @@ import {
 } from "./storage.js";
 
 export type FabFeature = "chat" | "hand";
+export type FabStateReason = "session-started" | "session-ended" | "session-replaced";
 
 export const FAB_HAND_TTL_MS = 12 * 60 * 60 * 1000;
 
@@ -138,4 +143,63 @@ export async function getSessionStudentDeviceIds(session: TeachingSession): Prom
     devices.forEach((device) => deviceIds.add(device.deviceId));
   }
   return [...deviceIds];
+}
+
+export async function broadcastFabStateToSessionRoster(options: {
+  schoolId: string;
+  session: Pick<TeachingSession, "id" | "groupId">;
+  reason: FabStateReason;
+}): Promise<{ studentCount: number; deviceCount: number }> {
+  try {
+    const roster = await getGroupStudents(options.session.groupId);
+    const studentIds = [...new Set(roster.map((row) => row.studentId).filter(Boolean))];
+    if (studentIds.length === 0) {
+      return { studentCount: 0, deviceCount: 0 };
+    }
+
+    const activeStudentSessions = await getActiveStudentSessionsForStudents(studentIds);
+    const activeDevicesByStudent = new Map<string, Set<string>>();
+    for (const studentSession of activeStudentSessions) {
+      const existing = activeDevicesByStudent.get(studentSession.studentId) ?? new Set<string>();
+      existing.add(studentSession.deviceId);
+      activeDevicesByStudent.set(studentSession.studentId, existing);
+    }
+
+    let deviceCount = 0;
+    for (const studentId of studentIds) {
+      const deviceIds = [...(activeDevicesByStudent.get(studentId) ?? [])];
+      if (deviceIds.length === 0) continue;
+
+      let fab;
+      try {
+        fab = await buildStudentFabState(options.schoolId, studentId);
+      } catch (error) {
+        console.warn(`[FAB] Failed to build lifecycle state for student ${studentId}:`, error);
+        continue;
+      }
+
+      for (const deviceId of deviceIds) {
+        const payload = {
+          type: "remote-control",
+          _msgId: randomUUID(),
+          command: {
+            type: "fab-state",
+            data: {
+              sessionId: options.session.id,
+              reason: options.reason,
+              ...fab,
+            },
+          },
+        };
+        sendToDeviceLocal(options.schoolId, deviceId, payload);
+        await publishWS({ kind: "device", schoolId: options.schoolId, deviceId }, payload);
+        deviceCount++;
+      }
+    }
+
+    return { studentCount: studentIds.length, deviceCount };
+  } catch (error) {
+    console.warn(`[FAB] Failed to broadcast ${options.reason} state for session ${options.session.id}:`, error);
+    return { studentCount: 0, deviceCount: 0 };
+  }
 }

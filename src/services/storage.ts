@@ -3074,6 +3074,22 @@ export async function getActiveSessionByDevice(
   return session;
 }
 
+export async function getActiveStudentSessionsForStudents(
+  studentIds: string[],
+  dbInstance: typeof db = db
+): Promise<StudentSession[]> {
+  if (studentIds.length === 0) return [];
+  return dbInstance
+    .select()
+    .from(studentSessions)
+    .where(
+      and(
+        inArray(studentSessions.studentId, studentIds),
+        eq(studentSessions.isActive, true)
+      )
+    );
+}
+
 export async function getActiveSessionById(
   sessionId: string
 ): Promise<StudentSession | undefined> {
