@@ -88,6 +88,9 @@ import {
   chatMessages,
   polls,
   pollResponses,
+  classpilotCommands,
+  classpilotCommandTargets,
+  classpilotClassroomStates,
   subgroups,
   subgroupMembers,
   flightPaths,
@@ -122,6 +125,12 @@ import {
   type InsertPoll,
   type PollResponse,
   type InsertPollResponse,
+  type ClasspilotCommand,
+  type InsertClasspilotCommand,
+  type ClasspilotCommandTarget,
+  type InsertClasspilotCommandTarget,
+  type ClasspilotClassroomState,
+  type InsertClasspilotClassroomState,
   type Subgroup,
   type InsertSubgroup,
   type SubgroupMember,
@@ -4311,6 +4320,289 @@ export async function createPollResponse(
 ): Promise<PollResponse> {
   const [resp] = await db.insert(pollResponses).values(data).returning();
   return resp!;
+}
+
+// ============================================================================
+// ClassPilot - Teacher command operations
+// ============================================================================
+
+export type ClasspilotCommandWithTargets = ClasspilotCommand & {
+  targets: ClasspilotCommandTarget[];
+};
+
+export async function createClasspilotCommandWithTargets(
+  commandData: InsertClasspilotCommand,
+  targetData: InsertClasspilotCommandTarget[]
+): Promise<ClasspilotCommandWithTargets> {
+  return await db.transaction(async (tx) => {
+    const [command] = await tx
+      .insert(classpilotCommands)
+      .values(commandData)
+      .returning();
+    if (!command) throw new Error("Failed to create ClassPilot command");
+
+    const targets = targetData.length > 0
+      ? await tx
+          .insert(classpilotCommandTargets)
+          .values(targetData.map((target) => ({ ...target, commandId: command.id })))
+          .returning()
+      : [];
+
+    return { ...command, targets };
+  });
+}
+
+export async function updateClasspilotCommandSummary(
+  commandId: string
+): Promise<ClasspilotCommand | undefined> {
+  const targets = await db
+    .select()
+    .from(classpilotCommandTargets)
+    .where(eq(classpilotCommandTargets.commandId, commandId));
+
+  const requestedCount = targets.length;
+  const sentCount = targets.filter((target) =>
+    ["sent", "received", "completed", "failed"].includes(target.status)
+  ).length;
+  const receivedCount = targets.filter((target) =>
+    ["received", "completed"].includes(target.status)
+  ).length;
+  const completedCount = targets.filter((target) => target.status === "completed").length;
+  const failedCount = targets.filter((target) => target.status === "failed").length;
+  const unavailableCount = targets.filter((target) => target.status === "unavailable").length;
+  const expiredCount = targets.filter((target) => target.status === "expired").length;
+
+  let status: ClasspilotCommand["status"] = "requested";
+  if (requestedCount === 0 || unavailableCount === requestedCount) status = "unavailable";
+  else if (completedCount === requestedCount) status = "completed";
+  else if (failedCount + unavailableCount + expiredCount === requestedCount) status = "failed";
+  else if (receivedCount > 0) status = "received";
+  else if (sentCount > 0) status = "sent";
+
+  const [command] = await db
+    .update(classpilotCommands)
+    .set({
+      status,
+      requestedCount,
+      sentCount,
+      receivedCount,
+      completedCount,
+      failedCount,
+      unavailableCount,
+      updatedAt: new Date(),
+    })
+    .where(eq(classpilotCommands.id, commandId))
+    .returning();
+
+  return command;
+}
+
+export async function markClasspilotCommandTargetsSent(
+  commandId: string,
+  deviceIds: string[]
+): Promise<ClasspilotCommandTarget[]> {
+  if (deviceIds.length === 0) return [];
+  const now = new Date();
+  const targets = await db
+    .update(classpilotCommandTargets)
+    .set({ status: "sent", sentAt: now, updatedAt: now })
+    .where(
+      and(
+        eq(classpilotCommandTargets.commandId, commandId),
+        inArray(classpilotCommandTargets.deviceId, deviceIds)
+      )
+    )
+    .returning();
+  await updateClasspilotCommandSummary(commandId);
+  return targets;
+}
+
+export async function updateClasspilotCommandTargetAck(options: {
+  commandId: string;
+  schoolId: string;
+  deviceId: string;
+  studentId?: string | null;
+  ackState: "received" | "completed" | "failed";
+  result?: unknown;
+  errorMessage?: string | null;
+}): Promise<ClasspilotCommandTarget | undefined> {
+  const now = new Date();
+  const status = options.ackState === "failed" ? "failed" : options.ackState;
+  const update: Partial<InsertClasspilotCommandTarget> & Record<string, unknown> = {
+    status,
+    ackState: options.ackState,
+    result: options.result ?? null,
+    errorMessage: options.errorMessage || null,
+    updatedAt: now,
+  };
+  if (options.ackState === "received") update.receivedAt = now;
+  if (options.ackState === "completed") update.completedAt = now;
+  if (options.ackState === "failed") update.failedAt = now;
+
+  const conditions = [
+    eq(classpilotCommandTargets.commandId, options.commandId),
+    eq(classpilotCommandTargets.schoolId, options.schoolId),
+    eq(classpilotCommandTargets.deviceId, options.deviceId),
+  ];
+  if (options.studentId) {
+    conditions.push(eq(classpilotCommandTargets.studentId, options.studentId));
+  }
+
+  const [target] = await db
+    .update(classpilotCommandTargets)
+    .set(update)
+    .where(and(...conditions))
+    .returning();
+
+  if (target) await updateClasspilotCommandSummary(options.commandId);
+  return target;
+}
+
+export async function getClasspilotCommandByIdAndSchool(
+  commandId: string,
+  schoolId: string
+): Promise<ClasspilotCommandWithTargets | undefined> {
+  const [command] = await db
+    .select()
+    .from(classpilotCommands)
+    .where(and(eq(classpilotCommands.id, commandId), eq(classpilotCommands.schoolId, schoolId)))
+    .limit(1);
+  if (!command) return undefined;
+  const targets = await db
+    .select()
+    .from(classpilotCommandTargets)
+    .where(eq(classpilotCommandTargets.commandId, command.id))
+    .orderBy(classpilotCommandTargets.createdAt);
+  return { ...command, targets };
+}
+
+export async function getRecentClasspilotCommands(
+  schoolId: string,
+  teacherId: string,
+  teachingSessionId?: string | null,
+  limit = 10
+): Promise<ClasspilotCommandWithTargets[]> {
+  const conditions = [
+    eq(classpilotCommands.schoolId, schoolId),
+    eq(classpilotCommands.teacherId, teacherId),
+  ];
+  if (teachingSessionId) {
+    conditions.push(eq(classpilotCommands.teachingSessionId, teachingSessionId));
+  }
+
+  const commands = await db
+    .select()
+    .from(classpilotCommands)
+    .where(and(...conditions))
+    .orderBy(desc(classpilotCommands.createdAt))
+    .limit(limit);
+
+  if (commands.length === 0) return [];
+  const targets = await db
+    .select()
+    .from(classpilotCommandTargets)
+    .where(inArray(classpilotCommandTargets.commandId, commands.map((command) => command.id)))
+    .orderBy(classpilotCommandTargets.createdAt);
+  const targetsByCommand = new Map<string, ClasspilotCommandTarget[]>();
+  for (const target of targets) {
+    const list = targetsByCommand.get(target.commandId) || [];
+    list.push(target);
+    targetsByCommand.set(target.commandId, list);
+  }
+  return commands.map((command) => ({
+    ...command,
+    targets: targetsByCommand.get(command.id) || [],
+  }));
+}
+
+export async function upsertClasspilotClassroomStates(
+  statesData: InsertClasspilotClassroomState[]
+): Promise<ClasspilotClassroomState[]> {
+  if (statesData.length === 0) return [];
+  const rows: ClasspilotClassroomState[] = [];
+  for (const state of statesData) {
+    const [existing] = await db
+      .select()
+      .from(classpilotClassroomStates)
+      .where(
+        and(
+          eq(classpilotClassroomStates.schoolId, state.schoolId),
+          eq(classpilotClassroomStates.teachingSessionId, state.teachingSessionId),
+          state.studentId === null || state.studentId === undefined
+            ? isNull(classpilotClassroomStates.studentId)
+            : eq(classpilotClassroomStates.studentId, state.studentId),
+          eq(classpilotClassroomStates.stateType, state.stateType),
+          eq(classpilotClassroomStates.stateKey, state.stateKey),
+          isNull(classpilotClassroomStates.clearedAt)
+        )
+      )
+      .limit(1);
+
+    if (existing) {
+      const [row] = await db
+        .update(classpilotClassroomStates)
+        .set({
+          payload: state.payload,
+          commandId: state.commandId,
+          appliedBy: state.appliedBy,
+          appliedAt: state.appliedAt || new Date(),
+          expiresAt: state.expiresAt || null,
+          updatedAt: new Date(),
+        })
+        .where(eq(classpilotClassroomStates.id, existing.id))
+        .returning();
+      if (row) rows.push(row);
+      continue;
+    }
+
+    const [row] = await db
+      .insert(classpilotClassroomStates)
+      .values(state)
+      .returning();
+    if (row) rows.push(row);
+  }
+  return rows;
+}
+
+export async function clearClasspilotClassroomStates(options: {
+  schoolId: string;
+  teachingSessionId: string;
+  studentIds?: string[];
+  stateTypes?: string[];
+  commandId?: string;
+}): Promise<void> {
+  const conditions: SQL[] = [
+    eq(classpilotClassroomStates.schoolId, options.schoolId),
+    eq(classpilotClassroomStates.teachingSessionId, options.teachingSessionId),
+    isNull(classpilotClassroomStates.clearedAt),
+  ];
+  if (options.studentIds?.length) {
+    conditions.push(inArray(classpilotClassroomStates.studentId, options.studentIds));
+  }
+  if (options.stateTypes?.length) {
+    conditions.push(inArray(classpilotClassroomStates.stateType, options.stateTypes));
+  }
+  await db
+    .update(classpilotClassroomStates)
+    .set({ clearedAt: new Date(), commandId: options.commandId || null, updatedAt: new Date() })
+    .where(and(...conditions));
+}
+
+export async function getActiveClasspilotClassroomStates(
+  schoolId: string,
+  teachingSessionId: string
+): Promise<ClasspilotClassroomState[]> {
+  return db
+    .select()
+    .from(classpilotClassroomStates)
+    .where(
+      and(
+        eq(classpilotClassroomStates.schoolId, schoolId),
+        eq(classpilotClassroomStates.teachingSessionId, teachingSessionId),
+        isNull(classpilotClassroomStates.clearedAt)
+      )
+    )
+    .orderBy(classpilotClassroomStates.appliedAt);
 }
 
 // ============================================================================

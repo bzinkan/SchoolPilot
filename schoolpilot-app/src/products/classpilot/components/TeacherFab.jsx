@@ -273,6 +273,19 @@ function TeacherFab({
               Messages ({unreadCount} new)
             </span>
             <div className="flex items-center gap-2">
+              {onSendMessage && (
+                <button
+                  onClick={() => {
+                    onSendMessage();
+                    setActivePanel(null);
+                    setExpanded(false);
+                  }}
+                  className="text-white/80 hover:text-white"
+                  title="Send message"
+                >
+                  <Send className="h-4 w-4" />
+                </button>
+              )}
               {onToggleStudentMessaging && (
                 <Switch
                   checked={studentMessagingEnabled}
@@ -394,19 +407,6 @@ function TeacherFab({
             )}
           </button>
 
-          {/* Send Message */}
-          <button
-            onClick={() => {
-              onSendMessage?.();
-              setExpanded(false);
-              setActivePanel(null);
-            }}
-            className="flex items-center gap-3 px-4 py-3 rounded-full shadow-lg transition-all duration-200 hover:scale-105 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-gray-700"
-          >
-            <Send className="h-5 w-5" />
-            <span className="font-medium">Send Message</span>
-          </button>
-
           {/* Raised Hands */}
           <button
             onClick={() => setActivePanel(activePanel === 'hands' ? null : 'hands')}
@@ -493,6 +493,8 @@ function TeacherFab({
         onClick={handleFabClick}
         onMouseDown={handleMouseDown}
         onTouchStart={handleTouchStart}
+        aria-label="Quick Classroom Tools"
+        title="Quick Classroom Tools"
         className={cn(
           "w-14 h-14 rounded-full shadow-xl flex items-center justify-center transition-all duration-300 relative select-none",
           expanded

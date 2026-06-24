@@ -20,6 +20,7 @@ import flightPathRoutes from "./classpilot/flightPaths.js";
 import chatRoutes from "./classpilot/chat.js";
 import dashboardRoutes from "./classpilot/dashboard.js";
 import competitiveRoutes from "./classpilot/competitive.js";
+import commandsRoutes from "./classpilot/commands.js";
 import superAdminRoutes from "./admin/superAdmin.js";
 import schoolInquiryRoutes from "./admin/schoolInquiries.js";
 import billingRoutes from "./admin/billing.js";
@@ -181,6 +182,7 @@ router.use((req: Request, _res: Response, next: NextFunction) => {
     return next();
   }
   if (p.startsWith("/chat/")) { req.url = "/classpilot" + req.url; return next(); }
+  if (p === "/commands" || p.startsWith("/commands/")) { req.url = "/classpilot" + req.url; return next(); }
   if (p.startsWith("/student/")) { req.url = "/classpilot" + req.url; return next(); }
   if (p.startsWith("/polls/")) { req.url = "/classpilot" + req.url; return next(); }
   if (p.startsWith("/checkin/")) { req.url = "/classpilot" + req.url; return next(); }
@@ -343,6 +345,7 @@ router.use("/classpilot/admin/classes", adminClassRoutes);
 router.use("/classpilot/groups", groupRoutes);
 router.use("/classpilot/flight-paths", flightPathRoutes);
 router.use("/classpilot", chatRoutes);
+router.use("/classpilot", commandsRoutes);
 router.use("/classpilot/teacher", dashboardRoutes);
 router.use("/classpilot", competitiveRoutes);
 

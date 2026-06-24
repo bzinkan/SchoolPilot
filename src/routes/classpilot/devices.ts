@@ -47,7 +47,6 @@ import { comparePassword } from "../../util/password.js";
 import { updateDeviceStatus, updateDeviceClassification, removeDeviceStatus } from "../../realtime/student-statuses.js";
 import {
   broadcastToTeachersLocal,
-  broadcastToStudentsLocal,
   sendToDeviceLocal,
 } from "../../realtime/ws-broadcast.js";
 import {
@@ -1708,6 +1707,11 @@ function remoteCommand(type: string) {
           ...new Set(tabsToClose.map((t: any) => t.deviceId).filter(Boolean)),
         ] as string[];
       }
+      if (!Array.isArray(resolvedDeviceIds) || resolvedDeviceIds.length === 0) {
+        return res.status(400).json({
+          error: "Explicit targetDeviceIds are required. Use /classpilot/commands for class-scoped teacher commands.",
+        });
+      }
 
       let rejectedDeviceCount = 0;
       // Reject device ids that don't belong to this school.
@@ -1761,12 +1765,8 @@ function remoteCommand(type: string) {
           metadata: commandData,
         });
         return res.json({ success: true, sent: resolvedDeviceIds.length, rejectedDeviceCount });
-      } else {
-        // Broadcast to all connected students
-        const sentCount = broadcastToStudentsLocal(schoolId, message);
-        await publishWS({ kind: "students", schoolId }, message);
-        return res.json({ success: true, sent: sentCount });
       }
+      return res.status(400).json({ error: "No target devices resolved" });
     } catch (err) {
       next(err);
     }
@@ -1788,6 +1788,11 @@ router.post("/remote/apply-flight-path", ...staffAuth, async (req, res, next) =>
     const schoolId = res.locals.schoolId!;
     const { deviceIds, targetDeviceIds, flightPathId, flightPathName, allowedDomains } = req.body;
     let resolvedDeviceIds: string[] | undefined = deviceIds || targetDeviceIds || undefined;
+    if (!Array.isArray(resolvedDeviceIds) || resolvedDeviceIds.length === 0) {
+      return res.status(400).json({
+        error: "Explicit targetDeviceIds are required. Use /classpilot/commands for class-scoped teacher commands.",
+      });
+    }
 
     let rejectedDeviceCount = 0;
     // Reject device ids that don't belong to this school.
@@ -1826,12 +1831,8 @@ router.post("/remote/apply-flight-path", ...staffAuth, async (req, res, next) =>
         metadata: { flightPathId, flightPathName },
       });
       return res.json({ success: true, sent: resolvedDeviceIds.length, rejectedDeviceCount });
-    } else {
-      // Broadcast to all connected students
-      const sentCount = broadcastToStudentsLocal(schoolId, message);
-      await publishWS({ kind: "students", schoolId }, message);
-      return res.json({ success: true, sent: sentCount, message: `Applied flight path to all connected devices` });
     }
+    return res.status(400).json({ error: "No target devices resolved" });
   } catch (err) {
     next(err);
   }
@@ -1843,6 +1844,11 @@ router.post("/remote/remove-flight-path", ...staffAuth, async (req, res, next) =
     const schoolId = res.locals.schoolId!;
     const { deviceIds, targetDeviceIds } = req.body;
     let resolvedDeviceIds: string[] | undefined = deviceIds || targetDeviceIds || undefined;
+    if (!Array.isArray(resolvedDeviceIds) || resolvedDeviceIds.length === 0) {
+      return res.status(400).json({
+        error: "Explicit targetDeviceIds are required. Use /classpilot/commands for class-scoped teacher commands.",
+      });
+    }
 
     let rejectedDeviceCount = 0;
     // Reject device ids that don't belong to this school.
@@ -1870,11 +1876,8 @@ router.post("/remote/remove-flight-path", ...staffAuth, async (req, res, next) =
         actorUserId: req.authUser!.id,
       });
       return res.json({ success: true, sent: resolvedDeviceIds.length, rejectedDeviceCount });
-    } else {
-      const sentCount = broadcastToStudentsLocal(schoolId, message);
-      await publishWS({ kind: "students", schoolId }, message);
-      return res.json({ success: true, sent: sentCount });
     }
+    return res.status(400).json({ error: "No target devices resolved" });
   } catch (err) {
     next(err);
   }

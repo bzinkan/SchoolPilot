@@ -18,9 +18,10 @@ import {
   type WsRedisTarget,
 } from "./ws-redis.js";
 import {
-  getSchoolByDomain,
   getSettingsForSchool,
   getMembershipByUserAndSchool,
+  getClasspilotCommandByIdAndSchool,
+  updateClasspilotCommandTargetAck,
 } from "../services/storage.js";
 import { runWithTenantContext } from "../middleware/tenantContext.js";
 import { verifyActiveStudentTokenSession } from "../services/classpilotStudentAuth.js";
@@ -265,6 +266,63 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
 
         // All remaining message types require authentication
         if (!client.authenticated) return;
+
+        // --- ClassPilot teacher command acknowledgements ---
+        if (
+          client.role === "student" &&
+          client.schoolId &&
+          client.deviceId &&
+          (message.type === "command-ack" ||
+            message.type === "command_ack" ||
+            message.type === "classpilot-command-ack" ||
+            message.type === "remote-control-result")
+        ) {
+          const commandId = String(
+            message.commandId ||
+              message.command?.commandId ||
+              message.data?.commandId ||
+              ""
+          ).trim();
+          const rawAckState = String(
+            message.ackState ||
+              message.status ||
+              message.resultStatus ||
+              ""
+          ).trim();
+          const ackState = rawAckState === "failed"
+            ? "failed"
+            : rawAckState === "completed" || rawAckState === "success"
+              ? "completed"
+              : rawAckState === "received"
+                ? "received"
+                : null;
+
+          if (!commandId || !ackState) return;
+
+          const command = await runWithTenantContext({ schoolId: client.schoolId }, async () => {
+            await updateClasspilotCommandTargetAck({
+              commandId,
+              schoolId: client.schoolId!,
+              deviceId: client.deviceId!,
+              studentId: message.studentId ? String(message.studentId) : undefined,
+              ackState,
+              result: message.result || message.state || message.data || null,
+              errorMessage: message.error || message.errorMessage || null,
+            });
+            return getClasspilotCommandByIdAndSchool(commandId, client.schoolId!);
+          });
+
+          if (command) {
+            const payload = {
+              type: "classpilot-command-update",
+              commandId,
+              command,
+            };
+            broadcastToTeachersLocal(client.schoolId, payload);
+            void publishWS({ kind: "staff", schoolId: client.schoolId }, payload);
+          }
+          return;
+        }
 
         // --- WebRTC signaling: offer, answer, ice ---
         if (message.type === "offer" || message.type === "answer" || message.type === "ice") {
