@@ -219,6 +219,9 @@ router.use((req: Request, _res: Response, next: NextFunction) => {
     };
     const mapped = googleMap[sub];
     if (mapped) {
+      if (sub === "import-staff") {
+        req.headers["x-gopilot-setup"] = "true";
+      }
       const qs = req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : "";
       req.url = mapped + qs;
       return next();

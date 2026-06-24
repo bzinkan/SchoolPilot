@@ -226,8 +226,10 @@ export const dismissalChanges = pgTable(
     note: text("note"),
     status: text("status").notNull().default("pending"),
     reviewedBy: text("reviewed_by"), // FK to users
+    acknowledgedBy: text("acknowledged_by"), // FK to users
     createdAt: timestamp("created_at").notNull().default(sql`now()`),
     reviewedAt: timestamp("reviewed_at"),
+    acknowledgedAt: timestamp("acknowledged_at"),
   },
   (table) => [
     index("dismissal_changes_session_id_idx").on(table.sessionId),

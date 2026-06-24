@@ -635,6 +635,9 @@ const importStaffHandler = async (req: any, res: any, next: any) => {
     const { users, role, orgUnitPath, userIds } = req.body;
     const schoolId = res.locals.schoolId!;
     const staffRole = role || "teacher";
+    const fromGoPilotSetup = req.headers["x-gopilot-setup"] === "true" || req.body?.source === "gopilot_setup";
+    const membershipRole = fromGoPilotSetup && staffRole === "office_staff" ? "teacher" : staffRole;
+    const gopilotRole = fromGoPilotSetup && staffRole === "office_staff" ? "office_staff" : null;
     const errors: string[] = [];
     if (!["admin", "school_admin", "teacher", "office_staff"].includes(staffRole)) {
       return res.status(400).json({ error: "Invalid staff role", code: "INVALID_STAFF_ROLE" });
@@ -683,7 +686,8 @@ const importStaffHandler = async (req: any, res: any, next: any) => {
             await createMembership({
               userId: user.id,
               schoolId,
-              role: staffRole,
+              role: membershipRole,
+              gopilotRole,
               status: "active",
             });
           } catch (err: any) {
@@ -757,7 +761,8 @@ const importStaffHandler = async (req: any, res: any, next: any) => {
           await createMembership({
             userId: user.id,
             schoolId,
-            role: staffRole,
+            role: membershipRole,
+            gopilotRole,
             status: "active",
           });
         } catch (err: any) {

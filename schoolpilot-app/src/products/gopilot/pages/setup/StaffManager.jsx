@@ -138,7 +138,7 @@ export default function StaffManager({ staff, schoolId, googleConnected, onAdd, 
       const usersToImport = wsUsers
         .filter(u => wsSelectedUsers.has(u.email))
         .map(u => ({ email: u.email, firstName: u.firstName, lastName: u.lastName }));
-      const res = await api.post(`/schools/${schoolId}/google/import-staff`, { users: usersToImport, role: wsRole });
+      const res = await api.post(`/schools/${schoolId}/google/import-staff`, { users: usersToImport, role: wsRole, source: 'gopilot_setup' });
       alert(`Imported ${res.data.imported} new, updated ${res.data.updated} existing.`);
       setShowWorkspaceModal(false);
       setWsUsers([]);

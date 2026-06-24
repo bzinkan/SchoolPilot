@@ -6,6 +6,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import {
   getAbsentStudentIds,
   getAttendanceBySchool,
+  getAttendanceRecordById,
   getStudentAttendance,
   markStudentsAbsentBulk,
   removeAbsence,
@@ -16,6 +17,12 @@ import {
   getSchoolById,
   createStudentTimelineEvent,
 } from "../../services/storage.js";
+import {
+  getRequestGoPilotRole,
+  getTeacherHomeroomIds,
+  hasActiveGoPilotLicense,
+  isGoPilotManager,
+} from "../../services/gopilotAccess.js";
 
 const router = Router();
 
@@ -55,12 +62,46 @@ async function todayForSchool(schoolId: string): Promise<string> {
   return todayInTz(school?.schoolTimezone || "America/New_York");
 }
 
+type AttendanceScope =
+  | { kind: "all" }
+  | { kind: "homerooms"; homeroomIds: Set<string> };
+
+async function getAttendanceScope(req: any, res: any): Promise<AttendanceScope | null> {
+  const schoolId = res.locals.schoolId!;
+  if (req.authUser?.isSuperAdmin || !(await hasActiveGoPilotLicense(schoolId))) {
+    return { kind: "all" };
+  }
+
+  const role = await getRequestGoPilotRole(req, res);
+  if (isGoPilotManager(role)) return { kind: "all" };
+  if (role === "teacher") {
+    return {
+      kind: "homerooms",
+      homeroomIds: await getTeacherHomeroomIds(req.authUser!.id, schoolId),
+    };
+  }
+
+  return null;
+}
+
+function studentInAttendanceScope(
+  student: { homeroomId?: string | null },
+  scope: AttendanceScope
+): boolean {
+  return scope.kind === "all" || (!!student.homeroomId && scope.homeroomIds.has(student.homeroomId));
+}
+
 // GET /api/admin/attendance?date=YYYY-MM-DD — list attendance for a date
 router.get("/", ...staffAuth, async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
     const date = (req.query.date as string) || await todayForSchool(schoolId);
-    const records = await getAttendanceBySchool(schoolId, date);
+    const scope = await getAttendanceScope(req, res);
+    if (!scope) {
+      return res.status(403).json({ error: "Insufficient permissions" });
+    }
+    const records = (await getAttendanceBySchool(schoolId, date))
+      .filter((r) => studentInAttendanceScope(r.student, scope));
 
     // Enrich with who marked it
     const markerIds = [
@@ -134,6 +175,10 @@ router.post("/", ...staffAuth, async (req, res, next) => {
 
     const schoolId = res.locals.schoolId!;
     const attendanceDate = date || await todayForSchool(schoolId);
+    const scope = await getAttendanceScope(req, res);
+    if (!scope) {
+      return res.status(403).json({ error: "Insufficient permissions" });
+    }
 
     // Verify all students belong to this school
     const schoolStudents = await getStudentsBySchool(schoolId);
@@ -143,6 +188,14 @@ router.post("/", ...staffAuth, async (req, res, next) => {
       return res.status(400).json({
         error: `Students not found in this school: ${invalid.join(", ")}`,
       });
+    }
+    const studentById = new Map(schoolStudents.map((student) => [student.id, student]));
+    const outOfScope = ids.filter((id) => {
+      const student = studentById.get(id);
+      return !student || !studentInAttendanceScope(student, scope);
+    });
+    if (outOfScope.length > 0) {
+      return res.status(403).json({ error: "Teachers can only mark attendance for assigned homerooms" });
     }
 
     const records = await markStudentsAbsentBulk(schoolId, ids, {
@@ -178,7 +231,20 @@ router.post("/", ...staffAuth, async (req, res, next) => {
 // DELETE /api/admin/attendance/:id — remove an absence record
 router.delete("/:id", ...staffAuth, async (req, res, next) => {
   try {
-    const removed = await removeAbsence(param(req, "id"), res.locals.schoolId!);
+    const schoolId = res.locals.schoolId!;
+    const scope = await getAttendanceScope(req, res);
+    if (!scope) {
+      return res.status(403).json({ error: "Insufficient permissions" });
+    }
+    const record = await getAttendanceRecordById(param(req, "id"), schoolId);
+    if (!record) {
+      return res.status(404).json({ error: "Attendance record not found" });
+    }
+    const student = await getStudentById(record.studentId);
+    if (!student || student.schoolId !== schoolId || !studentInAttendanceScope(student, scope)) {
+      return res.status(403).json({ error: "Insufficient permissions" });
+    }
+    const removed = await removeAbsence(param(req, "id"), schoolId);
     if (!removed) {
       return res.status(404).json({ error: "Attendance record not found" });
     }
@@ -200,6 +266,10 @@ router.get(
       const student = await getStudentById(studentId);
       if (!student || student.schoolId !== schoolId) {
         return res.status(404).json({ error: "Student not found" });
+      }
+      const scope = await getAttendanceScope(req, res);
+      if (!scope || !studentInAttendanceScope(student, scope)) {
+        return res.status(403).json({ error: "Insufficient permissions" });
       }
       const start = (req.query.start as string) || "2020-01-01";
       const end = (req.query.end as string) || await todayForSchool(schoolId);
