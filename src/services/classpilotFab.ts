@@ -18,6 +18,7 @@ export type FabFeature = "chat" | "hand";
 export type FabStateReason = "session-started" | "session-ended" | "session-replaced";
 
 export const FAB_HAND_TTL_MS = 12 * 60 * 60 * 1000;
+const FAB_STATE_BUILD_CONCURRENCY = 8;
 
 export class FabContractError extends Error {
   status: number;
@@ -165,19 +166,42 @@ export async function broadcastFabStateToSessionRoster(options: {
       activeDevicesByStudent.set(studentSession.studentId, existing);
     }
 
-    let deviceCount = 0;
-    for (const studentId of studentIds) {
-      const deviceIds = [...(activeDevicesByStudent.get(studentId) ?? [])];
-      if (deviceIds.length === 0) continue;
+    const studentsWithDevices = studentIds
+      .map((studentId) => ({
+        studentId,
+        deviceIds: [...(activeDevicesByStudent.get(studentId) ?? [])],
+      }))
+      .filter(({ deviceIds }) => deviceIds.length > 0);
 
-      let fab;
-      try {
-        fab = await buildStudentFabState(options.schoolId, studentId);
-      } catch (error) {
-        console.warn(`[FAB] Failed to build lifecycle state for student ${studentId}:`, error);
-        continue;
+    const studentFabStates: Array<{
+      studentId: string;
+      deviceIds: string[];
+      fab: Awaited<ReturnType<typeof buildStudentFabState>>;
+    }> = [];
+
+    for (let i = 0; i < studentsWithDevices.length; i += FAB_STATE_BUILD_CONCURRENCY) {
+      const batch = studentsWithDevices.slice(i, i + FAB_STATE_BUILD_CONCURRENCY);
+      const batchStates = await Promise.all(
+        batch.map(async ({ studentId, deviceIds }) => {
+          try {
+            const fab = await buildStudentFabState(options.schoolId, studentId);
+            return { studentId, deviceIds, fab };
+          } catch (error) {
+            console.warn(`[FAB] Failed to build lifecycle state for student ${studentId}:`, error);
+            return null;
+          }
+        })
+      );
+      for (const state of batchStates) {
+        if (state) {
+          studentFabStates.push(state);
+        }
       }
+    }
 
+    let deviceCount = 0;
+    const publishPromises: Promise<void>[] = [];
+    for (const { deviceIds, fab } of studentFabStates) {
       for (const deviceId of deviceIds) {
         const payload = {
           type: "remote-control",
@@ -192,10 +216,11 @@ export async function broadcastFabStateToSessionRoster(options: {
           },
         };
         sendToDeviceLocal(options.schoolId, deviceId, payload);
-        await publishWS({ kind: "device", schoolId: options.schoolId, deviceId }, payload);
+        publishPromises.push(publishWS({ kind: "device", schoolId: options.schoolId, deviceId }, payload));
         deviceCount++;
       }
     }
+    await Promise.all(publishPromises);
 
     return { studentCount: studentIds.length, deviceCount };
   } catch (error) {
