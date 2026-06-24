@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useNavigate } from 'react-router-dom';
-import { Monitor, Users, Activity, Settings as SettingsIcon, LogOut, Download, Calendar, Shield, AlertTriangle, UserCog, Plus, X, GraduationCap, WifiOff, Video, MonitorPlay, TabletSmartphone, Lock, Unlock, Layers, Route, CheckSquare, XSquare, User, List, ShieldBan, Eye, EyeOff, Timer, Clock, BarChart3, Trash2, UsersRound, Filter, Hand, MessageSquareOff, MessageSquare, Send, ClipboardCheck, ChevronDown, History, RotateCcw } from "lucide-react";
+import { Monitor, Users, Activity, Settings as SettingsIcon, LogOut, Download, Calendar, Shield, AlertTriangle, UserCog, Plus, X, GraduationCap, WifiOff, Video, MonitorPlay, TabletSmartphone, Lock, Unlock, Layers, Route, CheckSquare, XSquare, User, List, ShieldBan, Eye, EyeOff, Timer, Clock, BarChart3, Trash2, UsersRound, Filter, Hand, MessageSquareOff, MessageSquare, Send, ClipboardCheck, History, RotateCcw } from "lucide-react";
 import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
 import { Badge } from '../../../components/ui/badge';
@@ -17,15 +17,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '../../../components/ui/dialog';
-import {
-  DropdownMenu,
-  DropdownMenuCheckboxItem,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '../../../components/ui/dropdown-menu';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../components/ui/tabs';
 import { Label } from '../../../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
@@ -124,6 +115,7 @@ export default function Dashboard() {
   const [studentMessages, setStudentMessages] = useState([]);
   const [chatReplies, setChatReplies] = useState({});
   const [startGroupId, setStartGroupId] = useState("");
+  const [adminStartGroupId, setAdminStartGroupId] = useState("");
   const dismissedMessageIds = useRef(new Set());
   const dismissedMessagesInitialized = useRef(false);
   // eslint-disable-next-line react-hooks/refs
@@ -219,6 +211,16 @@ export default function Dashboard() {
     select: (data) => Array.isArray(data) ? data : data?.groups ?? [],
     enabled: isAdmin,
   });
+
+  useEffect(() => {
+    if (!isAdmin || adminTeachingGroups.length === 0) {
+      setAdminStartGroupId("");
+      return;
+    }
+    if (!adminTeachingGroups.some((group) => group.id === adminStartGroupId)) {
+      setAdminStartGroupId(adminTeachingGroups[0].id);
+    }
+  }, [adminTeachingGroups, adminStartGroupId, isAdmin]);
 
   const { data: allActiveSessions = [] } = useQuery({
     queryKey: ['/api/sessions/all'],
@@ -1534,78 +1536,63 @@ export default function Dashboard() {
                     </>
                   )}
                   {!activeSession && (
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <button
-                          type="button"
-                          disabled={adminTeachingGroupsLoading || adminTeachingGroups.length === 0 || startSessionMutation.isPending}
-                          title={adminTeachingGroupsLoading ? "Loading your classes" : adminTeachingGroups.length === 0 ? "No classes assigned to you" : "Choose a class to teach"}
-                          data-testid="button-admin-start-session"
-                          className="inline-flex h-8 items-center justify-center gap-2 whitespace-nowrap rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground shadow transition-colors hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0"
-                        >
-                          <Plus className="h-4 w-4 mr-2" />
-                          Teach Class
-                        </button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="w-64">
-                        <DropdownMenuLabel>Your Classes</DropdownMenuLabel>
-                        <DropdownMenuSeparator />
-                        {adminTeachingGroups.map((group) => (
-                          <DropdownMenuItem
-                            key={group.id}
-                            onSelect={() => startSessionMutation.mutate(group.id)}
-                            data-testid={`menu-item-admin-teach-${group.id}`}
-                          >
-                            <div className="flex flex-col">
-                              <span className="font-medium">{group.name}</span>
-                              {(group.gradeLevel || group.periodLabel) && (
-                                <span className="text-xs text-muted-foreground">
-                                  {[group.periodLabel, group.gradeLevel ? `Grade ${group.gradeLevel}` : null].filter(Boolean).join(" · ")}
-                                </span>
-                              )}
-                            </div>
-                          </DropdownMenuItem>
-                        ))}
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  )}
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <button className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${observedSession ? 'bg-slate-700 border-slate-600 text-slate-200' : 'bg-transparent border-slate-600 text-slate-400 hover:bg-slate-800'}`} data-testid="button-admin-observe">
-                        <Eye className="h-4 w-4" />
-                        {observedSession ? `Observing: ${groups.find(g => g.id === observedSession.groupId)?.name || 'Class'}` : 'Observe Class'}
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={adminStartGroupId}
+                        onChange={(event) => setAdminStartGroupId(event.target.value)}
+                        disabled={adminTeachingGroupsLoading || adminTeachingGroups.length === 0 || startSessionMutation.isPending}
+                        title={adminTeachingGroupsLoading ? "Loading your classes" : adminTeachingGroups.length === 0 ? "No classes assigned to you" : "Choose a class to teach"}
+                        aria-label="Select ClassPilot class to teach"
+                        data-testid="select-admin-start-session-group"
+                        className="h-8 max-w-[180px] rounded-md border border-slate-600 bg-slate-900 px-2 text-xs font-medium text-slate-100 shadow-sm focus:outline-none focus:ring-1 focus:ring-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {adminTeachingGroupsLoading ? (
+                          <option value="">Loading classes...</option>
+                        ) : adminTeachingGroups.length === 0 ? (
+                          <option value="">No classes assigned</option>
+                        ) : (
+                          adminTeachingGroups.map((group) => (
+                            <option key={group.id} value={group.id}>
+                              {[group.name, group.periodLabel, group.gradeLevel ? `Grade ${group.gradeLevel}` : null].filter(Boolean).join(" - ")}
+                            </option>
+                          ))
+                        )}
+                      </select>
+                      <button
+                        type="button"
+                        disabled={!adminStartGroupId || adminTeachingGroupsLoading || adminTeachingGroups.length === 0 || startSessionMutation.isPending}
+                        onClick={() => startSessionMutation.mutate(adminStartGroupId)}
+                        title={adminTeachingGroupsLoading ? "Loading your classes" : adminTeachingGroups.length === 0 ? "No classes assigned to you" : "Teach selected class"}
+                        data-testid="button-admin-start-session"
+                        className="inline-flex h-8 items-center justify-center gap-2 whitespace-nowrap rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground shadow transition-colors hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0"
+                      >
+                        <Plus className="h-4 w-4 mr-2" />
+                        Teach Class
                       </button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="w-72">
-                      <DropdownMenuLabel>Active Classes</DropdownMenuLabel>
-                      <DropdownMenuSeparator />
-                      {allActiveSessions.length === 0 ? (
-                        <div className="px-2 py-6 text-center text-sm text-muted-foreground">No active classes right now</div>
-                      ) : (
-                        <>
-                          {adminObservedSessionId && (
-                            <>
-                              <DropdownMenuCheckboxItem onSelect={() => setAdminObservedSessionId(null)} data-testid="menu-item-stop-observing">
-                                <X className="h-4 w-4 mr-2 text-muted-foreground" /> Stop Observing
-                              </DropdownMenuCheckboxItem>
-                              <DropdownMenuSeparator />
-                            </>
-                          )}
-                          {allActiveSessions.map((session) => {
-                            const sessionGroup = groups.find(g => g.id === session.groupId);
-                            const isOwnSession = session.teacherId === currentUser?.id;
-                            return (
-                              <DropdownMenuCheckboxItem key={session.id} checked={adminObservedSessionId === session.id} onSelect={() => setAdminObservedSessionId(session.id)} data-testid={`menu-item-observe-${session.id}`}>
-                                <div className="flex flex-col">
-                                  <span className="font-medium">{sessionGroup?.name || 'Unknown Class'}{isOwnSession && <span className="ml-1 text-xs text-primary">(yours)</span>}</span>
-                                </div>
-                              </DropdownMenuCheckboxItem>
-                            );
-                          })}
-                        </>
-                      )}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+                    </div>
+                  )}
+                  <div className={`flex items-center gap-1.5 rounded-lg border px-2 py-1 transition-colors ${observedSession ? 'bg-slate-700 border-slate-600 text-slate-200' : 'bg-transparent border-slate-600 text-slate-400'}`}>
+                    <Eye className="h-4 w-4" />
+                    <select
+                      value={adminObservedSessionId || ""}
+                      onChange={(event) => setAdminObservedSessionId(event.target.value || null)}
+                      disabled={allActiveSessions.length === 0}
+                      aria-label="Observe active ClassPilot class"
+                      data-testid="select-admin-observe"
+                      className="h-7 max-w-[220px] bg-transparent text-xs font-medium outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <option value="">{allActiveSessions.length === 0 ? "No active classes" : observedSession ? "Stop observing" : "Observe Class"}</option>
+                      {allActiveSessions.map((session) => {
+                        const sessionGroup = groups.find(g => g.id === session.groupId);
+                        const isOwnSession = session.teacherId === currentUser?.id;
+                        return (
+                          <option key={session.id} value={session.id}>
+                            {sessionGroup?.name || 'Unknown Class'}{isOwnSession ? " (yours)" : ""}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
                 </>
               )}
               {currentUser?.impersonating && (
@@ -1712,34 +1699,14 @@ export default function Dashboard() {
                 <div className="text-[13px] font-semibold">Target: {activeClassName} - {targetBannerLabel}</div>
                 <div className="text-[11px] font-medium opacity-80">{targetConnectionLabel}</div>
               </div>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-medium bg-transparent border border-border text-muted-foreground hover:bg-card transition-colors" data-testid="button-select-students">
-                    <Users className="h-4 w-4" /> Select
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" className="w-64 max-h-96 overflow-y-auto">
-                  <DropdownMenuLabel>Select Students</DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-                  {filteredStudents.length > 0 && (
-                    <>
-                      <DropdownMenuCheckboxItem checked={selectedStudentIds.size === filteredStudents.length && filteredStudents.length > 0} onCheckedChange={(checked) => { if (checked) selectAll(); else clearSelection(); }} onSelect={(e) => e.preventDefault()} data-testid="dropdown-item-select-all" className="font-medium">
-                        Select All ({filteredStudents.length})
-                      </DropdownMenuCheckboxItem>
-                      <DropdownMenuSeparator />
-                    </>
-                  )}
-                  {filteredStudents.length === 0 ? (
-                    <div className="px-2 py-6 text-center text-sm text-muted-foreground">No students available</div>
-                  ) : (
-                    filteredStudents.slice().sort((a, b) => (a.studentName || '').localeCompare(b.studentName || '')).map((student) => (
-                      <DropdownMenuCheckboxItem key={student.studentId} checked={selectedStudentIds.has(student.studentId)} onCheckedChange={() => toggleStudentSelection(student.studentId)} onSelect={(e) => e.preventDefault()} data-testid={`dropdown-item-student-${student.studentId}`}>
-                        {student.studentName || 'Unnamed Student'}
-                      </DropdownMenuCheckboxItem>
-                    ))
-                  )}
-                </DropdownMenuContent>
-              </DropdownMenu>
+              <button
+                onClick={selectAll}
+                disabled={filteredStudents.length === 0 || selectedStudentIds.size === filteredStudents.length}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-medium bg-transparent border border-border text-muted-foreground hover:bg-card transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                data-testid="button-select-all-students"
+              >
+                <Users className="h-4 w-4" /> Select All ({filteredStudents.length})
+              </button>
               <button onClick={clearSelection} disabled={selectedStudentIds.size === 0} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-medium bg-transparent border border-border text-muted-foreground hover:bg-card transition-colors disabled:opacity-50 disabled:cursor-not-allowed" data-testid="button-clear-selection">
                 Clear Selection
               </button>
@@ -1755,72 +1722,31 @@ export default function Dashboard() {
             </Button>
             <Button size="sm" variant="outline" onClick={() => setShowOpenTabDialog(true)} data-testid="button-open-tab" className="text-blue-600 dark:text-blue-400"><MonitorPlay className="h-4 w-4 mr-2" />Open URL</Button>
             <Button size="sm" variant="outline" onClick={() => openManageTabs(null)} data-testid="button-tabs" className="text-blue-600 dark:text-blue-400"><List className="h-4 w-4 mr-2" />Manage Tabs</Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button size="sm" variant="outline" data-testid="button-screen-control" className="text-amber-600 dark:text-amber-400">
-                  <Lock className="h-4 w-4 mr-2" />Screen Control<ChevronDown className="h-3 w-3 ml-2" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="w-56">
-                <DropdownMenuLabel>Screen Control</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={handleLockScreen} disabled={lockScreenMutation.isPending}>
-                  <Lock className="h-4 w-4 mr-2" />Lock current site
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setShowLockUrlDialog(true)}>
-                  <MonitorPlay className="h-4 w-4 mr-2" />Lock to URL
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={handleUnlockScreen} disabled={unlockScreenMutation.isPending}>
-                  <Unlock className="h-4 w-4 mr-2" />Unlock
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setShowFlightPathViewerDialog(true)}>
-                  <Eye className="h-4 w-4 mr-2" />View locked students
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button size="sm" variant="outline" data-testid="button-web-access" className="text-purple-600 dark:text-purple-400">
-                  <Shield className="h-4 w-4 mr-2" />Web Access<ChevronDown className="h-3 w-3 ml-2" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="w-56">
-                <DropdownMenuLabel>Web Access</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => setShowApplyFlightPathDialog(true)}>
-                  <Route className="h-4 w-4 mr-2" />Flight Paths
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setShowApplyBlockListDialog(true)}>
-                  <ShieldBan className="h-4 w-4 mr-2" />Block Lists
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setShowFlightPathViewerDialog(true)}>
-                  <History className="h-4 w-4 mr-2" />Active Restrictions
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={handleClearRestrictions} disabled={removeFlightPathMutation.isPending || removeBlockListMutation.isPending}>
-                  <RotateCcw className="h-4 w-4 mr-2" />Clear Restrictions
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <Button size="sm" variant="outline" onClick={handleLockScreen} disabled={lockScreenMutation.isPending} data-testid="button-lock-screen" className="text-amber-600 dark:text-amber-400"><Lock className="h-4 w-4 mr-2" />Lock current site</Button>
+            <Button size="sm" variant="outline" onClick={() => setShowLockUrlDialog(true)} data-testid="button-lock-url" className="text-amber-600 dark:text-amber-400"><MonitorPlay className="h-4 w-4 mr-2" />Lock to URL</Button>
+            <Button size="sm" variant="outline" onClick={handleUnlockScreen} disabled={unlockScreenMutation.isPending} data-testid="button-unlock-screen" className="text-amber-600 dark:text-amber-400"><Unlock className="h-4 w-4 mr-2" />Unlock</Button>
+            <Button size="sm" variant="outline" onClick={() => setShowFlightPathViewerDialog(true)} data-testid="button-view-lock-status" className="text-amber-600 dark:text-amber-400"><Eye className="h-4 w-4 mr-2" />Status</Button>
+            <Button size="sm" variant="outline" onClick={() => setShowApplyFlightPathDialog(true)} data-testid="button-apply-flight-path" className="text-purple-600 dark:text-purple-400"><Route className="h-4 w-4 mr-2" />Flight Paths</Button>
+            <Button size="sm" variant="outline" onClick={() => setShowApplyBlockListDialog(true)} data-testid="button-apply-block-list" className="text-purple-600 dark:text-purple-400"><ShieldBan className="h-4 w-4 mr-2" />Block Lists</Button>
+            <Button size="sm" variant="outline" onClick={() => setShowFlightPathViewerDialog(true)} data-testid="button-active-restrictions" className="text-purple-600 dark:text-purple-400"><History className="h-4 w-4 mr-2" />Active Restrictions</Button>
+            <Button size="sm" variant="outline" onClick={handleClearRestrictions} disabled={removeFlightPathMutation.isPending || removeBlockListMutation.isPending} data-testid="button-clear-restrictions" className="text-purple-600 dark:text-purple-400"><RotateCcw className="h-4 w-4 mr-2" />Clear Restrictions</Button>
             {subgroups.length > 0 && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button size="sm" variant="outline" data-testid="button-subgroup-filter" className={selectedSubgroupId ? "text-pink-600 dark:text-pink-400 border-pink-300" : "text-pink-600 dark:text-pink-400"}>
-                    <UsersRound className="h-4 w-4 mr-2" />
-                    {selectedSubgroupId ? subgroups.find(s => s.id === selectedSubgroupId)?.name || "Subgroup" : "Subgroups"}
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuLabel>Filter by Subgroup</DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuCheckboxItem checked={!selectedSubgroupId} onCheckedChange={() => setSelectedSubgroupId("")}>All Students</DropdownMenuCheckboxItem>
+              <label className={`inline-flex h-8 items-center gap-2 rounded-md border bg-background px-3 text-xs font-medium shadow-sm ${selectedSubgroupId ? "border-pink-300 text-pink-600 dark:text-pink-400" : "border-input text-pink-600 dark:text-pink-400"}`}>
+                <UsersRound className="h-4 w-4" />
+                <span className="sr-only">Filter by subgroup</span>
+                <select
+                  value={selectedSubgroupId}
+                  onChange={(event) => setSelectedSubgroupId(event.target.value)}
+                  data-testid="select-subgroup-filter"
+                  aria-label="Filter by subgroup"
+                  className="max-w-[170px] bg-transparent outline-none"
+                >
+                  <option value="">All Students</option>
                   {subgroups.map((subgroup) => (
-                    <DropdownMenuCheckboxItem key={subgroup.id} checked={selectedSubgroupId === subgroup.id} onCheckedChange={() => setSelectedSubgroupId(subgroup.id)}>
-                      <span className="w-3 h-3 rounded-full mr-2" style={{ backgroundColor: subgroup.color || '#9333ea' }} />
-                      {subgroup.name}
-                    </DropdownMenuCheckboxItem>
+                    <option key={subgroup.id} value={subgroup.id}>{subgroup.name}</option>
                   ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
+                </select>
+              </label>
             )}
           </div>
         )}
