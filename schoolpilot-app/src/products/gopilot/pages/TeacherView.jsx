@@ -214,7 +214,7 @@ export default function TeacherView() {
         const myHomeroom = homerooms[0];
 
         if (!myHomeroom) {
-          if (!cancelled) setError('No homeroom found for your account.');
+          if (!cancelled) setError('No GoPilot homeroom found for your account.');
           if (!cancelled) setLoading(false);
           return;
         }
@@ -616,17 +616,32 @@ export default function TeacherView() {
 
   // Error state
   if (error && students.length === 0) {
+    const isNoGoPilotHomeroom = error === 'No GoPilot homeroom found for your account.';
     return (
       <div className="min-h-screen bg-gray-100 flex items-center justify-center">
         <Card className="max-w-md mx-auto">
           <div className="p-6 text-center">
-            <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
-            <h2 className="text-lg font-semibold text-gray-900 mb-2">Unable to Load</h2>
-            <p className="text-gray-600 mb-4">{error}</p>
-            <Button onClick={() => { setError(null); setLoading(true); setRetryCount(c => c + 1); }}>
-              <RefreshCw className="w-4 h-4 mr-2" />
-              Retry
-            </Button>
+            <AlertCircle className={`w-12 h-12 mx-auto mb-4 ${isNoGoPilotHomeroom ? 'text-amber-500' : 'text-red-500'}`} />
+            <h2 className="text-lg font-semibold text-gray-900 mb-2">
+              {isNoGoPilotHomeroom ? 'No GoPilot Homeroom Assigned' : 'Unable to Load'}
+            </h2>
+            <p className="text-gray-600 mb-4">
+              {isNoGoPilotHomeroom
+                ? 'GoPilot dismissal teacher view needs an assigned homeroom. You can still open ClassPilot if your school has ClassPilot enabled.'
+                : error}
+            </p>
+            <div className="flex flex-col sm:flex-row justify-center gap-2">
+              <Button onClick={() => { setError(null); setLoading(true); setRetryCount(c => c + 1); }}>
+                <RefreshCw className="w-4 h-4 mr-2" />
+                Retry
+              </Button>
+              {isNoGoPilotHomeroom && hasClassPilot && !isNative && (
+                <Button onClick={() => navigate('/classpilot')}>
+                  Open ClassPilot
+                  <ArrowRight className="w-4 h-4 ml-2" />
+                </Button>
+              )}
+            </div>
           </div>
         </Card>
       </div>
