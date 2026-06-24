@@ -44,8 +44,42 @@ const createStaffSchema = z.object({
 
 export default function Admin() {
   const navigate = useNavigate();
+  const { currentUser, isLoading } = useClassPilotAuth();
+  const isAdmin = currentUser?.isSuperAdmin || currentUser?.role === "admin" || currentUser?.role === "school_admin";
+
+  if (isLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <Loader2 className="h-6 w-6 animate-spin" />
+      </div>
+    );
+  }
+
+  if (!isAdmin) {
+    return (
+      <div className="container mx-auto max-w-3xl p-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>Access denied</CardTitle>
+            <CardDescription>ClassPilot admin tools are available to school admins only.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button variant="outline" onClick={() => navigate("/classpilot")}>
+              <ArrowLeft className="h-4 w-4 mr-2" />
+              Dashboard
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  return <AdminPanel currentUser={currentUser} />;
+}
+
+function AdminPanel({ currentUser }) {
+  const navigate = useNavigate();
   const { toast } = useToast();
-  const { currentUser } = useClassPilotAuth();
 
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [staffToDelete, setStaffToDelete] = useState(null);

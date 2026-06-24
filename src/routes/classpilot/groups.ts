@@ -39,6 +39,16 @@ function param(req: any, key: string): string {
   return String(req.params[key] ?? "");
 }
 
+function rejectOfficialClassMutation(_req: any, res: any, groupType?: string | null): boolean {
+  if (groupType === "admin_class") {
+    res.status(403).json({
+      error: "Official classes must be managed through the admin class management API.",
+    });
+    return true;
+  }
+  return false;
+}
+
 // Filter a list of student ids down to those that actually belong to the
 // caller's school — prevents pulling another school's students into a group.
 async function studentsInSchool(studentIds: unknown, schoolId: string): Promise<string[]> {
@@ -118,6 +128,7 @@ router.post("/", ...auth, async (req, res, next) => {
     if (!name) {
       return res.status(400).json({ error: "name is required" });
     }
+    if (rejectOfficialClassMutation(req, res, groupType)) return;
 
     // Validate schedule times if scheduling is enabled
     if (scheduleEnabled) {
@@ -164,6 +175,7 @@ router.patch("/:id", ...auth, async (req, res, next) => {
     if (!existing) {
       return res.status(404).json({ error: "Group not found" });
     }
+    if (rejectOfficialClassMutation(req, res, existing.groupType)) return;
     const { name, description, periodLabel, gradeLevel, studentIds,
             scheduleEnabled, blockStartTime, blockEndTime } = req.body;
 
@@ -218,6 +230,7 @@ router.delete("/:id", ...auth, async (req, res, next) => {
     if (!existing) {
       return res.status(404).json({ error: "Group not found" });
     }
+    if (rejectOfficialClassMutation(req, res, existing.groupType)) return;
     await deleteGroup(param(req, "id"));
     return res.json({ ok: true });
   } catch (err) {
@@ -259,6 +272,7 @@ router.post("/:id/students", ...auth, async (req, res, next) => {
     if (!group) {
       return res.status(404).json({ error: "Group not found" });
     }
+    if (rejectOfficialClassMutation(req, res, group.groupType)) return;
     await addGroupStudents(group.id, await studentsInSchool(studentIds, res.locals.schoolId!));
     return res.json({ ok: true });
   } catch (err) {
@@ -273,6 +287,7 @@ router.post("/:id/students/:studentId", ...auth, async (req, res, next) => {
     if (!group) {
       return res.status(404).json({ error: "Group not found" });
     }
+    if (rejectOfficialClassMutation(req, res, group.groupType)) return;
     const valid = await studentsInSchool([param(req, "studentId")], res.locals.schoolId!);
     if (valid.length === 0) {
       return res.status(404).json({ error: "Student not found" });
@@ -291,6 +306,7 @@ router.delete("/:groupId/students/:studentId", ...auth, async (req, res, next) =
     if (!group) {
       return res.status(404).json({ error: "Group not found" });
     }
+    if (rejectOfficialClassMutation(req, res, group.groupType)) return;
     await removeGroupStudent(group.id, param(req, "studentId"));
     return res.json({ ok: true });
   } catch (err) {
@@ -488,6 +504,7 @@ router.post("/:id/teachers", ...auth, requireRole("admin"), async (req, res, nex
     if (!group) {
       return res.status(404).json({ error: "Group not found" });
     }
+    if (rejectOfficialClassMutation(req, res, group.groupType)) return;
 
     // The co-teacher being added must belong to this school.
     if (!(await userBelongsToSchool(teacherId, res.locals.schoolId!))) {
@@ -525,6 +542,7 @@ router.delete("/:id/teachers/:teacherId", ...auth, requireRole("admin"), async (
     if (!group) {
       return res.status(404).json({ error: "Group not found" });
     }
+    if (rejectOfficialClassMutation(req, res, group.groupType)) return;
 
     const removed = await removeGroupTeacher(group.id, param(req, "teacherId"));
     if (!removed) {
