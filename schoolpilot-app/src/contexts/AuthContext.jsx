@@ -4,6 +4,30 @@ import { saveToken, loadToken, clearToken } from '../native/storage';
 
 const AuthContext = createContext(null);
 
+const GOPILOT_ROLE_PRIORITY = {
+  admin: 5,
+  school_admin: 4,
+  office_staff: 3,
+  teacher: 2,
+  parent: 1,
+};
+
+function effectiveGoPilotRole(membership) {
+  return membership?.gopilotRole || membership?.role || '';
+}
+
+function selectMembershipForSchool(memberships, activeSchoolId) {
+  const schoolMemberships = memberships.filter((m) => m.schoolId === activeSchoolId);
+  if (schoolMemberships.length <= 1) return schoolMemberships[0] || null;
+  return [...schoolMemberships].sort((a, b) => {
+    const roleDelta =
+      (GOPILOT_ROLE_PRIORITY[effectiveGoPilotRole(b)] || 0) -
+      (GOPILOT_ROLE_PRIORITY[effectiveGoPilotRole(a)] || 0);
+    if (roleDelta !== 0) return roleDelta;
+    return (a.id || '').localeCompare(b.id || '');
+  })[0];
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [memberships, setMemberships] = useState([]);
@@ -127,7 +151,7 @@ export function AuthProvider({ children }) {
     fetchUser();
   };
 
-  const activeMembership = memberships.find((m) => m.schoolId === activeSchoolId);
+  const activeMembership = selectMembershipForSchool(memberships, activeSchoolId);
 
   return (
     <AuthContext.Provider

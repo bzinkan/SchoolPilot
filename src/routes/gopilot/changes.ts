@@ -9,7 +9,6 @@ import {
   updateDismissalChange,
   getSessionById,
   getStudentById,
-  upsertDismissalOverride,
 } from "../../services/storage.js";
 import { getIO } from "../../realtime/socketio.js";
 import {
@@ -20,6 +19,10 @@ import {
   getTeacherHomeroomIds,
   isGoPilotManager,
 } from "../../services/gopilotAccess.js";
+import {
+  emitDismissalOverrideApplied,
+  reviewDismissalChangeRequest,
+} from "../../services/gopilotOverrides.js";
 
 const router = Router();
 
@@ -158,6 +161,22 @@ router.post("/changes/:id/acknowledge", ...auth, async (req, res, next) => {
       acknowledgedAt: new Date(),
     });
 
+    const io = getIO();
+    if (io) {
+      const student = await getStudentById(existing.studentId);
+      const payload = {
+        change: updated,
+        studentName: student ? `${student.firstName} ${student.lastName}` : "",
+      };
+      io.to(`school:${res.locals.schoolId}:office`).emit("change:acknowledged", payload);
+      if (student?.homeroomId) {
+        io.to(`school:${res.locals.schoolId}:teacher:${student.homeroomId}`).emit(
+          "change:acknowledged",
+          payload
+        );
+      }
+    }
+
     return res.json({ change: updated });
   } catch (err) {
     next(err);
@@ -181,55 +200,52 @@ router.put("/changes/:id", ...auth, async (req, res, next) => {
       return res.status(403).json({ error: "Insufficient permissions" });
     }
 
-    const updated = await updateDismissalChange(id, {
+    const reviewed = await reviewDismissalChangeRequest({
+      changeId: id,
+      schoolId: res.locals.schoolId!,
       status,
       reviewedBy: req.authUser!.id,
-      reviewedAt: new Date(),
+      changedByRole: "office",
     });
+    if (!reviewed) {
+      return res.status(404).json({ error: "Change request not found" });
+    }
 
-    // If approved, create/update today's session-scoped override. Permanent
-    // roster defaults are changed only through setup/admin roster workflows.
-    if (status === "approved" && existing) {
-      await upsertDismissalOverride({
+    if (status === "approved" && reviewed.override) {
+      await emitDismissalOverrideApplied({
+        schoolId: res.locals.schoolId!,
         sessionId: existing.sessionId,
-        studentId: existing.studentId,
-        originalType: existing.fromType,
+        student: reviewed.student,
         overrideType: existing.toType,
+        busRoute: existing.busRoute,
         reason: existing.note || null,
         changedBy: req.authUser!.id,
         changedByRole: "office",
+        override: reviewed.override,
+        removedQueueEntries: reviewed.removedQueueEntries,
       });
-
-      // Notify teacher/office that the effective type changed so roster updates.
-      const io = getIO();
-      if (io) {
-        const student = await getStudentById(existing.studentId);
-        const typePayload = {
-          studentId: existing.studentId,
-          dismissalType: existing.toType,
-          busRoute: existing.busRoute,
-          isOverride: true,
-        };
-        io.to(`school:${res.locals.schoolId}:office`).emit("student:typeUpdated", typePayload);
-        if (student?.homeroomId) {
-          io.to(`school:${res.locals.schoolId}:teacher:${student.homeroomId}`).emit("student:typeUpdated", typePayload);
-        }
-        // Notify parent of resolution
-        io.to(
-          `school:${res.locals.schoolId}:parent:${existing.requestedBy}`
-        ).emit("change:resolved", { change: updated });
-      }
-    } else {
-      // Rejected or other status — still notify parent
-      const io = getIO();
-      if (io) {
-        io.to(
-          `school:${res.locals.schoolId}:parent:${existing.requestedBy}`
-        ).emit("change:resolved", { change: updated });
-      }
     }
 
-    return res.json({ change: updated });
+    const io = getIO();
+    if (io) {
+      const payload = {
+        change: reviewed.change,
+        studentName: `${reviewed.student.firstName} ${reviewed.student.lastName}`.trim(),
+      };
+      io.to(`school:${res.locals.schoolId}:office`).emit("change:resolved", payload);
+      if (reviewed.student.homeroomId) {
+        io.to(`school:${res.locals.schoolId}:teacher:${reviewed.student.homeroomId}`).emit(
+          "change:resolved",
+          payload
+        );
+      }
+      io.to(`school:${res.locals.schoolId}:parent:${existing.requestedBy}`).emit(
+        "change:resolved",
+        payload
+      );
+    }
+
+    return res.json({ change: reviewed.change });
   } catch (err) {
     next(err);
   }

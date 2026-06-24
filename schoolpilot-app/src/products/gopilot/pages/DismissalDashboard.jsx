@@ -56,6 +56,24 @@ const Card = ({ children, className = '' }) => (
   <div className={`bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-gray-200 dark:border-slate-700 ${className}`}>{children}</div>
 );
 
+const normalizeChangeRequest = (change, fallbackStudentName = '') => ({
+  id: change.id,
+  studentId: change.studentId,
+  studentName: change.student
+    ? `${change.student.firstName} ${change.student.lastName}`.trim()
+    : fallbackStudentName,
+  fromType: change.fromType,
+  toType: change.toType,
+  busRoute: change.busRoute,
+  note: change.note,
+  status: change.status || 'pending',
+  acknowledgedAt: change.acknowledgedAt,
+  acknowledgedBy: change.acknowledgedBy,
+  reviewedAt: change.reviewedAt,
+  reviewedBy: change.reviewedBy,
+  createdAt: change.createdAt,
+});
+
 export default function DismissalDashboard() {
   const { logout, currentSchool, currentRole } = useGoPilotAuth();
   const socket = useSocket();
@@ -119,6 +137,7 @@ export default function DismissalDashboard() {
   const [showChangeNotifications, setShowChangeNotifications] = useState(false);
   const [unreadChangeCount, setUnreadChangeCount] = useState(0);
   const [showNoteFor, setShowNoteFor] = useState(null);
+  const [changeActionId, setChangeActionId] = useState(null);
   // Student lookup state
   const [showStudentLookup, setShowStudentLookup] = useState(false);
   const [studentSearchTerm, setStudentSearchTerm] = useState('');
@@ -171,16 +190,7 @@ export default function DismissalDashboard() {
       try {
         const changesRes = await api.get(`/sessions/${sessionData.id}/changes`);
         const changes = changesRes.data?.changes || [];
-        setChangeRequests(changes.map(c => ({
-          id: c.id,
-          studentId: c.studentId,
-          studentName: c.student ? `${c.student.firstName} ${c.student.lastName}` : '',
-          fromType: c.fromType,
-          toType: c.toType,
-          note: c.note,
-          status: c.status || 'pending',
-          createdAt: c.createdAt,
-        })));
+        setChangeRequests(changes.map(c => normalizeChangeRequest(c)));
         // Don't set unreadCount on load — user is "seeing" them by loading the page
       } catch { /* non-critical */ }
 
@@ -232,20 +242,24 @@ export default function DismissalDashboard() {
     socket.on('student:called', handleQueueUpdate);
     socket.on('student:released', handleQueueUpdate);
     socket.on('student:dismissed', handleQueueUpdate);
+    const upsertChangeRequest = ({ change, studentName }) => {
+      const normalized = normalizeChangeRequest(change, studentName || '');
+      setChangeRequests(prev => {
+        const idx = prev.findIndex(cr => cr.id === normalized.id);
+        if (idx === -1) return [normalized, ...prev];
+        const next = [...prev];
+        next[idx] = { ...next[idx], ...normalized, studentName: normalized.studentName || next[idx].studentName };
+        return next;
+      });
+    };
+
     const handleChangeRequested = ({ change, studentName }) => {
-      setChangeRequests(prev => [...prev, {
-        id: change.id,
-        studentId: change.studentId,
-        studentName: studentName || '',
-        fromType: change.fromType,
-        toType: change.toType,
-        note: change.note,
-        status: change.status || 'pending',
-        createdAt: change.createdAt,
-      }]);
+      upsertChangeRequest({ change, studentName });
       setUnreadChangeCount(prev => prev + 1);
     };
     socket.on('change:requested', handleChangeRequested);
+    socket.on('change:acknowledged', upsertChangeRequest);
+    socket.on('change:resolved', upsertChangeRequest);
 
     const handleTypeUpdated = ({ studentId, dismissalType, busRoute }) => {
       setHomeroomStudents(prev => prev.map(s =>
@@ -280,6 +294,8 @@ export default function DismissalDashboard() {
       socket.off('student:released', handleQueueUpdate);
       socket.off('student:dismissed', handleQueueUpdate);
       socket.off('change:requested', handleChangeRequested);
+      socket.off('change:acknowledged', upsertChangeRequest);
+      socket.off('change:resolved', upsertChangeRequest);
       socket.off('student:typeUpdated', handleTypeUpdated);
       socket.off('dismissal:override', handleOverride);
     };
@@ -606,6 +622,33 @@ export default function DismissalDashboard() {
     }
   };
 
+  const handleAcknowledgeChangeRequest = async (changeId) => {
+    setChangeActionId(changeId);
+    try {
+      const res = await api.post(`/changes/${changeId}/acknowledge`);
+      const updated = normalizeChangeRequest(res.data?.change || {}, '');
+      setChangeRequests(prev => prev.map(cr => cr.id === changeId ? { ...cr, ...updated, studentName: updated.studentName || cr.studentName } : cr));
+    } catch (err) {
+      console.warn('Failed to acknowledge request:', err.response?.data?.error || err);
+    } finally {
+      setChangeActionId(null);
+    }
+  };
+
+  const handleReviewChangeRequest = async (changeId, status) => {
+    setChangeActionId(changeId);
+    try {
+      const res = await api.put(`/changes/${changeId}`, { status });
+      const updated = normalizeChangeRequest(res.data?.change || {}, '');
+      setChangeRequests(prev => prev.map(cr => cr.id === changeId ? { ...cr, ...updated, studentName: updated.studentName || cr.studentName } : cr));
+      await loadData();
+    } catch (err) {
+      console.warn('Failed to review request:', err.response?.data?.error || err);
+    } finally {
+      setChangeActionId(null);
+    }
+  };
+
   // Student lookup search with debounce
   const handleStudentSearch = (term) => {
     setStudentSearchTerm(term);
@@ -746,21 +789,58 @@ export default function DismissalDashboard() {
                         <div className="p-4 text-center text-sm text-gray-400">No change requests</div>
                       ) : (
                         changeRequests.map((cr, i) => (
-                          <div key={cr.id || i} className={`p-3 border-b last:border-b-0 dark:border-slate-700 ${cr.status === 'approved' ? 'opacity-60' : ''} hover:bg-gray-50 dark:hover:bg-slate-700/50`}>
+                          <div key={cr.id || i} className={`p-3 border-b last:border-b-0 dark:border-slate-700 ${cr.status !== 'pending' ? 'opacity-70' : ''} hover:bg-gray-50 dark:hover:bg-slate-700/50`}>
                             <div className="flex items-center justify-between">
                               <p className="text-sm font-medium flex items-center gap-1.5">
                                 {cr.studentName}
                                 {cr.status === 'approved' && <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />}
+                                {cr.status === 'rejected' && <X className="w-3.5 h-3.5 text-red-500" />}
                               </p>
                               <span className="text-xs text-gray-400">{cr.createdAt ? new Date(cr.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</span>
                             </div>
-                            <p className="text-xs text-gray-500 mt-0.5">
-                              <span className="capitalize">{cr.fromType}</span> → <span className="capitalize">{cr.toType}</span>
-                            </p>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <p className="text-xs text-gray-500">
+                                <span className="capitalize">{cr.fromType}</span> → <span className="capitalize">{cr.toType}</span>
+                                {cr.busRoute && <span> #{cr.busRoute}</span>}
+                              </p>
+                              <span className={`text-[10px] uppercase px-1.5 py-0.5 rounded ${cr.status === 'approved' ? 'bg-green-100 text-green-700 dark:bg-green-950/50 dark:text-green-300' : cr.status === 'rejected' ? 'bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-300' : cr.acknowledgedAt ? 'bg-blue-100 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300' : 'bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300'}`}>
+                                {cr.status === 'pending' && cr.acknowledgedAt ? 'Acknowledged' : cr.status}
+                              </span>
+                            </div>
                             {cr.note && (
                               <p className="text-xs bg-amber-50 dark:bg-amber-900/30 text-amber-800 dark:text-amber-200 rounded px-2 py-1 mt-1">
                                 <MessageSquare className="w-3 h-3 inline mr-1" />{cr.note}
                               </p>
+                            )}
+                            {cr.status === 'pending' && (
+                              <div className="flex flex-wrap gap-1.5 mt-2">
+                                {!cr.acknowledgedAt && (
+                                  <button
+                                    type="button"
+                                    disabled={changeActionId === cr.id}
+                                    onClick={() => handleAcknowledgeChangeRequest(cr.id)}
+                                    className="px-2 py-1 text-xs rounded bg-blue-50 text-blue-700 hover:bg-blue-100 disabled:opacity-60 dark:bg-blue-950/40 dark:text-blue-300"
+                                  >
+                                    Acknowledge
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  disabled={changeActionId === cr.id}
+                                  onClick={() => handleReviewChangeRequest(cr.id, 'approved')}
+                                  className="px-2 py-1 text-xs rounded bg-green-600 text-white hover:bg-green-700 disabled:opacity-60"
+                                >
+                                  Approve
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={changeActionId === cr.id}
+                                  onClick={() => handleReviewChangeRequest(cr.id, 'rejected')}
+                                  className="px-2 py-1 text-xs rounded bg-red-50 text-red-700 hover:bg-red-100 disabled:opacity-60 dark:bg-red-950/40 dark:text-red-300"
+                                >
+                                  Reject
+                                </button>
+                              </div>
                             )}
                           </div>
                         ))
@@ -1823,7 +1903,7 @@ function QueueItem({ item, position, onCall, onPickup, authorizedPickups }) {
       case 'waiting': return 'yellow';
       case 'called': return 'red';
       case 'released': return 'green';
-
+      case 'held': return 'orange';
       case 'delayed': return 'red';
       default: return 'default';
     }
@@ -1902,6 +1982,11 @@ function QueueItem({ item, position, onCall, onPickup, authorizedPickups }) {
         </div>
         <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
           {item.status === 'waiting' && (
+            <Button variant="primary" size="sm" onClick={() => onCall(item.id)}>
+              <Send className="w-4 h-4" /><span className="hidden sm:inline ml-1">Call</span>
+            </Button>
+          )}
+          {(item.status === 'held' || item.status === 'delayed') && (
             <Button variant="primary" size="sm" onClick={() => onCall(item.id)}>
               <Send className="w-4 h-4" /><span className="hidden sm:inline ml-1">Call</span>
             </Button>

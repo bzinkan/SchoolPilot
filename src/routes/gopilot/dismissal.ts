@@ -31,7 +31,6 @@ import {
   getFamilyGroupByCarNumber,
   getFamilyGroupStudents,
   getAbsentStudentIds,
-  upsertDismissalOverride,
   deleteDismissalOverride,
   getOverridesForSession,
   getOverrideForStudent,
@@ -52,9 +51,10 @@ import {
   isGoPilotManager,
   requireGoPilotRole,
 } from "../../services/gopilotAccess.js";
+import { applySessionDismissalOverride } from "../../services/gopilotOverrides.js";
 import { getIO } from "../../realtime/socketio.js";
 import { db } from "../../db.js";
-import { dismissalSessions, dismissalQueue, parentStudent } from "../../schema/gopilot.js";
+import { dismissalSessions } from "../../schema/gopilot.js";
 import { eq, and } from "drizzle-orm";
 
 const router = Router();
@@ -274,6 +274,9 @@ router.get("/sessions/:id/queue", ...auth, async (req, res, next) => {
     // Get effective dismissal types (with overrides applied)
     const studentIds = entries.map((e) => e.studentId);
     const effectiveTypes = await getEffectiveDismissalTypes(studentIds, sessionId);
+    const overrideMap = new Map(
+      (await getOverridesForSession(sessionId)).map((override) => [override.studentId, override])
+    );
 
     // Enrich each entry with student and homeroom data (snake_case for frontend compat)
     const queue = await Promise.all(
@@ -289,6 +292,7 @@ router.get("/sessions/:id/queue", ...auth, async (req, res, next) => {
           homeroomName = homeroom?.name ?? null;
         }
         const effectiveType = effectiveTypes.get(entry.studentId) ?? student?.dismissalType ?? null;
+        const override = overrideMap.get(entry.studentId);
         return {
           id: entry.id,
           session_id: entry.sessionId,
@@ -312,8 +316,8 @@ router.get("/sessions/:id/queue", ...auth, async (req, res, next) => {
           homeroom_name: homeroomName,
           dismissal_type: effectiveType,
           permanent_dismissal_type: student?.dismissalType ?? null,
-          is_overridden: effectiveType !== (student?.dismissalType ?? null),
-          bus_route: student?.busRoute ?? null,
+          is_overridden: !!override || effectiveType !== (student?.dismissalType ?? null),
+          bus_route: override?.busRoute ?? student?.busRoute ?? null,
         };
       })
     );
@@ -563,19 +567,42 @@ router.post(
         return res.status(404).json({ error: "Session not found" });
       }
 
-      const busStudents = await getStudentsByBusRoute(schoolId, busNumber);
-      if (busStudents.length === 0) {
+      const busNumberText = busNumber.toString().trim();
+      const busStudents = await getStudentsByBusRoute(schoolId, busNumberText);
+      const allOverrides = await getOverridesForSession(sessionId);
+      const overrideMap = new Map(allOverrides.map((override) => [override.studentId, override]));
+      const overrideBusStudents = await Promise.all(
+        allOverrides
+          .filter((override) =>
+            override.overrideType === "bus" &&
+            (override.busRoute || "").trim() === busNumberText
+          )
+          .map((override) => getStudentById(override.studentId))
+      );
+      const busStudentMap = new Map(busStudents.map((student) => [student.id, student]));
+      for (const student of overrideBusStudents) {
+        if (student && student.schoolId === schoolId && student.status === "active") {
+          busStudentMap.set(student.id, student);
+        }
+      }
+      const candidateBusStudents = [...busStudentMap.values()];
+      if (candidateBusStudents.length === 0) {
         return res
           .status(400)
           .json({ error: "No students on this bus route" });
       }
 
       // Filter by effective type (exclude students overridden away from bus)
-      const busStudentIds = busStudents.map((s) => s.id);
+      const busStudentIds = candidateBusStudents.map((s) => s.id);
       const busEffective = await getEffectiveDismissalTypes(busStudentIds, sessionId);
-      const effectiveBusStudents = busStudents.filter(
-        (s) => (busEffective.get(s.id) ?? "bus") === "bus"
-      );
+      const effectiveBusStudents = candidateBusStudents.filter((s) => {
+        const override = overrideMap.get(s.id);
+        const effectiveType = busEffective.get(s.id) ?? "bus";
+        const effectiveRoute = override?.overrideType === "bus"
+          ? (override.busRoute || s.busRoute || "").trim()
+          : (s.busRoute || "").trim();
+        return effectiveType === "bus" && effectiveRoute === busNumberText;
+      });
 
       // Filter out absent students
       const today = new Date().toISOString().slice(0, 10);
@@ -598,12 +625,12 @@ router.post(
         const entry = await addToQueue({
           sessionId,
           studentId: student.id,
-          guardianName: `Bus #${busNumber}`,
+          guardianName: `Bus #${busNumberText}`,
           checkInMethod: "bus_number",
           position,
         });
         entries.push({ entry, student });
-        await recordDismissalTimeline({ schoolId, entry, action: "checked in", actorUserId: req.authUser!.id, metadata: { busNumber } });
+        await recordDismissalTimeline({ schoolId, entry, action: "checked in", actorUserId: req.authUser!.id, metadata: { busNumber: busNumberText } });
 
         if (student.homeroomId) {
           emitToSchool(schoolId, `teacher:${student.homeroomId}`, "student:checked-in", entry);
@@ -613,11 +640,11 @@ router.post(
       emitToSchool(schoolId, "office", "queue:updated", {
         action: "check_in",
         entries: entries.map(({ entry }) => entry),
-        busNumber,
+        busNumber: busNumberText,
       });
 
       return res.json(buildCheckInResponse({
-        groupLabel: `Bus #${busNumber}`,
+        groupLabel: `Bus #${busNumberText}`,
         entries,
         duplicateCount,
         skippedAbsent,
@@ -646,8 +673,8 @@ router.post("/sessions/:id/call", ...managerAuth, async (req, res, next) => {
     if (!session || !original || original.sessionId !== sessionId) {
       return res.status(404).json({ error: "Queue entry not found" });
     }
-    if (!["waiting", "called"].includes(original.status)) {
-      return res.status(409).json({ error: "Only waiting or called students can be called" });
+    if (!["waiting", "called", "held", "delayed"].includes(original.status)) {
+      return res.status(409).json({ error: "Only waiting, called, held, or delayed students can be called" });
     }
 
     const entry = await callQueueEntry(queueId, zone);
@@ -1129,7 +1156,7 @@ router.post("/sessions/:id/override", ...auth, async (req, res, next) => {
     const schoolId = res.locals.schoolId!;
     const userId = req.authUser!.id;
     const role = await getRequestGoPilotRole(req, res);
-    const { studentId, overrideType, reason } = req.body;
+    const { studentId, overrideType, busRoute, reason } = req.body;
 
     if (!studentId || !overrideType) {
       return res.status(400).json({ error: "studentId and overrideType are required" });
@@ -1177,73 +1204,15 @@ router.post("/sessions/:id/override", ...auth, async (req, res, next) => {
     }
     // admin, school_admin, office_staff can override any student
 
-    const override = await upsertDismissalOverride({
+    const { override } = await applySessionDismissalOverride({
+      schoolId,
       sessionId,
-      studentId,
-      originalType: student.dismissalType ?? "car",
+      student,
       overrideType,
+      busRoute: busRoute || null,
       reason: reason || null,
       changedBy: userId,
       changedByRole,
-    });
-
-    // If student is already in queue and type changed to afterschool, remove from queue
-    // If type changed from afterschool to something else, they'll be added on next check-in
-    // For other type changes, update the queue entry's checkInMethod to reflect new type
-    if (overrideType === "afterschool") {
-      // Remove from queue if present — afterschool students don't need dismissal
-      await db
-        .delete(dismissalQueue)
-        .where(
-          and(
-            eq(dismissalQueue.sessionId, sessionId),
-            eq(dismissalQueue.studentId, studentId)
-          )
-        );
-    }
-
-    // Emit socket event
-    const changer = await getUserById(userId);
-    const changerName = changer ? `${changer.firstName} ${changer.lastName}` : "Unknown";
-
-    const overrideEvent = {
-      studentId,
-      studentName: `${student.firstName} ${student.lastName}`,
-      originalType: student.dismissalType ?? "car",
-      overrideType,
-      changedBy: changerName,
-      changedByRole,
-      reason: reason || null,
-    };
-
-    emitToSchool(schoolId, "office", "dismissal:override", overrideEvent);
-    if (student.homeroomId) {
-      emitToSchool(schoolId, `teacher:${student.homeroomId}`, "dismissal:override", overrideEvent);
-    }
-    // Notify parent if changed by teacher/office
-    if (changedByRole !== "parent") {
-      const parentLinks = await db
-        .select({ parentId: parentStudent.parentId })
-        .from(parentStudent)
-        .where(
-          and(
-            eq(parentStudent.studentId, studentId),
-            eq(parentStudent.status, "approved")
-          )
-        );
-      for (const link of parentLinks) {
-        emitToSchool(schoolId, `parent:${link.parentId}`, "dismissal:override", overrideEvent);
-      }
-    }
-
-    await recordDismissalTimeline({
-      schoolId,
-      studentId,
-      sourceId: override.id,
-      action: "override",
-      actorUserId: userId,
-      summary: `${student.dismissalType ?? "car"} to ${overrideType}${reason ? `: ${reason}` : ""}`,
-      metadata: overrideEvent,
     });
 
     return res.status(201).json({ override });
