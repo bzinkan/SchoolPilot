@@ -3793,6 +3793,93 @@ export async function updateAdminClassWithTeachers(options: {
   });
 }
 
+export async function upsertAdminClassroomClass(options: {
+  schoolId: string;
+  existingGroupId?: string | null;
+  data: Partial<InsertGroup> & Pick<InsertGroup, "name" | "schoolId" | "groupType">;
+  primaryTeacherId: string;
+  coTeacherIds: string[];
+  studentIds: string[];
+}): Promise<{
+  group: Group;
+  roster: {
+    added: string[];
+    alreadyPresent: string[];
+  };
+}> {
+  const uniqueCoTeachers = Array.from(
+    new Set(options.coTeacherIds.filter((id) => id && id !== options.primaryTeacherId))
+  );
+  const uniqueStudentIds = Array.from(new Set(options.studentIds.filter(Boolean)));
+
+  return db.transaction(async (tx) => {
+    const groupValues = {
+      ...options.data,
+      schoolId: options.schoolId,
+      teacherId: options.primaryTeacherId,
+    };
+    const [group] = options.existingGroupId
+      ? await tx
+          .update(groups)
+          .set(groupValues)
+          .where(
+            and(
+              eq(groups.id, options.existingGroupId),
+              eq(groups.schoolId, options.schoolId),
+              eq(groups.groupType, "admin_class")
+            )
+          )
+          .returning()
+      : await tx
+          .insert(groups)
+          .values({
+            ...groupValues,
+            status: options.data.status || "active",
+          } as InsertGroup)
+          .returning();
+
+    if (!group) {
+      throw schoolIsolationError("CLASS_NOT_FOUND", "Class not found", 404);
+    }
+
+    await tx.delete(groupTeachers).where(eq(groupTeachers.groupId, group.id));
+    await tx.insert(groupTeachers).values([
+      {
+        groupId: group.id,
+        teacherId: options.primaryTeacherId,
+        role: "primary",
+      },
+      ...uniqueCoTeachers.map((teacherId) => ({
+        groupId: group.id,
+        teacherId,
+        role: "co-teacher",
+      })),
+    ]);
+
+    let roster = { added: [] as string[], alreadyPresent: [] as string[] };
+    if (uniqueStudentIds.length > 0) {
+      const beforeRows = await tx
+        .select({ studentId: groupStudents.studentId })
+        .from(groupStudents)
+        .where(eq(groupStudents.groupId, group.id));
+      const before = new Set(beforeRows.map((row) => row.studentId));
+      const inserted = await tx
+        .insert(groupStudents)
+        .values(uniqueStudentIds.map((studentId) => ({ groupId: group.id, studentId })))
+        .onConflictDoNothing()
+        .returning({ studentId: groupStudents.studentId });
+      const added = inserted.map((row) => row.studentId);
+      const addedSet = new Set(added);
+      roster = {
+        added,
+        alreadyPresent: uniqueStudentIds.filter((id) => before.has(id) && !addedSet.has(id)),
+      };
+    }
+
+    return { group, roster };
+  });
+}
+
 export async function deleteGroup(groupId: string): Promise<boolean> {
   await db
     .delete(groupStudents)
@@ -4762,6 +4849,27 @@ export async function getClassroomCourseStudents(
     .select()
     .from(classroomCourseStudents)
     .where(eq(classroomCourseStudents.courseId, courseId));
+}
+
+export async function upsertClassroomCourseStudents(
+  rows: InsertClassroomCourseStudent[]
+): Promise<void> {
+  if (rows.length === 0) return;
+  await db
+    .insert(classroomCourseStudents)
+    .values(rows)
+    .onConflictDoUpdate({
+      target: [
+        classroomCourseStudents.schoolId,
+        classroomCourseStudents.courseId,
+        classroomCourseStudents.studentId,
+      ],
+      set: {
+        googleUserId: sql`excluded.google_user_id`,
+        studentEmailLc: sql`excluded.student_email_lc`,
+        lastSeenAt: new Date(),
+      },
+    });
 }
 
 

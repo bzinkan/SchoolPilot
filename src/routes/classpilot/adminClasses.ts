@@ -9,7 +9,9 @@ import { logAudit } from "../../services/audit.js";
 import {
   addGroupStudentsDetailed,
   archiveGroup,
+  autoAssignFamilyGroups,
   createGroup,
+  createStudent,
   findOverlappingScheduledAdminClass,
   getAdminClassSummariesBySchool,
   getGoogleOAuthTokenForSchool,
@@ -17,15 +19,35 @@ import {
   getGroupStudents,
   getGroupTeacherSummaries,
   getMembershipByUserAndSchool,
+  getProductLicenses,
+  getStudentByEmail,
   getStudentsByIds,
   getUserById,
   groupHasTeachingHistory,
   hardDeleteGroupWithCleanup,
   removeGroupStudent,
   replaceGroupTeachers,
+  updateStudent,
   updateAdminClassWithTeachers,
+  upsertAdminClassroomClass,
+  upsertClassroomCourse,
+  upsertClassroomCourseStudents,
   validateStaffEmailDomainForSchool,
 } from "../../services/storage.js";
+import { recordImportRun } from "../../services/importLog.js";
+import {
+  checkStudentEmail,
+  studentEmailRules,
+  studentEmailTaken,
+  type StudentEmailRules,
+} from "../../services/studentEmailPolicy.js";
+import {
+  encryptClassPilotPin,
+  generatedPinForStudent,
+  hashClassPilotPin,
+  randomFourDigitClassPilotPin,
+  type GeneratedClassPilotPin,
+} from "../../services/classpilotPins.js";
 
 const router = Router();
 
@@ -40,8 +62,10 @@ const auth = [
 const TEACHABLE_ROLES = new Set(["teacher", "admin", "school_admin"]);
 const GRADE_VALUES = new Set(["PK", "K", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"]);
 const CLASSROOM_IMPORT_ENABLED = process.env.CLASSPILOT_CLASSROOM_IMPORT_ENABLED === "true";
+const CLASSROOM_EMAIL_SCOPE = "https://www.googleapis.com/auth/classroom.profile.emails";
 const CLASSROOM_COURSES_SCOPE = "https://www.googleapis.com/auth/classroom.courses.readonly";
 const CLASSROOM_ROSTER_SCOPE = "https://www.googleapis.com/auth/classroom.rosters.readonly";
+const CLASSROOM_ROSTER_SCOPES = [CLASSROOM_COURSES_SCOPE, CLASSROOM_ROSTER_SCOPE, CLASSROOM_EMAIL_SCOPE];
 
 function param(req: any, key: string): string {
   return String(req.params[key] ?? "");
@@ -175,6 +199,40 @@ async function getAuthedClassroom(userId: string, schoolId: string, requiredScop
   return google.classroom({ version: "v1", auth: oauth2Client });
 }
 
+function normalizeGoogleClassroomError(err: any) {
+  const statusCode = Number(err?.status || err?.statusCode || (typeof err?.code === "number" ? err.code : 0));
+  if (statusCode === 401 || err?.message?.includes("invalid_grant")) {
+    return routeError("NO_TOKENS: Reconnect Google Classroom for this school.", 400, "NO_TOKENS");
+  }
+  if (statusCode === 403) {
+    return routeError(
+      "INSUFFICIENT_PERMISSIONS: Google Classroom access was denied. Reconnect Google Classroom with course, roster, and email profile access.",
+      403,
+      "INSUFFICIENT_PERMISSIONS"
+    );
+  }
+  if (err?.code && typeof err.code === "string") {
+    return routeError(err.message || "Google Classroom request failed", err.status || 400, err.code);
+  }
+  return err;
+}
+
+async function listActiveCourses(classroom: any) {
+  const courses: any[] = [];
+  let pageToken: string | undefined;
+  do {
+    const response = await classroom.courses.list({
+      teacherId: "me",
+      courseStates: ["ACTIVE"],
+      pageSize: 100,
+      pageToken,
+    });
+    courses.push(...(response.data.courses || []));
+    pageToken = response.data.nextPageToken || undefined;
+  } while (pageToken);
+  return courses;
+}
+
 async function listCourseStudents(classroom: any, courseId: string) {
   const students: any[] = [];
   let pageToken: string | undefined;
@@ -188,6 +246,143 @@ async function listCourseStudents(classroom: any, courseId: string) {
     pageToken = response.data.nextPageToken || undefined;
   } while (pageToken);
   return students;
+}
+
+async function getCourseMetadata(classroom: any, courseId: string, fallback?: any) {
+  try {
+    const response = await classroom.courses.get({ id: courseId });
+    return response.data || fallback || {};
+  } catch {
+    return fallback || {};
+  }
+}
+
+async function hasActiveClassPilotLicense(schoolId: string): Promise<boolean> {
+  const licenses = await getProductLicenses(schoolId);
+  return licenses.some(
+    (license) => license.product === "CLASSPILOT" && license.status === "active"
+  );
+}
+
+async function maybeAutoAssignGoPilotFamilies(schoolId: string, imported: number) {
+  if (imported === 0) return undefined;
+  const licenses = await getProductLicenses(schoolId);
+  const hasGoPilot = licenses.some(
+    (license) => license.product === "GOPILOT" && license.status === "active"
+  );
+  return hasGoPilot ? autoAssignFamilyGroups(schoolId) : undefined;
+}
+
+function teacherPreview(entry: { user: any; membership?: any }) {
+  const user = entry.user;
+  return {
+    id: user.id,
+    email: user.email,
+    displayName: user.displayName,
+    firstName: user.firstName,
+    lastName: user.lastName,
+    role: entry.membership?.role || null,
+  };
+}
+
+type ClassroomStudentUpsertResult = {
+  status: "imported" | "updated" | "skipped";
+  studentId?: string;
+  googleUserId?: string | null;
+  emailLc?: string | null;
+  generatedPin?: GeneratedClassPilotPin;
+};
+
+type SelectedClassroomCourse = {
+  googleCourseId: string;
+  primaryTeacherId: string;
+  coTeacherIds?: string[];
+  gradeLevel?: string | null;
+  schoolYear?: string | null;
+  term?: string | null;
+  periodLabel?: string | null;
+};
+
+async function upsertStudentFromClassroom(
+  schoolId: string,
+  googleStudent: any,
+  options: {
+    gradeLevel?: string | null;
+    rules: StudentEmailRules;
+    autoGenerateClassPilotPins?: boolean;
+    usedPins?: Set<string>;
+  }
+): Promise<ClassroomStudentUpsertResult> {
+  const email = googleStudent.profile?.emailAddress?.trim();
+  if (!email) return { status: "skipped" };
+
+  const emailLc = email.toLowerCase();
+  const emailErr = checkStudentEmail(email, options.rules);
+  if (emailErr) {
+    throw Object.assign(new Error(emailErr.error), { code: emailErr.code });
+  }
+  const firstName = googleStudent.profile?.name?.givenName || email.split("@")[0] || "";
+  const lastName = googleStudent.profile?.name?.familyName || "";
+  const existing = await getStudentByEmail(schoolId, emailLc);
+  const taken = await studentEmailTaken(schoolId, emailLc, existing?.id);
+  if (taken) {
+    throw Object.assign(new Error(taken), { code: "STUDENT_EMAIL_TAKEN" });
+  }
+
+  if (existing) {
+    const updated = await updateStudent(existing.id, {
+      firstName: firstName || existing.firstName,
+      lastName: lastName || existing.lastName,
+      email,
+      googleUserId: googleStudent.userId || existing.googleUserId || undefined,
+      ...(options.gradeLevel ? { gradeLevel: options.gradeLevel } : {}),
+    });
+    return {
+      status: "updated",
+      studentId: updated?.id || existing.id,
+      googleUserId: googleStudent.userId || updated?.googleUserId || existing.googleUserId || null,
+      emailLc,
+    };
+  }
+
+  const pin = options.autoGenerateClassPilotPins
+    ? randomFourDigitClassPilotPin(options.usedPins)
+    : null;
+  const student = await createStudent({
+    schoolId,
+    firstName,
+    lastName,
+    email,
+    gradeLevel: options.gradeLevel || undefined,
+    googleUserId: googleStudent.userId || undefined,
+    classpilotPinHash: pin ? await hashClassPilotPin(pin) : undefined,
+    classpilotPinEncrypted: pin ? encryptClassPilotPin(pin) : undefined,
+    status: "active",
+  });
+  return {
+    status: "imported",
+    studentId: student.id,
+    googleUserId: googleStudent.userId || null,
+    emailLc,
+    generatedPin: pin ? generatedPinForStudent(student, pin) : undefined,
+  };
+}
+
+function readImportCourses(body: any): SelectedClassroomCourse[] {
+  const rawCourses = Array.isArray(body?.courses)
+    ? body.courses
+    : Array.isArray(body?.selectedCourses)
+      ? body.selectedCourses
+      : [];
+  return rawCourses.map((course: any) => ({
+    googleCourseId: String(course.googleCourseId || course.courseId || "").trim(),
+    primaryTeacherId: course.primaryTeacherId || course.teacherId ? String(course.primaryTeacherId || course.teacherId) : "",
+    coTeacherIds: Array.isArray(course.coTeacherIds) ? course.coTeacherIds.map(String) : undefined,
+    gradeLevel: course.gradeLevel === undefined && course.grade === undefined ? undefined : normalizeGrade(course.gradeLevel ?? course.grade),
+    schoolYear: course.schoolYear === undefined ? undefined : (course.schoolYear ? String(course.schoolYear) : null),
+    term: course.term === undefined ? undefined : (course.term ? String(course.term) : null),
+    periodLabel: course.periodLabel === undefined ? undefined : (course.periodLabel ? String(course.periodLabel) : null),
+  }));
 }
 
 router.get("/", ...auth, async (req, res, next) => {
@@ -212,51 +407,268 @@ router.get("/classroom/import-preview", ...auth, async (req, res, next) => {
       return res.json({ enabled: false, courses: [] });
     }
     const schoolId = res.locals.schoolId!;
-    const classroom = await getAuthedClassroom(req.authUser!.id, schoolId, [CLASSROOM_COURSES_SCOPE, CLASSROOM_ROSTER_SCOPE]);
+    const classroom = await getAuthedClassroom(req.authUser!.id, schoolId, CLASSROOM_ROSTER_SCOPES);
     const existing = await getAdminClassSummariesBySchool(schoolId, { status: "all" });
     const existingByGoogleId = new Map(existing.filter((row) => row.googleClassroomCourseId).map((row) => [row.googleClassroomCourseId, row]));
-    const courses: any[] = [];
-    let pageToken: string | undefined;
-    do {
-      const response = await classroom.courses.list({
-        teacherId: "me",
-        courseStates: ["ACTIVE"],
-        pageSize: 100,
-        pageToken,
-      });
-      courses.push(...(response.data.courses || []));
-      pageToken = response.data.nextPageToken || undefined;
-    } while (pageToken);
+    let defaultTeacher: ReturnType<typeof teacherPreview> | null = null;
+    try {
+      defaultTeacher = teacherPreview(await validateTeachableUser(req.authUser!.id, schoolId));
+    } catch {
+      defaultTeacher = null;
+    }
+    const courses = await listActiveCourses(classroom);
     const normalized = await Promise.all(courses.map(async (course: any) => {
       const students = await listCourseStudents(classroom, course.id);
       const existingClass = existingByGoogleId.get(course.id);
+      let matchedTeacher = defaultTeacher;
+      if (existingClass) {
+        const teachers = await getGroupTeacherSummaries(existingClass.id, schoolId);
+        matchedTeacher = teachers.find((entry) => entry.relationshipRole === "primary")?.teacher || matchedTeacher;
+      }
       return {
         googleCourseId: course.id,
         name: course.name || `Class ${course.id}`,
         section: course.section || null,
-        matchedTeacher: null,
+        matchedTeacher,
         studentCount: students.length,
         existingClassId: existingClass?.id || null,
-        importability: existingClass ? "update" : "needs_teacher",
+        importability: existingClass ? "update" : matchedTeacher ? "ready" : "needs_teacher",
       };
     }));
     return res.json({ enabled: true, courses: normalized });
   } catch (err) {
-    next(err);
+    next(normalizeGoogleClassroomError(err));
   }
 });
 
-router.post("/classroom/import", ...auth, async (_req, res) => {
-  if (!CLASSROOM_IMPORT_ENABLED) {
-    return res.status(404).json({
-      error: "Google Classroom class import is not enabled.",
-      code: "CLASSROOM_IMPORT_DISABLED",
+router.post("/classroom/import", ...auth, async (req, res, next) => {
+  try {
+    if (!CLASSROOM_IMPORT_ENABLED) {
+      return res.status(404).json({
+        error: "Google Classroom class import is not enabled.",
+        code: "CLASSROOM_IMPORT_DISABLED",
+      });
+    }
+    const schoolId = res.locals.schoolId!;
+    const selectedCourses = readImportCourses(req.body).filter((course) => course.googleCourseId);
+    if (selectedCourses.length === 0) {
+      throw routeError("At least one Google Classroom course is required", 400, "COURSES_REQUIRED");
+    }
+
+    const classroom = await getAuthedClassroom(req.authUser!.id, schoolId, CLASSROOM_ROSTER_SCOPES);
+    const existing = await getAdminClassSummariesBySchool(schoolId, { status: "all" });
+    const existingByGoogleId = new Map(existing.filter((row) => row.googleClassroomCourseId).map((row) => [row.googleClassroomCourseId, row]));
+    let defaultTeacherId = "";
+    try {
+      defaultTeacherId = (await validateTeachableUser(req.authUser!.id, schoolId)).user.id;
+    } catch {
+      defaultTeacherId = "";
+    }
+
+    const rules = await studentEmailRules(schoolId);
+    const autoGenerateClassPilotPins = await hasActiveClassPilotLicense(schoolId);
+    const usedPins = new Set<string>();
+    const generatedPins: GeneratedClassPilotPin[] = [];
+    const failures: string[] = [];
+    const results: any[] = [];
+    let totalFound = 0;
+    let totalImported = 0;
+    let totalUpdated = 0;
+    let totalSkipped = 0;
+    let importedCourses = 0;
+    let updatedCourses = 0;
+
+    for (const selected of selectedCourses) {
+      const courseId = selected.googleCourseId;
+      const existingClass = existingByGoogleId.get(courseId);
+      const primaryTeacherId = selected.primaryTeacherId || existingClass?.teacherId || defaultTeacherId;
+      if (!primaryTeacherId) {
+        throw routeError(`Primary teacher is required for ${courseId}`, 400, "TEACHER_REQUIRED");
+      }
+
+      const preservedTeachers = existingClass
+        ? await getGroupTeacherSummaries(existingClass.id, schoolId)
+        : [];
+      const preservedCoTeachers = preservedTeachers
+        .filter((entry) => entry.relationshipRole === "co-teacher")
+        .map((entry) => entry.teacherId);
+      const coTeacherIds = await validateTeachers(
+        primaryTeacherId,
+        selected.coTeacherIds === undefined ? preservedCoTeachers : selected.coTeacherIds,
+        schoolId
+      );
+
+      try {
+        const courseMeta = await getCourseMetadata(classroom, courseId, selected);
+        const name = String(courseMeta.name || selected.googleCourseId || "").trim();
+        if (!name) throw routeError("Google Classroom course name is required", 400, "CLASS_NAME_REQUIRED");
+        const googleStudents = await listCourseStudents(classroom, courseId);
+        totalFound += googleStudents.length;
+
+        const gradeLevel = selected.gradeLevel === undefined
+          ? existingClass?.gradeLevel || null
+          : selected.gradeLevel;
+        const course = await upsertClassroomCourse({
+          schoolId,
+          googleCourseId: courseId,
+          name,
+          section: courseMeta.section || null,
+          room: courseMeta.room || null,
+          descriptionHeading: courseMeta.descriptionHeading || null,
+          ownerId: courseMeta.ownerId || null,
+          lastSyncedAt: new Date(),
+        });
+
+        let imported = 0;
+        let updated = 0;
+        let skipped = 0;
+        const studentIds: string[] = [];
+        const courseStudentRows: Array<{
+          schoolId: string;
+          courseId: string;
+          studentId: string;
+          googleUserId?: string | null;
+          studentEmailLc?: string | null;
+          lastSeenAt: Date;
+        }> = [];
+
+        for (const googleStudent of googleStudents) {
+          try {
+            const result = await upsertStudentFromClassroom(schoolId, googleStudent, {
+              gradeLevel,
+              rules,
+              autoGenerateClassPilotPins,
+              usedPins,
+            });
+            if (result.status === "imported") {
+              imported++;
+              if (result.generatedPin) generatedPins.push(result.generatedPin);
+            } else if (result.status === "updated") {
+              updated++;
+            } else {
+              skipped++;
+            }
+            if (result.studentId) {
+              studentIds.push(result.studentId);
+              courseStudentRows.push({
+                schoolId,
+                courseId: course.id,
+                studentId: result.studentId,
+                googleUserId: result.googleUserId || null,
+                studentEmailLc: result.emailLc || null,
+                lastSeenAt: new Date(),
+              });
+            }
+          } catch (error: any) {
+            skipped++;
+            const email = googleStudent.profile?.emailAddress || googleStudent.userId || "unknown student";
+            failures.push(`${email}: ${error?.code || "CLASSROOM_STUDENT_IMPORT_FAILED"}: ${error?.message || "Could not import Classroom student."}`);
+          }
+        }
+
+        const schedule = await validateSchedule({
+          schoolId,
+          teacherId: primaryTeacherId,
+          scheduleEnabled: existingClass?.scheduleEnabled === true,
+          blockStartTime: existingClass?.blockStartTime,
+          blockEndTime: existingClass?.blockEndTime,
+          excludeGroupId: existingClass?.id,
+        });
+        const { group, roster } = await upsertAdminClassroomClass({
+          schoolId,
+          existingGroupId: existingClass?.id || null,
+          data: {
+            schoolId,
+            teacherId: primaryTeacherId,
+            name,
+            description: existingClass?.description || null,
+            periodLabel: selected.periodLabel !== undefined
+              ? selected.periodLabel
+              : (courseMeta.section || existingClass?.periodLabel || null),
+            gradeLevel,
+            groupType: "admin_class",
+            status: existingClass?.status || "active",
+            schoolYear: selected.schoolYear === undefined ? existingClass?.schoolYear || null : selected.schoolYear,
+            term: selected.term === undefined ? existingClass?.term || null : selected.term,
+            googleClassroomCourseId: courseId,
+            scheduleEnabled: existingClass?.scheduleEnabled === true,
+            blockStartTime: schedule.blockStartTime,
+            blockEndTime: schedule.blockEndTime,
+            scheduleSkippedDate: null,
+          },
+          primaryTeacherId,
+          coTeacherIds,
+          studentIds,
+        });
+        await upsertClassroomCourseStudents(courseStudentRows);
+
+        if (existingClass) updatedCourses++;
+        else importedCourses++;
+        totalImported += imported;
+        totalUpdated += updated;
+        totalSkipped += skipped;
+        results.push({
+          googleCourseId: courseId,
+          classId: group.id,
+          courseName: name,
+          action: existingClass ? "updated" : "created",
+          studentsFound: googleStudents.length,
+          studentsImported: imported,
+          studentsUpdated: updated,
+          studentsSkipped: skipped,
+          rosterAdded: roster.added.length,
+          rosterAlreadyPresent: roster.alreadyPresent.length,
+        });
+        await logAudit({
+          ...actor(req, res),
+          action: "class.classroom_import",
+          entityType: "class",
+          entityId: group.id,
+          entityName: group.name,
+          changes: {
+            action: existingClass ? "updated" : "created",
+            googleCourseId: courseId,
+            studentsImported: imported,
+            studentsUpdated: updated,
+            rosterAdded: roster.added.length,
+            rosterAlreadyPresent: roster.alreadyPresent.length,
+          },
+        });
+      } catch (error: any) {
+        failures.push(`course ${courseId}: ${error?.code || "CLASSROOM_IMPORT_FAILED"}: ${error?.message || "Could not import course."}`);
+        results.push({ googleCourseId: courseId, error: error?.message || "Could not import course." });
+      }
+    }
+
+    const autoAssigned = await maybeAutoAssignGoPilotFamilies(schoolId, totalImported);
+    void recordImportRun({
+      schoolId,
+      userId: req.authUser?.id,
+      requestId: req.requestId,
+      source: "classroom",
+      scope: selectedCourses.map((course) => course.googleCourseId).join(", "),
+      totalFound,
+      imported: totalImported,
+      updated: totalUpdated,
+      skipped: totalSkipped,
+      failures,
     });
+
+    return res.json({
+      importedCourses,
+      updatedCourses,
+      totalFound,
+      totalImported,
+      totalUpdated,
+      totalSkipped,
+      failures,
+      results,
+      autoAssigned,
+      generatedPins,
+    });
+  } catch (err) {
+    next(normalizeGoogleClassroomError(err));
   }
-  return res.status(501).json({
-    error: "Google Classroom class import is not available yet.",
-    code: "CLASSROOM_IMPORT_NOT_IMPLEMENTED",
-  });
 });
 
 router.post("/", ...auth, async (req, res, next) => {
