@@ -20,6 +20,10 @@ import {
   hardDeleteGroupWithCleanup,
   replaceGroupTeachers,
   updateAdminClassWithTeachers,
+  upsertAdminClassroomClass,
+  upsertClassroomCourse,
+  upsertClassroomCourseStudents,
+  getClassroomCourseStudents,
 } from "../dist/services/storage.js";
 import db, { pool } from "../dist/db.js";
 import { runWithTenantContext } from "../dist/middleware/tenantContext.js";
@@ -78,6 +82,8 @@ after(async () => {
       await db.execute(sql`DELETE FROM group_students WHERE group_id IN (SELECT id FROM groups WHERE school_id = ${school.id})`);
       await db.execute(sql`DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id = ${school.id})`);
       await db.execute(sql`DELETE FROM groups WHERE school_id = ${school.id}`);
+      await db.execute(sql`DELETE FROM classroom_course_students WHERE school_id = ${school.id}`);
+      await db.execute(sql`DELETE FROM classroom_courses WHERE school_id = ${school.id}`);
       await db.execute(sql`DELETE FROM students WHERE school_id = ${school.id}`);
       await db.execute(sql`DELETE FROM school_memberships WHERE school_id = ${school.id}`);
       await db.execute(sql`DELETE FROM schools WHERE id = ${school.id}`);
@@ -138,6 +144,79 @@ describe("ClassPilot admin class management storage contracts", () => {
 
     const roster = await inSchool(school.id, () => getGroupStudents(group.id));
     assert.equal(roster.length, 2);
+  });
+
+  it("upserts Google Classroom classes and enrollment mappings idempotently", async () => {
+    const course = await inSchool(school.id, () => upsertClassroomCourse({
+      schoolId: school.id,
+      googleCourseId: `${TAG}_google_course`,
+      name: `${TAG}_Google Science`,
+      section: "8A",
+      lastSyncedAt: new Date(),
+    } as any));
+
+    const first = await inSchool(school.id, () => upsertAdminClassroomClass({
+      schoolId: school.id,
+      data: {
+        schoolId: school.id,
+        teacherId: teacherA.id,
+        name: `${TAG}_Google Science`,
+        groupType: "admin_class",
+        status: "active",
+        gradeLevel: "8",
+        googleClassroomCourseId: `${TAG}_google_course`,
+      } as any,
+      primaryTeacherId: teacherA.id,
+      coTeacherIds: [teacherC.id],
+      studentIds: [studentA.id],
+    }));
+
+    assert.equal(first.group.teacherId, teacherA.id);
+    assert.equal(first.roster.added.length, 1);
+
+    await inSchool(school.id, () => upsertClassroomCourseStudents([{
+      schoolId: school.id,
+      courseId: course.id,
+      studentId: studentA.id,
+      googleUserId: "google-student-a",
+      studentEmailLc: studentA.email.toLowerCase(),
+      lastSeenAt: new Date(),
+    } as any]));
+    await inSchool(school.id, () => upsertClassroomCourseStudents([{
+      schoolId: school.id,
+      courseId: course.id,
+      studentId: studentA.id,
+      googleUserId: "google-student-a-updated",
+      studentEmailLc: studentA.email.toLowerCase(),
+      lastSeenAt: new Date(),
+    } as any]));
+    const courseStudents = await inSchool(school.id, () => getClassroomCourseStudents(course.id));
+    assert.equal(courseStudents.length, 1);
+    assert.equal(courseStudents[0]?.googleUserId, "google-student-a-updated");
+
+    const second = await inSchool(school.id, () => upsertAdminClassroomClass({
+      schoolId: school.id,
+      existingGroupId: first.group.id,
+      data: {
+        schoolId: school.id,
+        teacherId: teacherB.id,
+        name: `${TAG}_Google Science Updated`,
+        groupType: "admin_class",
+        status: "active",
+        gradeLevel: "8",
+        googleClassroomCourseId: `${TAG}_google_course`,
+      } as any,
+      primaryTeacherId: teacherB.id,
+      coTeacherIds: [],
+      studentIds: [studentA.id, studentB.id],
+    }));
+
+    assert.equal(second.group.id, first.group.id);
+    assert.equal(second.group.teacherId, teacherB.id);
+    assert.deepEqual(second.roster.added, [studentB.id]);
+    assert.deepEqual(second.roster.alreadyPresent, [studentA.id]);
+    const teachers = await inSchool(school.id, () => getGroupTeacherSummaries(first.group.id, school.id));
+    assert.deepEqual(teachers.map((entry) => [entry.teacherId, entry.relationshipRole]), [[teacherB.id, "primary"]]);
   });
 
   it("archives classes and exposes aggregate student counts", async () => {

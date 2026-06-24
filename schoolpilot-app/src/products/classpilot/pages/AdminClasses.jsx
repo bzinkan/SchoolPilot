@@ -11,6 +11,7 @@ import {
   GraduationCap,
   Loader2,
   Plus,
+  RefreshCw,
   Search,
   Trash2,
   UserPlus,
@@ -622,6 +623,231 @@ function ClassCard({
   );
 }
 
+function ClassroomImportDialog({ open, onOpenChange, teachers }) {
+  const { toast } = useToast();
+  const [selectedCourseIds, setSelectedCourseIds] = useState(new Set());
+  const [teacherAssignments, setTeacherAssignments] = useState({});
+  const [gradeAssignments, setGradeAssignments] = useState({});
+
+  const previewQuery = useQuery({
+    queryKey: ["classpilot-admin-classes-classroom-preview"],
+    queryFn: () => apiRequest("GET", "/classpilot/admin/classes/classroom/import-preview"),
+    enabled: open && CLASSROOM_IMPORT_ENABLED,
+  });
+
+  const courses = previewQuery.data?.courses || [];
+  const sortedTeachers = useMemo(
+    () => [...teachers].sort((a, b) => {
+      const byLast = lastNameKey(a).localeCompare(lastNameKey(b));
+      return byLast || displayName(a).localeCompare(displayName(b));
+    }),
+    [teachers]
+  );
+
+  const resetSelections = () => {
+    setSelectedCourseIds(new Set());
+    setTeacherAssignments({});
+    setGradeAssignments({});
+  };
+
+  const handleOpenChange = (nextOpen) => {
+    if (!nextOpen) resetSelections();
+    onOpenChange(nextOpen);
+  };
+
+  const courseTeacherId = (course) => teacherAssignments[course.googleCourseId] || course.matchedTeacher?.id || "";
+  const selectedCourses = courses.filter((course) => selectedCourseIds.has(course.googleCourseId));
+  const selectedMissingTeacher = selectedCourses.some((course) => !courseTeacherId(course));
+
+  const toggleCourse = (courseId) => {
+    setSelectedCourseIds((previous) => {
+      const next = new Set(previous);
+      if (next.has(courseId)) next.delete(courseId);
+      else next.add(courseId);
+      return next;
+    });
+  };
+
+  const classroomImportMutation = useMutation({
+    mutationFn: (payload) => apiRequest("POST", "/classpilot/admin/classes/classroom/import", payload),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ADMIN_CLASSES_KEY });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/teacher-students"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-class-students"] });
+      resetSelections();
+      onOpenChange(false);
+      toast({
+        title: "Google Classroom import complete",
+        description: `${result.importedCourses || 0} created, ${result.updatedCourses || 0} updated, ${result.totalImported || 0} students imported.`,
+      });
+    },
+    onError: (error) => {
+      toast({ variant: "destructive", title: "Google Classroom import failed", description: getErrorMessage(error) });
+    },
+  });
+
+  const importSelectedCourses = () => {
+    classroomImportMutation.mutate({
+      courses: selectedCourses.map((course) => ({
+        googleCourseId: course.googleCourseId,
+        primaryTeacherId: courseTeacherId(course),
+        gradeLevel: gradeAssignments[course.googleCourseId],
+      })),
+    });
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent className="max-h-[85vh] max-w-4xl overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Import from Google Classroom</DialogTitle>
+          <DialogDescription>
+            Preview active Classroom courses, choose the ClassPilot teacher, and import rosters into official classes.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm text-muted-foreground">
+              {courses.length} active {courses.length === 1 ? "course" : "courses"} available
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => previewQuery.refetch()}
+              disabled={previewQuery.isFetching}
+            >
+              {previewQuery.isFetching ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+              Refresh
+            </Button>
+          </div>
+
+          {previewQuery.isLoading ? (
+            <div className="flex items-center justify-center gap-2 rounded-md border py-10 text-muted-foreground">
+              <Loader2 className="h-5 w-5 animate-spin" />
+              Loading Google Classroom courses...
+            </div>
+          ) : previewQuery.error ? (
+            <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+              {getErrorMessage(previewQuery.error)}
+            </div>
+          ) : !previewQuery.data?.enabled ? (
+            <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+              Google Classroom class import is disabled.
+            </div>
+          ) : courses.length === 0 ? (
+            <div className="rounded-md border p-8 text-center text-sm text-muted-foreground">
+              No active Google Classroom courses were found for this connected account.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {courses.map((course) => {
+                const teacherId = courseTeacherId(course);
+                const checked = selectedCourseIds.has(course.googleCourseId);
+                return (
+                  <div key={course.googleCourseId} className="rounded-lg border p-3">
+                    <div className="flex flex-wrap items-start gap-3">
+                      <Checkbox
+                        checked={checked}
+                        onCheckedChange={() => toggleCourse(course.googleCourseId)}
+                        aria-label={`Select ${course.name}`}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="font-medium leading-tight">{course.name}</p>
+                          {course.existingClassId ? (
+                            <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">Updates existing class</span>
+                          ) : null}
+                          {course.importability === "needs_teacher" ? (
+                            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-900">Teacher required</span>
+                          ) : null}
+                        </div>
+                        <p className="text-sm text-muted-foreground">
+                          {course.section ? `${course.section} - ` : ""}
+                          {course.studentCount || 0} {(course.studentCount || 0) === 1 ? "student" : "students"}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="mt-3 grid gap-3 md:grid-cols-2">
+                      <div className="grid gap-2">
+                        <Label>Primary teacher</Label>
+                        <Select
+                          value={teacherId || NONE}
+                          onValueChange={(value) => {
+                            setTeacherAssignments((previous) => ({
+                              ...previous,
+                              [course.googleCourseId]: value === NONE ? "" : value,
+                            }));
+                          }}
+                        >
+                          <SelectTrigger aria-label={`Primary teacher for ${course.name}`}>
+                            <SelectValue placeholder="Choose teacher" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value={NONE}>Choose teacher</SelectItem>
+                            {sortedTeachers.map((teacher) => (
+                              <SelectItem key={teacher.id} value={teacher.id}>
+                                {buildTeacherLabel(teacher)}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div className="grid gap-2">
+                        <Label>Grade</Label>
+                        <Select
+                          value={gradeAssignments[course.googleCourseId] ?? NONE}
+                          onValueChange={(value) => {
+                            setGradeAssignments((previous) => ({
+                              ...previous,
+                              [course.googleCourseId]: value === NONE ? null : value,
+                            }));
+                          }}
+                        >
+                          <SelectTrigger aria-label={`Grade for ${course.name}`}>
+                            <SelectValue placeholder="Keep existing or ungraded" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value={NONE}>Keep existing or ungraded</SelectItem>
+                            {GRADE_VALUES.map((grade) => (
+                              <SelectItem key={grade} value={grade}>
+                                {formatGrade(grade)}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => handleOpenChange(false)}>Cancel</Button>
+          <Button
+            type="button"
+            onClick={importSelectedCourses}
+            disabled={
+              classroomImportMutation.isPending
+              || selectedCourses.length === 0
+              || selectedMissingTeacher
+            }
+          >
+            {classroomImportMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+            Import {selectedCourses.length} {selectedCourses.length === 1 ? "Course" : "Courses"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function AdminClasses() {
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -638,6 +864,7 @@ export default function AdminClasses() {
   const [selectedStudents, setSelectedStudents] = useState(new Set());
   const [expandedClasses, setExpandedClasses] = useState(new Set());
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [classroomImportOpen, setClassroomImportOpen] = useState(false);
   const [editingClass, setEditingClass] = useState(null);
   const [archiveTarget, setArchiveTarget] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
@@ -910,10 +1137,22 @@ export default function AdminClasses() {
                       {filteredClasses.length} visible of {classes.length} loaded classes
                     </CardDescription>
                   </div>
-                  <Button onClick={() => setCreateDialogOpen(true)} data-testid="button-create-class">
-                    <Plus className="mr-2 h-4 w-4" />
-                    Create Class
-                  </Button>
+                  <div className="flex flex-wrap gap-2">
+                    {CLASSROOM_IMPORT_ENABLED ? (
+                      <Button
+                        variant="outline"
+                        onClick={() => setClassroomImportOpen(true)}
+                        data-testid="button-google-classroom-import"
+                      >
+                        <RefreshCw className="mr-2 h-4 w-4" />
+                        Import Classroom
+                      </Button>
+                    ) : null}
+                    <Button onClick={() => setCreateDialogOpen(true)} data-testid="button-create-class">
+                      <Plus className="mr-2 h-4 w-4" />
+                      Create Class
+                    </Button>
+                  </div>
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -973,12 +1212,6 @@ export default function AdminClasses() {
                     ))}
                   </TabsList>
                 </Tabs>
-
-                {CLASSROOM_IMPORT_ENABLED ? (
-                  <div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
-                    Google Classroom import is behind a feature flag while the normalized preview/import workflow is rebuilt.
-                  </div>
-                ) : null}
 
                 {queryError ? (
                   <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
@@ -1117,6 +1350,12 @@ export default function AdminClasses() {
         teachers={teachers}
         onSubmit={submitCreate}
         isSaving={createClassMutation.isPending}
+      />
+
+      <ClassroomImportDialog
+        open={classroomImportOpen}
+        onOpenChange={setClassroomImportOpen}
+        teachers={teachers}
       />
 
       <ClassFormDialog
