@@ -186,6 +186,8 @@ export const dismissalQueue = pgTable(
     studentId: text("student_id").notNull(), // FK to students
     guardianId: text("guardian_id"), // FK to users (parent)
     guardianName: text("guardian_name"),
+    pickupGroupId: text("pickup_group_id"),
+    pickupGroupLabel: text("pickup_group_label"),
     checkInTime: timestamp("check_in_time").default(sql`now()`),
     checkInMethod: text("check_in_method"), // app | car_number | bus_number | walker
     status: text("status").notNull().default("waiting"), // waiting | called | released | dismissed | held | delayed

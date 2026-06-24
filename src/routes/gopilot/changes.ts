@@ -199,6 +199,15 @@ router.put("/changes/:id", ...auth, async (req, res, next) => {
     if (!isGoPilotManager(role)) {
       return res.status(403).json({ error: "Insufficient permissions" });
     }
+    if (status === "approved") {
+      const session = await getSessionById(existing.sessionId);
+      if (!session || session.status !== "active") {
+        return res.status(409).json({ error: "Dismissal session is not active" });
+      }
+      if (existing.toType === "bus" && !existing.busRoute) {
+        return res.status(400).json({ error: "busRoute is required for bus approvals" });
+      }
+    }
 
     const reviewed = await reviewDismissalChangeRequest({
       changeId: id,

@@ -56,23 +56,59 @@ const Card = ({ children, className = '' }) => (
   <div className={`bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-gray-200 dark:border-slate-700 ${className}`}>{children}</div>
 );
 
-const normalizeChangeRequest = (change, fallbackStudentName = '') => ({
-  id: change.id,
-  studentId: change.studentId,
-  studentName: change.student
-    ? `${change.student.firstName} ${change.student.lastName}`.trim()
-    : fallbackStudentName,
-  fromType: change.fromType,
-  toType: change.toType,
-  busRoute: change.busRoute,
-  note: change.note,
-  status: change.status || 'pending',
-  acknowledgedAt: change.acknowledgedAt,
-  acknowledgedBy: change.acknowledgedBy,
-  reviewedAt: change.reviewedAt,
-  reviewedBy: change.reviewedBy,
-  createdAt: change.createdAt,
+const EMPTY_STATS = { waiting: 0, called: 0, released: 0, dismissed: 0, held: 0, delayed: 0, total: 0, avgWaitSeconds: null };
+
+const normalizeStats = (stats = {}) => ({
+  ...EMPTY_STATS,
+  ...stats,
+  avgWaitSeconds: stats.avgWaitSeconds ?? stats.avg_wait_seconds ?? null,
 });
+
+const apiErrorMessage = (err, fallback) => err?.response?.data?.error || fallback;
+
+const normalizeQueueEntry = (entry) => ({
+  ...entry,
+  pickupGroupId: entry.pickupGroupId ?? entry.pickup_group_id ?? null,
+  pickupGroupLabel: entry.pickupGroupLabel ?? entry.pickup_group_label ?? entry.guardianName ?? entry.guardian_name ?? 'Unknown',
+  studentId: entry.studentId ?? entry.student_id,
+  firstName: entry.firstName ?? entry.first_name,
+  lastName: entry.lastName ?? entry.last_name,
+  guardianName: entry.guardianName ?? entry.guardian_name,
+  checkInMethod: entry.checkInMethod ?? entry.check_in_method,
+  effectiveDismissalType: entry.effectiveDismissalType ?? entry.dismissal_type,
+  effectiveBusRoute: entry.effectiveBusRoute ?? entry.busRoute ?? entry.bus_route,
+  permanentDismissalType: entry.permanentDismissalType ?? entry.permanent_dismissal_type,
+  isOverridden: entry.isOverridden ?? entry.is_overridden ?? false,
+});
+
+const normalizeQueue = (data) => (Array.isArray(data) ? data : (data?.queue ?? [])).map(normalizeQueueEntry);
+
+const queueGroups = (entries) => {
+  const grouped = new Map();
+  entries.forEach((item) => {
+    const pickupGroupId = item.pickupGroupId ?? item.pickup_group_id ?? null;
+    const key = pickupGroupId || `legacy:${item.id}`;
+    if (!grouped.has(key)) {
+      grouped.set(key, {
+        key,
+        pickupGroupId,
+        name: item.pickupGroupLabel ?? item.pickup_group_label ?? item.guardianName ?? item.guardian_name ?? 'Unknown',
+        students: [],
+      });
+    }
+    grouped.get(key).students.push(item);
+  });
+  return Array.from(grouped.values());
+};
+
+const statusLabel = (sessionStatus) => ({
+  not_started: 'Not Started',
+  pending: 'Not Started',
+  active: 'Active',
+  paused: 'Paused',
+  completed: 'Completed',
+  'offline/stale': 'Offline/Stale',
+}[sessionStatus] || sessionStatus);
 
 export default function DismissalDashboard() {
   const { logout, currentSchool, currentRole } = useGoPilotAuth();
@@ -91,17 +127,19 @@ export default function DismissalDashboard() {
 
   const [currentTime, setCurrentTime] = useState(new Date());
   const [session, setSession] = useState(null);
-  const [dismissalActive, setDismissalActive] = useState(false);
+  const [realtimeStale, setRealtimeStale] = useState(false);
+  const [dashboardError, setDashboardError] = useState(null);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [selectedView, setSelectedView] = useState('queue');
   const [queueTab, setQueueTab] = useState('active'); // 'active' or 'dismissed'
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState('all');
   const [queue, setQueue] = useState([]);
-  const [stats, setStats] = useState({ waiting: 0, called: 0, released: 0, dismissed: 0, total: 0, avg_wait_seconds: null });
+  const [stats, setStats] = useState(EMPTY_STATS);
   const [homerooms, setHomerooms] = useState([]);
   const [alerts, setAlerts] = useState([]);
   const [allPickups, setAllPickups] = useState([]);
+  const [busRoutes, setBusRoutes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [pickupZones, setPickupZones] = useState([]);
   const [selectedZone, setSelectedZone] = useState(null);
@@ -127,6 +165,7 @@ export default function DismissalDashboard() {
   const [showOverrideFor, setShowOverrideFor] = useState(null);
   const [overrideType, setOverrideType] = useState('');
   const [overrideReason, setOverrideReason] = useState('');
+  const [overrideBusRoute, setOverrideBusRoute] = useState('');
   // Expandable homeroom state
   const [expandedHomeroom, setExpandedHomeroom] = useState(null);
   const [homeroomStudents, setHomeroomStudents] = useState([]);
@@ -137,48 +176,83 @@ export default function DismissalDashboard() {
   const [showChangeNotifications, setShowChangeNotifications] = useState(false);
   const [unreadChangeCount, setUnreadChangeCount] = useState(0);
   const [showNoteFor, setShowNoteFor] = useState(null);
-  const [changeActionId, setChangeActionId] = useState(null);
   // Student lookup state
   const [showStudentLookup, setShowStudentLookup] = useState(false);
   const [studentSearchTerm, setStudentSearchTerm] = useState('');
   const [studentSearchResults, setStudentSearchResults] = useState([]);
   const [studentSearchLoading, setStudentSearchLoading] = useState(false);
+  const [custodyPickup, setCustodyPickup] = useState(null);
   const studentSearchTimeout = useRef(null);
+  const snapshotRefreshTimeout = useRef(null);
+  const snapshotRefreshInFlight = useRef(false);
+  const sessionStatus = realtimeStale ? 'offline/stale' : (session?.status || 'not_started');
+  const isSessionActive = session?.status === 'active' && !realtimeStale;
 
-  // Initialize session and load data
-  const loadData = useCallback(async () => {
+  // Initialize read-only dashboard snapshot
+  const loadData = useCallback(async ({ silent = false } = {}) => {
     if (!currentSchool) return;
     try {
-      setLoading(true);
-      const sessionRes = await api.post(`/schools/${currentSchool.id}/sessions`);
-      const sessionData = sessionRes.data?.session || sessionRes.data;
-      setSession(sessionData);
-      setDismissalActive(sessionData.status === 'active');
-
-      const [queueRes, statsRes, homeroomRes, alertsRes, settingsRes, pickupsRes] = await Promise.all([
-        api.get(`/sessions/${sessionData.id}/queue`),
-        api.get(`/sessions/${sessionData.id}/stats`),
+      if (!silent) setLoading(true);
+      setDashboardError(null);
+      const [sessionRes, homeroomRes, alertsRes, settingsRes, pickupsRes, busRoutesRes] = await Promise.all([
+        api.get(`/schools/${currentSchool.id}/sessions/today`),
         api.get(`/schools/${currentSchool.id}/homerooms`),
         api.get(`/schools/${currentSchool.id}/custody-alerts`),
         api.get(`/schools/${currentSchool.id}/settings`),
         api.get('/pickups/all').catch(() => ({ data: { pickups: [] } })),
+        api.get(`/schools/${currentSchool.id}/bus-routes`).catch(() => ({ data: { routes: [] } })),
       ]);
-
-      setQueue(Array.isArray(queueRes.data) ? queueRes.data : (queueRes.data?.queue ?? []));
-      setStats(statsRes.data);
+      const sessionData = sessionRes.data?.session || null;
+      setSession(sessionData);
       setHomerooms(Array.isArray(homeroomRes.data) ? homeroomRes.data : (homeroomRes.data?.homerooms ?? []));
       setAlerts(Array.isArray(alertsRes.data) ? alertsRes.data : (alertsRes.data?.alerts ?? []));
       setAllPickups(Array.isArray(pickupsRes.data) ? pickupsRes.data : (pickupsRes.data?.pickups ?? []));
+      setBusRoutes(busRoutesRes.data?.routes || []);
 
-      // Fetch overrides
-      try {
-        const overridesRes = await api.get(`/sessions/${sessionData.id}/overrides`);
-        const map = {};
-        for (const o of overridesRes.data?.overrides || []) {
-          map[o.studentId] = { overrideType: o.overrideType, reason: o.reason, studentName: o.studentName, homeroomId: o.homeroomId };
-        }
-        setOverrides(map);
-      } catch { /* non-critical */ }
+      if (sessionData?.id) {
+        const [queueRes, statsRes] = await Promise.all([
+          api.get(`/sessions/${sessionData.id}/queue`),
+          api.get(`/sessions/${sessionData.id}/stats`),
+        ]);
+        setQueue(normalizeQueue(queueRes.data));
+        setStats(normalizeStats(statsRes.data));
+
+        try {
+          const overridesRes = await api.get(`/sessions/${sessionData.id}/overrides`);
+          const map = {};
+          for (const o of overridesRes.data?.overrides || []) {
+            map[o.studentId] = {
+              overrideType: o.overrideType,
+              reason: o.reason,
+              busRoute: o.busRoute,
+              studentName: o.studentName,
+              homeroomId: o.homeroomId,
+            };
+          }
+          setOverrides(map);
+        } catch { /* non-critical */ }
+
+        try {
+          const changesRes = await api.get(`/sessions/${sessionData.id}/changes`);
+          const changes = changesRes.data?.changes || [];
+          setChangeRequests(changes.map(c => ({
+            id: c.id,
+            studentId: c.studentId,
+            studentName: c.student ? `${c.student.firstName} ${c.student.lastName}` : '',
+            fromType: c.fromType,
+            toType: c.toType,
+            busRoute: c.busRoute,
+            note: c.note,
+            status: c.status || 'pending',
+            createdAt: c.createdAt,
+          })));
+        } catch { /* non-critical */ }
+      } else {
+        setQueue([]);
+        setStats(EMPTY_STATS);
+        setOverrides({});
+        setChangeRequests([]);
+      }
 
       // Fetch permanent afterschool students
       try {
@@ -186,25 +260,19 @@ export default function DismissalDashboard() {
         setAfterschoolStudents(afterRes.data?.students || []);
       } catch { /* non-critical */ }
 
-      // Fetch existing change requests (all statuses — persist until midnight/session end)
-      try {
-        const changesRes = await api.get(`/sessions/${sessionData.id}/changes`);
-        const changes = changesRes.data?.changes || [];
-        setChangeRequests(changes.map(c => normalizeChangeRequest(c)));
-        // Don't set unreadCount on load — user is "seeing" them by loading the page
-      } catch { /* non-critical */ }
-
       const zones = settingsRes.data.pickupZones || [
         { id: 'A', name: 'Zone A' }, { id: 'B', name: 'Zone B' }, { id: 'C', name: 'Zone C' }
       ];
       setPickupZones(zones);
-      if (zones.length > 0 && !selectedZone) setSelectedZone(zones[0].id);
+      setSelectedZone(prev => prev && zones.find(z => z.id === prev) ? prev : zones[0]?.id || null);
+      setRealtimeStale(false);
     } catch (err) {
       console.error('Failed to load dashboard data:', err);
+      setDashboardError(apiErrorMessage(err, 'Failed to load dashboard data'));
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
-  }, [currentSchool, selectedZone]);
+  }, [currentSchool]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -220,50 +288,62 @@ export default function DismissalDashboard() {
 
     const joinRoom = () => {
       socket.emit('join:school', { schoolId: currentSchool.id, role: 'admin' });
+      setRealtimeStale(false);
+    };
+    const scheduleSnapshotRefresh = () => {
+      if (snapshotRefreshTimeout.current) clearTimeout(snapshotRefreshTimeout.current);
+      snapshotRefreshTimeout.current = setTimeout(async () => {
+        if (snapshotRefreshInFlight.current) return;
+        snapshotRefreshInFlight.current = true;
+        try {
+          await loadData({ silent: true });
+        } finally {
+          snapshotRefreshInFlight.current = false;
+        }
+      }, 250);
     };
     joinRoom();
-    socket.on('connect', joinRoom);
+    const handleConnect = () => {
+      joinRoom();
+      scheduleSnapshotRefresh();
+    };
+    const handleDisconnect = () => setRealtimeStale(true);
+    socket.on('connect', handleConnect);
+    socket.on('disconnect', handleDisconnect);
 
     const handleQueueUpdate = (data) => {
-      if (session) {
-        // Optimistic update: if the event includes an entry with updated status, apply immediately
-        if (data?.entry) {
-          setQueue(prev => prev.map(q => q.id === data.entry.id ? { ...q, status: data.entry.status, released_at: data.entry.releasedAt || data.entry.released_at, dismissed_at: data.entry.dismissedAt || data.entry.dismissed_at } : q));
-        }
-        // Also re-fetch from server to ensure consistency
-        setTimeout(() => {
-          api.get(`/sessions/${session.id}/queue`).then(r => setQueue(Array.isArray(r.data) ? r.data : (r.data?.queue ?? []))).catch(() => {});
-          api.get(`/sessions/${session.id}/stats`).then(r => setStats(r.data)).catch(() => {});
-        }, 300);
+      if (data?.entry) {
+        const entry = normalizeQueueEntry(data.entry);
+        setQueue(prev => prev.map(q => q.id === entry.id ? { ...q, ...entry } : q));
       }
+      scheduleSnapshotRefresh();
     };
 
     socket.on('queue:updated', handleQueueUpdate);
     socket.on('student:called', handleQueueUpdate);
     socket.on('student:released', handleQueueUpdate);
     socket.on('student:dismissed', handleQueueUpdate);
-    const upsertChangeRequest = ({ change, studentName }) => {
-      const normalized = normalizeChangeRequest(change, studentName || '');
-      setChangeRequests(prev => {
-        const idx = prev.findIndex(cr => cr.id === normalized.id);
-        if (idx === -1) return [normalized, ...prev];
-        const next = [...prev];
-        next[idx] = { ...next[idx], ...normalized, studentName: normalized.studentName || next[idx].studentName };
-        return next;
-      });
-    };
-
+    socket.on('dismissal:status', scheduleSnapshotRefresh);
+    socket.on('dismissal:started', scheduleSnapshotRefresh);
+    socket.on('dismissal:ended', scheduleSnapshotRefresh);
     const handleChangeRequested = ({ change, studentName }) => {
-      upsertChangeRequest({ change, studentName });
+      setChangeRequests(prev => [...prev, {
+        id: change.id,
+        studentId: change.studentId,
+        studentName: studentName || '',
+        fromType: change.fromType,
+        toType: change.toType,
+        note: change.note,
+        status: change.status || 'pending',
+        createdAt: change.createdAt,
+      }]);
       setUnreadChangeCount(prev => prev + 1);
     };
     socket.on('change:requested', handleChangeRequested);
-    socket.on('change:acknowledged', upsertChangeRequest);
-    socket.on('change:resolved', upsertChangeRequest);
 
     const handleTypeUpdated = ({ studentId, dismissalType, busRoute }) => {
       setHomeroomStudents(prev => prev.map(s =>
-        s.id === studentId ? { ...s, dismissalType, dismissal_type: dismissalType, busRoute } : s
+        s.id === studentId ? { ...s, effectiveDismissalType: dismissalType, effectiveBusRoute: busRoute, isOverridden: true } : s
       ));
       if (dismissalType === 'afterschool') {
         setAfterschoolStudents(prev => {
@@ -278,28 +358,30 @@ export default function DismissalDashboard() {
 
     const handleOverride = (data) => {
       if (data.overrideType) {
-        setOverrides(prev => ({ ...prev, [data.studentId]: { overrideType: data.overrideType, reason: data.reason, studentName: data.studentName } }));
+        setOverrides(prev => ({ ...prev, [data.studentId]: { overrideType: data.overrideType, reason: data.reason, busRoute: data.busRoute, studentName: data.studentName } }));
       } else {
         setOverrides(prev => { const next = { ...prev }; delete next[data.studentId]; return next; });
       }
-      // Refresh queue to reflect type changes
-      handleQueueUpdate();
+      scheduleSnapshotRefresh();
     };
     socket.on('dismissal:override', handleOverride);
 
     return () => {
-      socket.off('connect', joinRoom);
+      if (snapshotRefreshTimeout.current) clearTimeout(snapshotRefreshTimeout.current);
+      socket.off('connect', handleConnect);
+      socket.off('disconnect', handleDisconnect);
       socket.off('queue:updated', handleQueueUpdate);
       socket.off('student:called', handleQueueUpdate);
       socket.off('student:released', handleQueueUpdate);
       socket.off('student:dismissed', handleQueueUpdate);
+      socket.off('dismissal:status', scheduleSnapshotRefresh);
+      socket.off('dismissal:started', scheduleSnapshotRefresh);
+      socket.off('dismissal:ended', scheduleSnapshotRefresh);
       socket.off('change:requested', handleChangeRequested);
-      socket.off('change:acknowledged', upsertChangeRequest);
-      socket.off('change:resolved', upsertChangeRequest);
       socket.off('student:typeUpdated', handleTypeUpdated);
       socket.off('dismissal:override', handleOverride);
     };
-  }, [socket, currentSchool, session]);
+  }, [socket, currentSchool, loadData]);
 
   // Effective afterschool list: permanent afterschool students + override-to-afterschool
   // Build lookup: studentId → pickups[]
@@ -340,66 +422,135 @@ export default function DismissalDashboard() {
     return Array.from(result.values());
   }, [afterschoolStudents, overrides]);
 
+  const custodyAlertsByStudent = useMemo(() => {
+    const map = {};
+    for (const alert of alerts) {
+      const studentId = alert.studentId ?? alert.student_id;
+      if (!studentId) continue;
+      if (!map[studentId]) map[studentId] = [];
+      map[studentId].push(alert);
+    }
+    return map;
+  }, [alerts]);
+
+  const requireActiveSession = (action = 'This action') => {
+    if (isSessionActive) return true;
+    setDashboardError(`${action} requires an active dismissal session.`);
+    return false;
+  };
+
+  const resetOverrideModal = () => {
+    setShowOverrideFor(null);
+    setOverrideType('');
+    setOverrideReason('');
+    setOverrideBusRoute('');
+  };
+
   // Actions
   const handleToggleDismissal = async () => {
-    if (!session) return;
     try {
-      const newStatus = dismissalActive ? 'paused' : 'active';
-      await api.put(`/sessions/${session.id}`, { status: newStatus });
-      setDismissalActive(!dismissalActive);
-    } catch (err) { console.warn('Action failed:', err); }
+      setDashboardError(null);
+      let targetSession = session;
+      if (!targetSession) {
+        const created = await api.post(`/schools/${currentSchool.id}/sessions`);
+        targetSession = created.data?.session || created.data;
+      }
+      if (targetSession?.status === 'completed') {
+        setDashboardError('Today’s dismissal session is completed and cannot be restarted.');
+        return;
+      }
+      const newStatus = targetSession?.status === 'active' ? 'paused' : 'active';
+      const res = await api.put(`/sessions/${targetSession.id}`, { status: newStatus });
+      setSession(res.data?.session || { ...targetSession, status: newStatus });
+      await loadData({ silent: true });
+    } catch (err) {
+      setDashboardError(apiErrorMessage(err, 'Unable to update dismissal status'));
+    }
   };
 
   const handleEndDismissal = async () => {
     if (!session) return;
     try {
-      await api.put(`/sessions/${session.id}`, { status: 'completed' });
-      setDismissalActive(false);
-      setSession(null);
-      setQueue([]);
-      setStats({ waiting: 0, called: 0, released: 0, dismissed: 0, total: 0, avg_wait_seconds: null });
+      setDashboardError(null);
+      const res = await api.put(`/sessions/${session.id}`, { status: 'completed' });
+      setSession(res.data?.session || { ...session, status: 'completed' });
       setShowEndConfirm(false);
+      await loadData({ silent: true });
     } catch (err) {
       console.error('Failed to end dismissal:', err);
+      const counts = err?.response?.data?.counts;
+      const countText = counts ? ` Waiting: ${counts.waiting || 0}, called: ${counts.called || 0}, in transit: ${counts.released || 0}.` : '';
+      setDashboardError(`${apiErrorMessage(err, 'Failed to end dismissal')}${countText}`);
     }
   };
 
   const handleCallStudent = async (queueId) => {
-    if (!session) return;
+    if (!session || !requireActiveSession('Calling students')) return;
     try {
       await api.post(`/sessions/${session.id}/call`, { queueId, zone: selectedZone || pickupZones[0]?.id });
       await refreshQueue();
-    } catch (err) { console.warn('Action failed:', err); }
+    } catch (err) { setDashboardError(apiErrorMessage(err, 'Unable to call student')); }
   };
 
-  const handleMarkPickedUp = async (queueId) => {
+  const handleMarkPickedUp = async (itemOrQueueId, options = {}) => {
+    if (!requireActiveSession('Pickup completion')) return;
+    const item = typeof itemOrQueueId === 'object' ? itemOrQueueId : queue.find(q => q.id === itemOrQueueId);
+    const queueId = item?.id || itemOrQueueId;
+    const studentAlerts = item ? (custodyAlertsByStudent[item.studentId || item.student_id] || []) : [];
+    if (studentAlerts.length > 0 && !options.custodyAcknowledged) {
+      setCustodyPickup({ item, queueId, alerts: studentAlerts });
+      return;
+    }
     try {
-      await api.post(`/queue/${queueId}/dismiss`);
+      await api.post(`/queue/${queueId}/dismiss`, {
+        custodyAcknowledged: !!options.custodyAcknowledged,
+        pickupPersonName: options.pickupPersonName || undefined,
+        pickupNote: options.pickupNote || undefined,
+      });
+      setCustodyPickup(null);
       await refreshQueue();
-    } catch (err) { console.warn('Action failed:', err); }
+    } catch (err) {
+      if (err?.response?.status === 409 && err.response?.data?.custodyAlerts) {
+        setCustodyPickup({ item, queueId, alerts: err.response.data.custodyAlerts });
+        return;
+      }
+      setDashboardError(apiErrorMessage(err, 'Unable to complete pickup'));
+    }
   };
 
   const handlePickupAll = async (students) => {
-    const eligible = students.filter(s => s.status === 'released');
+    if (!requireActiveSession('Batch pickup')) return;
+    const pickupGroupId = students[0]?.pickupGroupId ?? students[0]?.pickup_group_id;
+    if (!pickupGroupId) {
+      setDashboardError('Batch pickup requires a stable pickup group. Complete these students individually.');
+      return;
+    }
+    const eligible = students.filter(s => {
+      const studentId = s.studentId || s.student_id;
+      return s.status === 'released' && !(custodyAlertsByStudent[studentId]?.length);
+    });
     if (eligible.length === 0) return;
     try {
-      await api.post('/queue/dismiss-batch', { queueIds: eligible.map(s => s.id) });
+      const res = await api.post('/queue/dismiss-batch', { queueIds: eligible.map(s => s.id), pickupGroupId });
+      if (res.data?.skippedCustody?.length) {
+        setDashboardError('Some students were skipped because a custody alert requires individual acknowledgement.');
+      }
       await refreshQueue();
-    } catch (err) { console.warn('Action failed:', err); }
+    } catch (err) { setDashboardError(apiErrorMessage(err, 'Unable to complete batch pickup')); }
   };
 
   const [walkerLoading, setWalkerLoading] = useState(false);
   const [walkerResult, setWalkerResult] = useState(null);
   const handleReleaseWalkers = async () => {
-    if (!session) return;
+    if (!session || !requireActiveSession('Walker dismissal')) return;
     setWalkerLoading(true);
     setWalkerResult(null);
     try {
       const res = await api.post(`/sessions/${session.id}/release-walkers`);
-      if (res.data.alreadySubmitted) {
+      if (res.data.outcome === 'duplicate') {
         setWalkerResult({ type: 'info', message: 'Walkers already dismissed' });
       } else {
-        setWalkerResult({ type: 'success', message: `Dismissed ${res.data.entries.length} walker students` });
+        setWalkerResult({ type: res.data.outcome === 'partial' ? 'info' : 'success', message: `Dismissed ${res.data.entries?.length || 0} walker students` });
         await refreshQueue();
       }
       setTimeout(() => setWalkerResult(null), 5000);
@@ -411,7 +562,7 @@ export default function DismissalDashboard() {
   };
 
   const handleReleaseSelectedWalkers = async () => {
-    if (!session) return;
+    if (!session || !requireActiveSession('Walker dismissal')) return;
     const filterType = walkerViewTab; // 'grade' or 'homeroom'
     const filterValues = walkerViewTab === 'grade' ? selectedGrades : selectedWalkerHomerooms;
     if (filterValues.length === 0) {
@@ -423,10 +574,10 @@ export default function DismissalDashboard() {
     setWalkerResult(null);
     try {
       const res = await api.post(`/sessions/${session.id}/release-walkers-by-filter`, { filterType, filterValues });
-      if (res.data.entries.length === 0) {
+      if ((res.data.entries?.length || 0) === 0) {
         setWalkerResult({ type: 'info', message: 'No walker students to dismiss for selected ' + filterType + 's' });
       } else {
-        setWalkerResult({ type: 'success', message: `Dismissed ${res.data.entries.length} walker students` });
+        setWalkerResult({ type: res.data.outcome === 'partial' ? 'info' : 'success', message: `Dismissed ${res.data.entries.length} walker students` });
         await refreshQueue();
       }
       setSelectedGrades([]);
@@ -503,6 +654,7 @@ export default function DismissalDashboard() {
 
   const handleCarNumberCheckIn = async () => {
     if (!carNumberInput.trim() || !session) return;
+    if (!requireActiveSession('Car check-in')) return;
     setCarNumberLoading(true);
     setCarNumberResult(null);
     try {
@@ -521,6 +673,7 @@ export default function DismissalDashboard() {
 
   const handleBusNumberCheckIn = async () => {
     if (!busNumberInput.trim() || !session) return;
+    if (!requireActiveSession('Bus check-in')) return;
     setBusNumberLoading(true);
     setBusNumberResult(null);
     try {
@@ -550,6 +703,7 @@ export default function DismissalDashboard() {
       if (match) carNumber = match[0];
     }
     if (carNumber) {
+      if (!requireActiveSession('QR check-in')) return;
       setCarNumberInput(carNumber);
       // Auto-submit after a tick so state updates
       setTimeout(async () => {
@@ -580,8 +734,8 @@ export default function DismissalDashboard() {
       api.get(`/sessions/${session.id}/queue`),
       api.get(`/sessions/${session.id}/stats`),
     ]);
-    setQueue(Array.isArray(queueRes.data) ? queueRes.data : (queueRes.data?.queue ?? []));
-    setStats(statsRes.data);
+    setQueue(normalizeQueue(queueRes.data));
+    setStats(normalizeStats(statsRes.data));
   };
 
   // Toggle homeroom expansion (accordion)
@@ -595,7 +749,16 @@ export default function DismissalDashboard() {
     setLoadingStudents(true);
     try {
       const res = await api.get(`/schools/${currentSchool.id}/students?homeroomId=${roomId}`);
-      setHomeroomStudents(Array.isArray(res.data) ? res.data : (res.data?.students ?? []));
+      const students = Array.isArray(res.data) ? res.data : (res.data?.students ?? []);
+      setHomeroomStudents(students.map(student => ({
+        ...student,
+        permanentDismissalType: student.permanentDismissalType ?? student.dismissalType ?? student.dismissal_type,
+        permanentBusRoute: student.permanentBusRoute ?? student.busRoute ?? student.bus_route,
+        effectiveDismissalType: overrides[student.id]?.overrideType ?? student.effectiveDismissalType ?? student.dismissalType ?? student.dismissal_type,
+        effectiveBusRoute: overrides[student.id]?.busRoute ?? student.effectiveBusRoute ?? student.busRoute ?? student.bus_route,
+        isOverridden: !!overrides[student.id],
+        overrideReason: overrides[student.id]?.reason,
+      })));
     } catch (err) {
       console.error('Failed to load students', err);
       setHomeroomStudents([]);
@@ -606,46 +769,36 @@ export default function DismissalDashboard() {
   // Override handler
   const handleOverrideSubmit = async () => {
     if (!session?.id || !showOverrideFor || !overrideType) return;
+    if (!requireActiveSession('Dismissal overrides')) return;
+    if (overrideType === 'bus' && !overrideBusRoute.trim()) {
+      setDashboardError('Choose a bus route for bus overrides.');
+      return;
+    }
     try {
       await api.post(`/sessions/${session.id}/override`, {
         studentId: showOverrideFor,
         overrideType,
+        busRoute: overrideType === 'bus' ? overrideBusRoute.trim() : undefined,
         reason: overrideReason || undefined,
       });
-      setOverrides(prev => ({ ...prev, [showOverrideFor]: { overrideType, reason: overrideReason } }));
-      setShowOverrideFor(null);
-      setOverrideType('');
-      setOverrideReason('');
+      setOverrides(prev => ({ ...prev, [showOverrideFor]: { overrideType, reason: overrideReason, busRoute: overrideType === 'bus' ? overrideBusRoute.trim() : null } }));
+      resetOverrideModal();
       await refreshQueue();
     } catch (err) {
-      console.warn('Failed to change dismissal type:', err.response?.data?.error || err);
+      setDashboardError(apiErrorMessage(err, 'Failed to change dismissal type'));
     }
   };
 
-  const handleAcknowledgeChangeRequest = async (changeId) => {
-    setChangeActionId(changeId);
+  const handleOverrideRevert = async () => {
+    if (!session?.id || !showOverrideFor) return;
+    if (!requireActiveSession('Reverting overrides')) return;
     try {
-      const res = await api.post(`/changes/${changeId}/acknowledge`);
-      const updated = normalizeChangeRequest(res.data?.change || {}, '');
-      setChangeRequests(prev => prev.map(cr => cr.id === changeId ? { ...cr, ...updated, studentName: updated.studentName || cr.studentName } : cr));
+      await api.delete(`/sessions/${session.id}/override/${showOverrideFor}`);
+      setOverrides(prev => { const next = { ...prev }; delete next[showOverrideFor]; return next; });
+      resetOverrideModal();
+      await refreshQueue();
     } catch (err) {
-      console.warn('Failed to acknowledge request:', err.response?.data?.error || err);
-    } finally {
-      setChangeActionId(null);
-    }
-  };
-
-  const handleReviewChangeRequest = async (changeId, status) => {
-    setChangeActionId(changeId);
-    try {
-      const res = await api.put(`/changes/${changeId}`, { status });
-      const updated = normalizeChangeRequest(res.data?.change || {}, '');
-      setChangeRequests(prev => prev.map(cr => cr.id === changeId ? { ...cr, ...updated, studentName: updated.studentName || cr.studentName } : cr));
-      await loadData();
-    } catch (err) {
-      console.warn('Failed to review request:', err.response?.data?.error || err);
-    } finally {
-      setChangeActionId(null);
+      setDashboardError(apiErrorMessage(err, 'Failed to revert dismissal override'));
     }
   };
 
@@ -680,12 +833,12 @@ export default function DismissalDashboard() {
 
   // Filter queue - exclude bus students from car queue (they show in Buses tab)
   // Split into active (in progress) and dismissed (completed)
-  const carQueue = queue.filter(q => q.check_in_method !== 'bus_number' && q.check_in_method !== 'walker');
+  const carQueue = queue.filter(q => (q.checkInMethod ?? q.check_in_method) !== 'bus_number' && (q.checkInMethod ?? q.check_in_method) !== 'walker');
   const activeQueue = carQueue.filter(q => q.status !== 'dismissed');
   const dismissedQueue = carQueue.filter(q => q.status === 'dismissed');
 
   const filteredQueue = (queueTab === 'dismissed' ? dismissedQueue : activeQueue).filter(q => {
-    const name = `${q.first_name} ${q.last_name}`.toLowerCase();
+    const name = `${q.firstName ?? q.first_name ?? ''} ${q.lastName ?? q.last_name ?? ''}`.toLowerCase();
     if (searchTerm && !name.includes(searchTerm.toLowerCase())) return false;
     if (queueTab === 'active') {
       if (filterType === 'waiting' && q.status !== 'waiting') return false;
@@ -695,7 +848,7 @@ export default function DismissalDashboard() {
     return true;
   });
 
-  const avgWait = stats.avg_wait_seconds ? `${Math.floor(stats.avg_wait_seconds / 60)}:${String(Math.floor(stats.avg_wait_seconds % 60)).padStart(2, '0')}` : '--:--';
+  const avgWait = stats.avgWaitSeconds ? `${Math.floor(stats.avgWaitSeconds / 60)}:${String(Math.floor(stats.avgWaitSeconds % 60)).padStart(2, '0')}` : '--:--';
 
   if (loading) {
     return (
@@ -741,10 +894,10 @@ export default function DismissalDashboard() {
                   <p className="text-[10px] sm:text-xs text-gray-500 dark:text-slate-400 dark:text-slate-400 dark:text-slate-400 truncate max-w-[100px] sm:max-w-none">{currentSchool?.name || 'No School Selected'}</p>
                 </div>
               </div>
-              <div className={`hidden sm:flex ml-2 sm:ml-6 px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg items-center gap-2 ${dismissalActive ? 'bg-green-100 dark:bg-green-950/50 dark:bg-green-950/50' : 'bg-gray-100 dark:bg-slate-800'}`}>
-                <span className={`w-2 h-2 rounded-full ${dismissalActive ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`} />
-                <span className={`text-xs sm:text-sm font-medium ${dismissalActive ? 'text-green-700 dark:text-green-400' : 'text-gray-600 dark:text-slate-400'}`}>
-                  {dismissalActive ? 'Active' : session ? 'Paused' : 'Not Started'}
+              <div className={`flex ml-2 sm:ml-6 px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg items-center gap-2 ${sessionStatus === 'active' ? 'bg-green-100 dark:bg-green-950/50' : sessionStatus === 'completed' ? 'bg-blue-100 dark:bg-blue-950/50' : sessionStatus === 'offline/stale' ? 'bg-amber-100 dark:bg-amber-950/50' : 'bg-gray-100 dark:bg-slate-800'}`}>
+                <span className={`w-2 h-2 rounded-full ${sessionStatus === 'active' ? 'bg-green-500 animate-pulse' : sessionStatus === 'offline/stale' ? 'bg-amber-500' : 'bg-gray-400'}`} />
+                <span className={`text-xs sm:text-sm font-medium ${sessionStatus === 'active' ? 'text-green-700 dark:text-green-400' : sessionStatus === 'offline/stale' ? 'text-amber-700 dark:text-amber-300' : 'text-gray-600 dark:text-slate-400'}`}>
+                  {statusLabel(sessionStatus)}
                 </span>
               </div>
             </div>
@@ -789,58 +942,21 @@ export default function DismissalDashboard() {
                         <div className="p-4 text-center text-sm text-gray-400">No change requests</div>
                       ) : (
                         changeRequests.map((cr, i) => (
-                          <div key={cr.id || i} className={`p-3 border-b last:border-b-0 dark:border-slate-700 ${cr.status !== 'pending' ? 'opacity-70' : ''} hover:bg-gray-50 dark:hover:bg-slate-700/50`}>
+                          <div key={cr.id || i} className={`p-3 border-b last:border-b-0 dark:border-slate-700 ${cr.status === 'approved' ? 'opacity-60' : ''} hover:bg-gray-50 dark:hover:bg-slate-700/50`}>
                             <div className="flex items-center justify-between">
                               <p className="text-sm font-medium flex items-center gap-1.5">
                                 {cr.studentName}
                                 {cr.status === 'approved' && <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />}
-                                {cr.status === 'rejected' && <X className="w-3.5 h-3.5 text-red-500" />}
                               </p>
                               <span className="text-xs text-gray-400">{cr.createdAt ? new Date(cr.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</span>
                             </div>
-                            <div className="flex items-center gap-2 mt-0.5">
-                              <p className="text-xs text-gray-500">
-                                <span className="capitalize">{cr.fromType}</span> → <span className="capitalize">{cr.toType}</span>
-                                {cr.busRoute && <span> #{cr.busRoute}</span>}
-                              </p>
-                              <span className={`text-[10px] uppercase px-1.5 py-0.5 rounded ${cr.status === 'approved' ? 'bg-green-100 text-green-700 dark:bg-green-950/50 dark:text-green-300' : cr.status === 'rejected' ? 'bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-300' : cr.acknowledgedAt ? 'bg-blue-100 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300' : 'bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300'}`}>
-                                {cr.status === 'pending' && cr.acknowledgedAt ? 'Acknowledged' : cr.status}
-                              </span>
-                            </div>
+                            <p className="text-xs text-gray-500 mt-0.5">
+                              <span className="capitalize">{cr.fromType}</span> → <span className="capitalize">{cr.toType}</span>
+                            </p>
                             {cr.note && (
                               <p className="text-xs bg-amber-50 dark:bg-amber-900/30 text-amber-800 dark:text-amber-200 rounded px-2 py-1 mt-1">
                                 <MessageSquare className="w-3 h-3 inline mr-1" />{cr.note}
                               </p>
-                            )}
-                            {cr.status === 'pending' && (
-                              <div className="flex flex-wrap gap-1.5 mt-2">
-                                {!cr.acknowledgedAt && (
-                                  <button
-                                    type="button"
-                                    disabled={changeActionId === cr.id}
-                                    onClick={() => handleAcknowledgeChangeRequest(cr.id)}
-                                    className="px-2 py-1 text-xs rounded bg-blue-50 text-blue-700 hover:bg-blue-100 disabled:opacity-60 dark:bg-blue-950/40 dark:text-blue-300"
-                                  >
-                                    Acknowledge
-                                  </button>
-                                )}
-                                <button
-                                  type="button"
-                                  disabled={changeActionId === cr.id}
-                                  onClick={() => handleReviewChangeRequest(cr.id, 'approved')}
-                                  className="px-2 py-1 text-xs rounded bg-green-600 text-white hover:bg-green-700 disabled:opacity-60"
-                                >
-                                  Approve
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={changeActionId === cr.id}
-                                  onClick={() => handleReviewChangeRequest(cr.id, 'rejected')}
-                                  className="px-2 py-1 text-xs rounded bg-red-50 text-red-700 hover:bg-red-100 disabled:opacity-60 dark:bg-red-950/40 dark:text-red-300"
-                                >
-                                  Reject
-                                </button>
-                              </div>
                             )}
                           </div>
                         ))
@@ -852,15 +968,21 @@ export default function DismissalDashboard() {
                 <Button variant={soundEnabled ? 'secondary' : 'ghost'} size="sm" onClick={() => setSoundEnabled(!soundEnabled)}>
                   {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
                 </Button>
-                {dismissalActive ? (
-                  <button onClick={() => setShowEndConfirm(true)} className="flex items-center gap-1 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-lg transition-colors">
-                    <X className="w-4 h-4" />
-                    <span className="hidden sm:inline">End</span>
-                  </button>
+                {session?.status === 'active' ? (
+                  <>
+                    <Button variant="secondary" size="sm" onClick={handleToggleDismissal}>
+                      <Pause className="w-4 h-4" />
+                      <span className="hidden sm:inline ml-1">Pause</span>
+                    </Button>
+                    <button onClick={() => setShowEndConfirm(true)} className="flex items-center gap-1 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-lg transition-colors">
+                      <X className="w-4 h-4" />
+                      <span className="hidden sm:inline">End</span>
+                    </button>
+                  </>
                 ) : (
-                  <Button variant="success" size="sm" onClick={handleToggleDismissal}>
-                    <Play className="w-4 h-4" />
-                    <span className="hidden sm:inline ml-1">Start</span>
+                  <Button variant="success" size="sm" onClick={handleToggleDismissal} disabled={session?.status === 'completed' || realtimeStale}>
+                    {session?.status === 'paused' ? <Play className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+                    <span className="hidden sm:inline ml-1">{session?.status === 'paused' ? 'Resume' : 'Start'}</span>
                   </Button>
                 )}
                 <Button variant="ghost" size="sm" onClick={() => { logout(); navigate('/login'); }}>
@@ -870,14 +992,23 @@ export default function DismissalDashboard() {
             </div>
           </div>
         </div>
+        {dashboardError && (
+          <div className="bg-amber-50 dark:bg-amber-950/40 border-t border-amber-200 dark:border-amber-800 px-4 py-2">
+            <div className="flex items-center gap-3">
+              <AlertCircle className="w-5 h-5 text-amber-500" />
+              <span className="text-sm text-amber-800 dark:text-amber-200 font-medium">{dashboardError}</span>
+              <Button variant="ghost" size="sm" className="ml-auto text-amber-700" onClick={() => setDashboardError(null)}>Dismiss</Button>
+            </div>
+          </div>
+        )}
         {alerts.length > 0 && (
           <div className="bg-red-50 dark:bg-red-950/40 border-t border-red-200 dark:border-red-800 px-4 py-2">
             <div className="flex items-center gap-3">
               <AlertTriangle className="w-5 h-5 text-red-500" />
               <span className="text-sm text-red-700 dark:text-red-400 font-medium">
-                Custody alert: {alerts[0].person_name} - {alerts[0].alert_type} ({alerts[0].student_first_name} {alerts[0].student_last_name})
+                Custody alert: {alerts[0].personName || alerts[0].person_name} - {alerts[0].alertType || alerts[0].alert_type} ({alerts[0].studentName || `${alerts[0].studentFirstName || alerts[0].student_first_name || ''} ${alerts[0].studentLastName || alerts[0].student_last_name || ''}`.trim()})
               </span>
-              <Button variant="ghost" size="sm" className="ml-auto text-red-600">View Details</Button>
+              <span className="ml-auto text-xs text-red-600">{alerts.length} active</span>
             </div>
           </div>
         )}
@@ -984,7 +1115,7 @@ export default function DismissalDashboard() {
                       placeholder="e.g. 142"
                       className="flex-1 px-3 py-2 border dark:border-slate-600 rounded-lg text-lg font-mono text-center tracking-widest bg-white dark:bg-slate-800 dark:text-white"
                     />
-                    <Button variant="primary" size="md" onClick={handleCarNumberCheckIn} disabled={carNumberLoading || !carNumberInput.trim()}>
+                    <Button variant="primary" size="md" onClick={handleCarNumberCheckIn} disabled={carNumberLoading || !carNumberInput.trim() || !isSessionActive}>
                       {carNumberLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />}
                     </Button>
                   </form>
@@ -999,6 +1130,25 @@ export default function DismissalDashboard() {
                   <Button variant="secondary" size="sm" className="w-full justify-start" onClick={() => setShowStudentLookup(true)}>
                     <Search className="w-4 h-4 mr-2" /> Find Student
                   </Button>
+                </Card>
+                <Card className="p-3 sm:p-4">
+                  <h3 className="font-semibold mb-2 text-sm dark:text-white">Pickup Zone</h3>
+                  <div className={`grid gap-2 ${pickupZones.length <= 2 ? 'grid-cols-2' : 'grid-cols-3'}`}>
+                    {pickupZones.map(zone => {
+                      const count = queue.filter(q => q.zone === zone.id && q.status === 'called').length;
+                      const isSelected = selectedZone === zone.id;
+                      return (
+                        <button key={zone.id} onClick={() => setSelectedZone(zone.id)}
+                          className={`p-2 rounded-lg text-center transition-colors ${
+                            isSelected ? 'ring-2 ring-indigo-500 bg-indigo-50 dark:bg-indigo-950/40' :
+                            count > 0 ? 'bg-green-100 dark:bg-green-950/50' : 'bg-gray-100 dark:bg-slate-700 border border-transparent dark:border-slate-600'
+                          }`}>
+                          <p className="text-sm font-bold truncate dark:text-white">{zone.name}</p>
+                          <p className="text-[10px] text-gray-500 dark:text-slate-400">{count} called</p>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </Card>
               </div>
 
@@ -1050,13 +1200,7 @@ export default function DismissalDashboard() {
                   </div>
                   <div className="max-h-[calc(100vh-320px)] overflow-y-auto">
                     {(() => {
-                      const grouped = {};
-                      filteredQueue.forEach(item => {
-                        const key = item.guardian_name || 'Unknown';
-                        if (!grouped[key]) grouped[key] = [];
-                        grouped[key].push(item);
-                      });
-                      const groups = Object.entries(grouped);
+                      const groups = queueGroups(filteredQueue);
                       if (groups.length === 0) {
                         return (
                           <div className="p-8 text-center text-gray-500 dark:text-slate-400">
@@ -1074,12 +1218,14 @@ export default function DismissalDashboard() {
                           </div>
                         );
                       }
-                      return groups.map(([groupName, students]) => (
-                        <QueueGroup key={groupName} name={groupName} students={students}
-                          onPickupAll={() => handlePickupAll(students)}
+                      return groups.map(group => (
+                        <QueueGroup key={group.key} name={group.name} students={group.students} pickupGroupId={group.pickupGroupId}
+                          onPickupAll={() => handlePickupAll(group.students)}
                           onCall={handleCallStudent}
                           onPickup={handleMarkPickedUp}
-                          pickupsByStudent={pickupsByStudent} />
+                          pickupsByStudent={pickupsByStudent}
+                          custodyAlertsByStudent={custodyAlertsByStudent}
+                          actionsDisabled={!isSessionActive} />
                       ));
                     })()}
                   </div>
@@ -1105,7 +1251,7 @@ export default function DismissalDashboard() {
                       className="flex-1 px-3 py-2 border dark:border-slate-600 rounded-lg text-lg font-mono text-center tracking-widest bg-white dark:bg-slate-800 dark:text-white"
                       autoFocus
                     />
-                    <Button variant="primary" size="md" onClick={handleCarNumberCheckIn} disabled={carNumberLoading || !carNumberInput.trim()}>
+                    <Button variant="primary" size="md" onClick={handleCarNumberCheckIn} disabled={carNumberLoading || !carNumberInput.trim() || !isSessionActive}>
                       {carNumberLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />}
                     </Button>
                   </form>
@@ -1118,9 +1264,11 @@ export default function DismissalDashboard() {
                 <Card className="p-4">
                   <div className="flex items-center justify-between mb-3">
                     <h3 className="font-semibold dark:text-white">Pickup Zones</h3>
-                    <Button variant="ghost" size="sm" onClick={() => setShowZoneManager(true)}>
-                      <Settings className="w-4 h-4" />
-                    </Button>
+                    {canManageSetup && (
+                      <Button variant="ghost" size="sm" onClick={() => setShowZoneManager(true)}>
+                        <Settings className="w-4 h-4" />
+                      </Button>
+                    )}
                   </div>
                   <div className={`grid gap-2 ${pickupZones.length <= 2 ? 'grid-cols-2' : pickupZones.length === 3 ? 'grid-cols-3' : 'grid-cols-2'}`}>
                     {pickupZones.map(zone => {
@@ -1133,7 +1281,7 @@ export default function DismissalDashboard() {
                             count > 0 ? 'bg-green-100 dark:bg-green-950/50' : 'bg-gray-100 dark:bg-slate-700 border border-transparent dark:border-slate-600'
                           }`}>
                           <p className="text-lg font-bold truncate dark:text-white">{zone.name}</p>
-                          <p className="text-xs text-gray-500 dark:text-slate-400">{count} waiting</p>
+                          <p className="text-xs text-gray-500 dark:text-slate-400">{count} called</p>
                         </button>
                       );
                     })}
@@ -1198,7 +1346,8 @@ export default function DismissalDashboard() {
                             <div className="divide-y dark:divide-slate-700">
                               {homeroomStudents.map(student => {
                                 const override = overrides[student.id];
-                                const effectiveType = override ? override.overrideType : (student.dismissalType || student.dismissal_type);
+                                const effectiveType = override ? override.overrideType : (student.effectiveDismissalType || student.dismissalType || student.dismissal_type);
+                                const effectiveBusRoute = override?.busRoute || student.effectiveBusRoute || student.busRoute || student.bus_route || '';
                                 const isOverridden = !!override;
                                 const typeColors = { car: 'blue', bus: 'yellow', walker: 'green', afterschool: 'purple' };
                                 const typeLabels = { car: 'Car', bus: 'Bus', walker: 'Walker', afterschool: 'After School' };
@@ -1234,9 +1383,11 @@ export default function DismissalDashboard() {
                                           setShowOverrideFor(student.id);
                                           setOverrideType(effectiveType || '');
                                           setOverrideReason(override?.reason || '');
+                                          setOverrideBusRoute(effectiveType === 'bus' ? effectiveBusRoute : '');
                                         }}
+                                        disabled={!isSessionActive}
                                         className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-colors hover:ring-2 hover:ring-indigo-300 dark:hover:ring-indigo-600"
-                                        style={{ cursor: 'pointer' }}
+                                        style={{ cursor: isSessionActive ? 'pointer' : 'not-allowed' }}
                                       >
                                         <Badge variant={typeColors[effectiveType] || 'default'} size="sm">
                                           <TypeIcon className="w-3 h-3" />
@@ -1269,7 +1420,7 @@ export default function DismissalDashboard() {
           )}
 
           {selectedView === 'buses' && (() => {
-            const allBusQueue = queue.filter(q => q.check_in_method === 'bus_number');
+            const allBusQueue = queue.filter(q => (q.checkInMethod ?? q.check_in_method) === 'bus_number');
             const activeBusCount = allBusQueue.filter(q => q.status !== 'dismissed').length;
             const dismissedBusCount = allBusQueue.filter(q => q.status === 'dismissed').length;
 
@@ -1278,13 +1429,7 @@ export default function DismissalDashboard() {
               ? allBusQueue.filter(q => q.status !== 'dismissed')
               : allBusQueue.filter(q => q.status === 'dismissed');
 
-            // Group by guardian_name (e.g. "Bus #42")
-            const busByRoute = {};
-            busQueue.forEach(q => {
-              const key = q.guardian_name || 'Unknown';
-              if (!busByRoute[key]) busByRoute[key] = [];
-              busByRoute[key].push(q);
-            });
+            const busGroups = queueGroups(busQueue);
             return (
               <div className="space-y-4">
                 <Card className="p-4">
@@ -1316,7 +1461,7 @@ export default function DismissalDashboard() {
                       placeholder="e.g. 42"
                       className="flex-1 px-3 py-2 border dark:border-slate-600 rounded-lg text-lg font-mono text-center tracking-widest bg-white dark:bg-slate-800 dark:text-white"
                     />
-                    <Button variant="primary" size="md" onClick={handleBusNumberCheckIn} disabled={busNumberLoading || !busNumberInput.trim()}>
+                    <Button variant="primary" size="md" onClick={handleBusNumberCheckIn} disabled={busNumberLoading || !busNumberInput.trim() || !isSessionActive}>
                       {busNumberLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />}
                     </Button>
                   </form>
@@ -1327,13 +1472,15 @@ export default function DismissalDashboard() {
                   )}
                 </Card>
 
-                {Object.keys(busByRoute).length > 0 ? (
-                  Object.entries(busByRoute).map(([routeName, students]) => (
-                    <QueueGroup key={routeName} name={routeName} students={students}
-                      onPickupAll={() => handlePickupAll(students)}
+                {busGroups.length > 0 ? (
+                  busGroups.map(group => (
+                    <QueueGroup key={group.key} name={group.name} students={group.students} pickupGroupId={group.pickupGroupId}
+                      onPickupAll={() => handlePickupAll(group.students)}
                       onCall={handleCallStudent}
                       onPickup={handleMarkPickedUp}
-                      pickupsByStudent={pickupsByStudent} />
+                      pickupsByStudent={pickupsByStudent}
+                      custodyAlertsByStudent={custodyAlertsByStudent}
+                      actionsDisabled={!isSessionActive} />
                   ))
                 ) : (
                   <Card>
@@ -1348,7 +1495,7 @@ export default function DismissalDashboard() {
           })()}
 
           {selectedView === 'walkers' && (() => {
-            const allWalkerQueue = queue.filter(q => q.check_in_method === 'walker');
+            const allWalkerQueue = queue.filter(q => (q.checkInMethod ?? q.check_in_method) === 'walker');
             const activeWalkerCount = allWalkerQueue.filter(q => q.status !== 'dismissed').length;
             const dismissedWalkerCount = allWalkerQueue.filter(q => q.status === 'dismissed').length;
             const walkerQueue = walkerQueueTab === 'active'
@@ -1419,13 +1566,13 @@ export default function DismissalDashboard() {
                           variant="success"
                           size="sm"
                           onClick={handleReleaseSelectedWalkers}
-                          disabled={walkerLoading || (walkerViewTab === 'grade' ? selectedGrades.length === 0 : selectedWalkerHomerooms.length === 0)}
+                          disabled={walkerLoading || !isSessionActive || (walkerViewTab === 'grade' ? selectedGrades.length === 0 : selectedWalkerHomerooms.length === 0)}
                         >
                           {walkerLoading ? <RefreshCw className="w-4 h-4 animate-spin mr-1" /> : <PersonStanding className="w-4 h-4 mr-1" />}
                           <span className="hidden sm:inline">Dismiss Selected {walkerViewTab === 'grade' ? `(${selectedGrades.length} grades)` : `(${selectedWalkerHomerooms.length} homerooms)`}</span>
                           <span className="sm:hidden">Dismiss ({walkerViewTab === 'grade' ? selectedGrades.length : selectedWalkerHomerooms.length})</span>
                         </Button>
-                        <Button variant="danger" size="sm" onClick={handleReleaseWalkers} disabled={walkerLoading}>
+                        <Button variant="danger" size="sm" onClick={handleReleaseWalkers} disabled={walkerLoading || !isSessionActive}>
                           {walkerLoading ? <RefreshCw className="w-4 h-4 animate-spin mr-1" /> : <PersonStanding className="w-4 h-4 mr-1" />}
                           <span className="hidden sm:inline">Dismiss All Walkers</span>
                           <span className="sm:hidden">All</span>
@@ -1488,11 +1635,11 @@ export default function DismissalDashboard() {
                             <Check className="w-4 h-4 text-green-600" />
                           </div>
                           <div className="flex-1">
-                            <p className="font-medium text-sm">{student.first_name} {student.last_name}</p>
-                            <p className="text-xs text-gray-500 dark:text-slate-400">{student.guardian_name}</p>
+                            <p className="font-medium text-sm">{student.firstName || student.first_name} {student.lastName || student.last_name}</p>
+                            <p className="text-xs text-gray-500 dark:text-slate-400">{student.guardianName || student.guardian_name}</p>
                           </div>
                           <span className="text-xs text-gray-400 dark:text-slate-500">
-                            {student.dismissed_at && new Date(student.dismissed_at).toLocaleTimeString([], { timeZone: currentSchool?.timezone, hour: '2-digit', minute: '2-digit' })}
+                            {(student.dismissedAt || student.dismissed_at) && new Date(student.dismissedAt || student.dismissed_at).toLocaleTimeString([], { timeZone: currentSchool?.timezone, hour: '2-digit', minute: '2-digit' })}
                           </span>
                         </div>
                       ))}
@@ -1546,8 +1693,9 @@ export default function DismissalDashboard() {
                             </div>
                           </div>
                           <button
-                            onClick={() => { setShowOverrideFor(item.studentId); setOverrideType('car'); setOverrideReason(''); }}
-                            className="text-sm text-indigo-600 hover:text-indigo-700 font-medium"
+                            onClick={() => { setShowOverrideFor(item.studentId); setOverrideType('car'); setOverrideReason(''); setOverrideBusRoute(''); }}
+                            disabled={!isSessionActive}
+                            className="text-sm text-indigo-600 hover:text-indigo-700 font-medium disabled:text-gray-400 disabled:cursor-not-allowed"
                           >
                             Change
                           </button>
@@ -1568,7 +1716,7 @@ export default function DismissalDashboard() {
           <div className="bg-white dark:bg-slate-900 rounded-xl shadow-xl w-full max-w-sm">
             <div className="p-4 border-b dark:border-slate-700 flex items-center justify-between">
               <h2 className="font-bold dark:text-white">Change Dismissal for Today</h2>
-              <button onClick={() => setShowOverrideFor(null)} className="p-1"><X className="w-5 h-5 dark:text-slate-400" /></button>
+              <button onClick={resetOverrideModal} className="p-1"><X className="w-5 h-5 dark:text-slate-400" /></button>
             </div>
             <div className="p-4 space-y-4">
               <p className="text-xs text-gray-500 dark:text-slate-400">This change only applies to today.</p>
@@ -1598,11 +1746,61 @@ export default function DismissalDashboard() {
                 <input type="text" value={overrideReason} onChange={(e) => setOverrideReason(e.target.value)}
                   placeholder="Reason (optional)" className="w-full px-3 py-2 border dark:border-slate-600 rounded-lg text-sm dark:bg-slate-800 dark:text-white" />
               )}
+              {overrideType === 'bus' && (
+                <select
+                  value={overrideBusRoute}
+                  onChange={(e) => setOverrideBusRoute(e.target.value)}
+                  className="w-full px-3 py-2 border dark:border-slate-600 rounded-lg text-sm dark:bg-slate-800 dark:text-white"
+                >
+                  <option value="">Select bus route</option>
+                  {busRoutes.map(route => (
+                    <option key={route.id || route.routeNumber} value={route.routeNumber}>{route.routeNumber}</option>
+                  ))}
+                </select>
+              )}
               <div className="flex gap-2">
-                <Button variant="secondary" className="flex-1" onClick={() => setShowOverrideFor(null)}>Cancel</Button>
+                <Button variant="secondary" className="flex-1" onClick={resetOverrideModal}>Cancel</Button>
+                {overrides[showOverrideFor] && (
+                  <Button variant="secondary" className="flex-1" onClick={handleOverrideRevert}>Revert</Button>
+                )}
                 <Button variant="primary" className="flex-1" onClick={handleOverrideSubmit}
-                  disabled={overrideType === 'afterschool' && !overrideReason.trim()}>
+                  disabled={(overrideType === 'afterschool' && !overrideReason.trim()) || (overrideType === 'bus' && !overrideBusRoute.trim()) || !isSessionActive}>
                   Save
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Custody Acknowledgement Modal */}
+      {custodyPickup && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-xl shadow-xl w-full max-w-md">
+            <div className="p-4 border-b dark:border-slate-700 flex items-center justify-between">
+              <h2 className="font-bold text-red-700 dark:text-red-300 flex items-center gap-2">
+                <Shield className="w-5 h-5" />
+                Custody Alert
+              </h2>
+              <button onClick={() => setCustodyPickup(null)} className="p-1"><X className="w-5 h-5 dark:text-slate-400" /></button>
+            </div>
+            <div className="p-4 space-y-3">
+              <p className="text-sm text-gray-700 dark:text-slate-200">
+                Acknowledge the active custody alert before completing pickup for {custodyPickup.item?.firstName || custodyPickup.item?.first_name} {custodyPickup.item?.lastName || custodyPickup.item?.last_name}.
+              </p>
+              <div className="space-y-2">
+                {custodyPickup.alerts.map(alert => (
+                  <div key={alert.id} className="rounded-lg border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/30 p-3 text-sm">
+                    <p className="font-semibold text-red-800 dark:text-red-200">{alert.personName || alert.person_name}</p>
+                    <p className="text-red-700 dark:text-red-300 capitalize">{(alert.alertType || alert.alert_type || '').replace(/_/g, ' ')}</p>
+                    {alert.notes && <p className="text-red-700 dark:text-red-300 mt-1">{alert.notes}</p>}
+                  </div>
+                ))}
+              </div>
+              <div className="flex gap-2 pt-2">
+                <Button variant="secondary" className="flex-1" onClick={() => setCustodyPickup(null)}>Cancel</Button>
+                <Button variant="danger" className="flex-1" onClick={() => handleMarkPickedUp(custodyPickup.item || custodyPickup.queueId, { custodyAcknowledged: true })}>
+                  Acknowledge & Complete
                 </Button>
               </div>
             </div>
@@ -1619,11 +1817,11 @@ export default function DismissalDashboard() {
                 <AlertTriangle className="w-6 h-6 text-red-600 dark:text-red-400" />
               </div>
               <h2 className="text-lg font-bold dark:text-white">End Today's Dismissal?</h2>
-              <p className="text-sm text-gray-500 dark:text-slate-400 mt-2">This will end the current dismissal session and reset all queue entries. Parents will see "Waiting for Dismissal."</p>
+              <p className="text-sm text-gray-500 dark:text-slate-400 mt-2">This will complete today’s dismissal session after every queued student has been picked up. Queue history will remain available for review.</p>
             </div>
             <div className="flex gap-3">
               <Button variant="outline" className="flex-1" onClick={() => setShowEndConfirm(false)}>Cancel</Button>
-              <Button variant="destructive" className="flex-1" onClick={handleEndDismissal}>End Dismissal</Button>
+              <Button variant="danger" className="flex-1" onClick={handleEndDismissal}>End Dismissal</Button>
             </div>
           </div>
         </div>
@@ -1861,13 +2059,17 @@ function QrScannerModal({ onScan, onClose }) {
   );
 }
 
-function QueueGroup({ name, students, onPickupAll, onCall, onPickup, pickupsByStudent }) {
-  const eligible = students.filter(s => s.status === 'released');
+function QueueGroup({ name, students, pickupGroupId, onPickupAll, onCall, onPickup, pickupsByStudent, custodyAlertsByStudent, actionsDisabled }) {
+  const eligible = students.filter(s => {
+    const studentId = s.studentId || s.student_id;
+    return s.status === 'released' && !(custodyAlertsByStudent?.[studentId]?.length);
+  });
+  const hasStableBatch = !!pickupGroupId;
 
   if (students.length === 1) {
     return (
       <div className="border-b border-gray-100 dark:border-slate-800">
-        <QueueItem item={students[0]} position={1} onCall={onCall} onPickup={onPickup} authorizedPickups={pickupsByStudent?.[students[0].student_id] || []} />
+        <QueueItem item={students[0]} position={students[0].position || 1} onCall={onCall} onPickup={onPickup} authorizedPickups={pickupsByStudent?.[students[0].studentId || students[0].student_id] || []} custodyAlerts={custodyAlertsByStudent?.[students[0].studentId || students[0].student_id] || []} actionsDisabled={actionsDisabled} />
       </div>
     );
   }
@@ -1879,7 +2081,7 @@ function QueueGroup({ name, students, onPickupAll, onCall, onPickup, pickupsBySt
           <span className="font-semibold text-sm sm:text-base text-gray-800 dark:text-slate-200">{name}</span>
           <span className="text-xs bg-gray-200 dark:bg-slate-700 text-gray-600 dark:text-slate-300 rounded-full px-2 py-0.5">{students.length} students</span>
         </div>
-        {eligible.length > 0 && (
+        {hasStableBatch && eligible.length > 0 && (
           <button
             onClick={onPickupAll}
             className="text-xs sm:text-sm px-3 py-1 bg-green-600 dark:bg-green-700 text-white rounded-lg hover:bg-green-700 transition-colors"
@@ -1890,20 +2092,20 @@ function QueueGroup({ name, students, onPickupAll, onCall, onPickup, pickupsBySt
       </div>
       <div className="divide-y divide-gray-100 dark:divide-slate-800">
         {students.map((item, idx) => (
-          <QueueItem key={item.id} item={item} position={idx + 1} onCall={onCall} onPickup={onPickup} authorizedPickups={pickupsByStudent?.[item.student_id] || []} />
+          <QueueItem key={item.id} item={item} position={item.position || idx + 1} onCall={onCall} onPickup={onPickup} authorizedPickups={pickupsByStudent?.[item.studentId || item.student_id] || []} custodyAlerts={custodyAlertsByStudent?.[item.studentId || item.student_id] || []} actionsDisabled={actionsDisabled} />
         ))}
       </div>
     </div>
   );
 }
 
-function QueueItem({ item, position, onCall, onPickup, authorizedPickups }) {
+function QueueItem({ item, position, onCall, onPickup, authorizedPickups, custodyAlerts, actionsDisabled }) {
   const getStatusColor = (status) => {
     switch (status) {
       case 'waiting': return 'yellow';
       case 'called': return 'red';
       case 'released': return 'green';
-      case 'held': return 'orange';
+
       case 'delayed': return 'red';
       default: return 'default';
     }
@@ -1918,7 +2120,7 @@ function QueueItem({ item, position, onCall, onPickup, authorizedPickups }) {
     }
   };
 
-  const CheckInIcon = getCheckInIcon(item.check_in_method);
+  const CheckInIcon = getCheckInIcon(item.checkInMethod || item.check_in_method);
   // Calculate wait time: from check-in to dismissal (or now if not yet dismissed)
   const getWaitTime = () => {
     if (!item.check_in_time) return 0;
@@ -1939,7 +2141,7 @@ function QueueItem({ item, position, onCall, onPickup, authorizedPickups }) {
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <p className="font-medium text-sm sm:text-base truncate">{item.first_name} {item.last_name}</p>
+            <p className="font-medium text-sm sm:text-base truncate">{item.firstName || item.first_name} {item.lastName || item.last_name}</p>
             <Badge variant={getStatusColor(item.status)} size="sm">
               {item.status === 'released' ? 'In Transit' : item.status === 'waiting' ? 'Waiting' : item.status === 'called' ? 'Called' : item.status}
             </Badge>
@@ -1952,7 +2154,16 @@ function QueueItem({ item, position, onCall, onPickup, authorizedPickups }) {
             <span className="hidden sm:inline">•</span>
             <span className="hidden sm:inline">{item.homeroom_name || 'No homeroom'}</span>
             <span>•</span>
-            <span className="truncate">{item.guardian_name}</span>
+            <span className="truncate">{item.guardianName || item.guardian_name}</span>
+            {custodyAlerts?.length > 0 && (
+              <>
+                <span>•</span>
+                <span className="flex items-center gap-1 text-red-600 dark:text-red-400 font-medium">
+                  <Shield className="w-3 h-3" />
+                  Custody
+                </span>
+              </>
+            )}
             {item.zone && (
               <>
                 <span>•</span>
@@ -1982,22 +2193,17 @@ function QueueItem({ item, position, onCall, onPickup, authorizedPickups }) {
         </div>
         <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
           {item.status === 'waiting' && (
-            <Button variant="primary" size="sm" onClick={() => onCall(item.id)}>
-              <Send className="w-4 h-4" /><span className="hidden sm:inline ml-1">Call</span>
-            </Button>
-          )}
-          {(item.status === 'held' || item.status === 'delayed') && (
-            <Button variant="primary" size="sm" onClick={() => onCall(item.id)}>
+            <Button variant="primary" size="sm" onClick={() => onCall(item.id)} disabled={actionsDisabled}>
               <Send className="w-4 h-4" /><span className="hidden sm:inline ml-1">Call</span>
             </Button>
           )}
           {item.status === 'called' && (
-            <Button variant="secondary" size="sm" onClick={() => onCall(item.id)}>
+            <Button variant="secondary" size="sm" onClick={() => onCall(item.id)} disabled={actionsDisabled}>
               <Send className="w-4 h-4" /><span className="hidden sm:inline ml-1">Re-call</span>
             </Button>
           )}
           {item.status === 'released' && (
-            <Button variant="success" size="sm" onClick={() => onPickup(item.id)}>
+            <Button variant="success" size="sm" onClick={() => onPickup(item)} disabled={actionsDisabled}>
               <Check className="w-4 h-4" /><span className="hidden sm:inline ml-1">Pickup Complete</span>
             </Button>
           )}

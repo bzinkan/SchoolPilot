@@ -1414,19 +1414,6 @@ export async function getOrCreateSession(
     )
     .limit(1);
 
-  if (existing && existing.status === "completed") {
-    // Reset completed session so admin can start a new dismissal today
-    // Clear old queue entries first
-    await dbInstance
-      .delete(dismissalQueue)
-      .where(eq(dismissalQueue.sessionId, existing.id));
-    const [reset] = await dbInstance
-      .update(dismissalSessions)
-      .set({ status: "pending", endedAt: null, startedAt: null })
-      .where(eq(dismissalSessions.id, existing.id))
-      .returning();
-    return reset!;
-  }
   if (existing) return existing;
 
   // Create new with conflict handling
@@ -1450,6 +1437,24 @@ export async function getOrCreateSession(
     )
     .limit(1);
   return raced!;
+}
+
+export async function getSessionBySchoolAndDate(
+  schoolId: string,
+  date: string,
+  dbInstance: typeof db = db
+): Promise<DismissalSession | undefined> {
+  const [session] = await dbInstance
+    .select()
+    .from(dismissalSessions)
+    .where(
+      and(
+        eq(dismissalSessions.schoolId, schoolId),
+        eq(dismissalSessions.date, date)
+      )
+    )
+    .limit(1);
+  return session;
 }
 
 export async function getSessionById(
@@ -1891,11 +1896,42 @@ export async function getCustodyAlertsBySchool(
       createdBy: custodyAlerts.createdBy,
       active: custodyAlerts.active,
       createdAt: custodyAlerts.createdAt,
+      studentFirstName: students.firstName,
+      studentLastName: students.lastName,
     })
     .from(custodyAlerts)
     .innerJoin(students, eq(students.id, custodyAlerts.studentId))
     .where(
       and(eq(students.schoolId, schoolId), eq(custodyAlerts.active, true))
+    )
+    .orderBy(desc(custodyAlerts.createdAt));
+  return rows as CustodyAlert[];
+}
+
+export async function getActiveCustodyAlertsForStudent(
+  studentId: string
+): Promise<CustodyAlert[]> {
+  const rows = await db
+    .select({
+      id: custodyAlerts.id,
+      studentId: custodyAlerts.studentId,
+      personName: custodyAlerts.personName,
+      alertType: custodyAlerts.alertType,
+      notes: custodyAlerts.notes,
+      courtOrder: custodyAlerts.courtOrder,
+      createdBy: custodyAlerts.createdBy,
+      active: custodyAlerts.active,
+      createdAt: custodyAlerts.createdAt,
+      studentFirstName: students.firstName,
+      studentLastName: students.lastName,
+    })
+    .from(custodyAlerts)
+    .innerJoin(students, eq(students.id, custodyAlerts.studentId))
+    .where(
+      and(
+        eq(custodyAlerts.studentId, studentId),
+        eq(custodyAlerts.active, true)
+      )
     )
     .orderBy(desc(custodyAlerts.createdAt));
   return rows as CustodyAlert[];

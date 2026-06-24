@@ -712,6 +712,17 @@ async function runStartupMigrations(): Promise<void> {
     console.warn("[migration] dismissal_overrides migration skipped:", (err as Error).message);
   }
 
+  // Dismissal queue stable pickup grouping. Friendly guardian/family labels are
+  // still displayed in the UI, but batch actions use these stable keys.
+  try {
+    await pool.query(`ALTER TABLE IF EXISTS dismissal_queue ADD COLUMN IF NOT EXISTS pickup_group_id TEXT`);
+    await pool.query(`ALTER TABLE IF EXISTS dismissal_queue ADD COLUMN IF NOT EXISTS pickup_group_label TEXT`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS dismissal_queue_pickup_group_idx ON dismissal_queue (session_id, pickup_group_id)`);
+    console.log("[migration] dismissal_queue pickup grouping columns ready");
+  } catch (err) {
+    console.warn("[migration] dismissal_queue pickup grouping migration skipped:", (err as Error).message);
+  }
+
   // Dismissal change acknowledgment fields (read/ack is separate from review).
   try {
     await pool.query(`ALTER TABLE IF EXISTS dismissal_changes ADD COLUMN IF NOT EXISTS acknowledged_by TEXT`);
@@ -741,42 +752,9 @@ async function runStartupMigrations(): Promise<void> {
     await pool.query(`ALTER TABLE groups ADD COLUMN IF NOT EXISTS block_start_time TEXT`);
     await pool.query(`ALTER TABLE groups ADD COLUMN IF NOT EXISTS block_end_time TEXT`);
     await pool.query(`ALTER TABLE groups ADD COLUMN IF NOT EXISTS schedule_skipped_date TEXT`);
-    await pool.query(`ALTER TABLE groups ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'`);
-    await pool.query(`ALTER TABLE groups ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP`);
-    await pool.query(`ALTER TABLE groups ADD COLUMN IF NOT EXISTS school_year TEXT`);
-    await pool.query(`ALTER TABLE groups ADD COLUMN IF NOT EXISTS term TEXT`);
-    await pool.query(`ALTER TABLE groups ADD COLUMN IF NOT EXISTS google_classroom_course_id TEXT`);
-    await pool.query(`CREATE INDEX IF NOT EXISTS groups_status_idx ON groups (status)`);
-    await pool.query(`
-      CREATE UNIQUE INDEX IF NOT EXISTS groups_school_google_course_unique
-      ON groups (school_id, google_classroom_course_id)
-      WHERE google_classroom_course_id IS NOT NULL
-    `);
     console.log("[migration] class block scheduling columns ready");
   } catch (err) {
     console.warn("[migration] class block scheduling migration skipped:", (err as Error).message);
-  }
-
-  // Ensure roster membership idempotency before API batch assignment relies on
-  // ON CONFLICT. Keep the oldest row for each duplicated group/student pair.
-  try {
-    await pool.query(`
-      DELETE FROM group_students a
-      USING group_students b
-      WHERE a.group_id = b.group_id
-        AND a.student_id = b.student_id
-        AND (
-          a.assigned_at > b.assigned_at
-          OR (a.assigned_at = b.assigned_at AND a.id > b.id)
-        )
-    `);
-    await pool.query(`
-      CREATE UNIQUE INDEX IF NOT EXISTS group_students_unique
-      ON group_students (group_id, student_id)
-    `);
-    console.log("[migration] group_students unique membership ready");
-  } catch (err) {
-    console.warn("[migration] group_students uniqueness migration skipped:", (err as Error).message);
   }
 
   // Add tax exemption metadata columns used by billing/admin school queries
