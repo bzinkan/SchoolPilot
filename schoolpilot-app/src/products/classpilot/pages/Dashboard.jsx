@@ -123,6 +123,7 @@ export default function Dashboard() {
   const [raisedHands, setRaisedHands] = useState(new Map());
   const [studentMessages, setStudentMessages] = useState([]);
   const [chatReplies, setChatReplies] = useState({});
+  const [startGroupId, setStartGroupId] = useState("");
   const dismissedMessageIds = useRef(new Set());
   const dismissedMessagesInitialized = useRef(false);
   // eslint-disable-next-line react-hooks/refs
@@ -201,6 +202,16 @@ export default function Dashboard() {
     queryFn: () => apiRequest('GET', '/teacher/groups'),
     select: (data) => Array.isArray(data) ? data : data?.groups ?? [],
   });
+
+  useEffect(() => {
+    if (groups.length === 0) {
+      setStartGroupId("");
+      return;
+    }
+    if (!groups.some((group) => group.id === startGroupId)) {
+      setStartGroupId(groups[0].id);
+    }
+  }, [groups, startGroupId]);
 
   const { data: adminTeachingGroups = [], isLoading: adminTeachingGroupsLoading } = useQuery({
     queryKey: ['/api/teacher/groups', 'mine'],
@@ -1476,24 +1487,35 @@ export default function Dashboard() {
                       <X className="h-3.5 w-3.5" /> End Class
                     </button>
                   ) : (
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="default" size="sm" disabled={groups.length === 0} data-testid="button-start-session"><Plus className="h-4 w-4 mr-2" />Start Class</Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="w-56">
-                        <DropdownMenuLabel>Select Class</DropdownMenuLabel>
-                        <DropdownMenuSeparator />
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={startGroupId}
+                        onChange={(event) => setStartGroupId(event.target.value)}
+                        disabled={groups.length === 0 || startSessionMutation.isPending}
+                        className="h-8 max-w-[180px] rounded-md border border-slate-600 bg-slate-900 px-2 text-xs font-medium text-slate-100 shadow-sm focus:outline-none focus:ring-1 focus:ring-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
+                        aria-label="Select ClassPilot class"
+                        data-testid="select-start-session-group"
+                      >
                         {groups.length === 0 ? (
-                          <div className="px-2 py-6 text-center text-sm text-muted-foreground">No classes configured</div>
+                          <option value="">No classes configured</option>
                         ) : (
                           groups.map((group) => (
-                            <DropdownMenuCheckboxItem key={group.id} onSelect={() => startSessionMutation.mutate(group.id)} data-testid={`menu-item-start-${group.id}`}>
-                              <div className="flex flex-col"><span className="font-medium">{group.name}</span>{group.description && <span className="text-xs text-muted-foreground">{group.description}</span>}</div>
-                            </DropdownMenuCheckboxItem>
+                            <option key={group.id} value={group.id}>
+                              {group.name}
+                            </option>
                           ))
                         )}
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+                      </select>
+                      <button
+                        type="button"
+                        disabled={!startGroupId || startSessionMutation.isPending}
+                        onClick={() => startSessionMutation.mutate(startGroupId)}
+                        data-testid="button-start-session"
+                        className="inline-flex h-8 items-center justify-center gap-2 whitespace-nowrap rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground shadow transition-colors hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0"
+                      >
+                        <Plus className="h-4 w-4 mr-2" />Start Class
+                      </button>
+                    </div>
                   )}
                 </>
               )}
@@ -1514,16 +1536,16 @@ export default function Dashboard() {
                   {!activeSession && (
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <Button
-                          variant="default"
-                          size="sm"
+                        <button
+                          type="button"
                           disabled={adminTeachingGroupsLoading || adminTeachingGroups.length === 0 || startSessionMutation.isPending}
                           title={adminTeachingGroupsLoading ? "Loading your classes" : adminTeachingGroups.length === 0 ? "No classes assigned to you" : "Choose a class to teach"}
                           data-testid="button-admin-start-session"
+                          className="inline-flex h-8 items-center justify-center gap-2 whitespace-nowrap rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground shadow transition-colors hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0"
                         >
                           <Plus className="h-4 w-4 mr-2" />
                           Teach Class
-                        </Button>
+                        </button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end" className="w-64">
                         <DropdownMenuLabel>Your Classes</DropdownMenuLabel>
