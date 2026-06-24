@@ -162,6 +162,8 @@ async function autoStartDismissal(schoolId: string, schoolName: string) {
       await updateSessionStatus(session.id, "active", schedulerDb);
       console.log(`Auto-started dismissal for ${schoolName} (session ${session.id})`);
       const payload = { sessionId: session.id };
+      io?.to(`school:${schoolId}`).emit("dismissal:status", { ...payload, status: "active" });
+      io?.to(`school:${schoolId}`).emit("dismissal:started", payload);
       io?.to(`school:${schoolId}:office`).emit("dismissal:started", payload);
       io?.to(`school:${schoolId}:parents`).emit("dismissal:started", payload);
     }

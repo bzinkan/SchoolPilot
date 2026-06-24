@@ -946,6 +946,25 @@ describe("multi-school readiness route hardening", () => {
     assert.equal(duplicate.status, 200);
     assert.equal(duplicate.body.outcome, "duplicate");
 
+    const pendingCall = await requestJson(
+      "POST",
+      `/gopilot/dismissal/sessions/${sessionId}/call`,
+      { queueId, zone: "A" },
+      adminAuth
+    );
+    assert.equal(pendingCall.status, 409);
+    const pendingBatchRelease = await requestJson("POST", "/queue/release-batch", { queueIds: [queueId] }, teacherAuth);
+    assert.equal(pendingBatchRelease.status, 409);
+    const pendingWalkerRelease = await requestJson("POST", `/gopilot/dismissal/sessions/${sessionId}/release-walkers`, undefined, adminAuth);
+    assert.equal(pendingWalkerRelease.status, 409);
+    const pendingOverride = await requestJson(
+      "POST",
+      `/gopilot/dismissal/sessions/${sessionId}/override`,
+      { studentId: carStudent.id, overrideType: "walker" },
+      teacherAuth
+    );
+    assert.equal(pendingOverride.status, 409);
+
     const earlyRelease = await requestJson("POST", `/queue/${queueId}/release`, undefined, teacherAuth);
     assert.equal(earlyRelease.status, 409);
     const earlyPickup = await requestJson("POST", `/queue/${queueId}/dismiss`, undefined, adminAuth);
@@ -954,6 +973,26 @@ describe("multi-school readiness route hardening", () => {
     const hold = await requestJson("POST", `/queue/${queueId}/hold`, { reason: "Waiting for ID" }, adminAuth);
     assert.equal(hold.status, 200);
     assert.equal(hold.body.entry.status, "held");
+
+    const start = await requestJson("PUT", `/gopilot/dismissal/sessions/${sessionId}`, { status: "active" }, adminAuth);
+    assert.equal(start.status, 200);
+    assert.equal(start.body.session.status, "active");
+
+    const busOverrideMissingRoute = await requestJson(
+      "POST",
+      `/gopilot/dismissal/sessions/${sessionId}/override`,
+      { studentId: carStudent.id, overrideType: "bus" },
+      teacherAuth
+    );
+    assert.equal(busOverrideMissingRoute.status, 400);
+    const busOverride = await requestJson(
+      "POST",
+      `/gopilot/dismissal/sessions/${sessionId}/override`,
+      { studentId: carStudent.id, overrideType: "bus", busRoute: `${TAG}-ROUTE-9` },
+      teacherAuth
+    );
+    assert.equal(busOverride.status, 201);
+    assert.equal(busOverride.body.override.busRoute, `${TAG}-ROUTE-9`);
 
     const call = await requestJson(
       "POST",
@@ -990,6 +1029,20 @@ describe("multi-school readiness route hardening", () => {
     assert.equal(recallDelayed.body.entry.status, "called");
     assert.equal(recallDelayed.body.entry.delayedUntil, null);
 
+    const pause = await requestJson("PUT", `/gopilot/dismissal/sessions/${sessionId}`, { status: "paused" }, adminAuth);
+    assert.equal(pause.status, 200);
+    const pausedRelease = await requestJson("POST", `/queue/${queueId}/release`, undefined, teacherAuth);
+    assert.equal(pausedRelease.status, 409);
+    const pausedOverride = await requestJson(
+      "POST",
+      `/gopilot/dismissal/sessions/${sessionId}/override`,
+      { studentId: carStudent.id, overrideType: "walker" },
+      teacherAuth
+    );
+    assert.equal(pausedOverride.status, 409);
+    const resume = await requestJson("PUT", `/gopilot/dismissal/sessions/${sessionId}`, { status: "active" }, adminAuth);
+    assert.equal(resume.status, 200);
+
     const release = await requestJson("POST", `/queue/${queueId}/release`, undefined, teacherAuth);
     assert.equal(release.status, 200);
     assert.equal(release.body.entry.status, "released");
@@ -1005,7 +1058,7 @@ describe("multi-school readiness route hardening", () => {
     assert.equal(sessionRes.status, 200);
     const sessionId = sessionRes.body.session.id;
     const busRoute = `${TAG}-BUS-7`;
-    const today = new Date().toISOString().slice(0, 10);
+    const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
 
     const presentBusStudent = await inSchool(schoolA.id, () =>
       createStudent({
@@ -1031,6 +1084,30 @@ describe("multi-school readiness route hardening", () => {
         status: "active",
       } as any)
     );
+    const tardyBusStudent = await inSchool(schoolA.id, () =>
+      createStudent({
+        schoolId: schoolA.id,
+        firstName: "Tardy",
+        lastName: "Bus",
+        email: `tardy.bus@${TAG}-a.example.edu`,
+        homeroomId: homeroomA.id,
+        dismissalType: "bus",
+        busRoute,
+        status: "active",
+      } as any)
+    );
+    const earlyBusStudent = await inSchool(schoolA.id, () =>
+      createStudent({
+        schoolId: schoolA.id,
+        firstName: "Early",
+        lastName: "Bus",
+        email: `early.bus@${TAG}-a.example.edu`,
+        homeroomId: homeroomA.id,
+        dismissalType: "bus",
+        busRoute,
+        status: "active",
+      } as any)
+    );
 
     const markAbsent = await requestJson(
       "POST",
@@ -1039,6 +1116,20 @@ describe("multi-school readiness route hardening", () => {
       adminAuth
     );
     assert.equal(markAbsent.status, 201);
+    const markTardy = await requestJson(
+      "POST",
+      "/attendance",
+      { studentIds: [tardyBusStudent.id], date: today, status: "tardy" },
+      adminAuth
+    );
+    assert.equal(markTardy.status, 201);
+    const markEarly = await requestJson(
+      "POST",
+      "/attendance",
+      { studentIds: [earlyBusStudent.id], date: today, status: "early_dismissal" },
+      adminAuth
+    );
+    assert.equal(markEarly.status, 201);
 
     const busCheckIn = await requestJson(
       "POST",
@@ -1049,14 +1140,32 @@ describe("multi-school readiness route hardening", () => {
     assert.equal(busCheckIn.status, 200);
     assert.equal(busCheckIn.body.outcome, "partial");
     assert.equal(busCheckIn.body.groupLabel, `Bus #${busRoute}`);
-    assert.deepEqual(
-      busCheckIn.body.entries.map((entry: any) => entry.studentId),
-      [presentBusStudent.id]
-    );
-    assert.deepEqual(
-      busCheckIn.body.skippedAbsent.map((student: any) => student.studentId),
-      [absentBusStudent.id]
-    );
+    const checkedInIds = new Set(busCheckIn.body.entries.map((entry: any) => entry.studentId));
+    assert.ok(checkedInIds.has(presentBusStudent.id));
+    assert.ok(checkedInIds.has(tardyBusStudent.id));
+    assert.ok(!checkedInIds.has(absentBusStudent.id));
+    assert.ok(!checkedInIds.has(earlyBusStudent.id));
+    const skippedIds = new Set(busCheckIn.body.skippedAbsent.map((student: any) => student.studentId));
+    assert.ok(skippedIds.has(absentBusStudent.id));
+    assert.ok(skippedIds.has(earlyBusStudent.id));
+    assert.ok(!skippedIds.has(tardyBusStudent.id));
+  });
+
+  it("GoPilot today's session lookup is read-only after completion", async () => {
+    const adminAuth = authFor(adminUser, schoolA.id);
+    const sessionRes = await requestJson("POST", "/gopilot/dismissal/sessions", undefined, adminAuth);
+    assert.equal(sessionRes.status, 200);
+    const sessionId = sessionRes.body.session.id;
+
+    const start = await requestJson("PUT", `/gopilot/dismissal/sessions/${sessionId}`, { status: "active" }, adminAuth);
+    assert.equal(start.status, 200);
+    const complete = await requestJson("PUT", `/gopilot/dismissal/sessions/${sessionId}`, { status: "completed" }, adminAuth);
+    assert.equal(complete.status, 200);
+
+    const today = await requestJson("GET", "/gopilot/dismissal/sessions/today", undefined, adminAuth);
+    assert.equal(today.status, 200);
+    assert.equal(today.body.session.id, sessionId);
+    assert.equal(today.body.session.status, "completed");
   });
 
   it("GoPilot multi-school teachers only see assignments for the active school context", async () => {
@@ -1177,6 +1286,22 @@ describe("multi-school readiness route hardening", () => {
       const ids = new Set((res.body.students || []).map((s: any) => s.id));
       assert.ok(ids.has(ppStudent.id), "PassPilot teacher should see the school roster, not an empty list");
 
+      const gopilotContextAttendance = await requestJson(
+        "POST",
+        "/attendance",
+        { studentIds: [ppStudent.id], date: "2099-02-01", status: "absent", productContext: "gopilot" },
+        auth
+      );
+      assert.equal(gopilotContextAttendance.status, 403);
+
+      const gopilotContextRead = await requestJson(
+        "GET",
+        "/attendance?date=2099-02-01&productContext=gopilot",
+        undefined,
+        auth
+      );
+      assert.equal(gopilotContextRead.status, 403);
+
       const attendance = await requestJson(
         "POST",
         "/attendance",
@@ -1191,6 +1316,15 @@ describe("multi-school readiness route hardening", () => {
         (attendanceRead.body.records || []).some((record: any) => record.studentId === ppStudent.id),
         "shared-product teacher should keep attendance visibility without a GoPilot homeroom"
       );
+      const record = (attendanceRead.body.records || []).find((r: any) => r.studentId === ppStudent.id);
+      assert.ok(record?.id);
+      const gopilotContextDelete = await requestJson(
+        "DELETE",
+        `/attendance/${record.id}?productContext=gopilot`,
+        undefined,
+        auth
+      );
+      assert.equal(gopilotContextDelete.status, 403);
     } finally {
       await asSystem(async () => {
         if (ppSchool?.id) {

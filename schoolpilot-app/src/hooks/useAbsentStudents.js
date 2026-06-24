@@ -12,22 +12,39 @@ function todayInTimezone(tz) {
 }
 
 /**
- * Shared hook returning a Set of absent student IDs for today.
- * Used by ClassPilot, PassPilot, and GoPilot dashboards to show absent badges.
+ * Shared hook returning attendance status for today.
+ * `unavailableIds` marks students unavailable for dismissal/movement.
  */
-export function useAbsentStudents() {
+export function useAbsentStudents(productContext) {
   const { activeMembership } = useAuth();
   const tz = activeMembership?.schoolTimezone || "America/New_York";
   const today = todayInTimezone(tz);
+  const contextParam = productContext ? `&productContext=${encodeURIComponent(productContext)}` : "";
 
   const { data } = useQuery({
-    queryKey: ["/api/admin/attendance", today],
-    queryFn: () => apiRequest("GET", `/admin/attendance?date=${today}`),
+    queryKey: ["/api/admin/attendance", today, productContext || ""],
+    queryFn: () => apiRequest("GET", `/admin/attendance?date=${today}${contextParam}`),
     staleTime: 60_000,
     retry: false,
   });
 
   const records = data?.records || [];
-  const absentIds = new Set(records.map((r) => r.studentId));
-  return { absentIds, records };
+  const attendanceStatusByStudent = records.reduce((acc, record) => {
+    acc[record.studentId] = record.status;
+    return acc;
+  }, {});
+  const recordedIds = new Set(records.map((r) => r.studentId));
+  const absentIds = new Set(records.filter((r) => r.status === "absent").map((r) => r.studentId));
+  const tardyIds = new Set(records.filter((r) => r.status === "tardy").map((r) => r.studentId));
+  const earlyDismissalIds = new Set(records.filter((r) => r.status === "early_dismissal").map((r) => r.studentId));
+  const unavailableIds = new Set([...absentIds, ...earlyDismissalIds]);
+  return {
+    absentIds,
+    tardyIds,
+    earlyDismissalIds,
+    unavailableIds,
+    recordedIds,
+    attendanceStatusByStudent,
+    records,
+  };
 }

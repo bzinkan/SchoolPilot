@@ -85,6 +85,86 @@ function emitToSchool(schoolId: string, room: string, event: string, data: unkno
   if (io) io.to(`school:${schoolId}:${room}`).emit(event, data);
 }
 
+async function todayForSchool(schoolId: string): Promise<string> {
+  const school = await getSchoolById(schoolId);
+  const timeZone = school?.schoolTimezone ?? "America/New_York";
+  return new Date().toLocaleDateString("en-CA", { timeZone });
+}
+
+async function requireActiveSessionForSchool(sessionId: string, schoolId: string, res: any) {
+  const session = await getSessionForSchool(sessionId, schoolId);
+  if (!session) {
+    res.status(404).json({ error: "Session not found" });
+    return null;
+  }
+  if (session.status !== "active") {
+    res.status(409).json({ error: "Dismissal session is not active" });
+    return null;
+  }
+  return session;
+}
+
+async function emitQueueTransition(options: {
+  schoolId: string;
+  action: string;
+  event: "student:called" | "student:released" | "student:dismissed";
+  entry: any;
+  zone?: string | null;
+  notifyOffice?: boolean;
+}) {
+  if (options.notifyOffice !== false) {
+    emitToSchool(options.schoolId, "office", "queue:updated", {
+      action: options.action,
+      entry: options.entry,
+    });
+  }
+  const student = await getStudentById(options.entry.studentId);
+  if (student?.homeroomId) {
+    emitToSchool(options.schoolId, `teacher:${student.homeroomId}`, options.event, {
+      entry: options.entry,
+      zone: options.zone ?? options.entry.zone ?? null,
+    });
+  }
+  if (options.entry.guardianId) {
+    emitToSchool(options.schoolId, `parent:${options.entry.guardianId}`, options.event, {
+      entry: options.entry,
+      zone: options.zone ?? options.entry.zone ?? null,
+    });
+  }
+}
+
+async function emitBatchRelease(schoolId: string, action: string, event: "student:released" | "student:dismissed", entries: any[]) {
+  emitToSchool(schoolId, "office", "queue:updated", { action, entries });
+  await Promise.all(entries.map((entry) =>
+    emitQueueTransition({ schoolId, action, event, entry, notifyOffice: false })
+  ));
+}
+
+async function emitWalkerRelease(schoolId: string, entries: any[]) {
+  emitToSchool(schoolId, "office", "queue:updated", {
+    action: "walkers_released",
+    entries,
+  });
+
+  const entriesByHomeroom = new Map<string, any[]>();
+  for (const entry of entries) {
+    const student = await getStudentById(entry.studentId);
+    if (!student?.homeroomId) continue;
+    emitToSchool(schoolId, `teacher:${student.homeroomId}`, "student:dismissed", { entry });
+    const list = entriesByHomeroom.get(student.homeroomId) ?? [];
+    list.push(entry);
+    entriesByHomeroom.set(student.homeroomId, list);
+  }
+
+  for (const [homeroomId, homeroomEntries] of entriesByHomeroom.entries()) {
+    emitToSchool(schoolId, `teacher:${homeroomId}`, "walkers:released", {
+      homeroomId,
+      count: homeroomEntries.length,
+      entries: homeroomEntries,
+    });
+  }
+}
+
 type CheckInStudentSummary = {
   id: string;
   firstName?: string | null;
@@ -166,9 +246,7 @@ async function recordDismissalTimeline(options: {
 router.post("/sessions", ...staffAuth, async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
-    const school = await getSchoolById(schoolId);
-    const timeZone = school?.schoolTimezone ?? "America/New_York";
-    const localDate = new Date().toLocaleDateString("en-CA", { timeZone });
+    const localDate = await todayForSchool(schoolId);
 
     const session = await getOrCreateSession(schoolId, localDate);
     return res.json({ session });
@@ -181,9 +259,7 @@ router.post("/sessions", ...staffAuth, async (req, res, next) => {
 router.get("/sessions/active", ...auth, async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
-    const school = await getSchoolById(schoolId);
-    const timeZone = school?.schoolTimezone ?? "America/New_York";
-    const localDate = new Date().toLocaleDateString("en-CA", { timeZone });
+    const localDate = await todayForSchool(schoolId);
 
     // Only return session if it is actually active (not pending/completed)
     const [session] = await db
@@ -199,6 +275,28 @@ router.get("/sessions/active", ...auth, async (req, res, next) => {
       .limit(1);
 
     return res.json(session ? { session } : null);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/gopilot/dismissal/sessions/today - Read-only lookup for today's session
+router.get("/sessions/today", ...auth, async (req, res, next) => {
+  try {
+    const schoolId = res.locals.schoolId!;
+    const localDate = await todayForSchool(schoolId);
+    const [session] = await db
+      .select()
+      .from(dismissalSessions)
+      .where(
+        and(
+          eq(dismissalSessions.schoolId, schoolId),
+          eq(dismissalSessions.date, localDate)
+        )
+      )
+      .limit(1);
+
+    return res.json({ session: session ?? null });
   } catch (err) {
     next(err);
   }
@@ -235,10 +333,13 @@ router.put("/sessions/:id", ...managerAuth, async (req, res, next) => {
     // Notify all connected clients in this school's room
     const schoolId = res.locals.schoolId!;
     const io = getIO();
-    if (io && status === "active") {
-      io.to(`school:${schoolId}`).emit("dismissal:started", { sessionId: id });
-    } else if (io && status === "completed") {
-      io.to(`school:${schoolId}`).emit("dismissal:ended", { sessionId: id });
+    if (io) {
+      io.to(`school:${schoolId}`).emit("dismissal:status", { sessionId: id, status });
+      if (status === "active") {
+        io.to(`school:${schoolId}`).emit("dismissal:started", { sessionId: id });
+      } else if (status === "completed") {
+        io.to(`school:${schoolId}`).emit("dismissal:ended", { sessionId: id });
+      }
     }
 
     return res.json({ session });
@@ -386,7 +487,7 @@ router.post("/sessions/:id/check-in", ...auth, async (req, res, next) => {
       : "Unknown";
 
     // Filter out absent students
-    const today = new Date().toISOString().slice(0, 10);
+    const today = await todayForSchool(schoolId);
     const absentIds = await getAbsentStudentIds(schoolId, today);
     const skippedAbsent: string[] = [];
 
@@ -490,7 +591,7 @@ router.post(
       }
 
       // Filter out absent students
-      const today = new Date().toISOString().slice(0, 10);
+      const today = await todayForSchool(schoolId);
       const absentIds = await getAbsentStudentIds(schoolId, today);
       const skippedAbsent = studentList.filter((s) => absentIds.has(s.id));
       studentList = studentList.filter((s) => !absentIds.has(s.id));
@@ -605,7 +706,7 @@ router.post(
       });
 
       // Filter out absent students
-      const today = new Date().toISOString().slice(0, 10);
+      const today = await todayForSchool(schoolId);
       const absentIds = await getAbsentStudentIds(schoolId, today);
       const skippedAbsent = effectiveBusStudents.filter((s) => absentIds.has(s.id));
       const presentStudents = effectiveBusStudents.filter((s) => !absentIds.has(s.id));
@@ -668,9 +769,10 @@ router.post("/sessions/:id/call", ...managerAuth, async (req, res, next) => {
     if (!queueId) {
       return res.status(400).json({ error: "queueId is required" });
     }
-    const session = await getSessionForSchool(sessionId, schoolId);
+    const session = await requireActiveSessionForSchool(sessionId, schoolId, res);
     const original = await getQueueEntryForSchool(queueId, schoolId);
     if (!session || !original || original.sessionId !== sessionId) {
+      if (!session) return;
       return res.status(404).json({ error: "Queue entry not found" });
     }
     if (!["waiting", "called", "held", "delayed"].includes(original.status)) {
@@ -682,29 +784,7 @@ router.post("/sessions/:id/call", ...managerAuth, async (req, res, next) => {
       return res.status(409).json({ error: "Queue entry is not eligible to be called" });
     }
 
-    emitToSchool(schoolId, "office", "queue:updated", {
-      action: "called",
-      entry,
-    });
-
-    // Notify teacher homeroom
-    if (original) {
-      const student = await getStudentById(original.studentId);
-      if (student?.homeroomId) {
-        emitToSchool(schoolId, `teacher:${student.homeroomId}`, "student:called", {
-          entry,
-          zone,
-        });
-      }
-
-      // Notify parent
-      if (original.guardianId) {
-        emitToSchool(schoolId, `parent:${original.guardianId}`, "student:called", {
-          entry,
-          zone,
-        });
-      }
-    }
+    await emitQueueTransition({ schoolId, action: "called", event: "student:called", entry, zone });
 
     return res.json({ entry });
   } catch (err) {
@@ -717,10 +797,8 @@ router.post("/sessions/:id/call-batch", ...managerAuth, async (req, res, next) =
   try {
     const sessionId = param(req, "id");
     const schoolId = res.locals.schoolId!;
-    const session = await getSessionForSchool(sessionId, schoolId);
-    if (!session) {
-      return res.status(404).json({ error: "Session not found" });
-    }
+    const session = await requireActiveSessionForSchool(sessionId, schoolId, res);
+    if (!session) return;
     const count = req.body.count ?? 5;
     const zone = req.body.zone || null;
 
@@ -763,6 +841,8 @@ router.post("/queue/:id/release", ...staffAuth, async (req, res, next) => {
     if (!original) {
       return res.status(404).json({ error: "Queue entry not found" });
     }
+    const session = await requireActiveSessionForSchool(original.sessionId, schoolId, res);
+    if (!session) return;
     if (original.status !== "called") {
       return res.status(409).json({ error: "Student must be called before release" });
     }
@@ -777,22 +857,7 @@ router.post("/queue/:id/release", ...staffAuth, async (req, res, next) => {
     }
     await recordDismissalTimeline({ schoolId, entry, action: "released", actorUserId: req.authUser!.id });
 
-    emitToSchool(schoolId, "office", "queue:updated", {
-      action: "released",
-      entry,
-    });
-
-    const student = await getStudentById(entry.studentId);
-    if (student?.homeroomId) {
-      emitToSchool(schoolId, `teacher:${student.homeroomId}`, "student:released", {
-        entry,
-      });
-    }
-    if (entry.guardianId) {
-      emitToSchool(schoolId, `parent:${entry.guardianId}`, "student:released", {
-        entry,
-      });
-    }
+    await emitQueueTransition({ schoolId, action: "released", event: "student:released", entry });
 
     return res.json({ entry });
   } catch (err) {
@@ -809,6 +874,8 @@ router.post("/queue/:id/dismiss", ...managerAuth, async (req, res, next) => {
     if (!original) {
       return res.status(404).json({ error: "Queue entry not found" });
     }
+    const session = await requireActiveSessionForSchool(original.sessionId, schoolId, res);
+    if (!session) return;
     if (original.status !== "released") {
       return res.status(409).json({ error: "Student must be released before pickup completion" });
     }
@@ -819,22 +886,7 @@ router.post("/queue/:id/dismiss", ...managerAuth, async (req, res, next) => {
     }
     await recordDismissalTimeline({ schoolId, entry, action: "dismissed", actorUserId: req.authUser!.id });
 
-    emitToSchool(schoolId, "office", "queue:updated", {
-      action: "dismissed",
-      entry,
-    });
-
-    const student = await getStudentById(entry.studentId);
-    if (student?.homeroomId) {
-      emitToSchool(schoolId, `teacher:${student.homeroomId}`, "student:dismissed", {
-        entry,
-      });
-    }
-    if (entry.guardianId) {
-      emitToSchool(schoolId, `parent:${entry.guardianId}`, "student:dismissed", {
-        entry,
-      });
-    }
+    await emitQueueTransition({ schoolId, action: "dismissed", event: "student:dismissed", entry });
 
     return res.json({ entry });
   } catch (err) {
@@ -857,6 +909,10 @@ router.post("/queue/dismiss-batch", ...managerAuth, async (req, res, next) => {
     if (entriesForSchool.some((entry) => !entry)) {
       return res.status(404).json({ error: "One or more queue entries not found" });
     }
+    for (const entry of entriesForSchool) {
+      const session = await requireActiveSessionForSchool(entry!.sessionId, schoolId, res);
+      if (!session) return;
+    }
     if (entriesForSchool.some((entry) => entry!.status !== "released")) {
       return res.status(409).json({ error: "All students must be released before pickup completion" });
     }
@@ -866,10 +922,7 @@ router.post("/queue/dismiss-batch", ...managerAuth, async (req, res, next) => {
       recordDismissalTimeline({ schoolId, entry, action: "dismissed", actorUserId: req.authUser!.id })
     ));
 
-    emitToSchool(schoolId, "office", "queue:updated", {
-      action: "batch_dismissed",
-      entries,
-    });
+    await emitBatchRelease(schoolId, "batch_dismissed", "student:dismissed", entries);
 
     return res.json({ dismissed: entries.length, entries });
   } catch (err) {
@@ -893,6 +946,10 @@ router.post("/queue/release-batch", ...staffAuth, async (req, res, next) => {
     if (entriesForSchool.some((entry) => !entry)) {
       return res.status(404).json({ error: "One or more queue entries not found" });
     }
+    for (const entry of entriesForSchool) {
+      const session = await requireActiveSessionForSchool(entry!.sessionId, schoolId, res);
+      if (!session) return;
+    }
     if (entriesForSchool.some((entry) => entry!.status !== "called")) {
       return res.status(409).json({ error: "All students must be called before release" });
     }
@@ -908,6 +965,7 @@ router.post("/queue/release-batch", ...staffAuth, async (req, res, next) => {
     await Promise.all(entries.map((entry) =>
       recordDismissalTimeline({ schoolId, entry, action: "released", actorUserId: req.authUser!.id })
     ));
+    await emitBatchRelease(schoolId, "batch_released", "student:released", entries);
 
     return res.json({ released: entries.length, entries });
   } catch (err) {
@@ -927,10 +985,8 @@ router.post(
     try {
       const sessionId = param(req, "id");
       const schoolId = res.locals.schoolId!;
-      const session = await getSessionForSchool(sessionId, schoolId);
-      if (!session) {
-        return res.status(404).json({ error: "Session not found" });
-      }
+      const session = await requireActiveSessionForSchool(sessionId, schoolId, res);
+      if (!session) return;
 
       const walkers = await getStudentsByDismissalType(schoolId, "walker");
 
@@ -966,12 +1022,12 @@ router.post(
       }
 
       // Filter out absent students
-      const today = new Date().toISOString().slice(0, 10);
+      const today = await todayForSchool(schoolId);
       const absentIds = await getAbsentStudentIds(schoolId, today);
       const presentWalkers = finalWalkers.filter((s) => !absentIds.has(s.id));
 
       let position = await getMaxQueuePosition(sessionId);
-      const entries: unknown[] = [];
+      const entries: any[] = [];
 
       for (const student of presentWalkers) {
         const alreadyInQueue = await isStudentInQueue(sessionId, student.id);
@@ -991,10 +1047,7 @@ router.post(
         await recordDismissalTimeline({ schoolId, entry, action: "walker released", actorUserId: req.authUser!.id });
       }
 
-      emitToSchool(schoolId, "office", "queue:updated", {
-        action: "walkers_released",
-        entries,
-      });
+      await emitWalkerRelease(schoolId, entries);
 
       return res.json({ entries, position });
     } catch (err) {
@@ -1011,10 +1064,8 @@ router.post(
     try {
       const sessionId = param(req, "id");
       const schoolId = res.locals.schoolId!;
-      const session = await getSessionForSchool(sessionId, schoolId);
-      if (!session) {
-        return res.status(404).json({ error: "Session not found" });
-      }
+      const session = await requireActiveSessionForSchool(sessionId, schoolId, res);
+      if (!session) return;
       const { filterType, filterValues } = req.body;
 
       if (!filterType || !Array.isArray(filterValues)) {
@@ -1039,10 +1090,14 @@ router.post(
         return res.json({ entries: [], position: 0 });
       }
 
-      let position = await getMaxQueuePosition(sessionId);
-      const entries: unknown[] = [];
+      const today = await todayForSchool(schoolId);
+      const absentIds = await getAbsentStudentIds(schoolId, today);
+      const presentWalkers = walkers.filter((s) => !absentIds.has(s.id));
 
-      for (const student of walkers) {
+      let position = await getMaxQueuePosition(sessionId);
+      const entries: any[] = [];
+
+      for (const student of presentWalkers) {
         const alreadyInQueue = await isStudentInQueue(sessionId, student.id);
         if (alreadyInQueue) continue;
 
@@ -1060,10 +1115,7 @@ router.post(
         await recordDismissalTimeline({ schoolId, entry, action: "walker released", actorUserId: req.authUser!.id, metadata: { filterType, filterValues } });
       }
 
-      emitToSchool(schoolId, "office", "queue:updated", {
-        action: "walkers_released",
-        entries,
-      });
+      await emitWalkerRelease(schoolId, entries);
 
       return res.json({ entries, position });
     } catch (err) {
@@ -1168,16 +1220,19 @@ router.post("/sessions/:id/override", ...auth, async (req, res, next) => {
       return res.status(400).json({ error: "reason is required for afterschool override (e.g., activity name)" });
     }
 
-    // Verify session
-    const session = await getSessionById(sessionId);
-    if (!session || session.schoolId !== schoolId) {
-      return res.status(404).json({ error: "Session not found" });
-    }
+    const session = await requireActiveSessionForSchool(sessionId, schoolId, res);
+    if (!session) return;
 
     // Verify student belongs to school
     const student = await getStudentById(studentId);
     if (!student || student.schoolId !== schoolId) {
       return res.status(404).json({ error: "Student not found" });
+    }
+    const effectiveBusRoute = typeof busRoute === "string" && busRoute.trim()
+      ? busRoute.trim()
+      : student.busRoute || null;
+    if (overrideType === "bus" && !effectiveBusRoute) {
+      return res.status(400).json({ error: "busRoute is required for bus overrides" });
     }
 
     // Role-based access check
@@ -1209,7 +1264,7 @@ router.post("/sessions/:id/override", ...auth, async (req, res, next) => {
       sessionId,
       student,
       overrideType,
-      busRoute: busRoute || null,
+      busRoute: overrideType === "bus" ? effectiveBusRoute : null,
       reason: reason || null,
       changedBy: userId,
       changedByRole,
@@ -1270,10 +1325,8 @@ router.delete("/sessions/:id/override/:studentId", ...auth, async (req, res, nex
     const studentId = param(req, "studentId");
     const schoolId = res.locals.schoolId!;
 
-    const session = await getSessionById(sessionId);
-    if (!session || session.schoolId !== schoolId) {
-      return res.status(404).json({ error: "Session not found" });
-    }
+    const session = await requireActiveSessionForSchool(sessionId, schoolId, res);
+    if (!session) return;
     const role = await getRequestGoPilotRole(req, res);
     if (!(await canAccessStudent(req.authUser!, schoolId, studentId, role))) {
       return res.status(403).json({ error: "Insufficient permissions" });
