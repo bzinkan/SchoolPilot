@@ -135,9 +135,10 @@ export default function AdminAnalytics() {
                   </div>
                   <div>
                     <p className="text-2xl font-bold">{summaryData.summary.totalDevices ?? 0}</p>
-                    <p className="text-sm text-muted-foreground">Registered Devices</p>
+                    <p className="text-sm text-muted-foreground">Recognized Chromebooks</p>
                   </div>
                 </div>
+                <p className="text-xs text-muted-foreground mt-2">unique devices seen by ClassPilot</p>
               </CardContent>
             </Card>
 
