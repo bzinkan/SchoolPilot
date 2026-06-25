@@ -41,6 +41,10 @@ function RemoteControlToolbar({
   onGradeChange,
   userRole,
   coverageCount = 0,
+  availableCount = 0,
+  claimedCount = 0,
+  pickupView = "class",
+  onPickupViewChange,
   onOpenCoverage,
   canReroute = false,
   onReroute,
@@ -552,16 +556,60 @@ function RemoteControlToolbar({
                 <BarChart3 className="h-4 w-4 mr-2" />
                 Student Data
               </Button>
+              {onPickupViewChange && (
+                <div className="flex items-center gap-1 rounded-md bg-muted/60 p-1" data-testid="student-pickup-view-tabs">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={pickupView === "class" ? "secondary" : "ghost"}
+                    onClick={() => onPickupViewChange("class")}
+                    data-testid="button-view-class-students"
+                    className="h-8 px-3"
+                  >
+                    Class
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={pickupView === "available" ? "secondary" : "ghost"}
+                    onClick={() => onPickupViewChange("available")}
+                    data-testid="button-view-available-students"
+                    className="h-8 px-3"
+                  >
+                    Available
+                    {availableCount > 0 && (
+                      <span className="ml-1 min-w-5 rounded-full bg-amber-400 px-1.5 py-0.5 text-center text-[11px] font-semibold leading-none text-slate-900">
+                        {availableCount}
+                      </span>
+                    )}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={pickupView === "claimed" ? "secondary" : "ghost"}
+                    onClick={() => onPickupViewChange("claimed")}
+                    data-testid="button-view-claimed-students"
+                    className="h-8 px-3"
+                  >
+                    Claimed
+                    {claimedCount > 0 && (
+                      <span className="ml-1 min-w-5 rounded-full bg-emerald-500 px-1.5 py-0.5 text-center text-[11px] font-semibold leading-none text-white">
+                        {claimedCount}
+                      </span>
+                    )}
+                  </Button>
+                </div>
+              )}
               {onOpenCoverage && (
                 <Button
                   size="sm"
                   variant="outline"
                   onClick={onOpenCoverage}
                   data-testid="button-coverage-tab"
-                  title={coverageCount > 0 ? `${coverageCount} active coverage context${coverageCount === 1 ? "" : "s"} assigned to you` : "Open Coverage"}
+                  title={coverageCount > 0 ? `${coverageCount} claimed group${coverageCount === 1 ? "" : "s"} assigned to you` : "Open Supervision"}
                 >
                   <ClipboardCheck className="h-4 w-4 mr-2" />
-                  Coverage
+                  Supervision
                   {coverageCount > 0 && (
                     <span className="ml-1 min-w-5 rounded-full bg-amber-400 px-1.5 py-0.5 text-center text-[11px] font-semibold leading-none text-slate-900">
                       {coverageCount}
@@ -576,10 +624,10 @@ function RemoteControlToolbar({
                   onClick={onReroute}
                   disabled={selectedStudentIds.size === 0 || !canReroute}
                   data-testid="button-reroute-selected"
-                  title={!canReroute ? "Create an active coverage context before rerouting students" : "Move selected students into temporary coverage"}
+                  title={!canReroute ? "Create a Supervision Group with assigned staff before sending students" : "Send selected students to assigned staff"}
                 >
                   <Route className="h-4 w-4 mr-2" />
-                  Reroute
+                  Send to...
                 </Button>
               )}
             </div>

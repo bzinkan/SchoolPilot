@@ -84,7 +84,8 @@ function statusBadgeVariant(status) {
 }
 
 function contextTypeLabel(type) {
-  return coverageTypes.find(([id]) => id === type)?.[1] || "Coverage";
+  if (type === "supervision_group") return "Supervision Group";
+  return coverageTypes.find(([id]) => id === type)?.[1] || "Supervision";
 }
 
 export default function Coverage() {
@@ -133,6 +134,7 @@ export default function Coverage() {
     name: "",
     description: "",
     studentIds: [],
+    staffIds: [],
     active: true,
   });
 
@@ -172,8 +174,8 @@ export default function Coverage() {
   });
 
   const scopeGroupsQuery = useQuery({
-    queryKey: ["/api/coverage/scope-groups"],
-    queryFn: () => apiRequest("GET", "/coverage/scope-groups"),
+    queryKey: ["/api/coverage/supervision-groups"],
+    queryFn: () => apiRequest("GET", "/coverage/supervision-groups"),
     select: (data) => data?.groups || [],
     enabled: isAdmin,
   });
@@ -273,6 +275,9 @@ export default function Coverage() {
 
   const invalidateCoverage = () => {
     queryClient.invalidateQueries({ queryKey: ["/api/coverage/unassigned"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/coverage/available-students"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/coverage/claimed-students"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/coverage/supervision-groups"] });
     queryClient.invalidateQueries({ queryKey: ["/api/coverage/contexts"] });
     queryClient.invalidateQueries({ queryKey: ["/api/students-aggregated"] });
     if (selectedContext?.id) {
@@ -294,7 +299,7 @@ export default function Coverage() {
         setSelectedCoverageIds(new Set());
       }
       setActiveTab("console");
-      toast({ title: "Coverage started" });
+      toast({ title: "Supervision started" });
     },
     onError: (error) => toast({ variant: "destructive", title: "Could not start coverage", description: error.message }),
   });
@@ -309,7 +314,7 @@ export default function Coverage() {
       setSelectedCoverageIds(new Set());
       setReleaseDialog(null);
       setReleaseReason("returned_to_class");
-      toast({ title: "Coverage released" });
+      toast({ title: "Students released" });
     },
     onError: (error) => toast({ variant: "destructive", title: "Could not release coverage", description: error.message }),
   });
@@ -337,7 +342,7 @@ export default function Coverage() {
       queryClient.invalidateQueries({ queryKey: ["/api/coverage/assignments"] });
       setAssignmentOpen(false);
       setStudentPickerSearch("");
-      toast({ title: "Coverage assignment saved" });
+      toast({ title: "Staff permission saved" });
     },
     onError: (error) => toast({ variant: "destructive", title: "Could not save assignment", description: error.message }),
   });
@@ -348,7 +353,7 @@ export default function Coverage() {
       queryClient.invalidateQueries({ queryKey: ["/api/coverage/assignments"] });
       setAssignmentOpen(false);
       setStudentPickerSearch("");
-      toast({ title: "Coverage assignment updated" });
+      toast({ title: "Staff permission updated" });
     },
     onError: (error) => toast({ variant: "destructive", title: "Could not update assignment", description: error.message }),
   });
@@ -361,25 +366,26 @@ export default function Coverage() {
   const saveScopeGroupMutation = useMutation({
     mutationFn: async ({ id, payload }) => {
       if (!id) {
-        return apiRequest("POST", "/coverage/scope-groups", payload);
+        return apiRequest("POST", "/coverage/supervision-groups", payload);
       }
-      const updated = await apiRequest("PATCH", `/coverage/scope-groups/${id}`, {
+      const updated = await apiRequest("PATCH", `/coverage/supervision-groups/${id}`, {
         name: payload.name,
         description: payload.description,
         active: payload.active,
       });
-      await apiRequest("PUT", `/coverage/scope-groups/${id}/students`, { studentIds: payload.studentIds });
+      await apiRequest("PUT", `/coverage/supervision-groups/${id}/students`, { studentIds: payload.studentIds });
+      await apiRequest("PUT", `/coverage/supervision-groups/${id}/staff`, { staffIds: payload.staffIds });
       return updated;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/coverage/scope-groups"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/coverage/supervision-groups"] });
       queryClient.invalidateQueries({ queryKey: ["/api/coverage/assignments"] });
       setScopeGroupOpen(false);
       setStudentPickerSearch("");
       setScopeGroupSearch("");
-      toast({ title: "Testing group saved" });
+      toast({ title: "Supervision group saved" });
     },
-    onError: (error) => toast({ variant: "destructive", title: "Could not save testing group", description: error.message }),
+    onError: (error) => toast({ variant: "destructive", title: "Could not save supervision group", description: error.message }),
   });
 
   const toggleUnassignedStudent = (id) => {
@@ -429,7 +435,7 @@ export default function Coverage() {
   };
 
   const resetScopeGroupForm = () => {
-    setScopeGroupForm({ id: "", name: "", description: "", studentIds: [], active: true });
+    setScopeGroupForm({ id: "", name: "", description: "", studentIds: [], staffIds: [], active: true });
     setStudentPickerSearch("");
   };
 
@@ -444,6 +450,7 @@ export default function Coverage() {
       name: group.name || "",
       description: group.description || "",
       studentIds: (group.students || []).map((student) => student.studentId),
+      staffIds: (group.staff || []).map((staff) => staff.id),
       active: group.active !== false,
     });
     setStudentPickerSearch("");
@@ -465,6 +472,15 @@ export default function Coverage() {
       if (selected.has(studentId)) selected.delete(studentId);
       else selected.add(studentId);
       return { ...prev, studentIds: Array.from(selected) };
+    });
+  };
+
+  const toggleScopeGroupStaff = (staffId) => {
+    setScopeGroupForm((prev) => {
+      const selected = new Set(prev.staffIds);
+      if (selected.has(staffId)) selected.delete(staffId);
+      else selected.add(staffId);
+      return { ...prev, staffIds: Array.from(selected) };
     });
   };
 
@@ -499,6 +515,7 @@ export default function Coverage() {
         name: scopeGroupForm.name.trim(),
         description: scopeGroupForm.description.trim(),
         studentIds: scopeGroupForm.studentIds,
+        staffIds: scopeGroupForm.staffIds,
         active: scopeGroupForm.active,
       },
     });
@@ -506,7 +523,7 @@ export default function Coverage() {
 
   const sendCoverageCommand = (commandType, commandPayload = {}) => {
     if (!selectedContext?.id) {
-      toast({ variant: "destructive", title: "Choose a coverage context" });
+      toast({ variant: "destructive", title: "Choose claimed students" });
       return;
     }
     if (commandTargetCount === 0) {
@@ -539,8 +556,8 @@ export default function Coverage() {
               <ArrowLeft className="h-4 w-4" />
             </Button>
             <div>
-              <h1 className="text-xl font-semibold">Coverage</h1>
-              <p className="text-sm text-muted-foreground">Temporary supervision for students outside active class sessions</p>
+              <h1 className="text-xl font-semibold">Supervision</h1>
+              <p className="text-sm text-muted-foreground">Pick up online students and manage flexible supervision groups</p>
             </div>
           </div>
           <Button variant="outline" onClick={invalidateCoverage}>
@@ -554,19 +571,19 @@ export default function Coverage() {
         <div className="grid gap-4 md:grid-cols-3 mb-6">
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm flex items-center gap-2"><Eye className="h-4 w-4" />Online Unassigned</CardTitle>
+              <CardTitle className="text-sm flex items-center gap-2"><Eye className="h-4 w-4" />Available Students</CardTitle>
             </CardHeader>
             <CardContent><p className="text-3xl font-semibold">{unassignedQuery.data?.length || 0}</p></CardContent>
           </Card>
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm flex items-center gap-2"><ClipboardCheck className="h-4 w-4" />Active Coverage</CardTitle>
+              <CardTitle className="text-sm flex items-center gap-2"><ClipboardCheck className="h-4 w-4" />Claimed Students</CardTitle>
             </CardHeader>
             <CardContent><p className="text-3xl font-semibold">{contexts.filter((c) => c.status === "active").length}</p></CardContent>
           </Card>
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm flex items-center gap-2"><Shield className="h-4 w-4" />Coverage Staff</CardTitle>
+              <CardTitle className="text-sm flex items-center gap-2"><Shield className="h-4 w-4" />Assigned Staff</CardTitle>
             </CardHeader>
             <CardContent><p className="text-3xl font-semibold">{assignmentsQuery.data?.filter((a) => a.active).length || 0}</p></CardContent>
           </Card>
@@ -574,16 +591,16 @@ export default function Coverage() {
 
         <Tabs value={activeTab} onValueChange={setActiveTab}>
           <TabsList>
-            <TabsTrigger value="console">My Coverage</TabsTrigger>
-            <TabsTrigger value="unassigned">Online Unassigned</TabsTrigger>
-            <TabsTrigger value="contexts">Temporary Coverage</TabsTrigger>
-            {isAdmin && <TabsTrigger value="settings">Coverage Settings</TabsTrigger>}
+            <TabsTrigger value="console">Claimed</TabsTrigger>
+            <TabsTrigger value="unassigned">Available</TabsTrigger>
+            <TabsTrigger value="contexts">Active Supervision</TabsTrigger>
+            {isAdmin && <TabsTrigger value="settings">Supervision Groups</TabsTrigger>}
           </TabsList>
 
           <TabsContent value="console" className="space-y-4 mt-4">
             {manageableContexts.length === 0 ? (
               <div className="rounded-md border px-4 py-12 text-center text-sm text-muted-foreground">
-                No coverage contexts are assigned to you.
+                No students are claimed by you yet.
               </div>
             ) : (
               <>
@@ -608,7 +625,7 @@ export default function Coverage() {
                     <div>
                       <h2 className="text-base font-semibold">{selectedContext?.name}</h2>
                       <p className="text-xs text-muted-foreground">
-                        {contextTypeLabel(selectedContext?.contextType)} - {selectedContext?.assignedStaff?.displayName || "Coverage staff"} - ends {formatTime(selectedContext?.endsAt)}
+                        {contextTypeLabel(selectedContext?.contextType)} - {selectedContext?.assignedStaff?.displayName || "Assigned staff"} - ends {formatTime(selectedContext?.endsAt)}
                       </p>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
@@ -666,7 +683,7 @@ export default function Coverage() {
                   <div className="flex items-center gap-3 px-4 py-3">
                     <div className="relative w-full max-w-sm">
                       <Search className="h-4 w-4 absolute left-3 top-3 text-muted-foreground" />
-                      <Input className="pl-9" placeholder="Search covered students" value={coverageSearch} onChange={(e) => setCoverageSearch(e.target.value)} />
+                      <Input className="pl-9" placeholder="Search claimed students" value={coverageSearch} onChange={(e) => setCoverageSearch(e.target.value)} />
                     </div>
                     <Button variant="outline" size="sm" onClick={() => setSelectedCoverageIds(new Set(activeCoverageStudents.map((student) => student.studentId)))} disabled={activeCoverageStudents.length === 0}>
                       Select All
@@ -683,11 +700,11 @@ export default function Coverage() {
                       <span>Grade</span>
                       <span>Status</span>
                       <span>Active Tab</span>
-                      <span>In Coverage</span>
+                      <span>Claimed</span>
                       <span />
                     </div>
                     {coverageStudents.length === 0 ? (
-                      <div className="px-4 py-10 text-center text-sm text-muted-foreground">No students in this coverage context</div>
+                      <div className="px-4 py-10 text-center text-sm text-muted-foreground">No students claimed in this group</div>
                     ) : coverageStudents.map((student) => (
                       <div key={student.studentId} className="grid min-w-[860px] grid-cols-[44px_1.1fr_90px_110px_1.4fr_130px_120px] gap-3 border-t px-4 py-3 text-sm items-center">
                         <Checkbox checked={selectedCoverageIds.has(student.studentId)} onCheckedChange={() => toggleCoverageStudent(student.studentId)} disabled={!!student.releasedAt} />
@@ -727,7 +744,7 @@ export default function Coverage() {
               </div>
               <Button onClick={() => setContextOpen(true)} disabled={selectedUnassignedIds.size === 0 && !isAdmin}>
                 <Plus className="h-4 w-4 mr-2" />
-                Start Coverage
+                Start Supervision
               </Button>
             </div>
             <div className="rounded-md border overflow-hidden">
@@ -760,13 +777,13 @@ export default function Coverage() {
               {isAdmin && (
                 <Button onClick={() => setContextOpen(true)}>
                   <Plus className="h-4 w-4 mr-2" />
-                  Create Coverage
+                  Start Supervision
                 </Button>
               )}
             </div>
             <div className="grid gap-3">
               {contexts.length === 0 ? (
-                <div className="rounded-md border px-4 py-10 text-center text-sm text-muted-foreground">No temporary coverage contexts</div>
+                <div className="rounded-md border px-4 py-10 text-center text-sm text-muted-foreground">No active supervision</div>
               ) : contexts.map((context) => (
                 <Card key={context.id}>
                   <CardHeader className="pb-3">
@@ -774,7 +791,7 @@ export default function Coverage() {
                       <div>
                         <CardTitle className="text-base">{context.name}</CardTitle>
                         <CardDescription>
-                          {context.assignedStaff?.displayName || "Coverage staff"} - ends {formatTime(context.endsAt)}
+                          {context.assignedStaff?.displayName || "Assigned staff"} - ends {formatTime(context.endsAt)}
                         </CardDescription>
                       </div>
                       <Badge>{context.activeStudentCount} active</Badge>
@@ -823,8 +840,8 @@ export default function Coverage() {
                 <Card>
                   <CardHeader className="flex flex-row items-start justify-between gap-4">
                     <div>
-                      <CardTitle className="text-base">Coverage Staff Permissions</CardTitle>
-                      <CardDescription>Grant teachers and staff Claim + Manage access for specific student scopes.</CardDescription>
+                      <CardTitle className="text-base">Staff Permissions</CardTitle>
+                      <CardDescription>Optional direct permissions for broader supervision scopes.</CardDescription>
                     </div>
                     <Button onClick={() => openAssignmentDialog()}>
                       <UserCheck className="h-4 w-4 mr-2" />
@@ -834,7 +851,7 @@ export default function Coverage() {
                   <CardContent>
                     <div className="rounded-md border overflow-hidden">
                       {(assignmentsQuery.data || []).length === 0 ? (
-                        <div className="px-4 py-10 text-center text-sm text-muted-foreground">No coverage staff permissions yet</div>
+                        <div className="px-4 py-10 text-center text-sm text-muted-foreground">No staff permissions yet</div>
                       ) : assignmentsQuery.data.map((assignment) => (
                         <div key={assignment.id} className="grid gap-3 border-t first:border-t-0 px-4 py-3 text-sm md:grid-cols-[1.1fr_1fr_120px_170px] md:items-center">
                           <div>
@@ -863,8 +880,8 @@ export default function Coverage() {
                 <Card>
                   <CardHeader className="flex flex-row items-start justify-between gap-4">
                     <div>
-                      <CardTitle className="text-base">Testing Groups</CardTitle>
-                      <CardDescription>Reusable student sets for state testing and temporary event coverage.</CardDescription>
+                      <CardTitle className="text-base">Supervision Groups</CardTitle>
+                      <CardDescription>Reusable groups for testing, library, office, makeup work, and events.</CardDescription>
                     </div>
                     <Button variant="outline" onClick={() => openScopeGroupDialog()}>
                       <Plus className="h-4 w-4 mr-2" />
@@ -874,17 +891,17 @@ export default function Coverage() {
                   <CardContent className="space-y-3">
                     <div className="relative">
                       <Search className="h-4 w-4 absolute left-3 top-3 text-muted-foreground" />
-                      <Input className="pl-9" placeholder="Search testing groups" value={scopeGroupSearch} onChange={(e) => setScopeGroupSearch(e.target.value)} />
+                      <Input className="pl-9" placeholder="Search supervision groups" value={scopeGroupSearch} onChange={(e) => setScopeGroupSearch(e.target.value)} />
                     </div>
                     <div className="rounded-md border overflow-hidden">
                       {filteredScopeGroups.length === 0 ? (
-                        <div className="px-4 py-10 text-center text-sm text-muted-foreground">No testing groups</div>
+                        <div className="px-4 py-10 text-center text-sm text-muted-foreground">No supervision groups</div>
                       ) : filteredScopeGroups.map((group) => (
                         <div key={group.id} className="flex items-center justify-between gap-3 border-t first:border-t-0 px-4 py-3 text-sm">
                           <div>
                             <p className="font-medium">{group.name}</p>
                             <p className="text-xs text-muted-foreground">
-                              {group.studentCount} student{group.studentCount === 1 ? "" : "s"}{group.description ? ` - ${group.description}` : ""}
+                              {group.studentCount} student{group.studentCount === 1 ? "" : "s"} · {(group.staff || []).length} staff{(group.staff || []).length === 1 ? "" : ""}{group.description ? ` - ${group.description}` : ""}
                             </p>
                           </div>
                           <div className="flex items-center gap-2">
@@ -904,7 +921,7 @@ export default function Coverage() {
 
       <Dialog open={contextOpen} onOpenChange={setContextOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Start Temporary Coverage</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>Start Supervision</DialogTitle></DialogHeader>
           <div className="space-y-4">
             <div className="grid gap-2">
               <Label>Type</Label>
@@ -928,11 +945,11 @@ export default function Coverage() {
             )}
             {isAdmin && (
               <div className="grid gap-2">
-                <Label>Testing Group</Label>
+                <Label>Supervision Group</Label>
                 <Select value={contextForm.coverageGroupId || "none"} onValueChange={(value) => setContextForm((f) => ({ ...f, coverageGroupId: value === "none" ? "" : value }))}>
-                  <SelectTrigger><SelectValue placeholder="Optional testing group" /></SelectTrigger>
+                  <SelectTrigger><SelectValue placeholder="Optional supervision group" /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="none">No testing group</SelectItem>
+                    <SelectItem value="none">No supervision group</SelectItem>
                     {activeScopeGroups.map((group) => (
                       <SelectItem key={group.id} value={group.id}>{group.name} ({group.studentCount})</SelectItem>
                     ))}
@@ -959,8 +976,8 @@ export default function Coverage() {
       <Dialog open={assignmentOpen} onOpenChange={setAssignmentOpen}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>{assignmentForm.id ? "Edit Coverage Permission" : "Add Coverage Permission"}</DialogTitle>
-            <DialogDescription>Coverage staff receive Claim + Manage access for the selected scope.</DialogDescription>
+            <DialogTitle>{assignmentForm.id ? "Edit Staff Permission" : "Add Staff Permission"}</DialogTitle>
+            <DialogDescription>Staff receive Claim + Manage access for the selected scope.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="grid gap-2">
@@ -978,7 +995,7 @@ export default function Coverage() {
                   <SelectItem value="school">Schoolwide</SelectItem>
                   <SelectItem value="grade">Grade</SelectItem>
                   <SelectItem value="group">Class/Group</SelectItem>
-                  <SelectItem value="coverage_group">Testing Group</SelectItem>
+                  <SelectItem value="coverage_group">Supervision Group</SelectItem>
                   <SelectItem value="students">Selected Students</SelectItem>
                 </SelectContent>
               </Select>
@@ -1000,9 +1017,9 @@ export default function Coverage() {
             )}
             {assignmentForm.scopeType === "coverage_group" && (
               <div className="grid gap-2">
-                <Label>Testing Group</Label>
+                <Label>Supervision Group</Label>
                 <Select value={assignmentForm.scopeValue} onValueChange={(value) => setAssignmentForm((f) => ({ ...f, scopeValue: value }))}>
-                  <SelectTrigger><SelectValue placeholder="Select testing group" /></SelectTrigger>
+                  <SelectTrigger><SelectValue placeholder="Select supervision group" /></SelectTrigger>
                   <SelectContent>{activeScopeGroups.map((group) => <SelectItem key={group.id} value={group.id}>{group.name} ({group.studentCount})</SelectItem>)}</SelectContent>
                 </Select>
               </div>
@@ -1060,8 +1077,8 @@ export default function Coverage() {
       <Dialog open={scopeGroupOpen} onOpenChange={setScopeGroupOpen}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>{scopeGroupForm.id ? "Edit Testing Group" : "Create Testing Group"}</DialogTitle>
-            <DialogDescription>Testing groups are reusable coverage scopes and do not change class rosters.</DialogDescription>
+            <DialogTitle>{scopeGroupForm.id ? "Edit Supervision Group" : "Create Supervision Group"}</DialogTitle>
+            <DialogDescription>Supervision Groups do not change class rosters.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="grid gap-2">
@@ -1071,6 +1088,25 @@ export default function Coverage() {
             <div className="grid gap-2">
               <Label>Description</Label>
               <Textarea value={scopeGroupForm.description} onChange={(e) => setScopeGroupForm((f) => ({ ...f, description: e.target.value }))} placeholder="Optional note for admins" />
+            </div>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <Label>Staff</Label>
+                <Badge variant="secondary">{scopeGroupForm.staffIds.length} selected</Badge>
+              </div>
+              <div className="max-h-44 overflow-y-auto rounded-md border">
+                {(staffQuery.data || []).length === 0 ? (
+                  <div className="px-4 py-8 text-center text-sm text-muted-foreground">No staff found</div>
+                ) : (staffQuery.data || []).map((staff) => (
+                  <label key={staff.userId} className="flex cursor-pointer items-center gap-3 border-t first:border-t-0 px-4 py-2 text-sm">
+                    <Checkbox checked={scopeGroupForm.staffIds.includes(staff.userId)} onCheckedChange={() => toggleScopeGroupStaff(staff.userId)} />
+                    <span className="flex-1">
+                      <span className="block font-medium">{displayName(staff)}</span>
+                      <span className="block text-xs text-muted-foreground">{staff.role || staff.user?.email || "Staff"}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
             </div>
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-3">
@@ -1098,7 +1134,7 @@ export default function Coverage() {
             {scopeGroupForm.id && (
               <label className="flex items-center gap-2 text-sm">
                 <Checkbox checked={scopeGroupForm.active} onCheckedChange={(checked) => setScopeGroupForm((f) => ({ ...f, active: checked === true }))} />
-                Active testing group
+                Active supervision group
               </label>
             )}
           </div>
@@ -1196,7 +1232,7 @@ export default function Coverage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{releaseDialog?.title || "Release Students"}</DialogTitle>
-            <DialogDescription>Choose why these students are leaving temporary coverage.</DialogDescription>
+            <DialogDescription>Choose why these students are leaving supervision.</DialogDescription>
           </DialogHeader>
           <div className="grid gap-2">
             <Label>Release Reason</Label>
@@ -1217,7 +1253,7 @@ export default function Coverage() {
       <Dialog open={!!historyContextId} onOpenChange={(open) => !open && setHistoryContextId("")}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Coverage History</DialogTitle>
+            <DialogTitle>Supervision History</DialogTitle>
           </DialogHeader>
           <div className="max-h-[60vh] overflow-y-auto rounded-md border">
             {(historyQuery.data || []).length === 0 ? (

@@ -512,6 +512,7 @@ async function runStartupMigrations(): Promise<void> {
         name TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'active',
         assigned_staff_id TEXT NOT NULL,
+        coverage_group_id TEXT,
         created_by TEXT NOT NULL,
         note TEXT,
         starts_at TIMESTAMP NOT NULL DEFAULT now(),
@@ -521,8 +522,10 @@ async function runStartupMigrations(): Promise<void> {
         updated_at TIMESTAMP NOT NULL DEFAULT now()
       )
     `);
+    await pool.query(`ALTER TABLE classpilot_supervision_contexts ADD COLUMN IF NOT EXISTS coverage_group_id TEXT`);
     await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_supervision_contexts_school_status_idx ON classpilot_supervision_contexts (school_id, status)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_supervision_contexts_staff_idx ON classpilot_supervision_contexts (school_id, assigned_staff_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_supervision_contexts_coverage_group_idx ON classpilot_supervision_contexts (school_id, coverage_group_id)`);
 
     await pool.query(`
       CREATE TABLE IF NOT EXISTS classpilot_supervision_students (

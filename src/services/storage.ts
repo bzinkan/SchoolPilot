@@ -5301,6 +5301,62 @@ export async function getCoverageScopeGroupStudentIds(
   return rows.map((row) => row.studentId);
 }
 
+export async function getActiveCoverageAssignmentsForScopeGroup(
+  schoolId: string,
+  groupId: string
+): Promise<ClasspilotCoverageAssignment[]> {
+  return db
+    .select()
+    .from(classpilotCoverageAssignments)
+    .where(
+      and(
+        eq(classpilotCoverageAssignments.schoolId, schoolId),
+        eq(classpilotCoverageAssignments.scopeType, "coverage_group"),
+        eq(classpilotCoverageAssignments.scopeValue, groupId),
+        eq(classpilotCoverageAssignments.active, true)
+      )
+    )
+    .orderBy(classpilotCoverageAssignments.createdAt);
+}
+
+export async function replaceCoverageScopeGroupStaff(options: {
+  schoolId: string;
+  groupId: string;
+  staffIds: string[];
+  createdBy: string;
+}): Promise<ClasspilotCoverageAssignment[]> {
+  const staffIds = Array.from(new Set(options.staffIds.map(String).filter(Boolean)));
+  await db.transaction(async (tx) => {
+    await tx
+      .update(classpilotCoverageAssignments)
+      .set({ active: false, updatedAt: new Date() })
+      .where(
+        and(
+          eq(classpilotCoverageAssignments.schoolId, options.schoolId),
+          eq(classpilotCoverageAssignments.scopeType, "coverage_group"),
+          eq(classpilotCoverageAssignments.scopeValue, options.groupId),
+          eq(classpilotCoverageAssignments.active, true)
+        )
+      );
+
+    if (staffIds.length > 0) {
+      await tx.insert(classpilotCoverageAssignments).values(
+        staffIds.map((staffId) => ({
+          schoolId: options.schoolId,
+          staffId,
+          scopeType: "coverage_group" as const,
+          scopeValue: options.groupId,
+          permissions: { observe: true, claim: true },
+          active: true,
+          createdBy: options.createdBy,
+        }))
+      );
+    }
+  });
+
+  return getActiveCoverageAssignmentsForScopeGroup(options.schoolId, options.groupId);
+}
+
 export async function listCoverageAssignments(
   schoolId: string
 ): Promise<ClasspilotCoverageAssignment[]> {
@@ -5423,6 +5479,28 @@ export async function getSupervisionContextByIdAndSchool(
         eq(classpilotSupervisionContexts.id, contextId)
       )
     )
+    .limit(1);
+  return context;
+}
+
+export async function getActiveSupervisionContextForStaffGroup(
+  schoolId: string,
+  staffId: string,
+  coverageGroupId: string
+): Promise<ClasspilotSupervisionContext | undefined> {
+  const [context] = await db
+    .select()
+    .from(classpilotSupervisionContexts)
+    .where(
+      and(
+        eq(classpilotSupervisionContexts.schoolId, schoolId),
+        eq(classpilotSupervisionContexts.assignedStaffId, staffId),
+        eq(classpilotSupervisionContexts.coverageGroupId, coverageGroupId),
+        eq(classpilotSupervisionContexts.status, "active"),
+        sql`${classpilotSupervisionContexts.endsAt} > now()`
+      )
+    )
+    .orderBy(desc(classpilotSupervisionContexts.createdAt))
     .limit(1);
   return context;
 }
@@ -5601,6 +5679,7 @@ export async function extendSupervisionContext(options: {
   endsAt?: Date;
   note?: string | null;
   assignedStaffId?: string;
+  coverageGroupId?: string | null;
 }): Promise<ClasspilotSupervisionContext | undefined> {
   const data: Partial<InsertClasspilotSupervisionContext> & { updatedAt: Date } = {
     updatedAt: new Date(),
@@ -5608,6 +5687,7 @@ export async function extendSupervisionContext(options: {
   if (options.endsAt) data.endsAt = options.endsAt;
   if (options.note !== undefined) data.note = options.note;
   if (options.assignedStaffId) data.assignedStaffId = options.assignedStaffId;
+  if (options.coverageGroupId !== undefined) data.coverageGroupId = options.coverageGroupId;
 
   const [row] = await db
     .update(classpilotSupervisionContexts)
