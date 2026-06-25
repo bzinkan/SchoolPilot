@@ -5,6 +5,7 @@ import {
   createClasspilotCommandWithTargets,
   createMessage,
   createPoll,
+  endStudentSession,
   getBlockListById,
   getClasspilotCommandByIdAndSchool,
   getFlightPathById,
@@ -14,8 +15,9 @@ import {
   upsertClasspilotClassroomStates,
   type ClasspilotCommandWithTargets,
 } from "./storage.js";
-import { sendToDeviceLocal } from "../realtime/ws-broadcast.js";
+import { broadcastToStaffSessionLocal, sendToDeviceLocal } from "../realtime/ws-broadcast.js";
 import { publishWS } from "../realtime/ws-redis.js";
+import { removeDeviceStatus } from "../realtime/student-statuses.js";
 
 export type ClasspilotCommandTargetScope = "class" | "subgroup" | "students" | "context";
 
@@ -98,6 +100,8 @@ export function resultMessage(commandType: string, summary: ReturnType<typeof co
       return `Locked ${summary.sent} student${summary.sent === 1 ? "" : "s"}${unavailable}${failed}${awaiting}`;
     case "unlock-screen":
       return `Unlocked ${summary.sent} student${summary.sent === 1 ? "" : "s"}${unavailable}${failed}${awaiting}`;
+    case "student-sign-out":
+      return `Signed out ${summary.sent} student${summary.sent === 1 ? "" : "s"}${unavailable}${failed}${awaiting}`;
     case "apply-flight-path":
       return `Flight Path sent to ${summary.sent} student${summary.sent === 1 ? "" : "s"}${unavailable}${failed}${awaiting}`;
     case "apply-block-list":
@@ -130,6 +134,18 @@ export async function normalizeCommandPayload(
     case "temp-unblock":
     case "limit-tabs":
       return { extensionType: commandType, payload: { ...payload } };
+    case "student-sign-out":
+      if (!teachingSessionId) {
+        throw Object.assign(new Error("Student sign-out requires an active class session"), { status: 400 });
+      }
+      return {
+        extensionType: "student-sign-out",
+        payload: {
+          ...payload,
+          reason: "teacher_sign_out",
+          sessionId: teachingSessionId,
+        },
+      };
     case "apply-flight-path": {
       const flightPathId = String(payload?.flightPathId || "").trim();
       const flightPath = flightPathId ? await getFlightPathById(flightPathId, schoolId) : undefined;
@@ -244,6 +260,39 @@ function payloadForTarget(
       data: { ...payload },
     },
   };
+}
+
+async function endStudentSessionsForSignOut(options: {
+  schoolId: string;
+  teachingSessionId: string;
+  targets: ResolvedClasspilotCommandTarget[];
+}) {
+  const seenSessionIds = new Set<string>();
+  const seenDeviceIds = new Set<string>();
+
+  for (const target of options.targets) {
+    if (!target.deviceId) continue;
+    if (target.studentSessionId && !seenSessionIds.has(target.studentSessionId)) {
+      seenSessionIds.add(target.studentSessionId);
+      await endStudentSession(target.studentSessionId);
+    }
+    if (seenDeviceIds.has(target.deviceId)) continue;
+    seenDeviceIds.add(target.deviceId);
+
+    removeDeviceStatus(options.schoolId, target.deviceId);
+    const update = {
+      type: "student-signed-out",
+      studentId: target.studentId,
+      deviceId: target.deviceId,
+      schoolId: options.schoolId,
+      sessionId: options.teachingSessionId,
+      status: "offline",
+      reason: "teacher_sign_out",
+      timestamp: new Date().toISOString(),
+    };
+    broadcastToStaffSessionLocal(options.schoolId, options.teachingSessionId, update);
+    await publishWS({ kind: "staff-session", schoolId: options.schoolId, sessionId: options.teachingSessionId }, update);
+  }
 }
 
 async function persistActiveState(options: {
@@ -417,6 +466,13 @@ export async function executeClasspilotCommand(options: {
   }
 
   await markClasspilotCommandTargetsSent(created.id, sentTargets.map((target) => target.deviceId!).filter(Boolean));
+  if (options.commandType === "student-sign-out" && options.teachingSessionId) {
+    await endStudentSessionsForSignOut({
+      schoolId: options.schoolId,
+      teachingSessionId: options.teachingSessionId,
+      targets: sentTargets,
+    });
+  }
   if (options.persistClassroomState !== false && options.teachingSessionId) {
     await persistActiveState({
       schoolId: options.schoolId,

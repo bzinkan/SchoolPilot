@@ -95,6 +95,7 @@ export default function Dashboard() {
   const [selectedBlockListId, setSelectedBlockListId] = useState("");
   const [showSendMessageDialog, setShowSendMessageDialog] = useState(false);
   const [sendMessageText, setSendMessageText] = useState("");
+  const [showSignOutDialog, setShowSignOutDialog] = useState(false);
   const [showBlockListViewerDialog, setShowBlockListViewerDialog] = useState(false);
   const [showAttentionDialog, setShowAttentionDialog] = useState(false);
   const [attentionMessage, setAttentionMessage] = useState("Please look up!");
@@ -972,6 +973,11 @@ export default function Dashboard() {
       ? `${subgroupName || "Subgroup"} - ${targetStudents.length} student${targetStudents.length === 1 ? "" : "s"}`
       : `All ${targetStudents.length} student${targetStudents.length === 1 ? "" : "s"}`;
   const targetConnectionLabel = `${connectedTargetCount} connected · ${unavailableTargetCount} not signed in`;
+  const selectedSignOutStudents = studentView === "class"
+    ? getStudentsForCommandTarget(Array.from(selectedStudentIds))
+    : [];
+  const signOutSelectedCount = selectedSignOutStudents.length;
+  const canSignOutSelectedStudents = studentView === "class" && !!effectiveSession?.id && signOutSelectedCount > 0;
   const canShowStudentWorkspace = isAdmin || (isTeacher && (activeSession || studentView !== "class"));
   const canUseRemoteControls = studentView === "claimed" || ((isTeacher && activeSession) || (isAdmin && isAdminTeaching));
   const claimedContextCount = new Set(claimedPickupStudents.map((student) => student.contextId).filter(Boolean)).size;
@@ -1736,6 +1742,53 @@ export default function Dashboard() {
     onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
   });
 
+  const signOutStudentsMutation = useMutation({
+    mutationFn: async () => {
+      const studentIds = selectedSignOutStudents.map((student) => student.studentId);
+      if (studentIds.length === 0) {
+        throw new Error("Select at least one student to sign out.");
+      }
+      return postClassroomCommand('student-sign-out', { reason: 'teacher_sign_out' }, { studentIds });
+    },
+    onSuccess: (data) => {
+      const signedOutStudentIds = getSentStudentIdsFromCommand(data);
+      queryClient.setQueryData(['/api/students-aggregated'], (old) =>
+        Array.isArray(old)
+          ? old.map((student) => (
+            signedOutStudentIds.has(student.studentId)
+              ? {
+                ...student,
+                status: 'offline',
+                loginState: 'not_logged_in',
+                isLoggedIn: false,
+                activeTabTitle: '',
+                activeTabUrl: '',
+                allOpenTabs: [],
+                isSharing: false,
+                cameraActive: false,
+              }
+              : student
+          ))
+          : old
+      );
+      queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
+      setShowSignOutDialog(false);
+      clearSelection();
+      const signedOut = data.summary?.sent || 0;
+      const unavailable = data.summary?.unavailable || 0;
+      toast({
+        title: signedOut > 0 ? "Students Signed Out" : "No Students Signed Out",
+        description: [
+          signedOut > 0 ? `Signed out ${signedOut} student${signedOut === 1 ? "" : "s"}.` : data.message,
+          unavailable > 0 ? `${unavailable} ${unavailable === 1 ? "student was" : "students were"} already offline or unavailable.` : "",
+        ].filter(Boolean).join(" "),
+      });
+    },
+    onError: (error) => {
+      toast({ variant: "destructive", title: "Could Not Sign Out Students", description: error.message });
+    },
+  });
+
   const handleSendMessage = () => {
     if (!sendMessageText.trim()) { toast({ variant: "destructive", title: "Empty Message", description: "Please enter a message" }); return; }
     sendMessageMutation.mutate({ message: sendMessageText.trim() });
@@ -2100,6 +2153,19 @@ export default function Dashboard() {
           <div className="flex items-center gap-2 flex-wrap mb-4">
             <Button size="sm" variant="outline" onClick={() => setShowOpenTabDialog(true)} data-testid="button-open-tab" className="text-blue-600 dark:text-blue-400"><MonitorPlay className="h-4 w-4 mr-2" />Open URL</Button>
             <Button size="sm" variant="outline" onClick={() => openManageTabs(null)} data-testid="button-tabs" className="text-blue-600 dark:text-blue-400"><List className="h-4 w-4 mr-2" />Tabs</Button>
+            {studentView === "class" && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setShowSignOutDialog(true)}
+                disabled={!canSignOutSelectedStudents || signOutStudentsMutation.isPending}
+                data-testid="button-sign-out-students"
+                className="border-gray-300 bg-gray-200 text-black hover:bg-gray-300 hover:text-black disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-200 disabled:text-black/60 disabled:opacity-40"
+              >
+                <LogOut className="h-4 w-4 mr-2" />
+                Sign out
+              </Button>
+            )}
             <Button size="sm" variant="outline" onClick={handleLockScreen} disabled={lockScreenMutation.isPending} data-testid="button-lock-screen" className="text-amber-600 dark:text-amber-400"><Lock className="h-4 w-4 mr-2" />Lock Screen</Button>
             <Button size="sm" variant="outline" onClick={handleUnlockScreen} disabled={unlockScreenMutation.isPending} data-testid="button-unlock-screen" className="text-amber-600 dark:text-amber-400"><Unlock className="h-4 w-4 mr-2" />Unlock Screen</Button>
             <Button size="sm" variant="outline" onClick={() => setShowApplyFlightPathDialog(true)} data-testid="button-apply-flight-path" className="text-purple-600 dark:text-purple-400"><Layers className="h-4 w-4 mr-2" />Apply Flight Path</Button>
@@ -2448,6 +2514,31 @@ export default function Dashboard() {
             <Button onClick={handleRerouteSelected} disabled={rerouteMutation.isPending || !selectedCoverageContextId || selectedCoverageContextId === "none"} data-testid="button-confirm-reroute">
               <ClipboardCheck className="h-4 w-4 mr-2" />
               Send
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showSignOutDialog} onOpenChange={setShowSignOutDialog}>
+        <DialogContent data-testid="dialog-sign-out-students">
+          <DialogHeader>
+            <DialogTitle>Sign out selected students?</DialogTitle>
+            <DialogDescription>
+              This will sign {signOutSelectedCount} selected student{signOutSelectedCount === 1 ? "" : "s"} out of ClassPilot on their current Chromebook{signOutSelectedCount === 1 ? "" : "s"}. They will need to sign back in before monitoring, messaging, and hand raising resume.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowSignOutDialog(false)} disabled={signOutStudentsMutation.isPending}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => signOutStudentsMutation.mutate()}
+              disabled={!canSignOutSelectedStudents || signOutStudentsMutation.isPending}
+              data-testid="button-confirm-sign-out-students"
+              className="border border-gray-300 bg-gray-200 text-black hover:bg-gray-300 hover:text-black disabled:opacity-40"
+            >
+              <LogOut className="h-4 w-4 mr-2" />
+              Sign out
             </Button>
           </DialogFooter>
         </DialogContent>
