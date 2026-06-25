@@ -35,6 +35,7 @@ import {
 } from "./storage.js";
 import { startWatch, isMailpilotConfigured } from "./mailpilotGmail.js";
 import { sendEmail } from "./email.js";
+import { coerceSchedulerTimestamp } from "../util/schedulerTimestamp.js";
 
 let io: SocketServer | null = null;
 let intervalId: NodeJS.Timeout | null = null;
@@ -356,8 +357,8 @@ async function rollupSchoolUsage(schoolId: string, timezone: string) {
         studentId: heartbeats.studentId,
         heartbeatCount: sql<number>`COUNT(*)::int`,
         totalSeconds: sql<number>`(COUNT(*) * 10)::int`,
-        firstSeen: sql<Date>`MIN(${heartbeats.timestamp})`,
-        lastSeen: sql<Date>`MAX(${heartbeats.timestamp})`,
+        firstSeen: sql<string | null>`MIN(${heartbeats.timestamp})::text`,
+        lastSeen: sql<string | null>`MAX(${heartbeats.timestamp})::text`,
       })
       .from(heartbeats)
       .where(
@@ -403,6 +404,8 @@ async function rollupSchoolUsage(schoolId: string, timezone: string) {
     // Upsert daily usage for each student (through scheduler pool)
     for (const row of studentTotals) {
       if (!row.studentId) continue;
+      const firstSeen = coerceSchedulerTimestamp(row.firstSeen);
+      const lastSeen = coerceSchedulerTimestamp(row.lastSeen);
       await schedulerDb
         .insert(dailyUsage)
         .values({
@@ -412,8 +415,8 @@ async function rollupSchoolUsage(schoolId: string, timezone: string) {
           totalSeconds: row.totalSeconds,
           heartbeatCount: row.heartbeatCount,
           topDomains: studentDomains.get(row.studentId) || [],
-          firstSeen: row.firstSeen,
-          lastSeen: row.lastSeen,
+          firstSeen,
+          lastSeen,
         })
         .onConflictDoUpdate({
           target: [dailyUsage.studentId, dailyUsage.date],
@@ -421,8 +424,8 @@ async function rollupSchoolUsage(schoolId: string, timezone: string) {
             totalSeconds: row.totalSeconds,
             heartbeatCount: row.heartbeatCount,
             topDomains: studentDomains.get(row.studentId) || [],
-            firstSeen: row.firstSeen,
-            lastSeen: row.lastSeen,
+            firstSeen,
+            lastSeen,
             computedAt: sql`now()`,
           },
         });
