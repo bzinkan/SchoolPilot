@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useNavigate } from 'react-router-dom';
-import { Monitor, Users, Activity, Settings as SettingsIcon, LogOut, Download, Calendar, Shield, AlertTriangle, UserCog, Plus, X, GraduationCap, WifiOff, Video, MonitorPlay, TabletSmartphone, Lock, Unlock, Layers, Route, CheckSquare, XSquare, User, List, ShieldBan, Eye, EyeOff, Timer, Clock, BarChart3, Trash2, UsersRound, Filter, Hand, MessageSquareOff, MessageSquare, Send, ClipboardCheck, History, RotateCcw } from "lucide-react";
+import { Monitor, Users, Activity, Settings as SettingsIcon, LogOut, Download, Calendar, Shield, AlertTriangle, UserCog, Plus, X, GraduationCap, WifiOff, Video, MonitorPlay, TabletSmartphone, Lock, Unlock, Layers, CheckSquare, XSquare, User, List, ShieldBan, Eye, EyeOff, Timer, Clock, BarChart3, Trash2, UsersRound, Filter, Hand, MessageSquareOff, MessageSquare, Send, ClipboardCheck } from "lucide-react";
 import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
 import { Badge } from '../../../components/ui/badge';
@@ -1301,11 +1301,6 @@ export default function Dashboard() {
 
   const handleRemoveBlockList = () => { removeBlockListMutation.mutate({}); };
 
-  const handleClearRestrictions = () => {
-    removeFlightPathMutation.mutate({});
-    removeBlockListMutation.mutate({});
-  };
-
   const attentionModeMutation = useMutation({
     mutationFn: async ({ active, message }) => postClassroomCommand('attention-mode', { active, message }),
     onSuccess: (data, variables) => {
@@ -1760,19 +1755,14 @@ export default function Dashboard() {
         {/* Control Buttons */}
         {((isTeacher && activeSession) || (isAdmin && isAdminTeaching)) && (
           <div className="flex items-center gap-2 flex-wrap mb-4">
-            <Button size="sm" variant="outline" data-testid="button-target-model" disabled>
-              <Users className="h-4 w-4 mr-2" />Target
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => setShowOpenTabDialog(true)} data-testid="button-open-tab" className="text-blue-600 dark:text-blue-400"><MonitorPlay className="h-4 w-4 mr-2" />Open URL</Button>
-            <Button size="sm" variant="outline" onClick={() => openManageTabs(null)} data-testid="button-tabs" className="text-blue-600 dark:text-blue-400"><List className="h-4 w-4 mr-2" />Manage Tabs</Button>
-            <Button size="sm" variant="outline" onClick={handleLockScreen} disabled={lockScreenMutation.isPending} data-testid="button-lock-screen" className="text-amber-600 dark:text-amber-400"><Lock className="h-4 w-4 mr-2" />Lock current site</Button>
-            <Button size="sm" variant="outline" onClick={() => setShowLockUrlDialog(true)} data-testid="button-lock-url" className="text-amber-600 dark:text-amber-400"><MonitorPlay className="h-4 w-4 mr-2" />Lock to URL</Button>
-            <Button size="sm" variant="outline" onClick={handleUnlockScreen} disabled={unlockScreenMutation.isPending} data-testid="button-unlock-screen" className="text-amber-600 dark:text-amber-400"><Unlock className="h-4 w-4 mr-2" />Unlock</Button>
-            <Button size="sm" variant="outline" onClick={() => setShowFlightPathViewerDialog(true)} data-testid="button-view-lock-status" className="text-amber-600 dark:text-amber-400"><Eye className="h-4 w-4 mr-2" />Status</Button>
-            <Button size="sm" variant="outline" onClick={() => setShowApplyFlightPathDialog(true)} data-testid="button-apply-flight-path" className="text-purple-600 dark:text-purple-400"><Route className="h-4 w-4 mr-2" />Flight Paths</Button>
-            <Button size="sm" variant="outline" onClick={() => setShowApplyBlockListDialog(true)} data-testid="button-apply-block-list" className="text-purple-600 dark:text-purple-400"><ShieldBan className="h-4 w-4 mr-2" />Block Lists</Button>
-            <Button size="sm" variant="outline" onClick={() => setShowFlightPathViewerDialog(true)} data-testid="button-active-restrictions" className="text-purple-600 dark:text-purple-400"><History className="h-4 w-4 mr-2" />Active Restrictions</Button>
-            <Button size="sm" variant="outline" onClick={handleClearRestrictions} disabled={removeFlightPathMutation.isPending || removeBlockListMutation.isPending} data-testid="button-clear-restrictions" className="text-purple-600 dark:text-purple-400"><RotateCcw className="h-4 w-4 mr-2" />Clear Restrictions</Button>
+            <Button size="sm" variant="outline" onClick={() => setShowOpenTabDialog(true)} data-testid="button-open-tab" className="text-blue-600 dark:text-blue-400"><MonitorPlay className="h-4 w-4 mr-2" />Open Tab</Button>
+            <Button size="sm" variant="outline" onClick={() => openManageTabs(null)} data-testid="button-tabs" className="text-blue-600 dark:text-blue-400"><List className="h-4 w-4 mr-2" />Tabs</Button>
+            <Button size="sm" variant="outline" onClick={handleLockScreen} disabled={lockScreenMutation.isPending} data-testid="button-lock-screen" className="text-amber-600 dark:text-amber-400"><Lock className="h-4 w-4 mr-2" />Lock Screen</Button>
+            <Button size="sm" variant="outline" onClick={handleUnlockScreen} disabled={unlockScreenMutation.isPending} data-testid="button-unlock-screen" className="text-amber-600 dark:text-amber-400"><Unlock className="h-4 w-4 mr-2" />Unlock Screen</Button>
+            <Button size="sm" variant="outline" onClick={() => setShowApplyFlightPathDialog(true)} data-testid="button-apply-flight-path" className="text-purple-600 dark:text-purple-400"><Layers className="h-4 w-4 mr-2" />Apply Flight Path</Button>
+            <Button size="sm" variant="outline" onClick={() => setShowFlightPathViewerDialog(true)} data-testid="button-flight-path-status" className="text-purple-600 dark:text-purple-400"><Eye className="h-4 w-4 mr-2" />Flight Path Status</Button>
+            <Button size="sm" variant="outline" onClick={() => setShowApplyBlockListDialog(true)} data-testid="button-apply-block-list" className="text-red-600 dark:text-red-400"><ShieldBan className="h-4 w-4 mr-2" />Apply Block List</Button>
+            <Button size="sm" variant="outline" onClick={() => setShowBlockListViewerDialog(true)} data-testid="button-block-list-status" className="text-red-600 dark:text-red-400"><Shield className="h-4 w-4 mr-2" />Block List Status</Button>
             {subgroups.length > 0 && (
               <label className={`inline-flex h-8 items-center gap-2 rounded-md border bg-background px-3 text-xs font-medium shadow-sm ${selectedSubgroupId ? "border-pink-300 text-pink-600 dark:text-pink-400" : "border-input text-pink-600 dark:text-pink-400"}`}>
                 <UsersRound className="h-4 w-4" />
