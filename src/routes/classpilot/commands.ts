@@ -163,6 +163,9 @@ router.post("/commands", ...auth, async (req, res, next) => {
     const teachingSessionId = String(req.body.teachingSessionId || "").trim();
     const targetScope = normalizeTargetScope(req.body.targetScope);
     if (!targetScope) return res.status(400).json({ error: "targetScope must be class, subgroup, or students" });
+    if (commandType === "student-sign-out" && targetScope !== "students") {
+      return res.status(400).json({ error: "student-sign-out requires explicit targetStudentIds" });
+    }
 
     const targets = await resolveTargets(req, res, req.body);
     const result = await executeClasspilotCommand({

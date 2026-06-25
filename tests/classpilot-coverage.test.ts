@@ -637,6 +637,63 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     await inSchool(school.id, () => endTeachingSession(newSession.id));
   });
 
+  it("signs out explicit active class students and rejects implicit whole-class sign-out", async () => {
+    const signOutStudent = await inSchool(school.id, () => createStudent({
+      schoolId: school.id,
+      firstName: "Sign",
+      lastName: "Out",
+      email: `sign-out@${TAG}.example.edu`,
+      emailLc: `sign-out@${TAG}.example.edu`,
+      gradeLevel: "8",
+      status: "active",
+    } as any));
+    const signOutDevice = `${TAG}-device-sign-out`;
+    const signOutGroup = await inSchool(school.id, () => createGroup({
+      schoolId: school.id,
+      teacherId: teacher.id,
+      name: `${TAG}_Sign_Out_Class`,
+      groupType: "admin_class",
+      status: "active",
+    } as any));
+
+    await inSchool(school.id, async () => {
+      await createDevice({ deviceId: signOutDevice, schoolId: school.id, classId: "default", deviceName: "Sign Out" } as any);
+      await linkStudentDevice({ studentId: signOutStudent.id, deviceId: signOutDevice });
+      await setActiveStudentForDevice(signOutDevice, signOutStudent.id);
+      await addGroupStudentsDetailed(signOutGroup.id, [signOutStudent.id]);
+    });
+    const session = await inSchool(school.id, () => createTeachingSession({ groupId: signOutGroup.id, teacherId: teacher.id }));
+
+    const broadCommand = await requestJson("POST", "/commands", {
+      teachingSessionId: session.id,
+      targetScope: "class",
+      commandType: "student-sign-out",
+      commandPayload: {},
+    }, authFor(teacher, school.id));
+    assert.equal(broadCommand.status, 400);
+    assert.match(broadCommand.body.error, /explicit targetStudentIds/);
+
+    const selectedCommand = await requestJson("POST", "/commands", {
+      teachingSessionId: session.id,
+      targetScope: "students",
+      targetStudentIds: [signOutStudent.id],
+      commandType: "student-sign-out",
+      commandPayload: {},
+    }, authFor(teacher, school.id));
+    assert.equal(selectedCommand.status, 201);
+    assert.equal(selectedCommand.body.summary.requested, 1);
+    assert.equal(selectedCommand.body.summary.sent, 1);
+    assert.equal(selectedCommand.body.summary.unavailable, 0);
+    assert.equal(selectedCommand.body.command.targets[0].studentId, signOutStudent.id);
+    assert.equal(selectedCommand.body.command.targets[0].deviceId, signOutDevice);
+    assert.match(selectedCommand.body.message, /Signed out 1 student/);
+
+    const activeAfterSignOut = await inSchool(school.id, () => getActiveSessionByStudent(signOutStudent.id));
+    assert.equal(activeAfterSignOut, undefined);
+
+    await inSchool(school.id, () => endTeachingSession(session.id));
+  });
+
   it("excludes actively logged-in students from the shared Chromebook login roster", async () => {
     const enrollmentKey = `${TAG}-login-key`;
     const waitingStudent = await inSchool(school.id, () => createStudent({
