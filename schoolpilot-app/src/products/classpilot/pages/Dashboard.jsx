@@ -122,6 +122,7 @@ export default function Dashboard() {
   const [chatReplies, setChatReplies] = useState({});
   const [startGroupId, setStartGroupId] = useState("");
   const [adminStartGroupId, setAdminStartGroupId] = useState("");
+  const [classStartOverlap, setClassStartOverlap] = useState(null);
   const dismissedMessageIds = useRef(new Set());
   const dismissedMessagesInitialized = useRef(false);
   // eslint-disable-next-line react-hooks/refs
@@ -1172,16 +1173,34 @@ export default function Dashboard() {
   };
 
   const startSessionMutation = useMutation({
-    mutationFn: async (groupId) => apiRequest('POST', '/sessions/start', { groupId }),
-    onSuccess: (data) => {
+    mutationFn: async (request) => {
+      const payload = typeof request === "string" ? { groupId: request } : request;
+      return apiRequest('POST', '/sessions/start', payload);
+    },
+    onSuccess: (data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['/api/sessions/active'], exact: false });
       queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
       queryClient.invalidateQueries({ queryKey: ['/api/groups'], exact: false });
       queryClient.invalidateQueries({ queryKey: ['/api/teacher/groups'], exact: false });
+      setClassStartOverlap(null);
+      const request = typeof variables === "string" ? { groupId: variables } : variables;
       const group = groups.find(g => g.id === (data.session?.groupId || data.groupId));
-      toast({ title: "Class Started", description: `Now teaching: ${group?.name || 'Unknown Class'}` });
+      toast({
+        title: "Class Started",
+        description: request?.acknowledgeOverlap
+          ? "Class started. You may be taking control of students who were active in another class."
+          : `Now teaching: ${group?.name || 'Unknown Class'}`,
+      });
     },
-    onError: (error) => { toast({ variant: "destructive", title: "Cannot Start Class", description: error.response?.data?.error || error.message }); },
+    onError: (error, variables) => {
+      const data = error.response?.data;
+      if (error.response?.status === 409 && data?.code === "CLASS_ROSTER_ACTIVE_OVERLAP") {
+        const request = typeof variables === "string" ? { groupId: variables } : variables;
+        setClassStartOverlap({ ...data, request });
+        return;
+      }
+      toast({ variant: "destructive", title: "Cannot Start Class", description: data?.error || error.message });
+    },
   });
 
   const endSessionMutation = useMutation({
@@ -1865,7 +1884,7 @@ export default function Dashboard() {
                       <button
                         type="button"
                         disabled={!startGroupId || startSessionMutation.isPending}
-                        onClick={() => startSessionMutation.mutate(startGroupId)}
+                        onClick={() => startSessionMutation.mutate({ groupId: startGroupId })}
                         data-testid="button-start-session"
                         className="inline-flex h-8 items-center justify-center gap-2 whitespace-nowrap rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground shadow transition-colors hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0"
                       >
@@ -1915,7 +1934,7 @@ export default function Dashboard() {
                       <button
                         type="button"
                         disabled={!adminStartGroupId || adminTeachingGroupsLoading || adminTeachingGroups.length === 0 || startSessionMutation.isPending}
-                        onClick={() => startSessionMutation.mutate(adminStartGroupId)}
+                        onClick={() => startSessionMutation.mutate({ groupId: adminStartGroupId })}
                         title={adminTeachingGroupsLoading ? "Loading your classes" : adminTeachingGroups.length === 0 ? "No classes assigned to you" : "Teach selected class"}
                         data-testid="button-admin-start-session"
                         className="inline-flex h-8 items-center justify-center gap-2 whitespace-nowrap rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground shadow transition-colors hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0"
@@ -2319,6 +2338,51 @@ export default function Dashboard() {
           activeClassName={effectiveSession ? groups.find(g => g.id === effectiveSession.groupId)?.name : null}
         />
       )}
+
+      <Dialog open={!!classStartOverlap} onOpenChange={(open) => { if (!open) setClassStartOverlap(null); }}>
+        <DialogContent className="max-w-lg" data-testid="dialog-class-start-overlap">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-amber-500" />
+              Some students are already active in another class
+            </DialogTitle>
+            <DialogDescription>
+              {classStartOverlap?.totalOverlapCount || 0} student{classStartOverlap?.totalOverlapCount === 1 ? "" : "s"} from {classStartOverlap?.selectedClass?.name || "this class"} are currently active in other ClassPilot sessions. Starting this class will move ClassPilot control for those students to you.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            {(classStartOverlap?.groups || []).map((group) => (
+              <div key={group.sessionId} className="rounded-lg border border-amber-200 bg-amber-50/60 p-3 text-sm dark:border-amber-900/60 dark:bg-amber-950/20">
+                <div className="font-semibold text-slate-900 dark:text-slate-100">
+                  {group.teacherName} - {group.className} - {group.affectedCount} student{group.affectedCount === 1 ? "" : "s"}
+                </div>
+                {group.affectedStudents?.length > 0 && (
+                  <div className="mt-1 text-xs text-slate-600 dark:text-slate-400">
+                    {group.affectedStudents.map((student) => student.studentName).join(", ")}
+                    {group.affectedCount > group.affectedStudents.length ? `, +${group.affectedCount - group.affectedStudents.length} more` : ""}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setClassStartOverlap(null)} data-testid="button-cancel-overlap-start">
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                const groupId = classStartOverlap?.request?.groupId || classStartOverlap?.selectedClass?.id;
+                if (!groupId) return;
+                startSessionMutation.mutate({ groupId, acknowledgeOverlap: true });
+              }}
+              disabled={startSessionMutation.isPending}
+              data-testid="button-confirm-overlap-start"
+            >
+              Start Anyway
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Grade Management Dialog */}
       <Dialog open={showGradeDialog} onOpenChange={setShowGradeDialog}>

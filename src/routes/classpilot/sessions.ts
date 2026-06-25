@@ -6,6 +6,7 @@ import { requireProductLicense } from "../../middleware/requireProductLicense.js
 import {
   createTeachingSession,
   endTeachingSession,
+  getActiveClassOwnersForStudents,
   getActiveTeachingSessionForSchool,
   getTeachingSessionByIdAndSchool,
   getSessionSettings,
@@ -19,6 +20,7 @@ import {
   getCentralEmailRecipientForSchool,
   clearClasspilotClassroomStates,
   clearClasspilotActiveHandsForSession,
+  getUserById,
 } from "../../services/storage.js";
 import { sendSessionSummaryEmail } from "../../services/email.js";
 import db from "../../db.js";
@@ -37,56 +39,141 @@ const auth = [
   requireProductLicense("CLASSPILOT"),
 ] as const;
 
+function displayName(user: any): string {
+  return user?.displayName || [user?.firstName, user?.lastName].filter(Boolean).join(" ").trim() || user?.email || "Unknown teacher";
+}
+
+function studentName(student: any): string {
+  return [student?.firstName, student?.lastName].filter(Boolean).join(" ").trim() || student?.email || student?.id || "Unknown student";
+}
+
+function formatTime(t: string) {
+  const parts = t.split(":");
+  const hour = parseInt(parts[0] || "0", 10);
+  const m = parts[1] || "00";
+  const ampm = hour >= 12 ? "PM" : "AM";
+  const h12 = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
+  return `${h12}:${m} ${ampm}`;
+}
+
+async function assertManualStartWindow(group: any) {
+  if (!(group as any).scheduleEnabled || !(group as any).blockStartTime || !(group as any).blockEndTime) return;
+
+  const school = await getSchoolById(group.schoolId);
+  const tz = school?.schoolTimezone || "America/New_York";
+  const now = new Date();
+  const currentTimeHHMM = now.toLocaleString("en-US", {
+    timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false,
+  }).replace(/^24:/, "00:");
+  const isOutsideWindow = currentTimeHHMM < (group as any).blockStartTime || currentTimeHHMM >= (group as any).blockEndTime;
+  if (isOutsideWindow) {
+    throw Object.assign(new Error(`Class is scheduled for ${formatTime((group as any).blockStartTime)} - ${formatTime((group as any).blockEndTime)}. Cannot start outside the scheduled window.`), { status: 403 });
+  }
+}
+
+async function classStartOverlapPayload(options: {
+  schoolId: string;
+  teacherId: string;
+  group: any;
+}) {
+  const rosterRows = await getGroupStudents(options.group.id);
+  const studentIds = rosterRows.map((row) => row.studentId);
+  if (studentIds.length === 0) return null;
+
+  const owners = await getActiveClassOwnersForStudents(options.schoolId, studentIds);
+  const conflicts = owners.filter((owner) => owner.session.teacherId !== options.teacherId);
+  if (conflicts.length === 0) return null;
+
+  const studentsById = new Map(rosterRows.map((row) => [row.studentId, row.student]));
+  const bySession = new Map<string, {
+    sessionId: string;
+    classId: string;
+    className: string;
+    teacherId: string;
+    teacherName: string;
+    affectedCount: number;
+    affectedStudents: Array<{ studentId: string; studentName: string }>;
+  }>();
+  const teacherIds = [...new Set(conflicts.map((owner) => owner.session.teacherId))];
+  const teacherEntries = await Promise.all(teacherIds.map(async (id) => [id, await getUserById(id)] as const));
+  const teachersById = new Map(teacherEntries);
+
+  for (const owner of conflicts) {
+    const row = bySession.get(owner.session.id) || {
+      sessionId: owner.session.id,
+      classId: owner.groupId,
+      className: owner.groupName,
+      teacherId: owner.session.teacherId,
+      teacherName: displayName(teachersById.get(owner.session.teacherId)),
+      affectedCount: 0,
+      affectedStudents: [],
+    };
+    row.affectedCount += 1;
+    if (row.affectedStudents.length < 5) {
+      row.affectedStudents.push({
+        studentId: owner.studentId,
+        studentName: studentName(studentsById.get(owner.studentId)),
+      });
+    }
+    bySession.set(owner.session.id, row);
+  }
+
+  const groups = Array.from(bySession.values()).sort((a, b) => b.affectedCount - a.affectedCount || a.className.localeCompare(b.className));
+  const totalOverlapCount = groups.reduce((sum, group) => sum + group.affectedCount, 0);
+  return {
+    code: "CLASS_ROSTER_ACTIVE_OVERLAP",
+    selectedClass: {
+      id: options.group.id,
+      name: options.group.name,
+    },
+    totalOverlapCount,
+    groups,
+  };
+}
+
+async function startTeachingSessionWithOverlapGuard(req: any, res: any) {
+  const { groupId, acknowledgeOverlap } = req.body;
+  const teacherId = req.authUser!.id;
+  const schoolId = res.locals.schoolId!;
+
+  if (!groupId) {
+    return res.status(400).json({ error: "groupId is required" });
+  }
+
+  const group = await getGroupByIdAndSchool(groupId, schoolId);
+  if (!group) {
+    return res.status(404).json({ error: "Group not found" });
+  }
+
+  await assertManualStartWindow(group);
+
+  if (acknowledgeOverlap !== true) {
+    const overlap = await classStartOverlapPayload({ schoolId, teacherId, group });
+    if (overlap) {
+      return res.status(409).json({
+        error: "Some students are already active in another class",
+        ...overlap,
+      });
+    }
+  }
+
+  const existing = await getActiveTeachingSessionForSchool(teacherId, schoolId);
+  if (existing) {
+    await endTeachingSession(existing.id);
+    await clearClasspilotClassroomStates({ schoolId, teachingSessionId: existing.id });
+    await clearClasspilotActiveHandsForSession(schoolId, existing.id);
+  }
+
+  const session = await createTeachingSession({ groupId, teacherId });
+  return res.status(201).json({ session });
+}
+
 // POST /api/classpilot/teaching-sessions/start - Alias for creating a session
 router.post("/start", ...auth, async (req, res, next) => {
   try {
-    const { groupId } = req.body;
-    const teacherId = req.authUser!.id;
-
-    if (!groupId) {
-      return res.status(400).json({ error: "groupId is required" });
-    }
-
-    const group = await getGroupByIdAndSchool(groupId, res.locals.schoolId!);
-    if (!group) {
-      return res.status(404).json({ error: "Group not found" });
-    }
-
-    // Block manual start if scheduling is enabled and current time is OUTSIDE the scheduled window
-    // Applies to ALL teachers (primary and co-teachers) — same schedule boundaries for everyone
-    if ((group as any).scheduleEnabled && (group as any).blockStartTime && (group as any).blockEndTime) {
-      const school = await getSchoolById(group.schoolId);
-      const tz = school?.schoolTimezone || "America/New_York";
-      const now = new Date();
-      const currentTimeHHMM = now.toLocaleString("en-US", {
-        timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false,
-      }).replace(/^24:/, "00:");
-      const isOutsideWindow = currentTimeHHMM < (group as any).blockStartTime || currentTimeHHMM >= (group as any).blockEndTime;
-      if (isOutsideWindow) {
-        const formatTime = (t: string) => {
-          const parts = t.split(":");
-          const hour = parseInt(parts[0] || "0", 10);
-          const m = parts[1] || "00";
-          const ampm = hour >= 12 ? "PM" : "AM";
-          const h12 = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
-          return `${h12}:${m} ${ampm}`;
-        };
-        return res.status(403).json({
-          error: `Class is scheduled for ${formatTime((group as any).blockStartTime)} – ${formatTime((group as any).blockEndTime)}. Cannot start outside the scheduled window.`,
-        });
-      }
-    }
-
-    const existing = await getActiveTeachingSessionForSchool(teacherId, res.locals.schoolId!);
-    if (existing) {
-      await endTeachingSession(existing.id);
-      await clearClasspilotClassroomStates({ schoolId: res.locals.schoolId!, teachingSessionId: existing.id });
-      await clearClasspilotActiveHandsForSession(res.locals.schoolId!, existing.id);
-    }
-
-    const session = await createTeachingSession({ groupId, teacherId });
-    return res.status(201).json({ session });
-  } catch (err) {
+    return await startTeachingSessionWithOverlapGuard(req, res);
+  } catch (err: any) {
+    if (err?.status) return res.status(err.status).json({ error: err.message });
     next(err);
   }
 });
@@ -152,29 +239,9 @@ router.post("/end", ...auth, async (req, res, next) => {
 // POST /api/classpilot/teaching-sessions - Start a teaching session
 router.post("/", ...auth, async (req, res, next) => {
   try {
-    const { groupId } = req.body;
-    const teacherId = req.authUser!.id;
-
-    if (!groupId) {
-      return res.status(400).json({ error: "groupId is required" });
-    }
-
-    const group = await getGroupByIdAndSchool(groupId, res.locals.schoolId!);
-    if (!group) {
-      return res.status(404).json({ error: "Group not found" });
-    }
-
-    // End any existing active session for this teacher
-    const existing = await getActiveTeachingSessionForSchool(teacherId, res.locals.schoolId!);
-    if (existing) {
-      await endTeachingSession(existing.id);
-      await clearClasspilotClassroomStates({ schoolId: res.locals.schoolId!, teachingSessionId: existing.id });
-      await clearClasspilotActiveHandsForSession(res.locals.schoolId!, existing.id);
-    }
-
-    const session = await createTeachingSession({ groupId, teacherId });
-    return res.status(201).json({ session });
-  } catch (err) {
+    return await startTeachingSessionWithOverlapGuard(req, res);
+  } catch (err: any) {
+    if (err?.status) return res.status(err.status).json({ error: err.message });
     next(err);
   }
 });
