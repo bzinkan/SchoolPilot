@@ -520,6 +520,47 @@ async function runStartupMigrations(): Promise<void> {
     console.warn("[migration] ClassPilot supervision coverage migration skipped:", (err as Error).message);
   }
 
+  // ClassPilot admin analytics: forward-only session-attributed class usage.
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS classpilot_session_students (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        school_id TEXT NOT NULL,
+        teaching_session_id VARCHAR NOT NULL,
+        group_id TEXT NOT NULL,
+        student_id TEXT NOT NULL,
+        captured_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        CONSTRAINT classpilot_session_students_session_student_unique UNIQUE (teaching_session_id, student_id)
+      )
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS classpilot_session_usage (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        school_id TEXT NOT NULL,
+        teaching_session_id VARCHAR NOT NULL,
+        group_id TEXT NOT NULL,
+        student_id TEXT NOT NULL,
+        local_date TEXT NOT NULL,
+        total_seconds INTEGER NOT NULL DEFAULT 0,
+        heartbeat_count INTEGER NOT NULL DEFAULT 0,
+        top_domains JSONB,
+        first_seen TIMESTAMPTZ,
+        last_seen TIMESTAMPTZ,
+        computed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        CONSTRAINT classpilot_session_usage_session_student_date_unique UNIQUE (teaching_session_id, student_id, local_date)
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_session_students_school_session_idx ON classpilot_session_students (school_id, teaching_session_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_session_students_school_group_idx ON classpilot_session_students (school_id, group_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_session_students_school_student_idx ON classpilot_session_students (school_id, student_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_session_usage_school_date_idx ON classpilot_session_usage (school_id, local_date)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_session_usage_school_group_date_idx ON classpilot_session_usage (school_id, group_id, local_date)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_session_usage_school_session_idx ON classpilot_session_usage (school_id, teaching_session_id)`);
+    console.log("[migration] ClassPilot session-attributed analytics tables ready");
+  } catch (err) {
+    console.warn("[migration] ClassPilot session analytics migration skipped:", (err as Error).message);
+  }
+
   // RLS Phase 4: author per-school tenant-isolation policies (idempotent) for
   // every table that has a school_id column, EXCEPT global/bootstrap tables. The
   // policies + FORCE ROW LEVEL SECURITY are INERT until a table is named in the

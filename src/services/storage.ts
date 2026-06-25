@@ -1,6 +1,7 @@
 import { eq, and, desc, asc, ilike, or, isNull, inArray, sql, ne, type SQL } from "drizzle-orm";
 import db from "../db.js";
 import { runWithTenantContext } from "../middleware/tenantContext.js";
+import { localDateInTimeZone } from "../util/schoolTime.js";
 import {
   users,
   schools,
@@ -92,6 +93,8 @@ import {
   classpilotCommands,
   classpilotCommandTargets,
   classpilotClassroomStates,
+  classpilotSessionStudents,
+  classpilotSessionUsage,
   classpilotCoverageAssignments,
   classpilotSupervisionContexts,
   classpilotSupervisionStudents,
@@ -137,6 +140,8 @@ import {
   type InsertClasspilotCommandTarget,
   type ClasspilotClassroomState,
   type InsertClasspilotClassroomState,
+  type ClasspilotSessionStudent,
+  type ClasspilotSessionUsage,
   type ClasspilotCoverageAssignment,
   type InsertClasspilotCoverageAssignment,
   type ClasspilotSupervisionContext,
@@ -3158,8 +3163,204 @@ export async function getActiveSessions(
 // ClassPilot - Teaching Session operations
 // ============================================================================
 
+function isUndefinedTableError(err: unknown): boolean {
+  return typeof err === "object" && err !== null && (err as { code?: string }).code === "42P01";
+}
+
+async function snapshotTeachingSessionStudents(
+  session: TeachingSession,
+  dbInstance: typeof db = db
+): Promise<void> {
+  try {
+    const [group] = await dbInstance
+      .select({
+        id: groups.id,
+        schoolId: groups.schoolId,
+        groupType: groups.groupType,
+        status: groups.status,
+      })
+      .from(groups)
+      .where(eq(groups.id, session.groupId))
+      .limit(1);
+
+    if (!group || group.groupType !== "admin_class" || group.status !== "active") return;
+
+    const roster = await dbInstance
+      .select({ studentId: groupStudents.studentId })
+      .from(groupStudents)
+      .where(eq(groupStudents.groupId, session.groupId));
+
+    if (roster.length === 0) return;
+
+    await dbInstance
+      .insert(classpilotSessionStudents)
+      .values(
+        roster.map((row) => ({
+          schoolId: group.schoolId,
+          teachingSessionId: session.id,
+          groupId: session.groupId,
+          studentId: row.studentId,
+        }))
+      )
+      .onConflictDoNothing();
+  } catch (err) {
+    if (isUndefinedTableError(err)) return;
+    throw err;
+  }
+}
+
+export async function getClasspilotSessionStudents(
+  teachingSessionId: string,
+  dbInstance: typeof db = db
+): Promise<ClasspilotSessionStudent[]> {
+  return dbInstance
+    .select()
+    .from(classpilotSessionStudents)
+    .where(eq(classpilotSessionStudents.teachingSessionId, teachingSessionId))
+    .orderBy(classpilotSessionStudents.studentId);
+}
+
+export async function aggregateClasspilotSessionUsage(
+  teachingSessionId: string,
+  dbInstance: typeof db = db
+): Promise<ClasspilotSessionUsage[]> {
+  try {
+    const [sessionRow] = await dbInstance
+      .select({
+        session: teachingSessions,
+        startTimeText: sql<string>`${teachingSessions.startTime}::text`,
+        endTimeText: sql<string>`${teachingSessions.endTime}::text`,
+        schoolId: groups.schoolId,
+        groupId: groups.id,
+        groupType: groups.groupType,
+        groupStatus: groups.status,
+        schoolTimezone: schools.schoolTimezone,
+      })
+      .from(teachingSessions)
+      .innerJoin(groups, eq(teachingSessions.groupId, groups.id))
+      .innerJoin(schools, eq(groups.schoolId, schools.id))
+      .where(eq(teachingSessions.id, teachingSessionId))
+      .limit(1);
+
+    if (
+      !sessionRow?.session.endTime ||
+      !sessionRow.endTimeText ||
+      sessionRow.groupType !== "admin_class" ||
+      sessionRow.groupStatus !== "active"
+    ) {
+      return [];
+    }
+
+    const roster = await getClasspilotSessionStudents(teachingSessionId, dbInstance);
+    if (roster.length === 0) return [];
+
+    const heartbeatRows = await dbInstance
+      .select({
+        studentId: heartbeats.studentId,
+        activeTabUrl: heartbeats.activeTabUrl,
+        timestampText: sql<string>`${heartbeats.timestamp}::text`,
+      })
+      .from(heartbeats)
+      .where(
+        and(
+          eq(heartbeats.schoolId, sessionRow.schoolId),
+          inArray(heartbeats.studentId, roster.map((row) => row.studentId)),
+          sql`${heartbeats.timestamp} >= ${sessionRow.startTimeText}`,
+          sql`${heartbeats.timestamp} < ${sessionRow.endTimeText}`
+        )
+      )
+      .orderBy(heartbeats.studentId, heartbeats.timestamp);
+
+    type UsageBucket = {
+      heartbeatCount: number;
+      firstSeen: Date | null;
+      lastSeen: Date | null;
+      domains: Map<string, { seconds: number; visits: number }>;
+    };
+    const buckets = new Map<string, UsageBucket>();
+    const timezone = sessionRow.schoolTimezone || "America/New_York";
+
+    for (const hb of heartbeatRows) {
+      if (!hb.studentId) continue;
+      const heartbeatInstant = new Date(`${hb.timestampText.replace(" ", "T")}Z`);
+      const localDate = localDateInTimeZone(heartbeatInstant, timezone);
+      const key = `${hb.studentId}|${localDate}`;
+      const existing = buckets.get(key) || {
+        heartbeatCount: 0,
+        firstSeen: null,
+        lastSeen: null,
+        domains: new Map<string, { seconds: number; visits: number }>(),
+      };
+      const timestamp = heartbeatInstant;
+      existing.heartbeatCount += 1;
+      if (!existing.firstSeen || timestamp < existing.firstSeen) existing.firstSeen = timestamp;
+      if (!existing.lastSeen || timestamp > existing.lastSeen) existing.lastSeen = timestamp;
+      if (hb.activeTabUrl) {
+        try {
+          const domain = new URL(hb.activeTabUrl).hostname.replace(/^www\./, "");
+          const domainBucket = existing.domains.get(domain) || { seconds: 0, visits: 0 };
+          domainBucket.seconds += 10;
+          domainBucket.visits += 1;
+          existing.domains.set(domain, domainBucket);
+        } catch {
+          /* skip invalid URLs */
+        }
+      }
+      buckets.set(key, existing);
+    }
+
+    const upserted: ClasspilotSessionUsage[] = [];
+    for (const [key, bucket] of buckets) {
+      const [studentId, localDate] = key.split("|");
+      if (!studentId || !localDate) continue;
+      const topDomains = Array.from(bucket.domains.entries())
+        .sort((a, b) => b[1].seconds - a[1].seconds)
+        .slice(0, 5)
+        .map(([domain, value]) => ({ domain, seconds: value.seconds, visits: value.visits }));
+
+      const [usage] = await dbInstance
+        .insert(classpilotSessionUsage)
+        .values({
+          schoolId: sessionRow.schoolId,
+          teachingSessionId,
+          groupId: sessionRow.groupId,
+          studentId,
+          localDate,
+          totalSeconds: bucket.heartbeatCount * 10,
+          heartbeatCount: bucket.heartbeatCount,
+          topDomains,
+          firstSeen: bucket.firstSeen,
+          lastSeen: bucket.lastSeen,
+          computedAt: new Date(),
+        })
+        .onConflictDoUpdate({
+          target: [
+            classpilotSessionUsage.teachingSessionId,
+            classpilotSessionUsage.studentId,
+            classpilotSessionUsage.localDate,
+          ],
+          set: {
+            totalSeconds: bucket.heartbeatCount * 10,
+            heartbeatCount: bucket.heartbeatCount,
+            topDomains,
+            firstSeen: bucket.firstSeen,
+            lastSeen: bucket.lastSeen,
+            computedAt: new Date(),
+          },
+        })
+        .returning();
+      if (usage) upserted.push(usage);
+    }
+
+    return upserted;
+  } catch (err) {
+    if (isUndefinedTableError(err)) return [];
+    throw err;
+  }
+}
+
 export async function createTeachingSession(
-  data: { groupId: string; teacherId: string },
+  data: InsertTeachingSession & { groupId: string; teacherId: string },
   dbInstance: typeof db = db
 ): Promise<TeachingSession> {
   // teaching_sessions.school_id must mirror the parent group's school (RLS
@@ -3179,6 +3380,7 @@ export async function createTeachingSession(
     .insert(teachingSessions)
     .values({ ...data, schoolId: group.schoolId })
     .returning();
+  if (session) await snapshotTeachingSessionStudents(session, dbInstance);
   return session!;
 }
 
@@ -3191,6 +3393,7 @@ export async function endTeachingSession(
     .set({ endTime: new Date() })
     .where(eq(teachingSessions.id, sessionId))
     .returning();
+  if (session) await aggregateClasspilotSessionUsage(session.id, dbInstance);
   return session;
 }
 
