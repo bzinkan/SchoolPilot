@@ -241,6 +241,7 @@ export default function Dashboard() {
     enabled: isAdmin || isTeacher,
     refetchInterval: 10000,
   });
+  const manageableCoverageCount = activeCoverageContexts.filter((context) => context.canManage).length;
 
   // Admin observe mode logic
   const observedSession = isAdmin && adminObservedSessionId
@@ -1695,6 +1696,10 @@ export default function Dashboard() {
             selectedGrade={selectedGrade}
             onGradeChange={setSelectedGrade}
             userRole={currentUser?.role}
+            coverageCount={manageableCoverageCount}
+            onOpenCoverage={() => navigate("/classpilot/coverage")}
+            canReroute={activeCoverageContexts.length > 0}
+            onReroute={() => setShowRerouteDialog(true)}
           />
         )}
 
@@ -1748,9 +1753,6 @@ export default function Dashboard() {
               <button onClick={clearSelection} disabled={selectedStudentIds.size === 0} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-medium bg-transparent border border-border text-muted-foreground hover:bg-card transition-colors disabled:opacity-50 disabled:cursor-not-allowed" data-testid="button-clear-selection">
                 Clear Selection
               </button>
-              <button onClick={() => setShowRerouteDialog(true)} disabled={selectedStudentIds.size === 0 || activeCoverageContexts.length === 0} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-medium bg-transparent border border-border text-muted-foreground hover:bg-card transition-colors disabled:opacity-50 disabled:cursor-not-allowed" data-testid="button-reroute-selected">
-                <ClipboardCheck className="h-4 w-4" /> Reroute
-              </button>
             </div>
           </div>
         )}
@@ -1793,6 +1795,10 @@ export default function Dashboard() {
             <div className="h-20 w-20 mx-auto mb-6 rounded-2xl bg-muted/30 flex items-center justify-center"><Calendar className="h-10 w-10 text-muted-foreground/50" /></div>
             <h3 className="text-xl font-semibold mb-2">No Active Class Session</h3>
             <p className="text-sm text-muted-foreground max-w-md mx-auto mb-6">Start a class session to view and monitor your students. Click "Start Class" in the top right to select a class period.</p>
+            <Button variant="outline" className="mb-4" onClick={() => navigate("/classpilot/coverage")} data-testid="button-open-coverage-empty">
+              <ClipboardCheck className="h-4 w-4 mr-2" />
+              Open Coverage
+            </Button>
             {groups.length === 0 && <p className="text-xs text-muted-foreground max-w-md mx-auto">You don't have any class groups yet. Contact your administrator to have students assigned to your classes.</p>}
           </div>
         ) : studentsLoading ? (

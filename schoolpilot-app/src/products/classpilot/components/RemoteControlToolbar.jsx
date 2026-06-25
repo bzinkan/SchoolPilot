@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { MonitorPlay, TabletSmartphone, Lock, Unlock, Layers, ListChecks, CheckSquare, XSquare, Users, BarChart3, Route, KeyRound, ChevronDown, Clock, Download } from "lucide-react";
+import { MonitorPlay, TabletSmartphone, Lock, Unlock, Layers, ListChecks, CheckSquare, XSquare, Users, BarChart3, Route, KeyRound, ChevronDown, Clock, Download, ClipboardCheck } from "lucide-react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from 'recharts';
 import { startOfTodayInTimezone } from "../../../lib/date-utils";
 import { Button } from "../../../components/ui/button";
@@ -34,7 +34,17 @@ import { useToast } from "../../../hooks/use-toast";
 import { apiRequest, queryClient } from "../../../lib/queryClient";
 import { useQuery } from "@tanstack/react-query";
 
-function RemoteControlToolbar({ selectedStudentIds, students, selectedGrade, onGradeChange, userRole }) {
+function RemoteControlToolbar({
+  selectedStudentIds,
+  students,
+  selectedGrade,
+  onGradeChange,
+  userRole,
+  coverageCount = 0,
+  onOpenCoverage,
+  canReroute = false,
+  onReroute,
+}) {
   const [showOpenTab, setShowOpenTab] = useState(false);
   const [showLockScreen, setShowLockScreen] = useState(false);
   const [showFlightPathDialog, setShowFlightPathDialog] = useState(false);
@@ -531,16 +541,48 @@ function RemoteControlToolbar({ selectedStudentIds, students, selectedGrade, onG
               </Tabs>
             )}
 
-            {/* Right Side: Student Data Button */}
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => setShowStudentDataDialog(true)}
-              data-testid="button-student-data-tab"
-            >
-              <BarChart3 className="h-4 w-4 mr-2" />
-              Student Data
-            </Button>
+            {/* Right Side: Class Tools */}
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setShowStudentDataDialog(true)}
+                data-testid="button-student-data-tab"
+              >
+                <BarChart3 className="h-4 w-4 mr-2" />
+                Student Data
+              </Button>
+              {onOpenCoverage && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={onOpenCoverage}
+                  data-testid="button-coverage-tab"
+                  title={coverageCount > 0 ? `${coverageCount} active coverage context${coverageCount === 1 ? "" : "s"} assigned to you` : "Open Coverage"}
+                >
+                  <ClipboardCheck className="h-4 w-4 mr-2" />
+                  Coverage
+                  {coverageCount > 0 && (
+                    <span className="ml-1 min-w-5 rounded-full bg-amber-400 px-1.5 py-0.5 text-center text-[11px] font-semibold leading-none text-slate-900">
+                      {coverageCount}
+                    </span>
+                  )}
+                </Button>
+              )}
+              {onReroute && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={onReroute}
+                  disabled={selectedStudentIds.size === 0 || !canReroute}
+                  data-testid="button-reroute-selected"
+                  title={!canReroute ? "Create an active coverage context before rerouting students" : "Move selected students into temporary coverage"}
+                >
+                  <Route className="h-4 w-4 mr-2" />
+                  Reroute
+                </Button>
+              )}
+            </div>
           </div>
         </div>
       </div>
