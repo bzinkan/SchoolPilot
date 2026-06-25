@@ -307,6 +307,15 @@ export async function sendChatEscalationEmail(options: {
   });
 }
 
+function escapeEmailHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 export async function sendSessionSummaryEmail(options: {
   to: string;
   teacherName: string;
@@ -324,8 +333,12 @@ export async function sendSessionSummaryEmail(options: {
     safetyAlerts?: string[];
     safetyUrls?: string[];
   }>;
+  copyNotice?: string;
 }): Promise<boolean> {
-  const { to, teacherName, className, date, startTime, endTime, duration, studentCount, students } = options;
+  const { to, teacherName, className, date, startTime, endTime, duration, studentCount, students, copyNotice } = options;
+  const copyNoticeHtml = copyNotice
+    ? `<p style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 10px 12px; color: #475569; font-size: 13px;">${escapeEmailHtml(copyNotice)}</p>`
+    : "";
 
   // Build safety incidents section if any exist
   const safetyIncidents = students
@@ -368,6 +381,7 @@ export async function sendSessionSummaryEmail(options: {
   const html = `
     <div style="font-family: sans-serif; max-width: 700px; margin: 0 auto;">
       <h2 style="color: #1e293b;">📋 ClassPilot Session Summary</h2>
+      ${copyNoticeHtml}
       <p>Hi ${teacherName},</p>
       <p>Here's your session summary for <strong>${className}</strong>.</p>
       ${safetySection}

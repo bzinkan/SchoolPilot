@@ -140,6 +140,7 @@ router.get("/settings", ...auth, async (req, res, next) => {
     const schoolSettings = await getSettingsForSchool(schoolId);
     const activeSession = await getActiveTeachingSessionForSchool(req.authUser!.id, schoolId);
     const fabToggles = await getEffectiveFabToggles(schoolId, activeSession?.id || null);
+    const canReadSchoolAdminSettings = isAdminRole(req, res);
     return res.json({
       ...(teacherSettings || {}),
       handRaisingEnabled: fabToggles.handRaisingEnabled,
@@ -156,6 +157,7 @@ router.get("/settings", ...auth, async (req, res, next) => {
       blockedDomains: schoolSettings?.blockedDomains || [],
       maxTabsPerStudent: schoolSettings?.maxTabsPerStudent || null,
       aiSafetyEmailsEnabled: schoolSettings?.aiSafetyEmailsEnabled ?? true,
+      centralEmailRecipientUserId: canReadSchoolAdminSettings ? schoolSettings?.centralEmailRecipientUserId || null : null,
       sharedChromebookSignInEnabled: !!schoolSettings?.sharedChromebookSignInEnabled,
       sharedChromebookLoginMethod: effectiveSharedChromebookLoginMethod(schoolSettings),
       sharedChromebookPinLoginEnabled: effectiveSharedChromebookLoginMethod(schoolSettings) === "name_pin",
@@ -175,6 +177,7 @@ router.post("/settings", ...auth, async (req, res, next) => {
     const {
       maxTabsPerStudent, allowedDomains, blockedDomains, defaultFlightPathId,
       schoolName, retentionHours, ipAllowlist, aiSafetyEmailsEnabled, autoBlockUnsafeUrls,
+      centralEmailRecipientUserId,
       sharedChromebookSignInEnabled, sharedChromebookLoginMethod, sharedChromebookPinLoginEnabled,
     } = req.body;
 
@@ -190,13 +193,34 @@ router.post("/settings", ...auth, async (req, res, next) => {
     // which the teacher's MySettings page never includes.
     const isAdminSettingsRequest = schoolName !== undefined || retentionHours !== undefined
       || ipAllowlist !== undefined || aiSafetyEmailsEnabled !== undefined || autoBlockUnsafeUrls !== undefined
+      || centralEmailRecipientUserId !== undefined
       || sharedChromebookSignInEnabled !== undefined || sharedChromebookLoginMethod !== undefined
       || sharedChromebookPinLoginEnabled !== undefined;
 
+    let normalizedCentralEmailRecipientUserId: string | null | undefined;
     if (isAdminSettingsRequest) {
       const role = res.locals.membershipRole;
       if (!req.authUser?.isSuperAdmin && role !== "admin" && role !== "school_admin") {
         return res.status(403).json({ error: "Admin access required to update school settings" });
+      }
+
+      if (centralEmailRecipientUserId !== undefined) {
+        const rawRecipientId = String(centralEmailRecipientUserId || "").trim();
+        if (!rawRecipientId || rawRecipientId === "none" || rawRecipientId === "__none__") {
+          normalizedCentralEmailRecipientUserId = null;
+        } else {
+          const schoolId = res.locals.schoolId!;
+          const membership = await getMembershipByUserAndSchool(rawRecipientId, schoolId);
+          const allowedRoles = new Set(["admin", "school_admin", "teacher", "office_staff"]);
+          if (!membership || !allowedRoles.has(membership.role)) {
+            return res.status(400).json({ error: "Central email recipient must be active staff at this school" });
+          }
+          const user = await getUserById(rawRecipientId);
+          if (!user?.email) {
+            return res.status(400).json({ error: "Central email recipient must have an email address" });
+          }
+          normalizedCentralEmailRecipientUserId = rawRecipientId;
+        }
       }
     }
 
@@ -213,6 +237,9 @@ router.post("/settings", ...auth, async (req, res, next) => {
       if (maxTabsPerStudent !== undefined) schoolData.maxTabsPerStudent = maxTabsPerStudent || null;
       if (aiSafetyEmailsEnabled !== undefined) schoolData.aiSafetyEmailsEnabled = aiSafetyEmailsEnabled !== false;
       if (autoBlockUnsafeUrls !== undefined) schoolData.autoBlockUnsafeUrls = autoBlockUnsafeUrls !== false;
+      if (normalizedCentralEmailRecipientUserId !== undefined) {
+        schoolData.centralEmailRecipientUserId = normalizedCentralEmailRecipientUserId;
+      }
       if (sharedChromebookSignInEnabled !== undefined) {
         schoolData.sharedChromebookSignInEnabled = sharedChromebookSignInEnabled === true;
         if (sharedChromebookSignInEnabled === true && sharedChromebookLoginMethod === undefined && sharedChromebookPinLoginEnabled === undefined) {

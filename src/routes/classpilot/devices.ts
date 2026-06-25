@@ -38,6 +38,7 @@ import {
   getActiveSessions,
   setActiveStudentForDevice,
   getAdminEmailsBySchool,
+  addCentralEmailRecipientForSchool,
   upsertSettings,
   getRecentMessagesForStudent,
   getStudentByEmail,
@@ -1440,10 +1441,12 @@ router.post("/device/heartbeat", requireDeviceAuth, async (req, res, next) => {
 
           // Send email to school admins if enabled
           if (schoolSettings?.aiSafetyEmailsEnabled !== false) {
-            getAdminEmailsBySchool(schoolId).then((adminEmails) => {
-              if (adminEmails.length > 0) {
+            runWithTenantContext({ schoolId }, async () =>
+              addCentralEmailRecipientForSchool(schoolId, await getAdminEmailsBySchool(schoolId))
+            ).then((recipients) => {
+              if (recipients.length > 0) {
                 void sendSafetyAlertEmail({
-                  recipients: adminEmails,
+                  recipients,
                   studentEmail,
                   alertType: classification.safetyAlert!,
                   url: activeTabUrl,

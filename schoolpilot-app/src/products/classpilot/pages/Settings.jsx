@@ -8,6 +8,7 @@ import { Button } from "../../../components/ui/button";
 import { Input } from "../../../components/ui/input";
 import { Label } from "../../../components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../../components/ui/card";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../../components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -18,8 +19,9 @@ import {
 } from "../../../components/ui/dialog";
 import { useToast } from "../../../hooks/use-toast";
 import { apiRequest, queryClient } from "../../../lib/queryClient";
-import { ArrowLeft, Download, Shield, Clock, AlertCircle, Layers, Plus, Pencil, Trash2, Star, Users, BookOpen, Copy, RefreshCw, KeyRound } from "lucide-react";
+import { ArrowLeft, Download, Shield, Clock, AlertCircle, Layers, Plus, Pencil, Trash2, Star, Users, BookOpen, Copy, RefreshCw, KeyRound, Mail } from "lucide-react";
 import { ThemeToggle } from "../../../components/ThemeToggle";
+import { useClassPilotAuth } from "../../../hooks/useClassPilotAuth";
 
 // Helper function to normalize domain names
 function normalizeDomain(domain) {
@@ -58,6 +60,14 @@ function buildManagedPolicy(enrollmentKeySettings) {
   return JSON.stringify(policy, null, 2);
 }
 
+function displayStaffName(member) {
+  return member.user?.displayName
+    || [member.user?.firstName, member.user?.lastName].filter(Boolean).join(" ")
+    || member.user?.email
+    || member.email
+    || "Staff";
+}
+
 const settingsSchema = z.object({
   schoolName: z.string().min(1, "School name is required"),
   retentionDays: z.string().min(1, "Retention period is required"),
@@ -73,6 +83,8 @@ const settingsSchema = z.object({
 export default function Settings() {
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { currentUser, isAdmin } = useClassPilotAuth();
+  const canManageSchoolSettings = isAdmin || currentUser?.isSuperAdmin === true;
 
   // Flight Paths management state
   const [showSceneDialog, setShowSceneDialog] = useState(false);
@@ -85,6 +97,7 @@ export default function Settings() {
   const [selectedCourseId, setSelectedCourseId] = useState("");
   const [selectedResourceIds, setSelectedResourceIds] = useState(new Set());
   const [classroomFlightPathName, setClassroomFlightPathName] = useState("");
+  const [centralRecipientUserId, setCentralRecipientUserId] = useState("none");
 
 
   const { data: settings, isLoading } = useQuery({
@@ -101,6 +114,15 @@ export default function Settings() {
   const { data: enrollmentKeySettings, isLoading: enrollmentKeyLoading } = useQuery({
     queryKey: ["/api/classpilot/enrollment-key"],
     queryFn: () => apiRequest("GET", "/classpilot/enrollment-key"),
+  });
+
+  const { data: staffOptions = [] } = useQuery({
+    queryKey: ["/api/admin/users"],
+    queryFn: () => apiRequest("GET", "/admin/users"),
+    select: (data) => [...(data?.users ?? [])].sort((a, b) =>
+      displayStaffName(a).localeCompare(displayStaffName(b))
+    ),
+    enabled: canManageSchoolSettings,
   });
 
   const { data: classroomCourses = [], isLoading: classroomCoursesLoading } = useQuery({
@@ -146,6 +168,7 @@ export default function Settings() {
         autoBlockUnsafeUrls: settings.autoBlockUnsafeUrls !== false,
         sharedChromebookSignInEnabled: settings.sharedChromebookSignInEnabled === true,
       });
+      setCentralRecipientUserId(settings.centralEmailRecipientUserId || "none");
     }
   }, [settings, form]);
 
@@ -173,6 +196,9 @@ export default function Settings() {
         aiSafetyEmailsEnabled: data.aiSafetyEmailsEnabled !== false,
         autoBlockUnsafeUrls: data.autoBlockUnsafeUrls !== false,
         sharedChromebookSignInEnabled: data.sharedChromebookSignInEnabled === true,
+        ...(canManageSchoolSettings ? {
+          centralEmailRecipientUserId: centralRecipientUserId === "none" ? null : centralRecipientUserId,
+        } : {}),
       };
       return await apiRequest("POST", "/settings", payload);
     },
@@ -335,6 +361,8 @@ export default function Settings() {
   const sharedSignInEnabled = form.watch("sharedChromebookSignInEnabled");
   const managedPolicy = buildManagedPolicy(enrollmentKeySettings);
   const setupKey = enrollmentKeySettings?.key || "";
+  const selectedCentralRecipientAvailable = centralRecipientUserId === "none"
+    || staffOptions.some((member) => member.userId === centralRecipientUserId);
 
   const copyText = async (text, label) => {
     try {
@@ -506,6 +534,47 @@ export default function Settings() {
               <p className="text-xs text-muted-foreground -mt-4 ml-7">
                 Send email notifications to school admins when dangerous content (self-harm, violence, sexual) is detected.
               </p>
+
+              {canManageSchoolSettings && (
+                <div className="rounded-md border p-4 space-y-3">
+                  <div>
+                    <p className="text-sm font-medium flex items-center gap-2">
+                      <Mail className="h-4 w-4" />
+                      Central Email Copy
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Send a separate copy of ClassPilot operational emails to one staff account. The recipient must exist in the Staff tab.
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="central-email-recipient">Copy recipient</Label>
+                    <Select
+                      value={centralRecipientUserId}
+                      onValueChange={setCentralRecipientUserId}
+                    >
+                      <SelectTrigger id="central-email-recipient" data-testid="select-central-email-recipient">
+                        <SelectValue placeholder="No central copy" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">No central copy</SelectItem>
+                        {!selectedCentralRecipientAvailable && (
+                          <SelectItem value={centralRecipientUserId} disabled>
+                            Previously selected staff unavailable
+                          </SelectItem>
+                        )}
+                        {staffOptions.map((member) => (
+                          <SelectItem key={member.userId} value={member.userId}>
+                            {displayStaffName(member)} - {member.user?.email || member.email}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      Applies to ClassPilot session summaries and browser safety alerts. Password, billing, parent, and student emails are not copied.
+                    </p>
+                  </div>
+                </div>
+              )}
 
               <div className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground">
                 Attendance, hall pass, and dismissal context reduces classroom off-task noise in the dashboard. Critical student safety monitoring remains active and is still logged and routed to staff.
