@@ -7,7 +7,10 @@ import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
 import { requireProductLicense } from "../../middleware/requireProductLicense.js";
-import { requireDeviceAuth } from "../../middleware/requireDeviceAuth.js";
+import {
+  requireDeviceAuth,
+  requireDeviceAuthWithoutTenant,
+} from "../../middleware/requireDeviceAuth.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import {
   getDeviceById,
@@ -1485,7 +1488,7 @@ router.post("/device/heartbeat", requireDeviceAuth, async (req, res, next) => {
 // ============================================================================
 
 // POST /api/classpilot/device/screenshot - Upload screenshot
-router.post("/device/screenshot", requireDeviceAuth, async (req, res, next) => {
+router.post("/device/screenshot", requireDeviceAuthWithoutTenant, async (req, res, next) => {
   try {
     const { screenshot, tabTitle, tabUrl, tabFavicon } = req.body;
     const deviceId = res.locals.deviceId as string;
