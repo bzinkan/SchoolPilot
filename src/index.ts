@@ -307,7 +307,8 @@ async function runStartupMigrations(): Promise<void> {
       CREATE TABLE IF NOT EXISTS classpilot_commands (
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
         school_id TEXT NOT NULL,
-        teaching_session_id VARCHAR NOT NULL,
+        teaching_session_id VARCHAR,
+        supervision_context_id VARCHAR,
         teacher_id TEXT NOT NULL,
         target_scope TEXT NOT NULL,
         subgroup_id VARCHAR,
@@ -325,7 +326,10 @@ async function runStartupMigrations(): Promise<void> {
         updated_at TIMESTAMP NOT NULL DEFAULT now()
       )
     `);
+    await pool.query(`ALTER TABLE classpilot_commands ADD COLUMN IF NOT EXISTS supervision_context_id VARCHAR`);
+    await pool.query(`ALTER TABLE classpilot_commands ALTER COLUMN teaching_session_id DROP NOT NULL`);
     await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_commands_school_session_idx ON classpilot_commands (school_id, teaching_session_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_commands_school_context_idx ON classpilot_commands (school_id, supervision_context_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_commands_teacher_created_idx ON classpilot_commands (teacher_id, created_at)`);
 
     await pool.query(`
@@ -333,7 +337,8 @@ async function runStartupMigrations(): Promise<void> {
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
         command_id VARCHAR NOT NULL,
         school_id TEXT NOT NULL,
-        teaching_session_id VARCHAR NOT NULL,
+        teaching_session_id VARCHAR,
+        supervision_context_id VARCHAR,
         student_id TEXT NOT NULL,
         student_session_id VARCHAR,
         device_id TEXT,
@@ -349,8 +354,11 @@ async function runStartupMigrations(): Promise<void> {
         updated_at TIMESTAMP NOT NULL DEFAULT now()
       )
     `);
+    await pool.query(`ALTER TABLE classpilot_command_targets ADD COLUMN IF NOT EXISTS supervision_context_id VARCHAR`);
+    await pool.query(`ALTER TABLE classpilot_command_targets ALTER COLUMN teaching_session_id DROP NOT NULL`);
     await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_command_targets_command_idx ON classpilot_command_targets (command_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_command_targets_school_student_idx ON classpilot_command_targets (school_id, student_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_command_targets_school_context_idx ON classpilot_command_targets (school_id, supervision_context_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_command_targets_device_idx ON classpilot_command_targets (device_id)`);
 
     await pool.query(`
