@@ -76,6 +76,7 @@ export default function Dashboard() {
   });
   const [wsConnected, setWsConnected] = useState(false);
   const [liveStreams, setLiveStreams] = useState(new Map());
+  const [liveViewPendingIds, setLiveViewPendingIds] = useState(new Set());
   const [tileRevisions, setTileRevisions] = useState({});
   const [teacherAllowedDomains, setTeacherAllowedDomains] = useState(new Set());
   const [showGradeDialog, setShowGradeDialog] = useState(false);
@@ -151,6 +152,10 @@ export default function Dashboard() {
   const maxReconnectDelay = 30000;
   const [wsAuthenticated, setWsAuthenticated] = useState(false);
   const effectiveSessionIdRef = useRef(null);
+  const LIVE_VIEW_TIMEOUT_MS = 15 * 60 * 1000;
+  const LIVE_VIEW_CONNECT_TIMEOUT_MS = 12000;
+  const liveViewTimers = useRef(new Map());
+  const liveViewConnectTimers = useRef(new Map());
 
   // WebRTC hook for live video streaming
   // eslint-disable-next-line react-hooks/refs
@@ -655,6 +660,9 @@ export default function Dashboard() {
       }
     };
 
+    const activeLiveViewTimers = liveViewTimers.current;
+    const activeLiveViewConnectTimers = liveViewConnectTimers.current;
+
     connectWebSocket();
 
     return () => {
@@ -667,6 +675,10 @@ export default function Dashboard() {
         wsRef.current.close();
         wsRef.current = null;
       }
+      activeLiveViewTimers.forEach((timer) => clearTimeout(timer));
+      activeLiveViewTimers.clear();
+      activeLiveViewConnectTimers.forEach((timer) => clearTimeout(timer));
+      activeLiveViewConnectTimers.clear();
       webrtc.cleanup();
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -749,16 +761,24 @@ export default function Dashboard() {
   };
 
   const isStudentInTemporarySupervision = (student) => student?.supervisionState === "temporary_coverage";
-  const isStudentCommandable = (student) => !isStudentInTemporarySupervision(student);
+  const isStudentOwnedByAnotherClass = (student) => (
+    !!effectiveSession?.id &&
+    student?.supervisionContext?.type === "class" &&
+    student.supervisionContext.id &&
+    student.supervisionContext.id !== effectiveSession.id
+  );
+  const isStudentCommandable = (student) => !isStudentInTemporarySupervision(student) && !isStudentOwnedByAnotherClass(student);
 
   // Selection handlers
   const toggleStudentSelection = (studentId) => {
     const student = filteredStudents.find((row) => row.studentId === studentId);
-    if (studentView === "class" && isStudentInTemporarySupervision(student)) {
+    if (studentView === "class" && !isStudentCommandable(student)) {
       toast({
         variant: "destructive",
-        title: "Student is in supervision",
-        description: "Return the student to class before using ClassPilot controls.",
+        title: isStudentInTemporarySupervision(student) ? "Student is in supervision" : "Student moved to another class",
+        description: isStudentInTemporarySupervision(student)
+          ? "Return the student to class before using ClassPilot controls."
+          : "The most recent active class session controls this student.",
       });
       return;
     }
@@ -780,17 +800,60 @@ export default function Dashboard() {
   };
 
   // Live view handlers — auto-timeout after 15 minutes to protect student device CPU/battery
-  const LIVE_VIEW_TIMEOUT_MS = 15 * 60 * 1000;
-  const liveViewTimers = useRef(new Map());
+  const markLiveViewPending = (deviceId, pending) => {
+    setLiveViewPendingIds((prev) => {
+      const next = new Set(prev);
+      if (pending) next.add(deviceId);
+      else next.delete(deviceId);
+      return next;
+    });
+  };
+
+  const refreshTile = (deviceId) => {
+    setTileRevisions((prev) => ({ ...prev, [deviceId]: (prev[deviceId] ?? 0) + 1 }));
+  };
 
   const handleStartLiveView = async (deviceId) => {
     if (!wsAuthenticated) {
       toast({ title: "Not Ready", description: "Please wait for connection to be established", variant: "destructive" });
       return;
     }
-    await webrtc.startLiveView(deviceId, (stream) => {
-      setLiveStreams((prev) => { const newMap = new Map(prev); newMap.set(deviceId, stream); return newMap; });
-    });
+    markLiveViewPending(deviceId, true);
+    let streamReceived = false;
+    if (liveViewConnectTimers.current.has(deviceId)) clearTimeout(liveViewConnectTimers.current.get(deviceId));
+
+    try {
+      const connection = await webrtc.startLiveView(deviceId, (stream) => {
+        streamReceived = true;
+        markLiveViewPending(deviceId, false);
+        if (liveViewConnectTimers.current.has(deviceId)) {
+          clearTimeout(liveViewConnectTimers.current.get(deviceId));
+          liveViewConnectTimers.current.delete(deviceId);
+        }
+        setLiveStreams((prev) => { const newMap = new Map(prev); newMap.set(deviceId, stream); return newMap; });
+      });
+      if (!connection) {
+        markLiveViewPending(deviceId, false);
+        toast({ title: "Live View Not Ready", description: "The teacher connection is not ready yet. Try again in a moment.", variant: "destructive" });
+        return;
+      }
+      liveViewConnectTimers.current.set(deviceId, setTimeout(() => {
+        if (streamReceived) return;
+        markLiveViewPending(deviceId, false);
+        handleStopLiveView(deviceId);
+        refreshTile(deviceId);
+        queryClient.invalidateQueries({ queryKey: ['/api/device/screenshot', deviceId], refetchType: 'all' });
+        toast({
+          title: "Live View Timed Out",
+          description: "The request was sent, but no stream arrived. The managed session, extension policy, or network may be blocking live capture; showing the latest screenshot instead.",
+          variant: "destructive",
+        });
+      }, LIVE_VIEW_CONNECT_TIMEOUT_MS));
+    } catch (error) {
+      markLiveViewPending(deviceId, false);
+      toast({ title: "Live View Failed", description: error?.message || "Could not start live view.", variant: "destructive" });
+      return;
+    }
     // Clear any existing timer for this device and start a new one
     if (liveViewTimers.current.has(deviceId)) clearTimeout(liveViewTimers.current.get(deviceId));
     liveViewTimers.current.set(deviceId, setTimeout(() => {
@@ -799,11 +862,12 @@ export default function Dashboard() {
     }, LIVE_VIEW_TIMEOUT_MS));
   };
 
-  const refreshTile = (deviceId) => {
-    setTileRevisions((prev) => ({ ...prev, [deviceId]: (prev[deviceId] ?? 0) + 1 }));
-  };
-
   const handleStopLiveView = (deviceId) => {
+    markLiveViewPending(deviceId, false);
+    if (liveViewConnectTimers.current.has(deviceId)) {
+      clearTimeout(liveViewConnectTimers.current.get(deviceId));
+      liveViewConnectTimers.current.delete(deviceId);
+    }
     webrtc.stopLiveView(deviceId, wsRef.current);
     setLiveStreams((prev) => { const newMap = new Map(prev); newMap.delete(deviceId); return newMap; });
     if (liveViewTimers.current.has(deviceId)) {
@@ -817,6 +881,7 @@ export default function Dashboard() {
   const sessionFilteredStudents = students.filter((student) => {
     if (effectiveSession && sessionStudentIds.length > 0) {
       if (!sessionStudentIds.includes(student.studentId)) return false;
+      if (isStudentOwnedByAnotherClass(student)) return false;
     }
     if (isAdmin && !effectiveSession) {
       return normalizeGrade(student.gradeLevel) === normalizeGrade(selectedGrade);
@@ -852,7 +917,7 @@ export default function Dashboard() {
     : studentView === "claimed"
       ? filteredClaimedStudents
       : filteredClassStudents;
-  const controllableStudents = filteredStudents.filter((student) => student.supervisionState !== "temporary_coverage");
+  const controllableStudents = filteredStudents.filter(isStudentCommandable);
   const selectableStudents = studentView === "class" ? controllableStudents : filteredStudents;
 
   const statsStudents = studentView === "class" ? sessionFilteredStudents : filteredStudents;
@@ -2215,6 +2280,7 @@ export default function Dashboard() {
                     isSelected={selectedStudentIds.has(student.studentId)}
                     onToggleSelect={supervisedElsewhere ? undefined : () => toggleStudentSelection(student.studentId)}
                     liveStream={primaryDeviceId ? liveStreams.get(primaryDeviceId) || null : null}
+                    liveViewPending={primaryDeviceId ? liveViewPendingIds.has(primaryDeviceId) : false}
                     onStartLiveView={!supervisedElsewhere && primaryDeviceId ? () => handleStartLiveView(primaryDeviceId) : undefined}
                     onStopLiveView={!supervisedElsewhere && primaryDeviceId ? () => handleStopLiveView(primaryDeviceId) : undefined}
                     onEndLiveRefresh={primaryDeviceId ? () => refreshTile(primaryDeviceId) : undefined}

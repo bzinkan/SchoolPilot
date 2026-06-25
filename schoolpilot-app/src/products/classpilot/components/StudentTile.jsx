@@ -45,6 +45,7 @@ function StudentTile({
   liveStream,
   onStartLiveView,
   onStopLiveView,
+  liveViewPending = false,
   onBlockRefetches,
   onAllowDomain,
   teachingSessionId,
@@ -709,6 +710,7 @@ function StudentTile({
               variant={liveStream ? "default" : "outline"}
               size="sm"
               className="h-7 px-3 text-xs"
+              disabled={liveViewPending}
               onClick={(e) => {
                 e.stopPropagation();
                 if (liveStream) {
@@ -717,11 +719,11 @@ function StudentTile({
                   onStartLiveView();
                 }
               }}
-              title={liveStream ? "Stop live view" : "Start live view"}
+              title={liveViewPending ? "Waiting for live view to connect" : liveStream ? "Stop live view" : "Start live view"}
               data-testid={`button-live-view-${student.primaryDeviceId ?? "unknown-device"}`}
             >
               <Monitor className="h-3.5 w-3.5 mr-1" />
-              {liveStream ? "Stop" : "View"}
+              {liveViewPending ? "Connecting" : liveStream ? "Stop" : "View"}
             </Button>
           )}
           {liveStream && (

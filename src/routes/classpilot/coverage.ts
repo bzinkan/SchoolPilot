@@ -930,19 +930,8 @@ router.get("/coverage/setup/classes", ...auth, async (req, res, next) => {
 router.get("/coverage/assignments", ...auth, async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
-    const access = await setupAccessForRequest(req, res);
-    if (!access.canSetup) return res.status(403).json({ error: "Setup permission required" });
-    let assignments = await listCoverageAssignments(schoolId);
-    if (!isAdmin(req, res)) {
-      const filtered = [];
-      for (const assignment of assignments) {
-        if (assignment.scopeType === "setup" || assignmentAllowsSetup(assignment)) continue;
-        if (await assignmentScopeWithinSetupAccess(schoolId, access, assignment.scopeType, assignment.scopeValue)) {
-          filtered.push(assignment);
-        }
-      }
-      assignments = filtered;
-    }
+    if (!isAdmin(req, res)) return res.status(403).json({ error: "Admin access required" });
+    const assignments = await listCoverageAssignments(schoolId);
     return res.json({ assignments: await assignmentResponse(schoolId, assignments) });
   } catch (err) {
     next(err);
@@ -951,6 +940,7 @@ router.get("/coverage/assignments", ...auth, async (req, res, next) => {
 
 router.post("/coverage/assignments", ...auth, async (req, res, next) => {
   try {
+    if (!isAdmin(req, res)) return res.status(403).json({ error: "Admin access required" });
     const schoolId = res.locals.schoolId!;
     const staffId = String(req.body.staffId || "").trim();
     const scopeType = String(req.body.scopeType || "").trim();
@@ -996,20 +986,11 @@ router.post("/coverage/assignments", ...auth, async (req, res, next) => {
 
 router.patch("/coverage/assignments/:id", ...auth, async (req, res, next) => {
   try {
+    if (!isAdmin(req, res)) return res.status(403).json({ error: "Admin access required" });
     const schoolId = res.locals.schoolId!;
-    const access = await setupAccessForRequest(req, res);
-    if (!access.canSetup) return res.status(403).json({ error: "Setup permission required" });
     const assignmentId = String(req.params.id);
     const existing = (await listCoverageAssignments(schoolId)).find((assignment) => assignment.id === assignmentId);
     if (!existing) return res.status(404).json({ error: "Coverage assignment not found" });
-    if (!isAdmin(req, res)) {
-      if (existing.scopeType === "setup" || assignmentAllowsSetup(existing)) {
-        return res.status(403).json({ error: "Only admins can change setup access" });
-      }
-      if (!(await assignmentScopeWithinSetupAccess(schoolId, access, existing.scopeType, existing.scopeValue))) {
-        return res.status(403).json({ error: "Assignment is outside your setup scope" });
-      }
-    }
 
     const activeOnlyChange =
       req.body.active !== undefined &&

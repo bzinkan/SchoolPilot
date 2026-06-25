@@ -5,6 +5,7 @@ import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
 import { requireProductLicense } from "../../middleware/requireProductLicense.js";
 import {
   getActiveClasspilotClassroomStates,
+  getActiveClassOwnersForStudents,
   getActiveSessionByStudent,
   getActiveSupervisionForStudents,
   getGroupByIdAndSchool,
@@ -103,6 +104,11 @@ async function resolveTargets(req: Request, res: Response, body: any): Promise<R
     selectedRows.map((row) => row.studentId)
   );
   const coverageByStudent = new Map(activeCoverage.map((entry) => [entry.studentId, entry.context]));
+  const activeClassOwners = await getActiveClassOwnersForStudents(
+    schoolId,
+    selectedRows.map((row) => row.studentId)
+  );
+  const classOwnerByStudent = new Map(activeClassOwners.map((owner) => [owner.studentId, owner]));
   for (const row of selectedRows) {
     const coverage = coverageByStudent.get(row.studentId);
     const studentName = [row.student.firstName, row.student.lastName].filter(Boolean).join(" ") || row.student.email || row.studentId;
@@ -114,6 +120,18 @@ async function resolveTargets(req: Request, res: Response, body: any): Promise<R
         deviceId: null,
         available: false,
         unavailableReason: `Student is assigned to ${coverage.name}`,
+      });
+      continue;
+    }
+    const classOwner = classOwnerByStudent.get(row.studentId);
+    if (classOwner && classOwner.session.id !== teachingSessionId) {
+      resolved.push({
+        studentId: row.studentId,
+        studentName,
+        studentSessionId: null,
+        deviceId: null,
+        available: false,
+        unavailableReason: `Student is active in ${classOwner.groupName}`,
       });
       continue;
     }

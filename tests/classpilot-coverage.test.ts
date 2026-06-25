@@ -36,6 +36,7 @@ import {
   updateCoverageAssignment,
   updateCoverageScopeGroup,
   updateClasspilotCommandTargetAck,
+  updateEnrollmentSettings,
 } from "../dist/services/storage.js";
 import { getAuditLogs } from "../dist/services/audit.js";
 import { scopedDeviceTargets } from "../dist/services/classpilotDeviceScope.js";
@@ -368,6 +369,7 @@ after(async () => {
         await db.execute(sql`DELETE FROM student_sessions WHERE student_id IN (SELECT id FROM students WHERE school_id = ${school.id}) OR device_id LIKE ${`${TAG}-%`}`);
         await db.execute(sql`DELETE FROM student_devices WHERE student_id IN (SELECT id FROM students WHERE school_id = ${school.id}) OR device_id LIKE ${`${TAG}-%`}`);
         await db.execute(sql`DELETE FROM devices WHERE school_id = ${school.id} OR device_id LIKE ${`${TAG}-%`}`);
+        await db.execute(sql`DELETE FROM classpilot_session_students WHERE school_id = ${school.id}`);
         await db.execute(sql`DELETE FROM teaching_sessions WHERE school_id = ${school.id}`);
         await db.execute(sql`DELETE FROM group_students WHERE group_id IN (SELECT id FROM groups WHERE school_id = ${school.id})`);
         await db.execute(sql`DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id = ${school.id})`);
@@ -437,6 +439,106 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     }));
     assert.equal(released[0]?.releaseReason, "returned_to_class");
     await inSchool(school.id, () => endTeachingSession(session.id));
+  });
+
+  it("gives the newest normal class session control of overlapping students", async () => {
+    const secondTeacher = await createUser({
+      email: `second-teacher@${TAG}.example.edu`,
+      firstName: "Nina",
+      lastName: "Newest",
+    } as any);
+    await createMembership({ userId: secondTeacher.id, schoolId: school.id, role: "teacher", status: "active" } as any);
+
+    const oldGroup = await inSchool(school.id, () => createGroup({
+      schoolId: school.id,
+      teacherId: teacher.id,
+      name: `${TAG}_Old_Class`,
+      groupType: "admin_class",
+      status: "active",
+    } as any));
+    const newGroup = await inSchool(school.id, () => createGroup({
+      schoolId: school.id,
+      teacherId: secondTeacher.id,
+      name: `${TAG}_New_Class`,
+      groupType: "admin_class",
+      status: "active",
+    } as any));
+    await inSchool(school.id, () => addGroupStudentsDetailed(oldGroup.id, [studentDeviceGuard.id]));
+    await inSchool(school.id, () => addGroupStudentsDetailed(newGroup.id, [studentDeviceGuard.id]));
+
+    const oldSession = await inSchool(school.id, () => createTeachingSession({ groupId: oldGroup.id, teacherId: teacher.id }));
+    const newSession = await inSchool(school.id, () => createTeachingSession({ groupId: newGroup.id, teacherId: secondTeacher.id }));
+    await inSchool(school.id, async () => {
+      await db.execute(sql`UPDATE teaching_sessions SET start_time = ${new Date(Date.now() - 60_000)} WHERE id = ${oldSession.id}`);
+      await db.execute(sql`UPDATE teaching_sessions SET start_time = ${new Date()} WHERE id = ${newSession.id}`);
+    });
+
+    const aggregated = await requestJson("GET", "/students-aggregated", undefined, authFor(teacher, school.id));
+    assert.equal(aggregated.status, 200);
+    const overlappingStudent = aggregated.body.find((student: any) => student.studentId === studentDeviceGuard.id);
+    assert.equal(overlappingStudent?.supervisionContext?.id, newSession.id);
+    assert.equal(overlappingStudent?.supervisionContext?.type, "class");
+
+    const oldCommand = await requestJson("POST", "/commands", {
+      teachingSessionId: oldSession.id,
+      targetScope: "students",
+      targetStudentIds: [studentDeviceGuard.id],
+      commandType: "open-tab",
+      commandPayload: { url: "https://example.com/old" },
+    }, authFor(teacher, school.id));
+    assert.equal(oldCommand.status, 201);
+    assert.equal(oldCommand.body.summary.requested, 1);
+    assert.equal(oldCommand.body.summary.unavailable, 1);
+    assert.equal(oldCommand.body.summary.sent, 0);
+    assert.match(oldCommand.body.command.targets[0].errorMessage, /active in/);
+
+    const newCommand = await requestJson("POST", "/commands", {
+      teachingSessionId: newSession.id,
+      targetScope: "students",
+      targetStudentIds: [studentDeviceGuard.id],
+      commandType: "open-tab",
+      commandPayload: { url: "https://example.com/new" },
+    }, authFor(secondTeacher, school.id));
+    assert.equal(newCommand.status, 201);
+    assert.equal(newCommand.body.summary.requested, 1);
+    assert.equal(newCommand.body.summary.unavailable, 0);
+    assert.equal(newCommand.body.summary.sent, 1);
+
+    await inSchool(school.id, () => endTeachingSession(oldSession.id));
+    await inSchool(school.id, () => endTeachingSession(newSession.id));
+  });
+
+  it("excludes actively logged-in students from the shared Chromebook login roster", async () => {
+    const enrollmentKey = `${TAG}-login-key`;
+    const waitingStudent = await inSchool(school.id, () => createStudent({
+      schoolId: school.id,
+      firstName: "Waiting",
+      lastName: "Login",
+      email: `waiting-login@${TAG}.example.edu`,
+      emailLc: `waiting-login@${TAG}.example.edu`,
+      gradeLevel: "8",
+      status: "active",
+    } as any));
+    await inSchool(school.id, () => updateEnrollmentSettings(school.id, {
+      enrollmentKey,
+      enrollmentKeyRequired: true,
+      sharedChromebookSignInEnabled: true,
+      sharedChromebookLoginMethod: "name_pin",
+      sharedChromebookPinLoginEnabled: true,
+    }));
+
+    const roster = await requestJson(
+      "GET",
+      `/classpilot/extension/login-roster?schoolId=${encodeURIComponent(school.id)}&gradeLevel=8`,
+      undefined,
+      { "x-classpilot-enrollment-key": enrollmentKey }
+    );
+    assert.equal(roster.status, 200);
+    const rosterIds = new Set(roster.body.students.map((student: any) => student.id));
+    assert.ok(!rosterIds.has(studentCoverage.id));
+    assert.ok(!rosterIds.has(studentDeviceGuard.id));
+    assert.ok(rosterIds.has(waitingStudent.id));
+    expectNoDeviceIds(roster.body);
   });
 
   it("tracks coverage assignments and blocks direct device targeting during temporary coverage", async () => {
@@ -629,9 +731,8 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       scopeType: "grade",
       scopeValue: "8",
     }, floorCaptainAuth);
-    assert.equal(floorCaptainClaimAssignment.status, 201);
-    assert.equal(floorCaptainClaimAssignment.body.assignment.abilities.claim, true);
-    assert.equal(floorCaptainClaimAssignment.body.assignment.abilities.setup, false);
+    assert.equal(floorCaptainClaimAssignment.status, 403);
+    assert.match(floorCaptainClaimAssignment.body.error, /Admin access required/);
 
     const floorCaptainSetupDelegation = await requestJson("POST", "/coverage/assignments", {
       staffId: coverageStaff.id,
@@ -648,13 +749,8 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     assert.equal(floorCaptainSchoolwideAssignment.status, 403);
 
     const floorCaptainAssignments = await requestJson("GET", "/coverage/assignments", undefined, floorCaptainAuth);
-    assert.equal(floorCaptainAssignments.status, 200);
-    assert.ok(floorCaptainAssignments.body.assignments.some((assignment: any) =>
-      assignment.staffId === coverageStaff.id &&
-      assignment.scopeLabel === "Roster Grade: 8" &&
-      assignment.abilities.claim === true
-    ));
-    assert.ok(floorCaptainAssignments.body.assignments.every((assignment: any) => assignment.abilities.setup !== true));
+    assert.equal(floorCaptainAssignments.status, 403);
+    assert.match(floorCaptainAssignments.body.error, /Admin access required/);
 
     const setupAssignment = await requestJson("POST", "/coverage/assignments", {
       staffId: teacher.id,
@@ -694,7 +790,8 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     expectNoDeviceIds(teacherSetupGroup.body);
 
     const teacherAssignments = await requestJson("GET", "/coverage/assignments", undefined, teacherAuth);
-    assert.equal(teacherAssignments.status, 200);
+    assert.equal(teacherAssignments.status, 403);
+    assert.match(teacherAssignments.body.error, /Admin access required/);
 
     const teacherQueueAfterSetupGrant = await requestJson("GET", "/coverage/available-students", undefined, teacherAuth);
     assert.equal(teacherQueueAfterSetupGrant.status, 200);

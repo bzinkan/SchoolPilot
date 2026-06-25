@@ -35,6 +35,7 @@ import {
   updateEnrollmentSettings,
   getStudentsForDevice,
   getActiveStudentForDevice,
+  getActiveSessions,
   setActiveStudentForDevice,
   getAdminEmailsBySchool,
   upsertSettings,
@@ -601,6 +602,14 @@ router.get("/extension/login-roster", extensionRosterLimiter, async (req, res, n
       }
       let students = await getStudentsBySchool(school.id);
       const grades = rosterGradesForStudents(students);
+      const activeStudentIds = new Set(
+        (await getActiveSessions(school.id))
+          .filter((session) => {
+            const lastSeenAt = session.lastSeenAt?.getTime?.() ?? 0;
+            return lastSeenAt > 0 && Date.now() - lastSeenAt <= 5 * 60 * 1000;
+          })
+          .map((session) => session.studentId)
+      );
 
       if (!gradeLevel) {
         return res.json({
@@ -614,6 +623,7 @@ router.get("/extension/login-roster", extensionRosterLimiter, async (req, res, n
       const roster = students
         .filter((student) => student.status === "active")
         .filter((student) => normalizeGradeLevel(student.gradeLevel) === gradeLevel)
+        .filter((student) => !activeStudentIds.has(student.id))
         .map((student) => ({
           id: student.id,
           name: `${student.firstName || ""} ${student.lastName || ""}`.trim() || student.email || "Student",

@@ -251,7 +251,7 @@ export default function Coverage() {
     queryKey: ["/api/coverage/assignments"],
     queryFn: () => apiRequest("GET", "/coverage/assignments"),
     select: (data) => data?.assignments || [],
-    enabled: canManageSupervisionSetup,
+    enabled: isAdmin,
   });
 
   const scopeGroupsQuery = useQuery({
@@ -1174,13 +1174,13 @@ export default function Coverage() {
 
           {canManageSupervisionSetup && (
             <TabsContent value="settings" className="space-y-4 mt-4">
-              <div className="grid gap-4 xl:grid-cols-[1.2fr_1fr]">
-                {canManageSupervisionSetup && (
+              <div className={isAdmin ? "grid gap-4 xl:grid-cols-[1.2fr_1fr]" : "grid gap-4"}>
+                {isAdmin && (
                   <Card>
                     <CardHeader className="flex flex-row items-start justify-between gap-4">
                       <div>
                         <CardTitle className="text-base">Staff Permissions</CardTitle>
-                        <CardDescription>Give staff pickup access, or setup access within selected scopes.</CardDescription>
+                        <CardDescription>Give staff pickup access or setup access within selected scopes.</CardDescription>
                       </div>
                       <Button onClick={() => openAssignmentDialog()}>
                         <UserCheck className="h-4 w-4 mr-2" />

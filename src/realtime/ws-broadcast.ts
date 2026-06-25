@@ -218,17 +218,17 @@ export function broadcastToStudentsLocal(
   return sentCount;
 }
 
-export function sendToDeviceLocal(schoolId: string, deviceId: string, message: unknown) {
+export function sendToDeviceLocal(schoolId: string, deviceId: string, message: unknown): boolean {
   const sockets = studentSocketsBySchool.get(schoolId);
   const msgType = (message as { type?: string })?.type ?? 'unknown';
   if (!sockets) {
     console.log(`[WS-Local] No sockets for school ${schoolId} to deliver ${msgType} to ${deviceId}`);
-    return;
+    return false;
   }
   // Per-device dedup
   const msgId = extractMsgId(message);
   if (msgId && dedupKey(deviceId, msgId)) {
-    return;
+    return true;
   }
   const messageStr = JSON.stringify(message);
   let sent = false;
@@ -246,6 +246,7 @@ export function sendToDeviceLocal(schoolId: string, deviceId: string, message: u
   if (!sent) {
     console.log(`[WS-Local] Device ${deviceId} not found locally for ${msgType}`);
   }
+  return sent;
 }
 
 export function sendToRoleLocal(schoolId: string, role: WsRole, message: unknown) {
