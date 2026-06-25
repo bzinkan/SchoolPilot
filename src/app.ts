@@ -20,6 +20,28 @@ import errorMonitor from "./services/errorMonitor.js";
 const PgStore = connectPgSimple(session);
 const isProduction = process.env.NODE_ENV === "production";
 
+function skipsWebSession(req: express.Request): boolean {
+  const path = req.path;
+  return (
+    path.startsWith("/api/classpilot/device/") ||
+    path.startsWith("/api/device/") ||
+    path.startsWith("/api/classpilot/extension/") ||
+    path.startsWith("/api/extension/") ||
+    path.startsWith("/api/classpilot/student/") ||
+    path.startsWith("/api/student/") ||
+    path.startsWith("/api/classpilot/polls/") ||
+    path.startsWith("/api/polls/") ||
+    path.startsWith("/api/classpilot/checkin/") ||
+    path.startsWith("/api/checkin/") ||
+    path === "/api/classpilot/school/status" ||
+    path === "/api/school/status" ||
+    path === "/api/classpilot/register" ||
+    path === "/api/register" ||
+    path === "/api/classpilot/register-student" ||
+    path === "/api/register-student"
+  );
+}
+
 export function createApp() {
   const app = express();
 
@@ -110,28 +132,37 @@ export function createApp() {
   const sessionSecret =
     process.env.SESSION_SECRET || crypto.randomBytes(32).toString("hex");
 
-  // Session (connect-pg-simple stores sessions in the "session" table)
-  app.use(
-    session({
-      store: new PgStore({
-        pool: pool as any,
-        tableName: "session",
-        createTableIfMissing: false,
-      }),
-      name: "schoolpilot.sid",
-      secret: sessionSecret,
-      rolling: true,
-      resave: false,
-      saveUninitialized: false,
-      cookie: {
-        maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-        httpOnly: true,
-        secure: isProduction,
-        sameSite: "lax", // "lax" required for cross-subdomain navigation
-        domain: process.env.COOKIE_DOMAIN || undefined, // .classpilot.net in production
-      },
-    })
-  );
+  const webSession = session({
+    store: new PgStore({
+      pool: pool as any,
+      tableName: "session",
+      createTableIfMissing: false,
+    }),
+    name: "schoolpilot.sid",
+    secret: sessionSecret,
+    rolling: true,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: "lax", // "lax" required for cross-subdomain navigation
+      domain: process.env.COOKIE_DOMAIN || undefined, // .classpilot.net in production
+    },
+  });
+
+  // Session (connect-pg-simple stores sessions in the "session" table).
+  // ClassPilot extension/device endpoints authenticate with device JWTs and do
+  // not need web sessions. Bypassing the session store here keeps high-frequency
+  // screenshot/device traffic from consuming Postgres pool connections before
+  // the request reaches device auth.
+  app.use((req, res, next) => {
+    if (skipsWebSession(req)) {
+      return next();
+    }
+    return webSession(req, res, next);
+  });
 
   // Global API rate limit (Redis-backed, falls back to in-memory). The old
   // "CloudFront masks client IPs" false-429 problem is fixed by trust proxy = 2
