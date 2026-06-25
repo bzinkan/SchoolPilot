@@ -1,16 +1,21 @@
-import { after, before, describe, it } from "node:test";
+import { after, before, describe, it, mock } from "node:test";
 import assert from "node:assert/strict";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { sql } from "drizzle-orm";
 
 import db, { pool } from "../dist/db.js";
 import { runWithTenantContext } from "../dist/middleware/tenantContext.js";
+import { signUserToken } from "../dist/services/jwt.js";
 import {
   addGroupStudentsDetailed,
   createCoverageAssignment,
+  createCoverageScopeGroup,
   createClasspilotCommandWithTargets,
   createDevice,
   createGroup,
   createMembership,
+  createProductLicense,
   createSchool,
   createStudent,
   createSupervisionContextWithStudents,
@@ -20,11 +25,16 @@ import {
   getActiveCoverageAssignmentsForStaff,
   getActiveSessionByStudent,
   getActiveSupervisionForStudent,
+  getCoverageScopeGroupStudentIds,
   getClasspilotCommandByIdAndSchool,
   getOnlineUnassignedStudents,
+  listCoverageScopeGroups,
   linkStudentDevice,
+  replaceCoverageScopeGroupMembers,
   releaseSupervisionStudents,
   setActiveStudentForDevice,
+  updateCoverageAssignment,
+  updateCoverageScopeGroup,
   updateClasspilotCommandTargetAck,
 } from "../dist/services/storage.js";
 import { scopedDeviceTargets } from "../dist/services/classpilotDeviceScope.js";
@@ -35,10 +45,14 @@ let school: any;
 let admin: any;
 let teacher: any;
 let coverageStaff: any;
+let scopedCoverageStaff: any;
 let studentUnassigned: any;
 let studentInClass: any;
 let studentCoverage: any;
 let studentDeviceGuard: any;
+let server: Server;
+let baseUrl: string;
+let originalRedisUrl: string | undefined;
 
 const deviceUnassigned = `${TAG}-device-unassigned`;
 const deviceInClass = `${TAG}-device-class`;
@@ -53,7 +67,56 @@ function asSystem<T>(fn: () => Promise<T>): Promise<T> {
   return runWithTenantContext({ isSuper: true }, fn);
 }
 
+function authFor(user: any, schoolId: string): Record<string, string> {
+  const token = signUserToken({
+    userId: user.id,
+    email: user.email,
+    isSuperAdmin: !!user.isSuperAdmin,
+  });
+  return {
+    authorization: `Bearer ${token}`,
+    "x-school-id": schoolId,
+  };
+}
+
+async function requestJson(
+  method: string,
+  path: string,
+  body?: unknown,
+  headers: Record<string, string> = {}
+): Promise<{ status: number; body: any }> {
+  const response = await fetch(`${baseUrl}${path}`, {
+    method,
+    headers: {
+      ...(body !== undefined ? { "content-type": "application/json" } : {}),
+      ...headers,
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const text = await response.text();
+  return {
+    status: response.status,
+    body: text ? JSON.parse(text) : null,
+  };
+}
+
+function expectNoDeviceIds(value: unknown) {
+  const text = JSON.stringify(value);
+  assert.equal(text.includes("deviceId"), false);
+  assert.equal(text.includes("primaryDeviceId"), false);
+  assert.equal(text.includes("studentSessionId"), false);
+}
+
 async function ensureCoverageTables() {
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS "session" (
+      "sid" varchar NOT NULL PRIMARY KEY,
+      "sess" json NOT NULL,
+      "expire" timestamp(6) NOT NULL
+    )
+  `);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS "IDX_session_expire" ON "session" ("expire")`);
+
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS classpilot_commands (
       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -125,6 +188,35 @@ async function ensureCoverageTables() {
   await db.execute(sql`CREATE INDEX IF NOT EXISTS classpilot_coverage_assignments_scope_idx ON classpilot_coverage_assignments (school_id, scope_type, scope_value)`);
 
   await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS classpilot_coverage_scope_groups (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      school_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT,
+      active BOOLEAN NOT NULL DEFAULT true,
+      created_by TEXT NOT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT now(),
+      updated_at TIMESTAMP NOT NULL DEFAULT now()
+    )
+  `);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS classpilot_coverage_scope_groups_school_idx ON classpilot_coverage_scope_groups (school_id, active)`);
+
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS classpilot_coverage_scope_group_members (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      school_id TEXT NOT NULL,
+      coverage_group_id VARCHAR NOT NULL,
+      student_id TEXT NOT NULL,
+      assigned_at TIMESTAMP NOT NULL DEFAULT now()
+    )
+  `);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS classpilot_coverage_scope_group_members_group_idx ON classpilot_coverage_scope_group_members (school_id, coverage_group_id)`);
+  await db.execute(sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS classpilot_coverage_scope_group_members_unique
+    ON classpilot_coverage_scope_group_members (school_id, coverage_group_id, student_id)
+  `);
+
+  await db.execute(sql`
     CREATE TABLE IF NOT EXISTS classpilot_supervision_contexts (
       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
       school_id TEXT NOT NULL,
@@ -171,6 +263,10 @@ function ids(rows: Array<{ student: { id: string } }>) {
 }
 
 before(async () => {
+  originalRedisUrl = process.env.REDIS_URL;
+  process.env.REDIS_URL = "";
+  mock.timers.enable({ apis: ["setInterval"] });
+
   await ensureCoverageTables();
 
   school = await createSchool({
@@ -178,13 +274,16 @@ before(async () => {
     domain: `${TAG}.example.edu`,
     slug: TAG,
   } as any);
+  await createProductLicense({ schoolId: school.id, product: "CLASSPILOT", status: "active" } as any);
   admin = await createUser({ email: `admin@${TAG}.example.edu`, firstName: "Ada", lastName: "Admin" } as any);
   teacher = await createUser({ email: `teacher@${TAG}.example.edu`, firstName: "Tara", lastName: "Teacher" } as any);
   coverageStaff = await createUser({ email: `coverage@${TAG}.example.edu`, firstName: "Casey", lastName: "Coverage" } as any);
+  scopedCoverageStaff = await createUser({ email: `scoped-coverage@${TAG}.example.edu`, firstName: "Sam", lastName: "Scoped" } as any);
 
   await createMembership({ userId: admin.id, schoolId: school.id, role: "admin", status: "active" } as any);
   await createMembership({ userId: teacher.id, schoolId: school.id, role: "teacher", status: "active" } as any);
   await createMembership({ userId: coverageStaff.id, schoolId: school.id, role: "office_staff", status: "active" } as any);
+  await createMembership({ userId: scopedCoverageStaff.id, schoolId: school.id, role: "office_staff", status: "active" } as any);
 
   studentUnassigned = await inSchool(school.id, () => createStudent({
     schoolId: school.id,
@@ -237,15 +336,29 @@ before(async () => {
     await setActiveStudentForDevice(deviceCoverage, studentCoverage.id);
     await setActiveStudentForDevice(deviceGuard, studentDeviceGuard.id);
   });
+
+  const { createApp } = await import("../dist/app.js");
+  const app = createApp();
+  server = createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address() as AddressInfo;
+  baseUrl = `http://127.0.0.1:${address.port}/api`;
 });
 
 after(async () => {
   try {
+    if (server) {
+      await new Promise<void>((resolve, reject) => {
+        server.close((err) => (err ? reject(err) : resolve()));
+      });
+    }
     if (school?.id) {
       await asSystem(async () => {
         await db.execute(sql`DELETE FROM classpilot_supervision_students WHERE school_id = ${school.id}`);
         await db.execute(sql`DELETE FROM classpilot_supervision_contexts WHERE school_id = ${school.id}`);
         await db.execute(sql`DELETE FROM classpilot_coverage_assignments WHERE school_id = ${school.id}`);
+        await db.execute(sql`DELETE FROM classpilot_coverage_scope_group_members WHERE school_id = ${school.id}`);
+        await db.execute(sql`DELETE FROM classpilot_coverage_scope_groups WHERE school_id = ${school.id}`);
         await db.execute(sql`DELETE FROM classpilot_command_targets WHERE school_id = ${school.id}`);
         await db.execute(sql`DELETE FROM classpilot_commands WHERE school_id = ${school.id}`);
         await db.execute(sql`DELETE FROM student_sessions WHERE student_id IN (SELECT id FROM students WHERE school_id = ${school.id}) OR device_id LIKE ${`${TAG}-%`}`);
@@ -256,6 +369,7 @@ after(async () => {
         await db.execute(sql`DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id = ${school.id})`);
         await db.execute(sql`DELETE FROM groups WHERE school_id = ${school.id}`);
         await db.execute(sql`DELETE FROM students WHERE school_id = ${school.id}`);
+        await db.execute(sql`DELETE FROM product_licenses WHERE school_id = ${school.id}`);
         await db.execute(sql`DELETE FROM school_memberships WHERE school_id = ${school.id}`);
         await db.execute(sql`DELETE FROM schools WHERE id = ${school.id}`);
       });
@@ -266,6 +380,9 @@ after(async () => {
   } catch {
     /* best-effort cleanup */
   }
+  mock.timers.reset();
+  if (originalRedisUrl === undefined) delete process.env.REDIS_URL;
+  else process.env.REDIS_URL = originalRedisUrl;
   await pool.end();
 });
 
@@ -362,6 +479,163 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     const scopedAfterRelease = await inSchool(school.id, () => scopedDeviceTargets([deviceGuard], school.id));
     assert.deepEqual(scopedAfterRelease.deviceIds, [deviceGuard]);
     assert.equal(scopedAfterRelease.rejectedDeviceCount, 0);
+  });
+
+  it("manages reusable coverage testing groups and assignment edits", async () => {
+    const group = await inSchool(school.id, () => createCoverageScopeGroup({
+      group: {
+        schoolId: school.id,
+        name: "State Testing A",
+        description: "Initial testing roster",
+        active: true,
+        createdBy: admin.id,
+      },
+      studentIds: [studentCoverage.id, studentDeviceGuard.id],
+    } as any));
+    assert.equal(group.members.length, 2);
+
+    const listed = await inSchool(school.id, () => listCoverageScopeGroups(school.id));
+    assert.ok(listed.some((entry) => entry.id === group.id && entry.members.length === 2));
+
+    const replaced = await inSchool(school.id, () => replaceCoverageScopeGroupMembers({
+      schoolId: school.id,
+      groupId: group.id,
+      studentIds: [studentUnassigned.id],
+    }));
+    assert.equal(replaced?.members.length, 1);
+    assert.deepEqual(await inSchool(school.id, () => getCoverageScopeGroupStudentIds(school.id, group.id)), [studentUnassigned.id]);
+
+    const assignment = await inSchool(school.id, () => createCoverageAssignment({
+      schoolId: school.id,
+      staffId: coverageStaff.id,
+      scopeType: "coverage_group",
+      scopeValue: group.id,
+      permissions: { observe: true, claim: true },
+      active: true,
+      createdBy: admin.id,
+    } as any));
+    let activeAssignments = await inSchool(school.id, () => getActiveCoverageAssignmentsForStaff(school.id, coverageStaff.id));
+    assert.ok(activeAssignments.some((entry) => entry.id === assignment.id && entry.scopeType === "coverage_group"));
+
+    const updatedAssignment = await inSchool(school.id, () => updateCoverageAssignment(school.id, assignment.id, {
+      scopeType: "grade",
+      scopeValue: "8",
+      active: false,
+    } as any));
+    assert.equal(updatedAssignment?.scopeType, "grade");
+    assert.equal(updatedAssignment?.active, false);
+    activeAssignments = await inSchool(school.id, () => getActiveCoverageAssignmentsForStaff(school.id, coverageStaff.id));
+    assert.ok(!activeAssignments.some((entry) => entry.id === assignment.id));
+
+    const disabledGroup = await inSchool(school.id, () => updateCoverageScopeGroup({
+      schoolId: school.id,
+      groupId: group.id,
+      active: false,
+    }));
+    assert.equal(disabledGroup?.active, false);
+  });
+
+  it("enforces coverage-group scoped visibility and safe reroute targets through coverage APIs", async () => {
+    const adminAuth = authFor(admin, school.id);
+    const staffAuth = authFor(scopedCoverageStaff, school.id);
+    const teacherAuth = authFor(teacher, school.id);
+
+    const groupRes = await requestJson("POST", "/coverage/scope-groups", {
+      name: "Route Testing Group",
+      description: "API route coverage scope",
+      studentIds: [studentUnassigned.id],
+    }, adminAuth);
+    assert.equal(groupRes.status, 201);
+    assert.equal(groupRes.body.group.studentCount, 1);
+    expectNoDeviceIds(groupRes.body);
+
+    const assignmentRes = await requestJson("POST", "/coverage/assignments", {
+      staffId: scopedCoverageStaff.id,
+      scopeType: "coverage_group",
+      scopeValue: groupRes.body.group.id,
+    }, adminAuth);
+    assert.equal(assignmentRes.status, 201);
+    assert.equal(assignmentRes.body.assignment.permissionLabel, "Claim + Manage");
+    assert.match(assignmentRes.body.assignment.scopeLabel, /Testing Group/);
+    expectNoDeviceIds(assignmentRes.body);
+
+    const staffQueue = await requestJson("GET", "/coverage/unassigned", undefined, staffAuth);
+    assert.equal(staffQueue.status, 200);
+    const staffQueueIds = new Set(staffQueue.body.students.map((student: any) => student.studentId));
+    assert.ok(staffQueueIds.has(studentUnassigned.id));
+    assert.ok(!staffQueueIds.has(studentCoverage.id));
+    expectNoDeviceIds(staffQueue.body);
+
+    const teacherQueue = await requestJson("GET", "/coverage/unassigned", undefined, teacherAuth);
+    assert.equal(teacherQueue.status, 200);
+    assert.deepEqual(teacherQueue.body.students, []);
+
+    const contextRes = await requestJson("POST", "/coverage/contexts", {
+      contextType: "office",
+      name: "Scoped Office Coverage",
+      endsAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      studentIds: [studentUnassigned.id],
+    }, staffAuth);
+    assert.equal(contextRes.status, 201);
+    const contextId = contextRes.body.context.id;
+    expectNoDeviceIds(contextRes.body);
+
+    const staffContexts = await requestJson("GET", "/coverage/contexts?activeOnly=true", undefined, staffAuth);
+    assert.equal(staffContexts.status, 200);
+    assert.ok(staffContexts.body.contexts.some((context: any) => context.id === contextId && context.canManage));
+    expectNoDeviceIds(staffContexts.body);
+
+    const teacherContexts = await requestJson("GET", "/coverage/contexts?activeOnly=true", undefined, teacherAuth);
+    assert.equal(teacherContexts.status, 200);
+    assert.ok(!teacherContexts.body.contexts.some((context: any) => context.id === contextId));
+
+    const rerouteTargets = await requestJson("GET", "/coverage/reroute-targets", undefined, teacherAuth);
+    assert.equal(rerouteTargets.status, 200);
+    const target = rerouteTargets.body.contexts.find((context: any) => context.id === contextId);
+    assert.ok(target);
+    assert.equal(Object.prototype.hasOwnProperty.call(target, "students"), false);
+    expectNoDeviceIds(rerouteTargets.body);
+
+    const activeClass = await inSchool(school.id, () => createGroup({
+      schoolId: school.id,
+      teacherId: teacher.id,
+      name: `${TAG}_Reroute_Class`,
+      groupType: "admin_class",
+      status: "active",
+    } as any));
+    await inSchool(school.id, () => addGroupStudentsDetailed(activeClass.id, [studentInClass.id]));
+    const teachingSession = await inSchool(school.id, () => createTeachingSession({
+      groupId: activeClass.id,
+      teacherId: teacher.id,
+    }));
+
+    const teacherReroute = await requestJson("POST", "/coverage/reroute", {
+      contextId,
+      studentIds: [studentInClass.id],
+      note: "API teacher reroute check",
+    }, teacherAuth);
+    assert.equal(teacherReroute.status, 201);
+    assert.ok(teacherReroute.body.assignments.some((assignment: any) =>
+      assignment.studentId === studentInClass.id &&
+      assignment.contextId === contextId &&
+      assignment.source === "teacher_reroute"
+    ));
+    expectNoDeviceIds(teacherReroute.body);
+
+    const outOfClassReroute = await requestJson("POST", "/coverage/reroute", {
+      contextId,
+      studentIds: [studentCoverage.id],
+      note: "should be blocked",
+    }, teacherAuth);
+    assert.equal(outOfClassReroute.status, 403);
+    assert.match(outOfClassReroute.body.error, /active class/);
+
+    const releaseRes = await requestJson("POST", `/coverage/contexts/${contextId}/release`, {
+      studentIds: [studentUnassigned.id, studentInClass.id],
+      releaseReason: "test_release",
+    }, staffAuth);
+    assert.equal(releaseRes.status, 200);
+    await inSchool(school.id, () => endTeachingSession(teachingSession.id));
   });
 
   it("records coverage commands against a supervision context without a teaching session", async () => {

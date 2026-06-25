@@ -96,6 +96,8 @@ import {
   classpilotSessionStudents,
   classpilotSessionUsage,
   classpilotCoverageAssignments,
+  classpilotCoverageScopeGroups,
+  classpilotCoverageScopeGroupMembers,
   classpilotSupervisionContexts,
   classpilotSupervisionStudents,
   subgroups,
@@ -144,6 +146,9 @@ import {
   type ClasspilotSessionUsage,
   type ClasspilotCoverageAssignment,
   type InsertClasspilotCoverageAssignment,
+  type ClasspilotCoverageScopeGroup,
+  type InsertClasspilotCoverageScopeGroup,
+  type ClasspilotCoverageScopeGroupMember,
   type ClasspilotSupervisionContext,
   type InsertClasspilotSupervisionContext,
   type ClasspilotSupervisionStudent,
@@ -5121,6 +5126,10 @@ export type OnlineUnassignedStudent = {
   studentSession: StudentSession;
 };
 
+export type CoverageScopeGroupWithMembers = ClasspilotCoverageScopeGroup & {
+  members: (ClasspilotCoverageScopeGroupMember & { student: Student })[];
+};
+
 function activeSupervisionCondition(schoolId: string) {
   return and(
     eq(classpilotSupervisionStudents.schoolId, schoolId),
@@ -5129,6 +5138,167 @@ function activeSupervisionCondition(schoolId: string) {
     eq(classpilotSupervisionContexts.status, "active"),
     sql`${classpilotSupervisionContexts.endsAt} > now()`
   );
+}
+
+export async function listCoverageScopeGroups(
+  schoolId: string,
+  options: { activeOnly?: boolean } = {}
+): Promise<CoverageScopeGroupWithMembers[]> {
+  const conditions: SQL[] = [eq(classpilotCoverageScopeGroups.schoolId, schoolId)];
+  if (options.activeOnly) conditions.push(eq(classpilotCoverageScopeGroups.active, true));
+
+  const groupsRows = await db
+    .select()
+    .from(classpilotCoverageScopeGroups)
+    .where(and(...conditions))
+    .orderBy(desc(classpilotCoverageScopeGroups.active), classpilotCoverageScopeGroups.name);
+
+  if (groupsRows.length === 0) return [];
+  const groupIds = groupsRows.map((group) => group.id);
+  const members = await db
+    .select({ member: classpilotCoverageScopeGroupMembers, student: students })
+    .from(classpilotCoverageScopeGroupMembers)
+    .innerJoin(students, eq(students.id, classpilotCoverageScopeGroupMembers.studentId))
+    .where(
+      and(
+        eq(classpilotCoverageScopeGroupMembers.schoolId, schoolId),
+        inArray(classpilotCoverageScopeGroupMembers.coverageGroupId, groupIds)
+      )
+    )
+    .orderBy(students.lastName, students.firstName);
+
+  const membersByGroup = new Map<string, (ClasspilotCoverageScopeGroupMember & { student: Student })[]>();
+  for (const row of members) {
+    const list = membersByGroup.get(row.member.coverageGroupId) || [];
+    list.push({ ...row.member, student: row.student });
+    membersByGroup.set(row.member.coverageGroupId, list);
+  }
+
+  return groupsRows.map((group) => ({
+    ...group,
+    members: membersByGroup.get(group.id) || [],
+  }));
+}
+
+export async function getCoverageScopeGroupByIdAndSchool(
+  schoolId: string,
+  groupId: string
+): Promise<CoverageScopeGroupWithMembers | undefined> {
+  const groups = await listCoverageScopeGroups(schoolId, { activeOnly: false });
+  return groups.find((group) => group.id === groupId);
+}
+
+export async function createCoverageScopeGroup(options: {
+  group: InsertClasspilotCoverageScopeGroup;
+  studentIds: string[];
+}): Promise<CoverageScopeGroupWithMembers> {
+  const uniqueStudentIds = Array.from(new Set(options.studentIds.filter(Boolean)));
+  const created = await db.transaction(async (tx) => {
+    const [group] = await tx
+      .insert(classpilotCoverageScopeGroups)
+      .values(options.group)
+      .returning();
+    if (!group) throw new Error("Failed to create coverage group");
+
+    if (uniqueStudentIds.length > 0) {
+      await tx.insert(classpilotCoverageScopeGroupMembers).values(
+        uniqueStudentIds.map((studentId) => ({
+          schoolId: group.schoolId,
+          coverageGroupId: group.id,
+          studentId,
+        }))
+      );
+    }
+
+    return group;
+  });
+
+  return (await getCoverageScopeGroupByIdAndSchool(created.schoolId, created.id))!;
+}
+
+export async function updateCoverageScopeGroup(options: {
+  schoolId: string;
+  groupId: string;
+  name?: string;
+  description?: string | null;
+  active?: boolean;
+}): Promise<CoverageScopeGroupWithMembers | undefined> {
+  const data: Partial<InsertClasspilotCoverageScopeGroup> & { updatedAt: Date } = {
+    updatedAt: new Date(),
+  };
+  if (options.name !== undefined) data.name = options.name;
+  if (options.description !== undefined) data.description = options.description;
+  if (options.active !== undefined) data.active = options.active;
+
+  const [updated] = await db
+    .update(classpilotCoverageScopeGroups)
+    .set(data)
+    .where(
+      and(
+        eq(classpilotCoverageScopeGroups.schoolId, options.schoolId),
+        eq(classpilotCoverageScopeGroups.id, options.groupId)
+      )
+    )
+    .returning();
+  if (!updated) return undefined;
+  return getCoverageScopeGroupByIdAndSchool(options.schoolId, options.groupId);
+}
+
+export async function replaceCoverageScopeGroupMembers(options: {
+  schoolId: string;
+  groupId: string;
+  studentIds: string[];
+}): Promise<CoverageScopeGroupWithMembers | undefined> {
+  const uniqueStudentIds = Array.from(new Set(options.studentIds.filter(Boolean)));
+  const group = await getCoverageScopeGroupByIdAndSchool(options.schoolId, options.groupId);
+  if (!group) return undefined;
+
+  await db.transaction(async (tx) => {
+    await tx
+      .delete(classpilotCoverageScopeGroupMembers)
+      .where(
+        and(
+          eq(classpilotCoverageScopeGroupMembers.schoolId, options.schoolId),
+          eq(classpilotCoverageScopeGroupMembers.coverageGroupId, options.groupId)
+        )
+      );
+    if (uniqueStudentIds.length > 0) {
+      await tx.insert(classpilotCoverageScopeGroupMembers).values(
+        uniqueStudentIds.map((studentId) => ({
+          schoolId: options.schoolId,
+          coverageGroupId: options.groupId,
+          studentId,
+        }))
+      );
+    }
+    await tx
+      .update(classpilotCoverageScopeGroups)
+      .set({ updatedAt: new Date() })
+      .where(
+        and(
+          eq(classpilotCoverageScopeGroups.schoolId, options.schoolId),
+          eq(classpilotCoverageScopeGroups.id, options.groupId)
+        )
+      );
+  });
+
+  return getCoverageScopeGroupByIdAndSchool(options.schoolId, options.groupId);
+}
+
+export async function getCoverageScopeGroupStudentIds(
+  schoolId: string,
+  groupId: string
+): Promise<string[]> {
+  const rows = await db
+    .select({ studentId: classpilotCoverageScopeGroupMembers.studentId })
+    .from(classpilotCoverageScopeGroupMembers)
+    .where(
+      and(
+        eq(classpilotCoverageScopeGroupMembers.schoolId, schoolId),
+        eq(classpilotCoverageScopeGroupMembers.coverageGroupId, groupId)
+      )
+    );
+  return rows.map((row) => row.studentId);
 }
 
 export async function listCoverageAssignments(
@@ -5176,6 +5346,24 @@ export async function updateCoverageAssignmentActive(
   const [row] = await db
     .update(classpilotCoverageAssignments)
     .set({ active, updatedAt: new Date() })
+    .where(
+      and(
+        eq(classpilotCoverageAssignments.schoolId, schoolId),
+        eq(classpilotCoverageAssignments.id, assignmentId)
+      )
+    )
+    .returning();
+  return row;
+}
+
+export async function updateCoverageAssignment(
+  schoolId: string,
+  assignmentId: string,
+  data: Partial<Pick<InsertClasspilotCoverageAssignment, "staffId" | "scopeType" | "scopeValue" | "permissions" | "active">>
+): Promise<ClasspilotCoverageAssignment | undefined> {
+  const [row] = await db
+    .update(classpilotCoverageAssignments)
+    .set({ ...data, updatedAt: new Date() })
     .where(
       and(
         eq(classpilotCoverageAssignments.schoolId, schoolId),

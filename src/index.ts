@@ -476,6 +476,35 @@ async function runStartupMigrations(): Promise<void> {
     await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_coverage_assignments_scope_idx ON classpilot_coverage_assignments (school_id, scope_type, scope_value)`);
 
     await pool.query(`
+      CREATE TABLE IF NOT EXISTS classpilot_coverage_scope_groups (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        school_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT,
+        active BOOLEAN NOT NULL DEFAULT true,
+        created_by TEXT NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT now(),
+        updated_at TIMESTAMP NOT NULL DEFAULT now()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_coverage_scope_groups_school_idx ON classpilot_coverage_scope_groups (school_id, active)`);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS classpilot_coverage_scope_group_members (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        school_id TEXT NOT NULL,
+        coverage_group_id VARCHAR NOT NULL,
+        student_id TEXT NOT NULL,
+        assigned_at TIMESTAMP NOT NULL DEFAULT now()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_coverage_scope_group_members_group_idx ON classpilot_coverage_scope_group_members (school_id, coverage_group_id)`);
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS classpilot_coverage_scope_group_members_unique
+      ON classpilot_coverage_scope_group_members (school_id, coverage_group_id, student_id)
+    `);
+
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS classpilot_supervision_contexts (
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
         school_id TEXT NOT NULL,
