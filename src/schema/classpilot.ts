@@ -429,11 +429,12 @@ export const classpilotCommands = pgTable(
   {
     id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
     schoolId: text("school_id").notNull(),
-    teachingSessionId: varchar("teaching_session_id").notNull(),
+    teachingSessionId: varchar("teaching_session_id"),
+    supervisionContextId: varchar("supervision_context_id"),
     teacherId: text("teacher_id").notNull(),
     targetScope: text("target_scope")
       .notNull()
-      .$type<"class" | "subgroup" | "students">(),
+      .$type<"class" | "subgroup" | "students" | "context">(),
     subgroupId: varchar("subgroup_id"),
     commandType: text("command_type").notNull(),
     commandPayload: jsonb("command_payload")
@@ -458,6 +459,10 @@ export const classpilotCommands = pgTable(
       table.schoolId,
       table.teachingSessionId
     ),
+    index("classpilot_commands_school_context_idx").on(
+      table.schoolId,
+      table.supervisionContextId
+    ),
     index("classpilot_commands_teacher_created_idx").on(
       table.teacherId,
       table.createdAt
@@ -474,7 +479,8 @@ export const classpilotCommandTargets = pgTable(
     id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
     commandId: varchar("command_id").notNull(),
     schoolId: text("school_id").notNull(),
-    teachingSessionId: varchar("teaching_session_id").notNull(),
+    teachingSessionId: varchar("teaching_session_id"),
+    supervisionContextId: varchar("supervision_context_id"),
     studentId: text("student_id").notNull(),
     studentSessionId: varchar("student_session_id"),
     deviceId: text("device_id"),
@@ -497,6 +503,10 @@ export const classpilotCommandTargets = pgTable(
     index("classpilot_command_targets_school_student_idx").on(
       table.schoolId,
       table.studentId
+    ),
+    index("classpilot_command_targets_school_context_idx").on(
+      table.schoolId,
+      table.supervisionContextId
     ),
     index("classpilot_command_targets_device_idx").on(table.deviceId),
   ]

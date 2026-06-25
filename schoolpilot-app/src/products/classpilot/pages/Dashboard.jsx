@@ -20,6 +20,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../components/ui/tabs';
 import { Label } from '../../../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
+import { Textarea } from '../../../components/ui/textarea';
 import { useToast } from '../../../hooks/use-toast';
 import { useWebRTC } from '../../../hooks/useWebRTC';
 import { apiRequest, queryClient } from '../../../lib/queryClient';
@@ -111,6 +112,7 @@ export default function Dashboard() {
   const [pollTotalResponses, setPollTotalResponses] = useState(0);
   const [showRerouteDialog, setShowRerouteDialog] = useState(false);
   const [selectedCoverageContextId, setSelectedCoverageContextId] = useState("");
+  const [rerouteNote, setRerouteNote] = useState("");
   const [selectedSubgroupId, setSelectedSubgroupId] = useState("");
   const [subgroupMembers, setSubgroupMembers] = useState(new Set());
   const [raisedHands, setRaisedHands] = useState(new Map());
@@ -1006,13 +1008,14 @@ export default function Dashboard() {
   });
 
   const rerouteMutation = useMutation({
-    mutationFn: async ({ contextId, studentIds }) => apiRequest('POST', '/coverage/reroute', { contextId, studentIds }),
+    mutationFn: async ({ contextId, studentIds, note }) => apiRequest('POST', '/coverage/reroute', { contextId, studentIds, note }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
       queryClient.invalidateQueries({ queryKey: ['/api/coverage/contexts'] });
       queryClient.invalidateQueries({ queryKey: ['/api/coverage/unassigned'] });
       setShowRerouteDialog(false);
       setSelectedCoverageContextId("");
+      setRerouteNote("");
       clearSelection();
       toast({ title: "Students rerouted", description: "Selected students were moved to temporary coverage." });
     },
@@ -1031,7 +1034,7 @@ export default function Dashboard() {
       toast({ variant: "destructive", title: "Choose a coverage context" });
       return;
     }
-    rerouteMutation.mutate({ contextId: selectedCoverageContextId, studentIds });
+    rerouteMutation.mutate({ contextId: selectedCoverageContextId, studentIds, note: rerouteNote.trim() });
   };
 
   const stopImpersonateMutation = useMutation({
@@ -1908,9 +1911,18 @@ export default function Dashboard() {
                 </SelectContent>
               </Select>
             </div>
+            <div className="space-y-2">
+              <Label>Reroute Note</Label>
+              <Textarea
+                value={rerouteNote}
+                onChange={(e) => setRerouteNote(e.target.value)}
+                placeholder="State testing, office check-in, support block"
+                data-testid="textarea-reroute-note"
+              />
+            </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowRerouteDialog(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => { setShowRerouteDialog(false); setRerouteNote(""); }}>Cancel</Button>
             <Button onClick={handleRerouteSelected} disabled={rerouteMutation.isPending || !selectedCoverageContextId || selectedCoverageContextId === "none"} data-testid="button-confirm-reroute">
               <ClipboardCheck className="h-4 w-4 mr-2" />
               Reroute

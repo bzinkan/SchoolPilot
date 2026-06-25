@@ -44,6 +44,7 @@ export async function getAuditLogs(options: {
   userId?: string;
   action?: string;
   entityType?: string;
+  entityId?: string;
   limit?: number;
   offset?: number;
 }) {
@@ -52,6 +53,7 @@ export async function getAuditLogs(options: {
   if (options.userId) conditions.push(eq(auditLogs.userId, options.userId));
   if (options.action) conditions.push(eq(auditLogs.action, options.action));
   if (options.entityType) conditions.push(eq(auditLogs.entityType, options.entityType));
+  if (options.entityId) conditions.push(eq(auditLogs.entityId, options.entityId));
 
   const query = db
     .select()

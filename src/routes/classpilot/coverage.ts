@@ -8,6 +8,7 @@ import {
   assignStudentsToSupervisionContext,
   createCoverageAssignment,
   createSupervisionContextWithStudents,
+  getActiveSessionByStudent,
   extendSupervisionContext,
   getActiveCoverageAssignmentsForStaff,
   getActiveTeachingSessionForSchool,
@@ -25,7 +26,12 @@ import {
   updateCoverageAssignmentActive,
   type OnlineUnassignedStudent,
 } from "../../services/storage.js";
-import { logAudit } from "../../services/audit.js";
+import { getAuditLogs, logAudit } from "../../services/audit.js";
+import {
+  COVERAGE_COMMAND_TYPES,
+  executeClasspilotCommand,
+  type ResolvedClasspilotCommandTarget,
+} from "../../services/classpilotCommandDispatcher.js";
 
 const router = Router();
 
@@ -86,8 +92,34 @@ function activeStatusFor(row: OnlineUnassignedStudent) {
     lastSeenAt,
     activeTabTitle: rt?.activeTabTitle || "",
     activeTabUrl: rt?.activeTabUrl || "",
-    primaryDeviceId: rt?.deviceId || row.studentSession.deviceId,
-    allOpenTabs: rt?.allOpenTabs || [],
+    allOpenTabs: sanitizeTabs(rt?.allOpenTabs || []),
+    screenshotHealth: rt?.screenshotHealth,
+  };
+}
+
+function sanitizeTabs(tabs: any[]) {
+  return tabs.map((tab) => ({
+    title: tab.title || "",
+    url: tab.url || "",
+    favIconUrl: tab.favIconUrl || tab.favicon || "",
+    active: !!tab.active,
+  }));
+}
+
+async function activeStatusForStudent(schoolId: string, student: any) {
+  const session = await getActiveSessionByStudent(student.id);
+  const statuses = getSchoolDeviceStatuses(schoolId);
+  const byStudent = statuses.find((status) => status.studentId === student.id);
+  const byDevice = session ? statuses.find((status) => status.deviceId === session.deviceId) : null;
+  const rt = byStudent || byDevice || null;
+  const lastSeenAt = rt?.lastSeenAt || session?.lastSeenAt?.getTime?.() || null;
+  const age = lastSeenAt ? Date.now() - lastSeenAt : Infinity;
+  return {
+    status: age < 60000 ? "online" : age < 300000 ? "idle" : "offline",
+    lastSeenAt,
+    activeTabTitle: rt?.activeTabTitle || "",
+    activeTabUrl: rt?.activeTabUrl || "",
+    allOpenTabs: sanitizeTabs(rt?.allOpenTabs || []),
     screenshotHealth: rt?.screenshotHealth,
   };
 }
@@ -152,6 +184,7 @@ async function contextResponse(schoolId: string, contexts: any[], includeStudent
 
   return contexts.map((context) => {
     const staff = staffById.get(context.assignedStaffId);
+    const canViewStudents = includeStudentsFor(context);
     const students = includeStudentsFor(context)
       ? (studentsByContext.get(context.id) || []).map((entry) => ({
           studentId: entry.studentId,
@@ -168,9 +201,97 @@ async function contextResponse(schoolId: string, contexts: any[], includeStudent
         displayName: staff.displayName || [staff.firstName, staff.lastName].filter(Boolean).join(" ") || staff.email,
       } : null,
       students,
+      canManage: canViewStudents,
+      canViewStudents,
       activeStudentCount: (studentsByContext.get(context.id) || []).length,
     };
   });
+}
+
+function canManageContext(req: any, res: any, context: any) {
+  return isAdmin(req, res) || context.assignedStaffId === req.authUser!.id || context.createdBy === req.authUser!.id;
+}
+
+function assertActiveContext(context: any): asserts context {
+  if (!context || context.status !== "active" || context.endsAt <= new Date()) {
+    throw Object.assign(new Error("Active coverage context not found"), { status: 404 });
+  }
+}
+
+async function contextStudentPayload(schoolId: string, rows: any[]) {
+  const payload = [];
+  for (const row of rows) {
+    const status = await activeStatusForStudent(schoolId, row.student);
+    payload.push({
+      assignmentId: row.id,
+      studentId: row.studentId,
+      studentName: studentName(row.student),
+      studentEmail: row.student.email || undefined,
+      gradeLevel: row.student.gradeLevel || undefined,
+      source: row.source,
+      assignedBy: row.assignedBy,
+      assignedAt: row.assignedAt,
+      releasedAt: row.releasedAt,
+      releaseReason: row.releaseReason,
+      supervisionState: row.releasedAt ? "released" : "temporary_coverage",
+      status: status.status,
+      lastSeenAt: status.lastSeenAt,
+      activeTabTitle: status.activeTabTitle,
+      activeTabUrl: status.activeTabUrl,
+      allOpenTabs: status.allOpenTabs,
+      screenshotHealth: status.screenshotHealth,
+    });
+  }
+  return payload;
+}
+
+async function resolveCoverageCommandTargets(
+  schoolId: string,
+  contextId: string,
+  body: any
+): Promise<ResolvedClasspilotCommandTarget[]> {
+  const scope = String(body.targetScope || "").trim();
+  if (scope !== "context" && scope !== "students") {
+    throw Object.assign(new Error("targetScope must be context or students"), { status: 400 });
+  }
+
+  const activeRows = await listSupervisionStudentsForContexts(schoolId, [contextId], { activeOnly: true });
+  if (activeRows.length === 0) {
+    throw Object.assign(new Error("Coverage context has no active students"), { status: 400 });
+  }
+
+  let selectedRows = activeRows;
+  if (scope === "students") {
+    const targetStudentIds = normalizeStudentIds(body.targetStudentIds);
+    if (targetStudentIds.length === 0) {
+      throw Object.assign(new Error("targetStudentIds is required when targetScope is students"), { status: 400 });
+    }
+    const activeIds = new Set(activeRows.map((row) => row.studentId));
+    const outsideContext = targetStudentIds.filter((id) => !activeIds.has(id));
+    if (outsideContext.length > 0) {
+      throw Object.assign(new Error("One or more selected students are not active in this coverage context"), { status: 400 });
+    }
+    const targetSet = new Set(targetStudentIds);
+    selectedRows = activeRows.filter((row) => targetSet.has(row.studentId));
+  }
+
+  const now = Date.now();
+  const activeWindowMs = 5 * 60 * 1000;
+  const targets: ResolvedClasspilotCommandTarget[] = [];
+  for (const row of selectedRows) {
+    const session = await getActiveSessionByStudent(row.studentId);
+    const lastSeenAt = session?.lastSeenAt?.getTime?.() ?? 0;
+    const active = !!session && lastSeenAt > 0 && now - lastSeenAt <= activeWindowMs;
+    targets.push({
+      studentId: row.studentId,
+      studentName: studentName(row.student),
+      studentSessionId: active ? session!.id : null,
+      deviceId: active ? session!.deviceId : null,
+      available: active,
+      unavailableReason: active ? undefined : "Student is not signed in to the extension",
+    });
+  }
+  return targets;
 }
 
 router.get("/coverage/unassigned", ...auth, async (req, res, next) => {
@@ -198,8 +319,6 @@ router.get("/coverage/unassigned", ...auth, async (req, res, next) => {
           supervisionState: "online_unassigned",
           supervisionContext: null,
           deviceCount: 1,
-          devices: [{ deviceId: status.primaryDeviceId, status: status.status, lastSeenAt: status.lastSeenAt }],
-          primaryDeviceId: status.primaryDeviceId,
           status: status.status,
           lastSeenAt: status.lastSeenAt,
           activeTabTitle: status.activeTabTitle,
@@ -302,6 +421,149 @@ router.get("/coverage/contexts", ...auth, async (req, res, next) => {
   }
 });
 
+router.get("/coverage/contexts/:id/students", ...auth, async (req, res, next) => {
+  try {
+    if (!requireStaffRole(req, res)) return res.status(403).json({ error: "Staff access required" });
+    const schoolId = res.locals.schoolId!;
+    const context = await getSupervisionContextByIdAndSchool(schoolId, String(req.params.id));
+    if (!context) return res.status(404).json({ error: "Coverage context not found" });
+    if (!canManageContext(req, res, context)) {
+      return res.status(403).json({ error: "Only admins or assigned coverage staff can view coverage students" });
+    }
+
+    const activeOnly = req.query.active !== "false";
+    const rows = await listSupervisionStudentsForContexts(schoolId, [context.id], { activeOnly });
+    return res.json({
+      context,
+      students: await contextStudentPayload(schoolId, rows),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get("/coverage/contexts/:id/history", ...auth, async (req, res, next) => {
+  try {
+    if (!requireStaffRole(req, res)) return res.status(403).json({ error: "Staff access required" });
+    const schoolId = res.locals.schoolId!;
+    const context = await getSupervisionContextByIdAndSchool(schoolId, String(req.params.id));
+    if (!context) return res.status(404).json({ error: "Coverage context not found" });
+    if (!canManageContext(req, res, context)) {
+      return res.status(403).json({ error: "Only admins or assigned coverage staff can view coverage history" });
+    }
+
+    const [studentRows, auditRows] = await Promise.all([
+      listSupervisionStudentsForContexts(schoolId, [context.id], { activeOnly: false }),
+      getAuditLogs({
+        schoolId,
+        entityType: "supervision_context",
+        entityId: context.id,
+        limit: 100,
+      }),
+    ]);
+    const studentEvents = studentRows.flatMap((row) => {
+      const assigned = {
+        id: `${row.id}:assigned`,
+        type: "student.assigned",
+        action: "Student assigned",
+        createdAt: row.assignedAt,
+        actorId: row.assignedBy,
+        actorEmail: null,
+        studentId: row.studentId,
+        studentName: studentName(row.student),
+        details: { source: row.source },
+      };
+      if (!row.releasedAt) return [assigned];
+      return [
+        assigned,
+        {
+          id: `${row.id}:released`,
+          type: "student.released",
+          action: "Student released",
+          createdAt: row.releasedAt,
+          actorId: null,
+          actorEmail: null,
+          studentId: row.studentId,
+          studentName: studentName(row.student),
+          details: { releaseReason: row.releaseReason || "released" },
+        },
+      ];
+    });
+    const auditEvents = auditRows.map((entry: any) => ({
+      id: entry.id,
+      type: entry.action,
+      action: entry.action,
+      createdAt: entry.createdAt,
+      actorId: entry.userId,
+      actorEmail: entry.userEmail,
+      studentId: null,
+      studentName: null,
+      details: entry.changes,
+    }));
+
+    const events = [...studentEvents, ...auditEvents]
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, 100);
+    return res.json({ events });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post("/coverage/contexts/:id/commands", ...auth, async (req, res, next) => {
+  try {
+    if (!requireStaffRole(req, res)) return res.status(403).json({ error: "Staff access required" });
+    const schoolId = res.locals.schoolId!;
+    const context = await getSupervisionContextByIdAndSchool(schoolId, String(req.params.id));
+    assertActiveContext(context);
+    if (!canManageContext(req, res, context)) {
+      return res.status(403).json({ error: "Only admins or assigned coverage staff can command this coverage context" });
+    }
+
+    const commandType = String(req.body.commandType || "").trim();
+    if (!COVERAGE_COMMAND_TYPES.has(commandType)) {
+      return res.status(400).json({ error: "Unsupported coverage command type" });
+    }
+    const targetScope = String(req.body.targetScope || "").trim();
+    if (targetScope !== "context" && targetScope !== "students") {
+      return res.status(400).json({ error: "targetScope must be context or students" });
+    }
+
+    const targets = await resolveCoverageCommandTargets(schoolId, context.id, req.body);
+    const result = await executeClasspilotCommand({
+      schoolId,
+      actorId: req.authUser!.id,
+      supervisionContextId: context.id,
+      targetScope,
+      commandType,
+      rawCommandPayload: req.body.commandPayload || {},
+      targets,
+      persistClassroomState: false,
+    });
+
+    await logAudit({
+      schoolId,
+      userId: req.authUser!.id,
+      userEmail: req.authUser!.email,
+      userRole: res.locals.membershipRole,
+      action: "coverage.command",
+      entityType: "supervision_context",
+      entityId: context.id,
+      changes: {
+        commandId: result.command.id,
+        commandType,
+        targetScope,
+        targetStudentIds: targets.map((target) => target.studentId),
+        summary: result.summary,
+      },
+    });
+    return res.status(201).json(result);
+  } catch (err: any) {
+    if (err?.status) return res.status(err.status).json({ error: err.message });
+    next(err);
+  }
+});
+
 router.post("/coverage/contexts", ...auth, async (req, res, next) => {
   try {
     if (!requireStaffRole(req, res)) return res.status(403).json({ error: "Staff access required" });
@@ -362,7 +624,7 @@ router.post("/coverage/contexts", ...auth, async (req, res, next) => {
       action: "coverage.context.create",
       entityType: "supervision_context",
       entityId: context.id,
-      changes: { contextType, studentIds, assignedStaffId, endsAt },
+      changes: { contextType, studentIds, assignedStaffId, endsAt, note: req.body.note ? String(req.body.note) : null },
     });
     return res.status(201).json({ context });
   } catch (err: any) {
@@ -377,6 +639,7 @@ router.post("/coverage/reroute", ...auth, async (req, res, next) => {
     const schoolId = res.locals.schoolId!;
     const contextId = String(req.body.contextId || "").trim();
     const studentIds = normalizeStudentIds(req.body.studentIds);
+    const note = String(req.body.note || req.body.reason || "").trim();
     if (!contextId || studentIds.length === 0) return res.status(400).json({ error: "contextId and studentIds are required" });
     const context = await getSupervisionContextByIdAndSchool(schoolId, contextId);
     if (!context || context.status !== "active" || context.endsAt <= new Date()) {
@@ -411,7 +674,7 @@ router.post("/coverage/reroute", ...auth, async (req, res, next) => {
       action: "coverage.student.reroute",
       entityType: "supervision_context",
       entityId: contextId,
-      changes: { studentIds },
+      changes: { studentIds, note: note || null },
     });
     return res.status(201).json({ assignments });
   } catch (err: any) {
@@ -429,11 +692,36 @@ router.post("/coverage/contexts/:id/release", ...auth, async (req, res, next) =>
     if (!isAdmin(req, res) && context.assignedStaffId !== req.authUser!.id && context.createdBy !== req.authUser!.id) {
       return res.status(403).json({ error: "Only admins or assigned coverage staff can release students" });
     }
+    const studentIds = normalizeStudentIds(req.body.studentIds);
+    const releaseReason = String(req.body.releaseReason || "").trim();
+    if (!releaseReason) {
+      return res.status(400).json({ error: "releaseReason is required" });
+    }
+    if (studentIds.length > 0) {
+      const activeRows = await listSupervisionStudentsForContexts(schoolId, [context.id], { activeOnly: true });
+      const activeStudentIds = new Set(activeRows.map((row) => row.studentId));
+      if (studentIds.some((studentId) => !activeStudentIds.has(studentId))) {
+        return res.status(400).json({ error: "One or more selected students are not active in this coverage context" });
+      }
+    }
     const released = await releaseSupervisionStudents({
       schoolId,
       contextId: context.id,
-      studentIds: normalizeStudentIds(req.body.studentIds),
-      releaseReason: req.body.releaseReason ? String(req.body.releaseReason) : "released",
+      studentIds,
+      releaseReason,
+    });
+    await logAudit({
+      schoolId,
+      userId: req.authUser!.id,
+      userEmail: req.authUser!.email,
+      userRole: res.locals.membershipRole,
+      action: "coverage.context.release",
+      entityType: "supervision_context",
+      entityId: context.id,
+      changes: {
+        studentIds: studentIds.length > 0 ? studentIds : released.map((row) => row.studentId),
+        releaseReason,
+      },
     });
     return res.json({ released });
   } catch (err) {
@@ -468,6 +756,20 @@ router.patch("/coverage/contexts/:id", ...auth, async (req, res, next) => {
       endsAt,
       note: req.body.note === undefined ? undefined : String(req.body.note || ""),
       assignedStaffId,
+    });
+    const updateChanges: Record<string, unknown> = {};
+    if (endsAt) updateChanges.endsAt = endsAt;
+    if (req.body.note !== undefined) updateChanges.note = String(req.body.note || "");
+    if (assignedStaffId) updateChanges.assignedStaffId = assignedStaffId;
+    await logAudit({
+      schoolId,
+      userId: req.authUser!.id,
+      userEmail: req.authUser!.email,
+      userRole: res.locals.membershipRole,
+      action: "coverage.context.update",
+      entityType: "supervision_context",
+      entityId: context.id,
+      changes: updateChanges,
     });
     return res.json({ context: updated });
   } catch (err) {

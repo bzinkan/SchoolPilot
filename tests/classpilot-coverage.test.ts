@@ -7,6 +7,7 @@ import { runWithTenantContext } from "../dist/middleware/tenantContext.js";
 import {
   addGroupStudentsDetailed,
   createCoverageAssignment,
+  createClasspilotCommandWithTargets,
   createDevice,
   createGroup,
   createMembership,
@@ -17,11 +18,14 @@ import {
   createUser,
   endTeachingSession,
   getActiveCoverageAssignmentsForStaff,
+  getActiveSessionByStudent,
   getActiveSupervisionForStudent,
+  getClasspilotCommandByIdAndSchool,
   getOnlineUnassignedStudents,
   linkStudentDevice,
   releaseSupervisionStudents,
   setActiveStudentForDevice,
+  updateClasspilotCommandTargetAck,
 } from "../dist/services/storage.js";
 import { scopedDeviceTargets } from "../dist/services/classpilotDeviceScope.js";
 
@@ -50,6 +54,59 @@ function asSystem<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 async function ensureCoverageTables() {
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS classpilot_commands (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      school_id TEXT NOT NULL,
+      teaching_session_id VARCHAR,
+      supervision_context_id VARCHAR,
+      teacher_id TEXT NOT NULL,
+      target_scope TEXT NOT NULL,
+      subgroup_id VARCHAR,
+      command_type TEXT NOT NULL,
+      command_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      status TEXT NOT NULL DEFAULT 'requested',
+      requested_count INTEGER NOT NULL DEFAULT 0,
+      sent_count INTEGER NOT NULL DEFAULT 0,
+      received_count INTEGER NOT NULL DEFAULT 0,
+      completed_count INTEGER NOT NULL DEFAULT 0,
+      failed_count INTEGER NOT NULL DEFAULT 0,
+      unavailable_count INTEGER NOT NULL DEFAULT 0,
+      expires_at TIMESTAMP,
+      created_at TIMESTAMP NOT NULL DEFAULT now(),
+      updated_at TIMESTAMP NOT NULL DEFAULT now()
+    )
+  `);
+  await db.execute(sql`ALTER TABLE classpilot_commands ADD COLUMN IF NOT EXISTS supervision_context_id VARCHAR`);
+  await db.execute(sql`ALTER TABLE classpilot_commands ALTER COLUMN teaching_session_id DROP NOT NULL`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS classpilot_commands_school_context_idx ON classpilot_commands (school_id, supervision_context_id)`);
+
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS classpilot_command_targets (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      command_id VARCHAR NOT NULL,
+      school_id TEXT NOT NULL,
+      teaching_session_id VARCHAR,
+      supervision_context_id VARCHAR,
+      student_id TEXT NOT NULL,
+      student_session_id VARCHAR,
+      device_id TEXT,
+      status TEXT NOT NULL DEFAULT 'requested',
+      ack_state TEXT,
+      error_message TEXT,
+      result JSONB,
+      sent_at TIMESTAMP,
+      received_at TIMESTAMP,
+      completed_at TIMESTAMP,
+      failed_at TIMESTAMP,
+      created_at TIMESTAMP NOT NULL DEFAULT now(),
+      updated_at TIMESTAMP NOT NULL DEFAULT now()
+    )
+  `);
+  await db.execute(sql`ALTER TABLE classpilot_command_targets ADD COLUMN IF NOT EXISTS supervision_context_id VARCHAR`);
+  await db.execute(sql`ALTER TABLE classpilot_command_targets ALTER COLUMN teaching_session_id DROP NOT NULL`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS classpilot_command_targets_school_context_idx ON classpilot_command_targets (school_id, supervision_context_id)`);
+
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS classpilot_coverage_assignments (
       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -189,6 +246,8 @@ after(async () => {
         await db.execute(sql`DELETE FROM classpilot_supervision_students WHERE school_id = ${school.id}`);
         await db.execute(sql`DELETE FROM classpilot_supervision_contexts WHERE school_id = ${school.id}`);
         await db.execute(sql`DELETE FROM classpilot_coverage_assignments WHERE school_id = ${school.id}`);
+        await db.execute(sql`DELETE FROM classpilot_command_targets WHERE school_id = ${school.id}`);
+        await db.execute(sql`DELETE FROM classpilot_commands WHERE school_id = ${school.id}`);
         await db.execute(sql`DELETE FROM student_sessions WHERE student_id IN (SELECT id FROM students WHERE school_id = ${school.id}) OR device_id LIKE ${`${TAG}-%`}`);
         await db.execute(sql`DELETE FROM student_devices WHERE student_id IN (SELECT id FROM students WHERE school_id = ${school.id}) OR device_id LIKE ${`${TAG}-%`}`);
         await db.execute(sql`DELETE FROM devices WHERE school_id = ${school.id} OR device_id LIKE ${`${TAG}-%`}`);
@@ -250,11 +309,12 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     assert.ok(ids(afterCoverageClaim).has(studentUnassigned.id));
     assert.ok(!ids(afterCoverageClaim).has(studentCoverage.id));
 
-    await inSchool(school.id, () => releaseSupervisionStudents({
+    const released = await inSchool(school.id, () => releaseSupervisionStudents({
       schoolId: school.id,
       contextId: context.id,
-      releaseReason: "test_release",
+      releaseReason: "returned_to_class",
     }));
+    assert.equal(released[0]?.releaseReason, "returned_to_class");
     await inSchool(school.id, () => endTeachingSession(session.id));
   });
 
@@ -302,5 +362,73 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     const scopedAfterRelease = await inSchool(school.id, () => scopedDeviceTargets([deviceGuard], school.id));
     assert.deepEqual(scopedAfterRelease.deviceIds, [deviceGuard]);
     assert.equal(scopedAfterRelease.rejectedDeviceCount, 0);
+  });
+
+  it("records coverage commands against a supervision context without a teaching session", async () => {
+    const context = await inSchool(school.id, () => createSupervisionContextWithStudents({
+      context: {
+        schoolId: school.id,
+        contextType: "office",
+        name: "Coverage Command Test",
+        status: "active",
+        assignedStaffId: coverageStaff.id,
+        createdBy: admin.id,
+        endsAt: new Date(Date.now() + 60 * 60 * 1000),
+      },
+      studentIds: [studentUnassigned.id],
+      assignedBy: admin.id,
+      source: "admin_reroute",
+    }));
+
+    const activeSession = await inSchool(school.id, () => getActiveSessionByStudent(studentUnassigned.id));
+    assert.ok(activeSession);
+
+    const created = await inSchool(school.id, () => createClasspilotCommandWithTargets(
+      {
+        schoolId: school.id,
+        teachingSessionId: null,
+        supervisionContextId: context.id,
+        teacherId: coverageStaff.id,
+        targetScope: "context",
+        subgroupId: null,
+        commandType: "open-tab",
+        commandPayload: { url: "https://example.com/" },
+        requestedCount: 1,
+        unavailableCount: 0,
+      } as any,
+      [{
+        schoolId: school.id,
+        teachingSessionId: null,
+        supervisionContextId: context.id,
+        commandId: "",
+        studentId: studentUnassigned.id,
+        studentSessionId: activeSession!.id,
+        deviceId: deviceUnassigned,
+        status: "requested",
+        errorMessage: null,
+      } as any]
+    ));
+
+    assert.equal(created.teachingSessionId, null);
+    assert.equal((created as any).supervisionContextId, context.id);
+    assert.equal((created.targets[0] as any).supervisionContextId, context.id);
+
+    await inSchool(school.id, () => updateClasspilotCommandTargetAck({
+      commandId: created.id,
+      schoolId: school.id,
+      deviceId: deviceUnassigned,
+      studentId: studentUnassigned.id,
+      ackState: "completed",
+      result: { ok: true },
+    }));
+    const loaded = await inSchool(school.id, () => getClasspilotCommandByIdAndSchool(created.id, school.id));
+    assert.equal(loaded?.status, "completed");
+    assert.equal(loaded?.targets[0]?.status, "completed");
+
+    await inSchool(school.id, () => releaseSupervisionStudents({
+      schoolId: school.id,
+      contextId: context.id,
+      releaseReason: "test_release",
+    }));
   });
 });
