@@ -6,26 +6,42 @@ import { Button } from "../../../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../../components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../../components/ui/select";
 import { Badge } from "../../../components/ui/badge";
-import { ArrowLeft, BarChart3, Users, Monitor, Clock, Globe, TrendingUp, Layers } from "lucide-react";
+import { AlertCircle, ArrowLeft, BarChart3, Users, Monitor, Clock, Globe, TrendingUp, Layers } from "lucide-react";
 import { ThemeToggle } from "../../../components/ThemeToggle";
+
+function errorMessage(error) {
+  return error?.response?.data?.error || error?.message || "Request failed";
+}
+
+function ErrorState({ title, error }) {
+  return (
+    <div className="rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+      <div className="flex items-center gap-2 font-medium">
+        <AlertCircle className="h-4 w-4" />
+        {title}
+      </div>
+      <div className="mt-1 text-destructive/80">{errorMessage(error)}</div>
+    </div>
+  );
+}
 
 export default function AdminAnalytics() {
   const navigate = useNavigate();
-  const [summaryPeriod, setSummaryPeriod] = useState("24h");
+  const [summaryPeriod, setSummaryPeriod] = useState("today");
   const [teacherPeriod, setTeacherPeriod] = useState("7d");
   const [groupPeriod, setGroupPeriod] = useState("7d");
 
-  const { data: summaryData, isLoading: summaryLoading } = useQuery({
+  const { data: summaryData, isLoading: summaryLoading, isError: summaryIsError, error: summaryError } = useQuery({
     queryKey: ["/api/admin/analytics/summary", summaryPeriod],
     queryFn: () => apiRequest("GET", `/admin/analytics/summary?period=${summaryPeriod}`),
   });
 
-  const { data: teacherData, isLoading: teacherLoading } = useQuery({
+  const { data: teacherData, isLoading: teacherLoading, isError: teacherIsError, error: teacherError } = useQuery({
     queryKey: ["/api/admin/analytics/by-teacher", teacherPeriod],
     queryFn: () => apiRequest("GET", `/admin/analytics/by-teacher?period=${teacherPeriod}`),
   });
 
-  const { data: groupData, isLoading: groupLoading } = useQuery({
+  const { data: groupData, isLoading: groupLoading, isError: groupIsError, error: groupError } = useQuery({
     queryKey: ["/api/admin/analytics/by-group", groupPeriod],
     queryFn: () => apiRequest("GET", `/admin/analytics/by-group?period=${groupPeriod}`),
   });
@@ -42,6 +58,9 @@ export default function AdminAnalytics() {
   const topWebsites = Array.isArray(summaryData?.topWebsites) ? summaryData.topWebsites : [];
   const teachersList = Array.isArray(teacherData?.teachers) ? teacherData.teachers : [];
   const groupsList = Array.isArray(groupData?.groups) ? groupData.groups : [];
+  const classUsageTitle = groupData?.attributionMode === "roster"
+    ? "Roster Browsing by Official Class"
+    : "Class Session Usage by Official Class";
 
   const maxHourlyCount = hourlyActivity.length > 0
     ? Math.max(...hourlyActivity.map(h => h.count), 1)
@@ -79,7 +98,7 @@ export default function AdminAnalytics() {
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="24h">Last 24 hours</SelectItem>
+            <SelectItem value="today">Today</SelectItem>
             <SelectItem value="7d">Last 7 days</SelectItem>
             <SelectItem value="30d">Last 30 days</SelectItem>
           </SelectContent>
@@ -88,6 +107,8 @@ export default function AdminAnalytics() {
 
       {summaryLoading ? (
         <div className="text-center py-8 text-muted-foreground">Loading analytics...</div>
+      ) : summaryIsError ? (
+        <ErrorState title="Could not load activity summary" error={summaryError} />
       ) : summaryData ? (
         <>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -99,7 +120,7 @@ export default function AdminAnalytics() {
                   </div>
                   <div>
                     <p className="text-2xl font-bold">{summaryData.summary.activeStudents ?? 0}</p>
-                    <p className="text-sm text-muted-foreground">Active Students</p>
+                    <p className="text-sm text-muted-foreground">Active / Enrolled</p>
                   </div>
                 </div>
                 <p className="text-xs text-muted-foreground mt-2">of {summaryData.summary.totalStudents ?? 0} total</p>
@@ -114,7 +135,7 @@ export default function AdminAnalytics() {
                   </div>
                   <div>
                     <p className="text-2xl font-bold">{summaryData.summary.totalDevices ?? 0}</p>
-                    <p className="text-sm text-muted-foreground">Devices</p>
+                    <p className="text-sm text-muted-foreground">Registered Devices</p>
                   </div>
                 </div>
               </CardContent>
@@ -150,18 +171,18 @@ export default function AdminAnalytics() {
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Top Websites */}
+            {/* Top Domains */}
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Globe className="h-5 w-5" />
-                  Top Websites
+                  Top Domains by Observed Time
                 </CardTitle>
-                <CardDescription>Most visited domains</CardDescription>
+                <CardDescription>Estimated from heartbeat samples</CardDescription>
               </CardHeader>
               <CardContent>
                 {topWebsites.length === 0 ? (
-                  <p className="text-muted-foreground text-center py-4">No website data available</p>
+                  <p className="text-muted-foreground text-center py-4">No domain data available</p>
                 ) : (
                   <div className="space-y-3">
                     {topWebsites.map((site, idx) => (
@@ -195,7 +216,7 @@ export default function AdminAnalytics() {
                   <BarChart3 className="h-5 w-5" />
                   Activity by Hour
                 </CardTitle>
-                <CardDescription>Last 24 hours activity distribution</CardDescription>
+                <CardDescription>Selected period by school-local hour</CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="flex items-end gap-1 h-32">
@@ -243,6 +264,8 @@ export default function AdminAnalytics() {
         <CardContent className="pt-6">
           {teacherLoading ? (
             <div className="text-center py-8 text-muted-foreground">Loading teacher data...</div>
+          ) : teacherIsError ? (
+            <ErrorState title="Could not load teacher activity" error={teacherError} />
           ) : teachersList.length > 0 ? (
             <div className="border rounded-lg overflow-hidden">
               <table className="w-full text-sm">
@@ -250,8 +273,8 @@ export default function AdminAnalytics() {
                   <tr>
                     <th className="px-4 py-3 text-left font-medium">Teacher</th>
                     <th className="px-4 py-3 text-left font-medium">Sessions</th>
-                    <th className="px-4 py-3 text-left font-medium">Session Time</th>
-                    <th className="px-4 py-3 text-left font-medium">Groups</th>
+                    <th className="px-4 py-3 text-left font-medium">Class Session Duration</th>
+                    <th className="px-4 py-3 text-left font-medium" title="Distinct official classes with a teaching session during this period.">Classes Used</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -287,7 +310,7 @@ export default function AdminAnalytics() {
       <div className="flex items-center justify-between mt-8">
         <h2 className="text-xl font-semibold flex items-center gap-2">
           <Layers className="h-5 w-5" />
-          Class Usage
+          {classUsageTitle}
         </h2>
         <Select value={groupPeriod} onValueChange={setGroupPeriod}>
           <SelectTrigger className="w-36">
@@ -305,6 +328,8 @@ export default function AdminAnalytics() {
         <CardContent className="pt-6">
           {groupLoading ? (
             <div className="text-center py-8 text-muted-foreground">Loading class data...</div>
+          ) : groupIsError ? (
+            <ErrorState title="Could not load class usage" error={groupError} />
           ) : groupsList.length > 0 ? (
             <div className="border rounded-lg overflow-hidden">
               <table className="w-full text-sm">
@@ -312,9 +337,9 @@ export default function AdminAnalytics() {
                   <tr>
                     <th className="px-4 py-3 text-left font-medium">Class</th>
                     <th className="px-4 py-3 text-left font-medium">Teacher</th>
-                    <th className="px-4 py-3 text-left font-medium">Students</th>
+                    <th className="px-4 py-3 text-left font-medium">Active / Enrolled</th>
                     <th className="px-4 py-3 text-left font-medium">Total Usage</th>
-                    <th className="px-4 py-3 text-left font-medium">Avg / Student</th>
+                    <th className="px-4 py-3 text-left font-medium">Avg / Active Student</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -341,7 +366,7 @@ export default function AdminAnalytics() {
             </div>
           ) : (
             <div className="text-center py-8 text-muted-foreground">
-              No class usage data available for this period.
+              No class session usage data available for this period.
             </div>
           )}
         </CardContent>

@@ -299,6 +299,83 @@ export type TeachingSession = typeof teachingSessions.$inferSelect;
 export type InsertTeachingSession = typeof teachingSessions.$inferInsert;
 
 // ============================================================================
+// Session-attributed usage - forward-only class analytics
+// ============================================================================
+export const classpilotSessionStudents = pgTable(
+  "classpilot_session_students",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
+    teachingSessionId: varchar("teaching_session_id").notNull(),
+    groupId: text("group_id").notNull(),
+    studentId: text("student_id").notNull(),
+    capturedAt: timestamp("captured_at", { withTimezone: true }).notNull().default(sql`now()`),
+  },
+  (table) => [
+    uniqueIndex("classpilot_session_students_session_student_unique").on(
+      table.teachingSessionId,
+      table.studentId
+    ),
+    index("classpilot_session_students_school_session_idx").on(
+      table.schoolId,
+      table.teachingSessionId
+    ),
+    index("classpilot_session_students_school_group_idx").on(
+      table.schoolId,
+      table.groupId
+    ),
+    index("classpilot_session_students_school_student_idx").on(
+      table.schoolId,
+      table.studentId
+    ),
+  ]
+);
+
+export type ClasspilotSessionStudent = typeof classpilotSessionStudents.$inferSelect;
+export type InsertClasspilotSessionStudent = typeof classpilotSessionStudents.$inferInsert;
+
+export const classpilotSessionUsage = pgTable(
+  "classpilot_session_usage",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
+    teachingSessionId: varchar("teaching_session_id").notNull(),
+    groupId: text("group_id").notNull(),
+    studentId: text("student_id").notNull(),
+    localDate: text("local_date").notNull(),
+    totalSeconds: integer("total_seconds").notNull().default(0),
+    heartbeatCount: integer("heartbeat_count").notNull().default(0),
+    topDomains: jsonb("top_domains"),
+    firstSeen: timestamp("first_seen", { withTimezone: true }),
+    lastSeen: timestamp("last_seen", { withTimezone: true }),
+    computedAt: timestamp("computed_at", { withTimezone: true }).notNull().default(sql`now()`),
+  },
+  (table) => [
+    uniqueIndex("classpilot_session_usage_session_student_date_unique").on(
+      table.teachingSessionId,
+      table.studentId,
+      table.localDate
+    ),
+    index("classpilot_session_usage_school_date_idx").on(
+      table.schoolId,
+      table.localDate
+    ),
+    index("classpilot_session_usage_school_group_date_idx").on(
+      table.schoolId,
+      table.groupId,
+      table.localDate
+    ),
+    index("classpilot_session_usage_school_session_idx").on(
+      table.schoolId,
+      table.teachingSessionId
+    ),
+  ]
+);
+
+export type ClasspilotSessionUsage = typeof classpilotSessionUsage.$inferSelect;
+export type InsertClasspilotSessionUsage = typeof classpilotSessionUsage.$inferInsert;
+
+// ============================================================================
 // Session Settings - Per-session feature toggles
 // ============================================================================
 export const sessionSettings = pgTable("session_settings", {

@@ -41,7 +41,6 @@ import {
   getActiveTeachingSessionForSchool,
   getGroupStudents,
   getGroupByIdAndSchool,
-  getSchoolUsageSummary,
   getUserById,
   getAttendanceBySchool,
   getActivePassesBySchool,
@@ -51,7 +50,6 @@ import {
 import db from "../db.js";
 import { heartbeats, devices as deviceTable, teachingSessions, groups, groupStudents, dailyUsage, studentDevices, studentSessions } from "../schema/classpilot.js";
 import { dismissalQueue, dismissalSessions } from "../schema/gopilot.js";
-import { users } from "../schema/core.js";
 import { eq, and, sql, inArray } from "drizzle-orm";
 import { createGradeSchema } from "../schema/validation.js";
 import { hashPassword } from "../util/password.js";
@@ -65,6 +63,11 @@ import {
   requirePassPilotRole,
   userBelongsToSchool,
 } from "../services/passpilotAccess.js";
+import {
+  getClasspilotAdminAnalyticsByGroup,
+  getClasspilotAdminAnalyticsByTeacher,
+  getClasspilotAdminAnalyticsSummary,
+} from "../services/classpilotAdminAnalytics.js";
 
 const router = Router();
 
@@ -639,262 +642,40 @@ router.get("/admin/teacher-students", ...schoolAuth, requireRole("admin"), async
   }
 });
 
-router.get("/admin/analytics/summary", ...schoolAuth, requireRole("admin"), async (req, res, next) => {
+const classPilotAdminAnalyticsAuth = [
+  ...schoolAuth,
+  requireProductLicense("CLASSPILOT"),
+  requireRole("admin", "school_admin"),
+] as const;
+
+router.get("/admin/analytics/summary", ...classPilotAdminAnalyticsAuth, async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
-    const period = (req.query.period as string) || "24h";
-
-    // Calculate date range based on period
-    const now = new Date();
-    let startDate: string;
-    if (period === "7d") {
-      const d = new Date(now);
-      d.setDate(d.getDate() - 7);
-      startDate = d.toISOString().slice(0, 10);
-    } else if (period === "30d") {
-      const d = new Date(now);
-      d.setDate(d.getDate() - 30);
-      startDate = d.toISOString().slice(0, 10);
-    } else {
-      // 24h — use yesterday + today
-      const d = new Date(now);
-      d.setDate(d.getDate() - 1);
-      startDate = d.toISOString().slice(0, 10);
-    }
-    const endDate = now.toISOString().slice(0, 10);
-
-    const [usageSummary, students, staff, devices, hourlyRaw, topDomainsRaw] = await Promise.all([
-      getSchoolUsageSummary(schoolId, startDate, endDate),
-      getStudentsBySchool(schoolId),
-      getStaffBySchool(schoolId),
-      db.select({ deviceId: deviceTable.deviceId })
-        .from(deviceTable)
-        .where(eq(deviceTable.schoolId, schoolId)),
-      // Hourly activity: heartbeats in last 24h grouped by hour
-      db.select({
-        hour: sql<number>`EXTRACT(HOUR FROM ${heartbeats.timestamp})::int`,
-        count: sql<number>`COUNT(*)::int`,
-      })
-        .from(heartbeats)
-        .where(
-          and(
-            eq(heartbeats.schoolId, schoolId),
-            sql`${heartbeats.timestamp} >= NOW() - INTERVAL '24 hours'`
-          )
-        )
-        .groupBy(sql`EXTRACT(HOUR FROM ${heartbeats.timestamp})`),
-      // Top websites: aggregate from heartbeats for the period
-      db.select({
-        domain: sql<string>`SUBSTRING(${heartbeats.activeTabUrl} FROM '://([^/]+)')`,
-        minutes: sql<number>`(COUNT(*) * 10 / 60)::int`,
-        visits: sql<number>`COUNT(*)::int`,
-      })
-        .from(heartbeats)
-        .where(
-          and(
-            eq(heartbeats.schoolId, schoolId),
-            sql`${heartbeats.timestamp} >= ${startDate}::timestamp`,
-            sql`${heartbeats.activeTabUrl} IS NOT NULL`
-          )
-        )
-        .groupBy(sql`SUBSTRING(${heartbeats.activeTabUrl} FROM '://([^/]+)')`)
-        .orderBy(sql`COUNT(*) DESC`)
-        .limit(10),
-    ]);
-
-    // Build hourly activity array (0-23)
-    const hourlyMap = new Map(hourlyRaw.map(h => [h.hour, h.count]));
-    const hourlyActivity = Array.from({ length: 24 }, (_, i) => ({
-      hour: i,
-      count: hourlyMap.get(i) || 0,
-    }));
-
-    const teacherCount = staff.filter(s => s.role === "teacher" || s.role === "admin").length;
-
-    // Supplement daily_usage totals with today's live heartbeats (not yet rolled up)
-    const [todayLive] = await db.select({
-      activeStudents: sql<number>`COUNT(DISTINCT ${heartbeats.studentId})::int`,
-      totalSeconds: sql<number>`(COUNT(*) * 10)::int`,
-    })
-      .from(heartbeats)
-      .where(and(
-        eq(heartbeats.schoolId, schoolId),
-        sql`${heartbeats.timestamp}::date = CURRENT_DATE`
-      ));
-
-    const combinedActiveStudents = Math.max(
-      Number(usageSummary.activeStudents) || 0,
-      todayLive?.activeStudents || 0
-    );
-    const combinedTotalSeconds = (Number(usageSummary.totalSeconds) || 0) + (todayLive?.totalSeconds || 0);
-
-    return res.json({
-      summary: {
-        activeStudents: combinedActiveStudents,
-        totalStudents: students.length,
-        totalDevices: devices.length,
-        totalBrowsingMinutes: Math.round(combinedTotalSeconds / 60),
-        totalTeachers: teacherCount,
-      },
-      hourlyActivity,
-      topWebsites: topDomainsRaw.filter(d => d.domain),
-    });
+    const analytics = await getClasspilotAdminAnalyticsSummary(schoolId, req.query.period as string | undefined);
+    return res.json(analytics);
   } catch (err) {
     next(err);
   }
 });
 
-router.get("/admin/analytics/by-teacher", ...schoolAuth, requireRole("admin"), async (req, res, next) => {
+router.get("/admin/analytics/by-teacher", ...classPilotAdminAnalyticsAuth, async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
-    const period = (req.query.period as string) || "7d";
-
-    let cutoff: Date;
-    if (period === "today") {
-      // Midnight today UTC — resets every day
-      cutoff = new Date();
-      cutoff.setUTCHours(0, 0, 0, 0);
-    } else {
-      const days = period === "30d" ? 30 : 7;
-      cutoff = new Date();
-      cutoff.setDate(cutoff.getDate() - days);
-    }
-
-    // Get teachers with their session stats
-    // For time calculation: clamp session start/end to the query window.
-    // Sessions without endTime use NOW() but are clamped to the cutoff start,
-    // so a stale session from yesterday doesn't inflate "Today" totals.
-    const teacherStats = await db
-      .select({
-        id: teachingSessions.teacherId,
-        sessionCount: sql<number>`COUNT(DISTINCT ${teachingSessions.id})::int`,
-        totalSessionMinutes: sql<number>`COALESCE(SUM(EXTRACT(EPOCH FROM (
-          LEAST(COALESCE(${teachingSessions.endTime}, NOW()), NOW())
-          - GREATEST(${teachingSessions.startTime}, ${cutoff})
-        )) / 60)::int, 0)`,
-        groupCount: sql<number>`COUNT(DISTINCT ${teachingSessions.groupId})::int`,
-      })
-      .from(teachingSessions)
-      .innerJoin(groups, eq(teachingSessions.groupId, groups.id))
-      .where(
-        and(
-          eq(groups.schoolId, schoolId),
-          // Include sessions that overlap with the period (started before cutoff but still running)
-          sql`COALESCE(${teachingSessions.endTime}, NOW()) >= ${cutoff}`
-        )
-      )
-      .groupBy(teachingSessions.teacherId);
-
-    // Get teacher details
-    const teachers = [];
-    for (const stat of teacherStats) {
-      const user = await getUserById(stat.id);
-      if (user) {
-        teachers.push({
-          id: stat.id,
-          name: user.displayName || user.email || "Unknown",
-          email: user.email || "",
-          sessionCount: stat.sessionCount,
-          totalSessionMinutes: stat.totalSessionMinutes,
-          groupCount: stat.groupCount,
-        });
-      }
-    }
-
-    return res.json({ teachers });
+    const analytics = await getClasspilotAdminAnalyticsByTeacher(schoolId, req.query.period as string | undefined);
+    return res.json(analytics);
   } catch (err) {
     next(err);
   }
 });
 
-router.get("/admin/analytics/by-group", ...schoolAuth, requireRole("admin"), async (req, res, next) => {
+router.get("/admin/analytics/by-group", ...classPilotAdminAnalyticsAuth, async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
-    const period = (req.query.period as string) || "7d";
-
-    let startDate: string;
-    const endDate = new Date().toISOString().slice(0, 10);
-    if (period === "today") {
-      startDate = endDate; // Same day — daily_usage won't have it, live heartbeats will
-    } else {
-      const days = period === "30d" ? 30 : 7;
-      const cutoff = new Date();
-      cutoff.setDate(cutoff.getDate() - days);
-      startDate = cutoff.toISOString().slice(0, 10);
-    }
-
-    // Get rolled-up daily_usage for past days
-    const rows = await db
-      .select({
-        groupId: groups.id,
-        groupName: groups.name,
-        periodLabel: groups.periodLabel,
-        gradeLevel: groups.gradeLevel,
-        teacherDisplayName: users.displayName,
-        teacherEmail: users.email,
-        studentCount: sql<number>`COUNT(DISTINCT ${groupStudents.studentId})::int`,
-        activeStudentCount: sql<number>`COUNT(DISTINCT ${dailyUsage.studentId})::int`,
-        totalSeconds: sql<number>`COALESCE(SUM(${dailyUsage.totalSeconds}), 0)::int`,
-      })
-      .from(groups)
-      .innerJoin(users, eq(users.id, groups.teacherId))
-      .leftJoin(groupStudents, eq(groupStudents.groupId, groups.id))
-      .leftJoin(
-        dailyUsage,
-        and(
-          eq(dailyUsage.studentId, groupStudents.studentId),
-          eq(dailyUsage.schoolId, schoolId),
-          sql`${dailyUsage.date} >= ${startDate}`,
-          sql`${dailyUsage.date} <= ${endDate}`
-        )
-      )
-      .where(eq(groups.schoolId, schoolId))
-      .groupBy(groups.id, groups.name, groups.periodLabel, groups.gradeLevel, users.displayName, users.email);
-
-    // Supplement with today's live heartbeat data (not yet in daily_usage)
-    // This ensures Class Usage shows current-day activity
-    const todayLive = await db
-      .select({
-        groupId: groups.id,
-        activeStudentCount: sql<number>`COUNT(DISTINCT ${heartbeats.studentId})::int`,
-        totalSeconds: sql<number>`(COUNT(*) * 10)::int`,
-      })
-      .from(groups)
-      .leftJoin(groupStudents, eq(groupStudents.groupId, groups.id))
-      .leftJoin(
-        heartbeats,
-        and(
-          eq(heartbeats.studentId, groupStudents.studentId),
-          eq(heartbeats.schoolId, schoolId),
-          sql`${heartbeats.timestamp}::date = CURRENT_DATE`
-        )
-      )
-      .where(eq(groups.schoolId, schoolId))
-      .groupBy(groups.id);
-
-    const liveMap = new Map(todayLive.map((r) => [r.groupId, r]));
-
-    const groupsList = rows.map((r) => {
-      const live = liveMap.get(r.groupId);
-      const combinedSeconds = r.totalSeconds + (live?.totalSeconds || 0);
-      // Use the higher of daily_usage active count vs live active count as a conservative estimate
-      const activeCount = Math.max(r.activeStudentCount, live?.activeStudentCount || 0);
-      const totalMinutes = Math.round(combinedSeconds / 60);
-      return {
-        groupId: r.groupId,
-        groupName: r.groupName,
-        periodLabel: r.periodLabel,
-        gradeLevel: r.gradeLevel,
-        teacherName: r.teacherDisplayName || r.teacherEmail || "Unknown",
-        studentCount: r.studentCount,
-        activeStudentCount: activeCount,
-        totalBrowsingMinutes: totalMinutes,
-        avgMinutesPerStudent: activeCount > 0 ? Math.round(totalMinutes / activeCount) : 0,
-      };
+    const attributionMode = req.query.attributionMode === "roster" ? "roster" : "session";
+    const analytics = await getClasspilotAdminAnalyticsByGroup(schoolId, req.query.period as string | undefined, {
+      attributionMode,
     });
-
-    groupsList.sort((a, b) => b.totalBrowsingMinutes - a.totalBrowsingMinutes);
-    return res.json({ groups: groupsList });
+    return res.json(analytics);
   } catch (err) {
     next(err);
   }
