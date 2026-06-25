@@ -78,25 +78,66 @@ function requireStaffRole(req: any, res: any): boolean {
   return !!req.authUser?.isSuperAdmin || ["admin", "school_admin", "teacher", "office_staff"].includes(role);
 }
 
-function assignmentAllowsSetup(assignment: any): boolean {
+function assignmentAllowsClaim(assignment: any): boolean {
+  const permissions = assignment?.permissions as any;
   return (
     assignment?.active !== false &&
-    assignment?.scopeType === "setup" &&
-    (assignment?.permissions as any)?.setup === true
+    assignment?.scopeType !== "setup" &&
+    (permissions?.claim === true || permissions?.observe === true)
   );
 }
 
-async function canManageSupervisionSetup(req: any, res: any): Promise<boolean> {
-  if (isAdmin(req, res)) return true;
-  if (!requireStaffRole(req, res)) return false;
-  const assignments = await getActiveCoverageAssignmentsForStaff(res.locals.schoolId!, req.authUser!.id);
-  return assignments.some(assignmentAllowsSetup);
+function assignmentAllowsSetup(assignment: any): boolean {
+  const permissions = assignment?.permissions as any;
+  return (
+    assignment?.active !== false &&
+    (
+      (assignment?.scopeType === "setup" && permissions?.setup === true) ||
+      (assignment?.scopeType !== "setup" && permissions?.setup === true)
+    )
+  );
 }
 
-function setupCapabilityPayload(req: any, res: any, canSetup: boolean) {
+type SetupAccess = {
+  isAdmin: boolean;
+  actorId?: string;
+  canSetup: boolean;
+  isSchoolwide: boolean;
+  assignments: any[];
+};
+
+async function setupAccessForRequest(req: any, res: any): Promise<SetupAccess> {
+  if (isAdmin(req, res)) {
+    return { isAdmin: true, actorId: req.authUser?.id, canSetup: true, isSchoolwide: true, assignments: [] };
+  }
+  if (!requireStaffRole(req, res)) {
+    return { isAdmin: false, canSetup: false, isSchoolwide: false, assignments: [] };
+  }
+  const assignments = (await getActiveCoverageAssignmentsForStaff(res.locals.schoolId!, req.authUser!.id))
+    .filter(assignmentAllowsSetup);
+  const isSchoolwide = assignments.some((assignment) =>
+    assignment.scopeType === "setup" || assignment.scopeType === "school"
+  );
   return {
-    isAdmin: isAdmin(req, res),
-    canManageSupervisionSetup: canSetup,
+    isAdmin: false,
+    actorId: req.authUser!.id,
+    canSetup: assignments.length > 0,
+    isSchoolwide,
+    assignments,
+  };
+}
+
+async function canManageSupervisionSetup(req: any, res: any): Promise<boolean> {
+  return (await setupAccessForRequest(req, res)).canSetup;
+}
+
+async function setupCapabilityPayload(req: any, res: any) {
+  const access = await setupAccessForRequest(req, res);
+  return {
+    isAdmin: access.isAdmin,
+    canManageSupervisionSetup: access.canSetup,
+    isSchoolwideSetupManager: access.isSchoolwide,
+    setupScopes: access.isAdmin ? [] : await assignmentResponse(res.locals.schoolId!, access.assignments),
   };
 }
 
@@ -200,7 +241,7 @@ async function assignmentCoversStudent(assignment: any, student: any): Promise<b
 
 async function assignmentsCoverStudent(assignments: any[], student: any): Promise<boolean> {
   for (const assignment of assignments) {
-    if (await assignmentCoversStudent(assignment, student)) return true;
+    if (assignmentAllowsClaim(assignment) && await assignmentCoversStudent(assignment, student)) return true;
   }
   return false;
 }
@@ -208,7 +249,7 @@ async function assignmentsCoverStudent(assignments: any[], student: any): Promis
 async function matchingDirectAssignmentsForStudent(assignments: any[], student: any) {
   const matches = [];
   for (const assignment of assignments) {
-    if (assignment.scopeType === "coverage_group" || assignment.scopeType === "setup") continue;
+    if (!assignmentAllowsClaim(assignment) || assignment.scopeType === "coverage_group" || assignment.scopeType === "setup") continue;
     if (await assignmentCoversStudent(assignment, student)) matches.push(assignment);
   }
   return matches;
@@ -260,6 +301,164 @@ async function assertValidAssignmentScope(schoolId: string, scopeType: string, r
   return scopeValue;
 }
 
+async function setupAccessCoversStudent(access: SetupAccess, student: any): Promise<boolean> {
+  if (access.isAdmin || access.isSchoolwide) return true;
+  for (const assignment of access.assignments) {
+    if (await assignmentCoversStudent(assignment, student)) return true;
+  }
+  return false;
+}
+
+async function assertStudentsWithinSetupAccess(
+  schoolId: string,
+  access: SetupAccess,
+  studentIds: string[]
+) {
+  const students = await assertStudentsInSchool(schoolId, studentIds);
+  if (access.isAdmin || access.isSchoolwide) return students;
+  for (const student of students) {
+    if (!(await setupAccessCoversStudent(access, student))) {
+      throw Object.assign(new Error("One or more students are outside your setup scope"), { status: 403 });
+    }
+  }
+  return students;
+}
+
+async function assignmentScopeWithinSetupAccess(
+  schoolId: string,
+  access: SetupAccess,
+  scopeType: string,
+  scopeValue: string | null
+): Promise<boolean> {
+  if (access.isAdmin || access.isSchoolwide) return true;
+  if (scopeType === "setup" || scopeType === "school") return false;
+  if (scopeType === "grade") {
+    return access.assignments.some((assignment) =>
+      assignment.scopeType === "grade" &&
+      String(assignment.scopeValue || "") === String(scopeValue || "")
+    );
+  }
+  if (scopeType === "students") {
+    const studentIds = String(scopeValue || "").split(",").map((id) => id.trim()).filter(Boolean);
+    try {
+      await assertStudentsWithinSetupAccess(schoolId, access, studentIds);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  if (scopeType === "group" && scopeValue) {
+    const group = await getGroupByIdAndSchool(scopeValue, schoolId);
+    if (!group) return false;
+    const members = await groupStudentSet(scopeValue);
+    if (members.size === 0 && group.gradeLevel) {
+      return assignmentScopeWithinSetupAccess(schoolId, access, "grade", String(group.gradeLevel));
+    }
+    return allStudentIdsWithinSetupAccess(schoolId, access, Array.from(members));
+  }
+  if (scopeType === "coverage_group" && scopeValue) {
+    const members = await coverageGroupStudentSet(schoolId, scopeValue);
+    return allStudentIdsWithinSetupAccess(schoolId, access, Array.from(members));
+  }
+  return false;
+}
+
+async function allStudentIdsWithinSetupAccess(
+  schoolId: string,
+  access: SetupAccess,
+  studentIds: string[]
+): Promise<boolean> {
+  if (studentIds.length === 0) return access.isAdmin || access.isSchoolwide;
+  try {
+    await assertStudentsWithinSetupAccess(schoolId, access, studentIds);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function filterStudentsBySetupAccess(schoolId: string, access: SetupAccess, students: any[]) {
+  if (access.isAdmin || access.isSchoolwide) return students;
+  const visible = [];
+  for (const student of students) {
+    if (await setupAccessCoversStudent(access, student)) visible.push(student);
+  }
+  return visible;
+}
+
+async function filterClassesBySetupAccess(schoolId: string, access: SetupAccess, groups: any[]) {
+  if (access.isAdmin || access.isSchoolwide) return groups;
+  const visible = [];
+  for (const group of groups) {
+    if (await assignmentScopeWithinSetupAccess(schoolId, access, "group", group.id)) visible.push(group);
+  }
+  return visible;
+}
+
+async function filterSupervisionGroupsBySetupAccess(schoolId: string, access: SetupAccess, groups: any[]) {
+  if (access.isAdmin || access.isSchoolwide) return groups;
+  const visible = [];
+  for (const group of groups) {
+    if (
+      ((group.members || []).length === 0 && group.createdBy === access.actorId) ||
+      await assignmentScopeWithinSetupAccess(schoolId, access, "coverage_group", group.id)
+    ) {
+      visible.push(group);
+    }
+  }
+  return visible;
+}
+
+async function canManageSupervisionGroupWithinSetupAccess(
+  schoolId: string,
+  access: SetupAccess,
+  groupId: string
+) {
+  if (await assignmentScopeWithinSetupAccess(schoolId, access, "coverage_group", groupId)) return true;
+  const group = await getCoverageScopeGroupByIdAndSchool(schoolId, groupId);
+  return !!group && (group.members || []).length === 0 && group.createdBy === access.actorId;
+}
+
+function normalizeAssignmentPermissions(scopeType: string, rawPermissions: any = undefined) {
+  if (scopeType === "setup") return { setup: true };
+  const hasExplicitPermissions = rawPermissions && typeof rawPermissions === "object";
+  const wantsClaim = hasExplicitPermissions
+    ? rawPermissions.claim === true || rawPermissions.observe === true
+    : true;
+  const wantsSetup = hasExplicitPermissions && rawPermissions.setup === true;
+  const permissions: any = {};
+  if (wantsClaim) {
+    permissions.observe = true;
+    permissions.claim = true;
+  }
+  if (wantsSetup) permissions.setup = true;
+  return permissions;
+}
+
+function assignmentHasAnyPermission(permissions: any) {
+  return permissions?.claim === true || permissions?.observe === true || permissions?.setup === true;
+}
+
+async function assertActorCanWriteAssignment(
+  req: any,
+  res: any,
+  scopeType: string,
+  scopeValue: string | null,
+  permissions: any
+) {
+  if (isAdmin(req, res)) return;
+  const access = await setupAccessForRequest(req, res);
+  if (!access.canSetup) {
+    throw Object.assign(new Error("Setup permission required"), { status: 403 });
+  }
+  if (permissions?.setup === true || scopeType === "setup") {
+    throw Object.assign(new Error("Only admins can grant setup access"), { status: 403 });
+  }
+  if (!(await assignmentScopeWithinSetupAccess(res.locals.schoolId!, access, scopeType, scopeValue))) {
+    throw Object.assign(new Error("Assignment is outside your setup scope"), { status: 403 });
+  }
+}
+
 async function assignmentResponse(schoolId: string, assignments: any[]) {
   const staffIds = [...new Set(assignments.map((assignment) => assignment.staffId).filter(Boolean))];
   const staffEntries = await Promise.all(staffIds.map(async (id) => [id, await getUserById(id)] as const));
@@ -267,6 +466,9 @@ async function assignmentResponse(schoolId: string, assignments: any[]) {
 
   return Promise.all(assignments.map(async (assignment) => {
     const staff = staffById.get(assignment.staffId);
+    const permissions = assignment.permissions as any;
+    const claimPermission = assignmentAllowsClaim(assignment);
+    const setupPermission = assignmentAllowsSetup(assignment);
     let scopeLabel = "Schoolwide";
     let scopeDetail: any = null;
     if (assignment.scopeType === "setup") {
@@ -286,10 +488,19 @@ async function assignmentResponse(schoolId: string, assignments: any[]) {
       scopeLabel = `${ids.length} selected student${ids.length === 1 ? "" : "s"}`;
       scopeDetail = { studentIds: ids };
     }
+    const permissionLabels = [
+      claimPermission ? "Claim + Manage" : null,
+      setupPermission ? "Manage Supervision Setup" : null,
+    ].filter(Boolean);
 
     return {
       ...assignment,
-      permissionLabel: assignment.scopeType === "setup" ? "Manage Supervision Setup" : "Claim + Manage",
+      permissions,
+      abilities: {
+        claim: claimPermission,
+        setup: setupPermission,
+      },
+      permissionLabel: permissionLabels.join(" + ") || "No active abilities",
       scopeLabel,
       scopeDetail,
       staff: staff ? {
@@ -340,7 +551,8 @@ async function assignmentScopeLabel(schoolId: string, assignment: any): Promise<
 }
 
 async function supervisionGroupPayload(schoolId: string, group: any, options: { includeStudents?: boolean } = {}) {
-  const staffAssignments = await getActiveCoverageAssignmentsForScopeGroup(schoolId, group.id);
+  const staffAssignments = (await getActiveCoverageAssignmentsForScopeGroup(schoolId, group.id))
+    .filter(assignmentAllowsClaim);
   const staffEntries = await Promise.all(
     staffAssignments.map(async (assignment) => [assignment.staffId, await getUserById(assignment.staffId), assignment] as const)
   );
@@ -381,7 +593,7 @@ async function activeCoverageGroupIdsForStaff(schoolId: string, staffId: string)
   const assignments = await getActiveCoverageAssignmentsForStaff(schoolId, staffId);
   return new Set(
     assignments
-      .filter((assignment) => assignment.scopeType === "coverage_group" && assignment.scopeValue)
+      .filter((assignment) => assignmentAllowsClaim(assignment) && assignment.scopeType === "coverage_group" && assignment.scopeValue)
       .map((assignment) => assignment.scopeValue!)
   );
 }
@@ -669,7 +881,7 @@ router.get("/coverage/unassigned", ...auth, async (req, res, next) => {
 router.get("/coverage/capabilities", ...auth, async (req, res, next) => {
   try {
     if (!requireStaffRole(req, res)) return res.status(403).json({ error: "Staff access required" });
-    return res.json(setupCapabilityPayload(req, res, await canManageSupervisionSetup(req, res)));
+    return res.json(await setupCapabilityPayload(req, res));
   } catch (err) {
     next(err);
   }
@@ -687,8 +899,13 @@ router.get("/coverage/setup/staff", ...auth, async (req, res, next) => {
 
 router.get("/coverage/setup/students", ...auth, async (req, res, next) => {
   try {
-    if (!(await canManageSupervisionSetup(req, res))) return res.status(403).json({ error: "Setup permission required" });
-    const students = await getStudentsBySchool(res.locals.schoolId!);
+    const access = await setupAccessForRequest(req, res);
+    if (!access.canSetup) return res.status(403).json({ error: "Setup permission required" });
+    const students = await filterStudentsBySetupAccess(
+      res.locals.schoolId!,
+      access,
+      await getStudentsBySchool(res.locals.schoolId!)
+    );
     return res.json({ students: setupStudentPayload(students) });
   } catch (err) {
     next(err);
@@ -697,8 +914,13 @@ router.get("/coverage/setup/students", ...auth, async (req, res, next) => {
 
 router.get("/coverage/setup/classes", ...auth, async (req, res, next) => {
   try {
-    if (!(await canManageSupervisionSetup(req, res))) return res.status(403).json({ error: "Setup permission required" });
-    const groups = await getGroupsBySchool(res.locals.schoolId!);
+    const access = await setupAccessForRequest(req, res);
+    if (!access.canSetup) return res.status(403).json({ error: "Setup permission required" });
+    const groups = await filterClassesBySetupAccess(
+      res.locals.schoolId!,
+      access,
+      await getGroupsBySchool(res.locals.schoolId!)
+    );
     return res.json({ groups: setupClassPayload(groups) });
   } catch (err) {
     next(err);
@@ -707,9 +929,20 @@ router.get("/coverage/setup/classes", ...auth, async (req, res, next) => {
 
 router.get("/coverage/assignments", ...auth, async (req, res, next) => {
   try {
-    if (!isAdmin(req, res)) return res.status(403).json({ error: "Admin access required" });
     const schoolId = res.locals.schoolId!;
-    const assignments = await listCoverageAssignments(schoolId);
+    const access = await setupAccessForRequest(req, res);
+    if (!access.canSetup) return res.status(403).json({ error: "Setup permission required" });
+    let assignments = await listCoverageAssignments(schoolId);
+    if (!isAdmin(req, res)) {
+      const filtered = [];
+      for (const assignment of assignments) {
+        if (assignment.scopeType === "setup" || assignmentAllowsSetup(assignment)) continue;
+        if (await assignmentScopeWithinSetupAccess(schoolId, access, assignment.scopeType, assignment.scopeValue)) {
+          filtered.push(assignment);
+        }
+      }
+      assignments = filtered;
+    }
     return res.json({ assignments: await assignmentResponse(schoolId, assignments) });
   } catch (err) {
     next(err);
@@ -718,7 +951,6 @@ router.get("/coverage/assignments", ...auth, async (req, res, next) => {
 
 router.post("/coverage/assignments", ...auth, async (req, res, next) => {
   try {
-    if (!isAdmin(req, res)) return res.status(403).json({ error: "Admin access required" });
     const schoolId = res.locals.schoolId!;
     const staffId = String(req.body.staffId || "").trim();
     const scopeType = String(req.body.scopeType || "").trim();
@@ -730,13 +962,18 @@ router.post("/coverage/assignments", ...auth, async (req, res, next) => {
       return res.status(404).json({ error: "Staff member not found in this school" });
     }
     const scopeValue = await assertValidAssignmentScope(schoolId, scopeType, req.body.scopeValue ?? req.body.studentIds);
+    const permissions = normalizeAssignmentPermissions(scopeType, req.body.permissions);
+    if (!assignmentHasAnyPermission(permissions)) {
+      return res.status(400).json({ error: "At least one permission is required" });
+    }
+    await assertActorCanWriteAssignment(req, res, scopeType, scopeValue, permissions);
 
     const assignment = await createCoverageAssignment({
       schoolId,
       staffId,
       scopeType: scopeType as any,
       scopeValue,
-      permissions: scopeType === "setup" ? { setup: true } : { observe: true, claim: true },
+      permissions,
       active: true,
       createdBy: req.authUser!.id,
     });
@@ -759,11 +996,20 @@ router.post("/coverage/assignments", ...auth, async (req, res, next) => {
 
 router.patch("/coverage/assignments/:id", ...auth, async (req, res, next) => {
   try {
-    if (!isAdmin(req, res)) return res.status(403).json({ error: "Admin access required" });
     const schoolId = res.locals.schoolId!;
+    const access = await setupAccessForRequest(req, res);
+    if (!access.canSetup) return res.status(403).json({ error: "Setup permission required" });
     const assignmentId = String(req.params.id);
     const existing = (await listCoverageAssignments(schoolId)).find((assignment) => assignment.id === assignmentId);
     if (!existing) return res.status(404).json({ error: "Coverage assignment not found" });
+    if (!isAdmin(req, res)) {
+      if (existing.scopeType === "setup" || assignmentAllowsSetup(existing)) {
+        return res.status(403).json({ error: "Only admins can change setup access" });
+      }
+      if (!(await assignmentScopeWithinSetupAccess(schoolId, access, existing.scopeType, existing.scopeValue))) {
+        return res.status(403).json({ error: "Assignment is outside your setup scope" });
+      }
+    }
 
     const activeOnlyChange =
       req.body.active !== undefined &&
@@ -799,12 +1045,19 @@ router.patch("/coverage/assignments/:id", ...auth, async (req, res, next) => {
     }
     const scopeValue = await assertValidAssignmentScope(schoolId, nextScopeType, rawScopeValue);
     const active = req.body.active === undefined ? existing.active : req.body.active !== false;
+    const permissions = req.body.permissions === undefined
+      ? existing.permissions
+      : normalizeAssignmentPermissions(nextScopeType, req.body.permissions);
+    if (!assignmentHasAnyPermission(permissions)) {
+      return res.status(400).json({ error: "At least one permission is required" });
+    }
+    await assertActorCanWriteAssignment(req, res, nextScopeType, scopeValue, permissions);
 
     const assignment = await updateCoverageAssignment(schoolId, assignmentId, {
       staffId: nextStaffId,
       scopeType: nextScopeType as any,
       scopeValue,
-      permissions: nextScopeType === "setup" ? { setup: true } : { observe: true, claim: true },
+      permissions,
       active,
     });
     if (!assignment) return res.status(404).json({ error: "Coverage assignment not found" });
@@ -931,12 +1184,16 @@ router.get("/coverage/supervision-groups", ...auth, async (req, res, next) => {
   try {
     if (!requireStaffRole(req, res)) return res.status(403).json({ error: "Staff access required" });
     const schoolId = res.locals.schoolId!;
-    const canSetup = await canManageSupervisionSetup(req, res);
-    const groups = canSetup
-      ? await listCoverageScopeGroups(schoolId, { activeOnly: req.query.active === "true" })
+    const access = await setupAccessForRequest(req, res);
+    const groups = access.canSetup
+      ? await filterSupervisionGroupsBySetupAccess(
+          schoolId,
+          access,
+          await listCoverageScopeGroups(schoolId, { activeOnly: req.query.active === "true" })
+        )
       : await visibleSupervisionGroupsForRequest(req, res);
     const payload = await Promise.all(
-      groups.map((group) => supervisionGroupPayload(schoolId, group, { includeStudents: canSetup }))
+      groups.map((group) => supervisionGroupPayload(schoolId, group, { includeStudents: access.canSetup }))
     );
     return res.json({ groups: payload });
   } catch (err) {
@@ -946,13 +1203,14 @@ router.get("/coverage/supervision-groups", ...auth, async (req, res, next) => {
 
 router.post("/coverage/supervision-groups", ...auth, async (req, res, next) => {
   try {
-    if (!(await canManageSupervisionSetup(req, res))) return res.status(403).json({ error: "Setup permission required" });
+    const access = await setupAccessForRequest(req, res);
+    if (!access.canSetup) return res.status(403).json({ error: "Setup permission required" });
     const schoolId = res.locals.schoolId!;
     const name = String(req.body.name || "").trim();
     if (!name) return res.status(400).json({ error: "name is required" });
     const studentIds = normalizeStudentIds(req.body.studentIds);
     const staffIds = normalizeStudentIds(req.body.staffIds);
-    await assertStudentsInSchool(schoolId, studentIds);
+    await assertStudentsWithinSetupAccess(schoolId, access, studentIds);
     for (const staffId of staffIds) {
       const membership = await getMembershipByUserAndSchool(staffId, schoolId);
       if (!membership || membership.status !== "active") {
@@ -990,9 +1248,13 @@ router.post("/coverage/supervision-groups", ...auth, async (req, res, next) => {
 
 router.patch("/coverage/supervision-groups/:id", ...auth, async (req, res, next) => {
   try {
-    if (!(await canManageSupervisionSetup(req, res))) return res.status(403).json({ error: "Setup permission required" });
+    const access = await setupAccessForRequest(req, res);
+    if (!access.canSetup) return res.status(403).json({ error: "Setup permission required" });
     const schoolId = res.locals.schoolId!;
     const groupId = String(req.params.id);
+    if (!(await canManageSupervisionGroupWithinSetupAccess(schoolId, access, groupId))) {
+      return res.status(403).json({ error: "Supervision group is outside your setup scope" });
+    }
     const data: { name?: string; description?: string | null; active?: boolean } = {};
     if (req.body.name !== undefined) {
       const name = String(req.body.name || "").trim();
@@ -1021,11 +1283,15 @@ router.patch("/coverage/supervision-groups/:id", ...auth, async (req, res, next)
 
 router.put("/coverage/supervision-groups/:id/students", ...auth, async (req, res, next) => {
   try {
-    if (!(await canManageSupervisionSetup(req, res))) return res.status(403).json({ error: "Setup permission required" });
+    const access = await setupAccessForRequest(req, res);
+    if (!access.canSetup) return res.status(403).json({ error: "Setup permission required" });
     const schoolId = res.locals.schoolId!;
     const groupId = String(req.params.id);
+    if (!(await canManageSupervisionGroupWithinSetupAccess(schoolId, access, groupId))) {
+      return res.status(403).json({ error: "Supervision group is outside your setup scope" });
+    }
     const studentIds = normalizeStudentIds(req.body.studentIds);
-    await assertStudentsInSchool(schoolId, studentIds);
+    await assertStudentsWithinSetupAccess(schoolId, access, studentIds);
     const group = await replaceCoverageScopeGroupMembers({ schoolId, groupId, studentIds });
     if (!group) return res.status(404).json({ error: "Supervision group not found" });
     await logAudit({
@@ -1047,9 +1313,13 @@ router.put("/coverage/supervision-groups/:id/students", ...auth, async (req, res
 
 router.put("/coverage/supervision-groups/:id/staff", ...auth, async (req, res, next) => {
   try {
-    if (!(await canManageSupervisionSetup(req, res))) return res.status(403).json({ error: "Setup permission required" });
+    const access = await setupAccessForRequest(req, res);
+    if (!access.canSetup) return res.status(403).json({ error: "Setup permission required" });
     const schoolId = res.locals.schoolId!;
     const groupId = String(req.params.id);
+    if (!(await canManageSupervisionGroupWithinSetupAccess(schoolId, access, groupId))) {
+      return res.status(403).json({ error: "Supervision group is outside your setup scope" });
+    }
     const group = await getCoverageScopeGroupByIdAndSchool(schoolId, groupId);
     if (!group) return res.status(404).json({ error: "Supervision group not found" });
     const staffIds = normalizeStudentIds(req.body.staffIds);

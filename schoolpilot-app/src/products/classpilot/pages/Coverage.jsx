@@ -108,6 +108,29 @@ function assignmentScopeKey(scopeType, scopeValue, studentIds = []) {
   return `${scopeType}:${scopeValue || ""}`;
 }
 
+function assignmentHasClaim(assignment) {
+  const permissions = assignment?.permissions || {};
+  return assignment?.abilities?.claim === true || permissions.claim === true || permissions.observe === true;
+}
+
+function assignmentHasSetup(assignment) {
+  const permissions = assignment?.permissions || {};
+  return assignment?.abilities?.setup === true || permissions.setup === true || assignment?.scopeType === "setup";
+}
+
+function assignmentScopeSelection(assignment) {
+  if (assignment.scopeType === "setup") return { type: "school", value: "school" };
+  if (assignment.scopeType === "school") return { type: "school", value: "school" };
+  if (assignment.scopeType === "students") {
+    return { type: "students", value: assignment.scopeDetail?.studentIds || [] };
+  }
+  return { type: assignment.scopeType, value: assignment.scopeValue || "" };
+}
+
+function assignmentPayloadKey(payload) {
+  return assignmentScopeKey(payload.scopeType, payload.scopeValue || "", payload.studentIds || []);
+}
+
 function matchesTokens(value, query) {
   const tokens = String(query || "").trim().toLowerCase().split(/\s+/).filter(Boolean);
   if (tokens.length === 0) return true;
@@ -149,6 +172,7 @@ export default function Coverage() {
   const [releaseDialog, setReleaseDialog] = useState(null);
   const [releaseReason, setReleaseReason] = useState("returned_to_class");
   const [studentPickerSearch, setStudentPickerSearch] = useState("");
+  const [assignmentStaffSearch, setAssignmentStaffSearch] = useState("");
   const [scopeGroupOpen, setScopeGroupOpen] = useState(false);
   const [scopeGroupSearch, setScopeGroupSearch] = useState("");
   const [scopeGroupStaffSearch, setScopeGroupStaffSearch] = useState("");
@@ -166,11 +190,14 @@ export default function Coverage() {
     note: "",
   });
   const [assignmentForm, setAssignmentForm] = useState({
-    id: "",
+    existingIds: [],
     staffId: "",
-    scopeType: "school",
-    scopeValue: "",
-    scopeValues: [],
+    claim: true,
+    setup: false,
+    schoolwide: false,
+    gradeValues: [],
+    groupValues: [],
+    coverageGroupValues: [],
     studentIds: [],
     active: true,
   });
@@ -203,6 +230,8 @@ export default function Coverage() {
     enabled: !!currentUser,
   });
   const canManageSupervisionSetup = isAdmin || !!capabilitiesQuery.data?.canManageSupervisionSetup;
+  const canDelegateSetup = isAdmin;
+  const canChooseSchoolwide = isAdmin || !!capabilitiesQuery.data?.isSchoolwideSetupManager;
 
   const staffQuery = useQuery({
     queryKey: [isAdmin ? "/api/admin/users" : "/api/coverage/setup/staff"],
@@ -222,7 +251,7 @@ export default function Coverage() {
     queryKey: ["/api/coverage/assignments"],
     queryFn: () => apiRequest("GET", "/coverage/assignments"),
     select: (data) => data?.assignments || [],
-    enabled: isAdmin,
+    enabled: canManageSupervisionSetup,
   });
 
   const scopeGroupsQuery = useQuery({
@@ -263,6 +292,41 @@ export default function Coverage() {
     () => (scopeGroupsQuery.data || []).filter((group) => group.active),
     [scopeGroupsQuery.data]
   );
+  const assignableStaff = useMemo(() => {
+    return (staffQuery.data || []).filter((staff) => {
+      const searchText = [
+        displayName(staff),
+        staff.email,
+        staff.user?.email,
+        staff.role,
+      ].filter(Boolean).join(" ");
+      return matchesTokens(searchText, assignmentStaffSearch);
+    });
+  }, [assignmentStaffSearch, staffQuery.data]);
+  const permissionPackages = useMemo(() => {
+    const byStaff = new Map();
+    (assignmentsQuery.data || []).forEach((assignment) => {
+      const entry = byStaff.get(assignment.staffId) || {
+        staffId: assignment.staffId,
+        staff: assignment.staff || null,
+        assignments: [],
+        active: false,
+        claim: false,
+        setup: false,
+        scopeLabels: [],
+      };
+      entry.assignments.push(assignment);
+      entry.active = entry.active || assignment.active !== false;
+      entry.claim = entry.claim || assignmentHasClaim(assignment);
+      entry.setup = entry.setup || assignmentHasSetup(assignment);
+      if (assignment.scopeLabel) entry.scopeLabels.push(assignment.scopeLabel);
+      byStaff.set(assignment.staffId, entry);
+    });
+    return Array.from(byStaff.values()).map((entry) => ({
+      ...entry,
+      scopeLabels: Array.from(new Set(entry.scopeLabels)),
+    }));
+  }, [assignmentsQuery.data]);
   const adminStudents = useMemo(() => adminStudentsQuery.data || [], [adminStudentsQuery.data]);
   const rosterGrades = useMemo(() => {
     const counts = new Map();
@@ -386,6 +450,17 @@ export default function Coverage() {
     [activeCoverageStudentIds, selectedCoverageIds]
   );
   const commandTargetCount = selectedCoverageStudentIds.length || activeCoverageStudents.length;
+  const assignmentScopeCount =
+    (assignmentForm.schoolwide ? 1 : 0) +
+    assignmentForm.gradeValues.length +
+    assignmentForm.groupValues.length +
+    assignmentForm.coverageGroupValues.length +
+    (assignmentForm.studentIds.length > 0 ? 1 : 0);
+  const assignmentCanSave =
+    !!assignmentForm.staffId &&
+    (assignmentForm.claim || assignmentForm.setup) &&
+    assignmentScopeCount > 0 &&
+    (!assignmentForm.setup || canDelegateSetup);
 
   const invalidateCoverage = () => {
     queryClient.invalidateQueries({ queryKey: ["/api/coverage/unassigned"] });
@@ -451,20 +526,51 @@ export default function Coverage() {
   });
 
   const saveAssignmentMutation = useMutation({
-    mutationFn: async ({ id, payloads }) => {
-      if (id) {
-        const [firstPayload, ...newPayloads] = payloads;
-        const updated = await apiRequest("PATCH", `/coverage/assignments/${id}`, firstPayload);
-        const created = await Promise.all(newPayloads.map((payload) => apiRequest("POST", "/coverage/assignments", payload)));
-        return { updated, created };
+    mutationFn: async ({ staffId, payloads }) => {
+      const existing = (assignmentsQuery.data || []).filter((assignment) => assignment.staffId === staffId);
+      const payloadByKey = new Map(payloads.map((payload) => [assignmentPayloadKey(payload), payload]));
+      const existingByKey = new Map(existing.map((assignment) => [
+        assignmentScopeKey(
+          assignment.scopeType,
+          assignment.scopeValue || "",
+          assignment.scopeType === "students" ? (assignment.scopeDetail?.studentIds || []) : []
+        ),
+        assignment,
+      ]));
+
+      const updates = [];
+      const creates = [];
+      for (const [key, payload] of payloadByKey.entries()) {
+        const match = existingByKey.get(key);
+        if (match) updates.push(apiRequest("PATCH", `/coverage/assignments/${match.id}`, payload));
+        else creates.push(apiRequest("POST", "/coverage/assignments", payload));
       }
-      const created = await Promise.all(payloads.map((payload) => apiRequest("POST", "/coverage/assignments", payload)));
-      return { created };
+
+      const disables = existing
+        .filter((assignment) => assignment.active !== false)
+        .filter((assignment) => !assignmentHasSetup(assignment) || canDelegateSetup)
+        .filter((assignment) => {
+          const key = assignmentScopeKey(
+            assignment.scopeType,
+            assignment.scopeValue || "",
+            assignment.scopeType === "students" ? (assignment.scopeDetail?.studentIds || []) : []
+          );
+          return !payloadByKey.has(key);
+        })
+        .map((assignment) => apiRequest("PATCH", `/coverage/assignments/${assignment.id}`, { active: false }));
+
+      const [updated, created, disabled] = await Promise.all([
+        Promise.all(updates),
+        Promise.all(creates),
+        Promise.all(disables),
+      ]);
+      return { updated, created, disabled };
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["/api/coverage/assignments"] });
       setAssignmentOpen(false);
       setStudentPickerSearch("");
+      setAssignmentStaffSearch("");
       const count = variables?.payloads?.length || 1;
       toast({ title: count === 1 ? "Staff permission saved" : `${count} staff permissions saved` });
     },
@@ -530,26 +636,62 @@ export default function Coverage() {
   };
 
   const resetAssignmentForm = () => {
-    setAssignmentForm({ id: "", staffId: "", scopeType: "school", scopeValue: "", scopeValues: [], studentIds: [], active: true });
+    setAssignmentForm({
+      existingIds: [],
+      staffId: "",
+      claim: true,
+      setup: false,
+      schoolwide: false,
+      gradeValues: [],
+      groupValues: [],
+      coverageGroupValues: [],
+      studentIds: [],
+      active: true,
+    });
     setStudentPickerSearch("");
+    setAssignmentStaffSearch("");
   };
 
-  const openAssignmentDialog = (assignment = null) => {
-    if (!assignment) {
+  const openAssignmentDialog = (permissionPackage = null) => {
+    if (!permissionPackage) {
       resetAssignmentForm();
       setAssignmentOpen(true);
       return;
     }
+    const assignments = permissionPackage.assignments || [permissionPackage];
+    const gradeValues = [];
+    const groupValues = [];
+    const coverageGroupValues = [];
+    const studentIds = new Set();
+    let schoolwide = false;
+    let claim = false;
+    let setup = false;
+    assignments.forEach((assignment) => {
+      claim = claim || assignmentHasClaim(assignment);
+      setup = setup || assignmentHasSetup(assignment);
+      const scope = assignmentScopeSelection(assignment);
+      if (scope.type === "school") schoolwide = true;
+      if (scope.type === "grade" && scope.value) gradeValues.push(scope.value);
+      if (scope.type === "group" && scope.value) groupValues.push(scope.value);
+      if (scope.type === "coverage_group" && scope.value) coverageGroupValues.push(scope.value);
+      if (scope.type === "students") {
+        (scope.value || []).forEach((studentId) => studentIds.add(studentId));
+      }
+    });
     setAssignmentForm({
-      id: assignment.id,
-      staffId: assignment.staffId,
-      scopeType: assignment.scopeType,
-      scopeValue: assignment.scopeType === "students" ? "" : assignment.scopeValue || "",
-      scopeValues: assignment.scopeType !== "students" && assignment.scopeValue ? [assignment.scopeValue] : [],
-      studentIds: assignment.scopeType === "students" ? (assignment.scopeDetail?.studentIds || []) : [],
-      active: assignment.active !== false,
+      existingIds: assignments.map((assignment) => assignment.id),
+      staffId: permissionPackage.staffId || assignments[0]?.staffId || "",
+      claim,
+      setup,
+      schoolwide,
+      gradeValues: Array.from(new Set(gradeValues)),
+      groupValues: Array.from(new Set(groupValues)),
+      coverageGroupValues: Array.from(new Set(coverageGroupValues)),
+      studentIds: Array.from(studentIds),
+      active: assignments.some((assignment) => assignment.active !== false),
     });
     setStudentPickerSearch("");
+    setAssignmentStaffSearch("");
     setAssignmentOpen(true);
   };
 
@@ -595,16 +737,12 @@ export default function Coverage() {
     });
   };
 
-  const toggleAssignmentScopeValue = (scopeValue) => {
+  const toggleAssignmentArrayValue = (field, scopeValue) => {
     setAssignmentForm((prev) => {
-      const selected = new Set(prev.scopeValues || []);
+      const selected = new Set(prev[field] || []);
       if (selected.has(scopeValue)) selected.delete(scopeValue);
       else selected.add(scopeValue);
-      return {
-        ...prev,
-        scopeValue: selected.size === 1 ? Array.from(selected)[0] : "",
-        scopeValues: Array.from(selected),
-      };
+      return { ...prev, [field]: Array.from(selected) };
     });
   };
 
@@ -635,76 +773,77 @@ export default function Coverage() {
     });
   };
 
-  const assignmentMatchesPayload = (assignment, payload) => {
-    if (assignment.staffId !== payload.staffId || assignment.scopeType !== payload.scopeType) return false;
-    const assignmentKey = assignmentScopeKey(
-      assignment.scopeType,
-      assignment.scopeValue || "",
-      assignment.scopeType === "students" ? (assignment.scopeDetail?.studentIds || []) : []
-    );
-    const payloadKey = assignmentScopeKey(payload.scopeType, payload.scopeValue || "", payload.studentIds || []);
-    return assignmentKey === payloadKey;
-  };
-
   const buildAssignmentPayloads = () => {
-    if (assignmentForm.scopeType === "setup") {
-      return [{
-        staffId: assignmentForm.staffId,
-        scopeType: "setup",
-        active: assignmentForm.active,
-      }];
-    }
-    if (assignmentForm.scopeType === "school") {
-      return [{
+    const permissions = {
+      observe: assignmentForm.claim || undefined,
+      claim: assignmentForm.claim || undefined,
+      setup: assignmentForm.setup || undefined,
+    };
+    const payloads = [];
+    if (assignmentForm.schoolwide) {
+      payloads.push({
         staffId: assignmentForm.staffId,
         scopeType: "school",
+        permissions,
         active: assignmentForm.active,
-      }];
+      });
     }
-    if (assignmentForm.scopeType === "students") {
-      return [{
+    assignmentForm.gradeValues.forEach((scopeValue) => payloads.push({
+      staffId: assignmentForm.staffId,
+      scopeType: "grade",
+      scopeValue,
+      permissions,
+      active: assignmentForm.active,
+    }));
+    assignmentForm.groupValues.forEach((scopeValue) => payloads.push({
+      staffId: assignmentForm.staffId,
+      scopeType: "group",
+      scopeValue,
+      permissions,
+      active: assignmentForm.active,
+    }));
+    assignmentForm.coverageGroupValues.forEach((scopeValue) => payloads.push({
+      staffId: assignmentForm.staffId,
+      scopeType: "coverage_group",
+      scopeValue,
+      permissions,
+      active: assignmentForm.active,
+    }));
+    if (assignmentForm.studentIds.length > 0) {
+      payloads.push({
         staffId: assignmentForm.staffId,
         scopeType: "students",
         studentIds: assignmentForm.studentIds,
+        permissions,
         active: assignmentForm.active,
-      }];
+      });
     }
-    return (assignmentForm.scopeValues || []).map((scopeValue) => ({
-      staffId: assignmentForm.staffId,
-      scopeType: assignmentForm.scopeType,
-      scopeValue,
-      active: assignmentForm.active,
-    }));
+    if (assignmentForm.setup && !assignmentForm.claim && payloads.length === 0 && canDelegateSetup) {
+      payloads.push({
+        staffId: assignmentForm.staffId,
+        scopeType: "setup",
+        permissions: { setup: true },
+        active: assignmentForm.active,
+      });
+    }
+    return payloads;
   };
 
   const submitAssignment = () => {
     const payloads = buildAssignmentPayloads();
+    if (!assignmentForm.claim && !assignmentForm.setup) {
+      toast({ variant: "destructive", title: "Choose access", description: "Select Claim + Manage students, Manage Supervision Setup, or both." });
+      return;
+    }
+    if (assignmentForm.setup && !canDelegateSetup) {
+      toast({ variant: "destructive", title: "Admin required", description: "Only admins can grant setup access." });
+      return;
+    }
     if (payloads.length === 0) {
-      toast({ variant: "destructive", title: "Choose a scope", description: "Select setup access, a schoolwide permission, or at least one grade, class, group, or student." });
+      toast({ variant: "destructive", title: "Choose a scope", description: "Select schoolwide, at least one grade, class, group, or student." });
       return;
     }
-    const existingAssignments = assignmentsQuery.data || [];
-    const duplicateFor = (payload) => existingAssignments.some((assignment) => (
-      assignment.id !== assignmentForm.id && assignmentMatchesPayload(assignment, payload)
-    ));
-
-    if (assignmentForm.id) {
-      const [firstPayload, ...extraPayloads] = payloads;
-      if (duplicateFor(firstPayload)) {
-        toast({ variant: "destructive", title: "Permission already exists", description: "That staff member already has this supervision scope." });
-        return;
-      }
-      const newPayloads = extraPayloads.filter((payload) => !duplicateFor(payload));
-      saveAssignmentMutation.mutate({ id: assignmentForm.id, payloads: [firstPayload, ...newPayloads] });
-      return;
-    }
-
-    const newPayloads = payloads.filter((payload) => !duplicateFor(payload));
-    if (newPayloads.length === 0) {
-      toast({ variant: "destructive", title: "Permission already exists", description: "That staff member already has the selected supervision scope." });
-      return;
-    }
-    saveAssignmentMutation.mutate({ id: "", payloads: newPayloads });
+    saveAssignmentMutation.mutate({ staffId: assignmentForm.staffId, payloads });
   };
 
   const submitScopeGroup = () => {
@@ -1035,39 +1174,52 @@ export default function Coverage() {
 
           {canManageSupervisionSetup && (
             <TabsContent value="settings" className="space-y-4 mt-4">
-              <div className={`grid gap-4 ${isAdmin ? "xl:grid-cols-[1.2fr_1fr]" : ""}`}>
-                {isAdmin && (
+              <div className="grid gap-4 xl:grid-cols-[1.2fr_1fr]">
+                {canManageSupervisionSetup && (
                   <Card>
                     <CardHeader className="flex flex-row items-start justify-between gap-4">
                       <div>
                         <CardTitle className="text-base">Staff Permissions</CardTitle>
-                        <CardDescription>Optional direct permissions for broader supervision scopes.</CardDescription>
+                        <CardDescription>Give staff pickup access, or setup access within selected scopes.</CardDescription>
                       </div>
                       <Button onClick={() => openAssignmentDialog()}>
                         <UserCheck className="h-4 w-4 mr-2" />
-                        Add Staff
+                        Give Staff Access
                       </Button>
                     </CardHeader>
                     <CardContent>
                       <div className="rounded-md border overflow-hidden">
-                        {(assignmentsQuery.data || []).length === 0 ? (
+                        {permissionPackages.length === 0 ? (
                           <div className="px-4 py-10 text-center text-sm text-muted-foreground">No staff permissions yet</div>
-                        ) : assignmentsQuery.data.map((assignment) => (
-                          <div key={assignment.id} className="grid gap-3 border-t first:border-t-0 px-4 py-3 text-sm md:grid-cols-[1.1fr_1fr_120px_170px] md:items-center">
+                        ) : permissionPackages.map((permissionPackage) => (
+                          <div key={permissionPackage.staffId} className="grid gap-3 border-t first:border-t-0 px-4 py-3 text-sm md:grid-cols-[1.1fr_1.5fr_120px_170px] md:items-center">
                             <div>
-                              <p className="font-medium">{assignment.staff?.displayName || staffQuery.data?.find((s) => s.userId === assignment.staffId)?.user?.email || assignment.staffId}</p>
-                              <p className="text-xs text-muted-foreground">{assignment.staff?.email || assignment.permissionLabel}</p>
+                              <p className="font-medium">{permissionPackage.staff?.displayName || staffQuery.data?.find((s) => s.userId === permissionPackage.staffId)?.user?.email || permissionPackage.staffId}</p>
+                              <p className="text-xs text-muted-foreground">{permissionPackage.staff?.email || `${permissionPackage.assignments.length} permission${permissionPackage.assignments.length === 1 ? "" : "s"}`}</p>
                             </div>
                             <div className="flex flex-wrap gap-2">
-                              <Badge variant="secondary">{assignment.scopeLabel || assignment.scopeType}</Badge>
-                              <Badge variant="outline">{assignment.permissionLabel || "Claim + Manage"}</Badge>
+                              {permissionPackage.claim && <Badge variant="outline">Claim + Manage</Badge>}
+                              {permissionPackage.setup && <Badge variant="outline">Setup</Badge>}
+                              {permissionPackage.scopeLabels.slice(0, 5).map((label) => (
+                                <Badge variant="secondary" key={label}>{label}</Badge>
+                              ))}
+                              {permissionPackage.scopeLabels.length > 5 && (
+                                <Badge variant="secondary">+{permissionPackage.scopeLabels.length - 5} more</Badge>
+                              )}
                             </div>
-                            <Badge variant={assignment.active ? "default" : "outline"}>{assignment.active ? "Active" : "Disabled"}</Badge>
+                            <Badge variant={permissionPackage.active ? "default" : "outline"}>{permissionPackage.active ? "Active" : "Disabled"}</Badge>
                             <div className="flex justify-start gap-2 md:justify-end">
-                              <Button variant="outline" size="sm" onClick={() => openAssignmentDialog(assignment)}>
+                              <Button variant="outline" size="sm" onClick={() => openAssignmentDialog(permissionPackage)}>
                                 Edit
                               </Button>
-                              <Button variant="ghost" size="sm" onClick={() => deactivateAssignmentMutation.mutate(assignment.id)} disabled={!assignment.active || deactivateAssignmentMutation.isPending}>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => permissionPackage.assignments.forEach((assignment) => {
+                                  if (!assignmentHasSetup(assignment) || canDelegateSetup) deactivateAssignmentMutation.mutate(assignment.id);
+                                })}
+                                disabled={!permissionPackage.active || deactivateAssignmentMutation.isPending}
+                              >
                                 Disable
                               </Button>
                             </div>
@@ -1175,130 +1327,174 @@ export default function Coverage() {
       </Dialog>
 
       <Dialog open={assignmentOpen} onOpenChange={setAssignmentOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-3xl">
           <DialogHeader>
-            <DialogTitle>{assignmentForm.id ? "Edit Staff Permission" : "Add Staff Permission"}</DialogTitle>
-            <DialogDescription>Staff can receive pickup access for student scopes, or setup access to manage Supervision Groups.</DialogDescription>
+            <DialogTitle>{assignmentForm.existingIds.length ? "Edit Staff Access" : "Give Staff Access"}</DialogTitle>
+            <DialogDescription>Choose what this staff member can do, then choose the grades, classes, groups, or students where it applies.</DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
+          <div className="max-h-[70vh] space-y-5 overflow-y-auto pr-1">
             <div className="grid gap-2">
               <Label>Staff</Label>
+              <div className="relative">
+                <Search className="h-4 w-4 absolute left-3 top-3 text-muted-foreground" />
+                <Input
+                  className="pl-9"
+                  placeholder="Search staff by name, email, or role"
+                  value={assignmentStaffSearch}
+                  onChange={(event) => setAssignmentStaffSearch(event.target.value)}
+                />
+              </div>
               <Select value={assignmentForm.staffId} onValueChange={(value) => setAssignmentForm((f) => ({ ...f, staffId: value }))}>
                 <SelectTrigger><SelectValue placeholder="Select staff" /></SelectTrigger>
-                <SelectContent>{(staffQuery.data || []).map((staff) => <SelectItem key={staff.userId} value={staff.userId}>{displayName(staff)}</SelectItem>)}</SelectContent>
-              </Select>
-            </div>
-            <div className="grid gap-2">
-              <Label>Scope</Label>
-              <Select value={assignmentForm.scopeType} onValueChange={(value) => setAssignmentForm((f) => ({ ...f, scopeType: value, scopeValue: "", scopeValues: [], studentIds: [] }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="setup">Manage Supervision Setup</SelectItem>
-                  <SelectItem value="school">Schoolwide</SelectItem>
-                  <SelectItem value="grade">Grade from Class Roster</SelectItem>
-                  <SelectItem value="group">Class from Class Management</SelectItem>
-                  <SelectItem value="coverage_group">Supervision Group</SelectItem>
-                  <SelectItem value="students">Selected Students</SelectItem>
+                  {assignableStaff.length === 0 ? (
+                    <SelectItem value="none" disabled>No staff found</SelectItem>
+                  ) : assignableStaff.map((staff) => (
+                    <SelectItem key={staff.userId} value={staff.userId}>{displayName(staff)}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
-            {assignmentForm.scopeType === "grade" && (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between gap-3">
+
+            <div className="rounded-md border p-3">
+              <div className="mb-3">
+                <Label>Access abilities</Label>
+                <p className="text-xs text-muted-foreground">Claim + Manage lets staff pick up available students. Setup lets admins delegate group setup inside the chosen scopes.</p>
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                <label className="flex cursor-pointer items-start gap-3 rounded-md border p-3">
+                  <Checkbox
+                    checked={assignmentForm.claim}
+                    onCheckedChange={(checked) => setAssignmentForm((f) => ({ ...f, claim: checked === true }))}
+                  />
+                  <span>
+                    <span className="block text-sm font-medium">Claim + Manage students</span>
+                    <span className="block text-xs text-muted-foreground">Staff can see eligible Available students and claim them.</span>
+                  </span>
+                </label>
+                {canDelegateSetup ? (
+                  <label className="flex cursor-pointer items-start gap-3 rounded-md border p-3">
+                    <Checkbox
+                      checked={assignmentForm.setup}
+                      onCheckedChange={(checked) => setAssignmentForm((f) => ({ ...f, setup: checked === true }))}
+                    />
+                    <span>
+                      <span className="block text-sm font-medium">Manage Supervision Setup</span>
+                      <span className="block text-xs text-muted-foreground">Staff can create groups and assign staff only inside these scopes.</span>
+                    </span>
+                  </label>
+                ) : (
+                  <div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+                    Only admins can grant setup access to another staff member.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-md border p-3">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <Label>Scopes</Label>
+                  <p className="text-xs text-muted-foreground">Choose one or more areas this access applies to.</p>
+                </div>
+                <Badge variant="secondary">{assignmentScopeCount} selected</Badge>
+              </div>
+              {canChooseSchoolwide && (
+                <label className="mb-3 flex cursor-pointer items-center gap-3 rounded-md border px-4 py-2 text-sm">
+                  <Checkbox
+                    checked={assignmentForm.schoolwide}
+                    onCheckedChange={(checked) => setAssignmentForm((f) => ({ ...f, schoolwide: checked === true }))}
+                  />
+                  <span className="font-medium">Schoolwide</span>
+                </label>
+              )}
+
+              <div className="grid gap-4 lg:grid-cols-2">
+                <div className="space-y-2">
                   <div>
                     <Label>Roster grades</Label>
                     <p className="text-xs text-muted-foreground">Grades come from student records in Class Roster.</p>
                   </div>
-                  <Badge variant="secondary">{assignmentForm.scopeValues.length} selected</Badge>
+                  <div className="max-h-48 overflow-y-auto rounded-md border">
+                    {rosterGrades.length === 0 ? (
+                      <div className="px-4 py-8 text-center text-sm text-muted-foreground">No roster grades found</div>
+                    ) : rosterGrades.map((grade) => (
+                      <label key={grade.value} className="flex cursor-pointer items-center gap-3 border-t first:border-t-0 px-4 py-2 text-sm">
+                        <Checkbox checked={assignmentForm.gradeValues.includes(grade.value)} onCheckedChange={() => toggleAssignmentArrayValue("gradeValues", grade.value)} />
+                        <span className="flex-1">
+                          <span className="block font-medium">Grade {grade.value}</span>
+                          <span className="block text-xs text-muted-foreground">{grade.count} roster student{grade.count === 1 ? "" : "s"}</span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
                 </div>
-                <div className="max-h-56 overflow-y-auto rounded-md border">
-                  {rosterGrades.length === 0 ? (
-                    <div className="px-4 py-8 text-center text-sm text-muted-foreground">No roster grades found</div>
-                  ) : rosterGrades.map((grade) => (
-                    <label key={grade.value} className="flex cursor-pointer items-center gap-3 border-t first:border-t-0 px-4 py-2 text-sm">
-                      <Checkbox checked={assignmentForm.scopeValues.includes(grade.value)} onCheckedChange={() => toggleAssignmentScopeValue(grade.value)} />
-                      <span className="flex-1">
-                        <span className="block font-medium">Grade {grade.value}</span>
-                        <span className="block text-xs text-muted-foreground">{grade.count} roster student{grade.count === 1 ? "" : "s"}</span>
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-            )}
-            {assignmentForm.scopeType === "group" && (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between gap-3">
+
+                <div className="space-y-2">
                   <div>
                     <Label>Classes</Label>
                     <p className="text-xs text-muted-foreground">Classes come from Class Management rosters.</p>
                   </div>
-                  <Badge variant="secondary">{assignmentForm.scopeValues.length} selected</Badge>
-                </div>
-                <div className="max-h-64 overflow-y-auto rounded-md border">
-                  {classManagementGroups.length === 0 ? (
-                    <div className="px-4 py-8 text-center text-sm text-muted-foreground">No classes found</div>
-                  ) : classManagementGroups.map((group) => (
-                    <label key={group.id} className="flex cursor-pointer items-center gap-3 border-t first:border-t-0 px-4 py-2 text-sm">
-                      <Checkbox checked={assignmentForm.scopeValues.includes(group.id)} onCheckedChange={() => toggleAssignmentScopeValue(group.id)} />
-                      <span className="flex-1">
-                        <span className="block font-medium">{group.name}</span>
-                        <span className="block text-xs text-muted-foreground">
-                          {[group.periodLabel, group.gradeLevel ? `Grade ${group.gradeLevel}` : null].filter(Boolean).join(" - ") || "Class Management"}
+                  <div className="max-h-48 overflow-y-auto rounded-md border">
+                    {classManagementGroups.length === 0 ? (
+                      <div className="px-4 py-8 text-center text-sm text-muted-foreground">No classes found</div>
+                    ) : classManagementGroups.map((group) => (
+                      <label key={group.id} className="flex cursor-pointer items-center gap-3 border-t first:border-t-0 px-4 py-2 text-sm">
+                        <Checkbox checked={assignmentForm.groupValues.includes(group.id)} onCheckedChange={() => toggleAssignmentArrayValue("groupValues", group.id)} />
+                        <span className="flex-1">
+                          <span className="block font-medium">{group.name}</span>
+                          <span className="block text-xs text-muted-foreground">
+                            {[group.periodLabel, group.gradeLevel ? `Grade ${group.gradeLevel}` : null].filter(Boolean).join(" - ") || "Class Management"}
+                          </span>
                         </span>
-                      </span>
-                    </label>
-                  ))}
+                      </label>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
-            {assignmentForm.scopeType === "coverage_group" && (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between gap-3">
+
+                <div className="space-y-2">
                   <Label>Supervision Groups</Label>
-                  <Badge variant="secondary">{assignmentForm.scopeValues.length} selected</Badge>
+                  <div className="max-h-48 overflow-y-auto rounded-md border">
+                    {activeScopeGroups.length === 0 ? (
+                      <div className="px-4 py-8 text-center text-sm text-muted-foreground">No supervision groups found</div>
+                    ) : activeScopeGroups.map((group) => (
+                      <label key={group.id} className="flex cursor-pointer items-center gap-3 border-t first:border-t-0 px-4 py-2 text-sm">
+                        <Checkbox checked={assignmentForm.coverageGroupValues.includes(group.id)} onCheckedChange={() => toggleAssignmentArrayValue("coverageGroupValues", group.id)} />
+                        <span className="flex-1">
+                          <span className="block font-medium">{group.name}</span>
+                          <span className="block text-xs text-muted-foreground">{group.studentCount} student{group.studentCount === 1 ? "" : "s"}</span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
                 </div>
-                <div className="max-h-56 overflow-y-auto rounded-md border">
-                  {activeScopeGroups.length === 0 ? (
-                    <div className="px-4 py-8 text-center text-sm text-muted-foreground">No supervision groups found</div>
-                  ) : activeScopeGroups.map((group) => (
-                    <label key={group.id} className="flex cursor-pointer items-center gap-3 border-t first:border-t-0 px-4 py-2 text-sm">
-                      <Checkbox checked={assignmentForm.scopeValues.includes(group.id)} onCheckedChange={() => toggleAssignmentScopeValue(group.id)} />
-                      <span className="flex-1">
-                        <span className="block font-medium">{group.name}</span>
-                        <span className="block text-xs text-muted-foreground">{group.studentCount} student{group.studentCount === 1 ? "" : "s"}</span>
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-            )}
-            {assignmentForm.scopeType === "students" && (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between gap-3">
-                  <Label>Students</Label>
-                  <Badge variant="secondary">{assignmentForm.studentIds.length} selected</Badge>
-                </div>
-                <div className="relative">
-                  <Search className="h-4 w-4 absolute left-3 top-3 text-muted-foreground" />
-                  <Input className="pl-9" placeholder="Search students" value={studentPickerSearch} onChange={(e) => setStudentPickerSearch(e.target.value)} />
-                </div>
-                <div className="max-h-64 overflow-y-auto rounded-md border">
-                  {filteredPickerStudents.length === 0 ? (
-                    <div className="px-4 py-8 text-center text-sm text-muted-foreground">No students found</div>
-                  ) : filteredPickerStudents.map((student) => (
-                    <label key={student.id} className="flex cursor-pointer items-center gap-3 border-t first:border-t-0 px-4 py-2 text-sm">
-                      <Checkbox checked={assignmentForm.studentIds.includes(student.id)} onCheckedChange={() => toggleAssignmentStudent(student.id)} />
-                      <span className="flex-1">
-                        <span className="block font-medium">{student.studentName}</span>
-                        <span className="block text-xs text-muted-foreground">{student.studentEmail || "No email"} - Grade {student.gradeLevel || "None"}</span>
-                      </span>
-                    </label>
-                  ))}
+
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <Label>Selected Students</Label>
+                    <Badge variant="secondary">{assignmentForm.studentIds.length} selected</Badge>
+                  </div>
+                  <div className="relative">
+                    <Search className="h-4 w-4 absolute left-3 top-3 text-muted-foreground" />
+                    <Input className="pl-9" placeholder="Search students" value={studentPickerSearch} onChange={(e) => setStudentPickerSearch(e.target.value)} />
+                  </div>
+                  <div className="max-h-48 overflow-y-auto rounded-md border">
+                    {filteredPickerStudents.length === 0 ? (
+                      <div className="px-4 py-8 text-center text-sm text-muted-foreground">No students found</div>
+                    ) : filteredPickerStudents.map((student) => (
+                      <label key={student.id} className="flex cursor-pointer items-center gap-3 border-t first:border-t-0 px-4 py-2 text-sm">
+                        <Checkbox checked={assignmentForm.studentIds.includes(student.id)} onCheckedChange={() => toggleAssignmentStudent(student.id)} />
+                        <span className="flex-1">
+                          <span className="block font-medium">{student.studentName}</span>
+                          <span className="block text-xs text-muted-foreground">{student.studentEmail || "No email"} - Grade {student.gradeLevel || "None"}</span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
                 </div>
               </div>
-            )}
-            {assignmentForm.id && (
+            </div>
+            {assignmentForm.existingIds.length > 0 && (
               <label className="flex items-center gap-2 text-sm">
                 <Checkbox checked={assignmentForm.active} onCheckedChange={(checked) => setAssignmentForm((f) => ({ ...f, active: checked === true }))} />
                 Active permission
@@ -1311,9 +1507,7 @@ export default function Coverage() {
               onClick={submitAssignment}
               disabled={
                 saveAssignmentMutation.isPending ||
-                !assignmentForm.staffId ||
-                (assignmentForm.scopeType !== "school" && assignmentForm.scopeType !== "setup" && assignmentForm.scopeType !== "students" && assignmentForm.scopeValues.length === 0) ||
-                (assignmentForm.scopeType === "students" && assignmentForm.studentIds.length === 0)
+                !assignmentCanSave
               }
             >
               Save
