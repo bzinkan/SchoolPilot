@@ -60,6 +60,7 @@ function StudentTile({
   const { toast } = useToast();
   const tileVideoSlotRef = useRef(null);
   const videoElementRef = useRef(null);
+  const lastAutoExpandedStreamRef = useRef(null);
 
   // Create video element once and attach stream
   useEffect(() => {
@@ -79,8 +80,8 @@ function StudentTile({
       videoElementRef.current.srcObject = liveStream || null;
     }
 
-    // Mount video into tile slot when stream exists, remove when it doesn't
-    if (liveStream && tileVideoSlotRef.current && videoElementRef.current) {
+    // Mount video into tile slot when stream exists and the enlarged view is closed.
+    if (liveStream && !expanded && tileVideoSlotRef.current && videoElementRef.current) {
       if (!tileVideoSlotRef.current.contains(videoElementRef.current)) {
         tileVideoSlotRef.current.appendChild(videoElementRef.current);
       }
@@ -101,6 +102,36 @@ function StudentTile({
       }
     }
   }, [liveStream, expanded]);
+
+  useEffect(() => {
+    if (!liveStream) {
+      lastAutoExpandedStreamRef.current = null;
+      return undefined;
+    }
+    if (lastAutoExpandedStreamRef.current === liveStream) {
+      return undefined;
+    }
+    lastAutoExpandedStreamRef.current = liveStream;
+
+    const timeout = window.setTimeout(() => {
+      setExpanded(true);
+    }, 0);
+
+    return () => window.clearTimeout(timeout);
+  }, [liveStream]);
+
+  useEffect(() => {
+    if (!expanded || !liveStream || !videoElementRef.current) return undefined;
+
+    const timeout = window.setTimeout(() => {
+      const portalSlot = document.querySelector('#portal-video-slot');
+      if (portalSlot && videoElementRef.current && !portalSlot.contains(videoElementRef.current)) {
+        portalSlot.appendChild(videoElementRef.current);
+      }
+    }, 0);
+
+    return () => window.clearTimeout(timeout);
+  }, [expanded, liveStream]);
 
   const { data: _settings } = useQuery({
     queryKey: ['/api/settings'],
@@ -750,6 +781,7 @@ function StudentTile({
         <VideoPortal
           studentName={student.studentName || student.deviceName || student.primaryDeviceId || "Unknown student"}
           onClose={handleCollapse}
+          onStopLiveView={onStopLiveView}
         />
       )}
     </Card>

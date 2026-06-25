@@ -79,6 +79,18 @@ import { buildStudentFabState } from "../../services/classpilotFab.js";
 
 const router = Router();
 
+const EXTENSION_SIGN_OUT_REASONS = new Set([
+  "explicit_sign_out",
+  "auto_locked_timeout",
+  "auto_stale_wake",
+]);
+
+function normalizeExtensionSignOutReason(value: unknown): string {
+  if (typeof value !== "string") return "explicit_sign_out";
+  const normalized = value.trim().replace(/-/g, "_");
+  return EXTENSION_SIGN_OUT_REASONS.has(normalized) ? normalized : "explicit_sign_out";
+}
+
 // Cooldown for safety alerts: deviceId:domain → timestamp. Prevents duplicate alerts/emails.
 const safetyAlertCooldown = new Map<string, number>();
 // Track delivered message IDs per device to avoid re-sending
@@ -835,12 +847,13 @@ router.post("/extension/student-login", extensionLoginLimiter, async (req, res, 
 });
 
 // POST /api/classpilot/extension/sign-out - End the active student session for this token/device
-router.post("/extension/sign-out", requireDeviceAuth, async (_req, res, next) => {
+router.post("/extension/sign-out", requireDeviceAuth, async (req, res, next) => {
   try {
     setClassPilotNoStore(res);
     const deviceId = res.locals.deviceId as string;
     const studentId = res.locals.studentId as string;
     const schoolId = res.locals.schoolId as string;
+    const reason = normalizeExtensionSignOutReason(req.body?.reason);
     const active = await getActiveStudentForDevice(deviceId);
     if (active?.student.id === studentId) {
       await endStudentSession(active.session.id);
@@ -852,7 +865,7 @@ router.post("/extension/sign-out", requireDeviceAuth, async (_req, res, next) =>
       deviceId,
       schoolId,
       status: "offline",
-      reason: "explicit_sign_out",
+      reason,
       timestamp: new Date().toISOString(),
     };
     broadcastToTeachersLocal(schoolId, update);

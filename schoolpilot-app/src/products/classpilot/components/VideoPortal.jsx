@@ -5,7 +5,7 @@ import { Badge } from "../../../components/ui/badge";
 import { Maximize, Minimize, X, ZoomIn, ZoomOut, RotateCcw, Camera, Circle, Square } from "lucide-react";
 import { useToast } from "../../../hooks/use-toast";
 
-function VideoPortal({ studentName, onClose }) {
+function VideoPortal({ studentName, onClose, onStopLiveView }) {
   const containerRef = useRef(null);
   const [zoom, setZoom] = useState(1);
   const [isRecording, setIsRecording] = useState(false);
@@ -264,6 +264,11 @@ function VideoPortal({ studentName, onClose }) {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
+  const handleStopLiveView = () => {
+    onStopLiveView?.();
+    onClose();
+  };
+
   return createPortal(
     <div
       className="relative w-full max-w-7xl rounded-2xl bg-neutral-900 dark:bg-neutral-950 p-4 shadow-2xl"
@@ -411,6 +416,18 @@ function VideoPortal({ studentName, onClose }) {
         >
           Back to Grid
         </Button>
+
+        {onStopLiveView && (
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={handleStopLiveView}
+            data-testid="button-stop-live-view"
+          >
+            <X className="h-4 w-4 mr-2" />
+            Stop Live View
+          </Button>
+        )}
       </div>
     </div>,
     containerRef.current
