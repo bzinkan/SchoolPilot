@@ -5505,6 +5505,28 @@ export async function getActiveSupervisionContextForStaffGroup(
   return context;
 }
 
+export async function getActiveDirectSupervisionContextForStaff(
+  schoolId: string,
+  staffId: string
+): Promise<ClasspilotSupervisionContext | undefined> {
+  const [context] = await db
+    .select()
+    .from(classpilotSupervisionContexts)
+    .where(
+      and(
+        eq(classpilotSupervisionContexts.schoolId, schoolId),
+        eq(classpilotSupervisionContexts.assignedStaffId, staffId),
+        eq(classpilotSupervisionContexts.contextType, "direct_pickup"),
+        isNull(classpilotSupervisionContexts.coverageGroupId),
+        eq(classpilotSupervisionContexts.status, "active"),
+        sql`${classpilotSupervisionContexts.endsAt} > now()`
+      )
+    )
+    .orderBy(desc(classpilotSupervisionContexts.createdAt))
+    .limit(1);
+  return context;
+}
+
 export async function listSupervisionContexts(
   schoolId: string,
   options: { activeOnly?: boolean } = {}

@@ -244,6 +244,13 @@ export default function Dashboard() {
   });
   const manageableCoverageCount = activeCoverageContexts.filter((context) => context.canManage).length;
 
+  const { data: coverageCapabilities = {} } = useQuery({
+    queryKey: ['/api/coverage/capabilities'],
+    queryFn: () => apiRequest('GET', '/coverage/capabilities'),
+    enabled: isAdmin || isTeacher,
+  });
+  const canManageSupervisionSetup = isAdmin || !!coverageCapabilities.canManageSupervisionSetup;
+
   const { data: availablePickupStudents = [] } = useQuery({
     queryKey: ['/api/coverage/available-students'],
     queryFn: () => apiRequest('GET', '/coverage/available-students'),
@@ -741,8 +748,20 @@ export default function Dashboard() {
     return nameParts[nameParts.length - 1].toLowerCase();
   };
 
+  const isStudentInTemporarySupervision = (student) => student?.supervisionState === "temporary_coverage";
+  const isStudentCommandable = (student) => !isStudentInTemporarySupervision(student);
+
   // Selection handlers
   const toggleStudentSelection = (studentId) => {
+    const student = filteredStudents.find((row) => row.studentId === studentId);
+    if (studentView === "class" && isStudentInTemporarySupervision(student)) {
+      toast({
+        variant: "destructive",
+        title: "Student is in supervision",
+        description: "Return the student to class before using ClassPilot controls.",
+      });
+      return;
+    }
     setSelectedStudentIds((prev) => {
       const newSet = new Set(prev);
       if (newSet.has(studentId)) { newSet.delete(studentId); } else { newSet.add(studentId); }
@@ -750,7 +769,7 @@ export default function Dashboard() {
     });
   };
   const selectAll = () => {
-    const allStudentIds = filteredStudents.map((s) => s.studentId);
+    const allStudentIds = selectableStudents.map((s) => s.studentId);
     setSelectedStudentIds(new Set(allStudentIds));
   };
   const clearSelection = () => { setSelectedStudentIds(new Set()); };
@@ -834,6 +853,7 @@ export default function Dashboard() {
       ? filteredClaimedStudents
       : filteredClassStudents;
   const controllableStudents = filteredStudents.filter((student) => student.supervisionState !== "temporary_coverage");
+  const selectableStudents = studentView === "class" ? controllableStudents : filteredStudents;
 
   const statsStudents = studentView === "class" ? sessionFilteredStudents : filteredStudents;
   const onlineCount = statsStudents.filter((s) => s.status === 'online').length;
@@ -845,10 +865,11 @@ export default function Dashboard() {
 
   const getStudentsForCommandTarget = (overrideStudentIds = null) => {
     const overrideSet = overrideStudentIds ? new Set(overrideStudentIds) : null;
-    if (overrideSet) return sessionFilteredStudents.filter((student) => overrideSet.has(student.studentId));
-    if (selectedStudentIds.size > 0) return sessionFilteredStudents.filter((student) => selectedStudentIds.has(student.studentId));
-    if (selectedSubgroupId) return sessionFilteredStudents.filter((student) => subgroupMembers.has(student.studentId));
-    return sessionFilteredStudents;
+    const commandableSessionStudents = sessionFilteredStudents.filter(isStudentCommandable);
+    if (overrideSet) return commandableSessionStudents.filter((student) => overrideSet.has(student.studentId));
+    if (selectedStudentIds.size > 0) return commandableSessionStudents.filter((student) => selectedStudentIds.has(student.studentId));
+    if (selectedSubgroupId) return commandableSessionStudents.filter((student) => subgroupMembers.has(student.studentId));
+    return commandableSessionStudents;
   };
 
   const getClaimedStudentsForCommandTarget = (overrideStudentIds = null) => {
@@ -874,7 +895,7 @@ export default function Dashboard() {
       : groups.find(g => g.id === effectiveSession?.groupId)?.name || (effectiveSession ? "Active Class" : "Class");
   const subgroupName = selectedSubgroupId ? subgroups.find(s => s.id === selectedSubgroupId)?.name : null;
   const targetBannerLabel = selectedStudentIds.size > 0
-    ? `${selectedStudentIds.size} selected student${selectedStudentIds.size === 1 ? "" : "s"}`
+    ? `${targetStudents.length} selected ${studentView === "class" ? "controllable " : ""}student${targetStudents.length === 1 ? "" : "s"}`
     : selectedSubgroupId && studentView === "class"
       ? `${subgroupName || "Subgroup"} - ${targetStudents.length} student${targetStudents.length === 1 ? "" : "s"}`
       : `All ${targetStudents.length} student${targetStudents.length === 1 ? "" : "s"}`;
@@ -883,6 +904,30 @@ export default function Dashboard() {
   const canUseRemoteControls = studentView === "claimed" || ((isTeacher && activeSession) || (isAdmin && isAdminTeaching));
   const claimedContextCount = new Set(claimedPickupStudents.map((student) => student.contextId).filter(Boolean)).size;
   const selectedAvailableStudents = filteredAvailableStudents.filter((student) => selectedStudentIds.has(student.studentId));
+  const availableGroupSections = (() => {
+    const sections = new Map();
+    filteredAvailableStudents.forEach((student) => {
+      const group = student.matchingGroups?.[0] || null;
+      const scope = group ? null : student.matchingScopes?.[0] || null;
+      const key = group ? `group:${group.id}` : scope ? `scope:${scope.id}` : "scope:available";
+      if (!sections.has(key)) {
+        sections.set(key, {
+          id: key,
+          kind: group ? "group" : "scope",
+          label: group?.name || scope?.name || "Available students",
+          description: group?.description || (scope?.scopeType ? "Direct supervision permission" : "Eligible online students"),
+          students: [],
+        });
+      }
+      sections.get(key).students.push(student);
+    });
+    return Array.from(sections.values())
+      .map((section) => ({
+        ...section,
+        students: section.students.sort((a, b) => getLastName(a.studentName).localeCompare(getLastName(b.studentName))),
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  })();
 
   const deviceIdsForStudentIds = (studentIds) => {
     const ids = new Set(studentIds || []);
@@ -900,7 +945,7 @@ export default function Dashboard() {
   const commandStudentIdsFromRequest = (request) => {
     if (request.targetScope === "students") return request.targetStudentIds || [];
     if (request.targetScope === "subgroup") return getStudentsForCommandTarget().map((student) => student.studentId);
-    return sessionFilteredStudents.map((student) => student.studentId);
+    return getStudentsForCommandTarget().map((student) => student.studentId);
   };
 
   const buildCommandRequest = (commandType, commandPayload = {}, options = {}) => {
@@ -921,8 +966,12 @@ export default function Dashboard() {
       request.targetScope = "students";
       request.targetStudentIds = overrideStudentIds;
     } else if (selectedStudentIds.size > 0) {
+      const selectedCommandStudentIds = getStudentsForCommandTarget().map((student) => student.studentId);
+      if (selectedCommandStudentIds.length === 0) {
+        throw new Error("No controllable students are selected.");
+      }
       request.targetScope = "students";
-      request.targetStudentIds = Array.from(selectedStudentIds);
+      request.targetStudentIds = selectedCommandStudentIds;
     } else if (selectedSubgroupId) {
       request.targetScope = "subgroup";
       request.subgroupId = selectedSubgroupId;
@@ -1086,13 +1135,22 @@ export default function Dashboard() {
         map.set(group.id, rows);
         return map;
       }, new Map());
-      if (byGroup.size === 0) throw new Error("No Supervision Group is available for the selected students.");
-      return Promise.all(Array.from(byGroup.entries()).map(([supervisionGroupId, rows]) =>
+      const directScopeStudents = studentsToClaim.filter((student) => !(student.matchingGroups || []).length);
+      if (byGroup.size === 0 && directScopeStudents.length === 0) {
+        throw new Error("No supervision permission is available for the selected students.");
+      }
+      const requests = Array.from(byGroup.entries()).map(([supervisionGroupId, rows]) =>
         apiRequest('POST', '/coverage/claim', {
           supervisionGroupId,
           studentIds: rows.map((student) => student.studentId),
         })
-      ));
+      );
+      if (directScopeStudents.length > 0) {
+        requests.push(apiRequest('POST', '/coverage/claim', {
+          studentIds: directScopeStudents.map((student) => student.studentId),
+        }));
+      }
+      return Promise.all(requests);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/coverage/available-students'] });
@@ -1136,6 +1194,25 @@ export default function Dashboard() {
     },
   });
 
+  const returnToClassMutation = useMutation({
+    mutationFn: async ({ studentIds }) => apiRequest('POST', '/coverage/return-to-class', { studentIds }),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/coverage/available-students'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/coverage/claimed-students'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/coverage/contexts'] });
+      setSelectedStudentIds((prev) => {
+        const next = new Set(prev);
+        (variables?.studentIds || []).forEach((studentId) => next.delete(studentId));
+        return next;
+      });
+      toast({ title: "Returned to class", description: "The student can now be monitored in this class session." });
+    },
+    onError: (error) => {
+      toast({ variant: "destructive", title: "Could not return student", description: error.response?.data?.error || error.message });
+    },
+  });
+
   const handleClaimStudents = (studentsToClaim) => {
     if (!studentsToClaim.length) {
       toast({ variant: "destructive", title: "Select students first" });
@@ -1155,6 +1232,14 @@ export default function Dashboard() {
       return;
     }
     rerouteMutation.mutate({ targetId: selectedCoverageContextId, studentIds, note: rerouteNote.trim() });
+  };
+
+  const handleReturnToClass = (student) => {
+    if (!activeSession) {
+      toast({ variant: "destructive", title: "Start a class first", description: "Only an active class teacher can return a student from supervision." });
+      return;
+    }
+    returnToClassMutation.mutate({ studentIds: [student.studentId] });
   };
 
   const stopImpersonateMutation = useMutation({
@@ -1860,7 +1945,7 @@ export default function Dashboard() {
             claimedCount={claimedPickupStudents.length}
             pickupView={studentView}
             onPickupViewChange={handleStudentViewChange}
-            onOpenCoverage={() => navigate("/classpilot/coverage")}
+            onOpenCoverage={canManageSupervisionSetup ? () => navigate("/classpilot/coverage") : undefined}
             canReroute={studentView === "class" && rerouteCoverageTargets.length > 0}
             onReroute={studentView === "class" ? () => setShowRerouteDialog(true) : undefined}
           />
@@ -1907,11 +1992,11 @@ export default function Dashboard() {
               </div>
               <button
                 onClick={selectAll}
-                disabled={filteredStudents.length === 0 || selectedStudentIds.size === filteredStudents.length}
+                disabled={selectableStudents.length === 0 || selectedStudentIds.size === selectableStudents.length}
                 className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-medium bg-transparent border border-border text-muted-foreground hover:bg-card transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 data-testid="button-select-all-students"
               >
-                <Users className="h-4 w-4" /> Select All ({filteredStudents.length})
+                <Users className="h-4 w-4" /> Select All ({selectableStudents.length})
               </button>
               <button onClick={clearSelection} disabled={selectedStudentIds.size === 0} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-medium bg-transparent border border-border text-muted-foreground hover:bg-card transition-colors disabled:opacity-50 disabled:cursor-not-allowed" data-testid="button-clear-selection">
                 Clear Selection
@@ -1958,7 +2043,7 @@ export default function Dashboard() {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h2 className="text-lg font-semibold">Available students</h2>
-                <p className="text-sm text-muted-foreground">Online students from your Supervision Groups who are not in an active class.</p>
+                <p className="text-sm text-muted-foreground">Online students from your supervision permissions who are not in an active class.</p>
               </div>
               <div className="flex items-center gap-2">
                 <Button
@@ -1987,53 +2072,83 @@ export default function Dashboard() {
                 </div>
                 <h3 className="text-lg font-semibold">No students available</h3>
                 <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
-                  Students will appear here when they log in outside a class and match one of your Supervision Groups.
+                  Students will appear here when they log in outside a class and match one of your supervision permissions.
                 </p>
               </div>
             ) : (
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-                {filteredAvailableStudents.map((student) => (
-                  <div key={student.studentId} className="rounded-lg border bg-card p-4 shadow-sm" data-testid={`card-available-student-${student.studentId}`}>
-                    <div className="flex items-start gap-3">
-                      <input
-                        type="checkbox"
-                        checked={selectedStudentIds.has(student.studentId)}
-                        onChange={() => toggleStudentSelection(student.studentId)}
-                        className="mt-1 h-4 w-4 rounded border-border"
-                        aria-label={`Select ${student.studentName}`}
-                      />
-                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-amber-100 text-sm font-semibold text-amber-800">
-                        {(student.studentName || "?").split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase()}
+              <div className="space-y-4">
+                {availableGroupSections.map((section) => (
+                  <section key={section.id} className="rounded-lg border bg-card shadow-sm" data-testid={`section-available-${section.id}`}>
+                    <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3">
+                      <div>
+                        <h3 className="text-base font-semibold text-foreground">
+                          {section.label} - {section.students.length} available
+                        </h3>
+                        {section.description && (
+                          <p className="text-xs text-muted-foreground">{section.description}</p>
+                        )}
                       </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <p className="font-semibold text-foreground">{student.studentName}</p>
-                          <Badge variant="secondary">{student.status}</Badge>
-                        </div>
-                        <p className="text-sm text-muted-foreground">{student.gradeLevel ? `Grade ${student.gradeLevel}` : "No grade"}</p>
-                        <div className="mt-3 rounded-md bg-muted/40 p-3">
-                          <p className="truncate text-xs font-medium text-muted-foreground">{student.activeTabTitle || "No active tab"}</p>
-                          <p className="mt-1 truncate text-sm">{student.activeTabUrl || "Signed in to Chrome"}</p>
-                        </div>
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          {(student.matchingGroups || []).map((group) => (
-                            <Badge key={group.id} variant="outline">{group.name}</Badge>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="mt-4 flex justify-end">
                       <Button
                         size="sm"
-                        onClick={() => handleClaimStudents([student])}
-                        disabled={claimPickupMutation.isPending || !(student.matchingGroups || []).length}
-                        data-testid={`button-claim-student-${student.studentId}`}
+                        onClick={() => handleClaimStudents(section.students)}
+                        disabled={claimPickupMutation.isPending || section.students.length === 0}
+                        data-testid={`button-claim-section-${section.id}`}
+                        className="bg-amber-400 text-slate-950 hover:bg-amber-300"
                       >
-                        <UserCheck className="h-4 w-4 mr-2" />
-                        Claim
+                        <Users className="h-4 w-4 mr-2" />
+                        {section.kind === "group" ? "Claim Group" : "Claim Scope"}
                       </Button>
                     </div>
-                  </div>
+                    <div className="grid grid-cols-1 gap-4 p-4 md:grid-cols-2 xl:grid-cols-3">
+                      {section.students.map((student) => (
+                        <div key={`${section.id}-${student.studentId}`} className="rounded-lg border bg-background p-4 shadow-sm" data-testid={`card-available-student-${student.studentId}`}>
+                          <div className="flex items-start gap-3">
+                            <input
+                              type="checkbox"
+                              checked={selectedStudentIds.has(student.studentId)}
+                              onChange={() => toggleStudentSelection(student.studentId)}
+                              className="mt-1 h-4 w-4 rounded border-border"
+                              aria-label={`Select ${student.studentName}`}
+                            />
+                            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-amber-100 text-sm font-semibold text-amber-800">
+                              {(student.studentName || "?").split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase()}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <p className="font-semibold text-foreground">{student.studentName}</p>
+                                <Badge variant="secondary">{student.status}</Badge>
+                              </div>
+                              <p className="text-sm text-muted-foreground">{student.gradeLevel ? `Grade ${student.gradeLevel}` : "No grade"}</p>
+                              <div className="mt-3 rounded-md bg-muted/40 p-3">
+                                <p className="truncate text-xs font-medium text-muted-foreground">{student.activeTabTitle || "No active tab"}</p>
+                                <p className="mt-1 truncate text-sm">{student.activeTabUrl || "Signed in to Chrome"}</p>
+                              </div>
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                {(student.matchingGroups || []).map((group) => (
+                                  <Badge key={group.id} variant="outline">{group.name}</Badge>
+                                ))}
+                                {(student.matchingScopes || []).map((scope) => (
+                                  <Badge key={scope.id} variant="outline">{scope.name}</Badge>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="mt-4 flex justify-end">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleClaimStudents([student])}
+                              disabled={claimPickupMutation.isPending || !((student.matchingGroups || []).length || (student.matchingScopes || []).length)}
+                              data-testid={`button-claim-student-${student.studentId}`}
+                            >
+                              <UserCheck className="h-4 w-4 mr-2" />
+                              Claim
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
                 ))}
               </div>
             )}
@@ -2067,17 +2182,27 @@ export default function Dashboard() {
             {filteredStudents.map((student) => {
               const primaryDeviceId = student.primaryDeviceId ?? undefined;
               const tileRevision = primaryDeviceId ? tileRevisions[primaryDeviceId] ?? 0 : 0;
+              const supervisedElsewhere = studentView === "class" && isStudentInTemporarySupervision(student);
+              const supervisionStaffName = student.supervisionContext?.assignedStaff?.displayName || "";
               const coverageLabel = student.supervisionState === "temporary_coverage"
-                ? student.supervisionContext?.name || "Supervision"
+                ? `In supervision: ${[
+                    student.supervisionContext?.name || "Supervision",
+                    supervisionStaffName,
+                  ].filter(Boolean).join(" - ")}`
                 : student.supervisionState === "claimed"
                   ? student.supervisionGroup?.name || student.contextName || "Claimed"
                   : student.supervisionState === "online_unassigned"
                     ? "Online Unassigned"
                     : null;
+              const disabledReason = supervisedElsewhere
+                ? `${student.studentName || "This student"} is currently claimed by ${supervisionStaffName || student.supervisionContext?.name || "another supervision session"}.`
+                : "";
+              const returnToClassPending = returnToClassMutation.isPending &&
+                returnToClassMutation.variables?.studentIds?.includes(student.studentId);
               return (
-                <div key={`${student.studentId}-${primaryDeviceId ?? "no-device"}-${tileRevision}`} className="relative">
+                <div key={`${student.studentId}-${primaryDeviceId ?? "no-device"}-${tileRevision}`} className={`relative ${supervisedElsewhere ? "rounded-lg ring-2 ring-slate-300/70 dark:ring-slate-700/70" : ""}`}>
                   {coverageLabel && (
-                    <div className={`absolute left-3 top-3 z-10 rounded-md px-2 py-1 text-[11px] font-semibold shadow-sm ${student.supervisionState === "temporary_coverage" || student.supervisionState === "claimed" ? "bg-blue-600 text-white" : "bg-amber-400 text-slate-900"}`}>
+                    <div className={`absolute left-3 top-3 z-10 max-w-[calc(100%-1.5rem)] rounded-md px-2 py-1 text-[11px] font-semibold shadow-sm ${student.supervisionState === "temporary_coverage" || student.supervisionState === "claimed" ? "bg-slate-800 text-white" : "bg-amber-400 text-slate-900"}`}>
                       {coverageLabel}
                     </div>
                   )}
@@ -2088,15 +2213,20 @@ export default function Dashboard() {
                     isOffTask={isStudentOffTask(student)}
                     isAbsent={absentIds.has(student.studentId)}
                     isSelected={selectedStudentIds.has(student.studentId)}
-                    onToggleSelect={() => toggleStudentSelection(student.studentId)}
+                    onToggleSelect={supervisedElsewhere ? undefined : () => toggleStudentSelection(student.studentId)}
                     liveStream={primaryDeviceId ? liveStreams.get(primaryDeviceId) || null : null}
-                    onStartLiveView={primaryDeviceId ? () => handleStartLiveView(primaryDeviceId) : undefined}
-                    onStopLiveView={primaryDeviceId ? () => handleStopLiveView(primaryDeviceId) : undefined}
+                    onStartLiveView={!supervisedElsewhere && primaryDeviceId ? () => handleStartLiveView(primaryDeviceId) : undefined}
+                    onStopLiveView={!supervisedElsewhere && primaryDeviceId ? () => handleStopLiveView(primaryDeviceId) : undefined}
                     onEndLiveRefresh={primaryDeviceId ? () => refreshTile(primaryDeviceId) : undefined}
                     onBlockRefetches={() => { optimisticUpdateUntilRef.current = optimisticUpdateDeadline(); }}
-                    onAllowDomain={handleAllowDomain}
+                    onAllowDomain={supervisedElsewhere ? undefined : handleAllowDomain}
                     teachingSessionId={effectiveSession?.id}
-                    onManageTabs={() => openManageTabs([student.studentId])}
+                    onManageTabs={supervisedElsewhere ? undefined : () => openManageTabs([student.studentId])}
+                    controlDisabled={supervisedElsewhere}
+                    disabledReason={disabledReason}
+                    supervisionLabel={coverageLabel || "In supervision"}
+                    onReturnToClass={supervisedElsewhere && activeSession ? () => handleReturnToClass(student) : undefined}
+                    returnToClassPending={returnToClassPending}
                   />
                 </div>
               );

@@ -75,6 +75,10 @@ function param(req: any, key: string): string {
   return String(req.params[key] ?? "");
 }
 
+function displayNameForUser(user: any): string {
+  return user?.displayName || [user?.firstName, user?.lastName].filter(Boolean).join(" ") || user?.email || "Staff";
+}
+
 const auth = [authenticate] as const;
 const schoolAuth = [authenticate, requireSchoolContext, requireActiveSchool] as const;
 const passPilotAuth = [
@@ -936,6 +940,11 @@ router.get("/students-aggregated", ...schoolAuth, async (req, res, next) => {
     const activeSessionByStudent = new Map(activeStudentSessions.map((session) => [session.studentId, session]));
     const activeCoverageByStudent = new Map(activeCoverageRows.map((entry) => [entry.studentId, entry.context]));
     const activeClassByStudent = new Map(activeClassRows.map((row) => [row.studentId, row]));
+    const activeCoverageStaffEntries = await Promise.all(
+      [...new Set(activeCoverageRows.map((entry) => entry.context.assignedStaffId).filter(Boolean))]
+        .map(async (staffId) => [staffId, await getUserById(staffId)] as const)
+    );
+    const activeCoverageStaffById = new Map(activeCoverageStaffEntries);
     const dismissalByStudent = new Map<string, any>();
     for (const row of dismissalRows) {
       const existing = dismissalByStudent.get(row.queue.studentId);
@@ -1049,6 +1058,10 @@ router.get("/students-aggregated", ...schoolAuth, async (req, res, next) => {
           type: activeCoverage.contextType,
           name: activeCoverage.name,
           assignedStaffId: activeCoverage.assignedStaffId,
+          assignedStaff: activeCoverage.assignedStaffId ? {
+            id: activeCoverage.assignedStaffId,
+            displayName: displayNameForUser(activeCoverageStaffById.get(activeCoverage.assignedStaffId)),
+          } : null,
           endsAt: activeCoverage.endsAt,
         } : activeClass ? {
           id: activeClass.sessionId,

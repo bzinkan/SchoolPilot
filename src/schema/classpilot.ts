@@ -638,7 +638,7 @@ export const classpilotCoverageAssignments = pgTable(
     staffId: text("staff_id").notNull(),
     scopeType: text("scope_type")
       .notNull()
-      .$type<"school" | "grade" | "group" | "students" | "coverage_group">(),
+      .$type<"school" | "grade" | "group" | "students" | "coverage_group" | "setup">(),
     scopeValue: text("scope_value"),
     permissions: jsonb("permissions").notNull().default(sql`'{}'::jsonb`),
     active: boolean("active").notNull().default(true),
