@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   ArrowLeft,
@@ -169,26 +169,15 @@ export default function Coverage() {
     select: (data) => Array.isArray(data) ? data : data?.blockLists || [],
   });
 
-  const contexts = contextsQuery.data || [];
+  const contexts = useMemo(() => contextsQuery.data || [], [contextsQuery.data]);
   const manageableContexts = useMemo(
     () => contexts.filter((context) => context.canManage && context.status === "active"),
     [contexts]
   );
-  const selectedContext = manageableContexts.find((context) => context.id === selectedContextId) || manageableContexts[0] || null;
-
-  useEffect(() => {
-    if (!selectedContext && selectedContextId) {
-      setSelectedContextId("");
-      return;
-    }
-    if (!selectedContextId && manageableContexts.length > 0) {
-      setSelectedContextId(manageableContexts[0].id);
-    }
-  }, [manageableContexts, selectedContext, selectedContextId]);
-
-  useEffect(() => {
-    setSelectedCoverageIds(new Set());
-  }, [selectedContextId]);
+  const activeContextId = manageableContexts.some((context) => context.id === selectedContextId)
+    ? selectedContextId
+    : manageableContexts[0]?.id || "";
+  const selectedContext = manageableContexts.find((context) => context.id === activeContextId) || null;
 
   const contextStudentsQuery = useQuery({
     queryKey: ["/api/coverage/contexts", selectedContext?.id, "students"],
@@ -221,8 +210,18 @@ export default function Coverage() {
     });
   }, [contextStudentsQuery.data, coverageSearch]);
 
-  const activeCoverageStudents = coverageStudents.filter((student) => !student.releasedAt);
-  const selectedCoverageStudentIds = Array.from(selectedCoverageIds);
+  const activeCoverageStudents = useMemo(
+    () => coverageStudents.filter((student) => !student.releasedAt),
+    [coverageStudents]
+  );
+  const activeCoverageStudentIds = useMemo(
+    () => new Set(activeCoverageStudents.map((student) => student.studentId)),
+    [activeCoverageStudents]
+  );
+  const selectedCoverageStudentIds = useMemo(
+    () => Array.from(selectedCoverageIds).filter((studentId) => activeCoverageStudentIds.has(studentId)),
+    [activeCoverageStudentIds, selectedCoverageIds]
+  );
   const commandTargetCount = selectedCoverageStudentIds.length || activeCoverageStudents.length;
 
   const invalidateCoverage = () => {
@@ -243,7 +242,10 @@ export default function Coverage() {
       invalidateCoverage();
       setSelectedUnassignedIds(new Set());
       setContextOpen(false);
-      if (data?.context?.id) setSelectedContextId(data.context.id);
+      if (data?.context?.id) {
+        setSelectedContextId(data.context.id);
+        setSelectedCoverageIds(new Set());
+      }
       setActiveTab("console");
       toast({ title: "Coverage started" });
     },
@@ -313,6 +315,11 @@ export default function Coverage() {
       else next.add(id);
       return next;
     });
+  };
+
+  const chooseContext = (contextId) => {
+    setSelectedContextId(contextId);
+    setSelectedCoverageIds(new Set());
   };
 
   const submitContext = () => {
@@ -420,7 +427,7 @@ export default function Coverage() {
                     <button
                       key={context.id}
                       type="button"
-                      onClick={() => setSelectedContextId(context.id)}
+                      onClick={() => chooseContext(context.id)}
                       className={`min-w-[220px] rounded-md border px-3 py-2 text-left text-sm transition-colors ${selectedContext?.id === context.id ? "border-primary bg-primary/10" : "border-border bg-card hover:bg-muted/60"}`}
                     >
                       <span className="block font-medium truncate">{context.name}</span>
@@ -440,7 +447,7 @@ export default function Coverage() {
                       </p>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant="secondary">{selectedCoverageIds.size || activeCoverageStudents.length} targeted</Badge>
+                      <Badge variant="secondary">{selectedCoverageStudentIds.length || activeCoverageStudents.length} targeted</Badge>
                       <Button variant="outline" size="sm" onClick={() => setHistoryContextId(selectedContext.id)}>
                         <History className="h-4 w-4 mr-2" />
                         History
@@ -480,11 +487,11 @@ export default function Coverage() {
                     <Button
                       size="sm"
                       variant="outline"
-                      disabled={selectedCoverageIds.size === 0}
+                      disabled={selectedCoverageStudentIds.length === 0}
                       onClick={() => openReleaseDialog({
                         contextId: selectedContext.id,
                         studentIds: selectedCoverageStudentIds,
-                        title: `Release ${selectedCoverageIds.size} selected student${selectedCoverageIds.size === 1 ? "" : "s"}`,
+                        title: `Release ${selectedCoverageStudentIds.length} selected student${selectedCoverageStudentIds.length === 1 ? "" : "s"}`,
                       })}
                     >
                       Release Selected
@@ -499,7 +506,7 @@ export default function Coverage() {
                     <Button variant="outline" size="sm" onClick={() => setSelectedCoverageIds(new Set(activeCoverageStudents.map((student) => student.studentId)))} disabled={activeCoverageStudents.length === 0}>
                       Select All
                     </Button>
-                    <Button variant="ghost" size="sm" onClick={() => setSelectedCoverageIds(new Set())} disabled={selectedCoverageIds.size === 0}>
+                    <Button variant="ghost" size="sm" onClick={() => setSelectedCoverageIds(new Set())} disabled={selectedCoverageStudentIds.length === 0}>
                       Clear
                     </Button>
                   </div>
@@ -617,7 +624,7 @@ export default function Coverage() {
                     <div className="flex flex-wrap gap-2">
                       {context.canManage && (
                         <>
-                          <Button variant="outline" size="sm" onClick={() => { setSelectedContextId(context.id); setActiveTab("console"); }}>
+                          <Button variant="outline" size="sm" onClick={() => { chooseContext(context.id); setActiveTab("console"); }}>
                             <Users className="h-4 w-4 mr-2" />
                             Open Console
                           </Button>
