@@ -620,6 +620,12 @@ export default function Dashboard() {
               queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
             }
             if (message.type === 'screenshot-available') {
+              if (message.deviceId) {
+                queryClient.invalidateQueries({
+                  queryKey: ['/api/device/screenshot', message.deviceId],
+                  refetchType: 'all',
+                });
+              }
               queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
             }
             if (message.type === 'student-event') {
