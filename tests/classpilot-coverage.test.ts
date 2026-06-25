@@ -446,6 +446,130 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     await inSchool(school.id, () => endTeachingSession(session.id));
   });
 
+  it("warns before starting a class that overlaps another teacher's active roster", async () => {
+    const sourceTeacher = await createUser({
+      email: `source-teacher@${TAG}.example.edu`,
+      firstName: "Sam",
+      lastName: "Source",
+    } as any);
+    const startingTeacher = await createUser({
+      email: `starting-teacher@${TAG}.example.edu`,
+      firstName: "Tara",
+      lastName: "Starter",
+    } as any);
+    await createMembership({ userId: sourceTeacher.id, schoolId: school.id, role: "teacher", status: "active" } as any);
+    await createMembership({ userId: startingTeacher.id, schoolId: school.id, role: "teacher", status: "active" } as any);
+
+    const noOverlapStudent = await inSchool(school.id, () => createStudent({
+      schoolId: school.id,
+      firstName: "No",
+      lastName: "Overlap",
+      email: `no-overlap@${TAG}.example.edu`,
+      emailLc: `no-overlap@${TAG}.example.edu`,
+      gradeLevel: "6",
+      status: "active",
+    } as any));
+    const ownOverlapStudent = await inSchool(school.id, () => createStudent({
+      schoolId: school.id,
+      firstName: "Own",
+      lastName: "Switch",
+      email: `own-switch@${TAG}.example.edu`,
+      emailLc: `own-switch@${TAG}.example.edu`,
+      gradeLevel: "6",
+      status: "active",
+    } as any));
+    const crossTeacherStudent = await inSchool(school.id, () => createStudent({
+      schoolId: school.id,
+      firstName: "Cross",
+      lastName: "Teacher",
+      email: `cross-teacher@${TAG}.example.edu`,
+      emailLc: `cross-teacher@${TAG}.example.edu`,
+      gradeLevel: "6",
+      status: "active",
+    } as any));
+
+    const noOverlapGroup = await inSchool(school.id, () => createGroup({
+      schoolId: school.id,
+      teacherId: startingTeacher.id,
+      name: `${TAG}_No_Overlap_Start`,
+      groupType: "admin_class",
+      status: "active",
+    } as any));
+    await inSchool(school.id, () => addGroupStudentsDetailed(noOverlapGroup.id, [noOverlapStudent.id]));
+    const noOverlapStart = await requestJson("POST", "/sessions/start", {
+      groupId: noOverlapGroup.id,
+    }, authFor(startingTeacher, school.id));
+    assert.equal(noOverlapStart.status, 201);
+    await inSchool(school.id, () => endTeachingSession(noOverlapStart.body.session.id));
+
+    const ownGroupA = await inSchool(school.id, () => createGroup({
+      schoolId: school.id,
+      teacherId: startingTeacher.id,
+      name: `${TAG}_Own_A`,
+      groupType: "admin_class",
+      status: "active",
+    } as any));
+    const ownGroupB = await inSchool(school.id, () => createGroup({
+      schoolId: school.id,
+      teacherId: startingTeacher.id,
+      name: `${TAG}_Own_B`,
+      groupType: "admin_class",
+      status: "active",
+    } as any));
+    await inSchool(school.id, () => addGroupStudentsDetailed(ownGroupA.id, [ownOverlapStudent.id]));
+    await inSchool(school.id, () => addGroupStudentsDetailed(ownGroupB.id, [ownOverlapStudent.id]));
+    const ownStartA = await requestJson("POST", "/sessions/start", { groupId: ownGroupA.id }, authFor(startingTeacher, school.id));
+    assert.equal(ownStartA.status, 201);
+    const ownStartB = await requestJson("POST", "/sessions/start", { groupId: ownGroupB.id }, authFor(startingTeacher, school.id));
+    assert.equal(ownStartB.status, 201);
+    await inSchool(school.id, () => endTeachingSession(ownStartB.body.session.id));
+
+    const activeSourceGroup = await inSchool(school.id, () => createGroup({
+      schoolId: school.id,
+      teacherId: sourceTeacher.id,
+      name: `${TAG}_Source_Class`,
+      groupType: "admin_class",
+      status: "active",
+    } as any));
+    const overlappingStartGroup = await inSchool(school.id, () => createGroup({
+      schoolId: school.id,
+      teacherId: startingTeacher.id,
+      name: `${TAG}_Overlap_Start`,
+      groupType: "admin_class",
+      status: "active",
+    } as any));
+    await inSchool(school.id, () => addGroupStudentsDetailed(activeSourceGroup.id, [crossTeacherStudent.id]));
+    await inSchool(school.id, () => addGroupStudentsDetailed(overlappingStartGroup.id, [crossTeacherStudent.id]));
+    const sourceSession = await inSchool(school.id, () => createTeachingSession({
+      groupId: activeSourceGroup.id,
+      teacherId: sourceTeacher.id,
+    } as any));
+
+    const warned = await requestJson("POST", "/sessions/start", {
+      groupId: overlappingStartGroup.id,
+    }, authFor(startingTeacher, school.id));
+    assert.equal(warned.status, 409);
+    assert.equal(warned.body.code, "CLASS_ROSTER_ACTIVE_OVERLAP");
+    assert.equal(warned.body.selectedClass.id, overlappingStartGroup.id);
+    assert.equal(warned.body.totalOverlapCount, 1);
+    assert.equal(warned.body.groups[0].sessionId, sourceSession.id);
+    assert.equal(warned.body.groups[0].className, activeSourceGroup.name);
+    assert.equal(warned.body.groups[0].teacherName, "Sam Source");
+    assert.equal(warned.body.groups[0].affectedCount, 1);
+    assert.equal(warned.body.groups[0].affectedStudents[0].studentId, crossTeacherStudent.id);
+    expectNoDeviceIds(warned.body);
+
+    const acknowledged = await requestJson("POST", "/sessions/start", {
+      groupId: overlappingStartGroup.id,
+      acknowledgeOverlap: true,
+    }, authFor(startingTeacher, school.id));
+    assert.equal(acknowledged.status, 201);
+    assert.equal(acknowledged.body.session.groupId, overlappingStartGroup.id);
+
+    await inSchool(school.id, () => endTeachingSession(sourceSession.id));
+    await inSchool(school.id, () => endTeachingSession(acknowledged.body.session.id));
+  });
+
   it("gives the newest normal class session control of overlapping students", async () => {
     const secondTeacher = await createUser({
       email: `second-teacher@${TAG}.example.edu`,
