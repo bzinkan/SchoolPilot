@@ -3,9 +3,13 @@ import {
   verifyStudentToken,
   TokenExpiredError,
   InvalidTokenError,
+  type StudentTokenPayload,
 } from "../services/deviceJwt.js";
 import { bindTenantContext, runWithTenantContext } from "./tenantContext.js";
 import { verifyActiveStudentTokenSession } from "../services/classpilotStudentAuth.js";
+
+const activeStudentSessionCache = new Map<string, number>();
+const MAX_ACTIVE_STUDENT_SESSION_CACHE_SIZE = 5000;
 
 function extractBearerToken(rawHeader?: string | string[]): string | null {
   if (!rawHeader) return null;
@@ -17,8 +21,46 @@ function extractBearerToken(rawHeader?: string | string[]): string | null {
   return token.trim() || null;
 }
 
-function createRequireDeviceAuth(options: { bindTenant?: boolean } = {}): RequestHandler {
+function activeStudentSessionCacheKey(payload: StudentTokenPayload): string {
+  return `${payload.schoolId}:${payload.studentId}:${payload.deviceId}:${payload.sessionId}`;
+}
+
+function hasCachedActiveStudentSession(payload: StudentTokenPayload): boolean {
+  const cacheKey = activeStudentSessionCacheKey(payload);
+  const expiresAt = activeStudentSessionCache.get(cacheKey);
+  if (!expiresAt) {
+    return false;
+  }
+  if (expiresAt > Date.now()) {
+    return true;
+  }
+  activeStudentSessionCache.delete(cacheKey);
+  return false;
+}
+
+function cacheActiveStudentSession(payload: StudentTokenPayload, ttlMs: number): void {
+  if (ttlMs <= 0) {
+    return;
+  }
+  const now = Date.now();
+  if (activeStudentSessionCache.size >= MAX_ACTIVE_STUDENT_SESSION_CACHE_SIZE) {
+    for (const [key, expiresAt] of activeStudentSessionCache) {
+      if (expiresAt <= now || activeStudentSessionCache.size >= MAX_ACTIVE_STUDENT_SESSION_CACHE_SIZE) {
+        activeStudentSessionCache.delete(key);
+      }
+      if (activeStudentSessionCache.size < MAX_ACTIVE_STUDENT_SESSION_CACHE_SIZE) {
+        break;
+      }
+    }
+  }
+  activeStudentSessionCache.set(activeStudentSessionCacheKey(payload), now + ttlMs);
+}
+
+function createRequireDeviceAuth(
+  options: { bindTenant?: boolean; activeSessionCacheTtlMs?: number } = {}
+): RequestHandler {
   const shouldBindTenant = options.bindTenant ?? true;
+  const activeSessionCacheTtlMs = options.activeSessionCacheTtlMs ?? 0;
 
   /**
    * Device authentication middleware for ClassPilot Chrome extension.
@@ -38,10 +80,16 @@ function createRequireDeviceAuth(options: { bindTenant?: boolean } = {}): Reques
 
     try {
       const payload = verifyStudentToken(token);
-      const hasActiveSession = await runWithTenantContext(
-        { schoolId: payload.schoolId },
-        () => verifyActiveStudentTokenSession(payload)
-      );
+      let hasActiveSession = hasCachedActiveStudentSession(payload);
+      if (!hasActiveSession) {
+        hasActiveSession = await runWithTenantContext(
+          { schoolId: payload.schoolId },
+          () => verifyActiveStudentTokenSession(payload)
+        );
+        if (hasActiveSession) {
+          cacheActiveStudentSession(payload, activeSessionCacheTtlMs);
+        }
+      }
       if (!hasActiveSession) {
         return res.status(401).json({ error: "Student session is no longer active" });
       }
@@ -68,4 +116,7 @@ function createRequireDeviceAuth(options: { bindTenant?: boolean } = {}): Reques
 }
 
 export const requireDeviceAuth = createRequireDeviceAuth();
-export const requireDeviceAuthWithoutTenant = createRequireDeviceAuth({ bindTenant: false });
+export const requireDeviceAuthWithoutTenant = createRequireDeviceAuth({
+  bindTenant: false,
+  activeSessionCacheTtlMs: 60_000,
+});
