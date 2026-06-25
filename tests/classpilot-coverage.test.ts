@@ -543,6 +543,13 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     const adminAuth = authFor(admin, school.id);
     const staffAuth = authFor(scopedCoverageStaff, school.id);
     const teacherAuth = authFor(teacher, school.id);
+    const floorCaptain = await createUser({
+      email: `floor-captain@${TAG}.example.edu`,
+      firstName: "Flo",
+      lastName: "Captain",
+    } as any);
+    await createMembership({ userId: floorCaptain.id, schoolId: school.id, role: "teacher", status: "active" } as any);
+    const floorCaptainAuth = authFor(floorCaptain, school.id);
 
     const groupRes = await requestJson("POST", "/coverage/supervision-groups", {
       name: "Route Supervision Group",
@@ -575,6 +582,80 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     }, teacherAuth);
     assert.equal(teacherSetupBeforeGrant.status, 403);
 
+    const floorCaptainSetupAssignment = await requestJson("POST", "/coverage/assignments", {
+      staffId: floorCaptain.id,
+      scopeType: "grade",
+      scopeValue: "8",
+      permissions: { claim: true, setup: true },
+    }, adminAuth);
+    assert.equal(floorCaptainSetupAssignment.status, 201);
+    assert.equal(floorCaptainSetupAssignment.body.assignment.abilities.claim, true);
+    assert.equal(floorCaptainSetupAssignment.body.assignment.abilities.setup, true);
+    assert.equal(floorCaptainSetupAssignment.body.assignment.scopeLabel, "Roster Grade: 8");
+
+    const floorCaptainCapabilities = await requestJson("GET", "/coverage/capabilities", undefined, floorCaptainAuth);
+    assert.equal(floorCaptainCapabilities.status, 200);
+    assert.equal(floorCaptainCapabilities.body.canManageSupervisionSetup, true);
+    assert.equal(floorCaptainCapabilities.body.isSchoolwideSetupManager, false);
+    assert.ok(floorCaptainCapabilities.body.setupScopes.some((scope: any) => scope.scopeLabel === "Roster Grade: 8"));
+
+    const floorCaptainSetupStudents = await requestJson("GET", "/coverage/setup/students", undefined, floorCaptainAuth);
+    assert.equal(floorCaptainSetupStudents.status, 200);
+    const floorCaptainStudentIds = new Set(floorCaptainSetupStudents.body.students.map((student: any) => student.id));
+    assert.ok(floorCaptainStudentIds.has(studentCoverage.id));
+    assert.ok(floorCaptainStudentIds.has(studentDeviceGuard.id));
+    assert.ok(!floorCaptainStudentIds.has(studentUnassigned.id));
+    expectNoDeviceIds(floorCaptainSetupStudents.body);
+
+    const floorCaptainGroup = await requestJson("POST", "/coverage/supervision-groups", {
+      name: "Floor Captain Makeup Group",
+      studentIds: [studentCoverage.id],
+      staffIds: [coverageStaff.id],
+    }, floorCaptainAuth);
+    assert.equal(floorCaptainGroup.status, 201);
+    assert.equal(floorCaptainGroup.body.group.studentCount, 1);
+    assert.ok(floorCaptainGroup.body.group.staff.some((staff: any) => staff.id === coverageStaff.id));
+    expectNoDeviceIds(floorCaptainGroup.body);
+
+    const floorCaptainOutOfScopeGroup = await requestJson("POST", "/coverage/supervision-groups", {
+      name: "Wrong Grade Group",
+      studentIds: [studentUnassigned.id],
+      staffIds: [coverageStaff.id],
+    }, floorCaptainAuth);
+    assert.equal(floorCaptainOutOfScopeGroup.status, 403);
+
+    const floorCaptainClaimAssignment = await requestJson("POST", "/coverage/assignments", {
+      staffId: coverageStaff.id,
+      scopeType: "grade",
+      scopeValue: "8",
+    }, floorCaptainAuth);
+    assert.equal(floorCaptainClaimAssignment.status, 201);
+    assert.equal(floorCaptainClaimAssignment.body.assignment.abilities.claim, true);
+    assert.equal(floorCaptainClaimAssignment.body.assignment.abilities.setup, false);
+
+    const floorCaptainSetupDelegation = await requestJson("POST", "/coverage/assignments", {
+      staffId: coverageStaff.id,
+      scopeType: "grade",
+      scopeValue: "8",
+      permissions: { setup: true },
+    }, floorCaptainAuth);
+    assert.equal(floorCaptainSetupDelegation.status, 403);
+
+    const floorCaptainSchoolwideAssignment = await requestJson("POST", "/coverage/assignments", {
+      staffId: coverageStaff.id,
+      scopeType: "school",
+    }, floorCaptainAuth);
+    assert.equal(floorCaptainSchoolwideAssignment.status, 403);
+
+    const floorCaptainAssignments = await requestJson("GET", "/coverage/assignments", undefined, floorCaptainAuth);
+    assert.equal(floorCaptainAssignments.status, 200);
+    assert.ok(floorCaptainAssignments.body.assignments.some((assignment: any) =>
+      assignment.staffId === coverageStaff.id &&
+      assignment.scopeLabel === "Roster Grade: 8" &&
+      assignment.abilities.claim === true
+    ));
+    assert.ok(floorCaptainAssignments.body.assignments.every((assignment: any) => assignment.abilities.setup !== true));
+
     const setupAssignment = await requestJson("POST", "/coverage/assignments", {
       staffId: teacher.id,
       scopeType: "setup",
@@ -586,6 +667,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     const teacherCapabilities = await requestJson("GET", "/coverage/capabilities", undefined, teacherAuth);
     assert.equal(teacherCapabilities.status, 200);
     assert.equal(teacherCapabilities.body.canManageSupervisionSetup, true);
+    assert.equal(teacherCapabilities.body.isSchoolwideSetupManager, true);
 
     const teacherSetupStaff = await requestJson("GET", "/coverage/setup/staff", undefined, teacherAuth);
     assert.equal(teacherSetupStaff.status, 200);
@@ -612,7 +694,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     expectNoDeviceIds(teacherSetupGroup.body);
 
     const teacherAssignments = await requestJson("GET", "/coverage/assignments", undefined, teacherAuth);
-    assert.equal(teacherAssignments.status, 403);
+    assert.equal(teacherAssignments.status, 200);
 
     const teacherQueueAfterSetupGrant = await requestJson("GET", "/coverage/available-students", undefined, teacherAuth);
     assert.equal(teacherQueueAfterSetupGrant.status, 200);

@@ -5327,9 +5327,9 @@ export async function replaceCoverageScopeGroupStaff(options: {
 }): Promise<ClasspilotCoverageAssignment[]> {
   const staffIds = Array.from(new Set(options.staffIds.map(String).filter(Boolean)));
   await db.transaction(async (tx) => {
-    await tx
-      .update(classpilotCoverageAssignments)
-      .set({ active: false, updatedAt: new Date() })
+    const existing = await tx
+      .select()
+      .from(classpilotCoverageAssignments)
       .where(
         and(
           eq(classpilotCoverageAssignments.schoolId, options.schoolId),
@@ -5338,10 +5338,44 @@ export async function replaceCoverageScopeGroupStaff(options: {
           eq(classpilotCoverageAssignments.active, true)
         )
       );
+    const selected = new Set(staffIds);
 
-    if (staffIds.length > 0) {
+    for (const assignment of existing) {
+      const permissions = (assignment.permissions || {}) as Record<string, unknown>;
+      const hasSetup = permissions.setup === true;
+      const hasClaim = permissions.claim === true || permissions.observe === true;
+      const shouldClaim = selected.has(assignment.staffId);
+
+      if (shouldClaim) {
+        if (!hasClaim) {
+          await tx
+            .update(classpilotCoverageAssignments)
+            .set({
+              permissions: { ...permissions, observe: true, claim: true },
+              updatedAt: new Date(),
+            })
+            .where(eq(classpilotCoverageAssignments.id, assignment.id));
+        }
+        selected.delete(assignment.staffId);
+      } else if (hasSetup && hasClaim) {
+        const setupOnly = { ...permissions };
+        delete setupOnly.claim;
+        delete setupOnly.observe;
+        await tx
+          .update(classpilotCoverageAssignments)
+          .set({ permissions: setupOnly, updatedAt: new Date() })
+          .where(eq(classpilotCoverageAssignments.id, assignment.id));
+      } else if (hasClaim) {
+        await tx
+          .update(classpilotCoverageAssignments)
+          .set({ active: false, updatedAt: new Date() })
+          .where(eq(classpilotCoverageAssignments.id, assignment.id));
+      }
+    }
+
+    if (selected.size > 0) {
       await tx.insert(classpilotCoverageAssignments).values(
-        staffIds.map((staffId) => ({
+        Array.from(selected).map((staffId) => ({
           schoolId: options.schoolId,
           staffId,
           scopeType: "coverage_group" as const,
