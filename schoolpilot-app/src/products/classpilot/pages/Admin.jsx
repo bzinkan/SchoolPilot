@@ -894,6 +894,27 @@ function AdminPanel({ currentUser }) {
         </CardContent>
       </Card>
 
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <ClipboardCheck className="h-5 w-5" />
+            Coverage
+          </CardTitle>
+          <CardDescription>
+            Monitor online unassigned students and manage temporary coverage
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button
+            variant="default"
+            data-testid="button-manage-coverage"
+            onClick={() => navigate("/classpilot/coverage")}
+          >
+            Open Coverage
+          </Button>
+        </CardContent>
+      </Card>
+
       <Card className="border-destructive/50">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-destructive">

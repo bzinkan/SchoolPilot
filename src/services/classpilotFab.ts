@@ -2,6 +2,7 @@ import type { TeachingSession } from "../schema/classpilot.js";
 import type { Student } from "../schema/students.js";
 import {
   getActiveHandsForStudent,
+  getActiveSupervisionForStudent,
   getActiveTeachingSessionsForStudent,
   getGroupStudents,
   getSessionSettings,
@@ -68,6 +69,11 @@ export async function resolveStudentFabSessions(options: {
     throw new FabContractError(404, "student_not_found", "Student not found");
   }
 
+  const supervision = await getActiveSupervisionForStudent(options.schoolId, options.studentId);
+  if (supervision) {
+    throw new FabContractError(409, "temporary_coverage_active", "Student is assigned to temporary coverage");
+  }
+
   const sessions = await getActiveTeachingSessionsForStudent(options.schoolId, options.studentId);
   if (sessions.length === 0) {
     throw new FabContractError(409, "no_active_session", "No active teaching session for this student");
@@ -89,6 +95,23 @@ export async function resolveStudentFabSessions(options: {
 }
 
 export async function buildStudentFabState(schoolId: string, studentId: string) {
+  const supervision = await getActiveSupervisionForStudent(schoolId, studentId);
+  if (supervision) {
+    return {
+      activeSessionIds: [],
+      messagingEnabled: false,
+      handRaisingEnabled: false,
+      handRaised: false,
+      activeHands: [],
+      sessions: [],
+      supervisionContext: {
+        id: supervision.context.id,
+        type: supervision.context.contextType,
+        name: supervision.context.name,
+      },
+    };
+  }
+
   const sessions = await getActiveTeachingSessionsForStudent(schoolId, studentId);
   const activeHands = await getActiveHandsForStudent(schoolId, studentId);
 

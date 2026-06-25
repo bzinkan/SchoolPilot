@@ -541,6 +541,107 @@ export type ClasspilotClassroomState = typeof classpilotClassroomStates.$inferSe
 export type InsertClasspilotClassroomState = typeof classpilotClassroomStates.$inferInsert;
 
 // ============================================================================
+// Supervision Coverage - Online unassigned + temporary coverage contexts
+// ============================================================================
+export const classpilotCoverageAssignments = pgTable(
+  "classpilot_coverage_assignments",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
+    staffId: text("staff_id").notNull(),
+    scopeType: text("scope_type")
+      .notNull()
+      .$type<"school" | "grade" | "group" | "students">(),
+    scopeValue: text("scope_value"),
+    permissions: jsonb("permissions").notNull().default(sql`'{}'::jsonb`),
+    active: boolean("active").notNull().default(true),
+    createdBy: text("created_by").notNull(),
+    createdAt: timestamp("created_at").notNull().default(sql`now()`),
+    updatedAt: timestamp("updated_at").notNull().default(sql`now()`),
+  },
+  (table) => [
+    index("classpilot_coverage_assignments_school_staff_idx").on(
+      table.schoolId,
+      table.staffId
+    ),
+    index("classpilot_coverage_assignments_scope_idx").on(
+      table.schoolId,
+      table.scopeType,
+      table.scopeValue
+    ),
+  ]
+);
+
+export type ClasspilotCoverageAssignment = typeof classpilotCoverageAssignments.$inferSelect;
+export type InsertClasspilotCoverageAssignment = typeof classpilotCoverageAssignments.$inferInsert;
+
+export const classpilotSupervisionContexts = pgTable(
+  "classpilot_supervision_contexts",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
+    contextType: text("context_type").notNull(),
+    name: text("name").notNull(),
+    status: text("status")
+      .notNull()
+      .default("active")
+      .$type<"active" | "ended">(),
+    assignedStaffId: text("assigned_staff_id").notNull(),
+    createdBy: text("created_by").notNull(),
+    note: text("note"),
+    startsAt: timestamp("starts_at").notNull().default(sql`now()`),
+    endsAt: timestamp("ends_at").notNull(),
+    endedAt: timestamp("ended_at"),
+    createdAt: timestamp("created_at").notNull().default(sql`now()`),
+    updatedAt: timestamp("updated_at").notNull().default(sql`now()`),
+  },
+  (table) => [
+    index("classpilot_supervision_contexts_school_status_idx").on(
+      table.schoolId,
+      table.status
+    ),
+    index("classpilot_supervision_contexts_staff_idx").on(
+      table.schoolId,
+      table.assignedStaffId
+    ),
+  ]
+);
+
+export type ClasspilotSupervisionContext = typeof classpilotSupervisionContexts.$inferSelect;
+export type InsertClasspilotSupervisionContext = typeof classpilotSupervisionContexts.$inferInsert;
+
+export const classpilotSupervisionStudents = pgTable(
+  "classpilot_supervision_students",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
+    contextId: varchar("context_id").notNull(),
+    studentId: text("student_id").notNull(),
+    source: text("source").notNull().default("manual"),
+    assignedBy: text("assigned_by").notNull(),
+    assignedAt: timestamp("assigned_at").notNull().default(sql`now()`),
+    releasedAt: timestamp("released_at"),
+    releaseReason: text("release_reason"),
+  },
+  (table) => [
+    index("classpilot_supervision_students_context_idx").on(
+      table.schoolId,
+      table.contextId
+    ),
+    index("classpilot_supervision_students_student_idx").on(
+      table.schoolId,
+      table.studentId
+    ),
+    uniqueIndex("classpilot_supervision_students_active_unique")
+      .on(table.schoolId, table.studentId)
+      .where(sql`released_at IS NULL`),
+  ]
+);
+
+export type ClasspilotSupervisionStudent = typeof classpilotSupervisionStudents.$inferSelect;
+export type InsertClasspilotSupervisionStudent = typeof classpilotSupervisionStudents.$inferInsert;
+
+// ============================================================================
 // Subgroups - Within-class differentiation
 // ============================================================================
 export const subgroups = pgTable("subgroups", {
