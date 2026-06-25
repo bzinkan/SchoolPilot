@@ -20,6 +20,7 @@ import {
   getClasspilotAdminAnalyticsSummary,
   resolveSchoolLocalPeriod,
 } from "../dist/services/classpilotAdminAnalytics.js";
+import { coerceSchedulerTimestamp } from "../dist/util/schedulerTimestamp.js";
 
 const TAG = `admin_analytics_${Date.now()}`;
 
@@ -151,6 +152,16 @@ after(async () => {
 });
 
 describe("ClassPilot admin analytics", () => {
+  it("coerces scheduler aggregate timestamps before daily usage writes", () => {
+    assert.equal(
+      coerceSchedulerTimestamp("2026-01-14 15:04:05.123")?.toISOString(),
+      "2026-01-14T15:04:05.123Z"
+    );
+    const date = new Date("2026-01-14T15:04:05.123Z");
+    assert.equal(coerceSchedulerTimestamp(date), date);
+    assert.equal(coerceSchedulerTimestamp(null), null);
+  });
+
   it("resolves school-local periods without off-by-one dates", () => {
     const now = new Date("2026-01-15T17:30:00.000Z");
     const today = resolveSchoolLocalPeriod("24h", "America/New_York", now);
