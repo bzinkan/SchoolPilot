@@ -37,6 +37,7 @@ import {
   updateCoverageScopeGroup,
   updateClasspilotCommandTargetAck,
 } from "../dist/services/storage.js";
+import { getAuditLogs } from "../dist/services/audit.js";
 import { scopedDeviceTargets } from "../dist/services/classpilotDeviceScope.js";
 
 const TAG = `cpcoverage_${Date.now()}`;
@@ -567,6 +568,90 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     assert.equal(teacherQueue.status, 200);
     assert.deepEqual(teacherQueue.body.students, []);
 
+    const teacherSetupBeforeGrant = await requestJson("POST", "/coverage/supervision-groups", {
+      name: "Teacher Setup Before Grant",
+      studentIds: [studentCoverage.id],
+      staffIds: [coverageStaff.id],
+    }, teacherAuth);
+    assert.equal(teacherSetupBeforeGrant.status, 403);
+
+    const setupAssignment = await requestJson("POST", "/coverage/assignments", {
+      staffId: teacher.id,
+      scopeType: "setup",
+    }, adminAuth);
+    assert.equal(setupAssignment.status, 201);
+    assert.equal(setupAssignment.body.assignment.scopeLabel, "Setup Manager");
+    assert.equal(setupAssignment.body.assignment.permissionLabel, "Manage Supervision Setup");
+
+    const teacherCapabilities = await requestJson("GET", "/coverage/capabilities", undefined, teacherAuth);
+    assert.equal(teacherCapabilities.status, 200);
+    assert.equal(teacherCapabilities.body.canManageSupervisionSetup, true);
+
+    const teacherSetupStaff = await requestJson("GET", "/coverage/setup/staff", undefined, teacherAuth);
+    assert.equal(teacherSetupStaff.status, 200);
+    assert.ok(teacherSetupStaff.body.users.some((user: any) => user.userId === coverageStaff.id));
+    expectNoDeviceIds(teacherSetupStaff.body);
+
+    const teacherSetupStudents = await requestJson("GET", "/coverage/setup/students", undefined, teacherAuth);
+    assert.equal(teacherSetupStudents.status, 200);
+    assert.ok(teacherSetupStudents.body.students.some((student: any) => student.id === studentCoverage.id));
+    expectNoDeviceIds(teacherSetupStudents.body);
+
+    const teacherSetupClasses = await requestJson("GET", "/coverage/setup/classes", undefined, teacherAuth);
+    assert.equal(teacherSetupClasses.status, 200);
+    expectNoDeviceIds(teacherSetupClasses.body);
+
+    const teacherSetupGroup = await requestJson("POST", "/coverage/supervision-groups", {
+      name: "Teacher Managed Makeup Group",
+      studentIds: [studentCoverage.id],
+      staffIds: [coverageStaff.id],
+    }, teacherAuth);
+    assert.equal(teacherSetupGroup.status, 201);
+    assert.equal(teacherSetupGroup.body.group.studentCount, 1);
+    assert.ok(teacherSetupGroup.body.group.staff.some((staff: any) => staff.id === coverageStaff.id));
+    expectNoDeviceIds(teacherSetupGroup.body);
+
+    const teacherAssignments = await requestJson("GET", "/coverage/assignments", undefined, teacherAuth);
+    assert.equal(teacherAssignments.status, 403);
+
+    const teacherQueueAfterSetupGrant = await requestJson("GET", "/coverage/available-students", undefined, teacherAuth);
+    assert.equal(teacherQueueAfterSetupGrant.status, 200);
+    assert.deepEqual(teacherQueueAfterSetupGrant.body.students, []);
+
+    const directScopeGroup = await inSchool(school.id, () => createGroup({
+      schoolId: school.id,
+      teacherId: teacher.id,
+      name: "8th",
+      groupType: "admin_class",
+      status: "active",
+    } as any));
+    await inSchool(school.id, () => addGroupStudentsDetailed(directScopeGroup.id, [studentDeviceGuard.id]));
+    await requestJson("POST", "/coverage/assignments", {
+      staffId: teacher.id,
+      scopeType: "group",
+      scopeValue: directScopeGroup.id,
+    }, adminAuth);
+
+    const directScopeQueue = await requestJson("GET", "/coverage/available-students", undefined, teacherAuth);
+    assert.equal(directScopeQueue.status, 200);
+    const directScopeStudent = directScopeQueue.body.students.find((student: any) => student.studentId === studentDeviceGuard.id);
+    assert.ok(directScopeStudent);
+    assert.equal(directScopeStudent.matchingGroups.length, 0);
+    assert.ok(directScopeStudent.matchingScopes.some((scope: any) => scope.name === "Class: 8th"));
+    expectNoDeviceIds(directScopeQueue.body);
+
+    const directClaimRes = await requestJson("POST", "/coverage/claim", {
+      studentIds: [studentDeviceGuard.id],
+    }, teacherAuth);
+    assert.equal(directClaimRes.status, 201);
+    assert.equal(directClaimRes.body.context.coverageGroupId, null);
+    assert.equal(directClaimRes.body.context.name, "Class: 8th");
+    expectNoDeviceIds(directClaimRes.body);
+    await requestJson("POST", `/coverage/contexts/${directClaimRes.body.context.id}/release`, {
+      studentIds: [studentDeviceGuard.id],
+      releaseReason: "test_release",
+    }, teacherAuth);
+
     const claimRes = await requestJson("POST", "/coverage/claim", {
       supervisionGroupId: groupRes.body.group.id,
       studentIds: [studentUnassigned.id],
@@ -626,6 +711,40 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     ));
     expectNoDeviceIds(teacherReroute.body);
 
+    const returnOutOfClass = await requestJson("POST", "/coverage/return-to-class", {
+      studentIds: [studentUnassigned.id],
+    }, teacherAuth);
+    assert.equal(returnOutOfClass.status, 403);
+    assert.match(returnOutOfClass.body.error, /active class/);
+
+    const returnToClass = await requestJson("POST", "/coverage/return-to-class", {
+      studentIds: [studentInClass.id],
+    }, teacherAuth);
+    assert.equal(returnToClass.status, 200);
+    assert.ok(returnToClass.body.released.some((assignment: any) =>
+      assignment.studentId === studentInClass.id &&
+      assignment.contextId === contextId &&
+      assignment.releaseReason === "returned_to_class"
+    ));
+    expectNoDeviceIds(returnToClass.body);
+
+    const returnedStudentCoverage = await inSchool(school.id, () => getActiveSupervisionForStudent(school.id, studentInClass.id));
+    assert.equal(returnedStudentCoverage, undefined);
+    const stillClaimedCoverage = await inSchool(school.id, () => getActiveSupervisionForStudent(school.id, studentUnassigned.id));
+    assert.equal(stillClaimedCoverage?.context.id, contextId);
+
+    const returnAuditRows = await inSchool(school.id, () => getAuditLogs({
+      schoolId: school.id,
+      entityType: "supervision_context",
+      entityId: contextId,
+      limit: 25,
+    }));
+    assert.ok(returnAuditRows.some((entry: any) =>
+      entry.action === "coverage.student.return_to_class" &&
+      entry.changes?.releaseReason === "returned_to_class" &&
+      entry.changes?.studentIds?.includes(studentInClass.id)
+    ));
+
     const outOfClassReroute = await requestJson("POST", "/coverage/send", {
       supervisionGroupId: target.supervisionGroupId,
       assignedStaffId: target.assignedStaffId,
@@ -636,7 +755,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     assert.match(outOfClassReroute.body.error, /active class/);
 
     const releaseRes = await requestJson("POST", `/coverage/contexts/${contextId}/release`, {
-      studentIds: [studentUnassigned.id, studentInClass.id],
+      studentIds: [studentUnassigned.id],
       releaseReason: "test_release",
     }, staffAuth);
     assert.equal(releaseRes.status, 200);

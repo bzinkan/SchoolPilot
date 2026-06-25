@@ -3,7 +3,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { Card } from "../../../components/ui/card";
 import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
-import { Monitor, ExternalLink, AlertTriangle, Lock, Unlock, Video, Layers, Maximize2, X, List } from "lucide-react";
+import { Monitor, ExternalLink, AlertTriangle, Lock, Unlock, Layers, Maximize2, X, List, RotateCcw } from "lucide-react";
 import { Checkbox } from "../../../components/ui/checkbox";
 import { useToast } from "../../../hooks/use-toast";
 import { apiRequest, queryClient } from "../../../lib/queryClient";
@@ -34,7 +34,27 @@ function isBlockedDomain(url, blockedDomains) {
   }
 }
 
-function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false, isAbsent = false, isSelected = false, onToggleSelect, liveStream, onStartLiveView, onStopLiveView, onBlockRefetches, onAllowDomain, teachingSessionId, onManageTabs }) {
+function StudentTile({
+  student,
+  onClick,
+  blockedDomains = [],
+  isOffTask = false,
+  isAbsent = false,
+  isSelected = false,
+  onToggleSelect,
+  liveStream,
+  onStartLiveView,
+  onStopLiveView,
+  onBlockRefetches,
+  onAllowDomain,
+  teachingSessionId,
+  onManageTabs,
+  controlDisabled = false,
+  disabledReason = "",
+  supervisionLabel = "",
+  onReturnToClass,
+  returnToClassPending = false,
+}) {
   const [expanded, setExpanded] = useState(false);
   const { toast } = useToast();
   const tileVideoSlotRef = useRef(null);
@@ -92,7 +112,7 @@ function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false,
     queryKey: ['/api/heartbeats', student.primaryDeviceId],
     queryFn: () => apiRequest('GET', `/heartbeats/${student.primaryDeviceId}`),
     select: (data) => Array.isArray(data) ? data : data?.heartbeats ?? [],
-    enabled: !!student.primaryDeviceId,
+    enabled: !!student.primaryDeviceId && !controlDisabled,
     refetchInterval: 30000, // Refresh every 30 seconds
   });
 
@@ -108,7 +128,7 @@ function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false,
   const { data: screenshotData } = useQuery({
     queryKey: ['/api/device/screenshot', student.primaryDeviceId],
     queryFn: () => apiRequest('GET', `/device/screenshot/${student.primaryDeviceId}`),
-    enabled: !!student.primaryDeviceId && student.status !== 'offline' && !liveStream,
+    enabled: !!student.primaryDeviceId && student.status !== 'offline' && !liveStream && !controlDisabled,
     refetchInterval: 30000, // Refresh every 30 seconds (reduces server load at scale)
     refetchIntervalInBackground: false, // Don't refetch when browser tab is not focused
     retry: false, // Don't retry on 404 (no screenshot available)
@@ -308,6 +328,10 @@ function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false,
   };
 
   const getBorderStyle = (status) => {
+    if (controlDisabled) {
+      return 'border-2 border-slate-300 border-dashed dark:border-slate-700';
+    }
+
     if (isOffTask) {
       return 'border-2 border-red-500';
     }
@@ -329,6 +353,10 @@ function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false,
   };
 
   const getShadowStyle = (status) => {
+    if (controlDisabled) {
+      return 'shadow-sm';
+    }
+
     if (isOffTask) {
       return 'shadow-lg shadow-red-100 dark:shadow-red-950/30';
     }
@@ -350,6 +378,7 @@ function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false,
   };
 
   const getOpacity = (status) => {
+    if (controlDisabled) return 'opacity-90';
     if (isAbsent) return 'opacity-50';
     switch (status) {
       case 'online':
@@ -366,7 +395,7 @@ function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false,
   return (
     <Card
       data-testid={`card-student-${student.primaryDeviceId}`}
-      className={`${getBorderStyle(student.status)} ${getShadowStyle(student.status)} ${getOpacity(student.status)} hover-elevate cursor-pointer transition-all duration-200 overflow-hidden`}
+      className={`${getBorderStyle(student.status)} ${getShadowStyle(student.status)} ${getOpacity(student.status)} ${controlDisabled ? 'bg-slate-50/80 dark:bg-slate-950/40' : 'hover-elevate cursor-pointer'} transition-all duration-200 overflow-hidden`}
       onClick={onClick}
     >
       <div className="p-4 space-y-3">
@@ -376,6 +405,7 @@ function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false,
             {onToggleSelect && (
               <Checkbox
                 checked={isSelected}
+                disabled={controlDisabled}
                 onCheckedChange={onToggleSelect}
                 onClick={(e) => e.stopPropagation()}
                 data-testid={`checkbox-select-student-${student.primaryDeviceId}`}
@@ -421,15 +451,17 @@ function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false,
               variant="ghost"
               size="icon"
               className="h-7 w-7"
+              disabled={controlDisabled || lockToCurrentScreenMutation.isPending || unlockScreenMutation.isPending}
               onClick={(e) => {
                 e.stopPropagation();
+                if (controlDisabled) return;
                 if (student.screenLocked) {
                   unlockScreenMutation.mutate();
                 } else {
                   lockToCurrentScreenMutation.mutate();
                 }
               }}
-              title={student.screenLocked ? "Unlock screen" : "Lock to current screen"}
+              title={controlDisabled ? disabledReason || "Student is currently in supervision" : student.screenLocked ? "Unlock screen" : "Lock to current screen"}
               data-testid={`button-lock-toggle-${student.primaryDeviceId}`}
             >
               {student.screenLocked ? (
@@ -440,6 +472,18 @@ function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false,
             </Button>
           </div>
         </div>
+
+        {controlDisabled && (
+          <div className="rounded-md border border-slate-300 bg-white/80 p-3 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-900/70 dark:text-slate-200">
+            <div className="flex items-center gap-2 font-semibold">
+              <Lock className="h-3.5 w-3.5" />
+              <span>{supervisionLabel || "In supervision"}</span>
+            </div>
+            <p className="mt-1 leading-snug text-slate-500 dark:text-slate-400">
+              {disabledReason || "This student is currently claimed by another supervision session."}
+            </p>
+          </div>
+        )}
 
         {/* Alert Badges */}
         {(effectiveIsOffTask || isBlocked || isBlockedByFlightPath || student.flightPathActive || student.aiClassification?.safetyAlert || classroomNoiseSuppressed) && (
@@ -519,7 +563,15 @@ function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false,
         )}
 
         {/* Preview Zone - Live View, Screenshot Thumbnail, or Website Preview Card */}
-        {liveStream ? (
+        {controlDisabled ? (
+          <div className="flex aspect-video items-center justify-center rounded-lg border border-slate-200 bg-slate-100/80 text-center dark:border-slate-800 dark:bg-slate-900/80">
+            <div className="px-4">
+              <Lock className="mx-auto mb-2 h-6 w-6 text-slate-400" />
+              <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">Controls locked</p>
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Return the student to class to monitor again.</p>
+            </div>
+          </div>
+        ) : liveStream ? (
           <div className="aspect-video rounded-lg bg-black relative overflow-hidden">
             <div
               ref={tileVideoSlotRef}
@@ -619,7 +671,24 @@ function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false,
 
         {/* Footer Zone - Actions Only */}
         <div className="flex items-center justify-end gap-2 pt-2 border-t border-border/20">
-          {onManageTabs && (
+          {controlDisabled && onReturnToClass && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 px-3 text-xs border-amber-300 bg-amber-50 text-slate-900 hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-100"
+              disabled={returnToClassPending}
+              onClick={(e) => {
+                e.stopPropagation();
+                onReturnToClass();
+              }}
+              title="Release this student from supervision and return them to your active class"
+              data-testid={`button-return-to-class-${student.primaryDeviceId ?? "unknown-device"}`}
+            >
+              <RotateCcw className="h-3.5 w-3.5 mr-1" />
+              Return to Class
+            </Button>
+          )}
+          {onManageTabs && !controlDisabled && (
             <Button
               variant="outline"
               size="sm"
@@ -635,7 +704,7 @@ function StudentTile({ student, onClick, blockedDomains = [], isOffTask = false,
               Tabs
             </Button>
           )}
-          {onStartLiveView && onStopLiveView && (
+          {onStartLiveView && onStopLiveView && !controlDisabled && (
             <Button
               variant={liveStream ? "default" : "outline"}
               size="sm"
