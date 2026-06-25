@@ -1,7 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { Save, CheckCircle2, Smartphone, QrCode } from 'lucide-react';
+import { Save, CheckCircle2, Smartphone, QrCode, Eye } from 'lucide-react';
 import api from '../../../../shared/utils/api';
 import { TIMEZONES } from './constants';
+
+const DEFAULT_PARENT_DIGEST_SETTINGS = {
+  parentTransparencyEnabled: false,
+  parentDigestIncludesPassDismissal: true,
+  parentDigestIncludesSafety: false,
+};
 
 export default function SchoolSettingsTab({ schoolId }) {
   const [dismissalTime, setDismissalTime] = useState('15:00');
@@ -9,22 +15,31 @@ export default function SchoolSettingsTab({ schoolId }) {
   const [changeRequestWarning, setChangeRequestWarning] = useState('');
   const [checkInMethod, setCheckInMethod] = useState('app');
   const [autoDismissalEnabled, setAutoDismissalEnabled] = useState(true);
+  const [parentDigestSettings, setParentDigestSettings] = useState(() => ({ ...DEFAULT_PARENT_DIGEST_SETTINGS }));
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [parentDigestSaving, setParentDigestSaving] = useState(false);
+  const [parentDigestSaved, setParentDigestSaved] = useState(false);
+  const [parentDigestError, setParentDigestError] = useState('');
 
   useEffect(() => {
     if (!schoolId) return;
     Promise.all([
       api.get(`/schools/${schoolId}`),
       api.get(`/schools/${schoolId}/settings`).catch(() => ({ data: {} })),
-    ]).then(([schoolRes, settingsRes]) => {
+      api.get('/gopilot/settings/parent-digests').catch(() => ({ data: { settings: DEFAULT_PARENT_DIGEST_SETTINGS } })),
+    ]).then(([schoolRes, settingsRes, parentDigestRes]) => {
       const school = schoolRes.data?.school || schoolRes.data;
       setDismissalTime(school.dismissalTime || school.dismissal_time || '15:00');
       setTimezone(school.schoolTimezone || school.school_timezone || school.timezone || 'America/New_York');
       setChangeRequestWarning(settingsRes.data?.changeRequestWarning || '');
       setCheckInMethod(settingsRes.data?.checkInMethod || (settingsRes.data?.enableQrCodes ? 'qr' : 'app'));
       setAutoDismissalEnabled(settingsRes.data?.autoDismissalEnabled !== false);
+      setParentDigestSettings({
+        ...DEFAULT_PARENT_DIGEST_SETTINGS,
+        ...(parentDigestRes.data?.settings || {}),
+      });
     }).finally(() => setLoading(false));
   }, [schoolId]);
 
@@ -40,6 +55,32 @@ export default function SchoolSettingsTab({ schoolId }) {
       console.error('Failed to save settings:', err);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const updateParentDigestSetting = async (changes) => {
+    const nextSettings = { ...parentDigestSettings, ...changes };
+    const previousSettings = parentDigestSettings;
+    setParentDigestSettings(nextSettings);
+    setParentDigestSaving(true);
+    setParentDigestSaved(false);
+    setParentDigestError('');
+    try {
+      const response = await api.patch('/gopilot/settings/parent-digests', {
+        parentTransparencyEnabled: !!nextSettings.parentTransparencyEnabled,
+        parentDigestIncludesPassDismissal: nextSettings.parentDigestIncludesPassDismissal !== false,
+        parentDigestIncludesSafety: !!nextSettings.parentDigestIncludesSafety,
+      });
+      setParentDigestSettings({
+        ...DEFAULT_PARENT_DIGEST_SETTINGS,
+        ...(response.data?.settings || nextSettings),
+      });
+      setParentDigestSaved(true);
+    } catch (err) {
+      setParentDigestSettings(previousSettings);
+      setParentDigestError(err.response?.data?.error || err.message || 'Failed to save parent digest settings.');
+    } finally {
+      setParentDigestSaving(false);
     }
   };
 
@@ -134,6 +175,66 @@ export default function SchoolSettingsTab({ schoolId }) {
                 <p className="text-xs text-gray-500 dark:text-slate-400">Parents display their QR code tag in the car window</p>
               </div>
             </label>
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+          <div className="mb-4 flex items-start gap-3">
+            <Eye className="mt-0.5 h-5 w-5 text-gray-600 dark:text-slate-300" />
+            <div>
+              <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Parent Transparency Digest</h3>
+              <p className="text-xs text-gray-500 dark:text-slate-400">Weekly opt-in summaries for approved GoPilot parent-child links.</p>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <label className="flex items-start gap-3 rounded-lg border border-gray-200 p-3 dark:border-slate-700">
+              <input
+                type="checkbox"
+                className="mt-1 h-4 w-4 text-indigo-600"
+                checked={!!parentDigestSettings.parentTransparencyEnabled}
+                disabled={parentDigestSaving}
+                onChange={e => updateParentDigestSetting({ parentTransparencyEnabled: e.target.checked })}
+              />
+              <span>
+                <span className="block text-sm font-medium text-gray-900 dark:text-white">Enable weekly parent digests</span>
+                <span className="text-xs text-gray-500 dark:text-slate-400">Uses approved GoPilot parent links only.</span>
+              </span>
+            </label>
+
+            <label className="flex items-start gap-3 rounded-lg border border-gray-200 p-3 dark:border-slate-700">
+              <input
+                type="checkbox"
+                className="mt-1 h-4 w-4 text-indigo-600"
+                checked={parentDigestSettings.parentDigestIncludesPassDismissal !== false}
+                disabled={parentDigestSaving}
+                onChange={e => updateParentDigestSetting({ parentDigestIncludesPassDismissal: e.target.checked })}
+              />
+              <span>
+                <span className="block text-sm font-medium text-gray-900 dark:text-white">Include pass and dismissal summary</span>
+                <span className="text-xs text-gray-500 dark:text-slate-400">Shows counts and high-level school day context.</span>
+              </span>
+            </label>
+
+            <label className="flex items-start gap-3 rounded-lg border border-gray-200 p-3 dark:border-slate-700">
+              <input
+                type="checkbox"
+                className="mt-1 h-4 w-4 text-indigo-600"
+                checked={!!parentDigestSettings.parentDigestIncludesSafety}
+                disabled={parentDigestSaving}
+                onChange={e => updateParentDigestSetting({ parentDigestIncludesSafety: e.target.checked })}
+              />
+              <span>
+                <span className="block text-sm font-medium text-gray-900 dark:text-white">Include staff-approved safety notes</span>
+                <span className="text-xs text-gray-500 dark:text-slate-400">No screenshots, raw browsing timelines, or raw email content are included.</span>
+              </span>
+            </label>
+          </div>
+
+          <div className="mt-3 min-h-5 text-xs">
+            {parentDigestSaving && <span className="text-gray-500 dark:text-slate-400">Saving digest settings...</span>}
+            {!parentDigestSaving && parentDigestSaved && <span className="text-green-600">Digest settings saved.</span>}
+            {!parentDigestSaving && parentDigestError && <span className="text-red-600">{parentDigestError}</span>}
           </div>
         </div>
 

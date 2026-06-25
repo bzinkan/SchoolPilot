@@ -11,6 +11,7 @@ import changeRoutes from "./gopilot/changes.js";
 import pickupRoutes from "./gopilot/pickups.js";
 import busRouteRoutes from "./gopilot/busRoutes.js";
 import familyRoutes from "./gopilot/families.js";
+import gopilotSettingsRoutes from "./gopilot/settings.js";
 import deviceRoutes from "./classpilot/devices.js";
 import monitoringRoutes from "./classpilot/monitoring.js";
 import teachingSessionRoutes from "./classpilot/sessions.js";
@@ -332,6 +333,7 @@ router.use("/gopilot/dismissal", changeRoutes);
 router.use("/gopilot", changeRoutes);
 router.use("/gopilot/pickups", pickupRoutes);
 router.use("/gopilot/bus-routes", busRouteRoutes);
+router.use("/gopilot/settings", gopilotSettingsRoutes);
 router.use("/gopilot", familyRoutes);
 
 // GoPilot root-level aliases (dismissal sessions/queue, changes, homerooms)
