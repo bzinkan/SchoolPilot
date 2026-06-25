@@ -2153,6 +2153,12 @@ export default function Dashboard() {
           <div className="flex items-center gap-2 flex-wrap mb-4">
             <Button size="sm" variant="outline" onClick={() => setShowOpenTabDialog(true)} data-testid="button-open-tab" className="text-blue-600 dark:text-blue-400"><MonitorPlay className="h-4 w-4 mr-2" />Open URL</Button>
             <Button size="sm" variant="outline" onClick={() => openManageTabs(null)} data-testid="button-tabs" className="text-blue-600 dark:text-blue-400"><List className="h-4 w-4 mr-2" />Tabs</Button>
+            <Button size="sm" variant="outline" onClick={handleLockScreen} disabled={lockScreenMutation.isPending} data-testid="button-lock-screen" className="text-amber-600 dark:text-amber-400"><Lock className="h-4 w-4 mr-2" />Lock Screen</Button>
+            <Button size="sm" variant="outline" onClick={handleUnlockScreen} disabled={unlockScreenMutation.isPending} data-testid="button-unlock-screen" className="text-amber-600 dark:text-amber-400"><Unlock className="h-4 w-4 mr-2" />Unlock Screen</Button>
+            <Button size="sm" variant="outline" onClick={() => setShowApplyFlightPathDialog(true)} data-testid="button-apply-flight-path" className="text-purple-600 dark:text-purple-400"><Layers className="h-4 w-4 mr-2" />Apply Flight Path</Button>
+            {studentView === "class" && <Button size="sm" variant="outline" onClick={() => setShowFlightPathViewerDialog(true)} data-testid="button-flight-path-status" className="text-purple-600 dark:text-purple-400"><Eye className="h-4 w-4 mr-2" />Flight Path Status</Button>}
+            <Button size="sm" variant="outline" onClick={() => setShowApplyBlockListDialog(true)} data-testid="button-apply-block-list" className="text-red-600 dark:text-red-400"><ShieldBan className="h-4 w-4 mr-2" />Apply Block List</Button>
+            {studentView === "class" && <Button size="sm" variant="outline" onClick={() => setShowBlockListViewerDialog(true)} data-testid="button-block-list-status" className="text-red-600 dark:text-red-400"><Shield className="h-4 w-4 mr-2" />Block List Status</Button>}
             {studentView === "class" && (
               <Button
                 size="sm"
@@ -2163,15 +2169,9 @@ export default function Dashboard() {
                 className="border-gray-300 bg-gray-200 text-black hover:bg-gray-300 hover:text-black disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-200 disabled:text-black/60 disabled:opacity-40"
               >
                 <LogOut className="h-4 w-4 mr-2" />
-                Sign out
+                Student Sign Out
               </Button>
             )}
-            <Button size="sm" variant="outline" onClick={handleLockScreen} disabled={lockScreenMutation.isPending} data-testid="button-lock-screen" className="text-amber-600 dark:text-amber-400"><Lock className="h-4 w-4 mr-2" />Lock Screen</Button>
-            <Button size="sm" variant="outline" onClick={handleUnlockScreen} disabled={unlockScreenMutation.isPending} data-testid="button-unlock-screen" className="text-amber-600 dark:text-amber-400"><Unlock className="h-4 w-4 mr-2" />Unlock Screen</Button>
-            <Button size="sm" variant="outline" onClick={() => setShowApplyFlightPathDialog(true)} data-testid="button-apply-flight-path" className="text-purple-600 dark:text-purple-400"><Layers className="h-4 w-4 mr-2" />Apply Flight Path</Button>
-            {studentView === "class" && <Button size="sm" variant="outline" onClick={() => setShowFlightPathViewerDialog(true)} data-testid="button-flight-path-status" className="text-purple-600 dark:text-purple-400"><Eye className="h-4 w-4 mr-2" />Flight Path Status</Button>}
-            <Button size="sm" variant="outline" onClick={() => setShowApplyBlockListDialog(true)} data-testid="button-apply-block-list" className="text-red-600 dark:text-red-400"><ShieldBan className="h-4 w-4 mr-2" />Apply Block List</Button>
-            {studentView === "class" && <Button size="sm" variant="outline" onClick={() => setShowBlockListViewerDialog(true)} data-testid="button-block-list-status" className="text-red-600 dark:text-red-400"><Shield className="h-4 w-4 mr-2" />Block List Status</Button>}
             {studentView === "class" && subgroups.length > 0 && (
               <label className={`inline-flex h-8 items-center gap-2 rounded-md border bg-background px-3 text-xs font-medium shadow-sm ${selectedSubgroupId ? "border-pink-300 text-pink-600 dark:text-pink-400" : "border-input text-pink-600 dark:text-pink-400"}`}>
                 <UsersRound className="h-4 w-4" />
@@ -2538,7 +2538,7 @@ export default function Dashboard() {
               className="border border-gray-300 bg-gray-200 text-black hover:bg-gray-300 hover:text-black disabled:opacity-40"
             >
               <LogOut className="h-4 w-4 mr-2" />
-              Sign out
+              Student Sign Out
             </Button>
           </DialogFooter>
         </DialogContent>
