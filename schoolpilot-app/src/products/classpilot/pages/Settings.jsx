@@ -18,7 +18,7 @@ import {
 } from "../../../components/ui/dialog";
 import { useToast } from "../../../hooks/use-toast";
 import { apiRequest, queryClient } from "../../../lib/queryClient";
-import { ArrowLeft, Download, Shield, Clock, AlertCircle, Layers, Plus, Pencil, Trash2, Star, Users, BookOpen, Eye, Copy, RefreshCw, KeyRound } from "lucide-react";
+import { ArrowLeft, Download, Shield, Clock, AlertCircle, Layers, Plus, Pencil, Trash2, Star, Users, BookOpen, Copy, RefreshCw, KeyRound } from "lucide-react";
 import { ThemeToggle } from "../../../components/ThemeToggle";
 
 // Helper function to normalize domain names
@@ -96,12 +96,6 @@ export default function Settings() {
     queryKey: ['/api/flight-paths'],
     queryFn: () => apiRequest('GET', '/flight-paths'),
     select: (data) => Array.isArray(data) ? data : (data?.flightPaths ?? data?.scenes ?? []),
-  });
-
-  const { data: parentDigestSettings } = useQuery({
-    queryKey: ["/api/classpilot/parent-digests/settings"],
-    queryFn: () => apiRequest("GET", "/classpilot/parent-digests/settings"),
-    select: (data) => data?.settings ?? {},
   });
 
   const { data: enrollmentKeySettings, isLoading: enrollmentKeyLoading } = useQuery({
@@ -290,19 +284,6 @@ export default function Settings() {
       setClassroomFlightPathName("");
     },
     onError: (error) => toast({ variant: "destructive", title: "Classroom import failed", description: error.message }),
-  });
-
-  const parentDigestMutation = useMutation({
-    mutationFn: (payload) => apiRequest("PATCH", "/classpilot/parent-digests/settings", {
-      parentTransparencyEnabled: !!payload.parentTransparencyEnabled,
-      parentDigestIncludesSafety: !!payload.parentDigestIncludesSafety,
-      parentDigestIncludesPassDismissal: payload.parentDigestIncludesPassDismissal !== false,
-    }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/classpilot/parent-digests/settings"] });
-      toast({ title: "Parent digest settings saved" });
-    },
-    onError: (error) => toast({ variant: "destructive", title: "Digest settings failed", description: error.message }),
   });
 
   const resetSceneForm = () => {
@@ -754,66 +735,6 @@ export default function Settings() {
                 ))}
               </div>
             )}
-          </CardContent>
-        </Card>
-
-        {/* Parent Transparency */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Eye className="h-5 w-5" />
-              Parent Transparency Digest
-            </CardTitle>
-            <CardDescription>
-              Weekly opt-in summaries for approved GoPilot parent-child links
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <label className="flex items-start gap-3 rounded-md border p-3">
-              <input
-                type="checkbox"
-                className="mt-1 h-4 w-4"
-                checked={!!parentDigestSettings?.parentTransparencyEnabled}
-                onChange={(event) => parentDigestMutation.mutate({
-                  ...parentDigestSettings,
-                  parentTransparencyEnabled: event.target.checked,
-                })}
-              />
-              <span>
-                <span className="block text-sm font-medium">Enable weekly parent digests</span>
-                <span className="text-xs text-muted-foreground">Uses approved GoPilot parent links only.</span>
-              </span>
-            </label>
-            <label className="flex items-start gap-3 rounded-md border p-3">
-              <input
-                type="checkbox"
-                className="mt-1 h-4 w-4"
-                checked={parentDigestSettings?.parentDigestIncludesPassDismissal !== false}
-                onChange={(event) => parentDigestMutation.mutate({
-                  ...parentDigestSettings,
-                  parentDigestIncludesPassDismissal: event.target.checked,
-                })}
-              />
-              <span>
-                <span className="block text-sm font-medium">Include pass and dismissal summary</span>
-                <span className="text-xs text-muted-foreground">Shows counts and high-level school day context.</span>
-              </span>
-            </label>
-            <label className="flex items-start gap-3 rounded-md border p-3">
-              <input
-                type="checkbox"
-                className="mt-1 h-4 w-4"
-                checked={!!parentDigestSettings?.parentDigestIncludesSafety}
-                onChange={(event) => parentDigestMutation.mutate({
-                  ...parentDigestSettings,
-                  parentDigestIncludesSafety: event.target.checked,
-                })}
-              />
-              <span>
-                <span className="block text-sm font-medium">Include staff-approved safety notes</span>
-                <span className="text-xs text-muted-foreground">No screenshots, raw browsing timelines, or raw email content are included.</span>
-              </span>
-            </label>
           </CardContent>
         </Card>
 
