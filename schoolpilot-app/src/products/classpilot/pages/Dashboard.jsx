@@ -243,6 +243,14 @@ export default function Dashboard() {
   });
   const manageableCoverageCount = activeCoverageContexts.filter((context) => context.canManage).length;
 
+  const { data: rerouteCoverageTargets = [] } = useQuery({
+    queryKey: ['/api/coverage/reroute-targets'],
+    queryFn: () => apiRequest('GET', '/coverage/reroute-targets'),
+    select: (data) => data?.contexts || [],
+    enabled: isAdmin || isTeacher,
+    refetchInterval: 10000,
+  });
+
   // Admin observe mode logic
   const observedSession = isAdmin && adminObservedSessionId
     ? allActiveSessions.find(s => s.id === adminObservedSessionId)
@@ -1013,6 +1021,7 @@ export default function Dashboard() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
       queryClient.invalidateQueries({ queryKey: ['/api/coverage/contexts'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/coverage/reroute-targets'] });
       queryClient.invalidateQueries({ queryKey: ['/api/coverage/unassigned'] });
       setShowRerouteDialog(false);
       setSelectedCoverageContextId("");
@@ -1698,7 +1707,7 @@ export default function Dashboard() {
             userRole={currentUser?.role}
             coverageCount={manageableCoverageCount}
             onOpenCoverage={() => navigate("/classpilot/coverage")}
-            canReroute={activeCoverageContexts.length > 0}
+            canReroute={rerouteCoverageTargets.length > 0}
             onReroute={() => setShowRerouteDialog(true)}
           />
         )}
@@ -1907,9 +1916,9 @@ export default function Dashboard() {
               <Select value={selectedCoverageContextId} onValueChange={setSelectedCoverageContextId}>
                 <SelectTrigger data-testid="select-coverage-context"><SelectValue placeholder="Select coverage" /></SelectTrigger>
                 <SelectContent>
-                  {activeCoverageContexts.length === 0 ? (
+                  {rerouteCoverageTargets.length === 0 ? (
                     <SelectItem value="none" disabled>No active coverage contexts</SelectItem>
-                  ) : activeCoverageContexts.map((context) => (
+                  ) : rerouteCoverageTargets.map((context) => (
                     <SelectItem key={context.id} value={context.id}>
                       {context.name} · {context.assignedStaff?.displayName || "Coverage staff"}
                     </SelectItem>

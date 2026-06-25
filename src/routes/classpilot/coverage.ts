@@ -7,10 +7,13 @@ import { getSchoolDeviceStatuses } from "../../realtime/student-statuses.js";
 import {
   assignStudentsToSupervisionContext,
   createCoverageAssignment,
+  createCoverageScopeGroup,
   createSupervisionContextWithStudents,
   getActiveSessionByStudent,
   extendSupervisionContext,
   getActiveCoverageAssignmentsForStaff,
+  getCoverageScopeGroupByIdAndSchool,
+  getCoverageScopeGroupStudentIds,
   getActiveTeachingSessionForSchool,
   getGroupByIdAndSchool,
   getGroupStudents,
@@ -20,10 +23,13 @@ import {
   getSupervisionContextByIdAndSchool,
   getUserById,
   listCoverageAssignments,
+  listCoverageScopeGroups,
   listSupervisionContexts,
   listSupervisionStudentsForContexts,
+  replaceCoverageScopeGroupMembers,
   releaseSupervisionStudents,
-  updateCoverageAssignmentActive,
+  updateCoverageAssignment,
+  updateCoverageScopeGroup,
   type OnlineUnassignedStudent,
 } from "../../services/storage.js";
 import { getAuditLogs, logAudit } from "../../services/audit.js";
@@ -50,6 +56,7 @@ const COVERAGE_TYPES = new Set([
   "assembly",
   "other",
 ]);
+const COVERAGE_SCOPE_TYPES = new Set(["school", "grade", "group", "students", "coverage_group"]);
 
 function isAdmin(req: any, res: any) {
   const role = res.locals.membershipRole;
@@ -129,6 +136,10 @@ async function groupStudentSet(groupId: string): Promise<Set<string>> {
   return new Set(rows.map((row) => row.studentId));
 }
 
+async function coverageGroupStudentSet(schoolId: string, coverageGroupId: string): Promise<Set<string>> {
+  return new Set(await getCoverageScopeGroupStudentIds(schoolId, coverageGroupId));
+}
+
 async function assignmentsCoverStudent(assignments: any[], student: any): Promise<boolean> {
   for (const assignment of assignments) {
     if (assignment.scopeType === "school") return true;
@@ -141,6 +152,10 @@ async function assignmentsCoverStudent(assignments: any[], student: any): Promis
     }
     if (assignment.scopeType === "group" && assignment.scopeValue) {
       const members = await groupStudentSet(assignment.scopeValue);
+      if (members.has(student.id)) return true;
+    }
+    if (assignment.scopeType === "coverage_group" && assignment.scopeValue) {
+      const members = await coverageGroupStudentSet(student.schoolId, assignment.scopeValue);
       if (members.has(student.id)) return true;
     }
   }
@@ -167,6 +182,101 @@ async function assertStudentsInSchool(schoolId: string, studentIds: string[]) {
     students.push(student);
   }
   return students;
+}
+
+async function assertValidAssignmentScope(schoolId: string, scopeType: string, rawScopeValue: unknown) {
+  if (!COVERAGE_SCOPE_TYPES.has(scopeType)) {
+    throw Object.assign(new Error("A valid coverage scope is required"), { status: 400 });
+  }
+  const scopeValue = normalizeScopeValue(scopeType, rawScopeValue);
+  if (scopeType !== "school" && !scopeValue) {
+    throw Object.assign(new Error("scopeValue is required for this scope type"), { status: 400 });
+  }
+  if (scopeType === "group" && !(await getGroupByIdAndSchool(scopeValue!, schoolId))) {
+    throw Object.assign(new Error("Coverage class/group not found"), { status: 404 });
+  }
+  if (scopeType === "coverage_group") {
+    const group = await getCoverageScopeGroupByIdAndSchool(schoolId, scopeValue!);
+    if (!group || !group.active) {
+      throw Object.assign(new Error("Testing group not found"), { status: 404 });
+    }
+  }
+  if (scopeType === "students") {
+    await assertStudentsInSchool(schoolId, scopeValue!.split(",").map((id) => id.trim()).filter(Boolean));
+  }
+  return scopeValue;
+}
+
+async function assignmentResponse(schoolId: string, assignments: any[]) {
+  const staffIds = [...new Set(assignments.map((assignment) => assignment.staffId).filter(Boolean))];
+  const staffEntries = await Promise.all(staffIds.map(async (id) => [id, await getUserById(id)] as const));
+  const staffById = new Map(staffEntries);
+
+  return Promise.all(assignments.map(async (assignment) => {
+    const staff = staffById.get(assignment.staffId);
+    let scopeLabel = "Schoolwide";
+    let scopeDetail: any = null;
+    if (assignment.scopeType === "grade") {
+      scopeLabel = `Grade ${assignment.scopeValue}`;
+    } else if (assignment.scopeType === "group") {
+      const group = assignment.scopeValue ? await getGroupByIdAndSchool(assignment.scopeValue, schoolId) : null;
+      scopeLabel = group?.name ? `Class/Group: ${group.name}` : "Class/Group";
+      scopeDetail = group ? { id: group.id, name: group.name } : null;
+    } else if (assignment.scopeType === "coverage_group") {
+      const group = assignment.scopeValue ? await getCoverageScopeGroupByIdAndSchool(schoolId, assignment.scopeValue) : null;
+      scopeLabel = group?.name ? `Testing Group: ${group.name}` : "Testing Group";
+      scopeDetail = group ? { id: group.id, name: group.name, studentCount: group.members.length } : null;
+    } else if (assignment.scopeType === "students") {
+      const ids = String(assignment.scopeValue || "").split(",").map((id) => id.trim()).filter(Boolean);
+      scopeLabel = `${ids.length} selected student${ids.length === 1 ? "" : "s"}`;
+      scopeDetail = { studentIds: ids };
+    }
+
+    return {
+      ...assignment,
+      permissionLabel: "Claim + Manage",
+      scopeLabel,
+      scopeDetail,
+      staff: staff ? {
+        id: staff.id,
+        email: staff.email,
+        displayName: staff.displayName || [staff.firstName, staff.lastName].filter(Boolean).join(" ") || staff.email,
+      } : null,
+    };
+  }));
+}
+
+function coverageScopeGroupPayload(group: any) {
+  return {
+    id: group.id,
+    schoolId: group.schoolId,
+    name: group.name,
+    description: group.description,
+    active: group.active,
+    createdBy: group.createdBy,
+    createdAt: group.createdAt,
+    updatedAt: group.updatedAt,
+    studentCount: group.members.length,
+    students: group.members.map((member: any) => ({
+      studentId: member.studentId,
+      studentName: studentName(member.student),
+      studentEmail: member.student.email || undefined,
+      gradeLevel: member.student.gradeLevel || undefined,
+    })),
+  };
+}
+
+function coverageCommandResponse(result: any) {
+  const command = result.command
+    ? {
+        ...result.command,
+        targets: (result.command.targets || []).map((target: any) => {
+          const { deviceId: _deviceId, studentSessionId: _studentSessionId, ...safeTarget } = target;
+          return safeTarget;
+        }),
+      }
+    : result.command;
+  return { ...result, command };
 }
 
 async function contextResponse(schoolId: string, contexts: any[], includeStudentsFor: (context: any) => boolean) {
@@ -336,8 +446,9 @@ router.get("/coverage/unassigned", ...auth, async (req, res, next) => {
 router.get("/coverage/assignments", ...auth, async (req, res, next) => {
   try {
     if (!isAdmin(req, res)) return res.status(403).json({ error: "Admin access required" });
-    const assignments = await listCoverageAssignments(res.locals.schoolId!);
-    return res.json({ assignments });
+    const schoolId = res.locals.schoolId!;
+    const assignments = await listCoverageAssignments(schoolId);
+    return res.json({ assignments: await assignmentResponse(schoolId, assignments) });
   } catch (err) {
     next(err);
   }
@@ -349,20 +460,14 @@ router.post("/coverage/assignments", ...auth, async (req, res, next) => {
     const schoolId = res.locals.schoolId!;
     const staffId = String(req.body.staffId || "").trim();
     const scopeType = String(req.body.scopeType || "").trim();
-    if (!staffId || !["school", "grade", "group", "students"].includes(scopeType)) {
+    if (!staffId || !COVERAGE_SCOPE_TYPES.has(scopeType)) {
       return res.status(400).json({ error: "staffId and valid scopeType are required" });
     }
     const membership = await getMembershipByUserAndSchool(staffId, schoolId);
     if (!membership || membership.status !== "active") {
       return res.status(404).json({ error: "Staff member not found in this school" });
     }
-    const scopeValue = normalizeScopeValue(scopeType, req.body.scopeValue ?? req.body.studentIds);
-    if (scopeType !== "school" && !scopeValue) {
-      return res.status(400).json({ error: "scopeValue is required for this scope type" });
-    }
-    if (scopeType === "group" && !(await getGroupByIdAndSchool(scopeValue!, schoolId))) {
-      return res.status(404).json({ error: "Coverage group not found" });
-    }
+    const scopeValue = await assertValidAssignmentScope(schoolId, scopeType, req.body.scopeValue ?? req.body.studentIds);
 
     const assignment = await createCoverageAssignment({
       schoolId,
@@ -383,8 +488,9 @@ router.post("/coverage/assignments", ...auth, async (req, res, next) => {
       entityId: assignment.id,
       changes: assignment,
     });
-    return res.status(201).json({ assignment });
-  } catch (err) {
+    return res.status(201).json({ assignment: (await assignmentResponse(schoolId, [assignment]))[0] });
+  } catch (err: any) {
+    if (err?.status) return res.status(err.status).json({ error: err.message });
     next(err);
   }
 });
@@ -392,11 +498,169 @@ router.post("/coverage/assignments", ...auth, async (req, res, next) => {
 router.patch("/coverage/assignments/:id", ...auth, async (req, res, next) => {
   try {
     if (!isAdmin(req, res)) return res.status(403).json({ error: "Admin access required" });
-    const active = req.body.active !== false;
-    const assignment = await updateCoverageAssignmentActive(res.locals.schoolId!, String(req.params.id), active);
+    const schoolId = res.locals.schoolId!;
+    const assignmentId = String(req.params.id);
+    const existing = (await listCoverageAssignments(schoolId)).find((assignment) => assignment.id === assignmentId);
+    if (!existing) return res.status(404).json({ error: "Coverage assignment not found" });
+
+    const activeOnlyChange =
+      req.body.active !== undefined &&
+      req.body.staffId === undefined &&
+      req.body.scopeType === undefined &&
+      req.body.scopeValue === undefined &&
+      req.body.studentIds === undefined;
+    if (activeOnlyChange) {
+      const assignment = await updateCoverageAssignment(schoolId, assignmentId, { active: req.body.active !== false });
+      if (!assignment) return res.status(404).json({ error: "Coverage assignment not found" });
+      await logAudit({
+        schoolId,
+        userId: req.authUser!.id,
+        userEmail: req.authUser!.email,
+        userRole: res.locals.membershipRole,
+        action: "coverage.assignment.update",
+        entityType: "coverage_assignment",
+        entityId: assignment.id,
+        changes: { active: assignment.active },
+      });
+      return res.json({ assignment: (await assignmentResponse(schoolId, [assignment]))[0] });
+    }
+
+    const nextStaffId = req.body.staffId === undefined ? existing.staffId : String(req.body.staffId || "").trim();
+    const nextScopeType = req.body.scopeType === undefined ? existing.scopeType : String(req.body.scopeType || "").trim();
+    const rawScopeValue = req.body.scopeValue === undefined && req.body.studentIds === undefined
+      ? existing.scopeValue
+      : req.body.scopeValue ?? req.body.studentIds;
+    if (!nextStaffId) return res.status(400).json({ error: "staffId is required" });
+    const membership = await getMembershipByUserAndSchool(nextStaffId, schoolId);
+    if (!membership || membership.status !== "active") {
+      return res.status(404).json({ error: "Staff member not found in this school" });
+    }
+    const scopeValue = await assertValidAssignmentScope(schoolId, nextScopeType, rawScopeValue);
+    const active = req.body.active === undefined ? existing.active : req.body.active !== false;
+
+    const assignment = await updateCoverageAssignment(schoolId, assignmentId, {
+      staffId: nextStaffId,
+      scopeType: nextScopeType as any,
+      scopeValue,
+      permissions: { observe: true, claim: true },
+      active,
+    });
     if (!assignment) return res.status(404).json({ error: "Coverage assignment not found" });
-    return res.json({ assignment });
+    await logAudit({
+      schoolId,
+      userId: req.authUser!.id,
+      userEmail: req.authUser!.email,
+      userRole: res.locals.membershipRole,
+      action: "coverage.assignment.update",
+      entityType: "coverage_assignment",
+      entityId: assignment.id,
+      changes: assignment,
+    });
+    return res.json({ assignment: (await assignmentResponse(schoolId, [assignment]))[0] });
+  } catch (err: any) {
+    if (err?.status) return res.status(err.status).json({ error: err.message });
+    next(err);
+  }
+});
+
+router.get("/coverage/scope-groups", ...auth, async (req, res, next) => {
+  try {
+    if (!isAdmin(req, res)) return res.status(403).json({ error: "Admin access required" });
+    const groups = await listCoverageScopeGroups(res.locals.schoolId!, { activeOnly: req.query.active === "true" });
+    return res.json({ groups: groups.map(coverageScopeGroupPayload) });
   } catch (err) {
+    next(err);
+  }
+});
+
+router.post("/coverage/scope-groups", ...auth, async (req, res, next) => {
+  try {
+    if (!isAdmin(req, res)) return res.status(403).json({ error: "Admin access required" });
+    const schoolId = res.locals.schoolId!;
+    const name = String(req.body.name || "").trim();
+    if (!name) return res.status(400).json({ error: "name is required" });
+    const studentIds = normalizeStudentIds(req.body.studentIds);
+    await assertStudentsInSchool(schoolId, studentIds);
+    const group = await createCoverageScopeGroup({
+      group: {
+        schoolId,
+        name,
+        description: req.body.description ? String(req.body.description) : null,
+        active: true,
+        createdBy: req.authUser!.id,
+      },
+      studentIds,
+    });
+    await logAudit({
+      schoolId,
+      userId: req.authUser!.id,
+      userEmail: req.authUser!.email,
+      userRole: res.locals.membershipRole,
+      action: "coverage.scope_group.create",
+      entityType: "coverage_scope_group",
+      entityId: group.id,
+      changes: { name, studentIds },
+    });
+    return res.status(201).json({ group: coverageScopeGroupPayload(group) });
+  } catch (err: any) {
+    if (err?.status) return res.status(err.status).json({ error: err.message });
+    next(err);
+  }
+});
+
+router.patch("/coverage/scope-groups/:id", ...auth, async (req, res, next) => {
+  try {
+    if (!isAdmin(req, res)) return res.status(403).json({ error: "Admin access required" });
+    const schoolId = res.locals.schoolId!;
+    const groupId = String(req.params.id);
+    const data: { name?: string; description?: string | null; active?: boolean } = {};
+    if (req.body.name !== undefined) {
+      const name = String(req.body.name || "").trim();
+      if (!name) return res.status(400).json({ error: "name is required" });
+      data.name = name;
+    }
+    if (req.body.description !== undefined) data.description = String(req.body.description || "");
+    if (req.body.active !== undefined) data.active = req.body.active !== false;
+    const group = await updateCoverageScopeGroup({ schoolId, groupId, ...data });
+    if (!group) return res.status(404).json({ error: "Testing group not found" });
+    await logAudit({
+      schoolId,
+      userId: req.authUser!.id,
+      userEmail: req.authUser!.email,
+      userRole: res.locals.membershipRole,
+      action: "coverage.scope_group.update",
+      entityType: "coverage_scope_group",
+      entityId: group.id,
+      changes: data,
+    });
+    return res.json({ group: coverageScopeGroupPayload(group) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.put("/coverage/scope-groups/:id/students", ...auth, async (req, res, next) => {
+  try {
+    if (!isAdmin(req, res)) return res.status(403).json({ error: "Admin access required" });
+    const schoolId = res.locals.schoolId!;
+    const groupId = String(req.params.id);
+    const studentIds = normalizeStudentIds(req.body.studentIds);
+    await assertStudentsInSchool(schoolId, studentIds);
+    const group = await replaceCoverageScopeGroupMembers({ schoolId, groupId, studentIds });
+    if (!group) return res.status(404).json({ error: "Testing group not found" });
+    await logAudit({
+      schoolId,
+      userId: req.authUser!.id,
+      userEmail: req.authUser!.email,
+      userRole: res.locals.membershipRole,
+      action: "coverage.scope_group.members.update",
+      entityType: "coverage_scope_group",
+      entityId: group.id,
+      changes: { studentIds },
+    });
+    return res.json({ group: coverageScopeGroupPayload(group) });
+  } catch (err: any) {
+    if (err?.status) return res.status(err.status).json({ error: err.message });
     next(err);
   }
 });
@@ -409,13 +673,41 @@ router.get("/coverage/contexts", ...auth, async (req, res, next) => {
     const contexts = await listSupervisionContexts(schoolId, { activeOnly });
     const visible = isAdmin(req, res)
       ? contexts
-      : contexts.filter((context) => context.assignedStaffId === req.authUser!.id || context.createdBy === req.authUser!.id || activeOnly);
+      : contexts.filter((context) => context.assignedStaffId === req.authUser!.id || context.createdBy === req.authUser!.id);
     const response = await contextResponse(
       schoolId,
       visible,
       (context) => isAdmin(req, res) || context.assignedStaffId === req.authUser!.id || context.createdBy === req.authUser!.id
     );
     return res.json({ contexts: response });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get("/coverage/reroute-targets", ...auth, async (req, res, next) => {
+  try {
+    if (!requireStaffRole(req, res)) return res.status(403).json({ error: "Staff access required" });
+    const schoolId = res.locals.schoolId!;
+    const contexts = await listSupervisionContexts(schoolId, { activeOnly: true });
+    const staffIds = [...new Set(contexts.map((context) => context.assignedStaffId).filter(Boolean))];
+    const staffEntries = await Promise.all(staffIds.map(async (id) => [id, await getUserById(id)] as const));
+    const staffById = new Map(staffEntries);
+    return res.json({
+      contexts: contexts.map((context) => {
+        const staff = staffById.get(context.assignedStaffId);
+        return {
+          id: context.id,
+          name: context.name,
+          contextType: context.contextType,
+          assignedStaff: staff ? {
+            id: staff.id,
+            displayName: staff.displayName || [staff.firstName, staff.lastName].filter(Boolean).join(" ") || staff.email,
+          } : null,
+          endsAt: context.endsAt,
+        };
+      }),
+    });
   } catch (err) {
     next(err);
   }
@@ -557,7 +849,7 @@ router.post("/coverage/contexts/:id/commands", ...auth, async (req, res, next) =
         summary: result.summary,
       },
     });
-    return res.status(201).json(result);
+    return res.status(201).json(coverageCommandResponse(result));
   } catch (err: any) {
     if (err?.status) return res.status(err.status).json({ error: err.message });
     next(err);
@@ -568,7 +860,15 @@ router.post("/coverage/contexts", ...auth, async (req, res, next) => {
   try {
     if (!requireStaffRole(req, res)) return res.status(403).json({ error: "Staff access required" });
     const schoolId = res.locals.schoolId!;
-    const studentIds = normalizeStudentIds(req.body.studentIds);
+    let studentIds = normalizeStudentIds(req.body.studentIds);
+    const coverageGroupId = String(req.body.coverageGroupId || "").trim();
+    if (coverageGroupId) {
+      const coverageGroup = await getCoverageScopeGroupByIdAndSchool(schoolId, coverageGroupId);
+      if (!coverageGroup || !coverageGroup.active) {
+        return res.status(404).json({ error: "Testing group not found" });
+      }
+      studentIds = [...new Set([...studentIds, ...(await getCoverageScopeGroupStudentIds(schoolId, coverageGroupId))])];
+    }
     const admin = isAdmin(req, res);
     if (studentIds.length === 0 && !admin) return res.status(400).json({ error: "studentIds are required" });
     const students = await assertStudentsInSchool(schoolId, studentIds);
@@ -624,7 +924,7 @@ router.post("/coverage/contexts", ...auth, async (req, res, next) => {
       action: "coverage.context.create",
       entityType: "supervision_context",
       entityId: context.id,
-      changes: { contextType, studentIds, assignedStaffId, endsAt, note: req.body.note ? String(req.body.note) : null },
+      changes: { contextType, studentIds, coverageGroupId: coverageGroupId || null, assignedStaffId, endsAt, note: req.body.note ? String(req.body.note) : null },
     });
     return res.status(201).json({ context });
   } catch (err: any) {

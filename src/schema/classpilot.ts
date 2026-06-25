@@ -638,7 +638,7 @@ export const classpilotCoverageAssignments = pgTable(
     staffId: text("staff_id").notNull(),
     scopeType: text("scope_type")
       .notNull()
-      .$type<"school" | "grade" | "group" | "students">(),
+      .$type<"school" | "grade" | "group" | "students" | "coverage_group">(),
     scopeValue: text("scope_value"),
     permissions: jsonb("permissions").notNull().default(sql`'{}'::jsonb`),
     active: boolean("active").notNull().default(true),
@@ -661,6 +661,54 @@ export const classpilotCoverageAssignments = pgTable(
 
 export type ClasspilotCoverageAssignment = typeof classpilotCoverageAssignments.$inferSelect;
 export type InsertClasspilotCoverageAssignment = typeof classpilotCoverageAssignments.$inferInsert;
+
+export const classpilotCoverageScopeGroups = pgTable(
+  "classpilot_coverage_scope_groups",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
+    name: text("name").notNull(),
+    description: text("description"),
+    active: boolean("active").notNull().default(true),
+    createdBy: text("created_by").notNull(),
+    createdAt: timestamp("created_at").notNull().default(sql`now()`),
+    updatedAt: timestamp("updated_at").notNull().default(sql`now()`),
+  },
+  (table) => [
+    index("classpilot_coverage_scope_groups_school_idx").on(
+      table.schoolId,
+      table.active
+    ),
+  ]
+);
+
+export type ClasspilotCoverageScopeGroup = typeof classpilotCoverageScopeGroups.$inferSelect;
+export type InsertClasspilotCoverageScopeGroup = typeof classpilotCoverageScopeGroups.$inferInsert;
+
+export const classpilotCoverageScopeGroupMembers = pgTable(
+  "classpilot_coverage_scope_group_members",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
+    coverageGroupId: varchar("coverage_group_id").notNull(),
+    studentId: text("student_id").notNull(),
+    assignedAt: timestamp("assigned_at").notNull().default(sql`now()`),
+  },
+  (table) => [
+    index("classpilot_coverage_scope_group_members_group_idx").on(
+      table.schoolId,
+      table.coverageGroupId
+    ),
+    uniqueIndex("classpilot_coverage_scope_group_members_unique").on(
+      table.schoolId,
+      table.coverageGroupId,
+      table.studentId
+    ),
+  ]
+);
+
+export type ClasspilotCoverageScopeGroupMember = typeof classpilotCoverageScopeGroupMembers.$inferSelect;
+export type InsertClasspilotCoverageScopeGroupMember = typeof classpilotCoverageScopeGroupMembers.$inferInsert;
 
 export const classpilotSupervisionContexts = pgTable(
   "classpilot_supervision_contexts",

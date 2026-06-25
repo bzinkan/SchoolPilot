@@ -109,17 +109,31 @@ export default function Coverage() {
   const [selectedBlockListId, setSelectedBlockListId] = useState("");
   const [releaseDialog, setReleaseDialog] = useState(null);
   const [releaseReason, setReleaseReason] = useState("returned_to_class");
+  const [studentPickerSearch, setStudentPickerSearch] = useState("");
+  const [scopeGroupOpen, setScopeGroupOpen] = useState(false);
+  const [scopeGroupSearch, setScopeGroupSearch] = useState("");
   const [contextForm, setContextForm] = useState({
     contextType: "state_testing",
     name: "State Testing",
     assignedStaffId: "",
+    coverageGroupId: "",
     endsAt: defaultEndTime(),
     note: "",
   });
   const [assignmentForm, setAssignmentForm] = useState({
+    id: "",
     staffId: "",
     scopeType: "school",
     scopeValue: "",
+    studentIds: [],
+    active: true,
+  });
+  const [scopeGroupForm, setScopeGroupForm] = useState({
+    id: "",
+    name: "",
+    description: "",
+    studentIds: [],
+    active: true,
   });
 
   const unassignedQuery = useQuery({
@@ -157,6 +171,20 @@ export default function Coverage() {
     enabled: isAdmin,
   });
 
+  const scopeGroupsQuery = useQuery({
+    queryKey: ["/api/coverage/scope-groups"],
+    queryFn: () => apiRequest("GET", "/coverage/scope-groups"),
+    select: (data) => data?.groups || [],
+    enabled: isAdmin,
+  });
+
+  const adminStudentsQuery = useQuery({
+    queryKey: ["/api/admin/teacher-students"],
+    queryFn: () => apiRequest("GET", "/admin/teacher-students"),
+    select: (data) => data?.students || [],
+    enabled: isAdmin,
+  });
+
   const flightPathsQuery = useQuery({
     queryKey: ["/api/flight-paths"],
     queryFn: () => apiRequest("GET", "/flight-paths"),
@@ -170,6 +198,25 @@ export default function Coverage() {
   });
 
   const contexts = useMemo(() => contextsQuery.data || [], [contextsQuery.data]);
+  const activeScopeGroups = useMemo(
+    () => (scopeGroupsQuery.data || []).filter((group) => group.active),
+    [scopeGroupsQuery.data]
+  );
+  const adminStudents = useMemo(() => adminStudentsQuery.data || [], [adminStudentsQuery.data]);
+  const filteredPickerStudents = useMemo(() => {
+    const q = studentPickerSearch.trim().toLowerCase();
+    if (!q) return adminStudents;
+    return adminStudents.filter((student) => {
+      return `${student.studentName || ""} ${student.studentEmail || ""} ${student.gradeLevel || ""}`.toLowerCase().includes(q);
+    });
+  }, [adminStudents, studentPickerSearch]);
+  const filteredScopeGroups = useMemo(() => {
+    const q = scopeGroupSearch.trim().toLowerCase();
+    return (scopeGroupsQuery.data || []).filter((group) => {
+      if (!q) return true;
+      return `${group.name || ""} ${group.description || ""}`.toLowerCase().includes(q);
+    });
+  }, [scopeGroupsQuery.data, scopeGroupSearch]);
   const manageableContexts = useMemo(
     () => contexts.filter((context) => context.canManage && context.status === "active"),
     [contexts]
@@ -289,14 +336,50 @@ export default function Coverage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/coverage/assignments"] });
       setAssignmentOpen(false);
+      setStudentPickerSearch("");
       toast({ title: "Coverage assignment saved" });
     },
     onError: (error) => toast({ variant: "destructive", title: "Could not save assignment", description: error.message }),
   });
 
+  const updateAssignmentMutation = useMutation({
+    mutationFn: ({ id, payload }) => apiRequest("PATCH", `/coverage/assignments/${id}`, payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/coverage/assignments"] });
+      setAssignmentOpen(false);
+      setStudentPickerSearch("");
+      toast({ title: "Coverage assignment updated" });
+    },
+    onError: (error) => toast({ variant: "destructive", title: "Could not update assignment", description: error.message }),
+  });
+
   const deactivateAssignmentMutation = useMutation({
     mutationFn: (id) => apiRequest("PATCH", `/coverage/assignments/${id}`, { active: false }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/coverage/assignments"] }),
+  });
+
+  const saveScopeGroupMutation = useMutation({
+    mutationFn: async ({ id, payload }) => {
+      if (!id) {
+        return apiRequest("POST", "/coverage/scope-groups", payload);
+      }
+      const updated = await apiRequest("PATCH", `/coverage/scope-groups/${id}`, {
+        name: payload.name,
+        description: payload.description,
+        active: payload.active,
+      });
+      await apiRequest("PUT", `/coverage/scope-groups/${id}/students`, { studentIds: payload.studentIds });
+      return updated;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/coverage/scope-groups"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/coverage/assignments"] });
+      setScopeGroupOpen(false);
+      setStudentPickerSearch("");
+      setScopeGroupSearch("");
+      toast({ title: "Testing group saved" });
+    },
+    onError: (error) => toast({ variant: "destructive", title: "Could not save testing group", description: error.message }),
   });
 
   const toggleUnassignedStudent = (id) => {
@@ -322,6 +405,69 @@ export default function Coverage() {
     setSelectedCoverageIds(new Set());
   };
 
+  const resetAssignmentForm = () => {
+    setAssignmentForm({ id: "", staffId: "", scopeType: "school", scopeValue: "", studentIds: [], active: true });
+    setStudentPickerSearch("");
+  };
+
+  const openAssignmentDialog = (assignment = null) => {
+    if (!assignment) {
+      resetAssignmentForm();
+      setAssignmentOpen(true);
+      return;
+    }
+    setAssignmentForm({
+      id: assignment.id,
+      staffId: assignment.staffId,
+      scopeType: assignment.scopeType,
+      scopeValue: assignment.scopeType === "students" ? "" : assignment.scopeValue || "",
+      studentIds: assignment.scopeType === "students" ? (assignment.scopeDetail?.studentIds || []) : [],
+      active: assignment.active !== false,
+    });
+    setStudentPickerSearch("");
+    setAssignmentOpen(true);
+  };
+
+  const resetScopeGroupForm = () => {
+    setScopeGroupForm({ id: "", name: "", description: "", studentIds: [], active: true });
+    setStudentPickerSearch("");
+  };
+
+  const openScopeGroupDialog = (group = null) => {
+    if (!group) {
+      resetScopeGroupForm();
+      setScopeGroupOpen(true);
+      return;
+    }
+    setScopeGroupForm({
+      id: group.id,
+      name: group.name || "",
+      description: group.description || "",
+      studentIds: (group.students || []).map((student) => student.studentId),
+      active: group.active !== false,
+    });
+    setStudentPickerSearch("");
+    setScopeGroupOpen(true);
+  };
+
+  const toggleAssignmentStudent = (studentId) => {
+    setAssignmentForm((prev) => {
+      const selected = new Set(prev.studentIds);
+      if (selected.has(studentId)) selected.delete(studentId);
+      else selected.add(studentId);
+      return { ...prev, studentIds: Array.from(selected) };
+    });
+  };
+
+  const toggleScopeGroupStudent = (studentId) => {
+    setScopeGroupForm((prev) => {
+      const selected = new Set(prev.studentIds);
+      if (selected.has(studentId)) selected.delete(studentId);
+      else selected.add(studentId);
+      return { ...prev, studentIds: Array.from(selected) };
+    });
+  };
+
   const submitContext = () => {
     createContextMutation.mutate({
       ...contextForm,
@@ -332,10 +478,29 @@ export default function Coverage() {
   };
 
   const submitAssignment = () => {
-    createAssignmentMutation.mutate({
+    const payload = {
       staffId: assignmentForm.staffId,
       scopeType: assignmentForm.scopeType,
-      scopeValue: assignmentForm.scopeValue,
+      scopeValue: assignmentForm.scopeType === "students" ? undefined : assignmentForm.scopeValue,
+      studentIds: assignmentForm.scopeType === "students" ? assignmentForm.studentIds : undefined,
+      active: assignmentForm.active,
+    };
+    if (assignmentForm.id) {
+      updateAssignmentMutation.mutate({ id: assignmentForm.id, payload });
+    } else {
+      createAssignmentMutation.mutate(payload);
+    }
+  };
+
+  const submitScopeGroup = () => {
+    saveScopeGroupMutation.mutate({
+      id: scopeGroupForm.id,
+      payload: {
+        name: scopeGroupForm.name.trim(),
+        description: scopeGroupForm.description.trim(),
+        studentIds: scopeGroupForm.studentIds,
+        active: scopeGroupForm.active,
+      },
     });
   };
 
@@ -654,26 +819,83 @@ export default function Coverage() {
 
           {isAdmin && (
             <TabsContent value="settings" className="space-y-4 mt-4">
-              <div className="flex justify-end">
-                <Button onClick={() => setAssignmentOpen(true)}>
-                  <UserCheck className="h-4 w-4 mr-2" />
-                  Add Assignment
-                </Button>
-              </div>
-              <div className="rounded-md border overflow-hidden">
-                {(assignmentsQuery.data || []).length === 0 ? (
-                  <div className="px-4 py-10 text-center text-sm text-muted-foreground">No coverage assignments</div>
-                ) : assignmentsQuery.data.map((assignment) => (
-                  <div key={assignment.id} className="flex items-center justify-between gap-3 px-4 py-3 border-t first:border-t-0 text-sm">
+              <div className="grid gap-4 xl:grid-cols-[1.2fr_1fr]">
+                <Card>
+                  <CardHeader className="flex flex-row items-start justify-between gap-4">
                     <div>
-                      <p className="font-medium">{staffQuery.data?.find((s) => s.userId === assignment.staffId)?.user?.email || assignment.staffId}</p>
-                      <p className="text-xs text-muted-foreground">{assignment.scopeType}{assignment.scopeValue ? ` - ${assignment.scopeValue}` : ""}</p>
+                      <CardTitle className="text-base">Coverage Staff Permissions</CardTitle>
+                      <CardDescription>Grant teachers and staff Claim + Manage access for specific student scopes.</CardDescription>
                     </div>
-                    <Button variant="ghost" size="sm" onClick={() => deactivateAssignmentMutation.mutate(assignment.id)} disabled={!assignment.active}>
-                      Disable
+                    <Button onClick={() => openAssignmentDialog()}>
+                      <UserCheck className="h-4 w-4 mr-2" />
+                      Add Staff
                     </Button>
-                  </div>
-                ))}
+                  </CardHeader>
+                  <CardContent>
+                    <div className="rounded-md border overflow-hidden">
+                      {(assignmentsQuery.data || []).length === 0 ? (
+                        <div className="px-4 py-10 text-center text-sm text-muted-foreground">No coverage staff permissions yet</div>
+                      ) : assignmentsQuery.data.map((assignment) => (
+                        <div key={assignment.id} className="grid gap-3 border-t first:border-t-0 px-4 py-3 text-sm md:grid-cols-[1.1fr_1fr_120px_170px] md:items-center">
+                          <div>
+                            <p className="font-medium">{assignment.staff?.displayName || staffQuery.data?.find((s) => s.userId === assignment.staffId)?.user?.email || assignment.staffId}</p>
+                            <p className="text-xs text-muted-foreground">{assignment.staff?.email || assignment.permissionLabel}</p>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <Badge variant="secondary">{assignment.scopeLabel || assignment.scopeType}</Badge>
+                            <Badge variant="outline">Claim + Manage</Badge>
+                          </div>
+                          <Badge variant={assignment.active ? "default" : "outline"}>{assignment.active ? "Active" : "Disabled"}</Badge>
+                          <div className="flex justify-start gap-2 md:justify-end">
+                            <Button variant="outline" size="sm" onClick={() => openAssignmentDialog(assignment)}>
+                              Edit
+                            </Button>
+                            <Button variant="ghost" size="sm" onClick={() => deactivateAssignmentMutation.mutate(assignment.id)} disabled={!assignment.active || deactivateAssignmentMutation.isPending}>
+                              Disable
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader className="flex flex-row items-start justify-between gap-4">
+                    <div>
+                      <CardTitle className="text-base">Testing Groups</CardTitle>
+                      <CardDescription>Reusable student sets for state testing and temporary event coverage.</CardDescription>
+                    </div>
+                    <Button variant="outline" onClick={() => openScopeGroupDialog()}>
+                      <Plus className="h-4 w-4 mr-2" />
+                      New Group
+                    </Button>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="relative">
+                      <Search className="h-4 w-4 absolute left-3 top-3 text-muted-foreground" />
+                      <Input className="pl-9" placeholder="Search testing groups" value={scopeGroupSearch} onChange={(e) => setScopeGroupSearch(e.target.value)} />
+                    </div>
+                    <div className="rounded-md border overflow-hidden">
+                      {filteredScopeGroups.length === 0 ? (
+                        <div className="px-4 py-10 text-center text-sm text-muted-foreground">No testing groups</div>
+                      ) : filteredScopeGroups.map((group) => (
+                        <div key={group.id} className="flex items-center justify-between gap-3 border-t first:border-t-0 px-4 py-3 text-sm">
+                          <div>
+                            <p className="font-medium">{group.name}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {group.studentCount} student{group.studentCount === 1 ? "" : "s"}{group.description ? ` - ${group.description}` : ""}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Badge variant={group.active ? "secondary" : "outline"}>{group.active ? "Active" : "Disabled"}</Badge>
+                            <Button variant="outline" size="sm" onClick={() => openScopeGroupDialog(group)}>Edit</Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
               </div>
             </TabsContent>
           )}
@@ -704,6 +926,20 @@ export default function Coverage() {
                 </Select>
               </div>
             )}
+            {isAdmin && (
+              <div className="grid gap-2">
+                <Label>Testing Group</Label>
+                <Select value={contextForm.coverageGroupId || "none"} onValueChange={(value) => setContextForm((f) => ({ ...f, coverageGroupId: value === "none" ? "" : value }))}>
+                  <SelectTrigger><SelectValue placeholder="Optional testing group" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No testing group</SelectItem>
+                    {activeScopeGroups.map((group) => (
+                      <SelectItem key={group.id} value={group.id}>{group.name} ({group.studentCount})</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <div className="grid gap-2">
               <Label>End Time</Label>
               <Input type="datetime-local" value={contextForm.endsAt} onChange={(e) => setContextForm((f) => ({ ...f, endsAt: e.target.value }))} />
@@ -721,8 +957,11 @@ export default function Coverage() {
       </Dialog>
 
       <Dialog open={assignmentOpen} onOpenChange={setAssignmentOpen}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Add Coverage Assignment</DialogTitle></DialogHeader>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{assignmentForm.id ? "Edit Coverage Permission" : "Add Coverage Permission"}</DialogTitle>
+            <DialogDescription>Coverage staff receive Claim + Manage access for the selected scope.</DialogDescription>
+          </DialogHeader>
           <div className="space-y-4">
             <div className="grid gap-2">
               <Label>Staff</Label>
@@ -739,6 +978,8 @@ export default function Coverage() {
                   <SelectItem value="school">Schoolwide</SelectItem>
                   <SelectItem value="grade">Grade</SelectItem>
                   <SelectItem value="group">Class/Group</SelectItem>
+                  <SelectItem value="coverage_group">Testing Group</SelectItem>
+                  <SelectItem value="students">Selected Students</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -757,10 +998,115 @@ export default function Coverage() {
                 </Select>
               </div>
             )}
+            {assignmentForm.scopeType === "coverage_group" && (
+              <div className="grid gap-2">
+                <Label>Testing Group</Label>
+                <Select value={assignmentForm.scopeValue} onValueChange={(value) => setAssignmentForm((f) => ({ ...f, scopeValue: value }))}>
+                  <SelectTrigger><SelectValue placeholder="Select testing group" /></SelectTrigger>
+                  <SelectContent>{activeScopeGroups.map((group) => <SelectItem key={group.id} value={group.id}>{group.name} ({group.studentCount})</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+            )}
+            {assignmentForm.scopeType === "students" && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <Label>Students</Label>
+                  <Badge variant="secondary">{assignmentForm.studentIds.length} selected</Badge>
+                </div>
+                <div className="relative">
+                  <Search className="h-4 w-4 absolute left-3 top-3 text-muted-foreground" />
+                  <Input className="pl-9" placeholder="Search students" value={studentPickerSearch} onChange={(e) => setStudentPickerSearch(e.target.value)} />
+                </div>
+                <div className="max-h-64 overflow-y-auto rounded-md border">
+                  {filteredPickerStudents.length === 0 ? (
+                    <div className="px-4 py-8 text-center text-sm text-muted-foreground">No students found</div>
+                  ) : filteredPickerStudents.map((student) => (
+                    <label key={student.id} className="flex cursor-pointer items-center gap-3 border-t first:border-t-0 px-4 py-2 text-sm">
+                      <Checkbox checked={assignmentForm.studentIds.includes(student.id)} onCheckedChange={() => toggleAssignmentStudent(student.id)} />
+                      <span className="flex-1">
+                        <span className="block font-medium">{student.studentName}</span>
+                        <span className="block text-xs text-muted-foreground">{student.studentEmail || "No email"} - Grade {student.gradeLevel || "None"}</span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+            {assignmentForm.id && (
+              <label className="flex items-center gap-2 text-sm">
+                <Checkbox checked={assignmentForm.active} onCheckedChange={(checked) => setAssignmentForm((f) => ({ ...f, active: checked === true }))} />
+                Active permission
+              </label>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setAssignmentOpen(false)}>Cancel</Button>
-            <Button onClick={submitAssignment} disabled={createAssignmentMutation.isPending || !assignmentForm.staffId || (assignmentForm.scopeType !== "school" && !assignmentForm.scopeValue)}>Save</Button>
+            <Button
+              onClick={submitAssignment}
+              disabled={
+                createAssignmentMutation.isPending ||
+                updateAssignmentMutation.isPending ||
+                !assignmentForm.staffId ||
+                (assignmentForm.scopeType !== "school" && assignmentForm.scopeType !== "students" && !assignmentForm.scopeValue) ||
+                (assignmentForm.scopeType === "students" && assignmentForm.studentIds.length === 0)
+              }
+            >
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={scopeGroupOpen} onOpenChange={setScopeGroupOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{scopeGroupForm.id ? "Edit Testing Group" : "Create Testing Group"}</DialogTitle>
+            <DialogDescription>Testing groups are reusable coverage scopes and do not change class rosters.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="grid gap-2">
+              <Label>Name</Label>
+              <Input value={scopeGroupForm.name} onChange={(e) => setScopeGroupForm((f) => ({ ...f, name: e.target.value }))} placeholder="State testing - 8th grade" />
+            </div>
+            <div className="grid gap-2">
+              <Label>Description</Label>
+              <Textarea value={scopeGroupForm.description} onChange={(e) => setScopeGroupForm((f) => ({ ...f, description: e.target.value }))} placeholder="Optional note for admins" />
+            </div>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <Label>Students</Label>
+                <Badge variant="secondary">{scopeGroupForm.studentIds.length} selected</Badge>
+              </div>
+              <div className="relative">
+                <Search className="h-4 w-4 absolute left-3 top-3 text-muted-foreground" />
+                <Input className="pl-9" placeholder="Search students" value={studentPickerSearch} onChange={(e) => setStudentPickerSearch(e.target.value)} />
+              </div>
+              <div className="max-h-64 overflow-y-auto rounded-md border">
+                {filteredPickerStudents.length === 0 ? (
+                  <div className="px-4 py-8 text-center text-sm text-muted-foreground">No students found</div>
+                ) : filteredPickerStudents.map((student) => (
+                  <label key={student.id} className="flex cursor-pointer items-center gap-3 border-t first:border-t-0 px-4 py-2 text-sm">
+                    <Checkbox checked={scopeGroupForm.studentIds.includes(student.id)} onCheckedChange={() => toggleScopeGroupStudent(student.id)} />
+                    <span className="flex-1">
+                      <span className="block font-medium">{student.studentName}</span>
+                      <span className="block text-xs text-muted-foreground">{student.studentEmail || "No email"} - Grade {student.gradeLevel || "None"}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            {scopeGroupForm.id && (
+              <label className="flex items-center gap-2 text-sm">
+                <Checkbox checked={scopeGroupForm.active} onCheckedChange={(checked) => setScopeGroupForm((f) => ({ ...f, active: checked === true }))} />
+                Active testing group
+              </label>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setScopeGroupOpen(false)}>Cancel</Button>
+            <Button onClick={submitScopeGroup} disabled={saveScopeGroupMutation.isPending || !scopeGroupForm.name.trim()}>
+              Save
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
