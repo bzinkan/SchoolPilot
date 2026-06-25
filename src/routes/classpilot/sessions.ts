@@ -16,6 +16,7 @@ import {
   getHeartbeatsForStudentsInRange,
   setScheduleSkippedDate,
   getSchoolById,
+  getCentralEmailRecipientForSchool,
   clearClasspilotClassroomStates,
   clearClasspilotActiveHandsForSession,
 } from "../../services/storage.js";
@@ -337,6 +338,26 @@ export async function buildAndSendSessionSummary(
   });
 
   console.log(`[SessionSummary] Sent to ${teacher.email} for "${className}"`);
+
+  const centralRecipient = group?.schoolId
+    ? await getCentralEmailRecipientForSchool(group.schoolId, dbInstance)
+    : undefined;
+  const centralEmail = centralRecipient?.email?.trim();
+  if (centralEmail && centralEmail.toLowerCase() !== teacher.email.trim().toLowerCase()) {
+    await sendSessionSummaryEmail({
+      to: centralEmail,
+      teacherName,
+      className,
+      date: fmtDate(session.startTime),
+      startTime: fmt(session.startTime),
+      endTime: fmt(endTime),
+      duration: `${durationMin} min`,
+      studentCount: studentIds.length,
+      students,
+      copyNotice: `Central school copy of the session summary sent to ${teacher.email}.`,
+    });
+    console.log(`[SessionSummary] Central copy sent to ${centralEmail} for "${className}"`);
+  }
 }
 
 export default router;

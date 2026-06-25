@@ -918,6 +918,45 @@ export async function getAdminEmailsBySchool(
   return rows.map((r) => r.email);
 }
 
+export async function getCentralEmailRecipientForSchool(
+  schoolId: string,
+  dbInstance: typeof db = db
+): Promise<User | undefined> {
+  const schoolSettings = await getSettingsForSchool(schoolId, dbInstance);
+  const recipientUserId = schoolSettings?.centralEmailRecipientUserId;
+  if (!recipientUserId) return undefined;
+
+  const [row] = await dbInstance
+    .select({ user: users })
+    .from(schoolMemberships)
+    .innerJoin(users, eq(schoolMemberships.userId, users.id))
+    .where(
+      and(
+        eq(schoolMemberships.schoolId, schoolId),
+        eq(schoolMemberships.userId, recipientUserId),
+        eq(schoolMemberships.status, "active"),
+        inArray(schoolMemberships.role, ["admin", "school_admin", "teacher", "office_staff"])
+      )
+    )
+    .limit(1);
+
+  return row?.user;
+}
+
+export async function addCentralEmailRecipientForSchool(
+  schoolId: string,
+  recipients: string[],
+  dbInstance: typeof db = db
+): Promise<string[]> {
+  const centralRecipient = await getCentralEmailRecipientForSchool(schoolId, dbInstance);
+  const centralEmail = centralRecipient?.email?.trim();
+  if (!centralEmail) return recipients;
+
+  const seen = new Set(recipients.map((email) => email.trim().toLowerCase()).filter(Boolean));
+  if (seen.has(centralEmail.toLowerCase())) return recipients;
+  return [...recipients, centralEmail];
+}
+
 export async function getMembershipByUserAndSchool(
   userId: string,
   schoolId: string

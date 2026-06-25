@@ -26,8 +26,11 @@ import {
   getActiveSessionByStudent,
   getActiveSupervisionForStudent,
   getCoverageScopeGroupStudentIds,
+  getCentralEmailRecipientForSchool,
   getClasspilotCommandByIdAndSchool,
+  getSettingsForSchool,
   getOnlineUnassignedStudents,
+  addCentralEmailRecipientForSchool,
   listCoverageScopeGroups,
   linkStudentDevice,
   replaceCoverageScopeGroupMembers,
@@ -118,6 +121,7 @@ async function ensureCoverageTables() {
     )
   `);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS "IDX_session_expire" ON "session" ("expire")`);
+  await db.execute(sql`ALTER TABLE settings ADD COLUMN IF NOT EXISTS central_email_recipient_user_id TEXT`);
 
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS classpilot_commands (
@@ -375,6 +379,7 @@ after(async () => {
         await db.execute(sql`DELETE FROM group_teachers WHERE group_id IN (SELECT id FROM groups WHERE school_id = ${school.id})`);
         await db.execute(sql`DELETE FROM groups WHERE school_id = ${school.id}`);
         await db.execute(sql`DELETE FROM students WHERE school_id = ${school.id}`);
+        await db.execute(sql`DELETE FROM settings WHERE school_id = ${school.id}`);
         await db.execute(sql`DELETE FROM product_licenses WHERE school_id = ${school.id}`);
         await db.execute(sql`DELETE FROM school_memberships WHERE school_id = ${school.id}`);
         await db.execute(sql`DELETE FROM schools WHERE id = ${school.id}`);
@@ -539,6 +544,55 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     assert.ok(!rosterIds.has(studentDeviceGuard.id));
     assert.ok(rosterIds.has(waitingStudent.id));
     expectNoDeviceIds(roster.body);
+  });
+
+  it("lets admins configure one active staff account for central ClassPilot email copies", async () => {
+    const adminAuth = authFor(admin, school.id);
+    const teacherAuth = authFor(teacher, school.id);
+
+    const forbidden = await requestJson("POST", "/settings", {
+      centralEmailRecipientUserId: coverageStaff.id,
+    }, teacherAuth);
+    assert.equal(forbidden.status, 403);
+
+    const invalid = await requestJson("POST", "/settings", {
+      centralEmailRecipientUserId: studentUnassigned.id,
+    }, adminAuth);
+    assert.equal(invalid.status, 400);
+    assert.match(invalid.body.error, /active staff/);
+
+    const update = await requestJson("POST", "/settings", {
+      schoolName: school.name,
+      retentionHours: "720",
+      centralEmailRecipientUserId: coverageStaff.id,
+    }, adminAuth);
+    assert.equal(update.status, 200);
+
+    const saved = await inSchool(school.id, () => getSettingsForSchool(school.id));
+    assert.equal(saved?.centralEmailRecipientUserId, coverageStaff.id);
+
+    const resolved = await inSchool(school.id, () => getCentralEmailRecipientForSchool(school.id));
+    assert.equal(resolved?.email, coverageStaff.email);
+
+    const withCentralCopy = await inSchool(school.id, () =>
+      addCentralEmailRecipientForSchool(school.id, [admin.email])
+    );
+    assert.deepEqual(withCentralCopy, [admin.email, coverageStaff.email]);
+
+    const deduped = await inSchool(school.id, () =>
+      addCentralEmailRecipientForSchool(school.id, [coverageStaff.email.toUpperCase()])
+    );
+    assert.deepEqual(deduped, [coverageStaff.email.toUpperCase()]);
+
+    const clear = await requestJson("POST", "/settings", {
+      schoolName: school.name,
+      retentionHours: "720",
+      centralEmailRecipientUserId: null,
+    }, adminAuth);
+    assert.equal(clear.status, 200);
+
+    const cleared = await inSchool(school.id, () => getSettingsForSchool(school.id));
+    assert.equal(cleared?.centralEmailRecipientUserId, null);
   });
 
   it("tracks coverage assignments and blocks direct device targeting during temporary coverage", async () => {

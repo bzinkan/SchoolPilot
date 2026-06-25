@@ -52,6 +52,7 @@ export const settings = pgTable("settings", {
   handRaisingEnabled: boolean("hand_raising_enabled").default(true),
   studentMessagingEnabled: boolean("student_messaging_enabled").default(true),
   aiSafetyEmailsEnabled: boolean("ai_safety_emails_enabled").default(true),
+  centralEmailRecipientUserId: text("central_email_recipient_user_id"),
   autoBlockUnsafeUrls: boolean("auto_block_unsafe_urls").default(true),
   parentTransparencyEnabled: boolean("parent_transparency_enabled").default(false),
   parentDigestCadence: text("parent_digest_cadence")
