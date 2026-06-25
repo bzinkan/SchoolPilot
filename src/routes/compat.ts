@@ -45,10 +45,11 @@ import {
   getAttendanceBySchool,
   getActivePassesBySchool,
   getActiveSupervisionForStudents,
+  getActiveClassOwnersForStudents,
   validateStaffEmailDomainForSchool,
 } from "../services/storage.js";
 import db from "../db.js";
-import { heartbeats, devices as deviceTable, teachingSessions, groups, groupStudents, dailyUsage, studentDevices, studentSessions } from "../schema/classpilot.js";
+import { heartbeats, devices as deviceTable, groups, dailyUsage, studentDevices, studentSessions } from "../schema/classpilot.js";
 import { dismissalQueue, dismissalSessions } from "../schema/gopilot.js";
 import { eq, and, sql, inArray } from "drizzle-orm";
 import { createGradeSchema } from "../schema/validation.js";
@@ -926,14 +927,7 @@ router.get("/students-aggregated", ...schoolAuth, async (req, res, next) => {
             )
         : [],
       studentIds.length > 0 ? getActiveSupervisionForStudents(schoolId, studentIds) : [],
-      studentIds.length > 0
-        ? db
-            .select({ studentId: groupStudents.studentId, sessionId: teachingSessions.id, groupId: groups.id, groupName: groups.name })
-            .from(groupStudents)
-            .innerJoin(groups, eq(groups.id, groupStudents.groupId))
-            .innerJoin(teachingSessions, and(eq(teachingSessions.groupId, groups.id), sql`${teachingSessions.endTime} IS NULL`))
-            .where(and(eq(groups.schoolId, schoolId), inArray(groupStudents.studentId, studentIds)))
-        : [],
+      studentIds.length > 0 ? getActiveClassOwnersForStudents(schoolId, studentIds) : [],
     ]);
     const attendanceByStudent = new Map(attendanceRows.map((row) => [row.attendance.studentId, row.attendance]));
     const activePassByStudent = new Map(activePasses.map((pass) => [pass.studentId, pass]));
@@ -1064,10 +1058,12 @@ router.get("/students-aggregated", ...schoolAuth, async (req, res, next) => {
           } : null,
           endsAt: activeCoverage.endsAt,
         } : activeClass ? {
-          id: activeClass.sessionId,
+          id: activeClass.session.id,
           type: "class",
           name: activeClass.groupName,
           groupId: activeClass.groupId,
+          teacherId: activeClass.session.teacherId,
+          startTime: activeClass.session.startTime,
         } : null,
         monitoringContext: rt?.aiClassification?.safetyAlert
           ? "safety_with_context"

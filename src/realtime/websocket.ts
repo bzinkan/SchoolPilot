@@ -431,13 +431,13 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
               ...message,
             };
             if (client.schoolId) {
-              sendToRoleLocal(client.schoolId, "teacher", payload);
-              void publishWS({ kind: "role", schoolId: client.schoolId, role: "teacher" }, payload);
+              broadcastToTeachersLocal(client.schoolId, payload);
+              void publishWS({ kind: "staff", schoolId: client.schoolId }, payload);
             }
           } else {
             const payload = {
               type: message.type,
-              from: client.role === "teacher" ? "teacher" : client.deviceId,
+              from: client.role === "teacher" || client.role === "school_admin" || client.role === "super_admin" ? "teacher" : client.deviceId,
               ...message,
             };
             if (client.schoolId) {
@@ -448,18 +448,23 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
         }
 
         // --- Remote control: request-stream ---
-        if (message.type === "request-stream" && (client.role === "teacher" || client.role === "school_admin")) {
+        if (message.type === "request-stream" && (client.role === "teacher" || client.role === "school_admin" || client.role === "super_admin")) {
           const targetDeviceId = message.deviceId;
           if (!targetDeviceId || !client.schoolId) return;
 
           console.log(`[WebSocket] Forwarding request-stream to ${targetDeviceId}`);
           const payload = { type: "request-stream", from: "teacher" };
-          sendToDeviceLocal(client.schoolId, targetDeviceId, payload);
+          const deliveredLocally = sendToDeviceLocal(client.schoolId, targetDeviceId, payload);
           void publishWS({ kind: "device", schoolId: client.schoolId, deviceId: targetDeviceId }, payload);
+          ws.send(JSON.stringify({
+            type: "live-view-requested",
+            deviceId: targetDeviceId,
+            deliveredLocally,
+          }));
         }
 
         // --- Remote control: stop-share ---
-        if (message.type === "stop-share" && (client.role === "teacher" || client.role === "school_admin")) {
+        if (message.type === "stop-share" && (client.role === "teacher" || client.role === "school_admin" || client.role === "super_admin")) {
           const targetDeviceId = message.deviceId;
           if (!targetDeviceId || !client.schoolId) return;
 

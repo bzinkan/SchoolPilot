@@ -3492,20 +3492,74 @@ export async function getActiveTeachingSessionsForStudent(
   schoolId: string,
   studentId: string
 ): Promise<TeachingSession[]> {
-  const rows = await db
-    .select({ session: teachingSessions })
-    .from(teachingSessions)
-    .innerJoin(groups, eq(teachingSessions.groupId, groups.id))
-    .innerJoin(groupStudents, eq(groupStudents.groupId, groups.id))
-    .where(
+  const owner = await getActiveClassOwnerForStudent(schoolId, studentId);
+  return owner ? [owner.session] : [];
+}
+
+export type ActiveClassOwner = {
+  studentId: string;
+  session: TeachingSession;
+  groupId: string;
+  groupName: string;
+};
+
+export async function getActiveClassOwnersForStudents(
+  schoolId: string,
+  studentIds: string[],
+  dbInstance: typeof db = db
+): Promise<ActiveClassOwner[]> {
+  const uniqueStudentIds = [...new Set(studentIds.map(String).filter(Boolean))];
+  if (uniqueStudentIds.length === 0) return [];
+
+  const rows = await dbInstance
+    .select({
+      studentId: groupStudents.studentId,
+      groupId: groups.id,
+      groupName: groups.name,
+      session: teachingSessions,
+    })
+    .from(groupStudents)
+    .innerJoin(groups, eq(groups.id, groupStudents.groupId))
+    .innerJoin(
+      teachingSessions,
       and(
-        eq(groups.schoolId, schoolId),
-        eq(groupStudents.studentId, studentId),
+        eq(teachingSessions.groupId, groups.id),
         isNull(teachingSessions.endTime)
       )
     )
-    .orderBy(desc(teachingSessions.startTime));
-  return rows.map((row) => row.session);
+    .where(
+      and(
+        eq(groups.schoolId, schoolId),
+        inArray(groupStudents.studentId, uniqueStudentIds)
+      )
+    )
+    .orderBy(
+      groupStudents.studentId,
+      desc(teachingSessions.startTime),
+      desc(teachingSessions.createdAt),
+      desc(teachingSessions.id)
+    );
+
+  const owners = new Map<string, ActiveClassOwner>();
+  for (const row of rows) {
+    if (owners.has(row.studentId)) continue;
+    owners.set(row.studentId, {
+      studentId: row.studentId,
+      session: row.session,
+      groupId: row.groupId,
+      groupName: row.groupName,
+    });
+  }
+  return [...owners.values()];
+}
+
+export async function getActiveClassOwnerForStudent(
+  schoolId: string,
+  studentId: string,
+  dbInstance: typeof db = db
+): Promise<ActiveClassOwner | undefined> {
+  const [owner] = await getActiveClassOwnersForStudents(schoolId, [studentId], dbInstance);
+  return owner;
 }
 
 export async function getTeachingSessionForStudent(
@@ -3513,21 +3567,8 @@ export async function getTeachingSessionForStudent(
   sessionId: string,
   studentId: string
 ): Promise<TeachingSession | undefined> {
-  const [row] = await db
-    .select({ session: teachingSessions })
-    .from(teachingSessions)
-    .innerJoin(groups, eq(teachingSessions.groupId, groups.id))
-    .innerJoin(groupStudents, eq(groupStudents.groupId, groups.id))
-    .where(
-      and(
-        eq(teachingSessions.id, sessionId),
-        eq(groups.schoolId, schoolId),
-        eq(groupStudents.studentId, studentId),
-        isNull(teachingSessions.endTime)
-      )
-    )
-    .limit(1);
-  return row?.session;
+  const owner = await getActiveClassOwnerForStudent(schoolId, studentId);
+  return owner?.session.id === sessionId ? owner.session : undefined;
 }
 
 export async function getSessionSettings(
