@@ -11,6 +11,7 @@ import {
   createMessage,
   createPoll,
   getActiveClasspilotClassroomStates,
+  getActiveSupervisionForStudents,
   getActiveSessionByStudent,
   getBlockListById,
   getClasspilotCommandByIdAndSchool,
@@ -183,7 +184,24 @@ async function resolveTargets(req: Request, res: Response, body: any): Promise<R
   const now = Date.now();
   const activeWindowMs = 5 * 60 * 1000;
   const resolved: ResolvedTarget[] = [];
+  const activeCoverage = await getActiveSupervisionForStudents(
+    schoolId,
+    selectedRows.map((row) => row.studentId)
+  );
+  const coverageByStudent = new Map(activeCoverage.map((entry) => [entry.studentId, entry.context]));
   for (const row of selectedRows) {
+    const coverage = coverageByStudent.get(row.studentId);
+    if (coverage) {
+      resolved.push({
+        studentId: row.studentId,
+        studentName: [row.student.firstName, row.student.lastName].filter(Boolean).join(" ") || row.student.email || row.studentId,
+        studentSessionId: null,
+        deviceId: null,
+        available: false,
+        unavailableReason: `Student is assigned to ${coverage.name}`,
+      });
+      continue;
+    }
     const studentSession = await getActiveSessionByStudent(row.studentId);
     const lastSeenAt = studentSession?.lastSeenAt?.getTime?.() ?? 0;
     const active = !!studentSession && lastSeenAt > 0 && now - lastSeenAt <= activeWindowMs;

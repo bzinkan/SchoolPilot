@@ -118,6 +118,8 @@ export default function Dashboard() {
   const [activePoll, setActivePoll] = useState(null);
   const [pollResults, setPollResults] = useState([]);
   const [pollTotalResponses, setPollTotalResponses] = useState(0);
+  const [showRerouteDialog, setShowRerouteDialog] = useState(false);
+  const [selectedCoverageContextId, setSelectedCoverageContextId] = useState("");
   const [selectedSubgroupId, setSelectedSubgroupId] = useState("");
   const [subgroupMembers, setSubgroupMembers] = useState(new Set());
   const [raisedHands, setRaisedHands] = useState(new Map());
@@ -214,6 +216,14 @@ export default function Dashboard() {
     queryFn: () => apiRequest('GET', '/sessions/all'),
     select: (data) => Array.isArray(data) ? data : data?.sessions ?? [],
     enabled: isAdmin,
+    refetchInterval: 10000,
+  });
+
+  const { data: activeCoverageContexts = [] } = useQuery({
+    queryKey: ['/api/coverage/contexts'],
+    queryFn: () => apiRequest('GET', '/coverage/contexts'),
+    select: (data) => (data?.contexts || []).filter((context) => context.status === 'active'),
+    enabled: isAdmin || isTeacher,
     refetchInterval: 10000,
   });
 
@@ -760,6 +770,7 @@ export default function Dashboard() {
       return matchesSearch && matchesSubgroup;
     })
     .sort((a, b) => getLastName(a.studentName).localeCompare(getLastName(b.studentName)));
+  const controllableStudents = filteredStudents.filter((student) => student.supervisionState !== "temporary_coverage");
 
   const statsStudents = sessionFilteredStudents;
   const onlineCount = statsStudents.filter((s) => s.status === 'online').length;
@@ -980,6 +991,35 @@ export default function Dashboard() {
     },
     onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
   });
+
+  const rerouteMutation = useMutation({
+    mutationFn: async ({ contextId, studentIds }) => apiRequest('POST', '/coverage/reroute', { contextId, studentIds }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/coverage/contexts'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/coverage/unassigned'] });
+      setShowRerouteDialog(false);
+      setSelectedCoverageContextId("");
+      clearSelection();
+      toast({ title: "Students rerouted", description: "Selected students were moved to temporary coverage." });
+    },
+    onError: (error) => {
+      toast({ variant: "destructive", title: "Could not reroute students", description: error.response?.data?.error || error.message });
+    },
+  });
+
+  const handleRerouteSelected = () => {
+    const studentIds = Array.from(selectedStudentIds);
+    if (studentIds.length === 0) {
+      toast({ variant: "destructive", title: "Select students first" });
+      return;
+    }
+    if (!selectedCoverageContextId) {
+      toast({ variant: "destructive", title: "Choose a coverage context" });
+      return;
+    }
+    rerouteMutation.mutate({ contextId: selectedCoverageContextId, studentIds });
+  };
 
   const stopImpersonateMutation = useMutation({
     mutationFn: async () => apiRequest('POST', '/super-admin/stop-impersonate', {}),
@@ -1642,7 +1682,7 @@ export default function Dashboard() {
         {(isAdmin || (isTeacher && activeSession)) && (
           <RemoteControlToolbar
             selectedStudentIds={selectedStudentIds}
-            students={filteredStudents}
+            students={controllableStudents}
             onToggleStudent={toggleStudentSelection}
             onClearSelection={clearSelection}
             selectedGrade={selectedGrade}
@@ -1720,6 +1760,9 @@ export default function Dashboard() {
               </DropdownMenu>
               <button onClick={clearSelection} disabled={selectedStudentIds.size === 0} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-medium bg-transparent border border-border text-muted-foreground hover:bg-card transition-colors disabled:opacity-50 disabled:cursor-not-allowed" data-testid="button-clear-selection">
                 Clear Selection
+              </button>
+              <button onClick={() => setShowRerouteDialog(true)} disabled={selectedStudentIds.size === 0 || activeCoverageContexts.length === 0} className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-[13px] font-medium bg-transparent border border-border text-muted-foreground hover:bg-card transition-colors disabled:opacity-50 disabled:cursor-not-allowed" data-testid="button-reroute-selected">
+                <ClipboardCheck className="h-4 w-4" /> Reroute
               </button>
             </div>
           </div>
@@ -1829,25 +1872,36 @@ export default function Dashboard() {
             {filteredStudents.map((student) => {
               const primaryDeviceId = student.primaryDeviceId ?? undefined;
               const tileRevision = primaryDeviceId ? tileRevisions[primaryDeviceId] ?? 0 : 0;
+              const coverageLabel = student.supervisionState === "temporary_coverage"
+                ? student.supervisionContext?.name || "Temporary Coverage"
+                : student.supervisionState === "online_unassigned"
+                  ? "Online Unassigned"
+                  : null;
               return (
-                <StudentTile
-                  key={`${student.studentId}-${primaryDeviceId ?? "no-device"}-${tileRevision}`}
-                  student={student}
-                  onClick={() => setSelectedStudent(student)}
-                  blockedDomains={settings?.blockedDomains || []}
-                  isOffTask={isStudentOffTask(student)}
-                  isAbsent={absentIds.has(student.studentId)}
-                  isSelected={selectedStudentIds.has(student.studentId)}
-                  onToggleSelect={() => toggleStudentSelection(student.studentId)}
-                  liveStream={primaryDeviceId ? liveStreams.get(primaryDeviceId) || null : null}
-                  onStartLiveView={primaryDeviceId ? () => handleStartLiveView(primaryDeviceId) : undefined}
-                  onStopLiveView={primaryDeviceId ? () => handleStopLiveView(primaryDeviceId) : undefined}
-                  onEndLiveRefresh={primaryDeviceId ? () => refreshTile(primaryDeviceId) : undefined}
-                  onBlockRefetches={() => { optimisticUpdateUntilRef.current = optimisticUpdateDeadline(); }}
-                  onAllowDomain={handleAllowDomain}
-                  teachingSessionId={effectiveSession?.id}
-                  onManageTabs={() => openManageTabs([student.studentId])}
-                />
+                <div key={`${student.studentId}-${primaryDeviceId ?? "no-device"}-${tileRevision}`} className="relative">
+                  {coverageLabel && (
+                    <div className={`absolute left-3 top-3 z-10 rounded-md px-2 py-1 text-[11px] font-semibold shadow-sm ${student.supervisionState === "temporary_coverage" ? "bg-blue-600 text-white" : "bg-amber-400 text-slate-900"}`}>
+                      {coverageLabel}
+                    </div>
+                  )}
+                  <StudentTile
+                    student={student}
+                    onClick={() => setSelectedStudent(student)}
+                    blockedDomains={settings?.blockedDomains || []}
+                    isOffTask={isStudentOffTask(student)}
+                    isAbsent={absentIds.has(student.studentId)}
+                    isSelected={selectedStudentIds.has(student.studentId)}
+                    onToggleSelect={() => toggleStudentSelection(student.studentId)}
+                    liveStream={primaryDeviceId ? liveStreams.get(primaryDeviceId) || null : null}
+                    onStartLiveView={primaryDeviceId ? () => handleStartLiveView(primaryDeviceId) : undefined}
+                    onStopLiveView={primaryDeviceId ? () => handleStopLiveView(primaryDeviceId) : undefined}
+                    onEndLiveRefresh={primaryDeviceId ? () => refreshTile(primaryDeviceId) : undefined}
+                    onBlockRefetches={() => { optimisticUpdateUntilRef.current = optimisticUpdateDeadline(); }}
+                    onAllowDomain={handleAllowDomain}
+                    teachingSessionId={effectiveSession?.id}
+                    onManageTabs={() => openManageTabs([student.studentId])}
+                  />
+                </div>
               );
             })}
           </div>
@@ -1891,6 +1945,39 @@ export default function Dashboard() {
             </div>
           </div>
           <DialogFooter><Button variant="outline" onClick={() => { setShowGradeDialog(false); setNewGrade(""); }} data-testid="button-close-grade-dialog">Done</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showRerouteDialog} onOpenChange={setShowRerouteDialog}>
+        <DialogContent data-testid="dialog-reroute-students">
+          <DialogHeader>
+            <DialogTitle>Reroute Students</DialogTitle>
+            <DialogDescription>Move {selectedStudentIds.size} selected student{selectedStudentIds.size === 1 ? "" : "s"} into active temporary coverage.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Coverage Context</Label>
+              <Select value={selectedCoverageContextId} onValueChange={setSelectedCoverageContextId}>
+                <SelectTrigger data-testid="select-coverage-context"><SelectValue placeholder="Select coverage" /></SelectTrigger>
+                <SelectContent>
+                  {activeCoverageContexts.length === 0 ? (
+                    <SelectItem value="none" disabled>No active coverage contexts</SelectItem>
+                  ) : activeCoverageContexts.map((context) => (
+                    <SelectItem key={context.id} value={context.id}>
+                      {context.name} · {context.assignedStaff?.displayName || "Coverage staff"}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowRerouteDialog(false)}>Cancel</Button>
+            <Button onClick={handleRerouteSelected} disabled={rerouteMutation.isPending || !selectedCoverageContextId || selectedCoverageContextId === "none"} data-testid="button-confirm-reroute">
+              <ClipboardCheck className="h-4 w-4 mr-2" />
+              Reroute
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

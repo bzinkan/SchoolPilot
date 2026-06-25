@@ -92,6 +92,9 @@ import {
   classpilotCommands,
   classpilotCommandTargets,
   classpilotClassroomStates,
+  classpilotCoverageAssignments,
+  classpilotSupervisionContexts,
+  classpilotSupervisionStudents,
   subgroups,
   subgroupMembers,
   flightPaths,
@@ -134,6 +137,12 @@ import {
   type InsertClasspilotCommandTarget,
   type ClasspilotClassroomState,
   type InsertClasspilotClassroomState,
+  type ClasspilotCoverageAssignment,
+  type InsertClasspilotCoverageAssignment,
+  type ClasspilotSupervisionContext,
+  type InsertClasspilotSupervisionContext,
+  type ClasspilotSupervisionStudent,
+  type InsertClasspilotSupervisionStudent,
   type Subgroup,
   type InsertSubgroup,
   type SubgroupMember,
@@ -4892,6 +4901,384 @@ export async function getActiveClasspilotClassroomStates(
       )
     )
     .orderBy(classpilotClassroomStates.appliedAt);
+}
+
+// ============================================================================
+// ClassPilot - Supervision coverage operations
+// ============================================================================
+
+export type ActiveStudentSupervision = {
+  studentId: string;
+  assignment: ClasspilotSupervisionStudent;
+  context: ClasspilotSupervisionContext;
+};
+
+export type OnlineUnassignedStudent = {
+  student: Student;
+  studentSession: StudentSession;
+};
+
+function activeSupervisionCondition(schoolId: string) {
+  return and(
+    eq(classpilotSupervisionStudents.schoolId, schoolId),
+    isNull(classpilotSupervisionStudents.releasedAt),
+    eq(classpilotSupervisionContexts.schoolId, schoolId),
+    eq(classpilotSupervisionContexts.status, "active"),
+    sql`${classpilotSupervisionContexts.endsAt} > now()`
+  );
+}
+
+export async function listCoverageAssignments(
+  schoolId: string
+): Promise<ClasspilotCoverageAssignment[]> {
+  return db
+    .select()
+    .from(classpilotCoverageAssignments)
+    .where(eq(classpilotCoverageAssignments.schoolId, schoolId))
+    .orderBy(desc(classpilotCoverageAssignments.active), classpilotCoverageAssignments.scopeType, classpilotCoverageAssignments.createdAt);
+}
+
+export async function getActiveCoverageAssignmentsForStaff(
+  schoolId: string,
+  staffId: string
+): Promise<ClasspilotCoverageAssignment[]> {
+  return db
+    .select()
+    .from(classpilotCoverageAssignments)
+    .where(
+      and(
+        eq(classpilotCoverageAssignments.schoolId, schoolId),
+        eq(classpilotCoverageAssignments.staffId, staffId),
+        eq(classpilotCoverageAssignments.active, true)
+      )
+    )
+    .orderBy(classpilotCoverageAssignments.scopeType, classpilotCoverageAssignments.createdAt);
+}
+
+export async function createCoverageAssignment(
+  data: InsertClasspilotCoverageAssignment
+): Promise<ClasspilotCoverageAssignment> {
+  const [row] = await db
+    .insert(classpilotCoverageAssignments)
+    .values(data)
+    .returning();
+  return row!;
+}
+
+export async function updateCoverageAssignmentActive(
+  schoolId: string,
+  assignmentId: string,
+  active: boolean
+): Promise<ClasspilotCoverageAssignment | undefined> {
+  const [row] = await db
+    .update(classpilotCoverageAssignments)
+    .set({ active, updatedAt: new Date() })
+    .where(
+      and(
+        eq(classpilotCoverageAssignments.schoolId, schoolId),
+        eq(classpilotCoverageAssignments.id, assignmentId)
+      )
+    )
+    .returning();
+  return row;
+}
+
+export async function getActiveSupervisionForStudents(
+  schoolId: string,
+  studentIds: string[]
+): Promise<ActiveStudentSupervision[]> {
+  if (studentIds.length === 0) return [];
+  const rows = await db
+    .select({
+      assignment: classpilotSupervisionStudents,
+      context: classpilotSupervisionContexts,
+    })
+    .from(classpilotSupervisionStudents)
+    .innerJoin(
+      classpilotSupervisionContexts,
+      eq(classpilotSupervisionStudents.contextId, classpilotSupervisionContexts.id)
+    )
+    .where(
+      and(
+        activeSupervisionCondition(schoolId),
+        inArray(classpilotSupervisionStudents.studentId, studentIds)
+      )
+    );
+  return rows.map((row) => ({
+    studentId: row.assignment.studentId,
+    assignment: row.assignment,
+    context: row.context,
+  }));
+}
+
+export async function getActiveSupervisionForStudent(
+  schoolId: string,
+  studentId: string
+): Promise<ActiveStudentSupervision | undefined> {
+  const rows = await getActiveSupervisionForStudents(schoolId, [studentId]);
+  return rows[0];
+}
+
+export async function getSupervisionContextByIdAndSchool(
+  schoolId: string,
+  contextId: string
+): Promise<ClasspilotSupervisionContext | undefined> {
+  const [context] = await db
+    .select()
+    .from(classpilotSupervisionContexts)
+    .where(
+      and(
+        eq(classpilotSupervisionContexts.schoolId, schoolId),
+        eq(classpilotSupervisionContexts.id, contextId)
+      )
+    )
+    .limit(1);
+  return context;
+}
+
+export async function listSupervisionContexts(
+  schoolId: string,
+  options: { activeOnly?: boolean } = {}
+): Promise<ClasspilotSupervisionContext[]> {
+  const conditions: SQL[] = [eq(classpilotSupervisionContexts.schoolId, schoolId)];
+  if (options.activeOnly) {
+    conditions.push(eq(classpilotSupervisionContexts.status, "active"));
+    conditions.push(sql`${classpilotSupervisionContexts.endsAt} > now()`);
+  }
+  return db
+    .select()
+    .from(classpilotSupervisionContexts)
+    .where(and(...conditions))
+    .orderBy(desc(classpilotSupervisionContexts.createdAt))
+    .limit(200);
+}
+
+export async function listSupervisionStudentsForContexts(
+  schoolId: string,
+  contextIds: string[],
+  options: { activeOnly?: boolean } = {}
+): Promise<(ClasspilotSupervisionStudent & { student: Student })[]> {
+  if (contextIds.length === 0) return [];
+  const conditions: SQL[] = [
+    eq(classpilotSupervisionStudents.schoolId, schoolId),
+    inArray(classpilotSupervisionStudents.contextId, contextIds),
+  ];
+  if (options.activeOnly) conditions.push(isNull(classpilotSupervisionStudents.releasedAt));
+
+  const rows = await db
+    .select({ assignment: classpilotSupervisionStudents, student: students })
+    .from(classpilotSupervisionStudents)
+    .innerJoin(students, eq(students.id, classpilotSupervisionStudents.studentId))
+    .where(and(...conditions))
+    .orderBy(classpilotSupervisionStudents.assignedAt);
+
+  return rows.map((row) => ({ ...row.assignment, student: row.student }));
+}
+
+export async function createSupervisionContextWithStudents(options: {
+  context: InsertClasspilotSupervisionContext;
+  studentIds: string[];
+  assignedBy: string;
+  source?: string;
+}): Promise<ClasspilotSupervisionContext> {
+  const uniqueStudentIds = Array.from(new Set(options.studentIds.filter(Boolean)));
+  return db.transaction(async (tx) => {
+    const [context] = await tx
+      .insert(classpilotSupervisionContexts)
+      .values(options.context)
+      .returning();
+    if (!context) throw new Error("Failed to create supervision context");
+
+    if (uniqueStudentIds.length > 0) {
+      await tx
+        .update(classpilotSupervisionStudents)
+        .set({ releasedAt: new Date(), releaseReason: "reassigned" })
+        .where(
+          and(
+            eq(classpilotSupervisionStudents.schoolId, context.schoolId),
+            inArray(classpilotSupervisionStudents.studentId, uniqueStudentIds),
+            isNull(classpilotSupervisionStudents.releasedAt)
+          )
+        );
+      await tx.insert(classpilotSupervisionStudents).values(
+        uniqueStudentIds.map((studentId) => ({
+          schoolId: context.schoolId,
+          contextId: context.id,
+          studentId,
+          source: options.source || "manual",
+          assignedBy: options.assignedBy,
+        }))
+      );
+    }
+
+    return context;
+  });
+}
+
+export async function assignStudentsToSupervisionContext(options: {
+  schoolId: string;
+  contextId: string;
+  studentIds: string[];
+  assignedBy: string;
+  source?: string;
+}): Promise<ClasspilotSupervisionStudent[]> {
+  const uniqueStudentIds = Array.from(new Set(options.studentIds.filter(Boolean)));
+  if (uniqueStudentIds.length === 0) return [];
+
+  return db.transaction(async (tx) => {
+    await tx
+      .update(classpilotSupervisionStudents)
+      .set({ releasedAt: new Date(), releaseReason: "reassigned" })
+      .where(
+        and(
+          eq(classpilotSupervisionStudents.schoolId, options.schoolId),
+          inArray(classpilotSupervisionStudents.studentId, uniqueStudentIds),
+          isNull(classpilotSupervisionStudents.releasedAt)
+        )
+      );
+
+    return tx
+      .insert(classpilotSupervisionStudents)
+      .values(
+        uniqueStudentIds.map((studentId) => ({
+          schoolId: options.schoolId,
+          contextId: options.contextId,
+          studentId,
+          source: options.source || "reroute",
+          assignedBy: options.assignedBy,
+        }))
+      )
+      .returning();
+  });
+}
+
+export async function releaseSupervisionStudents(options: {
+  schoolId: string;
+  contextId: string;
+  studentIds?: string[];
+  releaseReason?: string;
+}): Promise<ClasspilotSupervisionStudent[]> {
+  const conditions: SQL[] = [
+    eq(classpilotSupervisionStudents.schoolId, options.schoolId),
+    eq(classpilotSupervisionStudents.contextId, options.contextId),
+    isNull(classpilotSupervisionStudents.releasedAt),
+  ];
+  if (options.studentIds?.length) {
+    conditions.push(inArray(classpilotSupervisionStudents.studentId, options.studentIds));
+  }
+
+  return db.transaction(async (tx) => {
+    const released = await tx
+      .update(classpilotSupervisionStudents)
+      .set({
+        releasedAt: new Date(),
+        releaseReason: options.releaseReason || "released",
+      })
+      .where(and(...conditions))
+      .returning();
+
+    const remaining = await tx
+      .select({ id: classpilotSupervisionStudents.id })
+      .from(classpilotSupervisionStudents)
+      .where(
+        and(
+          eq(classpilotSupervisionStudents.schoolId, options.schoolId),
+          eq(classpilotSupervisionStudents.contextId, options.contextId),
+          isNull(classpilotSupervisionStudents.releasedAt)
+        )
+      )
+      .limit(1);
+    if (remaining.length === 0) {
+      await tx
+        .update(classpilotSupervisionContexts)
+        .set({ status: "ended", endedAt: new Date(), updatedAt: new Date() })
+        .where(
+          and(
+            eq(classpilotSupervisionContexts.schoolId, options.schoolId),
+            eq(classpilotSupervisionContexts.id, options.contextId)
+          )
+        );
+    }
+
+    return released;
+  });
+}
+
+export async function extendSupervisionContext(options: {
+  schoolId: string;
+  contextId: string;
+  endsAt?: Date;
+  note?: string | null;
+  assignedStaffId?: string;
+}): Promise<ClasspilotSupervisionContext | undefined> {
+  const data: Partial<InsertClasspilotSupervisionContext> & { updatedAt: Date } = {
+    updatedAt: new Date(),
+  };
+  if (options.endsAt) data.endsAt = options.endsAt;
+  if (options.note !== undefined) data.note = options.note;
+  if (options.assignedStaffId) data.assignedStaffId = options.assignedStaffId;
+
+  const [row] = await db
+    .update(classpilotSupervisionContexts)
+    .set(data)
+    .where(
+      and(
+        eq(classpilotSupervisionContexts.schoolId, options.schoolId),
+        eq(classpilotSupervisionContexts.id, options.contextId)
+      )
+    )
+    .returning();
+  return row;
+}
+
+export async function getOnlineUnassignedStudents(
+  schoolId: string,
+  activeWithinMs = 5 * 60 * 1000
+): Promise<OnlineUnassignedStudent[]> {
+  const cutoff = new Date(Date.now() - activeWithinMs);
+  const onlineRows = await db
+    .select({ student: students, studentSession: studentSessions })
+    .from(studentSessions)
+    .innerJoin(students, eq(students.id, studentSessions.studentId))
+    .where(
+      and(
+        eq(students.schoolId, schoolId),
+        eq(students.status, "active"),
+        eq(studentSessions.isActive, true),
+        sql`${studentSessions.lastSeenAt} >= ${cutoff}`
+      )
+    )
+    .orderBy(desc(studentSessions.lastSeenAt));
+
+  if (onlineRows.length === 0) return [];
+  const studentIds = onlineRows.map((row) => row.student.id);
+
+  const activeClassRows = await db
+    .select({ studentId: groupStudents.studentId })
+    .from(groupStudents)
+    .innerJoin(groups, eq(groups.id, groupStudents.groupId))
+    .innerJoin(
+      teachingSessions,
+      and(
+        eq(teachingSessions.groupId, groups.id),
+        isNull(teachingSessions.endTime)
+      )
+    )
+    .where(
+      and(
+        eq(groups.schoolId, schoolId),
+        inArray(groupStudents.studentId, studentIds)
+      )
+    );
+  const inActiveClass = new Set(activeClassRows.map((row) => row.studentId));
+  const activeCoverage = await getActiveSupervisionForStudents(schoolId, studentIds);
+  const inTemporaryCoverage = new Set(activeCoverage.map((row) => row.studentId));
+
+  return onlineRows.filter(
+    (row) =>
+      !inActiveClass.has(row.student.id) &&
+      !inTemporaryCoverage.has(row.student.id)
+  );
 }
 
 // ============================================================================

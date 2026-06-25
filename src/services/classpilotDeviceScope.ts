@@ -1,4 +1,10 @@
-import { getDeviceById, getDevicesBySchool, getStudentDevices } from "./storage.js";
+import {
+  getActiveSessionByDevice,
+  getActiveSupervisionForStudent,
+  getDeviceById,
+  getDevicesBySchool,
+  getStudentDevices,
+} from "./storage.js";
 
 function normalizeDeviceIds(deviceIds: unknown): string[] {
   if (!Array.isArray(deviceIds)) return [];
@@ -19,9 +25,18 @@ export async function scopedDeviceTargets(
 ): Promise<{ deviceIds: string[]; rejectedDeviceCount: number }> {
   const requested = normalizeDeviceIds(deviceIds);
   const scoped = await devicesInSchool(requested, schoolId);
+  const controllable: string[] = [];
+  for (const deviceId of scoped) {
+    const activeSession = await getActiveSessionByDevice(deviceId);
+    if (activeSession?.studentId) {
+      const supervision = await getActiveSupervisionForStudent(schoolId, activeSession.studentId);
+      if (supervision) continue;
+    }
+    controllable.push(deviceId);
+  }
   return {
-    deviceIds: scoped,
-    rejectedDeviceCount: Math.max(0, requested.length - scoped.length),
+    deviceIds: controllable,
+    rejectedDeviceCount: Math.max(0, requested.length - controllable.length),
   };
 }
 

@@ -447,6 +447,71 @@ async function runStartupMigrations(): Promise<void> {
     console.warn("[migration] ClassPilot FAB migration skipped:", (err as Error).message);
   }
 
+  // ClassPilot supervision coverage. These school-scoped tables support the
+  // Online Unassigned queue and temporary coverage contexts.
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS classpilot_coverage_assignments (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        school_id TEXT NOT NULL,
+        staff_id TEXT NOT NULL,
+        scope_type TEXT NOT NULL,
+        scope_value TEXT,
+        permissions JSONB NOT NULL DEFAULT '{}'::jsonb,
+        active BOOLEAN NOT NULL DEFAULT true,
+        created_by TEXT NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT now(),
+        updated_at TIMESTAMP NOT NULL DEFAULT now()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_coverage_assignments_school_staff_idx ON classpilot_coverage_assignments (school_id, staff_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_coverage_assignments_scope_idx ON classpilot_coverage_assignments (school_id, scope_type, scope_value)`);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS classpilot_supervision_contexts (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        school_id TEXT NOT NULL,
+        context_type TEXT NOT NULL,
+        name TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        assigned_staff_id TEXT NOT NULL,
+        created_by TEXT NOT NULL,
+        note TEXT,
+        starts_at TIMESTAMP NOT NULL DEFAULT now(),
+        ends_at TIMESTAMP NOT NULL,
+        ended_at TIMESTAMP,
+        created_at TIMESTAMP NOT NULL DEFAULT now(),
+        updated_at TIMESTAMP NOT NULL DEFAULT now()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_supervision_contexts_school_status_idx ON classpilot_supervision_contexts (school_id, status)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_supervision_contexts_staff_idx ON classpilot_supervision_contexts (school_id, assigned_staff_id)`);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS classpilot_supervision_students (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        school_id TEXT NOT NULL,
+        context_id VARCHAR NOT NULL,
+        student_id TEXT NOT NULL,
+        source TEXT NOT NULL DEFAULT 'manual',
+        assigned_by TEXT NOT NULL,
+        assigned_at TIMESTAMP NOT NULL DEFAULT now(),
+        released_at TIMESTAMP,
+        release_reason TEXT
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_supervision_students_context_idx ON classpilot_supervision_students (school_id, context_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_supervision_students_student_idx ON classpilot_supervision_students (school_id, student_id)`);
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS classpilot_supervision_students_active_unique
+      ON classpilot_supervision_students (school_id, student_id)
+      WHERE released_at IS NULL
+    `);
+    console.log("[migration] ClassPilot supervision coverage tables ready");
+  } catch (err) {
+    console.warn("[migration] ClassPilot supervision coverage migration skipped:", (err as Error).message);
+  }
+
   // RLS Phase 4: author per-school tenant-isolation policies (idempotent) for
   // every table that has a school_id column, EXCEPT global/bootstrap tables. The
   // policies + FORCE ROW LEVEL SECURITY are INERT until a table is named in the

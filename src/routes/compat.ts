@@ -45,6 +45,7 @@ import {
   getUserById,
   getAttendanceBySchool,
   getActivePassesBySchool,
+  getActiveSupervisionForStudents,
   validateStaffEmailDomainForSchool,
 } from "../services/storage.js";
 import db from "../db.js";
@@ -1111,7 +1112,7 @@ router.get("/students-aggregated", ...schoolAuth, async (req, res, next) => {
           .from(studentDevices)
           .where(inArray(studentDevices.studentId, studentIds))
       : [];
-    const [activeStudentSessions, attendanceRows, activePasses, dismissalRows] = await Promise.all([
+    const [activeStudentSessions, attendanceRows, activePasses, dismissalRows, activeCoverageRows, activeClassRows] = await Promise.all([
       studentIds.length > 0
         ? db
             .select()
@@ -1139,10 +1140,21 @@ router.get("/students-aggregated", ...schoolAuth, async (req, res, next) => {
               )
             )
         : [],
+      studentIds.length > 0 ? getActiveSupervisionForStudents(schoolId, studentIds) : [],
+      studentIds.length > 0
+        ? db
+            .select({ studentId: groupStudents.studentId, sessionId: teachingSessions.id, groupId: groups.id, groupName: groups.name })
+            .from(groupStudents)
+            .innerJoin(groups, eq(groups.id, groupStudents.groupId))
+            .innerJoin(teachingSessions, and(eq(teachingSessions.groupId, groups.id), sql`${teachingSessions.endTime} IS NULL`))
+            .where(and(eq(groups.schoolId, schoolId), inArray(groupStudents.studentId, studentIds)))
+        : [],
     ]);
     const attendanceByStudent = new Map(attendanceRows.map((row) => [row.attendance.studentId, row.attendance]));
     const activePassByStudent = new Map(activePasses.map((pass) => [pass.studentId, pass]));
     const activeSessionByStudent = new Map(activeStudentSessions.map((session) => [session.studentId, session]));
+    const activeCoverageByStudent = new Map(activeCoverageRows.map((entry) => [entry.studentId, entry.context]));
+    const activeClassByStudent = new Map(activeClassRows.map((row) => [row.studentId, row]));
     const dismissalByStudent = new Map<string, any>();
     for (const row of dismissalRows) {
       const existing = dismissalByStudent.get(row.queue.studentId);
@@ -1167,6 +1179,8 @@ router.get("/students-aggregated", ...schoolAuth, async (req, res, next) => {
         (student.email ? statusByEmail.get(student.email.toLowerCase()) : null) ||
         null;
       const activeStudentSession = activeSessionByStudent.get(student.id);
+      const activeCoverage = activeCoverageByStudent.get(student.id);
+      const activeClass = activeClassByStudent.get(student.id);
       // Fallback to student_devices table when realtime status has no device mapping
       const deviceId = rt?.deviceId || activeStudentSession?.deviceId || student.deviceId || deviceByStudent.get(student.id) || null;
       const isConnected = deviceId ? connectedDevices.has(deviceId) : false;
@@ -1241,6 +1255,25 @@ router.get("/students-aggregated", ...schoolAuth, async (req, res, next) => {
           status: dismissal.status,
           checkInMethod: dismissal.checkInMethod,
           checkInTime: dismissal.checkInTime,
+        } : null,
+        supervisionState: activeCoverage
+          ? "temporary_coverage"
+          : activeGroup || activeClass
+            ? "in_class"
+            : isLoggedIn
+              ? "online_unassigned"
+              : "offline",
+        supervisionContext: activeCoverage ? {
+          id: activeCoverage.id,
+          type: activeCoverage.contextType,
+          name: activeCoverage.name,
+          assignedStaffId: activeCoverage.assignedStaffId,
+          endsAt: activeCoverage.endsAt,
+        } : activeClass ? {
+          id: activeClass.sessionId,
+          type: "class",
+          name: activeClass.groupName,
+          groupId: activeClass.groupId,
         } : null,
         monitoringContext: rt?.aiClassification?.safetyAlert
           ? "safety_with_context"
