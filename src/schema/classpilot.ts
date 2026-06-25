@@ -722,6 +722,7 @@ export const classpilotSupervisionContexts = pgTable(
       .default("active")
       .$type<"active" | "ended">(),
     assignedStaffId: text("assigned_staff_id").notNull(),
+    coverageGroupId: text("coverage_group_id"),
     createdBy: text("created_by").notNull(),
     note: text("note"),
     startsAt: timestamp("starts_at").notNull().default(sql`now()`),
@@ -738,6 +739,10 @@ export const classpilotSupervisionContexts = pgTable(
     index("classpilot_supervision_contexts_staff_idx").on(
       table.schoolId,
       table.assignedStaffId
+    ),
+    index("classpilot_supervision_contexts_coverage_group_idx").on(
+      table.schoolId,
+      table.coverageGroupId
     ),
   ]
 );

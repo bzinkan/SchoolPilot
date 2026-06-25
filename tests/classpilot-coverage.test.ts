@@ -224,6 +224,7 @@ async function ensureCoverageTables() {
       name TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'active',
       assigned_staff_id TEXT NOT NULL,
+      coverage_group_id TEXT,
       created_by TEXT NOT NULL,
       note TEXT,
       starts_at TIMESTAMP NOT NULL DEFAULT now(),
@@ -233,8 +234,10 @@ async function ensureCoverageTables() {
       updated_at TIMESTAMP NOT NULL DEFAULT now()
     )
   `);
+  await db.execute(sql`ALTER TABLE classpilot_supervision_contexts ADD COLUMN IF NOT EXISTS coverage_group_id TEXT`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS classpilot_supervision_contexts_school_status_idx ON classpilot_supervision_contexts (school_id, status)`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS classpilot_supervision_contexts_staff_idx ON classpilot_supervision_contexts (school_id, assigned_staff_id)`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS classpilot_supervision_contexts_coverage_group_idx ON classpilot_supervision_contexts (school_id, coverage_group_id)`);
 
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS classpilot_supervision_students (
@@ -481,7 +484,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     assert.equal(scopedAfterRelease.rejectedDeviceCount, 0);
   });
 
-  it("manages reusable coverage testing groups and assignment edits", async () => {
+  it("manages reusable supervision groups and assignment edits", async () => {
     const group = await inSchool(school.id, () => createCoverageScopeGroup({
       group: {
         schoolId: school.id,
@@ -535,55 +538,52 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     assert.equal(disabledGroup?.active, false);
   });
 
-  it("enforces coverage-group scoped visibility and safe reroute targets through coverage APIs", async () => {
+  it("supports supervision groups, available pickup, claiming, and teacher send targets", async () => {
     const adminAuth = authFor(admin, school.id);
     const staffAuth = authFor(scopedCoverageStaff, school.id);
     const teacherAuth = authFor(teacher, school.id);
 
-    const groupRes = await requestJson("POST", "/coverage/scope-groups", {
-      name: "Route Testing Group",
-      description: "API route coverage scope",
-      studentIds: [studentUnassigned.id],
+    const groupRes = await requestJson("POST", "/coverage/supervision-groups", {
+      name: "Route Supervision Group",
+      description: "API route supervision scope",
+      studentIds: [studentUnassigned.id, studentInClass.id, studentCoverage.id],
+      staffIds: [scopedCoverageStaff.id],
     }, adminAuth);
     assert.equal(groupRes.status, 201);
-    assert.equal(groupRes.body.group.studentCount, 1);
+    assert.equal(groupRes.body.group.studentCount, 3);
+    assert.ok(groupRes.body.group.staff.some((staff: any) => staff.id === scopedCoverageStaff.id));
     expectNoDeviceIds(groupRes.body);
 
-    const assignmentRes = await requestJson("POST", "/coverage/assignments", {
-      staffId: scopedCoverageStaff.id,
-      scopeType: "coverage_group",
-      scopeValue: groupRes.body.group.id,
-    }, adminAuth);
-    assert.equal(assignmentRes.status, 201);
-    assert.equal(assignmentRes.body.assignment.permissionLabel, "Claim + Manage");
-    assert.match(assignmentRes.body.assignment.scopeLabel, /Testing Group/);
-    expectNoDeviceIds(assignmentRes.body);
-
-    const staffQueue = await requestJson("GET", "/coverage/unassigned", undefined, staffAuth);
+    const staffQueue = await requestJson("GET", "/coverage/available-students", undefined, staffAuth);
     assert.equal(staffQueue.status, 200);
     const staffQueueIds = new Set(staffQueue.body.students.map((student: any) => student.studentId));
     assert.ok(staffQueueIds.has(studentUnassigned.id));
-    assert.ok(!staffQueueIds.has(studentCoverage.id));
+    assert.ok(staffQueue.body.students.every((student: any) =>
+      student.matchingGroups.some((group: any) => group.id === groupRes.body.group.id)
+    ));
     expectNoDeviceIds(staffQueue.body);
 
-    const teacherQueue = await requestJson("GET", "/coverage/unassigned", undefined, teacherAuth);
+    const teacherQueue = await requestJson("GET", "/coverage/available-students", undefined, teacherAuth);
     assert.equal(teacherQueue.status, 200);
     assert.deepEqual(teacherQueue.body.students, []);
 
-    const contextRes = await requestJson("POST", "/coverage/contexts", {
-      contextType: "office",
-      name: "Scoped Office Coverage",
-      endsAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    const claimRes = await requestJson("POST", "/coverage/claim", {
+      supervisionGroupId: groupRes.body.group.id,
       studentIds: [studentUnassigned.id],
     }, staffAuth);
-    assert.equal(contextRes.status, 201);
-    const contextId = contextRes.body.context.id;
-    expectNoDeviceIds(contextRes.body);
+    assert.equal(claimRes.status, 201);
+    assert.equal(claimRes.body.context.coverageGroupId, groupRes.body.group.id);
+    const contextId = claimRes.body.context.id;
+    expectNoDeviceIds(claimRes.body);
 
-    const staffContexts = await requestJson("GET", "/coverage/contexts?activeOnly=true", undefined, staffAuth);
-    assert.equal(staffContexts.status, 200);
-    assert.ok(staffContexts.body.contexts.some((context: any) => context.id === contextId && context.canManage));
-    expectNoDeviceIds(staffContexts.body);
+    const staffClaimed = await requestJson("GET", "/coverage/claimed-students", undefined, staffAuth);
+    assert.equal(staffClaimed.status, 200);
+    assert.ok(staffClaimed.body.students.some((student: any) =>
+      student.studentId === studentUnassigned.id &&
+      student.contextId === contextId &&
+      student.supervisionGroup.id === groupRes.body.group.id
+    ));
+    expectNoDeviceIds(staffClaimed.body);
 
     const teacherContexts = await requestJson("GET", "/coverage/contexts?activeOnly=true", undefined, teacherAuth);
     assert.equal(teacherContexts.status, 200);
@@ -591,7 +591,10 @@ describe("ClassPilot supervision coverage storage contracts", () => {
 
     const rerouteTargets = await requestJson("GET", "/coverage/reroute-targets", undefined, teacherAuth);
     assert.equal(rerouteTargets.status, 200);
-    const target = rerouteTargets.body.contexts.find((context: any) => context.id === contextId);
+    const target = rerouteTargets.body.targets.find((entry: any) =>
+      entry.supervisionGroupId === groupRes.body.group.id &&
+      entry.assignedStaffId === scopedCoverageStaff.id
+    );
     assert.ok(target);
     assert.equal(Object.prototype.hasOwnProperty.call(target, "students"), false);
     expectNoDeviceIds(rerouteTargets.body);
@@ -599,7 +602,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     const activeClass = await inSchool(school.id, () => createGroup({
       schoolId: school.id,
       teacherId: teacher.id,
-      name: `${TAG}_Reroute_Class`,
+      name: `${TAG}_Send_Class`,
       groupType: "admin_class",
       status: "active",
     } as any));
@@ -609,21 +612,23 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       teacherId: teacher.id,
     }));
 
-    const teacherReroute = await requestJson("POST", "/coverage/reroute", {
-      contextId,
+    const teacherReroute = await requestJson("POST", "/coverage/send", {
+      supervisionGroupId: target.supervisionGroupId,
+      assignedStaffId: target.assignedStaffId,
       studentIds: [studentInClass.id],
-      note: "API teacher reroute check",
+      note: "API teacher send check",
     }, teacherAuth);
     assert.equal(teacherReroute.status, 201);
     assert.ok(teacherReroute.body.assignments.some((assignment: any) =>
       assignment.studentId === studentInClass.id &&
       assignment.contextId === contextId &&
-      assignment.source === "teacher_reroute"
+      assignment.source === "teacher_send"
     ));
     expectNoDeviceIds(teacherReroute.body);
 
-    const outOfClassReroute = await requestJson("POST", "/coverage/reroute", {
-      contextId,
+    const outOfClassReroute = await requestJson("POST", "/coverage/send", {
+      supervisionGroupId: target.supervisionGroupId,
+      assignedStaffId: target.assignedStaffId,
       studentIds: [studentCoverage.id],
       note: "should be blocked",
     }, teacherAuth);
