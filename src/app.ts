@@ -7,7 +7,6 @@ import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
 import cookieParser from "cookie-parser";
 import { pool } from "./db.js";
-import { getIO } from "./realtime/socketio.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import { requestId } from "./middleware/requestId.js";
 import { sessionIdleTimeout } from "./middleware/sessionIdleTimeout.js";
@@ -15,7 +14,8 @@ import { csrfProtection } from "./middleware/csrfProtection.js";
 import { apiLimiter } from "./middleware/rateLimiter.js";
 import { safeCompare } from "./util/safeCompare.js";
 import routes from "./routes/index.js";
-import errorMonitor from "./services/errorMonitor.js";
+import monitoringRoutes from "./routes/monitoring.js";
+import { buildMonitoringHealthSnapshot } from "./services/monitoringDashboard.js";
 
 const PgStore = connectPgSimple(session);
 const isProduction = process.env.NODE_ENV === "production";
@@ -100,16 +100,6 @@ export function createApp() {
     })
   );
 
-  // Capture raw body for Stripe webhooks
-  app.use(
-    express.json({
-      limit: "1mb",
-      verify: (req, _res, buf) => {
-        (req as express.Request).rawBody = buf;
-      },
-    })
-  );
-  app.use(express.urlencoded({ extended: true, limit: "1mb" }));
   app.use(cookieParser());
 
   // CloudFront → ALB uses HTTP ("http-only" origin protocol), so the ALB sets
@@ -164,6 +154,22 @@ export function createApp() {
     return webSession(req, res, next);
   });
 
+  // Browser runtime telemetry is intentionally narrow, CSRF-exempt, and capped
+  // before the general 1mb JSON parser. It may use session cookies for optional
+  // correlation, but it never trusts client-provided identity fields.
+  app.use("/api/monitoring", monitoringRoutes);
+
+  // Capture raw body for Stripe webhooks
+  app.use(
+    express.json({
+      limit: "1mb",
+      verify: (req, _res, buf) => {
+        (req as express.Request).rawBody = buf;
+      },
+    })
+  );
+  app.use(express.urlencoded({ extended: true, limit: "1mb" }));
+
   // Global API rate limit (Redis-backed, falls back to in-memory). The old
   // "CloudFront masks client IPs" false-429 problem is fixed by trust proxy = 2
   // above, so req.ip is the real viewer again.
@@ -174,39 +180,7 @@ export function createApp() {
   // the detailed body (pool stats, error counts, client counts) is operational
   // intel and only returned when the caller presents HEALTH_TOKEN.
   app.get("/health", async (req, res) => {
-    const results: Record<string, any> = {};
-    let allOk = true;
-
-    // 1. Postgres ping
-    try {
-      const start = Date.now();
-      await pool.query("SELECT 1");
-      results.postgres = { ok: true, latencyMs: Date.now() - start };
-    } catch (err: any) {
-      results.postgres = { ok: false, error: err.message };
-      allOk = false;
-    }
-
-    // 2. DB pool stats
-    const waiting = pool.waitingCount;
-    results.dbPool = {
-      ok: waiting === 0,
-      total: pool.totalCount,
-      idle: pool.idleCount,
-      waiting,
-    };
-    if (waiting > 0) allOk = false;
-
-    // 3. Socket.IO
-    const io = getIO();
-    results.socketio = io
-      ? { ok: true, clients: io.engine.clientsCount }
-      : { ok: false, error: "not initialized" };
-    if (!io) allOk = false;
-
-    results.uptime = Math.floor(process.uptime());
-    results.timestamp = new Date().toISOString();
-    results.recentErrors = errorMonitor.getErrorSummary();
+    const snapshot = await buildMonitoringHealthSnapshot();
 
     const expected = process.env.HEALTH_TOKEN;
     const provided = req.get("x-health-token") ?? req.query.token;
@@ -214,10 +188,11 @@ export function createApp() {
       Boolean(expected) &&
       typeof provided === "string" &&
       safeCompare(provided, expected!);
-    res.status(allOk ? 200 : 503).json(
+    const status = snapshot.coreOk && snapshot.alerting.ok ? "ok" : "degraded";
+    res.status(snapshot.coreOk ? 200 : 503).json(
       detailed
-        ? { status: allOk ? "ok" : "degraded", checks: results }
-        : { status: allOk ? "ok" : "degraded" }
+        ? { status, checks: snapshot.checks }
+        : { status }
     );
   });
 

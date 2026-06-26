@@ -7,8 +7,8 @@
  * - Uses schedulerDb (isolated pool) so it never starves API requests.
  * - Every detection is written to security_events for human review.
  *
- * Alerts flow: detection → security_events row → email to security@school-pilot.net
- * → errorMonitor for visibility in existing alert channels.
+ * Alerts flow: detection -> security_events row -> minimal email to
+ * security@school-pilot.net -> safe security_event summary in errorMonitor.
  */
 import { sql } from "drizzle-orm";
 import { schedulerDb } from "./schedulerDb.js";
@@ -155,36 +155,35 @@ async function persistDetection(d: Detection): Promise<string | null> {
 }
 
 async function alertOn(d: Detection, eventId: string): Promise<void> {
-  const emoji = d.severity === "critical" ? "🚨" : d.severity === "high" ? "⚠️" : "⚡";
   try {
-    await sendEmail({
+    const delivered = Boolean(process.env.SENDGRID_API_KEY) && await sendEmail({
       to: "security@school-pilot.net",
-      subject: `${emoji} [${d.severity.toUpperCase()}] Security: ${d.eventType}`,
-      html: `
-        <h3>${emoji} Security Detection</h3>
-        <p><strong>Type:</strong> ${d.eventType}</p>
-        <p><strong>Severity:</strong> ${d.severity}</p>
-        <p><strong>Summary:</strong> ${d.summary}</p>
-        ${d.schoolId ? `<p><strong>School:</strong> ${d.schoolId}</p>` : ""}
-        ${d.userEmail ? `<p><strong>User:</strong> ${d.userEmail}</p>` : ""}
-        <p><strong>Details:</strong></p>
-        <pre>${JSON.stringify(d.details, null, 2)}</pre>
-        <p><strong>Event ID:</strong> ${eventId}</p>
-        <hr>
-        <p><em>Review at super-admin dashboard. This is an automated alert — investigate before taking action.</em></p>
-      `,
+      subject: `[${d.severity.toUpperCase()}] Security event: ${d.eventType}`,
+      text: [
+        "Security detection recorded.",
+        `Severity: ${d.severity}`,
+        `Type: ${d.eventType}`,
+        `Event ID: ${eventId}`,
+        d.schoolId ? `School ID: ${d.schoolId}` : null,
+        d.userId ? `User ID: ${d.userId}` : null,
+        "",
+        "Review the security_events record before taking action.",
+      ].filter(Boolean).join("\n"),
     });
-    await schedulerDb.update(securityEvents)
-      .set({ alertSent: true })
-      .where(sql`id = ${eventId}`);
+    if (delivered) {
+      await schedulerDb.update(securityEvents)
+        .set({ alertSent: true })
+        .where(sql`id = ${eventId}`);
+    }
   } catch (err) {
     console.error("[SecurityMonitor] Alert email failed:", err);
   }
 
   // Also log to the existing error monitor so it shows up in Telegram/existing channels
-  errorMonitor.trackError("uncaught_exception", new Error(`[SECURITY/${d.severity}] ${d.summary}`), {
+  errorMonitor.trackError("security_event", new Error(`Security event ${d.severity}: ${d.eventType} (${eventId})`), {
     eventType: d.eventType,
     eventId,
+    errorCode: d.severity,
   });
 }
 

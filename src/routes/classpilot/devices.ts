@@ -76,6 +76,10 @@ import {
   effectiveSharedChromebookLoginMethod,
 } from "../../services/classpilotSharedChromebook.js";
 import { buildStudentFabState } from "../../services/classpilotFab.js";
+import {
+  extensionRuntimeTelemetrySchema,
+  trackExtensionRuntimeTelemetry,
+} from "../../services/runtimeTelemetry.js";
 
 const router = Router();
 
@@ -182,6 +186,15 @@ const extensionRegisterLimiter = rateLimit({
     String(req.body?.schoolId || req.body?.schoolSlug || ""),
     String(req.body?.deviceId || ""),
   ].join(":"),
+});
+
+const extensionTelemetryLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  message: { error: "Too many telemetry events, please wait" },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => ipKeyGenerator(req.ip || req.socket.remoteAddress || "0.0.0.0"),
 });
 
 const deviceActionLimiter = rateLimit({
@@ -1196,6 +1209,21 @@ router.post("/device/:deviceId/active-student", deviceActionLimiter, requireDevi
   } catch (err) {
     next(err);
   }
+});
+
+// POST /api/classpilot/extension/runtime-error - Safe extension runtime telemetry
+router.post("/extension/runtime-error", extensionTelemetryLimiter, requireDeviceAuth, (req, res) => {
+  const parsed = extensionRuntimeTelemetrySchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Invalid telemetry payload" });
+  }
+
+  trackExtensionRuntimeTelemetry(parsed.data, {
+    requestId: req.requestId,
+    schoolId: res.locals.schoolId,
+  });
+
+  return res.status(204).send();
 });
 
 // ============================================================================

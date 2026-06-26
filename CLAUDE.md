@@ -202,7 +202,7 @@ Admin Class Management lets schools set `blockStartTime`/`blockEndTime` per grou
 - Admin updating schedule times **clears** `scheduleSkippedDate` — required so stale skips from earlier ends don't block the new window
 
 ### Security Monitor
-`src/services/securityMonitor.ts` runs every 5 minutes from the scheduler as a deterministic rule-based breach detector. Reads `audit_logs`, writes detections to `security_events` table, emails `security@school-pilot.net`. NEVER takes destructive action autonomously — read-only + alerting only. Current rules: failed auth spike, bulk student writes, off-hours admin burst, cross-school access. 30-minute dedup prevents alert spam. When adding rules, use `schedulerDb` and keep them deterministic (no LLM inference for security decisions). See `docs/WISP.md` for the Written Information Security Program this supports.
+`src/services/securityMonitor.ts` runs every 5 minutes from the scheduler as a deterministic rule-based breach detector. Reads `audit_logs`, writes detections to `security_events` table, emails `security@school-pilot.net`, and forwards only severity/type/event id to the generic `security_event` monitor category. NEVER takes destructive action autonomously — read-only + alerting only. Current rules: failed auth spike, bulk student writes, off-hours admin burst, cross-school access. 30-minute dedup prevents alert spam. When adding rules, use `schedulerDb` and keep them deterministic (no LLM inference for security decisions). Sensitive details belong in `security_events`, not generic Telegram/error-monitor text. See `docs/WISP.md` for the Written Information Security Program this supports.
 
 ### Admin Analytics Endpoints
 All in `src/routes/compat.ts`, require admin role:
@@ -415,23 +415,38 @@ Daily attendance tracking with timezone-aware resets:
 - **Reset behavior**: No cron job needed — attendance "resets" naturally because queries filter by the current local date. Historical records are permanent.
 
 ### Error Monitoring
-Centralized error tracking in `src/services/errorMonitor.ts`. `trackError(category, error, context?)` does three things: (1) records the error in a 5-minute in-memory sliding window for threshold alerting, (2) **persists it durably** to the `error_logs` Postgres table, and (3) forwards it to Sentry **if** Sentry is enabled.
+Centralized error tracking in `src/services/errorMonitor.ts`. `trackError(category, error, context?, options?)` normalizes and redacts the event once, then (1) records it in bounded per-fingerprint counters for threshold alerting, (2) persists the sanitized event durably to the `error_logs` Postgres table unless `options.persist === false`, and (3) forwards the sanitized error to Sentry **if** Sentry is enabled.
 
 **Wired into:**
-- `process.on("uncaughtException"/"unhandledRejection")` in `src/index.ts`
+- `process.on("uncaughtException"/"unhandledRejection")` in `src/index.ts` via bounded fatal shutdown
 - Express error middleware (`src/middleware/errorHandler.ts`) — 500-level errors only
 - All scheduler catch blocks (`src/services/scheduler.ts`)
 - SendGrid failures (`src/services/email.ts`) — with recursion guard to avoid alert→email→fail→alert loops
-- WebSocket connection errors (`src/realtime/websocket.ts`)
+- WebSocket connection errors and non-noise internal message-processing errors (`src/realtime/websocket.ts`)
+- Security detections as safe `security_event` notifications (`src/services/securityMonitor.ts`)
+- Main/scheduler DB pool failures as non-persisted `database_connectivity` events
+- Background subsystem health failures as non-persisted `health_failure` / `database_connectivity` events
+- SchoolPilot browser runtime telemetry via `POST /api/monitoring/browser-error`
+- ClassPilot extension runtime telemetry via device-authenticated `POST /api/classpilot/extension/runtime-error` (also aliased from `/api/extension/runtime-error`)
 
-**Thresholds** (errors in 5-min window to trigger alert): uncaught_exception: 1, api_error: 5, client_error: 10, scheduler_failure: 2, email_failure: 3, websocket_error: 10, database_error: 3. Each category has a 15-30 min cooldown to prevent spam.
+**Categories and thresholds** (matching fingerprint errors in 5-min window to trigger alert): `fatal_process_error`: 1, `api_error`: 5, `client_error`: 10, `scheduler_failure`: 2, `email_failure`: 3, `websocket_error`: 10, `security_event`: 1, `database_connectivity`: 1, `health_failure`: 1, `browser_runtime_error`: 10, `extension_runtime_error`: 25. Fingerprints are built from category, safe error code, normalized top stack frame, path, job, and message type. Cooldown is fingerprint-scoped and starts only after at least one configured alert channel confirms delivery; if all channels fail, the monitor uses a short 2-minute retry cooldown.
 
-**Alerts sent to:** Email (SendGrid → ADMIN_EMAIL) AND Telegram bot (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID env vars). Telegram alerts are picked up by Claude Code Channels for AI-powered diagnosis.
+**Alerts sent to:** Email (SendGrid -> `ADMIN_EMAIL`) and Telegram bot (`TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID`) when configured. Delivery results are checked explicitly; missing SendGrid or Telegram config is not treated as delivered. Telegram alerts are plain text, truncated under platform limits, and picked up by Claude Code Channels for AI-powered diagnosis.
 
-**Health endpoint** (`/health`) includes `recentErrors` summary with counts per category.
+**Redaction boundary:** messages, stacks, paths, safe context, email alerts, Telegram alerts, and Sentry capture are scrubbed before leaving the monitor. Query strings are stripped; emails, IPs, bearer/JWT/API-token shapes, and secret-looking assignments are redacted. Context JSONB stores only safe keys (`job`, `eventId`, `eventType`, `messageType`, `errorCode`, `source`, `surface`, `component`, `release`, `clientVersion`, `extensionVersion`, `chromeVersion`) while request/school/user correlation stays in dedicated columns. Do not pass student names, student emails, device ids, raw request bodies, raw URLs, localStorage, form/input values, or arbitrary context into monitor call sites.
+
+**Stats + metrics:** `errorMonitor.getStats()` exposes captured, persisted, persistFailed, dropped, alertAttempted, alertDelivered, alertFailed, and cooldownSuppressed counters by total/category/fingerprint. Fingerprint samples are bounded to 5 sanitized entries each and active fingerprints are capped/evicted by quiet low-priority entries first. The monitor emits CloudWatch Embedded Metric Format JSON to stdout every 60 seconds with namespace `SchoolPilot/Monitoring` and dimensions `Environment`, `Service`, and `InstanceId`; EMF output never includes message text, stack, path, user id, school id, or context. When `REDIS_URL` is configured, monitor alert thresholds and cooldown election are shared across ECS tasks under `${REDIS_PREFIX}:monitor:*`; if Redis is missing/unhealthy, aggregation degrades to the local Phase 2 behavior without blocking boot.
+
+**Health endpoint** (`/health`) includes `recentErrors`, detailed `checks.alerting`, and detailed `checks.monitoring` with monitor stats/runtime metadata plus `checks.monitoring.aggregation` (`mode: "redis" | "local"`). If alerting is the only degraded check, `/health` still returns HTTP 200 for liveness with JSON status `degraded`; core subsystem failures still return 503.
+
+**Super Admin Monitoring panel:** `/super-admin/monitoring` is the read-only operations view for the monitor. APIs live under `/api/super-admin/monitoring/*` and require super-admin auth plus the existing RLS super-admin bypass. The Schools page may show only a compact status chip/link, not a large monitoring dashboard section. Phase 4A intentionally has no schema changes, no mute/acknowledge controls, and no durable incident workflow; live fingerprint history comes from in-process/Redis aggregation, while recent events come from existing sanitized `error_logs`. The panel must never show raw query strings, request bodies, tokens, emails, IPs, student names, device ids, unrestricted context, or raw security-event details.
+
+**Browser/extension runtime telemetry:** Browser telemetry is operational error capture only, not analytics. The web app installs capture before React renders, dedupes per tab, and sends only sanitized message/stack/path/component/release/browser details. The ClassPilot extension uses `extension/telemetry.js`; service worker is the only network sender, offscreen/content script failures relay through `chrome.runtime.sendMessage`, and content scripts must not report arbitrary host-page JavaScript errors. Extension release remains separate: confirm the live Chrome Web Store version, bump `ClassPilot/extension/manifest.json` to the next patch, package, upload, and wait for review.
+
+**Fatal behavior:** uncaught exceptions, unhandled rejections, and startup failures are recorded as `fatal_process_error`, flushed with a 5-second bound, and then the process exits nonzero with a 10-second force-exit fallback. Do not continue serving traffic after a fatal process error.
 
 ### Durable error logs + request correlation
-- **`error_logs` table** (`src/schema/shared.ts`) — every tracked error persisted with category, message, stack, `request_id`, method, path, status_code, school_id, user_id, and a JSONB `context`. Queryable in your own DB (same FERPA posture as `audit_logs`). Purged after 30 days by `purgeOldErrorLogs()` in the scheduler. This is the durable counterpart to the 5-minute in-memory window.
+- **`error_logs` table** (`src/schema/shared.ts`) — every persisted tracked error stores sanitized category, message, stack, `request_id`, method, pathname-only path, status_code, school_id, user_id, and safe JSONB `context`. Queryable in your own DB (same FERPA posture as `audit_logs`). Purged after 30 days by `purgeOldErrorLogs()` in the scheduler. This is the durable counterpart to the 5-minute in-memory window.
 - **Request correlation id** (`src/middleware/requestId.ts`) — mounted first; assigns/honors `X-Request-Id`, echoes it in the response header, and the error handler returns it in the JSON error body (`{ error, requestId }`). To trace a reported problem: get the `requestId` from the user → query `error_logs` by `request_id` or grep CloudWatch for `req:<id>`.
 
 ### Sentry (GATED OFF until DPA signed)

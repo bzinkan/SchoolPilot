@@ -9,6 +9,9 @@ declare module "express-session" {
     schoolId: string | null;
     schoolSessionVersion: number;
     csrfToken: string;
+    googleOAuthState?: string;
+    googleOAuthNonce?: string;
+    googleOAuthRedirect?: string;
   }
 }
 

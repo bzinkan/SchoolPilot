@@ -23,7 +23,8 @@ function scrubString(s: string): string {
 
 /** Recursively scrub strings inside an arbitrary value (bounded depth). */
 function scrubDeep(value: unknown, depth = 0): unknown {
-  if (depth > 6 || value == null) return value;
+  if (depth > 6) return "[truncated]";
+  if (value == null) return value;
   if (typeof value === "string") return scrubString(value);
   if (Array.isArray(value)) return value.map((v) => scrubDeep(v, depth + 1));
   if (typeof value === "object") {
@@ -103,7 +104,15 @@ export function isSentryEnabled(): boolean {
 /** Capture an error with category + correlation context. No-op when disabled. */
 export function captureError(
   error: unknown,
-  context?: { category?: string; requestId?: string; schoolId?: string; userId?: string }
+  context?: {
+    category?: string;
+    requestId?: string;
+    schoolId?: string;
+    userId?: string;
+    fingerprint?: string;
+    release?: string;
+    instanceId?: string;
+  }
 ): void {
   if (!enabled) return;
   try {
@@ -111,6 +120,9 @@ export function captureError(
       tags: {
         category: context?.category,
         requestId: context?.requestId,
+        fingerprint: context?.fingerprint,
+        release: context?.release,
+        instanceId: context?.instanceId,
       },
       // schoolId/userId are non-PII opaque ids — safe for correlation.
       extra: {
@@ -120,5 +132,15 @@ export function captureError(
     });
   } catch (err) {
     console.error("[Sentry] captureException failed:", err);
+  }
+}
+
+export async function flushSentry(timeoutMs = 5000): Promise<boolean> {
+  if (!enabled) return true;
+  try {
+    return await Sentry.flush(timeoutMs);
+  } catch (err) {
+    console.error("[Sentry] flush failed:", err);
+    return false;
   }
 }

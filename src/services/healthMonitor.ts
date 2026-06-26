@@ -1,17 +1,13 @@
 // Background health monitor — checks all subsystems every 5 minutes
-// Sends email alerts on failure, recovery notifications when restored
+// Sends shared monitor alerts on failure and recovery notifications when restored
 
-import type { Server } from "socket.io";
 import type { WebSocketServer } from "ws";
 import { pool } from "../db.js";
 import { getIO } from "../realtime/socketio.js";
 import { isRedisEnabled } from "../realtime/ws-redis.js";
-import { sendEmail } from "./email.js";
-import { sendTelegramAlert } from "./errorMonitor.js";
+import errorMonitor, { type ErrorCategory } from "./errorMonitor.js";
 
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "bzinkan@school-pilot.net";
 const CHECK_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
-const ALERT_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour per subsystem
 const STARTUP_DELAY_MS = 15_000; // 15s to let DB pool warm up
 
 interface CheckResult {
@@ -22,8 +18,9 @@ interface CheckResult {
 }
 
 // --- Alert state ---
-const lastAlertSent = new Map<string, number>();
 const subsystemWasFailing = new Map<string, boolean>();
+let startupTimer: NodeJS.Timeout | null = null;
+let intervalTimer: NodeJS.Timeout | null = null;
 
 // --- Checks ---
 
@@ -65,7 +62,7 @@ async function checkDbPool(): Promise<CheckResult> {
   if (waiting > 0) {
     return {
       ok: false,
-      error: `${waiting} queries waiting — pool likely exhausted (${total}/20 connections)`,
+      error: `${waiting} queries waiting - pool likely exhausted (${total} connections)`,
     };
   }
   return { ok: true, detail: `${total} total, ${idle} idle, ${waiting} waiting` };
@@ -107,62 +104,40 @@ async function checkRedis(): Promise<CheckResult> {
 
 // --- Alerting ---
 
+function categoryForSubsystem(subsystem: string): ErrorCategory {
+  return subsystem === "postgres" || subsystem === "db-roundtrip" || subsystem === "db-pool"
+    ? "database_connectivity"
+    : "health_failure";
+}
+
 async function maybeSendAlert(subsystem: string, error: string): Promise<void> {
-  const now = Date.now();
-  const last = lastAlertSent.get(subsystem) ?? 0;
-  if (now - last < ALERT_COOLDOWN_MS) return;
-
-  lastAlertSent.set(subsystem, now);
-
-  const timestamp = new Date().toISOString();
-  const env = process.env.NODE_ENV || "development";
-
-  try {
-    await sendEmail({
-      to: ADMIN_EMAIL,
-      subject: `[SchoolPilot ALERT] ${subsystem} failure — ${timestamp}`,
-      html: `
-        <div style="font-family: sans-serif; max-width: 600px;">
-          <h2 style="color: #dc2626;">SchoolPilot Health Monitor Alert</h2>
-          <table style="width: 100%; border-collapse: collapse;">
-            <tr><td style="padding: 8px; font-weight: bold; border-bottom: 1px solid #e5e7eb;">Subsystem</td><td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">${subsystem}</td></tr>
-            <tr><td style="padding: 8px; font-weight: bold; border-bottom: 1px solid #e5e7eb;">Status</td><td style="padding: 8px; border-bottom: 1px solid #e5e7eb; color: #dc2626; font-weight: bold;">FAILING</td></tr>
-            <tr><td style="padding: 8px; font-weight: bold; border-bottom: 1px solid #e5e7eb;">Error</td><td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">${error}</td></tr>
-            <tr><td style="padding: 8px; font-weight: bold; border-bottom: 1px solid #e5e7eb;">Server</td><td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">${env}</td></tr>
-            <tr><td style="padding: 8px; font-weight: bold;">Time</td><td style="padding: 8px;">${timestamp}</td></tr>
-          </table>
-          <p style="color: #6b7280; font-size: 14px; margin-top: 16px;">This alert will not repeat for 1 hour.</p>
-        </div>
-      `,
-    });
-    // Also send to Telegram for Claude Code Channels
-    const alertText = `Subsystem: ${subsystem}\nStatus: FAILING\nError: ${error}\nServer: ${env}\nTime: ${timestamp}`;
-    await sendTelegramAlert(`${subsystem} failure`, alertText);
-  } catch (emailErr) {
-    console.error("[HealthMonitor] Failed to send alert email:", emailErr);
-  }
+  const category = categoryForSubsystem(subsystem);
+  errorMonitor.trackError(
+    category,
+    new Error(`${subsystem} health check failed: ${error}`),
+    { job: "healthMonitor", messageType: subsystem, errorCode: "health_check_failed" },
+    { persist: false, priority: category === "database_connectivity" ? "high" : "normal" }
+  );
 }
 
 async function maybeSendRecovery(subsystem: string): Promise<void> {
   if (!subsystemWasFailing.get(subsystem)) return;
   subsystemWasFailing.set(subsystem, false);
-  lastAlertSent.delete(subsystem);
 
   try {
-    await sendEmail({
-      to: ADMIN_EMAIL,
-      subject: `[SchoolPilot RECOVERED] ${subsystem} is healthy again`,
-      html: `
-        <div style="font-family: sans-serif; max-width: 600px;">
-          <h2 style="color: #16a34a;">SchoolPilot Health Monitor — Recovery</h2>
-          <p><strong>Subsystem:</strong> ${subsystem}</p>
-          <p><strong>Status:</strong> <span style="color: #16a34a;">RECOVERED</span></p>
-          <p><strong>Time:</strong> ${new Date().toISOString()}</p>
-        </div>
-      `,
-    });
-  } catch (emailErr) {
-    console.error("[HealthMonitor] Failed to send recovery email:", emailErr);
+    await errorMonitor.sendNotification(
+      "health_failure",
+      `[SchoolPilot RECOVERED] ${subsystem} is healthy again`,
+      [
+        `Subsystem: ${subsystem}`,
+        "Status: RECOVERED",
+        `Time: ${new Date().toISOString()}`,
+      ].join("\n"),
+      { job: "healthMonitor", messageType: subsystem, errorCode: "recovery" },
+      { persist: false, priority: "low" }
+    );
+  } catch (recoveryErr) {
+    console.error("[HealthMonitor] Failed to send recovery notification:", recoveryErr);
   }
 }
 
@@ -212,6 +187,17 @@ async function runAllChecks(wss: WebSocketServer): Promise<void> {
 
 export function startHealthMonitor(wss: WebSocketServer): void {
   console.log("[HealthMonitor] Starting (interval: 5 minutes)");
-  setTimeout(() => runAllChecks(wss), STARTUP_DELAY_MS);
-  setInterval(() => runAllChecks(wss), CHECK_INTERVAL_MS);
+  startupTimer = setTimeout(() => runAllChecks(wss), STARTUP_DELAY_MS);
+  intervalTimer = setInterval(() => runAllChecks(wss), CHECK_INTERVAL_MS);
+}
+
+export function stopHealthMonitor(): void {
+  if (startupTimer) {
+    clearTimeout(startupTimer);
+    startupTimer = null;
+  }
+  if (intervalTimer) {
+    clearInterval(intervalTimer);
+    intervalTimer = null;
+  }
 }

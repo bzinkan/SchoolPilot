@@ -26,6 +26,8 @@ import type { RequestHandler } from "express";
  *   - /api/auth/login, /api/auth/register* — no session yet to attach token to
  *   - /api/auth/csrf — the endpoint that issues the token
  *   - /api/auth/google* — OAuth flow has its own state parameter
+ *   - /api/monitoring/browser-error — mounted before this middleware with its
+ *     own 16KB parser and telemetry rate limiter
  *   - /health — operational
  *   - /api/stripe/* webhooks — verified by Stripe-Signature instead
  *   - /api/extension/* and /api/classpilot/device/* — JWT-bearer authenticated

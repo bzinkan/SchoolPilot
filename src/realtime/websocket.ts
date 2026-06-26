@@ -155,8 +155,10 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
     });
 
     ws.on("message", async (data) => {
+      let messageType = "unknown";
       try {
         const message = JSON.parse(data.toString());
+        messageType = typeof message?.type === "string" ? message.type : "unknown";
 
         // Log non-auth, non-heartbeat messages for debugging
         if (message.type !== "auth" && message.type !== "heartbeat") {
@@ -475,6 +477,13 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
         }
       } catch (error) {
         console.error("[WebSocket] Message error:", error);
+        if (!(error instanceof SyntaxError)) {
+          errorMonitor.trackError("websocket_error", error, {
+            messageType,
+            schoolId: client.schoolId,
+            userId: client.userId,
+          });
+        }
       }
     });
 
