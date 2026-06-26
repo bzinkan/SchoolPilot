@@ -1,0 +1,132 @@
+name: SOC 2 Approval Command
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+  actions: read
+
+jobs:
+  record-approval:
+    name: Record SOC 2 approval decision
+    if: >
+      github.event.issue.pull_request == null &&
+      (startsWith(github.event.comment.body, '/approve ') || startsWith(github.event.comment.body, '/reject '))
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Write issue body
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require("fs");
+            fs.writeFileSync("soc2-approval-issue-body.md", context.payload.issue.body || "");
+
+      - name: Parse approval command
+        id: command
+        env:
+          SOC2_APPROVAL_AUTHORIZED_ACTORS: ${{ vars.SOC2_APPROVAL_AUTHORIZED_ACTORS }}
+        run: >
+          node scripts/soc2/github-approval-issue.mjs parse-comment
+          --event-path "$GITHUB_EVENT_PATH"
+          --issue-body-file soc2-approval-issue-body.md
+          --output-file "$GITHUB_OUTPUT"
+
+      - name: Reject invalid approval command
+        if: steps.command.outputs.should_process != 'true'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.issue.number,
+              body: `SOC 2 approval command was not recorded.\n\n${{ toJSON(steps.command.outputs.error) }}`,
+            });
+            core.setFailed("Invalid SOC 2 approval command.");
+
+      - name: Download approval queue artifact
+        if: steps.command.outputs.should_process == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          QUEUE_RUN_ID: ${{ steps.command.outputs.queue_run_id }}
+          ARTIFACT_NAME: ${{ steps.command.outputs.artifact_name }}
+        run: gh run download "$QUEUE_RUN_ID" --name "$ARTIFACT_NAME" --dir downloaded-approval-queue
+
+      - name: Locate downloaded approval queue
+        if: steps.command.outputs.should_process == 'true'
+        id: queue_file
+        shell: bash
+        run: |
+          queue_file="$(find downloaded-approval-queue -type f -name '*soc2-approval-queue.json' | sort | tail -n 1)"
+          if [[ -z "$queue_file" ]]; then
+            echo "No approval queue JSON found in downloaded artifact." >&2
+            exit 1
+          fi
+          echo "queue_file=${queue_file}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout private SOC 2 evidence repo
+        if: steps.command.outputs.should_process == 'true'
+        uses: actions/checkout@v7
+        with:
+          repository: bzinkan/SchoolPilot-SOC2-Evidence
+          token: ${{ secrets.SOC2_EVIDENCE_REPO_TOKEN }}
+          path: private-evidence
+
+      - name: Record approval decision
+        if: steps.command.outputs.should_process == 'true'
+        env:
+          APPROVAL_ID: ${{ steps.command.outputs.approval_id }}
+          DECISION: ${{ steps.command.outputs.decision }}
+          APPROVER: ${{ github.event.comment.user.login }}
+          RATIONALE: ${{ steps.command.outputs.rationale }}
+          QUEUE_FILE: ${{ steps.queue_file.outputs.queue_file }}
+        run: >
+          npm run soc2:approval-decision --
+          --queue-file "$QUEUE_FILE"
+          --approval-id "$APPROVAL_ID"
+          --decision "$DECISION"
+          --approver "$APPROVER"
+          --rationale "$RATIONALE"
+          --private-dir "$GITHUB_WORKSPACE/private-evidence"
+
+      - name: Commit private evidence
+        if: steps.command.outputs.should_process == 'true'
+        env:
+          APPROVAL_ID: ${{ steps.command.outputs.approval_id }}
+          DECISION: ${{ steps.command.outputs.decision }}
+        working-directory: private-evidence
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .
+          if git diff --cached --quiet; then
+            echo "No private evidence changes to commit."
+          else
+            git commit -m "Record SOC 2 ${DECISION} decision for ${APPROVAL_ID}"
+            git push
+          fi
+
+      - name: Confirm approval decision
+        if: steps.command.outputs.should_process == 'true'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const approvalId = `${{ steps.command.outputs.approval_id }}`;
+            const decision = `${{ steps.command.outputs.decision }}`;
+            const actor = context.payload.comment.user.login;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.issue.number,
+              body: `Recorded SOC 2 decision \`${decision}\` for \`${approvalId}\` by @${actor}. Evidence was written to the private SOC 2 evidence repository.`,
+            });

@@ -45,3 +45,8 @@ prepare pending records, evidence pointers, expiration dates, and recommended
 decisions. `npm run soc2:approval-decision` records only the accountable
 person's explicit `approved` or `not_approved` decision and writes it to the
 private evidence repository.
+
+The GitHub issue flow is another input surface for the same decision boundary.
+An authorized approver comments `/approve APPROVAL-ID rationale` or
+`/reject APPROVAL-ID rationale` on the `SOC 2 approvals pending` issue. GitHub
+Actions records the decision, but the comment is the accountable human action.
