@@ -81,6 +81,8 @@ npm run check            # TypeScript type check (tsc --noEmit)
 npm run build            # Compile to dist/ (tsc + tsc-alias)
 npm run soc2:check       # Validate SOC 2 governance docs and draft risk acceptances
 npm run soc2:deployment-evidence  # Generate shadow deployment/change evidence
+npm run soc2:approval-queue       # Draft pending SOC 2 approval queue
+npm run soc2:approval-decision -- --approval-id <id> --decision approved|not_approved --approver "<name>" --rationale "<why>"
 
 # Frontend
 cd schoolpilot-app

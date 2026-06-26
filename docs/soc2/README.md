@@ -73,3 +73,24 @@ npm run soc2:deployment-evidence
 Deployment evidence is written to `soc2-evidence/deployments/` and uploaded in
 CI as `soc2-evidence-deployment`. It records PR/commit/build metadata and file
 hashes without deploying, using AWS credentials, or approving production changes.
+
+Generate the pending approval queue locally:
+
+```bash
+npm run soc2:approval-queue
+```
+
+Approval queue drafts are written to `soc2-evidence/approvals/` and uploaded in
+CI as `soc2-approval-queue`. The queue gathers human-owned decisions from the
+governance tracker, risk acceptance drafts, and local deployment evidence.
+
+Record an approve/not-approve decision into the private evidence repository:
+
+```bash
+npm run soc2:approval-decision -- --approval-id <id> --decision approved|not_approved --approver "<name>" --rationale "<why>"
+```
+
+Completed approvals default to `../SchoolPilot-SOC2-Evidence`, or to
+`SOC2_PRIVATE_EVIDENCE_DIR` when that environment variable is set. This command
+fails if the private evidence directory is missing so sensitive approval records
+are not accidentally written into this application repository.
