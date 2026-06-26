@@ -79,6 +79,8 @@ npm run dev              # Start Vite on :5173, proxies /api to :4000
 # Backend
 npm run check            # TypeScript type check (tsc --noEmit)
 npm run build            # Compile to dist/ (tsc + tsc-alias)
+npm run soc2:check       # Validate SOC 2 governance docs and draft risk acceptances
+npm run soc2:deployment-evidence  # Generate shadow deployment/change evidence
 
 # Frontend
 cd schoolpilot-app
@@ -302,6 +304,18 @@ Copy `.env.example` to `.env`. Required for local dev:
 GitHub Actions (`.github/workflows/ci-build.yml`) runs on push/PR to main:
 - Backend: `npm audit --audit-level=high` + `tsc --noEmit` + `npm run build`
 - Frontend: `npm audit --audit-level=critical` + `npm run lint` + `vite build`
+- SOC 2 governance: `npm run soc2:check` validates governance metadata, checks public/security claims, writes non-sensitive evidence packets, and auto-drafts risk acceptances for eligible open remediation items.
+- SOC 2 deployment evidence: `npm run soc2:deployment-evidence` writes a shadow change/deployment packet without deploying or requiring AWS credentials.
+
+### SOC 2 governance evidence
+
+- Run `npm run soc2:check` whenever changing `docs/soc2/`, `docs/WISP.md`, `docs/HECVAT-LITE.md`, public security/privacy/legal claims, remediation registers, control matrices, claim registers, or SOC 2 evidence scripts.
+- Run `npm run soc2:deployment-evidence` whenever changing CI/deploy evidence behavior, `scripts/deploy.sh`, `Dockerfile`, package lock files, or `SP-SEC-004` evidence docs.
+- Risk-acceptance drafts are generated from `docs/soc2/remediation-register.md` according to `docs/soc2/risk-acceptance-policy.json`. Current policy drafts P0/P1 items with `Open` or `In progress` status.
+- Generated packets and drafts are written under `soc2-evidence/`, including `soc2-evidence/risk-acceptances/` and `soc2-evidence/deployments/`; this folder is ignored by Git and must not be committed.
+- Automation may prepare risk records, owners, risk levels, expiration dates, and suggested compensating controls, but it must not approve risk acceptances. Drafts remain `Draft - pending founder approval` until the founder/Security & Privacy Officer signs off.
+- Deployment evidence automation must remain shadow-only unless a later task explicitly implements protected deploys: do not add AWS credentials, ECS/S3/CloudFront changes, or production approval bypasses to evidence collection.
+- If changing risk automation rules, update `docs/soc2/risk-acceptance-policy.json` and the SOC 2 governance tests together.
 
 The frontend uses React Compiler lint rules. Common gotchas:
 - `form.watch()` from React Hook Form is incompatible — extract to a variable (e.g., `const watchedRole = form.watch("role")`)
