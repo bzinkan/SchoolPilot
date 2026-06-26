@@ -50,3 +50,8 @@ The GitHub issue flow is another input surface for the same decision boundary.
 An authorized approver comments `/approve APPROVAL-ID rationale` or
 `/reject APPROVAL-ID rationale` on the `SOC 2 approvals pending` issue. GitHub
 Actions records the decision, but the comment is the accountable human action.
+
+GitHub issue notifications are reminders only. The approval queue workflow may
+assign the issue, apply the `soc2-approval-needed` label, and mention the
+configured approver when pending approvals change. Those reminders do not
+approve, reject, deploy, or change application behavior.

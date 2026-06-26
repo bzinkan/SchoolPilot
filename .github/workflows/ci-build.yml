@@ -311,6 +311,9 @@ jobs:
       - name: Open or update SOC 2 approval issue
         if: github.event_name != 'pull_request'
         uses: actions/github-script@v8
+        env:
+          SOC2_APPROVAL_NOTIFY_USERS: ${{ vars.SOC2_APPROVAL_NOTIFY_USERS }}
+          SOC2_APPROVAL_LABEL: ${{ vars.SOC2_APPROVAL_LABEL }}
         with:
           script: |
             const fs = require("fs");
@@ -318,6 +321,92 @@ jobs:
             const repo = context.repo.repo;
             const title = "SOC 2 approvals pending";
             const body = fs.readFileSync("soc2-evidence/approvals/github-approval-issue.md", "utf8");
+
+            const notifyUsers = (process.env.SOC2_APPROVAL_NOTIFY_USERS || "bzinkan")
+              .split(",")
+              .map((user) => user.trim().replace(/^@/, ""))
+              .filter(Boolean);
+            const labelName = (process.env.SOC2_APPROVAL_LABEL || "soc2-approval-needed").trim();
+
+            function approvalIds(markdown) {
+              return [...markdown.matchAll(/^###\s+(APPROVAL-[A-Z0-9_.:-]+)/gmi)]
+                .map((match) => match[1].toUpperCase())
+                .sort();
+            }
+
+            function approvalFingerprint(markdown) {
+              return approvalIds(markdown).join("|");
+            }
+
+            function pendingCount(markdown) {
+              const match = markdown.match(/^- Pending approvals:\s*(\d+)/m);
+              return Number(match?.[1] || 0);
+            }
+
+            function queueId(markdown) {
+              const match = markdown.match(/^- Queue ID:\s*(.+)$/m);
+              return match?.[1]?.trim() || "unknown";
+            }
+
+            async function ensureLabel() {
+              if (!labelName) return;
+              try {
+                await github.rest.issues.getLabel({ owner, repo, name: labelName });
+              } catch (error) {
+                if (error.status !== 404) throw error;
+                try {
+                  await github.rest.issues.createLabel({
+                    owner,
+                    repo,
+                    name: labelName,
+                    color: "B60205",
+                    description: "SOC 2 approval queue needs founder review.",
+                  });
+                } catch (createError) {
+                  if (createError.status !== 422) throw createError;
+                }
+              }
+            }
+
+            async function addNotificationRouting(issueNumber) {
+              if (labelName) {
+                await ensureLabel();
+                await github.rest.issues.addLabels({
+                  owner,
+                  repo,
+                  issue_number: issueNumber,
+                  labels: [labelName],
+                });
+              }
+
+              if (notifyUsers.length) {
+                try {
+                  await github.rest.issues.addAssignees({
+                    owner,
+                    repo,
+                    issue_number: issueNumber,
+                    assignees: notifyUsers,
+                  });
+                } catch (error) {
+                  core.warning(`Could not assign SOC 2 approval issue: ${error.message}`);
+                }
+              }
+            }
+
+            async function removePendingLabel(issueNumber) {
+              if (!labelName) return;
+              try {
+                await github.rest.issues.removeLabel({
+                  owner,
+                  repo,
+                  issue_number: issueNumber,
+                  name: labelName,
+                });
+              } catch (error) {
+                if (error.status !== 404) throw error;
+              }
+            }
+
             const { data: issues } = await github.rest.issues.listForRepo({
               owner,
               repo,
@@ -325,6 +414,11 @@ jobs:
               per_page: 100,
             });
             const existing = issues.find((issue) => issue.title === title && !issue.pull_request);
+            const previousBody = existing?.body || "";
+            const hasNewApprovalSet = approvalFingerprint(previousBody) !== approvalFingerprint(body);
+            const approvalsPending = pendingCount(body);
+            let issueNumber;
+
             if (existing) {
               await github.rest.issues.update({
                 owner,
@@ -332,7 +426,8 @@ jobs:
                 issue_number: existing.number,
                 body,
               });
-              core.info(`Updated SOC 2 approval issue #${existing.number}`);
+              issueNumber = existing.number;
+              core.info(`Updated SOC 2 approval issue #${issueNumber}`);
             } else {
               const { data: issue } = await github.rest.issues.create({
                 owner,
@@ -340,7 +435,37 @@ jobs:
                 title,
                 body,
               });
-              core.info(`Created SOC 2 approval issue #${issue.number}`);
+              issueNumber = issue.number;
+              core.info(`Created SOC 2 approval issue #${issueNumber}`);
+            }
+
+            if (approvalsPending > 0) {
+              await addNotificationRouting(issueNumber);
+
+              if (!existing || hasNewApprovalSet) {
+                const mentions = notifyUsers.map((user) => `@${user}`).join(" ");
+                await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number: issueNumber,
+                  body: [
+                    `<!-- schoolpilot-soc2-approval-notification ${approvalFingerprint(body) || "none"} -->`,
+                    `${mentions} SOC 2 approvals are pending.`,
+                    "",
+                    `- Pending approvals: ${approvalsPending}`,
+                    `- Queue ID: ${queueId(body)}`,
+                    `- Workflow run: ${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`,
+                    "",
+                    "Review the issue body, then comment with `/approve APPROVAL-ID rationale` or `/reject APPROVAL-ID rationale`.",
+                  ].join("\n").trim(),
+                });
+                core.info(`Posted SOC 2 approval notification on issue #${issueNumber}`);
+              } else {
+                core.info("SOC 2 approval issue already has the same pending approval set; notification comment skipped.");
+              }
+            } else {
+              await removePendingLabel(issueNumber);
+              core.info("No pending SOC 2 approvals; pending label removed if present.");
             }
 
       - name: Upload SOC 2 approval queue

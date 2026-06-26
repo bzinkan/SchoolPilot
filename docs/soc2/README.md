@@ -85,7 +85,10 @@ CI as `soc2-approval-queue`. The queue gathers human-owned decisions from the
 governance tracker, risk acceptance drafts, and local deployment evidence.
 
 CI on `main` also opens or updates the GitHub issue `SOC 2 approvals pending`.
-The issue is a review inbox. Authorized approvers may comment:
+When approvals are pending, the workflow assigns the issue to the notification
+owner, adds the `soc2-approval-needed` label, and posts a mention comment when
+the pending approval set changes. The issue is a review inbox. Authorized
+approvers may comment:
 
 ```text
 /approve APPROVAL-ID rationale
@@ -98,6 +101,12 @@ evidence to the private `SchoolPilot-SOC2-Evidence` repository. Configure the
 private evidence checkout with the `SOC2_EVIDENCE_REPO_TOKEN` GitHub secret.
 Optionally set `SOC2_APPROVAL_AUTHORIZED_ACTORS` as a comma-separated repository
 variable; it defaults to `bzinkan`.
+
+Approval notifications default to `@bzinkan`. Optionally set
+`SOC2_APPROVAL_NOTIFY_USERS` as a comma-separated repository variable to notify
+and assign different GitHub users, and `SOC2_APPROVAL_LABEL` to override the
+default `soc2-approval-needed` label. Notifications use GitHub issues only; no
+email provider or app runtime path is involved.
 
 Record an approve/not-approve decision into the private evidence repository:
 
