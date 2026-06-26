@@ -1,28 +1,136 @@
 import "dotenv/config";
 import http from "http";
+import type { Server as SocketIOServer } from "socket.io";
+import type { WebSocketServer } from "ws";
 import { initSentry } from "./services/sentry.js";
 import { createApp } from "./app.js";
 import { setupSocketIO } from "./realtime/socketio.js";
 import { setupWebSocket } from "./realtime/websocket.js";
-import { startScheduler } from "./services/scheduler.js";
-import { startHealthMonitor } from "./services/healthMonitor.js";
+import { startScheduler, stopScheduler } from "./services/scheduler.js";
+import { startHealthMonitor, stopHealthMonitor } from "./services/healthMonitor.js";
 import errorMonitor from "./services/errorMonitor.js";
+import { pool } from "./db.js";
+import { schedulerPool } from "./services/schedulerDb.js";
 
 // Initialize Sentry as early as possible. No-op unless SENTRY_DSN is set
 // (gated off until the DPA is signed + subprocessors list updated).
 initSentry();
 
+let httpServer: http.Server | null = null;
+let socketIoServer: SocketIOServer | null = null;
+let webSocketServer: WebSocketServer | null = null;
+let fatalShutdownStarted = false;
+
+async function bounded(promise: Promise<unknown>, timeoutMs: number, label: string): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      promise,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(() => {
+          console.error(`[FATAL] Timed out while waiting for ${label}`);
+          resolve();
+        }, timeoutMs);
+      }),
+    ]);
+  } catch (err) {
+    console.error(`[FATAL] ${label} failed:`, err);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function closeHttpServer(): Promise<void> {
+  return new Promise((resolve) => {
+    const server = httpServer;
+    if (!server || !server.listening) {
+      resolve();
+      return;
+    }
+    server.close((err) => {
+      if (err) console.error("[FATAL] HTTP server close failed:", err);
+      resolve();
+    });
+  });
+}
+
+function closeSocketIo(): Promise<void> {
+  return new Promise((resolve) => {
+    const io = socketIoServer;
+    if (!io) {
+      resolve();
+      return;
+    }
+    io.close(() => resolve());
+  });
+}
+
+function closeWebSocketServer(): Promise<void> {
+  return new Promise((resolve) => {
+    const wss = webSocketServer;
+    if (!wss) {
+      resolve();
+      return;
+    }
+    for (const client of wss.clients) {
+      try {
+        client.close(1011, "Server shutting down");
+      } catch {
+        // Best-effort shutdown only.
+      }
+    }
+    wss.close((err) => {
+      if (err) console.error("[FATAL] WebSocket server close failed:", err);
+      resolve();
+    });
+  });
+}
+
+async function fatalShutdown(reason: string, err: unknown): Promise<void> {
+  const error = err instanceof Error ? err : new Error(String(err));
+  if (fatalShutdownStarted) {
+    console.error(`[FATAL] Additional fatal event during shutdown (${reason}):`, error);
+    return;
+  }
+  fatalShutdownStarted = true;
+  process.exitCode = 1;
+
+  const forceExit = setTimeout(() => {
+    console.error("[FATAL] Force exiting after shutdown timeout");
+    process.exit(1);
+  }, 10_000);
+
+  console.error(`[FATAL] ${reason}:`, error);
+  stopScheduler();
+  stopHealthMonitor();
+  const closeServers = Promise.allSettled([
+    closeHttpServer(),
+    closeSocketIo(),
+    closeWebSocketServer(),
+  ]);
+
+  await errorMonitor.trackErrorAndFlush(
+    "fatal_process_error",
+    error,
+    { eventType: reason },
+    5_000
+  );
+  await bounded(closeServers.then(() => undefined), 4_000, "server shutdown");
+  await bounded(Promise.allSettled([pool.end(), schedulerPool.end()]).then(() => undefined), 4_000, "database pool shutdown");
+
+  clearTimeout(forceExit);
+  process.exit(1);
+}
+
 // ---------------------------------------------------------------------------
 // Global error handlers — catch crashes and alert developers
 // ---------------------------------------------------------------------------
 process.on("uncaughtException", (err) => {
-  errorMonitor.trackError("uncaught_exception", err);
-  console.error("[FATAL] Uncaught exception:", err);
+  void fatalShutdown("uncaughtException", err);
 });
 
 process.on("unhandledRejection", (reason) => {
-  errorMonitor.trackError("uncaught_exception", reason instanceof Error ? reason : new Error(String(reason)));
-  console.error("[FATAL] Unhandled rejection:", reason);
+  void fatalShutdown("unhandledRejection", reason instanceof Error ? reason : new Error(String(reason)));
 });
 
 // ---------------------------------------------------------------------------
@@ -65,8 +173,6 @@ validateEnv();
 const PORT = parseInt(process.env.PORT || "4000", 10);
 
 // Run lightweight auto-migrations for new tables
-import { pool } from "./db.js";
-import { schedulerPool } from "./services/schedulerDb.js";
 import {
   RLS_GLOBAL_TABLES,
   isSafeIdentifier,
@@ -591,6 +697,36 @@ async function runStartupMigrations(): Promise<void> {
     console.log("[migration] ClassPilot session-attributed analytics tables ready");
   } catch (err) {
     console.warn("[migration] ClassPilot session analytics migration skipped:", (err as Error).message);
+  }
+
+  // Google roster connector: IT-approved Domain-Wide Delegation for read-only
+  // Workspace/Classroom roster imports. Created before the generic RLS policy
+  // pass below so it receives tenant-isolation policy on the same startup.
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS google_roster_connectors (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        school_id TEXT NOT NULL UNIQUE,
+        domain TEXT NOT NULL,
+        delegated_admin_email TEXT,
+        service_account_client_id TEXT,
+        approved_scopes TEXT[] NOT NULL DEFAULT '{}'::text[],
+        auth_mode TEXT NOT NULL DEFAULT 'service_account_key',
+        status TEXT NOT NULL DEFAULT 'unverified',
+        verified_at TIMESTAMP,
+        last_sync_at TIMESTAMP,
+        disabled_at TIMESTAMP,
+        last_error TEXT,
+        connected_by_user_id TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT now(),
+        updated_at TIMESTAMP NOT NULL DEFAULT now()
+      )
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS google_roster_connectors_school_idx ON google_roster_connectors (school_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS google_roster_connectors_status_idx ON google_roster_connectors (school_id, status)`);
+    console.log("[migration] Google roster connector table ready");
+  } catch (err) {
+    console.warn("[migration] Google roster connector migration skipped:", (err as Error).message);
   }
 
   // RLS Phase 4: author per-school tenant-isolation policies (idempotent) for
@@ -1387,13 +1523,16 @@ async function startServer(): Promise<void> {
 
   const app = createApp();
   const server = http.createServer(app);
+  httpServer = server;
 
   // Attach Socket.io for real-time events (GoPilot dismissal, etc.)
   const io = setupSocketIO(server);
+  socketIoServer = io;
   console.log("Socket.io attached");
 
   // Attach WebSocket server for ClassPilot device monitoring
   const wss = setupWebSocket(server);
+  webSocketServer = wss;
   console.log("WebSocket server attached at /ws");
 
   // Start dismissal auto-start scheduler after startup migrations complete.
@@ -1410,7 +1549,5 @@ async function startServer(): Promise<void> {
 }
 
 startServer().catch((err) => {
-  errorMonitor.trackError("uncaught_exception", err instanceof Error ? err : new Error(String(err)));
-  console.error("[FATAL] Startup failed:", err);
-  process.exit(1);
+  void fatalShutdown("startupFailure", err instanceof Error ? err : new Error(String(err)));
 });

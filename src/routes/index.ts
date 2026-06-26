@@ -24,6 +24,7 @@ import competitiveRoutes from "./classpilot/competitive.js";
 import commandsRoutes from "./classpilot/commands.js";
 import coverageRoutes from "./classpilot/coverage.js";
 import superAdminRoutes from "./admin/superAdmin.js";
+import superAdminMonitoringRoutes from "./admin/monitoring.js";
 import schoolInquiryRoutes from "./admin/schoolInquiries.js";
 import billingRoutes from "./admin/billing.js";
 import attendanceRoutes from "./admin/attendance.js";
@@ -214,6 +215,10 @@ router.use((req: Request, _res: Response, next: NextFunction) => {
       "auth-url": "/google/auth-url",
       "status": "/google/status",
       "disconnect": "/google/disconnect",
+      "roster-connector/setup-info": "/google/roster-connector/setup-info",
+      "roster-connector/status": "/google/roster-connector/status",
+      "roster-connector/verify": "/google/roster-connector/verify",
+      "roster-connector": "/google/roster-connector",
       "courses": "/google/classroom/courses",
       "sync": "/google/classroom/sync",
       "org-units": "/google/directory/orgunits",
@@ -355,6 +360,7 @@ router.use("/classpilot/teacher", dashboardRoutes);
 router.use("/classpilot", competitiveRoutes);
 
 // Admin - Super admin panel
+router.use("/admin/monitoring", superAdminMonitoringRoutes);
 router.use("/admin", superAdminRoutes);
 router.use("/admin/inquiries", schoolInquiryRoutes);
 router.use("/admin/school-inquiries", schoolInquiryRoutes);

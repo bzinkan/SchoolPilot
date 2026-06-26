@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Activity } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { ThemeToggle } from '../../components/ThemeToggle';
 import api from '../../shared/utils/api';
@@ -7,6 +8,13 @@ import api from '../../shared/utils/api';
 const statusColors = {
   active: 'bg-green-100 text-green-800',
   suspended: 'bg-red-100 text-red-800',
+};
+
+const monitoringChipStyles = {
+  healthy: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  degraded: 'border-amber-200 bg-amber-50 text-amber-700',
+  unhealthy: 'border-red-200 bg-red-50 text-red-700',
+  unknown: 'border-slate-200 bg-slate-50 text-slate-600',
 };
 
 export default function SchoolsList() {
@@ -19,6 +27,7 @@ export default function SchoolsList() {
   const [productFilter, setProductFilter] = useState(null);
   const [loading, setLoading] = useState(true);
   const [actionMenu, setActionMenu] = useState(null);
+  const [monitoringStatus, setMonitoringStatus] = useState(null);
   const actionRef = useRef(null);
 
   // Broadcast email state
@@ -49,6 +58,26 @@ export default function SchoolsList() {
   };
 
   useEffect(() => { loadData(); }, [statusFilter]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadMonitoringStatus = async () => {
+      try {
+        const res = await api.get('/super-admin/monitoring/status');
+        if (!cancelled) setMonitoringStatus(res.data);
+      } catch {
+        if (!cancelled) setMonitoringStatus({ status: 'unknown', degradedReasons: ['monitoring status unavailable'] });
+      }
+    };
+
+    loadMonitoringStatus();
+    const id = window.setInterval(loadMonitoringStatus, 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, []);
 
   // Close action menu on outside click
   useEffect(() => {
@@ -142,6 +171,8 @@ export default function SchoolsList() {
     { label: 'Total Students', value: stats.totalStudents ?? stats.total_students ?? 0, color: 'bg-purple-100 text-purple-700' },
     { label: 'Pending Inquiries', value: stats.pendingInquiries ?? stats.pending_inquiries ?? 0, color: 'bg-amber-100 text-amber-700' },
   ];
+  const monitorStatusValue = monitoringStatus?.status || 'unknown';
+  const monitorStatusLabel = monitorStatusValue.charAt(0).toUpperCase() + monitorStatusValue.slice(1);
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
@@ -153,6 +184,15 @@ export default function SchoolsList() {
         </div>
         <div className="flex items-center gap-2">
           <ThemeToggle />
+          <button
+            onClick={() => navigate('/super-admin/monitoring')}
+            className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium hover:opacity-90 ${monitoringChipStyles[monitorStatusValue] || monitoringChipStyles.unknown}`}
+            title={monitoringStatus?.degradedReasons?.[0] || 'Open monitoring'}
+          >
+            <Activity className="h-4 w-4" />
+            <span>Monitoring</span>
+            <span className="text-xs font-semibold">{monitorStatusLabel}</span>
+          </button>
           <button
             onClick={openBroadcast}
             className="flex items-center gap-1.5 px-3 py-2 border border-slate-300 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50"

@@ -103,6 +103,43 @@ export type GoogleOAuthToken = typeof googleOAuthTokens.$inferSelect;
 export type InsertGoogleOAuthToken = typeof googleOAuthTokens.$inferInsert;
 
 // ============================================================================
+// Google Roster Connector - IT-managed Domain-Wide Delegation for imports
+// ============================================================================
+export const googleRosterConnectors = pgTable(
+  "google_roster_connectors",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull().unique(),
+    domain: text("domain").notNull(),
+    delegatedAdminEmail: text("delegated_admin_email"),
+    serviceAccountClientId: text("service_account_client_id"),
+    approvedScopes: text("approved_scopes")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    authMode: text("auth_mode").notNull().default("service_account_key"),
+    status: text("status")
+      .notNull()
+      .default("unverified")
+      .$type<"unverified" | "verified" | "disabled" | "error">(),
+    verifiedAt: timestamp("verified_at"),
+    lastSyncAt: timestamp("last_sync_at"),
+    disabledAt: timestamp("disabled_at"),
+    lastError: text("last_error"),
+    connectedByUserId: text("connected_by_user_id"),
+    createdAt: timestamp("created_at").notNull().default(sql`now()`),
+    updatedAt: timestamp("updated_at").notNull().default(sql`now()`),
+  },
+  (table) => ({
+    schoolIdx: index("google_roster_connectors_school_idx").on(table.schoolId),
+    statusIdx: index("google_roster_connectors_status_idx").on(table.schoolId, table.status),
+  })
+);
+
+export type GoogleRosterConnector = typeof googleRosterConnectors.$inferSelect;
+export type InsertGoogleRosterConnector = typeof googleRosterConnectors.$inferInsert;
+
+// ============================================================================
 // Classroom Courses - Google Classroom sync
 // ============================================================================
 export const classroomCourses = pgTable(
@@ -276,7 +313,7 @@ export const errorLogs = pgTable(
   "error_logs",
   {
     id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-    category: text("category").notNull(), // ErrorCategory: api_error, uncaught_exception, etc.
+    category: text("category").notNull(), // ErrorCategory: api_error, fatal_process_error, etc.
     message: text("message").notNull(),
     stack: text("stack"),
     // Request correlation — ties this error to a specific request + actor

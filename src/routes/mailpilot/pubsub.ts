@@ -92,7 +92,7 @@ router.post("/push", async (req, res) => {
     console.error("[MailPilot] processNotification failed:", err);
     errorMonitor.trackError("scheduler_failure", err as Error, {
       job: "mailpilot_pubsub",
-      emailAddress,
+      messageType: "gmail_pubsub",
     });
   });
 });

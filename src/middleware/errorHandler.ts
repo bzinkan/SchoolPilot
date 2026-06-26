@@ -19,7 +19,7 @@ export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
   const ctx = {
     requestId: reqId,
     method: req.method,
-    path: req.originalUrl,
+    path: req.path,
     status,
     userId: req.authUser?.id,
     schoolId: res.locals?.schoolId,

@@ -2,6 +2,7 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
 import * as schema from "../schema/index.js";
 import { buildPgSslConfig } from "../db/ssl.js";
+import errorMonitor from "./errorMonitor.js";
 
 // Dedicated pool for scheduler/background jobs.
 // Isolated from the main API pool so long-running rollup/purge queries can never
@@ -30,11 +31,31 @@ const schedulerPool = new pg.Pool({
 schedulerPool.on("connect", (client) => {
   client.query("SET app.is_super = 'on'").catch((err) => {
     console.error("[Scheduler Pool] failed to set RLS bypass flag", err);
+    errorMonitor.trackError(
+      "database_connectivity",
+      err,
+      {
+        job: "scheduler_pool",
+        messageType: "set_rls_bypass_failed",
+        errorCode: (err as NodeJS.ErrnoException).code,
+      },
+      { persist: false, priority: "high" }
+    );
   });
 });
 
 schedulerPool.on("error", (err) => {
   console.error("[Scheduler Pool] Unexpected error on idle client", err);
+  errorMonitor.trackError(
+    "database_connectivity",
+    err,
+    {
+      job: "scheduler_pool",
+      messageType: "idle_client_error",
+      errorCode: (err as NodeJS.ErrnoException).code,
+    },
+    { persist: false, priority: "high" }
+  );
 });
 
 export const schedulerDb = drizzle(schedulerPool, { schema });

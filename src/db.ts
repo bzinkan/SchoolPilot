@@ -3,6 +3,7 @@ import pg from "pg";
 import * as schema from "./schema/index.js";
 import { getTenantStore, rlsGucEnabled } from "./db/tenantContext.js";
 import { buildPgSslConfig } from "./db/ssl.js";
+import errorMonitor from "./services/errorMonitor.js";
 
 // SOC 2 / SC-7: enforce TLS verify-full to AWS RDS using the bundled CA chain.
 // The Docker image ships /app/rds-ca.pem from AWS' truststore so we can verify
@@ -25,6 +26,16 @@ const pool = new pg.Pool({
 
 pool.on("error", (err) => {
   console.error("Unexpected error on idle client", err);
+  errorMonitor.trackError(
+    "database_connectivity",
+    err,
+    {
+      job: "main_pool",
+      messageType: "idle_client_error",
+      errorCode: (err as NodeJS.ErrnoException).code,
+    },
+    { persist: false, priority: "high" }
+  );
 });
 
 // The global (pool-backed) Drizzle instance. Used directly when RLS request
