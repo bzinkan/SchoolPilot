@@ -84,6 +84,21 @@ Approval queue drafts are written to `soc2-evidence/approvals/` and uploaded in
 CI as `soc2-approval-queue`. The queue gathers human-owned decisions from the
 governance tracker, risk acceptance drafts, and local deployment evidence.
 
+CI on `main` also opens or updates the GitHub issue `SOC 2 approvals pending`.
+The issue is a review inbox. Authorized approvers may comment:
+
+```text
+/approve APPROVAL-ID rationale
+/reject APPROVAL-ID rationale
+```
+
+The GitHub comment workflow verifies the commenter, downloads the matching
+`soc2-approval-queue` artifact, records the decision, and writes JSON/Markdown
+evidence to the private `SchoolPilot-SOC2-Evidence` repository. Configure the
+private evidence checkout with the `SOC2_EVIDENCE_REPO_TOKEN` GitHub secret.
+Optionally set `SOC2_APPROVAL_AUTHORIZED_ACTORS` as a comma-separated repository
+variable; it defaults to `bzinkan`.
+
 Record an approve/not-approve decision into the private evidence repository:
 
 ```bash

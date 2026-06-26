@@ -7,6 +7,11 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+  issues: write
+  actions: read
+
 jobs:
   backend:
     name: Backend (TypeScript + Build)
@@ -289,6 +294,54 @@ jobs:
 
       - name: Generate SOC 2 approval queue
         run: npm run soc2:approval-queue
+
+      - name: Locate SOC 2 approval queue
+        id: approval_queue
+        shell: bash
+        run: |
+          queue_file="$(ls -1t soc2-evidence/approvals/*.json | head -n 1)"
+          echo "queue_file=${queue_file}" >> "$GITHUB_OUTPUT"
+
+      - name: Build SOC 2 approval issue body
+        run: >
+          npm run soc2:approval-issue --
+          --queue-file "${{ steps.approval_queue.outputs.queue_file }}"
+          --output soc2-evidence/approvals/github-approval-issue.md
+
+      - name: Open or update SOC 2 approval issue
+        if: github.event_name != 'pull_request'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require("fs");
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const title = "SOC 2 approvals pending";
+            const body = fs.readFileSync("soc2-evidence/approvals/github-approval-issue.md", "utf8");
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner,
+              repo,
+              state: "open",
+              per_page: 100,
+            });
+            const existing = issues.find((issue) => issue.title === title && !issue.pull_request);
+            if (existing) {
+              await github.rest.issues.update({
+                owner,
+                repo,
+                issue_number: existing.number,
+                body,
+              });
+              core.info(`Updated SOC 2 approval issue #${existing.number}`);
+            } else {
+              const { data: issue } = await github.rest.issues.create({
+                owner,
+                repo,
+                title,
+                body,
+              });
+              core.info(`Created SOC 2 approval issue #${issue.number}`);
+            }
 
       - name: Upload SOC 2 approval queue
         if: always()
