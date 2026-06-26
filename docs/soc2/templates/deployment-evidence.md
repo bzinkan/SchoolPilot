@@ -5,6 +5,10 @@ Deployment date:
 Change owner:
 Approver:
 
+Shadow evidence note: evidence automation may prepare this packet, but final
+production deployment approval must still be signed by the founder or
+engineering owner before any production deploy is treated as approved.
+
 ## Source
 
 - Repository:
@@ -36,6 +40,7 @@ Approver:
 - Protected environment:
 - Approver:
 - Approval timestamp:
+- Human approval status:
 
 ## Post-Deploy Checks
 

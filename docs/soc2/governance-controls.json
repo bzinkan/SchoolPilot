@@ -98,6 +98,11 @@
           "privateEvidenceLocation": "GitHub Actions artifact: soc2-evidence-frontend"
         },
         {
+          "name": "Shadow deployment evidence packet",
+          "automation": "automated",
+          "privateEvidenceLocation": "GitHub Actions artifact: soc2-evidence-deployment"
+        },
+        {
           "name": "Production deployment approval",
           "automation": "human_approved",
           "privateEvidenceLocation": "SchoolPilot-SOC2-Evidence/deployments/",

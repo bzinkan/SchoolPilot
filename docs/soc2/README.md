@@ -63,3 +63,13 @@ The check also drafts risk acceptance records from open remediation items using
 approval. Automation may prepare the record, expiration, owner, risk level, and
 suggested compensating controls; the founder must still approve or reject the
 risk.
+
+Generate shadow deployment/change-management evidence locally:
+
+```bash
+npm run soc2:deployment-evidence
+```
+
+Deployment evidence is written to `soc2-evidence/deployments/` and uploaded in
+CI as `soc2-evidence-deployment`. It records PR/commit/build metadata and file
+hashes without deploying, using AWS credentials, or approving production changes.

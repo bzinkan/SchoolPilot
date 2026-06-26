@@ -232,3 +232,34 @@ jobs:
           name: soc2-evidence-frontend
           path: soc2-evidence/
           if-no-files-found: error
+
+  soc2-deployment-evidence:
+    name: SOC 2 deployment evidence
+    runs-on: ubuntu-latest
+    needs:
+      - backend
+      - cross-tenant-tests
+      - rls-enabled-cross-tenant-tests
+      - frontend
+    if: always()
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Generate shadow deployment evidence
+        env:
+          JOB_STATUS: ${{ job.status }}
+          CI_JOB_RESULTS: ${{ toJSON(needs) }}
+        run: npm run soc2:deployment-evidence
+
+      - name: Upload SOC 2 deployment evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: soc2-evidence-deployment
+          path: soc2-evidence/deployments/
+          if-no-files-found: error
