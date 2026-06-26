@@ -30,7 +30,6 @@ export default function SchoolSetupWizard() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [, setSavingIds] = useState(new Set());
-  const [googleConnected, setGoogleConnected] = useState(false);
 
   const [showCreateSchool, setShowCreateSchool] = useState(!currentSchool);
 
@@ -59,11 +58,6 @@ export default function SchoolSetupWizard() {
         setStudents(toArray(studentsRes.data, 'students').map(normalizeStudent));
         setHomerooms(toArray(homeroomsRes.data, 'homerooms'));
         setStaff(toArray(staffRes.data, 'staff').map(normalizeStaff));
-        // Check Google Classroom connection status
-        try {
-          const gRes = await api.get(`/schools/${schoolId}/google/status`);
-          setGoogleConnected(gRes.data.connected);
-        } catch { /* ignore */ }
       } catch (err) {
         console.error('Failed to load school data:', err);
         setError('Failed to load school data. Please try again.');
@@ -345,7 +339,6 @@ export default function SchoolSetupWizard() {
           <StaffManager
             staff={staff}
             schoolId={schoolId}
-            googleConnected={googleConnected}
             onAdd={async (data) => {
               const res = await api.post(`/schools/${schoolId}/staff`, data);
               setStaff(prev => [...prev.filter(s => s.id !== res.data.id), res.data]);
@@ -375,7 +368,6 @@ export default function SchoolSetupWizard() {
             onUpdate={handleUpdateStudent}
             onDelete={handleDeleteStudent}
             onBulkDelete={handleBulkDelete}
-            googleConnected={googleConnected}
           />
         )}
         {activeTab === 'homerooms' && (
@@ -393,8 +385,6 @@ export default function SchoolSetupWizard() {
             homerooms={homerooms}
             onAssign={handleAssignStudent}
             schoolId={schoolId}
-            googleConnected={googleConnected}
-            setGoogleConnected={setGoogleConnected}
             onRefreshStudents={async () => {
               const res = await api.get(`/schools/${schoolId}/students`);
               setStudents(toArray(res.data, 'students').map(normalizeStudent));

@@ -11,12 +11,11 @@ import {
   createSchool,
   createMembership,
   getMembershipsWithSchool,
+  getEmailDomain,
   getProductLicenses,
+  normalizeDomain,
   updateUser,
   getSchoolBySlug,
-  getEmailDomain,
-  getGoogleOAuthToken,
-  upsertGoogleOAuthToken,
 } from "../services/storage.js";
 import { authenticate } from "../middleware/authenticate.js";
 import { authLimiter } from "../middleware/rateLimiter.js";
@@ -26,7 +25,6 @@ import { issueAuthCode, consumeAuthCode } from "../services/authCodeExchange.js"
 import { logAudit } from "../services/audit.js";
 import {
   exchangeGoogleAuthCode,
-  fetchGoogleUserInfo,
 } from "../util/googleOAuthTokenExchange.js";
 
 function clientIp(req: any): string | undefined {
@@ -385,45 +383,51 @@ function getFrontendUrl(): string {
   return allowlist[0] || "http://localhost:5173";
 }
 
-// GET /api/auth/google — Initiate Google OAuth login
+// GET /api/auth/google — Initiate identity-only Google OIDC login
 // Accepts optional ?redirect= to return the user to a specific path after login
-router.get("/google", (req, res) => {
+router.get("/google", (req, res, next) => {
   if (!process.env.GOOGLE_CLIENT_ID) {
     return res.status(503).json({ error: "Google OAuth not configured" });
   }
 
-  // Encode the desired post-login redirect path into OAuth state
-  const redirectPath = (req.query.redirect as string) || "";
-  const state = redirectPath ? Buffer.from(redirectPath).toString("base64url") : "";
+  const requestedRedirect = String(req.query.redirect || "");
+  const redirectPath = requestedRedirect.startsWith("/") ? requestedRedirect : "";
+  const state = crypto.randomBytes(32).toString("base64url");
+  const nonce = crypto.randomBytes(32).toString("base64url");
+  req.session.googleOAuthState = state;
+  req.session.googleOAuthNonce = nonce;
+  req.session.googleOAuthRedirect = redirectPath;
 
   const oauth2Client = getLoginOAuth2Client();
   const url = oauth2Client.generateAuthUrl({
-    access_type: "offline",
-    scope: [
-      "openid",
-      "profile",
-      "email",
-      "https://www.googleapis.com/auth/admin.directory.user.readonly",
-      "https://www.googleapis.com/auth/admin.directory.orgunit.readonly",
-      "https://www.googleapis.com/auth/classroom.courses.readonly",
-      "https://www.googleapis.com/auth/classroom.rosters.readonly",
-      "https://www.googleapis.com/auth/classroom.profile.emails",
-    ],
-    prompt: "consent",
-    ...(state ? { state } : {}),
+    access_type: "online",
+    scope: ["openid", "profile", "email"],
+    state,
+    nonce,
   });
 
-  return res.redirect(url);
+  req.session.save((err) => {
+    if (err) return next(err);
+    return res.redirect(url);
+  });
 });
 
 // GET /api/auth/google/callback — Handle Google OAuth callback
 router.get("/google/callback", async (req, res, next) => {
   try {
     const code = req.query.code as string;
+    const state = req.query.state as string;
     const frontendUrl = getFrontendUrl();
 
     if (!code) {
       return res.redirect(`${frontendUrl}/login?error=no_code`);
+    }
+    if (!state || state !== req.session.googleOAuthState || !req.session.googleOAuthNonce) {
+      await logAudit({
+        action: "auth.rejected",
+        metadata: { reason: "invalid_oauth_state", method: "google" },
+      });
+      return res.redirect(`${frontendUrl}/login?error=oauth_failed`);
     }
 
     const oauth2Client = getLoginOAuth2Client();
@@ -432,10 +436,44 @@ router.get("/google/callback", async (req, res, next) => {
       redirectUri: getLoginRedirectUri(),
       context: "auth-login",
     });
-    oauth2Client.setCredentials(tokens);
+    if (!tokens.id_token) {
+      await logAudit({
+        action: "auth.rejected",
+        metadata: { reason: "missing_id_token", method: "google" },
+      });
+      return res.redirect(`${frontendUrl}/login?error=oauth_failed`);
+    }
 
-    // Get user info from Google
-    const profile = await fetchGoogleUserInfo(tokens.access_token, "auth-login");
+    const ticket = await oauth2Client.verifyIdToken({
+      idToken: tokens.id_token,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+    const payload = ticket.getPayload();
+    if (!payload || payload.iss !== "https://accounts.google.com" && payload.iss !== "accounts.google.com") {
+      await logAudit({
+        action: "auth.rejected",
+        metadata: { reason: "invalid_id_token_issuer", method: "google" },
+      });
+      return res.redirect(`${frontendUrl}/login?error=oauth_failed`);
+    }
+    if (payload.nonce !== req.session.googleOAuthNonce) {
+      await logAudit({
+        action: "auth.rejected",
+        metadata: { reason: "invalid_oauth_nonce", method: "google" },
+      });
+      return res.redirect(`${frontendUrl}/login?error=oauth_failed`);
+    }
+
+    const profile = {
+      id: payload.sub,
+      email: payload.email,
+      picture: payload.picture,
+      hostedDomain: payload.hd,
+    };
+    const savedRedirect = req.session.googleOAuthRedirect || "";
+    req.session.googleOAuthState = undefined;
+    req.session.googleOAuthNonce = undefined;
+    req.session.googleOAuthRedirect = undefined;
 
     if (!profile.email) {
       // Durable record of the silent failure (otherwise just a redirect).
@@ -470,27 +508,28 @@ router.get("/google/callback", async (req, res, next) => {
       updates.profileImageUrl = profile.picture;
     await updateUser(user.id, updates);
 
-    // Save Google OAuth metadata so Workspace directory import can verify the
-    // connected domain instead of treating a valid token as stale.
-    const existingGoogleToken = await getGoogleOAuthToken(user.id);
-    const refreshToken = tokens.refresh_token || existingGoogleToken?.refreshToken;
-    if (refreshToken) {
-      const connectedEmail = profile.email.trim().toLowerCase();
-      await upsertGoogleOAuthToken(user.id, {
-        refreshToken,
-        scope: tokens.scope || existingGoogleToken?.scope || "",
-        tokenType: tokens.token_type || existingGoogleToken?.tokenType || "Bearer",
-        connectedEmail,
-        connectedDomain: getEmailDomain(connectedEmail),
-        expiryDate: tokens.expiry_date
-          ? new Date(tokens.expiry_date)
-          : existingGoogleToken?.expiryDate ?? undefined,
-      });
-    }
-
     // Get memberships for session
     const membershipsWithSchool = await getMembershipsWithSchool(user.id);
     const firstMembership = membershipsWithSchool[0];
+    const emailDomain = getEmailDomain(profile.email);
+    const hostedDomain = normalizeDomain(payload.hd);
+    const expectedHostedDomain = membershipsWithSchool
+      .map((m) => normalizeDomain(m.school.domain))
+      .find((domain) => !!domain && domain === emailDomain);
+    if (!user.isSuperAdmin && expectedHostedDomain && hostedDomain !== expectedHostedDomain) {
+      await logAudit({
+        schoolId: firstMembership?.membership.schoolId ?? null,
+        action: "auth.rejected",
+        userEmail: profile.email,
+        metadata: {
+          reason: "invalid_hosted_domain",
+          method: "google",
+          expectedDomain: expectedHostedDomain,
+          hostedDomain,
+        },
+      });
+      return res.redirect(`${frontendUrl}/login?error=domain_mismatch`);
+    }
 
     // Set session
     req.session.userId = user.id;
@@ -515,16 +554,7 @@ router.get("/google/callback", async (req, res, next) => {
       req.session.save((err) => (err ? reject(err) : resolve()));
     });
 
-    // Decode redirect hint from OAuth state (if provided)
-    const stateParam = req.query.state as string;
-    let redirectAfter = "";
-    if (stateParam) {
-      try {
-        const decoded = Buffer.from(stateParam, "base64url").toString();
-        // Only allow relative paths starting with /
-        if (decoded.startsWith("/")) redirectAfter = decoded;
-      } catch { /* ignore invalid state */ }
-    }
+    let redirectAfter = savedRedirect;
 
     // Resolve /gopilot to the correct role-based path
     if (redirectAfter === "/gopilot") {

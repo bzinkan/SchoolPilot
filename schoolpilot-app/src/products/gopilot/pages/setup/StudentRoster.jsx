@@ -6,11 +6,21 @@ import { useGoPilotAuth } from '../../../../hooks/useGoPilotAuth';
 import api from '../../../../shared/utils/api';
 import { GoogleLogo, GRADES, PAGE_SIZE, detectGradeFromName } from './constants';
 import ImportInClassPilotNotice from '../../../../shared/components/ImportInClassPilotNotice';
+import GoogleRosterConnectorPanel from '../../../../shared/components/GoogleRosterConnectorPanel';
 import { useStudentImportHome } from '../../../../shared/hooks/useStudentImportHome';
 
 // ─── STUDENT ROSTER TAB ──────────────────────────────────────────────
 
-export default function StudentRoster({ students, schoolId, onImport, onRefresh, onAdd, onUpdate, onDelete, onBulkDelete, googleConnected }) {
+function needsGoogleRosterConnector(err) {
+  const serverMsg = err?.response?.data?.code || err?.response?.data?.error || '';
+  return (
+    String(serverMsg).includes('GOOGLE_CONNECTOR_REQUIRED') ||
+    String(serverMsg).includes('NO_TOKENS') ||
+    String(serverMsg).includes('Google not connected')
+  );
+}
+
+export default function StudentRoster({ students, schoolId, onImport, onRefresh, onAdd, onUpdate, onDelete, onBulkDelete }) {
   const { currentSchool } = useGoPilotAuth();
   const navigate = useNavigate();
   const { consolidated, canLinkToClassPilot, importPath } = useStudentImportHome();
@@ -33,6 +43,7 @@ export default function StudentRoster({ students, schoolId, onImport, onRefresh,
   const [wsCheckedOUs, setWsCheckedOUs] = useState(new Set()); // checked org unit paths for bulk import
   const [wsImporting, setWsImporting] = useState(false);
   const [wsStep, setWsStep] = useState('orgunits'); // 'orgunits' | 'users'
+  const [wsConnectorRequired, setWsConnectorRequired] = useState(false);
   const [showQrPrint, setShowQrPrint] = useState(false);
   const [schoolSettings, setSchoolSettings] = useState({});
   const fileInputRef = useRef(null);
@@ -90,6 +101,25 @@ export default function StudentRoster({ students, schoolId, onImport, onRefresh,
     a.download = 'gopilot_student_template.csv';
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  const openWorkspaceImport = async () => {
+    setShowWorkspaceModal(true);
+    setWsStep('orgunits');
+    setWsConnectorRequired(false);
+    setWsLoading(true);
+    try {
+      const res = await api.get(`/schools/${schoolId}/google/org-units`);
+      setWsOrgUnits(res.data?.orgUnits || res.data || []);
+    } catch (err) {
+      if (needsGoogleRosterConnector(err)) {
+        setWsConnectorRequired(true);
+      } else {
+        console.error('Failed to load org units:', err);
+      }
+      setWsOrgUnits([]);
+    }
+    setWsLoading(false);
   };
 
   const toggleSelect = (id) => {
@@ -171,40 +201,13 @@ export default function StudentRoster({ students, schoolId, onImport, onRefresh,
         )}
         {!consolidated && (
           <>
-            {googleConnected ? (
-              <button
-                onClick={async () => {
-                  setShowWorkspaceModal(true);
-                  setWsStep('orgunits');
-                  setWsLoading(true);
-                  try {
-                    const res = await api.get(`/schools/${schoolId}/google/org-units`);
-                    setWsOrgUnits(res.data?.orgUnits || res.data || []);
-                  } catch (err) {
-                    console.error('Failed to load org units:', err);
-                    setWsOrgUnits([]);
-                  }
-                  setWsLoading(false);
-                }}
-                className="flex items-center gap-2 px-4 py-2 border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20 rounded-lg text-sm font-medium text-green-700 dark:text-green-400 hover:bg-green-100 dark:hover:bg-green-900/30"
-              >
-                <GoogleLogo className="w-4 h-4" />
-                Import from Google Workspace
-              </button>
-            ) : (
-              <button
-                onClick={async () => {
-                  try {
-                    const res = await api.get(`/schools/${schoolId}/google/auth-url`);
-                    window.location.href = res.data.url;
-                  } catch (err) { console.error(err); }
-                }}
-                className="flex items-center gap-2 px-4 py-2 border dark:border-slate-700 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-slate-800 dark:text-slate-200"
-              >
-                <GoogleLogo className="w-4 h-4" />
-                Connect Google
-              </button>
-            )}
+            <button
+              onClick={openWorkspaceImport}
+              className="flex items-center gap-2 px-4 py-2 border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/20 rounded-lg text-sm font-medium text-green-700 dark:text-green-400 hover:bg-green-100 dark:hover:bg-green-900/30"
+            >
+              <GoogleLogo className="w-4 h-4" />
+              Import from Google Workspace
+            </button>
             <div className="ml-auto">
               <button
                 onClick={() => setShowAddForm(!showAddForm)}
@@ -454,6 +457,7 @@ export default function StudentRoster({ students, schoolId, onImport, onRefresh,
           wsCheckedOUs={wsCheckedOUs}
           wsImporting={wsImporting}
           wsStep={wsStep}
+          wsConnectorRequired={wsConnectorRequired}
           setWsOrgUnits={setWsOrgUnits}
           setWsUsers={setWsUsers}
           setWsLoading={setWsLoading}
@@ -463,6 +467,7 @@ export default function StudentRoster({ students, schoolId, onImport, onRefresh,
           setWsCheckedOUs={setWsCheckedOUs}
           setWsImporting={setWsImporting}
           setWsStep={setWsStep}
+          setWsConnectorRequired={setWsConnectorRequired}
           onClose={() => {
             setShowWorkspaceModal(false);
             setWsUsers([]);
@@ -470,7 +475,9 @@ export default function StudentRoster({ students, schoolId, onImport, onRefresh,
             setWsSelectedUsers(new Set());
             setWsCheckedOUs(new Set());
             setWsGradeMap({});
+            setWsConnectorRequired(false);
           }}
+          onConnectorConnected={openWorkspaceImport}
           onRefresh={onRefresh}
         />
       )}
@@ -521,10 +528,10 @@ export default function StudentRoster({ students, schoolId, onImport, onRefresh,
 
 export function WorkspaceImportModal({
   schoolId, wsOrgUnits, wsUsers, wsLoading, wsSelectedOU, wsSelectedUsers,
-  wsGradeMap, wsCheckedOUs, wsImporting, wsStep,
+  wsGradeMap, wsCheckedOUs, wsImporting, wsStep, wsConnectorRequired,
   setWsUsers, setWsLoading, setWsSelectedOU, setWsSelectedUsers,
   setWsGradeMap, setWsCheckedOUs, setWsImporting, setWsStep,
-  onClose, onRefresh,
+  setWsConnectorRequired, onClose, onRefresh, onConnectorConnected,
 }) {
   // Auto-detect grades when org units load
   useEffect(() => {
@@ -555,7 +562,11 @@ export function WorkspaceImportModal({
       if (onRefresh) onRefresh();
     } catch (err) {
       console.error(err);
-      alert('Failed to import. Make sure your Google account has admin access.');
+      if (needsGoogleRosterConnector(err)) {
+        setWsConnectorRequired(true);
+      } else {
+        alert('Failed to import. Verify the Google Workspace Roster Connector and try again.');
+      }
     }
     setWsImporting(false);
   };
@@ -571,7 +582,11 @@ export function WorkspaceImportModal({
       const active = users.filter(u => !u.suspended);
       setWsUsers(active);
       setWsSelectedUsers(new Set(active.map(u => u.email)));
-    } catch (err) { console.error(err); setWsUsers([]); }
+    } catch (err) {
+      console.error(err);
+      if (needsGoogleRosterConnector(err)) setWsConnectorRequired(true);
+      setWsUsers([]);
+    }
     setWsLoading(false);
   };
 
@@ -593,7 +608,11 @@ export function WorkspaceImportModal({
       if (onRefresh) onRefresh();
     } catch (err) {
       console.error(err);
-      alert('Failed to import. Make sure your Google account has admin access.');
+      if (needsGoogleRosterConnector(err)) {
+        setWsConnectorRequired(true);
+      } else {
+        alert('Failed to import. Verify the Google Workspace Roster Connector and try again.');
+      }
     }
     setWsImporting(false);
   };
@@ -610,7 +629,12 @@ export function WorkspaceImportModal({
         </div>
 
         <div className="flex-1 overflow-auto p-4">
-          {wsLoading ? (
+          {wsConnectorRequired ? (
+            <GoogleRosterConnectorPanel
+              basePath={`/schools/${schoolId}/google/roster-connector`}
+              onConnected={onConnectorConnected}
+            />
+          ) : wsLoading ? (
             <div className="flex items-center justify-center py-12">
               <RefreshCw className="w-6 h-6 animate-spin text-gray-400 dark:text-slate-500" />
               <span className="ml-2 text-gray-500 dark:text-slate-400">Loading...</span>
@@ -726,7 +750,7 @@ export function WorkspaceImportModal({
         </div>
 
         {/* Footer */}
-        {wsStep === 'orgunits' && wsCheckedOUs.size > 0 && (
+        {!wsConnectorRequired && wsStep === 'orgunits' && wsCheckedOUs.size > 0 && (
           <div className="border-t dark:border-slate-700 p-4 flex items-center justify-between">
             <p className="text-sm text-gray-600 dark:text-slate-300">{wsCheckedOUs.size} org unit{wsCheckedOUs.size !== 1 ? 's' : ''} selected</p>
             <button
@@ -739,7 +763,7 @@ export function WorkspaceImportModal({
           </div>
         )}
 
-        {wsStep === 'users' && wsUsers.length > 0 && (
+        {!wsConnectorRequired && wsStep === 'users' && wsUsers.length > 0 && (
           <div className="border-t dark:border-slate-700 p-4 flex items-center justify-between">
             <p className="text-sm text-gray-600 dark:text-slate-300">{wsSelectedUsers.size} user{wsSelectedUsers.size !== 1 ? 's' : ''} selected</p>
             <button

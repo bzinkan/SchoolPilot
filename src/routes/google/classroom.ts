@@ -28,6 +28,10 @@ import {
   randomFourDigitClassPilotPin,
   type GeneratedClassPilotPin,
 } from "../../services/classpilotPins.js";
+import {
+  getRosterClassroomClientForSchool,
+  recordRosterConnectorSync,
+} from "../../services/googleRosterConnector.js";
 
 const router = Router();
 
@@ -43,13 +47,7 @@ const adminAuth = [
   requireActiveSchool,
   requireRole("admin", "school_admin"),
 ] as const;
-const CLASSROOM_EMAIL_SCOPE = "https://www.googleapis.com/auth/classroom.profile.emails";
 const CLASSROOM_COURSES_SCOPE = "https://www.googleapis.com/auth/classroom.courses.readonly";
-const CLASSROOM_ROSTER_SCOPES = [
-  CLASSROOM_COURSES_SCOPE,
-  "https://www.googleapis.com/auth/classroom.rosters.readonly",
-  CLASSROOM_EMAIL_SCOPE,
-];
 const CLASSROOM_RESOURCE_SCOPES = [
   CLASSROOM_COURSES_SCOPE,
   "https://www.googleapis.com/auth/classroom.coursework.students.readonly",
@@ -89,6 +87,9 @@ function handleGoogleError(err: any, res: any, next: any) {
   const statusCode = err.code || err.status || err.statusCode;
   if (err.code && typeof err.code === "string") {
     return res.status(err.status || 400).json({ error: err.message, code: err.code });
+  }
+  if (err.message?.includes("GOOGLE_CONNECTOR_REQUIRED")) {
+    return res.status(400).json({ error: err.message, code: "GOOGLE_CONNECTOR_REQUIRED" });
   }
   if (err.message === "Google not connected") {
     return res.status(400).json({ error: "NO_TOKENS: Google not connected", code: "NO_TOKENS" });
@@ -301,13 +302,25 @@ async function recordCourseSync(schoolId: string, courseId: string, course: any)
 router.get("/courses", ...staffAuth, async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
-    const { oauth2Client, google } = await getAuthedClient(
-      req.authUser!.id,
-      res.locals.schoolId!,
-      [CLASSROOM_COURSES_SCOPE],
-      "course"
-    );
-    const classroom = google.classroom({ version: "v1", auth: oauth2Client });
+    const useResourceOAuth = req.query.purpose === "classroom_resources";
+    let classroom: any;
+    if (useResourceOAuth) {
+      const { oauth2Client, google } = await getAuthedClient(
+        req.authUser!.id,
+        res.locals.schoolId!,
+        [CLASSROOM_COURSES_SCOPE],
+        "course"
+      );
+      classroom = google.classroom({ version: "v1", auth: oauth2Client });
+    } else {
+      if (res.locals.membershipRole !== "admin" && res.locals.membershipRole !== "school_admin") {
+        return res.status(403).json({
+          error: "INSUFFICIENT_GOOGLE_ROLE: Google Classroom roster import requires a school admin.",
+          code: "INSUFFICIENT_GOOGLE_ROLE",
+        });
+      }
+      classroom = (await getRosterClassroomClientForSchool(schoolId)).classroom;
+    }
     const courses = await listActiveCourses(classroom);
     const savedCourses = await getClassroomCoursesBySchool(schoolId);
     const savedByGoogleId = new Map(savedCourses.map((course) => [course.googleCourseId, course]));
@@ -387,13 +400,7 @@ router.post("/sync", ...adminAuth, async (req, res, next) => {
     }
 
     const schoolId = res.locals.schoolId!;
-    const { oauth2Client, google } = await getAuthedClient(
-      req.authUser!.id,
-      res.locals.schoolId!,
-      CLASSROOM_ROSTER_SCOPES,
-      "roster"
-    );
-    const classroom = google.classroom({ version: "v1", auth: oauth2Client });
+    const { classroom } = await getRosterClassroomClientForSchool(schoolId);
 
     let totalImported = 0;
     let totalUpdated = 0;
@@ -474,6 +481,7 @@ router.post("/sync", ...adminAuth, async (req, res, next) => {
       skipped: totalSkipped,
       failures,
     });
+    await recordRosterConnectorSync(schoolId);
     return res.json({ totalImported, totalUpdated, results, autoAssigned, generatedPins });
   } catch (err: any) {
     return handleGoogleError(err, res, next);
@@ -486,13 +494,7 @@ router.post("/courses/:courseId/sync", ...adminAuth, async (req, res, next) => {
     const courseId = String(req.params.courseId ?? "");
     const schoolId = res.locals.schoolId!;
     const gradeLevel = req.body?.gradeLevel || null;
-    const { oauth2Client, google } = await getAuthedClient(
-      req.authUser!.id,
-      res.locals.schoolId!,
-      CLASSROOM_ROSTER_SCOPES,
-      "roster"
-    );
-    const classroom = google.classroom({ version: "v1", auth: oauth2Client });
+    const { classroom } = await getRosterClassroomClientForSchool(schoolId);
 
     const courseMeta = await getCourseMetadata(classroom, courseId);
     const googleStudents = await listCourseStudents(classroom, courseId);
@@ -541,6 +543,7 @@ router.post("/courses/:courseId/sync", ...adminAuth, async (req, res, next) => {
       skipped,
       failures,
     });
+    await recordRosterConnectorSync(schoolId);
     return res.json({
       courseId,
       courseName: courseMeta.name || courseId,

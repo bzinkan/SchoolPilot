@@ -126,8 +126,8 @@ export default function Settings() {
   });
 
   const { data: classroomCourses = [], isLoading: classroomCoursesLoading } = useQuery({
-    queryKey: ["/api/classroom/courses"],
-    queryFn: () => apiRequest("GET", "/classroom/courses"),
+    queryKey: ["/api/classroom/courses", "classroom_resources"],
+    queryFn: () => apiRequest("GET", "/classroom/courses?purpose=classroom_resources"),
     select: (data) => data?.courses ?? [],
     enabled: showClassroomDialog,
   });

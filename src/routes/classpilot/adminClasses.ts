@@ -1,5 +1,4 @@
 import { Router } from "express";
-import { google } from "googleapis";
 import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
@@ -14,7 +13,6 @@ import {
   createStudent,
   findOverlappingScheduledAdminClass,
   getAdminClassSummariesBySchool,
-  getGoogleOAuthTokenForSchool,
   getGroupByIdAndSchool,
   getGroupStudents,
   getGroupTeacherSummaries,
@@ -48,6 +46,10 @@ import {
   randomFourDigitClassPilotPin,
   type GeneratedClassPilotPin,
 } from "../../services/classpilotPins.js";
+import {
+  getRosterClassroomClientForSchool,
+  recordRosterConnectorSync,
+} from "../../services/googleRosterConnector.js";
 
 const router = Router();
 
@@ -62,11 +64,6 @@ const auth = [
 const TEACHABLE_ROLES = new Set(["teacher", "admin", "school_admin"]);
 const GRADE_VALUES = new Set(["PK", "K", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"]);
 const CLASSROOM_IMPORT_ENABLED = process.env.CLASSPILOT_CLASSROOM_IMPORT_ENABLED === "true";
-const CLASSROOM_EMAIL_SCOPE = "https://www.googleapis.com/auth/classroom.profile.emails";
-const CLASSROOM_COURSES_SCOPE = "https://www.googleapis.com/auth/classroom.courses.readonly";
-const CLASSROOM_ROSTER_SCOPE = "https://www.googleapis.com/auth/classroom.rosters.readonly";
-const CLASSROOM_ROSTER_SCOPES = [CLASSROOM_COURSES_SCOPE, CLASSROOM_ROSTER_SCOPE, CLASSROOM_EMAIL_SCOPE];
-
 function param(req: any, key: string): string {
   return String(req.params[key] ?? "");
 }
@@ -183,24 +180,16 @@ async function serializeClass(group: any, schoolId: string) {
   };
 }
 
-async function getAuthedClassroom(userId: string, schoolId: string, requiredScopes: string[]) {
-  const token = await getGoogleOAuthTokenForSchool(userId, schoolId);
-  if (!token) throw routeError("NO_TOKENS: Google not connected for this school", 400, "NO_TOKENS");
-  const granted = new Set((token.scope || "").split(/\s+/).filter(Boolean));
-  const missing = requiredScopes.filter((scope) => !granted.has(scope));
-  if (missing.length > 0) {
-    throw routeError(`MISSING_GOOGLE_SCOPE: Reconnect Google Classroom (${missing.join(", ")}).`, 400, "MISSING_GOOGLE_SCOPE");
-  }
-  const oauth2Client = new google.auth.OAuth2(
-    process.env.GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET
-  );
-  oauth2Client.setCredentials({ refresh_token: token.refreshToken });
-  return google.classroom({ version: "v1", auth: oauth2Client });
+async function getAuthedClassroom(userId: string, schoolId: string) {
+  void userId;
+  return (await getRosterClassroomClientForSchool(schoolId)).classroom;
 }
 
 function normalizeGoogleClassroomError(err: any) {
   const statusCode = Number(err?.status || err?.statusCode || (typeof err?.code === "number" ? err.code : 0));
+  if (err?.code === "GOOGLE_CONNECTOR_REQUIRED" || err?.message?.includes("GOOGLE_CONNECTOR_REQUIRED")) {
+    return routeError(err.message || "Connect the Google Workspace Roster Connector.", 400, "GOOGLE_CONNECTOR_REQUIRED");
+  }
   if (statusCode === 401 || err?.message?.includes("invalid_grant")) {
     return routeError("NO_TOKENS: Reconnect Google Classroom for this school.", 400, "NO_TOKENS");
   }
@@ -407,7 +396,7 @@ router.get("/classroom/import-preview", ...auth, async (req, res, next) => {
       return res.json({ enabled: false, courses: [] });
     }
     const schoolId = res.locals.schoolId!;
-    const classroom = await getAuthedClassroom(req.authUser!.id, schoolId, CLASSROOM_ROSTER_SCOPES);
+    const classroom = await getAuthedClassroom(req.authUser!.id, schoolId);
     const existing = await getAdminClassSummariesBySchool(schoolId, { status: "all" });
     const existingByGoogleId = new Map(existing.filter((row) => row.googleClassroomCourseId).map((row) => [row.googleClassroomCourseId, row]));
     let defaultTeacher: ReturnType<typeof teacherPreview> | null = null;
@@ -455,7 +444,7 @@ router.post("/classroom/import", ...auth, async (req, res, next) => {
       throw routeError("At least one Google Classroom course is required", 400, "COURSES_REQUIRED");
     }
 
-    const classroom = await getAuthedClassroom(req.authUser!.id, schoolId, CLASSROOM_ROSTER_SCOPES);
+    const classroom = await getAuthedClassroom(req.authUser!.id, schoolId);
     const existing = await getAdminClassSummariesBySchool(schoolId, { status: "all" });
     const existingByGoogleId = new Map(existing.filter((row) => row.googleClassroomCourseId).map((row) => [row.googleClassroomCourseId, row]));
     let defaultTeacherId = "";
@@ -653,6 +642,7 @@ router.post("/classroom/import", ...auth, async (req, res, next) => {
       skipped: totalSkipped,
       failures,
     });
+    await recordRosterConnectorSync(schoolId);
 
     return res.json({
       importedCourses,

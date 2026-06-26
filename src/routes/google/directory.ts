@@ -1,11 +1,9 @@
 import { Router } from "express";
-import { google } from "googleapis";
 import { authenticate } from "../../middleware/authenticate.js";
 import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
 import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import {
-  getGoogleOAuthTokenForSchool,
   createStudent,
   updateStudent,
   createUser,
@@ -18,6 +16,7 @@ import {
   getSchoolById,
   normalizeDomain,
   autoAssignFamilyGroups,
+  markGoogleRosterConnectorSynced,
 } from "../../services/storage.js";
 import { recordImportRun } from "../../services/importLog.js";
 import {
@@ -33,6 +32,7 @@ import {
   randomFourDigitClassPilotPin,
   type GeneratedClassPilotPin,
 } from "../../services/classpilotPins.js";
+import { getRosterDirectoryClientForSchool } from "../../services/googleRosterConnector.js";
 
 const router = Router();
 
@@ -42,11 +42,6 @@ const adminAuth = [
   requireActiveSchool,
   requireRole("admin", "school_admin"),
 ] as const;
-
-const DIRECTORY_SCOPES = [
-  "https://www.googleapis.com/auth/admin.directory.user.readonly",
-  "https://www.googleapis.com/auth/admin.directory.orgunit.readonly",
-];
 
 // Extract student ID from Google Workspace externalIds field
 function extractStudentId(user: any): string | undefined {
@@ -67,6 +62,12 @@ function handleGoogleError(err: any, res: any, next: any) {
   const statusCode = err.code || err.status || err.statusCode;
   if (err.code && typeof err.code === "string") {
     return res.status(err.status || 400).json({ error: err.message, code: err.code });
+  }
+  if (err.message?.includes("GOOGLE_CONNECTOR_REQUIRED")) {
+    return res.status(400).json({
+      error: err.message,
+      code: "GOOGLE_CONNECTOR_REQUIRED",
+    });
   }
   if (err.message === "Google not connected") {
     return res.status(400).json({ error: "NO_TOKENS: Google not connected", code: "NO_TOKENS" });
@@ -316,31 +317,14 @@ async function importGoogleUsersAsStudents(
 }
 
 async function getAuthedClient(userId: string, schoolId: string) {
-  const token = await getGoogleOAuthTokenForSchool(userId, schoolId);
-  if (!token) throw routeError("NO_TOKENS: Google not connected for this school");
-  const granted = new Set((token.scope || "").split(/\s+/).filter(Boolean));
-  const missing = DIRECTORY_SCOPES.filter((scope) => !granted.has(scope));
-  if (missing.length > 0) {
-    throw routeError(
-      `MISSING_GOOGLE_SCOPE: Reconnect Google Workspace to grant Directory access (${missing.join(", ")}).`,
-      400,
-      "MISSING_GOOGLE_SCOPE"
-    );
-  }
-
-  const oauth2Client = new google.auth.OAuth2(
-    process.env.GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET
-  );
-  oauth2Client.setCredentials({ refresh_token: token.refreshToken });
-  return { oauth2Client, google };
+  void userId;
+  return getRosterDirectoryClientForSchool(schoolId);
 }
 
 // GET /api/google/workspace/orgunits - List org units
 router.get("/orgunits", ...adminAuth, async (req, res, next) => {
   try {
-    const { oauth2Client, google } = await getAuthedClient(req.authUser!.id, res.locals.schoolId!);
-    const admin = google.admin({ version: "directory_v1", auth: oauth2Client });
+    const { admin } = await getAuthedClient(req.authUser!.id, res.locals.schoolId!);
 
     const response = await admin.orgunits.list({
       customerId: "my_customer",
@@ -391,8 +375,7 @@ router.get("/users", ...adminAuth, async (req, res, next) => {
     const { orgUnitPath, pageToken } = req.query;
     const schoolId = res.locals.schoolId!;
     const pageTokenValue = optionalString(pageToken);
-    const { oauth2Client, google } = await getAuthedClient(req.authUser!.id, res.locals.schoolId!);
-    const admin = google.admin({ version: "directory_v1", auth: oauth2Client });
+    const { admin } = await getAuthedClient(req.authUser!.id, res.locals.schoolId!);
 
     const response = await listDirectoryUsersForSchool(admin, schoolId, {
       orgUnitPath: optionalString(orgUnitPath),
@@ -452,8 +435,7 @@ router.post("/import", ...adminAuth, async (req, res, next) => {
 
     // OU-based import with entries array (ClassPilot Students page)
     if (Array.isArray(entries) && entries.length > 0) {
-      const { oauth2Client, google } = await getAuthedClient(req.authUser!.id, res.locals.schoolId!);
-      const admin = google.admin({ version: "directory_v1", auth: oauth2Client });
+      const { admin } = await getAuthedClient(req.authUser!.id, res.locals.schoolId!);
 
       let totalImported = 0;
       let totalUpdated = 0;
@@ -498,6 +480,7 @@ router.post("/import", ...adminAuth, async (req, res, next) => {
         skipped: totalSkipped,
         failures: allErrors,
       });
+      await markGoogleRosterConnectorSynced(schoolId);
       return res.json({
         imported: totalImported,
         updated: totalUpdated,
@@ -511,8 +494,7 @@ router.post("/import", ...adminAuth, async (req, res, next) => {
 
     // Single OU or all-domain import (PassPilot/ClassPilot setup)
     if (orgUnitPath !== undefined || importAll === true) {
-      const { oauth2Client, google } = await getAuthedClient(req.authUser!.id, res.locals.schoolId!);
-      const admin = google.admin({ version: "directory_v1", auth: oauth2Client });
+      const { admin } = await getAuthedClient(req.authUser!.id, res.locals.schoolId!);
       const { users: googleUsers } = await listDirectoryUsersForSchool(admin, schoolId, {
         orgUnitPath: optionalString(orgUnitPath),
         projection: "full",
@@ -535,6 +517,7 @@ router.post("/import", ...adminAuth, async (req, res, next) => {
         skipped: result.skipped,
         failures: result.errors,
       });
+      await markGoogleRosterConnectorSynced(schoolId);
       return res.json({ ...result, total: googleUsers.length, autoAssigned });
     }
 
@@ -647,8 +630,7 @@ const importStaffHandler = async (req: any, res: any, next: any) => {
 
     // If orgUnitPath provided, fetch users from Google Directory
     if (orgUnitPath || (orgUnitPath === undefined && !users)) {
-      const { oauth2Client, google } = await getAuthedClient(req.authUser!.id, res.locals.schoolId!);
-      const admin = google.admin({ version: "directory_v1", auth: oauth2Client });
+      const { admin } = await getAuthedClient(req.authUser!.id, res.locals.schoolId!);
 
       const { users: googleUsers } = await listDirectoryUsersForSchool(admin, schoolId, {
         orgUnitPath: optionalString(orgUnitPath),
@@ -732,6 +714,7 @@ const importStaffHandler = async (req: any, res: any, next: any) => {
         skipped,
         failures: errors,
       });
+      await markGoogleRosterConnectorSynced(schoolId);
       return res.json({ imported, skipped, updated, errors, total: googleUsers.length });
     }
 
@@ -833,8 +816,7 @@ router.post("/import-orgunits", ...adminAuth, async (req, res, next) => {
     }
 
     const schoolId = res.locals.schoolId!;
-    const { oauth2Client, google } = await getAuthedClient(req.authUser!.id, res.locals.schoolId!);
-    const admin = google.admin({ version: "directory_v1", auth: oauth2Client });
+    const { admin } = await getAuthedClient(req.authUser!.id, res.locals.schoolId!);
 
     let totalImported = 0;
     let totalUpdated = 0;
@@ -880,6 +862,7 @@ router.post("/import-orgunits", ...adminAuth, async (req, res, next) => {
       skipped: totalSkipped,
       failures: allErrors,
     });
+    await markGoogleRosterConnectorSynced(schoolId);
     return res.json({
       imported: totalImported,
       updated: totalUpdated,

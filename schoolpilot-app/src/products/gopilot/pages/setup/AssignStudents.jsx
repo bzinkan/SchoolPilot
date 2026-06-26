@@ -2,8 +2,18 @@ import React, { useState } from 'react';
 import { X, School, ChevronRight, ChevronDown, Search, CheckCircle2, RefreshCw } from 'lucide-react';
 import api from '../../../../shared/utils/api';
 import { GoogleLogo } from './constants';
+import GoogleRosterConnectorPanel from '../../../../shared/components/GoogleRosterConnectorPanel';
 
-export default function AssignStudents({ students, homerooms, onAssign, schoolId, googleConnected, setGoogleConnected, onRefreshStudents }) {
+function needsGoogleRosterConnector(err) {
+  const serverMsg = err?.response?.data?.code || err?.response?.data?.error || '';
+  return (
+    String(serverMsg).includes('GOOGLE_CONNECTOR_REQUIRED') ||
+    String(serverMsg).includes('NO_TOKENS') ||
+    String(serverMsg).includes('Google not connected')
+  );
+}
+
+export default function AssignStudents({ students, homerooms, onAssign, schoolId, onRefreshStudents }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [expandedHomeroom, setExpandedHomeroom] = useState(null);
   const [courses, setCourses] = useState([]);
@@ -17,6 +27,8 @@ export default function AssignStudents({ students, homerooms, onAssign, schoolId
   const [selectedStudents, setSelectedStudents] = useState(new Set());
   const [bulkHomeroom, setBulkHomeroom] = useState('');
   const [bulkAssigning, setBulkAssigning] = useState(false);
+  const [showConnectorPanel, setShowConnectorPanel] = useState(false);
+  const [connectorRequired, setConnectorRequired] = useState(false);
 
   const allUnassigned = students.filter(s => !s.homeroom);
   const grades = [...new Set(allUnassigned.map(s => s.grade).filter(Boolean))].sort((a, b) => {
@@ -65,25 +77,24 @@ export default function AssignStudents({ students, homerooms, onAssign, schoolId
     setBulkAssigning(false);
   };
 
-  const handleConnectGoogle = async () => {
-    try {
-      const res = await api.get(`/schools/${schoolId}/google/auth-url`);
-      window.location.href = res.data.url;
-    } catch (err) {
-      console.error('Failed to get Google auth URL:', err);
-    }
+  const handleConnectGoogle = () => {
+    setShowConnectorPanel(true);
+    setConnectorRequired(true);
   };
 
   const handleLoadCourses = async () => {
     setLoadingCourses(true);
+    setConnectorRequired(false);
     try {
       const res = await api.get(`/schools/${schoolId}/google/courses`);
       setCourses(res.data?.courses || res.data || []);
       setShowCourses(true);
+      setShowConnectorPanel(false);
     } catch (err) {
       console.error('Failed to load courses:', err);
-      if (err.response?.status === 401) {
-        setGoogleConnected(false);
+      if (needsGoogleRosterConnector(err)) {
+        setConnectorRequired(true);
+        setShowConnectorPanel(true);
       }
     } finally {
       setLoadingCourses(false);
@@ -105,19 +116,12 @@ export default function AssignStudents({ students, homerooms, onAssign, schoolId
       await onRefreshStudents();
     } catch (err) {
       console.error('Sync failed:', err);
+      if (needsGoogleRosterConnector(err)) {
+        setConnectorRequired(true);
+        setShowConnectorPanel(true);
+      }
     } finally {
       setSyncing(false);
-    }
-  };
-
-  const handleDisconnect = async () => {
-    try {
-      await api.delete(`/schools/${schoolId}/google/disconnect`);
-      setGoogleConnected(false);
-      setCourses([]);
-      setShowCourses(false);
-    } catch (err) {
-      console.error('Failed to disconnect:', err);
     }
   };
 
@@ -138,34 +142,32 @@ export default function AssignStudents({ students, homerooms, onAssign, schoolId
             <div>
               <p className="font-medium">Google Classroom Sync</p>
               <p className="text-sm text-gray-500 dark:text-slate-400">
-                {googleConnected
-                  ? 'Connected — pull students from your Google Classroom courses'
-                  : 'Connect your Google account to import students from Classroom'}
+                Pull students from Classroom through the IT-approved Google Workspace Roster Connector.
               </p>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {googleConnected ? (
-              <>
-                <button onClick={handleLoadCourses} disabled={loadingCourses}
-                  className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:bg-indigo-300">
-                  {loadingCourses ? <RefreshCw className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-                  {loadingCourses ? 'Loading...' : 'Load Courses'}
-                </button>
-                <button onClick={handleDisconnect}
-                  className="px-3 py-2 border dark:border-slate-700 rounded-lg text-sm text-red-600 hover:bg-red-50">
-                  Disconnect
-                </button>
-              </>
-            ) : (
-              <button onClick={handleConnectGoogle}
-                className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-slate-900 border dark:border-slate-700 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-slate-800 shadow-sm">
-                <GoogleLogo className="w-4 h-4" />
-                Connect Google Classroom
-              </button>
-            )}
+            <button onClick={handleLoadCourses} disabled={loadingCourses}
+              className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:bg-indigo-300">
+              {loadingCourses ? <RefreshCw className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+              {loadingCourses ? 'Loading...' : 'Load Courses'}
+            </button>
+            <button onClick={handleConnectGoogle}
+              className="flex items-center gap-2 px-4 py-2 bg-white dark:bg-slate-900 border dark:border-slate-700 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-slate-800 shadow-sm">
+              <GoogleLogo className="w-4 h-4" />
+              Connector Setup
+            </button>
           </div>
         </div>
+
+        {(showConnectorPanel || connectorRequired) && (
+          <div className="mt-4 border-t dark:border-slate-700 pt-4">
+            <GoogleRosterConnectorPanel
+              basePath={`/schools/${schoolId}/google/roster-connector`}
+              onConnected={handleLoadCourses}
+            />
+          </div>
+        )}
 
         {/* No courses empty state */}
         {showCourses && courses.length === 0 && (

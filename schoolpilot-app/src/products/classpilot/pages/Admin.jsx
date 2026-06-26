@@ -34,6 +34,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "../../../components/ui
 import { Badge } from "../../../components/ui/badge";
 import { useClassPilotAuth } from "../../../hooks/useClassPilotAuth";
 import { ThemeToggle } from "../../../components/ThemeToggle";
+import GoogleRosterConnectorPanel from "../../../shared/components/GoogleRosterConnectorPanel";
 
 const createStaffSchema = z.object({
   name: z.string().optional(),
@@ -258,7 +259,7 @@ function AdminPanel({ currentUser }) {
     queryFn: () => apiRequest("GET", "/directory/users"),
     enabled: wsImportDialogOpen,
   });
-  const { data: wsOUData, isLoading: wsOULoading } = useQuery({
+  const { data: wsOUData, isLoading: wsOULoading, refetch: wsOURefetch } = useQuery({
     queryKey: ["/api/directory/orgunits"],
     queryFn: () => apiRequest("GET", "/directory/orgunits"),
     enabled: wsImportDialogOpen,
@@ -274,6 +275,8 @@ function AdminPanel({ currentUser }) {
     if (!wsUsersError) return null;
     // With axios, the server response is in error.response.data; error.message is generic
     const serverMsg = wsUsersError.response?.data?.error || wsUsersError.response?.data?.message || "";
+    const code = wsUsersError.response?.data?.code;
+    if (code === "GOOGLE_CONNECTOR_REQUIRED" || serverMsg.includes("GOOGLE_CONNECTOR_REQUIRED")) return "GOOGLE_CONNECTOR_REQUIRED";
     const msg = serverMsg || wsUsersError.message || "";
     try { const m = msg.match(/\{.*\}/); if (m) return JSON.parse(m[0]).code || null; } catch { /* ignore */ }
     if (msg.includes("NO_TOKENS") || msg.includes("Google not connected")) return "NO_TOKENS";
@@ -1456,18 +1459,11 @@ function AdminPanel({ currentUser }) {
                 <Loader2 className="h-6 w-6 animate-spin mr-2" />
                 <span className="text-muted-foreground">Loading users from Google Workspace...</span>
               </div>
-            ) : wsErrorCode === "NO_TOKENS" ? (
-              <div className="text-center py-8 space-y-4">
-                <p className="text-muted-foreground">Google Workspace is not connected. Connect your Google Workspace admin account to import staff.</p>
-                <Button variant="outline" onClick={async () => {
-                  try {
-                    const data = await apiRequest("GET", "/google/auth-url");
-                    if (data.url) window.location.href = data.url;
-                  } catch (err) {
-                    toast({ variant: "destructive", title: "Failed to connect Google", description: err.response?.data?.error || err.message });
-                  }
-                }}>Connect Google Workspace</Button>
-              </div>
+            ) : wsErrorCode === "NO_TOKENS" || wsErrorCode === "GOOGLE_CONNECTOR_REQUIRED" ? (
+              <GoogleRosterConnectorPanel onConnected={() => {
+                wsUsersRefetch();
+                wsOURefetch();
+              }} />
             ) : wsErrorCode === "INSUFFICIENT_PERMISSIONS" ? (
               <div className="text-center py-8 space-y-4">
                 <div className="flex items-center justify-center gap-2 text-yellow-600">
