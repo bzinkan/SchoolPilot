@@ -25,6 +25,7 @@ import { heartbeats, teachingSessions, groups } from "../schema/classpilot.js";
 import { users } from "../schema/core.js";
 import { devices as deviceTable } from "../schema/classpilot.js";
 import { eq, and, sql, desc } from "drizzle-orm";
+import { getToolsForContext } from "./chatTools.js";
 
 // Lazy imports to avoid circular deps — flight paths may not exist in all setups
 let _getFlightPathsBySchool: ((schoolId: string) => Promise<any[]>) | null =
@@ -47,6 +48,7 @@ export interface ToolContext {
   schoolName: string;
   userName: string;
   userRole: string;
+  licensedProducts: string[];
   getTranscript: () => string; // last N messages for escalation
 }
 
@@ -70,9 +72,9 @@ const executors: Record<string, ToolExecutor> = {
 
   list_students: async (_args, ctx) => {
     const students = await getStudentsBySchool(ctx.schoolId);
-    const summary = students.map((s: any) => ({
+    const summary = students.map((s: any, index: number) => ({
       id: s.id,
-      name: `${s.firstName} ${s.lastName}`,
+      label: `Student ${index + 1}`,
       gradeLevel: s.gradeLevel || "N/A",
       status: s.status,
     }));
@@ -118,9 +120,8 @@ const executors: Record<string, ToolExecutor> = {
   get_attendance_today: async (_args, ctx) => {
     const records = await getAttendanceBySchool(ctx.schoolId, todayDate());
     const summary = records.map((r: any) => ({
-      studentName: `${r.student.firstName} ${r.student.lastName}`,
+      studentId: r.student.id,
       status: r.attendance.status,
-      reason: r.attendance.reason,
     }));
     return {
       success: true,
@@ -506,6 +507,11 @@ export async function executeTool(
   args: Record<string, any>,
   ctx: ToolContext
 ): Promise<ToolResult> {
+  const { toolMeta } = getToolsForContext(ctx.userRole, ctx.licensedProducts);
+  if (!toolMeta.has(toolName)) {
+    return { success: false, error: `Tool not authorized: ${toolName}` };
+  }
+
   const executor = executors[toolName];
   if (!executor) {
     return { success: false, error: `Unknown tool: ${toolName}` };

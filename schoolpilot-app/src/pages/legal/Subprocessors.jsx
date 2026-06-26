@@ -151,16 +151,17 @@ export default function Subprocessors() {
                 <tbody className="divide-y divide-slate-200">
                   <tr>
                     <td className="px-4 py-3 text-slate-700"><strong>Anthropic PBC</strong> (Claude API)</td>
-                    <td className="px-4 py-3 text-slate-700">URL content classification for student safety (detecting harmful content, off-task browsing)</td>
-                    <td className="px-4 py-3 text-slate-700">URL strings and page titles only — <strong>no student PII</strong></td>
+                    <td className="px-4 py-3 text-slate-700">URL content classification for student safety; optional AI assistant when enabled for authorized school staff</td>
+                    <td className="px-4 py-3 text-slate-700">URL strings and page titles for classification. For the optional assistant, staff prompts and authorized, minimized tool results may be processed.</td>
                   </tr>
                 </tbody>
               </table>
             </div>
             <p className="text-slate-600 text-sm mt-2">
               Anthropic's API terms contractually prohibit using customer data to train models. Schoolpilot
-              sends only URL strings and page titles for classification — never student names, IDs, emails,
-              or other identifying information. See our <a href="/ai-transparency" className="text-amber-600 hover:text-amber-700 underline">AI Transparency</a> page for full details.
+              sends only URL strings and page titles for classification. The optional AI assistant is disabled
+              by default, limited by school role and product license, and designed to avoid model-bound
+              sensitive fields such as attendance reasons and individual browsing history. See our <a href="/ai-transparency" className="text-amber-600 hover:text-amber-700 underline">AI Transparency</a> page for full details.
             </p>
           </section>
 

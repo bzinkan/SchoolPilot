@@ -8,6 +8,8 @@ cookies.txt
 tmp_login.json
 temp_file.ts
 docs/*.docx
+soc2-evidence/
+evidence-artifacts/
 
 # Frontend build output
 schoolpilot-app/dist/
