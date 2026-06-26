@@ -122,6 +122,9 @@ async function classStartOverlapPayload(options: {
   const totalOverlapCount = groups.reduce((sum, group) => sum + group.affectedCount, 0);
   return {
     code: "CLASS_ROSTER_ACTIVE_OVERLAP",
+    severity: "warning",
+    requiresAcknowledgement: true,
+    canStartAnyway: true,
     selectedClass: {
       id: options.group.id,
       name: options.group.name,

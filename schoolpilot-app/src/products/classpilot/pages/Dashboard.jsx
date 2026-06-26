@@ -44,6 +44,12 @@ function optimisticUpdateDeadline(durationMs = 15000) {
   return Date.now() + durationMs;
 }
 
+function classStartOverlapData(error) {
+  const data = error?.response?.data || error?.data || null;
+  if (data?.code !== "CLASS_ROSTER_ACTIVE_OVERLAP") return null;
+  return data;
+}
+
 export default function Dashboard() {
   const navigate = useNavigate();
   const { currentUser, isAdmin, isTeacher, token, logout } = useClassPilotAuth();
@@ -1194,18 +1200,18 @@ export default function Dashboard() {
       toast({
         title: "Class Started",
         description: request?.acknowledgeOverlap
-          ? "Class started. You may be taking control of students who were active in another class."
+          ? "Class started. Control moved for students who were active elsewhere."
           : `Now teaching: ${group?.name || 'Unknown Class'}`,
       });
     },
     onError: (error, variables) => {
-      const data = error.response?.data;
-      if (error.response?.status === 409 && data?.code === "CLASS_ROSTER_ACTIVE_OVERLAP") {
+      const data = classStartOverlapData(error);
+      if (data) {
         const request = typeof variables === "string" ? { groupId: variables } : variables;
         setClassStartOverlap({ ...data, request });
         return;
       }
-      toast({ variant: "destructive", title: "Cannot Start Class", description: data?.error || error.message });
+      toast({ variant: "destructive", title: "Cannot Start Class", description: error.response?.data?.error || error.message });
     },
   });
 
@@ -2413,7 +2419,7 @@ export default function Dashboard() {
               Some students are already active in another class
             </DialogTitle>
             <DialogDescription>
-              {classStartOverlap?.totalOverlapCount || 0} student{classStartOverlap?.totalOverlapCount === 1 ? "" : "s"} from {classStartOverlap?.selectedClass?.name || "this class"} are currently active in other ClassPilot sessions. Starting this class will move ClassPilot control for those students to you.
+              {classStartOverlap?.totalOverlapCount || 0} student{classStartOverlap?.totalOverlapCount === 1 ? "" : "s"} from {classStartOverlap?.selectedClass?.name || "this class"} are currently active in another ClassPilot session. Starting anyway will move control for those students to you.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 py-2">
