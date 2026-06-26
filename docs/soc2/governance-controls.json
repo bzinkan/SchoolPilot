@@ -66,6 +66,11 @@
           "privateEvidenceLocation": "SchoolPilot-SOC2-Evidence/security-events/"
         },
         {
+          "name": "Incident evidence packet",
+          "automation": "automated",
+          "privateEvidenceLocation": "GitHub Actions artifact: soc2-evidence-incidents and SchoolPilot-SOC2-Evidence/incidents/"
+        },
+        {
           "name": "Monthly alert review decision",
           "automation": "human_approved",
           "privateEvidenceLocation": "SchoolPilot-SOC2-Evidence/security-events/reviews/",

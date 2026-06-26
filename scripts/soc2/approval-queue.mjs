@@ -231,6 +231,81 @@ function buildDeploymentApprovalItems(rootDir, evidenceDir, generatedAt) {
   }));
 }
 
+function collectIncidentEvidenceFiles(rootDir, evidenceDir) {
+  const incidentsDir = path.join(evidenceDir, "incidents");
+  if (!fs.existsSync(incidentsDir)) return [];
+
+  return fs
+    .readdirSync(incidentsDir)
+    .filter((name) => name.endsWith(".json"))
+    .map((name) => {
+      const fullPath = path.join(incidentsDir, name);
+      const packet = parseJsonFile(fullPath, null);
+      const incidentId = packet?.incident?.incidentId || packet?.evidenceId;
+      if (!incidentId || !Array.isArray(packet?.controls) || !packet.controls.includes("SP-SEC-003")) return null;
+      return {
+        packet,
+        incidentId,
+        jsonPath: path.relative(rootDir, fullPath).replace(/\\/g, "/"),
+        markdownPath: path.relative(rootDir, fullPath.replace(/\.json$/i, ".md")).replace(/\\/g, "/"),
+      };
+    })
+    .filter(Boolean);
+}
+
+function incidentPointers(packet, jsonPath, markdownPath) {
+  const pointers = [
+    pointer("Incident evidence JSON", jsonPath),
+    pointer("Incident evidence Markdown", markdownPath),
+    pointer("Private incident evidence location", packet.incident?.privateEvidenceLocation || "SchoolPilot-SOC2-Evidence/incidents/"),
+  ];
+
+  for (const item of packet.evidencePointers?.credentialRotation || []) {
+    pointers.push(pointer(item.label || "Credential rotation evidence", item.location));
+  }
+  for (const item of packet.evidencePointers?.logReview || []) {
+    pointers.push(pointer(item.label || "Security log review evidence", item.location));
+  }
+  if (packet.exposureAssessment?.evidencePointer) {
+    pointers.push(pointer("Exposure assessment evidence", packet.exposureAssessment.evidencePointer));
+  }
+
+  return pointers;
+}
+
+function buildIncidentApprovalItems(rootDir, evidenceDir, generatedAt) {
+  return collectIncidentEvidenceFiles(rootDir, evidenceDir).flatMap(({ packet, incidentId, jsonPath, markdownPath }) => {
+    const controlId = "SP-SEC-003";
+    const evidencePointers = incidentPointers(packet, jsonPath, markdownPath);
+    const owner = "Security & Privacy Officer";
+
+    return [
+      buildPendingItem({
+        approvalId: makeApprovalId([controlId, incidentId, "incident-closure"]),
+        controlId,
+        decisionType: packet.humanDecisions?.closure?.decisionType || "incident_decision",
+        sourceId: `${incidentId}:incident-closure`,
+        evidencePointers,
+        generatedAt,
+        expiresAt: null,
+        approverRole: packet.humanDecisions?.closure?.approverRole || "Security & Privacy Officer",
+        owner,
+      }),
+      buildPendingItem({
+        approvalId: makeApprovalId([controlId, incidentId, "notification-decision"]),
+        controlId,
+        decisionType: packet.humanDecisions?.notification?.decisionType || "notification_decision",
+        sourceId: `${incidentId}:notification-decision`,
+        evidencePointers,
+        generatedAt,
+        expiresAt: null,
+        approverRole: packet.humanDecisions?.notification?.approverRole || "Security & Privacy Officer",
+        owner,
+      }),
+    ];
+  });
+}
+
 function dedupeItems(items) {
   const byId = new Map();
   for (const item of items) {
@@ -250,6 +325,7 @@ export function buildApprovalQueue({ rootDir, evidenceDir, env = process.env, no
   const items = dedupeItems([
     ...buildGovernanceApprovalItems(governance, generatedAt),
     ...buildRiskApprovalItems(remediationRows, riskPolicy, generatedAt, now),
+    ...buildIncidentApprovalItems(resolvedRoot, resolvedEvidenceDir, generatedAt),
     ...buildDeploymentApprovalItems(resolvedRoot, resolvedEvidenceDir, generatedAt),
   ]);
 

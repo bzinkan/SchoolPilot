@@ -74,6 +74,17 @@ Deployment evidence is written to `soc2-evidence/deployments/` and uploaded in
 CI as `soc2-evidence-deployment`. It records PR/commit/build metadata and file
 hashes without deploying, using AWS credentials, or approving production changes.
 
+Generate non-sensitive incident response evidence locally:
+
+```bash
+npm run soc2:incident-evidence
+```
+
+Incident evidence is written to `soc2-evidence/incidents/` and uploaded in CI as
+`soc2-evidence-incidents`. It records metadata and evidence pointers for
+`SOC2-001`; private incident details, logs, credentials, customer data, and
+student data stay in `SchoolPilot-SOC2-Evidence/incidents/`.
+
 Generate the pending approval queue locally:
 
 ```bash
@@ -82,7 +93,8 @@ npm run soc2:approval-queue
 
 Approval queue drafts are written to `soc2-evidence/approvals/` and uploaded in
 CI as `soc2-approval-queue`. The queue gathers human-owned decisions from the
-governance tracker, risk acceptance drafts, and local deployment evidence.
+governance tracker, risk acceptance drafts, local incident evidence, and local
+deployment evidence.
 
 CI on `main` also opens or updates the GitHub issue `SOC 2 approvals pending`.
 When approvals are pending, the workflow assigns the issue to the notification

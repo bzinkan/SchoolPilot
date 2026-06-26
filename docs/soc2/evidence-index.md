@@ -10,6 +10,7 @@ exports, or generated evidence packets to this repository.
 | Approval queue | Human-approved evidence items | Automated draft plus founder approval | GitHub issue `SOC 2 approvals pending`, GitHub Actions artifact `soc2-approval-queue`, and `SchoolPilot-SOC2-Evidence/approvals/` |
 | Privileged access review | SP-SEC-001 | Human approved | `SchoolPilot-SOC2-Evidence/access-reviews/` |
 | Security event review | SP-SEC-003 | Automated plus human approved | `SchoolPilot-SOC2-Evidence/security-events/` |
+| Incident evidence and decisions | SP-SEC-003 | Automated draft plus human approved | GitHub Actions artifact `soc2-evidence-incidents` and `SchoolPilot-SOC2-Evidence/incidents/` |
 | Founder-only training attestation | SP-SEC-003 | Automated draft plus founder approval | `SchoolPilot-SOC2-Evidence/training/` |
 | Shadow deployment evidence | SP-SEC-004 | Automated | GitHub Actions artifact `soc2-evidence-deployment` and `SchoolPilot-SOC2-Evidence/deployments/` |
 | Deployment approval | SP-SEC-004 | Automated plus human approved | `SchoolPilot-SOC2-Evidence/deployments/` |
@@ -23,3 +24,5 @@ exports, or generated evidence packets to this repository.
 Generated local packets should use `soc2-evidence/`, which is ignored by Git.
 Shadow deployment packets are written to `soc2-evidence/deployments/` and must
 not include AWS credentials, production secrets, or customer data.
+Incident evidence packets are written to `soc2-evidence/incidents/` and must
+contain only non-sensitive metadata and pointers to private evidence.
