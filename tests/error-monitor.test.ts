@@ -10,6 +10,7 @@ import {
   type DeliveryResult,
   type ErrorCategory,
   type MonitorAggregationAdapter,
+  type MonitorAggregationStatus,
   type NormalizedMonitorEvent,
 } from "../dist/services/errorMonitor.js";
 import {
@@ -20,9 +21,11 @@ import {
 } from "../dist/services/runtimeTelemetry.js";
 import {
   buildMonitoringStatusSummary,
+  listMonitoringFingerprints,
   sanitizeRecentErrorLogForMonitoring,
   type MonitoringHealthSnapshot,
 } from "../dist/services/monitoringDashboard.js";
+import { RedisMonitorAggregationAdapter } from "../dist/services/monitorAggregation.js";
 
 const originalFetch = globalThis.fetch;
 const originalEnv = { ...process.env };
@@ -67,6 +70,7 @@ function makeMonitor(options: {
 class FakeAggregation implements MonitorAggregationAdapter {
   counts = new Map<string, number>();
   cooldowns = new Map<string, number>();
+  checkCalls = 0;
 
   constructor(private readonly now: () => number) {}
 
@@ -87,13 +91,33 @@ class FakeAggregation implements MonitorAggregationAdapter {
     this.cooldowns.set(fingerprint, this.now() + ttlMs);
   }
 
-  getStatus() {
+  getStatus(): MonitorAggregationStatus {
     return { mode: "redis" as const, ok: true };
+  }
+
+  async checkStatus(): Promise<MonitorAggregationStatus> {
+    this.checkCalls++;
+    return this.getStatus();
   }
 
   resetForTests(): void {
     this.counts.clear();
     this.cooldowns.clear();
+    this.checkCalls = 0;
+  }
+}
+
+class ProbeAggregation extends FakeAggregation {
+  lastTimeoutMs: number | undefined;
+
+  getStatus(): MonitorAggregationStatus {
+    return { mode: "local" as const, ok: false, degradedReason: "Redis aggregation is not connected" };
+  }
+
+  async checkStatus(timeoutMs?: number): Promise<MonitorAggregationStatus> {
+    this.checkCalls++;
+    this.lastTimeoutMs = timeoutMs;
+    return { mode: "redis" as const, ok: true };
   }
 }
 
@@ -350,6 +374,51 @@ describe("error monitor cooldowns and flush", () => {
 });
 
 describe("error monitor global aggregation", () => {
+  it("keeps cached aggregation status synchronous and probes Redis only when requested", async () => {
+    const aggregation = new ProbeAggregation(() => 0);
+    const monitor = makeMonitor({ aggregation });
+
+    const cached = monitor.getAggregationStatus();
+    assert.equal(cached.mode, "local");
+    assert.equal(cached.ok, false);
+    assert.equal(aggregation.checkCalls, 0);
+
+    const probed = await monitor.checkAggregationStatus(1234);
+    assert.equal(probed.mode, "redis");
+    assert.equal(probed.ok, true);
+    assert.equal(aggregation.checkCalls, 1);
+    assert.equal(aggregation.lastTimeoutMs, 1234);
+    monitor.dispose();
+  });
+
+  it("treats missing Redis as local fallback outside production and degraded in production", () => {
+    delete process.env.REDIS_URL;
+
+    process.env.NODE_ENV = "test";
+    const testMonitor = makeMonitor();
+    assert.deepEqual(testMonitor.getAggregationStatus(), { mode: "local", ok: true });
+    testMonitor.dispose();
+
+    process.env.NODE_ENV = "production";
+    const prodMonitor = makeMonitor();
+    const status = prodMonitor.getAggregationStatus();
+    assert.equal(status.mode, "local");
+    assert.equal(status.ok, false);
+    assert.equal(status.degradedReason, "REDIS_URL is not configured");
+    prodMonitor.dispose();
+  });
+
+  it("sanitizes Redis aggregation connection failures", async () => {
+    const adapter = new RedisMonitorAggregationAdapter("redis://:super-secret@127.0.0.1:1/0");
+    const status = await adapter.checkStatus(100);
+
+    assert.equal(status.mode, "local");
+    assert.equal(status.ok, false);
+    assert.ok((status.degradedReason ?? "").length <= 180);
+    assert.doesNotMatch(status.degradedReason ?? "", /super-secret|redis:\/\//);
+    await adapter.dispose();
+  });
+
   it("uses shared aggregation counts and elects one alert sender", async () => {
     let now = 0;
     const aggregation = new FakeAggregation(() => now);
@@ -496,6 +565,21 @@ describe("monitor integrations", () => {
 });
 
 describe("super-admin monitoring dashboard helpers", () => {
+  it("searches active fingerprints by safe operational fields", () => {
+    singletonErrorMonitor.resetStatsForTests();
+    singletonErrorMonitor.trackError(
+      "api_error",
+      "browser telemetry failed",
+      { path: "/api/monitoring/browser-error", job: "telemetry_ingest", messageType: "browser-error" },
+      { persist: false, alert: false }
+    );
+
+    assert.equal(listMonitoringFingerprints({ q: "/api/monitoring" }).length, 1);
+    assert.equal(listMonitoringFingerprints({ q: "telemetry_ingest" }).length, 1);
+    assert.equal(listMonitoringFingerprints({ q: "browser-error" }).length, 1);
+    assert.equal(listMonitoringFingerprints({ q: "not-present" }).length, 0);
+  });
+
   it("summarizes monitor health for the compact dashboard chip", () => {
     const summary = buildMonitoringStatusSummary(baseMonitoringSnapshot({
       status: "degraded",
