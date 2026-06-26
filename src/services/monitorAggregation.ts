@@ -18,12 +18,22 @@ export type MonitorAggregationAdapter = {
   tryAcquireAlert(fingerprint: string, ttlMs: number): Promise<boolean | null>;
   setCooldown(fingerprint: string, ttlMs: number): Promise<void>;
   getStatus(): MonitorAggregationStatus;
+  checkStatus(timeoutMs?: number): Promise<MonitorAggregationStatus>;
   resetForTests?(): void;
   dispose?(): Promise<void>;
 };
 
 function safeRedisPart(value: string): string {
   return value.replace(/[^a-zA-Z0-9:_-]/g, "_");
+}
+
+function safeRedisError(value: unknown): string {
+  const raw = value instanceof Error ? value.message : String(value);
+  const sanitized = raw
+    .replace(/\brediss?:\/\/[^\s]+/gi, "[redis-url]")
+    .replace(/\/\/[^/\s@]+@/g, "//[redacted]@")
+    .replace(/([?&](?:token|password|passwd|pwd|secret|api[_-]?key)=)[^&\s]+/gi, "$1[redacted]");
+  return sanitized.length > 180 ? `${sanitized.slice(0, 177)}...` : sanitized;
 }
 
 export class RedisMonitorAggregationAdapter implements MonitorAggregationAdapter {
@@ -103,6 +113,14 @@ export class RedisMonitorAggregationAdapter implements MonitorAggregationAdapter
     };
   }
 
+  async checkStatus(timeoutMs = 1000): Promise<MonitorAggregationStatus> {
+    const client = await this.getClient(timeoutMs);
+    if (client?.isReady && !this.lastError) {
+      return { mode: "redis", ok: true };
+    }
+    return this.getStatus();
+  }
+
   resetForTests(): void {
     this.lastError = undefined;
     void this.dispose();
@@ -124,10 +142,15 @@ export class RedisMonitorAggregationAdapter implements MonitorAggregationAdapter
     }
   }
 
-  private async getClient(): Promise<RedisClientType | null> {
+  private async getClient(timeoutMs = 2500): Promise<RedisClientType | null> {
     if (this.client?.isReady) return this.client;
     if (this.connectPromise) {
-      await this.connectPromise;
+      try {
+        await this.withTimeout(this.connectPromise, timeoutMs);
+      } catch (err) {
+        this.lastError = safeRedisError(err);
+        return null;
+      }
       return this.client?.isReady ? this.client : null;
     }
 
@@ -135,16 +158,24 @@ export class RedisMonitorAggregationAdapter implements MonitorAggregationAdapter
       try {
         this.client = createClient({
           url: this.redisUrl,
-          socket: { connectTimeout: 2000 },
+          socket: { connectTimeout: timeoutMs, reconnectStrategy: false },
         });
         this.client.on("error", (err) => {
-          this.lastError = err instanceof Error ? err.message : String(err);
+          this.lastError = safeRedisError(err);
         });
-        await this.withTimeout(this.client.connect(), 2500);
+        await this.withTimeout(this.client.connect(), timeoutMs);
         this.lastError = undefined;
       } catch (err) {
-        this.lastError = err instanceof Error ? err.message : String(err);
+        this.lastError = safeRedisError(err);
+        const client = this.client;
         this.client = null;
+        if (client?.isOpen) {
+          try {
+            await client.disconnect();
+          } catch {
+            // Ignore failed cleanup after a failed connection attempt.
+          }
+        }
       } finally {
         this.connectPromise = null;
       }

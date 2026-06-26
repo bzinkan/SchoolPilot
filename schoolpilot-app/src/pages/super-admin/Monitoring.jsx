@@ -74,6 +74,11 @@ function formatTime(value) {
   return Number.isNaN(date.getTime()) ? '-' : date.toLocaleString();
 }
 
+function formatRefreshTime(value) {
+  if (!value) return 'Not refreshed yet';
+  return `Updated ${value.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' })}`;
+}
+
 function statusIcon(status) {
   if (status === 'healthy') return <CheckCircle2 className="h-4 w-4" />;
   if (status === 'unhealthy') return <XCircle className="h-4 w-4" />;
@@ -85,10 +90,29 @@ function statusLabel(status) {
   return safe.charAt(0).toUpperCase() + safe.slice(1);
 }
 
+function aggregationDetail(aggregation) {
+  if (aggregation?.ok === false) return aggregation.degradedReason || 'aggregation degraded';
+  if (aggregation?.mode === 'local') return 'local fallback';
+  if (aggregation?.mode === 'redis') return 'operational';
+  return 'not available';
+}
+
 function Badge({ children, className = '' }) {
   return (
     <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-semibold ${className}`}>
       {children}
+    </span>
+  );
+}
+
+function FilterChip({ label, value, onClear }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600">
+      <span className="font-semibold text-slate-500">{label}</span>
+      <span className="max-w-64 truncate font-mono text-slate-800">{value}</span>
+      <button type="button" onClick={onClear} className="rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700" aria-label={`Clear ${label}`}>
+        <X className="h-3.5 w-3.5" />
+      </button>
     </span>
   );
 }
@@ -232,7 +256,6 @@ export default function Monitoring() {
   const [range, setRange] = useState('1h');
   const [category, setCategory] = useState('');
   const [priority, setPriority] = useState('');
-  const [schoolId, setSchoolId] = useState('');
   const [searchInput, setSearchInput] = useState('');
   const [query, setQuery] = useState('');
   const [autoRefresh, setAutoRefresh] = useState(true);
@@ -244,15 +267,15 @@ export default function Monitoring() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [selected, setSelected] = useState(null);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
 
   const params = useMemo(() => {
     const value = {};
     if (range) value.range = range;
     if (category) value.category = category;
-    if (schoolId.trim()) value.schoolId = schoolId.trim();
     if (query.trim()) value.q = query.trim();
     return value;
-  }, [range, category, schoolId, query]);
+  }, [range, category, query]);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -275,6 +298,7 @@ export default function Monitoring() {
       setFingerprints(fingerprintsRes.data?.fingerprints || []);
       setEvents(eventsRes.data?.errors || []);
       setNextCursor(eventsRes.data?.nextCursor || null);
+      setLastUpdatedAt(new Date());
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to load monitoring data');
     } finally {
@@ -307,7 +331,17 @@ export default function Monitoring() {
 
   const submitSearch = (event) => {
     event.preventDefault();
-    setQuery(searchInput.trim());
+    const nextQuery = searchInput.trim();
+    setQuery(nextQuery);
+    if (nextQuery) setTab('events');
+  };
+
+  const clearFilters = () => {
+    setCategory('');
+    setPriority('');
+    setSearchInput('');
+    setQuery('');
+    setRange('1h');
   };
 
   const status = overview?.status?.status || 'unknown';
@@ -315,6 +349,8 @@ export default function Monitoring() {
   const runtime = overview?.runtime || {};
   const alerting = overview?.alerting || {};
   const aggregation = overview?.aggregation || {};
+  const hasActiveFilters = Boolean(query || category || priority || range !== '1h');
+  const overviewFingerprintRows = hasActiveFilters ? fingerprints.slice(0, 10) : (overview?.topFingerprints || []);
 
   return (
     <div className="mx-auto max-w-7xl p-6">
@@ -345,7 +381,7 @@ export default function Monitoring() {
             className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
           >
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-            Refresh
+            {loading ? 'Refreshing' : 'Refresh'}
           </button>
         </div>
       </div>
@@ -360,7 +396,7 @@ export default function Monitoring() {
         <StatTile icon={Activity} label="Captured" value={formatNumber(totals.captured)} detail={`${formatNumber(overview?.stats?.activeFingerprints)} active fingerprints`} />
         <StatTile icon={Send} label="Delivered" value={formatNumber(totals.alertDelivered)} detail={`${formatNumber(totals.alertFailed)} failed deliveries`} />
         <StatTile icon={Database} label="Persisted" value={formatNumber(totals.persisted)} detail={`${formatNumber(totals.persistFailed)} persistence failures`} />
-        <StatTile icon={RadioTower} label="Aggregation" value={aggregation.mode || '-'} detail={aggregation.ok === false ? aggregation.degradedReason : 'operational'} />
+        <StatTile icon={RadioTower} label="Aggregation" value={aggregation.mode || '-'} detail={aggregationDetail(aggregation)} />
       </div>
 
       <div className="mb-5 rounded-lg border border-slate-200 bg-white p-3">
@@ -385,19 +421,13 @@ export default function Monitoring() {
             <option value="">All priorities</option>
             {PRIORITIES.map((item) => <option key={item} value={item}>{item}</option>)}
           </select>
-          <input
-            value={schoolId}
-            onChange={(event) => setSchoolId(event.target.value)}
-            placeholder="School ID"
-            className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm"
-          />
           <form onSubmit={submitSearch} className="flex min-w-0 flex-1">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <input
                 value={searchInput}
                 onChange={(event) => setSearchInput(event.target.value)}
-                placeholder="ID, request ID, fingerprint, or event ID"
+                placeholder="School, error, request, event, fingerprint, or path"
                 className="w-full rounded-l-md border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm"
               />
             </div>
@@ -405,6 +435,23 @@ export default function Monitoring() {
               Search
             </button>
           </form>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+          <span className="text-xs font-medium text-slate-500">{formatRefreshTime(lastUpdatedAt)}</span>
+          {hasActiveFilters && (
+            <span className="text-xs text-slate-500">
+              {formatNumber(fingerprints.length)} fingerprints, {formatNumber(events.length)} events
+            </span>
+          )}
+          {query && <FilterChip label="Search" value={query} onClear={() => { setQuery(''); setSearchInput(''); }} />}
+          {category && <FilterChip label="Category" value={category} onClear={() => setCategory('')} />}
+          {priority && <FilterChip label="Priority" value={priority} onClear={() => setPriority('')} />}
+          {range !== '1h' && <FilterChip label="Range" value={range} onClear={() => setRange('1h')} />}
+          {hasActiveFilters && (
+            <button type="button" onClick={clearFilters} className="rounded-md px-2 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-100">
+              Clear filters
+            </button>
+          )}
         </div>
       </div>
 
@@ -431,7 +478,7 @@ export default function Monitoring() {
                 <div className="border-b border-slate-200 px-4 py-3">
                   <h2 className="font-semibold text-slate-900">Top Fingerprints</h2>
                 </div>
-                <FingerprintTable rows={overview?.topFingerprints || []} onSelect={(item) => setSelected({ type: 'fingerprint', item })} />
+                <FingerprintTable rows={overviewFingerprintRows} onSelect={(item) => setSelected({ type: 'fingerprint', item })} />
               </section>
               <section className="rounded-lg border border-slate-200 bg-white">
                 <div className="border-b border-slate-200 px-4 py-3">

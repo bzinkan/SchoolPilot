@@ -180,14 +180,14 @@ export function createApp() {
   // the detailed body (pool stats, error counts, client counts) is operational
   // intel and only returned when the caller presents HEALTH_TOKEN.
   app.get("/health", async (req, res) => {
-    const snapshot = await buildMonitoringHealthSnapshot();
-
     const expected = process.env.HEALTH_TOKEN;
     const provided = req.get("x-health-token") ?? req.query.token;
     const detailed =
       Boolean(expected) &&
       typeof provided === "string" &&
       safeCompare(provided, expected!);
+    const snapshot = await buildMonitoringHealthSnapshot({ probeAggregation: detailed });
+
     const status = snapshot.coreOk && snapshot.alerting.ok ? "ok" : "degraded";
     res.status(snapshot.coreOk ? 200 : 503).json(
       detailed

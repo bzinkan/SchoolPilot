@@ -30,7 +30,7 @@ function handleMonitoringError(err: unknown, res: Response, next: NextFunction) 
 
 router.get("/status", ...auth, async (_req, res, next) => {
   try {
-    const snapshot = await buildMonitoringHealthSnapshot();
+    const snapshot = await buildMonitoringHealthSnapshot({ probeAggregation: true });
     return res.json(buildMonitoringStatusSummary(snapshot));
   } catch (err) {
     return handleMonitoringError(err, res, next);
@@ -39,7 +39,7 @@ router.get("/status", ...auth, async (_req, res, next) => {
 
 router.get("/overview", ...auth, async (_req, res, next) => {
   try {
-    return res.json(await getMonitoringOverview());
+    return res.json(await getMonitoringOverview({ probeAggregation: true }));
   } catch (err) {
     return handleMonitoringError(err, res, next);
   }
@@ -63,7 +63,7 @@ router.get("/recent-errors", ...auth, async (req, res, next) => {
 
 router.get("/health", ...auth, async (_req, res, next) => {
   try {
-    return res.json(await buildMonitoringHealthSnapshot());
+    return res.json(await buildMonitoringHealthSnapshot({ probeAggregation: true }));
   } catch (err) {
     return handleMonitoringError(err, res, next);
   }

@@ -114,6 +114,10 @@ type ParsedFingerprintQuery = {
   limit: number;
 };
 
+export type MonitoringHealthSnapshotOptions = {
+  probeAggregation?: boolean;
+};
+
 export class MonitoringQueryError extends Error {
   statusCode = 400;
 }
@@ -159,6 +163,7 @@ const SAFE_CONTEXT_KEYS = [
 
 const SECURITY_CONTEXT_KEYS = ["eventId", "eventType", "errorCode"] as const;
 const SAFE_IDENTIFIER_RE = /^[A-Za-z0-9._:-]{1,128}$/;
+const SAFE_MONITOR_SEARCH_RE = /^[A-Za-z0-9._:/-]{1,160}$/;
 const SAFE_SCHOOL_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 const JWT_RE = /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g;
@@ -171,7 +176,9 @@ const IPV4_RE =
 const URL_RE = /\bhttps?:\/\/[^\s<>"')]+/gi;
 const PATH_QUERY_RE = /(^|[\s(])((?:\/[A-Za-z0-9._~!$&'()*+,;=:@%-]+)+)\?[^)\s<>"']*/g;
 
-export async function buildMonitoringHealthSnapshot(): Promise<MonitoringHealthSnapshot> {
+export async function buildMonitoringHealthSnapshot(
+  options: MonitoringHealthSnapshotOptions = {}
+): Promise<MonitoringHealthSnapshot> {
   const checks: Record<string, unknown> = {};
   let coreOk = true;
 
@@ -225,7 +232,9 @@ export async function buildMonitoringHealthSnapshot(): Promise<MonitoringHealthS
 
   const stats = errorMonitor.getStats();
   const runtime = errorMonitor.getRuntimeMetadata();
-  const aggregation = errorMonitor.getAggregationStatus();
+  const aggregation = options.probeAggregation
+    ? await errorMonitor.checkAggregationStatus(1000)
+    : errorMonitor.getAggregationStatus();
   const generatedAt = new Date().toISOString();
 
   checks.uptime = Math.floor(process.uptime());
@@ -270,8 +279,10 @@ export function buildMonitoringStatusSummary(snapshot: MonitoringHealthSnapshot)
   };
 }
 
-export async function getMonitoringOverview(): Promise<MonitoringOverview> {
-  const snapshot = await buildMonitoringHealthSnapshot();
+export async function getMonitoringOverview(
+  options: MonitoringHealthSnapshotOptions = {}
+): Promise<MonitoringOverview> {
+  const snapshot = await buildMonitoringHealthSnapshot(options);
   const { fingerprints: _fingerprints, ...statsSummary } = snapshot.stats;
   const fingerprints = sortedFingerprintRows(snapshot.stats.fingerprints).slice(0, 10);
   const recentCategorySummary = Object.entries(snapshot.stats.byCategory)
@@ -304,7 +315,7 @@ export function listMonitoringFingerprints(query: Record<string, unknown>): Moni
   return sortedFingerprintRows(errorMonitor.getStats().fingerprints)
     .filter((row) => !parsed.category || row.category === parsed.category)
     .filter((row) => !parsed.priority || row.priority === parsed.priority)
-    .filter((row) => !parsed.q || row.fingerprint.includes(parsed.q))
+    .filter((row) => !parsed.q || fingerprintMatches(row, parsed.q))
     .slice(0, parsed.limit);
 }
 
@@ -316,11 +327,15 @@ export async function listMonitoringRecentErrors(query: Record<string, unknown>)
   if (parsed.category) conditions.push(eq(errorLogs.category, parsed.category));
   if (parsed.schoolId) conditions.push(eq(errorLogs.schoolId, parsed.schoolId));
   if (parsed.q) {
+    const path = parsed.q.startsWith("/") ? pathnameOnly(parsed.q) : undefined;
     const qCondition = or(
       eq(errorLogs.id, parsed.q),
       eq(errorLogs.requestId, parsed.q),
+      eq(errorLogs.schoolId, parsed.q),
+      eq(errorLogs.userId, parsed.q),
       sql`${errorLogs.context}->>'eventId' = ${parsed.q}`,
-      sql`${errorLogs.context}->>'fingerprint' = ${parsed.q}`
+      sql`${errorLogs.context}->>'fingerprint' = ${parsed.q}`,
+      ...(path ? [sql`${errorLogs.path} ILIKE ${`${path}%`}`] : [])
     );
     if (qCondition) conditions.push(qCondition);
   }
@@ -453,7 +468,7 @@ function parseRecentErrorQuery(query: Record<string, unknown>): ParsedRecentErro
 
   if (typeof query.q === "string" && query.q.trim()) {
     const q = query.q.trim();
-    if (!SAFE_IDENTIFIER_RE.test(q)) throw new MonitoringQueryError("Search must be a safe identifier");
+    if (!SAFE_MONITOR_SEARCH_RE.test(q)) throw new MonitoringQueryError("Search must be a safe identifier or pathname");
     parsed.q = q;
   }
 
@@ -483,7 +498,7 @@ function parseFingerprintQuery(query: Record<string, unknown>): ParsedFingerprin
 
   if (typeof query.q === "string" && query.q.trim()) {
     const q = query.q.trim();
-    if (!SAFE_IDENTIFIER_RE.test(q)) throw new MonitoringQueryError("Search must be a safe identifier");
+    if (!SAFE_MONITOR_SEARCH_RE.test(q)) throw new MonitoringQueryError("Search must be a safe identifier or pathname");
     parsed.q = q;
   }
 
@@ -505,6 +520,20 @@ function isMonitorCategory(value: string): value is ErrorCategory {
 
 function isMonitorPriority(value: string): value is MonitorPriority {
   return (MONITORING_PRIORITIES as readonly string[]).includes(value);
+}
+
+function fingerprintMatches(row: MonitoringFingerprintRow, q: string): boolean {
+  const needle = q.toLowerCase();
+  return [
+    row.fingerprint,
+    row.category,
+    row.priority,
+    row.fields.errorCode,
+    row.fields.topStackFrame,
+    row.fields.path,
+    row.fields.job,
+    row.fields.messageType,
+  ].some((value) => String(value ?? "").toLowerCase().includes(needle));
 }
 
 function encodeCursor(createdAt: Date, id: string): string {

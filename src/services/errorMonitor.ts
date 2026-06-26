@@ -821,7 +821,11 @@ export class ErrorMonitor {
   }
 
   getAggregationStatus(): MonitorAggregationStatus {
-    return this.aggregation?.getStatus() ?? { mode: "local", ok: true };
+    return this.aggregation?.getStatus() ?? localAggregationStatus();
+  }
+
+  async checkAggregationStatus(timeoutMs = 1000): Promise<MonitorAggregationStatus> {
+    return this.aggregation ? await this.aggregation.checkStatus(timeoutMs) : localAggregationStatus();
   }
 
   getStats(): MonitorStats {
@@ -1144,6 +1148,17 @@ export class ErrorMonitor {
       samples: state.samples.map((s) => s.text),
     };
   }
+}
+
+function localAggregationStatus(): MonitorAggregationStatus {
+  if (!process.env.REDIS_URL && process.env.NODE_ENV === "production") {
+    return {
+      mode: "local",
+      ok: false,
+      degradedReason: "REDIS_URL is not configured",
+    };
+  }
+  return { mode: "local", ok: true };
 }
 
 const errorMonitor = new ErrorMonitor();
