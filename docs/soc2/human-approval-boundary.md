@@ -22,10 +22,12 @@ Automation may:
 
 - collect CI/build/test evidence
 - draft risk acceptance records from open remediation items
+- draft pending approval queue records for founder review
 - summarize open remediation items
 - identify missing private evidence pointers
 - warn when public claims exceed evidence
 - generate packets for review
+- recommend `approved`, `not_approved`, or `manual_review` for a human to decide
 
 Automation may not:
 
@@ -35,3 +37,11 @@ Automation may not:
 - attest training on behalf of a person
 - certify SOC 2 readiness
 - represent that a CPA audit has occurred
+
+## Approval Queue
+
+The approval queue is a draft inbox only. `npm run soc2:approval-queue` can
+prepare pending records, evidence pointers, expiration dates, and recommended
+decisions. `npm run soc2:approval-decision` records only the accountable
+person's explicit `approved` or `not_approved` decision and writes it to the
+private evidence repository.

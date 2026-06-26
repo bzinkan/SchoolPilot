@@ -76,6 +76,12 @@
           "automation": "human_approved",
           "privateEvidenceLocation": "SchoolPilot-SOC2-Evidence/incidents/",
           "humanApproverRole": "Security & Privacy Officer"
+        },
+        {
+          "name": "Founder-only security training attestation",
+          "automation": "human_approved",
+          "privateEvidenceLocation": "SchoolPilot-SOC2-Evidence/training/",
+          "humanApproverRole": "Founder / Security & Privacy Officer"
         }
       ]
     },
