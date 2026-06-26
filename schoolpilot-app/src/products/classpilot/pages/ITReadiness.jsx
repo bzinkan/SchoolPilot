@@ -6,6 +6,7 @@ import { Button } from "../../../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/card";
 import { Badge } from "../../../components/ui/badge";
 import { ThemeToggle } from "../../../components/ThemeToggle";
+import GoogleRosterConnectorPanel from "../../../shared/components/GoogleRosterConnectorPanel";
 
 function statusBadge(status) {
   const icon = status === "pass" ? CheckCircle2 : status === "fail" ? XCircle : TriangleAlert;
@@ -88,6 +89,11 @@ export default function ITReadiness() {
             </Card>
           ))}
         </div>
+
+        <GoogleRosterConnectorPanel
+          className="bg-background"
+          onConnected={() => refetch()}
+        />
 
         <Card>
           <CardHeader>

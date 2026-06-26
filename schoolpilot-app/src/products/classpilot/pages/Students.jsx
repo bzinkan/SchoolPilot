@@ -46,6 +46,7 @@ import {
 import { EditStudentDialog } from "../components/EditStudentDialog";
 import { useClassPilotAuth } from "../../../hooks/useClassPilotAuth";
 import { useLicenses } from "../../../contexts/LicenseContext";
+import GoogleRosterConnectorPanel from "../../../shared/components/GoogleRosterConnectorPanel";
 
 // Helper to normalize grade levels
 function normalizeGrade(grade) {
@@ -331,13 +332,13 @@ function StudentsContent() {
   const classroomCourses = classroomData?.courses || [];
 
   // Parse error code from classroom error (axios errors have response data in error.response.data)
-  // Treats both NO_TOKENS (never connected) and MISSING_GOOGLE_SCOPE (connected
-  // before the classroom.profile.emails scope was added — needs reconnect) as
-  // "not connected" so the reconnect prompt is shown for both.
+  // Roster import now uses the IT-managed connector; old OAuth errors and the
+  // new connector-required code all show the connector setup surface.
   const classroomNotConnected = (() => {
     if (!classroomError) return false;
     const serverMsg = classroomError.response?.data?.error || "";
     if (
+      serverMsg.includes("GOOGLE_CONNECTOR_REQUIRED") ||
       serverMsg.includes("Google not connected") ||
       serverMsg.includes("NO_TOKENS") ||
       serverMsg.includes("MISSING_GOOGLE_SCOPE")
@@ -349,15 +350,16 @@ function StudentsContent() {
       const jsonMatch = errorMessage.match(/\{.*\}/);
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0]);
-        return parsed.code === "NO_TOKENS" || parsed.code === "MISSING_GOOGLE_SCOPE";
+        return parsed.code === "GOOGLE_CONNECTOR_REQUIRED" || parsed.code === "NO_TOKENS" || parsed.code === "MISSING_GOOGLE_SCOPE";
       }
     } catch {
       return (
+        errorMessage.includes("GOOGLE_CONNECTOR_REQUIRED") ||
         errorMessage.includes("NO_TOKENS") ||
         errorMessage.includes("MISSING_GOOGLE_SCOPE")
       );
     }
-    return errorMessage.includes("MISSING_GOOGLE_SCOPE");
+    return errorMessage.includes("GOOGLE_CONNECTOR_REQUIRED") || errorMessage.includes("MISSING_GOOGLE_SCOPE");
   })();
 
   // Sync Google Classroom roster mutation
@@ -413,6 +415,8 @@ function StudentsContent() {
     const serverCode = error.response?.data?.code;
     if (serverCode) return serverCode;
     const serverMsg = error.response?.data?.error || "";
+    const code = error.response?.data?.code;
+    if (code === "GOOGLE_CONNECTOR_REQUIRED" || serverMsg.includes("GOOGLE_CONNECTOR_REQUIRED")) return "GOOGLE_CONNECTOR_REQUIRED";
     if (serverMsg.includes("Google not connected") || serverMsg.includes("NO_TOKENS")) return "NO_TOKENS";
     if (serverMsg.includes("Reconnect Google") || serverMsg.includes("GOOGLE_RECONNECT_REQUIRED")) return "GOOGLE_RECONNECT_REQUIRED";
     if (serverMsg.includes("GOOGLE_DOMAIN_MISMATCH")) return "GOOGLE_DOMAIN_MISMATCH";
@@ -425,6 +429,7 @@ function StudentsContent() {
         return parsed.code || null;
       }
     } catch {
+      if (errorMessage.includes("GOOGLE_CONNECTOR_REQUIRED")) return "GOOGLE_CONNECTOR_REQUIRED";
       if (errorMessage.includes("NO_TOKENS")) return "NO_TOKENS";
       if (errorMessage.includes("GOOGLE_RECONNECT_REQUIRED")) return "GOOGLE_RECONNECT_REQUIRED";
       if (errorMessage.includes("GOOGLE_DOMAIN_MISMATCH")) return "GOOGLE_DOMAIN_MISMATCH";
@@ -436,30 +441,11 @@ function StudentsContent() {
   };
 
   const directoryErrorCode = getDirectoryErrorCode(directoryError) || getDirectoryErrorCode(orgUnitsError);
-  const directoryNeedsReconnect = directoryErrorCode === "NO_TOKENS" || directoryErrorCode === "GOOGLE_RECONNECT_REQUIRED";
+  const directoryNeedsReconnect = directoryErrorCode === "NO_TOKENS" || directoryErrorCode === "GOOGLE_RECONNECT_REQUIRED" || directoryErrorCode === "GOOGLE_CONNECTOR_REQUIRED";
   const directoryNoPermission = directoryErrorCode === "INSUFFICIENT_PERMISSIONS";
   const directoryDomainMismatch = directoryErrorCode === "GOOGLE_DOMAIN_MISMATCH";
   const directoryUnknownError = directoryErrorCode === "UNKNOWN_ERROR";
   const directoryEmptyDiagnostics = directoryUsers.length === 0 && !directoryError && !orgUnitsError ? directoryData?.diagnostics : null;
-
-  const connectGoogleWorkspace = async () => {
-    try {
-      const params = new URLSearchParams({
-        purpose: "workspace_import",
-        returnTo: `${window.location.origin}/classpilot/students`,
-      });
-      const data = await apiRequest("GET", `/google/auth-url?${params.toString()}`);
-      if (data?.url) {
-        window.location.href = data.url;
-      }
-    } catch (error) {
-      toast({
-        variant: "destructive",
-        title: "Google Reconnect Failed",
-        description: getApiErrorMessage(error),
-      });
-    }
-  };
 
   // Import from Google Workspace Directory mutation
   const importDirectoryMutation = useMutation({
@@ -1240,19 +1226,7 @@ function StudentsContent() {
                 <span className="text-muted-foreground">Loading courses...</span>
               </div>
             ) : classroomNotConnected ? (
-              <div className="text-center py-8 space-y-4">
-                <p className="text-muted-foreground">
-                  Google Classroom is not connected. Please sign out and sign back in with Google,
-                  making sure to grant Google Classroom access permissions.
-                </p>
-                <Button
-                  variant="outline"
-                  onClick={() => window.location.href = "/api/auth/google?redirect=/classpilot/students"}
-                  data-testid="button-reconnect-google"
-                >
-                  Reconnect Google Account
-                </Button>
-              </div>
+              <GoogleRosterConnectorPanel onConnected={() => refetchCourses()} />
             ) : classroomCourses.length === 0 ? (
               <div className="text-center py-8 space-y-2">
                 <p className="text-muted-foreground">No courses found in your Google Classroom account.</p>
@@ -1414,20 +1388,10 @@ function StudentsContent() {
                 <span className="text-muted-foreground">Loading users from Google Workspace...</span>
               </div>
             ) : directoryNeedsReconnect ? (
-              <div className="text-center py-8 space-y-4">
-                <p className="text-muted-foreground">
-                  {directoryErrorCode === "GOOGLE_RECONNECT_REQUIRED"
-                    ? "Google Workspace needs to be reconnected so SchoolPilot can verify the connected domain."
-                    : "Google Workspace is not connected. Connect your Google Workspace admin account to import students."}
-                </p>
-                <Button
-                  variant="outline"
-                  onClick={connectGoogleWorkspace}
-                  data-testid="button-reconnect-google-workspace"
-                >
-                  {directoryErrorCode === "GOOGLE_RECONNECT_REQUIRED" ? "Reconnect Google Workspace" : "Connect Google Workspace"}
-                </Button>
-              </div>
+              <GoogleRosterConnectorPanel onConnected={() => {
+                refetchDirectory();
+                refetchOrgUnits();
+              }} />
             ) : directoryDomainMismatch ? (
               <div className="text-center py-8 space-y-4">
                 <div className="flex items-center justify-center gap-2 text-destructive">
@@ -1437,13 +1401,10 @@ function StudentsContent() {
                 <p className="text-sm text-muted-foreground">
                   {getApiErrorMessage(directoryError || orgUnitsError)}
                 </p>
-                <Button
-                  variant="outline"
-                  onClick={connectGoogleWorkspace}
-                  data-testid="button-reconnect-google-workspace-domain"
-                >
-                  Reconnect Google Workspace
-                </Button>
+                <GoogleRosterConnectorPanel onConnected={() => {
+                  refetchDirectory();
+                  refetchOrgUnits();
+                }} />
               </div>
             ) : directoryNoPermission ? (
               <div className="text-center py-8 space-y-4">
@@ -1452,8 +1413,7 @@ function StudentsContent() {
                   <span className="font-medium">Admin Access Required</span>
                 </div>
                 <p className="text-muted-foreground">
-                  This feature requires Google Workspace administrator privileges.
-                  Your Google account must have admin access to your school's domain to import users directly.
+                  This import requires the Google Workspace Roster Connector to be verified by a Workspace administrator.
                 </p>
                 <p className="text-sm text-muted-foreground">
                   Alternatively, use the Google Classroom import or CSV upload options above.

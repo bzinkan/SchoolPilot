@@ -562,18 +562,8 @@ router.post("/admin/cleanup-students", ...schoolAuth, requireRole("admin"), asyn
 // GET /admin/classroom/courses-preview - List Google Classroom courses for import
 router.get("/admin/classroom/courses-preview", ...schoolAuth, requireRole("admin"), async (req, res, next) => {
   try {
-    // Proxy to Google Classroom courses endpoint
-    const { getGoogleOAuthToken } = await import("../services/storage.js");
-    const { google } = await import("googleapis");
-    const token = await getGoogleOAuthToken(req.authUser!.id);
-    if (!token) return res.json({ courses: [] });
-
-    const oauth2Client = new google.auth.OAuth2(
-      process.env.GOOGLE_CLIENT_ID,
-      process.env.GOOGLE_CLIENT_SECRET
-    );
-    oauth2Client.setCredentials({ refresh_token: token.refreshToken });
-    const classroom = google.classroom({ version: "v1", auth: oauth2Client });
+    const { getRosterClassroomClientForSchool } = await import("../services/googleRosterConnector.js");
+    const { classroom } = await getRosterClassroomClientForSchool(res.locals.schoolId!);
     const courses: any[] = [];
     let pageToken: string | undefined;
     do {

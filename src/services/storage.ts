@@ -180,6 +180,7 @@ import {
 import {
   settings,
   googleOAuthTokens,
+  googleRosterConnectors,
   classroomCourses,
   classroomCourseStudents,
   auditLogs,
@@ -192,6 +193,8 @@ import {
   type InsertSettings,
   type GoogleOAuthToken,
   type InsertGoogleOAuthToken,
+  type GoogleRosterConnector,
+  type InsertGoogleRosterConnector,
   type ClassroomCourse,
   type InsertClassroomCourse,
   type ClassroomCourseStudent,
@@ -6293,6 +6296,57 @@ export async function deleteGoogleOAuthToken(
     .delete(googleOAuthTokens)
     .where(eq(googleOAuthTokens.userId, userId));
   return (result.rowCount ?? 0) > 0;
+}
+
+// ============================================================================
+// Google Roster Connector operations
+// ============================================================================
+
+export async function getGoogleRosterConnector(
+  schoolId: string
+): Promise<GoogleRosterConnector | undefined> {
+  const [connector] = await db
+    .select()
+    .from(googleRosterConnectors)
+    .where(eq(googleRosterConnectors.schoolId, schoolId))
+    .limit(1);
+  return connector;
+}
+
+export async function upsertGoogleRosterConnector(
+  schoolId: string,
+  data: Omit<InsertGoogleRosterConnector, "schoolId" | "id" | "createdAt" | "updatedAt">
+): Promise<GoogleRosterConnector> {
+  const [connector] = await db
+    .insert(googleRosterConnectors)
+    .values({ schoolId, ...data })
+    .onConflictDoUpdate({
+      target: googleRosterConnectors.schoolId,
+      set: { ...data, updatedAt: new Date() },
+    })
+    .returning();
+  return connector!;
+}
+
+export async function updateGoogleRosterConnector(
+  schoolId: string,
+  data: Partial<Omit<InsertGoogleRosterConnector, "schoolId" | "id" | "createdAt" | "updatedAt">>
+): Promise<GoogleRosterConnector | undefined> {
+  const [connector] = await db
+    .update(googleRosterConnectors)
+    .set({ ...data, updatedAt: new Date() })
+    .where(eq(googleRosterConnectors.schoolId, schoolId))
+    .returning();
+  return connector;
+}
+
+export async function markGoogleRosterConnectorSynced(
+  schoolId: string
+): Promise<void> {
+  await db
+    .update(googleRosterConnectors)
+    .set({ lastSyncAt: new Date(), updatedAt: new Date() })
+    .where(eq(googleRosterConnectors.schoolId, schoolId));
 }
 
 // ============================================================================

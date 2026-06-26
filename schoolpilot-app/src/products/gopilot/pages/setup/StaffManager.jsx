@@ -2,10 +2,20 @@ import React, { useState } from 'react';
 import { Plus, Trash2, Check, X, Pencil, Eye, EyeOff, RefreshCw, ChevronRight, ArrowLeft } from 'lucide-react';
 import api from '../../../../shared/utils/api';
 import { GoogleLogo } from './constants';
+import GoogleRosterConnectorPanel from '../../../../shared/components/GoogleRosterConnectorPanel';
 
 // ─── STAFF MANAGER TAB ──────────────────────────────────────────────
 
-export default function StaffManager({ staff, schoolId, googleConnected, onAdd, onRemove, onUpdate, onRefresh }) {
+function needsGoogleRosterConnector(err) {
+  const serverMsg = err?.response?.data?.code || err?.response?.data?.error || '';
+  return (
+    String(serverMsg).includes('GOOGLE_CONNECTOR_REQUIRED') ||
+    String(serverMsg).includes('NO_TOKENS') ||
+    String(serverMsg).includes('Google not connected')
+  );
+}
+
+export default function StaffManager({ staff, schoolId, onAdd, onRemove, onUpdate, onRefresh }) {
   const [roleFilter, setRoleFilter] = useState('All');
   const [showAddForm, setShowAddForm] = useState(false);
   const [addForm, setAddForm] = useState({ email: '', firstName: '', lastName: '', role: 'teacher', password: '' });
@@ -28,6 +38,7 @@ export default function StaffManager({ staff, schoolId, googleConnected, onAdd, 
   const [wsImporting, setWsImporting] = useState(false);
   const [wsStep, setWsStep] = useState('orgunits');
   const [wsRole, setWsRole] = useState('teacher');
+  const [wsConnectorRequired, setWsConnectorRequired] = useState(false);
 
   // Normalize: API returns { id, userId, role, user: { email, firstName, ... } }
   // Flatten user fields to top level for easy access
@@ -106,12 +117,17 @@ export default function StaffManager({ staff, schoolId, googleConnected, onAdd, 
   const openWorkspaceImport = async () => {
     setShowWorkspaceModal(true);
     setWsStep('orgunits');
+    setWsConnectorRequired(false);
     setWsLoading(true);
     try {
       const res = await api.get(`/schools/${schoolId}/google/org-units`);
       setWsOrgUnits(res.data?.orgUnits || res.data || []);
     } catch (err) {
-      console.error(err);
+      if (needsGoogleRosterConnector(err)) {
+        setWsConnectorRequired(true);
+      } else {
+        console.error(err);
+      }
       setWsOrgUnits([]);
     }
     setWsLoading(false);
@@ -128,7 +144,11 @@ export default function StaffManager({ staff, schoolId, googleConnected, onAdd, 
       const active = users.filter(u => !u.suspended);
       setWsUsers(active);
       setWsSelectedUsers(new Set(active.map(u => u.email)));
-    } catch (err) { console.error(err); setWsUsers([]); }
+    } catch (err) {
+      console.error(err);
+      if (needsGoogleRosterConnector(err)) setWsConnectorRequired(true);
+      setWsUsers([]);
+    }
     setWsLoading(false);
   };
 
@@ -146,7 +166,11 @@ export default function StaffManager({ staff, schoolId, googleConnected, onAdd, 
       if (onRefresh) onRefresh();
     } catch (err) {
       console.error(err);
-      alert('Failed to import staff.');
+      if (needsGoogleRosterConnector(err)) {
+        setWsConnectorRequired(true);
+      } else {
+        alert('Failed to import staff. Verify the Google Workspace Roster Connector and try again.');
+      }
     }
     setWsImporting(false);
   };
@@ -169,28 +193,13 @@ export default function StaffManager({ staff, schoolId, googleConnected, onAdd, 
           <Plus className="w-4 h-4" />
           Add Staff
         </button>
-        {googleConnected ? (
-          <button
-            onClick={openWorkspaceImport}
-            className="flex items-center gap-2 px-4 py-2 border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/30 rounded-lg text-sm font-medium text-green-700 dark:text-green-400 hover:bg-green-100"
-          >
-            <GoogleLogo className="w-4 h-4" />
-            Import from Google Workspace
-          </button>
-        ) : (
-          <button
-            onClick={async () => {
-              try {
-                const res = await api.get(`/schools/${schoolId}/google/auth-url`);
-                window.location.href = res.data.url;
-              } catch (err) { console.error(err); }
-            }}
-            className="flex items-center gap-2 px-4 py-2 border dark:border-slate-700 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-slate-800 dark:text-slate-200"
-          >
-            <GoogleLogo className="w-4 h-4" />
-            Connect Google
-          </button>
-        )}
+        <button
+          onClick={openWorkspaceImport}
+          className="flex items-center gap-2 px-4 py-2 border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/30 rounded-lg text-sm font-medium text-green-700 dark:text-green-400 hover:bg-green-100"
+        >
+          <GoogleLogo className="w-4 h-4" />
+          Import from Google Workspace
+        </button>
       </div>
 
       {/* Add Staff Form */}
@@ -371,12 +380,17 @@ export default function StaffManager({ staff, schoolId, googleConnected, onAdd, 
                 <GoogleLogo className="w-5 h-5" />
                 <h3 className="font-semibold text-lg dark:text-white">Import Staff from Google Workspace</h3>
               </div>
-              <button onClick={() => { setShowWorkspaceModal(false); setWsUsers([]); setWsOrgUnits([]); setWsSelectedUsers(new Set()); }}
+              <button onClick={() => { setShowWorkspaceModal(false); setWsUsers([]); setWsOrgUnits([]); setWsSelectedUsers(new Set()); setWsConnectorRequired(false); }}
                 className="p-1 hover:bg-gray-100 dark:hover:bg-slate-800 rounded dark:text-slate-300"><X className="w-5 h-5" /></button>
             </div>
 
             <div className="flex-1 overflow-auto p-4">
-              {wsLoading ? (
+              {wsConnectorRequired ? (
+                <GoogleRosterConnectorPanel
+                  basePath={`/schools/${schoolId}/google/roster-connector`}
+                  onConnected={openWorkspaceImport}
+                />
+              ) : wsLoading ? (
                 <div className="flex items-center justify-center py-12">
                   <RefreshCw className="w-6 h-6 animate-spin text-gray-400 dark:text-slate-500" />
                   <span className="ml-2 text-gray-500 dark:text-slate-400">Loading...</span>
@@ -463,7 +477,7 @@ export default function StaffManager({ staff, schoolId, googleConnected, onAdd, 
               )}
             </div>
 
-            {wsStep === 'users' && wsUsers.length > 0 && (
+            {!wsConnectorRequired && wsStep === 'users' && wsUsers.length > 0 && (
               <div className="border-t dark:border-slate-700 p-4 flex items-center justify-between">
                 <p className="text-sm text-gray-600 dark:text-slate-300">{wsSelectedUsers.size} selected</p>
                 <button

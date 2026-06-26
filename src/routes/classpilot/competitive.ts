@@ -22,7 +22,7 @@ import {
   getClassroomCoursesBySchool,
   getDevicesBySchool,
   getEmailDomain,
-  getGoogleOAuthToken,
+  getGoogleRosterConnector,
   getGroupStudents,
   getGroupsByTeacher,
   getMailpilotWatchesBySchool,
@@ -35,6 +35,7 @@ import {
   getStudentById,
   getStudentsByIds,
   getStudentsBySchool,
+  normalizeDomain,
   listClasspilotAiDecisions,
   listEmailAlertsForSchool,
   listEvidenceArtifactsForStudent,
@@ -44,6 +45,7 @@ import {
   upsertSettings,
 } from "../../services/storage.js";
 import { logAudit } from "../../services/audit.js";
+import { GOOGLE_ROSTER_SCOPES } from "../../services/googleRosterConnector.js";
 
 const router = Router();
 
@@ -55,18 +57,6 @@ const staffAuth = [
 ] as const;
 
 const adminAuth = [...staffAuth, requireRole("admin", "school_admin")] as const;
-
-const CLASSROOM_SCOPES = [
-  "https://www.googleapis.com/auth/classroom.courses.readonly",
-  "https://www.googleapis.com/auth/classroom.rosters.readonly",
-  "https://www.googleapis.com/auth/classroom.profile.emails",
-  "https://www.googleapis.com/auth/classroom.coursework.students.readonly",
-  "https://www.googleapis.com/auth/classroom.courseworkmaterials.readonly",
-];
-const DIRECTORY_SCOPES = [
-  "https://www.googleapis.com/auth/admin.directory.user.readonly",
-  "https://www.googleapis.com/auth/admin.directory.orgunit.readonly",
-];
 
 function roleFrom(res: any, req: any): string {
   if (req.authUser?.isSuperAdmin) return "super_admin";
@@ -320,10 +310,10 @@ function issue(status: "pass" | "warn" | "fail", category: string, title: string
 
 async function buildReadinessPayload(req: any, res: any) {
   const schoolId = res.locals.schoolId!;
-  const [school, settings, token, students, dbDevices, courses, watches, recentImports, cases, staffDomainMismatches] = await Promise.all([
+  const [school, settings, rosterConnector, students, dbDevices, courses, watches, recentImports, cases, staffDomainMismatches] = await Promise.all([
     getSchoolById(schoolId),
     getSettingsForSchool(schoolId),
-    getGoogleOAuthToken(req.authUser!.id),
+    getGoogleRosterConnector(schoolId),
     getStudentsBySchool(schoolId),
     getDevicesBySchool(schoolId),
     getClassroomCoursesBySchool(schoolId),
@@ -334,11 +324,14 @@ async function buildReadinessPayload(req: any, res: any) {
   ]);
 
   const now = Date.now();
-  const scopes = new Set((token?.scope || "").split(/\s+/).filter(Boolean));
-  const schoolDomain = school?.domain?.trim().toLowerCase() || null;
-  const connectedDomain = token?.connectedDomain || getEmailDomain(token?.connectedEmail || null);
-  const googleDomainVerified = !!token && !!schoolDomain && !!connectedDomain && connectedDomain === schoolDomain;
-  const googleRequiresReconnect = !!token && (!token.connectedEmail || !connectedDomain);
+  const approvedScopes = new Set((rosterConnector?.approvedScopes || []).filter(Boolean));
+  const missingRosterScopes = GOOGLE_ROSTER_SCOPES.filter((scope) => !approvedScopes.has(scope));
+  const extraRosterScopes = [...approvedScopes].filter((scope) => !GOOGLE_ROSTER_SCOPES.includes(scope as any));
+  const schoolDomain = normalizeDomain(school?.domain);
+  const connectorDomain = normalizeDomain(rosterConnector?.domain);
+  const delegatedAdminDomain = getEmailDomain(rosterConnector?.delegatedAdminEmail || null);
+  const connectorVerified = rosterConnector?.status === "verified";
+  const googleDomainVerified = connectorVerified && !!schoolDomain && connectorDomain === schoolDomain && delegatedAdminDomain === schoolDomain;
   const realtime = getSchoolDeviceStatuses(schoolId);
   const connected = getConnectedStudentDeviceIds(schoolId);
   const realtimeByDevice = new Map(realtime.map((s) => [s.deviceId, s]));
@@ -360,11 +353,10 @@ async function buildReadinessPayload(req: any, res: any) {
   const unmappedStudents = students.filter((s) => !studentMappings.some((m) => m.studentId === s.id));
 
   const issues = [
-    issue(token ? "pass" : "fail", "Google", "Google account connected", token ? "OAuth token found for this admin." : "Reconnect Google from the admin setup flow.", "/classpilot/students"),
     issue(schoolDomain ? "pass" : "fail", "Google", "School Workspace domain", schoolDomain ? `School domain is ${schoolDomain}.` : "Set the school Google Workspace domain before imports.", "/super-admin"),
-    issue(googleDomainVerified ? "pass" : "fail", "Google", "Connected Google domain", !token ? "Reconnect Google from the admin setup flow." : googleRequiresReconnect ? "Reconnect Google so SchoolPilot can verify the connected account domain." : googleDomainVerified ? `Connected domain ${connectedDomain} matches this school.` : `Connected domain ${connectedDomain || "unknown"} does not match ${schoolDomain || "the school domain"}.`, "/classpilot/students"),
-    issue(CLASSROOM_SCOPES.every((s) => scopes.has(s)) ? "pass" : "fail", "Google", "Classroom roster scopes", CLASSROOM_SCOPES.filter((s) => !scopes.has(s)).join(", ") || "All Classroom scopes granted.", "/classpilot/students"),
-    issue(DIRECTORY_SCOPES.every((s) => scopes.has(s)) ? "pass" : "warn", "Google", "Workspace Directory scopes", DIRECTORY_SCOPES.filter((s) => !scopes.has(s)).join(", ") || "All Directory scopes granted.", "/classpilot/students"),
+    issue(connectorVerified ? "pass" : "fail", "Google", "Roster Connector verified", connectorVerified ? `Connector verified as ${rosterConnector?.delegatedAdminEmail || "delegated admin"}.` : `Connector status is ${rosterConnector?.status || "not connected"}.`, "/classpilot/it-readiness"),
+    issue(googleDomainVerified ? "pass" : "fail", "Google", "Delegated admin domain", !rosterConnector ? "Connect the Google Workspace Roster Connector." : googleDomainVerified ? `Connector domain ${connectorDomain} matches this school.` : `Connector domain ${connectorDomain || "unknown"} or delegated admin domain ${delegatedAdminDomain || "unknown"} does not match ${schoolDomain || "the school domain"}.`, "/classpilot/it-readiness"),
+    issue(missingRosterScopes.length === 0 && extraRosterScopes.length === 0 ? "pass" : "fail", "Google", "Roster Connector scopes", missingRosterScopes.length === 0 && extraRosterScopes.length === 0 ? "Only the approved read-only roster scopes are configured." : `Missing: ${missingRosterScopes.join(", ") || "none"}; Extra: ${extraRosterScopes.join(", ") || "none"}.`, "/classpilot/it-readiness"),
     issue(staffDomainMismatches.length === 0 ? "pass" : "fail", "Staff", "Staff email domain match", staffDomainMismatches.length === 0 ? "All staff emails match the school Workspace domain." : `${staffDomainMismatches.length} staff account(s) use the wrong or unverifiable domain.`, "/admin/users"),
     issue(courses.length > 0 ? "pass" : "warn", "Roster", "Classroom sync history", courses.length > 0 ? `${courses.length} Classroom course(s) synced.` : "No Classroom courses have been synced yet.", "/classpilot/admin/classes"),
     issue(recentImports.length > 0 ? "pass" : "warn", "Roster", "Import run log", recentImports.length > 0 ? "Recent import outcomes are available." : "No import runs recorded yet.", "/classpilot/students"),
@@ -403,11 +395,17 @@ async function buildReadinessPayload(req: any, res: any) {
       missingEmail: missingEmail.map((s) => ({ id: s.id, name: studentName(s), email: s.email })),
       unmappedStudents: unmappedStudents.map((s) => ({ id: s.id, name: studentName(s), email: s.email })),
       google: {
-        connectedEmail: token?.connectedEmail || null,
-        connectedDomain,
+        connectorStatus: rosterConnector?.status || null,
+        delegatedAdminEmail: rosterConnector?.delegatedAdminEmail || null,
+        connectedDomain: connectorDomain,
         schoolDomain,
         domainVerified: googleDomainVerified,
-        requiresReconnect: googleRequiresReconnect,
+        approvedScopes: rosterConnector?.approvedScopes || [],
+        missingRosterScopes,
+        extraRosterScopes,
+        lastVerifiedAt: rosterConnector?.verifiedAt || null,
+        lastSyncAt: rosterConnector?.lastSyncAt || null,
+        disabledAt: rosterConnector?.disabledAt || null,
       },
       staffDomainMismatches,
       mailpilot: {

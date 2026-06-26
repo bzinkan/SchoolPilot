@@ -6,6 +6,7 @@ import { usePassPilotAuth } from "../../../../hooks/usePassPilotAuth";
 import { apiRequest, queryClient } from "../../../../lib/queryClient";
 import api from "../../../../shared/utils/api";
 import ImportInClassPilotNotice from "../../../../shared/components/ImportInClassPilotNotice";
+import GoogleRosterConnectorPanel from "../../../../shared/components/GoogleRosterConnectorPanel";
 import { useStudentImportHome } from "../../../../shared/hooks/useStudentImportHome";
 import { Card, CardContent, CardHeader, CardTitle } from "../../../../components/ui/card";
 import { Button } from "../../../../components/ui/button";
@@ -71,6 +72,7 @@ function TeachersTab() {
   const [gwSelectedUsers, setGwSelectedUsers] = useState(new Set());
   const [gwImporting, setGwImporting] = useState(false);
   const [gwResult, setGwResult] = useState(null);
+  const [gwConnectorRequired, setGwConnectorRequired] = useState(false);
 
   const addTeacher = useMutation({
     mutationFn: (data) =>
@@ -107,9 +109,12 @@ function TeachersTab() {
       }
     } catch (err) {
       const serverMsg = err.response?.data?.error || err.response?.data?.code || "";
+      if (serverMsg.includes("GOOGLE_CONNECTOR_REQUIRED")) {
+        setGwConnectorRequired(true);
+        return;
+      }
       if (serverMsg.includes("NO_TOKENS") || serverMsg.includes("Google not connected")) {
-        toast({ title: "Google not connected", description: "Connect your Google account in Settings first.", variant: "destructive" });
-        setGwImportOpen(false);
+        setGwConnectorRequired(true);
         return;
       }
       toast({ title: "Error", description: serverMsg || err.message, variant: "destructive" });
@@ -253,7 +258,7 @@ function TeachersTab() {
         setGwImportOpen(open);
         if (!open) {
           setGwOrgUnits([]); setGwSelectedOUs(new Set()); setGwExpandedOU(null);
-          setGwUsers([]); setGwSelectedUsers(new Set()); setGwResult(null);
+          setGwUsers([]); setGwSelectedUsers(new Set()); setGwResult(null); setGwConnectorRequired(false);
         }
       }}>
         <DialogContent className="max-w-2xl">
@@ -272,7 +277,12 @@ function TeachersTab() {
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
-            {(gwOuLoading || gwUsersLoading) && (
+            {gwConnectorRequired ? (
+              <GoogleRosterConnectorPanel onConnected={() => {
+                setGwConnectorRequired(false);
+                loadGwOrgUnits();
+              }} />
+            ) : (gwOuLoading || gwUsersLoading) && (
               <div className="py-8 text-center">
                 <RefreshCw className="h-6 w-6 animate-spin mx-auto mb-2 text-muted-foreground" />
                 <p className="text-sm text-muted-foreground">{gwOuLoading ? "Loading organizational units..." : "Loading users..."}</p>
@@ -280,7 +290,7 @@ function TeachersTab() {
             )}
 
             {/* OU List */}
-            {!gwOuLoading && !gwExpandedOU && !gwUsersLoading && (
+            {!gwConnectorRequired && !gwOuLoading && !gwExpandedOU && !gwUsersLoading && (
               <>
                 {gwOrgUnits.length === 0 ? (
                   <div className="py-8 text-center text-muted-foreground">
@@ -351,7 +361,7 @@ function TeachersTab() {
             )}
 
             {/* User List */}
-            {!gwUsersLoading && gwExpandedOU && (
+            {!gwConnectorRequired && !gwUsersLoading && gwExpandedOU && (
               <>
                 <div className="flex items-center justify-between">
                   <p className="text-sm text-muted-foreground">{gwUsers.length} users</p>
@@ -426,6 +436,7 @@ function StudentRosterTab() {
   const [googleDirSelected, setGoogleDirSelected] = useState(new Set());
   const [googleDirGradeLevel, setGoogleDirGradeLevel] = useState("");
   const [googleDirLoading, setGoogleDirLoading] = useState(false);
+  const [googleDirConnectorRequired, setGoogleDirConnectorRequired] = useState(false);
   // OU-based import state
   const [orgUnits, setOrgUnits] = useState([]);
   const [ouLoading, setOuLoading] = useState(false);
@@ -437,6 +448,7 @@ function StudentRosterTab() {
   const [classroomSelectedCourse, setClassroomSelectedCourse] = useState("");
   const [classroomGradeLevel, setClassroomGradeLevel] = useState("");
   const [classroomLoading, setClassroomLoading] = useState(false);
+  const [classroomConnectorRequired, setClassroomConnectorRequired] = useState(false);
   const [importResult, setImportResult] = useState(null);
 
   // Add student form state
@@ -591,9 +603,12 @@ function StudentRosterTab() {
       }
     } catch (err) {
       const serverMsg = err.response?.data?.error || err.response?.data?.code || "";
-      if (serverMsg.includes("NO_TOKENS") || serverMsg.includes("Google not connected")) {
-        toast({ title: "Google not connected", description: "Connect your Google account in Settings first.", variant: "destructive" });
-        setGoogleDirOpen(false);
+      if (
+        serverMsg.includes("GOOGLE_CONNECTOR_REQUIRED") ||
+        serverMsg.includes("NO_TOKENS") ||
+        serverMsg.includes("Google not connected")
+      ) {
+        setGoogleDirConnectorRequired(true);
         return;
       }
       toast({ title: "Error", description: serverMsg || err.message, variant: "destructive" });
@@ -612,7 +627,16 @@ function StudentRosterTab() {
       setGoogleDirUsers(data.users || []);
       setGoogleDirSelected(new Set((data.users || []).map((u) => u.id)));
     } catch (err) {
-      toast({ title: "Error", description: err.response?.data?.error || err.message, variant: "destructive" });
+      const serverMsg = err.response?.data?.error || err.response?.data?.code || "";
+      if (
+        serverMsg.includes("GOOGLE_CONNECTOR_REQUIRED") ||
+        serverMsg.includes("NO_TOKENS") ||
+        serverMsg.includes("Google not connected")
+      ) {
+        setGoogleDirConnectorRequired(true);
+        return;
+      }
+      toast({ title: "Error", description: serverMsg || err.message, variant: "destructive" });
     } finally {
       setGoogleDirLoading(false);
     }
@@ -653,9 +677,12 @@ function StudentRosterTab() {
       setClassroomCourses(data.courses || data || []);
     } catch (err) {
       const serverMsg = err.response?.data?.error || err.response?.data?.code || "";
-      if (serverMsg.includes("NO_TOKENS") || serverMsg.includes("Google not connected")) {
-        toast({ title: "Google not connected", description: "Connect your Google account in Settings first.", variant: "destructive" });
-        setClassroomOpen(false);
+      if (
+        serverMsg.includes("GOOGLE_CONNECTOR_REQUIRED") ||
+        serverMsg.includes("NO_TOKENS") ||
+        serverMsg.includes("Google not connected")
+      ) {
+        setClassroomConnectorRequired(true);
         return;
       }
       toast({ title: "Error", description: serverMsg || err.message, variant: "destructive" });
@@ -1379,6 +1406,7 @@ function StudentRosterTab() {
           setOrgUnits([]); setSelectedOUs(new Set()); setExpandedOU(null);
           setGoogleDirUsers([]); setGoogleDirSelected(new Set());
           setGoogleDirGradeLevel(""); setImportResult(null); setOuGradeOverrides({});
+          setGoogleDirConnectorRequired(false);
         }
       }}>
         <DialogContent className="max-w-2xl">
@@ -1397,8 +1425,15 @@ function StudentRosterTab() {
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
+            {googleDirConnectorRequired ? (
+              <GoogleRosterConnectorPanel onConnected={() => {
+                setGoogleDirConnectorRequired(false);
+                loadOrgUnits();
+              }} />
+            ) : null}
+
             {/* Loading state */}
-            {(ouLoading || googleDirLoading) && (
+            {!googleDirConnectorRequired && (ouLoading || googleDirLoading) && (
               <div className="py-8 text-center">
                 <RefreshCw className="h-6 w-6 animate-spin mx-auto mb-2 text-muted-foreground" />
                 <p className="text-sm text-muted-foreground">{ouLoading ? "Loading organizational units..." : "Loading users..."}</p>
@@ -1406,13 +1441,13 @@ function StudentRosterTab() {
             )}
 
             {/* OU List View */}
-            {!ouLoading && !expandedOU && !googleDirLoading && (
+            {!googleDirConnectorRequired && !ouLoading && !expandedOU && !googleDirLoading && (
               <>
                 {orgUnits.length === 0 ? (
                   <div className="py-8 text-center text-muted-foreground">
                     <Cloud className="h-10 w-10 mx-auto mb-3 opacity-50" />
                     <p>No organizational units found.</p>
-                    <p className="text-xs mt-1">Make sure your Google account has admin directory permissions.</p>
+                    <p className="text-xs mt-1">Verify the Google Workspace Roster Connector, then retry.</p>
                     <Button variant="outline" size="sm" className="mt-3" onClick={loadOrgUnits}>
                       <RefreshCw className="h-3 w-3 mr-1" /> Retry
                     </Button>
@@ -1514,7 +1549,7 @@ function StudentRosterTab() {
             )}
 
             {/* User List View (expanded OU) */}
-            {!googleDirLoading && expandedOU && (
+            {!googleDirConnectorRequired && !googleDirLoading && expandedOU && (
               <>
                 <div className="flex items-center justify-between">
                   <p className="text-sm text-muted-foreground">{googleDirUsers.length} users</p>
@@ -1579,11 +1614,16 @@ function StudentRosterTab() {
       </Dialog>
 
       {/* Google Classroom Import Dialog */}
-      <Dialog open={!consolidated && classroomOpen} onOpenChange={(open) => { setClassroomOpen(open); if (!open) { setClassroomCourses([]); setClassroomSelectedCourse(""); setClassroomGradeLevel(""); setImportResult(null); } }}>
+      <Dialog open={!consolidated && classroomOpen} onOpenChange={(open) => { setClassroomOpen(open); if (!open) { setClassroomCourses([]); setClassroomSelectedCourse(""); setClassroomGradeLevel(""); setImportResult(null); setClassroomConnectorRequired(false); } }}>
         <DialogContent className="max-w-2xl">
           <DialogHeader><DialogTitle>Import from Google Classroom</DialogTitle></DialogHeader>
           <div className="space-y-4">
-            {classroomLoading ? (
+            {classroomConnectorRequired ? (
+              <GoogleRosterConnectorPanel onConnected={() => {
+                setClassroomConnectorRequired(false);
+                loadClassroomCourses();
+              }} />
+            ) : classroomLoading ? (
               <div className="py-8 text-center">
                 <RefreshCw className="h-6 w-6 animate-spin mx-auto mb-2 text-muted-foreground" />
                 <p className="text-sm text-muted-foreground">Loading courses from Google Classroom...</p>
@@ -1591,8 +1631,8 @@ function StudentRosterTab() {
             ) : classroomCourses.length === 0 ? (
               <div className="py-8 text-center text-muted-foreground">
                 <GraduationCap className="h-10 w-10 mx-auto mb-3 opacity-50" />
-                <p>No courses found or Google account not connected.</p>
-                <p className="text-xs mt-1">Make sure your Google account is connected with Classroom permissions.</p>
+                <p>No active courses found.</p>
+                <p className="text-xs mt-1">Verify the Google Workspace Roster Connector, then retry.</p>
                 <Button variant="outline" size="sm" className="mt-3" onClick={loadClassroomCourses}>
                   <RefreshCw className="h-3 w-3 mr-1" /> Retry
                 </Button>
@@ -1618,6 +1658,7 @@ function StudentRosterTab() {
               </div>
             )}
 
+            {!classroomConnectorRequired && (
             <div className="space-y-1">
               <Label>Grade Level (optional)</Label>
               <Select value={classroomGradeLevel} onValueChange={setClassroomGradeLevel}>
@@ -1629,6 +1670,7 @@ function StudentRosterTab() {
                 </SelectContent>
               </Select>
             </div>
+            )}
 
             {importResult && (
               <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-800">
@@ -1639,7 +1681,7 @@ function StudentRosterTab() {
             <Button
               className="w-full"
               onClick={() => classroomImport.mutate()}
-              disabled={classroomImport.isPending || !classroomSelectedCourse}
+              disabled={classroomConnectorRequired || classroomImport.isPending || !classroomSelectedCourse}
             >
               {classroomImport.isPending ? "Syncing..." : "Sync Roster"}
             </Button>

@@ -96,6 +96,14 @@ router.get("/auth-url", authenticate, requireSchoolContext, requireActiveSchool,
     const oauth2Client = getOAuth2Client();
     const schoolId = res.locals.schoolId!;
     const purpose = normalizePurpose(req.query.purpose);
+    if (purpose === "workspace_import") {
+      return res.status(409).json({
+        error:
+          "GOOGLE_CONNECTOR_REQUIRED: Google Workspace roster import now uses the IT-approved Roster Connector.",
+        code: "GOOGLE_CONNECTOR_REQUIRED",
+        setupPath: "/api/google/roster-connector/setup-info",
+      });
+    }
     if (!roleCanRequestPurpose(res.locals.membershipRole, purpose)) {
       return res.status(403).json({
         error: "INSUFFICIENT_GOOGLE_ROLE: You do not have permission to connect Google for this workflow.",
@@ -203,7 +211,6 @@ router.get("/status", authenticate, requireSchoolContext, async (req, res, next)
     const connectedDomain = normalizeDomain(token?.connectedDomain || getEmailDomain(connectedEmail));
     const domainVerified = !!token && !!schoolDomain && !!connectedDomain && connectedDomain === schoolDomain;
     const requiresReconnect = !!token && (!connectedEmail || !connectedDomain);
-    const workspaceImportMissingScopes = missingScopes(token?.scope, scopesForPurpose("workspace_import"));
     const classroomResourceMissingScopes = missingScopes(token?.scope, scopesForPurpose("classroom_resources"));
 
     let errorCode: string | null = null;
@@ -219,7 +226,7 @@ router.get("/status", authenticate, requireSchoolContext, async (req, res, next)
       domainVerified,
       requiresReconnect,
       errorCode,
-      workspaceImportMissingScopes,
+      workspaceImportDisabled: true,
       classroomResourceMissingScopes,
     });
   } catch (err) {
