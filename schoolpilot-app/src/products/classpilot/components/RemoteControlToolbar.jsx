@@ -332,7 +332,7 @@ function RemoteControlToolbar({
     students.forEach(student => {
       if (selectedStudentIds.has(student.studentId)) {
         // Add all devices for this student
-        student.devices.forEach(device => {
+        (student.devices || []).forEach(device => {
           if (device.deviceId) {
             deviceIds.push(device.deviceId);
           }
