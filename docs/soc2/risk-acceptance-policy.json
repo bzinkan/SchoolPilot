@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "owner": "Founder / Security & Privacy Officer",
+  "approverRole": "Founder",
+  "privateEvidenceLocation": "SchoolPilot-SOC2-Evidence/risk-acceptances/",
+  "draftStatus": "Draft - pending founder approval",
+  "defaultExpirationDays": 90,
+  "autoDraftPriorities": ["P0", "P1"],
+  "autoDraftStatuses": ["Open", "In progress"],
+  "riskLevelByPriority": {
+    "P0": "High",
+    "P1": "Medium",
+    "P2": "Low"
+  },
+  "compensatingControlsByArea": {
+    "Incident response": ["Maintain incident-report template", "Track credential rotation evidence", "Escalate suspected incidents to founder immediately"],
+    "Privileged access": ["Perform manual privileged access review", "Keep in-app MFA claim deferred", "Limit production/admin access to founder-approved users"],
+    "Deployment": ["Require PR review and green CI before merge", "Retain deployment evidence", "Use manual production deployment approval"],
+    "Tenant isolation": ["Run cross-tenant and RLS-enabled tests in CI", "Keep RLS status evidence", "Review school-scoped data changes"],
+    "Infrastructure": ["Retain AWS configuration exports", "Track hardening work in remediation register", "Document compensating monitoring"],
+    "Security testing": ["Run npm audit, gitleaks, Trivy, and CodeQL workflows", "Track CodeQL warnings until cleared", "Require explicit founder acceptance for unresolved high-risk findings"],
+    "Evidence": ["Run SOC 2 governance evidence check", "Store generated packets privately", "Keep public claims aligned to evidence"],
+    "Mobile": ["Track native storage limitations", "Avoid stronger mobile-security claims until build evidence exists", "Prioritize fail-closed production storage before observation"],
+    "AI/privacy": ["Keep AI assistant disabled by default", "Run AI authorization tests", "Maintain AI transparency and subprocessor disclosures"]
+  }
+}

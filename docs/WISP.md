@@ -35,7 +35,7 @@ This program applies to all Schoolpilot employees, contractors, systems, network
 ### 4.1 Access Control
 - **Role-Based Access Control (RBAC)** enforced at the application layer. Four roles: `admin`, `teacher`, `office_staff`, `parent`. Additional `super_admin` role reserved for Schoolpilot internal staff.
 - **Least privilege**: Teachers can only monitor students in groups they are assigned to.
-- **Multi-Factor Authentication (MFA)** required for super admin and production AWS access.
+- **Multi-Factor Authentication (MFA)** required for production AWS access where supported. In-app privileged/admin MFA is tracked as a SOC 2 remediation item and should not be represented as fully operating until deployed and evidenced.
 - **Password requirements**: Minimum 8 characters; hashed with bcrypt (12 salt rounds); no plaintext storage.
 - **Session management**: 7-day expiration; httpOnly + secure cookies; rolling renewal.
 
