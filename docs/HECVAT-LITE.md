@@ -46,7 +46,7 @@ The HECVAT Lite is a subset of the full HECVAT created by EDUCAUSE and the REN-I
 | 2.4 | Access control / least privilege policy? | **Yes** | RBAC enforced at application layer; WISP Section 4.1 |
 | 2.5 | Data classification policy? | **Yes** | WISP Section 3: Restricted / Confidential / Public |
 | 2.6 | Background checks on staff with data access? | **Yes** | Required before production access |
-| 2.7 | Annual security training for staff? | **Yes** | WISP Section 11 |
+| 2.7 | Annual security training for staff? | **Yes** | WISP Section 11; completion attestations are human-signed and stored privately |
 
 ---
 
@@ -59,7 +59,7 @@ The HECVAT Lite is a subset of the full HECVAT created by EDUCAUSE and the REN-I
 | 3.3 | Encryption algorithm(s) used? | **Yes** | AES-256 at rest (AWS), TLS 1.2+ ECDHE in transit |
 | 3.4 | Key management process documented? | **Yes** | AWS KMS managed keys; rotation per AWS default |
 | 3.5 | Role-based access control (RBAC)? | **Yes** | admin / school_admin / teacher / office_staff / parent / super_admin |
-| 3.6 | Multi-factor authentication for privileged accounts? | **Partial** | MFA required for AWS production access and super_admin. In-app MFA for school admin accounts is on the roadmap. |
+| 3.6 | Multi-factor authentication for privileged accounts? | **Partial** | Production AWS access uses MFA where available. In-app MFA for super_admin and school admin accounts is deferred and tracked in the SOC 2 remediation register. |
 | 3.7 | Password complexity enforced? | **Yes** | 10+ characters, uppercase, lowercase, digit required |
 | 3.8 | Account lockout after failed attempts? | **Yes** | 10 failures in 15 min → 30 min lockout (per-account, distributed-IP resistant) |
 | 3.9 | Session management (secure cookies, expiry)? | **Yes** | httpOnly + secure + SameSite cookies; 7-day rolling for teachers/parents; 1-hour idle timeout for admin roles |
@@ -162,7 +162,7 @@ The HECVAT Lite is a subset of the full HECVAT created by EDUCAUSE and the REN-I
 | # | Question | Response | Notes |
 |---|----------|----------|-------|
 | 10.1 | Public list of subprocessors available? | **Yes** | https://school-pilot.net/subprocessors |
-| 10.2 | Subprocessors bound by data processing agreements? | **Yes** | AWS, Google, SendGrid, Stripe, Anthropic all have executed DPAs with Schoolpilot |
+| 10.2 | Subprocessors bound by data processing agreements? | **In review** | DPA confirmations are tracked in private vendor review evidence and require human sign-off before being treated as operating evidence. |
 | 10.3 | Notice period before adding new subprocessors? | **Yes** | 30 days per Subprocessors page |
 | 10.4 | Customer right to object to new subprocessors? | **Yes** | Customer may terminate if subprocessor creates unacceptable risk |
 
@@ -189,7 +189,7 @@ Under NDA, the following documents are provided to schools and qualified assesso
 - Executed Data Processing Agreements with subprocessors
 - Incident Response Runbook
 - Penetration test reports (when available)
-- SOC 2 Type II report (when available)
+- SOC 2 Type II report (not available yet; when available)
 
 **Contact:** privacy@school-pilot.net or security@school-pilot.net
 
@@ -201,7 +201,7 @@ The following items are not yet met and are documented in our security roadmap:
 
 1. **SOC 2 Type II certification** — planned post-funding (cost: ~$20K, 12-month observation)
 2. **Third-party penetration test** — planned post-funding (~$10-15K)
-3. **In-app MFA for school admins** — on roadmap (currently enforced only for super_admin and AWS access)
+3. **In-app MFA for school admins and super_admins** — deferred and tracked in the SOC 2 remediation register
 4. **SAML 2.0 SSO** — on roadmap (Google OAuth currently supported)
 5. **Cyber liability insurance** — in procurement
 6. **AWS WAF** — planned; currently relying on CloudFront + security-group filtering

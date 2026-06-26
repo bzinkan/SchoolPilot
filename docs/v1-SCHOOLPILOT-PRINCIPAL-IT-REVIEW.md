@@ -22,7 +22,7 @@ ClassPilot is positioned as a **"GoGuardian / Securely Light"** alternative: it 
 | Identity model | **Student email**, not device serial |
 | Hosting | AWS (us-east-1) |
 | Multi-tenancy | Hard school-domain isolation (every record scoped by `schoolId`) |
-| Compliance posture | FERPA-compliant, COPPA-aware, SOC 2 controls implemented (not yet certified — see §6) |
+| Compliance posture | FERPA-compliant, COPPA-aware, SOC 2 readiness in progress (not certified — see §6) |
 | Data retention | Configurable per school (default 30 days) |
 | Pricing model | Per-student/year, no base fee: $3 (1 product) / $5 (2) / $7 (all 3); +$1 for 24/7 monitoring — see §9 |
 
@@ -288,7 +288,7 @@ PassPilot and GoPilot are also available as native iOS / Android apps via Capaci
 |---|---|
 | FERPA | Compliant; full posture documented |
 | COPPA | Compliant for the schools-as-agent model; data-processing agreement available |
-| SOC 2 Type I/II | **Controls implemented; not yet certified.** Certification is deferred until revenue supports the audit cost (~$25K). All technical controls a SOC 2 auditor would expect are in place; we publish our Written Information Security Program (WISP) and a HECVAT Lite questionnaire as evidence. |
+| SOC 2 Type I/II | **Readiness in progress; not certified.** Certification is deferred until revenue supports the audit cost (~$25K). Several technical controls are implemented and others remain in the SOC 2 remediation register. We can provide our Written Information Security Program (WISP), HECVAT Lite questionnaire, public subprocessor list, and readiness evidence summary. |
 | NDPA / SDPC | Standard contract available |
 | iKeepSafe | Not certified (cost-deferred) |
 
@@ -312,9 +312,9 @@ For users under 13, the platform relies on **school consent under COPPA's school
 - No advertising, no profile-building, no cross-context tracking.
 - The extension displays a disclosure indicator to students when a class session is active.
 
-### 6.4 SOC 2 Controls Implemented (Selected)
+### 6.4 SOC 2 Readiness Controls (Selected)
 
-SchoolPilot has implemented the technical control families a SOC 2 Type II audit would assess. We are not yet audited because the audit fee (~$25K) is deferred until revenue supports it. The implementations below exist today and are continuously enforced by automation.
+SchoolPilot is building and evidencing the control families a SOC 2 Type II audit would assess. We are not yet audited because the audit fee (~$25K) is deferred until revenue supports it. Some controls are automated, while human approvals, risk acceptances, vendor DPA confirmations, incident decisions, training attestations, and CPA audit work are tracked separately and require accountable human sign-off.
 
 **Logical access (CC6):**
 - Strong password requirements + bcrypt hashing
@@ -539,7 +539,7 @@ Not currently. SchoolPilot is SaaS only.
 AWS us-east-1 (Northern Virginia). Data does not leave US AWS regions.
 
 **Q: Can we get a SOC 2 report?**
-We have not yet undergone a SOC 2 audit. We can provide our WISP, HECVAT Lite questionnaire, public subprocessor list, and a list of implemented controls (see §6.4 above) as the equivalent technical evidence. SOC 2 Type I certification is on our roadmap.
+We have not yet undergone a SOC 2 audit. We can provide our WISP, HECVAT Lite questionnaire, public subprocessor list, remediation register summary, and readiness evidence package. SOC 2 Type I certification is on our roadmap.
 
 **Q: How long are records retained?**
 Default: 30 days for browsing activity, indefinitely for audit logs. Retention is configurable by your school admin. Deletion requests honored within 30 days.

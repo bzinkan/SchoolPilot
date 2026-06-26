@@ -32,6 +32,9 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: SOC 2 governance evidence check
+        run: npm run soc2:check
+
       - name: Collect SOC 2 evidence
         if: always()
         env:

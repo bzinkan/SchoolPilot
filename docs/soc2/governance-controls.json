@@ -1,0 +1,219 @@
+{
+  "schemaVersion": 1,
+  "program": "SchoolPilot SOC 2 Type II readiness",
+  "lastUpdated": "2026-06-26",
+  "evidenceRepository": "SchoolPilot-SOC2-Evidence",
+  "humanApprovalBoundary": "Automation may collect status and evidence pointers, but human-owned approvals, risk acceptances, vendor DPA confirmations, incident decisions, training attestations, and CPA audit judgments must be signed by an accountable person.",
+  "controls": [
+    {
+      "id": "SP-SEC-001",
+      "owner": "Security & Privacy Officer",
+      "status": "Planned",
+      "frequency": "Continuous, quarterly review",
+      "nextReviewDue": "2026-09-30",
+      "automationImpact": "No user-facing MFA or login changes are enabled by this governance tracker.",
+      "evidence": [
+        {
+          "name": "Quarterly privileged access review packet",
+          "automation": "human_approved",
+          "privateEvidenceLocation": "SchoolPilot-SOC2-Evidence/access-reviews/",
+          "humanApproverRole": "Security & Privacy Officer"
+        },
+        {
+          "name": "Privileged MFA rollout decision",
+          "automation": "human_approved",
+          "privateEvidenceLocation": "SchoolPilot-SOC2-Evidence/risk-acceptances/",
+          "humanApproverRole": "Management"
+        },
+        {
+          "name": "User and role export",
+          "automation": "automated",
+          "privateEvidenceLocation": "SchoolPilot-SOC2-Evidence/access-reviews/exports/"
+        }
+      ]
+    },
+    {
+      "id": "SP-SEC-002",
+      "owner": "Engineering",
+      "status": "Implementing",
+      "frequency": "Continuous",
+      "nextReviewDue": "2026-07-31",
+      "automationImpact": "CI evidence only; no customer workflow impact.",
+      "evidence": [
+        {
+          "name": "Cross-tenant isolation CI evidence",
+          "automation": "automated",
+          "privateEvidenceLocation": "GitHub Actions artifact: soc2-evidence-cross-tenant"
+        },
+        {
+          "name": "Production RLS status export",
+          "automation": "manual_record",
+          "privateEvidenceLocation": "SchoolPilot-SOC2-Evidence/tenant-isolation/"
+        }
+      ]
+    },
+    {
+      "id": "SP-SEC-003",
+      "owner": "Security & Privacy Officer",
+      "status": "Implementing",
+      "frequency": "Continuous, monthly review",
+      "nextReviewDue": "2026-07-31",
+      "automationImpact": "Monitoring and evidence review only; no automatic destructive action.",
+      "evidence": [
+        {
+          "name": "Security event alert sample",
+          "automation": "automated",
+          "privateEvidenceLocation": "SchoolPilot-SOC2-Evidence/security-events/"
+        },
+        {
+          "name": "Monthly alert review decision",
+          "automation": "human_approved",
+          "privateEvidenceLocation": "SchoolPilot-SOC2-Evidence/security-events/reviews/",
+          "humanApproverRole": "Security & Privacy Officer"
+        },
+        {
+          "name": "Incident decision record",
+          "automation": "human_approved",
+          "privateEvidenceLocation": "SchoolPilot-SOC2-Evidence/incidents/",
+          "humanApproverRole": "Security & Privacy Officer"
+        }
+      ]
+    },
+    {
+      "id": "SP-SEC-004",
+      "owner": "Engineering",
+      "status": "Implementing",
+      "frequency": "Per change",
+      "nextReviewDue": "2026-07-31",
+      "automationImpact": "CI/deployment evidence only; app behavior unchanged.",
+      "evidence": [
+        {
+          "name": "Backend CI evidence",
+          "automation": "automated",
+          "privateEvidenceLocation": "GitHub Actions artifact: soc2-evidence-backend"
+        },
+        {
+          "name": "Frontend CI evidence",
+          "automation": "automated",
+          "privateEvidenceLocation": "GitHub Actions artifact: soc2-evidence-frontend"
+        },
+        {
+          "name": "Production deployment approval",
+          "automation": "human_approved",
+          "privateEvidenceLocation": "SchoolPilot-SOC2-Evidence/deployments/",
+          "humanApproverRole": "Engineering Lead"
+        }
+      ]
+    },
+    {
+      "id": "SP-SEC-005",
+      "owner": "Security & Privacy Officer",
+      "status": "Planned",
+      "frequency": "Annual, on change",
+      "nextReviewDue": "2026-09-30",
+      "automationImpact": "Subprocessor tracking only; DPAs remain private and human-confirmed.",
+      "evidence": [
+        {
+          "name": "Vendor DPA confirmation",
+          "automation": "human_approved",
+          "privateEvidenceLocation": "SchoolPilot-SOC2-Evidence/vendors/dpas/",
+          "humanApproverRole": "Security & Privacy Officer"
+        },
+        {
+          "name": "Annual vendor review packet",
+          "automation": "human_approved",
+          "privateEvidenceLocation": "SchoolPilot-SOC2-Evidence/vendors/reviews/",
+          "humanApproverRole": "Security & Privacy Officer"
+        },
+        {
+          "name": "Public subprocessor inventory",
+          "automation": "manual_record",
+          "privateEvidenceLocation": "SchoolPilot-SOC2-Evidence/vendors/inventory/"
+        }
+      ]
+    },
+    {
+      "id": "SP-AVL-001",
+      "owner": "Engineering",
+      "status": "Planned",
+      "frequency": "Backup continuous, restore test at least annual",
+      "nextReviewDue": "2026-09-30",
+      "automationImpact": "Evidence and restore drill tracking only; no production restore is run automatically.",
+      "evidence": [
+        {
+          "name": "Backup configuration export",
+          "automation": "manual_record",
+          "privateEvidenceLocation": "SchoolPilot-SOC2-Evidence/backups/config/"
+        },
+        {
+          "name": "Restore drill approval",
+          "automation": "human_approved",
+          "privateEvidenceLocation": "SchoolPilot-SOC2-Evidence/backups/restore-tests/",
+          "humanApproverRole": "Engineering Lead"
+        }
+      ]
+    },
+    {
+      "id": "SP-AVL-002",
+      "owner": "Engineering",
+      "status": "Implementing",
+      "frequency": "Continuous, monthly review",
+      "nextReviewDue": "2026-07-31",
+      "automationImpact": "Monitoring evidence only; alerts remain human-reviewed.",
+      "evidence": [
+        {
+          "name": "Health and error monitor sample",
+          "automation": "automated",
+          "privateEvidenceLocation": "SchoolPilot-SOC2-Evidence/monitoring/"
+        },
+        {
+          "name": "Monthly monitoring review",
+          "automation": "human_approved",
+          "privateEvidenceLocation": "SchoolPilot-SOC2-Evidence/monitoring/reviews/",
+          "humanApproverRole": "Engineering Lead"
+        }
+      ]
+    },
+    {
+      "id": "SP-CONF-001",
+      "owner": "Engineering",
+      "status": "Implementing",
+      "frequency": "Continuous",
+      "nextReviewDue": "2026-09-30",
+      "automationImpact": "Configuration evidence only; no runtime customer changes.",
+      "evidence": [
+        {
+          "name": "AWS encryption configuration export",
+          "automation": "manual_record",
+          "privateEvidenceLocation": "SchoolPilot-SOC2-Evidence/encryption/aws/"
+        },
+        {
+          "name": "TLS configuration evidence",
+          "automation": "manual_record",
+          "privateEvidenceLocation": "SchoolPilot-SOC2-Evidence/encryption/tls/"
+        }
+      ]
+    },
+    {
+      "id": "SP-CONF-002",
+      "owner": "Engineering",
+      "status": "Implementing",
+      "frequency": "Continuous",
+      "nextReviewDue": "2026-07-31",
+      "automationImpact": "AI authorization and logging evidence only; no assistant enablement change.",
+      "evidence": [
+        {
+          "name": "AI authorization test evidence",
+          "automation": "automated",
+          "privateEvidenceLocation": "GitHub Actions artifact: soc2-evidence-backend"
+        },
+        {
+          "name": "AI data-flow review",
+          "automation": "human_approved",
+          "privateEvidenceLocation": "SchoolPilot-SOC2-Evidence/ai/reviews/",
+          "humanApproverRole": "Security & Privacy Officer"
+        }
+      ]
+    }
+  ]
+}
