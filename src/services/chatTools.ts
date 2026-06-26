@@ -386,7 +386,9 @@ export const chatTools: ChatTool[] = [
       },
     },
     product: "classpilot",
-    requiredRoles: teacherAndAdmin,
+    // Disabled for AI until a privacy review approves individual browsing
+    // history in model-bound context.
+    requiredRoles: [],
     mutating: false,
   },
   {

@@ -4,8 +4,10 @@ import Anthropic from "@anthropic-ai/sdk";
 import { buildSystemPrompt } from "../prompts/systemPrompt.js";
 import { getToolsForContext, type ChatTool } from "./chatTools.js";
 import { executeTool, type ToolContext } from "./chatToolExecutor.js";
+import { logAudit } from "./audit.js";
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";
+const AI_CHAT_ENABLED = process.env.AI_CHAT_ENABLED === "true";
 const MODEL = "claude-sonnet-4-20250514";
 const MAX_TOKENS = 1024;
 const CONVERSATION_TTL_MS = 30 * 60 * 1000; // 30 minutes
@@ -23,7 +25,7 @@ function getClient(): Anthropic {
 }
 
 export function isChatAvailable(): boolean {
-  return !!ANTHROPIC_API_KEY;
+  return AI_CHAT_ENABLED && !!ANTHROPIC_API_KEY;
 }
 
 // --- Conversation store ---
@@ -57,6 +59,26 @@ export interface ConversationContext {
 
 const conversations = new Map<string, Conversation>();
 
+function conversationMatchesContext(conv: Conversation, context: ConversationContext): boolean {
+  return conv.context.userId === context.userId && conv.context.schoolId === context.schoolId;
+}
+
+async function auditAiEvent(
+  context: ConversationContext,
+  action: string,
+  metadata: Record<string, unknown>
+): Promise<void> {
+  await logAudit({
+    schoolId: context.schoolId,
+    userId: context.userId,
+    userRole: context.userRole,
+    action,
+    entityType: "ai_chat",
+    entityId: typeof metadata.conversationId === "string" ? metadata.conversationId : undefined,
+    metadata,
+  });
+}
+
 // Cleanup expired conversations every 5 minutes
 setInterval(() => {
   const now = Date.now();
@@ -72,6 +94,9 @@ function getOrCreateConversation(
   context: ConversationContext
 ): Conversation {
   let conv = conversations.get(conversationId);
+  if (conv && !conversationMatchesContext(conv, context)) {
+    throw new Error("Conversation does not belong to the current user and school.");
+  }
   if (!conv) {
     conv = {
       messages: [],
@@ -125,6 +150,19 @@ export async function* sendMessage(
   userMessage: string,
   context: ConversationContext
 ): AsyncGenerator<SSEEvent> {
+  const existing = conversations.get(conversationId);
+  if (existing && !conversationMatchesContext(existing, context)) {
+    await auditAiEvent(context, "ai.conversation.denied", {
+      conversationId,
+      reason: "owner_mismatch",
+    });
+    yield {
+      type: "error",
+      content: "Conversation not found.",
+    };
+    return;
+  }
+
   const conv = getOrCreateConversation(conversationId, context);
   const { tools, toolMeta } = getToolsForContext(
     context.userRole,
@@ -233,6 +271,13 @@ export async function* sendMessage(
             args: tb.input,
             toolMeta: meta,
           };
+          await auditAiEvent(context, "ai.tool.requested", {
+            conversationId,
+            toolName: tb.name,
+            mutating: true,
+            argumentKeys: Object.keys(tb.input || {}),
+            confirmationRequired: true,
+          });
 
           yield {
             type: "confirmation",
@@ -248,10 +293,18 @@ export async function* sendMessage(
             schoolName: context.schoolName,
             userName: context.userName,
             userRole: context.userRole,
+            licensedProducts: context.licensedProducts,
             getTranscript: () => getTranscript(conv),
           };
 
           const result = await executeTool(tb.name, tb.input, toolCtx);
+          await auditAiEvent(context, "ai.tool.executed", {
+            conversationId,
+            toolName: tb.name,
+            mutating: false,
+            argumentKeys: Object.keys(tb.input || {}),
+            success: result.success,
+          });
 
           // Add tool result to conversation
           conv.messages.push({
@@ -311,6 +364,17 @@ export async function* confirmAction(
   context: ConversationContext
 ): AsyncGenerator<SSEEvent> {
   const conv = conversations.get(conversationId);
+  if (conv && !conversationMatchesContext(conv, context)) {
+    await auditAiEvent(context, "ai.conversation.denied", {
+      conversationId,
+      reason: "owner_mismatch",
+    });
+    yield {
+      type: "error",
+      content: "Conversation not found.",
+    };
+    return;
+  }
   if (!conv || !conv.pendingToolUse) {
     yield {
       type: "error",
@@ -323,6 +387,12 @@ export async function* confirmAction(
   conv.pendingToolUse = undefined;
 
   if (!confirmed) {
+    await auditAiEvent(context, "ai.tool.cancelled", {
+      conversationId,
+      toolName,
+      mutating: true,
+      argumentKeys: Object.keys(args || {}),
+    });
     // User cancelled — add tool result indicating cancellation
     conv.messages.push({
       role: "user",
@@ -357,10 +427,18 @@ export async function* confirmAction(
     schoolName: context.schoolName,
     userName: context.userName,
     userRole: context.userRole,
+    licensedProducts: context.licensedProducts,
     getTranscript: () => getTranscript(conv),
   };
 
   const result = await executeTool(toolName, args, toolCtx);
+  await auditAiEvent(context, "ai.tool.executed", {
+    conversationId,
+    toolName,
+    mutating: true,
+    argumentKeys: Object.keys(args || {}),
+    success: result.success,
+  });
 
   yield {
     type: "action_result",
@@ -423,6 +501,14 @@ export async function* confirmAction(
   yield { type: "done" };
 }
 
-export function deleteConversation(conversationId: string): boolean {
+export function deleteConversation(conversationId: string, context: ConversationContext): boolean {
+  const conv = conversations.get(conversationId);
+  if (conv && !conversationMatchesContext(conv, context)) {
+    auditAiEvent(context, "ai.conversation.denied", {
+      conversationId,
+      reason: "delete_owner_mismatch",
+    }).catch(() => {});
+    return false;
+  }
   return conversations.delete(conversationId);
 }

@@ -32,6 +32,24 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Collect SOC 2 evidence
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: >
+          node scripts/soc2/collect-ci-evidence.mjs
+          --job "Backend TypeScript and build"
+          --controls "SP-SEC-004"
+          --summary "Backend dependency audit, TypeScript check, and production build ran for this commit."
+
+      - name: Upload SOC 2 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: soc2-evidence-backend
+          path: soc2-evidence/
+          if-no-files-found: error
+
   cross-tenant-tests:
     name: Cross-tenant isolation tests
     runs-on: ubuntu-latest
@@ -72,6 +90,24 @@ jobs:
 
       - name: Cross-tenant isolation tests
         run: npm test
+
+      - name: Collect SOC 2 evidence
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: >
+          node scripts/soc2/collect-ci-evidence.mjs
+          --job "Cross-tenant isolation tests"
+          --controls "SP-SEC-002,SP-SEC-004"
+          --summary "Cross-tenant isolation regression suite ran against the application storage layer."
+
+      - name: Upload SOC 2 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: soc2-evidence-cross-tenant
+          path: soc2-evidence/
+          if-no-files-found: error
 
   rls-enabled-cross-tenant-tests:
     name: RLS-enabled cross-tenant tests
@@ -128,6 +164,24 @@ jobs:
       - name: RLS-enabled cross-tenant isolation tests
         run: node --import tsx --test tests/cross-tenant-isolation.test.ts
 
+      - name: Collect SOC 2 evidence
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: >
+          node scripts/soc2/collect-ci-evidence.mjs
+          --job "RLS-enabled cross-tenant tests"
+          --controls "SP-SEC-002,SP-SEC-004"
+          --summary "RLS-enabled cross-tenant tests ran with a non-superuser database role and tenant-table allowlist."
+
+      - name: Upload SOC 2 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: soc2-evidence-rls-enabled
+          path: soc2-evidence/
+          if-no-files-found: error
+
   frontend:
     name: Frontend (Vite Build)
     runs-on: ubuntu-latest
@@ -157,3 +211,21 @@ jobs:
       - name: Build frontend
         working-directory: schoolpilot-app
         run: npm run build
+
+      - name: Collect SOC 2 evidence
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: >
+          node scripts/soc2/collect-ci-evidence.mjs
+          --job "Frontend lint and build"
+          --controls "SP-SEC-004"
+          --summary "Frontend dependency audit, lint, and production Vite build ran for this commit."
+
+      - name: Upload SOC 2 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: soc2-evidence-frontend
+          path: soc2-evidence/
+          if-no-files-found: error

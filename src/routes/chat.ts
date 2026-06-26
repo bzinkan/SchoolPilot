@@ -25,8 +25,8 @@ const auth = [authenticate, requireSchoolContext] as const;
 
 async function buildContext(req: any, res: any): Promise<ConversationContext> {
   const user = req.authUser!;
-  const membership = res.locals.membership;
   const schoolId = res.locals.schoolId!;
+  const userRole = res.locals.membershipRole || req.session?.role || "teacher";
 
   // Look up active product licenses for this school
   const licenses = await getProductLicenses(schoolId);
@@ -37,9 +37,11 @@ async function buildContext(req: any, res: any): Promise<ConversationContext> {
   return {
     userId: user.id,
     schoolId,
-    schoolName: membership?.schoolName || "Unknown School",
-    userName: user.displayName || `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.email || "Unknown",
-    userRole: membership?.role || "teacher",
+    // SOC 2 privacy hardening: do not send school/user identity into the model
+    // context unless a future privacy review explicitly approves that data flow.
+    schoolName: "current school",
+    userName: "current user",
+    userRole,
     licensedProducts,
   };
 }
@@ -128,8 +130,15 @@ router.post("/confirm", ...auth, async (req, res) => {
 
 // DELETE /api/chat/conversations/:id — clear a conversation
 router.delete("/conversations/:id", ...auth, (req, res) => {
-  deleteConversation(req.params.id as string);
-  res.json({ ok: true });
+  buildContext(req, res)
+    .then((context) => {
+      const deleted = deleteConversation(req.params.id as string, context);
+      res.json({ ok: deleted });
+    })
+    .catch((err) => {
+      console.error("[Chat Route] Delete conversation error:", err);
+      res.status(500).json({ error: "Failed to delete conversation" });
+    });
 });
 
 // GET /api/chat/status — check if chat is available

@@ -89,6 +89,18 @@ export default function AITransparency() {
           </section>
 
           <section>
+            <h2 className="text-2xl font-semibold text-slate-900 mb-4">Optional AI Assistant</h2>
+            <p className="text-slate-700 leading-relaxed">
+              Schoolpilot may offer an optional AI assistant for authorized school staff. This assistant is
+              disabled by default and is enabled only after the school-facing data flow has been reviewed.
+              When enabled, user prompts and authorized tool results may be processed by Anthropic to answer
+              the request. Schoolpilot limits model-bound tool results by role, product license, and school,
+              excludes sensitive fields such as attendance reasons and individual browsing history, and logs
+              AI tool activity for audit review.
+            </p>
+          </section>
+
+          <section>
             <h2 className="text-2xl font-semibold text-slate-900 mb-4">Third-Party AI Provider</h2>
             <p className="text-slate-700 leading-relaxed">
               Our AI classification is powered by <strong>Anthropic</strong>, the maker of Claude.
