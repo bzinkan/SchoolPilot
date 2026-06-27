@@ -13,6 +13,7 @@ exports, or generated evidence packets to this repository.
 | Tenant isolation and RLS evidence | SP-SEC-002 | Automated draft plus human approved | GitHub Actions artifact `soc2-evidence-tenant-isolation` and `SchoolPilot-SOC2-Evidence/tenant-isolation/` |
 | Security event review | SP-SEC-003 | Automated plus human approved | `SchoolPilot-SOC2-Evidence/security-events/` |
 | Incident evidence and decisions | SP-SEC-003 | Automated draft plus human approved | GitHub Actions artifact `soc2-evidence-incidents` and `SchoolPilot-SOC2-Evidence/incidents/` |
+| SOC2-001 private incident drafts | SP-SEC-003 | Private draft templates plus founder completion | `SchoolPilot-SOC2-Evidence/incidents/credential-rotation/`, `SchoolPilot-SOC2-Evidence/incidents/log-review/`, `SchoolPilot-SOC2-Evidence/incidents/exposure-assessment/` |
 | Founder-only training attestation | SP-SEC-003 | Automated draft plus founder approval | `SchoolPilot-SOC2-Evidence/training/` |
 | Shadow deployment evidence | SP-SEC-004 | Automated | GitHub Actions artifact `soc2-evidence-deployment` and `SchoolPilot-SOC2-Evidence/deployments/` |
 | Deployment approval | SP-SEC-004 | Automated plus human approved | `SchoolPilot-SOC2-Evidence/deployments/` |

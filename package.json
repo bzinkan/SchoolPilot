@@ -18,6 +18,7 @@
     "check": "tsc --noEmit",
     "soc2:check": "node scripts/soc2/check-governance-evidence.mjs",
     "soc2:incident-evidence": "node scripts/soc2/collect-incident-evidence.mjs",
+    "soc2:incident-private-evidence-kit": "node scripts/soc2/incident-private-evidence-kit.mjs",
     "soc2:tenant-isolation-evidence": "node scripts/soc2/collect-tenant-isolation-evidence.mjs",
     "soc2:deployment-evidence": "node scripts/soc2/collect-deployment-evidence.mjs",
     "soc2:private-evidence-readiness": "node scripts/soc2/private-evidence-readiness.mjs",

@@ -4,7 +4,7 @@ Priority values: P0 blocks observation, P1 required before observation, P2 impro
 
 | ID | Priority | Area | Gap | Owner | Target | Evidence Needed | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| SOC2-001 | P0 | Incident response | Historical credential exposure needs formal incident record and rotation evidence. | Security & Privacy Officer | Before observation | Incident evidence packet, rotation records, log review, closure decision, notification decision | In progress |
+| SOC2-001 | P0 | Incident response | Historical credential exposure investigated; Anthropic API credential rotated same day; no suspicious access or customer/student exposure found. | Security & Privacy Officer | Completed before observation | Private SOC2-001 evidence kit, credential rotation record, log review, exposure assessment, approved closure decision, approved no-notification decision | Closed |
 | SOC2-002 | P0 | AI/privacy | AI assistant claims and implementation do not fully align. | Engineering | Before observation | Data-flow review, updated public docs, audit events, tests | In progress |
 | SOC2-003 | P0 | Privileged access | In-app privileged MFA and token revocation are deferred; access reviews and risk acceptance need evidence in the meantime. | Engineering | Before observation | MFA export when implemented, auth tests, access review, risk acceptance | Open |
 | SOC2-004 | P0 | Deployment | Production deploys need OIDC, protected approval, artifact digest, and operating deployment evidence. Shadow deployment evidence generation exists first. | Engineering | Before observation | Workflow run, shadow deployment packet, approval, digest, deployment record | In progress |

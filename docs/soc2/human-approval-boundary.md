@@ -62,3 +62,9 @@ actionable, but it is still not an approval. A final approval or rejection exist
 only when an authorized human records `/approve APPROVAL-ID rationale` or
 `/reject APPROVAL-ID rationale`, and GitHub Actions writes that decision to the
 private evidence repository.
+
+For `SOC2-001`, the incident private evidence kit may create draft credential
+rotation, log review, and exposure assessment records. Drafts are not incident
+closure, notification decisions, or evidence approval. Those records must be
+completed and marked `ready_for_approval` before the approval queue can ask for
+human closure or notification decisions.
