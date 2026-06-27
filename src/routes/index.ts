@@ -25,6 +25,7 @@ import commandsRoutes from "./classpilot/commands.js";
 import coverageRoutes from "./classpilot/coverage.js";
 import superAdminRoutes from "./admin/superAdmin.js";
 import superAdminMonitoringRoutes from "./admin/monitoring.js";
+import superAdminSoc2Routes from "./admin/soc2.js";
 import schoolInquiryRoutes from "./admin/schoolInquiries.js";
 import billingRoutes from "./admin/billing.js";
 import attendanceRoutes from "./admin/attendance.js";
@@ -366,6 +367,7 @@ router.use("/classpilot", competitiveRoutes);
 
 // Admin - Super admin panel
 router.use("/admin/monitoring", superAdminMonitoringRoutes);
+router.use("/admin/soc2", superAdminSoc2Routes);
 router.use("/admin", superAdminRoutes);
 router.use("/admin/inquiries", schoolInquiryRoutes);
 router.use("/admin/school-inquiries", schoolInquiryRoutes);
