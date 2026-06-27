@@ -173,6 +173,36 @@ function writeIncidentEvidence(root: string) {
   write(root, "soc2-evidence/incidents/soc2-001-historical-credential-exposure-incident-evidence.md", "# Incident evidence\n");
 }
 
+function writeTenantIsolationEvidence(root: string) {
+  write(
+    root,
+    "soc2-evidence/tenant-isolation/tenant-isolation-evidence.json",
+    `${JSON.stringify({
+      evidenceId: "TENANT-ISOLATION-EVIDENCE",
+      controls: ["SP-SEC-002"],
+      remediationItems: ["SOC2-005"],
+      appImpact: "No user-facing behavior changed",
+      ci: {
+        evidenceArtifacts: {
+          crossTenantTests: "soc2-evidence-cross-tenant",
+          rlsEnabledTests: "soc2-evidence-rls-enabled",
+        },
+      },
+      rls: {
+        productionStatusExport: "pending_private_export",
+        dbGrantsAndPoliciesExport: "pending_private_export",
+        privateEvidenceLocation: "SchoolPilot-SOC2-Evidence/tenant-isolation/",
+      },
+      humanReview: {
+        decisionType: "tenant_isolation_review",
+        status: "pending_human_approval",
+        approverRole: "Engineering",
+      },
+    }, null, 2)}\n`,
+  );
+  write(root, "soc2-evidence/tenant-isolation/tenant-isolation-evidence.md", "# Tenant isolation evidence\n");
+}
+
 describe("SOC 2 approval queue", () => {
   it("creates JSON and Markdown queue packets with pending approvals", () => {
     const root = tempRoot();
@@ -271,6 +301,29 @@ describe("SOC 2 approval queue", () => {
     assert.match(JSON.stringify(notification?.evidencePointers), /log-review/);
   });
 
+  it("includes tenant isolation review approval when local tenant evidence exists", () => {
+    const root = tempRoot();
+    writeSoc2Docs(root);
+    writeTenantIsolationEvidence(root);
+
+    const queue = buildApprovalQueue({
+      rootDir: root,
+      evidenceDir: path.join(root, "soc2-evidence"),
+      now: new Date("2026-06-26T12:00:00Z"),
+    });
+
+    const review = queue.items.find(
+      (item) => item.approvalId === "APPROVAL-SP-SEC-002-TENANT-ISOLATION-EVIDENCE-REVIEW",
+    );
+
+    assert.ok(review);
+    assert.equal(review?.decisionType, "tenant_isolation_review");
+    assert.equal(review?.status, "pending_human_approval");
+    assert.deepEqual(review?.allowedDecisions, ["approved", "not_approved"]);
+    assert.match(JSON.stringify(review?.evidencePointers), /soc2-evidence-rls-enabled/);
+    assert.match(JSON.stringify(review?.evidencePointers), /pending_private_export/);
+  });
+
   it("uses evidence pointers without copying private document contents", () => {
     const root = tempRoot();
     writeSoc2Docs(root);
@@ -311,6 +364,37 @@ describe("SOC 2 approval queue", () => {
     assert.equal(record.appImpact, "No user-facing behavior changed");
     assert.ok(record.evidencePointers.length > 0);
     assert.match(jsonPath, /risk-acceptances/);
+    assert.ok(fs.existsSync(jsonPath));
+    assert.ok(fs.existsSync(mdPath));
+  });
+
+  it("records tenant isolation review decisions to the tenant-isolation private folder", () => {
+    const root = tempRoot();
+    writeSoc2Docs(root);
+    writeTenantIsolationEvidence(root);
+    const queue = buildApprovalQueue({
+      rootDir: root,
+      evidenceDir: path.join(root, "soc2-evidence"),
+      now: new Date("2026-06-26T12:00:00Z"),
+    });
+    const { jsonPath: queueFile } = writeApprovalQueue(queue, path.join(root, "soc2-evidence", "approvals"));
+    const privateEvidenceDir = path.join(root, "SchoolPilot-SOC2-Evidence");
+    fs.mkdirSync(privateEvidenceDir, { recursive: true });
+
+    const { record, jsonPath, mdPath } = recordApprovalDecision({
+      rootDir: root,
+      queueFile,
+      privateEvidenceDir,
+      approvalId: "APPROVAL-SP-SEC-002-TENANT-ISOLATION-EVIDENCE-REVIEW",
+      decision: "not_approved",
+      approverName: "Brian Zinkan",
+      rationale: "Production RLS export evidence is still pending.",
+      now: new Date("2026-06-26T13:00:00Z"),
+    });
+
+    assert.equal(record.decision, "not_approved");
+    assert.equal(record.decisionType, "tenant_isolation_review");
+    assert.match(jsonPath, /tenant-isolation/);
     assert.ok(fs.existsSync(jsonPath));
     assert.ok(fs.existsSync(mdPath));
   });

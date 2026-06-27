@@ -9,6 +9,7 @@ exports, or generated evidence packets to this repository.
 | CI/build/test packets | SP-SEC-002, SP-SEC-004, SP-CONF-002 | Automated | GitHub Actions artifacts and `SchoolPilot-SOC2-Evidence/ci/` |
 | Approval queue | Human-approved evidence items | Automated draft plus founder approval | GitHub issue `SOC 2 approvals pending`, GitHub Actions artifact `soc2-approval-queue`, and `SchoolPilot-SOC2-Evidence/approvals/` |
 | Privileged access review | SP-SEC-001 | Human approved | `SchoolPilot-SOC2-Evidence/access-reviews/` |
+| Tenant isolation and RLS evidence | SP-SEC-002 | Automated draft plus human approved | GitHub Actions artifact `soc2-evidence-tenant-isolation` and `SchoolPilot-SOC2-Evidence/tenant-isolation/` |
 | Security event review | SP-SEC-003 | Automated plus human approved | `SchoolPilot-SOC2-Evidence/security-events/` |
 | Incident evidence and decisions | SP-SEC-003 | Automated draft plus human approved | GitHub Actions artifact `soc2-evidence-incidents` and `SchoolPilot-SOC2-Evidence/incidents/` |
 | Founder-only training attestation | SP-SEC-003 | Automated draft plus founder approval | `SchoolPilot-SOC2-Evidence/training/` |
@@ -26,3 +27,5 @@ Shadow deployment packets are written to `soc2-evidence/deployments/` and must
 not include AWS credentials, production secrets, or customer data.
 Incident evidence packets are written to `soc2-evidence/incidents/` and must
 contain only non-sensitive metadata and pointers to private evidence.
+Tenant isolation packets are written to `soc2-evidence/tenant-isolation/` and
+must not include production DB exports, grants, policies, or customer data.

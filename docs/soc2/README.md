@@ -85,6 +85,18 @@ Incident evidence is written to `soc2-evidence/incidents/` and uploaded in CI as
 `SOC2-001`; private incident details, logs, credentials, customer data, and
 student data stay in `SchoolPilot-SOC2-Evidence/incidents/`.
 
+Generate non-sensitive tenant isolation/RLS evidence locally:
+
+```bash
+npm run soc2:tenant-isolation-evidence
+```
+
+Tenant isolation evidence is written to `soc2-evidence/tenant-isolation/` and
+uploaded in CI as `soc2-evidence-tenant-isolation`. It records RLS policy/test
+source hashes, CI artifact references, and private production export pointers
+for `SOC2-005`; production DB exports, grants, policies, and customer data stay
+in `SchoolPilot-SOC2-Evidence/tenant-isolation/`.
+
 Generate the pending approval queue locally:
 
 ```bash
@@ -93,8 +105,8 @@ npm run soc2:approval-queue
 
 Approval queue drafts are written to `soc2-evidence/approvals/` and uploaded in
 CI as `soc2-approval-queue`. The queue gathers human-owned decisions from the
-governance tracker, risk acceptance drafts, local incident evidence, and local
-deployment evidence.
+governance tracker, risk acceptance drafts, local incident evidence, local tenant
+isolation evidence, and local deployment evidence.
 
 CI on `main` also opens or updates the GitHub issue `SOC 2 approvals pending`.
 When approvals are pending, the workflow assigns the issue to the notification
