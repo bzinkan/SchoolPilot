@@ -8,6 +8,8 @@ const APP_IMPACT = "No user-facing behavior changed";
 const PRIVATE_REPO_NAME = "SchoolPilot-SOC2-Evidence";
 const SOC2_001_INCIDENT_ID = "SOC2-001-HISTORICAL-CREDENTIAL-EXPOSURE";
 const SOC2_002_AI_EVIDENCE_TYPE = "ai_data_flow_review";
+const SOC2_003_PRIVILEGED_ACCESS_REVIEW_TYPE = "privileged_access_review";
+const SOC2_003_USER_ROLE_EXPORT_TYPE = "user_role_export";
 const READY_STATUS = "ready_for_approval";
 const ALLOWED_DECISIONS = new Set(["approved", "not_approved"]);
 
@@ -202,6 +204,38 @@ function summarizeReadyAiReviewEvidence(privateEvidenceDir, label, location) {
   };
 }
 
+function summarizeReadyControlEvidence(privateEvidenceDir, label, location, { controlId, remediationItem, evidenceType }) {
+  const relativePaths = evidenceLocationMatches(location);
+  const relativePath = relativePaths[0] || "";
+  const fullPath = relativePath ? path.join(privateEvidenceDir, relativePath) : "";
+  const files = fullPath ? meaningfulEvidenceFiles(fullPath) : [];
+  const jsonRecords = files
+    .filter((file) => file.endsWith(".json"))
+    .map((file) => ({
+      file,
+      record: parseJsonFile(file, null),
+    }))
+    .filter(({ record }) => record?.controlId === controlId
+      && record?.remediationItem === remediationItem
+      && record?.evidenceType === evidenceType);
+  const readyRecords = jsonRecords.filter(({ record }) => record.status === READY_STATUS);
+  const latestStatus = jsonRecords.at(-1)?.record?.status || (files.length ? "present_but_not_ready" : "missing");
+
+  return {
+    label,
+    location,
+    relativePath: relativePath ? publicPrivatePath(relativePath) : "not_available",
+    present: readyRecords.length > 0,
+    readinessStatus: readyRecords.length > 0 ? READY_STATUS : latestStatus,
+    fileCount: files.length,
+    readyFileCount: readyRecords.length,
+    fileHashes: files.map((file) => ({
+      path: publicPathForFile(privateEvidenceDir, file),
+      sha256: sha256File(file),
+    })),
+  };
+}
+
 function buildEvidenceCheck({
   checkId,
   approvalId,
@@ -241,6 +275,7 @@ function buildGovernanceEvidenceChecks(rootDir, privateEvidenceDir) {
       const decisionType = decisionTypeForEvidence(evidence.name, evidence.privateEvidenceLocation);
       if (decisionType === "risk_acceptance") continue;
       if (decisionType === "ai_data_flow_review") continue;
+      if (control.id === "SP-SEC-001" && decisionType === "privileged_access_review") continue;
 
       const approvalId = makeApprovalId([control.id, evidence.name]);
       checks.push(buildEvidenceCheck({
@@ -262,6 +297,41 @@ function buildGovernanceEvidenceChecks(rootDir, privateEvidenceDir) {
   }
 
   return checks;
+}
+
+function buildPrivilegedAccessEvidenceChecks(privateEvidenceDir) {
+  return [
+    buildEvidenceCheck({
+      checkId: "SOC2-003-PRIVILEGED-ACCESS-REVIEW-PRIVATE-EVIDENCE",
+      approvalId: "APPROVAL-SP-SEC-001-QUARTERLY-PRIVILEGED-ACCESS-REVIEW-PACKET",
+      controlId: "SP-SEC-001",
+      decisionType: "privileged_access_review",
+      sourceId: "SP-SEC-001:Quarterly privileged access review packet",
+      owner: "Security & Privacy Officer",
+      requiredEvidence: [
+        summarizeReadyControlEvidence(
+          privateEvidenceDir,
+          "Privileged access review",
+          "SchoolPilot-SOC2-Evidence/access-reviews/",
+          {
+            controlId: "SP-SEC-001",
+            remediationItem: "SOC2-003",
+            evidenceType: SOC2_003_PRIVILEGED_ACCESS_REVIEW_TYPE,
+          },
+        ),
+        summarizeReadyControlEvidence(
+          privateEvidenceDir,
+          "User and role export",
+          "SchoolPilot-SOC2-Evidence/access-reviews/exports/",
+          {
+            controlId: "SP-SEC-001",
+            remediationItem: "SOC2-003",
+            evidenceType: SOC2_003_USER_ROLE_EXPORT_TYPE,
+          },
+        ),
+      ],
+    }),
+  ];
 }
 
 function buildAiEvidenceChecks(privateEvidenceDir) {
@@ -479,6 +549,7 @@ export function buildPrivateEvidenceReadiness({
     decisions: latestDecisionRecords(allDecisionRecords),
     evidenceChecks: [
       ...buildGovernanceEvidenceChecks(resolvedRoot, resolvedPrivateDir),
+      ...buildPrivilegedAccessEvidenceChecks(resolvedPrivateDir),
       ...buildAiEvidenceChecks(resolvedPrivateDir),
       ...buildIncidentEvidenceChecks(resolvedPrivateDir),
       ...buildTenantIsolationEvidenceChecks(resolvedPrivateDir),

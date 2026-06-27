@@ -32,6 +32,18 @@ function writeGovernance(root: string) {
       humanApprovalBoundary: "Automation drafts records, humans approve decisions.",
       controls: [
         {
+          id: "SP-SEC-001",
+          owner: "Security & Privacy Officer",
+          evidence: [
+            {
+              name: "Quarterly privileged access review packet",
+              automation: "human_approved",
+              privateEvidenceLocation: "SchoolPilot-SOC2-Evidence/access-reviews/",
+              humanApproverRole: "Founder",
+            },
+          ],
+        },
+        {
           id: "SP-SEC-005",
           owner: "Security & Privacy Officer",
           evidence: [
@@ -76,6 +88,23 @@ function writeAiReviewRecord(root: string, status: string) {
       evidenceType: "ai_data_flow_review",
       status,
       privateReviewNotes: "PRIVATE_AI_REVIEW_BODY_SHOULD_NOT_APPEAR",
+    }, null, 2)}\n`,
+  );
+}
+
+function writePrivilegedAccessRecord(root: string, relativePath: string, evidenceType: string, status: string) {
+  write(
+    root,
+    `SchoolPilot-SOC2-Evidence/${relativePath}`,
+    `${JSON.stringify({
+      evidenceId: evidenceType === "privileged_access_review"
+        ? "SOC2-003-PRIVILEGED-ACCESS-REVIEW"
+        : "SOC2-003-USER-ROLE-EXPORT",
+      controlId: "SP-SEC-001",
+      remediationItem: "SOC2-003",
+      evidenceType,
+      status,
+      privateDetails: "PRIVATE_USER_EXPORT_BODY_SHOULD_NOT_APPEAR",
     }, null, 2)}\n`,
   );
 }
@@ -266,6 +295,73 @@ describe("SOC 2 private evidence readiness", () => {
     assert.equal(aiReview?.requiredEvidence[0].readinessStatus, "ready_for_approval");
     assert.match(aiReview?.requiredEvidence[0].fileHashes[0].sha256 || "", /^[a-f0-9]{64}$/);
     assert.doesNotMatch(JSON.stringify(packet), /PRIVATE_AI_REVIEW_BODY_SHOULD_NOT_APPEAR/);
+  });
+
+  it("does not treat .gitkeep or draft SOC2-003 privileged access files as ready", () => {
+    const root = tempRoot();
+    writeGovernance(root);
+    write(root, "SchoolPilot-SOC2-Evidence/access-reviews/.gitkeep", "");
+    write(root, "SchoolPilot-SOC2-Evidence/access-reviews/exports/.gitkeep", "");
+    writePrivilegedAccessRecord(
+      root,
+      "access-reviews/soc2-003-privileged-access-review.json",
+      "privileged_access_review",
+      "draft_pending_founder_input",
+    );
+    writePrivilegedAccessRecord(
+      root,
+      "access-reviews/exports/soc2-003-user-role-export-template.json",
+      "user_role_export",
+      "draft_pending_founder_input",
+    );
+
+    const packet = buildPrivateEvidenceReadiness({
+      rootDir: root,
+      privateEvidenceDir: privateDir(root),
+      now: new Date("2026-06-27T00:00:00Z"),
+    });
+    const accessReview = packet.evidenceChecks.find(
+      (check) => check.approvalId === "APPROVAL-SP-SEC-001-QUARTERLY-PRIVILEGED-ACCESS-REVIEW-PACKET",
+    );
+
+    assert.equal(accessReview?.status, "missing");
+    assert.deepEqual(accessReview?.missingEvidence, ["Privileged access review", "User and role export"]);
+    assert.ok(accessReview?.requiredEvidence.every((item) => item.readyFileCount === 0));
+    assert.ok(accessReview?.requiredEvidence.every((item) => item.readinessStatus === "draft_pending_founder_input"));
+    assert.doesNotMatch(JSON.stringify(packet), /PRIVATE_USER_EXPORT_BODY_SHOULD_NOT_APPEAR/);
+  });
+
+  it("marks SOC2-003 privileged access review ready only when review and export are ready", () => {
+    const root = tempRoot();
+    writeGovernance(root);
+    writePrivilegedAccessRecord(
+      root,
+      "access-reviews/soc2-003-privileged-access-review.json",
+      "privileged_access_review",
+      "ready_for_approval",
+    );
+    writePrivilegedAccessRecord(
+      root,
+      "access-reviews/exports/soc2-003-user-role-export.json",
+      "user_role_export",
+      "ready_for_approval",
+    );
+
+    const packet = buildPrivateEvidenceReadiness({
+      rootDir: root,
+      privateEvidenceDir: privateDir(root),
+      now: new Date("2026-06-27T00:00:00Z"),
+    });
+    const accessReview = packet.evidenceChecks.find(
+      (check) => check.approvalId === "APPROVAL-SP-SEC-001-QUARTERLY-PRIVILEGED-ACCESS-REVIEW-PACKET",
+    );
+
+    assert.equal(accessReview?.status, "ready");
+    assert.deepEqual(accessReview?.missingEvidence, []);
+    assert.ok(accessReview?.requiredEvidence.every((item) => item.readyFileCount === 1));
+    assert.ok(accessReview?.requiredEvidence.every((item) => item.readinessStatus === "ready_for_approval"));
+    assert.match(accessReview?.requiredEvidence[0].fileHashes[0].sha256 || "", /^[a-f0-9]{64}$/);
+    assert.doesNotMatch(JSON.stringify(packet), /PRIVATE_USER_EXPORT_BODY_SHOULD_NOT_APPEAR/);
   });
 
   it("writes JSON and Markdown readiness packets", () => {

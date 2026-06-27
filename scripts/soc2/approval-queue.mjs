@@ -12,6 +12,8 @@ const APP_IMPACT = "No user-facing behavior changed";
 const PENDING_STATUS = "pending_human_approval";
 const ALLOWED_DECISIONS = ["approved", "not_approved"];
 const ALLOWED_RECOMMENDATIONS = new Set(["approved", "not_approved", "manual_review"]);
+const CANONICAL_SOC2_003_MFA_APPROVAL_ID = "APPROVAL-SP-SEC-001-PRIVILEGED-MFA-ROLLOUT-DECISION";
+const GENERIC_SOC2_003_RISK_APPROVAL_ID = "APPROVAL-RA-SOC2-003-RISK-ACCEPTANCE";
 
 const CONTROL_BY_REMEDIATION_ID = {
   "SOC2-001": "SP-SEC-003",
@@ -469,6 +471,12 @@ function dedupeItems(items) {
   return [...byId.values()].sort((a, b) => a.approvalId.localeCompare(b.approvalId));
 }
 
+function suppressCanonicalDuplicateRiskItems(items) {
+  const hasCanonicalMfaDecision = items.some((item) => item.approvalId === CANONICAL_SOC2_003_MFA_APPROVAL_ID);
+  if (!hasCanonicalMfaDecision) return items;
+  return items.filter((item) => item.approvalId !== GENERIC_SOC2_003_RISK_APPROVAL_ID);
+}
+
 export function buildApprovalQueue({ rootDir, evidenceDir, privateReadinessFile = "", env = process.env, now = new Date() } = {}) {
   const resolvedRoot = rootDir || fileURLToPath(new URL("../..", import.meta.url));
   const resolvedEvidenceDir = evidenceDir || path.join(resolvedRoot, process.env.SOC2_EVIDENCE_DIR || "soc2-evidence");
@@ -478,13 +486,13 @@ export function buildApprovalQueue({ rootDir, evidenceDir, privateReadinessFile 
   const remediationRows = parseMarkdownTable(readText(resolvedRoot, "docs/soc2/remediation-register.md"));
   const privateReadiness = loadPrivateReadiness(resolvedRoot, privateReadinessFile);
 
-  const draftItems = dedupeItems([
+  const draftItems = suppressCanonicalDuplicateRiskItems(dedupeItems([
     ...buildGovernanceApprovalItems(governance, generatedAt),
     ...buildRiskApprovalItems(remediationRows, riskPolicy, generatedAt, now),
     ...buildIncidentApprovalItems(resolvedRoot, resolvedEvidenceDir, generatedAt),
     ...buildTenantIsolationApprovalItems(resolvedRoot, resolvedEvidenceDir, generatedAt),
     ...buildDeploymentApprovalItems(resolvedRoot, resolvedEvidenceDir, generatedAt),
-  ]);
+  ]));
   const { items, readinessGaps, suppressedApprovals } = applyPrivateReadiness(draftItems, privateReadiness, now);
 
   const errors = validateApprovalQueueItems(items);

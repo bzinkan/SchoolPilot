@@ -8,11 +8,16 @@
     {
       "id": "SP-SEC-001",
       "owner": "Security & Privacy Officer",
-      "status": "Planned",
+      "status": "Implementing",
       "frequency": "Continuous, quarterly review",
       "nextReviewDue": "2026-09-30",
       "automationImpact": "No user-facing MFA or login changes are enabled by this governance tracker.",
       "evidence": [
+        {
+          "name": "Privileged access evidence packet",
+          "automation": "automated",
+          "privateEvidenceLocation": "GitHub Actions artifact: soc2-evidence-privileged-access and ignored soc2-evidence/privileged-access/"
+        },
         {
           "name": "Quarterly privileged access review packet",
           "automation": "human_approved",

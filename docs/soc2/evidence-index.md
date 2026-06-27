@@ -9,7 +9,9 @@ exports, or generated evidence packets to this repository.
 | CI/build/test packets | SP-SEC-002, SP-SEC-004, SP-CONF-002 | Automated | GitHub Actions artifacts and `SchoolPilot-SOC2-Evidence/ci/` |
 | Private evidence readiness metadata | Approval queue prerequisites | Automated metadata only | GitHub Actions artifact `soc2-private-evidence-readiness` and ignored `soc2-evidence/private-readiness/` |
 | Approval queue | Human-approved evidence items | Automated draft plus founder approval | GitHub issue `SOC 2 approvals pending`, GitHub Actions artifact `soc2-approval-queue`, and `SchoolPilot-SOC2-Evidence/approvals/` |
-| Privileged access review | SP-SEC-001 | Human approved | `SchoolPilot-SOC2-Evidence/access-reviews/` |
+| Privileged access evidence packet | SP-SEC-001 | Automated | GitHub Actions artifact `soc2-evidence-privileged-access` and ignored `soc2-evidence/privileged-access/` |
+| Privileged access review | SP-SEC-001 | Private draft plus human approved | `SchoolPilot-SOC2-Evidence/access-reviews/` |
+| Privileged user/role export | SP-SEC-001 | Private manual or explicit database export | `SchoolPilot-SOC2-Evidence/access-reviews/exports/` |
 | Tenant isolation and RLS evidence | SP-SEC-002 | Automated draft plus human approved | GitHub Actions artifact `soc2-evidence-tenant-isolation` and `SchoolPilot-SOC2-Evidence/tenant-isolation/` |
 | Security event review | SP-SEC-003 | Automated plus human approved | `SchoolPilot-SOC2-Evidence/security-events/` |
 | Incident evidence and decisions | SP-SEC-003 | Automated draft plus human approved | GitHub Actions artifact `soc2-evidence-incidents` and `SchoolPilot-SOC2-Evidence/incidents/` |
@@ -35,3 +37,6 @@ must not include production DB exports, grants, policies, or customer data.
 AI/privacy evidence packets are written to `soc2-evidence/ai-privacy/` and
 must not include prompt bodies, API keys, raw logs, transcripts, customer
 records, or student records.
+Privileged access evidence packets are written to
+`soc2-evidence/privileged-access/` and must not include password hashes, session
+contents, raw user exports, secrets, customer records, or student records.
