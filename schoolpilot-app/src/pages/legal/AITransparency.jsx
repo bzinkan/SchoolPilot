@@ -28,23 +28,25 @@ export default function AITransparency() {
       {/* Content */}
       <div className="container mx-auto px-4 py-12 max-w-4xl">
         <h1 className="text-4xl font-bold text-slate-900 mb-8">AI Transparency</h1>
-        <p className="text-slate-600 mb-8">Last updated: April 2, 2026</p>
+        <p className="text-slate-600 mb-8">Last updated: June 27, 2026</p>
 
         <div className="prose prose-slate max-w-none space-y-8">
           <section>
             <h2 className="text-2xl font-semibold text-slate-900 mb-4">AI-Powered Content Classification</h2>
             <p className="text-slate-700 leading-relaxed">
-              SchoolPilot uses <strong>Anthropic's Claude API</strong> to power our AI content classification
-              system within ClassPilot, our classroom monitoring product. This feature helps keep students safe
-              online by analyzing website content in real time.
+              SchoolPilot uses <strong>Anthropic's Claude API</strong> to support student-safety
+              classification in ClassPilot and, when a school enables MailPilot, email safety
+              classification. These features help schools identify unsafe content while keeping
+              AI use limited to the specific safety workflows the school has enabled.
             </p>
           </section>
 
           <section>
             <h2 className="text-2xl font-semibold text-slate-900 mb-4">How It Works</h2>
             <p className="text-slate-700 leading-relaxed mb-4">
-              When a student visits a website on a monitored Chromebook during a class session, the URL is sent to
-              Anthropic's Claude API for classification. The AI determines whether the content is:
+              When a student visits a website on a monitored Chromebook during a class session, SchoolPilot
+              may send the URL and page title to Anthropic's Claude API for classification. The AI determines
+              whether the content is:
             </p>
             <ul className="list-disc pl-6 space-y-2 text-slate-700">
               <li><strong>Educational</strong> — Content related to learning, research, or school work</li>
@@ -56,10 +58,10 @@ export default function AITransparency() {
           <section>
             <h2 className="text-2xl font-semibold text-slate-900 mb-4">What Data Is Sent</h2>
             <p className="text-slate-700 leading-relaxed">
-              Only the <strong>URL and page title</strong> of the website being visited are sent to the AI service
-              for classification. No student names, personal information, browsing history, or any other
-              personally identifiable information (PII) is transmitted to Anthropic. The classification is
-              performed on a per-URL basis and results are not stored by the AI provider.
+              For ClassPilot website classification, only the <strong>URL and page title</strong> of the
+              website being visited are sent to the AI service. No student names, personal information,
+              full browsing history, or other personally identifiable information (PII) is included in that
+              URL-classification request.
             </p>
           </section>
 
@@ -89,6 +91,18 @@ export default function AITransparency() {
           </section>
 
           <section>
+            <h2 className="text-2xl font-semibold text-slate-900 mb-4">MailPilot Email Safety Classification</h2>
+            <p className="text-slate-700 leading-relaxed">
+              If a school separately enables MailPilot email monitoring, SchoolPilot may use Anthropic's
+              Claude API to classify student Gmail messages for safety concerns such as self-harm, violence,
+              sexual content, drugs, or bullying. MailPilot is not enabled by default; it requires school
+              authorization and operational setup. In that workflow, message text may be processed for
+              safety classification, and SchoolPilot stores the resulting alert, severity, confidence, and
+              review status for school safety staff.
+            </p>
+          </section>
+
+          <section>
             <h2 className="text-2xl font-semibold text-slate-900 mb-4">Optional AI Assistant</h2>
             <p className="text-slate-700 leading-relaxed">
               Schoolpilot may offer an optional AI assistant for authorized school staff. This assistant is
@@ -103,12 +117,19 @@ export default function AITransparency() {
           <section>
             <h2 className="text-2xl font-semibold text-slate-900 mb-4">Third-Party AI Provider</h2>
             <p className="text-slate-700 leading-relaxed">
-              Our AI classification is powered by <strong>Anthropic</strong>, the maker of Claude.
+              Our AI classification workflows are powered by <strong>Anthropic</strong>, the maker of Claude.
               Anthropic's usage policies and privacy practices can be found at{" "}
               <a href="https://www.anthropic.com/policies" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
                 anthropic.com/policies
-              </a>.
-              SchoolPilot uses Anthropic's API, which does not use customer data for model training.
+              </a>. SchoolPilot uses Anthropic's API. Anthropic's{" "}
+              <a href="https://www.anthropic.com/legal/commercial-terms" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
+                Commercial Terms
+              </a>{" "}
+              and{" "}
+              <a href="https://privacy.claude.com/en/articles/7996868-is-my-data-used-for-model-training" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
+                Privacy Center
+              </a>{" "}
+              explain Anthropic's training-use limits for customer API inputs and outputs.
             </p>
           </section>
 
