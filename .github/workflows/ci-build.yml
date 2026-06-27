@@ -269,8 +269,8 @@ jobs:
           path: soc2-evidence/deployments/
           if-no-files-found: error
 
-  soc2-approval-queue:
-    name: SOC 2 approval queue
+  soc2-incident-evidence:
+    name: SOC 2 incident evidence
     runs-on: ubuntu-latest
     needs:
       - backend
@@ -286,11 +286,47 @@ jobs:
         with:
           node-version: 22
 
+      - name: Generate incident response evidence
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: npm run soc2:incident-evidence
+
+      - name: Upload SOC 2 incident evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: soc2-evidence-incidents
+          path: soc2-evidence/incidents/
+          if-no-files-found: error
+
+  soc2-approval-queue:
+    name: SOC 2 approval queue
+    runs-on: ubuntu-latest
+    needs:
+      - backend
+      - cross-tenant-tests
+      - rls-enabled-cross-tenant-tests
+      - frontend
+      - soc2-incident-evidence
+    if: always()
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
       - name: Generate local deployment evidence for approval pointers
         env:
           JOB_STATUS: ${{ job.status }}
           CI_JOB_RESULTS: ${{ toJSON(needs) }}
         run: npm run soc2:deployment-evidence
+
+      - name: Generate local incident evidence for approval pointers
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: npm run soc2:incident-evidence
 
       - name: Generate SOC 2 approval queue
         run: npm run soc2:approval-queue

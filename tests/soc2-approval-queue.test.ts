@@ -126,6 +126,53 @@ function writeDeploymentEvidence(root: string) {
   write(root, "soc2-evidence/deployments/2026-06-26-shadow-deployment-evidence.md", "# Deployment evidence\n");
 }
 
+function writeIncidentEvidence(root: string) {
+  write(
+    root,
+    "soc2-evidence/incidents/soc2-001-historical-credential-exposure-incident-evidence.json",
+    `${JSON.stringify({
+      evidenceId: "SOC2-001-HISTORICAL-CREDENTIAL-EXPOSURE",
+      controls: ["SP-SEC-003"],
+      remediationItems: ["SOC2-001"],
+      appImpact: "No user-facing behavior changed",
+      incident: {
+        incidentId: "SOC2-001-HISTORICAL-CREDENTIAL-EXPOSURE",
+        privateEvidenceLocation: "SchoolPilot-SOC2-Evidence/incidents/",
+      },
+      evidencePointers: {
+        credentialRotation: [
+          {
+            label: "Credential rotation evidence",
+            location: "SchoolPilot-SOC2-Evidence/incidents/credential-rotation/",
+          },
+        ],
+        logReview: [
+          {
+            label: "Security log review evidence",
+            location: "SchoolPilot-SOC2-Evidence/incidents/log-review/",
+          },
+        ],
+      },
+      exposureAssessment: {
+        evidencePointer: "SchoolPilot-SOC2-Evidence/incidents/exposure-assessment/",
+      },
+      humanDecisions: {
+        closure: {
+          decisionType: "incident_decision",
+          status: "pending_human_approval",
+          approverRole: "Security & Privacy Officer",
+        },
+        notification: {
+          decisionType: "notification_decision",
+          status: "pending_human_approval",
+          approverRole: "Security & Privacy Officer",
+        },
+      },
+    }, null, 2)}\n`,
+  );
+  write(root, "soc2-evidence/incidents/soc2-001-historical-credential-exposure-incident-evidence.md", "# Incident evidence\n");
+}
+
 describe("SOC 2 approval queue", () => {
   it("creates JSON and Markdown queue packets with pending approvals", () => {
     const root = tempRoot();
@@ -192,6 +239,36 @@ describe("SOC 2 approval queue", () => {
     assert.equal(deploymentItem?.decisionType, "production_deployment_approval");
     assert.equal(deploymentItem?.controlId, "SP-SEC-004");
     assert.match(JSON.stringify(deploymentItem?.evidencePointers), /shadow-deployment-evidence\.json/);
+  });
+
+  it("includes incident closure and notification approvals when local incident evidence exists", () => {
+    const root = tempRoot();
+    writeSoc2Docs(root);
+    writeIncidentEvidence(root);
+
+    const queue = buildApprovalQueue({
+      rootDir: root,
+      evidenceDir: path.join(root, "soc2-evidence"),
+      now: new Date("2026-06-26T12:00:00Z"),
+    });
+
+    const closure = queue.items.find(
+      (item) => item.approvalId === "APPROVAL-SP-SEC-003-SOC2-001-HISTORICAL-CREDENTIAL-EXPOSURE-INCIDENT-CLOSURE",
+    );
+    const notification = queue.items.find(
+      (item) => item.approvalId === "APPROVAL-SP-SEC-003-SOC2-001-HISTORICAL-CREDENTIAL-EXPOSURE-NOTIFICATION-DECISION",
+    );
+
+    assert.ok(closure);
+    assert.ok(notification);
+    assert.equal(closure?.decisionType, "incident_decision");
+    assert.equal(notification?.decisionType, "notification_decision");
+    assert.equal(closure?.status, "pending_human_approval");
+    assert.equal(notification?.status, "pending_human_approval");
+    assert.deepEqual(closure?.allowedDecisions, ["approved", "not_approved"]);
+    assert.deepEqual(notification?.allowedDecisions, ["approved", "not_approved"]);
+    assert.match(JSON.stringify(closure?.evidencePointers), /credential-rotation/);
+    assert.match(JSON.stringify(notification?.evidencePointers), /log-review/);
   });
 
   it("uses evidence pointers without copying private document contents", () => {
