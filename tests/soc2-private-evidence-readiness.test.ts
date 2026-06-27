@@ -65,6 +65,21 @@ function writeIncidentRecord(root: string, folder: string, evidenceType: string,
   );
 }
 
+function writeAiReviewRecord(root: string, status: string) {
+  write(
+    root,
+    "SchoolPilot-SOC2-Evidence/ai/reviews/soc2-002-ai-data-flow-review.json",
+    `${JSON.stringify({
+      evidenceId: "SOC2-002-AI-DATA-FLOW-REVIEW",
+      controlId: "SP-CONF-002",
+      remediationItem: "SOC2-002",
+      evidenceType: "ai_data_flow_review",
+      status,
+      privateReviewNotes: "PRIVATE_AI_REVIEW_BODY_SHOULD_NOT_APPEAR",
+    }, null, 2)}\n`,
+  );
+}
+
 describe("SOC 2 private evidence readiness", () => {
   it("detects approved and not-approved private decision records", () => {
     const root = tempRoot();
@@ -207,6 +222,50 @@ describe("SOC 2 private evidence readiness", () => {
     ]);
     assert.ok(incident?.requiredEvidence.every((item) => item.readyFileCount === 0));
     assert.ok(incident?.requiredEvidence.every((item) => item.readinessStatus === "draft_pending_founder_input"));
+  });
+
+  it("does not treat .gitkeep or draft SOC2-002 AI files as ready", () => {
+    const root = tempRoot();
+    writeGovernance(root);
+    write(root, "SchoolPilot-SOC2-Evidence/ai/reviews/.gitkeep", "");
+    writeAiReviewRecord(root, "draft_pending_founder_input");
+
+    const packet = buildPrivateEvidenceReadiness({
+      rootDir: root,
+      privateEvidenceDir: privateDir(root),
+      now: new Date("2026-06-27T00:00:00Z"),
+    });
+    const aiReview = packet.evidenceChecks.find(
+      (check) => check.approvalId === "APPROVAL-SP-CONF-002-AI-DATA-FLOW-REVIEW",
+    );
+
+    assert.equal(aiReview?.status, "missing");
+    assert.deepEqual(aiReview?.missingEvidence, ["AI data-flow review"]);
+    assert.equal(aiReview?.requiredEvidence[0].readyFileCount, 0);
+    assert.equal(aiReview?.requiredEvidence[0].readinessStatus, "draft_pending_founder_input");
+    assert.doesNotMatch(JSON.stringify(packet), /PRIVATE_AI_REVIEW_BODY_SHOULD_NOT_APPEAR/);
+  });
+
+  it("marks SOC2-002 AI review ready only when the private JSON is ready for approval", () => {
+    const root = tempRoot();
+    writeGovernance(root);
+    writeAiReviewRecord(root, "ready_for_approval");
+
+    const packet = buildPrivateEvidenceReadiness({
+      rootDir: root,
+      privateEvidenceDir: privateDir(root),
+      now: new Date("2026-06-27T00:00:00Z"),
+    });
+    const aiReview = packet.evidenceChecks.find(
+      (check) => check.approvalId === "APPROVAL-SP-CONF-002-AI-DATA-FLOW-REVIEW",
+    );
+
+    assert.equal(aiReview?.status, "ready");
+    assert.deepEqual(aiReview?.missingEvidence, []);
+    assert.equal(aiReview?.requiredEvidence[0].readyFileCount, 1);
+    assert.equal(aiReview?.requiredEvidence[0].readinessStatus, "ready_for_approval");
+    assert.match(aiReview?.requiredEvidence[0].fileHashes[0].sha256 || "", /^[a-f0-9]{64}$/);
+    assert.doesNotMatch(JSON.stringify(packet), /PRIVATE_AI_REVIEW_BODY_SHOULD_NOT_APPEAR/);
   });
 
   it("writes JSON and Markdown readiness packets", () => {

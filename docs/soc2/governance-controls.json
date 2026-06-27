@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "program": "SchoolPilot SOC 2 Type II readiness",
-  "lastUpdated": "2026-06-26",
+  "lastUpdated": "2026-06-27",
   "evidenceRepository": "SchoolPilot-SOC2-Evidence",
   "humanApprovalBoundary": "Automation may collect status and evidence pointers, but human-owned approvals, risk acceptances, vendor DPA confirmations, incident decisions, training attestations, and CPA audit judgments must be signed by an accountable person.",
   "controls": [
@@ -223,6 +223,11 @@
       "nextReviewDue": "2026-07-31",
       "automationImpact": "AI authorization and logging evidence only; no assistant enablement change.",
       "evidence": [
+        {
+          "name": "AI/privacy evidence packet",
+          "automation": "automated",
+          "privateEvidenceLocation": "GitHub Actions artifact: soc2-evidence-ai-privacy and ignored soc2-evidence/ai-privacy/"
+        },
         {
           "name": "AI authorization test evidence",
           "automation": "automated",

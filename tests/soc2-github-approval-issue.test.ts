@@ -116,6 +116,41 @@ describe("SOC 2 GitHub approval issue", () => {
     assert.doesNotMatch(body, /\/reject APPROVAL-SP-SEC-002-TENANT-ISOLATION-EVIDENCE-REVIEW/);
   });
 
+  it("formats AI readiness gaps without approval commands", () => {
+    const pendingQueue = {
+      ...queue(),
+      itemCount: 0,
+      readinessGapCount: 1,
+      items: [],
+      readinessGaps: [
+        {
+          approvalId: "APPROVAL-SP-CONF-002-AI-DATA-FLOW-REVIEW",
+          controlId: "SP-CONF-002",
+          decisionType: "ai_data_flow_review",
+          sourceId: "SP-CONF-002:AI data-flow review",
+          status: "not_ready",
+          reason: "Required private evidence is missing.",
+          missingEvidence: ["AI data-flow review"],
+          requiredEvidence: [
+            {
+              label: "AI data-flow review",
+              location: "SchoolPilot-SOC2-Evidence/ai/reviews/",
+              present: false,
+            },
+          ],
+          appImpact: "No user-facing behavior changed",
+        },
+      ],
+    };
+
+    const body = formatApprovalIssueBody(pendingQueue);
+
+    assert.match(body, /Gap: APPROVAL-SP-CONF-002-AI-DATA-FLOW-REVIEW/);
+    assert.match(body, /AI data-flow review: missing/);
+    assert.doesNotMatch(body, /\/approve APPROVAL-SP-CONF-002-AI-DATA-FLOW-REVIEW/);
+    assert.doesNotMatch(body, /\/reject APPROVAL-SP-CONF-002-AI-DATA-FLOW-REVIEW/);
+  });
+
   it("parses authorized approve commands", () => {
     const issueBody = formatApprovalIssueBody(queue());
     const result = parseApprovalComment({
