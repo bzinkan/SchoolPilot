@@ -23,10 +23,12 @@ import {
   createUser,
   endTeachingSession,
   getActiveCoverageAssignmentsForStaff,
+  getActiveClassOwnerForStudent,
   getActiveSessionByStudent,
   getActiveSupervisionForStudent,
   getCoverageScopeGroupStudentIds,
   getCentralEmailRecipientForSchool,
+  getClasspilotSessionStudents,
   getClasspilotCommandByIdAndSchool,
   getSettingsForSchool,
   getOnlineUnassignedStudents,
@@ -122,6 +124,7 @@ async function ensureCoverageTables() {
   `);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS "IDX_session_expire" ON "session" ("expire")`);
   await db.execute(sql`ALTER TABLE settings ADD COLUMN IF NOT EXISTS central_email_recipient_user_id TEXT`);
+  await db.execute(sql`ALTER TABLE teaching_sessions ADD COLUMN IF NOT EXISTS control_updated_at TIMESTAMP`);
 
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS classpilot_commands (
@@ -690,6 +693,126 @@ describe("ClassPilot supervision coverage storage contracts", () => {
 
     await inSchool(school.id, () => endTeachingSession(oldSession.id));
     await inSchool(school.id, () => endTeachingSession(newSession.id));
+  });
+
+  it("resyncs an active class roster and requires acknowledgement before reclaiming active students", async () => {
+    const resyncTeacher = await createUser({
+      email: `resync-teacher@${TAG}.example.edu`,
+      firstName: "Rita",
+      lastName: "Resync",
+    } as any);
+    const otherTeacher = await createUser({
+      email: `resync-other@${TAG}.example.edu`,
+      firstName: "Omar",
+      lastName: "Owner",
+    } as any);
+    const unauthorizedTeacher = await createUser({
+      email: `resync-unauthorized@${TAG}.example.edu`,
+      firstName: "Una",
+      lastName: "Allowed",
+    } as any);
+    await createMembership({ userId: resyncTeacher.id, schoolId: school.id, role: "teacher", status: "active" } as any);
+    await createMembership({ userId: otherTeacher.id, schoolId: school.id, role: "teacher", status: "active" } as any);
+    await createMembership({ userId: unauthorizedTeacher.id, schoolId: school.id, role: "teacher", status: "active" } as any);
+
+    const originalStudent = await inSchool(school.id, () => createStudent({
+      schoolId: school.id,
+      firstName: "Original",
+      lastName: "Roster",
+      email: `resync-original@${TAG}.example.edu`,
+      emailLc: `resync-original@${TAG}.example.edu`,
+      gradeLevel: "7",
+      status: "active",
+    } as any));
+    const lateStudent = await inSchool(school.id, () => createStudent({
+      schoolId: school.id,
+      firstName: "Late",
+      lastName: "Joiner",
+      email: `resync-late@${TAG}.example.edu`,
+      emailLc: `resync-late@${TAG}.example.edu`,
+      gradeLevel: "7",
+      status: "active",
+    } as any));
+    const overlapStudent = await inSchool(school.id, () => createStudent({
+      schoolId: school.id,
+      firstName: "Overlap",
+      lastName: "Student",
+      email: `resync-overlap@${TAG}.example.edu`,
+      emailLc: `resync-overlap@${TAG}.example.edu`,
+      gradeLevel: "7",
+      status: "active",
+    } as any));
+
+    const resyncGroup = await inSchool(school.id, () => createGroup({
+      schoolId: school.id,
+      teacherId: resyncTeacher.id,
+      name: `${TAG}_Resync_Class`,
+      groupType: "admin_class",
+      status: "active",
+    } as any));
+    const otherGroup = await inSchool(school.id, () => createGroup({
+      schoolId: school.id,
+      teacherId: otherTeacher.id,
+      name: `${TAG}_Other_Active_Class`,
+      groupType: "admin_class",
+      status: "active",
+    } as any));
+    await inSchool(school.id, () => addGroupStudentsDetailed(resyncGroup.id, [originalStudent.id]));
+    const resyncSession = await inSchool(school.id, () => createTeachingSession({ groupId: resyncGroup.id, teacherId: resyncTeacher.id }));
+
+    const noop = await requestJson("POST", `/sessions/${resyncSession.id}/resync`, {}, authFor(resyncTeacher, school.id));
+    assert.equal(noop.status, 200);
+    assert.equal(noop.body.rosterCount, 1);
+    assert.equal(noop.body.alreadyInSession, 1);
+    assert.equal(noop.body.addedToSession, 0);
+    assert.equal(noop.body.notSignedIn, 1);
+
+    await inSchool(school.id, () => addGroupStudentsDetailed(resyncGroup.id, [lateStudent.id]));
+    const added = await requestJson("POST", `/sessions/${resyncSession.id}/resync`, {}, authFor(resyncTeacher, school.id));
+    assert.equal(added.status, 200);
+    assert.equal(added.body.rosterCount, 2);
+    assert.equal(added.body.addedToSession, 1);
+    const sessionRowsAfterAdd = await inSchool(school.id, () => getClasspilotSessionStudents(resyncSession.id));
+    assert.ok(sessionRowsAfterAdd.some((row) => row.studentId === lateStudent.id));
+
+    const forbidden = await requestJson("POST", `/sessions/${resyncSession.id}/resync`, {}, authFor(unauthorizedTeacher, school.id));
+    assert.equal(forbidden.status, 403);
+
+    await inSchool(school.id, async () => {
+      await addGroupStudentsDetailed(resyncGroup.id, [overlapStudent.id]);
+      await addGroupStudentsDetailed(otherGroup.id, [overlapStudent.id]);
+    });
+    const otherSession = await inSchool(school.id, () => createTeachingSession({ groupId: otherGroup.id, teacherId: otherTeacher.id }));
+
+    const warned = await requestJson("POST", `/sessions/${resyncSession.id}/resync`, {}, authFor(resyncTeacher, school.id));
+    assert.equal(warned.status, 409);
+    assert.equal(warned.body.code, "CLASS_RESYNC_ACTIVE_OVERLAP");
+    assert.equal(warned.body.requiresAcknowledgement, true);
+    assert.equal(warned.body.activeElsewhere, 1);
+    assert.equal(warned.body.conflicts[0].sessionId, otherSession.id);
+    assert.equal(warned.body.conflicts[0].teacherName, "Omar Owner");
+    expectNoDeviceIds(warned.body);
+
+    const acknowledged = await requestJson("POST", `/sessions/${resyncSession.id}/resync`, {
+      acknowledgeOverlap: true,
+    }, authFor(resyncTeacher, school.id));
+    assert.equal(acknowledged.status, 200);
+    assert.equal(acknowledged.body.addedToSession, 1);
+    assert.equal(acknowledged.body.activeElsewhere, 1);
+    assert.ok(acknowledged.body.session.controlUpdatedAt);
+    const owner = await inSchool(school.id, () => getActiveClassOwnerForStudent(school.id, overlapStudent.id));
+    assert.equal(owner?.session.id, resyncSession.id);
+
+    const auditRows = await getAuditLogs({
+      schoolId: school.id,
+      action: "classpilot.session.resync",
+      entityId: resyncSession.id,
+      limit: 10,
+    });
+    assert.ok(auditRows.length >= 2);
+
+    await inSchool(school.id, () => endTeachingSession(resyncSession.id));
+    await inSchool(school.id, () => endTeachingSession(otherSession.id));
   });
 
   it("signs out explicit active class students and rejects implicit whole-class sign-out", async () => {

@@ -7,22 +7,29 @@ import {
   createTeachingSession,
   endTeachingSession,
   getActiveClassOwnersForStudents,
+  getActiveSessionByStudent,
+  getActiveSupervisionForStudents,
   getActiveTeachingSessionForSchool,
+  getClasspilotSessionStudents,
   getTeachingSessionByIdAndSchool,
   getSessionSettings,
   upsertSessionSettings,
   getGroupById,
   getGroupByIdAndSchool,
+  getGroupTeachers,
   getGroupStudents,
   getHeartbeatsForStudentsInRange,
+  resyncClasspilotSessionStudents,
   setScheduleSkippedDate,
   getSchoolById,
   getCentralEmailRecipientForSchool,
   clearClasspilotClassroomStates,
   clearClasspilotActiveHandsForSession,
   getUserById,
+  updateTeachingSessionControlTimestamp,
 } from "../../services/storage.js";
 import { sendSessionSummaryEmail } from "../../services/email.js";
+import { logAudit } from "../../services/audit.js";
 import db from "../../db.js";
 import { runWithTenantContext } from "../../middleware/tenantContext.js";
 
@@ -131,6 +138,128 @@ async function classStartOverlapPayload(options: {
     },
     totalOverlapCount,
     groups,
+  };
+}
+
+async function assertCanManageTeachingSession(req: any, res: any, session: any): Promise<void> {
+  const role = res.locals.membershipRole as string | undefined;
+  const isAdmin = req.authUser?.isSuperAdmin || role === "admin" || role === "school_admin";
+  if (isAdmin || session.teacherId === req.authUser!.id) return;
+
+  const coTeachers = await getGroupTeachers(session.groupId);
+  if (coTeachers.some((teacher) => teacher.teacherId === req.authUser!.id)) return;
+
+  throw Object.assign(new Error("This class session is not assigned to you"), { status: 403 });
+}
+
+function emptyResyncSummary() {
+  return {
+    rosterCount: 0,
+    alreadyInSession: 0,
+    addedToSession: 0,
+    online: 0,
+    notSignedIn: 0,
+    claimedByCoverage: 0,
+    activeElsewhere: 0,
+    requiresAcknowledgement: false,
+    conflicts: [] as Array<{
+      sessionId: string;
+      classId: string;
+      className: string;
+      teacherId: string;
+      teacherName: string;
+      affectedCount: number;
+      affectedStudents: Array<{ studentId: string; studentName: string }>;
+    }>,
+  };
+}
+
+async function classResyncPreview(options: {
+  schoolId: string;
+  session: any;
+  group: any;
+}) {
+  const rosterRows = await getGroupStudents(options.group.id);
+  const rosterStudentIds = rosterRows.map((row) => row.studentId);
+  if (rosterStudentIds.length === 0) return emptyResyncSummary();
+
+  const [sessionRows, owners, supervision] = await Promise.all([
+    getClasspilotSessionStudents(options.session.id),
+    getActiveClassOwnersForStudents(options.schoolId, rosterStudentIds),
+    getActiveSupervisionForStudents(options.schoolId, rosterStudentIds),
+  ]);
+  const sessionStudentIds = new Set(sessionRows.map((row) => row.studentId));
+  const activeSupervisionByStudent = new Map(supervision.map((entry) => [entry.studentId, entry.context]));
+  const ownerConflicts = owners.filter((owner) => owner.session.id !== options.session.id);
+  const ownerConflictsByStudent = new Map(ownerConflicts.map((owner) => [owner.studentId, owner]));
+  const studentsById = new Map(rosterRows.map((row) => [row.studentId, row.student]));
+  const teacherIds = [...new Set(ownerConflicts.map((owner) => owner.session.teacherId))];
+  const teacherEntries = await Promise.all(teacherIds.map(async (id) => [id, await getUserById(id)] as const));
+  const teachersById = new Map(teacherEntries);
+  const bySession = new Map<string, {
+    sessionId: string;
+    classId: string;
+    className: string;
+    teacherId: string;
+    teacherName: string;
+    affectedCount: number;
+    affectedStudents: Array<{ studentId: string; studentName: string }>;
+  }>();
+
+  let online = 0;
+  for (const row of rosterRows) {
+    const active = await getActiveSessionByStudent(row.studentId);
+    const lastSeenAt = active?.lastSeenAt?.getTime?.() || 0;
+    if (active && lastSeenAt > 0 && Date.now() - lastSeenAt <= 5 * 60 * 1000) {
+      online++;
+    }
+
+    const owner = ownerConflictsByStudent.get(row.studentId);
+    if (!owner) continue;
+    const conflict = bySession.get(owner.session.id) || {
+      sessionId: owner.session.id,
+      classId: owner.groupId,
+      className: owner.groupName,
+      teacherId: owner.session.teacherId,
+      teacherName: displayName(teachersById.get(owner.session.teacherId)),
+      affectedCount: 0,
+      affectedStudents: [],
+    };
+    conflict.affectedCount += 1;
+    if (conflict.affectedStudents.length < 5) {
+      conflict.affectedStudents.push({
+        studentId: owner.studentId,
+        studentName: studentName(studentsById.get(owner.studentId)),
+      });
+    }
+    bySession.set(owner.session.id, conflict);
+  }
+
+  const conflicts = Array.from(bySession.values()).sort((a, b) => b.affectedCount - a.affectedCount || a.className.localeCompare(b.className));
+  const activeElsewhere = conflicts.reduce((total, conflict) => total + conflict.affectedCount, 0);
+  return {
+    rosterCount: rosterRows.length,
+    alreadyInSession: rosterRows.filter((row) => sessionStudentIds.has(row.studentId)).length,
+    addedToSession: 0,
+    online,
+    notSignedIn: rosterRows.length - online,
+    claimedByCoverage: rosterRows.filter((row) => activeSupervisionByStudent.has(row.studentId)).length,
+    activeElsewhere,
+    requiresAcknowledgement: activeElsewhere > 0,
+    conflicts,
+  };
+}
+
+function classResyncAuditSummary(summary: ReturnType<typeof emptyResyncSummary>) {
+  return {
+    rosterCount: summary.rosterCount,
+    alreadyInSession: summary.alreadyInSession,
+    addedToSession: summary.addedToSession,
+    online: summary.online,
+    notSignedIn: summary.notSignedIn,
+    claimedByCoverage: summary.claimedByCoverage,
+    activeElsewhere: summary.activeElsewhere,
+    requiresAcknowledgement: summary.requiresAcknowledgement,
   };
 }
 
@@ -283,6 +412,92 @@ router.get("/:id", ...auth, async (req, res, next) => {
     const settings = await getSessionSettings(session.id);
     return res.json({ session, settings });
   } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/classpilot/teaching-sessions/:id/resync - Reconcile active session roster
+router.post("/:id/resync", ...auth, async (req, res, next) => {
+  try {
+    const sessionId = param(req, "id");
+    const schoolId = res.locals.schoolId!;
+    const session = await getTeachingSessionByIdAndSchool(sessionId, schoolId);
+    if (!session || session.endTime) {
+      return res.status(404).json({ error: "Active class session not found" });
+    }
+
+    const group = await getGroupByIdAndSchool(session.groupId, schoolId);
+    if (!group) {
+      return res.status(404).json({ error: "Active class group not found" });
+    }
+
+    await assertCanManageTeachingSession(req, res, session);
+
+    const preview = await classResyncPreview({ schoolId, session, group });
+    const acknowledgeOverlap = req.body?.acknowledgeOverlap === true;
+    if (preview.activeElsewhere > 0 && !acknowledgeOverlap) {
+      await logAudit({
+        schoolId,
+        userId: req.authUser!.id,
+        userEmail: req.authUser!.email,
+        userRole: res.locals.membershipRole,
+        action: "classpilot.session.resync",
+        entityType: "teaching_session",
+        entityId: session.id,
+        entityName: group.name,
+        changes: {
+          acknowledgedOverlap: false,
+          summary: classResyncAuditSummary(preview),
+        },
+        metadata: {
+          conflictSessionIds: preview.conflicts.map((conflict) => conflict.sessionId),
+        },
+      });
+      return res.status(409).json({
+        error: "Some students are already active in another class",
+        code: "CLASS_RESYNC_ACTIVE_OVERLAP",
+        severity: "warning",
+        canResyncAnyway: true,
+        ...preview,
+      });
+    }
+
+    const syncSummary = await resyncClasspilotSessionStudents(session);
+    const updatedSession = acknowledgeOverlap && preview.activeElsewhere > 0
+      ? await updateTeachingSessionControlTimestamp(session.id)
+      : session;
+    const summary = {
+      ...preview,
+      rosterCount: syncSummary.rosterCount,
+      alreadyInSession: syncSummary.alreadyInSession,
+      addedToSession: syncSummary.addedToSession,
+      requiresAcknowledgement: false,
+    };
+
+    await logAudit({
+      schoolId,
+      userId: req.authUser!.id,
+      userEmail: req.authUser!.email,
+      userRole: res.locals.membershipRole,
+      action: "classpilot.session.resync",
+      entityType: "teaching_session",
+      entityId: session.id,
+      entityName: group.name,
+      changes: {
+        acknowledgedOverlap: acknowledgeOverlap,
+        summary: classResyncAuditSummary(summary),
+      },
+      metadata: {
+        conflictSessionIds: preview.conflicts.map((conflict) => conflict.sessionId),
+      },
+    });
+
+    return res.json({
+      session: updatedSession || session,
+      ...summary,
+    });
+  } catch (err: any) {
+    if (err?.status) return res.status(err.status).json({ error: err.message });
     next(err);
   }
 });

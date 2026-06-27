@@ -3214,10 +3214,16 @@ function isUndefinedTableError(err: unknown): boolean {
   return typeof err === "object" && err !== null && (err as { code?: string }).code === "42P01";
 }
 
-async function snapshotTeachingSessionStudents(
+export type ClasspilotSessionRosterSyncSummary = {
+  rosterCount: number;
+  alreadyInSession: number;
+  addedToSession: number;
+};
+
+export async function resyncClasspilotSessionStudents(
   session: TeachingSession,
   dbInstance: typeof db = db
-): Promise<void> {
+): Promise<ClasspilotSessionRosterSyncSummary> {
   try {
     const [group] = await dbInstance
       .select({
@@ -3230,28 +3236,53 @@ async function snapshotTeachingSessionStudents(
       .where(eq(groups.id, session.groupId))
       .limit(1);
 
-    if (!group || group.groupType !== "admin_class" || group.status !== "active") return;
+    if (!group || group.groupType !== "admin_class" || group.status !== "active") {
+      return { rosterCount: 0, alreadyInSession: 0, addedToSession: 0 };
+    }
 
     const roster = await dbInstance
       .select({ studentId: groupStudents.studentId })
       .from(groupStudents)
       .where(eq(groupStudents.groupId, session.groupId));
 
-    if (roster.length === 0) return;
+    if (roster.length === 0) {
+      return { rosterCount: 0, alreadyInSession: 0, addedToSession: 0 };
+    }
 
-    await dbInstance
+    const existing = await getClasspilotSessionStudents(session.id, dbInstance);
+    const existingIds = new Set(existing.map((row) => row.studentId));
+    const missing = roster.filter((row) => !existingIds.has(row.studentId));
+
+    if (missing.length === 0) {
+      return {
+        rosterCount: roster.length,
+        alreadyInSession: roster.length,
+        addedToSession: 0,
+      };
+    }
+
+    const inserted = await dbInstance
       .insert(classpilotSessionStudents)
       .values(
-        roster.map((row) => ({
+        missing.map((row) => ({
           schoolId: group.schoolId,
           teachingSessionId: session.id,
           groupId: session.groupId,
           studentId: row.studentId,
         }))
       )
-      .onConflictDoNothing();
+      .onConflictDoNothing()
+      .returning({ studentId: classpilotSessionStudents.studentId });
+
+    return {
+      rosterCount: roster.length,
+      alreadyInSession: roster.length - inserted.length,
+      addedToSession: inserted.length,
+    };
   } catch (err) {
-    if (isUndefinedTableError(err)) return;
+    if (isUndefinedTableError(err)) {
+      return { rosterCount: 0, alreadyInSession: 0, addedToSession: 0 };
+    }
     throw err;
   }
 }
@@ -3427,8 +3458,20 @@ export async function createTeachingSession(
     .insert(teachingSessions)
     .values({ ...data, schoolId: group.schoolId })
     .returning();
-  if (session) await snapshotTeachingSessionStudents(session, dbInstance);
+  if (session) await resyncClasspilotSessionStudents(session, dbInstance);
   return session!;
+}
+
+export async function updateTeachingSessionControlTimestamp(
+  sessionId: string,
+  dbInstance: typeof db = db
+): Promise<TeachingSession | undefined> {
+  const [session] = await dbInstance
+    .update(teachingSessions)
+    .set({ controlUpdatedAt: new Date() })
+    .where(eq(teachingSessions.id, sessionId))
+    .returning();
+  return session;
 }
 
 export async function endTeachingSession(
@@ -3454,6 +3497,7 @@ export async function getActiveTeachingSessions(
       teacherId: teachingSessions.teacherId,
       schoolId: teachingSessions.schoolId,
       startTime: teachingSessions.startTime,
+      controlUpdatedAt: teachingSessions.controlUpdatedAt,
       endTime: teachingSessions.endTime,
       createdAt: teachingSessions.createdAt,
     })
@@ -3577,6 +3621,7 @@ export async function getActiveClassOwnersForStudents(
     )
     .orderBy(
       groupStudents.studentId,
+      desc(sql`COALESCE(${teachingSessions.controlUpdatedAt}, ${teachingSessions.startTime})`),
       desc(teachingSessions.startTime),
       desc(teachingSessions.createdAt),
       desc(teachingSessions.id)

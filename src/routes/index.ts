@@ -130,6 +130,10 @@ router.use((req: Request, _res: Response, next: NextFunction) => {
     req.url = "/classpilot/teaching-sessions/end";
     return next();
   }
+  if (p.startsWith("/sessions/") && p.endsWith("/resync") && m === "POST") {
+    req.url = "/classpilot/teaching-sessions" + req.url.slice("/sessions".length);
+    return next();
+  }
   if (p === "/sessions/active" && m === "GET") {
     req.url = "/classpilot/teaching-sessions/active";
     return next();

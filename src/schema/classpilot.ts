@@ -286,6 +286,7 @@ export const teachingSessions = pgTable(
     // for legacy rows. Basis for the per-school RLS policy.
     schoolId: text("school_id"),
     startTime: timestamp("start_time").notNull().default(sql`now()`),
+    controlUpdatedAt: timestamp("control_updated_at"),
     endTime: timestamp("end_time"),
     createdAt: timestamp("created_at").notNull().default(sql`now()`),
   },
