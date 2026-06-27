@@ -128,7 +128,7 @@ export default function Security() {
                 <strong>Written Information Security Program</strong> (WISP) summary — under NDA
               </li>
               <li>
-                <strong>Subprocessor list with executed DPAs</strong> — see <a href="/subprocessors" className="text-amber-600 hover:text-amber-700 underline">public Subprocessors page</a>
+                <strong>Subprocessor list and vendor review/DPA status</strong> — see <a href="/subprocessors" className="text-amber-600 hover:text-amber-700 underline">public Subprocessors page</a>
               </li>
             </ul>
             <p className="text-slate-700 leading-relaxed">

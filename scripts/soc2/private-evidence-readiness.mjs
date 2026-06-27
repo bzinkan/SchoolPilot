@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const APP_IMPACT = "No user-facing behavior changed";
 const PRIVATE_REPO_NAME = "SchoolPilot-SOC2-Evidence";
 const SOC2_001_INCIDENT_ID = "SOC2-001-HISTORICAL-CREDENTIAL-EXPOSURE";
+const SOC2_002_AI_EVIDENCE_TYPE = "ai_data_flow_review";
 const READY_STATUS = "ready_for_approval";
 const ALLOWED_DECISIONS = new Set(["approved", "not_approved"]);
 
@@ -169,6 +170,38 @@ function summarizeReadyIncidentEvidence(privateEvidenceDir, label, location, evi
   };
 }
 
+function summarizeReadyAiReviewEvidence(privateEvidenceDir, label, location) {
+  const relativePaths = evidenceLocationMatches(location);
+  const relativePath = relativePaths[0] || "";
+  const fullPath = relativePath ? path.join(privateEvidenceDir, relativePath) : "";
+  const files = fullPath ? meaningfulEvidenceFiles(fullPath) : [];
+  const jsonRecords = files
+    .filter((file) => file.endsWith(".json"))
+    .map((file) => ({
+      file,
+      record: parseJsonFile(file, null),
+    }))
+    .filter(({ record }) => record?.controlId === "SP-CONF-002"
+      && record?.remediationItem === "SOC2-002"
+      && record?.evidenceType === SOC2_002_AI_EVIDENCE_TYPE);
+  const readyRecords = jsonRecords.filter(({ record }) => record.status === READY_STATUS);
+  const latestStatus = jsonRecords.at(-1)?.record?.status || (files.length ? "present_but_not_ready" : "missing");
+
+  return {
+    label,
+    location,
+    relativePath: relativePath ? publicPrivatePath(relativePath) : "not_available",
+    present: readyRecords.length > 0,
+    readinessStatus: readyRecords.length > 0 ? READY_STATUS : latestStatus,
+    fileCount: files.length,
+    readyFileCount: readyRecords.length,
+    fileHashes: files.map((file) => ({
+      path: publicPathForFile(privateEvidenceDir, file),
+      sha256: sha256File(file),
+    })),
+  };
+}
+
 function buildEvidenceCheck({
   checkId,
   approvalId,
@@ -207,6 +240,7 @@ function buildGovernanceEvidenceChecks(rootDir, privateEvidenceDir) {
       if (evidence.automation !== "human_approved") continue;
       const decisionType = decisionTypeForEvidence(evidence.name, evidence.privateEvidenceLocation);
       if (decisionType === "risk_acceptance") continue;
+      if (decisionType === "ai_data_flow_review") continue;
 
       const approvalId = makeApprovalId([control.id, evidence.name]);
       checks.push(buildEvidenceCheck({
@@ -228,6 +262,26 @@ function buildGovernanceEvidenceChecks(rootDir, privateEvidenceDir) {
   }
 
   return checks;
+}
+
+function buildAiEvidenceChecks(privateEvidenceDir) {
+  return [
+    buildEvidenceCheck({
+      checkId: "SOC2-002-AI-DATA-FLOW-REVIEW-PRIVATE-EVIDENCE",
+      approvalId: "APPROVAL-SP-CONF-002-AI-DATA-FLOW-REVIEW",
+      controlId: "SP-CONF-002",
+      decisionType: "ai_data_flow_review",
+      sourceId: "SP-CONF-002:AI data-flow review",
+      owner: "Engineering",
+      requiredEvidence: [
+        summarizeReadyAiReviewEvidence(
+          privateEvidenceDir,
+          "AI data-flow review",
+          "SchoolPilot-SOC2-Evidence/ai/reviews/",
+        ),
+      ],
+    }),
+  ];
 }
 
 function buildIncidentEvidenceChecks(privateEvidenceDir) {
@@ -425,6 +479,7 @@ export function buildPrivateEvidenceReadiness({
     decisions: latestDecisionRecords(allDecisionRecords),
     evidenceChecks: [
       ...buildGovernanceEvidenceChecks(resolvedRoot, resolvedPrivateDir),
+      ...buildAiEvidenceChecks(resolvedPrivateDir),
       ...buildIncidentEvidenceChecks(resolvedPrivateDir),
       ...buildTenantIsolationEvidenceChecks(resolvedPrivateDir),
     ].sort((a, b) => a.approvalId.localeCompare(b.approvalId)),

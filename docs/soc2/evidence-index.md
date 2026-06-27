@@ -22,7 +22,8 @@ exports, or generated evidence packets to this repository.
 | Backup and restore testing | SP-AVL-001 | Manual record plus human approved | `SchoolPilot-SOC2-Evidence/backups/` |
 | Monitoring review | SP-AVL-002 | Automated plus human approved | `SchoolPilot-SOC2-Evidence/monitoring/` |
 | Encryption configuration | SP-CONF-001 | Manual record | `SchoolPilot-SOC2-Evidence/encryption/` |
-| AI data-flow review | SP-CONF-002 | Automated plus human approved | `SchoolPilot-SOC2-Evidence/ai/` |
+| AI/privacy evidence packet | SP-CONF-002 | Automated | GitHub Actions artifact `soc2-evidence-ai-privacy` and ignored `soc2-evidence/ai-privacy/` |
+| AI data-flow review | SP-CONF-002 | Private draft plus human approved | `SchoolPilot-SOC2-Evidence/ai/reviews/` |
 
 Generated local packets should use `soc2-evidence/`, which is ignored by Git.
 Shadow deployment packets are written to `soc2-evidence/deployments/` and must
@@ -31,3 +32,6 @@ Incident evidence packets are written to `soc2-evidence/incidents/` and must
 contain only non-sensitive metadata and pointers to private evidence.
 Tenant isolation packets are written to `soc2-evidence/tenant-isolation/` and
 must not include production DB exports, grants, policies, or customer data.
+AI/privacy evidence packets are written to `soc2-evidence/ai-privacy/` and
+must not include prompt bodies, API keys, raw logs, transcripts, customer
+records, or student records.

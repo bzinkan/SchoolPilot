@@ -64,6 +64,31 @@ approval. Automation may prepare the record, expiration, owner, risk level, and
 suggested compensating controls; the founder must still approve or reject the
 risk.
 
+Generate non-sensitive AI/privacy evidence locally:
+
+```bash
+npm run soc2:ai-privacy-evidence
+```
+
+AI/privacy evidence is written to `soc2-evidence/ai-privacy/` and uploaded in
+CI as `soc2-evidence-ai-privacy`. It records metadata, source hashes, AI feature
+inventory, data-flow summaries, test pointers, and public-claim review findings
+for `SOC2-002`. It must not copy prompt bodies, API keys, raw logs,
+transcripts, customer records, or student records.
+
+Create a private draft AI data-flow review for `SOC2-002`:
+
+```bash
+npm run soc2:ai-private-evidence-kit -- --private-dir ../SchoolPilot-SOC2-Evidence
+```
+
+The private AI kit writes `ai/reviews/soc2-002-ai-data-flow-review.{json,md}`
+into the private evidence repo. Drafts use
+`status: draft_pending_founder_input`; they are checklists, not final
+conclusions. The founder/security owner must complete the factual fields and
+change the JSON record to `status: ready_for_approval` before the AI data-flow
+review moves out of readiness gaps and into the GitHub approval queue.
+
 Generate shadow deployment/change-management evidence locally:
 
 ```bash
@@ -132,8 +157,9 @@ npm run soc2:approval-queue
 Approval queue drafts are written to `soc2-evidence/approvals/` and uploaded in
 CI as `soc2-approval-queue`. The queue gathers human-owned decisions from the
 governance tracker, risk acceptance drafts, local incident evidence, local tenant
-isolation evidence, local deployment evidence, and optional private readiness
-metadata. When private readiness metadata is present, already-decided approvals
+isolation evidence, local AI/privacy evidence, local deployment evidence, and
+optional private readiness metadata. When private readiness metadata is present,
+already-decided approvals
 are suppressed, approved unexpired risk acceptances stay out of the queue, and
 items missing required private evidence appear as readiness gaps instead of
 approval commands. Shadow deployment packets with no requested production deploy

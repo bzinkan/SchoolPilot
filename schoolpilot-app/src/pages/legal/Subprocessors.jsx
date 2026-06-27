@@ -23,16 +23,17 @@ export default function Subprocessors() {
 
       <div className="container mx-auto px-4 py-12 max-w-4xl">
         <h1 className="text-4xl font-bold text-slate-900 mb-4">Subprocessors</h1>
-        <p className="text-slate-600 mb-8">Last updated: April 13, 2026</p>
+        <p className="text-slate-600 mb-8">Last updated: June 27, 2026</p>
 
         <div className="prose prose-slate max-w-none space-y-8">
           <section>
             <p className="text-slate-700 leading-relaxed">
               Schoolpilot uses the following third-party service providers ("subprocessors") to operate
               the Service. Each subprocessor is bound by contractual obligations to handle data in
-              accordance with applicable privacy laws, including FERPA and COPPA. All subprocessors handling
-              student personally identifiable information (PII) have executed Data Processing Agreements
-              with Schoolpilot.
+              accordance with applicable privacy laws, including FERPA and COPPA. Schoolpilot tracks
+              vendor review and Data Processing Agreement status for subprocessors handling student
+              personally identifiable information (PII), and provides applicable executed agreements
+              under NDA when available.
             </p>
           </section>
 
@@ -151,17 +152,27 @@ export default function Subprocessors() {
                 <tbody className="divide-y divide-slate-200">
                   <tr>
                     <td className="px-4 py-3 text-slate-700"><strong>Anthropic PBC</strong> (Claude API)</td>
-                    <td className="px-4 py-3 text-slate-700">URL content classification for student safety; optional AI assistant when enabled for authorized school staff</td>
-                    <td className="px-4 py-3 text-slate-700">URL strings and page titles for classification. For the optional assistant, staff prompts and authorized, minimized tool results may be processed.</td>
+                    <td className="px-4 py-3 text-slate-700">URL content classification for student safety; MailPilot email safety classification when enabled by a school; optional AI assistant when enabled for authorized school staff</td>
+                    <td className="px-4 py-3 text-slate-700">URL strings and page titles for ClassPilot classification. For MailPilot, student Gmail message text may be processed for safety classification when the school has enabled email monitoring. For the optional assistant, staff prompts and authorized, minimized tool results may be processed.</td>
                   </tr>
                 </tbody>
               </table>
             </div>
             <p className="text-slate-600 text-sm mt-2">
-              Anthropic's API terms contractually prohibit using customer data to train models. Schoolpilot
-              sends only URL strings and page titles for classification. The optional AI assistant is disabled
-              by default, limited by school role and product license, and designed to avoid model-bound
-              sensitive fields such as attendance reasons and individual browsing history. See our <a href="/ai-transparency" className="text-amber-600 hover:text-amber-700 underline">AI Transparency</a> page for full details.
+              Schoolpilot uses Anthropic's API for limited safety and assistant workflows. ClassPilot URL
+              classification sends URL strings and page titles. MailPilot email safety classification may
+              process student Gmail message text only when a school has separately enabled MailPilot.
+              The optional AI assistant is disabled by default, limited by school role and product license,
+              and designed to avoid model-bound sensitive fields such as attendance reasons and individual
+              browsing history. Anthropic's{" "}
+              <a href="https://www.anthropic.com/legal/commercial-terms" target="_blank" rel="noopener noreferrer" className="text-amber-600 hover:text-amber-700 underline">
+                Commercial Terms
+              </a>{" "}
+              and{" "}
+              <a href="https://privacy.claude.com/en/articles/7996868-is-my-data-used-for-model-training" target="_blank" rel="noopener noreferrer" className="text-amber-600 hover:text-amber-700 underline">
+                Privacy Center
+              </a>{" "}
+              explain Anthropic's training-use limits for customer API inputs and outputs. See our <a href="/ai-transparency" className="text-amber-600 hover:text-amber-700 underline">AI Transparency</a> page for full details.
             </p>
           </section>
 

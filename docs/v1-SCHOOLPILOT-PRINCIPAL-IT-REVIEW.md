@@ -361,7 +361,7 @@ SchoolPilot is building and evidencing the control families a SOC 2 Type II audi
 - Production `.env` files are gitignored; secrets live in the ECS task definition
 
 **Vendor management:**
-- Public subprocessors list at school-pilot.net/subprocessors (AWS, SendGrid, Stripe, Anthropic, OpenAI, Google)
+- Public subprocessors list at school-pilot.net/subprocessors (AWS, SendGrid, Stripe, Anthropic, Google)
 - Each subprocessor is selected for compliance posture (SOC 2 Type II or equivalent)
 
 ### 6.5 Google OAuth & Workspace Integration

@@ -254,6 +254,21 @@ function writeReadyIncidentPrivateEvidence(root: string) {
   }
 }
 
+function writeReadyAiPrivateEvidence(root: string) {
+  write(
+    root,
+    path.join("SchoolPilot-SOC2-Evidence", "ai", "reviews", "soc2-002-ai-data-flow-review.json"),
+    `${JSON.stringify({
+      evidenceId: "SOC2-002-AI-DATA-FLOW-REVIEW",
+      controlId: "SP-CONF-002",
+      remediationItem: "SOC2-002",
+      evidenceType: "ai_data_flow_review",
+      status: "ready_for_approval",
+      privateReviewNotes: "PRIVATE_AI_REVIEW_BODY_SHOULD_NOT_APPEAR",
+    }, null, 2)}\n`,
+  );
+}
+
 function writePrivateReadiness(root: string, now = new Date("2026-06-26T12:00:00Z")) {
   const privateEvidenceDir = path.join(root, "SchoolPilot-SOC2-Evidence");
   fs.mkdirSync(privateEvidenceDir, { recursive: true });
@@ -510,6 +525,54 @@ describe("SOC 2 approval queue", () => {
     assert.doesNotMatch(JSON.stringify(queue), /PRIVATE_INCIDENT_BODY_SHOULD_NOT_APPEAR/);
   });
 
+  it("unlocks AI data-flow approval when private AI review evidence is ready", () => {
+    const root = tempRoot();
+    writeSoc2Docs(root);
+    writeReadyAiPrivateEvidence(root);
+    const { jsonPath: readinessFile } = writePrivateReadiness(root, new Date("2026-06-26T14:00:00Z"));
+
+    const queue = buildApprovalQueue({
+      rootDir: root,
+      evidenceDir: path.join(root, "soc2-evidence"),
+      privateReadinessFile: readinessFile,
+      now: new Date("2026-06-27T12:00:00Z"),
+    });
+
+    assert.ok(queue.items.some(
+      (item) => item.approvalId === "APPROVAL-SP-CONF-002-AI-DATA-FLOW-REVIEW",
+    ));
+    assert.ok(!queue.readinessGaps.some(
+      (gap) => gap.approvalId === "APPROVAL-SP-CONF-002-AI-DATA-FLOW-REVIEW",
+    ));
+    assert.doesNotMatch(JSON.stringify(queue), /PRIVATE_AI_REVIEW_BODY_SHOULD_NOT_APPEAR/);
+  });
+
+  it("suppresses completed AI data-flow decisions from the pending queue", () => {
+    const root = tempRoot();
+    writeSoc2Docs(root);
+    writePrivateDecision(root, "ai/reviews/approved-ai-review.json", {
+      approvalId: "APPROVAL-SP-CONF-002-AI-DATA-FLOW-REVIEW",
+      controlId: "SP-CONF-002",
+      decisionType: "ai_data_flow_review",
+      sourceId: "SP-CONF-002:AI data-flow review",
+      decision: "approved",
+      status: "approved",
+      decidedAt: "2026-06-26T13:00:00.000Z",
+      rationale: "PRIVATE_RATIONALE_SHOULD_NOT_APPEAR",
+    });
+    const { jsonPath: readinessFile } = writePrivateReadiness(root, new Date("2026-06-26T14:00:00Z"));
+
+    const queue = buildApprovalQueue({
+      rootDir: root,
+      privateReadinessFile: readinessFile,
+      now: new Date("2026-06-27T12:00:00Z"),
+    });
+
+    assert.ok(!queue.items.some((item) => item.approvalId === "APPROVAL-SP-CONF-002-AI-DATA-FLOW-REVIEW"));
+    assert.ok(queue.suppressedApprovals.some((item) => item.approvalId === "APPROVAL-SP-CONF-002-AI-DATA-FLOW-REVIEW"));
+    assert.doesNotMatch(JSON.stringify(queue), /PRIVATE_RATIONALE_SHOULD_NOT_APPEAR/);
+  });
+
   it("uses evidence pointers without copying private document contents", () => {
     const root = tempRoot();
     writeSoc2Docs(root);
@@ -581,6 +644,35 @@ describe("SOC 2 approval queue", () => {
     assert.equal(record.decision, "not_approved");
     assert.equal(record.decisionType, "tenant_isolation_review");
     assert.match(jsonPath, /tenant-isolation/);
+    assert.ok(fs.existsSync(jsonPath));
+    assert.ok(fs.existsSync(mdPath));
+  });
+
+  it("records AI data-flow review decisions to the ai/reviews private folder", () => {
+    const root = tempRoot();
+    writeSoc2Docs(root);
+    const queue = buildApprovalQueue({
+      rootDir: root,
+      now: new Date("2026-06-26T12:00:00Z"),
+    });
+    const { jsonPath: queueFile } = writeApprovalQueue(queue, path.join(root, "soc2-evidence", "approvals"));
+    const privateEvidenceDir = path.join(root, "SchoolPilot-SOC2-Evidence");
+    fs.mkdirSync(privateEvidenceDir, { recursive: true });
+
+    const { record, jsonPath, mdPath } = recordApprovalDecision({
+      rootDir: root,
+      queueFile,
+      privateEvidenceDir,
+      approvalId: "APPROVAL-SP-CONF-002-AI-DATA-FLOW-REVIEW",
+      decision: "not_approved",
+      approverName: "Brian Zinkan",
+      rationale: "Private AI review remains incomplete.",
+      now: new Date("2026-06-26T13:00:00Z"),
+    });
+
+    assert.equal(record.decision, "not_approved");
+    assert.equal(record.decisionType, "ai_data_flow_review");
+    assert.match(jsonPath, /ai[\\/]reviews/);
     assert.ok(fs.existsSync(jsonPath));
     assert.ok(fs.existsSync(mdPath));
   });
