@@ -83,6 +83,7 @@ npm run soc2:check       # Validate SOC 2 governance docs and draft risk accepta
 npm run soc2:incident-evidence   # Generate non-sensitive incident response evidence
 npm run soc2:tenant-isolation-evidence  # Generate non-sensitive tenant isolation/RLS evidence
 npm run soc2:deployment-evidence  # Generate shadow deployment/change evidence
+npm run soc2:private-evidence-readiness  # Generate non-sensitive readiness metadata from the private evidence repo
 npm run soc2:approval-queue       # Draft pending SOC 2 approval queue
 npm run soc2:approval-issue       # Format the GitHub issue body for pending approvals
 npm run soc2:approval-decision -- --approval-id <id> --decision approved|not_approved --approver "<name>" --rationale "<why>"

@@ -55,3 +55,10 @@ GitHub issue notifications are reminders only. The approval queue workflow may
 assign the issue, apply the `soc2-approval-needed` label, and mention the
 configured approver when pending approvals change. Those reminders do not
 approve, reject, deploy, or change application behavior.
+
+Private evidence readiness metadata may suppress already-decided approvals and
+move missing-evidence items into readiness gaps. This makes the GitHub issue
+actionable, but it is still not an approval. A final approval or rejection exists
+only when an authorized human records `/approve APPROVAL-ID rationale` or
+`/reject APPROVAL-ID rationale`, and GitHub Actions writes that decision to the
+private evidence repository.

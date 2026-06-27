@@ -97,6 +97,18 @@ source hashes, CI artifact references, and private production export pointers
 for `SOC2-005`; production DB exports, grants, policies, and customer data stay
 in `SchoolPilot-SOC2-Evidence/tenant-isolation/`.
 
+Generate non-sensitive private evidence readiness metadata locally:
+
+```bash
+npm run soc2:private-evidence-readiness -- --private-dir ../SchoolPilot-SOC2-Evidence
+```
+
+Private evidence readiness is written to `soc2-evidence/private-readiness/`.
+It records completed approval IDs, decision statuses, expiration dates, relative
+private evidence paths, file hashes, and missing/present checks only. It must not
+copy private evidence contents, approval rationales, secrets, logs, credentials,
+customer data, or student data into this repository or a public CI artifact.
+
 Generate the pending approval queue locally:
 
 ```bash
@@ -106,7 +118,12 @@ npm run soc2:approval-queue
 Approval queue drafts are written to `soc2-evidence/approvals/` and uploaded in
 CI as `soc2-approval-queue`. The queue gathers human-owned decisions from the
 governance tracker, risk acceptance drafts, local incident evidence, local tenant
-isolation evidence, and local deployment evidence.
+isolation evidence, local deployment evidence, and optional private readiness
+metadata. When private readiness metadata is present, already-decided approvals
+are suppressed, approved unexpired risk acceptances stay out of the queue, and
+items missing required private evidence appear as readiness gaps instead of
+approval commands. Shadow deployment packets with no requested production deploy
+do not create deployment approval commands.
 
 CI on `main` also opens or updates the GitHub issue `SOC 2 approvals pending`.
 When approvals are pending, the workflow assigns the issue to the notification
@@ -125,6 +142,12 @@ evidence to the private `SchoolPilot-SOC2-Evidence` repository. Configure the
 private evidence checkout with the `SOC2_EVIDENCE_REPO_TOKEN` GitHub secret.
 Optionally set `SOC2_APPROVAL_AUTHORIZED_ACTORS` as a comma-separated repository
 variable; it defaults to `bzinkan`.
+
+On pull requests, CI keeps the approval queue secret-free and does not checkout
+the private evidence repo. On `main`, CI uses `SOC2_EVIDENCE_REPO_TOKEN` to read
+the private evidence repo, generates the non-sensitive
+`soc2-private-evidence-readiness` artifact, and uses it to keep the GitHub issue
+focused on actionable approvals.
 
 Approval notifications default to `@bzinkan`. Optionally set
 `SOC2_APPROVAL_NOTIFY_USERS` as a comma-separated repository variable to notify

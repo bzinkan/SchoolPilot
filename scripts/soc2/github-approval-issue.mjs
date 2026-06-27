@@ -97,12 +97,39 @@ ${commandExample(item, "reject")}
 `;
 }
 
+function formatReadinessGap(gap) {
+  const evidenceLines = (gap.requiredEvidence || [])
+    .map((item) => {
+      const status = item.present ? "present" : "missing";
+      return `  - ${item.label}: ${status} (${item.location})`;
+    })
+    .join("\n");
+
+  return `### Gap: ${gap.approvalId}
+
+- Control: ${gap.controlId}
+- Decision type: ${gap.decisionType}
+- Status: ${gap.status}
+- Reason: ${gap.reason}
+- App impact: ${gap.appImpact}
+- Required private evidence:
+${evidenceLines || "  - No private evidence requirements available."}
+
+Add the missing private evidence, then rerun the SOC 2 approval queue. This item
+does not accept an approval command until it is ready.
+`;
+}
+
 export function formatApprovalIssueBody(queue, env = process.env) {
   const metadata = hiddenMetadata(queue, env);
   const items = queue.items || [];
   const itemSections = items.length
     ? items.map(formatItem).join("\n")
     : "No pending SOC 2 approvals were generated.";
+  const readinessGaps = queue.readinessGaps || [];
+  const readinessGapSections = readinessGaps.length
+    ? readinessGaps.map(formatReadinessGap).join("\n")
+    : "No private evidence readiness gaps were reported.";
 
   return `<!-- ${MARKER} ${JSON.stringify(metadata)} -->
 # SOC 2 Approvals Pending
@@ -113,6 +140,8 @@ evidence repository.
 
 - Queue ID: ${queue.queueId}
 - Pending approvals: ${queue.itemCount}
+- Readiness gaps: ${queue.readinessGapCount || 0}
+- Suppressed completed decisions: ${queue.suppressedApprovalCount || 0}
 - Generated at: ${queue.generatedAt}
 - Source run: ${metadata.runUrl || `${metadata.runId}.${metadata.runAttempt}`}
 - Artifact: ${metadata.artifactName}
@@ -140,6 +169,10 @@ and route this queue, but it never approves a decision on its own.
 ## Pending Items
 
 ${itemSections}
+
+## Private Evidence Readiness Gaps
+
+${readinessGapSections}
 `;
 }
 

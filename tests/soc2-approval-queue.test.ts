@@ -9,6 +9,10 @@ import {
   recordApprovalDecision,
   writeApprovalQueue,
 } from "../scripts/soc2/approval-queue.mjs";
+import {
+  buildPrivateEvidenceReadiness,
+  writePrivateEvidenceReadiness,
+} from "../scripts/soc2/private-evidence-readiness.mjs";
 
 function tempRoot() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "schoolpilot-soc2-approval-"));
@@ -126,6 +130,24 @@ function writeDeploymentEvidence(root: string) {
   write(root, "soc2-evidence/deployments/2026-06-26-shadow-deployment-evidence.md", "# Deployment evidence\n");
 }
 
+function writeNotRequestedDeploymentEvidence(root: string) {
+  write(
+    root,
+    "soc2-evidence/deployments/2026-06-27-shadow-deployment-evidence.json",
+    `${JSON.stringify({
+      evidenceId: "2026-06-27-shadow-deployment-evidence",
+      ci: { runUrl: "https://github.com/bzinkan/SchoolPilot/actions/runs/456" },
+      deployment: {
+        productionDeployDecision: "not_requested",
+        productionApprovalStatus: "pending_human_approval",
+        imageDigest: "pending/not_deployed",
+        deploymentResult: "not_deployed",
+      },
+    }, null, 2)}\n`,
+  );
+  write(root, "soc2-evidence/deployments/2026-06-27-shadow-deployment-evidence.md", "# Deployment evidence\n");
+}
+
 function writeIncidentEvidence(root: string) {
   write(
     root,
@@ -203,6 +225,25 @@ function writeTenantIsolationEvidence(root: string) {
   write(root, "soc2-evidence/tenant-isolation/tenant-isolation-evidence.md", "# Tenant isolation evidence\n");
 }
 
+function writePrivateDecision(root: string, relativePath: string, record: Record<string, unknown>) {
+  write(
+    root,
+    path.join("SchoolPilot-SOC2-Evidence", relativePath),
+    `${JSON.stringify(record, null, 2)}\n`,
+  );
+}
+
+function writePrivateReadiness(root: string, now = new Date("2026-06-26T12:00:00Z")) {
+  const privateEvidenceDir = path.join(root, "SchoolPilot-SOC2-Evidence");
+  fs.mkdirSync(privateEvidenceDir, { recursive: true });
+  const packet = buildPrivateEvidenceReadiness({
+    rootDir: root,
+    privateEvidenceDir,
+    now,
+  });
+  return writePrivateEvidenceReadiness(packet, path.join(root, "soc2-evidence", "private-readiness"));
+}
+
 describe("SOC 2 approval queue", () => {
   it("creates JSON and Markdown queue packets with pending approvals", () => {
     const root = tempRoot();
@@ -271,6 +312,20 @@ describe("SOC 2 approval queue", () => {
     assert.match(JSON.stringify(deploymentItem?.evidencePointers), /shadow-deployment-evidence\.json/);
   });
 
+  it("does not create approval items for shadow deployment packets when production deploy is not requested", () => {
+    const root = tempRoot();
+    writeSoc2Docs(root);
+    writeNotRequestedDeploymentEvidence(root);
+
+    const queue = buildApprovalQueue({
+      rootDir: root,
+      evidenceDir: path.join(root, "soc2-evidence"),
+      now: new Date("2026-06-26T12:00:00Z"),
+    });
+
+    assert.ok(!queue.items.some((item) => item.sourceId === "2026-06-27-shadow-deployment-evidence"));
+  });
+
   it("includes incident closure and notification approvals when local incident evidence exists", () => {
     const root = tempRoot();
     writeSoc2Docs(root);
@@ -322,6 +377,90 @@ describe("SOC 2 approval queue", () => {
     assert.deepEqual(review?.allowedDecisions, ["approved", "not_approved"]);
     assert.match(JSON.stringify(review?.evidencePointers), /soc2-evidence-rls-enabled/);
     assert.match(JSON.stringify(review?.evidencePointers), /pending_private_export/);
+  });
+
+  it("uses private readiness to suppress completed approvals and move not-ready items to gaps", () => {
+    const root = tempRoot();
+    writeSoc2Docs(root);
+    writeIncidentEvidence(root);
+    writeTenantIsolationEvidence(root);
+    writePrivateDecision(root, "risk-acceptances/approved-risk.json", {
+      approvalId: "APPROVAL-RA-SOC2-003-RISK-ACCEPTANCE",
+      controlId: "SP-SEC-001",
+      decisionType: "risk_acceptance",
+      sourceId: "RA-SOC2-003",
+      decision: "approved",
+      status: "approved",
+      decidedAt: "2026-06-26T13:00:00.000Z",
+      expiresAt: "2026-09-25",
+      rationale: "PRIVATE_RATIONALE_SHOULD_NOT_APPEAR",
+    });
+    const { jsonPath: readinessFile } = writePrivateReadiness(root, new Date("2026-06-26T14:00:00Z"));
+
+    const queue = buildApprovalQueue({
+      rootDir: root,
+      evidenceDir: path.join(root, "soc2-evidence"),
+      privateReadinessFile: readinessFile,
+      now: new Date("2026-06-27T12:00:00Z"),
+    });
+
+    assert.ok(!queue.items.some((item) => item.approvalId === "APPROVAL-RA-SOC2-003-RISK-ACCEPTANCE"));
+    assert.ok(queue.suppressedApprovals.some((item) => item.approvalId === "APPROVAL-RA-SOC2-003-RISK-ACCEPTANCE"));
+    assert.ok(!queue.items.some(
+      (item) => item.approvalId === "APPROVAL-SP-SEC-003-SOC2-001-HISTORICAL-CREDENTIAL-EXPOSURE-INCIDENT-CLOSURE",
+    ));
+    assert.ok(queue.readinessGaps.some(
+      (gap) => gap.approvalId === "APPROVAL-SP-SEC-003-SOC2-001-HISTORICAL-CREDENTIAL-EXPOSURE-INCIDENT-CLOSURE",
+    ));
+    assert.ok(queue.readinessGaps.some(
+      (gap) => gap.approvalId === "APPROVAL-SP-SEC-002-TENANT-ISOLATION-EVIDENCE-REVIEW",
+    ));
+    assert.equal(queue.readinessGaps.every((gap) => gap.status === "not_ready"), true);
+    assert.doesNotMatch(JSON.stringify(queue), /PRIVATE_RATIONALE_SHOULD_NOT_APPEAR/);
+  });
+
+  it("resurfaces expired approved risk acceptances", () => {
+    const root = tempRoot();
+    writeSoc2Docs(root);
+    writePrivateDecision(root, "risk-acceptances/expired-risk.json", {
+      approvalId: "APPROVAL-RA-SOC2-003-RISK-ACCEPTANCE",
+      controlId: "SP-SEC-001",
+      decisionType: "risk_acceptance",
+      sourceId: "RA-SOC2-003",
+      decision: "approved",
+      status: "approved",
+      decidedAt: "2026-01-01T13:00:00.000Z",
+      expiresAt: "2026-01-31",
+      rationale: "Expired approval.",
+    });
+    const { jsonPath: readinessFile } = writePrivateReadiness(root, new Date("2026-06-26T14:00:00Z"));
+
+    const queue = buildApprovalQueue({
+      rootDir: root,
+      privateReadinessFile: readinessFile,
+      now: new Date("2026-06-27T12:00:00Z"),
+    });
+
+    assert.ok(queue.items.some((item) => item.approvalId === "APPROVAL-RA-SOC2-003-RISK-ACCEPTANCE"));
+    assert.ok(!queue.suppressedApprovals.some((item) => item.approvalId === "APPROVAL-RA-SOC2-003-RISK-ACCEPTANCE"));
+  });
+
+  it("preserves secret-free fallback behavior when no private readiness file is supplied", () => {
+    const root = tempRoot();
+    writeSoc2Docs(root);
+    writeIncidentEvidence(root);
+
+    const queue = buildApprovalQueue({
+      rootDir: root,
+      evidenceDir: path.join(root, "soc2-evidence"),
+      now: new Date("2026-06-26T12:00:00Z"),
+    });
+
+    assert.ok(queue.items.some(
+      (item) => item.approvalId === "APPROVAL-SP-SEC-003-SOC2-001-HISTORICAL-CREDENTIAL-EXPOSURE-INCIDENT-CLOSURE",
+    ));
+    assert.equal(queue.readinessGaps.length, 0);
+    assert.equal(queue.suppressedApprovals.length, 0);
   });
 
   it("uses evidence pointers without copying private document contents", () => {
