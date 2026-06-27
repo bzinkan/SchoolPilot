@@ -234,3 +234,20 @@ Completed approvals default to `../SchoolPilot-SOC2-Evidence`, or to
 `SOC2_PRIVATE_EVIDENCE_DIR` when that environment variable is set. This command
 fails if the private evidence directory is missing so sensitive approval records
 are not accidentally written into this application repository.
+
+### Super Admin SOC 2 dashboard
+
+The Super Admin dashboard exposes `/super-admin/soc2` as a read-only readiness
+view. It summarizes local SOC 2 docs, the GitHub approval issue, current
+workflow status, readiness gaps, recent recorded decision metadata, and
+code/secret-scanning alert counts when token permissions allow. It never displays
+private evidence file bodies, credentials, logs, student data, customer data, or
+approval rationale text.
+
+Production uses `SOC2_DASHBOARD_GITHUB_TOKEN` to call the GitHub REST API.
+Optionally set `SOC2_DASHBOARD_REPO`, `SOC2_APPROVAL_ISSUE_NUMBER`, and
+`SOC2_DASHBOARD_WORKFLOW`; defaults are `bzinkan/SchoolPilot`, `146`, and
+`ci-build.yml`. Missing or under-scoped GitHub permissions return partial
+`unavailable` sections instead of breaking the page. The Resync button only
+dispatches the configured GitHub Actions workflow on `main`; all approval and
+rejection decisions remain in GitHub issue comments for auditability.

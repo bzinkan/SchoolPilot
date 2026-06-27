@@ -51,6 +51,9 @@ RUN npm ci --omit=dev && npm cache clean --force \
 # Copy compiled output
 COPY --from=builder /app/dist ./dist
 
+# Copy non-sensitive SOC 2 readiness docs used by the Super Admin dashboard
+COPY docs/soc2 ./docs/soc2
+
 # Copy schema source (needed by drizzle ORM at runtime)
 COPY src/schema ./src/schema
 

@@ -32,6 +32,7 @@ const SUPER_ADMIN_ITEMS = [
   { label: 'Schools', path: '/super-admin/schools', icon: '🏫' },
   { label: 'Inquiries', path: '/super-admin/inquiries', icon: '📋' },
   { label: 'Monitoring', path: '/super-admin/monitoring', icon: '📡' },
+  { label: 'SOC 2', path: '/super-admin/soc2', icon: '✅' },
 ];
 
 export default function Sidebar({ open, onClose }) {

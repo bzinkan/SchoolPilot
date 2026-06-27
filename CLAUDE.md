@@ -301,6 +301,8 @@ Copy `.env.example` to `.env`. Required for local dev:
 - `SENTRY_DSN` — (optional, gated off) Sentry error tracking. Leave unset until DPA signed + added to subprocessors. See "Sentry" section below.
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` — (optional) developer error alerts via Telegram
 - `RLS_GUC_ENABLED` / `RLS_ENABLED_TABLES` — (prod, ECS task def) master switch + per-table allowlist for the Row-Level Security enforcement described under "Database-Level Tenant Isolation (RLS)". Leave unset locally unless testing RLS.
+- `SOC2_DASHBOARD_GITHUB_TOKEN` — (prod, ECS task def) GitHub token used only by the Super Admin SOC 2 dashboard to read issue #146, workflow status, code/secret-scanning counts, and dispatch the configured CI workflow. Missing or under-scoped tokens must degrade to partial dashboard data.
+- `SOC2_DASHBOARD_REPO`, `SOC2_APPROVAL_ISSUE_NUMBER`, `SOC2_DASHBOARD_WORKFLOW` — optional SOC 2 dashboard overrides; defaults are `bzinkan/SchoolPilot`, `146`, and `ci-build.yml`.
 
 ### Secrets hygiene — NEVER commit keys
 
@@ -330,6 +332,7 @@ GitHub Actions (`.github/workflows/ci-build.yml`) runs on push/PR to main:
 - Automation may prepare risk records, owners, risk levels, expiration dates, and suggested compensating controls, but it must not approve risk acceptances. Drafts remain `Draft - pending founder approval` until the founder/Security & Privacy Officer signs off.
 - Deployment evidence automation must remain shadow-only unless a later task explicitly implements protected deploys: do not add AWS credentials, ECS/S3/CloudFront changes, or production approval bypasses to evidence collection.
 - Privileged access evidence automation must keep MFA status as deferred unless a later task explicitly implements MFA; do not add user-facing MFA prompts, login changes, AWS changes, session revocation, or production DB exports to CI.
+- Super Admin SOC 2 dashboard changes must stay read-only except for triggering GitHub Actions `workflow_dispatch`; do not add in-app approve/reject buttons or expose private evidence document bodies.
 - If changing risk automation rules, update `docs/soc2/risk-acceptance-policy.json` and the SOC 2 governance tests together.
 
 The frontend uses React Compiler lint rules. Common gotchas:
