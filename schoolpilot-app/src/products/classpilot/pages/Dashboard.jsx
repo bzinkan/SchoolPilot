@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useNavigate } from 'react-router-dom';
-import { Monitor, Users, Activity, Settings as SettingsIcon, LogOut, Download, Calendar, Shield, AlertTriangle, UserCog, Plus, X, GraduationCap, WifiOff, Video, MonitorPlay, TabletSmartphone, Lock, Unlock, Layers, CheckSquare, XSquare, User, UserCheck, List, ShieldBan, Eye, EyeOff, Timer, Clock, BarChart3, Trash2, UsersRound, Filter, Hand, MessageSquareOff, MessageSquare, Send, ClipboardCheck } from "lucide-react";
+import { Monitor, Users, Activity, Settings as SettingsIcon, LogOut, Download, Calendar, Shield, AlertTriangle, UserCog, Plus, X, GraduationCap, WifiOff, Video, MonitorPlay, TabletSmartphone, Lock, Unlock, Layers, CheckSquare, XSquare, User, UserCheck, List, ShieldBan, Eye, EyeOff, Timer, Clock, BarChart3, Trash2, UsersRound, Filter, Hand, MessageSquareOff, MessageSquare, Send, ClipboardCheck, RefreshCw } from "lucide-react";
 import { Button } from '../../../components/ui/button';
 import { Input } from '../../../components/ui/input';
 import { Badge } from '../../../components/ui/badge';
@@ -48,6 +48,20 @@ function classStartOverlapData(error) {
   const data = error?.response?.data || error?.data || null;
   if (data?.code !== "CLASS_ROSTER_ACTIVE_OVERLAP") return null;
   return data;
+}
+
+function classResyncOverlapData(error) {
+  const data = error?.response?.data || error?.data || null;
+  if (data?.code !== "CLASS_RESYNC_ACTIVE_OVERLAP") return null;
+  return data;
+}
+
+function resyncSummaryText(data) {
+  const parts = [];
+  if (data?.addedToSession) parts.push(`${data.addedToSession} added`);
+  if (data?.notSignedIn) parts.push(`${data.notSignedIn} not signed in`);
+  if (data?.activeElsewhere) parts.push(`${data.activeElsewhere} active elsewhere`);
+  return parts.length > 0 ? `Class resynced: ${parts.join(", ")}` : "Class resynced: roster is already up to date";
 }
 
 export default function Dashboard() {
@@ -130,6 +144,7 @@ export default function Dashboard() {
   const [startGroupId, setStartGroupId] = useState("");
   const [adminStartGroupId, setAdminStartGroupId] = useState("");
   const [classStartOverlap, setClassStartOverlap] = useState(null);
+  const [classResyncOverlap, setClassResyncOverlap] = useState(null);
   const dismissedMessageIds = useRef(new Set());
   const dismissedMessagesInitialized = useRef(false);
   // eslint-disable-next-line react-hooks/refs
@@ -1227,6 +1242,32 @@ export default function Dashboard() {
     onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
   });
 
+  const resyncSessionMutation = useMutation({
+    mutationFn: async ({ sessionId, acknowledgeOverlap = false }) => (
+      apiRequest('POST', `/sessions/${encodeURIComponent(sessionId)}/resync`, { acknowledgeOverlap })
+    ),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/sessions/active'], exact: false });
+      queryClient.invalidateQueries({ queryKey: ['/api/sessions/all'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/groups'], exact: false });
+      queryClient.invalidateQueries({ queryKey: ['/api/teacher/groups'], exact: false });
+      queryClient.invalidateQueries({ queryKey: ['/api/coverage/available-students'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/coverage/claimed-students'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/coverage/reroute-targets'] });
+      setClassResyncOverlap(null);
+      toast({ title: "Class resynced", description: resyncSummaryText(data) });
+    },
+    onError: (error, variables) => {
+      const data = classResyncOverlapData(error);
+      if (data) {
+        setClassResyncOverlap({ ...data, request: variables });
+        return;
+      }
+      toast({ variant: "destructive", title: "Could not resync class", description: error.response?.data?.error || error.message });
+    },
+  });
+
   const claimPickupMutation = useMutation({
     mutationFn: async ({ students: studentsToClaim }) => {
       const byGroup = studentsToClaim.reduce((map, student) => {
@@ -1917,9 +1958,20 @@ export default function Dashboard() {
               {isTeacher && (
                 <>
                   {activeSession ? (
-                    <button onClick={() => endSessionMutation.mutate()} disabled={endSessionMutation.isPending} className="flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold bg-red-500 text-white hover:bg-red-600 transition-colors disabled:opacity-50" data-testid="button-end-session">
-                      <X className="h-3.5 w-3.5" /> End Class
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => resyncSessionMutation.mutate({ sessionId: activeSession.id })}
+                        disabled={resyncSessionMutation.isPending}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border border-slate-600 bg-slate-900 text-slate-100 hover:bg-slate-800 transition-colors disabled:opacity-50"
+                        data-testid="button-resync-session"
+                      >
+                        <RefreshCw className={`h-3.5 w-3.5 ${resyncSessionMutation.isPending ? "animate-spin" : ""}`} /> Resync Class
+                      </button>
+                      <button onClick={() => endSessionMutation.mutate()} disabled={endSessionMutation.isPending} className="flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold bg-red-500 text-white hover:bg-red-600 transition-colors disabled:opacity-50" data-testid="button-end-session">
+                        <X className="h-3.5 w-3.5" /> End Class
+                      </button>
+                    </div>
                   ) : (
                     <div className="flex items-center gap-2">
                       <select
@@ -1962,6 +2014,15 @@ export default function Dashboard() {
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
                         Teaching: {groups.find(g => g.id === activeSession.groupId)?.name || 'Active Class'}
                       </div>
+                      <button
+                        type="button"
+                        onClick={() => resyncSessionMutation.mutate({ sessionId: activeSession.id })}
+                        disabled={resyncSessionMutation.isPending}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border border-slate-600 bg-slate-900 text-slate-100 hover:bg-slate-800 transition-colors disabled:opacity-50"
+                        data-testid="button-admin-resync-session"
+                      >
+                        <RefreshCw className={`h-3.5 w-3.5 ${resyncSessionMutation.isPending ? "animate-spin" : ""}`} /> Resync Class
+                      </button>
                       <button onClick={() => endSessionMutation.mutate()} disabled={endSessionMutation.isPending} className="flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold bg-red-500 text-white hover:bg-red-600 transition-colors disabled:opacity-50" data-testid="button-admin-end-session">
                         <X className="h-3.5 w-3.5" /> End Class
                       </button>
@@ -2451,6 +2512,51 @@ export default function Dashboard() {
               data-testid="button-confirm-overlap-start"
             >
               Start Anyway
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!classResyncOverlap} onOpenChange={(open) => { if (!open) setClassResyncOverlap(null); }}>
+        <DialogContent className="max-w-lg" data-testid="dialog-class-resync-overlap">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-amber-500" />
+              Some students are active in another class
+            </DialogTitle>
+            <DialogDescription>
+              {classResyncOverlap?.activeElsewhere || 0} student{classResyncOverlap?.activeElsewhere === 1 ? "" : "s"} from this roster are currently active in another ClassPilot session. Resyncing anyway will move ClassPilot control for those students back to this class.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            {(classResyncOverlap?.conflicts || []).map((group) => (
+              <div key={group.sessionId} className="rounded-lg border border-amber-200 bg-amber-50/60 p-3 text-sm dark:border-amber-900/60 dark:bg-amber-950/20">
+                <div className="font-semibold text-slate-900 dark:text-slate-100">
+                  {group.teacherName} - {group.className} - {group.affectedCount} student{group.affectedCount === 1 ? "" : "s"}
+                </div>
+                {group.affectedStudents?.length > 0 && (
+                  <div className="mt-1 text-xs text-slate-600 dark:text-slate-400">
+                    {group.affectedStudents.map((student) => student.studentName).join(", ")}
+                    {group.affectedCount > group.affectedStudents.length ? `, +${group.affectedCount - group.affectedStudents.length} more` : ""}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setClassResyncOverlap(null)} data-testid="button-cancel-resync-overlap">
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                const sessionId = classResyncOverlap?.request?.sessionId || activeSession?.id;
+                if (!sessionId) return;
+                resyncSessionMutation.mutate({ sessionId, acknowledgeOverlap: true });
+              }}
+              disabled={resyncSessionMutation.isPending}
+              data-testid="button-confirm-resync-overlap"
+            >
+              Resync Anyway
             </Button>
           </DialogFooter>
         </DialogContent>
