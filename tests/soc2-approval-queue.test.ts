@@ -233,6 +233,27 @@ function writePrivateDecision(root: string, relativePath: string, record: Record
   );
 }
 
+function writeReadyIncidentPrivateEvidence(root: string) {
+  const records = [
+    ["credential-rotation", "credential_rotation"],
+    ["log-review", "log_review"],
+    ["exposure-assessment", "exposure_assessment"],
+  ];
+
+  for (const [folder, evidenceType] of records) {
+    write(
+      root,
+      path.join("SchoolPilot-SOC2-Evidence", "incidents", folder, `soc2-001-${folder}.json`),
+      `${JSON.stringify({
+        incidentId: "SOC2-001-HISTORICAL-CREDENTIAL-EXPOSURE",
+        evidenceType,
+        status: "ready_for_approval",
+        privateDetails: "PRIVATE_INCIDENT_BODY_SHOULD_NOT_APPEAR",
+      }, null, 2)}\n`,
+    );
+  }
+}
+
 function writePrivateReadiness(root: string, now = new Date("2026-06-26T12:00:00Z")) {
   const privateEvidenceDir = path.join(root, "SchoolPilot-SOC2-Evidence");
   fs.mkdirSync(privateEvidenceDir, { recursive: true });
@@ -461,6 +482,32 @@ describe("SOC 2 approval queue", () => {
     ));
     assert.equal(queue.readinessGaps.length, 0);
     assert.equal(queue.suppressedApprovals.length, 0);
+  });
+
+  it("unlocks incident approval items when private incident evidence is ready", () => {
+    const root = tempRoot();
+    writeSoc2Docs(root);
+    writeIncidentEvidence(root);
+    writeReadyIncidentPrivateEvidence(root);
+    const { jsonPath: readinessFile } = writePrivateReadiness(root, new Date("2026-06-26T14:00:00Z"));
+
+    const queue = buildApprovalQueue({
+      rootDir: root,
+      evidenceDir: path.join(root, "soc2-evidence"),
+      privateReadinessFile: readinessFile,
+      now: new Date("2026-06-27T12:00:00Z"),
+    });
+
+    assert.ok(queue.items.some(
+      (item) => item.approvalId === "APPROVAL-SP-SEC-003-SOC2-001-HISTORICAL-CREDENTIAL-EXPOSURE-INCIDENT-CLOSURE",
+    ));
+    assert.ok(queue.items.some(
+      (item) => item.approvalId === "APPROVAL-SP-SEC-003-SOC2-001-HISTORICAL-CREDENTIAL-EXPOSURE-NOTIFICATION-DECISION",
+    ));
+    assert.ok(!queue.readinessGaps.some(
+      (gap) => gap.approvalId === "APPROVAL-SP-SEC-003-SOC2-001-HISTORICAL-CREDENTIAL-EXPOSURE-INCIDENT-CLOSURE",
+    ));
+    assert.doesNotMatch(JSON.stringify(queue), /PRIVATE_INCIDENT_BODY_SHOULD_NOT_APPEAR/);
   });
 
   it("uses evidence pointers without copying private document contents", () => {

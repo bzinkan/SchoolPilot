@@ -6,6 +6,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const APP_IMPACT = "No user-facing behavior changed";
 const PRIVATE_REPO_NAME = "SchoolPilot-SOC2-Evidence";
+const SOC2_001_INCIDENT_ID = "SOC2-001-HISTORICAL-CREDENTIAL-EXPOSURE";
+const READY_STATUS = "ready_for_approval";
 const ALLOWED_DECISIONS = new Set(["approved", "not_approved"]);
 
 function argValue(name, fallback = "") {
@@ -109,11 +111,20 @@ function walkFiles(dir) {
   return files.sort((a, b) => a.localeCompare(b));
 }
 
+function isMeaningfulEvidenceFile(fullPath) {
+  const stat = fs.statSync(fullPath);
+  return path.basename(fullPath) !== ".gitkeep" && stat.size > 0;
+}
+
+function meaningfulEvidenceFiles(dir) {
+  return walkFiles(dir).filter(isMeaningfulEvidenceFile);
+}
+
 function summarizeEvidenceLocation(privateEvidenceDir, label, location) {
   const relativePaths = evidenceLocationMatches(location);
   const relativePath = relativePaths[0] || "";
   const fullPath = relativePath ? path.join(privateEvidenceDir, relativePath) : "";
-  const files = fullPath ? walkFiles(fullPath) : [];
+  const files = fullPath ? meaningfulEvidenceFiles(fullPath) : [];
 
   return {
     label,
@@ -121,6 +132,36 @@ function summarizeEvidenceLocation(privateEvidenceDir, label, location) {
     relativePath: relativePath ? publicPrivatePath(relativePath) : "not_available",
     present: files.length > 0,
     fileCount: files.length,
+    fileHashes: files.map((file) => ({
+      path: publicPathForFile(privateEvidenceDir, file),
+      sha256: sha256File(file),
+    })),
+  };
+}
+
+function summarizeReadyIncidentEvidence(privateEvidenceDir, label, location, evidenceType) {
+  const relativePaths = evidenceLocationMatches(location);
+  const relativePath = relativePaths[0] || "";
+  const fullPath = relativePath ? path.join(privateEvidenceDir, relativePath) : "";
+  const files = fullPath ? meaningfulEvidenceFiles(fullPath) : [];
+  const jsonRecords = files
+    .filter((file) => file.endsWith(".json"))
+    .map((file) => ({
+      file,
+      record: parseJsonFile(file, null),
+    }))
+    .filter(({ record }) => record?.incidentId === SOC2_001_INCIDENT_ID && record?.evidenceType === evidenceType);
+  const readyRecords = jsonRecords.filter(({ record }) => record.status === READY_STATUS);
+  const latestStatus = jsonRecords.at(-1)?.record?.status || (files.length ? "present_but_not_ready" : "missing");
+
+  return {
+    label,
+    location,
+    relativePath: relativePath ? publicPrivatePath(relativePath) : "not_available",
+    present: readyRecords.length > 0,
+    readinessStatus: readyRecords.length > 0 ? READY_STATUS : latestStatus,
+    fileCount: files.length,
+    readyFileCount: readyRecords.length,
     fileHashes: files.map((file) => ({
       path: publicPathForFile(privateEvidenceDir, file),
       sha256: sha256File(file),
@@ -191,20 +232,23 @@ function buildGovernanceEvidenceChecks(rootDir, privateEvidenceDir) {
 
 function buildIncidentEvidenceChecks(privateEvidenceDir) {
   const requiredEvidence = [
-    summarizeEvidenceLocation(
+    summarizeReadyIncidentEvidence(
       privateEvidenceDir,
       "Credential rotation evidence",
       "SchoolPilot-SOC2-Evidence/incidents/credential-rotation/",
+      "credential_rotation",
     ),
-    summarizeEvidenceLocation(
+    summarizeReadyIncidentEvidence(
       privateEvidenceDir,
       "Security log review evidence",
       "SchoolPilot-SOC2-Evidence/incidents/log-review/",
+      "log_review",
     ),
-    summarizeEvidenceLocation(
+    summarizeReadyIncidentEvidence(
       privateEvidenceDir,
       "Exposure assessment evidence",
       "SchoolPilot-SOC2-Evidence/incidents/exposure-assessment/",
+      "exposure_assessment",
     ),
   ];
 

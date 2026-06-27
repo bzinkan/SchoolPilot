@@ -85,6 +85,20 @@ Incident evidence is written to `soc2-evidence/incidents/` and uploaded in CI as
 `SOC2-001`; private incident details, logs, credentials, customer data, and
 student data stay in `SchoolPilot-SOC2-Evidence/incidents/`.
 
+Create private draft evidence templates for `SOC2-001`:
+
+```bash
+npm run soc2:incident-private-evidence-kit -- --private-dir ../SchoolPilot-SOC2-Evidence
+```
+
+The private incident kit writes draft JSON/Markdown records for credential
+rotation, security log review, and exposure assessment into the private evidence
+repo. Drafts use `status: draft_pending_founder_input`; they are checklists, not
+final conclusions. The founder/security owner must complete the factual fields
+and change all three JSON records to `status: ready_for_approval` before the
+incident closure and notification decisions move out of readiness gaps and into
+the GitHub approval queue.
+
 Generate non-sensitive tenant isolation/RLS evidence locally:
 
 ```bash
