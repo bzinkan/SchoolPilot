@@ -269,6 +269,33 @@ function writeReadyAiPrivateEvidence(root: string) {
   );
 }
 
+function writeReadyPrivilegedAccessPrivateEvidence(root: string) {
+  write(
+    root,
+    path.join("SchoolPilot-SOC2-Evidence", "access-reviews", "soc2-003-privileged-access-review.json"),
+    `${JSON.stringify({
+      evidenceId: "SOC2-003-PRIVILEGED-ACCESS-REVIEW",
+      controlId: "SP-SEC-001",
+      remediationItem: "SOC2-003",
+      evidenceType: "privileged_access_review",
+      status: "ready_for_approval",
+      privateReviewNotes: "PRIVATE_USER_EXPORT_BODY_SHOULD_NOT_APPEAR",
+    }, null, 2)}\n`,
+  );
+  write(
+    root,
+    path.join("SchoolPilot-SOC2-Evidence", "access-reviews", "exports", "soc2-003-user-role-export.json"),
+    `${JSON.stringify({
+      evidenceId: "SOC2-003-USER-ROLE-EXPORT",
+      controlId: "SP-SEC-001",
+      remediationItem: "SOC2-003",
+      evidenceType: "user_role_export",
+      status: "ready_for_approval",
+      privateUserRows: "PRIVATE_USER_EXPORT_BODY_SHOULD_NOT_APPEAR",
+    }, null, 2)}\n`,
+  );
+}
+
 function writePrivateReadiness(root: string, now = new Date("2026-06-26T12:00:00Z")) {
   const privateEvidenceDir = path.join(root, "SchoolPilot-SOC2-Evidence");
   fs.mkdirSync(privateEvidenceDir, { recursive: true });
@@ -325,7 +352,8 @@ describe("SOC 2 approval queue", () => {
     const riskItems = queue.items.filter((item) => item.decisionType === "risk_acceptance");
 
     assert.ok(riskItems.some((item) => item.sourceId === "RA-SOC2-001"));
-    assert.ok(riskItems.some((item) => item.sourceId === "RA-SOC2-003"));
+    assert.ok(riskItems.some((item) => item.approvalId === "APPROVAL-SP-SEC-001-PRIVILEGED-MFA-ROLLOUT-DECISION"));
+    assert.ok(!riskItems.some((item) => item.sourceId === "RA-SOC2-003"));
     assert.ok(!riskItems.some((item) => item.sourceId === "RA-SOC2-009"));
     assert.ok(riskItems.every((item) => item.expiresAt));
   });
@@ -421,10 +449,10 @@ describe("SOC 2 approval queue", () => {
     writeIncidentEvidence(root);
     writeTenantIsolationEvidence(root);
     writePrivateDecision(root, "risk-acceptances/approved-risk.json", {
-      approvalId: "APPROVAL-RA-SOC2-003-RISK-ACCEPTANCE",
+      approvalId: "APPROVAL-SP-SEC-001-PRIVILEGED-MFA-ROLLOUT-DECISION",
       controlId: "SP-SEC-001",
       decisionType: "risk_acceptance",
-      sourceId: "RA-SOC2-003",
+      sourceId: "SP-SEC-001:Privileged MFA rollout decision",
       decision: "approved",
       status: "approved",
       decidedAt: "2026-06-26T13:00:00.000Z",
@@ -441,9 +469,13 @@ describe("SOC 2 approval queue", () => {
     });
 
     assert.ok(!queue.items.some((item) => item.approvalId === "APPROVAL-RA-SOC2-003-RISK-ACCEPTANCE"));
-    assert.ok(queue.suppressedApprovals.some((item) => item.approvalId === "APPROVAL-RA-SOC2-003-RISK-ACCEPTANCE"));
+    assert.ok(!queue.items.some((item) => item.approvalId === "APPROVAL-SP-SEC-001-PRIVILEGED-MFA-ROLLOUT-DECISION"));
+    assert.ok(queue.suppressedApprovals.some((item) => item.approvalId === "APPROVAL-SP-SEC-001-PRIVILEGED-MFA-ROLLOUT-DECISION"));
     assert.ok(!queue.items.some(
       (item) => item.approvalId === "APPROVAL-SP-SEC-003-SOC2-001-HISTORICAL-CREDENTIAL-EXPOSURE-INCIDENT-CLOSURE",
+    ));
+    assert.ok(queue.readinessGaps.some(
+      (gap) => gap.approvalId === "APPROVAL-SP-SEC-001-QUARTERLY-PRIVILEGED-ACCESS-REVIEW-PACKET",
     ));
     assert.ok(queue.readinessGaps.some(
       (gap) => gap.approvalId === "APPROVAL-SP-SEC-003-SOC2-001-HISTORICAL-CREDENTIAL-EXPOSURE-INCIDENT-CLOSURE",
@@ -459,10 +491,10 @@ describe("SOC 2 approval queue", () => {
     const root = tempRoot();
     writeSoc2Docs(root);
     writePrivateDecision(root, "risk-acceptances/expired-risk.json", {
-      approvalId: "APPROVAL-RA-SOC2-003-RISK-ACCEPTANCE",
+      approvalId: "APPROVAL-SP-SEC-001-PRIVILEGED-MFA-ROLLOUT-DECISION",
       controlId: "SP-SEC-001",
       decisionType: "risk_acceptance",
-      sourceId: "RA-SOC2-003",
+      sourceId: "SP-SEC-001:Privileged MFA rollout decision",
       decision: "approved",
       status: "approved",
       decidedAt: "2026-01-01T13:00:00.000Z",
@@ -477,8 +509,9 @@ describe("SOC 2 approval queue", () => {
       now: new Date("2026-06-27T12:00:00Z"),
     });
 
-    assert.ok(queue.items.some((item) => item.approvalId === "APPROVAL-RA-SOC2-003-RISK-ACCEPTANCE"));
-    assert.ok(!queue.suppressedApprovals.some((item) => item.approvalId === "APPROVAL-RA-SOC2-003-RISK-ACCEPTANCE"));
+    assert.ok(queue.items.some((item) => item.approvalId === "APPROVAL-SP-SEC-001-PRIVILEGED-MFA-ROLLOUT-DECISION"));
+    assert.ok(!queue.items.some((item) => item.approvalId === "APPROVAL-RA-SOC2-003-RISK-ACCEPTANCE"));
+    assert.ok(!queue.suppressedApprovals.some((item) => item.approvalId === "APPROVAL-SP-SEC-001-PRIVILEGED-MFA-ROLLOUT-DECISION"));
   });
 
   it("preserves secret-free fallback behavior when no private readiness file is supplied", () => {
@@ -545,6 +578,27 @@ describe("SOC 2 approval queue", () => {
       (gap) => gap.approvalId === "APPROVAL-SP-CONF-002-AI-DATA-FLOW-REVIEW",
     ));
     assert.doesNotMatch(JSON.stringify(queue), /PRIVATE_AI_REVIEW_BODY_SHOULD_NOT_APPEAR/);
+  });
+
+  it("unlocks privileged access review when private access review and export are ready", () => {
+    const root = tempRoot();
+    writeSoc2Docs(root);
+    writeReadyPrivilegedAccessPrivateEvidence(root);
+    const { jsonPath: readinessFile } = writePrivateReadiness(root, new Date("2026-06-26T14:00:00Z"));
+
+    const queue = buildApprovalQueue({
+      rootDir: root,
+      privateReadinessFile: readinessFile,
+      now: new Date("2026-06-27T12:00:00Z"),
+    });
+
+    assert.ok(queue.items.some(
+      (item) => item.approvalId === "APPROVAL-SP-SEC-001-QUARTERLY-PRIVILEGED-ACCESS-REVIEW-PACKET",
+    ));
+    assert.ok(!queue.readinessGaps.some(
+      (gap) => gap.approvalId === "APPROVAL-SP-SEC-001-QUARTERLY-PRIVILEGED-ACCESS-REVIEW-PACKET",
+    ));
+    assert.doesNotMatch(JSON.stringify(queue), /PRIVATE_USER_EXPORT_BODY_SHOULD_NOT_APPEAR/);
   });
 
   it("suppresses completed AI data-flow decisions from the pending queue", () => {

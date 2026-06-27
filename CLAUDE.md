@@ -82,6 +82,8 @@ npm run build            # Compile to dist/ (tsc + tsc-alias)
 npm run soc2:check       # Validate SOC 2 governance docs and draft risk acceptances
 npm run soc2:ai-privacy-evidence  # Generate non-sensitive AI/privacy evidence for SOC2-002
 npm run soc2:ai-private-evidence-kit  # Create private SOC2-002 AI data-flow review drafts
+npm run soc2:privileged-access-evidence  # Generate non-sensitive SOC2-003 privileged access/MFA deferral evidence
+npm run soc2:privileged-access-private-evidence-kit  # Create private SOC2-003 access review/export/MFA deferral drafts
 npm run soc2:incident-evidence   # Generate non-sensitive incident response evidence
 npm run soc2:incident-private-evidence-kit  # Create SOC2-001 private incident evidence drafts
 npm run soc2:tenant-isolation-evidence  # Generate non-sensitive tenant isolation/RLS evidence
@@ -314,16 +316,20 @@ GitHub Actions (`.github/workflows/ci-build.yml`) runs on push/PR to main:
 - Backend: `npm audit --audit-level=high` + `tsc --noEmit` + `npm run build`
 - Frontend: `npm audit --audit-level=critical` + `npm run lint` + `vite build`
 - SOC 2 governance: `npm run soc2:check` validates governance metadata, checks public/security claims, writes non-sensitive evidence packets, and auto-drafts risk acceptances for eligible open remediation items.
+- SOC 2 privileged access evidence: `npm run soc2:privileged-access-evidence` writes a non-sensitive packet for `SOC2-003` showing MFA is deferred, privileged access is reviewed, and private access-review/user-export/MFA-deferral evidence is required.
 - SOC 2 deployment evidence: `npm run soc2:deployment-evidence` writes a shadow change/deployment packet without deploying or requiring AWS credentials.
 
 ### SOC 2 governance evidence
 
 - Run `npm run soc2:check` whenever changing `docs/soc2/`, `docs/WISP.md`, `docs/HECVAT-LITE.md`, public security/privacy/legal claims, remediation registers, control matrices, claim registers, or SOC 2 evidence scripts.
+- Run `npm run soc2:privileged-access-evidence` whenever changing auth, role checks, school context enforcement, session controls, security monitoring, audit logging, `SOC2-003`, or `SP-SEC-001` evidence docs. This command is evidence-only and must not enable MFA, change login behavior, revoke sessions, or query production users.
+- Run `npm run soc2:privileged-access-private-evidence-kit -- --private-dir ../SchoolPilot-SOC2-Evidence` to create private draft access-review, user/role export, and MFA-deferral records. Drafts are not approvals; the founder/security owner must complete factual fields before approval.
 - Run `npm run soc2:deployment-evidence` whenever changing CI/deploy evidence behavior, `scripts/deploy.sh`, `Dockerfile`, package lock files, or `SP-SEC-004` evidence docs.
 - Risk-acceptance drafts are generated from `docs/soc2/remediation-register.md` according to `docs/soc2/risk-acceptance-policy.json`. Current policy drafts P0/P1 items with `Open` or `In progress` status.
 - Generated packets and drafts are written under `soc2-evidence/`, including `soc2-evidence/risk-acceptances/` and `soc2-evidence/deployments/`; this folder is ignored by Git and must not be committed.
 - Automation may prepare risk records, owners, risk levels, expiration dates, and suggested compensating controls, but it must not approve risk acceptances. Drafts remain `Draft - pending founder approval` until the founder/Security & Privacy Officer signs off.
 - Deployment evidence automation must remain shadow-only unless a later task explicitly implements protected deploys: do not add AWS credentials, ECS/S3/CloudFront changes, or production approval bypasses to evidence collection.
+- Privileged access evidence automation must keep MFA status as deferred unless a later task explicitly implements MFA; do not add user-facing MFA prompts, login changes, AWS changes, session revocation, or production DB exports to CI.
 - If changing risk automation rules, update `docs/soc2/risk-acceptance-policy.json` and the SOC 2 governance tests together.
 
 The frontend uses React Compiler lint rules. Common gotchas:

@@ -89,6 +89,35 @@ conclusions. The founder/security owner must complete the factual fields and
 change the JSON record to `status: ready_for_approval` before the AI data-flow
 review moves out of readiness gaps and into the GitHub approval queue.
 
+Generate non-sensitive privileged access evidence locally:
+
+```bash
+npm run soc2:privileged-access-evidence
+```
+
+Privileged access evidence is written to
+`soc2-evidence/privileged-access/` and uploaded in CI as
+`soc2-evidence-privileged-access`. It records metadata, source hashes,
+privileged role tiers, MFA status as `deferred_not_live`, audit/session
+safeguards, and private evidence pointers for `SOC2-003`. It must not copy
+password hashes, session contents, raw user exports, secrets, customer records,
+or student records.
+
+Create private draft privileged access evidence for `SOC2-003`:
+
+```bash
+npm run soc2:privileged-access-private-evidence-kit -- --private-dir ../SchoolPilot-SOC2-Evidence
+```
+
+The private privileged access kit writes draft JSON/Markdown records for the
+access review, user/role export template, and MFA deferral risk acceptance into
+the private evidence repo. Drafts use `status: draft_pending_founder_input`.
+The founder/security owner must complete the factual fields and mark the access
+review plus user/role export `ready_for_approval` before the access review moves
+out of readiness gaps and into the GitHub approval queue. A trusted operator may
+run the same command with `--from-database` only from an environment where
+`DATABASE_URL` is intentionally set; CI must not query production DB.
+
 Generate shadow deployment/change-management evidence locally:
 
 ```bash

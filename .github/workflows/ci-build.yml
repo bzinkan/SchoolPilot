@@ -357,6 +357,33 @@ jobs:
           path: soc2-evidence/ai-privacy/
           if-no-files-found: error
 
+  soc2-privileged-access-evidence:
+    name: SOC 2 privileged access evidence
+    runs-on: ubuntu-latest
+    needs:
+      - backend
+    if: always()
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Generate privileged access evidence
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: npm run soc2:privileged-access-evidence
+
+      - name: Upload SOC 2 privileged access evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: soc2-evidence-privileged-access
+          path: soc2-evidence/privileged-access/
+          if-no-files-found: error
+
   soc2-approval-queue:
     name: SOC 2 approval queue
     runs-on: ubuntu-latest
@@ -368,6 +395,7 @@ jobs:
       - soc2-incident-evidence
       - soc2-tenant-isolation-evidence
       - soc2-ai-privacy-evidence
+      - soc2-privileged-access-evidence
     if: always()
 
     steps:
@@ -397,6 +425,11 @@ jobs:
         env:
           JOB_STATUS: ${{ job.status }}
         run: npm run soc2:ai-privacy-evidence
+
+      - name: Generate local privileged access evidence for approval pointers
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: npm run soc2:privileged-access-evidence
 
       - name: Checkout private SOC 2 evidence repo
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'

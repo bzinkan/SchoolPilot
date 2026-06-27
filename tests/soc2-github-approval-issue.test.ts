@@ -151,6 +151,47 @@ describe("SOC 2 GitHub approval issue", () => {
     assert.doesNotMatch(body, /\/reject APPROVAL-SP-CONF-002-AI-DATA-FLOW-REVIEW/);
   });
 
+  it("formats privileged access readiness gaps without approval commands", () => {
+    const pendingQueue = {
+      ...queue(),
+      itemCount: 0,
+      readinessGapCount: 1,
+      items: [],
+      readinessGaps: [
+        {
+          approvalId: "APPROVAL-SP-SEC-001-QUARTERLY-PRIVILEGED-ACCESS-REVIEW-PACKET",
+          controlId: "SP-SEC-001",
+          decisionType: "privileged_access_review",
+          sourceId: "SP-SEC-001:Quarterly privileged access review packet",
+          status: "not_ready",
+          reason: "Required private evidence is missing.",
+          missingEvidence: ["Privileged access review", "User and role export"],
+          requiredEvidence: [
+            {
+              label: "Privileged access review",
+              location: "SchoolPilot-SOC2-Evidence/access-reviews/",
+              present: false,
+            },
+            {
+              label: "User and role export",
+              location: "SchoolPilot-SOC2-Evidence/access-reviews/exports/",
+              present: false,
+            },
+          ],
+          appImpact: "No user-facing behavior changed",
+        },
+      ],
+    };
+
+    const body = formatApprovalIssueBody(pendingQueue);
+
+    assert.match(body, /Gap: APPROVAL-SP-SEC-001-QUARTERLY-PRIVILEGED-ACCESS-REVIEW-PACKET/);
+    assert.match(body, /Privileged access review: missing/);
+    assert.match(body, /User and role export: missing/);
+    assert.doesNotMatch(body, /\/approve APPROVAL-SP-SEC-001-QUARTERLY-PRIVILEGED-ACCESS-REVIEW-PACKET/);
+    assert.doesNotMatch(body, /\/reject APPROVAL-SP-SEC-001-QUARTERLY-PRIVILEGED-ACCESS-REVIEW-PACKET/);
+  });
+
   it("parses authorized approve commands", () => {
     const issueBody = formatApprovalIssueBody(queue());
     const result = parseApprovalComment({
