@@ -116,6 +116,106 @@ function normalizeRecommendation(value = "manual_review") {
   return ALLOWED_RECOMMENDATIONS.has(value) ? value : "manual_review";
 }
 
+function loadPrivateReadiness(rootDir, privateReadinessFile = "") {
+  if (!privateReadinessFile) return null;
+  const resolvedPath = path.resolve(rootDir, privateReadinessFile);
+  if (!fs.existsSync(resolvedPath)) {
+    throw new Error(`Private evidence readiness file does not exist: ${resolvedPath}`);
+  }
+  const readiness = parseJsonFile(resolvedPath, null);
+  if (!readiness || !Array.isArray(readiness.decisions) || !Array.isArray(readiness.evidenceChecks)) {
+    throw new Error(`Private evidence readiness file is invalid: ${resolvedPath}`);
+  }
+  return readiness;
+}
+
+function expirationDateIsExpired(expiresAt, now) {
+  if (!expiresAt) return false;
+  const expiration = /^\d{4}-\d{2}-\d{2}$/.test(String(expiresAt))
+    ? new Date(`${expiresAt}T23:59:59.999Z`)
+    : new Date(expiresAt);
+  if (Number.isNaN(expiration.getTime())) return false;
+  return expiration.getTime() < now.getTime();
+}
+
+function readinessGapFromCheck(item, check) {
+  return {
+    approvalId: item.approvalId,
+    controlId: item.controlId,
+    decisionType: item.decisionType,
+    sourceId: item.sourceId,
+    status: "not_ready",
+    reason: "Required private evidence is missing.",
+    missingEvidence: check.missingEvidence || [],
+    requiredEvidence: check.requiredEvidence || [],
+    recommendedAction: "Add the missing private evidence, rerun the SOC 2 approval queue, then approve or reject.",
+    appImpact: APP_IMPACT,
+  };
+}
+
+function suppressedApprovalFromDecision(item, decision, now) {
+  const expired = item.decisionType === "risk_acceptance"
+    && decision.decision === "approved"
+    && expirationDateIsExpired(decision.expiresAt, now);
+  if (expired) return null;
+
+  return {
+    approvalId: item.approvalId,
+    controlId: item.controlId,
+    decisionType: item.decisionType,
+    sourceId: item.sourceId,
+    decision: decision.decision,
+    decidedAt: decision.decidedAt || "",
+    expiresAt: decision.expiresAt || null,
+    evidencePath: decision.relativePath || "",
+    reason: decision.decision === "approved"
+      ? "Approval already recorded in private evidence."
+      : "Not-approved decision already recorded in private evidence.",
+    appImpact: APP_IMPACT,
+  };
+}
+
+function applyPrivateReadiness(items, readiness, now) {
+  if (!readiness) {
+    return {
+      items,
+      readinessGaps: [],
+      suppressedApprovals: [],
+    };
+  }
+
+  const decisionsByApprovalId = new Map((readiness.decisions || []).map((decision) => [decision.approvalId, decision]));
+  const checksByApprovalId = new Map((readiness.evidenceChecks || []).map((check) => [check.approvalId, check]));
+  const readyItems = [];
+  const readinessGaps = [];
+  const suppressedApprovals = [];
+
+  for (const item of items) {
+    const decision = decisionsByApprovalId.get(item.approvalId);
+    if (decision) {
+      const suppressed = suppressedApprovalFromDecision(item, decision, now);
+      if (suppressed) {
+        suppressedApprovals.push(suppressed);
+        continue;
+      }
+    }
+
+    const check = checksByApprovalId.get(item.approvalId);
+    if (check && check.status !== "ready") {
+      readinessGaps.push(readinessGapFromCheck(item, check));
+      continue;
+    }
+
+    readyItems.push(item);
+  }
+
+  return {
+    items: readyItems,
+    readinessGaps: readinessGaps.sort((a, b) => a.approvalId.localeCompare(b.approvalId)),
+    suppressedApprovals: suppressedApprovals.sort((a, b) => a.approvalId.localeCompare(b.approvalId)),
+  };
+}
+
 function buildPendingItem({
   approvalId,
   controlId,
@@ -216,7 +316,13 @@ function collectDeploymentEvidenceFiles(rootDir, evidenceDir) {
 }
 
 function buildDeploymentApprovalItems(rootDir, evidenceDir, generatedAt) {
-  return collectDeploymentEvidenceFiles(rootDir, evidenceDir).map(({ packet, jsonPath, markdownPath }) => buildPendingItem({
+  return collectDeploymentEvidenceFiles(rootDir, evidenceDir)
+    .filter(({ packet }) => {
+      const deployment = packet.deployment || {};
+      return deployment.productionDeployDecision !== "not_requested"
+        && deployment.deploymentResult !== "not_deployed";
+    })
+    .map(({ packet, jsonPath, markdownPath }) => buildPendingItem({
     approvalId: makeApprovalId(["SP-SEC-004", packet.evidenceId, "production-deployment"]),
     controlId: "SP-SEC-004",
     decisionType: "production_deployment_approval",
@@ -363,21 +469,23 @@ function dedupeItems(items) {
   return [...byId.values()].sort((a, b) => a.approvalId.localeCompare(b.approvalId));
 }
 
-export function buildApprovalQueue({ rootDir, evidenceDir, env = process.env, now = new Date() } = {}) {
+export function buildApprovalQueue({ rootDir, evidenceDir, privateReadinessFile = "", env = process.env, now = new Date() } = {}) {
   const resolvedRoot = rootDir || fileURLToPath(new URL("../..", import.meta.url));
   const resolvedEvidenceDir = evidenceDir || path.join(resolvedRoot, process.env.SOC2_EVIDENCE_DIR || "soc2-evidence");
   const generatedAt = now.toISOString();
   const governance = readJson(resolvedRoot, "docs/soc2/governance-controls.json");
   const riskPolicy = readJson(resolvedRoot, "docs/soc2/risk-acceptance-policy.json");
   const remediationRows = parseMarkdownTable(readText(resolvedRoot, "docs/soc2/remediation-register.md"));
+  const privateReadiness = loadPrivateReadiness(resolvedRoot, privateReadinessFile);
 
-  const items = dedupeItems([
+  const draftItems = dedupeItems([
     ...buildGovernanceApprovalItems(governance, generatedAt),
     ...buildRiskApprovalItems(remediationRows, riskPolicy, generatedAt, now),
     ...buildIncidentApprovalItems(resolvedRoot, resolvedEvidenceDir, generatedAt),
     ...buildTenantIsolationApprovalItems(resolvedRoot, resolvedEvidenceDir, generatedAt),
     ...buildDeploymentApprovalItems(resolvedRoot, resolvedEvidenceDir, generatedAt),
   ]);
+  const { items, readinessGaps, suppressedApprovals } = applyPrivateReadiness(draftItems, privateReadiness, now);
 
   const errors = validateApprovalQueueItems(items);
 
@@ -395,9 +503,21 @@ export function buildApprovalQueue({ rootDir, evidenceDir, env = process.env, no
     sha: env.GITHUB_SHA || "",
     appImpact: APP_IMPACT,
     privateEvidenceDefault: "../SchoolPilot-SOC2-Evidence",
+    privateReadiness: privateReadiness ? {
+      readinessId: privateReadiness.readinessId,
+      generatedAt: privateReadiness.generatedAt,
+      decisionRecordCount: privateReadiness.decisionRecordCount || privateReadiness.decisions.length,
+      evidenceCheckCount: privateReadiness.evidenceCheckCount || privateReadiness.evidenceChecks.length,
+      missingEvidenceCheckCount: privateReadiness.missingEvidenceCheckCount || 0,
+      qualityGateStatus: privateReadiness.qualityGate?.status || "unknown",
+    } : null,
     automationBoundary: governance.humanApprovalBoundary,
     itemCount: items.length,
     items,
+    readinessGapCount: readinessGaps.length,
+    readinessGaps,
+    suppressedApprovalCount: suppressedApprovals.length,
+    suppressedApprovals,
     qualityGate: {
       status: errors.length ? "fail" : "pass",
       errors,
@@ -437,6 +557,12 @@ export function formatApprovalQueueMarkdown(queue) {
   const itemLines = queue.items.length
     ? queue.items.map((item) => `- ${item.approvalId}: ${item.decisionType} for ${item.controlId} (${item.status})`).join("\n")
     : "- No pending approvals generated.";
+  const gapLines = queue.readinessGaps?.length
+    ? queue.readinessGaps.map((gap) => `- ${gap.approvalId}: ${gap.reason} Missing: ${gap.missingEvidence.join(", ") || "not_specified"}`).join("\n")
+    : "- No private evidence readiness gaps.";
+  const suppressedLines = queue.suppressedApprovals?.length
+    ? queue.suppressedApprovals.map((item) => `- ${item.approvalId}: ${item.decision} (${item.evidencePath || "private evidence"})`).join("\n")
+    : "- No completed private decisions suppressed.";
   const errorLines = queue.qualityGate.errors.length
     ? queue.qualityGate.errors.map((error) => `- ERROR: ${error}`).join("\n")
     : "- No blocking validation errors.";
@@ -461,6 +587,14 @@ ${queue.automationBoundary}
 ## Pending Approvals
 
 ${itemLines}
+
+## Private Evidence Readiness Gaps
+
+${gapLines}
+
+## Suppressed Completed Decisions
+
+${suppressedLines}
 
 ## Decision CLI
 
@@ -609,8 +743,9 @@ export function recordApprovalDecision({
 function runGenerateCli() {
   const rootDir = path.resolve(argValue("root-dir", fileURLToPath(new URL("../..", import.meta.url))));
   const evidenceDir = path.resolve(rootDir, argValue("evidence-dir", process.env.SOC2_EVIDENCE_DIR || "soc2-evidence"));
+  const privateReadinessFile = argValue("private-readiness-file");
   const outputDir = path.resolve(rootDir, argValue("output-dir", path.join(process.env.SOC2_EVIDENCE_DIR || "soc2-evidence", "approvals")));
-  const queue = buildApprovalQueue({ rootDir, evidenceDir });
+  const queue = buildApprovalQueue({ rootDir, evidenceDir, privateReadinessFile });
   const { jsonPath, mdPath } = writeApprovalQueue(queue, outputDir);
 
   console.log(`[soc2-approval] wrote ${jsonPath}`);

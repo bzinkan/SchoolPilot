@@ -15,7 +15,11 @@ function queue() {
     runAttempt: "1",
     runUrl: "https://github.com/bzinkan/SchoolPilot/actions/runs/123",
     itemCount: 2,
+    readinessGapCount: 0,
+    suppressedApprovalCount: 0,
     appImpact: "No user-facing behavior changed",
+    readinessGaps: [],
+    suppressedApprovals: [],
     items: [
       {
         approvalId: "APPROVAL-SP-SEC-004-PRODUCTION-DEPLOYMENT-APPROVAL",
@@ -67,6 +71,49 @@ describe("SOC 2 GitHub approval issue", () => {
     assert.equal(metadata?.queueId, "2026-06-26T20-00-00-000Z-soc2-approval-queue");
     assert.equal(metadata?.runId, "456");
     assert.equal(metadata?.artifactName, "soc2-approval-queue");
+  });
+
+  it("formats readiness gaps without approval commands", () => {
+    const pendingQueue = {
+      ...queue(),
+      itemCount: 0,
+      readinessGapCount: 1,
+      suppressedApprovalCount: 1,
+      items: [],
+      suppressedApprovals: [
+        {
+          approvalId: "APPROVAL-RA-SOC2-002-RISK-ACCEPTANCE",
+          decision: "approved",
+        },
+      ],
+      readinessGaps: [
+        {
+          approvalId: "APPROVAL-SP-SEC-002-TENANT-ISOLATION-EVIDENCE-REVIEW",
+          controlId: "SP-SEC-002",
+          decisionType: "tenant_isolation_review",
+          sourceId: "TENANT-ISOLATION-EVIDENCE",
+          status: "not_ready",
+          reason: "Required private evidence is missing.",
+          missingEvidence: ["Production RLS status export"],
+          requiredEvidence: [
+            {
+              label: "Production RLS status export",
+              location: "SchoolPilot-SOC2-Evidence/tenant-isolation/production-rls-export/",
+              present: false,
+            },
+          ],
+          appImpact: "No user-facing behavior changed",
+        },
+      ],
+    };
+
+    const body = formatApprovalIssueBody(pendingQueue);
+
+    assert.match(body, /Readiness gaps: 1/);
+    assert.match(body, /Gap: APPROVAL-SP-SEC-002-TENANT-ISOLATION-EVIDENCE-REVIEW/);
+    assert.match(body, /Production RLS status export: missing/);
+    assert.doesNotMatch(body, /\/approve APPROVAL-SP-SEC-002-TENANT-ISOLATION-EVIDENCE-REVIEW/);
+    assert.doesNotMatch(body, /\/reject APPROVAL-SP-SEC-002-TENANT-ISOLATION-EVIDENCE-REVIEW/);
   });
 
   it("parses authorized approve commands", () => {

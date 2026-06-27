@@ -364,8 +364,38 @@ jobs:
           JOB_STATUS: ${{ job.status }}
         run: npm run soc2:tenant-isolation-evidence
 
+      - name: Checkout private SOC 2 evidence repo
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: actions/checkout@v7
+        with:
+          repository: bzinkan/SchoolPilot-SOC2-Evidence
+          token: ${{ secrets.SOC2_EVIDENCE_REPO_TOKEN }}
+          path: private-evidence
+
+      - name: Generate private evidence readiness
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: npm run soc2:private-evidence-readiness -- --private-dir private-evidence
+
+      - name: Locate private evidence readiness
+        id: private_readiness
+        shell: bash
+        run: |
+          readiness_file=""
+          if [[ -d soc2-evidence/private-readiness ]]; then
+            readiness_file="$(ls -1t soc2-evidence/private-readiness/*.json 2>/dev/null | head -n 1 || true)"
+          fi
+          echo "readiness_file=${readiness_file}" >> "$GITHUB_OUTPUT"
+
       - name: Generate SOC 2 approval queue
-        run: npm run soc2:approval-queue
+        shell: bash
+        env:
+          PRIVATE_READINESS_FILE: ${{ steps.private_readiness.outputs.readiness_file }}
+        run: |
+          if [[ -n "$PRIVATE_READINESS_FILE" ]]; then
+            npm run soc2:approval-queue -- --private-readiness-file "$PRIVATE_READINESS_FILE"
+          else
+            npm run soc2:approval-queue
+          fi
 
       - name: Locate SOC 2 approval queue
         id: approval_queue
@@ -546,4 +576,12 @@ jobs:
         with:
           name: soc2-approval-queue
           path: soc2-evidence/approvals/
+          if-no-files-found: error
+
+      - name: Upload SOC 2 private evidence readiness
+        if: always() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: soc2-private-evidence-readiness
+          path: soc2-evidence/private-readiness/
           if-no-files-found: error
