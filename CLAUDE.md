@@ -81,6 +81,7 @@ npm run check            # TypeScript type check (tsc --noEmit)
 npm run build            # Compile to dist/ (tsc + tsc-alias)
 npm run soc2:check       # Validate SOC 2 governance docs and draft risk acceptances
 npm run soc2:incident-evidence   # Generate non-sensitive incident response evidence
+npm run soc2:tenant-isolation-evidence  # Generate non-sensitive tenant isolation/RLS evidence
 npm run soc2:deployment-evidence  # Generate shadow deployment/change evidence
 npm run soc2:approval-queue       # Draft pending SOC 2 approval queue
 npm run soc2:approval-issue       # Format the GitHub issue body for pending approvals

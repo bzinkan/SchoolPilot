@@ -37,6 +37,7 @@ const PRIVATE_SUBDIR_BY_DECISION_TYPE = {
   restore_drill_approval: "backups/restore-tests",
   founder_training_attestation: "training",
   ai_data_flow_review: "ai/reviews",
+  tenant_isolation_review: "tenant-isolation",
   human_approval: "approvals",
 };
 
@@ -92,6 +93,7 @@ function decisionTypeForEvidence(name, location = "") {
   if (/restore|backup/.test(text)) return "restore_drill_approval";
   if (/training|attestation/.test(text)) return "founder_training_attestation";
   if (/\bai\b|data-flow|data flow/.test(text)) return "ai_data_flow_review";
+  if (/tenant isolation|\brls\b|row-level security/.test(text)) return "tenant_isolation_review";
   return "human_approval";
 }
 
@@ -306,6 +308,53 @@ function buildIncidentApprovalItems(rootDir, evidenceDir, generatedAt) {
   });
 }
 
+function collectTenantIsolationEvidenceFiles(rootDir, evidenceDir) {
+  const tenantIsolationDir = path.join(evidenceDir, "tenant-isolation");
+  if (!fs.existsSync(tenantIsolationDir)) return [];
+
+  return fs
+    .readdirSync(tenantIsolationDir)
+    .filter((name) => name.endsWith(".json"))
+    .sort()
+    .map((name) => {
+      const fullPath = path.join(tenantIsolationDir, name);
+      const packet = parseJsonFile(fullPath, null);
+      if (!packet?.evidenceId || !Array.isArray(packet?.controls) || !packet.controls.includes("SP-SEC-002")) return null;
+      return {
+        packet,
+        jsonPath: path.relative(rootDir, fullPath).replace(/\\/g, "/"),
+        markdownPath: path.relative(rootDir, fullPath.replace(/\.json$/i, ".md")).replace(/\\/g, "/"),
+      };
+    })
+    .filter(Boolean);
+}
+
+function tenantIsolationPointers(packet, jsonPath, markdownPath) {
+  return [
+    pointer("Tenant isolation evidence JSON", jsonPath),
+    pointer("Tenant isolation evidence Markdown", markdownPath),
+    pointer("Cross-tenant CI artifact", packet.ci?.evidenceArtifacts?.crossTenantTests || "soc2-evidence-cross-tenant"),
+    pointer("RLS-enabled CI artifact", packet.ci?.evidenceArtifacts?.rlsEnabledTests || "soc2-evidence-rls-enabled"),
+    pointer("Production RLS status export", packet.rls?.productionStatusExport || "pending_private_export"),
+    pointer("DB grants and policies export", packet.rls?.dbGrantsAndPoliciesExport || "pending_private_export"),
+    pointer("Private evidence location", packet.rls?.privateEvidenceLocation || "SchoolPilot-SOC2-Evidence/tenant-isolation/"),
+  ];
+}
+
+function buildTenantIsolationApprovalItems(rootDir, evidenceDir, generatedAt) {
+  return collectTenantIsolationEvidenceFiles(rootDir, evidenceDir).map(({ packet, jsonPath, markdownPath }) => buildPendingItem({
+    approvalId: makeApprovalId(["SP-SEC-002", "tenant-isolation-evidence-review"]),
+    controlId: "SP-SEC-002",
+    decisionType: packet.humanReview?.decisionType || "tenant_isolation_review",
+    sourceId: packet.evidenceId,
+    evidencePointers: tenantIsolationPointers(packet, jsonPath, markdownPath),
+    generatedAt,
+    expiresAt: null,
+    approverRole: packet.humanReview?.approverRole || "Engineering",
+    owner: "Engineering",
+  }));
+}
+
 function dedupeItems(items) {
   const byId = new Map();
   for (const item of items) {
@@ -326,6 +375,7 @@ export function buildApprovalQueue({ rootDir, evidenceDir, env = process.env, no
     ...buildGovernanceApprovalItems(governance, generatedAt),
     ...buildRiskApprovalItems(remediationRows, riskPolicy, generatedAt, now),
     ...buildIncidentApprovalItems(resolvedRoot, resolvedEvidenceDir, generatedAt),
+    ...buildTenantIsolationApprovalItems(resolvedRoot, resolvedEvidenceDir, generatedAt),
     ...buildDeploymentApprovalItems(resolvedRoot, resolvedEvidenceDir, generatedAt),
   ]);
 

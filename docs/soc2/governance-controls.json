@@ -46,6 +46,11 @@
           "privateEvidenceLocation": "GitHub Actions artifact: soc2-evidence-cross-tenant"
         },
         {
+          "name": "Tenant isolation evidence packet",
+          "automation": "automated",
+          "privateEvidenceLocation": "GitHub Actions artifact: soc2-evidence-tenant-isolation and SchoolPilot-SOC2-Evidence/tenant-isolation/"
+        },
+        {
           "name": "Production RLS status export",
           "automation": "manual_record",
           "privateEvidenceLocation": "SchoolPilot-SOC2-Evidence/tenant-isolation/"
