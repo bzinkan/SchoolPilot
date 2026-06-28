@@ -19,6 +19,8 @@
     "soc2:check": "node scripts/soc2/check-governance-evidence.mjs",
     "soc2:privileged-access-evidence": "node scripts/soc2/collect-privileged-access-evidence.mjs",
     "soc2:privileged-access-private-evidence-kit": "node scripts/soc2/privileged-access-private-evidence-kit.mjs",
+    "soc2:monitoring-evidence": "node scripts/soc2/collect-monitoring-evidence.mjs",
+    "soc2:monitoring-private-evidence-kit": "node scripts/soc2/monitoring-private-evidence-kit.mjs",
     "soc2:ai-privacy-evidence": "node scripts/soc2/collect-ai-privacy-evidence.mjs",
     "soc2:ai-private-evidence-kit": "node scripts/soc2/ai-private-evidence-kit.mjs",
     "soc2:incident-evidence": "node scripts/soc2/collect-incident-evidence.mjs",

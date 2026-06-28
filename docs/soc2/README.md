@@ -118,6 +118,34 @@ out of readiness gaps and into the GitHub approval queue. A trusted operator may
 run the same command with `--from-database` only from an environment where
 `DATABASE_URL` is intentionally set; CI must not query production DB.
 
+Generate non-sensitive monthly monitoring and alert-review evidence locally:
+
+```bash
+npm run soc2:monitoring-evidence
+```
+
+Monitoring evidence is written to `soc2-evidence/monitoring/` and uploaded in
+CI as `soc2-evidence-monitoring`. It records metadata, source hashes, health
+status labels, GitHub Actions/scan pointers, monitoring safeguards, security
+event coverage, and private evidence pointers for `SP-AVL-002` and
+`SP-SEC-003`. It must not copy production logs, stack traces, alert bodies,
+credentials, tokens, customer records, or student records.
+
+Create private draft monthly monitoring and alert-review evidence:
+
+```bash
+npm run soc2:monitoring-private-evidence-kit -- --private-dir ../SchoolPilot-SOC2-Evidence
+```
+
+The private monitoring kit writes draft JSON/Markdown records for the monthly
+production monitoring review and monthly security alert review into
+`SchoolPilot-SOC2-Evidence/monitoring/reviews/` and
+`SchoolPilot-SOC2-Evidence/security-events/reviews/`. Drafts use
+`status: draft_pending_founder_input`. The founder/security owner must complete
+the factual fields and mark each review `ready_for_approval` before the
+corresponding GitHub approval command appears. Completed monthly approval
+decisions include an expiration date so the same review can recur next month.
+
 Generate shadow deployment/change-management evidence locally:
 
 ```bash
@@ -186,11 +214,11 @@ npm run soc2:approval-queue
 Approval queue drafts are written to `soc2-evidence/approvals/` and uploaded in
 CI as `soc2-approval-queue`. The queue gathers human-owned decisions from the
 governance tracker, risk acceptance drafts, local incident evidence, local tenant
-isolation evidence, local AI/privacy evidence, local deployment evidence, and
-optional private readiness metadata. When private readiness metadata is present,
-already-decided approvals
-are suppressed, approved unexpired risk acceptances stay out of the queue, and
-items missing required private evidence appear as readiness gaps instead of
+isolation evidence, local AI/privacy evidence, local monitoring evidence, local
+deployment evidence, and optional private readiness metadata. When private
+readiness metadata is present, already-decided approvals are suppressed, approved
+unexpired risk acceptances and unexpired monthly reviews stay out of the queue,
+and items missing required private evidence appear as readiness gaps instead of
 approval commands. Shadow deployment packets with no requested production deploy
 do not create deployment approval commands.
 
