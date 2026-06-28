@@ -281,6 +281,14 @@ export default function SchoolpilotLanding() {
             </span>
           </h1>
 
+          <p className="fade-in delay-2" style={{
+            fontSize: 18, color: "#475569", lineHeight: 1.7,
+            maxWidth: 680, margin: "0 auto",
+          }}>
+            SchoolPilot helps K-12 schools manage student safety, Chromebook supervision,
+            hall passes, and dismissal from one connected platform.
+          </p>
+
           {SHOW_MARKETING && (
           <p className="fade-in delay-2" style={{
             fontSize: 20, color: "#64748b", lineHeight: 1.7,
