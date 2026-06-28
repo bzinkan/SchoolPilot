@@ -1608,6 +1608,7 @@ async function runMigrationsAndExit(): Promise<void> {
   errorMonitor.dispose();
   await Promise.allSettled([pool.end(), schedulerPool.end()]);
   console.log("[migration] startup migrations complete");
+  process.exit(0);
 }
 
 if (migrationsOnly()) {
