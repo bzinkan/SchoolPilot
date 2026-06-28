@@ -8,14 +8,15 @@ import {
   getScheduledGroupsReadyToStart,
   getScheduledGroupsReadyToEnd,
   hasActiveSessionForGroup,
-  getActiveTeachingSessionForSchool,
   endTeachingSession,
-  createTeachingSession,
   getUserById,
   clearClasspilotActiveHandsForSession,
 } from "./storage.js";
+import { processScheduledClassAutoStart } from "./classpilotScheduledStart.js";
 import { buildAndSendSessionSummary } from "../routes/classpilot/sessions.js";
 import { broadcastToTeachersLocal } from "../realtime/ws-broadcast.js";
+import { publishWS } from "../realtime/ws-redis.js";
+import { publishSocketIoRedis } from "../realtime/socketio-redis.js";
 import { runSecurityChecks } from "./securityMonitor.js";
 import db from "../db.js";
 import { schedulerDb, schedulerPool } from "./schedulerDb.js";
@@ -42,6 +43,50 @@ let intervalId: NodeJS.Timeout | null = null;
 let lastRollupHour = -1;
 let lastPurgeHour = -1;
 let heavyJobRunning = false; // Mutex: prevent rollup and purge from running concurrently
+
+export type SchedulerLockResult<T> =
+  | { acquired: true; result: T }
+  | { acquired: false };
+
+export async function runWithSchedulerLock<T>(
+  jobName: string,
+  fn: () => Promise<T>
+): Promise<SchedulerLockResult<T>> {
+  const client = await schedulerPool.connect();
+  let locked = false;
+  try {
+    const lockKey = `schoolpilot:scheduler:${jobName}`;
+    const result = await client.query<{ locked: boolean }>(
+      "SELECT pg_try_advisory_lock(hashtext($1)) AS locked",
+      [lockKey]
+    );
+    locked = !!result.rows[0]?.locked;
+    if (!locked) {
+      console.log(`[Scheduler] Skipping ${jobName}; another task holds the lock`);
+      return { acquired: false };
+    }
+    return { acquired: true, result: await fn() };
+  } finally {
+    if (locked) {
+      await client
+        .query("SELECT pg_advisory_unlock(hashtext($1))", [`schoolpilot:scheduler:${jobName}`])
+        .catch((err) => console.warn(`[Scheduler] Failed to unlock ${jobName}:`, err));
+    }
+    client.release();
+  }
+}
+
+function scheduleLockedJob(jobName: string, fn: () => Promise<void>) {
+  void runWithSchedulerLock(jobName, fn).catch((err) => {
+    console.error(`[Scheduler] ${jobName} failed outside handler:`, err);
+    errorMonitor.trackError("scheduler_failure", err as Error, { job: jobName });
+  });
+}
+
+async function publishGoPilotEvent(room: string, event: string, data: unknown) {
+  io?.to(room).emit(event, data);
+  await publishSocketIoRedis({ room, event, data });
+}
 
 async function runHeavyJobsSerially() {
   if (heavyJobRunning) {
@@ -74,31 +119,29 @@ async function runHeavyJobsSerially() {
 
 let tickCount = 0;
 
-export function startScheduler(socketIo: SocketServer) {
+export function startScheduler(socketIo: SocketServer | null = null) {
   io = socketIo;
   console.log("Dismissal scheduler started (checking every 60s)");
   intervalId = setInterval(() => {
     tickCount++;
-    checkDismissalTimes();
-    autoCompleteStaleGoPilotSessions();
-    autoEndStaleClassPilotSessions();
-    autoStartClassBlocks();
-    autoEndClassBlocks();
+    scheduleLockedJob("checkDismissalTimes", checkDismissalTimes);
+    scheduleLockedJob("autoCompleteStaleGoPilotSessions", autoCompleteStaleGoPilotSessions);
+    scheduleLockedJob("autoEndStaleClassPilotSessions", autoEndStaleClassPilotSessions);
+    scheduleLockedJob("autoStartClassBlocks", autoStartClassBlocks);
+    scheduleLockedJob("autoEndClassBlocks", autoEndClassBlocks);
     // Security monitor: run every 5 minutes (every 5th tick) — rule-based breach detection
     if (tickCount % 5 === 0) {
-      runSecurityChecks().catch((err) =>
-        console.error("[Scheduler] Security monitor error:", err)
-      );
+      scheduleLockedJob("runSecurityChecks", async () => {
+        await runSecurityChecks();
+      });
     }
     // Fire and forget — runs through the mutex and dedicated pool
-    runHeavyJobsSerially().catch((err) =>
-      console.error("[Scheduler] Heavy job error:", err)
-    );
+    scheduleLockedJob("runHeavyJobsSerially", runHeavyJobsSerially);
   }, 60 * 1000);
-  checkDismissalTimes();
-  autoCompleteStaleGoPilotSessions();
-  autoStartClassBlocks();
-  autoEndClassBlocks();
+  scheduleLockedJob("checkDismissalTimes", checkDismissalTimes);
+  scheduleLockedJob("autoCompleteStaleGoPilotSessions", autoCompleteStaleGoPilotSessions);
+  scheduleLockedJob("autoStartClassBlocks", autoStartClassBlocks);
+  scheduleLockedJob("autoEndClassBlocks", autoEndClassBlocks);
 }
 
 export function stopScheduler() {
@@ -164,10 +207,12 @@ async function autoStartDismissal(schoolId: string, schoolName: string) {
       await updateSessionStatus(session.id, "active", schedulerDb);
       console.log(`Auto-started dismissal for ${schoolName} (session ${session.id})`);
       const payload = { sessionId: session.id };
-      io?.to(`school:${schoolId}`).emit("dismissal:status", { ...payload, status: "active" });
-      io?.to(`school:${schoolId}`).emit("dismissal:started", payload);
-      io?.to(`school:${schoolId}:office`).emit("dismissal:started", payload);
-      io?.to(`school:${schoolId}:parents`).emit("dismissal:started", payload);
+      await Promise.all([
+        publishGoPilotEvent(`school:${schoolId}`, "dismissal:status", { ...payload, status: "active" }),
+        publishGoPilotEvent(`school:${schoolId}`, "dismissal:started", payload),
+        publishGoPilotEvent(`school:${schoolId}:office`, "dismissal:started", payload),
+        publishGoPilotEvent(`school:${schoolId}:parents`, "dismissal:started", payload),
+      ]);
     }
   } catch (err) {
     console.error(`Failed to auto-start dismissal for school ${schoolId}:`, err);
@@ -284,11 +329,13 @@ async function autoEndStaleClassPilotSessions() {
         }
 
         // Notify teacher dashboard
-        broadcastToTeachersLocal(s.schoolId, {
+        const update = {
           type: "session-ended",
           sessionId: s.sessionId,
           reason: "auto-ended",
-        });
+        };
+        broadcastToTeachersLocal(s.schoolId, update);
+        void publishWS({ kind: "staff", schoolId: s.schoolId }, update);
       }
     }
   } catch (err) {
@@ -727,19 +774,20 @@ async function autoStartClassBlocks() {
           continue;
         }
 
-        // End any existing active session for this teacher IN THIS SCHOOL.
-        // getActiveTeachingSession (teacherId only) would let one school's
-        // scheduler terminate a multi-school teacher's session in another school.
-        const existingSession = await getActiveTeachingSessionForSchool(group.teacherId, group.schoolId, schedulerDb);
-        if (existingSession) {
-          await endTeachingSession(existingSession.id, schedulerDb);
-          await clearClasspilotActiveHandsForSession(group.schoolId, existingSession.id, schedulerDb);
-          console.log(`[ClassPilot] Auto-ended previous session for teacher ${group.teacherId} before starting "${group.name}"`);
+        const result = await processScheduledClassAutoStart({
+          group,
+          scheduledDate: todayDate,
+          dbInstance: schedulerDb,
+        });
+        if (result.status === "started") {
+          console.log(`[ClassPilot] Auto-started session for "${group.name}" (teacher ${group.teacherId}, school ${school.id})`);
+        } else if (result.status === "coverage_needed") {
+          console.log(`[ClassPilot] Scheduled coverage needed for "${group.name}" (request ${result.conflictId})`);
+        } else if (result.status === "claimed") {
+          console.log(`[ClassPilot] Scheduled coverage already claimed for "${group.name}" (request ${result.conflictId})`);
+        } else {
+          console.log(`[ClassPilot] Skipped scheduled start for "${group.name}" (${result.reason})`);
         }
-
-        // Create new session
-        await createTeachingSession({ groupId: group.id, teacherId: group.teacherId }, schedulerDb);
-        console.log(`[ClassPilot] Auto-started session for "${group.name}" (teacher ${group.teacherId}, school ${school.id})`);
       }
     }
   } catch (err) {

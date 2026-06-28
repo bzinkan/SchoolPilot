@@ -300,6 +300,44 @@ export type TeachingSession = typeof teachingSessions.$inferSelect;
 export type InsertTeachingSession = typeof teachingSessions.$inferInsert;
 
 // ============================================================================
+// Scheduled Class Conflicts - coverage needed for unattended scheduled starts
+// ============================================================================
+export const classpilotScheduledConflicts = pgTable(
+  "classpilot_scheduled_conflicts",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    schoolId: text("school_id").notNull(),
+    groupId: text("group_id").notNull(),
+    teacherId: text("teacher_id").notNull(),
+    scheduledDate: text("scheduled_date").notNull(),
+    blockStartTime: text("block_start_time").notNull(),
+    blockEndTime: text("block_end_time"),
+    status: text("status").notNull().default("coverage_needed"),
+    conflictPayload: jsonb("conflict_payload").notNull().default(sql`'{}'::jsonb`),
+    scheduledTeacherConnected: boolean("scheduled_teacher_connected").notNull().default(false),
+    lastCheckedAt: timestamp("last_checked_at").notNull().default(sql`now()`),
+    resolvedAt: timestamp("resolved_at"),
+    resolvedBy: text("resolved_by"),
+    resolution: text("resolution"),
+    createdAt: timestamp("created_at").notNull().default(sql`now()`),
+    updatedAt: timestamp("updated_at").notNull().default(sql`now()`),
+  },
+  (table) => [
+    uniqueIndex("classpilot_scheduled_conflicts_unique").on(
+      table.schoolId,
+      table.groupId,
+      table.scheduledDate,
+      table.blockStartTime
+    ),
+    index("classpilot_scheduled_conflicts_school_status_idx").on(table.schoolId, table.status),
+    index("classpilot_scheduled_conflicts_teacher_idx").on(table.schoolId, table.teacherId),
+  ]
+);
+
+export type ClasspilotScheduledConflict = typeof classpilotScheduledConflicts.$inferSelect;
+export type InsertClasspilotScheduledConflict = typeof classpilotScheduledConflicts.$inferInsert;
+
+// ============================================================================
 // Session-attributed usage - forward-only class analytics
 // ============================================================================
 export const classpilotSessionStudents = pgTable(
@@ -724,6 +762,7 @@ export const classpilotSupervisionContexts = pgTable(
       .$type<"active" | "ended">(),
     assignedStaffId: text("assigned_staff_id").notNull(),
     coverageGroupId: text("coverage_group_id"),
+    scheduledConflictId: text("scheduled_conflict_id"),
     createdBy: text("created_by").notNull(),
     note: text("note"),
     startsAt: timestamp("starts_at").notNull().default(sql`now()`),
@@ -744,6 +783,10 @@ export const classpilotSupervisionContexts = pgTable(
     index("classpilot_supervision_contexts_coverage_group_idx").on(
       table.schoolId,
       table.coverageGroupId
+    ),
+    index("classpilot_supervision_contexts_scheduled_conflict_idx").on(
+      table.schoolId,
+      table.scheduledConflictId
     ),
   ]
 );

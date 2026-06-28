@@ -23,6 +23,7 @@ import dashboardRoutes from "./classpilot/dashboard.js";
 import competitiveRoutes from "./classpilot/competitive.js";
 import commandsRoutes from "./classpilot/commands.js";
 import coverageRoutes from "./classpilot/coverage.js";
+import scheduledConflictRoutes from "./classpilot/scheduledConflicts.js";
 import superAdminRoutes from "./admin/superAdmin.js";
 import superAdminMonitoringRoutes from "./admin/monitoring.js";
 import superAdminSoc2Routes from "./admin/soc2.js";
@@ -362,6 +363,7 @@ router.use("/classpilot/flight-paths", flightPathRoutes);
 router.use("/classpilot", chatRoutes);
 router.use("/classpilot", commandsRoutes);
 router.use("/classpilot", coverageRoutes);
+router.use("/classpilot", scheduledConflictRoutes);
 router.use("/classpilot/teacher", dashboardRoutes);
 router.use("/classpilot", competitiveRoutes);
 

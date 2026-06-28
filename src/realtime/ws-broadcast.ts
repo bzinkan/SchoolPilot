@@ -156,6 +156,44 @@ export function broadcastToTeachersLocal(schoolId: string, message: unknown): nu
   return sentCount;
 }
 
+export function isStaffUserConnectedLocal(schoolId: string, userId: string): boolean {
+  const sockets = teacherSocketsBySchool.get(schoolId);
+  if (!sockets) return false;
+  for (const ws of sockets) {
+    const client = wsClients.get(ws);
+    if (
+      client?.authenticated &&
+      isStaffRole(client.role) &&
+      client.userId === userId &&
+      ws.readyState === WebSocket.OPEN
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function sendToStaffUserLocal(schoolId: string, userId: string, message: unknown): number {
+  const sockets = teacherSocketsBySchool.get(schoolId);
+  if (!sockets) return 0;
+  const messageStr = JSON.stringify(message);
+  let sentCount = 0;
+  sockets.forEach((ws) => {
+    const client = wsClients.get(ws);
+    if (
+      !client?.authenticated ||
+      !isStaffRole(client.role) ||
+      client.userId !== userId ||
+      ws.readyState !== WebSocket.OPEN
+    ) {
+      return;
+    }
+    ws.send(messageStr);
+    sentCount++;
+  });
+  return sentCount;
+}
+
 export function broadcastToStaffSessionLocal(
   schoolId: string,
   sessionId: string,

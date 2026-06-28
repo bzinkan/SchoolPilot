@@ -6,3 +6,15 @@ variable "db_instance_class" { type = string }
 variable "db_name" { type = string }
 variable "db_username" { type = string }
 variable "ecs_security_group_id" { type = string }
+variable "multi_az" {
+  type    = bool
+  default = true
+}
+variable "allocated_storage" {
+  type    = number
+  default = 100
+}
+variable "max_allocated_storage" {
+  type    = number
+  default = 1000
+}

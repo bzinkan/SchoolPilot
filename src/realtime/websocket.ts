@@ -33,10 +33,28 @@ import {
 import { runWithTenantContext } from "../middleware/tenantContext.js";
 import { verifyActiveStudentTokenSession } from "../services/classpilotStudentAuth.js";
 import { buildStudentFabState } from "../services/classpilotFab.js";
+import { startActiveScheduledClassesForTeacher } from "../services/classpilotScheduledStart.js";
 
 // Ping/pong keepalive constants
 const WS_PING_INTERVAL_MS = 30_000; // 30 seconds
 const WS_PONG_TIMEOUT_MS = 10_000;  // 10 seconds to respond
+
+function emitWebSocketMetric(metricName: "WebSocketDisconnect" | "WebSocketError") {
+  const environment = process.env.APP_ENV || process.env.NODE_ENV || "development";
+  console.log(JSON.stringify({
+    _aws: {
+      Timestamp: Date.now(),
+      CloudWatchMetrics: [{
+        Namespace: "SchoolPilot/WebSocket",
+        Dimensions: [["Environment", "Service"]],
+        Metrics: [{ Name: metricName, Unit: "Count" }],
+      }],
+    },
+    Environment: environment,
+    Service: "api",
+    [metricName]: 1,
+  }));
+}
 
 export function setupWebSocket(httpServer: Server): WebSocketServer {
   const wss = new WebSocketServer({ noServer: true });
@@ -265,6 +283,22 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
               });
 
               ws.send(JSON.stringify({ type: "auth-success", role }));
+              void runWithTenantContext({ schoolId }, async () => {
+                const started = await startActiveScheduledClassesForTeacher({ schoolId, teacherId: userId });
+                if (started.length > 0) {
+                  broadcastToTeachersLocal(schoolId, {
+                    type: "scheduled-class-conflict-updated",
+                    startedSessionIds: started.map((session) => session.id),
+                  });
+                }
+              }).catch((error) => {
+                console.error("[WebSocket] Scheduled class pickup on staff login failed:", error);
+                errorMonitor.trackError("scheduler_failure", error as Error, {
+                  job: "scheduledClassLoginPickup",
+                  schoolId,
+                  teacherId: userId,
+                });
+              });
               console.log(`[WebSocket] Staff authenticated: ${role} (userId: ${userId})`);
             } catch (error) {
               console.error("[WebSocket] Staff auth error:", error);
@@ -478,6 +512,7 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
       } catch (error) {
         console.error("[WebSocket] Message error:", error);
         if (!(error instanceof SyntaxError)) {
+          emitWebSocketMetric("WebSocketError");
           errorMonitor.trackError("websocket_error", error, {
             messageType,
             schoolId: client.schoolId,
@@ -490,11 +525,13 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
     ws.on("close", () => {
       stopPingInterval(ws);
       removeWsClient(ws);
+      emitWebSocketMetric("WebSocketDisconnect");
       console.log("[WebSocket] Client disconnected");
     });
 
     ws.on("error", (error) => {
       console.error("[WebSocket] Error:", error);
+      emitWebSocketMetric("WebSocketError");
       errorMonitor.trackError("websocket_error", error);
       stopPingInterval(ws);
       removeWsClient(ws);

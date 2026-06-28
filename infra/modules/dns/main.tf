@@ -15,9 +15,10 @@ locals {
   name = "${var.project}-${var.environment}"
 
   # Production gets apex + www; staging gets staging.domain
-  is_production  = var.environment == "production"
-  primary_domain = local.is_production ? var.domain : "${var.environment}.${var.domain}"
-  all_domains    = local.is_production ? [var.domain, "www.${var.domain}"] : [local.primary_domain]
+  is_production     = var.environment == "production"
+  primary_domain    = local.is_production ? var.domain : "${var.environment}.${var.domain}"
+  api_origin_domain = local.is_production ? "api-origin.${var.domain}" : "api-origin.${local.primary_domain}"
+  all_domains       = local.is_production ? [var.domain, "www.${var.domain}", local.api_origin_domain] : [local.primary_domain, local.api_origin_domain]
 }
 
 # --- Look up existing hosted zone ---

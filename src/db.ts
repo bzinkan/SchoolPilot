@@ -4,6 +4,7 @@ import * as schema from "./schema/index.js";
 import { getTenantStore, rlsGucEnabled } from "./db/tenantContext.js";
 import { buildPgSslConfig } from "./db/ssl.js";
 import errorMonitor from "./services/errorMonitor.js";
+import { intEnv } from "./config/runtime.js";
 
 // SOC 2 / SC-7: enforce TLS verify-full to AWS RDS using the bundled CA chain.
 // The Docker image ships /app/rds-ca.pem from AWS' truststore so we can verify
@@ -17,7 +18,7 @@ if (!url) {
 
 const pool = new pg.Pool({
   connectionString: url,
-  max: 50,
+  max: intEnv("DB_POOL_MAX", 50),
   idleTimeoutMillis: 10000,
   connectionTimeoutMillis: 5000,
   statement_timeout: 15000,

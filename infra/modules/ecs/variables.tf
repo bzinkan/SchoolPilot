@@ -2,7 +2,7 @@ variable "project" { type = string }
 variable "environment" { type = string }
 variable "aws_region" { type = string }
 variable "vpc_id" { type = string }
-variable "public_subnet_ids" { type = list(string) }
+variable "private_subnet_ids" { type = list(string) }
 variable "alb_target_group_arn" { type = string }
 variable "ecr_repository_url" { type = string }
 variable "container_port" { type = number }
@@ -11,6 +11,12 @@ variable "ecs_security_group_id" { type = string }
 variable "desired_count" { type = number }
 variable "cpu" { type = number }
 variable "memory" { type = number }
+variable "worker_desired_count" { type = number }
+variable "worker_cpu" { type = number }
+variable "worker_memory" { type = number }
+variable "db_pool_max" { type = number }
+variable "scheduler_db_pool_max" { type = number }
+variable "rls_enabled_tables" { type = string }
 
 # App environment variables
 variable "database_url" {

@@ -4,6 +4,33 @@
 
 locals {
   name = "${var.project}-${var.environment}"
+  common_environment = [
+    { name = "NODE_ENV", value = "production" },
+    { name = "APP_ENV", value = var.environment },
+    { name = "PGSSLMODE", value = "require" },
+    { name = "PUBLIC_BASE_URL", value = var.public_base_url },
+    { name = "CORS_ALLOWLIST", value = var.cors_allowlist },
+    { name = "COOKIE_DOMAIN", value = var.cookie_domain },
+    { name = "GOOGLE_CLIENT_ID", value = var.google_client_id },
+    { name = "RUN_MIGRATIONS_ON_STARTUP", value = "false" },
+    { name = "DB_POOL_MAX", value = tostring(var.db_pool_max) },
+    { name = "SCHEDULER_DB_POOL_MAX", value = tostring(var.scheduler_db_pool_max) },
+    { name = "RLS_GUC_ENABLED", value = "true" },
+    { name = "RLS_ENABLED_TABLES", value = var.rls_enabled_tables },
+  ]
+  common_secrets = [
+    { name = "DATABASE_URL", valueFrom = aws_ssm_parameter.database_url.arn },
+    { name = "REDIS_URL", valueFrom = aws_ssm_parameter.redis_url.arn },
+    { name = "SESSION_SECRET", valueFrom = aws_ssm_parameter.session_secret.arn },
+    { name = "JWT_SECRET", valueFrom = aws_ssm_parameter.jwt_secret.arn },
+    { name = "STUDENT_TOKEN_SECRET", valueFrom = aws_ssm_parameter.student_token_secret.arn },
+    { name = "GOOGLE_CLIENT_SECRET", valueFrom = aws_ssm_parameter.google_client_secret.arn },
+    { name = "GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY", valueFrom = aws_ssm_parameter.google_oauth_encryption_key.arn },
+    { name = "SENDGRID_API_KEY", valueFrom = aws_ssm_parameter.sendgrid_api_key.arn },
+    { name = "STRIPE_SECRET_KEY", valueFrom = aws_ssm_parameter.stripe_secret_key.arn },
+    { name = "STRIPE_WEBHOOK_SECRET", valueFrom = aws_ssm_parameter.stripe_webhook_secret.arn },
+    { name = "OPENAI_API_KEY", valueFrom = aws_ssm_parameter.openai_api_key.arn },
+  ]
 }
 
 # --- CloudWatch Log Group ---
@@ -37,8 +64,8 @@ resource "aws_iam_role" "ecs_execution" {
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Action = "sts:AssumeRole"
-      Effect = "Allow"
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
       Principal = { Service = "ecs-tasks.amazonaws.com" }
     }]
   })
@@ -83,8 +110,8 @@ resource "aws_iam_role" "ecs_task" {
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Action = "sts:AssumeRole"
-      Effect = "Allow"
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
       Principal = { Service = "ecs-tasks.amazonaws.com" }
     }]
   })
@@ -114,29 +141,12 @@ resource "aws_ecs_task_definition" "api" {
       protocol      = "tcp"
     }]
 
-    environment = [
-      { name = "NODE_ENV", value = "production" },
+    environment = concat(local.common_environment, [
       { name = "PORT", value = tostring(var.container_port) },
-      { name = "PGSSLMODE", value = "require" },
-      { name = "PUBLIC_BASE_URL", value = var.public_base_url },
-      { name = "CORS_ALLOWLIST", value = var.cors_allowlist },
-      { name = "COOKIE_DOMAIN", value = var.cookie_domain },
-      { name = "GOOGLE_CLIENT_ID", value = var.google_client_id },
-    ]
+      { name = "SCHEDULER_ENABLED", value = "false" },
+    ])
 
-    secrets = [
-      { name = "DATABASE_URL", valueFrom = aws_ssm_parameter.database_url.arn },
-      { name = "REDIS_URL", valueFrom = aws_ssm_parameter.redis_url.arn },
-      { name = "SESSION_SECRET", valueFrom = aws_ssm_parameter.session_secret.arn },
-      { name = "JWT_SECRET", valueFrom = aws_ssm_parameter.jwt_secret.arn },
-      { name = "STUDENT_TOKEN_SECRET", valueFrom = aws_ssm_parameter.student_token_secret.arn },
-      { name = "GOOGLE_CLIENT_SECRET", valueFrom = aws_ssm_parameter.google_client_secret.arn },
-      { name = "GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY", valueFrom = aws_ssm_parameter.google_oauth_encryption_key.arn },
-      { name = "SENDGRID_API_KEY", valueFrom = aws_ssm_parameter.sendgrid_api_key.arn },
-      { name = "STRIPE_SECRET_KEY", valueFrom = aws_ssm_parameter.stripe_secret_key.arn },
-      { name = "STRIPE_WEBHOOK_SECRET", valueFrom = aws_ssm_parameter.stripe_webhook_secret.arn },
-      { name = "OPENAI_API_KEY", valueFrom = aws_ssm_parameter.openai_api_key.arn },
-    ]
+    secrets = local.common_secrets
 
     logConfiguration = {
       logDriver = "awslogs"
@@ -169,9 +179,9 @@ resource "aws_ecs_service" "api" {
   launch_type     = "FARGATE"
 
   network_configuration {
-    subnets          = var.public_subnet_ids
+    subnets          = var.private_subnet_ids
     security_groups  = [var.ecs_security_group_id]
-    assign_public_ip = true
+    assign_public_ip = false
   }
 
   load_balancer {
@@ -189,6 +199,62 @@ resource "aws_ecs_service" "api" {
   }
 
   tags = { Name = "${local.name}-api" }
+}
+
+resource "aws_ecs_task_definition" "worker" {
+  family                   = "${local.name}-scheduler-worker"
+  network_mode             = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
+  cpu                      = var.worker_cpu
+  memory                   = var.worker_memory
+  execution_role_arn       = aws_iam_role.ecs_execution.arn
+  task_role_arn            = aws_iam_role.ecs_task.arn
+
+  container_definitions = jsonencode([{
+    name    = "scheduler-worker"
+    image   = "${var.ecr_repository_url}:latest"
+    command = ["node", "dist/worker.js"]
+
+    environment = concat(local.common_environment, [
+      { name = "SCHEDULER_ENABLED", value = "true" },
+    ])
+
+    secrets = local.common_secrets
+
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        "awslogs-group"         = aws_cloudwatch_log_group.api.name
+        "awslogs-region"        = var.aws_region
+        "awslogs-stream-prefix" = "scheduler-worker"
+      }
+    }
+  }])
+
+  tags = { Name = "${local.name}-scheduler-worker" }
+}
+
+resource "aws_ecs_service" "worker" {
+  name            = "${local.name}-scheduler-worker"
+  cluster         = aws_ecs_cluster.main.id
+  task_definition = aws_ecs_task_definition.worker.arn
+  desired_count   = var.worker_desired_count
+  launch_type     = "FARGATE"
+
+  network_configuration {
+    subnets          = var.private_subnet_ids
+    security_groups  = [var.ecs_security_group_id]
+    assign_public_ip = false
+  }
+
+  deployment_maximum_percent         = 200
+  deployment_minimum_healthy_percent = 100
+
+  lifecycle {
+    ignore_changes = [task_definition]
+  }
+
+  tags = { Name = "${local.name}-scheduler-worker" }
 }
 
 # --- Auto Scaling ---

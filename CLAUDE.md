@@ -17,7 +17,8 @@ Backend lives at the root (`src/`), frontend in `schoolpilot-app/`. The ClassPil
 ```
 /                           # Backend (Express + TypeScript)
 ├── src/
-│   ├── index.ts            # Entry: HTTP server, Socket.io, WebSocket, auto-migrations
+│   ├── index.ts            # Entry: HTTP server, Socket.io, WebSocket, migration runner
+│   ├── worker.ts           # Dedicated scheduler worker entrypoint
 │   ├── app.ts              # Express app, middleware, route mounting
 │   ├── routes/             # API handlers, organized by product
 │   │   ├── index.ts        # URL rewrite layer (maps frontend paths to canonical routes)
@@ -185,8 +186,8 @@ No base fees. Pure per-student pricing.
 1. **Heartbeats** — Chrome extension sends heartbeats every 10s to `/api/classpilot/heartbeat`. Stored in `heartbeats` table with studentId, schoolId, activeTabUrl, timestamp. Heartbeat handler caches `productLicenses` by schoolId (30min TTL) and only queries pending messages on the first heartbeat per device (WebSocket handles subsequent delivery). Reduces per-heartbeat DB queries from 7 to 5.
 2. **Daily usage rollup** — `scheduler.ts` runs `rollupDailyUsage()` hourly (hour-gated). For each school with ClassPilot license, aggregates yesterday's heartbeats into the `daily_usage` table (totalSeconds, heartbeatCount, topDomains JSONB, firstSeen/lastSeen). Uses upsert on `(studentId, date)` for idempotency.
 3. **Heartbeat purge** — `purgeExpiredHeartbeats()` runs at :30 past each hour (staggered from rollup). Deletes heartbeats in 5000-row batches using raw SQL (NO `.returning()` — that loads all IDs into memory). Deletes rows older than each school's `retentionHours` setting (default 720 = 30 days).
-4. **Auto-migration** — `index.ts` creates tables with `CREATE TABLE IF NOT EXISTS` on startup (since production RDS is in a private VPC and can't be reached by `drizzle-kit push` directly).
-5. **Scheduler isolation** — All heavy background jobs use `schedulerDb` from `src/services/schedulerDb.ts` (dedicated `pg.Pool` with `max: 3`), completely isolated from the main API pool (`max: 50`). Background jobs cannot starve API requests regardless of how long they take. When adding a new scheduled job, route it through `schedulerDb`, NOT the main `db` export. `schedulerDb` also sets `app.is_super='on'` on every connection, so it **bypasses Row-Level Security** — correct for cross-school jobs, but it means a scheduler query is NOT school-scoped (see "Database-Level Tenant Isolation (RLS)").
+4. **Explicit migrations** — `runStartupMigrations()` in `src/index.ts` remains the reusable migration entrypoint. Production deploys run it as a one-off ECS task with `RUN_MIGRATIONS_ONLY=true` before rolling web/worker services. Web ECS tasks use `RUN_MIGRATIONS_ON_STARTUP=false`.
+5. **Scheduler isolation** — Production web tasks run with `SCHEDULER_ENABLED=false`; the singleton ECS service `schoolpilot-production-scheduler-worker` runs `src/worker.ts` with `SCHEDULER_ENABLED=true`. Each scheduled job also takes a Postgres advisory lock through `runWithSchedulerLock()` so accidental duplicate workers do not double-run jobs. All heavy background jobs use `schedulerDb` from `src/services/schedulerDb.ts` (dedicated `pg.Pool`, `SCHEDULER_DB_POOL_MAX`, default 3), isolated from the main API pool (`DB_POOL_MAX`, default 50). Background jobs cannot starve API requests regardless of how long they take. When adding a new scheduled job, route it through `schedulerDb`, NOT the main `db` export. `schedulerDb` also sets `app.is_super='on'` on every connection, so it **bypasses Row-Level Security** — correct for cross-school jobs, but it means a scheduler query is NOT school-scoped (see "Database-Level Tenant Isolation (RLS)").
 
 ### ClassPilot Teacher Dashboard Commands
 Teacher Dashboard actions are intentionally class-scoped and outcome-driven:
@@ -289,7 +290,12 @@ Student imports are shared setup paths for ClassPilot, PassPilot, and GoPilot. T
 
 Copy `.env.example` to `.env`. Required for local dev:
 - `DATABASE_URL` — PostgreSQL connection (default: `postgresql://schoolpilot:schoolpilot_dev@localhost:5435/schoolpilot`)
-- `REDIS_URL` — Redis connection (default: `redis://localhost:6380`)
+- `REDIS_URL` — Redis connection (default: `redis://localhost:6380`; production ElastiCache with required transit encryption uses `rediss://...`)
+- `APP_ENV` — Runtime environment dimension for CloudWatch embedded metrics (`production`, `staging`, `development`)
+- `RUN_MIGRATIONS_ON_STARTUP` — Keep `false` in production web/worker ECS tasks; local default can remain `true`
+- `RUN_MIGRATIONS_ONLY` — One-off migration task mode used by `npm run migrate:startup` / `scripts/deploy.sh`
+- `SCHEDULER_ENABLED` — `false` for web ECS tasks, `true` only for the singleton scheduler worker
+- `DB_POOL_MAX` / `SCHEDULER_DB_POOL_MAX` — Main API and scheduler Postgres pool caps
 - `SESSION_SECRET`, `JWT_SECRET`, `STUDENT_TOKEN_SECRET` — Auth secrets
 - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` — Google OAuth
 - `SUPER_ADMIN_EMAIL` — Email address that gets super admin privileges
@@ -409,15 +415,16 @@ JAVA_HOME="C:/Program Files/Android/Android Studio/jbr" ./gradlew assembleDebug
 
 Infrastructure is on AWS (us-east-1):
 - **ECR**: `135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api`
-- **ECS**: Cluster `schoolpilot-production-cluster`, service `schoolpilot-production-api`
-- **RDS**: PostgreSQL in private VPC (not directly accessible — use auto-migrations in `index.ts` for schema changes)
+- **ECS**: Cluster `schoolpilot-production-cluster`, services `schoolpilot-production-api` and `schoolpilot-production-scheduler-worker`
+- **RDS**: PostgreSQL in private VPC (not directly accessible - run the deploy-script migration task for schema changes)
 - **S3**: `schoolpilot-production-frontend` (static frontend assets)
 - **CloudFront**: Distribution `E1TPPJOD7C2CXR`
 
 ### Schema Changes
 Since production RDS is in a private VPC, `drizzle-kit push` cannot reach it directly. Instead:
 1. Add the Drizzle schema definition in the appropriate `src/schema/*.ts` file (e.g., `gopilot.ts` for GoPilot tables, `classpilot.ts` for ClassPilot, etc.)
-2. Add a `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS` block in `src/index.ts` (for production auto-migration on startup)
+2. Add a `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS` block in `runStartupMigrations()` in `src/index.ts`
+3. Let `scripts/deploy.sh` run the migration ECS task before web/worker rollout; do not rely on scaled web tasks to apply DDL
 
 ### GoPilot Dismissal Override System
 Session-scoped dismissal type changes (car/bus/walker/afterschool) for today only, without admin approval:

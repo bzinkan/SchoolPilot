@@ -52,27 +52,27 @@ resource "aws_db_instance" "main" {
   engine_version = "16.4"
   instance_class = var.db_instance_class
 
-  db_name  = var.db_name
-  username = var.db_username
+  db_name                     = var.db_name
+  username                    = var.db_username
   manage_master_user_password = true
 
-  allocated_storage     = 20
-  max_allocated_storage = 100
+  allocated_storage     = var.allocated_storage
+  max_allocated_storage = var.max_allocated_storage
   storage_type          = "gp3"
   storage_encrypted     = true
 
   db_subnet_group_name   = aws_db_subnet_group.main.name
   vpc_security_group_ids = [aws_security_group.rds.id]
 
-  multi_az            = false
+  multi_az            = var.multi_az
   publicly_accessible = false
 
   backup_retention_period = var.environment == "production" ? 14 : 7
   backup_window           = "03:00-04:00"
   maintenance_window      = "sun:04:00-sun:05:00"
 
-  deletion_protection = var.environment == "production"
-  skip_final_snapshot = var.environment != "production"
+  deletion_protection       = var.environment == "production"
+  skip_final_snapshot       = var.environment != "production"
   final_snapshot_identifier = var.environment == "production" ? "${local.name}-final-snapshot" : null
 
   performance_insights_enabled = true

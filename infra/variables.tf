@@ -36,12 +36,36 @@ variable "az_count" {
   default     = 2
 }
 
+variable "enable_nat_gateway" {
+  description = "Create one NAT gateway per AZ for private ECS egress"
+  type        = bool
+  default     = true
+}
+
 # --- Database ---
 
 variable "db_instance_class" {
   description = "RDS instance class"
   type        = string
   default     = "db.t4g.medium"
+}
+
+variable "db_multi_az" {
+  description = "Enable RDS Multi-AZ standby"
+  type        = bool
+  default     = true
+}
+
+variable "db_allocated_storage" {
+  description = "Initial RDS storage in GB"
+  type        = number
+  default     = 100
+}
+
+variable "db_max_allocated_storage" {
+  description = "Maximum RDS autoscaled storage in GB"
+  type        = number
+  default     = 1000
 }
 
 variable "db_name" {
@@ -64,6 +88,12 @@ variable "redis_node_type" {
   default     = "cache.t4g.micro"
 }
 
+variable "redis_replica_count" {
+  description = "Number of Redis replicas for automatic failover"
+  type        = number
+  default     = 1
+}
+
 # --- ECS / Fargate ---
 
 variable "ecs_desired_count" {
@@ -82,6 +112,42 @@ variable "ecs_memory" {
   description = "Fargate task memory in MB"
   type        = number
   default     = 1024
+}
+
+variable "worker_desired_count" {
+  description = "Number of scheduler worker tasks"
+  type        = number
+  default     = 1
+}
+
+variable "worker_cpu" {
+  description = "Scheduler worker Fargate CPU"
+  type        = number
+  default     = 256
+}
+
+variable "worker_memory" {
+  description = "Scheduler worker memory in MB"
+  type        = number
+  default     = 512
+}
+
+variable "db_pool_max" {
+  description = "Maximum Postgres connections per API task"
+  type        = number
+  default     = 20
+}
+
+variable "scheduler_db_pool_max" {
+  description = "Maximum Postgres connections for scheduler worker"
+  type        = number
+  default     = 5
+}
+
+variable "rls_enabled_tables" {
+  description = "Comma-separated tenant table allowlist for PostgreSQL RLS"
+  type        = string
+  default     = "activity_log,audit_logs,block_lists,bus_routes,classpilot_ai_decisions,classpilot_classroom_states,classpilot_command_targets,classpilot_commands,classroom_course_students,classroom_courses,daily_usage,dashboard_tabs,devices,dismissal_sessions,email_alerts,email_scan_log,error_logs,evidence_artifacts,family_groups,flight_paths,grades,groups,heartbeats,homerooms,import_runs,mailpilot_watches,messages,parent_student,passes,security_events,settings,student_attendance,student_groups,student_safety_cases,student_timeline_events,students,subgroups,teacher_students,teaching_sessions,walker_zones"
 }
 
 # --- Domain & DNS ---
