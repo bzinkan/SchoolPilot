@@ -10,6 +10,8 @@ const SOC2_001_INCIDENT_ID = "SOC2-001-HISTORICAL-CREDENTIAL-EXPOSURE";
 const SOC2_002_AI_EVIDENCE_TYPE = "ai_data_flow_review";
 const SOC2_003_PRIVILEGED_ACCESS_REVIEW_TYPE = "privileged_access_review";
 const SOC2_003_USER_ROLE_EXPORT_TYPE = "user_role_export";
+const MONTHLY_MONITORING_REVIEW_TYPE = "monthly_monitoring_review";
+const MONTHLY_ALERT_REVIEW_TYPE = "monthly_alert_review";
 const READY_STATUS = "ready_for_approval";
 const ALLOWED_DECISIONS = new Set(["approved", "not_approved"]);
 
@@ -236,6 +238,36 @@ function summarizeReadyControlEvidence(privateEvidenceDir, label, location, { co
   };
 }
 
+function summarizeReadyMonthlyReviewEvidence(privateEvidenceDir, label, location, { controlId, evidenceType }) {
+  const relativePaths = evidenceLocationMatches(location);
+  const relativePath = relativePaths[0] || "";
+  const fullPath = relativePath ? path.join(privateEvidenceDir, relativePath) : "";
+  const files = fullPath ? meaningfulEvidenceFiles(fullPath) : [];
+  const jsonRecords = files
+    .filter((file) => file.endsWith(".json"))
+    .map((file) => ({
+      file,
+      record: parseJsonFile(file, null),
+    }))
+    .filter(({ record }) => record?.controlId === controlId && record?.evidenceType === evidenceType);
+  const readyRecords = jsonRecords.filter(({ record }) => record.status === READY_STATUS);
+  const latestStatus = jsonRecords.at(-1)?.record?.status || (files.length ? "present_but_not_ready" : "missing");
+
+  return {
+    label,
+    location,
+    relativePath: relativePath ? publicPrivatePath(relativePath) : "not_available",
+    present: readyRecords.length > 0,
+    readinessStatus: readyRecords.length > 0 ? READY_STATUS : latestStatus,
+    fileCount: files.length,
+    readyFileCount: readyRecords.length,
+    fileHashes: files.map((file) => ({
+      path: publicPathForFile(privateEvidenceDir, file),
+      sha256: sha256File(file),
+    })),
+  };
+}
+
 function buildEvidenceCheck({
   checkId,
   approvalId,
@@ -275,6 +307,7 @@ function buildGovernanceEvidenceChecks(rootDir, privateEvidenceDir) {
       const decisionType = decisionTypeForEvidence(evidence.name, evidence.privateEvidenceLocation);
       if (decisionType === "risk_acceptance") continue;
       if (decisionType === "ai_data_flow_review") continue;
+      if (decisionType === "monitoring_review") continue;
       if (control.id === "SP-SEC-001" && decisionType === "privileged_access_review") continue;
 
       const approvalId = makeApprovalId([control.id, evidence.name]);
@@ -297,6 +330,49 @@ function buildGovernanceEvidenceChecks(rootDir, privateEvidenceDir) {
   }
 
   return checks;
+}
+
+function buildMonitoringEvidenceChecks(privateEvidenceDir) {
+  return [
+    buildEvidenceCheck({
+      checkId: "MONTHLY-MONITORING-REVIEW-PRIVATE-EVIDENCE",
+      approvalId: "APPROVAL-SP-AVL-002-MONTHLY-MONITORING-REVIEW",
+      controlId: "SP-AVL-002",
+      decisionType: "monitoring_review",
+      sourceId: "SP-AVL-002:Monthly monitoring review",
+      owner: "Engineering",
+      requiredEvidence: [
+        summarizeReadyMonthlyReviewEvidence(
+          privateEvidenceDir,
+          "Monthly monitoring review",
+          "SchoolPilot-SOC2-Evidence/monitoring/reviews/",
+          {
+            controlId: "SP-AVL-002",
+            evidenceType: MONTHLY_MONITORING_REVIEW_TYPE,
+          },
+        ),
+      ],
+    }),
+    buildEvidenceCheck({
+      checkId: "MONTHLY-ALERT-REVIEW-PRIVATE-EVIDENCE",
+      approvalId: "APPROVAL-SP-SEC-003-MONTHLY-ALERT-REVIEW-DECISION",
+      controlId: "SP-SEC-003",
+      decisionType: "monitoring_review",
+      sourceId: "SP-SEC-003:Monthly alert review decision",
+      owner: "Security & Privacy Officer",
+      requiredEvidence: [
+        summarizeReadyMonthlyReviewEvidence(
+          privateEvidenceDir,
+          "Monthly alert review decision",
+          "SchoolPilot-SOC2-Evidence/security-events/reviews/",
+          {
+            controlId: "SP-SEC-003",
+            evidenceType: MONTHLY_ALERT_REVIEW_TYPE,
+          },
+        ),
+      ],
+    }),
+  ];
 }
 
 function buildPrivilegedAccessEvidenceChecks(privateEvidenceDir) {
@@ -551,6 +627,7 @@ export function buildPrivateEvidenceReadiness({
       ...buildGovernanceEvidenceChecks(resolvedRoot, resolvedPrivateDir),
       ...buildPrivilegedAccessEvidenceChecks(resolvedPrivateDir),
       ...buildAiEvidenceChecks(resolvedPrivateDir),
+      ...buildMonitoringEvidenceChecks(resolvedPrivateDir),
       ...buildIncidentEvidenceChecks(resolvedPrivateDir),
       ...buildTenantIsolationEvidenceChecks(resolvedPrivateDir),
     ].sort((a, b) => a.approvalId.localeCompare(b.approvalId)),

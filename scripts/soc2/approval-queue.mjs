@@ -14,6 +14,7 @@ const ALLOWED_DECISIONS = ["approved", "not_approved"];
 const ALLOWED_RECOMMENDATIONS = new Set(["approved", "not_approved", "manual_review"]);
 const CANONICAL_SOC2_003_MFA_APPROVAL_ID = "APPROVAL-SP-SEC-001-PRIVILEGED-MFA-ROLLOUT-DECISION";
 const GENERIC_SOC2_003_RISK_APPROVAL_ID = "APPROVAL-RA-SOC2-003-RISK-ACCEPTANCE";
+const MONTHLY_ALERT_REVIEW_APPROVAL_ID = "APPROVAL-SP-SEC-003-MONTHLY-ALERT-REVIEW-DECISION";
 
 const CONTROL_BY_REMEDIATION_ID = {
   "SOC2-001": "SP-SEC-003",
@@ -41,6 +42,11 @@ const PRIVATE_SUBDIR_BY_DECISION_TYPE = {
   ai_data_flow_review: "ai/reviews",
   tenant_isolation_review: "tenant-isolation",
   human_approval: "approvals",
+};
+
+const PRIVATE_SUBDIR_BY_APPROVAL_ID = {
+  [MONTHLY_ALERT_REVIEW_APPROVAL_ID]: "security-events/reviews",
+  "APPROVAL-SP-AVL-002-MONTHLY-MONITORING-REVIEW": "monitoring/reviews",
 };
 
 function argValue(name, fallback = "") {
@@ -140,6 +146,13 @@ function expirationDateIsExpired(expiresAt, now) {
   return expiration.getTime() < now.getTime();
 }
 
+function monthEndDate(value) {
+  const base = new Date(value);
+  if (Number.isNaN(base.getTime())) return null;
+  const end = new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth() + 1, 0));
+  return end.toISOString().slice(0, 10);
+}
+
 function readinessGapFromCheck(item, check) {
   return {
     approvalId: item.approvalId,
@@ -156,9 +169,7 @@ function readinessGapFromCheck(item, check) {
 }
 
 function suppressedApprovalFromDecision(item, decision, now) {
-  const expired = item.decisionType === "risk_acceptance"
-    && decision.decision === "approved"
-    && expirationDateIsExpired(decision.expiresAt, now);
+  const expired = decision.expiresAt && expirationDateIsExpired(decision.expiresAt, now);
   if (expired) return null;
 
   return {
@@ -270,7 +281,11 @@ function buildGovernanceApprovalItems(governance, generatedAt) {
           pointer("Private evidence location", evidence.privateEvidenceLocation),
         ],
         generatedAt,
-        expiresAt: decisionType === "risk_acceptance" ? control.nextReviewDue || null : null,
+        expiresAt: decisionType === "risk_acceptance"
+          ? control.nextReviewDue || null
+          : decisionType === "monitoring_review"
+            ? monthEndDate(generatedAt)
+            : null,
         approverRole: evidence.humanApproverRole || "",
         owner: control.owner || "",
       }));
@@ -736,7 +751,9 @@ export function recordApprovalDecision({
     sourceQueueFile: path.relative(resolvedRoot, resolvedQueueFile).replace(/\\/g, "/"),
   };
 
-  const subdir = PRIVATE_SUBDIR_BY_DECISION_TYPE[record.decisionType] || PRIVATE_SUBDIR_BY_DECISION_TYPE.human_approval;
+  const subdir = PRIVATE_SUBDIR_BY_APPROVAL_ID[record.approvalId]
+    || PRIVATE_SUBDIR_BY_DECISION_TYPE[record.decisionType]
+    || PRIVATE_SUBDIR_BY_DECISION_TYPE.human_approval;
   const outputDir = path.join(resolvedPrivateDir, subdir);
   fs.mkdirSync(outputDir, { recursive: true });
 

@@ -13,6 +13,7 @@ exports, or generated evidence packets to this repository.
 | Privileged access review | SP-SEC-001 | Private draft plus human approved | `SchoolPilot-SOC2-Evidence/access-reviews/` |
 | Privileged user/role export | SP-SEC-001 | Private manual or explicit database export | `SchoolPilot-SOC2-Evidence/access-reviews/exports/` |
 | Tenant isolation and RLS evidence | SP-SEC-002 | Automated draft plus human approved | GitHub Actions artifact `soc2-evidence-tenant-isolation` and `SchoolPilot-SOC2-Evidence/tenant-isolation/` |
+| Monthly monitoring evidence packet | SP-AVL-002, SP-SEC-003 | Automated | GitHub Actions artifact `soc2-evidence-monitoring` and ignored `soc2-evidence/monitoring/` |
 | Security event review | SP-SEC-003 | Automated plus human approved | `SchoolPilot-SOC2-Evidence/security-events/` |
 | Incident evidence and decisions | SP-SEC-003 | Automated draft plus human approved | GitHub Actions artifact `soc2-evidence-incidents` and `SchoolPilot-SOC2-Evidence/incidents/` |
 | SOC2-001 private incident drafts | SP-SEC-003 | Private draft templates plus founder completion | `SchoolPilot-SOC2-Evidence/incidents/credential-rotation/`, `SchoolPilot-SOC2-Evidence/incidents/log-review/`, `SchoolPilot-SOC2-Evidence/incidents/exposure-assessment/` |
@@ -40,3 +41,6 @@ records, or student records.
 Privileged access evidence packets are written to
 `soc2-evidence/privileged-access/` and must not include password hashes, session
 contents, raw user exports, secrets, customer records, or student records.
+Monitoring evidence packets are written to `soc2-evidence/monitoring/` and must
+not include production logs, stack traces, alert bodies, credentials, tokens,
+customer records, or student records.

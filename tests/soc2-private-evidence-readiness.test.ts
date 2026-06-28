@@ -109,6 +109,26 @@ function writePrivilegedAccessRecord(root: string, relativePath: string, evidenc
   );
 }
 
+function writeMonitoringReviewRecord(root: string, relativePath: string, controlId: string, evidenceType: string, status: string) {
+  write(
+    root,
+    `SchoolPilot-SOC2-Evidence/${relativePath}`,
+    `${JSON.stringify({
+      evidenceId: evidenceType === "monthly_monitoring_review"
+        ? "SOC2-MONTHLY-MONITORING-REVIEW"
+        : "SOC2-MONTHLY-ALERT-REVIEW",
+      approvalId: evidenceType === "monthly_monitoring_review"
+        ? "APPROVAL-SP-AVL-002-MONTHLY-MONITORING-REVIEW"
+        : "APPROVAL-SP-SEC-003-MONTHLY-ALERT-REVIEW-DECISION",
+      controlId,
+      remediationItem: "SOC2-008",
+      evidenceType,
+      status,
+      privateReviewNotes: "PRIVATE_MONITORING_REVIEW_BODY_SHOULD_NOT_APPEAR",
+    }, null, 2)}\n`,
+  );
+}
+
 describe("SOC 2 private evidence readiness", () => {
   it("detects approved and not-approved private decision records", () => {
     const root = tempRoot();
@@ -362,6 +382,87 @@ describe("SOC 2 private evidence readiness", () => {
     assert.ok(accessReview?.requiredEvidence.every((item) => item.readinessStatus === "ready_for_approval"));
     assert.match(accessReview?.requiredEvidence[0].fileHashes[0].sha256 || "", /^[a-f0-9]{64}$/);
     assert.doesNotMatch(JSON.stringify(packet), /PRIVATE_USER_EXPORT_BODY_SHOULD_NOT_APPEAR/);
+  });
+
+  it("does not treat .gitkeep or draft monthly monitoring reviews as ready", () => {
+    const root = tempRoot();
+    writeGovernance(root);
+    write(root, "SchoolPilot-SOC2-Evidence/monitoring/reviews/.gitkeep", "");
+    write(root, "SchoolPilot-SOC2-Evidence/security-events/reviews/.gitkeep", "");
+    writeMonitoringReviewRecord(
+      root,
+      "monitoring/reviews/soc2-monthly-monitoring-review.json",
+      "SP-AVL-002",
+      "monthly_monitoring_review",
+      "draft_pending_founder_input",
+    );
+    writeMonitoringReviewRecord(
+      root,
+      "security-events/reviews/soc2-monthly-alert-review.json",
+      "SP-SEC-003",
+      "monthly_alert_review",
+      "draft_pending_founder_input",
+    );
+
+    const packet = buildPrivateEvidenceReadiness({
+      rootDir: root,
+      privateEvidenceDir: privateDir(root),
+      now: new Date("2026-06-27T00:00:00Z"),
+    });
+    const monitoring = packet.evidenceChecks.find(
+      (check) => check.approvalId === "APPROVAL-SP-AVL-002-MONTHLY-MONITORING-REVIEW",
+    );
+    const alert = packet.evidenceChecks.find(
+      (check) => check.approvalId === "APPROVAL-SP-SEC-003-MONTHLY-ALERT-REVIEW-DECISION",
+    );
+
+    assert.equal(monitoring?.status, "missing");
+    assert.equal(alert?.status, "missing");
+    assert.deepEqual(monitoring?.missingEvidence, ["Monthly monitoring review"]);
+    assert.deepEqual(alert?.missingEvidence, ["Monthly alert review decision"]);
+    assert.equal(monitoring?.requiredEvidence[0].readinessStatus, "draft_pending_founder_input");
+    assert.equal(alert?.requiredEvidence[0].readinessStatus, "draft_pending_founder_input");
+    assert.doesNotMatch(JSON.stringify(packet), /PRIVATE_MONITORING_REVIEW_BODY_SHOULD_NOT_APPEAR/);
+  });
+
+  it("marks monthly monitoring and alert reviews ready only when private JSON files are ready", () => {
+    const root = tempRoot();
+    writeGovernance(root);
+    writeMonitoringReviewRecord(
+      root,
+      "monitoring/reviews/soc2-monthly-monitoring-review.json",
+      "SP-AVL-002",
+      "monthly_monitoring_review",
+      "ready_for_approval",
+    );
+    writeMonitoringReviewRecord(
+      root,
+      "security-events/reviews/soc2-monthly-alert-review.json",
+      "SP-SEC-003",
+      "monthly_alert_review",
+      "ready_for_approval",
+    );
+
+    const packet = buildPrivateEvidenceReadiness({
+      rootDir: root,
+      privateEvidenceDir: privateDir(root),
+      now: new Date("2026-06-27T00:00:00Z"),
+    });
+    const monitoring = packet.evidenceChecks.find(
+      (check) => check.approvalId === "APPROVAL-SP-AVL-002-MONTHLY-MONITORING-REVIEW",
+    );
+    const alert = packet.evidenceChecks.find(
+      (check) => check.approvalId === "APPROVAL-SP-SEC-003-MONTHLY-ALERT-REVIEW-DECISION",
+    );
+
+    assert.equal(monitoring?.status, "ready");
+    assert.equal(alert?.status, "ready");
+    assert.deepEqual(monitoring?.missingEvidence, []);
+    assert.deepEqual(alert?.missingEvidence, []);
+    assert.equal(monitoring?.requiredEvidence[0].readyFileCount, 1);
+    assert.equal(alert?.requiredEvidence[0].readyFileCount, 1);
+    assert.match(monitoring?.requiredEvidence[0].fileHashes[0].sha256 || "", /^[a-f0-9]{64}$/);
+    assert.doesNotMatch(JSON.stringify(packet), /PRIVATE_MONITORING_REVIEW_BODY_SHOULD_NOT_APPEAR/);
   });
 
   it("writes JSON and Markdown readiness packets", () => {

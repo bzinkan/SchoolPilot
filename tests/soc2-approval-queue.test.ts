@@ -74,6 +74,7 @@ function writeSoc2Docs(root: string) {
       ]),
       control("SP-AVL-002", [
         { name: "Health monitor sample", automation: "automated", privateEvidenceLocation: "SchoolPilot-SOC2-Evidence/monitoring/" },
+        humanEvidence("Monthly monitoring review", "SchoolPilot-SOC2-Evidence/monitoring/reviews/", "Engineering Lead"),
       ]),
       control("SP-CONF-002", [
         humanEvidence("AI data-flow review", "SchoolPilot-SOC2-Evidence/ai/reviews/"),
@@ -296,6 +297,35 @@ function writeReadyPrivilegedAccessPrivateEvidence(root: string) {
   );
 }
 
+function writeReadyMonitoringPrivateEvidence(root: string) {
+  write(
+    root,
+    path.join("SchoolPilot-SOC2-Evidence", "monitoring", "reviews", "soc2-monthly-monitoring-review.json"),
+    `${JSON.stringify({
+      evidenceId: "SOC2-MONTHLY-MONITORING-REVIEW",
+      approvalId: "APPROVAL-SP-AVL-002-MONTHLY-MONITORING-REVIEW",
+      controlId: "SP-AVL-002",
+      remediationItem: "SOC2-008",
+      evidenceType: "monthly_monitoring_review",
+      status: "ready_for_approval",
+      privateReviewNotes: "PRIVATE_MONITORING_REVIEW_BODY_SHOULD_NOT_APPEAR",
+    }, null, 2)}\n`,
+  );
+  write(
+    root,
+    path.join("SchoolPilot-SOC2-Evidence", "security-events", "reviews", "soc2-monthly-alert-review.json"),
+    `${JSON.stringify({
+      evidenceId: "SOC2-MONTHLY-ALERT-REVIEW",
+      approvalId: "APPROVAL-SP-SEC-003-MONTHLY-ALERT-REVIEW-DECISION",
+      controlId: "SP-SEC-003",
+      remediationItem: "SOC2-008",
+      evidenceType: "monthly_alert_review",
+      status: "ready_for_approval",
+      privateReviewNotes: "PRIVATE_MONITORING_REVIEW_BODY_SHOULD_NOT_APPEAR",
+    }, null, 2)}\n`,
+  );
+}
+
 function writePrivateReadiness(root: string, now = new Date("2026-06-26T12:00:00Z")) {
   const privateEvidenceDir = path.join(root, "SchoolPilot-SOC2-Evidence");
   fs.mkdirSync(privateEvidenceDir, { recursive: true });
@@ -336,10 +366,12 @@ describe("SOC 2 approval queue", () => {
     const sourceIds = queue.items.map((item) => item.sourceId);
 
     assert.ok(sourceIds.includes("SP-SEC-001:Quarterly privileged access review packet"));
+    assert.ok(sourceIds.includes("SP-SEC-003:Monthly alert review decision"));
     assert.ok(sourceIds.includes("SP-SEC-003:Incident decision record"));
     assert.ok(sourceIds.includes("SP-SEC-003:Founder-only security training attestation"));
     assert.ok(sourceIds.includes("SP-SEC-005:Vendor DPA confirmation"));
     assert.ok(sourceIds.includes("SP-AVL-001:Restore drill approval"));
+    assert.ok(sourceIds.includes("SP-AVL-002:Monthly monitoring review"));
     assert.ok(queue.items.some((item) => item.decisionType === "founder_training_attestation"));
     assert.ok(queue.items.some((item) => item.decisionType === "vendor_dpa_confirmation"));
   });
@@ -483,6 +515,12 @@ describe("SOC 2 approval queue", () => {
     assert.ok(queue.readinessGaps.some(
       (gap) => gap.approvalId === "APPROVAL-SP-SEC-002-TENANT-ISOLATION-EVIDENCE-REVIEW",
     ));
+    assert.ok(queue.readinessGaps.some(
+      (gap) => gap.approvalId === "APPROVAL-SP-AVL-002-MONTHLY-MONITORING-REVIEW",
+    ));
+    assert.ok(queue.readinessGaps.some(
+      (gap) => gap.approvalId === "APPROVAL-SP-SEC-003-MONTHLY-ALERT-REVIEW-DECISION",
+    ));
     assert.equal(queue.readinessGaps.every((gap) => gap.status === "not_ready"), true);
     assert.doesNotMatch(JSON.stringify(queue), /PRIVATE_RATIONALE_SHOULD_NOT_APPEAR/);
   });
@@ -599,6 +637,83 @@ describe("SOC 2 approval queue", () => {
       (gap) => gap.approvalId === "APPROVAL-SP-SEC-001-QUARTERLY-PRIVILEGED-ACCESS-REVIEW-PACKET",
     ));
     assert.doesNotMatch(JSON.stringify(queue), /PRIVATE_USER_EXPORT_BODY_SHOULD_NOT_APPEAR/);
+  });
+
+  it("unlocks monthly monitoring and alert approvals when private reviews are ready", () => {
+    const root = tempRoot();
+    writeSoc2Docs(root);
+    writeReadyMonitoringPrivateEvidence(root);
+    const { jsonPath: readinessFile } = writePrivateReadiness(root, new Date("2026-06-26T14:00:00Z"));
+
+    const queue = buildApprovalQueue({
+      rootDir: root,
+      privateReadinessFile: readinessFile,
+      now: new Date("2026-06-27T12:00:00Z"),
+    });
+
+    const monitoring = queue.items.find(
+      (item) => item.approvalId === "APPROVAL-SP-AVL-002-MONTHLY-MONITORING-REVIEW",
+    );
+    const alert = queue.items.find(
+      (item) => item.approvalId === "APPROVAL-SP-SEC-003-MONTHLY-ALERT-REVIEW-DECISION",
+    );
+
+    assert.ok(monitoring);
+    assert.ok(alert);
+    assert.equal(monitoring?.decisionType, "monitoring_review");
+    assert.equal(alert?.decisionType, "monitoring_review");
+    assert.equal(monitoring?.expiresAt, "2026-06-30");
+    assert.equal(alert?.expiresAt, "2026-06-30");
+    assert.ok(!queue.readinessGaps.some(
+      (gap) => gap.approvalId === "APPROVAL-SP-AVL-002-MONTHLY-MONITORING-REVIEW",
+    ));
+    assert.ok(!queue.readinessGaps.some(
+      (gap) => gap.approvalId === "APPROVAL-SP-SEC-003-MONTHLY-ALERT-REVIEW-DECISION",
+    ));
+    assert.doesNotMatch(JSON.stringify(queue), /PRIVATE_MONITORING_REVIEW_BODY_SHOULD_NOT_APPEAR/);
+  });
+
+  it("suppresses completed monthly reviews only until their expiration", () => {
+    const root = tempRoot();
+    writeSoc2Docs(root);
+    writeReadyMonitoringPrivateEvidence(root);
+    writePrivateDecision(root, "monitoring/reviews/approved-monitoring-review.json", {
+      approvalId: "APPROVAL-SP-AVL-002-MONTHLY-MONITORING-REVIEW",
+      controlId: "SP-AVL-002",
+      decisionType: "monitoring_review",
+      sourceId: "SP-AVL-002:Monthly monitoring review",
+      decision: "approved",
+      status: "approved",
+      decidedAt: "2026-06-27T13:00:00.000Z",
+      expiresAt: "2026-06-30",
+      rationale: "PRIVATE_RATIONALE_SHOULD_NOT_APPEAR",
+    });
+    const { jsonPath: readinessFile } = writePrivateReadiness(root, new Date("2026-06-27T14:00:00Z"));
+
+    const currentMonthQueue = buildApprovalQueue({
+      rootDir: root,
+      privateReadinessFile: readinessFile,
+      now: new Date("2026-06-28T12:00:00Z"),
+    });
+    const nextMonthQueue = buildApprovalQueue({
+      rootDir: root,
+      privateReadinessFile: readinessFile,
+      now: new Date("2026-07-01T12:00:00Z"),
+    });
+
+    assert.ok(!currentMonthQueue.items.some(
+      (item) => item.approvalId === "APPROVAL-SP-AVL-002-MONTHLY-MONITORING-REVIEW",
+    ));
+    assert.ok(currentMonthQueue.suppressedApprovals.some(
+      (item) => item.approvalId === "APPROVAL-SP-AVL-002-MONTHLY-MONITORING-REVIEW",
+    ));
+    assert.ok(nextMonthQueue.items.some(
+      (item) => item.approvalId === "APPROVAL-SP-AVL-002-MONTHLY-MONITORING-REVIEW",
+    ));
+    assert.ok(!nextMonthQueue.suppressedApprovals.some(
+      (item) => item.approvalId === "APPROVAL-SP-AVL-002-MONTHLY-MONITORING-REVIEW",
+    ));
+    assert.doesNotMatch(JSON.stringify(currentMonthQueue), /PRIVATE_RATIONALE_SHOULD_NOT_APPEAR/);
   });
 
   it("suppresses completed AI data-flow decisions from the pending queue", () => {
@@ -727,6 +842,36 @@ describe("SOC 2 approval queue", () => {
     assert.equal(record.decision, "not_approved");
     assert.equal(record.decisionType, "ai_data_flow_review");
     assert.match(jsonPath, /ai[\\/]reviews/);
+    assert.ok(fs.existsSync(jsonPath));
+    assert.ok(fs.existsSync(mdPath));
+  });
+
+  it("records monthly alert review decisions to the security-events reviews private folder", () => {
+    const root = tempRoot();
+    writeSoc2Docs(root);
+    const queue = buildApprovalQueue({
+      rootDir: root,
+      now: new Date("2026-06-26T12:00:00Z"),
+    });
+    const { jsonPath: queueFile } = writeApprovalQueue(queue, path.join(root, "soc2-evidence", "approvals"));
+    const privateEvidenceDir = path.join(root, "SchoolPilot-SOC2-Evidence");
+    fs.mkdirSync(privateEvidenceDir, { recursive: true });
+
+    const { record, jsonPath, mdPath } = recordApprovalDecision({
+      rootDir: root,
+      queueFile,
+      privateEvidenceDir,
+      approvalId: "APPROVAL-SP-SEC-003-MONTHLY-ALERT-REVIEW-DECISION",
+      decision: "approved",
+      approverName: "Brian Zinkan",
+      rationale: "Monthly security alert review completed for the current review period.",
+      now: new Date("2026-06-26T13:00:00Z"),
+    });
+
+    assert.equal(record.decision, "approved");
+    assert.equal(record.decisionType, "monitoring_review");
+    assert.equal(record.expiresAt, "2026-06-30");
+    assert.match(jsonPath, /security-events[\\/]reviews/);
     assert.ok(fs.existsSync(jsonPath));
     assert.ok(fs.existsSync(mdPath));
   });

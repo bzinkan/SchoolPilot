@@ -76,6 +76,11 @@
           "privateEvidenceLocation": "SchoolPilot-SOC2-Evidence/security-events/"
         },
         {
+          "name": "Monthly monitoring and alert evidence packet",
+          "automation": "automated",
+          "privateEvidenceLocation": "GitHub Actions artifact: soc2-evidence-monitoring and ignored soc2-evidence/monitoring/"
+        },
+        {
           "name": "Incident evidence packet",
           "automation": "automated",
           "privateEvidenceLocation": "GitHub Actions artifact: soc2-evidence-incidents and SchoolPilot-SOC2-Evidence/incidents/"
@@ -191,6 +196,11 @@
           "name": "Health and error monitor sample",
           "automation": "automated",
           "privateEvidenceLocation": "SchoolPilot-SOC2-Evidence/monitoring/"
+        },
+        {
+          "name": "Monthly monitoring evidence packet",
+          "automation": "automated",
+          "privateEvidenceLocation": "GitHub Actions artifact: soc2-evidence-monitoring and ignored soc2-evidence/monitoring/"
         },
         {
           "name": "Monthly monitoring review",
