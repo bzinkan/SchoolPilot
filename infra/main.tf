@@ -128,6 +128,7 @@ module "rds" {
   multi_az              = var.db_multi_az
   allocated_storage     = var.db_allocated_storage
   max_allocated_storage = var.db_max_allocated_storage
+  db_apply_immediately  = var.db_apply_immediately
   ecs_security_group_id = aws_security_group.ecs_tasks.id
 }
 

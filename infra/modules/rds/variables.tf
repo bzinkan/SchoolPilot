@@ -18,3 +18,7 @@ variable "max_allocated_storage" {
   type    = number
   default = 1000
 }
+variable "db_apply_immediately" {
+  type    = bool
+  default = false
+}

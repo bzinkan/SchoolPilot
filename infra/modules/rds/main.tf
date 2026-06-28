@@ -76,6 +76,7 @@ resource "aws_db_instance" "main" {
   final_snapshot_identifier = var.environment == "production" ? "${local.name}-final-snapshot" : null
 
   performance_insights_enabled = true
+  apply_immediately            = var.db_apply_immediately
 
   tags = { Name = "${local.name}-db" }
 }

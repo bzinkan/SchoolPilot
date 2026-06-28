@@ -68,6 +68,12 @@ variable "db_max_allocated_storage" {
   default     = 1000
 }
 
+variable "db_apply_immediately" {
+  description = "Apply RDS instance modifications immediately instead of waiting for the maintenance window"
+  type        = bool
+  default     = false
+}
+
 variable "db_name" {
   description = "Database name"
   type        = string
