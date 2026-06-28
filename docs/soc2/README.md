@@ -36,6 +36,9 @@ require accountable human sign-off.
 
 ## Files
 
+- Root `SOC2.md` is the agent runbook for SOC 2 operating rules and command
+  selection. This folder and `governance-controls.json` remain the control and
+  evidence sources of truth.
 - `control-matrix.md` maps controls to owners, tests, evidence, and status.
 - `governance-controls.json` is the machine-readable control/evidence tracker
   used by CI.
