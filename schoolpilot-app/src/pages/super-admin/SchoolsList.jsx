@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Activity } from 'lucide-react';
+import { Activity, ShieldCheck } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { ThemeToggle } from '../../components/ThemeToggle';
 import api from '../../shared/utils/api';
@@ -192,6 +192,13 @@ export default function SchoolsList() {
             <Activity className="h-4 w-4" />
             <span>Monitoring</span>
             <span className="text-xs font-semibold">{monitorStatusLabel}</span>
+          </button>
+          <button
+            onClick={() => navigate('/super-admin/soc2')}
+            className="flex items-center gap-1.5 px-3 py-2 border border-sky-200 bg-sky-50 rounded-lg text-sm font-medium text-sky-700 hover:bg-sky-100"
+          >
+            <ShieldCheck className="h-4 w-4" />
+            SOC 2
           </button>
           <button
             onClick={openBroadcast}
