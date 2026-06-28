@@ -323,6 +323,7 @@ GitHub Actions (`.github/workflows/ci-build.yml`) runs on push/PR to main:
 
 ### SOC 2 governance evidence
 
+- Read `SOC2.md` before doing SOC 2 work. It is the agent runbook for sources of truth, automation boundaries, and command selection; the official control and evidence records remain under `docs/soc2/` and the private evidence repo.
 - Run `npm run soc2:check` whenever changing `docs/soc2/`, `docs/WISP.md`, `docs/HECVAT-LITE.md`, public security/privacy/legal claims, remediation registers, control matrices, claim registers, or SOC 2 evidence scripts.
 - Run `npm run soc2:privileged-access-evidence` whenever changing auth, role checks, school context enforcement, session controls, security monitoring, audit logging, `SOC2-003`, or `SP-SEC-001` evidence docs. This command is evidence-only and must not enable MFA, change login behavior, revoke sessions, or query production users.
 - Run `npm run soc2:privileged-access-private-evidence-kit -- --private-dir ../SchoolPilot-SOC2-Evidence` to create private draft access-review, user/role export, and MFA-deferral records. Drafts are not approvals; the founder/security owner must complete factual fields before approval.
