@@ -164,6 +164,7 @@ module "alb" {
   environment       = var.environment
   vpc_id            = module.vpc.vpc_id
   public_subnet_ids = module.vpc.public_subnet_ids
+  enable_https      = local.has_domain
   certificate_arn   = local.has_domain ? module.dns[0].certificate_arn : ""
   health_check_path = "/health"
 }
