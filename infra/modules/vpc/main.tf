@@ -7,7 +7,7 @@ data "aws_availability_zones" "available" {
 }
 
 locals {
-  azs = slice(data.aws_availability_zones.available.names, 0, var.az_count)
+  azs  = slice(data.aws_availability_zones.available.names, 0, var.az_count)
   name = "${var.project}-${var.environment}"
 }
 
@@ -58,7 +58,7 @@ resource "aws_route_table_association" "public" {
   route_table_id = aws_route_table.public.id
 }
 
-# --- Private Subnets (RDS, Redis) ---
+# --- Private Subnets (ECS, RDS, Redis) ---
 
 resource "aws_subnet" "private" {
   count = var.az_count
@@ -70,13 +70,39 @@ resource "aws_subnet" "private" {
   tags = { Name = "${local.name}-private-${local.azs[count.index]}" }
 }
 
+resource "aws_eip" "nat" {
+  count  = var.enable_nat_gateway ? var.az_count : 0
+  domain = "vpc"
+
+  tags = { Name = "${local.name}-nat-${local.azs[count.index]}" }
+}
+
+resource "aws_nat_gateway" "main" {
+  count         = var.enable_nat_gateway ? var.az_count : 0
+  allocation_id = aws_eip.nat[count.index].id
+  subnet_id     = aws_subnet.public[count.index].id
+
+  tags = { Name = "${local.name}-nat-${local.azs[count.index]}" }
+
+  depends_on = [aws_internet_gateway.main]
+}
+
 resource "aws_route_table" "private" {
+  count  = var.az_count
   vpc_id = aws_vpc.main.id
-  tags   = { Name = "${local.name}-private-rt" }
+
+  tags = { Name = "${local.name}-private-${local.azs[count.index]}-rt" }
+}
+
+resource "aws_route" "private_nat" {
+  count                  = var.enable_nat_gateway ? var.az_count : 0
+  route_table_id         = aws_route_table.private[count.index].id
+  destination_cidr_block = "0.0.0.0/0"
+  nat_gateway_id         = aws_nat_gateway.main[count.index].id
 }
 
 resource "aws_route_table_association" "private" {
   count          = var.az_count
   subnet_id      = aws_subnet.private[count.index].id
-  route_table_id = aws_route_table.private.id
+  route_table_id = aws_route_table.private[count.index].id
 }

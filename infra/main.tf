@@ -56,8 +56,9 @@ data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
 
 locals {
-  name       = "${var.project}-${var.environment}"
-  has_domain = var.domain != ""
+  name             = "${var.project}-${var.environment}"
+  has_domain       = var.domain != ""
+  frontend_domains = local.has_domain ? [for domain in module.dns[0].all_domains : domain if domain != module.dns[0].api_origin_domain] : []
 }
 
 # ============================================================================
@@ -100,10 +101,11 @@ resource "aws_security_group" "ecs_tasks" {
 module "vpc" {
   source = "./modules/vpc"
 
-  project     = var.project
-  environment = var.environment
-  vpc_cidr    = var.vpc_cidr
-  az_count    = var.az_count
+  project            = var.project
+  environment        = var.environment
+  vpc_cidr           = var.vpc_cidr
+  az_count           = var.az_count
+  enable_nat_gateway = var.enable_nat_gateway
 }
 
 module "ecr" {
@@ -116,24 +118,28 @@ module "ecr" {
 module "rds" {
   source = "./modules/rds"
 
-  project            = var.project
-  environment        = var.environment
-  vpc_id             = module.vpc.vpc_id
-  private_subnet_ids = module.vpc.private_subnet_ids
-  db_instance_class  = var.db_instance_class
-  db_name            = var.db_name
-  db_username        = var.db_username
+  project               = var.project
+  environment           = var.environment
+  vpc_id                = module.vpc.vpc_id
+  private_subnet_ids    = module.vpc.private_subnet_ids
+  db_instance_class     = var.db_instance_class
+  db_name               = var.db_name
+  db_username           = var.db_username
+  multi_az              = var.db_multi_az
+  allocated_storage     = var.db_allocated_storage
+  max_allocated_storage = var.db_max_allocated_storage
   ecs_security_group_id = aws_security_group.ecs_tasks.id
 }
 
 module "redis" {
   source = "./modules/redis"
 
-  project            = var.project
-  environment        = var.environment
-  vpc_id             = module.vpc.vpc_id
-  private_subnet_ids = module.vpc.private_subnet_ids
-  node_type          = var.redis_node_type
+  project               = var.project
+  environment           = var.environment
+  vpc_id                = module.vpc.vpc_id
+  private_subnet_ids    = module.vpc.private_subnet_ids
+  node_type             = var.redis_node_type
+  replica_count         = var.redis_replica_count
   ecs_security_group_id = aws_security_group.ecs_tasks.id
 }
 
@@ -158,21 +164,21 @@ module "alb" {
   environment       = var.environment
   vpc_id            = module.vpc.vpc_id
   public_subnet_ids = module.vpc.public_subnet_ids
-  certificate_arn   = ""
+  certificate_arn   = local.has_domain ? module.dns[0].certificate_arn : ""
   health_check_path = "/health"
 }
 
 module "ecs" {
   source = "./modules/ecs"
 
-  project            = var.project
-  environment        = var.environment
-  aws_region         = var.aws_region
-  vpc_id             = module.vpc.vpc_id
-  public_subnet_ids = module.vpc.public_subnet_ids
-  alb_target_group_arn = module.alb.target_group_arn
-  ecr_repository_url = module.ecr.repository_url
-  container_port     = 4000
+  project               = var.project
+  environment           = var.environment
+  aws_region            = var.aws_region
+  vpc_id                = module.vpc.vpc_id
+  private_subnet_ids    = module.vpc.private_subnet_ids
+  alb_target_group_arn  = module.alb.target_group_arn
+  ecr_repository_url    = module.ecr.repository_url
+  container_port        = 4000
   ecs_security_group_id = aws_security_group.ecs_tasks.id
 
   # Environment variables for the API
@@ -188,20 +194,26 @@ module "ecs" {
   cookie_domain   = local.has_domain ? ".${var.domain}" : var.cookie_domain
 
   # Google OAuth
-  google_client_id     = var.google_client_id
-  google_client_secret = var.google_client_secret
+  google_client_id            = var.google_client_id
+  google_client_secret        = var.google_client_secret
   google_oauth_encryption_key = var.google_oauth_encryption_key
 
   # Optional services
-  sendgrid_api_key   = var.sendgrid_api_key
-  stripe_secret_key  = var.stripe_secret_key
+  sendgrid_api_key      = var.sendgrid_api_key
+  stripe_secret_key     = var.stripe_secret_key
   stripe_webhook_secret = var.stripe_webhook_secret
   openai_api_key        = var.openai_api_key
 
   # Scaling
-  desired_count = var.ecs_desired_count
-  cpu           = var.ecs_cpu
-  memory        = var.ecs_memory
+  desired_count         = var.ecs_desired_count
+  cpu                   = var.ecs_cpu
+  memory                = var.ecs_memory
+  worker_desired_count  = var.worker_desired_count
+  worker_cpu            = var.worker_cpu
+  worker_memory         = var.worker_memory
+  db_pool_max           = var.db_pool_max
+  scheduler_db_pool_max = var.scheduler_db_pool_max
+  rls_enabled_tables    = var.rls_enabled_tables
 }
 
 module "cdn" {
@@ -212,11 +224,13 @@ module "cdn" {
     aws.us_east_1 = aws.us_east_1
   }
 
-  project         = var.project
-  environment     = var.environment
-  domain_name     = local.has_domain ? module.dns[0].primary_domain : ""
-  api_domain      = module.alb.alb_dns_name
-  certificate_arn = local.has_domain ? module.dns[0].certificate_arn : ""
+  project                    = var.project
+  environment                = var.environment
+  domain_name                = local.has_domain ? module.dns[0].primary_domain : ""
+  domain_aliases             = local.frontend_domains
+  api_domain                 = local.has_domain ? module.dns[0].api_origin_domain : module.alb.alb_dns_name
+  certificate_arn            = local.has_domain ? module.dns[0].certificate_arn : ""
+  api_origin_protocol_policy = local.has_domain ? "https-only" : "http-only"
 }
 
 # ============================================================================
@@ -225,7 +239,7 @@ module "cdn" {
 # ============================================================================
 
 resource "aws_route53_record" "cloudfront_a" {
-  for_each = local.has_domain ? toset(module.dns[0].all_domains) : toset([])
+  for_each = local.has_domain ? toset(local.frontend_domains) : toset([])
 
   zone_id = module.dns[0].zone_id
   name    = each.value
@@ -239,7 +253,7 @@ resource "aws_route53_record" "cloudfront_a" {
 }
 
 resource "aws_route53_record" "cloudfront_aaaa" {
-  for_each = local.has_domain ? toset(module.dns[0].all_domains) : toset([])
+  for_each = local.has_domain ? toset(local.frontend_domains) : toset([])
 
   zone_id = module.dns[0].zone_id
   name    = each.value
@@ -249,5 +263,19 @@ resource "aws_route53_record" "cloudfront_aaaa" {
     name                   = module.cdn.cloudfront_domain
     zone_id                = module.cdn.cloudfront_hosted_zone_id
     evaluate_target_health = false
+  }
+}
+
+resource "aws_route53_record" "api_origin_a" {
+  count = local.has_domain ? 1 : 0
+
+  zone_id = module.dns[0].zone_id
+  name    = module.dns[0].api_origin_domain
+  type    = "A"
+
+  alias {
+    name                   = module.alb.alb_dns_name
+    zone_id                = module.alb.alb_zone_id
+    evaluate_target_health = true
   }
 }

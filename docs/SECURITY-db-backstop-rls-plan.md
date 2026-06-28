@@ -1,9 +1,10 @@
 # Tenant-Isolation DB Backstop (Row-Level Security) — Plan
 
-**Status:** Plan only — no code changes yet (deliberate; review before implementing).
+**Status:** Implemented in the app/runtime path; retain as design history and
+operating checklist.
 **Goal:** make per-school isolation enforced by the **database**, so a single
 forgotten `WHERE schoolId` in a future handler can't leak across schools. Today
-isolation is **100% application-layer** (verified + tested, but no backstop).
+isolation is application-layer plus PostgreSQL RLS when `RLS_GUC_ENABLED=true`.
 
 ---
 
@@ -21,7 +22,7 @@ developer must remember" into "the database refuses to return other schools' row
 The database enforces a `schoolId` predicate on every query automatically.
 
 - Add to each tenant table: `ENABLE ROW LEVEL SECURITY` + a policy
-  `USING (school_id = current_setting('app.school_id', true)::uuid)`.
+  `USING (school_id = current_setting('app.school_id', true))`.
 - Per request, set the GUC from `res.locals.schoolId`:
   `SET LOCAL app.school_id = $1` at the start of the transaction (must be inside a
   txn for `SET LOCAL` to scope correctly).
@@ -52,26 +53,21 @@ assert 404 on every `:id` route and every list endpoint for B's resources).
 
 ## 3. Recommended sequence
 
-1. **Now (cheap, high value):** Option C — add the cross-tenant regression test
-   suite to CI. This would have caught every finding in the 2026-06 sweep and guards
-   against regressions immediately, with zero runtime risk.
-2. **Next (structural):** Option A — RLS, rolled out table-by-table behind a flag:
-   1. Add `schoolId` columns to the 6 derived tables (or write join-based policies).
-   2. Add a txn-scoped `SET LOCAL app.school_id` in a middleware wrapper; route the
-      main pool through it. Leave `schedulerPool` / migrations on a `BYPASSRLS` role.
-   3. Enable RLS on low-risk tables first (e.g. `dashboard_tabs`, `grades`),
-      validate in staging, then expand to `students`, `passes`, `heartbeats`, etc.
-   4. Add a "deny by default" test: with no `app.school_id` set, tenant tables
-      return zero rows.
-3. **Cleanup:** once RLS covers all tenant tables, the per-handler `schoolId`
+1. Keep the cross-tenant regression suite in CI.
+2. Keep `RLS_GUC_ENABLED=true` in production and keep `RLS_ENABLED_TABLES`
+   aligned with the tested tenant table allowlist.
+3. Export private production evidence for policies, status, grants, and
+   representative deny-by-default checks.
+4. Validate any future RDS Proxy experiment against session-GUC RLS behavior before
+   adding it to production.
+5. **Cleanup:** once RLS covers all tenant tables, the per-handler `schoolId`
    filters become defense-in-depth (keep them; belt + suspenders).
 
 ## 4. Effort / risk
 
-- Option C: ~0.5–1 day, no runtime risk. **Do first.**
-- Option A: ~1–2 weeks done carefully (the GUC-per-request + pool + super-admin +
-  derived-table work is the bulk). Roll out incrementally in staging; never flip all
-  tables at once in prod.
+Ongoing risk is operational drift: an env flag disabled in production, a new
+tenant table omitted from the allowlist, or a DB connection path that bypasses
+the request GUC. Treat RLS config and private evidence export as release gates.
 
 ## 5. Tables needing a `schoolId` column before RLS (no direct column today)
 
@@ -83,7 +79,6 @@ or write a join-based RLS policy.
 
 ## 6. Bottom line
 
-App-layer isolation is now verified and tested, but it is not structural. Option C
-(CI tests) should land before/with multi-tenant onboarding as the immediate
-guardrail; Option A (RLS) is the durable backstop to schedule as a follow-up
-project once onboarding is underway.
+App-layer isolation is verified and tested, and RLS is the structural backstop.
+Keep both: app filters are still defense-in-depth, and RLS is the fail-closed
+safety net.

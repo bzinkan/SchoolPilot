@@ -11,6 +11,7 @@ import {
   resolveGoPilotIdentity,
 } from "../services/gopilotAccess.js";
 import { runWithTenantContext } from "../middleware/tenantContext.js";
+import { subscribeSocketIoRedis } from "./socketio-redis.js";
 
 let io: Server | null = null;
 
@@ -37,6 +38,10 @@ export function setupSocketIO(httpServer: HttpServer): Server {
   io = new Server(httpServer, {
     cors: { origin: origins, methods: ["GET", "POST"] },
     path: "/gopilot-socket",
+  });
+
+  void subscribeSocketIoRedis(({ room, event, data }) => {
+    io?.to(room).emit(event, data);
   });
 
   io.use(async (socket, next) => {

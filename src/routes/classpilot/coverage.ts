@@ -11,6 +11,7 @@ import {
   createSupervisionContextWithStudents,
   getActiveCoverageAssignmentsForScopeGroup,
   getActiveDirectSupervisionContextForStaff,
+  getActiveSupervisionContextForStaffScheduledConflict,
   getActiveSessionByStudent,
   getActiveSupervisionForStudents,
   getActiveSupervisionContextForStaffGroup,
@@ -28,19 +29,24 @@ import {
   getStaffBySchool,
   getStudentById,
   getStudentsBySchool,
+  getScheduledClassConflictByIdAndSchool,
   getSupervisionContextByIdAndSchool,
   getUserById,
   listCoverageAssignments,
   listCoverageScopeGroups,
+  listActiveScheduledClassConflicts,
   listSupervisionContexts,
   listSupervisionStudentsForContexts,
   replaceCoverageScopeGroupMembers,
   replaceCoverageScopeGroupStaff,
   releaseSupervisionStudents,
+  updateScheduledClassConflictStatus,
   updateCoverageAssignment,
   updateCoverageScopeGroup,
   type OnlineUnassignedStudent,
 } from "../../services/storage.js";
+import { buildScheduledCoveragePayload } from "../../services/classpilotScheduledStart.js";
+import { broadcastToTeachersLocal } from "../../realtime/ws-broadcast.js";
 import { getAuditLogs, logAudit } from "../../services/audit.js";
 import {
   COVERAGE_COMMAND_TYPES,
@@ -683,6 +689,79 @@ async function availableStudentPayload(
     })),
     matchingScopes,
   };
+}
+
+async function scheduledCoverageStudentPayload(
+  schoolId: string,
+  student: any,
+  scheduledCoverage: { id: string; className: string; teacherName: string }
+) {
+  const status = await activeStatusForStudent(schoolId, student);
+  return {
+    studentId: student.id,
+    studentName: studentName(student),
+    studentEmail: student.email || undefined,
+    gradeLevel: student.gradeLevel || undefined,
+    isLoggedIn: true,
+    loginState: "logged_in",
+    supervisionState: "available",
+    supervisionContext: null,
+    status: status.status,
+    lastSeenAt: status.lastSeenAt,
+    activeTabTitle: status.activeTabTitle,
+    activeTabUrl: status.activeTabUrl,
+    allOpenTabs: status.allOpenTabs,
+    screenshotHealth: status.screenshotHealth,
+    matchingGroups: [],
+    matchingScopes: [],
+    matchingScheduledCoverage: scheduledCoverage,
+  };
+}
+
+async function scheduledCoverageGroupsForRequest(req: any, res: any, activeAssignments: any[]) {
+  const schoolId = res.locals.schoolId!;
+  const conflicts = await listActiveScheduledClassConflicts(schoolId);
+  const groups = [];
+  for (const conflict of conflicts) {
+    const group = await getGroupByIdAndSchool(conflict.groupId, schoolId);
+    if (!group) continue;
+    const scheduledPayload = await buildScheduledCoveragePayload({
+      group,
+      scheduledDate: conflict.scheduledDate,
+      scheduledConflictId: conflict.id,
+    });
+    const teacherName = scheduledPayload.scheduledTeacher.displayName;
+    const scheduledCoverage = {
+      id: conflict.id,
+      className: scheduledPayload.selectedClass.name,
+      teacherName,
+    };
+    const visibleStudents = [];
+    for (const entry of scheduledPayload.claimableStudents) {
+      const student = await getStudentById(entry.studentId);
+      if (!student || student.schoolId !== schoolId) continue;
+      if (!isAdmin(req, res) && !(await assignmentsCoverStudent(activeAssignments, student))) continue;
+      visibleStudents.push(await scheduledCoverageStudentPayload(schoolId, student, scheduledCoverage));
+    }
+    if (visibleStudents.length === 0) continue;
+    groups.push({
+      id: conflict.id,
+      kind: "scheduled_coverage",
+      label: `Scheduled Coverage Needed: ${scheduledPayload.selectedClass.name}`,
+      className: scheduledPayload.selectedClass.name,
+      teacherName,
+      scheduledTeacher: scheduledPayload.scheduledTeacher,
+      scheduledDate: conflict.scheduledDate,
+      blockStartTime: conflict.blockStartTime,
+      blockEndTime: conflict.blockEndTime,
+      claimableCount: visibleStudents.length,
+      totalClaimableCount: scheduledPayload.claimableCount,
+      monitoredCount: scheduledPayload.monitoredCount,
+      claimedCount: scheduledPayload.claimedCount,
+      students: visibleStudents,
+    });
+  }
+  return groups;
 }
 
 async function defaultClaimEndsAt(schoolId: string): Promise<Date> {
@@ -1337,7 +1416,12 @@ router.get("/coverage/available-students", ...auth, async (req, res, next) => {
     const activeAssignments = isAdmin(req, res)
       ? []
       : await getActiveCoverageAssignmentsForStaff(schoolId, req.authUser!.id);
+    const scheduledCoverageGroups = await scheduledCoverageGroupsForRequest(req, res, activeAssignments);
+    const scheduledCoverageStudentIds = new Set(
+      scheduledCoverageGroups.flatMap((group: any) => (group.students || []).map((student: any) => student.studentId))
+    );
     const students = (await Promise.all(rows
+      .filter((row) => !scheduledCoverageStudentIds.has(row.student.id))
       .map(async (row) => {
         const matchingGroups = visibleGroups.filter((group) => groupContainsStudent(group, row.student.id));
         const matchingAssignments = await matchingDirectAssignmentsForStudent(activeAssignments, row.student);
@@ -1345,7 +1429,7 @@ router.get("/coverage/available-students", ...auth, async (req, res, next) => {
         return availableStudentPayload(schoolId, row, matchingGroups, matchingAssignments);
       })))
       .filter(Boolean);
-    return res.json({ students });
+    return res.json({ students, scheduledCoverageGroups });
   } catch (err) {
     next(err);
   }
@@ -1496,11 +1580,66 @@ async function assignStudentsToDirectSupervision(options: {
   return { context, assignments: [] };
 }
 
+async function assignStudentsToScheduledCoverage(options: {
+  schoolId: string;
+  scheduledConflictId: string;
+  className: string;
+  assignedStaffId: string;
+  actorId: string;
+  studentIds: string[];
+  note?: string;
+}) {
+  const endsAt = await defaultClaimEndsAt(options.schoolId);
+  const existing = await getActiveSupervisionContextForStaffScheduledConflict(
+    options.schoolId,
+    options.assignedStaffId,
+    options.scheduledConflictId
+  );
+  if (existing) {
+    const context = await extendSupervisionContext({
+      schoolId: options.schoolId,
+      contextId: existing.id,
+      endsAt: existing.endsAt < endsAt ? endsAt : existing.endsAt,
+      note: options.note || existing.note || null,
+      coverageGroupId: null,
+      scheduledConflictId: options.scheduledConflictId,
+    });
+    const assignments = await assignStudentsToSupervisionContext({
+      schoolId: options.schoolId,
+      contextId: existing.id,
+      studentIds: options.studentIds,
+      assignedBy: options.actorId,
+      source: "scheduled_coverage_claim",
+    });
+    return { context: context || existing, assignments };
+  }
+
+  const context = await createSupervisionContextWithStudents({
+    context: {
+      schoolId: options.schoolId,
+      contextType: "scheduled_coverage",
+      name: `Scheduled Coverage: ${options.className}`,
+      status: "active",
+      assignedStaffId: options.assignedStaffId,
+      coverageGroupId: null,
+      scheduledConflictId: options.scheduledConflictId,
+      createdBy: options.actorId,
+      note: options.note || null,
+      endsAt,
+    },
+    studentIds: options.studentIds,
+    assignedBy: options.actorId,
+    source: "scheduled_coverage_claim",
+  });
+  return { context, assignments: [] };
+}
+
 router.post("/coverage/claim", ...auth, async (req, res, next) => {
   try {
     if (!requireStaffRole(req, res)) return res.status(403).json({ error: "Staff access required" });
     const schoolId = res.locals.schoolId!;
     const groupId = String(req.body.supervisionGroupId || req.body.coverageGroupId || "").trim();
+    const scheduledConflictId = String(req.body.scheduledConflictId || "").trim();
     const studentIds = normalizeStudentIds(req.body.studentIds);
     if (studentIds.length === 0) {
       return res.status(400).json({ error: "studentIds are required" });
@@ -1513,14 +1652,57 @@ router.post("/coverage/claim", ...auth, async (req, res, next) => {
       return res.status(404).json({ error: "Assigned staff member not found in this school" });
     }
     const students = await assertStudentsInSchool(schoolId, studentIds);
-    const unassignedRows = await getOnlineUnassignedStudents(schoolId);
-    const unassignedIds = new Set(unassignedRows.map((row) => row.student.id));
-    if (studentIds.some((studentId) => !unassignedIds.has(studentId))) {
-      return res.status(409).json({ error: "One or more students are no longer available to claim" });
-    }
 
     let result;
-    if (groupId) {
+    if (scheduledConflictId) {
+      const conflict = await getScheduledClassConflictByIdAndSchool(scheduledConflictId, schoolId);
+      if (!conflict || !["coverage_needed", "claimed", "pending"].includes(conflict.status)) {
+        return res.status(404).json({ error: "Scheduled coverage request not found" });
+      }
+      const group = await getGroupByIdAndSchool(conflict.groupId, schoolId);
+      if (!group) return res.status(404).json({ error: "Scheduled class not found" });
+      const scheduledPayload = await buildScheduledCoveragePayload({
+        group,
+        scheduledDate: conflict.scheduledDate,
+        scheduledConflictId: conflict.id,
+      });
+      const claimableIds = new Set(scheduledPayload.claimableStudents.map((student) => student.studentId));
+      if (studentIds.some((studentId) => !claimableIds.has(studentId))) {
+        return res.status(409).json({ error: "One or more students are no longer available for scheduled coverage" });
+      }
+      if (!isAdmin(req, res)) {
+        const assignments = await getActiveCoverageAssignmentsForStaff(schoolId, req.authUser!.id);
+        for (const student of students) {
+          if (!(await assignmentsCoverStudent(assignments, student))) {
+            return res.status(403).json({ error: "One or more students are outside your supervision scope" });
+          }
+        }
+      }
+      result = await assignStudentsToScheduledCoverage({
+        schoolId,
+        scheduledConflictId: conflict.id,
+        className: group.name,
+        assignedStaffId,
+        actorId: req.authUser!.id,
+        studentIds,
+        note: req.body.note ? String(req.body.note) : undefined,
+      });
+      const refreshedPayload = await buildScheduledCoveragePayload({
+        group,
+        scheduledDate: conflict.scheduledDate,
+        scheduledConflictId: conflict.id,
+      });
+      await updateScheduledClassConflictStatus(conflict.id, schoolId, "claimed", refreshedPayload);
+      broadcastToTeachersLocal(schoolId, {
+        type: "scheduled-class-conflict-updated",
+        conflictId: conflict.id,
+      });
+    } else if (groupId) {
+      const unassignedRows = await getOnlineUnassignedStudents(schoolId);
+      const unassignedIds = new Set(unassignedRows.map((row) => row.student.id));
+      if (studentIds.some((studentId) => !unassignedIds.has(studentId))) {
+        return res.status(409).json({ error: "One or more students are no longer available to claim" });
+      }
       const group = await getCoverageScopeGroupByIdAndSchool(schoolId, groupId);
       if (!group || !group.active) return res.status(404).json({ error: "Supervision group not found" });
       if (!isAdmin(req, res)) {
@@ -1543,6 +1725,11 @@ router.post("/coverage/claim", ...auth, async (req, res, next) => {
         note: req.body.note ? String(req.body.note) : undefined,
       });
     } else {
+      const unassignedRows = await getOnlineUnassignedStudents(schoolId);
+      const unassignedIds = new Set(unassignedRows.map((row) => row.student.id));
+      if (studentIds.some((studentId) => !unassignedIds.has(studentId))) {
+        return res.status(409).json({ error: "One or more students are no longer available to claim" });
+      }
       let contextName = "Claimed students";
       if (!isAdmin(req, res)) {
         const assignments = await getActiveCoverageAssignmentsForStaff(schoolId, req.authUser!.id);
@@ -1574,7 +1761,7 @@ router.post("/coverage/claim", ...auth, async (req, res, next) => {
       action: "coverage.student.claim",
       entityType: "supervision_context",
       entityId: result.context.id,
-      changes: { supervisionGroupId: groupId || null, assignedStaffId, studentIds },
+      changes: { supervisionGroupId: groupId || null, scheduledConflictId: scheduledConflictId || null, assignedStaffId, studentIds },
     });
     return res.status(201).json({ context: result.context, assignments: result.assignments });
   } catch (err: any) {

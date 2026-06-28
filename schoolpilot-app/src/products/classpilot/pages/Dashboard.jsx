@@ -279,13 +279,18 @@ export default function Dashboard() {
   });
   const canManageSupervisionSetup = isAdmin || !!coverageCapabilities.canManageSupervisionSetup;
 
-  const { data: availablePickupStudents = [] } = useQuery({
+  const { data: availablePickupData = { students: [], scheduledCoverageGroups: [] } } = useQuery({
     queryKey: ['/api/coverage/available-students'],
     queryFn: () => apiRequest('GET', '/coverage/available-students'),
-    select: (data) => data?.students || [],
+    select: (data) => ({
+      students: data?.students || [],
+      scheduledCoverageGroups: data?.scheduledCoverageGroups || [],
+    }),
     enabled: isAdmin || isTeacher,
     refetchInterval: 10000,
   });
+  const availablePickupStudents = availablePickupData.students || [];
+  const scheduledCoverageGroups = availablePickupData.scheduledCoverageGroups || [];
 
   const { data: claimedPickupStudents = [] } = useQuery({
     queryKey: ['/api/coverage/claimed-students'],
@@ -301,6 +306,14 @@ export default function Dashboard() {
     select: (data) => data?.targets || data?.contexts || [],
     enabled: isAdmin || isTeacher,
     refetchInterval: 10000,
+  });
+
+  const { data: scheduledClassConflicts = [] } = useQuery({
+    queryKey: ['/api/classpilot/scheduled-conflicts'],
+    queryFn: () => apiRequest('GET', '/classpilot/scheduled-conflicts'),
+    select: (data) => data?.conflicts || [],
+    enabled: isAdmin || isTeacher,
+    refetchInterval: 15000,
   });
 
   // Admin observe mode logic
@@ -631,6 +644,13 @@ export default function Dashboard() {
               );
               queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
             }
+            if (message.type === 'scheduled-class-conflict-updated') {
+              queryClient.invalidateQueries({ queryKey: ['/api/classpilot/scheduled-conflicts'] });
+              queryClient.invalidateQueries({ queryKey: ['/api/coverage/available-students'] });
+              queryClient.invalidateQueries({ queryKey: ['/api/coverage/claimed-students'] });
+              queryClient.invalidateQueries({ queryKey: ['/api/sessions/active'], exact: false });
+              queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
+            }
             if (message.type === 'ai-classification') {
               queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
             }
@@ -938,11 +958,25 @@ export default function Dashboard() {
   const filteredAvailableStudents = availablePickupStudents
     .filter(matchesStudentSearch)
     .sort((a, b) => getLastName(a.studentName).localeCompare(getLastName(b.studentName)));
+  const filteredScheduledCoverageGroups = scheduledCoverageGroups
+    .map((group) => ({
+      ...group,
+      students: (group.students || [])
+        .filter((student) => (
+          matchesStudentSearch(student) ||
+          (group.label || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+          (group.className || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+          (group.teacherName || '').toLowerCase().includes(searchQuery.toLowerCase())
+        ))
+        .sort((a, b) => getLastName(a.studentName).localeCompare(getLastName(b.studentName))),
+    }))
+    .filter((group) => group.students.length > 0)
+    .sort((a, b) => (a.className || a.label || "").localeCompare(b.className || b.label || ""));
   const filteredClaimedStudents = claimedPickupStudents
     .filter(matchesStudentSearch)
     .sort((a, b) => getLastName(a.studentName).localeCompare(getLastName(b.studentName)));
   const filteredStudents = studentView === "available"
-    ? filteredAvailableStudents
+    ? [...filteredScheduledCoverageGroups.flatMap((group) => group.students), ...filteredAvailableStudents]
     : studentView === "claimed"
       ? filteredClaimedStudents
       : filteredClassStudents;
@@ -979,7 +1013,7 @@ export default function Dashboard() {
       : getStudentsForCommandTarget(overrideStudentIds)
   );
 
-  const targetStudents = studentView === "available" ? filteredAvailableStudents : getActiveCommandStudents();
+  const targetStudents = studentView === "available" ? filteredStudents : getActiveCommandStudents();
   const connectedTargetCount = targetStudents.filter(isConnectedStudent).length;
   const unavailableTargetCount = Math.max(0, targetStudents.length - connectedTargetCount);
   const activeClassName = studentView === "available"
@@ -1002,7 +1036,7 @@ export default function Dashboard() {
   const canShowStudentWorkspace = isAdmin || (isTeacher && (activeSession || studentView !== "class"));
   const canUseRemoteControls = studentView === "claimed" || ((isTeacher && activeSession) || (isAdmin && isAdminTeaching));
   const claimedContextCount = new Set(claimedPickupStudents.map((student) => student.contextId).filter(Boolean)).size;
-  const selectedAvailableStudents = filteredAvailableStudents.filter((student) => selectedStudentIds.has(student.studentId));
+  const selectedAvailableStudents = filteredStudents.filter((student) => selectedStudentIds.has(student.studentId));
   const availableGroupSections = (() => {
     const sections = new Map();
     filteredAvailableStudents.forEach((student) => {
@@ -1268,9 +1302,44 @@ export default function Dashboard() {
     },
   });
 
+  const startScheduledConflictMutation = useMutation({
+    mutationFn: async (conflictId) => apiRequest('POST', `/classpilot/scheduled-conflicts/${encodeURIComponent(conflictId)}/start-anyway`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/classpilot/scheduled-conflicts'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/sessions/active'], exact: false });
+      queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/groups'], exact: false });
+      queryClient.invalidateQueries({ queryKey: ['/api/teacher/groups'], exact: false });
+      toast({ title: "Class Started", description: "Scheduled class started. Temporary scheduled coverage was released." });
+    },
+    onError: (error) => {
+      toast({ variant: "destructive", title: "Could not start scheduled class", description: error.response?.data?.error || error.message });
+    },
+  });
+
+  const skipScheduledConflictMutation = useMutation({
+    mutationFn: async (conflictId) => apiRequest('POST', `/classpilot/scheduled-conflicts/${encodeURIComponent(conflictId)}/skip`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/classpilot/scheduled-conflicts'] });
+      toast({ title: "Scheduled Class Skipped", description: "This scheduled class will not auto-start again today." });
+    },
+    onError: (error) => {
+      toast({ variant: "destructive", title: "Could not skip scheduled class", description: error.response?.data?.error || error.message });
+    },
+  });
+
   const claimPickupMutation = useMutation({
     mutationFn: async ({ students: studentsToClaim }) => {
+      const byScheduled = studentsToClaim.reduce((map, student) => {
+        const scheduled = student.matchingScheduledCoverage;
+        if (!scheduled?.id) return map;
+        const rows = map.get(scheduled.id) || [];
+        rows.push(student);
+        map.set(scheduled.id, rows);
+        return map;
+      }, new Map());
       const byGroup = studentsToClaim.reduce((map, student) => {
+        if (student.matchingScheduledCoverage?.id) return map;
         const group = student.matchingGroups?.[0];
         if (!group?.id) return map;
         const rows = map.get(group.id) || [];
@@ -1278,16 +1347,22 @@ export default function Dashboard() {
         map.set(group.id, rows);
         return map;
       }, new Map());
-      const directScopeStudents = studentsToClaim.filter((student) => !(student.matchingGroups || []).length);
-      if (byGroup.size === 0 && directScopeStudents.length === 0) {
+      const directScopeStudents = studentsToClaim.filter((student) => !student.matchingScheduledCoverage?.id && !(student.matchingGroups || []).length);
+      if (byScheduled.size === 0 && byGroup.size === 0 && directScopeStudents.length === 0) {
         throw new Error("No supervision permission is available for the selected students.");
       }
-      const requests = Array.from(byGroup.entries()).map(([supervisionGroupId, rows]) =>
+      const requests = Array.from(byScheduled.entries()).map(([scheduledConflictId, rows]) =>
+        apiRequest('POST', '/coverage/claim', {
+          scheduledConflictId,
+          studentIds: rows.map((student) => student.studentId),
+        })
+      );
+      requests.push(...Array.from(byGroup.entries()).map(([supervisionGroupId, rows]) =>
         apiRequest('POST', '/coverage/claim', {
           supervisionGroupId,
           studentIds: rows.map((student) => student.studentId),
         })
-      );
+      ));
       if (directScopeStudents.length > 0) {
         requests.push(apiRequest('POST', '/coverage/claim', {
           studentIds: directScopeStudents.map((student) => student.studentId),
@@ -2151,7 +2226,7 @@ export default function Dashboard() {
             onGradeChange={setSelectedGrade}
             userRole={currentUser?.role}
             coverageCount={claimedContextCount || manageableCoverageCount}
-            availableCount={availablePickupStudents.length}
+            availableCount={availablePickupStudents.length + scheduledCoverageGroups.reduce((total, group) => total + (group.students?.length || group.claimableCount || 0), 0)}
             claimedCount={claimedPickupStudents.length}
             pickupView={studentView}
             onPickupViewChange={handleStudentViewChange}
@@ -2159,6 +2234,59 @@ export default function Dashboard() {
             canReroute={studentView === "class" && rerouteCoverageTargets.length > 0}
             onReroute={studentView === "class" ? () => setShowRerouteDialog(true) : undefined}
           />
+        )}
+
+        {scheduledClassConflicts.length > 0 && (
+          <div className="mb-6 space-y-3" data-testid="scheduled-class-conflicts">
+            {scheduledClassConflicts.map((conflict) => (
+              <div
+                key={conflict.id}
+                className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-slate-950 shadow-sm dark:border-amber-800 dark:bg-amber-950/30 dark:text-slate-100"
+                data-testid={`scheduled-class-conflict-${conflict.id}`}
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 text-sm font-semibold">
+                      <Calendar className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+                      Scheduled coverage needed
+                    </div>
+                    <p className="mt-1 text-sm text-slate-700 dark:text-slate-300">{conflict.message}</p>
+                    {(conflict.overlap?.monitoredGroups || conflict.overlap?.groups || []).length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {(conflict.overlap?.monitoredGroups || conflict.overlap?.groups || []).map((group) => (
+                          <Badge key={group.sessionId} variant="secondary" className="bg-white/80 text-slate-800 dark:bg-slate-900/60 dark:text-slate-200">
+                            {group.teacherName} - {group.className} - {group.affectedCount} student{group.affectedCount === 1 ? "" : "s"}
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  {conflict.canStartAnyway && (
+                    <div className="flex shrink-0 items-center gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => skipScheduledConflictMutation.mutate(conflict.id)}
+                        disabled={skipScheduledConflictMutation.isPending || startScheduledConflictMutation.isPending}
+                        data-testid={`button-skip-scheduled-conflict-${conflict.id}`}
+                      >
+                        Skip
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={() => startScheduledConflictMutation.mutate(conflict.id)}
+                        disabled={startScheduledConflictMutation.isPending || skipScheduledConflictMutation.isPending}
+                        data-testid={`button-start-scheduled-conflict-${conflict.id}`}
+                        className="bg-amber-400 text-slate-950 hover:bg-amber-300"
+                      >
+                        Start Class
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
         )}
 
         {/* Stats Cards */}
@@ -2279,8 +2407,8 @@ export default function Dashboard() {
                   Claim selected
                 </Button>
                 <Button
-                  onClick={() => handleClaimStudents(filteredAvailableStudents)}
-                  disabled={filteredAvailableStudents.length === 0 || claimPickupMutation.isPending}
+                  onClick={() => handleClaimStudents(filteredStudents)}
+                  disabled={filteredStudents.length === 0 || claimPickupMutation.isPending}
                   data-testid="button-claim-all-students"
                 >
                   <Users className="h-4 w-4 mr-2" />
@@ -2288,7 +2416,7 @@ export default function Dashboard() {
                 </Button>
               </div>
             </div>
-            {filteredAvailableStudents.length === 0 ? (
+            {filteredScheduledCoverageGroups.length === 0 && filteredAvailableStudents.length === 0 ? (
               <div className="rounded-lg border bg-card px-4 py-14 text-center">
                 <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-xl bg-muted/40">
                   <UserCheck className="h-7 w-7 text-muted-foreground" />
@@ -2300,6 +2428,76 @@ export default function Dashboard() {
               </div>
             ) : (
               <div className="space-y-4">
+                {filteredScheduledCoverageGroups.map((section) => (
+                  <section key={`scheduled-${section.id}`} className="rounded-lg border border-amber-300 bg-amber-50/80 shadow-sm dark:border-amber-800 dark:bg-amber-950/20" data-testid={`section-scheduled-coverage-${section.id}`}>
+                    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-amber-200 px-4 py-3 dark:border-amber-900">
+                      <div>
+                        <h3 className="text-base font-semibold text-foreground">
+                          {section.className || section.label} - {section.students.length} available
+                        </h3>
+                        <p className="text-xs text-muted-foreground">
+                          Scheduled Coverage Needed for {section.teacherName || "scheduled teacher"}
+                          {section.blockStartTime && section.blockEndTime ? ` (${section.blockStartTime}-${section.blockEndTime})` : ""}
+                        </p>
+                      </div>
+                      <Button
+                        size="sm"
+                        onClick={() => handleClaimStudents(section.students)}
+                        disabled={claimPickupMutation.isPending || section.students.length === 0}
+                        data-testid={`button-claim-scheduled-coverage-${section.id}`}
+                        className="bg-amber-400 text-slate-950 hover:bg-amber-300"
+                      >
+                        <Users className="h-4 w-4 mr-2" />
+                        Claim Group
+                      </Button>
+                    </div>
+                    <div className="grid grid-cols-1 gap-4 p-4 md:grid-cols-2 xl:grid-cols-3">
+                      {section.students.map((student) => (
+                        <div key={`${section.id}-${student.studentId}`} className="rounded-lg border bg-background p-4 shadow-sm" data-testid={`card-scheduled-coverage-student-${student.studentId}`}>
+                          <div className="flex items-start gap-3">
+                            <input
+                              type="checkbox"
+                              checked={selectedStudentIds.has(student.studentId)}
+                              onChange={() => toggleStudentSelection(student.studentId)}
+                              className="mt-1 h-4 w-4 rounded border-border"
+                              aria-label={`Select ${student.studentName}`}
+                            />
+                            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-amber-100 text-sm font-semibold text-amber-800">
+                              {(student.studentName || "?").split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase()}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <p className="font-semibold text-foreground">{student.studentName}</p>
+                                <Badge variant="secondary">{student.status}</Badge>
+                              </div>
+                              <p className="text-sm text-muted-foreground">{student.gradeLevel ? `Grade ${student.gradeLevel}` : "No grade"}</p>
+                              <div className="mt-3 rounded-md bg-muted/40 p-3">
+                                <p className="truncate text-xs font-medium text-muted-foreground">{student.activeTabTitle || "No active tab"}</p>
+                                <p className="mt-1 truncate text-sm">{student.activeTabUrl || "Signed in to Chrome"}</p>
+                              </div>
+                              <div className="mt-3 flex flex-wrap gap-2">
+                                <Badge variant="outline">Scheduled Coverage</Badge>
+                                <Badge variant="outline">{section.className || section.label}</Badge>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="mt-4 flex justify-end">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleClaimStudents([student])}
+                              disabled={claimPickupMutation.isPending}
+                              data-testid={`button-claim-scheduled-student-${student.studentId}`}
+                            >
+                              <UserCheck className="h-4 w-4 mr-2" />
+                              Claim
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                ))}
                 {availableGroupSections.map((section) => (
                   <section key={section.id} className="rounded-lg border bg-card shadow-sm" data-testid={`section-available-${section.id}`}>
                     <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3">

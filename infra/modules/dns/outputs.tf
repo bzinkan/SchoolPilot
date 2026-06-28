@@ -13,6 +13,11 @@ output "all_domains" {
   value       = local.all_domains
 }
 
+output "api_origin_domain" {
+  description = "Dedicated origin hostname for CloudFront → ALB HTTPS"
+  value       = local.api_origin_domain
+}
+
 output "zone_id" {
   value = data.aws_route53_zone.main.zone_id
 }

@@ -10,6 +10,8 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc && tsc-alias",
     "start": "node dist/index.js",
+    "start:worker": "node dist/worker.js",
+    "migrate:startup": "node -e \"process.env.RUN_MIGRATIONS_ONLY='true'; import('./dist/index.js')\"",
     "db:push": "drizzle-kit push",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
@@ -31,6 +33,7 @@
     "soc2:approval-queue": "node scripts/soc2/approval-queue.mjs",
     "soc2:approval-issue": "node scripts/soc2/github-approval-issue.mjs issue-body",
     "soc2:approval-decision": "node scripts/soc2/approval-queue.mjs decision",
+    "load:classpilot": "node scripts/load/classpilot-load-test.mjs",
     "test": "node --env-file-if-exists=.env --import tsx --test \"tests/**/*.test.ts\""
   },
   "dependencies": {

@@ -32,6 +32,7 @@ import { sendSessionSummaryEmail } from "../../services/email.js";
 import { logAudit } from "../../services/audit.js";
 import db from "../../db.js";
 import { runWithTenantContext } from "../../middleware/tenantContext.js";
+import { buildClassStartOverlapPayload } from "../../services/classpilotStartOverlap.js";
 
 const router = Router();
 
@@ -76,69 +77,6 @@ async function assertManualStartWindow(group: any) {
   if (isOutsideWindow) {
     throw Object.assign(new Error(`Class is scheduled for ${formatTime((group as any).blockStartTime)} - ${formatTime((group as any).blockEndTime)}. Cannot start outside the scheduled window.`), { status: 403 });
   }
-}
-
-async function classStartOverlapPayload(options: {
-  schoolId: string;
-  teacherId: string;
-  group: any;
-}) {
-  const rosterRows = await getGroupStudents(options.group.id);
-  const studentIds = rosterRows.map((row) => row.studentId);
-  if (studentIds.length === 0) return null;
-
-  const owners = await getActiveClassOwnersForStudents(options.schoolId, studentIds);
-  const conflicts = owners.filter((owner) => owner.session.teacherId !== options.teacherId);
-  if (conflicts.length === 0) return null;
-
-  const studentsById = new Map(rosterRows.map((row) => [row.studentId, row.student]));
-  const bySession = new Map<string, {
-    sessionId: string;
-    classId: string;
-    className: string;
-    teacherId: string;
-    teacherName: string;
-    affectedCount: number;
-    affectedStudents: Array<{ studentId: string; studentName: string }>;
-  }>();
-  const teacherIds = [...new Set(conflicts.map((owner) => owner.session.teacherId))];
-  const teacherEntries = await Promise.all(teacherIds.map(async (id) => [id, await getUserById(id)] as const));
-  const teachersById = new Map(teacherEntries);
-
-  for (const owner of conflicts) {
-    const row = bySession.get(owner.session.id) || {
-      sessionId: owner.session.id,
-      classId: owner.groupId,
-      className: owner.groupName,
-      teacherId: owner.session.teacherId,
-      teacherName: displayName(teachersById.get(owner.session.teacherId)),
-      affectedCount: 0,
-      affectedStudents: [],
-    };
-    row.affectedCount += 1;
-    if (row.affectedStudents.length < 5) {
-      row.affectedStudents.push({
-        studentId: owner.studentId,
-        studentName: studentName(studentsById.get(owner.studentId)),
-      });
-    }
-    bySession.set(owner.session.id, row);
-  }
-
-  const groups = Array.from(bySession.values()).sort((a, b) => b.affectedCount - a.affectedCount || a.className.localeCompare(b.className));
-  const totalOverlapCount = groups.reduce((sum, group) => sum + group.affectedCount, 0);
-  return {
-    code: "CLASS_ROSTER_ACTIVE_OVERLAP",
-    severity: "warning",
-    requiresAcknowledgement: true,
-    canStartAnyway: true,
-    selectedClass: {
-      id: options.group.id,
-      name: options.group.name,
-    },
-    totalOverlapCount,
-    groups,
-  };
 }
 
 async function assertCanManageTeachingSession(req: any, res: any, session: any): Promise<void> {
@@ -280,7 +218,7 @@ async function startTeachingSessionWithOverlapGuard(req: any, res: any) {
   await assertManualStartWindow(group);
 
   if (acknowledgeOverlap !== true) {
-    const overlap = await classStartOverlapPayload({ schoolId, teacherId, group });
+    const overlap = await buildClassStartOverlapPayload({ schoolId, teacherId, group });
     if (overlap) {
       return res.status(409).json({
         error: "Some students are already active in another class",

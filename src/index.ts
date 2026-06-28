@@ -11,6 +11,7 @@ import { startHealthMonitor, stopHealthMonitor } from "./services/healthMonitor.
 import errorMonitor from "./services/errorMonitor.js";
 import { pool } from "./db.js";
 import { schedulerPool } from "./services/schedulerDb.js";
+import { migrationsOnStartup, migrationsOnly, schedulerEnabled } from "./config/runtime.js";
 
 // Initialize Sentry as early as possible. No-op unless SENTRY_DSN is set
 // (gated off until the DPA is signed + subprocessors list updated).
@@ -179,7 +180,7 @@ import {
   parseRlsEnabledTables,
   policySqlFor,
 } from "./db/rlsPolicies.js";
-async function runStartupMigrations(): Promise<void> {
+export async function runStartupMigrations(): Promise<void> {
   // Schools can share a district Google Workspace domain. Older deployments had
   // a single-column unique constraint on domain; remove it and keep uniqueness
   // on (domain, name), matching the Drizzle schema.
@@ -621,6 +622,7 @@ async function runStartupMigrations(): Promise<void> {
         status TEXT NOT NULL DEFAULT 'active',
         assigned_staff_id TEXT NOT NULL,
         coverage_group_id TEXT,
+        scheduled_conflict_id TEXT,
         created_by TEXT NOT NULL,
         note TEXT,
         starts_at TIMESTAMP NOT NULL DEFAULT now(),
@@ -631,9 +633,11 @@ async function runStartupMigrations(): Promise<void> {
       )
     `);
     await pool.query(`ALTER TABLE classpilot_supervision_contexts ADD COLUMN IF NOT EXISTS coverage_group_id TEXT`);
+    await pool.query(`ALTER TABLE classpilot_supervision_contexts ADD COLUMN IF NOT EXISTS scheduled_conflict_id TEXT`);
     await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_supervision_contexts_school_status_idx ON classpilot_supervision_contexts (school_id, status)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_supervision_contexts_staff_idx ON classpilot_supervision_contexts (school_id, assigned_staff_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_supervision_contexts_coverage_group_idx ON classpilot_supervision_contexts (school_id, coverage_group_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_supervision_contexts_scheduled_conflict_idx ON classpilot_supervision_contexts (school_id, scheduled_conflict_id)`);
 
     await pool.query(`
       CREATE TABLE IF NOT EXISTS classpilot_supervision_students (
@@ -658,6 +662,47 @@ async function runStartupMigrations(): Promise<void> {
     console.log("[migration] ClassPilot supervision coverage tables ready");
   } catch (err) {
     console.warn("[migration] ClassPilot supervision coverage migration skipped:", (err as Error).message);
+  }
+
+  // ClassPilot scheduled-start coverage requests. These school-scoped rows record
+  // scheduled classes that need temporary staff pickup while the scheduled
+  // teacher is not logged in.
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS classpilot_scheduled_conflicts (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        school_id TEXT NOT NULL,
+        group_id TEXT NOT NULL,
+        teacher_id TEXT NOT NULL,
+        scheduled_date TEXT NOT NULL,
+        block_start_time TEXT NOT NULL,
+        block_end_time TEXT,
+        status TEXT NOT NULL DEFAULT 'coverage_needed',
+        conflict_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+        scheduled_teacher_connected BOOLEAN NOT NULL DEFAULT false,
+        last_checked_at TIMESTAMP NOT NULL DEFAULT now(),
+        resolved_at TIMESTAMP,
+        resolved_by TEXT,
+        resolution TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT now(),
+        updated_at TIMESTAMP NOT NULL DEFAULT now()
+      )
+    `);
+    await pool.query(`ALTER TABLE classpilot_scheduled_conflicts ADD COLUMN IF NOT EXISTS block_end_time TEXT`);
+    await pool.query(`ALTER TABLE classpilot_scheduled_conflicts ADD COLUMN IF NOT EXISTS scheduled_teacher_connected BOOLEAN NOT NULL DEFAULT false`);
+    await pool.query(`ALTER TABLE classpilot_scheduled_conflicts ADD COLUMN IF NOT EXISTS last_checked_at TIMESTAMP NOT NULL DEFAULT now()`);
+    await pool.query(`ALTER TABLE classpilot_scheduled_conflicts ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMP`);
+    await pool.query(`ALTER TABLE classpilot_scheduled_conflicts ADD COLUMN IF NOT EXISTS resolved_by TEXT`);
+    await pool.query(`ALTER TABLE classpilot_scheduled_conflicts ADD COLUMN IF NOT EXISTS resolution TEXT`);
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS classpilot_scheduled_conflicts_unique
+      ON classpilot_scheduled_conflicts (school_id, group_id, scheduled_date, block_start_time)
+    `);
+    await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_scheduled_conflicts_school_status_idx ON classpilot_scheduled_conflicts (school_id, status)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS classpilot_scheduled_conflicts_teacher_idx ON classpilot_scheduled_conflicts (school_id, teacher_id)`);
+    console.log("[migration] ClassPilot scheduled conflict table ready");
+  } catch (err) {
+    console.warn("[migration] ClassPilot scheduled conflict migration skipped:", (err as Error).message);
   }
 
   // ClassPilot admin analytics: forward-only session-attributed class usage.
@@ -1521,7 +1566,11 @@ async function runStartupMigrations(): Promise<void> {
 }
 
 async function startServer(): Promise<void> {
-  await runStartupMigrations();
+  if (migrationsOnStartup()) {
+    await runStartupMigrations();
+  } else {
+    console.log("[startup] RUN_MIGRATIONS_ON_STARTUP=false; skipping startup migrations");
+  }
 
   const app = createApp();
   const server = http.createServer(app);
@@ -1537,8 +1586,12 @@ async function startServer(): Promise<void> {
   webSocketServer = wss;
   console.log("WebSocket server attached at /ws");
 
-  // Start dismissal auto-start scheduler after startup migrations complete.
-  startScheduler(io);
+  // Production API tasks set SCHEDULER_ENABLED=false; a singleton worker runs it.
+  if (schedulerEnabled()) {
+    startScheduler(io);
+  } else {
+    console.log("[startup] SCHEDULER_ENABLED=false; scheduler disabled in this task");
+  }
 
   // Start health monitoring after startup migrations complete.
   startHealthMonitor(wss);
@@ -1550,6 +1603,20 @@ async function startServer(): Promise<void> {
   });
 }
 
-startServer().catch((err) => {
-  void fatalShutdown("startupFailure", err instanceof Error ? err : new Error(String(err)));
-});
+async function runMigrationsAndExit(): Promise<void> {
+  await runStartupMigrations();
+  errorMonitor.dispose();
+  await Promise.allSettled([pool.end(), schedulerPool.end()]);
+  console.log("[migration] startup migrations complete");
+}
+
+if (migrationsOnly()) {
+  runMigrationsAndExit().catch((err) => {
+    console.error("[migration] startup migrations failed:", err);
+    process.exit(1);
+  });
+} else {
+  startServer().catch((err) => {
+    void fatalShutdown("startupFailure", err instanceof Error ? err : new Error(String(err)));
+  });
+}

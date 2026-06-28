@@ -22,6 +22,8 @@ import {
   createTeachingSession,
   createUser,
   endTeachingSession,
+  getActiveClassOwnersForStudents,
+  getActiveTeachingSessionForSchool,
   getActiveCoverageAssignmentsForStaff,
   getActiveClassOwnerForStudent,
   getActiveSessionByStudent,
@@ -43,6 +45,7 @@ import {
   updateClasspilotCommandTargetAck,
   updateEnrollmentSettings,
 } from "../dist/services/storage.js";
+import { processScheduledClassAutoStart } from "../dist/services/classpilotScheduledStart.js";
 import { getAuditLogs } from "../dist/services/audit.js";
 import { scopedDeviceTargets } from "../dist/services/classpilotDeviceScope.js";
 
@@ -234,6 +237,7 @@ async function ensureCoverageTables() {
       status TEXT NOT NULL DEFAULT 'active',
       assigned_staff_id TEXT NOT NULL,
       coverage_group_id TEXT,
+      scheduled_conflict_id TEXT,
       created_by TEXT NOT NULL,
       note TEXT,
       starts_at TIMESTAMP NOT NULL DEFAULT now(),
@@ -244,9 +248,11 @@ async function ensureCoverageTables() {
     )
   `);
   await db.execute(sql`ALTER TABLE classpilot_supervision_contexts ADD COLUMN IF NOT EXISTS coverage_group_id TEXT`);
+  await db.execute(sql`ALTER TABLE classpilot_supervision_contexts ADD COLUMN IF NOT EXISTS scheduled_conflict_id TEXT`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS classpilot_supervision_contexts_school_status_idx ON classpilot_supervision_contexts (school_id, status)`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS classpilot_supervision_contexts_staff_idx ON classpilot_supervision_contexts (school_id, assigned_staff_id)`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS classpilot_supervision_contexts_coverage_group_idx ON classpilot_supervision_contexts (school_id, coverage_group_id)`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS classpilot_supervision_contexts_scheduled_conflict_idx ON classpilot_supervision_contexts (school_id, scheduled_conflict_id)`);
 
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS classpilot_supervision_students (
@@ -268,6 +274,32 @@ async function ensureCoverageTables() {
     ON classpilot_supervision_students (school_id, student_id)
     WHERE released_at IS NULL
   `);
+
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS classpilot_scheduled_conflicts (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      school_id TEXT NOT NULL,
+      group_id TEXT NOT NULL,
+      teacher_id TEXT NOT NULL,
+      scheduled_date TEXT NOT NULL,
+      block_start_time TEXT NOT NULL,
+      block_end_time TEXT,
+      status TEXT NOT NULL DEFAULT 'coverage_needed',
+      conflict_payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+      scheduled_teacher_connected BOOLEAN NOT NULL DEFAULT false,
+      last_checked_at TIMESTAMP NOT NULL DEFAULT now(),
+      resolved_at TIMESTAMP,
+      resolved_by TEXT,
+      resolution TEXT,
+      created_at TIMESTAMP NOT NULL DEFAULT now(),
+      updated_at TIMESTAMP NOT NULL DEFAULT now()
+    )
+  `);
+  await db.execute(sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS classpilot_scheduled_conflicts_unique
+    ON classpilot_scheduled_conflicts (school_id, group_id, scheduled_date, block_start_time)
+  `);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS classpilot_scheduled_conflicts_school_status_idx ON classpilot_scheduled_conflicts (school_id, status)`);
 }
 
 function ids(rows: Array<{ student: { id: string } }>) {
@@ -371,6 +403,7 @@ after(async () => {
         await db.execute(sql`DELETE FROM classpilot_coverage_assignments WHERE school_id = ${school.id}`);
         await db.execute(sql`DELETE FROM classpilot_coverage_scope_group_members WHERE school_id = ${school.id}`);
         await db.execute(sql`DELETE FROM classpilot_coverage_scope_groups WHERE school_id = ${school.id}`);
+        await db.execute(sql`DELETE FROM classpilot_scheduled_conflicts WHERE school_id = ${school.id}`);
         await db.execute(sql`DELETE FROM classpilot_command_targets WHERE school_id = ${school.id}`);
         await db.execute(sql`DELETE FROM classpilot_commands WHERE school_id = ${school.id}`);
         await db.execute(sql`DELETE FROM student_sessions WHERE student_id IN (SELECT id FROM students WHERE school_id = ${school.id}) OR device_id LIKE ${`${TAG}-%`}`);
@@ -626,6 +659,251 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     await inSchool(school.id, () => endTeachingSession(sourceSession.id));
     await inSchool(school.id, () => endTeachingSession(secondSourceSession.id));
     await inSchool(school.id, () => endTeachingSession(acknowledged.body.session.id));
+  });
+
+  it("pushes offline scheduled classes into available scheduled coverage and releases when the scheduled teacher starts", async () => {
+    const sourceTeacher = await createUser({
+      email: `scheduled-source@${TAG}.example.edu`,
+      firstName: "Paula",
+      lastName: "Present",
+    } as any);
+    const scheduledTeacher = await createUser({
+      email: `scheduled-teacher@${TAG}.example.edu`,
+      firstName: "Nora",
+      lastName: "NoLogin",
+    } as any);
+    const unrelatedTeacher = await createUser({
+      email: `scheduled-unrelated@${TAG}.example.edu`,
+      firstName: "Uri",
+      lastName: "Unrelated",
+    } as any);
+    const scheduledCoverageStaff = await createUser({
+      email: `scheduled-coverage-staff@${TAG}.example.edu`,
+      firstName: "Casey",
+      lastName: "ScheduledCoverage",
+    } as any);
+    await createMembership({ userId: sourceTeacher.id, schoolId: school.id, role: "teacher", status: "active" } as any);
+    await createMembership({ userId: scheduledTeacher.id, schoolId: school.id, role: "teacher", status: "active" } as any);
+    await createMembership({ userId: unrelatedTeacher.id, schoolId: school.id, role: "teacher", status: "active" } as any);
+    await createMembership({ userId: scheduledCoverageStaff.id, schoolId: school.id, role: "office_staff", status: "active" } as any);
+    await inSchool(school.id, () => createCoverageAssignment({
+      schoolId: school.id,
+      staffId: scheduledCoverageStaff.id,
+      scopeType: "grade",
+      scopeValue: "6",
+      permissions: { observe: true, claim: true },
+      active: true,
+      createdBy: admin.id,
+    } as any));
+
+    const scheduledOnlyStudent = await inSchool(school.id, () => createStudent({
+      schoolId: school.id,
+      firstName: "Scheduled",
+      lastName: "Only",
+      email: `scheduled-only@${TAG}.example.edu`,
+      emailLc: `scheduled-only@${TAG}.example.edu`,
+      gradeLevel: "6",
+      status: "active",
+    } as any));
+    const connectedStudent = await inSchool(school.id, () => createStudent({
+      schoolId: school.id,
+      firstName: "Connected",
+      lastName: "Scheduled",
+      email: `scheduled-connected@${TAG}.example.edu`,
+      emailLc: `scheduled-connected@${TAG}.example.edu`,
+      gradeLevel: "6",
+      status: "active",
+    } as any));
+    const overlapStudent = await inSchool(school.id, () => createStudent({
+      schoolId: school.id,
+      firstName: "Overlap",
+      lastName: "Scheduled",
+      email: `scheduled-overlap@${TAG}.example.edu`,
+      emailLc: `scheduled-overlap@${TAG}.example.edu`,
+      gradeLevel: "6",
+      status: "active",
+    } as any));
+    const scheduledOnlyDevice = `${TAG}-scheduled-only-device`;
+    const overlapDevice = `${TAG}-scheduled-overlap-device`;
+    const connectedDevice = `${TAG}-scheduled-connected-device`;
+    await inSchool(school.id, async () => {
+      await createDevice({ deviceId: scheduledOnlyDevice, schoolId: school.id, classId: "default", deviceName: "Scheduled Only" } as any);
+      await createDevice({ deviceId: overlapDevice, schoolId: school.id, classId: "default", deviceName: "Scheduled Overlap" } as any);
+      await createDevice({ deviceId: connectedDevice, schoolId: school.id, classId: "default", deviceName: "Scheduled Connected" } as any);
+      await linkStudentDevice({ studentId: scheduledOnlyStudent.id, deviceId: scheduledOnlyDevice });
+      await linkStudentDevice({ studentId: overlapStudent.id, deviceId: overlapDevice });
+      await linkStudentDevice({ studentId: connectedStudent.id, deviceId: connectedDevice });
+      await setActiveStudentForDevice(scheduledOnlyDevice, scheduledOnlyStudent.id);
+      await setActiveStudentForDevice(overlapDevice, overlapStudent.id);
+      await setActiveStudentForDevice(connectedDevice, connectedStudent.id);
+    });
+
+    const connectedGroup = await inSchool(school.id, () => createGroup({
+      schoolId: school.id,
+      teacherId: scheduledTeacher.id,
+      name: `${TAG}_Scheduled_Connected`,
+      groupType: "admin_class",
+      status: "active",
+      scheduleEnabled: true,
+      blockStartTime: "08:00",
+      blockEndTime: "08:45",
+    } as any));
+    await inSchool(school.id, () => addGroupStudentsDetailed(connectedGroup.id, [connectedStudent.id]));
+    const connectedStart = await inSchool(school.id, () => processScheduledClassAutoStart({
+      group: connectedGroup,
+      scheduledDate: "2026-01-15",
+      scheduledTeacherConnectedOverride: true,
+    }));
+    assert.equal(connectedStart.status, "started");
+    if (connectedStart.status === "started") {
+      await inSchool(school.id, () => endTeachingSession(connectedStart.session.id));
+    }
+
+    const sourceGroup = await inSchool(school.id, () => createGroup({
+      schoolId: school.id,
+      teacherId: sourceTeacher.id,
+      name: `${TAG}_Scheduled_Source`,
+      groupType: "admin_class",
+      status: "active",
+    } as any));
+    const scheduledGroup = await inSchool(school.id, () => createGroup({
+      schoolId: school.id,
+      teacherId: scheduledTeacher.id,
+      name: `${TAG}_Scheduled_Coverage_Needed`,
+      groupType: "admin_class",
+      status: "active",
+      scheduleEnabled: true,
+      blockStartTime: "09:00",
+      blockEndTime: "09:45",
+    } as any));
+    await inSchool(school.id, () => addGroupStudentsDetailed(sourceGroup.id, [overlapStudent.id]));
+    await inSchool(school.id, () => addGroupStudentsDetailed(scheduledGroup.id, [scheduledOnlyStudent.id, overlapStudent.id]));
+    const sourceSession = await inSchool(school.id, () => createTeachingSession({
+      groupId: sourceGroup.id,
+      teacherId: sourceTeacher.id,
+    } as any));
+
+    const coverageNeeded = await inSchool(school.id, () => processScheduledClassAutoStart({
+      group: scheduledGroup,
+      scheduledDate: "2026-01-15",
+      scheduledTeacherConnectedOverride: false,
+      connectedTeacherIdsOverride: new Set([sourceTeacher.id]),
+    }));
+    assert.equal(coverageNeeded.status, "coverage_needed");
+    const scheduledActive = await inSchool(school.id, () => getActiveTeachingSessionForSchool(scheduledTeacher.id, school.id));
+    assert.equal(scheduledActive, undefined);
+
+    const duplicate = await inSchool(school.id, () => processScheduledClassAutoStart({
+      group: scheduledGroup,
+      scheduledDate: "2026-01-15",
+      scheduledTeacherConnectedOverride: false,
+      connectedTeacherIdsOverride: new Set([sourceTeacher.id]),
+    }));
+    assert.equal(duplicate.status, "coverage_needed");
+    assert.equal(duplicate.status === "coverage_needed" && coverageNeeded.status === "coverage_needed" ? duplicate.conflictId : null, coverageNeeded.status === "coverage_needed" ? coverageNeeded.conflictId : null);
+
+    const adminList = await requestJson("GET", "/classpilot/scheduled-conflicts", undefined, authFor(admin, school.id));
+    assert.equal(adminList.status, 200);
+    assert.equal(adminList.body.conflicts.length, 1);
+    const conflict = adminList.body.conflicts[0];
+    assert.equal(conflict.groupId, scheduledGroup.id);
+    assert.equal(conflict.teacherId, scheduledTeacher.id);
+    assert.equal(conflict.canStartAnyway, true);
+    assert.equal(conflict.status, "coverage_needed");
+    assert.equal(conflict.overlap.claimableCount, 1);
+    assert.equal(conflict.overlap.monitoredCount, 1);
+    assert.match(conflict.message, /not currently logged in/);
+    expectNoDeviceIds(conflict);
+
+    const staffQueue = await requestJson("GET", "/coverage/available-students", undefined, authFor(scheduledCoverageStaff, school.id));
+    assert.equal(staffQueue.status, 200);
+    const flatAvailableIds = new Set(staffQueue.body.students.map((student: any) => student.studentId));
+    assert.equal(flatAvailableIds.has(scheduledOnlyStudent.id), false);
+    assert.equal(staffQueue.body.scheduledCoverageGroups.length, 1);
+    assert.equal(staffQueue.body.scheduledCoverageGroups[0].id, conflict.id);
+    const scheduledCoverageIds = new Set(staffQueue.body.scheduledCoverageGroups[0].students.map((student: any) => student.studentId));
+    assert.equal(scheduledCoverageIds.has(scheduledOnlyStudent.id), true);
+    expectNoDeviceIds(staffQueue.body.scheduledCoverageGroups[0]);
+
+    const scheduledTeacherList = await requestJson("GET", "/classpilot/scheduled-conflicts", undefined, authFor(scheduledTeacher, school.id));
+    assert.equal(scheduledTeacherList.status, 200);
+    assert.equal(scheduledTeacherList.body.conflicts.length, 1);
+    assert.equal(scheduledTeacherList.body.conflicts[0].canStartAnyway, true);
+
+    const affectedTeacherList = await requestJson("GET", "/classpilot/scheduled-conflicts", undefined, authFor(sourceTeacher, school.id));
+    assert.equal(affectedTeacherList.status, 200);
+    assert.equal(affectedTeacherList.body.conflicts.length, 1);
+    assert.equal(affectedTeacherList.body.conflicts[0].canStartAnyway, false);
+    assert.match(affectedTeacherList.body.conflicts[0].message, /not currently logged in/);
+
+    const unrelatedList = await requestJson("GET", "/classpilot/scheduled-conflicts", undefined, authFor(unrelatedTeacher, school.id));
+    assert.equal(unrelatedList.status, 200);
+    assert.equal(unrelatedList.body.conflicts.length, 0);
+
+    const affectedStart = await requestJson("POST", `/classpilot/scheduled-conflicts/${conflict.id}/start-anyway`, {}, authFor(sourceTeacher, school.id));
+    assert.equal(affectedStart.status, 403);
+
+    const claim = await requestJson("POST", "/coverage/claim", {
+      scheduledConflictId: conflict.id,
+      studentIds: [scheduledOnlyStudent.id],
+    }, authFor(scheduledCoverageStaff, school.id));
+    assert.equal(claim.status, 201);
+    const activeScheduledCoverage = await inSchool(school.id, () => getActiveSupervisionForStudent(school.id, scheduledOnlyStudent.id));
+    assert.equal(activeScheduledCoverage?.context.contextType, "scheduled_coverage");
+
+    const skipped = await requestJson("POST", `/classpilot/scheduled-conflicts/${conflict.id}/skip`, {}, authFor(scheduledTeacher, school.id));
+    assert.equal(skipped.status, 200);
+    const skippedRetry = await inSchool(school.id, () => processScheduledClassAutoStart({
+      group: scheduledGroup,
+      scheduledDate: "2026-01-15",
+      scheduledTeacherConnectedOverride: false,
+    }));
+    assert.equal(skippedRetry.status, "skipped");
+    if (activeScheduledCoverage) {
+      await inSchool(school.id, () => releaseSupervisionStudents({
+        schoolId: school.id,
+        contextId: activeScheduledCoverage.context.id,
+        releaseReason: "test_cleanup",
+      }));
+    }
+
+    const startAnywayGroup = await inSchool(school.id, () => createGroup({
+      schoolId: school.id,
+      teacherId: scheduledTeacher.id,
+      name: `${TAG}_Scheduled_Start_Anyway`,
+      groupType: "admin_class",
+      status: "active",
+      scheduleEnabled: true,
+      blockStartTime: "10:00",
+      blockEndTime: "10:45",
+    } as any));
+    await inSchool(school.id, () => addGroupStudentsDetailed(startAnywayGroup.id, [scheduledOnlyStudent.id, overlapStudent.id]));
+    const coverageStart = await inSchool(school.id, () => processScheduledClassAutoStart({
+      group: startAnywayGroup,
+      scheduledDate: "2026-01-15",
+      scheduledTeacherConnectedOverride: false,
+    }));
+    assert.equal(coverageStart.status, "coverage_needed");
+    assert.ok(coverageStart.status === "coverage_needed" && coverageStart.conflictId);
+    const claimStart = await requestJson("POST", "/coverage/claim", {
+      scheduledConflictId: coverageStart.status === "coverage_needed" ? coverageStart.conflictId : "",
+      studentIds: [scheduledOnlyStudent.id],
+    }, authFor(scheduledCoverageStaff, school.id));
+    assert.equal(claimStart.status, 201);
+    const started = await requestJson(
+      "POST",
+      `/classpilot/scheduled-conflicts/${coverageStart.status === "coverage_needed" ? coverageStart.conflictId : ""}/start-anyway`,
+      {},
+      authFor(scheduledTeacher, school.id)
+    );
+    assert.equal(started.status, 201);
+    const [owner] = await inSchool(school.id, () => getActiveClassOwnersForStudents(school.id, [overlapStudent.id]));
+    assert.equal(owner.session.id, started.body.session.id);
+    const releasedScheduledCoverage = await inSchool(school.id, () => getActiveSupervisionForStudent(school.id, scheduledOnlyStudent.id));
+    assert.equal(releasedScheduledCoverage, undefined);
+
+    await inSchool(school.id, () => endTeachingSession(sourceSession.id));
+    await inSchool(school.id, () => endTeachingSession(started.body.session.id));
   });
 
   it("gives the newest normal class session control of overlapping students", async () => {

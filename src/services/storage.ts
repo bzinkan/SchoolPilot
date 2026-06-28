@@ -93,6 +93,7 @@ import {
   classpilotCommands,
   classpilotCommandTargets,
   classpilotClassroomStates,
+  classpilotScheduledConflicts,
   classpilotSessionStudents,
   classpilotSessionUsage,
   classpilotCoverageAssignments,
@@ -142,6 +143,8 @@ import {
   type InsertClasspilotCommandTarget,
   type ClasspilotClassroomState,
   type InsertClasspilotClassroomState,
+  type ClasspilotScheduledConflict,
+  type InsertClasspilotScheduledConflict,
   type ClasspilotSessionStudent,
   type ClasspilotSessionUsage,
   type ClasspilotCoverageAssignment,
@@ -3487,6 +3490,160 @@ export async function endTeachingSession(
   return session;
 }
 
+export async function upsertScheduledClassConflict(
+  data: InsertClasspilotScheduledConflict & {
+    schoolId: string;
+    groupId: string;
+    teacherId: string;
+    scheduledDate: string;
+    blockStartTime: string;
+    conflictPayload: unknown;
+  },
+  dbInstance: typeof db = db
+): Promise<ClasspilotScheduledConflict> {
+  const now = new Date();
+  const status = data.status || "coverage_needed";
+  const [row] = await dbInstance
+    .insert(classpilotScheduledConflicts)
+    .values({
+      ...data,
+      status,
+      lastCheckedAt: now,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: [
+        classpilotScheduledConflicts.schoolId,
+        classpilotScheduledConflicts.groupId,
+        classpilotScheduledConflicts.scheduledDate,
+        classpilotScheduledConflicts.blockStartTime,
+      ],
+      set: {
+        teacherId: data.teacherId,
+        blockEndTime: data.blockEndTime || null,
+        status,
+        conflictPayload: data.conflictPayload as any,
+        scheduledTeacherConnected: data.scheduledTeacherConnected || false,
+        lastCheckedAt: now,
+        resolvedAt: null,
+        resolvedBy: null,
+        resolution: null,
+        updatedAt: now,
+      },
+    })
+    .returning();
+  return row!;
+}
+
+const ACTIVE_SCHEDULED_COVERAGE_STATUSES = ["coverage_needed", "claimed", "pending"];
+
+export async function getScheduledClassConflictByIdAndSchool(
+  id: string,
+  schoolId: string,
+  dbInstance: typeof db = db
+): Promise<ClasspilotScheduledConflict | undefined> {
+  const [row] = await dbInstance
+    .select()
+    .from(classpilotScheduledConflicts)
+    .where(and(eq(classpilotScheduledConflicts.id, id), eq(classpilotScheduledConflicts.schoolId, schoolId)))
+    .limit(1);
+  return row;
+}
+
+export async function getScheduledClassConflictForSlot(
+  options: { schoolId: string; groupId: string; scheduledDate: string; blockStartTime: string },
+  dbInstance: typeof db = db
+): Promise<ClasspilotScheduledConflict | undefined> {
+  const [row] = await dbInstance
+    .select()
+    .from(classpilotScheduledConflicts)
+    .where(and(
+      eq(classpilotScheduledConflicts.schoolId, options.schoolId),
+      eq(classpilotScheduledConflicts.groupId, options.groupId),
+      eq(classpilotScheduledConflicts.scheduledDate, options.scheduledDate),
+      eq(classpilotScheduledConflicts.blockStartTime, options.blockStartTime)
+    ))
+    .limit(1);
+  return row;
+}
+
+export async function listActiveScheduledClassConflicts(
+  schoolId: string,
+  dbInstance: typeof db = db
+): Promise<ClasspilotScheduledConflict[]> {
+  return dbInstance
+    .select()
+    .from(classpilotScheduledConflicts)
+    .where(and(
+      eq(classpilotScheduledConflicts.schoolId, schoolId),
+      inArray(classpilotScheduledConflicts.status, ACTIVE_SCHEDULED_COVERAGE_STATUSES)
+    ))
+    .orderBy(desc(classpilotScheduledConflicts.lastCheckedAt), desc(classpilotScheduledConflicts.createdAt));
+}
+
+export const listPendingScheduledClassConflicts = listActiveScheduledClassConflicts;
+
+export async function listActiveScheduledClassConflictsForTeacher(
+  schoolId: string,
+  teacherId: string,
+  scheduledDate?: string,
+  dbInstance: typeof db = db
+): Promise<ClasspilotScheduledConflict[]> {
+  const conditions: SQL[] = [
+    eq(classpilotScheduledConflicts.schoolId, schoolId),
+    eq(classpilotScheduledConflicts.teacherId, teacherId),
+    inArray(classpilotScheduledConflicts.status, ACTIVE_SCHEDULED_COVERAGE_STATUSES),
+  ];
+  if (scheduledDate) conditions.push(eq(classpilotScheduledConflicts.scheduledDate, scheduledDate));
+  return dbInstance
+    .select()
+    .from(classpilotScheduledConflicts)
+    .where(and(...conditions))
+    .orderBy(desc(classpilotScheduledConflicts.lastCheckedAt), desc(classpilotScheduledConflicts.createdAt));
+}
+
+export async function resolveScheduledClassConflict(
+  id: string,
+  schoolId: string,
+  resolution: string,
+  resolvedBy: string | null,
+  dbInstance: typeof db = db
+): Promise<ClasspilotScheduledConflict | undefined> {
+  const [row] = await dbInstance
+    .update(classpilotScheduledConflicts)
+    .set({
+      status: resolution,
+      resolution,
+      resolvedBy,
+      resolvedAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(and(eq(classpilotScheduledConflicts.id, id), eq(classpilotScheduledConflicts.schoolId, schoolId)))
+    .returning();
+  return row;
+}
+
+export async function updateScheduledClassConflictStatus(
+  id: string,
+  schoolId: string,
+  status: string,
+  conflictPayload?: unknown,
+  dbInstance: typeof db = db
+): Promise<ClasspilotScheduledConflict | undefined> {
+  const data: Partial<InsertClasspilotScheduledConflict> & { updatedAt: Date; lastCheckedAt: Date } = {
+    status,
+    updatedAt: new Date(),
+    lastCheckedAt: new Date(),
+  };
+  if (conflictPayload !== undefined) data.conflictPayload = conflictPayload as any;
+  const [row] = await dbInstance
+    .update(classpilotScheduledConflicts)
+    .set(data)
+    .where(and(eq(classpilotScheduledConflicts.id, id), eq(classpilotScheduledConflicts.schoolId, schoolId)))
+    .returning();
+  return row;
+}
+
 export async function getActiveTeachingSessions(
   schoolId: string
 ): Promise<TeachingSession[]> {
@@ -5689,6 +5846,48 @@ export async function getActiveDirectSupervisionContextForStaff(
   return context;
 }
 
+export async function getActiveSupervisionContextForStaffScheduledConflict(
+  schoolId: string,
+  staffId: string,
+  scheduledConflictId: string,
+  dbInstance: typeof db = db
+): Promise<ClasspilotSupervisionContext | undefined> {
+  const [context] = await dbInstance
+    .select()
+    .from(classpilotSupervisionContexts)
+    .where(
+      and(
+        eq(classpilotSupervisionContexts.schoolId, schoolId),
+        eq(classpilotSupervisionContexts.assignedStaffId, staffId),
+        eq(classpilotSupervisionContexts.scheduledConflictId, scheduledConflictId),
+        eq(classpilotSupervisionContexts.status, "active"),
+        sql`${classpilotSupervisionContexts.endsAt} > now()`
+      )
+    )
+    .orderBy(desc(classpilotSupervisionContexts.createdAt))
+    .limit(1);
+  return context;
+}
+
+export async function listActiveSupervisionContextsForScheduledConflict(
+  schoolId: string,
+  scheduledConflictId: string,
+  dbInstance: typeof db = db
+): Promise<ClasspilotSupervisionContext[]> {
+  return dbInstance
+    .select()
+    .from(classpilotSupervisionContexts)
+    .where(
+      and(
+        eq(classpilotSupervisionContexts.schoolId, schoolId),
+        eq(classpilotSupervisionContexts.scheduledConflictId, scheduledConflictId),
+        eq(classpilotSupervisionContexts.status, "active"),
+        sql`${classpilotSupervisionContexts.endsAt} > now()`
+      )
+    )
+    .orderBy(desc(classpilotSupervisionContexts.createdAt));
+}
+
 export async function listSupervisionContexts(
   schoolId: string,
   options: { activeOnly?: boolean } = {}
@@ -5864,6 +6063,7 @@ export async function extendSupervisionContext(options: {
   note?: string | null;
   assignedStaffId?: string;
   coverageGroupId?: string | null;
+  scheduledConflictId?: string | null;
 }): Promise<ClasspilotSupervisionContext | undefined> {
   const data: Partial<InsertClasspilotSupervisionContext> & { updatedAt: Date } = {
     updatedAt: new Date(),
@@ -5872,6 +6072,7 @@ export async function extendSupervisionContext(options: {
   if (options.note !== undefined) data.note = options.note;
   if (options.assignedStaffId) data.assignedStaffId = options.assignedStaffId;
   if (options.coverageGroupId !== undefined) data.coverageGroupId = options.coverageGroupId;
+  if (options.scheduledConflictId !== undefined) data.scheduledConflictId = options.scheduledConflictId;
 
   const [row] = await db
     .update(classpilotSupervisionContexts)
@@ -5884,6 +6085,54 @@ export async function extendSupervisionContext(options: {
     )
     .returning();
   return row;
+}
+
+export async function releaseScheduledConflictSupervision(
+  options: {
+    schoolId: string;
+    scheduledConflictId: string;
+    releaseReason?: string;
+  },
+  dbInstance: typeof db = db
+): Promise<ClasspilotSupervisionStudent[]> {
+  return dbInstance.transaction(async (tx) => {
+    const contexts = await tx
+      .select()
+      .from(classpilotSupervisionContexts)
+      .where(
+        and(
+          eq(classpilotSupervisionContexts.schoolId, options.schoolId),
+          eq(classpilotSupervisionContexts.scheduledConflictId, options.scheduledConflictId),
+          eq(classpilotSupervisionContexts.status, "active")
+        )
+      );
+    if (contexts.length === 0) return [];
+    const contextIds = contexts.map((context) => context.id);
+    const released = await tx
+      .update(classpilotSupervisionStudents)
+      .set({
+        releasedAt: new Date(),
+        releaseReason: options.releaseReason || "scheduled_teacher_started",
+      })
+      .where(
+        and(
+          eq(classpilotSupervisionStudents.schoolId, options.schoolId),
+          inArray(classpilotSupervisionStudents.contextId, contextIds),
+          isNull(classpilotSupervisionStudents.releasedAt)
+        )
+      )
+      .returning();
+    await tx
+      .update(classpilotSupervisionContexts)
+      .set({ status: "ended", endedAt: new Date(), updatedAt: new Date() })
+      .where(
+        and(
+          eq(classpilotSupervisionContexts.schoolId, options.schoolId),
+          inArray(classpilotSupervisionContexts.id, contextIds)
+        )
+      );
+    return released;
+  });
 }
 
 export async function getOnlineUnassignedStudents(

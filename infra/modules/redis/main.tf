@@ -53,17 +53,18 @@ resource "aws_elasticache_replication_group" "main" {
   engine_version = "7.1"
   node_type      = var.node_type
 
-  num_cache_clusters = 1
+  num_cache_clusters = var.replica_count + 1
 
   subnet_group_name  = aws_elasticache_subnet_group.main.name
   security_group_ids = [aws_security_group.redis.id]
 
   at_rest_encryption_enabled = true
   transit_encryption_enabled = true
-  transit_encryption_mode    = "preferred"
+  transit_encryption_mode    = "required"
   apply_immediately          = true
 
-  automatic_failover_enabled = false
+  automatic_failover_enabled = var.replica_count > 0
+  multi_az_enabled           = var.replica_count > 0
 
   snapshot_retention_limit = var.environment == "production" ? 3 : 0
 

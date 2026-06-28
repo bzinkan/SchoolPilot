@@ -1,6 +1,6 @@
 # Multi-Tenant (Cross-School) Isolation — Readiness
 
-**Last updated:** 2026-06 (pre-multi-tenant-onboarding hardening)
+**Last updated:** 2026-06 (RLS backstop live in app/runtime path)
 
 This is the single source of truth for "are schools sealed from each other?" Read
 the **Bottom line** and **Pre-onboarding checklist** first.
@@ -9,13 +9,15 @@ the **Bottom line** and **Pre-onboarding checklist** first.
 
 ## Bottom line
 
-Schools are isolated by **verified, tested application-layer controls** — not by
-database-level construction. After the work below is **deployed**, cross-school
-access requires a code regression (a future handler forgetting a check), not an
-existing hole. There is **no database backstop yet** (see the RLS plan), so
-isolation depends on continued discipline + the recommended CI guardrail.
+Schools are isolated by **verified, tested application-layer controls** plus a
+PostgreSQL Row-Level Security backstop on tenant tables when
+`RLS_GUC_ENABLED=true`. Request middleware binds `app.school_id` to a dedicated
+connection, out-of-request work uses `runWithTenantContext()`, and scheduler
+cross-school work uses `schedulerDb` with `app.is_super='on'`.
 
-**Do not onboard a second school until the Pre-onboarding checklist is complete.**
+Keep `RLS_GUC_ENABLED=true` and keep `RLS_ENABLED_TABLES` aligned with CI and
+production. Store live policy/status/grants exports as private SOC 2 evidence,
+not in this repository.
 
 ## What was found & fixed
 
@@ -44,8 +46,9 @@ isolation depends on continued discipline + the recommended CI guardrail.
   unauthenticated *minting* of that JWT (now domain-anchored).
 
 ### Structural finding
-Isolation is **100% application-layer** — no PostgreSQL RLS / row-level backstop.
-Plan to add one: [SECURITY-db-backstop-rls-plan.md](./SECURITY-db-backstop-rls-plan.md).
+The original finding was correct at the time: isolation was application-layer
+only. That is now stale. The durable RLS plan has been implemented in the app
+runtime path and must remain part of production readiness evidence.
 
 ## Isolation model (how it works today, post-fixes)
 
@@ -59,34 +62,36 @@ Plan to add one: [SECURITY-db-backstop-rls-plan.md](./SECURITY-db-backstop-rls-p
   authenticated `schoolId`, never client-supplied fields.
 - **Super-admin:** intentionally cross-school; all such paths gated by
   `requireSuperAdmin` / `isSuperAdmin`.
+- **Database backstop:** tenant tables enforce `tenant_isolation` RLS policies
+  when included in `RLS_ENABLED_TABLES`; policies use `app.school_id` or the
+  explicit `app.is_super='on'` bypass.
 
-## Pre-onboarding checklist (required before a 2nd school)
+## Pre-onboarding checklist
 
-1. [ ] **Deploy PR #39 + the Phase-2 fixes** to production (verify in the running
-       environment — not just merged). Until deployed, the live system still has the
-       Phase-1 holes.
-2. [ ] **Decide the Google-token scope** — domain guard is shipped; confirm it's
+1. [ ] **Verify RLS in production-like runtime** with `RLS_GUC_ENABLED=true` and
+       the full `RLS_ENABLED_TABLES` allowlist.
+2. [ ] **Export private RLS evidence**: policy status, grants, and representative
+       deny-by-default checks through the live connection path.
+3. [ ] **Decide the Google-token scope** — domain guard is shipped; confirm it's
        sufficient for your districts (it is, unless one person admins two schools on
        two separate Workspace domains).
-3. [ ] **Enrollment secret** — implement per the spec (backend + extension) if you
+4. [ ] **Enrollment secret** — implement per the spec (backend + extension) if you
        want device enrollment locked beyond domain-binding. Backward compatible /
        off by default.
-4. [ ] **Add cross-tenant CI tests** (Option C in the RLS plan) — seed two schools,
-       auth as one, assert no access to the other across every `:id` route + list.
-5. [ ] **Resolve or accept `dashboard_tabs`** — a multi-school teacher sees their own
+5. [ ] **Keep cross-tenant CI tests green** for route-level and RLS-enabled paths.
+6. [ ] **Resolve or accept `dashboard_tabs`** — a multi-school teacher sees their own
        tabs across schools (own data; needs a `schoolId` column to fully partition).
-6. [ ] **Schedule the RLS backstop** (Option A) as a follow-up project.
 
 ## Known accepted / deferred items
 
 - `dashboard_tabs` cross-school (own data only; needs schema migration).
 - `workspaceAudit` service Google-token use not yet school-scoped (feature is
   dormant / not exposed).
-- No DB-level RLS backstop yet (planned).
+- Live RLS evidence is private, not committed here.
 
 ## Honest caveat
 
 No software can be declared "100% sealed." What can be said: the cross-school
 attack surface has been exhaustively swept (REST) and audited (non-REST), every
-confirmed hole is fixed, and the remaining risk is (a) deploying the fixes and
-(b) future code discipline — which the CI tests + RLS plan are designed to remove.
+confirmed hole is fixed, and the remaining risk is future code or operational
+regression. Keep CI, RLS evidence, and production config aligned.
