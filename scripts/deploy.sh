@@ -137,19 +137,60 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
     --region "$REGION")
   info "Digest: $DIGEST"
 
-  info "Rendering task definition from the service's current revision..."
+  info "Rendering task definition from the live service plus Terraform template..."
+  CURRENT_API_TASK_DEF=$(aws ecs describe-services \
+    --cluster "$CLUSTER" \
+    --services "$SERVICE" \
+    --query 'services[0].taskDefinition' \
+    --output text \
+    --region "$REGION")
+
+  aws ecs describe-task-definition \
+    --task-definition "$CURRENT_API_TASK_DEF" \
+    --query taskDefinition \
+    --output json \
+    --region "$REGION" > .taskdef-current.json
+
   aws ecs describe-task-definition \
     --task-definition "${NAME}-api" \
     --query taskDefinition \
     --output json \
-    --region "$REGION" > .taskdef-current.json
+    --region "$REGION" > .taskdef-template.json
 
   # Relative paths so this works with Windows node under Git Bash too.
   IMAGE_REF="${ECR_REPO}@${DIGEST}" node -e '
     const fs = require("fs");
     const td = JSON.parse(fs.readFileSync(".taskdef-current.json", "utf8"));
-    ["taskDefinitionArn","revision","status","requiresAttributes","compatibilities","registeredAt","registeredBy"].forEach(k => delete td[k]);
-    td.containerDefinitions[0].image = process.env.IMAGE_REF;
+    const template = JSON.parse(fs.readFileSync(".taskdef-template.json", "utf8"));
+    const readonly = ["taskDefinitionArn","revision","status","requiresAttributes","compatibilities","registeredAt","registeredBy"];
+    readonly.forEach(k => delete td[k]);
+
+    for (const key of ["family","taskRoleArn","executionRoleArn","networkMode","requiresCompatibilities","cpu","memory","runtimePlatform","ephemeralStorage"]) {
+      if (template[key] !== undefined) td[key] = template[key];
+    }
+
+    function mergeNamed(base = [], overlay = []) {
+      const merged = new Map();
+      for (const item of base) merged.set(item.name, item);
+      for (const item of overlay) merged.set(item.name, item);
+      return [...merged.values()];
+    }
+
+    function dedupeEnvAgainstSecrets(container) {
+      const secretNames = new Set((container.secrets || []).map(item => item.name));
+      container.environment = (container.environment || []).filter(item => !secretNames.has(item.name));
+    }
+
+    const container = td.containerDefinitions.find(c => c.name === "api") || td.containerDefinitions[0];
+    const templateContainer = (template.containerDefinitions || []).find(c => c.name === "api") || template.containerDefinitions?.[0] || {};
+    const liveEnvironment = container.environment || [];
+    const liveSecrets = container.secrets || [];
+    Object.assign(container, templateContainer);
+    container.image = process.env.IMAGE_REF;
+    container.environment = mergeNamed(liveEnvironment, templateContainer.environment);
+    container.secrets = mergeNamed(liveSecrets, templateContainer.secrets);
+    dedupeEnvAgainstSecrets(container);
+
     fs.writeFileSync(".taskdef-new.json", JSON.stringify(td));
   '
 
@@ -158,7 +199,7 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
     --query 'taskDefinition.revision' \
     --output text \
     --region "$REGION")
-  rm -f .taskdef-current.json .taskdef-new.json
+  rm -f .taskdef-current.json .taskdef-template.json .taskdef-new.json
   success "Registered ${NAME}-api:${NEW_REV} (image pinned by digest)"
 
   # Step 5: Run migrations as an explicit one-off task before any service rollout.
@@ -245,12 +286,36 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
       --output json \
       --region "$REGION" > .worker-taskdef-current.json
 
+    aws ecs describe-task-definition \
+      --task-definition "${NAME}-api:${NEW_REV}" \
+      --query taskDefinition \
+      --output json \
+      --region "$REGION" > .worker-env-source.json
+
     IMAGE_REF="${ECR_REPO}@${DIGEST}" node -e '
       const fs = require("fs");
       const td = JSON.parse(fs.readFileSync(".worker-taskdef-current.json", "utf8"));
+      const api = JSON.parse(fs.readFileSync(".worker-env-source.json", "utf8"));
       ["taskDefinitionArn","revision","status","requiresAttributes","compatibilities","registeredAt","registeredBy"].forEach(k => delete td[k]);
+
+      function mergeNamed(base = [], overlay = []) {
+        const merged = new Map();
+        for (const item of base) merged.set(item.name, item);
+        for (const item of overlay) merged.set(item.name, item);
+        return [...merged.values()];
+      }
+
+      function dedupeEnvAgainstSecrets(container) {
+        const secretNames = new Set((container.secrets || []).map(item => item.name));
+        container.environment = (container.environment || []).filter(item => !secretNames.has(item.name));
+      }
+
       const container = td.containerDefinitions.find(c => c.name === "scheduler-worker") || td.containerDefinitions[0];
+      const apiContainer = (api.containerDefinitions || []).find(c => c.name === "api") || api.containerDefinitions?.[0] || {};
       container.image = process.env.IMAGE_REF;
+      container.environment = mergeNamed(apiContainer.environment, container.environment);
+      container.secrets = mergeNamed(apiContainer.secrets, container.secrets);
+      dedupeEnvAgainstSecrets(container);
       fs.writeFileSync(".worker-taskdef-new.json", JSON.stringify(td));
     '
 
@@ -259,7 +324,7 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
       --query 'taskDefinition.revision' \
       --output text \
       --region "$REGION")
-    rm -f .worker-taskdef-current.json .worker-taskdef-new.json
+    rm -f .worker-taskdef-current.json .worker-env-source.json .worker-taskdef-new.json
     success "Registered ${WORKER_SERVICE}:${WORKER_NEW_REV} (image pinned by digest)"
 
     info "Updating scheduler worker service to revision ${WORKER_NEW_REV}..."
