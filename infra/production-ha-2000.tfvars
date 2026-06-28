@@ -1,6 +1,9 @@
 # ============================================================================
-# Production Environment Configuration
+# Production HA Scale-Up Profile
 # ============================================================================
+#
+# Use these values when broad ClassPilot onboarding is ready to resume and the
+# 500/1,000/2,000 active-device load gate is being prepared.
 
 project     = "schoolpilot"
 environment = "production"
@@ -11,9 +14,9 @@ vpc_cidr           = "10.1.0.0/16"
 az_count           = 2
 enable_nat_gateway = true
 
-# Database — pilot-cost posture for confirmed onboarding while schools are pending
-db_instance_class        = "db.t4g.medium"
-db_multi_az              = false
+# Database — standard HA posture for the 2,000 active-device gate
+db_instance_class        = "db.t4g.large"
+db_multi_az              = true
 db_allocated_storage     = 100
 db_max_allocated_storage = 1000
 db_name                  = "schoolpilot"
@@ -21,10 +24,10 @@ db_username              = "schoolpilot"
 
 # Redis
 redis_node_type     = "cache.t4g.small"
-redis_replica_count = 0
+redis_replica_count = 1
 
-# ECS — scheduler work remains isolated; API runs single-task in pilot mode
-ecs_desired_count     = 1
+# ECS — scheduler work runs in the singleton worker, so the API can scale out safely
+ecs_desired_count     = 2
 ecs_cpu               = 512
 ecs_memory            = 1024
 worker_desired_count  = 1
