@@ -14,7 +14,6 @@ import {
   XCircle,
 } from 'lucide-react';
 import { ThemeToggle } from '../../components/ThemeToggle';
-import api, { resolveApiRequestUrl } from '../../shared/utils/api';
 
 const TABS = [
   ['overview', 'Overview'],
@@ -64,31 +63,85 @@ function statusIcon(value) {
   return <XCircle className="h-4 w-4" />;
 }
 
-function resolveFailedRequestUrl(error) {
-  const configUrl = error?.config?.url;
-  if (!configUrl) return '';
+function sameOriginApiUrl(path) {
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  if (typeof window === 'undefined') return `/api${normalizedPath}`;
+  return new URL(`/api${normalizedPath}`, window.location.origin).toString();
+}
 
+function createSoc2RequestError(message, requestUrl, responseData, status) {
+  const error = new Error(message);
+  error.requestUrl = requestUrl;
+  error.response = { data: responseData, status };
+  return error;
+}
+
+async function parseJsonResponse(response) {
+  const text = await response.text();
+  if (!text) return null;
   try {
-    const origin = typeof window !== 'undefined' ? window.location.origin : '';
-    const base = error?.config?.baseURL || `${origin}/api`;
-    return resolveApiRequestUrl(configUrl, base, origin);
+    return JSON.parse(text);
   } catch {
-    return configUrl;
+    return { error: text.slice(0, 300) };
   }
+}
+
+async function soc2Fetch(path, options = {}) {
+  const url = sameOriginApiUrl(path);
+  const response = await fetch(url, {
+    credentials: 'include',
+    redirect: 'manual',
+    ...options,
+    headers: {
+      Accept: 'application/json',
+      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(options.headers || {}),
+    },
+  });
+
+  if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400)) {
+    throw createSoc2RequestError(
+      'SOC 2 request was redirected away from the same-origin API route.',
+      url,
+      { error: 'Unexpected API redirect; expected same-origin /api route.' },
+      response.status || 0
+    );
+  }
+
+  const data = await parseJsonResponse(response);
+  if (!response.ok) {
+    throw createSoc2RequestError(
+      data?.error || `SOC 2 request failed with HTTP ${response.status}.`,
+      url,
+      data,
+      response.status
+    );
+  }
+
+  return data;
+}
+
+let csrfToken = null;
+
+async function getCsrfToken() {
+  if (csrfToken) return csrfToken;
+  const data = await soc2Fetch('/auth/csrf');
+  csrfToken = data?.csrfToken || null;
+  return csrfToken;
 }
 
 function soc2DashboardError(error, fallbackMessage) {
   const serverError = error?.response?.data?.error;
   if (serverError) return serverError;
 
-  const failedUrl = resolveFailedRequestUrl(error);
+  const failedUrl = error?.requestUrl || '';
   const expectedUrl = typeof window !== 'undefined'
     ? `${window.location.origin}/api/super-admin/soc2/readiness`
     : '/api/super-admin/soc2/readiness';
   const networkMessage = error?.message ? ` Network error: ${error.message}.` : '';
   const requestMessage = failedUrl ? ` Request URL: ${failedUrl}.` : '';
 
-  return `${fallbackMessage}${networkMessage}${requestMessage} Expected same-origin API route: ${expectedUrl}. Refresh and retry; if this persists, a stale deployed bundle or cache may be using an old backend host.`;
+  return `${fallbackMessage}${networkMessage}${requestMessage} Expected same-origin API route: ${expectedUrl}. The dashboard does not follow cross-origin redirects; refresh and retry.`;
 }
 
 function Badge({ children, className = '' }) {
@@ -326,8 +379,8 @@ export default function Soc2() {
     setLoading(true);
     setError('');
     try {
-      const res = await api.get('/super-admin/soc2/readiness');
-      setData(res.data);
+      const readiness = await soc2Fetch('/super-admin/soc2/readiness');
+      setData(readiness);
       setLastUpdatedAt(new Date());
     } catch (err) {
       setError(soc2DashboardError(err, 'Failed to load SOC 2 readiness.'));
@@ -350,8 +403,12 @@ export default function Soc2() {
     setResyncing(true);
     setError('');
     try {
-      const res = await api.post('/super-admin/soc2/resync');
-      setResyncResult(res.data);
+      const token = await getCsrfToken();
+      const result = await soc2Fetch('/super-admin/soc2/resync', {
+        method: 'POST',
+        headers: token ? { 'X-CSRF-Token': token } : {},
+      });
+      setResyncResult(result);
       await loadData();
     } catch (err) {
       setError(soc2DashboardError(err, 'Unable to queue SOC 2 resync.'));
