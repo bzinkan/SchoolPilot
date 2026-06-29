@@ -18,8 +18,7 @@ import { broadcastToTeachersLocal } from "../realtime/ws-broadcast.js";
 import { publishWS } from "../realtime/ws-redis.js";
 import { publishSocketIoRedis } from "../realtime/socketio-redis.js";
 import { runSecurityChecks } from "./securityMonitor.js";
-import db from "../db.js";
-import { schedulerDb, schedulerPool } from "./schedulerDb.js";
+import { schedulerDb, schedulerLockPool, schedulerPool } from "./schedulerDb.js";
 import { schools, productLicenses } from "../schema/core.js";
 import { heartbeats, dailyUsage, teachingSessions, groups } from "../schema/classpilot.js";
 import { dismissalQueue, dismissalSessions, parentStudent } from "../schema/gopilot.js";
@@ -52,7 +51,7 @@ export async function runWithSchedulerLock<T>(
   jobName: string,
   fn: () => Promise<T>
 ): Promise<SchedulerLockResult<T>> {
-  const client = await schedulerPool.connect();
+  const client = await schedulerLockPool.connect();
   let locked = false;
   try {
     const lockKey = `schoolpilot:scheduler:${jobName}`;
@@ -155,7 +154,7 @@ async function checkDismissalTimes() {
   try {
 
     // Find schools where current time >= dismissal_time (catches exact match + late starts after deploys)
-    const result = await db
+    const result = await schedulerDb
       .select({
         id: schools.id,
         name: schools.name,
@@ -174,7 +173,7 @@ async function checkDismissalTimes() {
     // Filter out schools with auto-dismissal disabled
     const eligible = [];
     for (const school of result) {
-      const fullSchool = await getSchoolById(school.id);
+      const fullSchool = await getSchoolById(school.id, schedulerDb);
       const schoolSettings = fullSchool?.settings ? JSON.parse(fullSchool.settings) : {};
       if (schoolSettings.autoDismissalEnabled === false) continue;
       eligible.push(school);
@@ -194,7 +193,7 @@ async function checkDismissalTimes() {
 
 async function autoStartDismissal(schoolId: string, schoolName: string) {
   try {
-    const school = await getSchoolById(schoolId);
+    const school = await getSchoolById(schoolId, schedulerDb);
     const timezone = school?.schoolTimezone || "America/New_York";
 
     // Get today's date in school timezone
@@ -720,7 +719,7 @@ async function purgeExpiredHeartbeats() {
 
 async function autoStartClassBlocks() {
   try {
-    const activeSchools = await db
+    const activeSchools = await schedulerDb
       .select({
         id: schools.id,
         schoolTimezone: schools.schoolTimezone,
@@ -798,7 +797,7 @@ async function autoStartClassBlocks() {
 
 async function autoEndClassBlocks() {
   try {
-    const activeSchools = await db
+    const activeSchools = await schedulerDb
       .select({
         id: schools.id,
         schoolTimezone: schools.schoolTimezone,
