@@ -3,6 +3,7 @@ import {
   assertSafeWebApiRequest,
   getApiBaseURL,
   resolveApiRequestUrl,
+  rewriteDirectBackendRequestUrl,
 } from '../src/shared/utils/api.js';
 
 assert.equal(
@@ -42,6 +43,22 @@ assert.throws(
     'https://school-pilot.net'
   ),
   /Blocked cross-origin web API request/
+);
+
+assert.equal(
+  rewriteDirectBackendRequestUrl(
+    'https://schoolpilot-production-alb-1532292365.us-east-1.elb.amazonaws.com/api/super-admin/soc2/readiness',
+    'https://school-pilot.net'
+  ),
+  'https://school-pilot.net/api/super-admin/soc2/readiness'
+);
+
+assert.equal(
+  rewriteDirectBackendRequestUrl(
+    'https://school-pilot.net/api/super-admin/soc2/readiness',
+    'https://school-pilot.net'
+  ),
+  'https://school-pilot.net/api/super-admin/soc2/readiness'
 );
 
 console.log('API routing assertions passed.');

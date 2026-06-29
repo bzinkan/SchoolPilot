@@ -8,7 +8,14 @@ const DIRECT_BACKEND_HOST_PATTERNS = [
   /schoolpilot-production/i,
 ];
 
-const isNative = Capacitor.isNativePlatform();
+let routingGuardInstalled = false;
+
+function isNativeRuntime(options = {}) {
+  if (typeof options.isNative === 'boolean') return options.isNative;
+  return Capacitor.getPlatform() !== 'web' && Capacitor.isNativePlatform();
+}
+
+const isNative = isNativeRuntime();
 
 function getBrowserOrigin() {
   if (typeof window === 'undefined' || !window.location?.origin) return '';
@@ -16,7 +23,7 @@ function getBrowserOrigin() {
 }
 
 export function getApiBaseURL(options = {}) {
-  const native = typeof options.isNative === 'boolean' ? options.isNative : Capacitor.isNativePlatform();
+  const native = isNativeRuntime(options);
   if (native) return NATIVE_API_BASE_URL;
 
   const origin = options.origin || getBrowserOrigin();
@@ -48,6 +55,22 @@ export function resolveApiRequestUrl(url, requestBaseURL = getApiBaseURL(), orig
   return new URL(`${absoluteBase.origin}${basePath || ''}/${requestPath}`).toString();
 }
 
+export function rewriteDirectBackendRequestUrl(url, origin = getBrowserOrigin()) {
+  if (!origin || !url) return url;
+
+  try {
+    const resolved = new URL(url, origin);
+    const expectedOrigin = new URL(origin).origin;
+    if (resolved.origin === expectedOrigin || !isDirectBackendHost(resolved.hostname)) {
+      return typeof url === 'string' ? url : resolved.toString();
+    }
+
+    return `${expectedOrigin}${resolved.pathname}${resolved.search}${resolved.hash}`;
+  } catch {
+    return url;
+  }
+}
+
 export function assertSafeWebApiRequest(url, requestBaseURL = getApiBaseURL(), origin = getBrowserOrigin()) {
   if (!origin) return true;
 
@@ -61,6 +84,41 @@ export function assertSafeWebApiRequest(url, requestBaseURL = getApiBaseURL(), o
   }
 
   return true;
+}
+
+function rewriteFetchInput(input) {
+  if (typeof input === 'string') return rewriteDirectBackendRequestUrl(input);
+  if (typeof URL !== 'undefined' && input instanceof URL) {
+    const rewritten = rewriteDirectBackendRequestUrl(input.toString());
+    return rewritten === input.toString() ? input : new URL(rewritten);
+  }
+  if (typeof Request !== 'undefined' && input instanceof Request) {
+    const rewritten = rewriteDirectBackendRequestUrl(input.url);
+    return rewritten === input.url ? input : new Request(rewritten, input);
+  }
+  return input;
+}
+
+export function installApiRoutingGuard() {
+  if (routingGuardInstalled || typeof window === 'undefined' || isNative) return;
+  routingGuardInstalled = true;
+
+  if (typeof window.fetch === 'function') {
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = (input, init) => originalFetch(rewriteFetchInput(input), init);
+  }
+
+  if (typeof window.XMLHttpRequest !== 'undefined') {
+    const originalOpen = window.XMLHttpRequest.prototype.open;
+    window.XMLHttpRequest.prototype.open = function open(method, url, ...rest) {
+      return originalOpen.call(this, method, rewriteDirectBackendRequestUrl(url), ...rest);
+    };
+  }
+
+  if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
+    const originalSendBeacon = navigator.sendBeacon.bind(navigator);
+    navigator.sendBeacon = (url, data) => originalSendBeacon(rewriteDirectBackendRequestUrl(url), data);
+  }
 }
 
 const baseURL = getApiBaseURL({ isNative });
