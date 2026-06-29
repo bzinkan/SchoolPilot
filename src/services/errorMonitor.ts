@@ -104,6 +104,8 @@ export type MonitorStats = {
   windowMs: number;
   activeFingerprints: number;
   maxFingerprints: number;
+  lastPersistFailureAt?: string;
+  lastAlertFailureAt?: string;
   totals: MonitorCounterSet;
   byCategory: Partial<Record<ErrorCategory, MonitorCounterSet>>;
   fingerprints: MonitorFingerprintStats[];
@@ -317,6 +319,18 @@ export function sanitizeMonitorString(input: string): string {
     .replace(API_KEY_RE, "[secret]")
     .replace(EMAIL_RE, "[email]")
     .replace(IPV4_RE, "[ip]");
+}
+
+function persistenceErrorSummary(err: unknown): string {
+  const error = err as NodeJS.ErrnoException & { cause?: unknown };
+  const cause = error?.cause as (NodeJS.ErrnoException & { message?: string }) | undefined;
+  const parts = [
+    error?.message,
+    error?.code ? `code=${error.code}` : undefined,
+    cause?.message ? `cause=${cause.message}` : undefined,
+    cause?.code ? `causeCode=${cause.code}` : undefined,
+  ].filter(Boolean);
+  return limit(sanitizeMonitorString(parts.join(" | ") || String(err)), 700);
 }
 
 function normalizeOptionalString(value: unknown, max = MAX_SAFE_CONTEXT_CHARS): string | undefined {
@@ -557,7 +571,7 @@ async function persistErrorLog(event: NormalizedMonitorEvent): Promise<PersistRe
     });
     return "persisted";
   } catch (err) {
-    console.error("[ErrorMonitor] Failed to persist error_log:", (err as Error).message);
+    console.error("[ErrorMonitor] Failed to persist error_log:", persistenceErrorSummary(err));
     return "failed";
   } finally {
     inFlightPersists--;
@@ -693,6 +707,8 @@ export class ErrorMonitor {
   private readonly maxFingerprints: number;
   private readonly metricsSink: (line: string) => void;
   private readonly aggregation?: MonitorAggregationAdapter;
+  private lastPersistFailureAt?: number;
+  private lastAlertFailureAt?: number;
   private housekeepingTimer?: NodeJS.Timeout;
   private metricsTimer?: NodeJS.Timeout;
 
@@ -844,6 +860,12 @@ export class ErrorMonitor {
       windowMs: WINDOW_MS,
       activeFingerprints: this.fingerprints.size,
       maxFingerprints: this.maxFingerprints,
+      lastPersistFailureAt: this.lastPersistFailureAt
+        ? new Date(this.lastPersistFailureAt).toISOString()
+        : undefined,
+      lastAlertFailureAt: this.lastAlertFailureAt
+        ? new Date(this.lastAlertFailureAt).toISOString()
+        : undefined,
       totals: copyCounters(this.totals),
       byCategory,
       fingerprints,
@@ -909,6 +931,8 @@ export class ErrorMonitor {
     this.fingerprints.clear();
     this.byCategory.clear();
     Object.assign(this.totals, createCounters());
+    this.lastPersistFailureAt = undefined;
+    this.lastAlertFailureAt = undefined;
     this.cooldownUntil.clear();
     this.aggregation?.resetForTests?.();
   }
@@ -1037,6 +1061,7 @@ export class ErrorMonitor {
       return;
     }
     if (result === "failed") {
+      this.lastPersistFailureAt = this.now();
       this.incrementCounters(event.category, event.fingerprint, "persistFailed");
       return;
     }
@@ -1094,6 +1119,7 @@ export class ErrorMonitor {
     if (results.some((r) => r.delivered)) {
       this.incrementCounters(category, fingerprint, "alertDelivered");
     } else {
+      this.lastAlertFailureAt = this.now();
       this.incrementCounters(category, fingerprint, "alertFailed");
     }
   }

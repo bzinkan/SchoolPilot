@@ -21,7 +21,9 @@ import {
 } from "../dist/services/runtimeTelemetry.js";
 import {
   buildMonitoringStatusSummary,
+  deriveMonitoringStatus,
   listMonitoringFingerprints,
+  MONITOR_FAILURE_DEGRADED_WINDOW_MS,
   sanitizeRecentErrorLogForMonitoring,
   type MonitoringHealthSnapshot,
 } from "../dist/services/monitoringDashboard.js";
@@ -71,8 +73,11 @@ class FakeAggregation implements MonitorAggregationAdapter {
   counts = new Map<string, number>();
   cooldowns = new Map<string, number>();
   checkCalls = 0;
+  private readonly now: () => number;
 
-  constructor(private readonly now: () => number) {}
+  constructor(now: () => number) {
+    this.now = now;
+  }
 
   async recordEvent(event: NormalizedMonitorEvent): Promise<number> {
     const next = (this.counts.get(event.fingerprint) ?? 0) + 1;
@@ -128,6 +133,8 @@ function baseMonitoringSnapshot(overrides: Partial<MonitoringHealthSnapshot> = {
     coreOk: true,
     alerting: { ok: true, configuredChannels: ["email"] },
     aggregation: { ok: true, mode: "local" },
+    activeDegradedReasons: [],
+    historicalWarnings: [],
     runtime: {
       environment: "test",
       service: "api",
@@ -160,6 +167,23 @@ function baseMonitoringSnapshot(overrides: Partial<MonitoringHealthSnapshot> = {
       },
     },
     ...overrides,
+  };
+}
+
+function statsWithFailure(
+  overrides: Partial<Omit<MonitoringHealthSnapshot["stats"], "totals">> & {
+    totals?: Partial<MonitoringHealthSnapshot["stats"]["totals"]>;
+  }
+): MonitoringHealthSnapshot["stats"] {
+  const base = baseMonitoringSnapshot().stats;
+  const { totals, ...rest } = overrides;
+  return {
+    ...base,
+    ...rest,
+    totals: {
+      ...base.totals,
+      ...(totals ?? {}),
+    },
   };
 }
 
@@ -591,6 +615,105 @@ describe("super-admin monitoring dashboard helpers", () => {
     assert.equal(summary.recentErrors, 5);
     assert.equal(summary.alertingOk, false);
     assert.match(summary.degradedReasons.join(" "), /no approved alert channel/);
+  });
+
+  it("treats recent monitor persistence failures as degraded", () => {
+    const generatedAt = "2026-06-25T12:00:00.000Z";
+    const lastPersistFailureAt = new Date(
+      Date.parse(generatedAt) - MONITOR_FAILURE_DEGRADED_WINDOW_MS + 60_000
+    ).toISOString();
+    const stats = statsWithFailure({
+      generatedAt,
+      lastPersistFailureAt,
+      totals: { persistFailed: 1 },
+    });
+
+    const status = deriveMonitoringStatus(
+      true,
+      { ok: true, configuredChannels: ["email"] },
+      { ok: true, mode: "redis" },
+      stats
+    );
+    const summary = buildMonitoringStatusSummary(baseMonitoringSnapshot({ status, generatedAt, stats }));
+
+    assert.equal(status, "degraded");
+    assert.deepEqual(summary.activeDegradedReasons, ["monitor persistence failed recently"]);
+    assert.deepEqual(summary.historicalWarnings, []);
+  });
+
+  it("keeps stale monitor persistence failures as historical warnings", () => {
+    const generatedAt = "2026-06-25T12:00:00.000Z";
+    const lastPersistFailureAt = new Date(
+      Date.parse(generatedAt) - MONITOR_FAILURE_DEGRADED_WINDOW_MS - 60_000
+    ).toISOString();
+    const stats = statsWithFailure({
+      generatedAt,
+      lastPersistFailureAt,
+      totals: { persistFailed: 7 },
+    });
+
+    const status = deriveMonitoringStatus(
+      true,
+      { ok: true, configuredChannels: ["email"] },
+      { ok: true, mode: "redis" },
+      stats
+    );
+    const summary = buildMonitoringStatusSummary(baseMonitoringSnapshot({ status, generatedAt, stats }));
+
+    assert.equal(status, "healthy");
+    assert.equal(summary.historicalPersistFailures, 7);
+    assert.deepEqual(summary.activeDegradedReasons, []);
+    assert.deepEqual(summary.degradedReasons, []);
+    assert.deepEqual(summary.historicalWarnings, ["monitor persistence failed earlier in this API runtime"]);
+  });
+
+  it("applies the recent failure window to alert delivery failures", () => {
+    const generatedAt = "2026-06-25T12:00:00.000Z";
+    const recentStats = statsWithFailure({
+      generatedAt,
+      lastAlertFailureAt: new Date(Date.parse(generatedAt) - 60_000).toISOString(),
+      totals: { alertFailed: 1 },
+    });
+    const staleStats = statsWithFailure({
+      generatedAt,
+      lastAlertFailureAt: new Date(
+        Date.parse(generatedAt) - MONITOR_FAILURE_DEGRADED_WINDOW_MS - 1
+      ).toISOString(),
+      totals: { alertFailed: 2 },
+    });
+
+    assert.equal(
+      deriveMonitoringStatus(true, { ok: true, configuredChannels: ["email"] }, { ok: true, mode: "redis" }, recentStats),
+      "degraded"
+    );
+    assert.equal(
+      deriveMonitoringStatus(true, { ok: true, configuredChannels: ["email"] }, { ok: true, mode: "redis" }, staleStats),
+      "healthy"
+    );
+    const summary = buildMonitoringStatusSummary(baseMonitoringSnapshot({
+      status: "healthy",
+      generatedAt,
+      stats: staleStats,
+    }));
+    assert.equal(summary.historicalAlertFailures, 2);
+    assert.deepEqual(summary.historicalWarnings, ["monitor alert delivery failed earlier in this API runtime"]);
+  });
+
+  it("keeps core, alerting, and aggregation failures authoritative", () => {
+    const stats = baseMonitoringSnapshot().stats;
+
+    assert.equal(
+      deriveMonitoringStatus(false, { ok: true, configuredChannels: ["email"] }, { ok: true, mode: "redis" }, stats),
+      "unhealthy"
+    );
+    assert.equal(
+      deriveMonitoringStatus(true, { ok: false, configuredChannels: [], degradedReason: "not configured" }, { ok: true, mode: "redis" }, stats),
+      "degraded"
+    );
+    assert.equal(
+      deriveMonitoringStatus(true, { ok: true, configuredChannels: ["email"] }, { ok: false, mode: "local", degradedReason: "Redis unavailable" }, stats),
+      "degraded"
+    );
   });
 
   it("sanitizes recent error rows before the monitoring UI displays them", () => {

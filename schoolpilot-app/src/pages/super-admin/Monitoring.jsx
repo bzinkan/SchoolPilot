@@ -79,6 +79,11 @@ function formatRefreshTime(value) {
   return `Updated ${value.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' })}`;
 }
 
+function formatFailureCount(value, label) {
+  const count = Number(value || 0);
+  return `${formatNumber(count)} ${label}${count === 1 ? '' : 's'}`;
+}
+
 function statusIcon(status) {
   if (status === 'healthy') return <CheckCircle2 className="h-4 w-4" />;
   if (status === 'unhealthy') return <XCircle className="h-4 w-4" />;
@@ -349,6 +354,15 @@ export default function Monitoring() {
   const runtime = overview?.runtime || {};
   const alerting = overview?.alerting || {};
   const aggregation = overview?.aggregation || {};
+  const statusSummary = overview?.status || {};
+  const historicalFailureNotes = [
+    Number(statusSummary.historicalPersistFailures || 0) > 0
+      ? `${formatFailureCount(statusSummary.historicalPersistFailures, 'persistence failure')} earlier in this API runtime. Last: ${formatTime(statusSummary.lastPersistFailureAt)}`
+      : null,
+    Number(statusSummary.historicalAlertFailures || 0) > 0
+      ? `${formatFailureCount(statusSummary.historicalAlertFailures, 'alert delivery failure')} earlier in this API runtime. Last: ${formatTime(statusSummary.lastAlertFailureAt)}`
+      : null,
+  ].filter(Boolean);
   const hasActiveFilters = Boolean(query || category || priority || range !== '1h');
   const overviewFingerprintRows = hasActiveFilters ? fingerprints.slice(0, 10) : (overview?.topFingerprints || []);
 
@@ -398,6 +412,18 @@ export default function Monitoring() {
         <StatTile icon={Database} label="Persisted" value={formatNumber(totals.persisted)} detail={`${formatNumber(totals.persistFailed)} persistence failures`} />
         <StatTile icon={RadioTower} label="Aggregation" value={aggregation.mode || '-'} detail={aggregationDetail(aggregation)} />
       </div>
+
+      {historicalFailureNotes.length > 0 && (
+        <div className="mb-5 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <div className="flex gap-2">
+            <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" />
+            <div>
+              <p className="font-semibold">Historical monitor warning</p>
+              <p className="mt-1 text-amber-700">{historicalFailureNotes.join(' ')}</p>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="mb-5 rounded-lg border border-slate-200 bg-white p-3">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-center">

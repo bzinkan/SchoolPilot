@@ -26,6 +26,12 @@ export type MonitoringStatusSummary = {
   recentErrors: number;
   alertFailed: number;
   persistFailed: number;
+  lastPersistFailureAt?: string;
+  lastAlertFailureAt?: string;
+  historicalPersistFailures: number;
+  historicalAlertFailures: number;
+  activeDegradedReasons: string[];
+  historicalWarnings: string[];
   configuredChannels: string[];
   aggregationMode: MonitorAggregationStatus["mode"];
   degradedReasons: string[];
@@ -37,6 +43,8 @@ export type MonitoringHealthSnapshot = {
   coreOk: boolean;
   alerting: AlertingStatus;
   aggregation: MonitorAggregationStatus;
+  activeDegradedReasons: string[];
+  historicalWarnings: string[];
   runtime: MonitorRuntimeMetadata;
   stats: MonitorStats;
   checks: Record<string, unknown>;
@@ -137,6 +145,7 @@ const MONITORING_CATEGORIES = [
 ] as const satisfies readonly ErrorCategory[];
 
 const MONITORING_PRIORITIES = ["low", "normal", "high", "critical"] as const satisfies readonly MonitorPriority[];
+export const MONITOR_FAILURE_DEGRADED_WINDOW_MS = 30 * 60 * 1000;
 
 const RANGE_MS = {
   "15m": 15 * 60 * 1000,
@@ -236,6 +245,9 @@ export async function buildMonitoringHealthSnapshot(
     ? await errorMonitor.checkAggregationStatus(1000)
     : errorMonitor.getAggregationStatus();
   const generatedAt = new Date().toISOString();
+  const status = deriveMonitoringStatus(coreOk, alerting, aggregation, stats);
+  const activeDegradedReasons = degradedReasonsFor(coreOk, alerting, aggregation, stats, generatedAt);
+  const monitorHistoricalWarnings = historicalWarningsFor(stats, generatedAt);
 
   checks.uptime = Math.floor(process.uptime());
   checks.timestamp = generatedAt;
@@ -245,14 +257,18 @@ export async function buildMonitoringHealthSnapshot(
     runtime,
     stats,
     aggregation,
+    activeDegradedReasons,
+    historicalWarnings: monitorHistoricalWarnings,
   };
 
   return {
-    status: deriveMonitoringStatus(coreOk, alerting, aggregation, stats),
+    status,
     generatedAt,
     coreOk,
     alerting,
     aggregation,
+    activeDegradedReasons,
+    historicalWarnings: monitorHistoricalWarnings,
     runtime,
     stats,
     checks,
@@ -262,6 +278,7 @@ export async function buildMonitoringHealthSnapshot(
 export function buildMonitoringStatusSummary(snapshot: MonitoringHealthSnapshot): MonitoringStatusSummary {
   const recentErrors = Object.values((snapshot.checks.recentErrors ?? {}) as Record<string, number>)
     .reduce((sum, value) => sum + value, 0);
+  const activeReasons = degradedReasons(snapshot);
 
   return {
     status: snapshot.status,
@@ -273,9 +290,23 @@ export function buildMonitoringStatusSummary(snapshot: MonitoringHealthSnapshot)
     recentErrors,
     alertFailed: snapshot.stats.totals.alertFailed,
     persistFailed: snapshot.stats.totals.persistFailed,
+    lastPersistFailureAt: snapshot.stats.lastPersistFailureAt,
+    lastAlertFailureAt: snapshot.stats.lastAlertFailureAt,
+    historicalPersistFailures: historicalFailureCount(
+      snapshot.stats.totals.persistFailed,
+      snapshot.stats.lastPersistFailureAt,
+      snapshot.generatedAt
+    ),
+    historicalAlertFailures: historicalFailureCount(
+      snapshot.stats.totals.alertFailed,
+      snapshot.stats.lastAlertFailureAt,
+      snapshot.generatedAt
+    ),
+    activeDegradedReasons: activeReasons,
+    historicalWarnings: historicalWarnings(snapshot),
     configuredChannels: snapshot.alerting.configuredChannels,
     aggregationMode: snapshot.aggregation.mode,
-    degradedReasons: degradedReasons(snapshot),
+    degradedReasons: activeReasons,
   };
 }
 
@@ -391,27 +422,89 @@ export function sanitizeRecentErrorLogForMonitoring(row: ErrorLog): MonitoringRe
   };
 }
 
-function deriveMonitoringStatus(
+export function deriveMonitoringStatus(
   coreOk: boolean,
   alerting: AlertingStatus,
   aggregation: MonitorAggregationStatus,
   stats: MonitorStats
 ): MonitoringPanelStatus {
   if (!coreOk) return "unhealthy";
-  if (!alerting.ok || !aggregation.ok || stats.totals.persistFailed > 0 || stats.totals.alertFailed > 0) {
+  if (!alerting.ok || !aggregation.ok || hasRecentMonitorFailures(stats)) {
     return "degraded";
   }
   return "healthy";
 }
 
 function degradedReasons(snapshot: MonitoringHealthSnapshot): string[] {
+  return degradedReasonsFor(
+    snapshot.coreOk,
+    snapshot.alerting,
+    snapshot.aggregation,
+    snapshot.stats,
+    snapshot.generatedAt
+  );
+}
+
+function degradedReasonsFor(
+  coreOk: boolean,
+  alerting: AlertingStatus,
+  aggregation: MonitorAggregationStatus,
+  stats: MonitorStats,
+  generatedAt: string
+): string[] {
   const reasons: string[] = [];
-  if (!snapshot.coreOk) reasons.push("core subsystem failure");
-  if (!snapshot.alerting.ok) reasons.push(snapshot.alerting.degradedReason ?? "alerting degraded");
-  if (!snapshot.aggregation.ok) reasons.push(snapshot.aggregation.degradedReason ?? "aggregation degraded");
-  if (snapshot.stats.totals.persistFailed > 0) reasons.push("monitor persistence failures");
-  if (snapshot.stats.totals.alertFailed > 0) reasons.push("monitor alert delivery failures");
+  if (!coreOk) reasons.push("core subsystem failure");
+  if (!alerting.ok) reasons.push(alerting.degradedReason ?? "alerting degraded");
+  if (!aggregation.ok) reasons.push(aggregation.degradedReason ?? "aggregation degraded");
+  if (isRecentFailure(stats.lastPersistFailureAt, generatedAt)) {
+    reasons.push("monitor persistence failed recently");
+  }
+  if (isRecentFailure(stats.lastAlertFailureAt, generatedAt)) {
+    reasons.push("monitor alert delivery failed recently");
+  }
   return reasons;
+}
+
+function historicalWarnings(snapshot: MonitoringHealthSnapshot): string[] {
+  return historicalWarningsFor(snapshot.stats, snapshot.generatedAt);
+}
+
+function historicalWarningsFor(stats: MonitorStats, generatedAt: string): string[] {
+  const warnings: string[] = [];
+  if (historicalFailureCount(
+    stats.totals.persistFailed,
+    stats.lastPersistFailureAt,
+    generatedAt
+  ) > 0) {
+    warnings.push("monitor persistence failed earlier in this API runtime");
+  }
+  if (historicalFailureCount(
+    stats.totals.alertFailed,
+    stats.lastAlertFailureAt,
+    generatedAt
+  ) > 0) {
+    warnings.push("monitor alert delivery failed earlier in this API runtime");
+  }
+  return warnings;
+}
+
+function hasRecentMonitorFailures(stats: MonitorStats): boolean {
+  return (
+    isRecentFailure(stats.lastPersistFailureAt, stats.generatedAt) ||
+    isRecentFailure(stats.lastAlertFailureAt, stats.generatedAt)
+  );
+}
+
+function historicalFailureCount(total: number, lastFailureAt: string | undefined, generatedAt: string): number {
+  return total > 0 && !isRecentFailure(lastFailureAt, generatedAt) ? total : 0;
+}
+
+function isRecentFailure(lastFailureAt: string | undefined, generatedAt: string): boolean {
+  if (!lastFailureAt) return false;
+  const lastFailureMs = Date.parse(lastFailureAt);
+  const generatedMs = Date.parse(generatedAt);
+  if (!Number.isFinite(lastFailureMs) || !Number.isFinite(generatedMs)) return false;
+  return generatedMs - lastFailureMs <= MONITOR_FAILURE_DEGRADED_WINDOW_MS;
 }
 
 function sortedFingerprintRows(fingerprints: MonitorFingerprintStats[]): MonitoringFingerprintRow[] {
