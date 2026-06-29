@@ -1,8 +1,69 @@
 import axios from 'axios';
 import { Capacitor } from '@capacitor/core';
 
+const NATIVE_API_BASE_URL = 'https://school-pilot.net/api';
+const DIRECT_BACKEND_HOST_PATTERNS = [
+  /(^|\.)elb\.amazonaws\.com$/i,
+  /^schoolpilot-production/i,
+  /schoolpilot-production/i,
+];
+
 const isNative = Capacitor.isNativePlatform();
-const baseURL = isNative ? 'https://school-pilot.net/api' : '/api';
+
+function getBrowserOrigin() {
+  if (typeof window === 'undefined' || !window.location?.origin) return '';
+  return window.location.origin;
+}
+
+export function getApiBaseURL(options = {}) {
+  const native = typeof options.isNative === 'boolean' ? options.isNative : Capacitor.isNativePlatform();
+  if (native) return NATIVE_API_BASE_URL;
+
+  const origin = options.origin || getBrowserOrigin();
+  if (!origin) return '/api';
+
+  try {
+    return new URL('/api', origin).toString();
+  } catch {
+    return '/api';
+  }
+}
+
+function isDirectBackendHost(hostname) {
+  return DIRECT_BACKEND_HOST_PATTERNS.some((pattern) => pattern.test(hostname));
+}
+
+function isAbsoluteUrl(url) {
+  return /^([a-z][a-z\d+\-.]*:)?\/\//i.test(url || '');
+}
+
+export function resolveApiRequestUrl(url, requestBaseURL = getApiBaseURL(), origin = getBrowserOrigin()) {
+  const requestUrl = url || '';
+  if (isAbsoluteUrl(requestUrl)) return new URL(requestUrl).toString();
+
+  const base = requestBaseURL || getApiBaseURL({ origin });
+  const absoluteBase = new URL(base, origin || 'http://localhost');
+  const basePath = absoluteBase.pathname.replace(/\/+$/, '');
+  const requestPath = requestUrl.replace(/^\/+/, '');
+  return new URL(`${absoluteBase.origin}${basePath || ''}/${requestPath}`).toString();
+}
+
+export function assertSafeWebApiRequest(url, requestBaseURL = getApiBaseURL(), origin = getBrowserOrigin()) {
+  if (!origin) return true;
+
+  const resolved = new URL(resolveApiRequestUrl(url, requestBaseURL, origin));
+  const expectedOrigin = new URL(origin).origin;
+
+  if (resolved.origin !== expectedOrigin || isDirectBackendHost(resolved.hostname)) {
+    throw new Error(
+      `Blocked cross-origin web API request to ${resolved.origin}; expected same-origin ${expectedOrigin}/api.`
+    );
+  }
+
+  return true;
+}
+
+const baseURL = getApiBaseURL({ isNative });
 
 const api = axios.create({
   baseURL,
@@ -55,6 +116,10 @@ export function clearCsrfToken() {
 api.interceptors.request.use(async (config) => {
   if (_token) {
     config.headers.Authorization = `Bearer ${_token}`;
+  }
+
+  if (!isNative) {
+    assertSafeWebApiRequest(config.url, config.baseURL || baseURL);
   }
 
   const activeSchoolId = getActiveSchoolId();

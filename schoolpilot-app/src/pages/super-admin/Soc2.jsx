@@ -14,7 +14,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { ThemeToggle } from '../../components/ThemeToggle';
-import api from '../../shared/utils/api';
+import api, { resolveApiRequestUrl } from '../../shared/utils/api';
 
 const TABS = [
   ['overview', 'Overview'],
@@ -62,6 +62,33 @@ function statusIcon(value) {
   if (value === 'action_required') return <AlertTriangle className="h-4 w-4" />;
   if (value === 'in_progress') return <Clock className="h-4 w-4" />;
   return <XCircle className="h-4 w-4" />;
+}
+
+function resolveFailedRequestUrl(error) {
+  const configUrl = error?.config?.url;
+  if (!configUrl) return '';
+
+  try {
+    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+    const base = error?.config?.baseURL || `${origin}/api`;
+    return resolveApiRequestUrl(configUrl, base, origin);
+  } catch {
+    return configUrl;
+  }
+}
+
+function soc2DashboardError(error, fallbackMessage) {
+  const serverError = error?.response?.data?.error;
+  if (serverError) return serverError;
+
+  const failedUrl = resolveFailedRequestUrl(error);
+  const expectedUrl = typeof window !== 'undefined'
+    ? `${window.location.origin}/api/super-admin/soc2/readiness`
+    : '/api/super-admin/soc2/readiness';
+  const networkMessage = error?.message ? ` Network error: ${error.message}.` : '';
+  const requestMessage = failedUrl ? ` Request URL: ${failedUrl}.` : '';
+
+  return `${fallbackMessage}${networkMessage}${requestMessage} Expected same-origin API route: ${expectedUrl}. Refresh and retry; if this persists, a stale deployed bundle or cache may be using an old backend host.`;
 }
 
 function Badge({ children, className = '' }) {
@@ -303,7 +330,7 @@ export default function Soc2() {
       setData(res.data);
       setLastUpdatedAt(new Date());
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to load SOC 2 readiness.');
+      setError(soc2DashboardError(err, 'Failed to load SOC 2 readiness.'));
     } finally {
       setLoading(false);
     }
@@ -327,7 +354,7 @@ export default function Soc2() {
       setResyncResult(res.data);
       await loadData();
     } catch (err) {
-      setError(err.response?.data?.error || 'Unable to queue SOC 2 resync.');
+      setError(soc2DashboardError(err, 'Unable to queue SOC 2 resync.'));
     } finally {
       setResyncing(false);
     }
