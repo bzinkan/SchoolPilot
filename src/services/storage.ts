@@ -282,9 +282,10 @@ export async function updateUser(
 // ============================================================================
 
 export async function getSchoolById(
-  id: string
+  id: string,
+  dbInstance: typeof db = db
 ): Promise<School | undefined> {
-  const [school] = await db
+  const [school] = await dbInstance
     .select()
     .from(schools)
     .where(eq(schools.id, id))
