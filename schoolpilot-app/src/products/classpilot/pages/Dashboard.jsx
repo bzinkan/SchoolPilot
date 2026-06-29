@@ -145,6 +145,7 @@ export default function Dashboard() {
   const [adminStartGroupId, setAdminStartGroupId] = useState("");
   const [classStartOverlap, setClassStartOverlap] = useState(null);
   const [classResyncOverlap, setClassResyncOverlap] = useState(null);
+  const [quickClaimStudentId, setQuickClaimStudentId] = useState(null);
   const dismissedMessageIds = useRef(new Set());
   const dismissedMessagesInitialized = useRef(false);
   // eslint-disable-next-line react-hooks/refs
@@ -1370,17 +1371,24 @@ export default function Dashboard() {
       }
       return Promise.all(requests);
     },
-    onSuccess: () => {
+    onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['/api/coverage/available-students'] });
       queryClient.invalidateQueries({ queryKey: ['/api/coverage/claimed-students'] });
       queryClient.invalidateQueries({ queryKey: ['/api/coverage/contexts'] });
       queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
       clearSelection();
       setStudentView("claimed");
-      toast({ title: "Students claimed", description: "They are now in your claimed view." });
+      const isQuickClaim = variables?.quickClaimStudentId && variables?.students?.length === 1;
+      toast({
+        title: isQuickClaim ? "Student claimed" : "Students claimed",
+        description: isQuickClaim ? "The student is now in your claimed view." : "They are now in your claimed view.",
+      });
     },
     onError: (error) => {
       toast({ variant: "destructive", title: "Could not claim students", description: error.response?.data?.error || error.message });
+    },
+    onSettled: () => {
+      setQuickClaimStudentId(null);
     },
   });
 
@@ -1431,12 +1439,13 @@ export default function Dashboard() {
     },
   });
 
-  const handleClaimStudents = (studentsToClaim) => {
+  const handleClaimStudents = (studentsToClaim, options = {}) => {
     if (!studentsToClaim.length) {
       toast({ variant: "destructive", title: "Select students first" });
       return;
     }
-    claimPickupMutation.mutate({ students: studentsToClaim });
+    setQuickClaimStudentId(options.quickClaimStudentId || null);
+    claimPickupMutation.mutate({ students: studentsToClaim, quickClaimStudentId: options.quickClaimStudentId || null });
   };
 
   const handleRerouteSelected = () => {
@@ -2484,13 +2493,13 @@ export default function Dashboard() {
                           <div className="mt-4 flex justify-end">
                             <Button
                               size="sm"
-                              variant="outline"
-                              onClick={() => handleClaimStudents([student])}
+                              onClick={() => handleClaimStudents([student], { quickClaimStudentId: student.studentId })}
                               disabled={claimPickupMutation.isPending}
                               data-testid={`button-claim-scheduled-student-${student.studentId}`}
+                              className="bg-amber-400 text-slate-950 hover:bg-amber-300 focus-visible:ring-amber-300 disabled:bg-amber-200 disabled:text-slate-700"
                             >
                               <UserCheck className="h-4 w-4 mr-2" />
-                              Claim
+                              {claimPickupMutation.isPending && quickClaimStudentId === student.studentId ? "Claiming..." : "Claim"}
                             </Button>
                           </div>
                         </div>
@@ -2557,13 +2566,13 @@ export default function Dashboard() {
                           <div className="mt-4 flex justify-end">
                             <Button
                               size="sm"
-                              variant="outline"
-                              onClick={() => handleClaimStudents([student])}
-                              disabled={claimPickupMutation.isPending || !((student.matchingGroups || []).length || (student.matchingScopes || []).length)}
+                              onClick={() => handleClaimStudents([student], { quickClaimStudentId: student.studentId })}
+                              disabled={claimPickupMutation.isPending}
                               data-testid={`button-claim-student-${student.studentId}`}
+                              className="bg-amber-400 text-slate-950 hover:bg-amber-300 focus-visible:ring-amber-300 disabled:bg-amber-200 disabled:text-slate-700"
                             >
                               <UserCheck className="h-4 w-4 mr-2" />
-                              Claim
+                              {claimPickupMutation.isPending && quickClaimStudentId === student.studentId ? "Claiming..." : "Claim"}
                             </Button>
                           </div>
                         </div>
