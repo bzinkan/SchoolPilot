@@ -24,6 +24,9 @@ const TABS = [
   ['claims', 'Claims/Risks'],
 ];
 
+const SOC2_READINESS_PATH = '/admin/soc2/readiness';
+const SOC2_RESYNC_PATH = '/admin/soc2/resync';
+
 const STATUS_STYLES = {
   ready: 'border-emerald-200 bg-emerald-50 text-emerald-700',
   in_progress: 'border-sky-200 bg-sky-50 text-sky-700',
@@ -66,7 +69,19 @@ function statusIcon(value) {
 function sameOriginApiUrl(path) {
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
   if (typeof window === 'undefined') return `/api${normalizedPath}`;
-  return new URL(`/api${normalizedPath}`, window.location.origin).toString();
+  const url = new URL(`/api${normalizedPath}`, window.location.origin);
+
+  // CloudFront redirects HTTP viewers to HTTPS. Build the dashboard API URL as
+  // HTTPS directly on production domains so manual redirect handling never
+  // blocks an otherwise-valid same-origin API request.
+  if (
+    (url.hostname === 'school-pilot.net' || url.hostname === 'www.school-pilot.net') &&
+    url.protocol !== 'https:'
+  ) {
+    url.protocol = 'https:';
+  }
+
+  return url.toString();
 }
 
 function createSoc2RequestError(message, requestUrl, responseData, status) {
@@ -136,8 +151,8 @@ function soc2DashboardError(error, fallbackMessage) {
 
   const failedUrl = error?.requestUrl || '';
   const expectedUrl = typeof window !== 'undefined'
-    ? `${window.location.origin}/api/super-admin/soc2/readiness`
-    : '/api/super-admin/soc2/readiness';
+    ? sameOriginApiUrl(SOC2_READINESS_PATH)
+    : `/api${SOC2_READINESS_PATH}`;
   const networkMessage = error?.message ? ` Network error: ${error.message}.` : '';
   const requestMessage = failedUrl ? ` Request URL: ${failedUrl}.` : '';
 
@@ -379,7 +394,7 @@ export default function Soc2() {
     setLoading(true);
     setError('');
     try {
-      const readiness = await soc2Fetch('/super-admin/soc2/readiness');
+      const readiness = await soc2Fetch(SOC2_READINESS_PATH);
       setData(readiness);
       setLastUpdatedAt(new Date());
     } catch (err) {
@@ -404,7 +419,7 @@ export default function Soc2() {
     setError('');
     try {
       const token = await getCsrfToken();
-      const result = await soc2Fetch('/super-admin/soc2/resync', {
+      const result = await soc2Fetch(SOC2_RESYNC_PATH, {
         method: 'POST',
         headers: token ? { 'X-CSRF-Token': token } : {},
       });
