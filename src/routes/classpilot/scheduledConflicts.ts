@@ -109,6 +109,14 @@ function broadcastConflictUpdate(schoolId: string, conflictId: string) {
   });
 }
 
+function expiredScheduledConflictResponse(res: any) {
+  return res.status(409).json({
+    code: "SCHEDULED_CONFLICT_EXPIRED",
+    status: "expired",
+    error: "This scheduled block has ended. Students will move with the next class or become available again.",
+  });
+}
+
 router.get("/scheduled-conflicts", ...auth, async (req, res, next) => {
   try {
     const schoolId = res.locals.schoolId!;
@@ -129,13 +137,22 @@ router.post("/scheduled-conflicts/:id/start-anyway", ...auth, async (req, res, n
   try {
     const schoolId = res.locals.schoolId!;
     const conflict = await getScheduledClassConflictByIdAndSchool(param(req, "id"), schoolId);
-    if (!conflict || !["coverage_needed", "claimed", "pending"].includes(conflict.status)) return res.status(404).json({ error: "Scheduled coverage request not found" });
+    if (!conflict) return res.status(404).json({ error: "Scheduled coverage request not found" });
+    if (conflict.status === "expired") return expiredScheduledConflictResponse(res);
+    if (!["coverage_needed", "claimed", "pending"].includes(conflict.status)) return res.status(404).json({ error: "Scheduled coverage request not found" });
     if (!isAdmin(req, res) && conflict.teacherId !== req.authUser!.id) {
       return res.status(403).json({ error: "Only an admin or the scheduled teacher can start this class" });
     }
     const session = await startScheduledClassFromConflict({ conflict, actorId: req.authUser!.id });
     return res.status(201).json({ session });
   } catch (err) {
+    if ((err as any)?.code === "SCHEDULED_CONFLICT_EXPIRED") return expiredScheduledConflictResponse(res);
+    if ((err as any)?.code === "SCHEDULED_CONFLICT_NOT_ACTIVE") {
+      return res.status(409).json({
+        code: "SCHEDULED_CONFLICT_NOT_ACTIVE",
+        error: (err as Error).message,
+      });
+    }
     next(err);
   }
 });

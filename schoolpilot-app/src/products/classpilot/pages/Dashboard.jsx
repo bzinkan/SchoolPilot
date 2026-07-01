@@ -1314,6 +1314,17 @@ export default function Dashboard() {
       toast({ title: "Class Started", description: "Scheduled class started. Temporary scheduled coverage was released." });
     },
     onError: (error) => {
+      if (error.response?.data?.code === "SCHEDULED_CONFLICT_EXPIRED") {
+        queryClient.invalidateQueries({ queryKey: ['/api/classpilot/scheduled-conflicts'] });
+        queryClient.invalidateQueries({ queryKey: ['/api/coverage/available-students'] });
+        queryClient.invalidateQueries({ queryKey: ['/api/coverage/claimed-students'] });
+        queryClient.invalidateQueries({ queryKey: ['/api/coverage/contexts'] });
+        toast({
+          title: "Scheduled block ended",
+          description: "This scheduled block has ended. Students will move with the next class or become available again.",
+        });
+        return;
+      }
       toast({ variant: "destructive", title: "Could not start scheduled class", description: error.response?.data?.error || error.message });
     },
   });
@@ -1385,6 +1396,17 @@ export default function Dashboard() {
       });
     },
     onError: (error) => {
+      if (error.response?.data?.code === "SCHEDULED_CONFLICT_EXPIRED") {
+        queryClient.invalidateQueries({ queryKey: ['/api/classpilot/scheduled-conflicts'] });
+        queryClient.invalidateQueries({ queryKey: ['/api/coverage/available-students'] });
+        queryClient.invalidateQueries({ queryKey: ['/api/coverage/claimed-students'] });
+        queryClient.invalidateQueries({ queryKey: ['/api/coverage/contexts'] });
+        toast({
+          title: "Scheduled block ended",
+          description: "This scheduled block has ended. Students will move with the next class or become available again.",
+        });
+        return;
+      }
       toast({ variant: "destructive", title: "Could not claim students", description: error.response?.data?.error || error.message });
     },
     onSettled: () => {
@@ -2270,7 +2292,11 @@ export default function Dashboard() {
                       </div>
                     )}
                   </div>
-                  {conflict.canStartAnyway && (
+                  {conflict.status === "expired" ? (
+                    <p className="shrink-0 rounded-md bg-white/80 px-3 py-2 text-sm font-medium text-slate-700 dark:bg-slate-900/60 dark:text-slate-200">
+                      This scheduled block has ended.
+                    </p>
+                  ) : conflict.canStartAnyway && (
                     <div className="flex shrink-0 items-center gap-2">
                       <Button
                         size="sm"
