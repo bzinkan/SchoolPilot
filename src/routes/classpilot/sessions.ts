@@ -617,45 +617,51 @@ export async function buildAndSendSessionSummary(
   }
 }
 
-export async function buildAndSendScheduledReportCentralSummary(
+export async function buildAndSendScheduledReportSummary(
   session: SessionSummarySession,
   dbInstance: typeof db = db,
   options: { endTimeOverride?: Date; copyNotice?: string } = {}
-): Promise<boolean> {
+): Promise<{ teacherSent: boolean; centralSent: boolean }> {
   const summary = await buildSessionSummaryData(session, dbInstance, options);
   if (!summary.group?.schoolId) {
-    console.log(`[SessionSummary] Scheduled report central copy skipped for "${summary.className}" - missing school`);
-    return false;
+    console.log(`[SessionSummary] Scheduled report skipped for "${summary.className}" - missing school`);
+    return { teacherSent: false, centralSent: false };
+  }
+
+  const scheduledTeacher = await getUserById(summary.group.teacherId);
+  const scheduledTeacherEmail = scheduledTeacher?.email?.trim();
+  const scheduledTeacherName = recipientName(scheduledTeacher, "scheduled teacher");
+  const copyNotice = options.copyNotice
+    || `Unattended scheduled reporting block. The scheduled teacher (${scheduledTeacherName}) did not have a live ClassPilot session for this block.`;
+
+  let teacherSent = false;
+  if (scheduledTeacherEmail) {
+    await sendSessionSummaryTo(summary, scheduledTeacherEmail, scheduledTeacherName, copyNotice);
+    teacherSent = true;
+    console.log(
+      `[SessionSummary] Scheduled report sent to primary teacher ${scheduledTeacherEmail} for "${summary.className}" (${summary.rawStartTime.toISOString()} - ${summary.rawEndTime.toISOString()})`
+    );
+  } else {
+    console.log(`[SessionSummary] Scheduled report teacher copy skipped for "${summary.className}" - missing scheduled teacher email`);
   }
 
   const centralRecipient = await getCentralEmailRecipientForSchool(summary.group.schoolId, dbInstance);
   const centralEmail = centralRecipient?.email?.trim();
   if (!centralEmail) {
     console.log(`[SessionSummary] Scheduled report central copy skipped for "${summary.className}" - no central recipient configured`);
-    return false;
+    return { teacherSent, centralSent: false };
   }
 
-  const scheduledTeacher = await getUserById(summary.group.teacherId);
-  const scheduledTeacherEmail = scheduledTeacher?.email?.trim().toLowerCase();
-  if (scheduledTeacherEmail && scheduledTeacherEmail === centralEmail.toLowerCase()) {
+  if (scheduledTeacherEmail && scheduledTeacherEmail.toLowerCase() === centralEmail.toLowerCase()) {
     console.log(`[SessionSummary] Scheduled report central copy skipped for "${summary.className}" - central recipient is the scheduled teacher`);
-    return false;
+    return { teacherSent, centralSent: false };
   }
 
-  const scheduledTeacherName = recipientName(scheduledTeacher, "scheduled teacher");
-  const copyNotice = options.copyNotice
-    || `Unattended scheduled reporting block. The scheduled teacher (${scheduledTeacherName}) did not have a live ClassPilot session for this block.`;
-
-  await sendSessionSummaryTo(
-    summary,
-    centralEmail,
-    recipientName(centralRecipient, "School Team"),
-    copyNotice
-  );
+  await sendSessionSummaryTo(summary, centralEmail, recipientName(centralRecipient, "School Team"), copyNotice);
   console.log(
     `[SessionSummary] Central scheduled report sent to ${centralEmail} for "${summary.className}" (${summary.rawStartTime.toISOString()} - ${summary.rawEndTime.toISOString()})`
   );
-  return true;
+  return { teacherSent, centralSent: true };
 }
 
 export default router;

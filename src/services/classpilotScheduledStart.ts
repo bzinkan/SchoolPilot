@@ -3,7 +3,7 @@ import { broadcastToTeachersLocal, isStaffUserConnectedLocal } from "../realtime
 import type { ClasspilotScheduledConflict, Group, TeachingSession } from "../schema/classpilot.js";
 import type { Student } from "../schema/students.js";
 import { localDateInTimeZone, localDateStartUtc } from "../util/schoolTime.js";
-import { buildAndSendScheduledReportCentralSummary } from "../routes/classpilot/sessions.js";
+import { buildAndSendScheduledReportSummary } from "../routes/classpilot/sessions.js";
 import {
   clearClasspilotActiveHandsForSession,
   createOrReuseScheduledReportSession,
@@ -447,7 +447,7 @@ export async function expireScheduledClassConflict(options: {
     conflict: options.conflict,
     releaseReason: "scheduled_window_ended",
     dbInstance,
-    sendCentralScheduledReport: true,
+    sendScheduledReportEmails: true,
   });
   const updated = await resolveScheduledClassConflict(
     options.conflict.id,
@@ -464,7 +464,7 @@ export async function closeScheduledConflictReporting(options: {
   conflict: ClasspilotScheduledConflict;
   releaseReason: string;
   dbInstance?: typeof db;
-  sendCentralScheduledReport?: boolean;
+  sendScheduledReportEmails?: boolean;
 }): Promise<void> {
   const dbInstance = options.dbInstance;
   await releaseScheduledConflictSupervision({
@@ -478,19 +478,19 @@ export async function closeScheduledConflictReporting(options: {
     dbInstance
   );
   if (reportSession) {
-    if (options.sendCentralScheduledReport) {
+    if (options.sendScheduledReportEmails) {
       try {
         const school = await getSchoolById(options.conflict.schoolId);
         const timeZone = school?.schoolTimezone || "America/New_York";
         const endTimeOverride = options.conflict.blockEndTime
           ? scheduledBlockStartUtc(options.conflict.scheduledDate, options.conflict.blockEndTime, timeZone)
           : undefined;
-        await buildAndSendScheduledReportCentralSummary(reportSession, dbInstance, {
+        await buildAndSendScheduledReportSummary(reportSession, dbInstance, {
           endTimeOverride,
           copyNotice: "Unattended scheduled reporting block. The scheduled teacher did not have a live ClassPilot session for this block.",
         });
       } catch (err) {
-        console.error("[SessionSummary] Scheduled report central copy failed:", err);
+        console.error("[SessionSummary] Scheduled report email failed:", err);
       }
     }
     await endTeachingSession(reportSession.id, dbInstance);
