@@ -363,6 +363,9 @@ router.post("/:id/resync", ...auth, async (req, res, next) => {
     if (!session || session.endTime) {
       return res.status(404).json({ error: "Active class session not found" });
     }
+    if ((session as any).sessionMode && (session as any).sessionMode !== "live") {
+      return res.status(403).json({ error: "This scheduled reporting block is not a live class session" });
+    }
 
     const group = await getGroupByIdAndSchool(session.groupId, schoolId);
     if (!group) {

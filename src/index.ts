@@ -350,6 +350,10 @@ export async function runStartupMigrations(): Promise<void> {
     await pool.query(`CREATE INDEX IF NOT EXISTS teaching_sessions_school_id_idx ON teaching_sessions (school_id)`);
     await pool.query(`ALTER TABLE teaching_sessions ADD COLUMN IF NOT EXISTS control_updated_at TIMESTAMP`);
     await pool.query(`CREATE INDEX IF NOT EXISTS teaching_sessions_control_updated_at_idx ON teaching_sessions (control_updated_at)`);
+    await pool.query(`ALTER TABLE teaching_sessions ADD COLUMN IF NOT EXISTS session_mode TEXT NOT NULL DEFAULT 'live'`);
+    await pool.query(`ALTER TABLE teaching_sessions ADD COLUMN IF NOT EXISTS scheduled_conflict_id TEXT`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS teaching_sessions_session_mode_idx ON teaching_sessions (session_mode)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS teaching_sessions_scheduled_conflict_idx ON teaching_sessions (scheduled_conflict_id)`);
 
     await pool.query(`ALTER TABLE parent_student ADD COLUMN IF NOT EXISTS school_id TEXT`);
     await pool.query(`UPDATE parent_student ps SET school_id = st.school_id FROM students st WHERE st.id = ps.student_id AND ps.school_id IS NULL`);

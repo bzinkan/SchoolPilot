@@ -42,6 +42,10 @@ function asSystem<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 async function ensureAnalyticsTables() {
+  await db.execute(sql`ALTER TABLE teaching_sessions ADD COLUMN IF NOT EXISTS session_mode TEXT NOT NULL DEFAULT 'live'`);
+  await db.execute(sql`ALTER TABLE teaching_sessions ADD COLUMN IF NOT EXISTS scheduled_conflict_id TEXT`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS teaching_sessions_session_mode_idx ON teaching_sessions (session_mode)`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS teaching_sessions_scheduled_conflict_idx ON teaching_sessions (scheduled_conflict_id)`);
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS classpilot_session_students (
       id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),

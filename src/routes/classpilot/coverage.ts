@@ -23,6 +23,7 @@ import {
   getGroupsBySchool,
   getGroupByIdAndSchool,
   getGroupStudents,
+  getGroupTeachers,
   getMembershipByUserAndSchool,
   getOnlineUnassignedStudents,
   getSettingsForSchool,
@@ -718,6 +719,21 @@ async function scheduledCoverageStudentPayload(
   };
 }
 
+async function canManageScheduledCoverageStudent(
+  req: any,
+  res: any,
+  conflict: any,
+  student: any,
+  activeAssignments: any[]
+): Promise<boolean> {
+  if (isAdmin(req, res)) return true;
+  const userId = req.authUser!.id;
+  if (conflict.teacherId === userId) return true;
+  const groupTeachers = await getGroupTeachers(conflict.groupId);
+  if (groupTeachers.some((teacher) => teacher.teacherId === userId)) return true;
+  return assignmentsCoverStudent(activeAssignments, student);
+}
+
 async function scheduledCoverageGroupsForRequest(req: any, res: any, activeAssignments: any[]) {
   const schoolId = res.locals.schoolId!;
   const conflicts = await listActiveScheduledClassConflicts(schoolId);
@@ -740,14 +756,14 @@ async function scheduledCoverageGroupsForRequest(req: any, res: any, activeAssig
     for (const entry of scheduledPayload.claimableStudents) {
       const student = await getStudentById(entry.studentId);
       if (!student || student.schoolId !== schoolId) continue;
-      if (!isAdmin(req, res) && !(await assignmentsCoverStudent(activeAssignments, student))) continue;
+      if (!(await canManageScheduledCoverageStudent(req, res, conflict, student, activeAssignments))) continue;
       visibleStudents.push(await scheduledCoverageStudentPayload(schoolId, student, scheduledCoverage));
     }
     if (visibleStudents.length === 0) continue;
     groups.push({
       id: conflict.id,
       kind: "scheduled_coverage",
-      label: `Scheduled Coverage Needed: ${scheduledPayload.selectedClass.name}`,
+      label: `Scheduled Supervision Needed: ${scheduledPayload.selectedClass.name}`,
       className: scheduledPayload.selectedClass.name,
       teacherName,
       scheduledTeacher: scheduledPayload.scheduledTeacher,
@@ -1618,7 +1634,7 @@ async function assignStudentsToScheduledCoverage(options: {
     context: {
       schoolId: options.schoolId,
       contextType: "scheduled_coverage",
-      name: `Scheduled Coverage: ${options.className}`,
+      name: `Scheduled Supervision: ${options.className}`,
       status: "active",
       assignedStaffId: options.assignedStaffId,
       coverageGroupId: null,
@@ -1679,7 +1695,7 @@ router.post("/coverage/claim", ...auth, async (req, res, next) => {
       if (!isAdmin(req, res)) {
         const assignments = await getActiveCoverageAssignmentsForStaff(schoolId, req.authUser!.id);
         for (const student of students) {
-          if (!(await assignmentsCoverStudent(assignments, student))) {
+          if (!(await canManageScheduledCoverageStudent(req, res, conflict, student, assignments))) {
             return res.status(403).json({ error: "One or more students are outside your supervision scope" });
           }
         }

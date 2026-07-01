@@ -2,12 +2,14 @@ import type db from "../db.js";
 import { broadcastToTeachersLocal, isStaffUserConnectedLocal } from "../realtime/ws-broadcast.js";
 import type { ClasspilotScheduledConflict, Group, TeachingSession } from "../schema/classpilot.js";
 import type { Student } from "../schema/students.js";
-import { localDateInTimeZone } from "../util/schoolTime.js";
+import { localDateInTimeZone, localDateStartUtc } from "../util/schoolTime.js";
 import {
   clearClasspilotActiveHandsForSession,
+  createOrReuseScheduledReportSession,
   createTeachingSession,
   endTeachingSession,
   getActiveClassOwnersForStudents,
+  getActiveScheduledReportSessionForConflict,
   getActiveSessionByStudent,
   getActiveSupervisionForStudents,
   getActiveTeachingSessionForSchool,
@@ -19,6 +21,7 @@ import {
   listActiveScheduledClassConflictsReadyToExpire,
   listActiveScheduledClassConflictsForTeacher,
   listActiveSupervisionContextsForScheduledConflict,
+  promoteScheduledReportSessionToLive,
   releaseScheduledConflictSupervision,
   resolveScheduledClassConflict,
   upsertScheduledClassConflict,
@@ -50,6 +53,9 @@ export type ScheduledCoveragePayload = {
   scheduledDate: string;
   blockStartTime: string | null;
   blockEndTime: string | null;
+  reportingState: "active";
+  needsSupervision: boolean;
+  teacherConnected: boolean;
   totalRosterCount: number;
   claimableCount: number;
   monitoredCount: number;
@@ -107,6 +113,12 @@ function isWithinScheduleWindow(group: Group, currentTimeHHMM: string): boolean 
 
 function scheduleWindowEnded(group: Group, currentTimeHHMM: string): boolean {
   return !!group.blockEndTime && group.blockEndTime <= currentTimeHHMM;
+}
+
+function scheduledBlockStartUtc(scheduledDate: string, blockStartTime: string, timeZone: string): Date {
+  const [hour = 0, minute = 0] = blockStartTime.split(":").map(Number);
+  const dayStart = localDateStartUtc(scheduledDate, timeZone);
+  return new Date(dayStart.getTime() + ((hour || 0) * 60 + (minute || 0)) * 60 * 1000);
 }
 
 function scheduledConflictExpiredError(message = "This scheduled block has ended."): Error & { status: number; code: string } {
@@ -226,6 +238,9 @@ export async function buildScheduledCoveragePayload(options: {
     scheduledDate: options.scheduledDate,
     blockStartTime: group.blockStartTime || null,
     blockEndTime: group.blockEndTime || null,
+    reportingState: "active",
+    needsSupervision: true,
+    teacherConnected: false,
     totalRosterCount: rows.length,
     claimableCount: claimableStudents.length,
     monitoredCount,
@@ -265,7 +280,18 @@ async function startScheduledClass(options: {
     await clearClasspilotActiveHandsForSession(options.group.schoolId, existingSession.id, dbInstance);
   }
 
-  const session = await createTeachingSession({ groupId: options.group.id, teacherId: options.group.teacherId }, dbInstance);
+  const promotedSession = options.scheduledConflict
+    ? await promoteScheduledReportSessionToLive({
+      schoolId: options.group.schoolId,
+      scheduledConflictId: options.scheduledConflict.id,
+    }, dbInstance)
+    : undefined;
+  const session = promotedSession || await createTeachingSession({
+    groupId: options.group.id,
+    teacherId: options.group.teacherId,
+    sessionMode: "live",
+    scheduledConflictId: options.scheduledConflict?.id,
+  } as any, dbInstance);
   if (options.scheduledConflict) {
     await resolveScheduledClassConflict(
       options.scheduledConflict.id,
@@ -367,6 +393,15 @@ export async function processScheduledClassAutoStart(options: {
     conflictPayload: payload,
     scheduledTeacherConnected: false,
   }, dbInstance);
+  const school = await getSchoolById(group.schoolId);
+  const timeZone = school?.schoolTimezone || "America/New_York";
+  await createOrReuseScheduledReportSession({
+    schoolId: group.schoolId,
+    groupId: group.id,
+    teacherId: group.teacherId,
+    scheduledConflictId: conflict.id,
+    startTime: scheduledBlockStartUtc(options.scheduledDate, blockStartTime, timeZone),
+  }, dbInstance);
   broadcastToTeachersLocal(group.schoolId, conflictBroadcast(conflict.id));
   return { status: status === "claimed" ? "claimed" : "coverage_needed", conflictId: conflict.id };
 }
@@ -407,11 +442,11 @@ export async function expireScheduledClassConflict(options: {
 }): Promise<ClasspilotScheduledConflict | undefined> {
   const dbInstance = options.dbInstance;
   if (options.conflict.status === "expired") return options.conflict;
-  await releaseScheduledConflictSupervision({
-    schoolId: options.conflict.schoolId,
-    scheduledConflictId: options.conflict.id,
+  await closeScheduledConflictReporting({
+    conflict: options.conflict,
     releaseReason: "scheduled_window_ended",
-  }, dbInstance);
+    dbInstance,
+  });
   const updated = await resolveScheduledClassConflict(
     options.conflict.id,
     options.conflict.schoolId,
@@ -421,6 +456,28 @@ export async function expireScheduledClassConflict(options: {
   );
   broadcastToTeachersLocal(options.conflict.schoolId, conflictBroadcast(options.conflict.id));
   return updated;
+}
+
+export async function closeScheduledConflictReporting(options: {
+  conflict: ClasspilotScheduledConflict;
+  releaseReason: string;
+  dbInstance?: typeof db;
+}): Promise<void> {
+  const dbInstance = options.dbInstance;
+  await releaseScheduledConflictSupervision({
+    schoolId: options.conflict.schoolId,
+    scheduledConflictId: options.conflict.id,
+    releaseReason: options.releaseReason,
+  }, dbInstance);
+  const reportSession = await getActiveScheduledReportSessionForConflict(
+    options.conflict.schoolId,
+    options.conflict.id,
+    dbInstance
+  );
+  if (reportSession) {
+    await endTeachingSession(reportSession.id, dbInstance);
+    await clearClasspilotActiveHandsForSession(options.conflict.schoolId, reportSession.id, dbInstance);
+  }
 }
 
 export async function expireScheduledClassConflictsForSchool(options: {

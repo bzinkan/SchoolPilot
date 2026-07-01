@@ -287,12 +287,16 @@ export const teachingSessions = pgTable(
     schoolId: text("school_id"),
     startTime: timestamp("start_time").notNull().default(sql`now()`),
     controlUpdatedAt: timestamp("control_updated_at"),
+    sessionMode: text("session_mode").notNull().default("live"),
+    scheduledConflictId: text("scheduled_conflict_id"),
     endTime: timestamp("end_time"),
     createdAt: timestamp("created_at").notNull().default(sql`now()`),
   },
   (table) => [
     index("teaching_sessions_group_id_idx").on(table.groupId),
     index("teaching_sessions_teacher_id_idx").on(table.teacherId),
+    index("teaching_sessions_session_mode_idx").on(table.sessionMode),
+    index("teaching_sessions_scheduled_conflict_idx").on(table.scheduledConflictId),
   ]
 );
 
