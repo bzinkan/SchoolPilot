@@ -46,6 +46,10 @@ function asSystem<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 before(async () => {
+  await asSystem(async () => {
+    await db.execute(sql`ALTER TABLE teaching_sessions ADD COLUMN IF NOT EXISTS session_mode TEXT NOT NULL DEFAULT 'live'`);
+    await db.execute(sql`ALTER TABLE teaching_sessions ADD COLUMN IF NOT EXISTS scheduled_conflict_id TEXT`);
+  });
   school = await createSchool({
     name: `${TAG}_School`,
     domain: `${TAG}.example.edu`,

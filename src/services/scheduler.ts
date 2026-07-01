@@ -265,6 +265,7 @@ async function autoEndStaleClassPilotSessions() {
         teacherId: teachingSessions.teacherId,
         groupId: teachingSessions.groupId,
         startTime: teachingSessions.startTime,
+        sessionMode: teachingSessions.sessionMode,
         schoolId: schools.id,
         schoolTimezone: schools.schoolTimezone,
       })
@@ -314,7 +315,7 @@ async function autoEndStaleClassPilotSessions() {
         console.log(`[ClassPilot] Auto-ended stale session ${s.sessionId} for teacher ${s.teacherId} (${reason}, age: ${ageHours.toFixed(1)}h)`);
 
         // Send session summary email (same as manual/scheduled end)
-        if (session?.startTime && session?.endTime) {
+        if (session?.startTime && session?.endTime && s.sessionMode !== "scheduled_report") {
           const teacher = await getUserById(s.teacherId);
           if (teacher) {
             buildAndSendSessionSummary(session, {
@@ -842,7 +843,7 @@ async function autoEndClassBlocks() {
         console.log(`[ClassPilot] Auto-ended session for "${group.name}" (teacher ${group.teacherId}, school ${school.id})`);
 
         // Send session summary email (same as manual end)
-        if (session?.startTime && session?.endTime) {
+        if (session?.startTime && session?.endTime && group.sessionMode !== "scheduled_report") {
           const teacher = await getUserById(group.teacherId);
           if (teacher) {
             buildAndSendSessionSummary(session, {

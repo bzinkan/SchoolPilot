@@ -50,6 +50,9 @@ async function resolveTargets(req: Request, res: Response, body: any): Promise<R
 
   const session = await getTeachingSessionByIdAndSchool(teachingSessionId, schoolId);
   if (!session || session.endTime) throw Object.assign(new Error("Active class session not found"), { status: 404 });
+  if ((session as any).sessionMode && (session as any).sessionMode !== "live") {
+    throw Object.assign(new Error("This scheduled reporting block is not a live class session"), { status: 403 });
+  }
   if (!isAdmin && session.teacherId !== userId) {
     const coTeachers = await getGroupTeachers(session.groupId);
     if (!coTeachers.some((teacher) => teacher.teacherId === userId)) {

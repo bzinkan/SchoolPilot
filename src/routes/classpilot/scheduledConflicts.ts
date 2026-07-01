@@ -12,7 +12,7 @@ import {
   setScheduleSkippedDate,
 } from "../../services/storage.js";
 import { broadcastToTeachersLocal, isStaffUserConnectedLocal } from "../../realtime/ws-broadcast.js";
-import { startScheduledClassFromConflict } from "../../services/classpilotScheduledStart.js";
+import { closeScheduledConflictReporting, startScheduledClassFromConflict } from "../../services/classpilotScheduledStart.js";
 
 const router = Router();
 
@@ -53,10 +53,19 @@ async function affectedTeacherIds(conflict: any): Promise<Set<string>> {
   return ids;
 }
 
+async function scheduledClassStaffIds(conflict: any): Promise<Set<string>> {
+  const ids = new Set<string>([conflict.teacherId].filter(Boolean));
+  const teachers = await getGroupTeachers(conflict.groupId);
+  teachers.forEach((teacher) => ids.add(teacher.teacherId));
+  return ids;
+}
+
 async function viewContext(conflict: any, userId: string, admin: boolean) {
   const affected = await affectedTeacherIds(conflict);
+  const scheduledStaff = await scheduledClassStaffIds(conflict);
   if (admin) return { visible: true, audience: "admin", canAct: true };
   if (conflict.teacherId === userId) return { visible: true, audience: "scheduled_teacher", canAct: true };
+  if (scheduledStaff.has(userId)) return { visible: true, audience: "scheduled_coteacher", canAct: false };
   if (affected.has(userId)) return { visible: true, audience: "affected_teacher", canAct: false };
   return { visible: false, audience: "none", canAct: false };
 }
@@ -67,13 +76,16 @@ function conflictMessage(conflict: any, teacherName: string, audience: string): 
   const count = data.claimableCount ?? data.totalOverlapCount ?? 0;
   const connected = conflict.scheduledTeacherConnected === true || isStaffUserConnectedLocal(conflict.schoolId, conflict.teacherId);
   if (audience === "scheduled_teacher") {
-    return `${className} was scheduled to start while you were not logged in. ${count} student${count === 1 ? "" : "s"} may be waiting under Available until you start the class.`;
+    return `${className} started while you were not logged in. Reporting is active, and ${count} student${count === 1 ? "" : "s"} may be waiting under Available until you open ClassPilot.`;
+  }
+  if (audience === "scheduled_coteacher") {
+    return `${className} has started for ${teacherName}, but ${teacherName} is not currently logged in. Reporting is active; this block needs supervision.`;
   }
   if (!connected) {
     if (audience === "affected_teacher") {
-      return `${teacherName}'s ${className} was scheduled to start, but ${teacherName} is not currently logged in. Students remain in your class unless an admin, eligible staff member, or the scheduled teacher picks them up.`;
+      return `${teacherName}'s ${className} has started, but ${teacherName} is not currently logged in. Reporting is active; students remain in your class unless an admin, co-teacher, eligible staff member, or the scheduled teacher picks them up.`;
     }
-    return `${className} was scheduled to start for ${teacherName}, but ${teacherName} is not currently logged in. ClassPilot pushed available online students into Scheduled Coverage Needed instead of creating an unattended class.`;
+    return `${className} has started for ${teacherName}, but ${teacherName} is not currently logged in. Reporting is active; this block needs supervision.`;
   }
   return `${className} is waiting for scheduled coverage. ${count} student${count === 1 ? "" : "s"} may be available for temporary pickup.`;
 }
@@ -166,6 +178,10 @@ router.post("/scheduled-conflicts/:id/skip", ...auth, async (req, res, next) => 
       return res.status(403).json({ error: "Only an admin or the scheduled teacher can skip this class" });
     }
     await setScheduleSkippedDate(conflict.groupId, conflict.scheduledDate);
+    await closeScheduledConflictReporting({
+      conflict,
+      releaseReason: "scheduled_skipped",
+    });
     const updated = await resolveScheduledClassConflict(conflict.id, schoolId, "skipped", req.authUser!.id);
     broadcastConflictUpdate(schoolId, conflict.id);
     return res.json({ conflict: updated });

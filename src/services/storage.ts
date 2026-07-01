@@ -3466,6 +3466,77 @@ export async function createTeachingSession(
   return session!;
 }
 
+export async function getActiveScheduledReportSessionForConflict(
+  schoolId: string,
+  scheduledConflictId: string,
+  dbInstance: typeof db = db
+): Promise<TeachingSession | undefined> {
+  const [row] = await dbInstance
+    .select({ session: teachingSessions })
+    .from(teachingSessions)
+    .innerJoin(groups, eq(teachingSessions.groupId, groups.id))
+    .where(and(
+      eq(groups.schoolId, schoolId),
+      eq(teachingSessions.scheduledConflictId, scheduledConflictId),
+      eq(teachingSessions.sessionMode, SCHEDULED_REPORT_SESSION_MODE),
+      isNull(teachingSessions.endTime)
+    ))
+    .limit(1);
+  return row?.session;
+}
+
+export async function createOrReuseScheduledReportSession(
+  data: {
+    schoolId: string;
+    groupId: string;
+    teacherId: string;
+    scheduledConflictId: string;
+    startTime?: Date;
+  },
+  dbInstance: typeof db = db
+): Promise<TeachingSession> {
+  const existing = await getActiveScheduledReportSessionForConflict(
+    data.schoolId,
+    data.scheduledConflictId,
+    dbInstance
+  );
+  if (existing) {
+    await resyncClasspilotSessionStudents(existing, dbInstance);
+    return existing;
+  }
+  return createTeachingSession({
+    groupId: data.groupId,
+    teacherId: data.teacherId,
+    startTime: data.startTime,
+    sessionMode: SCHEDULED_REPORT_SESSION_MODE,
+    scheduledConflictId: data.scheduledConflictId,
+  } as InsertTeachingSession & { groupId: string; teacherId: string }, dbInstance);
+}
+
+export async function promoteScheduledReportSessionToLive(
+  data: {
+    schoolId: string;
+    scheduledConflictId: string;
+  },
+  dbInstance: typeof db = db
+): Promise<TeachingSession | undefined> {
+  const [session] = await dbInstance
+    .update(teachingSessions)
+    .set({
+      sessionMode: LIVE_TEACHING_SESSION_MODE,
+      controlUpdatedAt: new Date(),
+    })
+    .where(and(
+      eq(teachingSessions.scheduledConflictId, data.scheduledConflictId),
+      eq(teachingSessions.schoolId, data.schoolId),
+      eq(teachingSessions.sessionMode, SCHEDULED_REPORT_SESSION_MODE),
+      isNull(teachingSessions.endTime)
+    ))
+    .returning();
+  if (session) await resyncClasspilotSessionStudents(session, dbInstance);
+  return session;
+}
+
 export async function updateTeachingSessionControlTimestamp(
   sessionId: string,
   dbInstance: typeof db = db
@@ -3537,6 +3608,8 @@ export async function upsertScheduledClassConflict(
 }
 
 const ACTIVE_SCHEDULED_COVERAGE_STATUSES = ["coverage_needed", "claimed", "pending"];
+const LIVE_TEACHING_SESSION_MODE = "live";
+const SCHEDULED_REPORT_SESSION_MODE = "scheduled_report";
 
 export async function getScheduledClassConflictByIdAndSchool(
   id: string,
@@ -3675,6 +3748,8 @@ export async function getActiveTeachingSessions(
       schoolId: teachingSessions.schoolId,
       startTime: teachingSessions.startTime,
       controlUpdatedAt: teachingSessions.controlUpdatedAt,
+      sessionMode: teachingSessions.sessionMode,
+      scheduledConflictId: teachingSessions.scheduledConflictId,
       endTime: teachingSessions.endTime,
       createdAt: teachingSessions.createdAt,
     })
@@ -3683,6 +3758,7 @@ export async function getActiveTeachingSessions(
     .where(
       and(
         eq(groups.schoolId, schoolId),
+        eq(teachingSessions.sessionMode, LIVE_TEACHING_SESSION_MODE),
         isNull(teachingSessions.endTime)
       )
     );
@@ -3697,6 +3773,7 @@ export async function getActiveTeachingSession(
     .where(
       and(
         eq(teachingSessions.teacherId, teacherId),
+        eq(teachingSessions.sessionMode, LIVE_TEACHING_SESSION_MODE),
         isNull(teachingSessions.endTime)
       )
     )
@@ -3719,6 +3796,7 @@ export async function getActiveTeachingSessionForSchool(
       and(
         eq(teachingSessions.teacherId, teacherId),
         eq(groups.schoolId, schoolId),
+        eq(teachingSessions.sessionMode, LIVE_TEACHING_SESSION_MODE),
         isNull(teachingSessions.endTime)
       )
     )
@@ -3787,6 +3865,7 @@ export async function getActiveClassOwnersForStudents(
       teachingSessions,
       and(
         eq(teachingSessions.groupId, groups.id),
+        eq(teachingSessions.sessionMode, LIVE_TEACHING_SESSION_MODE),
         isNull(teachingSessions.endTime)
       )
     )
@@ -3914,7 +3993,7 @@ export async function getScheduledGroupsReadyToEnd(
   schoolId: string,
   currentTimeHHMM: string,
   dbInstance: typeof db = db
-): Promise<(Group & { sessionId: string })[]> {
+): Promise<(Group & { sessionId: string; sessionMode: string })[]> {
   const rows = await dbInstance
     .select({
       id: groups.id,
@@ -3932,6 +4011,7 @@ export async function getScheduledGroupsReadyToEnd(
       scheduleSkippedDate: groups.scheduleSkippedDate,
       createdAt: groups.createdAt,
       sessionId: teachingSessions.id,
+      sessionMode: teachingSessions.sessionMode,
     })
     .from(groups)
     .innerJoin(
@@ -3949,7 +4029,7 @@ export async function getScheduledGroupsReadyToEnd(
         sql`${groups.blockEndTime} <= ${currentTimeHHMM}`
       )
     );
-  return rows as (Group & { sessionId: string })[];
+  return rows as (Group & { sessionId: string; sessionMode: string })[];
 }
 
 export async function setScheduleSkippedDate(
@@ -3972,6 +4052,7 @@ export async function hasActiveSessionForGroup(
     .where(
       and(
         eq(teachingSessions.groupId, groupId),
+        eq(teachingSessions.sessionMode, LIVE_TEACHING_SESSION_MODE),
         isNull(teachingSessions.endTime)
       )
     )

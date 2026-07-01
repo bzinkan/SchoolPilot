@@ -2279,9 +2279,19 @@ export default function Dashboard() {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 text-sm font-semibold">
                       <Calendar className="h-4 w-4 text-amber-600 dark:text-amber-400" />
-                      Scheduled coverage needed
+                      Scheduled supervision needed
                     </div>
                     <p className="mt-1 text-sm text-slate-700 dark:text-slate-300">{conflict.message}</p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <Badge variant="secondary" className="bg-white/80 text-slate-800 dark:bg-slate-900/60 dark:text-slate-200">
+                        Reporting active
+                      </Badge>
+                      {!conflict.scheduledTeacherConnected && (
+                        <Badge variant="secondary" className="bg-white/80 text-slate-800 dark:bg-slate-900/60 dark:text-slate-200">
+                          Teacher offline
+                        </Badge>
+                      )}
+                    </div>
                     {(conflict.overlap?.monitoredGroups || conflict.overlap?.groups || []).length > 0 && (
                       <div className="mt-2 flex flex-wrap gap-2">
                         {(conflict.overlap?.monitoredGroups || conflict.overlap?.groups || []).map((group) => (
@@ -2471,7 +2481,7 @@ export default function Dashboard() {
                           {section.className || section.label} - {section.students.length} available
                         </h3>
                         <p className="text-xs text-muted-foreground">
-                          Scheduled Coverage Needed for {section.teacherName || "scheduled teacher"}
+                          Scheduled Supervision Needed for {section.teacherName || "scheduled teacher"} - reporting active
                           {section.blockStartTime && section.blockEndTime ? ` (${section.blockStartTime}-${section.blockEndTime})` : ""}
                         </p>
                       </div>
@@ -2511,7 +2521,8 @@ export default function Dashboard() {
                                 <p className="mt-1 truncate text-sm">{student.activeTabUrl || "Signed in to Chrome"}</p>
                               </div>
                               <div className="mt-3 flex flex-wrap gap-2">
-                                <Badge variant="outline">Scheduled Coverage</Badge>
+                                <Badge variant="outline">Scheduled Supervision</Badge>
+                                <Badge variant="outline">Reporting active</Badge>
                                 <Badge variant="outline">{section.className || section.label}</Badge>
                               </div>
                             </div>
