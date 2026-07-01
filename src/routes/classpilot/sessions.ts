@@ -481,13 +481,19 @@ router.put("/:id/settings", ...auth, async (req, res, next) => {
   }
 });
 
-// Build and send session summary email (called async after response, or by scheduler)
-export async function buildAndSendSessionSummary(
-  session: { id: string; groupId: string; startTime: Date; endTime: Date | null },
-  teacher: { email: string; firstName?: string; lastName?: string },
-  dbInstance: typeof db = db
+type SessionSummarySession = { id: string; groupId: string; startTime: Date; endTime: Date | null };
+type SessionSummaryRecipient = { email: string; firstName?: string | null; lastName?: string | null };
+
+function recipientName(user: { email?: string; firstName?: string | null; lastName?: string | null } | undefined, fallback = "Teacher") {
+  return [user?.firstName, user?.lastName].filter(Boolean).join(" ") || user?.email || fallback;
+}
+
+async function buildSessionSummaryData(
+  session: SessionSummarySession,
+  dbInstance: typeof db,
+  options: { endTimeOverride?: Date } = {}
 ) {
-  const endTime = session.endTime ?? new Date();
+  const endTime = options.endTimeOverride ?? session.endTime ?? new Date();
   // Threads dbInstance through every tenant-table read so the scheduler's
   // fire-and-forget callers (which run outside any request tenant context) can
   // pass schedulerDb (app.is_super) and not hit RLS deny-by-default on the
@@ -549,11 +555,7 @@ export async function buildAndSendSessionSummary(
   const fmtDate = (d: Date) =>
     d.toLocaleDateString("en-US", { timeZone: tz, weekday: "long", month: "long", day: "numeric", year: "numeric" });
 
-  const teacherName = [teacher.firstName, teacher.lastName].filter(Boolean).join(" ") || "Teacher";
-
-  await sendSessionSummaryEmail({
-    to: teacher.email,
-    teacherName,
+  return {
     className,
     date: fmtDate(session.startTime),
     startTime: fmt(session.startTime),
@@ -561,29 +563,99 @@ export async function buildAndSendSessionSummary(
     duration: `${durationMin} min`,
     studentCount: studentIds.length,
     students,
+    group,
+    rawStartTime: session.startTime,
+    rawEndTime: endTime,
+  };
+}
+
+async function sendSessionSummaryTo(
+  summary: Awaited<ReturnType<typeof buildSessionSummaryData>>,
+  to: string,
+  teacherName: string,
+  copyNotice?: string
+) {
+  return sendSessionSummaryEmail({
+    to,
+    teacherName,
+    className: summary.className,
+    date: summary.date,
+    startTime: summary.startTime,
+    endTime: summary.endTime,
+    duration: summary.duration,
+    studentCount: summary.studentCount,
+    students: summary.students,
+    copyNotice,
   });
+}
 
-  console.log(`[SessionSummary] Sent to ${teacher.email} for "${className}"`);
+// Build and send session summary email (called async after response, or by scheduler)
+export async function buildAndSendSessionSummary(
+  session: SessionSummarySession,
+  teacher: SessionSummaryRecipient,
+  dbInstance: typeof db = db,
+  options: { endTimeOverride?: Date } = {}
+) {
+  const summary = await buildSessionSummaryData(session, dbInstance, options);
+  const teacherName = recipientName(teacher);
 
-  const centralRecipient = group?.schoolId
-    ? await getCentralEmailRecipientForSchool(group.schoolId, dbInstance)
+  await sendSessionSummaryTo(summary, teacher.email, teacherName);
+  console.log(`[SessionSummary] Sent to ${teacher.email} for "${summary.className}"`);
+
+  const centralRecipient = summary.group?.schoolId
+    ? await getCentralEmailRecipientForSchool(summary.group.schoolId, dbInstance)
     : undefined;
   const centralEmail = centralRecipient?.email?.trim();
   if (centralEmail && centralEmail.toLowerCase() !== teacher.email.trim().toLowerCase()) {
-    await sendSessionSummaryEmail({
-      to: centralEmail,
+    await sendSessionSummaryTo(
+      summary,
+      centralEmail,
       teacherName,
-      className,
-      date: fmtDate(session.startTime),
-      startTime: fmt(session.startTime),
-      endTime: fmt(endTime),
-      duration: `${durationMin} min`,
-      studentCount: studentIds.length,
-      students,
-      copyNotice: `Central school copy of the session summary sent to ${teacher.email}.`,
-    });
-    console.log(`[SessionSummary] Central copy sent to ${centralEmail} for "${className}"`);
+      `Central school copy of the session summary sent to ${teacher.email}.`
+    );
+    console.log(`[SessionSummary] Central copy sent to ${centralEmail} for "${summary.className}"`);
   }
+}
+
+export async function buildAndSendScheduledReportCentralSummary(
+  session: SessionSummarySession,
+  dbInstance: typeof db = db,
+  options: { endTimeOverride?: Date; copyNotice?: string } = {}
+): Promise<boolean> {
+  const summary = await buildSessionSummaryData(session, dbInstance, options);
+  if (!summary.group?.schoolId) {
+    console.log(`[SessionSummary] Scheduled report central copy skipped for "${summary.className}" - missing school`);
+    return false;
+  }
+
+  const centralRecipient = await getCentralEmailRecipientForSchool(summary.group.schoolId, dbInstance);
+  const centralEmail = centralRecipient?.email?.trim();
+  if (!centralEmail) {
+    console.log(`[SessionSummary] Scheduled report central copy skipped for "${summary.className}" - no central recipient configured`);
+    return false;
+  }
+
+  const scheduledTeacher = await getUserById(summary.group.teacherId);
+  const scheduledTeacherEmail = scheduledTeacher?.email?.trim().toLowerCase();
+  if (scheduledTeacherEmail && scheduledTeacherEmail === centralEmail.toLowerCase()) {
+    console.log(`[SessionSummary] Scheduled report central copy skipped for "${summary.className}" - central recipient is the scheduled teacher`);
+    return false;
+  }
+
+  const scheduledTeacherName = recipientName(scheduledTeacher, "scheduled teacher");
+  const copyNotice = options.copyNotice
+    || `Unattended scheduled reporting block. The scheduled teacher (${scheduledTeacherName}) did not have a live ClassPilot session for this block.`;
+
+  await sendSessionSummaryTo(
+    summary,
+    centralEmail,
+    recipientName(centralRecipient, "School Team"),
+    copyNotice
+  );
+  console.log(
+    `[SessionSummary] Central scheduled report sent to ${centralEmail} for "${summary.className}" (${summary.rawStartTime.toISOString()} - ${summary.rawEndTime.toISOString()})`
+  );
+  return true;
 }
 
 export default router;

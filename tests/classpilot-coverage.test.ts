@@ -1009,14 +1009,32 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     const expiringCoverage = await inSchool(school.id, () => getActiveSupervisionForStudent(school.id, scheduledOnlyStudent.id));
     assert.equal(expiringCoverage?.context.contextType, "scheduled_coverage");
 
-    const expired = await inSchool(school.id, () => expireScheduledClassConflictsForSchool({
-      schoolId: school.id,
-      scheduledDate: "2026-01-15",
-      currentTimeHHMM: "11:46",
-    }));
+    await inSchool(school.id, () => updateEnrollmentSettings(school.id, {
+      centralEmailRecipientUserId: scheduledCoverageStaff.id,
+    } as any));
+    const centralReportLogs: string[] = [];
+    const consoleLogMock = mock.method(console, "log", (...args: unknown[]) => {
+      centralReportLogs.push(args.map(String).join(" "));
+    });
+    let expired;
+    try {
+      expired = await inSchool(school.id, () => expireScheduledClassConflictsForSchool({
+        schoolId: school.id,
+        scheduledDate: "2026-01-15",
+        currentTimeHHMM: "11:46",
+      }));
+    } finally {
+      consoleLogMock.mock.restore();
+    }
     assert.equal(expired.length, 1);
     assert.equal(expired[0].id, expiringConflictId);
     assert.equal(expired[0].status, "expired");
+    assert.ok(centralReportLogs.some((line) =>
+      line.includes(`Central scheduled report sent to ${scheduledCoverageStaff.email}`)
+        && line.includes(expiringGroup.name)
+        && line.includes("2026-01-15T16:00:00.000Z - 2026-01-15T16:45:00.000Z")
+    ));
+    assert.equal(centralReportLogs.some((line) => line.includes(`Would send to ${scheduledTeacher.email}`)), false);
     const expiredCoverage = await inSchool(school.id, () => getActiveSupervisionForStudent(school.id, scheduledOnlyStudent.id));
     assert.equal(expiredCoverage, undefined);
     const expiredReportSession = await inSchool(school.id, () => getActiveScheduledReportSessionForConflict(school.id, expiringConflictId));
