@@ -3603,6 +3603,25 @@ export async function listActiveScheduledClassConflictsForTeacher(
     .orderBy(desc(classpilotScheduledConflicts.lastCheckedAt), desc(classpilotScheduledConflicts.createdAt));
 }
 
+export async function listActiveScheduledClassConflictsReadyToExpire(
+  schoolId: string,
+  scheduledDate: string,
+  currentTimeHHMM: string,
+  dbInstance: typeof db = db
+): Promise<ClasspilotScheduledConflict[]> {
+  return dbInstance
+    .select()
+    .from(classpilotScheduledConflicts)
+    .where(and(
+      eq(classpilotScheduledConflicts.schoolId, schoolId),
+      eq(classpilotScheduledConflicts.scheduledDate, scheduledDate),
+      inArray(classpilotScheduledConflicts.status, ACTIVE_SCHEDULED_COVERAGE_STATUSES),
+      sql`${classpilotScheduledConflicts.blockEndTime} IS NOT NULL`,
+      sql`${classpilotScheduledConflicts.blockEndTime} <= ${currentTimeHHMM}`
+    ))
+    .orderBy(desc(classpilotScheduledConflicts.lastCheckedAt), desc(classpilotScheduledConflicts.createdAt));
+}
+
 export async function resolveScheduledClassConflict(
   id: string,
   schoolId: string,

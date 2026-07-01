@@ -16,6 +16,7 @@ import {
   getScheduledClassConflictForSlot,
   getSchoolById,
   getUserById,
+  listActiveScheduledClassConflictsReadyToExpire,
   listActiveScheduledClassConflictsForTeacher,
   listActiveSupervisionContextsForScheduledConflict,
   releaseScheduledConflictSupervision,
@@ -90,8 +91,8 @@ function conflictBroadcast(conflictId: string) {
   };
 }
 
-function currentLocalTimeHHMM(timeZone: string): string {
-  return new Date().toLocaleString("en-US", {
+function currentLocalTimeHHMM(timeZone: string, now = new Date()): string {
+  return now.toLocaleString("en-US", {
     timeZone,
     hour: "2-digit",
     minute: "2-digit",
@@ -102,6 +103,17 @@ function currentLocalTimeHHMM(timeZone: string): string {
 function isWithinScheduleWindow(group: Group, currentTimeHHMM: string): boolean {
   if (!group.blockStartTime || !group.blockEndTime) return false;
   return group.blockStartTime <= currentTimeHHMM && group.blockEndTime > currentTimeHHMM;
+}
+
+function scheduleWindowEnded(group: Group, currentTimeHHMM: string): boolean {
+  return !!group.blockEndTime && group.blockEndTime <= currentTimeHHMM;
+}
+
+function scheduledConflictExpiredError(message = "This scheduled block has ended."): Error & { status: number; code: string } {
+  return Object.assign(new Error(message), {
+    status: 409,
+    code: "SCHEDULED_CONFLICT_EXPIRED",
+  });
 }
 
 function teacherConnected(
@@ -271,9 +283,27 @@ export async function startScheduledClassFromConflict(options: {
   conflict: ClasspilotScheduledConflict;
   actorId?: string | null;
   dbInstance?: typeof db;
+  now?: Date;
 }): Promise<TeachingSession> {
   const group = await getGroupByIdAndSchool(options.conflict.groupId, options.conflict.schoolId);
   if (!group) throw Object.assign(new Error("Class not found"), { status: 404 });
+  const school = await getSchoolById(options.conflict.schoolId);
+  const timeZone = school?.schoolTimezone || "America/New_York";
+  const currentTimeHHMM = currentLocalTimeHHMM(timeZone, options.now || new Date());
+  if (!isWithinScheduleWindow(group, currentTimeHHMM)) {
+    if (scheduleWindowEnded(group, currentTimeHHMM)) {
+      await expireScheduledClassConflict({
+        conflict: options.conflict,
+        actorId: options.actorId || null,
+        dbInstance: options.dbInstance,
+      });
+      throw scheduledConflictExpiredError();
+    }
+    throw Object.assign(new Error("This scheduled block is not currently active."), {
+      status: 409,
+      code: "SCHEDULED_CONFLICT_NOT_ACTIVE",
+    });
+  }
   return startScheduledClass({
     group,
     scheduledConflict: options.conflict,
@@ -303,6 +333,9 @@ export async function processScheduledClassAutoStart(options: {
 
   if (existingConflict?.status === "skipped" || existingConflict?.status === "started") {
     return { status: "skipped", reason: existingConflict.status };
+  }
+  if (existingConflict?.status === "expired") {
+    return { status: "skipped", reason: "expired" };
   }
 
   const scheduledTeacherConnected = teacherConnected(group.schoolId, group.teacherId, {
@@ -347,7 +380,7 @@ export async function startActiveScheduledClassesForTeacher(options: {
   const school = await getSchoolById(options.schoolId);
   const timeZone = school?.schoolTimezone || "America/New_York";
   const scheduledDate = localDateInTimeZone(now, timeZone);
-  const currentTimeHHMM = currentLocalTimeHHMM(timeZone);
+  const currentTimeHHMM = currentLocalTimeHHMM(timeZone, now);
   const conflicts = await listActiveScheduledClassConflictsForTeacher(
     options.schoolId,
     options.teacherId,
@@ -365,4 +398,48 @@ export async function startActiveScheduledClassesForTeacher(options: {
     started.push(session);
   }
   return started;
+}
+
+export async function expireScheduledClassConflict(options: {
+  conflict: ClasspilotScheduledConflict;
+  actorId?: string | null;
+  dbInstance?: typeof db;
+}): Promise<ClasspilotScheduledConflict | undefined> {
+  const dbInstance = options.dbInstance;
+  if (options.conflict.status === "expired") return options.conflict;
+  await releaseScheduledConflictSupervision({
+    schoolId: options.conflict.schoolId,
+    scheduledConflictId: options.conflict.id,
+    releaseReason: "scheduled_window_ended",
+  }, dbInstance);
+  const updated = await resolveScheduledClassConflict(
+    options.conflict.id,
+    options.conflict.schoolId,
+    "expired",
+    options.actorId || null,
+    dbInstance
+  );
+  broadcastToTeachersLocal(options.conflict.schoolId, conflictBroadcast(options.conflict.id));
+  return updated;
+}
+
+export async function expireScheduledClassConflictsForSchool(options: {
+  schoolId: string;
+  scheduledDate: string;
+  currentTimeHHMM: string;
+  dbInstance?: typeof db;
+}): Promise<ClasspilotScheduledConflict[]> {
+  const dbInstance = options.dbInstance;
+  const conflicts = await listActiveScheduledClassConflictsReadyToExpire(
+    options.schoolId,
+    options.scheduledDate,
+    options.currentTimeHHMM,
+    dbInstance
+  );
+  const expired: ClasspilotScheduledConflict[] = [];
+  for (const conflict of conflicts) {
+    const updated = await expireScheduledClassConflict({ conflict, dbInstance });
+    if (updated) expired.push(updated);
+  }
+  return expired;
 }

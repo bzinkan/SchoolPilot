@@ -45,7 +45,10 @@ import {
   updateClasspilotCommandTargetAck,
   updateEnrollmentSettings,
 } from "../dist/services/storage.js";
-import { processScheduledClassAutoStart } from "../dist/services/classpilotScheduledStart.js";
+import {
+  expireScheduledClassConflictsForSchool,
+  processScheduledClassAutoStart,
+} from "../dist/services/classpilotScheduledStart.js";
 import { getAuditLogs } from "../dist/services/audit.js";
 import { scopedDeviceTargets } from "../dist/services/classpilotDeviceScope.js";
 
@@ -874,8 +877,8 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       groupType: "admin_class",
       status: "active",
       scheduleEnabled: true,
-      blockStartTime: "10:00",
-      blockEndTime: "10:45",
+      blockStartTime: "00:00",
+      blockEndTime: "23:59",
     } as any));
     await inSchool(school.id, () => addGroupStudentsDetailed(startAnywayGroup.id, [scheduledOnlyStudent.id, overlapStudent.id]));
     const coverageStart = await inSchool(school.id, () => processScheduledClassAutoStart({
@@ -901,6 +904,61 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     assert.equal(owner.session.id, started.body.session.id);
     const releasedScheduledCoverage = await inSchool(school.id, () => getActiveSupervisionForStudent(school.id, scheduledOnlyStudent.id));
     assert.equal(releasedScheduledCoverage, undefined);
+
+    const expiringGroup = await inSchool(school.id, () => createGroup({
+      schoolId: school.id,
+      teacherId: scheduledTeacher.id,
+      name: `${TAG}_Scheduled_Expires`,
+      groupType: "admin_class",
+      status: "active",
+      scheduleEnabled: true,
+      blockStartTime: "11:00",
+      blockEndTime: "11:45",
+    } as any));
+    await inSchool(school.id, () => addGroupStudentsDetailed(expiringGroup.id, [scheduledOnlyStudent.id]));
+    const expiringStart = await inSchool(school.id, () => processScheduledClassAutoStart({
+      group: expiringGroup,
+      scheduledDate: "2026-01-15",
+      scheduledTeacherConnectedOverride: false,
+    }));
+    assert.equal(expiringStart.status, "coverage_needed");
+    const expiringConflictId = expiringStart.status === "coverage_needed" ? expiringStart.conflictId : "";
+    assert.ok(expiringConflictId);
+    const expiringClaim = await requestJson("POST", "/coverage/claim", {
+      scheduledConflictId: expiringConflictId,
+      studentIds: [scheduledOnlyStudent.id],
+    }, authFor(scheduledCoverageStaff, school.id));
+    assert.equal(expiringClaim.status, 201);
+    const expiringCoverage = await inSchool(school.id, () => getActiveSupervisionForStudent(school.id, scheduledOnlyStudent.id));
+    assert.equal(expiringCoverage?.context.contextType, "scheduled_coverage");
+
+    const expired = await inSchool(school.id, () => expireScheduledClassConflictsForSchool({
+      schoolId: school.id,
+      scheduledDate: "2026-01-15",
+      currentTimeHHMM: "11:46",
+    }));
+    assert.equal(expired.length, 1);
+    assert.equal(expired[0].id, expiringConflictId);
+    assert.equal(expired[0].status, "expired");
+    const expiredCoverage = await inSchool(school.id, () => getActiveSupervisionForStudent(school.id, scheduledOnlyStudent.id));
+    assert.equal(expiredCoverage, undefined);
+
+    const expiredAdminList = await requestJson("GET", "/classpilot/scheduled-conflicts", undefined, authFor(admin, school.id));
+    assert.equal(expiredAdminList.status, 200);
+    assert.equal(expiredAdminList.body.conflicts.some((entry: any) => entry.id === expiringConflictId), false);
+    const expiredStaffQueue = await requestJson("GET", "/coverage/available-students", undefined, authFor(scheduledCoverageStaff, school.id));
+    assert.equal(expiredStaffQueue.status, 200);
+    assert.equal(expiredStaffQueue.body.scheduledCoverageGroups.some((entry: any) => entry.id === expiringConflictId), false);
+    const expiredStart = await requestJson(
+      "POST",
+      `/classpilot/scheduled-conflicts/${expiringConflictId}/start-anyway`,
+      {},
+      authFor(scheduledTeacher, school.id)
+    );
+    assert.equal(expiredStart.status, 409);
+    assert.equal(expiredStart.body.code, "SCHEDULED_CONFLICT_EXPIRED");
+    const postExpiredScheduledActive = await inSchool(school.id, () => getActiveTeachingSessionForSchool(scheduledTeacher.id, school.id));
+    assert.equal(postExpiredScheduledActive?.id, started.body.session.id);
 
     await inSchool(school.id, () => endTeachingSession(sourceSession.id));
     await inSchool(school.id, () => endTeachingSession(started.body.session.id));

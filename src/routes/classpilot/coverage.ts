@@ -1656,6 +1656,12 @@ router.post("/coverage/claim", ...auth, async (req, res, next) => {
     let result;
     if (scheduledConflictId) {
       const conflict = await getScheduledClassConflictByIdAndSchool(scheduledConflictId, schoolId);
+      if (conflict?.status === "expired") {
+        return res.status(409).json({
+          code: "SCHEDULED_CONFLICT_EXPIRED",
+          error: "This scheduled block has ended. Students will move with the next class or become available again.",
+        });
+      }
       if (!conflict || !["coverage_needed", "claimed", "pending"].includes(conflict.status)) {
         return res.status(404).json({ error: "Scheduled coverage request not found" });
       }

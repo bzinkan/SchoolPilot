@@ -12,7 +12,7 @@ import {
   getUserById,
   clearClasspilotActiveHandsForSession,
 } from "./storage.js";
-import { processScheduledClassAutoStart } from "./classpilotScheduledStart.js";
+import { expireScheduledClassConflictsForSchool, processScheduledClassAutoStart } from "./classpilotScheduledStart.js";
 import { buildAndSendSessionSummary } from "../routes/classpilot/sessions.js";
 import { broadcastToTeachersLocal } from "../realtime/ws-broadcast.js";
 import { publishWS } from "../realtime/ws-redis.js";
@@ -822,6 +822,17 @@ async function autoEndClassBlocks() {
         minute: "2-digit",
         hour12: false,
       }).replace(/^24:/, "00:");
+      const todayDate = now.toLocaleDateString("en-CA", { timeZone: tz });
+
+      const expiredConflicts = await expireScheduledClassConflictsForSchool({
+        schoolId: school.id,
+        scheduledDate: todayDate,
+        currentTimeHHMM,
+        dbInstance: schedulerDb,
+      });
+      if (expiredConflicts.length > 0) {
+        console.log(`[ClassPilot] Expired ${expiredConflicts.length} scheduled coverage request(s) for school ${school.id}`);
+      }
 
       const readyGroups = await getScheduledGroupsReadyToEnd(school.id, currentTimeHHMM, schedulerDb);
 
