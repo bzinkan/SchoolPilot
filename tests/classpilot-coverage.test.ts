@@ -1034,7 +1034,11 @@ describe("ClassPilot supervision coverage storage contracts", () => {
         && line.includes(expiringGroup.name)
         && line.includes("2026-01-15T16:00:00.000Z - 2026-01-15T16:45:00.000Z")
     ));
-    assert.equal(centralReportLogs.some((line) => line.includes(`Would send to ${scheduledTeacher.email}`)), false);
+    assert.ok(centralReportLogs.some((line) =>
+      line.includes(`Scheduled report sent to primary teacher ${scheduledTeacher.email}`)
+        && line.includes(expiringGroup.name)
+        && line.includes("2026-01-15T16:00:00.000Z - 2026-01-15T16:45:00.000Z")
+    ));
     const expiredCoverage = await inSchool(school.id, () => getActiveSupervisionForStudent(school.id, scheduledOnlyStudent.id));
     assert.equal(expiredCoverage, undefined);
     const expiredReportSession = await inSchool(school.id, () => getActiveScheduledReportSessionForConflict(school.id, expiringConflictId));
