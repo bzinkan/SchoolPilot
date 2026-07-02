@@ -10,8 +10,9 @@ changes.
 
 Important boundary: SchoolPilot deploys the API and web app only. The
 ClassPilot Chrome extension is released separately from the `ClassPilot` repo
-through a versioned Chrome Web Store upload. Current ClassPilot extension
-version: `2.5.5`.
+through a versioned Chrome Web Store upload. Current prepared ClassPilot
+extension package version: `2.5.7`; confirm the live Chrome Web Store version
+before bumping or uploading another package.
 
 Windows deploy note: if frontend deploy stops during `npm ci` with an `EPERM`
 unlink error on a native package such as `lightningcss`, it is usually a local

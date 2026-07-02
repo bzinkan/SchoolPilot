@@ -966,7 +966,7 @@ async function purgeExpiredEvidenceArtifactContent() {
           content = NULL,
           status = CASE WHEN artifact.status = 'available' THEN 'expired' ELSE artifact.status END,
           metadata = COALESCE(artifact.metadata, '{}'::jsonb)
-            || jsonb_build_object('contentPurgedAt', NOW(), 'retentionDays', $2)
+            || jsonb_build_object('contentPurgedAt', NOW(), 'retentionDays', $2::int)
         FROM expired
         WHERE artifact.id = expired.id`,
         [cutoff, retentionDays]

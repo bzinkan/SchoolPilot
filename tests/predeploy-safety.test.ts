@@ -41,4 +41,10 @@ describe("pre-deploy safety fixes", () => {
     assert.match(schema, /index\("evidence_artifacts_purge_idx"\)/);
     assert.match(schema, /artifact_type = 'screenshot' AND content IS NOT NULL/);
   });
+
+  it("casts evidence purge retention metadata parameters", () => {
+    const scheduler = readFileSync(new URL("../src/services/scheduler.ts", import.meta.url), "utf8");
+
+    assert.match(scheduler, /jsonb_build_object\('contentPurgedAt', NOW\(\), 'retentionDays', \$2::int\)/);
+  });
 });
