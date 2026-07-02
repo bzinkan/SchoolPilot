@@ -25,7 +25,7 @@ jobs:
           node-version: 22
 
       - name: Write issue body
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const fs = require("fs");
@@ -43,7 +43,7 @@ jobs:
 
       - name: Reject invalid approval command
         if: steps.command.outputs.should_process != 'true'
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             await github.rest.issues.createComment({
@@ -118,7 +118,7 @@ jobs:
 
       - name: Confirm approval decision
         if: steps.command.outputs.should_process == 'true'
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const approvalId = `${{ steps.command.outputs.approval_id }}`;
