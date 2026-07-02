@@ -10,6 +10,12 @@ async function main() {
   console.log("Seeding database...\n");
 
   try {
+    if (process.env.ALLOW_DEMO_SEED !== "1") {
+      throw new Error(
+        "Demo seed data is disabled. Set ALLOW_DEMO_SEED=1 to run seeds/run.ts intentionally."
+      );
+    }
+
     // 1. Super admin
     console.log("[1/5] Super admin");
     const superAdmin = await seedSuperAdmin();

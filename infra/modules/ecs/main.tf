@@ -158,7 +158,7 @@ resource "aws_ecs_task_definition" "api" {
     }
 
     healthCheck = {
-      command     = ["CMD-SHELL", "wget -qO- http://localhost:${var.container_port}/health || exit 1"]
+      command     = ["CMD-SHELL", "wget -qO- http://localhost:${var.container_port}/livez || exit 1"]
       interval    = 30
       timeout     = 5
       retries     = 3
@@ -192,6 +192,11 @@ resource "aws_ecs_service" "api" {
 
   deployment_maximum_percent         = 200
   deployment_minimum_healthy_percent = 100
+
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
 
   # Allow external changes (e.g., deploy script updating task definition)
   lifecycle {
@@ -249,6 +254,11 @@ resource "aws_ecs_service" "worker" {
 
   deployment_maximum_percent         = 200
   deployment_minimum_healthy_percent = 100
+
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
 
   lifecycle {
     ignore_changes = [task_definition]

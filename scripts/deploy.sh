@@ -9,6 +9,7 @@
 #   ./scripts/deploy.sh --frontend       # Frontend only (Vite build → S3 → CloudFront)
 #   ./scripts/deploy.sh --skip-wait      # Deploy without waiting for ECS stabilization
 #   ./scripts/deploy.sh production       # Explicit environment (default: production)
+#   ./scripts/deploy.sh --tag abc123     # Override default git-SHA image tag
 # ============================================================================
 
 set -euo pipefail
@@ -18,7 +19,7 @@ ENV="production"
 DEPLOY_BACKEND=true
 DEPLOY_FRONTEND=true
 SKIP_WAIT=false
-IMAGE_TAG="latest"
+IMAGE_TAG=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -67,6 +68,22 @@ ecs_service_status() {
     --region "$REGION" 2>/dev/null || true
 }
 
+TEMP_FILES=(
+  .taskdef-current.json
+  .taskdef-template.json
+  .taskdef-new.json
+  .ecs-network.json
+  .migration-task.json
+  .migration-result.json
+  .worker-taskdef-current.json
+  .worker-env-source.json
+  .worker-taskdef-new.json
+)
+
+cleanup_temp_files() {
+  rm -f "${TEMP_FILES[@]}"
+}
+
 # --- Preflight checks ---
 echo ""
 echo "=========================================="
@@ -93,6 +110,67 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
 info "Working directory: $PROJECT_ROOT"
+
+trap cleanup_temp_files EXIT
+cleanup_temp_files
+
+if ! command -v gh > /dev/null 2>&1; then
+  error "GitHub CLI (gh) is required so deploys can verify green checks on origin/main."
+  exit 1
+fi
+
+if ! gh auth status -h github.com > /dev/null 2>&1; then
+  error "GitHub CLI is not authenticated. Run 'gh auth login' before deploying."
+  exit 1
+fi
+
+git fetch origin main --quiet
+
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+if [[ "$CURRENT_BRANCH" != "main" ]]; then
+  error "Deploys must run from main. Current branch: $CURRENT_BRANCH"
+  exit 1
+fi
+
+if [[ -n "$(git status --porcelain)" ]]; then
+  error "Working tree is not clean. Commit, stash, or remove local changes before deploying."
+  git status --short
+  exit 1
+fi
+
+LOCAL_SHA=$(git rev-parse HEAD)
+REMOTE_SHA=$(git rev-parse origin/main)
+if [[ "$LOCAL_SHA" != "$REMOTE_SHA" ]]; then
+  error "Local main is not exactly origin/main. Pull the latest main before deploying."
+  exit 1
+fi
+
+CHECKS_JSON=$(gh run list --commit "$LOCAL_SHA" --limit 20 --json status,conclusion,workflowName)
+if ! CHECK_REPORT=$(CHECKS_JSON="$CHECKS_JSON" node <<'NODE'
+const runs = JSON.parse(process.env.CHECKS_JSON || "[]");
+if (runs.length === 0) {
+  console.log("No GitHub Actions runs found for origin/main; refusing deploy without a green CI signal.");
+  process.exit(1);
+}
+const greenConclusions = new Set(["success", "skipped", "neutral"]);
+const badRuns = runs.filter((run) => run.status !== "completed" || !greenConclusions.has(run.conclusion));
+if (badRuns.length > 0) {
+  console.log(
+    "GitHub Actions checks are not green:\n" +
+      badRuns.map((run) => `- ${run.workflowName}: status=${run.status}, conclusion=${run.conclusion}`).join("\n")
+  );
+  process.exit(1);
+}
+console.log("ok");
+NODE
+); then
+  error "$CHECK_REPORT"
+  exit 1
+fi
+
+IMAGE_TAG="${IMAGE_TAG:-$(git rev-parse --short=12 HEAD)}"
+success "Git deploy preflight OK: main@$IMAGE_TAG has green GitHub checks"
+info "Image tag:   $IMAGE_TAG"
 
 # ============================================================================
 # BACKEND DEPLOY
