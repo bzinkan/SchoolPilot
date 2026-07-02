@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { Router, type Request } from "express";
+import { Router, type Request, type Response } from "express";
 import { eq, and } from "drizzle-orm";
 import { productLicenses } from "../../schema/core.js";
 import db from "../../db.js";
@@ -80,6 +80,7 @@ import {
   extensionRuntimeTelemetrySchema,
   trackExtensionRuntimeTelemetry,
 } from "../../services/runtimeTelemetry.js";
+import { redisStore } from "../../middleware/rateLimiter.js";
 
 const router = Router();
 
@@ -188,13 +189,43 @@ const extensionRegisterLimiter = rateLimit({
   ].join(":"),
 });
 
+function authenticatedDeviceKey(req: Request, res: Response): string {
+  const schoolId = String(res.locals.schoolId || "unknown-school");
+  const deviceId = String(res.locals.deviceId || req.params.deviceId || "unknown-device");
+  return `device:${schoolId}:${deviceId}`;
+}
+
+const deviceHeartbeatLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  message: { error: "Too many heartbeat requests, please wait" },
+  standardHeaders: true,
+  legacyHeaders: false,
+  store: redisStore("rl:device:heartbeat:"),
+  passOnStoreError: true,
+  keyGenerator: authenticatedDeviceKey,
+});
+
+const deviceScreenshotLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  message: { error: "Too many screenshot uploads, please wait" },
+  standardHeaders: true,
+  legacyHeaders: false,
+  store: redisStore("rl:device:screenshot:"),
+  passOnStoreError: true,
+  keyGenerator: authenticatedDeviceKey,
+});
+
 const extensionTelemetryLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 60,
   message: { error: "Too many telemetry events, please wait" },
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => ipKeyGenerator(req.ip || req.socket.remoteAddress || "0.0.0.0"),
+  store: redisStore("rl:device:telemetry:"),
+  passOnStoreError: true,
+  keyGenerator: authenticatedDeviceKey,
 });
 
 const deviceActionLimiter = rateLimit({
@@ -203,7 +234,9 @@ const deviceActionLimiter = rateLimit({
   message: { error: "Too many device requests, please wait" },
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => ipKeyGenerator(req.ip || req.socket.remoteAddress || "0.0.0.0"),
+  store: redisStore("rl:device:action:"),
+  passOnStoreError: true,
+  keyGenerator: authenticatedDeviceKey,
 });
 
 const staffAuth = [
@@ -1153,7 +1186,7 @@ router.post("/register-student", extensionRegisterLimiter, async (req, res, next
 // ============================================================================
 
 // GET /api/classpilot/device/:deviceId/students - List students on a device
-router.get("/device/:deviceId/students", deviceActionLimiter, requireDeviceAuth, async (req, res, next) => {
+router.get("/device/:deviceId/students", requireDeviceAuth, deviceActionLimiter, async (req, res, next) => {
   try {
     const deviceId = param(req, "deviceId");
     if (deviceId !== res.locals.deviceId) {
@@ -1175,7 +1208,7 @@ router.get("/device/:deviceId/students", deviceActionLimiter, requireDeviceAuth,
 });
 
 // POST /api/classpilot/device/:deviceId/active-student - Set active student on device
-router.post("/device/:deviceId/active-student", deviceActionLimiter, requireDeviceAuth, async (req, res, next) => {
+router.post("/device/:deviceId/active-student", requireDeviceAuth, deviceActionLimiter, async (req, res, next) => {
   try {
     const deviceId = param(req, "deviceId");
     if (deviceId !== res.locals.deviceId) {
@@ -1212,7 +1245,7 @@ router.post("/device/:deviceId/active-student", deviceActionLimiter, requireDevi
 });
 
 // POST /api/classpilot/extension/runtime-error - Safe extension runtime telemetry
-router.post("/extension/runtime-error", extensionTelemetryLimiter, requireDeviceAuth, (req, res) => {
+router.post("/extension/runtime-error", requireDeviceAuth, extensionTelemetryLimiter, (req, res) => {
   const parsed = extensionRuntimeTelemetrySchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: "Invalid telemetry payload" });
@@ -1231,7 +1264,7 @@ router.post("/extension/runtime-error", extensionTelemetryLimiter, requireDevice
 // ============================================================================
 
 // POST /api/classpilot/device/heartbeat - Device sends heartbeat (device JWT auth)
-router.post("/device/heartbeat", requireDeviceAuth, async (req, res, next) => {
+router.post("/device/heartbeat", requireDeviceAuth, deviceHeartbeatLimiter, async (req, res, next) => {
   try {
     const {
       activeTabUrl, activeTabTitle, visibilityState, screenLocked,
@@ -1542,7 +1575,7 @@ router.post("/device/heartbeat", requireDeviceAuth, async (req, res, next) => {
 // ============================================================================
 
 // POST /api/classpilot/device/screenshot - Upload screenshot
-router.post("/device/screenshot", requireDeviceAuthWithoutTenant, async (req, res, next) => {
+router.post("/device/screenshot", requireDeviceAuthWithoutTenant, deviceScreenshotLimiter, async (req, res, next) => {
   try {
     const { screenshot, tabTitle, tabUrl, tabFavicon } = req.body;
     const deviceId = res.locals.deviceId as string;
@@ -1611,7 +1644,7 @@ router.get("/device/screenshot/:deviceId", ...staffAuth, async (req, res, next) 
 // ============================================================================
 
 // POST /api/classpilot/device/event - Log device event
-router.post("/device/event", requireDeviceAuth, async (req, res, next) => {
+router.post("/device/event", requireDeviceAuth, deviceActionLimiter, async (req, res, next) => {
   try {
     const { eventType, metadata } = req.body;
     const deviceId = res.locals.deviceId as string;
