@@ -394,25 +394,25 @@ resource "aws_cloudwatch_metric_alarm" "websocket_disconnects" {
   }
 }
 
-resource "aws_route53_health_check" "schoolpilot_public_livez" {
+resource "aws_route53_health_check" "schoolpilot_public_health" {
   count             = local.has_domain ? 1 : 0
   fqdn              = var.domain
   port              = 443
   type              = "HTTPS"
-  resource_path     = "/livez"
+  resource_path     = "/health"
   request_interval  = 30
   failure_threshold = 3
   measure_latency   = true
 
   tags = {
-    Name = "${local.alarm_prefix}-public-livez"
+    Name = "${local.alarm_prefix}-public-health"
   }
 }
 
-resource "aws_cloudwatch_metric_alarm" "synthetic_public_livez" {
+resource "aws_cloudwatch_metric_alarm" "synthetic_public_health" {
   count               = local.has_domain ? 1 : 0
-  alarm_name          = "${local.alarm_prefix}-synthetic-public-livez"
-  alarm_description   = "External Route53 synthetic check for the public /livez endpoint is failing."
+  alarm_name          = "${local.alarm_prefix}-synthetic-public-health"
+  alarm_description   = "External Route53 synthetic check for the public /health endpoint is failing."
   namespace           = "AWS/Route53"
   metric_name         = "HealthCheckStatus"
   comparison_operator = "LessThanThreshold"
@@ -425,6 +425,6 @@ resource "aws_cloudwatch_metric_alarm" "synthetic_public_livez" {
   ok_actions          = local.alarm_ok_actions
 
   dimensions = {
-    HealthCheckId = aws_route53_health_check.schoolpilot_public_livez[0].id
+    HealthCheckId = aws_route53_health_check.schoolpilot_public_health[0].id
   }
 }

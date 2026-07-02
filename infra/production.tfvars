@@ -37,6 +37,9 @@ scheduler_db_pool_max = 5
 # Accessible at school-pilot.net + www.school-pilot.net
 domain = "school-pilot.net"
 
+# Alerts
+alerts_sns_topic_arn = "arn:aws:sns:us-east-1:135775632425:schoolpilot-production-alerts"
+
 # Existing SecureString parameters for optional runtime secrets that must not
 # remain as plaintext ECS task environment values.
 anthropic_api_key_parameter_arn  = "arn:aws:ssm:us-east-1:135775632425:parameter/schoolpilot/production/ANTHROPIC_API_KEY"

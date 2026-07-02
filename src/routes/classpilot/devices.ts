@@ -212,8 +212,8 @@ const extensionRegisterLimiter = rateLimit({
 });
 
 function authenticatedDeviceKey(req: Request, res: Response): string {
-  const schoolId = String(res.locals.schoolId || "unknown-school");
-  const deviceId = String(res.locals.deviceId || req.params.deviceId || "unknown-device");
+  const schoolId = String(res?.locals?.schoolId || "unknown-school");
+  const deviceId = String(res?.locals?.deviceId || req.params?.deviceId || "unknown-device");
   return `device:${schoolId}:${deviceId}`;
 }
 
@@ -407,13 +407,11 @@ async function recordPinFailure(schoolId: string, studentId: string) {
 
 async function clearPinFailures(schoolId: string, studentId: string) {
   const key = getPinFailureKey(schoolId, studentId);
-  const redisCleared = await tryRedisVoid(
+  await tryRedisVoid(
     ["DEL", `${REDIS_KEY_PREFIX}:classpilot:pin-failures:${key}`, `${REDIS_KEY_PREFIX}:classpilot:pin-lockout:${key}`],
     "pin failure clear"
   );
-  if (!redisCleared) {
-    fallbackPinLoginFailures.delete(key);
-  }
+  fallbackPinLoginFailures.delete(key);
 }
 
 async function broadcastStudentSignedOut(options: {

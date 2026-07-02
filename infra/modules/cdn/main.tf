@@ -271,24 +271,6 @@ resource "aws_cloudfront_distribution" "main" {
     max_ttl     = 0
   }
 
-  # /livez → ALB
-  ordered_cache_behavior {
-    path_pattern           = "/livez"
-    allowed_methods        = ["GET", "HEAD"]
-    cached_methods         = ["GET", "HEAD"]
-    target_origin_id       = "alb-api"
-    viewer_protocol_policy = "redirect-to-https"
-
-    forwarded_values {
-      query_string = false
-      cookies { forward = "none" }
-    }
-
-    min_ttl     = 0
-    default_ttl = 0
-    max_ttl     = 0
-  }
-
   # /health → ALB
   ordered_cache_behavior {
     path_pattern           = "/health"
