@@ -45,6 +45,22 @@ export function parseRlsEnabledTables(
   );
 }
 
+export function findUnknownRlsAllowlistEntries(
+  allowlist: Iterable<string>,
+  tenantTables: Iterable<string>,
+): string[] {
+  const tenantTableSet = new Set(tenantTables);
+  return [...allowlist].filter((table) => !tenantTableSet.has(table)).sort();
+}
+
+export function findMissingRlsAllowlistEntries(
+  allowlist: Iterable<string>,
+  tenantTables: Iterable<string>,
+): string[] {
+  const allowlistSet = new Set(allowlist);
+  return [...tenantTables].filter((table) => !allowlistSet.has(table)).sort();
+}
+
 /** Conservative identifier guard for table names sourced from the catalog. */
 export function isSafeIdentifier(name: string): boolean {
   return /^[a-z_][a-z0-9_]*$/.test(name);

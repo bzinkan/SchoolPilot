@@ -10,6 +10,7 @@ temp_file.ts
 docs/*.docx
 soc2-evidence/
 evidence-artifacts/
+.codex-remote-attachments/
 
 # Frontend build output
 schoolpilot-app/dist/

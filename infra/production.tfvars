@@ -36,3 +36,8 @@ scheduler_db_pool_max = 5
 # Domain — auto-creates ACM cert, DNS records, and derives app URLs
 # Accessible at school-pilot.net + www.school-pilot.net
 domain = "school-pilot.net"
+
+# Existing SecureString parameters for optional runtime secrets that must not
+# remain as plaintext ECS task environment values.
+anthropic_api_key_parameter_arn  = "arn:aws:ssm:us-east-1:135775632425:parameter/schoolpilot/production/ANTHROPIC_API_KEY"
+telegram_bot_token_parameter_arn = "arn:aws:ssm:us-east-1:135775632425:parameter/schoolpilot/production/TELEGRAM_BOT_TOKEN"
