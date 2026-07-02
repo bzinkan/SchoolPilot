@@ -19,6 +19,28 @@ import { buildMonitoringHealthSnapshot } from "./services/monitoringDashboard.js
 
 const PgStore = connectPgSimple(session);
 const isProduction = process.env.NODE_ENV === "production";
+const parsedLivezDbTimeoutMs = Number(process.env.LIVEZ_DB_TIMEOUT_MS ?? 2000);
+const livezDbTimeoutMs =
+  Number.isFinite(parsedLivezDbTimeoutMs) && parsedLivezDbTimeoutMs > 0
+    ? parsedLivezDbTimeoutMs
+    : 2000;
+
+async function runLivenessDbProbe(): Promise<void> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      pool.query("SELECT 1"),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error("liveness database probe timed out")),
+          livezDbTimeoutMs
+        );
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
 
 function skipsWebSession(req: express.Request): boolean {
   const path = req.path;
@@ -175,10 +197,20 @@ export function createApp() {
   // above, so req.ip is the real viewer again.
   app.use("/api", apiLimiter);
 
-  // Health check (no auth required). The ALB target check and the Docker
-  // HEALTHCHECK only consume the status code, so 200/503 semantics are public;
-  // the detailed body (pool stats, error counts, client counts) is operational
-  // intel and only returned when the caller presents HEALTH_TOKEN.
+  // Liveness check for ALB/ECS. Keep this intentionally small and bounded so
+  // container replacement does not depend on rich operational probes.
+  app.get("/livez", async (_req, res) => {
+    try {
+      await runLivenessDbProbe();
+      res.status(200).json({ status: "ok" });
+    } catch (_error) {
+      res.status(503).json({ status: "unhealthy" });
+    }
+  });
+
+  // Health check (no auth required). This remains the rich operational health
+  // endpoint; the detailed body (pool stats, error counts, client counts) is
+  // only returned when the caller presents HEALTH_TOKEN.
   app.get("/health", async (req, res) => {
     const expected = process.env.HEALTH_TOKEN;
     const provided = req.get("x-health-token") ?? req.query.token;

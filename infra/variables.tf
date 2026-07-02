@@ -156,6 +156,12 @@ variable "rls_enabled_tables" {
   default     = "activity_log,audit_logs,block_lists,bus_routes,classpilot_ai_decisions,classpilot_classroom_states,classpilot_command_targets,classpilot_commands,classroom_course_students,classroom_courses,daily_usage,dashboard_tabs,devices,dismissal_sessions,email_alerts,email_scan_log,error_logs,evidence_artifacts,family_groups,flight_paths,grades,groups,heartbeats,homerooms,import_runs,mailpilot_watches,messages,parent_student,passes,security_events,settings,student_attendance,student_groups,student_safety_cases,student_timeline_events,students,subgroups,teacher_students,teaching_sessions,walker_zones"
 }
 
+variable "alerts_sns_topic_arn" {
+  description = "SNS topic ARN for production CloudWatch alarm and OK notifications"
+  type        = string
+  default     = "arn:aws:sns:us-east-1:135775632425:schoolpilot-production-alerts"
+}
+
 # --- Domain & DNS ---
 
 variable "domain" {

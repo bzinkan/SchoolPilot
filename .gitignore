@@ -24,3 +24,9 @@ infra/*.tfstate
 infra/*.tfstate.*
 infra/.terraform.lock.hcl
 infra/secrets.auto.tfvars
+
+# Deployment scratch files
+.taskdef-*.json
+.migration-*.json
+.ecs-network.json
+.worker-*.json

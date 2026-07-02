@@ -3,7 +3,9 @@
 # ============================================================================
 
 locals {
-  alarm_prefix = "${local.name}-scale"
+  alarm_prefix     = "${local.name}-scale"
+  alarm_actions    = compact([var.alerts_sns_topic_arn])
+  alarm_ok_actions = compact([var.alerts_sns_topic_arn])
 }
 
 resource "aws_cloudwatch_metric_alarm" "alb_p95_latency" {
@@ -18,6 +20,8 @@ resource "aws_cloudwatch_metric_alarm" "alb_p95_latency" {
   period              = 60
   extended_statistic  = "p95"
   treat_missing_data  = "notBreaching"
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_ok_actions
 
   dimensions = {
     LoadBalancer = module.alb.alb_arn_suffix
@@ -37,6 +41,8 @@ resource "aws_cloudwatch_metric_alarm" "alb_target_5xx" {
   period              = 60
   statistic           = "Sum"
   treat_missing_data  = "notBreaching"
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_ok_actions
 
   dimensions = {
     LoadBalancer = module.alb.alb_arn_suffix
@@ -56,6 +62,8 @@ resource "aws_cloudwatch_metric_alarm" "alb_4xx" {
   period              = 60
   statistic           = "Sum"
   treat_missing_data  = "notBreaching"
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_ok_actions
 
   dimensions = {
     LoadBalancer = module.alb.alb_arn_suffix
@@ -75,6 +83,8 @@ resource "aws_cloudwatch_metric_alarm" "api_cpu" {
   period              = 60
   statistic           = "Average"
   treat_missing_data  = "notBreaching"
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_ok_actions
 
   dimensions = {
     ClusterName = module.ecs.cluster_name
@@ -94,6 +104,8 @@ resource "aws_cloudwatch_metric_alarm" "api_memory" {
   period              = 60
   statistic           = "Average"
   treat_missing_data  = "notBreaching"
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_ok_actions
 
   dimensions = {
     ClusterName = module.ecs.cluster_name
@@ -112,6 +124,8 @@ resource "aws_cloudwatch_metric_alarm" "api_running_tasks" {
   period              = 60
   statistic           = "Average"
   treat_missing_data  = "breaching"
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_ok_actions
 
   dimensions = {
     ClusterName = module.ecs.cluster_name
@@ -130,6 +144,8 @@ resource "aws_cloudwatch_metric_alarm" "worker_running_tasks" {
   period              = 60
   statistic           = "Average"
   treat_missing_data  = "breaching"
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_ok_actions
 
   dimensions = {
     ClusterName = module.ecs.cluster_name
@@ -148,6 +164,8 @@ resource "aws_cloudwatch_metric_alarm" "scheduler_worker_heartbeat" {
   period              = 300
   statistic           = "Sum"
   treat_missing_data  = "breaching"
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_ok_actions
 
   dimensions = {
     Environment = var.environment
@@ -167,6 +185,8 @@ resource "aws_cloudwatch_metric_alarm" "rds_cpu" {
   period              = 60
   statistic           = "Average"
   treat_missing_data  = "notBreaching"
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_ok_actions
 
   dimensions = {
     DBInstanceIdentifier = "${local.name}-db"
@@ -185,6 +205,8 @@ resource "aws_cloudwatch_metric_alarm" "rds_connections" {
   period              = 60
   statistic           = "Average"
   treat_missing_data  = "notBreaching"
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_ok_actions
 
   dimensions = {
     DBInstanceIdentifier = "${local.name}-db"
@@ -203,6 +225,8 @@ resource "aws_cloudwatch_metric_alarm" "rds_free_storage" {
   period              = 60
   statistic           = "Average"
   treat_missing_data  = "breaching"
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_ok_actions
 
   dimensions = {
     DBInstanceIdentifier = "${local.name}-db"
@@ -221,6 +245,8 @@ resource "aws_cloudwatch_metric_alarm" "rds_read_iops" {
   period              = 60
   statistic           = "Average"
   treat_missing_data  = "notBreaching"
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_ok_actions
 
   dimensions = {
     DBInstanceIdentifier = "${local.name}-db"
@@ -239,6 +265,8 @@ resource "aws_cloudwatch_metric_alarm" "rds_write_iops" {
   period              = 60
   statistic           = "Average"
   treat_missing_data  = "notBreaching"
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_ok_actions
 
   dimensions = {
     DBInstanceIdentifier = "${local.name}-db"
@@ -257,6 +285,8 @@ resource "aws_cloudwatch_metric_alarm" "redis_cpu" {
   period              = 60
   statistic           = "Average"
   treat_missing_data  = "notBreaching"
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_ok_actions
 
   dimensions = {
     ReplicationGroupId = "${local.name}-redis"
@@ -275,6 +305,8 @@ resource "aws_cloudwatch_metric_alarm" "redis_memory" {
   period              = 60
   statistic           = "Average"
   treat_missing_data  = "notBreaching"
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_ok_actions
 
   dimensions = {
     ReplicationGroupId = "${local.name}-redis"
@@ -292,6 +324,8 @@ resource "aws_cloudwatch_metric_alarm" "redis_evictions" {
   period              = 60
   statistic           = "Sum"
   treat_missing_data  = "notBreaching"
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_ok_actions
 
   dimensions = {
     ReplicationGroupId = "${local.name}-redis"
@@ -310,6 +344,8 @@ resource "aws_cloudwatch_metric_alarm" "redis_connections" {
   period              = 60
   statistic           = "Average"
   treat_missing_data  = "notBreaching"
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_ok_actions
 
   dimensions = {
     ReplicationGroupId = "${local.name}-redis"
@@ -328,6 +364,8 @@ resource "aws_cloudwatch_metric_alarm" "websocket_errors" {
   period              = 60
   statistic           = "Sum"
   treat_missing_data  = "notBreaching"
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_ok_actions
 
   dimensions = {
     Environment = var.environment
@@ -347,6 +385,8 @@ resource "aws_cloudwatch_metric_alarm" "websocket_disconnects" {
   period              = 60
   statistic           = "Sum"
   treat_missing_data  = "notBreaching"
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_ok_actions
 
   dimensions = {
     Environment = var.environment
