@@ -244,10 +244,10 @@ When a school has multiple products, priority order is: ClassPilot > PassPilot >
   - **Axios instance** from `shared/utils/api.js` — legacy pattern, auto-attaches JWT tokens.
 - **Role-aware hooks**: `useClassPilotAuth`, `usePassPilotAuth`, `useGoPilotAuth` map the generic `activeMembership.role` to product-specific role checks (isAdmin, isTeacher, etc.).
 - **Vite proxy**: The frontend dev server proxies `/api`, `/ws`, and `/gopilot-socket` to the backend on port 4000.
-- **Chrome extension**: The ClassPilot Chrome extension (MV3, separate repo at `ClassPilot/extension/`) uses a service worker (`service-worker.js`). Current version: `2.5.5`. Use `console.warn` instead of `console.error` — Chrome surfaces `console.error` calls as visible "Errors" on the chrome://extensions page, alarming school IT admins.
+- **Chrome extension**: The ClassPilot Chrome extension (MV3, separate repo at `ClassPilot/extension/`) uses a service worker (`service-worker.js`). Current prepared package version: `2.5.7` (`ClassPilot-v2.5.7.zip`); do not assume this is live in the Chrome Web Store until the developer console confirms review/publish. Use `console.warn` instead of `console.error` — Chrome surfaces `console.error` calls as visible "Errors" on the chrome://extensions page, alarming school IT admins.
 - **MV3 service worker limits**: `setInterval` doesn't survive service worker termination. Use `chrome.alarms` for periodic tasks. Screenshots use a separate `chrome.alarms` alarm (30s). Heartbeats use `setInterval(10s)` plus `chrome.alarms` as fallback.
 - **WebSocket lives in offscreen document**: MV3 service workers can't maintain persistent WebSockets (Chrome 145+ enforces this). The extension uses an offscreen document (`offscreen.js`) as a WebSocket proxy. Chrome can kill the offscreen doc when the declared `reasons` (USER_MEDIA, DISPLAY_MEDIA, BLOBS) are inactive — the offscreen doc sends a 25s application-level ping to keep itself alive AND keep ALB connections from idling out.
-- **Extension deployment**: Requires force-install via Google Admin (Devices → Chrome → Apps & extensions) for managed browsers/Chromebooks. Google Workspace screen capture policies needed for `captureVisibleTab`. Updates flow: bump `manifest.json` version in the separate ClassPilot repo → package a versioned zip → publish to Chrome Web Store → CWS review → force-install pulls automatically. A SchoolPilot API/frontend deploy does not publish or update the Chrome extension.
+- **Extension deployment**: Requires force-install via Google Admin (Devices → Chrome → Apps & extensions) for managed browsers/Chromebooks. Google Workspace screen capture policies needed for `captureVisibleTab`. Updates flow: confirm the live CWS version → bump `manifest.json` version in the separate ClassPilot repo → package a versioned zip → publish to Chrome Web Store → CWS review → force-install pulls automatically. A SchoolPilot API/frontend deploy does not publish or update the Chrome extension.
 - **Teacher command acknowledgements**: Extension `2.5.2+` includes `commandId` in teacher command responses and reports `received`, `completed`, and `failed` states with result snapshots when available. SchoolPilot remains backward compatible with older extensions by showing `sent` / awaiting acknowledgement rather than blocking classroom actions.
 - **Pending message delivery**: Backend includes undelivered messages in heartbeat response (`pendingMessages` field). Extension checks this on each heartbeat to recover messages missed during WebSocket disconnection.
 - **Screenshot pipeline**: Extension captures with `chrome.tabs.captureVisibleTab` (JPEG quality 50, ~30-50KB) every 30s → POST `/api/device/screenshot` → stored in Redis with **120s TTL** (must outlive both 30s capture interval AND 30s dashboard poll, with margin for jitter). Dashboard polls `GET /api/device/screenshot/:deviceId` every 30s. Extension also reports `screenshotHealth` diagnostics (lastSuccessAt, lastError, attempts, successes, alarmActive) in every heartbeat — visible on `/students-aggregated` for remote troubleshooting without console access.
@@ -477,7 +477,7 @@ Centralized error tracking in `src/services/errorMonitor.ts`. `trackError(catego
 
 **Stats + metrics:** `errorMonitor.getStats()` exposes captured, persisted, persistFailed, dropped, alertAttempted, alertDelivered, alertFailed, and cooldownSuppressed counters by total/category/fingerprint. Fingerprint samples are bounded to 5 sanitized entries each and active fingerprints are capped/evicted by quiet low-priority entries first. The monitor emits CloudWatch Embedded Metric Format JSON to stdout every 60 seconds with namespace `SchoolPilot/Monitoring` and dimensions `Environment`, `Service`, and `InstanceId`; EMF output never includes message text, stack, path, user id, school id, or context. When `REDIS_URL` is configured, monitor alert thresholds and cooldown election are shared across ECS tasks under `${REDIS_PREFIX}:monitor:*`; if Redis is missing/unhealthy, aggregation degrades to the local Phase 2 behavior without blocking boot.
 
-**Health endpoint** (`/health`) includes `recentErrors`, detailed `checks.alerting`, and detailed `checks.monitoring` with monitor stats/runtime metadata plus `checks.monitoring.aggregation` (`mode: "redis" | "local"`). If alerting is the only degraded check, `/health` still returns HTTP 200 for liveness with JSON status `degraded`; core subsystem failures still return 503.
+**Health endpoints:** `/livez` is the lightweight liveness endpoint used by ECS container health and the ALB target group; keep it session-free and DB-free. CloudFront intentionally does not expose a separate `/livez` behavior. Public `/health` is cheap external uptime (`{"status":"ok"}`) for Route53/synthetic checks. Detailed operational health is available only with `HEALTH_TOKEN` via `x-health-token` or `?token=...`; that detailed response includes `recentErrors`, `checks.alerting`, and `checks.monitoring` with monitor stats/runtime metadata plus `checks.monitoring.aggregation` (`mode: "redis" | "local"`). If alerting is the only degraded check, detailed `/health` still returns HTTP 200 with JSON status `degraded`; core subsystem failures return 503.
 
 **Super Admin Monitoring panel:** `/super-admin/monitoring` is the read-only operations view for the monitor. APIs live under `/api/super-admin/monitoring/*` and require super-admin auth plus the existing RLS super-admin bypass. The Schools page may show only a compact status chip/link, not a large monitoring dashboard section. Phase 4A intentionally has no schema changes, no mute/acknowledge controls, and no durable incident workflow; live fingerprint history comes from in-process/Redis aggregation, while recent events come from existing sanitized `error_logs`. The panel must never show raw query strings, request bodies, tokens, emails, IPs, student names, device ids, unrestricted context, or raw security-event details.
 
@@ -627,30 +627,49 @@ Student Gmail ──► Gmail watch() ──► GCP Pub/Sub topic ──► webh
 ```
 User → CloudFront (E1TPPJOD7C2CXR) → routes by path:
   /api/*              → ALB → ECS Fargate (port 4000)
-  /health             → ALB → ECS Fargate (port 4000)
+  /health             → ALB → ECS Fargate (port 4000), public cheap uptime
   /ws                 → ALB → ECS Fargate (port 4000)
   /gopilot-socket/*   → ALB → ECS Fargate (port 4000)
   /* (default)        → S3 (schoolpilot-production-frontend)
 ```
 
+The ALB target group and ECS container health checks use `/livez` directly. Do
+not add a CloudFront `/livez` behavior; public synthetic checks should use
+`/health`.
+
 ### Component Details
 
 | Component | Name / ARN | Notes |
 |-----------|-----------|-------|
-| **CloudFront** | Distribution `E1TPPJOD7C2CXR` | Two origins: `alb-api` (ALB) and `s3-frontend` (S3) |
-| **ALB** | `schoolpilot-production-alb` (`schoolpilot-production-alb-1268871698.us-east-1.elb.amazonaws.com`) | Forwards to ECS target group |
+| **CloudFront** | Distribution `E1TPPJOD7C2CXR` | Two origins: `alb-api` (HTTPS-only ALB origin) and `s3-frontend` (S3); WAF attached |
+| **ALB** | `schoolpilot-production-alb` (`schoolpilot-production-alb-1268871698.us-east-1.elb.amazonaws.com`) | HTTPS listener forwards to ECS target group; target health path `/livez` |
 | **ECS Cluster** | `schoolpilot-production-cluster` | Fargate launch type |
-| **ECS Service** | `schoolpilot-production-api` | 1 desired task, Fargate, uses ALB target group |
-| **Task Definition** | `schoolpilot-production-api` | Single container named `api`, port 4000 |
-| **ECR** | `135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api` | Image tagged `:latest` |
+| **ECS API Service** | `schoolpilot-production-api` | Pilot sizing: 1 desired task, Fargate, private subnets, uses ALB target group |
+| **ECS Worker Service** | `schoolpilot-production-scheduler-worker` | Pilot sizing: 1 desired singleton scheduler worker, no ALB |
+| **Task Definitions** | `schoolpilot-production-api`, `schoolpilot-production-scheduler-worker` | API container named `api`, worker container named `scheduler-worker`, same digest-pinned image |
+| **ECR** | `135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api` | Images are pushed with a git-SHA tag and also `:latest`; ECS revisions pin by digest |
 | **S3** | `schoolpilot-production-frontend` | Static frontend assets served by CloudFront |
-| **RDS** | PostgreSQL in private VPC | Not directly accessible; use auto-migrations in `index.ts` |
+| **RDS** | PostgreSQL in private VPC | Pilot sizing is `db.t4g.medium`, Single-AZ, 100 GB allocated with 1000 GB max autoscaling |
+| **Redis** | ElastiCache replication group | Pilot sizing is `cache.t4g.small`, single node, TLS required via `rediss://` |
 | **Region** | `us-east-1` | All resources |
 | **Account** | `135775632425` | |
 
 ### Deploy Sequence — Backend
 
 **CRITICAL: Always build and deploy from this repo's root. Never deploy from any older prototype checkout — their schemas are incompatible with the production database.**
+
+Preferred path:
+
+```bash
+./scripts/deploy.sh --backend
+```
+
+The deploy script requires a clean local `main` equal to `origin/main`, green
+latest GitHub Actions runs per workflow, authenticated AWS + GitHub CLIs, and a
+git-SHA image tag by default. It builds and pushes the image, registers
+digest-pinned API and scheduler-worker task definitions, runs the explicit
+`RUN_MIGRATIONS_ONLY=true` ECS migration task, updates both ECS services, waits
+for service stability, and cleans temporary task-definition files.
 
 ```bash
 # Step 1: ECR login (required — tokens expire after 12 hours)
@@ -666,8 +685,9 @@ docker tag schoolpilot-production-api:latest 135775632425.dkr.ecr.us-east-1.amaz
 docker push 135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api:latest
 
 # Step 5: Register a task-def revision pinned to the pushed image DIGEST, then
-# point the service at it. Preferred: `./scripts/deploy.sh --backend` does steps
-# 1-5 automatically (resolve digest → render revision → register → update-service).
+# point the API and scheduler-worker services at matching revisions. Preferred:
+# `./scripts/deploy.sh --backend` does this automatically (resolve digest →
+# run migration task → render revisions → register → update services).
 # ECR tags are mutable, so never deploy by tag/force-new-deployment — a digest-pinned
 # revision is exact and rollback is just `update-service --task-definition family:prevRev`.
 DIGEST=$(MSYS_NO_PATHCONV=1 aws ecr describe-images --repository-name schoolpilot-production-api --image-ids imageTag=latest --query 'imageDetails[0].imageDigest' --output text --region us-east-1)
@@ -676,9 +696,9 @@ DIGEST=$(MSYS_NO_PATHCONV=1 aws ecr describe-images --repository-name schoolpilo
 # then: aws ecs register-task-definition --cli-input-json file://taskdef.json
 MSYS_NO_PATHCONV=1 aws ecs update-service --cluster schoolpilot-production-cluster --service schoolpilot-production-api --task-definition schoolpilot-production-api:<NEW_REV> --region us-east-1
 
-# Step 6: VERIFY — wait for new task to reach RUNNING, old task to stop
-MSYS_NO_PATHCONV=1 aws ecs describe-services --cluster schoolpilot-production-cluster --services schoolpilot-production-api --region us-east-1 --query 'services[0].deployments'
-# Should show 1 deployment with desiredCount=1, runningCount=1, rolloutState=COMPLETED
+# Step 6: VERIFY — wait for new API + worker tasks to reach RUNNING, old tasks to stop
+MSYS_NO_PATHCONV=1 aws ecs describe-services --cluster schoolpilot-production-cluster --services schoolpilot-production-api schoolpilot-production-scheduler-worker --region us-east-1 --query 'services[].{service:serviceName,desired:desiredCount,running:runningCount,taskDefinition:taskDefinition,deployments:deployments}'
+# Each service should show desiredCount=1, runningCount=1, rolloutState=COMPLETED
 # If runningCount=0 or rolloutState=FAILED, check task logs in CloudWatch
 ```
 
@@ -692,7 +712,7 @@ cd schoolpilot-app && npm run build
 MSYS_NO_PATHCONV=1 aws s3 sync "C:/GitHub/SchoolPilot/schoolpilot-app/dist/" s3://schoolpilot-production-frontend/ --delete --region us-east-1
 
 # Step 3: Invalidate CloudFront cache (use targeted paths to reduce costs — "/*" causes ALL cached objects to refetch)
-MSYS_NO_PATHCONV=1 aws cloudfront create-invalidation --distribution-id E1TPPJOD7C2CXR --paths "/index.html" "/assets/*" --region us-east-1
+MSYS_NO_PATHCONV=1 aws cloudfront create-invalidation --distribution-id E1TPPJOD7C2CXR --paths "/index.html" "/" --region us-east-1
 
 # Step 4: VERIFY — check invalidation completed
 MSYS_NO_PATHCONV=1 aws cloudfront list-invalidations --distribution-id E1TPPJOD7C2CXR --region us-east-1 --query 'InvalidationList.Items[0]'
@@ -703,9 +723,9 @@ MSYS_NO_PATHCONV=1 aws cloudfront list-invalidations --distribution-id E1TPPJOD7
 
 1. **Wrong source directory** — ALWAYS build from this repo. The obsolete GoPilot server prototype uses raw `pool.query()` with columns that don't exist in the production database.
 2. **ECR login expired** — `docker push` will fail with auth errors if you haven't run `ecr get-login-password` recently. Tokens last 12 hours.
-3. **ECS service name** — Must be exactly `schoolpilot-production-api` in cluster `schoolpilot-production-cluster`. There are no other services/clusters.
-4. **Task not starting** — If the new task fails to start after a service update, ECS rolls back automatically. Check CloudWatch logs for the failed task. Common causes: missing env vars, bad image, port mismatch. Rollback is explicit now: `update-service --task-definition schoolpilot-production-api:<previousRev>`.
-5. **CloudFront invalidation costs** — Use targeted invalidation (`/index.html /assets/*`) instead of `/*`. Wildcard `/*` invalidates ALL cached objects, causing every request to refetch from origin, generating massive CloudFront + S3 request charges during development.
+3. **ECS service names** — Must be exactly `schoolpilot-production-api` and `schoolpilot-production-scheduler-worker` in cluster `schoolpilot-production-cluster`.
+4. **Task not starting** — If the new task fails to start after a service update, ECS rolls back automatically. Check CloudWatch logs for the failed task. Common causes: missing env vars, bad image, port mismatch. Rollback is explicit now: `update-service --task-definition schoolpilot-production-api:<previousRev>` or `schoolpilot-production-scheduler-worker:<previousRev>`.
+5. **CloudFront invalidation costs** — Use targeted invalidation (`/index.html /`) instead of `/*`. Wildcard `/*` invalidates ALL cached objects, causing every request to refetch from origin, generating massive CloudFront + S3 request charges during development.
 6. **Windows path conversion** — Always prefix AWS CLI commands with `MSYS_NO_PATHCONV=1` in Git Bash on Windows, otherwise paths like `--paths "/*"` get mangled.
 7. **Task definition env vars** — The ECS task definition must include `CLIENT_URL=https://school-pilot.net` and `GOOGLE_CALLBACK_URL=https://school-pilot.net/api/auth/google/callback`. These are set in the task definition, not in the container.
-8. **Dockerfile CMD** — Runs `node dist/index.js` directly (no `drizzle-kit push`). Schema migrations are handled by auto-migration blocks in `src/index.ts` on startup.
+8. **Dockerfile CMD** — Runs `node dist/index.js` directly (no `drizzle-kit push`). Production schema changes are handled by the explicit deploy-script migration task (`RUN_MIGRATIONS_ONLY=true`), not by normal web/worker startup.
