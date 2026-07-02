@@ -623,6 +623,11 @@ const importStaffHandler = async (req: any, res: any, next: any) => {
     const membershipRole = fromGoPilotSetup && staffRole === "office_staff" ? "teacher" : staffRole;
     const gopilotRole = fromGoPilotSetup && staffRole === "office_staff" ? "office_staff" : null;
     const shouldNormalizeExistingOffice = fromGoPilotSetup && staffRole === "office_staff";
+    const canNormalizeExistingOfficeMembership = (existing: any) =>
+      shouldNormalizeExistingOffice &&
+      existing?.status === "active" &&
+      !["admin", "school_admin"].includes(existing.role) &&
+      (existing.role === "teacher" || existing.role === "office_staff" || existing.gopilotRole === "office_staff");
     const errors: string[] = [];
     if (!["admin", "school_admin", "teacher", "office_staff"].includes(staffRole)) {
       return res.status(400).json({ error: "Invalid staff role", code: "INVALID_STAFF_ROLE" });
@@ -666,12 +671,11 @@ const importStaffHandler = async (req: any, res: any, next: any) => {
         }
 
         const existing = await getMembershipByUserAndSchool(user.id, schoolId);
-        if (existing && shouldNormalizeExistingOffice) {
+        if (existing && canNormalizeExistingOfficeMembership(existing)) {
           try {
             await updateMembershipForSchool(existing.id, schoolId, {
               role: membershipRole,
               gopilotRole,
-              status: "active",
             });
             updated++;
           } catch (err: any) {
@@ -755,12 +759,11 @@ const importStaffHandler = async (req: any, res: any, next: any) => {
       }
 
       const existing = await getMembershipByUserAndSchool(user.id, schoolId);
-      if (existing && shouldNormalizeExistingOffice) {
+      if (existing && canNormalizeExistingOfficeMembership(existing)) {
         try {
           await updateMembershipForSchool(existing.id, schoolId, {
             role: membershipRole,
             gopilotRole,
-            status: "active",
           });
         } catch (err: any) {
           skipped++;
@@ -768,6 +771,9 @@ const importStaffHandler = async (req: any, res: any, next: any) => {
           errors.push(`${email}: ${err?.code || "MEMBERSHIP_UPDATE_FAILED"}: ${err?.message || "Could not update staff membership."}`);
           continue;
         }
+      } else if (existing && shouldNormalizeExistingOffice) {
+        skipped++;
+        if (!createdUser) updated--;
       } else if (existing) {
         // Existing non-GoPilot-setup staff import preserves the current membership role.
       } else {

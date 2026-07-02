@@ -66,6 +66,7 @@ import { runWithTenantContext } from "../../middleware/tenantContext.js";
 import { scopedDeviceTargets } from "../../services/classpilotDeviceScope.js";
 import { safeStudent, safeStudents } from "../../util/safeStudent.js";
 import {
+  CLASSPILOT_ENROLLMENT_KEY_HEADER,
   enrollmentKeyFromRequest,
   issueStudentDeviceSessionToken,
   setClassPilotNoStore,
@@ -80,7 +81,7 @@ import {
   extensionRuntimeTelemetrySchema,
   trackExtensionRuntimeTelemetry,
 } from "../../services/runtimeTelemetry.js";
-import { redisStore } from "../../middleware/rateLimiter.js";
+import { redisCommand, redisStore } from "../../middleware/rateLimiter.js";
 
 const router = Router();
 
@@ -103,7 +104,10 @@ const deliveredMessages = new Map<string, Set<string>>();
 const SAFETY_COOLDOWN_MS = 10 * 60 * 1000; // 10 minutes
 const PIN_LOGIN_MAX_FAILURES = 5;
 const PIN_LOGIN_LOCKOUT_MS = 10 * 60 * 1000;
-const pinLoginFailures = new Map<string, { count: number; lockedUntil: number }>();
+const PIN_LOGIN_LOCKOUT_SECONDS = PIN_LOGIN_LOCKOUT_MS / 1000;
+const PIN_LOGIN_FAILURE_WINDOW_SECONDS = 10 * 60;
+const fallbackPinLoginFailures = new Map<string, { count: number; lockedUntil: number; windowStart: number }>();
+const REDIS_KEY_PREFIX = process.env.REDIS_PREFIX ?? "schoolpilot";
 
 // In-memory cache for school lookups (reduces DB queries on heartbeats)
 const schoolCache = new Map<string, { school: any; expires: number }>();
@@ -140,6 +144,16 @@ function extensionIp(req: Request): string {
   return ipKeyGenerator(req.ip || req.socket.remoteAddress || "0.0.0.0");
 }
 
+function enrollmentKeyLimiterKey(req: Request): string {
+  const provided =
+    req.get(CLASSPILOT_ENROLLMENT_KEY_HEADER) ||
+    (typeof (req as Request & { body?: { enrollmentKey?: unknown } }).body?.enrollmentKey === "string"
+      ? String((req as Request & { body?: { enrollmentKey?: string } }).body?.enrollmentKey)
+      : "");
+  if (!provided) return `ip:${extensionIp(req)}`;
+  return `enrollment-key:${crypto.createHash("sha256").update(provided).digest("hex").slice(0, 24)}`;
+}
+
 const extensionConfigLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 180,
@@ -147,19 +161,23 @@ const extensionConfigLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: extensionIp,
+  store: redisStore("rl:classpilot:extension:config:"),
+  passOnStoreError: true,
 });
 
 const extensionRosterLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 90,
+  max: 600,
   message: { error: "Too many roster requests, please wait" },
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => [
-    extensionIp(req),
+    enrollmentKeyLimiterKey(req),
     String(req.query.schoolId || req.query.schoolSlug || ""),
     normalizeGradeLevel(req.query.gradeLevel) || "",
   ].join(":"),
+  store: redisStore("rl:classpilot:extension:roster:"),
+  passOnStoreError: true,
 });
 
 const extensionLoginLimiter = rateLimit({
@@ -174,6 +192,8 @@ const extensionLoginLimiter = rateLimit({
     String(req.body?.deviceId || ""),
     String(req.body?.studentId || req.body?.studentEmail || "").toLowerCase(),
   ].join(":"),
+  store: redisStore("rl:classpilot:extension:login:"),
+  passOnStoreError: true,
 });
 
 const extensionRegisterLimiter = rateLimit({
@@ -187,6 +207,8 @@ const extensionRegisterLimiter = rateLimit({
     String(req.body?.schoolId || req.body?.schoolSlug || ""),
     String(req.body?.deviceId || ""),
   ].join(":"),
+  store: redisStore("rl:classpilot:extension:register:"),
+  passOnStoreError: true,
 });
 
 function authenticatedDeviceKey(req: Request, res: Response): string {
@@ -301,14 +323,49 @@ function getPinFailureKey(schoolId: string, studentId: string): string {
   return `${schoolId}:${studentId}`;
 }
 
-function getPinLockout(schoolId: string, studentId: string): { ok: true } | { ok: false; retryAfterSeconds: number } {
+async function tryRedisNumber(args: string[], label: string): Promise<number | undefined> {
+  try {
+    const value = await redisCommand(args);
+    if (value === undefined || value === null) return undefined;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  } catch (error) {
+    console.warn(`[ClassPilot] Redis ${label} failed; using local fallback.`, error);
+    return undefined;
+  }
+}
+
+async function tryRedisVoid(args: string[], label: string): Promise<boolean> {
+  try {
+    const value = await redisCommand(args);
+    return value !== undefined;
+  } catch (error) {
+    console.warn(`[ClassPilot] Redis ${label} failed; using local fallback.`, error);
+    return false;
+  }
+}
+
+async function getPinLockout(schoolId: string, studentId: string): Promise<{ ok: true } | { ok: false; retryAfterSeconds: number }> {
   const key = getPinFailureKey(schoolId, studentId);
-  const failure = pinLoginFailures.get(key);
+  const redisLockKey = `${REDIS_KEY_PREFIX}:classpilot:pin-lockout:${key}`;
+  const redisLockTtlMs = await tryRedisNumber(["PTTL", redisLockKey], "pin lockout TTL");
+  if (redisLockTtlMs !== undefined) {
+    if (redisLockTtlMs > 0) {
+      return { ok: false, retryAfterSeconds: Math.ceil(redisLockTtlMs / 1000) };
+    }
+    return { ok: true };
+  }
+
+  const failure = fallbackPinLoginFailures.get(key);
   if (!failure) {
     return { ok: true };
   }
+  if (Date.now() - failure.windowStart > PIN_LOGIN_FAILURE_WINDOW_SECONDS * 1000) {
+    fallbackPinLoginFailures.delete(key);
+    return { ok: true };
+  }
   if (failure.lockedUntil > 0 && failure.lockedUntil <= Date.now()) {
-    pinLoginFailures.delete(key);
+    fallbackPinLoginFailures.delete(key);
     return { ok: true };
   }
   if (failure.lockedUntil === 0) {
@@ -320,20 +377,43 @@ function getPinLockout(schoolId: string, studentId: string): { ok: true } | { ok
   };
 }
 
-function recordPinFailure(schoolId: string, studentId: string) {
+async function recordPinFailure(schoolId: string, studentId: string) {
   const key = getPinFailureKey(schoolId, studentId);
-  const current = pinLoginFailures.get(key);
+  const redisCountKey = `${REDIS_KEY_PREFIX}:classpilot:pin-failures:${key}`;
+  const redisLockKey = `${REDIS_KEY_PREFIX}:classpilot:pin-lockout:${key}`;
+  const count = await tryRedisNumber(["INCR", redisCountKey], "pin failure increment");
+  if (count !== undefined) {
+    if (count === 1) {
+      await tryRedisVoid(["EXPIRE", redisCountKey, String(PIN_LOGIN_FAILURE_WINDOW_SECONDS)], "pin failure expiry");
+    }
+    if (count >= PIN_LOGIN_MAX_FAILURES) {
+      await tryRedisVoid(["SET", redisLockKey, "1", "EX", String(PIN_LOGIN_LOCKOUT_SECONDS)], "pin lockout set");
+      await tryRedisVoid(["DEL", redisCountKey], "pin failure clear");
+    }
+    return;
+  }
+
+  const current = fallbackPinLoginFailures.get(key);
   const now = Date.now();
   if (current?.lockedUntil && current.lockedUntil > now) return;
-  const count = (current?.count || 0) + 1;
-  pinLoginFailures.set(key, {
-    count,
-    lockedUntil: count >= PIN_LOGIN_MAX_FAILURES ? now + PIN_LOGIN_LOCKOUT_MS : 0,
+  const withinWindow = current && now - current.windowStart <= PIN_LOGIN_FAILURE_WINDOW_SECONDS * 1000;
+  const localCount = (withinWindow ? current.count : 0) + 1;
+  fallbackPinLoginFailures.set(key, {
+    count: localCount,
+    lockedUntil: localCount >= PIN_LOGIN_MAX_FAILURES ? now + PIN_LOGIN_LOCKOUT_MS : 0,
+    windowStart: withinWindow ? current.windowStart : now,
   });
 }
 
-function clearPinFailures(schoolId: string, studentId: string) {
-  pinLoginFailures.delete(getPinFailureKey(schoolId, studentId));
+async function clearPinFailures(schoolId: string, studentId: string) {
+  const key = getPinFailureKey(schoolId, studentId);
+  const redisCleared = await tryRedisVoid(
+    ["DEL", `${REDIS_KEY_PREFIX}:classpilot:pin-failures:${key}`, `${REDIS_KEY_PREFIX}:classpilot:pin-lockout:${key}`],
+    "pin failure clear"
+  );
+  if (!redisCleared) {
+    fallbackPinLoginFailures.delete(key);
+  }
 }
 
 async function broadcastStudentSignedOut(options: {
@@ -483,20 +563,66 @@ setInterval(() => {
 // school enrollment unless a single school enrolls >100 students in an hour, which
 // is rare and would surface as a legitimate signal worth investigating anyway.
 // ============================================================================
-const schoolAutoCreations = new Map<string, { count: number; windowStart: number }>();
+const fallbackSchoolAutoCreations = new Map<string, { count: number; windowStart: number }>();
 const AUTO_CREATE_WINDOW_MS = 60 * 60 * 1000; // 1 hour
+const AUTO_CREATE_WINDOW_SECONDS = AUTO_CREATE_WINDOW_MS / 1000;
 const MAX_AUTO_CREATIONS = 100;
+const ROSTER_FETCH_WINDOW_SECONDS = 60;
+const MAX_ROSTER_FETCHES_PER_WINDOW = 300;
+const fallbackRosterFetches = new Map<string, { count: number; windowStart: number }>();
 
-function recordAutoCreation(schoolId: string): boolean {
+async function recordAutoCreation(schoolId: string): Promise<boolean> {
+  const redisKey = `${REDIS_KEY_PREFIX}:classpilot:auto-creations:${schoolId}`;
+  const redisCount = await tryRedisNumber(["INCR", redisKey], "auto-creation increment");
+  if (redisCount !== undefined) {
+    if (redisCount === 1) {
+      await tryRedisVoid(["EXPIRE", redisKey, String(AUTO_CREATE_WINDOW_SECONDS)], "auto-creation expiry");
+    }
+    return redisCount <= MAX_AUTO_CREATIONS;
+  }
+
   const now = Date.now();
-  const entry = schoolAutoCreations.get(schoolId);
+  const entry = fallbackSchoolAutoCreations.get(schoolId);
   if (!entry || now - entry.windowStart > AUTO_CREATE_WINDOW_MS) {
-    schoolAutoCreations.set(schoolId, { count: 1, windowStart: now });
+    fallbackSchoolAutoCreations.set(schoolId, { count: 1, windowStart: now });
     return true;
   }
   if (entry.count >= MAX_AUTO_CREATIONS) return false;
   entry.count++;
   return true;
+}
+
+async function enforceSharedRosterFetchThrottle(
+  schoolId: string,
+  gradeLevel: string | null
+): Promise<{ ok: true } | { ok: false; retryAfterSeconds: number }> {
+  const gradeKey = gradeLevel || "grades";
+  const key = `${schoolId}:${gradeKey}`;
+  const redisKey = `${REDIS_KEY_PREFIX}:classpilot:roster-fetches:${key}`;
+  const redisCount = await tryRedisNumber(["INCR", redisKey], "roster fetch increment");
+  if (redisCount !== undefined) {
+    if (redisCount === 1) {
+      await tryRedisVoid(["EXPIRE", redisKey, String(ROSTER_FETCH_WINDOW_SECONDS)], "roster fetch expiry");
+    }
+    if (redisCount <= MAX_ROSTER_FETCHES_PER_WINDOW) return { ok: true };
+    const ttl = await tryRedisNumber(["TTL", redisKey], "roster fetch TTL");
+    return { ok: false, retryAfterSeconds: ttl && ttl > 0 ? ttl : ROSTER_FETCH_WINDOW_SECONDS };
+  }
+
+  const now = Date.now();
+  const current = fallbackRosterFetches.get(key);
+  if (!current || now - current.windowStart > ROSTER_FETCH_WINDOW_SECONDS * 1000) {
+    fallbackRosterFetches.set(key, { count: 1, windowStart: now });
+    return { ok: true };
+  }
+  if (current.count >= MAX_ROSTER_FETCHES_PER_WINDOW) {
+    return {
+      ok: false,
+      retryAfterSeconds: Math.max(1, Math.ceil((ROSTER_FETCH_WINDOW_SECONDS * 1000 - (now - current.windowStart)) / 1000)),
+    };
+  }
+  current.count++;
+  return { ok: true };
 }
 
 // ============================================================================
@@ -658,6 +784,13 @@ router.get("/extension/login-roster", extensionRosterLimiter, async (req, res, n
       });
       if (!keyCheck.ok) {
         return res.status(keyCheck.status).json({ error: keyCheck.error });
+      }
+      const rosterThrottle = await enforceSharedRosterFetchThrottle(school.id, gradeLevel);
+      if (!rosterThrottle.ok) {
+        return res.status(429).json({
+          error: "Too many roster requests, please wait",
+          retryAfterSeconds: rosterThrottle.retryAfterSeconds,
+        });
       }
       let students = await getStudentsBySchool(school.id);
       const grades = rosterGradesForStudents(students);
@@ -859,7 +992,7 @@ router.post("/extension/student-login", extensionLoginLimiter, async (req, res, 
       }
 
       const student = await getStudentById(selectedStudentId);
-      const lockout = getPinLockout(school.id, selectedStudentId);
+      const lockout = await getPinLockout(school.id, selectedStudentId);
       if (!lockout.ok) {
         return res.status(429).json({
           error: "Too many PIN attempts. Try again later.",
@@ -873,10 +1006,10 @@ router.post("/extension/student-login", extensionLoginLimiter, async (req, res, 
         !student.classpilotPinHash ||
         !(await comparePassword(enteredPin, student.classpilotPinHash))
       ) {
-        recordPinFailure(school.id, selectedStudentId);
+        await recordPinFailure(school.id, selectedStudentId);
         return res.status(401).json({ error: "Invalid student credentials" });
       }
-      clearPinFailures(school.id, selectedStudentId);
+      await clearPinFailures(school.id, selectedStudentId);
 
       const login = await completeStudentDeviceLogin({
         schoolId: school.id,
@@ -1059,7 +1192,7 @@ router.post("/extension/register", extensionRegisterLimiter, async (req, res, ne
           });
         }
         // Auto-enroll path (opt-in): cap auto-creations per school per hour.
-        if (!recordAutoCreation(resolvedSchoolId)) {
+        if (!(await recordAutoCreation(resolvedSchoolId))) {
           console.warn(`[Security] Auto-creation rate limit hit for school ${resolvedSchoolId}; rejecting ${studentEmail}`);
           return res.status(429).json({
             error: "Auto-enrollment rate limit reached — please ask your administrator to import students first.",
@@ -1147,7 +1280,7 @@ router.post("/register-student", extensionRegisterLimiter, async (req, res, next
           });
         }
         // Anti-spam: cap auto-creations per school per hour
-        if (!recordAutoCreation(resolvedSchoolId)) {
+        if (!(await recordAutoCreation(resolvedSchoolId))) {
           console.warn(`[Security] Auto-creation rate limit hit on /register-student for school ${resolvedSchoolId}`);
           return res.status(429).json({
             error: "Auto-enrollment temporarily disabled — please ask your administrator to import students first.",

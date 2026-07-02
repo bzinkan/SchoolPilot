@@ -62,15 +62,6 @@ function toTopWebsiteList(map: Map<string, TopDomain>) {
     }));
 }
 
-function localHourInTimeZone(date: Date, timeZone: string): number {
-  const value = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hourCycle: "h23",
-    hour: "2-digit",
-  }).format(date);
-  return Number(value);
-}
-
 function hasCompletedDates(period: SchoolLocalPeriod): period is SchoolLocalPeriod & {
   completedStartDate: string;
   completedEndDate: string;
@@ -160,7 +151,8 @@ export async function getClasspilotAdminAnalyticsSummary(
 
   const hourlyRows = await db
     .select({
-      timestampText: sql<string>`${heartbeats.timestamp}::text`,
+      hour: sql<number>`EXTRACT(HOUR FROM (${heartbeats.timestamp} AT TIME ZONE 'UTC' AT TIME ZONE ${period.timeZone}))::int`,
+      count: sql<number>`COUNT(*)::int`,
     })
     .from(heartbeats)
     .where(
@@ -169,7 +161,8 @@ export async function getClasspilotAdminAnalyticsSummary(
         sql`${heartbeats.timestamp} >= ${rangeStartSql}`,
         sql`${heartbeats.timestamp} < ${rangeEndSql}`
       )
-    );
+    )
+    .groupBy(sql`1`);
 
   const [studentCount, teacherCount, deviceCount] = await Promise.all([
     db
@@ -208,9 +201,10 @@ export async function getClasspilotAdminAnalyticsSummary(
 
   const hourlyCounts = Array<number>(24).fill(0);
   for (const row of hourlyRows) {
-    if (!row.timestampText) continue;
-    const hour = localHourInTimeZone(new Date(`${row.timestampText.replace(" ", "T")}Z`), period.timeZone);
-    if (Number.isInteger(hour) && hour >= 0 && hour < 24) hourlyCounts[hour] = (hourlyCounts[hour] ?? 0) + 1;
+    const hour = Number(row.hour);
+    if (Number.isInteger(hour) && hour >= 0 && hour < 24) {
+      hourlyCounts[hour] = Number(row.count) || 0;
+    }
   }
   const hourlyActivity = Array.from({ length: 24 }, (_, hour) => ({
     hour,
