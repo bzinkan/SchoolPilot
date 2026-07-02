@@ -857,6 +857,54 @@ export async function runStartupMigrations(): Promise<void> {
     console.warn("[migration] substitute_assignments drop skipped:", (err as Error).message);
   }
 
+  // ClassPilot groups base table. Some deployments had dependent DDL for
+  // group_teachers without the startup safety net for the base groups table.
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS groups (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        school_id TEXT NOT NULL,
+        teacher_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT,
+        period_label TEXT,
+        grade_level TEXT,
+        group_type TEXT NOT NULL DEFAULT 'teacher_created',
+        parent_group_id TEXT,
+        status TEXT NOT NULL DEFAULT 'active',
+        archived_at TIMESTAMP,
+        school_year TEXT,
+        term TEXT,
+        google_classroom_course_id TEXT,
+        schedule_enabled BOOLEAN NOT NULL DEFAULT false,
+        block_start_time TEXT,
+        block_end_time TEXT,
+        schedule_skipped_date TEXT,
+        created_at TIMESTAMP NOT NULL DEFAULT now()
+      )
+    `);
+    await pool.query(`ALTER TABLE groups ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active'`);
+    await pool.query(`ALTER TABLE groups ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP`);
+    await pool.query(`ALTER TABLE groups ADD COLUMN IF NOT EXISTS school_year TEXT`);
+    await pool.query(`ALTER TABLE groups ADD COLUMN IF NOT EXISTS term TEXT`);
+    await pool.query(`ALTER TABLE groups ADD COLUMN IF NOT EXISTS google_classroom_course_id TEXT`);
+    await pool.query(`ALTER TABLE groups ADD COLUMN IF NOT EXISTS schedule_enabled BOOLEAN NOT NULL DEFAULT false`);
+    await pool.query(`ALTER TABLE groups ADD COLUMN IF NOT EXISTS block_start_time TEXT`);
+    await pool.query(`ALTER TABLE groups ADD COLUMN IF NOT EXISTS block_end_time TEXT`);
+    await pool.query(`ALTER TABLE groups ADD COLUMN IF NOT EXISTS schedule_skipped_date TEXT`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS groups_school_id_idx ON groups (school_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS groups_teacher_id_idx ON groups (teacher_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS groups_status_idx ON groups (status)`);
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS groups_school_google_course_unique
+      ON groups (school_id, google_classroom_course_id)
+      WHERE google_classroom_course_id IS NOT NULL
+    `);
+    console.log("[migration] groups table ready");
+  } catch (err) {
+    console.warn("[migration] groups migration skipped:", (err as Error).message);
+  }
+
   // Co-teacher junction tables
   try {
     await pool.query(`

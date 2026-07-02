@@ -1,7 +1,9 @@
 import rateLimit, { ipKeyGenerator, type Store } from "express-rate-limit";
 import { RedisStore } from "rate-limit-redis";
+import { createHash } from "crypto";
 import { createClient } from "redis";
 import type { Request } from "express";
+import { usesDeviceScopedApiLimit } from "../util/apiRateLimitRoutes.js";
 
 // Shared Redis backing for all limiters so counts survive deploys and are
 // shared across ECS tasks. Dedicated client (not the ws-redis publisher) to
@@ -47,7 +49,7 @@ function waitForReady(timeoutMs = 2000): Promise<void> {
   });
 }
 
-function redisStore(prefix: string): Store | undefined {
+export function redisStore(prefix: string): Store | undefined {
   if (!redisClient) return undefined; // express-rate-limit defaults to MemoryStore
   const store = new RedisStore({
     prefix,
@@ -69,6 +71,20 @@ function redisStore(prefix: string): Store | undefined {
   return store;
 }
 
+function apiRateLimitKey(req: Request): string {
+  const authorization = req.get("authorization");
+  if (
+    usesDeviceScopedApiLimit(req) &&
+    typeof authorization === "string" &&
+    authorization.toLowerCase().startsWith("bearer ")
+  ) {
+    const tokenHash = createHash("sha256").update(authorization).digest("hex").slice(0, 32);
+    return `device-token:${tokenHash}`;
+  }
+
+  return `ip:${ipKeyGenerator(req.ip ?? req.socket?.remoteAddress ?? "unknown")}`;
+}
+
 export const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 15,
@@ -87,6 +103,7 @@ export const apiLimiter = rateLimit({
   legacyHeaders: false,
   store: redisStore("rl:api:"),
   passOnStoreError: true,
+  keyGenerator: apiRateLimitKey,
 });
 
 // Workspace Security Audit — expensive: each call fans out to ~10 Google APIs
