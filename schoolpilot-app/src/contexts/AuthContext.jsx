@@ -62,6 +62,10 @@ export function AuthProvider({ children }) {
       if (res.data.token) {
         setToken(res.data.token);
         saveToken(res.data.token); // persist for native app relaunch
+      } else if (res.data.user?.impersonating) {
+        setToken(null);
+        setApiToken(null);
+        await clearToken();
       }
 
       const selectedSchoolIsValid =

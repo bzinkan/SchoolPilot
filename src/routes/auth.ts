@@ -288,7 +288,6 @@ router.get("/me", authenticate, async (req, res, next) => {
 
     const { password: _, ...safeUser } = req.authUser;
     const isImpersonating = Boolean(
-      req.authMethod === "session" &&
       (req.session as any)?.impersonating &&
       (req.session as any).originalUserId
     );
@@ -326,11 +325,13 @@ router.get("/me", authenticate, async (req, res, next) => {
     }
 
     // Generate JWT so clients can use it for Socket.io and API calls
-    const token = signUserToken({
-      userId: req.authUser.id,
-      email: req.authUser.email,
-      isSuperAdmin: req.authUser.isSuperAdmin,
-    });
+    const token = isImpersonating
+      ? null
+      : signUserToken({
+          userId: req.authUser.id,
+          email: req.authUser.email,
+          isSuperAdmin: req.authUser.isSuperAdmin,
+        });
 
     return res.json({
       user: {

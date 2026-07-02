@@ -1726,6 +1726,15 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       teacherId: teacher.id,
     }));
 
+    const unpairedStaffReroute = await requestJson("POST", "/coverage/send", {
+      supervisionGroupId: target.supervisionGroupId,
+      assignedStaffId: floorCaptain.id,
+      studentIds: [studentInClass.id],
+      note: "should require supervision group pairing",
+    }, teacherAuth);
+    assert.equal(unpairedStaffReroute.status, 403);
+    assert.match(unpairedStaffReroute.body.error, /paired with this Supervision Group/);
+
     const teacherReroute = await requestJson("POST", "/coverage/send", {
       supervisionGroupId: target.supervisionGroupId,
       assignedStaffId: target.assignedStaffId,

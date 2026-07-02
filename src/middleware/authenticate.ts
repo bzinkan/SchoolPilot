@@ -6,10 +6,29 @@ import db from "../db.js";
 
 /**
  * Dual authentication middleware.
- * Checks Bearer JWT first (explicit auth takes priority),
- * then falls back to session cookie.
+ * Checks Bearer JWT first (explicit auth takes priority), then falls back to
+ * session cookie. Active impersonation sessions are the exception: the session
+ * must win so stale client JWTs cannot mask or bypass impersonation state.
  */
 export const authenticate: RequestHandler = async (req, res, next) => {
+  if ((req.session as any)?.impersonating && req.session?.userId) {
+    try {
+      const [user] = await db
+        .select()
+        .from(users)
+        .where(eq(users.id, req.session.userId))
+        .limit(1);
+
+      if (user) {
+        req.authUser = user;
+        req.authMethod = "session";
+        return next();
+      }
+    } catch (err) {
+      console.error("[auth] Impersonation session lookup failed:", err);
+    }
+  }
+
   // Strategy 1: Bearer JWT (takes priority when present)
   const authHeader = req.headers.authorization;
   if (authHeader?.startsWith("Bearer ")) {
@@ -61,6 +80,23 @@ export const authenticate: RequestHandler = async (req, res, next) => {
  * Optional auth - sets user if available but doesn't reject
  */
 export const optionalAuth: RequestHandler = async (req, _res, next) => {
+  if ((req.session as any)?.impersonating && req.session?.userId) {
+    try {
+      const [user] = await db
+        .select()
+        .from(users)
+        .where(eq(users.id, req.session.userId))
+        .limit(1);
+      if (user) {
+        req.authUser = user;
+        req.authMethod = "session";
+        return next();
+      }
+    } catch (err) {
+      console.error("[auth] Optional impersonation session lookup failed:", err);
+    }
+  }
+
   // JWT takes priority over session
   const authHeader = req.headers.authorization;
   if (authHeader?.startsWith("Bearer ")) {

@@ -1808,6 +1808,10 @@ router.post("/coverage/send", ...auth, async (req, res, next) => {
     if (!staffMembership || staffMembership.status !== "active") {
       return res.status(404).json({ error: "Assigned staff member not found in this school" });
     }
+    const assignedStaffGroupIds = await activeCoverageGroupIdsForStaff(schoolId, assignedStaffId);
+    if (!assignedStaffGroupIds.has(group.id)) {
+      return res.status(403).json({ error: "Assigned staff member is not paired with this Supervision Group" });
+    }
     await assertStudentsInSchool(schoolId, studentIds);
     const groupMemberIds = new Set(group.members.map((member: any) => member.studentId));
     if (studentIds.some((studentId) => !groupMemberIds.has(studentId))) {

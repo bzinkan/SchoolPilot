@@ -201,6 +201,7 @@ describe("ClassPilot admin analytics", () => {
     assert.equal(result.summary.activeStudents, 2);
     assert.equal(result.summary.totalBrowsingMinutes, 2);
     assert.deepEqual(result.topWebsites.map((site: any) => site.domain).sort(), ["history.edu", "live.edu"].sort());
+    assert.equal(result.hourlyActivity.find((row: any) => row.hour === 11)?.count, 1);
   });
 
   it("filters roster-mode browsing to active official classes", async () => {

@@ -176,6 +176,7 @@ export default function DismissalDashboard() {
   const [showChangeNotifications, setShowChangeNotifications] = useState(false);
   const [unreadChangeCount, setUnreadChangeCount] = useState(0);
   const [showNoteFor, setShowNoteFor] = useState(null);
+  const [changeReviewingId, setChangeReviewingId] = useState(null);
   // Student lookup state
   const [showStudentLookup, setShowStudentLookup] = useState(false);
   const [studentSearchTerm, setStudentSearchTerm] = useState('');
@@ -333,6 +334,7 @@ export default function DismissalDashboard() {
         studentName: studentName || '',
         fromType: change.fromType,
         toType: change.toType,
+        busRoute: change.busRoute,
         note: change.note,
         status: change.status || 'pending',
         createdAt: change.createdAt,
@@ -340,6 +342,16 @@ export default function DismissalDashboard() {
       setUnreadChangeCount(prev => prev + 1);
     };
     socket.on('change:requested', handleChangeRequested);
+    const handleChangeResolved = ({ change }) => {
+      if (!change?.id) return;
+      setChangeRequests(prev => prev.map(cr => (
+        cr.id === change.id
+          ? { ...cr, status: change.status || cr.status, reviewedAt: change.reviewedAt || cr.reviewedAt }
+          : cr
+      )));
+      scheduleSnapshotRefresh();
+    };
+    socket.on('change:resolved', handleChangeResolved);
 
     const handleTypeUpdated = ({ studentId, dismissalType, busRoute }) => {
       setHomeroomStudents(prev => prev.map(s =>
@@ -378,10 +390,32 @@ export default function DismissalDashboard() {
       socket.off('dismissal:started', scheduleSnapshotRefresh);
       socket.off('dismissal:ended', scheduleSnapshotRefresh);
       socket.off('change:requested', handleChangeRequested);
+      socket.off('change:resolved', handleChangeResolved);
       socket.off('student:typeUpdated', handleTypeUpdated);
       socket.off('dismissal:override', handleOverride);
     };
   }, [socket, currentSchool, loadData]);
+
+  const reviewChangeRequest = useCallback(async (changeId, status) => {
+    if (!changeId || !['approved', 'rejected'].includes(status)) return;
+    const reviewKey = `${changeId}:${status}`;
+    setChangeReviewingId(reviewKey);
+    setDashboardError(null);
+    try {
+      const res = await api.put(`/changes/${changeId}`, { status });
+      const updated = res.data?.change;
+      setChangeRequests(prev => prev.map(cr => (
+        cr.id === changeId
+          ? { ...cr, ...(updated || {}), status: updated?.status || status }
+          : cr
+      )));
+      await loadData({ silent: true });
+    } catch (err) {
+      setDashboardError(apiErrorMessage(err, `Could not ${status} change request`));
+    } finally {
+      setChangeReviewingId(null);
+    }
+  }, [loadData]);
 
   // Effective afterschool list: permanent afterschool students + override-to-afterschool
   // Build lookup: studentId → pickups[]
@@ -942,20 +976,50 @@ export default function DismissalDashboard() {
                         <div className="p-4 text-center text-sm text-gray-400">No change requests</div>
                       ) : (
                         changeRequests.map((cr, i) => (
-                          <div key={cr.id || i} className={`p-3 border-b last:border-b-0 dark:border-slate-700 ${cr.status === 'approved' ? 'opacity-60' : ''} hover:bg-gray-50 dark:hover:bg-slate-700/50`}>
+                          <div key={cr.id || i} className={`p-3 border-b last:border-b-0 dark:border-slate-700 ${cr.status !== 'pending' ? 'opacity-70' : ''} hover:bg-gray-50 dark:hover:bg-slate-700/50`}>
                             <div className="flex items-center justify-between">
                               <p className="text-sm font-medium flex items-center gap-1.5">
                                 {cr.studentName}
                                 {cr.status === 'approved' && <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />}
+                                {cr.status === 'rejected' && <X className="w-3.5 h-3.5 text-red-500" />}
                               </p>
                               <span className="text-xs text-gray-400">{cr.createdAt ? new Date(cr.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</span>
                             </div>
                             <p className="text-xs text-gray-500 mt-0.5">
                               <span className="capitalize">{cr.fromType}</span> → <span className="capitalize">{cr.toType}</span>
+                              {cr.busRoute && <span> ({cr.busRoute})</span>}
                             </p>
                             {cr.note && (
                               <p className="text-xs bg-amber-50 dark:bg-amber-900/30 text-amber-800 dark:text-amber-200 rounded px-2 py-1 mt-1">
                                 <MessageSquare className="w-3 h-3 inline mr-1" />{cr.note}
+                              </p>
+                            )}
+                            {cr.status === 'pending' ? (
+                              <div className="mt-2 flex gap-2">
+                                <Button
+                                  variant="success"
+                                  size="sm"
+                                  className="h-8 flex-1 gap-1"
+                                  onClick={() => reviewChangeRequest(cr.id, 'approved')}
+                                  disabled={!!changeReviewingId}
+                                >
+                                  <Check className="w-3.5 h-3.5" />
+                                  Approve
+                                </Button>
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
+                                  className="h-8 flex-1 gap-1"
+                                  onClick={() => reviewChangeRequest(cr.id, 'rejected')}
+                                  disabled={!!changeReviewingId}
+                                >
+                                  <X className="w-3.5 h-3.5" />
+                                  Reject
+                                </Button>
+                              </div>
+                            ) : (
+                              <p className="mt-2 text-xs font-medium capitalize text-gray-500 dark:text-slate-400">
+                                {cr.status}
                               </p>
                             )}
                           </div>

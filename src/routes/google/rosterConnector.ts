@@ -18,6 +18,7 @@ import {
   getRosterDwdAuthClient,
   getRosterServiceAccountInfo,
 } from "../../services/googleRosterConnector.js";
+import { isTransientGoogleError } from "../../util/transientGoogleError.js";
 
 const router = Router();
 
@@ -179,7 +180,7 @@ router.post("/verify", ...adminAuth, async (req, res, next) => {
     return res.json({ connector: safeConnector(connector) });
   } catch (err: any) {
     await updateGoogleRosterConnector(schoolId, {
-      status: "error",
+      ...(isTransientGoogleError(err) ? {} : { status: "error" as const }),
       lastError: err?.message || "Google roster connector verification failed.",
     }).catch(() => {});
     next(err);

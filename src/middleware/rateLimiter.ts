@@ -71,6 +71,12 @@ export function redisStore(prefix: string): Store | undefined {
   return store;
 }
 
+export async function redisCommand(args: string[]): Promise<unknown | undefined> {
+  if (!redisClient) return undefined;
+  await waitForReady();
+  return redisClient.sendCommand(args);
+}
+
 function apiRateLimitKey(req: Request): string {
   const authorization = req.get("authorization");
   if (
