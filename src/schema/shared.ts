@@ -482,6 +482,7 @@ export const evidenceArtifacts = pgTable(
     index("evidence_artifacts_school_student_idx").on(table.schoolId, table.studentId),
     index("evidence_artifacts_case_idx").on(table.caseId),
     index("evidence_artifacts_source_idx").on(table.sourceType, table.sourceId),
+    index("evidence_artifacts_artifact_captured_idx").on(table.artifactType, table.capturedAt),
   ]
 );
 

@@ -1,5 +1,7 @@
 import pg from "pg";
 import {
+  findMissingRlsAllowlistEntries,
+  findUnknownRlsAllowlistEntries,
   isSafeIdentifier,
   parseRlsEnabledTables,
   policySqlFor,
@@ -62,6 +64,16 @@ async function main() {
       .filter((table) => !RLS_GLOBAL_TABLES.has(table) && isSafeIdentifier(table));
     const allowlist = parseRlsEnabledTables();
 
+    const unknown = findUnknownRlsAllowlistEntries(allowlist, tenantTables);
+    if (unknown.length > 0) {
+      throw new Error(`Unknown RLS_ENABLED_TABLES entries: ${unknown.join(", ")}`);
+    }
+
+    const missing = findMissingRlsAllowlistEntries(allowlist, tenantTables);
+    if (missing.length > 0) {
+      throw new Error(`RLS_ENABLED_TABLES missing discovered school_id tables: ${missing.join(", ")}`);
+    }
+
     for (const table of tenantTables) {
       for (const statement of policySqlFor(table)) {
         await client.query(statement);
@@ -71,11 +83,6 @@ async function main() {
       } else {
         await client.query(`ALTER TABLE ${table} DISABLE ROW LEVEL SECURITY`);
       }
-    }
-
-    const unknown = [...allowlist].filter((table) => !tenantTables.includes(table));
-    if (unknown.length > 0) {
-      throw new Error(`Unknown RLS_ENABLED_TABLES entries: ${unknown.join(", ")}`);
     }
 
     console.log(`[rls-ci] enabled ${allowlist.size} tenant tables for ${ROLE}`);

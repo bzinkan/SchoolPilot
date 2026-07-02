@@ -153,7 +153,7 @@ variable "scheduler_db_pool_max" {
 variable "rls_enabled_tables" {
   description = "Comma-separated tenant table allowlist for PostgreSQL RLS"
   type        = string
-  default     = "activity_log,audit_logs,block_lists,bus_routes,classpilot_ai_decisions,classpilot_classroom_states,classpilot_command_targets,classpilot_commands,classroom_course_students,classroom_courses,daily_usage,dashboard_tabs,devices,dismissal_sessions,email_alerts,email_scan_log,error_logs,evidence_artifacts,family_groups,flight_paths,grades,groups,heartbeats,homerooms,import_runs,mailpilot_watches,messages,parent_student,passes,security_events,settings,student_attendance,student_groups,student_safety_cases,student_timeline_events,students,subgroups,teacher_students,teaching_sessions,walker_zones"
+  default     = "activity_log,audit_logs,block_lists,bus_routes,chat_messages,classpilot_active_hands,classpilot_ai_decisions,classpilot_classroom_states,classpilot_command_targets,classpilot_commands,classpilot_coverage_assignments,classpilot_coverage_scope_group_members,classpilot_coverage_scope_groups,classpilot_scheduled_conflicts,classpilot_session_students,classpilot_session_usage,classpilot_supervision_contexts,classpilot_supervision_students,classroom_course_students,classroom_courses,daily_usage,dashboard_tabs,devices,dismissal_sessions,email_alerts,email_scan_log,error_logs,evidence_artifacts,family_groups,flight_paths,google_roster_connectors,grades,groups,heartbeats,homerooms,import_runs,mailpilot_watches,messages,parent_student,passes,security_events,settings,student_attendance,student_groups,student_safety_cases,student_timeline_events,students,subgroups,teacher_students,teaching_sessions,walker_zones"
 }
 
 variable "alerts_sns_topic_arn" {
@@ -264,5 +264,17 @@ variable "openai_api_key" {
   description = "OpenAI API key for AI content classification"
   type        = string
   sensitive   = true
+  default     = ""
+}
+
+variable "anthropic_api_key_parameter_arn" {
+  description = "Existing SecureString SSM parameter ARN for ANTHROPIC_API_KEY"
+  type        = string
+  default     = ""
+}
+
+variable "telegram_bot_token_parameter_arn" {
+  description = "Existing SecureString SSM parameter ARN for TELEGRAM_BOT_TOKEN"
+  type        = string
   default     = ""
 }

@@ -18,7 +18,15 @@ locals {
     { name = "RLS_GUC_ENABLED", value = "true" },
     { name = "RLS_ENABLED_TABLES", value = var.rls_enabled_tables },
   ]
-  common_secrets = [
+  optional_common_secrets = concat(
+    var.anthropic_api_key_parameter_arn != "" ? [
+      { name = "ANTHROPIC_API_KEY", valueFrom = var.anthropic_api_key_parameter_arn },
+    ] : [],
+    var.telegram_bot_token_parameter_arn != "" ? [
+      { name = "TELEGRAM_BOT_TOKEN", valueFrom = var.telegram_bot_token_parameter_arn },
+    ] : []
+  )
+  common_secrets = concat([
     { name = "DATABASE_URL", valueFrom = aws_ssm_parameter.database_url.arn },
     { name = "REDIS_URL", valueFrom = aws_ssm_parameter.redis_url.arn },
     { name = "SESSION_SECRET", valueFrom = aws_ssm_parameter.session_secret.arn },
@@ -30,7 +38,7 @@ locals {
     { name = "STRIPE_SECRET_KEY", valueFrom = aws_ssm_parameter.stripe_secret_key.arn },
     { name = "STRIPE_WEBHOOK_SECRET", valueFrom = aws_ssm_parameter.stripe_webhook_secret.arn },
     { name = "OPENAI_API_KEY", valueFrom = aws_ssm_parameter.openai_api_key.arn },
-  ]
+  ], local.optional_common_secrets)
 }
 
 # --- CloudWatch Log Group ---

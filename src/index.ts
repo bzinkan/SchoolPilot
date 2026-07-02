@@ -1266,6 +1266,7 @@ export async function runStartupMigrations(): Promise<void> {
     await pool.query(`CREATE INDEX IF NOT EXISTS evidence_artifacts_school_student_idx ON evidence_artifacts (school_id, student_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS evidence_artifacts_case_idx ON evidence_artifacts (case_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS evidence_artifacts_source_idx ON evidence_artifacts (source_type, source_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS evidence_artifacts_artifact_captured_idx ON evidence_artifacts (artifact_type, captured_at)`);
     console.log("[migration] ClassPilot competitive safety spine tables ready");
   } catch (err) {
     console.warn("[migration] ClassPilot competitive safety spine migration skipped:", (err as Error).message);

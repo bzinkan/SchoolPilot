@@ -206,6 +206,10 @@ module "ecs" {
   stripe_webhook_secret = var.stripe_webhook_secret
   openai_api_key        = var.openai_api_key
 
+  # Existing SecureString parameters managed outside Terraform tfvars.
+  anthropic_api_key_parameter_arn  = var.anthropic_api_key_parameter_arn
+  telegram_bot_token_parameter_arn = var.telegram_bot_token_parameter_arn
+
   # Scaling
   desired_count         = var.ecs_desired_count
   cpu                   = var.ecs_cpu

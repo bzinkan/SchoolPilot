@@ -236,7 +236,7 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
     --region "$REGION" > .taskdef-template.json
 
   # Relative paths so this works with Windows node under Git Bash too.
-  IMAGE_REF="${ECR_REPO}@${DIGEST}" node -e '
+  ACCOUNT_ID="$ACCOUNT_ID" REGION="$REGION" PROJECT="$PROJECT" ENVIRONMENT="$ENV" IMAGE_REF="${ECR_REPO}@${DIGEST}" node -e '
     const fs = require("fs");
     const td = JSON.parse(fs.readFileSync(".taskdef-current.json", "utf8"));
     const template = JSON.parse(fs.readFileSync(".taskdef-template.json", "utf8"));
@@ -259,6 +259,23 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
       container.environment = (container.environment || []).filter(item => !secretNames.has(item.name));
     }
 
+    function ssmParameterArn(name) {
+      return `arn:aws:ssm:${process.env.REGION}:${process.env.ACCOUNT_ID}:parameter/${process.env.PROJECT}/${process.env.ENVIRONMENT}/${name}`;
+    }
+
+    function migratePlaintextSecrets(container) {
+      const secureStringNames = ["ANTHROPIC_API_KEY", "TELEGRAM_BOT_TOKEN"];
+      const secretsByName = new Map((container.secrets || []).map(item => [item.name, item]));
+      const envNames = new Set((container.environment || []).map(item => item.name));
+      for (const name of secureStringNames) {
+        if (envNames.has(name) || secretsByName.has(name)) {
+          secretsByName.set(name, { name, valueFrom: ssmParameterArn(name) });
+        }
+      }
+      container.secrets = [...secretsByName.values()];
+      container.environment = (container.environment || []).filter(item => !secureStringNames.includes(item.name));
+    }
+
     const container = td.containerDefinitions.find(c => c.name === "api") || td.containerDefinitions[0];
     const templateContainer = (template.containerDefinitions || []).find(c => c.name === "api") || template.containerDefinitions?.[0] || {};
     const liveEnvironment = container.environment || [];
@@ -267,6 +284,7 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
     container.image = process.env.IMAGE_REF;
     container.environment = mergeNamed(liveEnvironment, templateContainer.environment);
     container.secrets = mergeNamed(liveSecrets, templateContainer.secrets);
+    migratePlaintextSecrets(container);
     dedupeEnvAgainstSecrets(container);
 
     fs.writeFileSync(".taskdef-new.json", JSON.stringify(td));

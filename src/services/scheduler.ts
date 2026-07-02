@@ -107,6 +107,7 @@ async function runHeavyJobsSerially() {
     if (currentMinute >= 30 && currentHour !== lastPurgeHour) {
       lastPurgeHour = currentHour;
       await purgeExpiredHeartbeats();
+      await purgeExpiredEvidenceArtifactContent();
       await purgeMailpilotRetention();
       await purgeOldErrorLogs();
       await purgeOldImportRuns();
@@ -934,6 +935,53 @@ async function purgeOldErrorLogs() {
   } catch (err) {
     console.error("[ErrorLogs] Retention purge error:", err);
     errorMonitor.trackError("scheduler_failure", err as Error, { job: "purgeOldErrorLogs" });
+  }
+}
+
+function parseRetentionDays(raw: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(raw || "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+// Evidence artifact retention — preserve artifact rows and metadata, but remove
+// old screenshot payloads so base64 blobs cannot grow without bound.
+async function purgeExpiredEvidenceArtifactContent() {
+  try {
+    const retentionDays = parseRetentionDays(process.env.EVIDENCE_ARTIFACT_CONTENT_RETENTION_DAYS, 30);
+    const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
+    let batchUpdated = 0;
+    let total = 0;
+
+    do {
+      const result = await schedulerPool.query(
+        `WITH expired AS (
+          SELECT id FROM evidence_artifacts
+          WHERE artifact_type = 'screenshot'
+            AND content IS NOT NULL
+            AND captured_at < $1
+          LIMIT 1000
+        )
+        UPDATE evidence_artifacts AS artifact
+        SET
+          content = NULL,
+          status = CASE WHEN artifact.status = 'available' THEN 'expired' ELSE artifact.status END,
+          metadata = COALESCE(artifact.metadata, '{}'::jsonb)
+            || jsonb_build_object('contentPurgedAt', NOW(), 'retentionDays', $2)
+        FROM expired
+        WHERE artifact.id = expired.id`,
+        [cutoff, retentionDays]
+      );
+      batchUpdated = result.rowCount || 0;
+      total += batchUpdated;
+      if (batchUpdated > 0) await new Promise((r) => setTimeout(r, 100));
+    } while (batchUpdated >= 1000);
+
+    if (total > 0) {
+      console.log(`[Evidence] Purged ${total} screenshot artifact payloads older than ${retentionDays} days`);
+    }
+  } catch (err) {
+    console.error("[Evidence] Retention purge error:", err);
+    errorMonitor.trackError("scheduler_failure", err as Error, { job: "purgeExpiredEvidenceArtifactContent" });
   }
 }
 
