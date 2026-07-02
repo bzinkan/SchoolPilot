@@ -905,6 +905,24 @@ export async function runStartupMigrations(): Promise<void> {
     console.warn("[migration] groups migration skipped:", (err as Error).message);
   }
 
+  // Group membership junction table. Keep this before any group-dependent startup work.
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS group_students (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        group_id TEXT NOT NULL,
+        student_id TEXT NOT NULL,
+        assigned_at TIMESTAMP NOT NULL DEFAULT now()
+      )
+    `);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS group_students_unique ON group_students (group_id, student_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS group_students_group_id_idx ON group_students (group_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS group_students_student_id_idx ON group_students (student_id)`);
+    console.log("[migration] group_students table ready");
+  } catch (err) {
+    console.warn("[migration] group_students migration skipped:", (err as Error).message);
+  }
+
   // Co-teacher junction tables
   try {
     await pool.query(`
