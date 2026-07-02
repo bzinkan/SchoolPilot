@@ -153,7 +153,15 @@ if (runs.length === 0) {
   process.exit(1);
 }
 const greenConclusions = new Set(["success", "skipped", "neutral"]);
-const badRuns = runs.filter((run) => run.status !== "completed" || !greenConclusions.has(run.conclusion));
+const latestRunsByWorkflow = new Map();
+for (const run of runs) {
+  if (!latestRunsByWorkflow.has(run.workflowName)) {
+    latestRunsByWorkflow.set(run.workflowName, run);
+  }
+}
+const badRuns = [...latestRunsByWorkflow.values()].filter(
+  (run) => run.status !== "completed" || !greenConclusions.has(run.conclusion)
+);
 if (badRuns.length > 0) {
   console.log(
     "GitHub Actions checks are not green:\n" +

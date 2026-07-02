@@ -774,6 +774,7 @@ const importStaffHandler = async (req: any, res: any, next: any) => {
       } else if (existing && shouldNormalizeExistingOffice) {
         skipped++;
         if (!createdUser) updated--;
+        continue;
       } else if (existing) {
         // Existing non-GoPilot-setup staff import preserves the current membership role.
       } else {

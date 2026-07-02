@@ -159,7 +159,7 @@ variable "rls_enabled_tables" {
 variable "alerts_sns_topic_arn" {
   description = "SNS topic ARN for production CloudWatch alarm and OK notifications"
   type        = string
-  default     = "arn:aws:sns:us-east-1:135775632425:schoolpilot-production-alerts"
+  default     = ""
 }
 
 # --- Domain & DNS ---

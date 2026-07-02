@@ -19,28 +19,6 @@ import { buildMonitoringHealthSnapshot } from "./services/monitoringDashboard.js
 
 const PgStore = connectPgSimple(session);
 const isProduction = process.env.NODE_ENV === "production";
-const parsedLivezDbTimeoutMs = Number(process.env.LIVEZ_DB_TIMEOUT_MS ?? 2000);
-const livezDbTimeoutMs =
-  Number.isFinite(parsedLivezDbTimeoutMs) && parsedLivezDbTimeoutMs > 0
-    ? parsedLivezDbTimeoutMs
-    : 2000;
-
-async function runLivenessDbProbe(): Promise<void> {
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  try {
-    await Promise.race([
-      pool.query("SELECT 1"),
-      new Promise<never>((_, reject) => {
-        timeout = setTimeout(
-          () => reject(new Error("liveness database probe timed out")),
-          livezDbTimeoutMs
-        );
-      }),
-    ]);
-  } finally {
-    if (timeout) clearTimeout(timeout);
-  }
-}
 
 function skipsWebSession(req: express.Request): boolean {
   const path = req.path;
@@ -124,6 +102,31 @@ export function createApp() {
 
   app.use(cookieParser());
 
+  // Liveness check for ALB/ECS. Keep this intentionally small and bounded so
+  // container replacement does not depend on web sessions or rich probes.
+  app.get("/livez", async (_req, res) => {
+    res.status(200).json({ status: "ok" });
+  });
+
+  // Public health stays cheap for external uptime checks. Detailed operational
+  // probes are available only when the caller presents HEALTH_TOKEN.
+  app.get("/health", async (req, res) => {
+    const expected = process.env.HEALTH_TOKEN;
+    const provided = req.get("x-health-token") ?? req.query.token;
+    const detailed =
+      Boolean(expected) &&
+      typeof provided === "string" &&
+      safeCompare(provided, expected!);
+    if (!detailed) {
+      return res.status(200).json({ status: "ok" });
+    }
+
+    const snapshot = await buildMonitoringHealthSnapshot({ probeAggregation: detailed });
+
+    const status = snapshot.coreOk && snapshot.alerting.ok ? "ok" : "degraded";
+    res.status(snapshot.coreOk ? 200 : 503).json({ status, checks: snapshot.checks });
+  });
+
   // CloudFront → ALB uses HTTP ("http-only" origin protocol), so the ALB sets
   // X-Forwarded-Proto: http. But the viewer → CloudFront link is always HTTPS
   // (ViewerProtocolPolicy: redirect-to-https). Override so express-session
@@ -196,37 +199,6 @@ export function createApp() {
   // "CloudFront masks client IPs" false-429 problem is fixed by trust proxy = 2
   // above, so req.ip is the real viewer again.
   app.use("/api", apiLimiter);
-
-  // Liveness check for ALB/ECS. Keep this intentionally small and bounded so
-  // container replacement does not depend on rich operational probes.
-  app.get("/livez", async (_req, res) => {
-    try {
-      await runLivenessDbProbe();
-      res.status(200).json({ status: "ok" });
-    } catch (_error) {
-      res.status(503).json({ status: "unhealthy" });
-    }
-  });
-
-  // Health check (no auth required). This remains the rich operational health
-  // endpoint; the detailed body (pool stats, error counts, client counts) is
-  // only returned when the caller presents HEALTH_TOKEN.
-  app.get("/health", async (req, res) => {
-    const expected = process.env.HEALTH_TOKEN;
-    const provided = req.get("x-health-token") ?? req.query.token;
-    const detailed =
-      Boolean(expected) &&
-      typeof provided === "string" &&
-      safeCompare(provided, expected!);
-    const snapshot = await buildMonitoringHealthSnapshot({ probeAggregation: detailed });
-
-    const status = snapshot.coreOk && snapshot.alerting.ok ? "ok" : "degraded";
-    res.status(snapshot.coreOk ? 200 : 503).json(
-      detailed
-        ? { status, checks: snapshot.checks }
-        : { status }
-    );
-  });
 
   // Client config for Chrome extension (public, no auth)
   app.get("/client-config.json", (_req, res) => {

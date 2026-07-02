@@ -905,6 +905,24 @@ export async function runStartupMigrations(): Promise<void> {
     console.warn("[migration] groups migration skipped:", (err as Error).message);
   }
 
+  // Group membership junction table. Keep this before any group-dependent startup work.
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS group_students (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        group_id TEXT NOT NULL,
+        student_id TEXT NOT NULL,
+        assigned_at TIMESTAMP NOT NULL DEFAULT now()
+      )
+    `);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS group_students_unique ON group_students (group_id, student_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS group_students_group_id_idx ON group_students (group_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS group_students_student_id_idx ON group_students (student_id)`);
+    console.log("[migration] group_students table ready");
+  } catch (err) {
+    console.warn("[migration] group_students migration skipped:", (err as Error).message);
+  }
+
   // Co-teacher junction tables
   try {
     await pool.query(`
@@ -1266,7 +1284,8 @@ export async function runStartupMigrations(): Promise<void> {
     await pool.query(`CREATE INDEX IF NOT EXISTS evidence_artifacts_school_student_idx ON evidence_artifacts (school_id, student_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS evidence_artifacts_case_idx ON evidence_artifacts (case_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS evidence_artifacts_source_idx ON evidence_artifacts (source_type, source_id)`);
-    await pool.query(`CREATE INDEX IF NOT EXISTS evidence_artifacts_artifact_captured_idx ON evidence_artifacts (artifact_type, captured_at)`);
+    await pool.query(`DROP INDEX CONCURRENTLY IF EXISTS evidence_artifacts_artifact_captured_idx`);
+    await pool.query(`CREATE INDEX CONCURRENTLY IF NOT EXISTS evidence_artifacts_purge_idx ON evidence_artifacts (captured_at) WHERE artifact_type = 'screenshot' AND content IS NOT NULL`);
     console.log("[migration] ClassPilot competitive safety spine tables ready");
   } catch (err) {
     console.warn("[migration] ClassPilot competitive safety spine migration skipped:", (err as Error).message);
