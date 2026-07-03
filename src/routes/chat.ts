@@ -23,6 +23,17 @@ const chatLimiter = rateLimit({
 
 const auth = [authenticate, requireSchoolContext] as const;
 
+function startSse(res: any, headers: Record<string, string> = {}) {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+    ...headers,
+  });
+  res.flushHeaders?.();
+  res.write(": connected\n\n");
+}
+
 async function buildContext(req: any, res: any): Promise<ConversationContext> {
   const user = req.authUser!;
   const schoolId = res.locals.schoolId!;
@@ -67,13 +78,9 @@ router.post("/message", ...auth, chatLimiter, async (req, res) => {
   const context = await buildContext(req, res);
   console.log(`[AI Chat] User=${context.userName} Role=${context.userRole} Products=${context.licensedProducts.join(",") || "NONE"}`);
 
-  // Set up SSE
-  res.writeHead(200, {
-    "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache",
-    Connection: "keep-alive",
-    "X-Conversation-Id": convId,
-  });
+  // Start SSE immediately so ALB TargetResponseTime does not include model
+  // generation time before the first assistant token arrives.
+  startSse(res, { "X-Conversation-Id": convId });
 
   try {
     for await (const event of sendMessage(convId, message.trim(), context)) {
@@ -104,11 +111,7 @@ router.post("/confirm", ...auth, async (req, res) => {
 
   const context = await buildContext(req, res);
 
-  res.writeHead(200, {
-    "Content-Type": "text/event-stream",
-    "Cache-Control": "no-cache",
-    Connection: "keep-alive",
-  });
+  startSse(res);
 
   try {
     for await (const event of confirmAction(
