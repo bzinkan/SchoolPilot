@@ -34,6 +34,7 @@ import { runWithTenantContext } from "../middleware/tenantContext.js";
 import { verifyActiveStudentTokenSession } from "../services/classpilotStudentAuth.js";
 import { buildStudentFabState } from "../services/classpilotFab.js";
 import { startActiveScheduledClassesForTeacher } from "../services/classpilotScheduledStart.js";
+import { isClassPilotWebSocketPath, isGoPilotSocketIoPath } from "./websocketPaths.js";
 
 // Ping/pong keepalive constants
 const WS_PING_INTERVAL_MS = 30_000; // 30 seconds
@@ -103,7 +104,14 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
       console.warn("[WebSocket] Failed to parse upgrade URL");
     }
 
-    if (pathname !== "/ws" && pathname !== "/ws/") {
+    // Socket.IO owns the GoPilot upgrade path. Do not let this raw ClassPilot
+    // WebSocket handler destroy that socket, or clients fall back to long
+    // polling and pollute ALB TargetResponseTime p95.
+    if (isGoPilotSocketIoPath(pathname)) {
+      return;
+    }
+
+    if (!isClassPilotWebSocketPath(pathname)) {
       console.warn("[WebSocket] Rejected upgrade for invalid path:", pathname);
       socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
       socket.destroy();
