@@ -642,7 +642,7 @@ not add a CloudFront `/livez` behavior; public synthetic checks should use
 | Component | Name / ARN | Notes |
 |-----------|-----------|-------|
 | **CloudFront** | Distribution `E1TPPJOD7C2CXR` | Two origins: `alb-api` (HTTPS-only ALB origin) and `s3-frontend` (S3); WAF attached |
-| **ALB** | `schoolpilot-production-alb` (`schoolpilot-production-alb-1268871698.us-east-1.elb.amazonaws.com`) | HTTPS listener forwards to ECS target group; target health path `/livez`; inbound listener access is restricted to the AWS CloudFront origin-facing managed prefix list |
+| **ALB** | `schoolpilot-production-alb` (`schoolpilot-production-alb-1532292365.us-east-1.elb.amazonaws.com`) | HTTPS listener forwards to ECS target group; target health path `/livez`; inbound HTTPS access is restricted to the AWS CloudFront origin-facing managed prefix list |
 | **ECS Cluster** | `schoolpilot-production-cluster` | Fargate launch type |
 | **ECS API Service** | `schoolpilot-production-api` | Pilot sizing: 1 desired task, Fargate, private subnets, uses ALB target group |
 | **ECS Worker Service** | `schoolpilot-production-scheduler-worker` | Pilot sizing: 1 desired singleton scheduler worker, no ALB |
@@ -657,9 +657,9 @@ not add a CloudFront `/livez` behavior; public synthetic checks should use
 Production public traffic must enter through CloudFront at `school-pilot.net`.
 Direct local/browser access to `api-origin.school-pilot.net` is intentionally not
 part of the verification path because the ALB security group allows only
-CloudFront origin-facing IP ranges. Use public `/health` through CloudFront plus
-ECS target health for deploy checks. ALB access logs are delivered to the
-production ALB log bucket under `alb/AWSLogs/<account-id>/`.
+CloudFront origin-facing IP ranges over HTTPS. Use public `/health` through
+CloudFront plus ECS target health for deploy checks. ALB access logs are
+delivered to the production ALB log bucket under `alb/AWSLogs/<account-id>/`.
 
 ### Deploy Sequence — Backend
 
