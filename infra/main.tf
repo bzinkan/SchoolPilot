@@ -55,10 +55,76 @@ provider "aws" {
 data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
 
+data "aws_ec2_managed_prefix_list" "cloudfront_origin_facing" {
+  name = "com.amazonaws.global.cloudfront.origin-facing"
+}
+
 locals {
-  name             = "${var.project}-${var.environment}"
-  has_domain       = var.domain != ""
-  frontend_domains = local.has_domain ? [for domain in module.dns[0].all_domains : domain if domain != module.dns[0].api_origin_domain] : []
+  name                   = "${var.project}-${var.environment}"
+  has_domain             = var.domain != ""
+  frontend_domains       = local.has_domain ? [for domain in module.dns[0].all_domains : domain if domain != module.dns[0].api_origin_domain] : []
+  alb_access_logs_bucket = "${local.name}-alb-access-logs-${data.aws_caller_identity.current.account_id}"
+}
+
+# ALB access logs let us identify source IPs and paths for target 4xx spikes.
+resource "aws_s3_bucket" "alb_access_logs" {
+  bucket        = local.alb_access_logs_bucket
+  force_destroy = var.environment != "production"
+
+  tags = { Name = local.alb_access_logs_bucket }
+}
+
+resource "aws_s3_bucket_public_access_block" "alb_access_logs" {
+  bucket = aws_s3_bucket.alb_access_logs.id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "alb_access_logs" {
+  bucket = aws_s3_bucket.alb_access_logs.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "alb_access_logs" {
+  bucket = aws_s3_bucket.alb_access_logs.id
+
+  rule {
+    id     = "expire-alb-access-logs"
+    status = "Enabled"
+
+    filter {
+      prefix = ""
+    }
+
+    expiration {
+      days = 90
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "alb_access_logs" {
+  bucket = aws_s3_bucket.alb_access_logs.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid    = "AllowElasticLoadBalancingAccessLogs"
+      Effect = "Allow"
+      Principal = {
+        Service = "logdelivery.elasticloadbalancing.amazonaws.com"
+      }
+      Action   = "s3:PutObject"
+      Resource = "${aws_s3_bucket.alb_access_logs.arn}/alb/AWSLogs/${data.aws_caller_identity.current.account_id}/*"
+    }]
+  })
 }
 
 # ============================================================================
@@ -161,13 +227,20 @@ module "dns" {
 module "alb" {
   source = "./modules/alb"
 
-  project           = var.project
-  environment       = var.environment
-  vpc_id            = module.vpc.vpc_id
-  public_subnet_ids = module.vpc.public_subnet_ids
-  enable_https      = local.has_domain
-  certificate_arn   = local.has_domain ? module.dns[0].certificate_arn : ""
-  health_check_path = "/livez"
+  project                         = var.project
+  environment                     = var.environment
+  vpc_id                          = module.vpc.vpc_id
+  public_subnet_ids               = module.vpc.public_subnet_ids
+  enable_https                    = local.has_domain
+  certificate_arn                 = local.has_domain ? module.dns[0].certificate_arn : ""
+  health_check_path               = "/livez"
+  allowed_ingress_cidr_blocks     = []
+  allowed_ingress_prefix_list_ids = [data.aws_ec2_managed_prefix_list.cloudfront_origin_facing.id]
+  enable_access_logs              = true
+  access_logs_bucket              = aws_s3_bucket.alb_access_logs.id
+  access_logs_prefix              = "alb"
+
+  depends_on = [aws_s3_bucket_policy.alb_access_logs]
 }
 
 module "ecs" {
