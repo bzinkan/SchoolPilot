@@ -14,19 +14,21 @@ resource "aws_security_group" "alb" {
   description = "Allow HTTP/HTTPS inbound"
 
   ingress {
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-    description = "HTTP"
+    from_port       = 80
+    to_port         = 80
+    protocol        = "tcp"
+    cidr_blocks     = var.allowed_ingress_cidr_blocks
+    prefix_list_ids = var.allowed_ingress_prefix_list_ids
+    description     = "HTTP from approved origins"
   }
 
   ingress {
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-    description = "HTTPS"
+    from_port       = 443
+    to_port         = 443
+    protocol        = "tcp"
+    cidr_blocks     = var.allowed_ingress_cidr_blocks
+    prefix_list_ids = var.allowed_ingress_prefix_list_ids
+    description     = "HTTPS from approved origins"
   }
 
   egress {
@@ -53,6 +55,16 @@ resource "aws_lb" "main" {
   subnets            = var.public_subnet_ids
 
   enable_deletion_protection = var.environment == "production"
+
+  dynamic "access_logs" {
+    for_each = var.enable_access_logs ? [1] : []
+
+    content {
+      bucket  = var.access_logs_bucket
+      prefix  = var.access_logs_prefix
+      enabled = true
+    }
+  }
 
   tags = { Name = "${local.name}-alb" }
 }
