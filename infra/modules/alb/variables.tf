@@ -6,6 +6,12 @@ variable "enable_https" { type = bool }
 variable "certificate_arn" { type = string }
 variable "health_check_path" { type = string }
 
+variable "enable_http_ingress" {
+  description = "Allow inbound HTTP traffic to the ALB listener"
+  type        = bool
+  default     = true
+}
+
 variable "allowed_ingress_cidr_blocks" {
   description = "CIDR blocks allowed to reach the ALB listeners"
   type        = list(string)

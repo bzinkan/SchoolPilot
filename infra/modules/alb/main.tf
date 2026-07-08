@@ -13,13 +13,17 @@ resource "aws_security_group" "alb" {
   vpc_id      = var.vpc_id
   description = "Allow HTTP/HTTPS inbound"
 
-  ingress {
-    from_port       = 80
-    to_port         = 80
-    protocol        = "tcp"
-    cidr_blocks     = var.allowed_ingress_cidr_blocks
-    prefix_list_ids = var.allowed_ingress_prefix_list_ids
-    description     = "HTTP from approved origins"
+  dynamic "ingress" {
+    for_each = var.enable_http_ingress ? [1] : []
+
+    content {
+      from_port       = 80
+      to_port         = 80
+      protocol        = "tcp"
+      cidr_blocks     = var.allowed_ingress_cidr_blocks
+      prefix_list_ids = var.allowed_ingress_prefix_list_ids
+      description     = "HTTP from approved origins"
+    }
   }
 
   ingress {
