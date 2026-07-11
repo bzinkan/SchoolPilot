@@ -7,9 +7,12 @@ environment = "production"
 aws_region  = "us-east-1"
 
 # Networking
-vpc_cidr           = "10.1.0.0/16"
-az_count           = 2
-enable_nat_gateway = true
+vpc_cidr = "10.1.0.0/16"
+az_count = 2
+# Staged value: switch enable_nat_gateway to false only after public-task egress
+# checks and the required 24-hour soak are green.
+ecs_tasks_in_public_subnets = true
+enable_nat_gateway          = true
 
 # Database — pilot-cost posture for confirmed onboarding while schools are pending
 db_instance_class        = "db.t4g.medium"
@@ -19,7 +22,8 @@ db_max_allocated_storage = 1000
 db_name                  = "schoolpilot"
 db_username              = "schoolpilot"
 
-# Redis
+# Redis — staged value: switch to cache.t4g.micro only after the manual snapshot,
+# 800-device load, endurance, and subsequent automated-snapshot gates pass.
 redis_node_type     = "cache.t4g.small"
 redis_replica_count = 0
 
@@ -32,10 +36,20 @@ worker_cpu            = 256
 worker_memory         = 512
 db_pool_max           = 20
 scheduler_db_pool_max = 5
+# Staged value: switch to false only after five stable live school days.
+enable_container_insights = true
+
+# Shared-school-IP WAF capacity: device ingest is isolated from all other API traffic.
+waf_api_rate_limit           = 50000
+waf_device_ingest_rate_limit = 100000
+waf_rate_rule_action         = "block"
 
 # Domain — auto-creates ACM cert, DNS records, and derives app URLs
 # Accessible at school-pilot.net + www.school-pilot.net
 domain = "school-pilot.net"
+# Staged value: override to true in Week 1/public-ECS plans, then apply false
+# alone during the reviewed off-hours Route 53 phase.
+route53_measure_latency = false
 
 # Alerts
 alerts_sns_topic_arn = "arn:aws:sns:us-east-1:135775632425:schoolpilot-production-alerts"

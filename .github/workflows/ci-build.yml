@@ -37,6 +37,15 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Launch cost and load-safety tests
+        run: >
+          node --import tsx --test --test-concurrency=1
+          tests/api-rate-limiter-identity.test.ts
+          tests/daily-usage-rollup.test.ts
+          tests/hot-path-logging.test.ts
+          tests/classpilot-load-preparer.test.ts
+          tests/classpilot-load-harness.test.ts
+
       - name: SOC 2 governance evidence check
         run: npm run soc2:check
 
@@ -48,7 +57,7 @@ jobs:
           node scripts/soc2/collect-ci-evidence.mjs
           --job "Backend TypeScript and build"
           --controls "SP-SEC-004"
-          --summary "Backend dependency audit, TypeScript check, and production build ran for this commit."
+          --summary "Backend dependency audit, TypeScript/build, and launch cost/load-safety tests ran for this commit."
 
       - name: Upload SOC 2 evidence
         if: always()
@@ -189,6 +198,36 @@ jobs:
           name: soc2-evidence-rls-enabled
           path: soc2-evidence/
           if-no-files-found: error
+
+  rollout-safety:
+    name: AWS rollout safety (PowerShell + Terraform)
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.14.3
+          terraform_wrapper: false
+
+      - name: Terraform formatting
+        run: terraform fmt -check -recursive infra
+
+      - name: Terraform lockfile-only initialization
+        run: terraform -chdir=infra init -backend=false -lockfile=readonly -input=false
+
+      - name: Terraform validation
+        run: terraform -chdir=infra validate -no-tests
+
+      - name: WAF block/count Terraform tests
+        run: terraform -chdir=infra test
+
+      - name: State backup and recovery tests
+        run: pwsh -NoProfile -File tests/terraform-state-backup.test.ps1
+
+      - name: Rollout monitor and rollback tests
+        run: pwsh -NoProfile -File tests/aws-rollout-automation.test.ps1
 
   frontend:
     name: Frontend (Vite Build)

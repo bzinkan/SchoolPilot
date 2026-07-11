@@ -27,7 +27,7 @@ import { students } from "../schema/students.js";
 import { users } from "../schema/core.js";
 import { settings as schoolSettings } from "../schema/shared.js";
 import { emailAlerts } from "../schema/mailpilot.js";
-import { eq, and, desc, gte, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import { eq, and, desc, gte, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm";
 import {
   getWatchesDueForRenewal,
   upsertMailpilotWatch,
@@ -36,12 +36,18 @@ import {
 import { startWatch, isMailpilotConfigured } from "./mailpilotGmail.js";
 import { sendEmail } from "./email.js";
 import { coerceSchedulerTimestamp } from "../util/schedulerTimestamp.js";
+import {
+  DailyUsageRollupMarkers,
+  dailyUsageRollupWindow,
+  type DailyUsageRollupWindow,
+} from "../util/dailyUsageRollup.js";
 
 let io: SocketServer | null = null;
 let intervalId: NodeJS.Timeout | null = null;
 let lastRollupHour = -1;
 let lastPurgeHour = -1;
 let heavyJobRunning = false; // Mutex: prevent rollup and purge from running concurrently
+const dailyUsageRollupMarkers = new DailyUsageRollupMarkers();
 
 export type SchedulerLockResult<T> =
   | { acquired: true; result: T }
@@ -142,6 +148,9 @@ export function startScheduler(socketIo: SocketServer | null = null) {
   scheduleLockedJob("autoCompleteStaleGoPilotSessions", autoCompleteStaleGoPilotSessions);
   scheduleLockedJob("autoStartClassBlocks", autoStartClassBlocks);
   scheduleLockedJob("autoEndClassBlocks", autoEndClassBlocks);
+  // Run heavy jobs immediately so a worker restart after 02:00 local time
+  // catches up yesterday's usage without waiting for the next hourly boundary.
+  scheduleLockedJob("runHeavyJobsSerially", runHeavyJobsSerially);
 }
 
 export function stopScheduler() {
@@ -368,8 +377,23 @@ async function rollupDailyUsage() {
       )
       .where(eq(schools.status, "active"));
 
+    const now = new Date();
     for (const school of activeSchools) {
-      await rollupSchoolUsage(school.id, school.schoolTimezone || "America/New_York");
+      const timezone = school.schoolTimezone || "America/New_York";
+      try {
+        const window = dailyUsageRollupWindow(now, timezone);
+        if (!window) continue;
+        if (await dailyUsageRollupMarkers.isComplete(school.id, window.date)) continue;
+
+        await rollupSchoolUsage(school.id, window);
+        await dailyUsageRollupMarkers.markComplete(school.id, window.date);
+      } catch (err) {
+        console.error(`[ClassPilot] Rollup failed for school ${school.id}:`, err);
+        errorMonitor.trackError("scheduler_failure", err as Error, {
+          job: "rollupSchoolUsage",
+          schoolId: school.id,
+        });
+      }
       // Small yield between schools so other scheduler ticks can run
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
@@ -379,111 +403,95 @@ async function rollupDailyUsage() {
   }
 }
 
-async function rollupSchoolUsage(schoolId: string, timezone: string) {
-  try {
-    // Compute yesterday's date in the school's timezone
-    const now = new Date();
-    const todayStr = now.toLocaleDateString("en-CA", { timeZone: timezone });
-    const yesterday = new Date(todayStr);
-    yesterday.setDate(yesterday.getDate() - 1);
-    const yesterdayStr = yesterday.toISOString().slice(0, 10);
-
-    // Compute UTC boundaries for "yesterday" in the school's timezone
-    // yesterdayStr at 00:00 in the school's timezone → UTC
-    // todayStr at 00:00 in the school's timezone → UTC
-    const dayStartUtc = new Date(
-      new Date().toLocaleString("en-US", { timeZone: timezone }).replace(/.*/, `${yesterdayStr}T00:00:00`)
-    );
-    const dayEndUtc = new Date(
-      new Date().toLocaleString("en-US", { timeZone: timezone }).replace(/.*/, `${todayStr}T00:00:00`)
-    );
-
-    // Aggregate heartbeats per student for yesterday (use SQL timezone conversion for accuracy)
-    // All scheduler queries go through schedulerDb (dedicated pool, isolated from API requests)
-    const studentTotals = await schedulerDb
-      .select({
-        studentId: heartbeats.studentId,
-        heartbeatCount: sql<number>`COUNT(*)::int`,
-        totalSeconds: sql<number>`(COUNT(*) * 10)::int`,
-        firstSeen: sql<string | null>`MIN(${heartbeats.timestamp})::text`,
-        lastSeen: sql<string | null>`MAX(${heartbeats.timestamp})::text`,
-      })
-      .from(heartbeats)
-      .where(
-        and(
-          eq(heartbeats.schoolId, schoolId),
-          sql`(${heartbeats.timestamp} AT TIME ZONE ${timezone})::date = ${yesterdayStr}::date`
-        )
+async function rollupSchoolUsage(schoolId: string, window: DailyUsageRollupWindow) {
+  // Aggregate heartbeats per student using raw, indexed timestamp comparisons.
+  // All scheduler queries go through schedulerDb (dedicated pool, isolated from API requests).
+  const studentTotals = await schedulerDb
+    .select({
+      studentId: heartbeats.studentId,
+      heartbeatCount: sql<number>`COUNT(*)::int`,
+      totalSeconds: sql<number>`(COUNT(*) * 10)::int`,
+      firstSeen: sql<string | null>`MIN(${heartbeats.timestamp})::text`,
+      lastSeen: sql<string | null>`MAX(${heartbeats.timestamp})::text`,
+    })
+    .from(heartbeats)
+    .where(
+      and(
+        eq(heartbeats.schoolId, schoolId),
+        gte(heartbeats.timestamp, window.dayStartUtc),
+        lt(heartbeats.timestamp, window.dayEndUtc)
       )
-      .groupBy(heartbeats.studentId);
+    )
+    .groupBy(heartbeats.studentId);
 
-    if (studentTotals.length === 0) return;
+  if (studentTotals.length === 0) {
+    console.log(`[ClassPilot] Daily usage empty for school ${schoolId} (${window.date})`);
+    return;
+  }
 
-    // Get top domains per student
-    const domainData = await schedulerDb
-      .select({
-        studentId: heartbeats.studentId,
-        domain: sql<string>`SUBSTRING(${heartbeats.activeTabUrl} FROM '://([^/]+)')`,
-        seconds: sql<number>`(COUNT(*) * 10)::int`,
-        visits: sql<number>`COUNT(*)::int`,
-      })
-      .from(heartbeats)
-      .where(
-        and(
-          eq(heartbeats.schoolId, schoolId),
-          sql`(${heartbeats.timestamp} AT TIME ZONE ${timezone})::date = ${yesterdayStr}::date`,
-          sql`${heartbeats.activeTabUrl} IS NOT NULL`
-        )
+  // Get top domains per student from the same half-open UTC window.
+  const domainData = await schedulerDb
+    .select({
+      studentId: heartbeats.studentId,
+      domain: sql<string>`SUBSTRING(${heartbeats.activeTabUrl} FROM '://([^/]+)')`,
+      seconds: sql<number>`(COUNT(*) * 10)::int`,
+      visits: sql<number>`COUNT(*)::int`,
+    })
+    .from(heartbeats)
+    .where(
+      and(
+        eq(heartbeats.schoolId, schoolId),
+        gte(heartbeats.timestamp, window.dayStartUtc),
+        lt(heartbeats.timestamp, window.dayEndUtc),
+        sql`${heartbeats.activeTabUrl} IS NOT NULL`
       )
-      .groupBy(heartbeats.studentId, sql`SUBSTRING(${heartbeats.activeTabUrl} FROM '://([^/]+)')`)
-      .orderBy(sql`COUNT(*) DESC`);
+    )
+    .groupBy(heartbeats.studentId, sql`SUBSTRING(${heartbeats.activeTabUrl} FROM '://([^/]+)')`)
+    .orderBy(sql`COUNT(*) DESC`);
 
-    // Group domains by student and take top 5
-    const studentDomains = new Map<string, { domain: string; seconds: number; visits: number }[]>();
-    for (const row of domainData) {
-      if (!row.studentId || !row.domain) continue;
-      const list = studentDomains.get(row.studentId) || [];
-      if (list.length < 5) {
-        list.push({ domain: row.domain, seconds: row.seconds, visits: row.visits });
-      }
-      studentDomains.set(row.studentId, list);
+  // Group domains by student and take top 5.
+  const studentDomains = new Map<string, { domain: string; seconds: number; visits: number }[]>();
+  for (const row of domainData) {
+    if (!row.studentId || !row.domain) continue;
+    const list = studentDomains.get(row.studentId) || [];
+    if (list.length < 5) {
+      list.push({ domain: row.domain, seconds: row.seconds, visits: row.visits });
     }
+    studentDomains.set(row.studentId, list);
+  }
 
-    // Upsert daily usage for each student (through scheduler pool)
-    for (const row of studentTotals) {
-      if (!row.studentId) continue;
-      const firstSeen = coerceSchedulerTimestamp(row.firstSeen);
-      const lastSeen = coerceSchedulerTimestamp(row.lastSeen);
-      await schedulerDb
-        .insert(dailyUsage)
-        .values({
-          schoolId,
-          studentId: row.studentId,
-          date: yesterdayStr,
+  // Upsert daily usage for each student (through scheduler pool). If a worker
+  // stops partway through, the next run safely recomputes and overwrites rows.
+  for (const row of studentTotals) {
+    if (!row.studentId) continue;
+    const firstSeen = coerceSchedulerTimestamp(row.firstSeen);
+    const lastSeen = coerceSchedulerTimestamp(row.lastSeen);
+    await schedulerDb
+      .insert(dailyUsage)
+      .values({
+        schoolId,
+        studentId: row.studentId,
+        date: window.date,
+        totalSeconds: row.totalSeconds,
+        heartbeatCount: row.heartbeatCount,
+        topDomains: studentDomains.get(row.studentId) || [],
+        firstSeen,
+        lastSeen,
+      })
+      .onConflictDoUpdate({
+        target: [dailyUsage.studentId, dailyUsage.date],
+        set: {
           totalSeconds: row.totalSeconds,
           heartbeatCount: row.heartbeatCount,
           topDomains: studentDomains.get(row.studentId) || [],
           firstSeen,
           lastSeen,
-        })
-        .onConflictDoUpdate({
-          target: [dailyUsage.studentId, dailyUsage.date],
-          set: {
-            totalSeconds: row.totalSeconds,
-            heartbeatCount: row.heartbeatCount,
-            topDomains: studentDomains.get(row.studentId) || [],
-            firstSeen,
-            lastSeen,
-            computedAt: sql`now()`,
-          },
-        });
-    }
-
-    console.log(`[ClassPilot] Rolled up daily usage for school ${schoolId}: ${studentTotals.length} students (${yesterdayStr})`);
-  } catch (err) {
-    console.error(`[ClassPilot] Rollup failed for school ${schoolId}:`, err);
-    errorMonitor.trackError("scheduler_failure", err as Error, { job: "rollupSchoolUsage", schoolId });
+          computedAt: sql`now()`,
+        },
+      });
   }
+
+  console.log(`[ClassPilot] Rolled up daily usage for school ${schoolId}: ${studentTotals.length} students (${window.date})`);
 }
 
 // ============================================================================

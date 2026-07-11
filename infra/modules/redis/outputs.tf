@@ -10,3 +10,7 @@ output "redis_url" {
 output "security_group_id" {
   value = aws_security_group.redis.id
 }
+
+output "member_clusters" {
+  value = sort(aws_elasticache_replication_group.main.member_clusters)
+}

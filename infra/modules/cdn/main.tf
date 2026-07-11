@@ -13,6 +13,13 @@ terraform {
 
 locals {
   name = "${var.project}-${var.environment}"
+  # This is intentionally an unqualified same-context label key. AWS WAF
+  # resolves unqualified LABEL matches against labels added in the same web
+  # ACL; a fully qualified web-ACL prefix contains the account and ACL name,
+  # not a rule-name namespace. See:
+  # https://docs.aws.amazon.com/waf/latest/developerguide/waf-rule-label-match-examples.html
+  device_ingest_label      = "device-ingest"
+  device_ingest_path_regex = "^/api/(classpilot/)?device/(heartbeat|screenshot)$"
 }
 
 # --- S3 Bucket for Frontend ---
@@ -150,29 +157,144 @@ resource "aws_wafv2_web_acl" "main" {
     }
   }
 
+  # Provider 5.100 cannot represent NOT(POST AND path) at this nesting depth.
+  # Classify exact ingest requests once, then let both rate rules consume the
+  # resulting same-context label without weakening the general API contract.
   rule {
-    name     = "ApiRateLimit"
+    name     = "DeviceIngestClassifier"
+    priority = 25
+
+    action {
+      count {}
+    }
+
+    statement {
+      and_statement {
+        statement {
+          byte_match_statement {
+            search_string = "POST"
+            field_to_match {
+              method {}
+            }
+            positional_constraint = "EXACTLY"
+            text_transformation {
+              priority = 0
+              type     = "NONE"
+            }
+          }
+        }
+
+        statement {
+          regex_match_statement {
+            regex_string = local.device_ingest_path_regex
+            field_to_match {
+              uri_path {}
+            }
+            text_transformation {
+              priority = 0
+              type     = "NONE"
+            }
+          }
+        }
+      }
+    }
+
+    rule_label {
+      name = local.device_ingest_label
+    }
+
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "${local.name}-device-ingest-classifier"
+      sampled_requests_enabled   = true
+    }
+  }
+
+  rule {
+    name     = "DeviceIngestRateLimit"
     priority = 30
 
     action {
-      block {}
+      dynamic "block" {
+        for_each = var.rate_rule_action == "block" ? [1] : []
+        content {}
+      }
+
+      dynamic "count" {
+        for_each = var.rate_rule_action == "count" ? [1] : []
+        content {}
+      }
     }
 
     statement {
       rate_based_statement {
-        limit              = 20000
-        aggregate_key_type = "IP"
+        limit                 = var.device_ingest_rate_limit
+        aggregate_key_type    = "IP"
+        evaluation_window_sec = 300
 
         scope_down_statement {
-          byte_match_statement {
-            search_string = "/api/"
-            field_to_match {
-              uri_path {}
+          label_match_statement {
+            scope = "LABEL"
+            key   = local.device_ingest_label
+          }
+        }
+      }
+    }
+
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "${local.name}-device-ingest-rate-limit"
+      sampled_requests_enabled   = true
+    }
+  }
+
+  rule {
+    name     = "ApiRateLimit"
+    priority = 40
+
+    action {
+      dynamic "block" {
+        for_each = var.rate_rule_action == "block" ? [1] : []
+        content {}
+      }
+
+      dynamic "count" {
+        for_each = var.rate_rule_action == "count" ? [1] : []
+        content {}
+      }
+    }
+
+    statement {
+      rate_based_statement {
+        limit                 = var.api_rate_limit
+        aggregate_key_type    = "IP"
+        evaluation_window_sec = 300
+
+        scope_down_statement {
+          and_statement {
+            statement {
+              byte_match_statement {
+                search_string = "/api/"
+                field_to_match {
+                  uri_path {}
+                }
+                positional_constraint = "STARTS_WITH"
+                text_transformation {
+                  priority = 0
+                  type     = "NONE"
+                }
+              }
             }
-            positional_constraint = "STARTS_WITH"
-            text_transformation {
-              priority = 0
-              type     = "NONE"
+
+            statement {
+              not_statement {
+                statement {
+                  label_match_statement {
+                    scope = "LABEL"
+                    key   = local.device_ingest_label
+                  }
+                }
+              }
             }
           }
         }

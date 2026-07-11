@@ -20,6 +20,8 @@ DEPLOY_BACKEND=true
 DEPLOY_FRONTEND=true
 SKIP_WAIT=false
 IMAGE_TAG=""
+EMERGENCY_TASK_DEF_ARN=""
+EMERGENCY_TASK_DEF_REVISION=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -72,6 +74,8 @@ TEMP_FILES=(
   .taskdef-current.json
   .taskdef-template.json
   .taskdef-new.json
+  .taskdef-emergency.json
+  .taskdef-emergency-registered.json
   .ecs-network.json
   .migration-task.json
   .migration-result.json
@@ -303,8 +307,70 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
     --query 'taskDefinition.revision' \
     --output text \
     --region "$REGION")
-  rm -f .taskdef-current.json .taskdef-template.json .taskdef-new.json
   success "Registered ${NAME}-api:${NEW_REV} (image pinned by digest)"
+
+  # Pre-register an unused, digest-identical OOM recovery target. It is cloned
+  # from the just-rendered API revision so environment variables, secrets,
+  # roles, logging, health checks, and runtime settings stay exactly aligned.
+  # Only the family and Fargate task size differ; no service is pointed at it.
+  info "Rendering 512 CPU / 2048 MiB API OOM emergency revision..."
+  EMERGENCY_FAMILY="${NAME}-api-emergency" IMAGE_REF="${ECR_REPO}@${DIGEST}" node -e '
+    const fs = require("fs");
+    const source = JSON.parse(fs.readFileSync(".taskdef-new.json", "utf8"));
+    const emergency = structuredClone(source);
+    const container = (emergency.containerDefinitions || []).find(c => c.name === "api") || emergency.containerDefinitions?.[0];
+
+    if (!container) {
+      throw new Error("Rendered API task definition has no container");
+    }
+    if (container.image !== process.env.IMAGE_REF || !container.image.includes("@sha256:")) {
+      throw new Error("Emergency task definition must use the just-pushed digest-pinned API image");
+    }
+
+    emergency.family = process.env.EMERGENCY_FAMILY;
+    emergency.cpu = "512";
+    emergency.memory = "2048";
+    // The live task currently relies on the task-level ceiling. If a future
+    // revision adds a hard container cap, carrying it into the OOM target
+    // would silently defeat the 2 GiB recovery posture.
+    delete container.memory;
+    fs.writeFileSync(".taskdef-emergency.json", JSON.stringify(emergency));
+  '
+
+  EMERGENCY_TASK_DEF_ARN=$(aws ecs register-task-definition \
+    --cli-input-json file://.taskdef-emergency.json \
+    --query 'taskDefinition.taskDefinitionArn' \
+    --output text \
+    --region "$REGION")
+  EMERGENCY_TASK_DEF_REVISION="${EMERGENCY_TASK_DEF_ARN##*:}"
+  if [[ ! "$EMERGENCY_TASK_DEF_REVISION" =~ ^[0-9]+$ ]]; then
+    error "Could not determine the registered emergency task-definition revision from: $EMERGENCY_TASK_DEF_ARN"
+    exit 1
+  fi
+
+  aws ecs describe-task-definition \
+    --task-definition "$EMERGENCY_TASK_DEF_ARN" \
+    --query taskDefinition \
+    --output json \
+    --region "$REGION" > .taskdef-emergency-registered.json
+  EMERGENCY_FAMILY="${NAME}-api-emergency" IMAGE_REF="${ECR_REPO}@${DIGEST}" node -e '
+    const fs = require("fs");
+    const registered = JSON.parse(fs.readFileSync(".taskdef-emergency-registered.json", "utf8"));
+    const container = (registered.containerDefinitions || []).find(c => c.name === "api") || registered.containerDefinitions?.[0];
+    if (registered.family !== process.env.EMERGENCY_FAMILY || registered.cpu !== "512" || registered.memory !== "2048") {
+      throw new Error("Registered emergency task definition does not have the reviewed family and 512/2048 task size");
+    }
+    if (!container || container.image !== process.env.IMAGE_REF || !container.image.includes("@sha256:")) {
+      throw new Error("Registered emergency task definition is not pinned to the deployed API image digest");
+    }
+    if (container.memory !== undefined && Number(container.memory) < 2048) {
+      throw new Error("Registered emergency container retains a lower hard memory ceiling");
+    }
+  '
+
+  rm -f .taskdef-current.json .taskdef-template.json .taskdef-new.json .taskdef-emergency.json .taskdef-emergency-registered.json
+  success "OOM emergency target registered but not deployed: ${EMERGENCY_TASK_DEF_ARN} (revision ${EMERGENCY_TASK_DEF_REVISION})"
+  info "OOM recovery command: aws ecs update-service --cluster ${CLUSTER} --service ${SERVICE} --task-definition ${EMERGENCY_TASK_DEF_ARN} --region ${REGION}"
 
   # Step 5: Run migrations as an explicit one-off task before any service rollout.
   info "Resolving ECS network configuration for migration task..."
@@ -533,5 +599,8 @@ echo "=========================================="
 success "All done! Deployment summary:"
 echo "=========================================="
 [[ "$DEPLOY_BACKEND" == true ]]  && echo "  API:      ECS service updated (image: ${IMAGE_TAG})"
+if [[ "$DEPLOY_BACKEND" == true && -n "$EMERGENCY_TASK_DEF_ARN" ]]; then
+  echo "  OOM target: ${EMERGENCY_TASK_DEF_ARN} (revision ${EMERGENCY_TASK_DEF_REVISION}, 512 CPU / 2048 MiB; not deployed)"
+fi
 [[ "$DEPLOY_FRONTEND" == true ]] && echo "  Frontend: S3 synced, CloudFront invalidated"
 echo ""

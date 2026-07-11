@@ -42,6 +42,12 @@ variable "enable_nat_gateway" {
   default     = true
 }
 
+variable "ecs_tasks_in_public_subnets" {
+  description = "Place ECS API and worker tasks in public subnets with public IPv4 addresses"
+  type        = bool
+  default     = false
+}
+
 # --- Database ---
 
 variable "db_instance_class" {
@@ -138,6 +144,12 @@ variable "worker_memory" {
   default     = 512
 }
 
+variable "enable_container_insights" {
+  description = "Enable ECS Container Insights and its task-count alarms"
+  type        = bool
+  default     = true
+}
+
 variable "db_pool_max" {
   description = "Maximum Postgres connections per API task"
   type        = number
@@ -162,12 +174,51 @@ variable "alerts_sns_topic_arn" {
   default     = ""
 }
 
+variable "waf_api_rate_limit" {
+  description = "Maximum non-device-ingest API requests allowed per source IP in a five-minute WAF window"
+  type        = number
+  default     = 50000
+
+  validation {
+    condition     = var.waf_api_rate_limit >= 100
+    error_message = "waf_api_rate_limit must be at least 100 requests per five minutes."
+  }
+}
+
+variable "waf_device_ingest_rate_limit" {
+  description = "Maximum heartbeat and screenshot POST requests allowed per source IP in a five-minute WAF window"
+  type        = number
+  default     = 100000
+
+  validation {
+    condition     = var.waf_device_ingest_rate_limit >= 100
+    error_message = "waf_device_ingest_rate_limit must be at least 100 requests per five minutes."
+  }
+}
+
+variable "waf_rate_rule_action" {
+  description = "Action for both WAF rate-limit rules; use count only for a reviewed emergency rollback"
+  type        = string
+  default     = "block"
+
+  validation {
+    condition     = contains(["block", "count"], var.waf_rate_rule_action)
+    error_message = "waf_rate_rule_action must be either block or count."
+  }
+}
+
 # --- Domain & DNS ---
 
 variable "domain" {
   description = "Root domain (e.g., school-pilot.net). Set to enable Route 53 + ACM auto-setup."
   type        = string
   default     = ""
+}
+
+variable "route53_measure_latency" {
+  description = "Enable Route 53 health-check latency measurement; keep true until the separate off-hours disable phase"
+  type        = bool
+  default     = true
 }
 
 # --- Application Secrets ---

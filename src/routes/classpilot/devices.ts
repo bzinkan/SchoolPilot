@@ -59,6 +59,7 @@ import {
   setScreenshot,
   getScreenshot,
   setFlightPathStatus,
+  recordScreenshotUpload,
 } from "../../realtime/ws-redis.js";
 import { classifyUrl } from "../../services/aiClassification.js";
 import { recordBrowserSafetyTimeline } from "./competitive.js";
@@ -1712,8 +1713,6 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, deviceScreensh
     const deviceId = res.locals.deviceId as string;
     const schoolId = res.locals.schoolId as string;
 
-    console.log(`[Screenshot] Upload from device=${deviceId} school=${schoolId} size=${screenshot ? Math.round(screenshot.length / 1024) + 'KB' : 'empty'}`);
-
     if (!screenshot) {
       return res.status(400).json({ error: "screenshot data required" });
     }
@@ -1732,6 +1731,10 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, deviceScreensh
       (globalThis as any).__screenshots = (globalThis as any).__screenshots || new Map();
       (globalThis as any).__screenshots.set(deviceId, data);
     }
+    recordScreenshotUpload(
+      typeof screenshot === "string" ? Buffer.byteLength(screenshot, "utf8") : 0,
+      stored
+    );
 
     // Notify teachers
     broadcastToTeachersLocal(schoolId, {

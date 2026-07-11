@@ -244,7 +244,7 @@ When a school has multiple products, priority order is: ClassPilot > PassPilot >
   - **Axios instance** from `shared/utils/api.js` — legacy pattern, auto-attaches JWT tokens.
 - **Role-aware hooks**: `useClassPilotAuth`, `usePassPilotAuth`, `useGoPilotAuth` map the generic `activeMembership.role` to product-specific role checks (isAdmin, isTeacher, etc.).
 - **Vite proxy**: The frontend dev server proxies `/api`, `/ws`, and `/gopilot-socket` to the backend on port 4000.
-- **Chrome extension**: The ClassPilot Chrome extension (MV3, separate repo at `ClassPilot/extension/`) uses a service worker (`service-worker.js`). Current prepared package version: `2.5.7` (`ClassPilot-v2.5.7.zip`); do not assume this is live in the Chrome Web Store until the developer console confirms review/publish. Use `console.warn` instead of `console.error` — Chrome surfaces `console.error` calls as visible "Errors" on the chrome://extensions page, alarming school IT admins.
+- **Chrome extension**: The ClassPilot Chrome extension (MV3, separate repo at `ClassPilot/extension/`) uses a service worker (`service-worker.js`). Public Chrome Web Store listing `iggbfegfcjkfieoemeolfmfnapepalca` was verified on July 11, 2026 at live version `2.5.7` (updated July 2, 2026), matching the prepared `ClassPilot-v2.5.7.zip`; re-check the listing before any future bump/upload. Use `console.warn` instead of `console.error` — Chrome surfaces `console.error` calls as visible "Errors" on the chrome://extensions page, alarming school IT admins.
 - **MV3 service worker limits**: `setInterval` doesn't survive service worker termination. Use `chrome.alarms` for periodic tasks. Screenshots use a separate `chrome.alarms` alarm (30s). Heartbeats use `setInterval(10s)` plus `chrome.alarms` as fallback.
 - **WebSocket lives in offscreen document**: MV3 service workers can't maintain persistent WebSockets (Chrome 145+ enforces this). The extension uses an offscreen document (`offscreen.js`) as a WebSocket proxy. Chrome can kill the offscreen doc when the declared `reasons` (USER_MEDIA, DISPLAY_MEDIA, BLOBS) are inactive — the offscreen doc sends a 25s application-level ping to keep itself alive AND keep ALB connections from idling out.
 - **Extension deployment**: Requires force-install via Google Admin (Devices → Chrome → Apps & extensions) for managed browsers/Chromebooks. Google Workspace screen capture policies needed for `captureVisibleTab`. Updates flow: confirm the live CWS version → bump `manifest.json` version in the separate ClassPilot repo → package a versioned zip → publish to Chrome Web Store → CWS review → force-install pulls automatically. A SchoolPilot API/frontend deploy does not publish or update the Chrome extension.
@@ -644,17 +644,20 @@ not add a CloudFront `/livez` behavior; public synthetic checks should use
 | **CloudFront** | Distribution `E1TPPJOD7C2CXR` | Two origins: `alb-api` (HTTPS-only ALB origin) and `s3-frontend` (S3); WAF attached |
 | **ALB** | `schoolpilot-production-alb` (`schoolpilot-production-alb-1532292365.us-east-1.elb.amazonaws.com`) | HTTPS listener forwards to ECS target group; target health path `/livez`; inbound HTTPS access is restricted to the AWS CloudFront origin-facing managed prefix list |
 | **ECS Cluster** | `schoolpilot-production-cluster` | Fargate launch type |
-| **ECS API Service** | `schoolpilot-production-api` | Pilot sizing: 1 desired task, Fargate, private subnets, uses ALB target group |
-| **ECS Worker Service** | `schoolpilot-production-scheduler-worker` | Pilot sizing: 1 desired singleton scheduler worker, no ALB |
-| **Task Definitions** | `schoolpilot-production-api`, `schoolpilot-production-scheduler-worker` | API container named `api`, worker container named `scheduler-worker`, same digest-pinned image |
+| **ECS API Service** | `schoolpilot-production-api` | Launch sizing: 1 desired task (autoscaling 1–6), 512 CPU / 1024 MiB, uses the ALB target group. The cost rollout stages it from private to public subnets with a public IPv4 only after the baseline gate. |
+| **ECS Worker Service** | `schoolpilot-production-scheduler-worker` | Launch sizing: 1 desired singleton scheduler worker at 256 CPU / 512 MiB, staged to the same public-task egress posture as the API; no ALB target registration. |
+| **Task Definitions** | `schoolpilot-production-api`, `schoolpilot-production-api-emergency`, `schoolpilot-production-scheduler-worker` | API container named `api`, worker container named `scheduler-worker`, same digest-pinned image. The emergency family is pre-registered at 512 CPU / 2048 MiB and is never selected by the normal deploy path. |
 | **ECR** | `135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api` | Images are pushed with a git-SHA tag and also `:latest`; ECS revisions pin by digest |
 | **S3** | `schoolpilot-production-frontend` | Static frontend assets served by CloudFront |
 | **RDS** | PostgreSQL in private VPC | Pilot sizing is `db.t4g.medium`, Single-AZ, 100 GB allocated with 1000 GB max autoscaling |
-| **Redis** | ElastiCache replication group | Pilot sizing is `cache.t4g.small`, single node, TLS required via `rediss://` |
+| **Redis** | ElastiCache replication group | Launch target is `cache.t4g.micro`, single node, TLS required via `rediss://`; retain `cache.t4g.small` until the snapshot and 800-device endurance gates pass. |
 | **Region** | `us-east-1` | All resources |
 | **Account** | `135775632425` | |
 
 Production public traffic must enter through CloudFront at `school-pilot.net`.
+Public IPv4 on launch ECS tasks is for direct outbound egress after NAT removal;
+the ECS security group still accepts the API port only from the ALB security
+group and the worker exposes no public application listener.
 Direct local/browser access to `api-origin.school-pilot.net` is intentionally not
 part of the verification path because the ALB security group allows only
 CloudFront origin-facing IP ranges over HTTPS. Use public `/health` through
@@ -674,7 +677,12 @@ Preferred path:
 The deploy script requires a clean local `main` equal to `origin/main`, green
 latest GitHub Actions runs per workflow, authenticated AWS + GitHub CLIs, and a
 git-SHA image tag by default. It builds and pushes the image, registers
-digest-pinned API and scheduler-worker task definitions, runs the explicit
+digest-pinned API and scheduler-worker task definitions, and also pre-registers
+an unused digest-pinned API OOM target in the
+`schoolpilot-<environment>-api-emergency` family. The emergency target clones
+the newly rendered API definition, including its environment and secrets, but
+uses 512 CPU / 2048 MiB. The script prints its exact ARN and revision without
+changing either active service. It then runs the explicit
 `RUN_MIGRATIONS_ONLY=true` ECS migration task, updates both ECS services, waits
 for service stability, and cleans temporary task-definition files.
 
@@ -707,6 +715,50 @@ MSYS_NO_PATHCONV=1 aws ecs update-service --cluster schoolpilot-production-clust
 MSYS_NO_PATHCONV=1 aws ecs describe-services --cluster schoolpilot-production-cluster --services schoolpilot-production-api schoolpilot-production-scheduler-worker --region us-east-1 --query 'services[].{service:serviceName,desired:desiredCount,running:runningCount,taskDefinition:taskDefinition,deployments:deployments}'
 # Each service should show desiredCount=1, runningCount=1, rolloutState=COMPLETED
 # If runningCount=0 or rolloutState=FAILED, check task logs in CloudWatch
+```
+
+If the API deployment OOMs, use the exact emergency ARN printed by that same
+backend deploy; do not reuse an emergency revision from a different image. The
+command below is an operator action and is not run automatically by the deploy
+script:
+
+```bash
+EMERGENCY_TASK_DEF_ARN="arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:<PRINTED_REVISION>"
+MSYS_NO_PATHCONV=1 aws ecs update-service \
+  --cluster schoolpilot-production-cluster \
+  --service schoolpilot-production-api \
+  --task-definition "$EMERGENCY_TASK_DEF_ARN" \
+  --region us-east-1
+MSYS_NO_PATHCONV=1 aws ecs wait services-stable \
+  --cluster schoolpilot-production-cluster \
+  --services schoolpilot-production-api \
+  --region us-east-1
+```
+
+Verify `/health`, target health, and ECS task restart/OOM counters immediately
+after using the emergency target. The standard 512 CPU / 1024 MiB API revision
+is not an OOM recovery target because it retains the failed memory ceiling.
+
+### Launch cost rollout
+
+The staged WAF/alarm, public-ECS, NAT, Route 53, Redis, synthetic-load, state
+recovery, supervision, and rollback procedure lives in
+`docs/AWS_COST_ROLLOUT_OPERATIONS.md`; the thresholds and Chromebook onboarding
+hold live in `docs/SCALE_READINESS.md`. Follow those two files as one contract.
+`production.tfvars` intentionally contains future stage values, so never run an
+unscoped production apply. Use a unique external saved plan, verified DPAPI and
+OneDrive AES-GCM state backups before plan/before apply/after apply, and the
+exact phase shape from the runbook.
+
+Useful safety checks:
+
+```powershell
+node scripts/load/prepare-classpilot-load-test.mjs --help
+npm run load:classpilot -- --validate-fixtures
+pwsh -NoProfile -File tests/terraform-state-backup.test.ps1
+pwsh -NoProfile -File tests/aws-rollout-automation.test.ps1
+terraform -chdir=infra init -backend=false -lockfile=readonly -input=false
+terraform -chdir=infra validate -no-tests
 ```
 
 ### Deploy Sequence — Frontend

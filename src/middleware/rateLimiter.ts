@@ -1,9 +1,8 @@
 import rateLimit, { ipKeyGenerator, type Store } from "express-rate-limit";
 import { RedisStore } from "rate-limit-redis";
-import { createHash } from "crypto";
 import { createClient } from "redis";
 import type { Request } from "express";
-import { usesDeviceScopedApiLimit } from "../util/apiRateLimitRoutes.js";
+import { resolveApiRateLimitIdentity } from "../util/apiRateLimitIdentity.js";
 
 // Shared Redis backing for all limiters so counts survive deploys and are
 // shared across ECS tasks. Dedicated client (not the ws-redis publisher) to
@@ -77,18 +76,13 @@ export async function redisCommand(args: string[]): Promise<unknown | undefined>
   return redisClient.sendCommand(args);
 }
 
-function apiRateLimitKey(req: Request): string {
-  const authorization = req.get("authorization");
-  if (
-    usesDeviceScopedApiLimit(req) &&
-    typeof authorization === "string" &&
-    authorization.toLowerCase().startsWith("bearer ")
-  ) {
-    const tokenHash = createHash("sha256").update(authorization).digest("hex").slice(0, 32);
-    return `device-token:${tokenHash}`;
-  }
-
-  return `ip:${ipKeyGenerator(req.ip ?? req.socket?.remoteAddress ?? "unknown")}`;
+function apiRateLimitIdentity(req: Request) {
+  return resolveApiRateLimitIdentity({
+    request: req,
+    authorization: req.get("authorization"),
+    sessionUserId: req.session?.userId,
+    normalizedIp: ipKeyGenerator(req.ip ?? req.socket?.remoteAddress ?? "unknown"),
+  });
 }
 
 export const authLimiter = rateLimit({
@@ -103,13 +97,13 @@ export const authLimiter = rateLimit({
 
 export const apiLimiter = rateLimit({
   windowMs: 1 * 60 * 1000, // 1 minute
-  max: 1000,
+  max: (req: Request) => apiRateLimitIdentity(req).limit,
   message: { error: "Too many requests, please try again later" },
   standardHeaders: true,
   legacyHeaders: false,
   store: redisStore("rl:api:"),
   passOnStoreError: true,
-  keyGenerator: apiRateLimitKey,
+  keyGenerator: (req: Request) => apiRateLimitIdentity(req).key,
 });
 
 // Workspace Security Audit — expensive: each call fans out to ~10 Google APIs

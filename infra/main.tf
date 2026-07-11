@@ -251,7 +251,8 @@ module "ecs" {
   environment           = var.environment
   aws_region            = var.aws_region
   vpc_id                = module.vpc.vpc_id
-  private_subnet_ids    = module.vpc.private_subnet_ids
+  task_subnet_ids       = var.ecs_tasks_in_public_subnets ? module.vpc.public_subnet_ids : module.vpc.private_subnet_ids
+  assign_task_public_ip = var.ecs_tasks_in_public_subnets
   alb_target_group_arn  = module.alb.target_group_arn
   ecr_repository_url    = module.ecr.repository_url
   container_port        = 4000
@@ -285,15 +286,16 @@ module "ecs" {
   telegram_bot_token_parameter_arn = var.telegram_bot_token_parameter_arn
 
   # Scaling
-  desired_count         = var.ecs_desired_count
-  cpu                   = var.ecs_cpu
-  memory                = var.ecs_memory
-  worker_desired_count  = var.worker_desired_count
-  worker_cpu            = var.worker_cpu
-  worker_memory         = var.worker_memory
-  db_pool_max           = var.db_pool_max
-  scheduler_db_pool_max = var.scheduler_db_pool_max
-  rls_enabled_tables    = var.rls_enabled_tables
+  desired_count             = var.ecs_desired_count
+  cpu                       = var.ecs_cpu
+  memory                    = var.ecs_memory
+  worker_desired_count      = var.worker_desired_count
+  worker_cpu                = var.worker_cpu
+  worker_memory             = var.worker_memory
+  enable_container_insights = var.enable_container_insights
+  db_pool_max               = var.db_pool_max
+  scheduler_db_pool_max     = var.scheduler_db_pool_max
+  rls_enabled_tables        = var.rls_enabled_tables
 }
 
 module "cdn" {
@@ -311,6 +313,9 @@ module "cdn" {
   api_domain                 = local.has_domain ? module.dns[0].api_origin_domain : module.alb.alb_dns_name
   certificate_arn            = local.has_domain ? module.dns[0].certificate_arn : ""
   api_origin_protocol_policy = local.has_domain ? "https-only" : "http-only"
+  api_rate_limit             = var.waf_api_rate_limit
+  device_ingest_rate_limit   = var.waf_device_ingest_rate_limit
+  rate_rule_action           = var.waf_rate_rule_action
 }
 
 # ============================================================================

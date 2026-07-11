@@ -19,6 +19,64 @@ const instanceShortId = instanceId.slice(0, 8); // Short ID for logging
 const redisUrl = process.env.REDIS_URL;
 const redisPrefix = process.env.REDIS_PREFIX ?? "schoolpilot";
 const redisChannel = `${redisPrefix}:ws:broadcast`;
+const HOT_PATH_LOG_INTERVAL_MS = 60_000;
+
+type HotPathActivity = {
+  redisMessagesPublished: number;
+  redisSubscriberDeliveries: number;
+  redisMessagesReceived: number;
+  screenshotUploads: number;
+  screenshotPayloadBytes: number;
+  screenshotRedisStores: number;
+  screenshotMemoryFallbacks: number;
+};
+
+function emptyHotPathActivity(): HotPathActivity {
+  return {
+    redisMessagesPublished: 0,
+    redisSubscriberDeliveries: 0,
+    redisMessagesReceived: 0,
+    screenshotUploads: 0,
+    screenshotPayloadBytes: 0,
+    screenshotRedisStores: 0,
+    screenshotMemoryFallbacks: 0,
+  };
+}
+
+let hotPathActivity = emptyHotPathActivity();
+
+function flushHotPathActivity(): void {
+  const activity = hotPathActivity;
+  hotPathActivity = emptyHotPathActivity();
+  if (
+    activity.redisMessagesPublished === 0 &&
+    activity.redisMessagesReceived === 0 &&
+    activity.screenshotUploads === 0
+  ) {
+    return;
+  }
+
+  // Deliberately contains only process-level counts: no school, user, device,
+  // URL, title, message payload, or Redis key data.
+  console.log(JSON.stringify({
+    event: "realtime_hot_path_summary",
+    intervalSeconds: HOT_PATH_LOG_INTERVAL_MS / 1_000,
+    ...activity,
+  }));
+}
+
+const hotPathLogTimer = setInterval(flushHotPathActivity, HOT_PATH_LOG_INTERVAL_MS);
+hotPathLogTimer.unref?.();
+
+export function recordScreenshotUpload(payloadBytes: number, storedInRedis: boolean): void {
+  hotPathActivity.screenshotUploads += 1;
+  hotPathActivity.screenshotPayloadBytes += Math.max(0, payloadBytes);
+  if (storedInRedis) {
+    hotPathActivity.screenshotRedisStores += 1;
+  } else {
+    hotPathActivity.screenshotMemoryFallbacks += 1;
+  }
+}
 
 console.log(`[Redis] Instance ${instanceShortId} starting, Redis URL: ${redisUrl ? 'configured' : 'NOT configured'}`);
 
@@ -108,13 +166,11 @@ export async function subscribeWS(
         if (!envelope) {
           return;
         }
-        const senderShortId = envelope.instanceId.slice(0, 8);
         // Skip messages from this instance (they were already handled locally)
         if (envelope.instanceId === instanceId) {
           return;
         }
-        const msgType = (envelope.message as { type?: string })?.type ?? 'unknown';
-        console.log(`[Redis] Instance ${instanceShortId} received ${msgType} from ${senderShortId}, target: ${envelope.target.kind}`);
+        hotPathActivity.redisMessagesReceived += 1;
         onMessage(envelope.target, envelope.message);
       } catch (error) {
         console.error(`[Redis] Instance ${instanceShortId} message parse error:`, error);
@@ -144,11 +200,9 @@ export async function publishWS(target: WsRedisTarget, message: unknown): Promis
   };
 
   try {
-    const msgType = (message as { type?: string })?.type ?? 'unknown';
-    const targetInfo = target.kind === 'device' ? `device:${(target as any).deviceId}` : target.kind;
-    console.log(`[Redis] Instance ${instanceShortId} publishing ${msgType} to ${targetInfo}`);
     const numSubscribers = await redisPublisher.publish(redisChannel, JSON.stringify(payload));
-    console.log(`[Redis] Instance ${instanceShortId} published ${msgType}, ${numSubscribers} subscribers received`);
+    hotPathActivity.redisMessagesPublished += 1;
+    hotPathActivity.redisSubscriberDeliveries += numSubscribers;
   } catch (error) {
     console.error(`[Redis] Instance ${instanceShortId} publish failed:`, error);
     warnRedis(error);
