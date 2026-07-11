@@ -11,7 +11,8 @@
  *     --config <absolute-external-json> --output <absolute-external-directory>
  *
  * Required process environment (never place these in the config file):
- *   CLP_SUPER_ADMIN_EMAIL / CLP_SUPER_ADMIN_PASSWORD  (all online operations)
+ *   CLP_SUPER_ADMIN_BEARER OR                         (all online operations)
+ *   CLP_SUPER_ADMIN_EMAIL / CLP_SUPER_ADMIN_PASSWORD
  *   CLP_FIXTURE_ADMIN_PASSWORD                        (provision/refresh/verify/deactivate)
  *   CLP_FIXTURE_TEACHER_PASSWORD                      (provision and refresh)
  *   CLP_OPERATOR_ALIAS_CONFIRMED=<fixtureId>           (after receiving the primary alias probe)
@@ -38,6 +39,11 @@ export const FILES = Object.freeze({
 });
 
 const COUNTS = Object.freeze({ teachers: 20, classes: 20, classSize: 40, primaryStudents: 1000, canaryStudents: 10 });
+// ClassPilot PIN generation uses bcrypt cost 12 for every imported student.
+// Keep each request well below CloudFront's 30-second origin-response ceiling
+// on a 0.5-vCPU launch task; total provisioning throughput is unchanged because
+// batches run sequentially.
+const STUDENT_IMPORT_BATCH_SIZE = 10;
 const SYNTHETIC_SCHOOL_MARKER = "[SYNTHETIC LOAD TEST - NON-BILLABLE]";
 const OWNERSHIP_ACK = "TOOL_OWNED_MARKED_NON_BILLABLE_SYNTHETIC_TENANTS_ONLY";
 const EMAIL_DELIVERY_ACK = "ALL_SYNTHETIC_EMAILS_ROUTE_PLUS_ALIASES_TO_OPERATOR_MAILBOX";
@@ -409,7 +415,7 @@ export function buildDryRunSummary(config) {
       { cohort: "burst-200", start: 811, end: 1010, count: 200 },
     ],
     requiredEnvironment: [
-      "CLP_SUPER_ADMIN_EMAIL", "CLP_SUPER_ADMIN_PASSWORD", "CLP_FIXTURE_ADMIN_PASSWORD",
+      "CLP_SUPER_ADMIN_BEARER OR (CLP_SUPER_ADMIN_EMAIL + CLP_SUPER_ADMIN_PASSWORD)", "CLP_FIXTURE_ADMIN_PASSWORD",
       "CLP_FIXTURE_TEACHER_PASSWORD", `CLP_OPERATOR_ALIAS_CONFIRMED=${config.fixtureId}`,
       `CLP_CANARY_ALIAS_CONFIRMED=${config.fixtureId}`,
     ],
@@ -567,6 +573,76 @@ function envSecret(name, minimumLength = 1) {
   const value = process.env[name];
   if (typeof value !== "string" || value.length < minimumLength) throw new SafeError(`${name} is required in the current process environment`);
   return value;
+}
+
+function nonEmptyEnvironmentValue(env, name) {
+  const value = env[name];
+  return typeof value === "string" && Boolean(value.trim());
+}
+
+export function superAdminAuthPrerequisiteReasons(env = process.env) {
+  if (nonEmptyEnvironmentValue(env, "CLP_SUPER_ADMIN_BEARER")) return [];
+  const reasons = [];
+  if (!nonEmptyEnvironmentValue(env, "CLP_SUPER_ADMIN_EMAIL")) {
+    reasons.push("CLP_SUPER_ADMIN_BEARER or CLP_SUPER_ADMIN_EMAIL is absent from the current process");
+  }
+  if (!nonEmptyEnvironmentValue(env, "CLP_SUPER_ADMIN_PASSWORD")) {
+    reasons.push("CLP_SUPER_ADMIN_BEARER or CLP_SUPER_ADMIN_PASSWORD is absent from the current process");
+  }
+  return reasons;
+}
+
+function superAdminAuthFailure(message) {
+  return new SafeError(message, "SUPER_ADMIN_AUTH");
+}
+
+function assertVerifiedSuperAdminIdentity(me, config) {
+  const user = me?.data?.user;
+  if (user?.isSuperAdmin !== true) {
+    throw superAdminAuthFailure("The supplied super-admin authentication does not belong to a super administrator");
+  }
+  if (typeof user.id !== "string" || !user.id) {
+    throw superAdminAuthFailure("The supplied super-admin authentication returned an invalid user identity");
+  }
+  const actualEmail = typeof user.email === "string" ? user.email.trim().toLowerCase() : "";
+  if (actualEmail !== config.operatorMailboxEmail) {
+    throw superAdminAuthFailure("The supplied super-admin authentication belongs to a different operator mailbox identity");
+  }
+}
+
+/**
+ * Resolve either a short-lived bearer obtained from the operator's normal
+ * Google-backed session or the legacy email/password login. Both modes are
+ * independently verified through /api/auth/me before any super-admin route is
+ * used. The returned object intentionally contains only the in-memory bearer.
+ */
+export async function superAuthFromEnvironment(client, config, env = process.env) {
+  const suppliedBearer = nonEmptyEnvironmentValue(env, "CLP_SUPER_ADMIN_BEARER")
+    ? env.CLP_SUPER_ADMIN_BEARER
+    : null;
+  let bearer;
+  if (suppliedBearer !== null) {
+    if (suppliedBearer !== suppliedBearer.trim() || /\s/.test(suppliedBearer)) {
+      throw superAdminAuthFailure("CLP_SUPER_ADMIN_BEARER must contain only the bearer token value without whitespace");
+    }
+    bearer = suppliedBearer;
+  } else {
+    const reasons = superAdminAuthPrerequisiteReasons(env);
+    if (reasons.length) throw superAdminAuthFailure(reasons.join("; "));
+    const email = normalizeEmail(env.CLP_SUPER_ADMIN_EMAIL, "CLP_SUPER_ADMIN_EMAIL");
+    if (email !== config.operatorMailboxEmail) {
+      throw superAdminAuthFailure("CLP_SUPER_ADMIN_EMAIL must exactly match operatorMailboxEmail");
+    }
+    const password = env.CLP_SUPER_ADMIN_PASSWORD;
+    if (typeof password !== "string" || password.length < 8) {
+      throw superAdminAuthFailure("CLP_SUPER_ADMIN_PASSWORD is required in the current process environment");
+    }
+    const auth = await login(client, email, password);
+    bearer = auth.bearer;
+  }
+  const me = await client.request("/api/auth/me", { bearer });
+  assertVerifiedSuperAdminIdentity(me, config);
+  return { bearer };
 }
 
 function cookieFromHeaders(headers) {
@@ -1020,7 +1096,11 @@ function prerequisiteManifest(config, reasons) {
     reasons,
     directDatabaseChangesPermitted: false,
     requiredEnvironment: {
-      provisioning: ["CLP_SUPER_ADMIN_EMAIL", "CLP_SUPER_ADMIN_PASSWORD", "CLP_FIXTURE_ADMIN_PASSWORD", "CLP_FIXTURE_TEACHER_PASSWORD"],
+      provisioning: [
+        "CLP_SUPER_ADMIN_BEARER OR (CLP_SUPER_ADMIN_EMAIL + CLP_SUPER_ADMIN_PASSWORD)",
+        "CLP_FIXTURE_ADMIN_PASSWORD",
+        "CLP_FIXTURE_TEACHER_PASSWORD",
+      ],
       emailDeliveryGates: {
         primary: `After receiving a test or welcome message at ${config.schools.primary.adminEmail}, set CLP_OPERATOR_ALIAS_CONFIRMED=${config.fixtureId} for that one process.`,
         canary: `After receiving a test or welcome message at ${config.schools.canary.adminEmail}, set CLP_CANARY_ALIAS_CONFIRMED=${config.fixtureId} for that one process.`,
@@ -1038,7 +1118,7 @@ function prerequisiteManifest(config, reasons) {
       autoEnrollStudents: false,
     })),
     safeResolution: config.allowSchoolCreation
-      ? "Supply super-admin credentials through this process so the CLI can discover/create only these exact synthetic schools through /api/super-admin/schools."
+      ? "Supply a super-admin bearer from the operator's normal sign-in session, or the matching email/password, through this process so the CLI can discover/create only these exact synthetic schools through /api/super-admin/schools."
       : "Set allowSchoolCreation=true for the initial tool-owned creation, or restore the matching private ownership ledger for an already tool-created fixture. Manually created schools are never adopted.",
   };
 }
@@ -1478,7 +1558,7 @@ async function ensureStudents(client, adminAuth, plannedStudents) {
   let existing = Array.isArray(response.data?.students) ? response.data.students : [];
   const byEmail = new Map(existing.map((student) => [String(student.email || "").toLowerCase(), student]));
   const missing = plannedStudents.filter((student) => !byEmail.has(student.email));
-  for (const batch of chunk(missing, 100)) {
+  for (const batch of chunk(missing, STUDENT_IMPORT_BATCH_SIZE)) {
     await client.request("/api/students/bulk", {
       method: "POST",
       bearer: adminAuth.bearer,
@@ -1716,7 +1796,7 @@ function readState(outputDirectory, config) {
 
 async function refreshArtifacts(client, config, outputDirectory, state, adminPassword, teacherPassword) {
   const registrationPacer = runtimePacer(config.registrationRequestsPerMinute);
-  const superAuth = await superAuthFromEnvironment(client);
+  const superAuth = await superAuthFromEnvironment(client, config);
   const verifiedSchools = await verifySchoolsWithSuper(client, config, state, superAuth);
   for (const schoolKey of ["primary", "canary"]) {
     if (verifiedSchools[schoolKey].status !== "active"
@@ -1903,24 +1983,28 @@ function validateExistingOutputReadOnly(outputDirectory, config) {
 
 async function runProvision(client, config, outputDirectory) {
   const { priorState, ownership } = existingProvisionContext(outputDirectory, config);
-  const missing = ["CLP_SUPER_ADMIN_EMAIL", "CLP_SUPER_ADMIN_PASSWORD", "CLP_FIXTURE_ADMIN_PASSWORD", "CLP_FIXTURE_TEACHER_PASSWORD"]
+  const missing = ["CLP_FIXTURE_ADMIN_PASSWORD", "CLP_FIXTURE_TEACHER_PASSWORD"]
     .filter((name) => typeof process.env[name] !== "string" || !process.env[name]);
-  if (missing.length) failPrerequisite(outputDirectory, config, missing.map((name) => `${name} is absent from the current process`));
+  const authReasons = superAdminAuthPrerequisiteReasons(process.env);
+  if (missing.length || authReasons.length) {
+    failPrerequisite(outputDirectory, config, [
+      ...authReasons,
+      ...missing.map((name) => `${name} is absent from the current process`),
+    ]);
+  }
   if (process.env.CLP_OPERATOR_ALIAS_CONFIRMED !== config.fixtureId) {
     failPrerequisite(outputDirectory, config, [
       `Before provisioning, send an external test message to ${config.schools.primary.adminEmail}, verify receipt in ${config.operatorMailboxEmail}, then set CLP_OPERATOR_ALIAS_CONFIRMED=${config.fixtureId}`,
     ]);
   }
-  const superEmail = normalizeEmail(envSecret("CLP_SUPER_ADMIN_EMAIL"), "CLP_SUPER_ADMIN_EMAIL");
-  const superPassword = envSecret("CLP_SUPER_ADMIN_PASSWORD", 8);
   const adminPassword = envSecret("CLP_FIXTURE_ADMIN_PASSWORD", 12);
   const teacherPassword = envSecret("CLP_FIXTURE_TEACHER_PASSWORD", 12);
   let superAuth;
   try {
-    superAuth = await login(client, superEmail, superPassword);
+    superAuth = await superAuthFromEnvironment(client, config);
   } catch (error) {
-    if (error instanceof HttpStatusError && [401, 403].includes(error.status)) {
-      failPrerequisite(outputDirectory, config, ["The supplied super-admin process credentials cannot access the supported school-provisioning API"]);
+    if ((error instanceof HttpStatusError && [401, 403].includes(error.status)) || error?.code === "SUPER_ADMIN_AUTH") {
+      failPrerequisite(outputDirectory, config, ["The supplied super-admin process authentication cannot access the supported school-provisioning API as the configured operator"]);
     }
     throw error;
   }
@@ -2134,7 +2218,7 @@ async function runVerify(client, config, outputDirectory) {
   const authArtifact = readJsonFile(path.join(outputDirectory, FILES.auth), "Teacher auth artifact");
   const validatedAuth = validateAuthArtifactContract(authArtifact, config, state);
   const adminPassword = envSecret("CLP_FIXTURE_ADMIN_PASSWORD", 12);
-  const superAuth = await superAuthFromEnvironment(client);
+  const superAuth = await superAuthFromEnvironment(client, config);
   const verifiedSchools = await verifySchoolsWithSuper(client, config, state, superAuth);
   for (const schoolKey of ["primary", "canary"]) {
     if (verifiedSchools[schoolKey].status !== "active"
@@ -2259,11 +2343,6 @@ export function buildCleanupPlan(config, state, tokenCount = 1010) {
     },
     ownedSchoolKeys,
   };
-}
-
-async function superAuthFromEnvironment(client) {
-  const email = normalizeEmail(envSecret("CLP_SUPER_ADMIN_EMAIL"), "CLP_SUPER_ADMIN_EMAIL");
-  return login(client, email, envSecret("CLP_SUPER_ADMIN_PASSWORD", 8));
 }
 
 async function verifySchoolsWithSuper(client, config, state, superAuth, options = {}) {
@@ -2550,7 +2629,7 @@ async function runDeactivate(client, config, outputDirectory, confirm, dryRun) {
   let state = initializeDeactivationState(originalState);
   const checkpoint = () => writePrivateJson(outputDirectory, FILES.state, state);
   const ownership = seedOwnershipFromState(readOwnership(outputDirectory, config), originalState);
-  const superAuth = await superAuthFromEnvironment(client);
+  const superAuth = await superAuthFromEnvironment(client, config);
   await verifySchoolsWithSuper(client, config, originalState, superAuth);
   let live = {
     source: "durable-pre-hold-checkpoint",
@@ -2780,7 +2859,7 @@ async function runCleanup(client, config, outputDirectory, confirm, dryRun) {
     if (dryRun) return runDeactivate(client, config, outputDirectory, confirm, true);
     throw new SafeError("Run deactivate --confirm first so sessions and telemetry are purged before the 30-day hold");
   }
-  const superAuth = await superAuthFromEnvironment(client);
+  const superAuth = await superAuthFromEnvironment(client, config);
   const ownership = seedOwnershipFromState(readOwnership(outputDirectory, config), state);
   const alreadyDeleted = new Set(state.cleanup?.deletedOwnedSchoolKeys || []);
   const ownedSchoolKeys = config.cleanupOwnedSchools
@@ -2924,7 +3003,9 @@ export function buildHelpText() {
     "  --confirm <fixture>  Required for destructive deactivate/cleanup operations.",
     "",
     "Process environment (values are secrets or operator attestations; never put values in the config):",
-    "  CLP_SUPER_ADMIN_EMAIL / CLP_SUPER_ADMIN_PASSWORD",
+    "  CLP_SUPER_ADMIN_BEARER (preferred for Google-sign-in super admins; token value only)",
+    "    OR CLP_SUPER_ADMIN_EMAIL / CLP_SUPER_ADMIN_PASSWORD",
+    "  The selected super-admin identity is verified through /api/auth/me and must exactly match operatorMailboxEmail.",
     "  CLP_FIXTURE_ADMIN_PASSWORD / CLP_FIXTURE_TEACHER_PASSWORD",
     "  CLP_OPERATOR_ALIAS_CONFIRMED=<fixtureId>",
     "  CLP_CANARY_ALIAS_CONFIRMED=<fixtureId>",

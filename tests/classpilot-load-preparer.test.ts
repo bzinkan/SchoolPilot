@@ -24,6 +24,8 @@ import {
   revokeDeviceSessionStrict,
   runCli as runPreparerCli,
   selectConfiguredSchool,
+  superAdminAuthPrerequisiteReasons,
+  superAuthFromEnvironment,
   validateAuthArtifactContract,
   validateConfig,
   validateStateContract,
@@ -402,6 +404,7 @@ describe("ClassPilot synthetic load fixture preparer", () => {
 
   it("prints secret-free help without requiring config or output paths", () => {
     const result = runCli(["--help"], cleanEnv({
+      CLP_SUPER_ADMIN_BEARER: "help-bearer-secret-sentinel",
       CLP_SUPER_ADMIN_PASSWORD: "help-super-secret-sentinel",
       CLP_FIXTURE_ADMIN_PASSWORD: "help-admin-secret-sentinel",
     }));
@@ -410,9 +413,87 @@ describe("ClassPilot synthetic load fixture preparer", () => {
     assert.match(result.stdout, /emailDeliveryAcknowledgement/);
     assert.match(result.stdout, /operatorMailboxEmail/);
     assert.match(result.stdout, /CLP_CANARY_ALIAS_CONFIRMED=<fixtureId>/);
+    assert.match(result.stdout, /CLP_SUPER_ADMIN_BEARER/);
+    assert.match(result.stdout, /verified through \/api\/auth\/me/);
     assert.match(result.stdout, /may safely share the base mailbox domain/);
     assert.match(result.stdout, /Existing schools are accepted only with the matching private tool-ownership ledger/);
-    assert.doesNotMatch(result.stdout, /help-super-secret-sentinel|help-admin-secret-sentinel/);
+    assert.doesNotMatch(result.stdout, /help-bearer-secret-sentinel|help-super-secret-sentinel|help-admin-secret-sentinel/);
+  });
+
+  it("accepts a bearer only after exact super-admin /auth/me identity verification", async () => {
+    const config = validateConfig(rawConfig());
+    const bearer = "bearer-success-secret-sentinel";
+    const calls: Array<{ route: string; options: any }> = [];
+    const client = {
+      request: async (route: string, options: any) => {
+        calls.push({ route, options });
+        return {
+          status: 200,
+          data: { user: { id: "super-user", email: config.operatorMailboxEmail.toUpperCase(), isSuperAdmin: true } },
+        };
+      },
+    };
+    const auth = await superAuthFromEnvironment(client, config, {
+      CLP_SUPER_ADMIN_BEARER: bearer,
+    } as NodeJS.ProcessEnv);
+    assert.deepEqual(auth, { bearer });
+    assert.deepEqual(calls, [{ route: "/api/auth/me", options: { bearer } }]);
+  });
+
+  it("rejects bearer identities with the wrong role or operator mailbox without leaking the token", async () => {
+    const config = validateConfig(rawConfig());
+    const bearer = "bearer-rejection-secret-sentinel";
+    const verify = async (user: Record<string, unknown>) => {
+      const client = { request: async () => ({ status: 200, data: { user } }) };
+      let caught: unknown;
+      try {
+        await superAuthFromEnvironment(client, config, { CLP_SUPER_ADMIN_BEARER: bearer } as NodeJS.ProcessEnv);
+      } catch (error) {
+        caught = error;
+      }
+      assert.ok(caught instanceof Error);
+      assert.doesNotMatch(String(caught), /bearer-rejection-secret-sentinel/);
+      return String(caught);
+    };
+    assert.match(await verify({ id: "ordinary-user", email: config.operatorMailboxEmail, isSuperAdmin: false }), /does not belong to a super administrator/);
+    assert.match(await verify({ id: "other-super", email: "other@example.org", isSuperAdmin: true }), /different operator mailbox identity/);
+  });
+
+  it("preserves password authentication while requiring one complete super-admin auth mode", async () => {
+    const config = validateConfig(rawConfig());
+    assert.deepEqual(superAdminAuthPrerequisiteReasons({} as NodeJS.ProcessEnv), [
+      "CLP_SUPER_ADMIN_BEARER or CLP_SUPER_ADMIN_EMAIL is absent from the current process",
+      "CLP_SUPER_ADMIN_BEARER or CLP_SUPER_ADMIN_PASSWORD is absent from the current process",
+    ]);
+    await assert.rejects(
+      () => superAuthFromEnvironment({ request: async () => assert.fail("network must not be called") }, config, {} as NodeJS.ProcessEnv),
+      /CLP_SUPER_ADMIN_BEARER or CLP_SUPER_ADMIN_EMAIL/,
+    );
+
+    const calls: Array<{ route: string; options: any }> = [];
+    const client = {
+      request: async (route: string, options: any) => {
+        calls.push({ route, options });
+        if (route === "/api/auth/login") {
+          return {
+            status: 200,
+            headers: new Headers({ "set-cookie": "schoolpilot.sid=password-session; Path=/; HttpOnly" }),
+            data: { token: "password-mode-token", user: { id: "super-user" }, memberships: [] },
+          };
+        }
+        return {
+          status: 200,
+          data: { user: { id: "super-user", email: config.operatorMailboxEmail, isSuperAdmin: true } },
+        };
+      },
+    };
+    const auth = await superAuthFromEnvironment(client, config, {
+      CLP_SUPER_ADMIN_EMAIL: config.operatorMailboxEmail,
+      CLP_SUPER_ADMIN_PASSWORD: "password-mode-secret-sentinel",
+    } as NodeJS.ProcessEnv);
+    assert.deepEqual(auth, { bearer: "password-mode-token" });
+    assert.equal(calls[0].options.body.password, "password-mode-secret-sentinel");
+    assert.deepEqual(calls[1], { route: "/api/auth/me", options: { bearer: "password-mode-token" } });
   });
 
   it("rejects config-embedded secrets and any config or output path under the repository", () => {
@@ -604,6 +685,18 @@ describe("ClassPilot synthetic load fixture preparer", () => {
     assert.equal(manifest.directDatabaseChangesPermitted, false);
     assert.ok(manifest.reasons.some((reason: string) => reason.includes("CLP_SUPER_ADMIN_EMAIL")));
     assert.ok(manifest.reasons.some((reason: string) => reason.includes("CLP_FIXTURE_ADMIN_PASSWORD")));
+
+    const bearerOutput = join(loadGatesRoot, "missing-fixture-password-with-bearer-output");
+    const bearerResult = runCli(["provision", "--config", configPath, "--output", bearerOutput], cleanEnv({
+      CLP_SUPER_ADMIN_BEARER: "preflight-bearer-secret-sentinel",
+      CLP_FIXTURE_TEACHER_PASSWORD: "teacher-secret-sentinel",
+    }));
+    const bearerCombined = `${bearerResult.stdout}\n${bearerResult.stderr}\n${readFileSync(join(bearerOutput, FILES.prerequisites), "utf8")}`;
+    assert.notEqual(bearerResult.status, 0);
+    assert.doesNotMatch(bearerCombined, /preflight-bearer-secret-sentinel|teacher-secret-sentinel/);
+    const bearerManifest = JSON.parse(readFileSync(join(bearerOutput, FILES.prerequisites), "utf8"));
+    assert.ok(bearerManifest.reasons.some((reason: string) => reason.includes("CLP_FIXTURE_ADMIN_PASSWORD")));
+    assert.ok(!bearerManifest.reasons.some((reason: string) => reason.includes("CLP_SUPER_ADMIN_EMAIL is absent")));
   });
 
   it("verifies primary delivery before creation and preserves ownership across the pre-canary delivery gate", async () => {
@@ -624,10 +717,11 @@ describe("ClassPilot synthetic load fixture preparer", () => {
         response.end(JSON.stringify(body));
       };
       if (request.method === "POST" && url.pathname === "/api/auth/login") {
-        if (body.email !== "super@example.org") assert.equal(primaryAdminCreated, true);
+        const isSuper = body.email === config.operatorMailboxEmail;
+        if (!isSuper) assert.equal(primaryAdminCreated, true);
         return send(200, {
           token: "header.payload.signature",
-          user: { id: "user" },
+          user: { id: isSuper ? "super-user" : "user" },
           memberships: [{
             id: "primary-admin-membership",
             schoolId: "school-primary-created",
@@ -639,6 +733,14 @@ describe("ClassPilot synthetic load fixture preparer", () => {
         });
       }
       if (request.method === "GET" && url.pathname === "/api/auth/me") {
+        if (!request.headers["x-school-id"]) {
+          assert.equal(request.headers.authorization, "Bearer header.payload.signature");
+          return send(200, {
+            token: "verified.super.signature",
+            user: { id: "super-user", email: config.operatorMailboxEmail, isSuperAdmin: true },
+            memberships: [],
+          });
+        }
         assert.equal(request.headers["x-school-id"], "school-primary-created");
         return send(200, {
           token: "verified.header.signature",
@@ -727,7 +829,7 @@ describe("ClassPilot synthetic load fixture preparer", () => {
     writeFileSync(localConfigPath, JSON.stringify(config));
     const saved = { ...process.env };
     Object.assign(process.env, cleanEnv({
-      CLP_SUPER_ADMIN_EMAIL: "super@example.org",
+      CLP_SUPER_ADMIN_EMAIL: config.operatorMailboxEmail,
       CLP_SUPER_ADMIN_PASSWORD: "super-password",
       CLP_FIXTURE_ADMIN_PASSWORD: "fixture-admin-password",
       CLP_FIXTURE_TEACHER_PASSWORD: "fixture-teacher-password",
@@ -853,6 +955,7 @@ describe("ClassPilot synthetic load fixture preparer", () => {
         canary: { key: ["enrollment", "canary", "1"].join("-"), generation: 1, autoEnrollStudents: false },
       },
       events: [] as string[],
+      studentImportBatchSizes: [] as number[],
       tokenEmails: new Map<string, string>(),
       tokenCounter: 0,
       teacherCounter: 0,
@@ -891,7 +994,7 @@ describe("ClassPilot synthetic load fixture preparer", () => {
         if (request.method === "POST" && url.pathname === "/api/auth/login") {
           const body = await readBody(request);
           const identity = identityForEmail(body.email);
-          const isSuper = body.email === "super@example.org";
+          const isSuper = body.email === configValue.operatorMailboxEmail;
           if (!identity && !isSuper) return send(401, { error: "invalid" });
           const userId = isSuper ? "super-user" : identity!.entry.userId;
           const memberships = isSuper ? [] : [{
@@ -909,6 +1012,14 @@ describe("ClassPilot synthetic load fixture preparer", () => {
           const cookieEmail = Buffer.from(encoded, "base64url").toString("utf8");
           const authToken = String(request.headers.authorization || "").replace(/^Bearer\s+/i, "");
           const email = cookieEmail || model.tokenEmails.get(authToken) || "";
+          if (email === configValue.operatorMailboxEmail) {
+            if (request.headers["x-school-id"]) return send(403, { error: "super identity must not be tenant-bound" });
+            return send(200, {
+              token: issueToken(email, { userId: "super-user" }),
+              user: { id: "super-user", email, isSuperAdmin: true },
+              memberships: [],
+            });
+          }
           const identity = identityForEmail(email);
           if (!identity) return send(401, { error: "invalid session" });
           const school = model.schools[identity.schoolKey];
@@ -931,7 +1042,7 @@ describe("ClassPilot synthetic load fixture preparer", () => {
 
         const bearer = String(request.headers.authorization || "").replace(/^Bearer\s+/i, "");
         const bearerEmail = model.tokenEmails.get(bearer) || "";
-        const isSuper = bearerEmail === "super@example.org";
+        const isSuper = bearerEmail === configValue.operatorMailboxEmail;
         if (url.pathname === "/api/super-admin/schools" && request.method === "GET") {
           return send(200, { schools: Object.values(model.schools).filter((school: any) => !school.deleted) });
         }
@@ -1053,6 +1164,8 @@ describe("ClassPilot synthetic load fixture preparer", () => {
         if (url.pathname === "/api/students" && request.method === "GET") return send(200, { students: model.students[schoolKey] });
         if (url.pathname === "/api/students/bulk" && request.method === "POST") {
           const body = await readBody(request);
+          model.studentImportBatchSizes.push((body.students || []).length);
+          if ((body.students || []).length > 10) return send(504, { error: "synthetic origin timeout" });
           for (const value of body.students || []) {
             if (model.students[schoolKey].some((student: any) => student.email === value.email)) continue;
             model.students[schoolKey].push({ ...value, id: `student-${schoolKey}-${model.students[schoolKey].length + 1}` });
@@ -1194,9 +1307,10 @@ describe("ClassPilot synthetic load fixture preparer", () => {
     const output = join(loadGatesRoot, "full-lifecycle-output");
     writeFileSync(localConfigPath, JSON.stringify(configValue));
     const saved = { ...process.env };
+    const lifecycleBearer = "full-lifecycle-bearer-secret-sentinel";
+    model.tokenEmails.set(lifecycleBearer, configValue.operatorMailboxEmail);
     Object.assign(process.env, cleanEnv({
-      CLP_SUPER_ADMIN_EMAIL: "super@example.org",
-      CLP_SUPER_ADMIN_PASSWORD: "super-password",
+      CLP_SUPER_ADMIN_BEARER: lifecycleBearer,
       CLP_FIXTURE_ADMIN_PASSWORD: "fixture-admin-password",
       CLP_FIXTURE_TEACHER_PASSWORD: "fixture-teacher-password",
       CLP_OPERATOR_ALIAS_CONFIRMED: "launch-safe-2026",
@@ -1218,9 +1332,14 @@ describe("ClassPilot synthetic load fixture preparer", () => {
       assert.equal(provisioned.devicesRegistered, 1010);
       assert.equal(model.students.primary.length, 1000);
       assert.equal(model.students.canary.length, 10);
+      assert.equal(model.studentImportBatchSizes.length, 101);
+      assert.ok(model.studentImportBatchSizes.every((size: number) => size === 10));
       assert.equal(model.staff.primary.filter((entry: any) => entry.role === "teacher").length, 20);
       assert.equal(model.classes.size, 20);
       assert.equal([...model.sessions.values()].filter((entry: any) => !entry.endTime).length, 20);
+      for (const filename of readdirSync(output)) {
+        assert.doesNotMatch(readFileSync(join(output, filename), "utf8"), /full-lifecycle-bearer-secret-sentinel/);
+      }
       const firstRegistration = model.events.findIndex((entry: string) => entry.startsWith("device-registered:"));
       assert.equal(model.events.filter((entry: string) => entry.startsWith("student-imported:")).length, 1010);
       const lastImport = model.events.map((entry: string, index: number) => entry.startsWith("student-imported:") ? index : -1).reduce((a: number, b: number) => Math.max(a, b), -1);
@@ -1340,6 +1459,14 @@ describe("ClassPilot synthetic load fixture preparer", () => {
           }, { "set-cookie": `schoolpilot.sid=${encodeURIComponent(body.email)}; Path=/; HttpOnly` });
         }
         if (request.method === "GET" && url.pathname === "/api/auth/me") {
+          const bearer = String(request.headers.authorization || "").replace(/^Bearer\s+/i, "");
+          if (bearer === `token:${config.operatorMailboxEmail}`) {
+            return send(200, {
+              token: bearer,
+              user: { id: "super-user", email: config.operatorMailboxEmail, isSuperAdmin: true },
+              memberships: [],
+            });
+          }
           const email = decodeURIComponent(/schoolpilot\.sid=([^;]+)/.exec(String(request.headers.cookie || ""))?.[1] || "");
           const school = email === state.schools.primary.adminEmail ? state.schools.primary : state.schools.canary;
           assert.equal(request.headers["x-school-id"], school.id);
@@ -1455,7 +1582,7 @@ describe("ClassPilot synthetic load fixture preparer", () => {
     })));
     const saved = { ...process.env };
     Object.assign(process.env, cleanEnv({
-      CLP_SUPER_ADMIN_EMAIL: "super@example.org",
+      CLP_SUPER_ADMIN_EMAIL: config.operatorMailboxEmail,
       CLP_SUPER_ADMIN_PASSWORD: "super-password",
       CLP_FIXTURE_ADMIN_PASSWORD: "fixture-admin-password",
     }));
