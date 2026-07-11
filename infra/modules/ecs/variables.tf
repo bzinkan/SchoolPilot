@@ -2,7 +2,11 @@ variable "project" { type = string }
 variable "environment" { type = string }
 variable "aws_region" { type = string }
 variable "vpc_id" { type = string }
-variable "private_subnet_ids" { type = list(string) }
+variable "task_subnet_ids" { type = list(string) }
+variable "assign_task_public_ip" {
+  type    = bool
+  default = false
+}
 variable "alb_target_group_arn" { type = string }
 variable "ecr_repository_url" { type = string }
 variable "container_port" { type = number }
@@ -14,6 +18,10 @@ variable "memory" { type = number }
 variable "worker_desired_count" { type = number }
 variable "worker_cpu" { type = number }
 variable "worker_memory" { type = number }
+variable "enable_container_insights" {
+  type    = bool
+  default = true
+}
 variable "db_pool_max" { type = number }
 variable "scheduler_db_pool_max" { type = number }
 variable "rls_enabled_tables" { type = string }

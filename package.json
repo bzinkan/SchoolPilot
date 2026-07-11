@@ -34,7 +34,7 @@
     "soc2:approval-issue": "node scripts/soc2/github-approval-issue.mjs issue-body",
     "soc2:approval-decision": "node scripts/soc2/approval-queue.mjs decision",
     "load:classpilot": "node scripts/load/classpilot-load-test.mjs",
-    "test": "node --env-file-if-exists=.env --import tsx --test \"tests/**/*.test.ts\""
+    "test": "node --env-file-if-exists=.env --import tsx --test --test-concurrency=1 \"tests/**/*.test.ts\""
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.105.0",

@@ -23,7 +23,8 @@ nul
 infra/.terraform/
 infra/*.tfstate
 infra/*.tfstate.*
-infra/.terraform.lock.hcl
+infra/*.tfplan
+*.tfplan
 infra/secrets.auto.tfvars
 
 # Deployment scratch files
@@ -31,3 +32,10 @@ infra/secrets.auto.tfvars
 .migration-*.json
 .ecs-network.json
 .worker-*.json
+
+# Local load-test identities/session contracts (may contain auth or tenant IDs)
+load-devices*.json
+load-command-bodies*.json
+scripts/load/*.private.json
+scripts/load/*.jsonl
+scripts/load/*summary*.json
