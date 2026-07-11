@@ -13,6 +13,12 @@ const JPEG_1X1 =
 const LATENCY_BUCKETS_MS = [25, 50, 100, 200, 300, 500, 750, 1_000, 2_000, 5_000, 10_000, Infinity];
 const MAX_RESPONSE_CAPTURE_BYTES = 5 * 1024 * 1024;
 const REPOSITORY_ROOT = fs.realpathSync(fileURLToPath(new URL("../../", import.meta.url)));
+// Low-level Node HTTP and ws clients do not add a User-Agent. Real managed
+// Chromebooks always send one, and AWSManagedRulesCommonRuleSet correctly
+// blocks requests that omit it. Keep a fixed browser-compatible value so the
+// synthetic gate exercises the same WAF path as the extension.
+const LOAD_GATE_USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36 SchoolPilot-ClassPilot-LoadGate/1.0";
 const ipv4HttpAgent = new http.Agent({ keepAlive: true, family: 4 });
 const ipv4HttpsAgent = new https.Agent({ keepAlive: true, family: 4 });
 
@@ -746,6 +752,18 @@ if (screenshotGetTemplate) {
     throw new Error("LOAD_SCREENSHOT_GET_PATH_TEMPLATE must contain {deviceId}");
   }
 }
+const hasTeacherTemplatePaths = teacherPaths.some((path) =>
+  path.includes("{deviceId}") || path.includes("{studentId}")
+);
+// StudentTile mounts its history and screenshot queries together. Once the
+// initial screenshot POST window is safely warm, align both 30-second poll
+// phases so each teacher cohort exercises the browser's combined tile burst.
+const teacherTileCohortWarmupMs = hasTeacherTemplatePaths && screenshotGetTemplate
+  ? Math.max(teacherHistoryWarmupMs, screenshotGetWarmupMs)
+  : teacherHistoryWarmupMs;
+const screenshotCohortWarmupMs = hasTeacherTemplatePaths
+  ? teacherTileCohortWarmupMs
+  : screenshotGetWarmupMs;
 const commandEndpoint = process.env.LOAD_COMMAND_ENDPOINT?.trim() || "";
 if (commandEndpoint) validateRelativePath(commandEndpoint, "LOAD_COMMAND_ENDPOINT");
 const configuredTeacherEndpointClasses = new Set([
@@ -1218,6 +1236,21 @@ function workloadEvery(callback, intervalMs) {
   return every(callback, intervalMs);
 }
 
+function staggeredDelay(index, count, productionWindowMs) {
+  if (count <= 1) return 0;
+  const windowMs = acceleratedRequestStaggerMs || productionWindowMs;
+  return Math.floor((index / count) * windowMs);
+}
+
+function scheduleStaggered(jobs, productionWindowMs, emit) {
+  const scaleWithAcceleratedRuntime = !acceleratedRequestStaggerMs;
+  jobs.forEach((job, index) => {
+    const delayMs = staggeredDelay(index, jobs.length, productionWindowMs);
+    if (delayMs > 0) later(() => emit(job), delayMs, { scale: scaleWithAcceleratedRuntime });
+    else emit(job);
+  });
+}
+
 function tracked(promise) {
   inFlight.add(promise);
   void promise.finally(() => inFlight.delete(promise));
@@ -1425,7 +1458,7 @@ async function request(path, {
   const requestTimeout = setTimeout(() => controller.abort(new Error("request timeout")), requestTimeoutMs);
   requestTimeout.unref?.();
   try {
-    const headers = {};
+    const headers = { "user-agent": LOAD_GATE_USER_AGENT };
     if (body !== undefined) headers["content-type"] = "application/json";
     if (token) headers.authorization = `Bearer ${token}`;
     if (cookie) headers.cookie = cookie;
@@ -1497,8 +1530,11 @@ function issue(path, options) {
   return tracked(request(path, options));
 }
 
-function teacherHttpAuth(auth = teacherAuthInputs[0]) {
+function teacherHttpAuth(auth = teacherAuthInputs[0], { preferBearer = false } = {}) {
   if (!auth) return {};
+  if (preferBearer && auth.token) {
+    return { token: auth.token, expectedSchoolId: auth.schoolId, schoolIdHeader: auth.schoolId };
+  }
   // When a cookie is provided, intentionally omit Bearer auth so the run
   // exercises browser session identity, CSRF, and session-keyed rate limiting.
   return auth.cookie
@@ -1692,7 +1728,12 @@ function connectDevice(state) {
   if (stoppingTraffic) return;
   state.generation += 1;
   const generation = state.generation;
-  const socket = new WebSocket(wsUrl, { perMessageDeflate: false, handshakeTimeout: requestTimeoutMs, family: 4 });
+  const socket = new WebSocket(wsUrl, {
+    perMessageDeflate: false,
+    handshakeTimeout: requestTimeoutMs,
+    family: 4,
+    headers: { "user-agent": LOAD_GATE_USER_AGENT },
+  });
   state.socket = socket;
   state.authenticated = false;
   sockets.add(socket);
@@ -1832,18 +1873,23 @@ function startTeacherTraffic() {
   if (!hasTeacherHttpAuth || teacherPaths.length === 0) return;
   const staticPaths = teacherPaths.filter((path) => !path.includes("{deviceId}") && !path.includes("{studentId}"));
   const templatePaths = teacherPaths.filter((path) => path.includes("{deviceId}") || path.includes("{studentId}"));
-  const poll = (paths) => {
+  const poll = (paths, spreadWindowMs) => {
     if (stoppingTraffic) return;
-    const jobs = [];
+    const cohorts = [];
     for (const [authIndex, auth] of teacherAuthInputs.entries()) {
+      const jobs = [];
       for (const template of paths) {
         for (const path of expandTeacherPath(template, auth, authIndex)) {
           jobs.push({ auth, path });
         }
       }
+      if (jobs.length > 0) cohorts.push(jobs);
     }
-    jobs.forEach((job, index) => {
-      const emit = () => {
+    scheduleStaggered(cohorts, spreadWindowMs, (jobs) => {
+      // A real dashboard mounts/refetches one class's tiles together. Stagger
+      // independent teacher cohorts, but preserve each class's browser burst
+      // so the gate still exercises backend concurrency honestly.
+      for (const job of jobs) {
         if (stoppingTraffic) return;
         counters.teacher += 1;
         const kind = job.path.includes("screenshot") ? "screenshotGet" : "teacher";
@@ -1864,24 +1910,19 @@ function startTeacherTraffic() {
           expectedDeviceId,
           expectedStudentIds,
         });
-      };
-      if (acceleratedRequestStaggerMs && jobs.length > 1) {
-        later(emit, Math.floor((index / jobs.length) * acceleratedRequestStaggerMs), { scale: false });
-      } else {
-        emit();
       }
     });
   };
   if (staticPaths.length > 0) {
-    poll(staticPaths);
-    workloadEvery(() => poll(staticPaths), teacherIntervalMs);
+    poll(staticPaths, teacherIntervalMs);
+    workloadEvery(() => poll(staticPaths, teacherIntervalMs), teacherIntervalMs);
   }
   if (templatePaths.length > 0) {
     later(() => {
       if (stoppingTraffic) return;
-      poll(templatePaths);
-      workloadEvery(() => poll(templatePaths), teacherTemplateIntervalMs);
-    }, teacherHistoryWarmupMs);
+      poll(templatePaths, teacherTemplateIntervalMs);
+      workloadEvery(() => poll(templatePaths, teacherTemplateIntervalMs), teacherTemplateIntervalMs);
+    }, teacherTileCohortWarmupMs);
   }
 }
 
@@ -1889,28 +1930,28 @@ function startScreenshotPolling() {
   if (!hasTeacherHttpAuth || !screenshotGetTemplate) return;
   const poll = () => {
     if (stoppingTraffic) return;
-    const jobs = [];
+    const cohorts = [];
     for (const [authIndex, auth] of teacherAuthInputs.entries()) {
+      const jobs = [];
       for (const device of devicesForTeacher(auth, authIndex)) {
         jobs.push({ auth, device });
       }
+      if (jobs.length > 0) cohorts.push(jobs);
     }
-    jobs.forEach((job, index) => {
-      const emit = () => {
+    scheduleStaggered(cohorts, screenshotGetIntervalMs, (jobs) => {
+      for (const job of jobs) {
         if (stoppingTraffic) return;
         const path = screenshotGetTemplate.replaceAll("{deviceId}", encodeURIComponent(job.device.deviceId));
         counters.screenshotGet += 1;
         void issue(path, {
-          ...teacherHttpAuth(job.auth),
+          // The production web API client sends its in-memory bearer for this
+          // screenshot path. Cookie-only requests are rejected upstream even
+          // though other teacher dashboard/history routes accept the session.
+          ...teacherHttpAuth(job.auth, { preferBearer: true }),
           kind: "screenshotGet",
           endpointClass: redactedEndpointClass(path),
           expectedDeviceId: job.device.deviceId,
         });
-      };
-      if (acceleratedRequestStaggerMs && jobs.length > 1) {
-        later(emit, Math.floor((index / jobs.length) * acceleratedRequestStaggerMs), { scale: false });
-      } else {
-        emit();
       }
     });
   };
@@ -1921,7 +1962,7 @@ function startScreenshotPolling() {
     if (stoppingTraffic) return;
     poll();
     workloadEvery(poll, screenshotGetIntervalMs);
-  }, screenshotGetWarmupMs);
+  }, screenshotCohortWarmupMs);
 }
 
 function startTenantIsolationProbes() {
@@ -1931,21 +1972,25 @@ function startTenantIsolationProbes() {
   }
   if ((!isLaunchGate && !testProbe) || !teacherAuthInputs[0] || nonOwnedDeviceIds.size === 0) return;
   const auth = teacherAuthInputs[0];
+  const probes = [];
   for (const deviceId of nonOwnedDeviceIds) {
     const encoded = encodeURIComponent(deviceId);
     for (const probePath of [
       `/api/classpilot/heartbeats/${encoded}`,
       `/api/classpilot/device/screenshot/${encoded}`,
     ]) {
-      void issue(probePath, {
-        ...teacherHttpAuth(auth),
+      probes.push(probePath);
+    }
+  }
+  scheduleStaggered(probes, teacherIntervalMs, (probePath) => {
+    void issue(probePath, {
+        ...teacherHttpAuth(auth, { preferBearer: probePath.includes("/device/screenshot/") }),
         kind: "tenantIsolationProbe",
         endpointClass: redactedEndpointClass(probePath),
         countWorkload: false,
         probeExpectedStatus: 404,
-      });
-    }
-  }
+    });
+  });
 }
 
 function startCommandTraffic() {
@@ -2027,7 +2072,12 @@ function startCommandTraffic() {
 function connectTeacherWebSocket(state) {
   const { auth } = state;
   if (!auth?.token || !auth.schoolId) return;
-  const socket = new WebSocket(wsUrl, { perMessageDeflate: false, handshakeTimeout: requestTimeoutMs, family: 4 });
+  const socket = new WebSocket(wsUrl, {
+    perMessageDeflate: false,
+    handshakeTimeout: requestTimeoutMs,
+    family: 4,
+    headers: { "user-agent": LOAD_GATE_USER_AGENT },
+  });
   state.socket = socket;
   sockets.add(socket);
   socket.on("open", () => {
@@ -2548,6 +2598,15 @@ if (validateConfigOnly) {
       tenantIsolationProbes: nonOwnedDeviceIds.size * 2,
       requiredEndpointClasses: [...configuredTeacherEndpointClasses].sort(),
     },
+    trafficShaping: {
+      teacherStaticPollSpreadMs: teacherIntervalMs,
+      teacherTemplatePollSpreadMs: teacherTemplateIntervalMs,
+      screenshotGetSpreadMs: screenshotGetIntervalMs,
+      teacherTileCohortWarmupMs,
+      screenshotCohortWarmupMs,
+      teacherWebSocketStartupSpreadMs: teacherIntervalMs,
+      isolationProbeSpreadMs: teacherIntervalMs,
+    },
   }, null, 2));
 } else {
   progressDescriptor = externalProgressPath
@@ -2562,7 +2621,7 @@ if (validateConfigOnly) {
     startTeacherTraffic();
     startScreenshotPolling();
     startTenantIsolationProbes();
-    teacherSocketStates.forEach(connectTeacherWebSocket);
+    scheduleStaggered(teacherSocketStates, teacherIntervalMs, connectTeacherWebSocket);
     startCommandTraffic();
     scheduleForcedReconnect();
     later(() => void shutdown("duration"), durationMs);

@@ -255,7 +255,11 @@ summary paths. Launch-profile runs are immutable:
 Every launch run includes ten second-school canaries first in the manifest,
 20 distinct teacher sessions, shared-IP traffic, authenticated WebSockets and
 ACKs, forced reconnects, dashboard/history/screenshot GETs, and one-minute
-JSONL progress. Any valid 403/429, known foreign tenant identifier, or
+JSONL progress. Teacher WebSocket startups, dashboard polls, and isolation
+probes are staggered across their real polling intervals. After screenshot
+cache warm-up, each teacher's history and screenshot reads fire together as one
+class-sized browser burst, while the 20 independent teacher cohorts are
+staggered across the 30-second tile polling interval. Any valid 403/429, known foreign tenant identifier, or
 cross-school delivery writes `fatal_gate`, stops traffic, flushes evidence, and
 exits nonzero.
 

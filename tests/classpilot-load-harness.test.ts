@@ -557,6 +557,15 @@ describe("ClassPilot load harness safety", () => {
       assert.equal(preflight.finalAcceptanceContract.outstandingReconnects, 0);
       assert.equal(preflight.finalAcceptanceContract.commandTargets, stage.targets * 20);
       assert.equal(preflight.finalAcceptanceContract.tenantIsolationProbes, 20);
+      assert.deepEqual(preflight.trafficShaping, {
+        teacherStaticPollSpreadMs: 5_000,
+        teacherTemplatePollSpreadMs: 30_000,
+        screenshotGetSpreadMs: 30_000,
+        teacherTileCohortWarmupMs: 45_000,
+        screenshotCohortWarmupMs: 45_000,
+        teacherWebSocketStartupSpreadMs: 5_000,
+        isolationProbeSpreadMs: 5_000,
+      });
       assert.doesNotMatch(result.stdout, new RegExp(`${stage.label}-(?:cookie|csrf|student|device)`));
     }
   });
@@ -618,6 +627,12 @@ describe("ClassPilot load harness safety", () => {
     const teacherSockets = new Set<WebSocket>();
     const commandStates = new Map<string, { targets: string[]; statuses: Map<string, string> }>();
     const schoolHeaders: Array<{ path: string; schoolId: string; cookie: string }> = [];
+    const httpUserAgents: string[] = [];
+    const websocketUserAgents: string[] = [];
+    const heartbeatCohortRequests: Array<{ cookie: string; at: number }> = [];
+    const screenshotCohortRequests: Array<{ deviceId: string; at: number }> = [];
+    const tileInFlightByClass = new Map<string, number>();
+    const tilePeakInFlightByClass = new Map<string, number>();
     let commandSequence = 0;
     let receivedAcks = 0;
     let completedAcks = 0;
@@ -628,6 +643,13 @@ describe("ClassPilot load harness safety", () => {
 
     const server = createServer((request, response) => {
       const url = request.url || "/";
+      const userAgent = String(request.headers["user-agent"] || "");
+      httpUserAgents.push(userAgent);
+      if (!userAgent.includes("SchoolPilot-ClassPilot-LoadGate/1.0")) {
+        response.writeHead(403, { "content-type": "application/json" });
+        response.end(JSON.stringify({ error: "missing load-gate user agent" }));
+        return;
+      }
       const isTeacherRequest =
         url === "/api/students-aggregated" ||
         url.startsWith("/api/classpilot/heartbeats/") ||
@@ -643,6 +665,18 @@ describe("ClassPilot load harness safety", () => {
       const sendJson = (status: number, value: unknown) => {
         response.writeHead(status, { "content-type": "application/json" });
         response.end(JSON.stringify(value));
+      };
+      const sendHeldTileJson = (classId: string, status: number, value: unknown) => {
+        const inFlight = (tileInFlightByClass.get(classId) || 0) + 1;
+        tileInFlightByClass.set(classId, inFlight);
+        tilePeakInFlightByClass.set(
+          classId,
+          Math.max(tilePeakInFlightByClass.get(classId) || 0, inFlight)
+        );
+        setTimeout(() => {
+          tileInFlightByClass.set(classId, Math.max(0, (tileInFlightByClass.get(classId) || 1) - 1));
+          sendJson(status, value);
+        }, 100);
       };
       if (request.method === "POST" && url === "/api/classpilot/commands") {
         let body = "";
@@ -711,19 +745,45 @@ describe("ClassPilot load harness safety", () => {
       }
       if (url.startsWith("/api/classpilot/heartbeats/")) {
         const deviceId = decodeURIComponent(url.split("/").at(-1) || "");
+        if (!deviceId.includes("canary-device")) {
+          heartbeatCohortRequests.push({ cookie: String(request.headers.cookie || ""), at: Date.now() });
+        }
         if (deviceId.includes("canary-device")) sendJson(404, { error: "Not found" });
-        else sendJson(200, { heartbeats: [{ deviceId }] });
+        else {
+          const teacherIndex = Number(String(request.headers.cookie || "").match(/launch-cookie-secret-(\d+)/)?.[1] || 0);
+          sendHeldTileJson(`launch-class-${teacherIndex}`, 200, { heartbeats: [{ deviceId }] });
+        }
         return;
       }
       if (url.startsWith("/api/classpilot/device/screenshot/")) {
+        if (!String(request.headers.authorization || "").startsWith("Bearer ")) {
+          sendJson(401, { error: "screenshot bearer required" });
+          return;
+        }
         const deviceId = decodeURIComponent(url.split("/").at(-1) || "");
+        if (!deviceId.includes("canary-device")) {
+          screenshotCohortRequests.push({ deviceId, at: Date.now() });
+        }
         if (deviceId.includes("canary-device")) sendJson(404, { error: "Not found" });
-        else sendJson(200, { screenshot: "data:image/jpeg;base64,/9j/2Q==", timestamp: Date.now() });
+        else {
+          assert.ok(artifacts);
+          const classId = artifacts.manifest.find((entry) => entry.deviceId === deviceId)?.classId;
+          assert.ok(classId);
+          sendHeldTileJson(classId, 200, { screenshot: "data:image/jpeg;base64,/9j/2Q==", timestamp: Date.now() });
+        }
         return;
       }
       sendJson(200, {});
     });
-    const webSockets = new WebSocketServer({ server, path: "/ws" });
+    const webSockets = new WebSocketServer({
+      server,
+      path: "/ws",
+      verifyClient: ({ req }) => {
+        const userAgent = String(req.headers["user-agent"] || "");
+        websocketUserAgents.push(userAgent);
+        return userAgent.includes("SchoolPilot-ClassPilot-LoadGate/1.0");
+      },
+    });
     const broadcastCommandState = (commandId: string) => {
       const state = commandStates.get(commandId);
       const teacher = [...teacherSockets].find((socket) => socket.readyState === WebSocket.OPEN);
@@ -839,6 +899,55 @@ describe("ClassPilot load harness safety", () => {
       assert.ok(studentAuthentications >= 1020);
       assert.equal(teacherAuthentications, 20);
       assert.ok(schoolHeaders.length > 1000);
+      assert.ok(httpUserAgents.length > 1000);
+      assert.ok(httpUserAgents.every((value) => value.includes("Mozilla/5.0") && value.includes("SchoolPilot-ClassPilot-LoadGate/1.0")));
+      assert.ok(websocketUserAgents.length >= 1040);
+      assert.ok(websocketUserAgents.every((value) => value.includes("Mozilla/5.0") && value.includes("SchoolPilot-ClassPilot-LoadGate/1.0")));
+      const heartbeatByTeacher = new Map<string, number[]>();
+      for (const entry of heartbeatCohortRequests) {
+        const values = heartbeatByTeacher.get(entry.cookie) || [];
+        values.push(entry.at);
+        heartbeatByTeacher.set(entry.cookie, values);
+      }
+      assert.equal(heartbeatByTeacher.size, 20);
+      for (const values of heartbeatByTeacher.values()) {
+        assert.equal(values.length, 25);
+        assert.ok(Math.max(...values) - Math.min(...values) < 1_000, "one teacher's 25 tile requests must remain a cohort burst");
+      }
+      const cohortStarts = [...heartbeatByTeacher.values()].map((values) => Math.min(...values)).sort((a, b) => a - b);
+      assert.ok(cohortStarts.at(-1)! - cohortStarts[0] >= 4_000, "independent teacher cohorts must be staggered across the configured window");
+      assert.ok(artifacts);
+      const classByDeviceId = new Map(artifacts.manifest.map((entry) => [entry.deviceId, entry.classId]));
+      const combinedTileReadsByClass = new Map<string, number[]>();
+      for (const entry of heartbeatCohortRequests) {
+        const teacherIndex = Number(entry.cookie.match(/launch-cookie-secret-(\d+)/)?.[1] || 0);
+        const classId = `launch-class-${teacherIndex}`;
+        const values = combinedTileReadsByClass.get(classId) || [];
+        values.push(entry.at);
+        combinedTileReadsByClass.set(classId, values);
+      }
+      for (const entry of screenshotCohortRequests) {
+        const classId = classByDeviceId.get(entry.deviceId);
+        if (!classId) continue;
+        const values = combinedTileReadsByClass.get(classId) || [];
+        values.push(entry.at);
+        combinedTileReadsByClass.set(classId, values);
+      }
+      assert.equal(combinedTileReadsByClass.size, 20);
+      for (const values of combinedTileReadsByClass.values()) {
+        assert.equal(values.length, 50);
+        assert.ok(
+          Math.max(...values) - Math.min(...values) < 1_000,
+          "one teacher's 25 history and 25 screenshot reads must remain one combined tile burst"
+        );
+      }
+      assert.equal(tilePeakInFlightByClass.size, 20);
+      for (const peak of tilePeakInFlightByClass.values()) {
+        assert.ok(
+          peak >= 45,
+          `combined history and screenshot cohort must reach at least 45 in-flight requests; observed ${peak}`
+        );
+      }
       assert.ok(schoolHeaders.every((entry) => entry.schoolId === "school-1"));
       assert.equal(new Set(schoolHeaders.filter((entry) => entry.path === "/api/students-aggregated").map((entry) => entry.cookie)).size, 20);
       const commandHeaders = schoolHeaders.filter((entry) => entry.path === "/api/classpilot/commands");
@@ -982,7 +1091,7 @@ describe("ClassPilot load harness safety", () => {
     assert.doesNotMatch(`${expiredAuth.stdout}\n${expiredAuth.stderr}`, /expired-cookie-secret|expired-token-secret/);
   });
 
-  it("uses 20 distinct teacher auth sessions for simultaneous polling and staff WebSockets", async () => {
+  it("uses 20 distinct teacher auth sessions across staggered polling cohorts and staff WebSockets", async () => {
     const cookies = new Set<string>();
     const server = createServer((request, response) => {
       if (request.url === "/api/students-aggregated") cookies.add(String(request.headers.cookie || ""));
@@ -1007,7 +1116,8 @@ describe("ClassPilot load harness safety", () => {
       const result = await runAsync([], cleanEnv({
         LOAD_BASE_URL: `http://127.0.0.1:${address.port}`,
         LOAD_DEVICE_MANIFEST: manifestPath,
-        LOAD_DURATION_SECONDS: "1",
+        LOAD_DURATION_SECONDS: "10",
+        LOAD_TEST_ACCELERATED_RUNTIME_MS: "2000",
         LOAD_COMMAND_SETTLE_MS: "0",
         LOAD_REQUEST_TIMEOUT_MS: "500",
         LOAD_SHUTDOWN_GRACE_MS: "500",
@@ -1374,7 +1484,8 @@ describe("ClassPilot load harness safety", () => {
       const result = await runAsync([], cleanEnv({
         LOAD_BASE_URL: `http://127.0.0.1:${address.port}`,
         LOAD_DEVICE_MANIFEST: probeManifestPath,
-        LOAD_DURATION_SECONDS: "1",
+        LOAD_DURATION_SECONDS: "10",
+        LOAD_TEST_ACCELERATED_RUNTIME_MS: "2000",
         LOAD_COMMAND_SETTLE_MS: "0",
         LOAD_REQUEST_TIMEOUT_MS: "500",
         LOAD_SHUTDOWN_GRACE_MS: "500",
