@@ -46,6 +46,7 @@ $script:TestModeSentinel = "I_UNDERSTAND_CREDENTIAL_ROTATION_TEST_ONLY"
 $script:Utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 $script:Utf8Bom = [System.Text.UTF8Encoding]::new($true)
 $script:MutationStarted = $false
+$script:ActiveStageCode = "NOT_STARTED"
 
 function Get-RotationPhaseCatalog {
     return [ordered]@{
@@ -862,12 +863,15 @@ function Get-ServiceSnapshot {
     foreach ($entry in @($api[0], $worker[0])) {
         $deployments = @($entry.deployments)
         if (
+            [string]$entry.status -cne "ACTIVE" -or
             [int]$entry.desiredCount -lt 1 -or
             [int]$entry.runningCount -ne [int]$entry.desiredCount -or
             [int]$entry.pendingCount -ne 0 -or
             $deployments.Count -ne 1 -or
             [string]$deployments[0].status -cne "PRIMARY" -or
             [string]$deployments[0].rolloutState -cne "COMPLETED" -or
+            -not ($deployments[0].PSObject.Properties.Name -contains "failedTasks") -or
+            [int]$deployments[0].failedTasks -ne 0 -or
             [string]$deployments[0].taskDefinition -cne [string]$entry.taskDefinition
         ) {
             throw "A production service is not in the exact stable rollout state."
@@ -888,6 +892,93 @@ function Get-ServiceSnapshot {
             [string]$api[0].loadBalancers[0].targetGroupArn
         } else { "" }
     }
+}
+
+function Wait-ForExactServiceTaskConvergence {
+    param(
+        [Parameter(Mandatory = $true)][string]$Cluster,
+        [Parameter(Mandatory = $true)][string]$ApiService,
+        [Parameter(Mandatory = $true)][string]$WorkerService,
+        [Parameter(Mandatory = $true)][string]$ExpectedApiTaskDefinitionArn,
+        [Parameter(Mandatory = $true)][string]$ExpectedWorkerTaskDefinitionArn,
+        [Parameter(Mandatory = $true)][string]$AwsRegion,
+        [ValidateRange(1, 120)][int]$MaxAttempts = 30,
+        [ValidateRange(0, 60)][int]$IntervalSeconds = 2
+    )
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        $response = $null
+        try {
+            $response = Invoke-AwsJson -Arguments @(
+                "ecs", "describe-services",
+                "--cluster", $Cluster,
+                "--services", $ApiService, $WorkerService,
+                "--region", $AwsRegion,
+                "--output", "json"
+            )
+        }
+        catch {
+            # A bounded retry tolerates transient ECS control-plane reads. The
+            # final error remains generic and carries no service response text.
+        }
+
+        if ($null -ne $response -and @($response.failures).Count -eq 0 -and @($response.services).Count -eq 2) {
+            $api = @($response.services | Where-Object serviceName -CEQ $ApiService)
+            $worker = @($response.services | Where-Object serviceName -CEQ $WorkerService)
+            if ($api.Count -eq 1 -and $worker.Count -eq 1) {
+                $ready = $true
+                foreach ($expected in @(
+                    @{ service = $api[0]; task = $ExpectedApiTaskDefinitionArn; desired = @(1, 2) },
+                    @{ service = $worker[0]; task = $ExpectedWorkerTaskDefinitionArn; desired = @(1) }
+                )) {
+                    $entry = $expected.service
+                    $deployments = @($entry.deployments)
+                    foreach ($deployment in $deployments) {
+                        if (
+                            $deployment.PSObject.Properties.Name -contains "failedTasks" -and
+                            [int]$deployment.failedTasks -gt 0
+                        ) {
+                            throw "ECS strict convergence observed failed deployment tasks."
+                        }
+                    }
+                    if (
+                        [string]$entry.status -cne "ACTIVE" -or
+                        [int]$entry.desiredCount -notin $expected.desired -or
+                        [int]$entry.runningCount -ne [int]$entry.desiredCount -or
+                        [int]$entry.pendingCount -ne 0 -or
+                        [string]$entry.taskDefinition -cne [string]$expected.task -or
+                        $deployments.Count -ne 1 -or
+                        -not ($deployments[0].PSObject.Properties.Name -contains "failedTasks") -or
+                        [int]$deployments[0].failedTasks -ne 0 -or
+                        [string]$deployments[0].status -cne "PRIMARY" -or
+                        [string]$deployments[0].taskDefinition -cne [string]$expected.task -or
+                        [string]$deployments[0].rolloutState -cne "COMPLETED"
+                    ) {
+                        $ready = $false
+                    }
+                }
+                if ($ready) {
+                    return [pscustomobject]@{
+                        ApiTaskDefinitionArn = [string]$api[0].taskDefinition
+                        WorkerTaskDefinitionArn = [string]$worker[0].taskDefinition
+                        ApiDesiredCount = [int]$api[0].desiredCount
+                        WorkerDesiredCount = [int]$worker[0].desiredCount
+                        TargetGroupArn = if (@($api[0].loadBalancers).Count -eq 1) {
+                            [string]$api[0].loadBalancers[0].targetGroupArn
+                        } else { "" }
+                    }
+                }
+            }
+        }
+
+        if (
+            $attempt -lt $MaxAttempts -and
+            $IntervalSeconds -gt 0 -and
+            $env:SCHOOLPILOT_CREDENTIAL_ROTATION_TEST_MODE -ne $script:TestModeSentinel
+        ) {
+            Start-Sleep -Seconds $IntervalSeconds
+        }
+    }
+    throw "ECS services did not reach exact strict convergence within the bounded polling window."
 }
 
 function Get-TaskDefinitionImage {
@@ -1175,7 +1266,8 @@ function Write-SanitizedEvidenceEvent {
             "publicHealth", "albTargets", "logGate", "providerValidationStatus"
         )
         rotation_failed = @(
-            "mutationAttempted", "automaticRollbackRequired", "errorCode", "mutationDisposition"
+            "mutationAttempted", "automaticRollbackRequired", "errorCode", "mutationDisposition",
+            "activeStageCode"
         )
         automatic_rollback_complete = @(
             "restoredSsmVersion", "apiTaskDefinitionArn", "workerTaskDefinitionArn", "imageDigest"
@@ -1185,7 +1277,7 @@ function Write-SanitizedEvidenceEvent {
         )
         manual_recovery_required = @(
             "errorCode", "rollbackApiTaskDefinitionArn", "rollbackWorkerTaskDefinitionArn",
-            "rollbackSsmPriorVersion", "observedSsmVersion", "mutationDisposition"
+            "rollbackSsmPriorVersion", "observedSsmVersion", "mutationDisposition", "activeStageCode"
         )
         unit = @("ssmVersion", "hashPrefix")
     }
@@ -1198,6 +1290,12 @@ function Write-SanitizedEvidenceEvent {
         if ([string]$key -in $forbidden -or [string]$key -notin $allowed) {
             throw "Sanitized evidence rejected a field that is not allowlisted for this event."
         }
+    }
+    if (
+        $Details.ContainsKey("activeStageCode") -and
+        [string]$Details.activeStageCode -notmatch '^[A-Z][A-Z0-9_]{1,63}$'
+    ) {
+        throw "Sanitized evidence rejected an invalid active-stage code."
     }
     $detailJson = $Details | ConvertTo-Json -Depth 20 -Compress
     if ($detailJson -match '(?i)(SG\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|sk_live_[A-Za-z0-9_]+|whsec_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]{20,}|Bearer\s+[A-Za-z0-9._~-]+|postgres(?:ql)?://[^\s"@]+:[^\s"@]+@)') {
@@ -1653,16 +1751,20 @@ function Invoke-SecretOnlyTaskCutover {
             "--output", "json"
         ))
     }
+    $script:ActiveStageCode = "ECS_CUTOVER_WAITER"
     [void](Invoke-ExternalCommand -Command "aws" -Arguments @(
         "ecs", "wait", "services-stable",
         "--cluster", ([string]$Manifest.cluster),
         "--services", ([string]$Manifest.apiService), ([string]$Manifest.workerService),
         "--region", $AwsRegion
     ) -TimeoutSeconds 900)
-    $services = Get-ServiceSnapshot `
+    $script:ActiveStageCode = "ECS_CUTOVER_STRICT_CONVERGENCE"
+    $services = Wait-ForExactServiceTaskConvergence `
         -Cluster ([string]$Manifest.cluster) `
         -ApiService ([string]$Manifest.apiService) `
         -WorkerService ([string]$Manifest.workerService) `
+        -ExpectedApiTaskDefinitionArn $apiRevision `
+        -ExpectedWorkerTaskDefinitionArn $workerRevision `
         -AwsRegion $AwsRegion
     $configuration = Get-RotationPhaseConfiguration -Name ([string]$Manifest.phase)
     Assert-ServiceRuntimeSecretContract `
@@ -1704,13 +1806,21 @@ function Invoke-ServiceTaskRollback {
             "--output", "json"
         ))
     }
+    $script:ActiveStageCode = "ECS_ROLLBACK_WAITER"
     [void](Invoke-ExternalCommand -Command "aws" -Arguments @(
         "ecs", "wait", "services-stable",
         "--cluster", $Cluster,
         "--services", $ApiService, $WorkerService,
         "--region", $AwsRegion
     ) -TimeoutSeconds 900)
-    $snapshot = Get-ServiceSnapshot -Cluster $Cluster -ApiService $ApiService -WorkerService $WorkerService -AwsRegion $AwsRegion
+    $script:ActiveStageCode = "ECS_ROLLBACK_STRICT_CONVERGENCE"
+    $snapshot = Wait-ForExactServiceTaskConvergence `
+        -Cluster $Cluster `
+        -ApiService $ApiService `
+        -WorkerService $WorkerService `
+        -ExpectedApiTaskDefinitionArn $ApiTaskDefinitionArn `
+        -ExpectedWorkerTaskDefinitionArn $WorkerTaskDefinitionArn `
+        -AwsRegion $AwsRegion
     if (
         $snapshot.ApiTaskDefinitionArn -cne $ApiTaskDefinitionArn -or
         $snapshot.WorkerTaskDefinitionArn -cne $WorkerTaskDefinitionArn
@@ -1913,8 +2023,10 @@ function Invoke-CredentialRollbackCore {
         [Parameter(Mandatory = $true)][securestring]$PriorSecret,
         [Parameter(Mandatory = $true)][int64]$LogStartTimeMs
     )
+    $script:ActiveStageCode = "ROLLBACK_SSM_CURRENT_GATE"
     $currentSsm = Get-SsmParameterSnapshot -ParameterName ([string]$Manifest.parameterName) -AwsRegion $AwsRegion
     Assert-SsmSnapshotMatches -Expected $ExpectedCurrentSsmSnapshot -Actual $currentSsm
+    $script:ActiveStageCode = "ROLLBACK_SSM_WRITE_RECONCILE"
     $rollbackWrite = Invoke-SsmSecretWrite `
         -ParameterName ([string]$Manifest.parameterName) `
         -Value $PriorSecret `
@@ -1929,6 +2041,7 @@ function Invoke-CredentialRollbackCore {
     if ([string]$restoredSsm.PlaintextHash -cne [string]$Manifest.prior.ssm.PlaintextHash) {
         throw "Rollback restored an unexpected plaintext hash."
     }
+    $script:ActiveStageCode = "ROLLBACK_ECS_UPDATE"
     $services = Invoke-ServiceTaskRollback `
         -Cluster ([string]$Manifest.cluster) `
         -ApiService ([string]$Manifest.apiService) `
@@ -1936,18 +2049,23 @@ function Invoke-CredentialRollbackCore {
         -ApiTaskDefinitionArn ([string]$Manifest.prior.apiTaskDefinitionArn) `
         -WorkerTaskDefinitionArn ([string]$Manifest.prior.workerTaskDefinitionArn) `
         -AwsRegion $AwsRegion
+    $script:ActiveStageCode = "ROLLBACK_IMAGE_DIGEST_GATE"
     $digest = Assert-ServiceDigestGate -ServiceSnapshot $services -AwsRegion $AwsRegion
     if ($digest -cne [string]$Manifest.prior.imageDigest) {
         throw "Rollback restored unexpected task image digest."
     }
+    $script:ActiveStageCode = "ROLLBACK_PUBLIC_HEALTH_GATE"
     Assert-PublicHealthGate
+    $script:ActiveStageCode = "ROLLBACK_TARGET_HEALTH_GATE"
     Assert-TargetHealthGate -TargetGroupArn $services.TargetGroupArn -ExpectedHealthy $services.ApiDesiredCount -AwsRegion $AwsRegion
+    $script:ActiveStageCode = "ROLLBACK_LOG_GATE"
     Assert-PostDeployLogGate `
         -PhaseConfiguration $Configuration `
         -StartTimeMs $LogStartTimeMs `
         -ProjectName ([string]$Manifest.project) `
         -EnvironmentName ([string]$Manifest.environment) `
         -AwsRegion $AwsRegion
+    $script:ActiveStageCode = "ROLLBACK_SSM_POST_GATE"
     $postRollbackSsm = Get-SsmParameterSnapshot -ParameterName ([string]$Manifest.parameterName) -AwsRegion $AwsRegion
     Assert-SsmSnapshotMatches -Expected $restoredSsm -Actual $postRollbackSsm
     return [pscustomobject]@{ SsmVersion = $restoredSsm.Version; Ssm = $restoredSsm; Services = $services; Digest = $digest }
@@ -1971,6 +2089,7 @@ function Invoke-CredentialRotationApply {
     $mutationDisposition = "not_attempted"
     $manualRecoveryRequired = $false
     $script:MutationStarted = $false
+    $script:ActiveStageCode = "APPLY_ROLLBACK_MATERIAL_GATE"
     $applyStart = [DateTimeOffset]::UtcNow
     $applyStartMs = $applyStart.AddMinutes(-1).ToUnixTimeMilliseconds()
     try {
@@ -1980,6 +2099,7 @@ function Invoke-CredentialRotationApply {
         if ((Get-SecureStringHash -Value $priorSecret) -cne [string]$Manifest.prior.ssm.PlaintextHash) {
             throw "The protected rollback material failed its expected hash gate."
         }
+        $script:ActiveStageCode = "APPLY_SOURCE_STATE_GATE"
         $planState = Assert-CurrentPlanState -Manifest $Manifest -AwsRegion $AwsRegion
         $replacementHash = Get-SecureStringHash -Value $Replacement
         if ($replacementHash -ceq [string]$Manifest.prior.ssm.PlaintextHash) {
@@ -1987,6 +2107,7 @@ function Invoke-CredentialRotationApply {
         }
         $preWriteSsm = $planState.Ssm
         Assert-SsmSnapshotMatches -Expected $Manifest.prior.ssm -Actual $preWriteSsm
+        $script:ActiveStageCode = "APPLY_SSM_WRITE_RECONCILE"
         $writeResult = Invoke-SsmSecretWrite `
             -ParameterName ([string]$Manifest.parameterName) `
             -Value $Replacement `
@@ -2011,6 +2132,7 @@ function Invoke-CredentialRotationApply {
                 rollbackSsmPriorVersion = [int64]$Manifest.prior.ssm.Version
                 observedSsmVersion = if ($null -ne $writeResult.Snapshot) { [int64]$writeResult.Snapshot.Version } else { -1 }
                 mutationDisposition = $mutationDisposition
+                activeStageCode = [string]$script:ActiveStageCode
             }
             throw "The SSM write outcome is indeterminate; no automatic overwrite is safe."
         }
@@ -2022,14 +2144,19 @@ function Invoke-CredentialRotationApply {
             commandAcknowledged = [bool]$writeResult.CommandAcknowledged
             commandFailed = [bool]$writeResult.CommandFailed
         }
+        $script:ActiveStageCode = "APPLY_ECS_CUTOVER"
         $services = Invoke-SecretOnlyTaskCutover `
             -Manifest $Manifest `
             -ExpectedSsmSnapshot $ownedWriteSnapshot `
             -RunDirectory $runDirectory `
             -AwsRegion $AwsRegion
+        $script:ActiveStageCode = "APPLY_IMAGE_DIGEST_GATE"
         $digest = Assert-ServiceDigestGate -ServiceSnapshot $services -AwsRegion $AwsRegion
+        $script:ActiveStageCode = "APPLY_PUBLIC_HEALTH_GATE"
         Assert-PublicHealthGate
+        $script:ActiveStageCode = "APPLY_TARGET_HEALTH_GATE"
         Assert-TargetHealthGate -TargetGroupArn $services.TargetGroupArn -ExpectedHealthy $services.ApiDesiredCount -AwsRegion $AwsRegion
+        $script:ActiveStageCode = "APPLY_LOG_GATE"
         Assert-PostDeployLogGate `
             -PhaseConfiguration $Configuration `
             -StartTimeMs $applyStartMs `
@@ -2074,6 +2201,7 @@ function Invoke-CredentialRotationApply {
             automaticRollbackRequired = ($null -ne $ownedWriteSnapshot -and -not $manualRecoveryRequired)
             errorCode = "ROTATION_GATE_FAILED"
             mutationDisposition = $mutationDisposition
+            activeStageCode = [string]$script:ActiveStageCode
         }
         if ($manualRecoveryRequired) {
             throw "Credential rotation stopped with an indeterminate external state; follow the private evidence and do not overwrite SSM automatically."
@@ -2090,6 +2218,7 @@ function Invoke-CredentialRotationApply {
                         rollbackSsmPriorVersion = [int64]$Manifest.prior.ssm.Version
                         observedSsmVersion = [int64]$current.Version
                         mutationDisposition = "indeterminate"
+                        activeStageCode = [string]$script:ActiveStageCode
                     }
                     throw "Automatic rollback refused because SSM no longer matches the exact owned write snapshot."
                 }
@@ -2120,6 +2249,7 @@ function Invoke-CredentialRotationApply {
                         rollbackSsmPriorVersion = [int64]$Manifest.prior.ssm.Version
                         observedSsmVersion = -1
                         mutationDisposition = "indeterminate"
+                        activeStageCode = [string]$script:ActiveStageCode
                     }
                 }
                 throw "Credential rotation failed and automatic rollback did not complete; follow the external sanitized evidence."
@@ -2188,6 +2318,7 @@ function Invoke-CredentialRotationManualRollback {
                 rollbackSsmPriorVersion = [int64]$Manifest.prior.ssm.Version
                 observedSsmVersion = [int64]$current.Version
                 mutationDisposition = "indeterminate"
+                activeStageCode = [string]$script:ActiveStageCode
             }
             throw "Manual rollback did not reconcile exactly; no further automatic overwrite is safe."
         }
