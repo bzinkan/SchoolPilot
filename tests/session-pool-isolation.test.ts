@@ -137,9 +137,21 @@ describe("PostgreSQL session-pool isolation", () => {
     );
   });
 
-  it("forwards async school-context failures through Express 4 error handling", () => {
+  it("forwards async authorization failures through Express 4 error handling", () => {
     const contextSource = readFileSync(
       resolve(root, "src/middleware/requireSchoolContext.ts"),
+      "utf8"
+    );
+    const activeSchoolSource = readFileSync(
+      resolve(root, "src/middleware/requireActiveSchool.ts"),
+      "utf8"
+    );
+    const licenseSource = readFileSync(
+      resolve(root, "src/middleware/requireProductLicense.ts"),
+      "utf8"
+    );
+    const roleSource = readFileSync(
+      resolve(root, "src/middleware/requireRole.ts"),
       "utf8"
     );
 
@@ -151,6 +163,46 @@ describe("PostgreSQL session-pool isolation", () => {
       contextSource,
       /export const requireSchoolContext:[\s\S]*Promise\.resolve\([\s\S]*resolveSchoolContext\([\s\S]*\.catch\(next\)/
     );
+    assert.match(
+      activeSchoolSource,
+      /requireActiveSchool:[\s\S]*Promise\.resolve\(resolveActiveSchool\(req,\s*res,\s*next\)\)\.catch\(next\)/
+    );
+    assert.match(
+      licenseSource,
+      /return \(req,\s*res,\s*next\)[\s\S]*Promise\.resolve\(checkLicense\(req,\s*res,\s*next\)\)\.catch\(next\)/
+    );
+    assert.match(
+      roleSource,
+      /return \(req,\s*res,\s*next\)[\s\S]*Promise\.resolve\(checkRole\(req,\s*res,\s*next\)\)\.catch\(next\)/
+    );
+  });
+
+  it("fails closed for revoked session schools and broken impersonation lookups", () => {
+    const contextSource = readFileSync(
+      resolve(root, "src/middleware/requireSchoolContext.ts"),
+      "utf8"
+    );
+    const authenticateSource = readFileSync(
+      resolve(root, "src/middleware/authenticate.ts"),
+      "utf8"
+    );
+    const requiredImpersonation = authenticateSource.slice(
+      authenticateSource.indexOf("export const authenticate"),
+      authenticateSource.indexOf("// Strategy 1: Bearer JWT")
+    );
+    const optionalImpersonation = authenticateSource.slice(
+      authenticateSource.indexOf("export const optionalAuth"),
+      authenticateSource.indexOf("// JWT takes priority over session")
+    );
+
+    assert.match(
+      contextSource,
+      /const membership = await loadActiveMembershipContext\([\s\S]*if \(!membership\)[\s\S]*status\(403\)/
+    );
+    assert.match(requiredImpersonation, /return res\.status\(401\)/);
+    assert.match(requiredImpersonation, /return next\(err\)/);
+    assert.match(optionalImpersonation, /return next\(\)/);
+    assert.match(optionalImpersonation, /return next\(err\)/);
   });
 
   it("keeps tile history explicitly school scoped and clamps row count", () => {

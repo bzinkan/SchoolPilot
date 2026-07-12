@@ -3,6 +3,23 @@ import { verifyUserToken } from "../services/jwt.js";
 import { eq } from "drizzle-orm";
 import { users } from "../schema/core.js";
 import db from "../db.js";
+import { createSingleFlight } from "../util/singleFlight.js";
+
+const loadUserSingleFlight = createSingleFlight<
+  string,
+  typeof users.$inferSelect | undefined
+>({ maxPendingKeys: 2_048 });
+
+function loadUserById(userId: string): Promise<typeof users.$inferSelect | undefined> {
+  return loadUserSingleFlight(userId, async () => {
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+    return user;
+  });
+}
 
 /**
  * Dual authentication middleware.
@@ -13,19 +30,17 @@ import db from "../db.js";
 export const authenticate: RequestHandler = async (req, res, next) => {
   if ((req.session as any)?.impersonating && req.session?.userId) {
     try {
-      const [user] = await db
-        .select()
-        .from(users)
-        .where(eq(users.id, req.session.userId))
-        .limit(1);
+      const user = await loadUserById(req.session.userId);
 
       if (user) {
         req.authUser = user;
         req.authMethod = "session";
         return next();
       }
+      return res.status(401).json({ error: "Authentication required" });
     } catch (err) {
       console.error("[auth] Impersonation session lookup failed:", err);
+      return next(err);
     }
   }
 
@@ -36,11 +51,7 @@ export const authenticate: RequestHandler = async (req, res, next) => {
     if (token) {
       try {
         const payload = verifyUserToken(token);
-        const [user] = await db
-          .select()
-          .from(users)
-          .where(eq(users.id, payload.userId))
-          .limit(1);
+        const user = await loadUserById(payload.userId);
 
         if (user) {
           req.authUser = user;
@@ -57,11 +68,7 @@ export const authenticate: RequestHandler = async (req, res, next) => {
   // Strategy 2: Session cookie (PassPilot/ClassPilot web)
   if (req.session?.userId) {
     try {
-      const [user] = await db
-        .select()
-        .from(users)
-        .where(eq(users.id, req.session.userId))
-        .limit(1);
+      const user = await loadUserById(req.session.userId);
 
       if (user) {
         req.authUser = user;
@@ -82,18 +89,16 @@ export const authenticate: RequestHandler = async (req, res, next) => {
 export const optionalAuth: RequestHandler = async (req, _res, next) => {
   if ((req.session as any)?.impersonating && req.session?.userId) {
     try {
-      const [user] = await db
-        .select()
-        .from(users)
-        .where(eq(users.id, req.session.userId))
-        .limit(1);
+      const user = await loadUserById(req.session.userId);
       if (user) {
         req.authUser = user;
         req.authMethod = "session";
         return next();
       }
+      return next();
     } catch (err) {
       console.error("[auth] Optional impersonation session lookup failed:", err);
+      return next(err);
     }
   }
 
@@ -104,11 +109,7 @@ export const optionalAuth: RequestHandler = async (req, _res, next) => {
     if (token) {
       try {
         const payload = verifyUserToken(token);
-        const [user] = await db
-          .select()
-          .from(users)
-          .where(eq(users.id, payload.userId))
-          .limit(1);
+        const user = await loadUserById(payload.userId);
         if (user) {
           req.authUser = user;
           req.authMethod = "jwt";
@@ -123,11 +124,7 @@ export const optionalAuth: RequestHandler = async (req, _res, next) => {
 
   if (req.session?.userId) {
     try {
-      const [user] = await db
-        .select()
-        .from(users)
-        .where(eq(users.id, req.session.userId))
-        .limit(1);
+      const user = await loadUserById(req.session.userId);
       if (user) {
         req.authUser = user;
         req.authMethod = "session";
