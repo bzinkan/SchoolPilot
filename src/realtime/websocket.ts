@@ -1,6 +1,10 @@
 import { WebSocketServer, WebSocket } from "ws";
 import type { Server } from "http";
-import { verifyStudentToken } from "../services/deviceJwt.js";
+import {
+  InvalidTokenError,
+  TokenExpiredError,
+  verifyStudentToken,
+} from "../services/deviceJwt.js";
 import { verifyUserToken } from "../services/jwt.js";
 import errorMonitor from "../services/errorMonitor.js";
 import {
@@ -31,7 +35,10 @@ import {
   getChatMessageByIdAndSchool,
 } from "../services/storage.js";
 import { runWithTenantContext } from "../middleware/tenantContext.js";
-import { verifyActiveStudentTokenSession } from "../services/classpilotStudentAuth.js";
+import {
+  resolveActiveStudentTokenSession,
+  studentAuthenticationServiceError,
+} from "../services/classpilotStudentAuth.js";
 import { buildStudentFabState } from "../services/classpilotFab.js";
 import { startActiveScheduledClassesForTeacher } from "../services/classpilotScheduledStart.js";
 import { isClassPilotWebSocketPath, isGoPilotSocketIoPath } from "./websocketPaths.js";
@@ -59,6 +66,20 @@ function emitWebSocketMetric(metricName: "WebSocketDisconnect" | "WebSocketError
 
 export function setupWebSocket(httpServer: Server): WebSocketServer {
   const wss = new WebSocketServer({ noServer: true });
+
+  let activity = { connected: 0, studentAuthenticated: 0, staffAuthenticated: 0 };
+  const activityTimer = setInterval(() => {
+    const snapshot = activity;
+    activity = { connected: 0, studentAuthenticated: 0, staffAuthenticated: 0 };
+    if (snapshot.connected === 0 && snapshot.studentAuthenticated === 0 && snapshot.staffAuthenticated === 0) return;
+    console.log(JSON.stringify({
+      type: "websocket_activity",
+      intervalSeconds: 60,
+      ...snapshot,
+    }));
+  }, 60_000);
+  activityTimer.unref();
+  wss.once("close", () => clearInterval(activityTimer));
 
   // Track ping/pong state per client
   const clientPingTimers = new Map<WebSocket, NodeJS.Timeout>();
@@ -169,8 +190,7 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
   // --- Connection handler ---
   wss.on("connection", (ws) => {
     const client = registerWsClient(ws);
-
-    console.log("[WebSocket] Client connected");
+    activity.connected += 1;
 
     // Start ping/pong keepalive
     startPingInterval(ws);
@@ -200,15 +220,33 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
           // it cannot prove the request came from the managed extension deployment.
           if (message.role === "student" && message.deviceId) {
             if (message.studentToken) {
+              let payload: ReturnType<typeof verifyStudentToken>;
               try {
-                const payload = verifyStudentToken(message.studentToken);
+                payload = verifyStudentToken(message.studentToken);
+              } catch (error) {
+                const msg = error instanceof TokenExpiredError
+                  ? "Token expired, please re-register"
+                  : error instanceof InvalidTokenError
+                    ? "Invalid token"
+                    : "Authentication failed";
+                ws.send(JSON.stringify({ type: "auth-error", message: msg }));
+                ws.close();
+                return;
+              }
+
+              try {
                 const schoolId = payload.schoolId;
                 const deviceId = payload.deviceId;
-                const hasActiveSession = await runWithTenantContext(
-                  { schoolId },
-                  () => verifyActiveStudentTokenSession(payload)
-                );
-                if (!hasActiveSession) {
+                const bootstrap = await runWithTenantContext({ schoolId }, async () => {
+                  const activeSession = await resolveActiveStudentTokenSession(payload);
+                  if (!activeSession) return null;
+                  const schoolSettings = await getSettingsForSchool(schoolId);
+                  const fab = await buildStudentFabState(schoolId, payload.studentId, {
+                    schoolSettings,
+                  });
+                  return { schoolSettings, fab };
+                });
+                if (!bootstrap) {
                   ws.send(JSON.stringify({ type: "auth-error", message: "Student session is no longer active" }));
                   ws.close();
                   return;
@@ -220,28 +258,29 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
                   schoolId,
                 });
 
-                // Send settings along with auth success
-                const schoolSettings = await runWithTenantContext({ schoolId }, () => getSettingsForSchool(schoolId));
-                const fab = await runWithTenantContext({ schoolId }, () =>
-                  buildStudentFabState(schoolId, payload.studentId)
-                );
                 ws.send(JSON.stringify({
                   type: "auth-success",
                   role: "student",
                   settings: {
-                    maxTabsPerStudent: schoolSettings?.maxTabsPerStudent
-                      ? parseInt(schoolSettings.maxTabsPerStudent, 10) : null,
-                    globalBlockedDomains: schoolSettings?.blockedDomains || [],
-                    fab,
+                    maxTabsPerStudent: bootstrap.schoolSettings?.maxTabsPerStudent
+                      ? parseInt(bootstrap.schoolSettings.maxTabsPerStudent, 10) : null,
+                    globalBlockedDomains: bootstrap.schoolSettings?.blockedDomains || [],
+                    fab: bootstrap.fab,
                   },
                 }));
-                console.log(`[WebSocket] Student authenticated: device=${deviceId}, school=${schoolId}`);
+                activity.studentAuthenticated += 1;
               } catch (error) {
-                const msg = error instanceof Error && error.name === "TokenExpiredError"
-                  ? "Token expired, please re-register"
-                  : "Invalid token";
-                ws.send(JSON.stringify({ type: "auth-error", message: msg }));
-                ws.close();
+                const safeError = studentAuthenticationServiceError(error);
+                console.error("[WebSocket] Student authentication service unavailable", {
+                  errorCode: (safeError as NodeJS.ErrnoException).code ?? "unknown",
+                });
+                errorMonitor.trackError("database_connectivity", safeError, {
+                  job: "studentWebSocketAuth",
+                  messageType: "authentication_service_error",
+                  errorCode: (safeError as NodeJS.ErrnoException).code,
+                }, { persist: false, priority: "high" });
+                ws.send(JSON.stringify({ type: "auth-error", message: "Authentication service unavailable" }));
+                ws.close(1013, "Authentication service unavailable");
                 return;
               }
             } else {
@@ -291,6 +330,7 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
               });
 
               ws.send(JSON.stringify({ type: "auth-success", role }));
+              activity.staffAuthenticated += 1;
               void runWithTenantContext({ schoolId }, async () => {
                 const started = await startActiveScheduledClassesForTeacher({ schoolId, teacherId: userId });
                 if (started.length > 0) {
@@ -307,7 +347,6 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
                   teacherId: userId,
                 });
               });
-              console.log(`[WebSocket] Staff authenticated: ${role} (userId: ${userId})`);
             } catch (error) {
               console.error("[WebSocket] Staff auth error:", error);
               ws.send(JSON.stringify({ type: "auth-error", message: "Authentication failed" }));

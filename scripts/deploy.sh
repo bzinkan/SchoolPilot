@@ -7,7 +7,7 @@
 #   ./scripts/deploy.sh                  # Deploy everything (backend + frontend)
 #   ./scripts/deploy.sh --backend        # Backend only (Docker → ECR → ECS)
 #   ./scripts/deploy.sh --frontend       # Frontend only (Vite build → S3 → CloudFront)
-#   ./scripts/deploy.sh --skip-wait      # Deploy without waiting for ECS stabilization
+#   ./scripts/deploy.sh --skip-wait      # Non-production only; production refuses this flag
 #   ./scripts/deploy.sh production       # Explicit environment (default: production)
 #   ./scripts/deploy.sh --tag abc123     # Override default git-SHA image tag
 # ============================================================================
@@ -48,6 +48,16 @@ CLUSTER="${NAME}-cluster"
 SERVICE="${NAME}-api"
 WORKER_SERVICE="${NAME}-scheduler-worker"
 BUCKET="${NAME}-frontend"
+AUTOSCALING_RESOURCE_ID="service/${CLUSTER}/${SERVICE}"
+AUTOSCALING_DIMENSION="ecs:service:DesiredCount"
+
+# These values are populated only while a production backend deploy owns the
+# temporary Application Auto Scaling hold. Keeping the prior booleans separate
+# avoids depending on JSON round-tripping across Bash/Windows process boundaries.
+PRODUCTION_SCALING_HOLD_ACTIVE=false
+PRODUCTION_SCALING_PRIOR_IN=""
+PRODUCTION_SCALING_PRIOR_OUT=""
+PRODUCTION_SCALING_PRIOR_SCHEDULED=""
 
 # Colors (works in most terminals)
 RED='\033[0;31m'
@@ -70,6 +80,246 @@ ecs_service_status() {
     --region "$REGION" 2>/dev/null || true
 }
 
+production_service_snapshot() {
+  aws ecs describe-services \
+    --cluster "$CLUSTER" \
+    --services "$SERVICE" "$WORKER_SERVICE" \
+    --query 'services[].[serviceName,status,desiredCount,runningCount,pendingCount,length(deployments),deployments[?status==`PRIMARY`]|[0].rolloutState]' \
+    --output text \
+    --region "$REGION" 2>/dev/null
+}
+
+validate_production_service_snapshot() {
+  local snapshot="$1"
+  local service_name status desired running pending deployment_count rollout_state extra
+  local api_seen=0
+  local worker_seen=0
+  local api_desired=""
+
+  while IFS=$'\t' read -r service_name status desired running pending deployment_count rollout_state extra; do
+    rollout_state="${rollout_state%$'\r'}"
+    extra="${extra%$'\r'}"
+
+    if [[ -z "$service_name" || -n "$extra" ||
+          ! "$desired" =~ ^(0|[1-9][0-9]*)$ ||
+          ! "$running" =~ ^(0|[1-9][0-9]*)$ ||
+          ! "$pending" =~ ^(0|[1-9][0-9]*)$ ||
+          ! "$deployment_count" =~ ^(0|[1-9][0-9]*)$ ]]; then
+      error "Production ECS service state was malformed or ambiguous; refusing the backend deployment."
+      return 1
+    fi
+
+    if [[ "$status" != "ACTIVE" || "$running" != "$desired" || "$pending" != "0" ||
+          "$deployment_count" != "1" || "$rollout_state" != "COMPLETED" ]]; then
+      error "Production ECS service ${service_name} is not stable (status=${status}, desired=${desired}, running=${running}, pending=${pending}, deployments=${deployment_count}, rollout=${rollout_state}); refusing the backend deployment."
+      return 1
+    fi
+
+    case "$service_name" in
+      "$SERVICE")
+        api_seen=$((api_seen + 1))
+        api_desired="$desired"
+        if [[ "$desired" != "1" && "$desired" != "2" ]]; then
+          error "Production API desiredCount is ${desired}; backend deploys require desiredCount 1 or 2 so rolling database connections stay below the launch gate."
+          return 1
+        fi
+        ;;
+      "$WORKER_SERVICE")
+        worker_seen=$((worker_seen + 1))
+        if [[ "$desired" != "1" ]]; then
+          error "Production scheduler worker desiredCount is ${desired}; backend deploys require exactly one worker so rolling database connections stay below the launch gate."
+          return 1
+        fi
+        ;;
+      *)
+        error "Unexpected ECS service ${service_name} appeared in the production capacity check; refusing the backend deployment."
+        return 1
+        ;;
+    esac
+  done <<< "$snapshot"
+
+  if [[ "$api_seen" != "1" || "$worker_seen" != "1" ]]; then
+    error "Production capacity check did not return exactly one API and one scheduler worker service; refusing the backend deployment."
+    return 1
+  fi
+
+  PRODUCTION_PREFLIGHT_API_DESIRED="$api_desired"
+}
+
+production_backend_capacity_preflight() {
+  if [[ "$ENV" != "production" || "$DEPLOY_BACKEND" != true ]]; then
+    return 0
+  fi
+
+  if [[ "$SKIP_WAIT" == true ]]; then
+    error "Production backend deploys cannot use --skip-wait because the autoscaling hold must remain through ECS stabilization."
+    return 1
+  fi
+
+  local phase="${1:-before deployment}"
+  local service_snapshot
+  info "Checking production API and scheduler capacity ${phase}..."
+  if ! service_snapshot=$(production_service_snapshot); then
+    error "Could not read production ECS service state; refusing the backend deployment."
+    return 1
+  fi
+
+  if ! validate_production_service_snapshot "$service_snapshot"; then
+    return 1
+  fi
+
+  success "Production backend capacity preflight OK: API desiredCount=${PRODUCTION_PREFLIGHT_API_DESIRED}, worker desiredCount=1, both stable"
+}
+
+production_scaling_state_snapshot() {
+  aws application-autoscaling describe-scalable-targets \
+    --service-namespace ecs \
+    --resource-ids "$AUTOSCALING_RESOURCE_ID" \
+    --scalable-dimension "$AUTOSCALING_DIMENSION" \
+    --query 'ScalableTargets[0].[SuspendedState.DynamicScalingInSuspended,SuspendedState.DynamicScalingOutSuspended,SuspendedState.ScheduledScalingSuspended]' \
+    --output text \
+    --region "$REGION" 2>/dev/null
+}
+
+normalize_production_scaling_state() {
+  local raw="$1"
+  local scale_in scale_out scheduled extra
+
+  if [[ "$raw" == *$'\n'* ]]; then
+    return 1
+  fi
+
+  read -r scale_in scale_out scheduled extra <<< "$raw"
+  scheduled="${scheduled%$'\r'}"
+  extra="${extra%$'\r'}"
+  if [[ -z "$scale_in" || -z "$scale_out" || -z "$scheduled" || -n "$extra" ]]; then
+    return 1
+  fi
+
+  case "$scale_in" in
+    True|true) scale_in=true ;;
+    False|false) scale_in=false ;;
+    *) return 1 ;;
+  esac
+  case "$scale_out" in
+    True|true) scale_out=true ;;
+    False|false) scale_out=false ;;
+    *) return 1 ;;
+  esac
+  case "$scheduled" in
+    True|true) scheduled=true ;;
+    False|false) scheduled=false ;;
+    *) return 1 ;;
+  esac
+
+  printf '%s %s %s\n' "$scale_in" "$scale_out" "$scheduled"
+}
+
+set_production_scaling_state() {
+  local scale_in="$1"
+  local scale_out="$2"
+  local scheduled="$3"
+
+  aws application-autoscaling register-scalable-target \
+    --service-namespace ecs \
+    --resource-id "$AUTOSCALING_RESOURCE_ID" \
+    --scalable-dimension "$AUTOSCALING_DIMENSION" \
+    --suspended-state "DynamicScalingInSuspended=${scale_in},DynamicScalingOutSuspended=${scale_out},ScheduledScalingSuspended=${scheduled}" \
+    --region "$REGION" > /dev/null
+}
+
+wait_for_production_scaling_state() {
+  local expected="$1 $2 $3"
+  local attempt raw normalized
+
+  # Application Auto Scaling updates are normally visible immediately, but use
+  # a bounded 20-second observation window for control-plane propagation.
+  for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    raw=""
+    normalized=""
+    if raw=$(production_scaling_state_snapshot) &&
+       normalized=$(normalize_production_scaling_state "$raw") &&
+       [[ "$normalized" == "$expected" ]]; then
+      return 0
+    fi
+    if [[ "$attempt" != "10" ]]; then
+      sleep 2
+    fi
+  done
+  return 1
+}
+
+acquire_production_scaling_hold() {
+  if [[ "$ENV" != "production" || "$DEPLOY_BACKEND" != true ]]; then
+    return 0
+  fi
+  if [[ "$PRODUCTION_SCALING_HOLD_ACTIVE" == true ]]; then
+    error "Production autoscaling hold is already active; refusing to overwrite its recovery state."
+    return 1
+  fi
+
+  local raw prior
+  if ! raw=$(production_scaling_state_snapshot); then
+    error "Could not read the production API autoscaling suspended state; refusing the service rollout."
+    return 1
+  fi
+  if ! prior=$(normalize_production_scaling_state "$raw"); then
+    error "Production API autoscaling suspended state was missing or ambiguous; refusing the service rollout."
+    return 1
+  fi
+  read -r PRODUCTION_SCALING_PRIOR_IN PRODUCTION_SCALING_PRIOR_OUT PRODUCTION_SCALING_PRIOR_SCHEDULED <<< "$prior"
+
+  # Mark the hold active before the mutating request. If the client loses the
+  # response after AWS applied it, the EXIT trap still restores the captured state.
+  PRODUCTION_SCALING_HOLD_ACTIVE=true
+  info "Suspending production API dynamic scaling while preserving the prior scheduled-scaling state..."
+  if ! set_production_scaling_state true true "$PRODUCTION_SCALING_PRIOR_SCHEDULED"; then
+    error "Could not suspend production API autoscaling; refusing the service rollout."
+    return 1
+  fi
+  if ! wait_for_production_scaling_state true true "$PRODUCTION_SCALING_PRIOR_SCHEDULED"; then
+    error "Production API autoscaling hold could not be verified; refusing the service rollout."
+    return 1
+  fi
+  success "Production API dynamic-scaling hold verified; scheduled-scaling state preserved"
+
+  # The first check happens before Docker. This second snapshot closes the
+  # build/push window and is protected from target-tracking drift. The reviewed
+  # scheduled actions remain live and can move only between one and two tasks.
+  if ! production_backend_capacity_preflight "under the autoscaling hold"; then
+    error "Production ECS capacity changed after the initial preflight; refusing the migration and service rollout."
+    return 1
+  fi
+}
+
+restore_production_scaling_hold() {
+  if [[ "$PRODUCTION_SCALING_HOLD_ACTIVE" != true ]]; then
+    return 0
+  fi
+
+  info "Restoring the exact prior production API autoscaling suspended state..."
+  if ! set_production_scaling_state \
+    "$PRODUCTION_SCALING_PRIOR_IN" \
+    "$PRODUCTION_SCALING_PRIOR_OUT" \
+    "$PRODUCTION_SCALING_PRIOR_SCHEDULED"; then
+    error "Could not restore the prior production API autoscaling suspended state."
+    return 1
+  fi
+  if ! wait_for_production_scaling_state \
+    "$PRODUCTION_SCALING_PRIOR_IN" \
+    "$PRODUCTION_SCALING_PRIOR_OUT" \
+    "$PRODUCTION_SCALING_PRIOR_SCHEDULED"; then
+    error "Prior production API autoscaling suspended state was not observable after restoration."
+    return 1
+  fi
+
+  PRODUCTION_SCALING_HOLD_ACTIVE=false
+  PRODUCTION_SCALING_PRIOR_IN=""
+  PRODUCTION_SCALING_PRIOR_OUT=""
+  PRODUCTION_SCALING_PRIOR_SCHEDULED=""
+  success "Production API autoscaling suspended state restored"
+}
+
 TEMP_FILES=(
   .taskdef-current.json
   .taskdef-template.json
@@ -86,6 +336,22 @@ TEMP_FILES=(
 
 cleanup_temp_files() {
   rm -f "${TEMP_FILES[@]}"
+}
+
+deploy_exit_cleanup() {
+  local exit_code=$?
+  trap - EXIT
+
+  if [[ "$PRODUCTION_SCALING_HOLD_ACTIVE" == true ]]; then
+    warn "Deploy exited while the production autoscaling hold was active; attempting recovery..."
+    if ! restore_production_scaling_hold; then
+      error "EXIT recovery could not restore production API autoscaling. Manual recovery is required immediately."
+      exit_code=1
+    fi
+  fi
+
+  cleanup_temp_files
+  exit "$exit_code"
 }
 
 # --- Preflight checks ---
@@ -115,7 +381,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
 info "Working directory: $PROJECT_ROOT"
 
-trap cleanup_temp_files EXIT
+trap deploy_exit_cleanup EXIT
 cleanup_temp_files
 
 if ! command -v gh > /dev/null 2>&1; then
@@ -183,6 +449,12 @@ fi
 IMAGE_TAG="${IMAGE_TAG:-$(git rev-parse --short=12 HEAD)}"
 success "Git deploy preflight OK: main@$IMAGE_TAG has green GitHub checks"
 info "Image tag:   $IMAGE_TAG"
+
+# A 200% API/worker rollout is safe under the reviewed 150-connection launch
+# gate only while the API is stable at one or two tasks and the singleton
+# worker is stable at one task. This check runs before Docker/ECR/ECS work and
+# fails closed if ECS cannot provide one unambiguous two-service snapshot.
+production_backend_capacity_preflight
 
 # ============================================================================
 # BACKEND DEPLOY
@@ -392,6 +664,11 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
     console.log(`awsvpcConfiguration={subnets=[${cfg.subnets.join(",")}],securityGroups=[${securityGroups.join(",")}],assignPublicIp=${assignPublicIp}}`);
   ')
 
+  # Acquire the hold only after the slow image and task-definition work, then
+  # keep it through the one-off migration and both ECS service deployments.
+  # The helper rechecks API/worker stability after scaling is suspended.
+  acquire_production_scaling_hold
+
   info "Running startup migrations with ${NAME}-api:${NEW_REV}..."
   aws ecs run-task \
     --cluster "$CLUSTER" \
@@ -438,6 +715,7 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
   success "Startup migrations completed"
 
   # Step 6: Point the API service at the new revision
+  production_backend_capacity_preflight "after migration under the autoscaling hold"
   info "Updating ECS service to revision ${NEW_REV}..."
   aws ecs update-service \
     --cluster "$CLUSTER" \
@@ -507,6 +785,10 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
       --output table
     UPDATED_WORKER=true
   else
+    if [[ "$ENV" == "production" ]]; then
+      error "Production scheduler worker disappeared after the guarded capacity check; refusing to complete the rollout."
+      exit 1
+    fi
     warn "Scheduler worker service not found; run Terraform before relying on multi-task API scale-out."
   fi
 
@@ -526,6 +808,16 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
         --region "$REGION"
     fi
     success "ECS deployment stable"
+  fi
+
+  # Keep dynamic scaling suspended until ECS itself reports a single, completed
+  # deployment for both services at the reviewed task counts. Scheduled scaling
+  # remains in its captured state so a 06:00/10:00 action cannot be skipped.
+  production_backend_capacity_preflight "after ECS stabilization"
+
+  if ! restore_production_scaling_hold; then
+    error "Backend deployment stabilized, but autoscaling restoration failed; failing the deploy and retrying restoration from the EXIT trap."
+    exit 1
   fi
 
   success "Backend deploy complete!"

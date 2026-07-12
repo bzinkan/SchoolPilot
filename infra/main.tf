@@ -286,16 +286,20 @@ module "ecs" {
   telegram_bot_token_parameter_arn = var.telegram_bot_token_parameter_arn
 
   # Scaling
-  desired_count             = var.ecs_desired_count
-  cpu                       = var.ecs_cpu
-  memory                    = var.ecs_memory
-  worker_desired_count      = var.worker_desired_count
-  worker_cpu                = var.worker_cpu
-  worker_memory             = var.worker_memory
-  enable_container_insights = var.enable_container_insights
-  db_pool_max               = var.db_pool_max
-  scheduler_db_pool_max     = var.scheduler_db_pool_max
-  rls_enabled_tables        = var.rls_enabled_tables
+  desired_count                   = var.ecs_desired_count
+  enable_api_arrival_capacity     = var.enable_api_arrival_capacity
+  api_arrival_scale_up_schedule   = var.api_arrival_scale_up_schedule
+  api_arrival_scale_down_schedule = var.api_arrival_scale_down_schedule
+  api_arrival_schedule_timezone   = var.api_arrival_schedule_timezone
+  cpu                             = var.ecs_cpu
+  memory                          = var.ecs_memory
+  worker_desired_count            = var.worker_desired_count
+  worker_cpu                      = var.worker_cpu
+  worker_memory                   = var.worker_memory
+  enable_container_insights       = var.enable_container_insights
+  db_pool_max                     = var.db_pool_max
+  scheduler_db_pool_max           = var.scheduler_db_pool_max
+  rls_enabled_tables              = var.rls_enabled_tables
 }
 
 module "cdn" {

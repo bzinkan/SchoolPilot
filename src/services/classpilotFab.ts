@@ -1,5 +1,6 @@
 import type { TeachingSession } from "../schema/classpilot.js";
 import type { Student } from "../schema/students.js";
+import type { Settings } from "../schema/shared.js";
 import {
   getActiveHandsForStudent,
   getActiveSupervisionForStudent,
@@ -33,7 +34,8 @@ export function studentDisplayName(student: Student): string {
 
 export async function getEffectiveFabToggles(
   schoolId: string,
-  sessionId?: string | null
+  sessionId?: string | null,
+  knownSchoolSettings?: Settings
 ): Promise<{
   messagingEnabled: boolean;
   handRaisingEnabled: boolean;
@@ -42,7 +44,7 @@ export async function getEffectiveFabToggles(
   sessionMessagingEnabled: boolean;
   sessionHandRaisingEnabled: boolean;
 }> {
-  const schoolSettings = await getSettingsForSchool(schoolId);
+  const schoolSettings = knownSchoolSettings ?? await getSettingsForSchool(schoolId);
   const sessionSettings = sessionId ? await getSessionSettings(sessionId) : undefined;
   const schoolMessagingEnabled = schoolSettings?.studentMessagingEnabled !== false;
   const schoolHandRaisingEnabled = schoolSettings?.handRaisingEnabled !== false;
@@ -94,7 +96,11 @@ export async function resolveStudentFabSessions(options: {
   return { student, sessions: enabledSessions };
 }
 
-export async function buildStudentFabState(schoolId: string, studentId: string) {
+export async function buildStudentFabState(
+  schoolId: string,
+  studentId: string,
+  options: { schoolSettings?: Settings } = {}
+) {
   const supervision = await getActiveSupervisionForStudent(schoolId, studentId);
   if (supervision) {
     return {
@@ -125,7 +131,11 @@ export async function buildStudentFabState(schoolId: string, studentId: string) 
   }> = [];
 
   for (const session of sessions) {
-    const toggles = await getEffectiveFabToggles(schoolId, session.id);
+    const toggles = await getEffectiveFabToggles(
+      schoolId,
+      session.id,
+      options.schoolSettings
+    );
     const handRaised = activeHands.some((hand) => hand.teachingSessionId === session.id);
     messagingEnabled = messagingEnabled || toggles.messagingEnabled;
     handRaisingEnabled = handRaisingEnabled || toggles.handRaisingEnabled;

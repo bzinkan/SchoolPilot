@@ -499,6 +499,36 @@ try {
     & $supervisorScript -ConfigPath $supervisorConfigPath -Mode Validate | Out-Null
     Assert-Condition ($LASTEXITCODE -eq 0) "Supervisor validation should accept a unique external long-run contract."
 
+    foreach ($collisionCase in @(
+        [pscustomobject]@{ id="progress-monitor-result"; field="loadProgressPath"; generatedSuffix="MONITOR-RESULT.JSON" },
+        [pscustomobject]@{ id="summary-rollback-evidence"; field="loadSummaryPath"; generatedSuffix="ROLLBACK.JSONL" }
+    )) {
+        $collisionConfig = $supervisorConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+        $collisionConfig.runId = "collision-$($collisionCase.id)"
+        $collisionConfig.evidenceDirectory = Join-Path $tempRoot "collision-$($collisionCase.id)-evidence"
+        $collisionConfig.loadProgressPath = Join-Path $tempRoot "collision-$($collisionCase.id)-progress.jsonl"
+        $collisionConfig.loadSummaryPath = Join-Path $tempRoot "collision-$($collisionCase.id)-summary.json"
+        $collisionConfig.($collisionCase.field) = Join-Path $collisionConfig.evidenceDirectory `
+            "$($collisionConfig.runId.ToUpperInvariant())-$($collisionCase.generatedSuffix)"
+        $collisionConfigPath = Join-Path $tempRoot "collision-$($collisionCase.id)-supervisor.json"
+        [IO.File]::WriteAllText($collisionConfigPath, ($collisionConfig | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+        $collisionRejected = $false
+        try { & $supervisorScript -ConfigPath $collisionConfigPath -Mode Validate | Out-Null }
+        catch { $collisionRejected = $_.Exception.Message -match "must not collide with generated supervisor, monitor, or rollback artifact" }
+        Assert-Condition $collisionRejected "Supervisor must reject case-insensitive $($collisionCase.field) collisions with generated evidence artifacts."
+    }
+
+    $productionDelayHookConfig = $supervisorConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+    $productionDelayHookConfig.testMode = $false
+    $productionDelayHookConfig.PSObject.Properties.Remove("testGeneratorPublicIpSequence")
+    $productionDelayHookConfig | Add-Member -NotePropertyName testPreReleaseGeneratorPublicIpDelayMilliseconds -NotePropertyValue 100 -Force
+    $productionDelayHookPath = Join-Path $tempRoot "production-delay-hook-supervisor.json"
+    [IO.File]::WriteAllText($productionDelayHookPath, ($productionDelayHookConfig | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+    $productionDelayHookRejected = $false
+    try { & $supervisorScript -ConfigPath $productionDelayHookPath -Mode Validate | Out-Null }
+    catch { $productionDelayHookRejected = $_.Exception.Message -match "testPreReleaseGeneratorPublicIpDelayMilliseconds is forbidden outside isolated testMode" }
+    Assert-Condition $productionDelayHookRejected "The deterministic pre-release IP-delay hook must remain confined to isolated testMode."
+
     $validPreflightExpression = '{ok:true,trafficStarted:false,runId:process.env.LOAD_RUN_ID,gateProfile:"launch",thresholdsEnforced:true,networkFamily:"IPv4"}'
     foreach ($invalidDocument in @(
         [pscustomobject]@{ id="root-array"; source="console.log(JSON.stringify([$validPreflightExpression]));"; expected="exactly one JSON object" },
@@ -554,8 +584,22 @@ try {
     $fakeSlowRollbackMonitor = Join-Path $tempRoot "fake-slow-rollback-monitor.ps1"
     $fakeLostHeartbeatMonitor = Join-Path $tempRoot "fake-lost-heartbeat-monitor.ps1"
     $fakeHealthyMonitor = Join-Path $tempRoot "fake-healthy-monitor.ps1"
-    [IO.File]::WriteAllText($fakeHarnessOk, 'if(!process.env.LOAD_RUN_ID)process.exit(8);if(process.argv.includes("--validate-config")){console.log(JSON.stringify({ok:true,trafficStarted:false,runId:process.env.LOAD_RUN_ID,gateProfile:"launch",thresholdsEnforced:true,networkFamily:"IPv4"}));process.exit(0)}setTimeout(() => process.exit(0), 4500);', [Text.UTF8Encoding]::new($false))
-    [IO.File]::WriteAllText($fakeHarnessFail, 'if(!process.env.LOAD_RUN_ID)process.exit(8);if(process.argv.includes("--validate-config")){console.log(JSON.stringify({ok:true,trafficStarted:false,runId:process.env.LOAD_RUN_ID,gateProfile:"launch",thresholdsEnforced:true,networkFamily:"IPv4"}));process.exit(0)}setTimeout(() => process.exit(7), 1000);', [Text.UTF8Encoding]::new($false))
+    $fakeExitBeforeReleaseMonitor = Join-Path $tempRoot "fake-exit-before-release-monitor.ps1"
+    $fakeHarnessPreamble = @'
+import fs from "node:fs";
+if(!process.env.LOAD_RUN_ID)process.exit(8);
+if(process.argv.includes("--validate-config")){
+  console.log(JSON.stringify({ok:true,trafficStarted:false,runId:process.env.LOAD_RUN_ID,gateProfile:"launch",thresholdsEnforced:true,networkFamily:"IPv4"}));
+  process.exit(0);
+}
+const readyPath=process.env.LOAD_SUPERVISOR_READY_PATH;
+const gatePath=process.env.LOAD_SUPERVISOR_START_GATE_PATH;
+if(!readyPath||!gatePath)process.exit(9);
+fs.writeFileSync(readyPath,JSON.stringify({schemaVersion:1,type:"load_supervisor_ready",runId:process.env.LOAD_RUN_ID,stage:process.env.LOAD_STAGE,harnessProcessId:process.pid,readyAt:new Date().toISOString(),trafficStarted:false}));
+while(!fs.existsSync(gatePath))await new Promise(resolve=>setTimeout(resolve,25));
+'@
+    [IO.File]::WriteAllText($fakeHarnessOk, $fakeHarnessPreamble + "`nsetTimeout(() => process.exit(0), 4500);", [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText($fakeHarnessFail, $fakeHarnessPreamble + "`nsetTimeout(() => process.exit(7), 1000);", [Text.UTF8Encoding]::new($false))
     [IO.File]::WriteAllText($fakeHarnessPreflightFail, 'if(process.argv.includes("--validate-config")){process.exit(9)}setTimeout(() => process.exit(0), 5000);', [Text.UTF8Encoding]::new($false))
     $fakeMonitorPreamble = @'
 param([string]$ConfigPath,[string]$Mode)
@@ -566,14 +610,19 @@ $rh=Join-Path $c.evidenceDirectory "$($c.runId)-rollback-heartbeat.json"
 '@
     [IO.File]::WriteAllText($fakeSlowRollbackMonitor, $fakeMonitorPreamble + "`n" + @'
 W $rh @{runId=$c.runId;action="NatRemoved";status="running";step="slow-test";timestamp=[DateTimeOffset]::UtcNow.ToString("o");deadlineUtc=[DateTimeOffset]::UtcNow.AddMinutes(1).ToString("o")}
-W $mh @{runId=$c.runId;timestamp=[DateTimeOffset]::UtcNow.ToString("o")}
+W $mh @{runId=$c.runId;phase=$c.phase;timestamp=[DateTimeOffset]::UtcNow.ToString("o");iteration=1;triggered=$false}
 Start-Sleep -Seconds 4
 exit 0
 '@, [Text.UTF8Encoding]::new($false))
-    [IO.File]::WriteAllText($fakeLostHeartbeatMonitor, $fakeMonitorPreamble + "`nStart-Sleep -Seconds 4`nexit 0`n", [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText($fakeLostHeartbeatMonitor, $fakeMonitorPreamble + "`nW `$mh @{runId=`$c.runId;phase=`$c.phase;timestamp=[DateTimeOffset]::UtcNow.ToString(`"o`");iteration=1;triggered=`$false}`nStart-Sleep -Seconds 4`nexit 0`n", [Text.UTF8Encoding]::new($false))
     [IO.File]::WriteAllText($fakeHealthyMonitor, $fakeMonitorPreamble + "`n" + @'
-for($i=0;$i-lt 4;$i++){W $mh @{runId=$c.runId;timestamp=[DateTimeOffset]::UtcNow.ToString("o")};Start-Sleep -Milliseconds 500}
+for($i=0;$i-lt 4;$i++){W $mh @{runId=$c.runId;phase=$c.phase;timestamp=[DateTimeOffset]::UtcNow.ToString("o");iteration=($i+1);triggered=$false};Start-Sleep -Milliseconds 500}
 exit 0
+'@, [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText($fakeExitBeforeReleaseMonitor, $fakeMonitorPreamble + "`n" + @'
+W $mh @{runId=$c.runId;phase=$c.phase;timestamp=[DateTimeOffset]::UtcNow.ToString("o");iteration=1;triggered=$false}
+Start-Sleep -Milliseconds 500
+exit 42
 '@, [Text.UTF8Encoding]::new($false))
 
     function New-SupervisorRuntimeConfig {
@@ -615,6 +664,20 @@ exit 0
     try { & $supervisorScript -ConfigPath $changedIpSupervisorPath -Mode Run | Out-Null }
     catch { $changedIpError=$_.Exception.Message;$changedIpRejected = $changedIpError -match "changed during" }
     Assert-Condition $changedIpRejected "Supervisor must stop traffic without an infrastructure mutation if the generator public IPv4 changes (actual: $changedIpError)."
+
+    $exitBeforeReleaseSupervisorPath = New-SupervisorRuntimeConfig "monitor-exit-before-release" $fakeExitBeforeReleaseMonitor $fakeHarnessOk
+    $exitBeforeReleaseConfig = Get-Content -LiteralPath $exitBeforeReleaseSupervisorPath -Raw | ConvertFrom-Json -Depth 30
+    $exitBeforeReleaseConfig | Add-Member -NotePropertyName testPreReleaseGeneratorPublicIpDelayMilliseconds -NotePropertyValue 1500 -Force
+    [IO.File]::WriteAllText($exitBeforeReleaseSupervisorPath, ($exitBeforeReleaseConfig|ConvertTo-Json -Depth 30), [Text.UTF8Encoding]::new($false))
+    $exitBeforeReleaseRejected = $false
+    $exitBeforeReleaseError = ""
+    try { & $supervisorScript -ConfigPath $exitBeforeReleaseSupervisorPath -Mode Run | Out-Null }
+    catch {
+        $exitBeforeReleaseError = $_.Exception.Message
+        $exitBeforeReleaseRejected = $exitBeforeReleaseError -match "AWS monitor exited before releasing the load harness"
+    }
+    $exitBeforeReleaseGate = Join-Path $tempRoot "monitor-exit-before-release-evidence\monitor-exit-before-release-harness-start.json"
+    Assert-Condition ($exitBeforeReleaseRejected -and -not (Test-Path -LiteralPath $exitBeforeReleaseGate)) "Supervisor must recheck monitor liveness after the generator-IP lookup and keep the traffic gate closed (actual: $exitBeforeReleaseError)."
 
     $lostSupervisorPath = New-SupervisorRuntimeConfig "lost-monitor-heartbeat" $fakeLostHeartbeatMonitor $fakeHarnessOk
     $lostRejected = $false
@@ -813,6 +876,38 @@ if ($service -eq "wafv2" -and $operation -eq "update-web-acl") { if($env:SCHOOLP
 throw "Unexpected child AWS call: $($arguments -join ' ')"
 '@
     [IO.File]::WriteAllText($childAws, $childAwsSource, [Text.UTF8Encoding]::new($false))
+    $immediateFatalHarness = Join-Path $childRoot "immediate-fatal-after-start-gate.mjs"
+    $immediateFatalHarnessSource = @'
+import fs from "node:fs";
+import path from "node:path";
+if(process.argv.includes("--validate-config")){
+  console.log(JSON.stringify({ok:true,trafficStarted:false,runId:process.env.LOAD_RUN_ID,gateProfile:"launch",thresholdsEnforced:true,networkFamily:"IPv4"}));
+  process.exit(0);
+}
+const runId=process.env.LOAD_RUN_ID;
+const stage=process.env.LOAD_STAGE;
+const readyPath=process.env.LOAD_SUPERVISOR_READY_PATH;
+const gatePath=process.env.LOAD_SUPERVISOR_START_GATE_PATH;
+const progressPath=process.env.LOAD_EXTERNAL_PROGRESS_PATH;
+const summaryPath=process.env.LOAD_EXTERNAL_SUMMARY_PATH;
+const reason=process.env.SCHOOLPILOT_TEST_FATAL_REASON;
+if(!runId||!stage||!readyPath||!gatePath||!progressPath||!summaryPath||!reason)process.exit(10);
+fs.writeFileSync(readyPath,JSON.stringify({schemaVersion:1,type:"load_supervisor_ready",runId,stage,harnessProcessId:process.pid,readyAt:new Date().toISOString(),trafficStarted:false}));
+while(!fs.existsSync(gatePath))await new Promise(resolve=>setTimeout(resolve,10));
+const gate=JSON.parse(fs.readFileSync(gatePath,"utf8"));
+const monitorHeartbeatPath=path.join(path.dirname(gatePath),`${runId}-monitor-heartbeat.json`);
+if(!fs.existsSync(monitorHeartbeatPath))process.exit(11);
+const monitorHeartbeat=JSON.parse(fs.readFileSync(monitorHeartbeatPath,"utf8"));
+if(process.env.SCHOOLPILOT_TEST_FATAL_OBSERVED_PATH){
+  fs.writeFileSync(process.env.SCHOOLPILOT_TEST_FATAL_OBSERVED_PATH,JSON.stringify({runId,reason,gate,monitorHeartbeat,observedAt:new Date().toISOString()}));
+}
+const fatalGate={reasonCodes:[reason],observedAt:new Date().toISOString(),kind:"tenant-isolation-probe"};
+const summary={runId,stage,devices:1,declaredSecondSchoolCanaryDevices:0,run:{plannedTrafficSeconds:1,actualTrafficSeconds:1,completedConfiguredDuration:true},screenshotFixture:{decodedBytes:1024},thresholds:{passed:false},fatalGate};
+fs.writeFileSync(summaryPath,JSON.stringify(summary));
+fs.writeFileSync(progressPath,JSON.stringify({schemaVersion:1,type:"progress",event:"final",runId,stage,timestamp:new Date().toISOString(),fatalGate})+"\n");
+process.exit(1);
+'@
+    [IO.File]::WriteAllText($immediateFatalHarness, $immediateFatalHarnessSource, [Text.UTF8Encoding]::new($false))
     $childProgress = Join-Path $childRoot "progress.jsonl"
     $childSummary = Join-Path $childRoot "summary.json"
     $childRollbackConfigPath = Join-Path $childRoot "rollback.json"
@@ -875,7 +970,7 @@ throw "Unexpected child AWS call: $($arguments -join ' ')"
         $waitDeadline = [DateTimeOffset]::UtcNow.AddSeconds(15)
         while (-not (Test-Path -LiteralPath $evidencePath) -and [DateTimeOffset]::UtcNow -lt $waitDeadline) { Start-Sleep -Milliseconds 100 }
         Assert-Condition (Test-Path -LiteralPath $evidencePath) "Child monitor did not begin sampling."
-        $fatal = @{reasonCodes=@("valid-http-403","cross-school-http-response","command-target-scope","invalid-teacher-response");observedAt=[DateTimeOffset]::UtcNow.ToString("o")}
+        $fatal = @{reasonCodes=@("valid-http-403","cross-school-http-response","tenant-isolation-probe-unavailable","command-target-scope","invalid-teacher-response");observedAt=[DateTimeOffset]::UtcNow.ToString("o")}
         $summary = @{runId=$childRunId;stage="fatal-stage";devices=1;declaredSecondSchoolCanaryDevices=0;
           run=@{plannedTrafficSeconds=1;actualTrafficSeconds=1;completedConfiguredDuration=$true};screenshotFixture=@{decodedBytes=1024};
           thresholds=@{passed=$false};fatalGate=$fatal}
@@ -888,11 +983,89 @@ throw "Unexpected child AWS call: $($arguments -join ' ')"
         $childResult = Get-Content -LiteralPath (Join-Path $childEvidence "$childRunId-monitor-result.json") -Raw | ConvertFrom-Json -Depth 20
         Assert-Condition ($childMonitor.ExitCode -eq 2) "Hard-gate monitor should exit 2 after a successful rollback (exit=$($childMonitor.ExitCode), stderr=$childErrorText, result=$($childResult|ConvertTo-Json -Compress -Depth 20))."
         $childEvidenceTail = Get-Content -LiteralPath $evidencePath -Tail 1 -ErrorAction SilentlyContinue
-        Assert-Condition ($childResult.failures -contains "load:valid-http-403" -and $childResult.failures -contains "load:cross-school-http-response" -and $childResult.failures -contains "load:command-target-scope" -and $childResult.failures -contains "load:invalid-teacher-response") "Final summary fatal reason codes must be preserved (actual: $($childResult|ConvertTo-Json -Compress -Depth 20); sample: $childEvidenceTail; stderr: $childErrorText)."
+        Assert-Condition ($childResult.failures -contains "load:valid-http-403" -and $childResult.failures -contains "load:cross-school-http-response" -and $childResult.failures -contains "load:tenant-isolation-probe-unavailable" -and $childResult.failures -contains "load:command-target-scope" -and $childResult.failures -contains "load:invalid-teacher-response") "Final summary fatal reason codes must be preserved (actual: $($childResult|ConvertTo-Json -Compress -Depth 20); sample: $childEvidenceTail; stderr: $childErrorText)."
         Assert-Condition (@($childResult.failures | Where-Object { $_ -like "ecs_api_oom:*" }).Count -gt 0) "Priority test must observe the simultaneous API OOM."
         Assert-Condition ($childResult.rollback.attempted -and $childResult.rollback.action -eq "Application" -and $childResult.rollback.exitCode -eq 0) "Tenant-isolation regression must outrank a simultaneous OOM and restore the previous API/worker revisions."
         $sleepProcess.Refresh()
         Assert-Condition $sleepProcess.HasExited "Hard gate must terminate the bound harness process."
+
+        # The supervisor must arm the real monitor before releasing even the
+        # first synthetic request. Exercise both immediate tenant exposure and
+        # immediate probe availability failure through the full start-gate path.
+        Remove-Item -LiteralPath $oomFlag -ErrorAction SilentlyContinue
+        $oldImmediateFatalReason = $env:SCHOOLPILOT_TEST_FATAL_REASON
+        $oldImmediateObservedPath = $env:SCHOOLPILOT_TEST_FATAL_OBSERVED_PATH
+        try {
+            foreach ($startGateCase in @(
+                [pscustomobject]@{ label="cross-school"; reason="cross-school-http-response"; expectApplicationRollback=$true },
+                [pscustomobject]@{ label="probe-unavailable"; reason="tenant-isolation-probe-unavailable"; expectApplicationRollback=$false }
+            )) {
+                Remove-Item -LiteralPath $apiTaskFlag,$workerTaskFlag -ErrorAction SilentlyContinue
+                $caseRunId = "start-gate-$($startGateCase.label)"
+                $caseEvidence = Join-Path $childRoot "$caseRunId-evidence"
+                [void][IO.Directory]::CreateDirectory($caseEvidence)
+                $caseProgress = Join-Path $childRoot "$caseRunId-progress.jsonl"
+                $caseSummary = Join-Path $childRoot "$caseRunId-summary.json"
+                $caseObserved = Join-Path $childRoot "$caseRunId-observed.json"
+                $caseRollbackPath = Join-Path $childRoot "$caseRunId-rollback.json"
+
+                $caseRollback = $childRollback | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+                $caseRollback.runId = $caseRunId
+                $caseRollback.evidenceDirectory = $caseEvidence
+                [IO.File]::WriteAllText($caseRollbackPath, ($caseRollback|ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+
+                $caseConfig = $childConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+                $caseConfig.runId = $caseRunId
+                $caseConfig.evidenceDirectory = $caseEvidence
+                $caseConfig.loadProgressPath = $caseProgress
+                $caseConfig.loadSummaryPath = $caseSummary
+                $caseConfig.rollbackConfigPath = $caseRollbackPath
+                $caseConfig.maxIterations = 10
+                $caseConfig.deadlineUtc = [DateTimeOffset]::UtcNow.AddMinutes(1).ToString("o")
+                $caseConfig | Add-Member -NotePropertyName expectedGeneratorPublicIp -NotePropertyValue "203.0.113.10" -Force
+                $caseConfig | Add-Member -NotePropertyName testGeneratorPublicIpSequence -NotePropertyValue @("203.0.113.10") -Force
+                $caseConfig | Add-Member -NotePropertyName testRuntimeHarnessScriptPath -NotePropertyValue $immediateFatalHarness -Force
+                $caseConfig | Add-Member -NotePropertyName supervisorWatchdog -NotePropertyValue ([pscustomobject]@{
+                    monitorHeartbeatStaleSeconds=10;rollbackHeartbeatStaleSeconds=10;pollSeconds=1;generatorIpCheckSeconds=1
+                }) -Force
+                $caseConfigPath = Join-Path $childRoot "$caseRunId-supervisor.json"
+                [IO.File]::WriteAllText($caseConfigPath, ($caseConfig|ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+
+                $env:SCHOOLPILOT_TEST_FATAL_REASON = $startGateCase.reason
+                $env:SCHOOLPILOT_TEST_FATAL_OBSERVED_PATH = $caseObserved
+                $supervisorRejected = $false
+                $supervisorFailure = ""
+                try { & $supervisorScript -ConfigPath $caseConfigPath -Mode Run | Out-Null }
+                catch {
+                    $supervisorFailure = $_.Exception.Message
+                    $supervisorRejected = $supervisorFailure -match "AWS monitor exited with code 2"
+                }
+                Assert-Condition $supervisorRejected "$caseRunId must fail through the armed monitor, not before monitor startup (actual: $supervisorFailure)."
+                Assert-Condition (Test-Path -LiteralPath $caseObserved) "$caseRunId harness never observed the released start gate."
+
+                $caseObservation = Get-Content -LiteralPath $caseObserved -Raw | ConvertFrom-Json -Depth 20
+                Assert-Condition ($caseObservation.reason -eq $startGateCase.reason) "$caseRunId observed the wrong immediate fatal reason."
+                Assert-Condition ($caseObservation.gate.runId -eq $caseRunId -and $caseObservation.monitorHeartbeat.runId -eq $caseRunId) "$caseRunId gate and monitor heartbeat identities must match."
+                Assert-Condition ([DateTimeOffset]$caseObservation.gate.releasedAt -ge [DateTimeOffset]$caseObservation.monitorHeartbeat.timestamp) "$caseRunId traffic gate opened before the first monitor heartbeat."
+
+                $caseMonitorResultPath = Join-Path $caseEvidence "$caseRunId-monitor-result.json"
+                Assert-Condition (Test-Path -LiteralPath $caseMonitorResultPath) "$caseRunId monitor did not write its failure result."
+                $caseMonitorResult = Get-Content -LiteralPath $caseMonitorResultPath -Raw | ConvertFrom-Json -Depth 20
+                Assert-Condition ($caseMonitorResult.failures -contains "load:$($startGateCase.reason)") "$caseRunId monitor did not preserve the immediate fatal reason."
+                if ($startGateCase.expectApplicationRollback) {
+                    Assert-Condition ($caseMonitorResult.rollback.attempted -and $caseMonitorResult.rollback.action -eq "Application" -and $caseMonitorResult.rollback.exitCode -eq 0) "$caseRunId must invoke the pre-approved Application rollback."
+                }
+                else {
+                    Assert-Condition (-not $caseMonitorResult.rollback.attempted) "$caseRunId availability-indeterminate failure must stop without guessing at an infrastructure mutation."
+                }
+            }
+        }
+        finally {
+            if ($null -eq $oldImmediateFatalReason) { Remove-Item Env:SCHOOLPILOT_TEST_FATAL_REASON -ErrorAction SilentlyContinue }
+            else { $env:SCHOOLPILOT_TEST_FATAL_REASON = $oldImmediateFatalReason }
+            if ($null -eq $oldImmediateObservedPath) { Remove-Item Env:SCHOOLPILOT_TEST_FATAL_OBSERVED_PATH -ErrorAction SilentlyContinue }
+            else { $env:SCHOOLPILOT_TEST_FATAL_OBSERVED_PATH = $oldImmediateObservedPath }
+        }
 
         $slowRollbackConfig = $childRollback | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
         $slowRollbackConfig.runId = "slow-waf-rollback-heartbeat"

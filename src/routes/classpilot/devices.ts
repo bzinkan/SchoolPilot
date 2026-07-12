@@ -32,7 +32,6 @@ import {
   getStudentsBySchool,
   createStudent,
   touchStudentSession,
-  getActiveSessionByDevice,
   resolveSchoolForStudent,
   getSchoolById,
   getSchoolBySlug,
@@ -1514,7 +1513,7 @@ router.post("/device/heartbeat", requireDeviceAuth, deviceHeartbeatLimiter, asyn
       return res.status(402).json({ planStatus: "inactive" });
     }
 
-    const activeSession = await getActiveSessionByDevice(deviceId);
+    const activeSession = res.locals.activeStudentSession as { studentId?: string } | undefined;
     if (!activeSession || activeSession.studentId !== studentId) {
       removeDeviceStatus(schoolId, deviceId);
       const signOutUpdate = {
