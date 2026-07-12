@@ -33,18 +33,26 @@ function stableServices(options: {
   apiRunning?: string;
   apiPending?: string;
   apiDeployments?: string;
+  apiTaskDefinition?: string;
+  apiPrimaryTaskDefinition?: string;
   apiRollout?: string;
   workerStatus?: string;
   workerDesired?: string;
   workerRunning?: string;
   workerPending?: string;
   workerDeployments?: string;
+  workerTaskDefinition?: string;
+  workerPrimaryTaskDefinition?: string;
   workerRollout?: string;
   omitApi?: boolean;
   omitWorker?: boolean;
 } = {}): string {
   const apiDesired = options.apiDesired ?? "1";
   const workerDesired = options.workerDesired ?? "1";
+  const apiTaskDefinition = options.apiTaskDefinition
+    ?? "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api:101";
+  const workerTaskDefinition = options.workerTaskDefinition
+    ?? "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:21";
   const rows: string[] = [];
   if (!options.omitApi) {
     rows.push([
@@ -54,6 +62,8 @@ function stableServices(options: {
       options.apiRunning ?? apiDesired,
       options.apiPending ?? "0",
       options.apiDeployments ?? "1",
+      apiTaskDefinition,
+      options.apiPrimaryTaskDefinition ?? apiTaskDefinition,
       options.apiRollout ?? "COMPLETED",
     ].join("\t"));
   }
@@ -65,6 +75,8 @@ function stableServices(options: {
       options.workerRunning ?? workerDesired,
       options.workerPending ?? "0",
       options.workerDeployments ?? "1",
+      workerTaskDefinition,
+      options.workerPrimaryTaskDefinition ?? workerTaskDefinition,
       options.workerRollout ?? "COMPLETED",
     ].join("\t"));
   }
@@ -209,7 +221,7 @@ describe("production backend deployment capacity guard", () => {
     const restore = execution.indexOf("\n  if ! restore_production_scaling_hold; then", workerUpdate);
     const lastServiceWait = execution.lastIndexOf("aws ecs wait services-stable", restore);
     const finalCapacityCheck = execution.lastIndexOf(
-      'production_backend_capacity_preflight "after ECS stabilization"',
+      "wait_for_production_backend_strict_stability",
       restore
     );
 
@@ -251,6 +263,9 @@ describe("production backend deployment capacity guard", () => {
       stableServices({ workerRunning: "0" }),
       stableServices({ workerStatus: "DRAINING" }),
       stableServices({ workerRollout: "IN_PROGRESS" }),
+      stableServices({
+        apiPrimaryTaskDefinition: "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api:100",
+      }),
     ];
 
     for (const snapshot of cases) {
@@ -258,7 +273,7 @@ describe("production backend deployment capacity guard", () => {
         serviceSnapshots: [snapshot],
       });
       assert.notEqual(result.status, 0, `unexpectedly accepted ${JSON.stringify(snapshot)}`);
-      assert.match(result.stderr, /is not stable/);
+      assert.match(result.stderr, /is not stable|disagree on task definition/);
     }
   });
 
@@ -267,6 +282,7 @@ describe("production backend deployment capacity guard", () => {
       stableServices({ omitWorker: true }),
       `${stableServices()}\n${stableServices({ omitWorker: true })}`,
       stableServices({ apiDesired: "02" }),
+      stableServices({ apiTaskDefinition: "schoolpilot-production-api:latest" }),
       "__FAIL__:42",
     ];
     for (const snapshot of cases) {
@@ -290,6 +306,7 @@ describe("production backend deployment capacity guard", () => {
     const body = `
 production_backend_capacity_preflight
 acquire_production_scaling_hold
+wait_for_production_backend_strict_stability
 restore_production_scaling_hold
 `;
     const staging = runLibrary(body, { environment: "staging", skipWait: true });
@@ -299,6 +316,122 @@ restore_production_scaling_hold
     assert.equal(frontend.status, 0, frontend.stderr);
     assert.deepEqual(staging.commands, []);
     assert.deepEqual(frontend.commands, []);
+  });
+
+  it("dynamically tolerates transient rollout metadata lag until both services are strictly complete", () => {
+    const result = runLibrary(`
+trap deploy_exit_cleanup EXIT
+acquire_production_scaling_hold
+wait_for_production_backend_strict_stability schoolpilot-production-api:101 schoolpilot-production-scheduler-worker:21 3 0
+restore_production_scaling_hold
+`, {
+      serviceSnapshots: [
+        stableServices(),
+        stableServices({ workerRollout: "IN_PROGRESS" }),
+        stableServices(),
+      ],
+      scalingSnapshots: ["False\tTrue\tTrue", "True\tTrue\tTrue", "False\tTrue\tTrue"],
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(
+      result.commands.filter((line) => line.includes("ecs describe-services")).length,
+      3
+    );
+    assert.match(result.stdout, /has not fully converged \(attempt 1\/3\)/);
+    assert.match(result.stdout, /one COMPLETED deployment each/);
+    assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, /is not stable/);
+    const describeCommands = result.commands.filter((line) => line.includes("ecs describe-services"));
+    assert.ok(describeCommands.every((line) =>
+      line.includes("--cli-connect-timeout 3 --cli-read-timeout 5")
+    ));
+    assert.match(deploySource, /AWS_MAX_ATTEMPTS=1 aws ecs describe-services/);
+    const registrations = registerCommands(result.commands);
+    assert.equal(registrations.length, 2);
+    assert.match(
+      registrations.at(-1)!,
+      /DynamicScalingInSuspended=false,DynamicScalingOutSuspended=true,ScheduledScalingSuspended=true/
+    );
+  });
+
+  it("fails closed on a permanent strict-stability timeout and restores the autoscaling hold", () => {
+    const result = runLibrary(`
+trap deploy_exit_cleanup EXIT
+acquire_production_scaling_hold
+wait_for_production_backend_strict_stability schoolpilot-production-api:101 schoolpilot-production-scheduler-worker:21 3 0
+`, {
+      serviceSnapshots: [
+        stableServices(),
+        stableServices({ workerRollout: "IN_PROGRESS" }),
+        stableServices({ workerRollout: "IN_PROGRESS" }),
+        stableServices({ workerRollout: "IN_PROGRESS" }),
+      ],
+      scalingSnapshots: ["False\tFalse\tTrue", "True\tTrue\tTrue", "False\tFalse\tTrue"],
+    });
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /did not reach one COMPLETED deployment each before the bounded deadline/);
+    assert.match(result.stderr, /requiring autoscaling recovery/);
+    assert.match(result.stderr, /attempting recovery/);
+    assert.equal(
+      result.commands.filter((line) => line.includes("ecs describe-services")).length,
+      4
+    );
+    const registrations = registerCommands(result.commands);
+    assert.equal(registrations.length, 2);
+    assert.match(
+      registrations.at(-1)!,
+      /DynamicScalingInSuspended=false,DynamicScalingOutSuspended=false,ScheduledScalingSuspended=true/
+    );
+  });
+
+  it("rejects a circuit-breaker rollback to old stable revisions and restores autoscaling", () => {
+    const result = runLibrary(`
+trap deploy_exit_cleanup EXIT
+acquire_production_scaling_hold
+wait_for_production_backend_strict_stability schoolpilot-production-api:102 schoolpilot-production-scheduler-worker:22 3 0
+`, {
+      serviceSnapshots: [
+        stableServices(),
+        stableServices(),
+        stableServices(),
+        stableServices(),
+      ],
+      scalingSnapshots: ["False\tTrue\tFalse", "True\tTrue\tFalse", "False\tTrue\tFalse"],
+    });
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /completed an unexpected task definition/);
+    assert.match(result.stderr, /expected schoolpilot-production-api:102/);
+    assert.match(result.stderr, /attempting recovery/);
+    const registrations = registerCommands(result.commands);
+    assert.equal(registrations.length, 2);
+    assert.match(
+      registrations.at(-1)!,
+      /DynamicScalingInSuspended=false,DynamicScalingOutSuspended=true,ScheduledScalingSuspended=false/
+    );
+  });
+
+  it("distinguishes repeated describe failures and restores autoscaling", () => {
+    const result = runLibrary(`
+trap deploy_exit_cleanup EXIT
+acquire_production_scaling_hold
+wait_for_production_backend_strict_stability schoolpilot-production-api:101 schoolpilot-production-scheduler-worker:21 3 0
+`, {
+      serviceSnapshots: [stableServices(), "__FAIL__:42", "__FAIL__:42", "__FAIL__:42"],
+      scalingSnapshots: ["True\tFalse\tFalse", "True\tTrue\tFalse", "True\tFalse\tFalse"],
+    });
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /final production ECS describe-services call failed/);
+    assert.doesNotMatch(result.stderr, /malformed or ambiguous/);
+    assert.match(result.stderr, /attempting recovery/);
+    const registrations = registerCommands(result.commands);
+    assert.equal(registrations.length, 2);
+    assert.match(
+      registrations.at(-1)!,
+      /DynamicScalingInSuspended=true,DynamicScalingOutSuspended=false,ScheduledScalingSuspended=false/
+    );
   });
 
   it("dynamically acquires the hold before recheck and restores the exact prior state afterward", () => {
