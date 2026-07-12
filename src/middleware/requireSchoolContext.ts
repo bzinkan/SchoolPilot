@@ -1,8 +1,54 @@
-import type { RequestHandler } from "express";
+import type { RequestHandler, Response } from "express";
 import { eq, and } from "drizzle-orm";
 import { schoolMemberships, schools } from "../schema/core.js";
 import db from "../db.js";
 import { bindTenantContext } from "./tenantContext.js";
+import { createSingleFlight } from "../util/singleFlight.js";
+
+type ActiveMembershipContext = {
+  membership: typeof schoolMemberships.$inferSelect;
+  school: typeof schools.$inferSelect;
+};
+
+const loadMembershipSingleFlight = createSingleFlight<
+  string,
+  ActiveMembershipContext | undefined
+>({ maxPendingKeys: 4_096 });
+
+function loadActiveMembershipContext(
+  userId: string,
+  schoolId?: string
+): Promise<ActiveMembershipContext | undefined> {
+  const key = `${userId}\u0000${schoolId ?? "*"}`;
+  return loadMembershipSingleFlight(key, async () => {
+    const conditions = [
+      eq(schoolMemberships.userId, userId),
+      eq(schoolMemberships.status, "active"),
+    ];
+    if (schoolId) conditions.push(eq(schoolMemberships.schoolId, schoolId));
+    const [context] = await db
+      .select({ membership: schoolMemberships, school: schools })
+      .from(schoolMemberships)
+      .innerJoin(schools, eq(schoolMemberships.schoolId, schools.id))
+      .where(and(...conditions))
+      .limit(1);
+    return context;
+  });
+}
+
+function applyVerifiedMembershipContext(
+  res: Response,
+  context: ActiveMembershipContext
+): void {
+  res.locals.schoolId = context.membership.schoolId;
+  res.locals.membershipRole = context.membership.role;
+  res.locals.school = context.school;
+  res.locals.verifiedSchoolMembership = {
+    userId: context.membership.userId,
+    schoolId: context.membership.schoolId,
+    role: context.membership.role,
+  };
+}
 
 /**
  * Ensures a school context is available.
@@ -41,21 +87,10 @@ const resolveSchoolContext: RequestHandler = async (req, res, next) => {
       "";
 
     if (requestedSchoolId && requestedSchoolId !== req.session.schoolId) {
-      const [requestedMembership] = await db
-        .select({
-          membership: schoolMemberships,
-          school: schools,
-        })
-        .from(schoolMemberships)
-        .innerJoin(schools, eq(schoolMemberships.schoolId, schools.id))
-        .where(
-          and(
-            eq(schoolMemberships.userId, req.authUser.id),
-            eq(schoolMemberships.schoolId, requestedSchoolId),
-            eq(schoolMemberships.status, "active")
-          )
-        )
-        .limit(1);
+      const requestedMembership = await loadActiveMembershipContext(
+        req.authUser.id,
+        requestedSchoolId
+      );
 
       if (!requestedMembership) {
         return res.status(404).json({ error: "School not found" });
@@ -65,22 +100,21 @@ const resolveSchoolContext: RequestHandler = async (req, res, next) => {
       req.session.role = requestedMembership.membership.role;
       req.session.schoolSessionVersion =
         requestedMembership.school.schoolSessionVersion ?? 1;
+      applyVerifiedMembershipContext(res, requestedMembership);
+      return next();
     }
 
-    res.locals.schoolId = req.session.schoolId;
-    // Look up role for session users too
-    const [membership] = await db
-      .select()
-      .from(schoolMemberships)
-      .where(
-        and(
-          eq(schoolMemberships.userId, req.authUser.id),
-          eq(schoolMemberships.schoolId, req.session.schoolId),
-          eq(schoolMemberships.status, "active")
-        )
-      )
-      .limit(1);
-    res.locals.membershipRole = membership?.role || null;
+    const membership = await loadActiveMembershipContext(
+      req.authUser.id,
+      req.session.schoolId
+    );
+    if (!membership) {
+      // A stale session-selected school must not establish an RLS tenant after
+      // membership revocation. The user may select another active membership,
+      // but this request fails closed immediately.
+      return res.status(403).json({ error: "No access to this school" });
+    }
+    applyVerifiedMembershipContext(res, membership);
     return next();
   }
 
@@ -96,17 +130,10 @@ const resolveSchoolContext: RequestHandler = async (req, res, next) => {
 
   if (schoolId) {
     // Verify user has membership in this school
-    const [membership] = await db
-      .select()
-      .from(schoolMemberships)
-      .where(
-        and(
-          eq(schoolMemberships.userId, req.authUser.id),
-          eq(schoolMemberships.schoolId, schoolId),
-          eq(schoolMemberships.status, "active")
-        )
-      )
-      .limit(1);
+    const membership = await loadActiveMembershipContext(
+      req.authUser.id,
+      schoolId
+    );
 
     if (!membership) {
       return res
@@ -114,29 +141,18 @@ const resolveSchoolContext: RequestHandler = async (req, res, next) => {
         .json({ error: "No access to this school" });
     }
 
-    res.locals.schoolId = schoolId;
-    res.locals.membershipRole = membership.role;
+    applyVerifiedMembershipContext(res, membership);
     return next();
   }
 
   // Fallback: use first active membership
-  const [membership] = await db
-    .select()
-    .from(schoolMemberships)
-    .where(
-      and(
-        eq(schoolMemberships.userId, req.authUser.id),
-        eq(schoolMemberships.status, "active")
-      )
-    )
-    .limit(1);
+  const membership = await loadActiveMembershipContext(req.authUser.id);
 
   if (!membership) {
     return res.status(400).json({ error: "No school context available" });
   }
 
-  res.locals.schoolId = membership.schoolId;
-  res.locals.membershipRole = membership.role;
+  applyVerifiedMembershipContext(res, membership);
   return next();
 };
 

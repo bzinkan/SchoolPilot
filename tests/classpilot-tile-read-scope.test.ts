@@ -51,7 +51,7 @@ const {
 } = storage;
 const { signUserToken } = jwt;
 const { createApp } = appModule;
-const { eq, sql } = drizzle;
+const { and, eq, sql } = drizzle;
 const {
   classpilotSupervisionContexts,
   classpilotSupervisionStudents,
@@ -59,6 +59,9 @@ const {
   groupStudents,
   groups,
   heartbeats,
+  productLicenses,
+  schoolMemberships,
+  schools,
   studentDevices,
   studentSessions,
   students,
@@ -555,6 +558,86 @@ describe("ClassPilot tile-read tenant scope", () => {
           .where(eq(classpilotSupervisionContexts.id, context.id));
       });
     }
+  });
+
+  it("applies membership, role, school, and license changes on the next request", async () => {
+    const path = `/api/classpilot/device/screenshot/${primaryDeviceIds[0]}`;
+    assert.equal((await requestJson(path, teacher)).status, 200);
+
+    const updateMembership = (values: Record<string, unknown>) =>
+      asSystem(async () => {
+        await db
+          .update(schoolMemberships)
+          .set(values)
+          .where(
+            and(
+              eq(schoolMemberships.userId, teacher.id),
+              eq(schoolMemberships.schoolId, schoolA.id)
+            )
+          );
+      });
+
+    await updateMembership({ status: "suspended" });
+    try {
+      assert.equal((await requestJson(path, teacher)).status, 403);
+    } finally {
+      await updateMembership({ status: "active" });
+    }
+    assert.equal((await requestJson(path, teacher)).status, 200);
+
+    await updateMembership({ role: "parent" });
+    try {
+      assert.equal((await requestJson(path, teacher)).status, 403);
+    } finally {
+      await updateMembership({ role: "teacher" });
+    }
+    assert.equal((await requestJson(path, teacher)).status, 200);
+
+    await asSystem(async () => {
+      await db
+        .update(schools)
+        .set({ status: "suspended" })
+        .where(eq(schools.id, schoolA.id));
+    });
+    try {
+      assert.equal((await requestJson(path, teacher)).status, 403);
+    } finally {
+      await asSystem(async () => {
+        await db
+          .update(schools)
+          .set({ status: "active" })
+          .where(eq(schools.id, schoolA.id));
+      });
+    }
+    assert.equal((await requestJson(path, teacher)).status, 200);
+
+    await asSystem(async () => {
+      await db
+        .update(productLicenses)
+        .set({ status: "suspended" })
+        .where(
+          and(
+            eq(productLicenses.schoolId, schoolA.id),
+            eq(productLicenses.product, "CLASSPILOT")
+          )
+        );
+    });
+    try {
+      assert.equal((await requestJson(path, teacher)).status, 403);
+    } finally {
+      await asSystem(async () => {
+        await db
+          .update(productLicenses)
+          .set({ status: "active" })
+          .where(
+            and(
+              eq(productLicenses.schoolId, schoolA.id),
+              eq(productLicenses.product, "CLASSPILOT")
+            )
+          );
+      });
+    }
+    assert.equal((await requestJson(path, teacher)).status, 200);
   });
 
   it("serves a 40-request aligned burst through the 18-connection API pool", async () => {
