@@ -12,6 +12,8 @@ export type ApiRateLimitIdentityInput = {
   request: ApiRateLimitRequestLike;
   authorization?: string;
   sessionUserId?: string | number | null;
+  sessionImpersonating?: boolean;
+  verifiedBearerUserId?: string | number | null;
   normalizedIp: string;
 };
 
@@ -32,16 +34,29 @@ function bearerToken(authorization?: string): string | null {
   return token || null;
 }
 
-function normalizeSessionUserId(
-  sessionUserId: ApiRateLimitIdentityInput["sessionUserId"]
+export function verifyBearerUserId(
+  authorization: string | undefined,
+  verify: (token: string) => { userId?: string | number | null }
 ): string | null {
-  if (typeof sessionUserId === "string") {
-    const normalized = sessionUserId.trim();
+  const token = bearerToken(authorization);
+  if (!token) return null;
+  try {
+    return normalizeUserId(verify(token).userId);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeUserId(
+  userId: ApiRateLimitIdentityInput["sessionUserId"]
+): string | null {
+  if (typeof userId === "string") {
+    const normalized = userId.trim();
     return normalized || null;
   }
 
-  if (typeof sessionUserId === "number" && Number.isFinite(sessionUserId)) {
-    return String(sessionUserId);
+  if (typeof userId === "number" && Number.isFinite(userId)) {
+    return String(userId);
   }
 
   return null;
@@ -63,10 +78,18 @@ export function resolveApiRateLimitIdentity(
     };
   }
 
-  const sessionUserId = normalizeSessionUserId(input.sessionUserId);
-  if (sessionUserId) {
+  // Match authenticate.ts exactly: an active impersonation session wins;
+  // otherwise an explicit signature-verified bearer wins, with the ordinary
+  // session as fallback. Both auth modes share the same opaque key namespace.
+  const sessionUserId = normalizeUserId(input.sessionUserId);
+  const bearerUserId = normalizeUserId(input.verifiedBearerUserId);
+  const staffUserId =
+    input.sessionImpersonating && sessionUserId
+      ? sessionUserId
+      : bearerUserId ?? sessionUserId;
+  if (staffUserId) {
     return {
-      key: opaqueKey("session-user", sessionUserId),
+      key: opaqueKey("staff-user", staffUserId),
       limit: SESSION_API_RATE_LIMIT_PER_MINUTE,
     };
   }

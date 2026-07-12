@@ -1,4 +1,4 @@
-import { eq, and, desc, asc, ilike, or, isNull, inArray, sql, ne, type SQL } from "drizzle-orm";
+import { eq, and, desc, asc, ilike, or, isNull, inArray, sql, ne, type SQL, type SQLWrapper } from "drizzle-orm";
 import db from "../db.js";
 import { runWithTenantContext } from "../middleware/tenantContext.js";
 import { localDateInTimeZone } from "../util/schoolTime.js";
@@ -2748,6 +2748,195 @@ export async function getDeviceById(
   return device;
 }
 
+export type ClassPilotTileReadRole =
+  | "admin"
+  | "school_admin"
+  | "teacher"
+  | "office_staff"
+  | "super_admin";
+
+type ClassPilotTileReadOptions = {
+  schoolId: string;
+  deviceId: string;
+  staffId: string;
+  role: ClassPilotTileReadRole;
+  isSuperAdmin?: boolean;
+};
+
+function hasSchoolWideTileRead(options: ClassPilotTileReadOptions): boolean {
+  return Boolean(
+    options.isSuperAdmin ||
+      options.role === "super_admin" ||
+      options.role === "admin" ||
+      options.role === "school_admin"
+  );
+}
+
+function restrictedTileStudentScope(
+  options: ClassPilotTileReadOptions,
+  studentId: SQLWrapper
+): SQL | undefined {
+  const assignedSupervision = sql<boolean>`EXISTS (
+    SELECT 1
+    FROM ${classpilotSupervisionStudents}
+    INNER JOIN ${classpilotSupervisionContexts}
+      ON ${classpilotSupervisionContexts.id} = ${classpilotSupervisionStudents.contextId}
+    WHERE ${classpilotSupervisionStudents.schoolId} = ${options.schoolId}
+      AND ${classpilotSupervisionStudents.studentId} = ${studentId}
+      AND ${classpilotSupervisionStudents.releasedAt} IS NULL
+      AND ${classpilotSupervisionContexts.schoolId} = ${options.schoolId}
+      AND ${classpilotSupervisionContexts.assignedStaffId} = ${options.staffId}
+      AND ${classpilotSupervisionContexts.status} = 'active'
+      AND ${classpilotSupervisionContexts.endsAt} > now()
+  )`;
+
+  if (options.role === "office_staff") return assignedSupervision;
+  if (options.role !== "teacher") return undefined;
+
+  const activeClassRoster = sql<boolean>`EXISTS (
+    SELECT 1
+    FROM ${groupStudents}
+    INNER JOIN ${groups} ON ${groups.id} = ${groupStudents.groupId}
+    INNER JOIN ${teachingSessions} ON ${teachingSessions.groupId} = ${groups.id}
+    WHERE ${groupStudents.studentId} = ${studentId}
+      AND ${groups.schoolId} = ${options.schoolId}
+      AND ${teachingSessions.sessionMode} = 'live'
+      AND ${teachingSessions.endTime} IS NULL
+      AND (
+        ${teachingSessions.teacherId} = ${options.staffId}
+        OR EXISTS (
+          SELECT 1
+          FROM ${groupTeachers}
+          WHERE ${groupTeachers.groupId} = ${groups.id}
+            AND ${groupTeachers.teacherId} = ${options.staffId}
+        )
+      )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM ${classpilotSupervisionStudents}
+        INNER JOIN ${classpilotSupervisionContexts}
+          ON ${classpilotSupervisionContexts.id} = ${classpilotSupervisionStudents.contextId}
+        WHERE ${classpilotSupervisionStudents.schoolId} = ${options.schoolId}
+          AND ${classpilotSupervisionStudents.studentId} = ${studentId}
+          AND ${classpilotSupervisionStudents.releasedAt} IS NULL
+          AND ${classpilotSupervisionContexts.schoolId} = ${options.schoolId}
+          AND ${classpilotSupervisionContexts.assignedStaffId} <> ${options.staffId}
+          AND ${classpilotSupervisionContexts.status} = 'active'
+          AND ${classpilotSupervisionContexts.endsAt} > now()
+      )
+  )`;
+
+  return sql<boolean>`(${activeClassRoster} OR ${assignedSupervision})`;
+}
+
+async function getSchoolWideTileDevice(
+  options: ClassPilotTileReadOptions
+): Promise<Device | undefined> {
+  const [device] = await db
+    .select()
+    .from(devices)
+    .where(
+      and(
+        eq(devices.schoolId, options.schoolId),
+        eq(devices.deviceId, options.deviceId)
+      )
+    )
+    .limit(1);
+  return device;
+}
+
+/**
+ * Authorizes the current live student on a screenshot tile. This remains one
+ * indexed query so aligned classroom polling cannot recreate pool starvation.
+ */
+export async function getLiveTileReadableDeviceForStaff(
+  options: ClassPilotTileReadOptions
+): Promise<Device | undefined> {
+  if (hasSchoolWideTileRead(options)) return getSchoolWideTileDevice(options);
+
+  const staffScope = restrictedTileStudentScope(options, studentSessions.studentId);
+  if (!staffScope) return undefined;
+
+  const [row] = await db
+    .select({ device: devices })
+    .from(devices)
+    .innerJoin(
+      studentSessions,
+      and(
+        eq(studentSessions.deviceId, devices.deviceId),
+        eq(studentSessions.isActive, true)
+      )
+    )
+    .innerJoin(
+      students,
+      and(
+        eq(students.id, studentSessions.studentId),
+        eq(students.schoolId, options.schoolId)
+      )
+    )
+    .where(
+      and(
+        eq(devices.schoolId, options.schoolId),
+        eq(devices.deviceId, options.deviceId),
+        staffScope
+      )
+    )
+    .limit(1);
+  return row?.device;
+}
+
+export type ClassPilotHistoryTileAccess = {
+  device: Device;
+  // null means an administrator may read all school-scoped history on the
+  // device. Restricted staff must filter to this explicit student allowlist.
+  authorizedStudentIds: string[] | null;
+};
+
+/**
+ * Authorizes historical device mappings for heartbeat tiles. Unlike live
+ * screenshots, offline students still poll history through student_devices.
+ */
+export async function getHistoryTileAccessForStaff(
+  options: ClassPilotTileReadOptions
+): Promise<ClassPilotHistoryTileAccess | undefined> {
+  if (hasSchoolWideTileRead(options)) {
+    const device = await getSchoolWideTileDevice(options);
+    return device ? { device, authorizedStudentIds: null } : undefined;
+  }
+
+  const staffScope = restrictedTileStudentScope(options, studentDevices.studentId);
+  if (!staffScope) return undefined;
+
+  const rows = await db
+    .select({ device: devices, studentId: studentDevices.studentId })
+    .from(devices)
+    .innerJoin(studentDevices, eq(studentDevices.deviceId, devices.deviceId))
+    .innerJoin(
+      students,
+      and(
+        eq(students.id, studentDevices.studentId),
+        eq(students.schoolId, options.schoolId)
+      )
+    )
+    .where(
+      and(
+        eq(devices.schoolId, options.schoolId),
+        eq(devices.deviceId, options.deviceId),
+        staffScope
+      )
+    )
+    // Shared devices normally map to a handful of students. Keep even corrupt
+    // historical mappings bounded before using them in an IN predicate.
+    .limit(100);
+
+  const device = rows[0]?.device;
+  if (!device) return undefined;
+  return {
+    device,
+    authorizedStudentIds: [...new Set(rows.map((row) => row.studentId))],
+  };
+}
+
 export async function getDevicesBySchool(
   schoolId: string
 ): Promise<Device[]> {
@@ -2898,12 +3087,21 @@ export async function updateHeartbeatClassification(
 export async function getHeartbeatsByDevice(
   schoolId: string,
   deviceId: string,
-  limit = 50
+  limit = 50,
+  authorizedStudentIds?: string[] | null
 ): Promise<Heartbeat[]> {
+  if (authorizedStudentIds?.length === 0) return [];
+  const conditions: SQL[] = [
+    eq(heartbeats.schoolId, schoolId),
+    eq(heartbeats.deviceId, deviceId),
+  ];
+  if (authorizedStudentIds) {
+    conditions.push(inArray(heartbeats.studentId, authorizedStudentIds));
+  }
   return db
     .select()
     .from(heartbeats)
-    .where(and(eq(heartbeats.schoolId, schoolId), eq(heartbeats.deviceId, deviceId)))
+    .where(and(...conditions))
     .orderBy(desc(heartbeats.timestamp))
     .limit(limit);
 }
@@ -2912,19 +3110,28 @@ export async function getHeartbeatsByDeviceInRange(
   schoolId: string,
   deviceId: string,
   startTime: Date,
-  endTime: Date
+  endTime: Date,
+  authorizedStudentIds?: string[] | null
 ): Promise<Heartbeat[]> {
-  const conditions = [
+  if (authorizedStudentIds?.length === 0) return [];
+  const conditions: SQL[] = [
     eq(heartbeats.schoolId, schoolId),
     eq(heartbeats.deviceId, deviceId),
     sql`${heartbeats.timestamp} >= ${startTime}`,
     sql`${heartbeats.timestamp} <= ${endTime}`,
   ];
+  if (authorizedStudentIds) {
+    conditions.push(inArray(heartbeats.studentId, authorizedStudentIds));
+  }
   return db
     .select()
     .from(heartbeats)
     .where(and(...conditions))
-    .orderBy(desc(heartbeats.timestamp));
+    .orderBy(desc(heartbeats.timestamp))
+    // A live teaching session hard-caps at 12 hours. At the normal ten-second
+    // cadence that is 4,320 rows; keep modest headroom while preventing an
+    // ancient startTime from turning one tile read into an unbounded response.
+    .limit(5_000);
 }
 
 export async function getHeartbeatsByStudent(

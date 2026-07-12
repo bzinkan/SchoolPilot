@@ -4,7 +4,10 @@ import { eq, and } from "drizzle-orm";
 import { productLicenses } from "../../schema/core.js";
 import db from "../../db.js";
 import { authenticate } from "../../middleware/authenticate.js";
-import { requireSchoolContext } from "../../middleware/requireSchoolContext.js";
+import {
+  requireSchoolContext,
+  requireSchoolContextWithoutTenantBinding,
+} from "../../middleware/requireSchoolContext.js";
 import { requireActiveSchool } from "../../middleware/requireActiveSchool.js";
 import { requireProductLicense } from "../../middleware/requireProductLicense.js";
 import {
@@ -14,6 +17,8 @@ import {
 import { requireRole } from "../../middleware/requireRole.js";
 import {
   getDeviceById,
+  getLiveTileReadableDeviceForStaff,
+  getHistoryTileAccessForStaff,
   getDevicesBySchool,
   createDevice,
   updateDevice,
@@ -265,9 +270,70 @@ const deviceActionLimiter = rateLimit({
 const staffAuth = [
   authenticate,
   requireSchoolContext,
+  requireRole("admin", "school_admin", "teacher", "office_staff"),
   requireActiveSchool,
   requireProductLicense("CLASSPILOT"),
 ] as const;
+
+// Tile reads arrive in aligned 40-device browser cohorts. Resolve all global
+// authorization first, then hold an RLS client only around the indexed tenant
+// query inside the handler. Never use this chain without a narrow tenant scope.
+const tileReadAuth = [
+  authenticate,
+  requireSchoolContextWithoutTenantBinding,
+  requireRole("admin", "school_admin", "teacher", "office_staff"),
+  requireActiveSchool,
+  requireProductLicense("CLASSPILOT"),
+] as const;
+
+async function withAuthorizedTileDevice<T>(
+  req: Request,
+  res: Response,
+  deviceId: string,
+  accessMode: "live" | "history",
+  operation: (
+    device: { schoolId: string },
+    authorizedStudentIds: string[] | null
+  ) => Promise<T> | T
+): Promise<{ status: "not-found" } | { status: "ok"; value: T }> {
+  const schoolId = res.locals.schoolId as string | undefined;
+  // Preserve the previous selected-school boundary for super admins too. A
+  // missing school context must never turn a device id into a cross-tenant
+  // lookup capability.
+  if (!schoolId) {
+    return { status: "not-found" };
+  }
+  const role = res.locals.membershipRole as
+    | "admin"
+    | "school_admin"
+    | "teacher"
+    | "office_staff"
+    | "super_admin";
+
+  return runWithTenantContext(
+    { schoolId },
+    async () => {
+      const options = {
+        schoolId,
+        deviceId,
+        staffId: req.authUser!.id,
+        role,
+        isSuperAdmin: req.authUser!.isSuperAdmin,
+      };
+      const access =
+        accessMode === "live"
+          ? await getLiveTileReadableDeviceForStaff(options).then((device) =>
+              device ? { device, authorizedStudentIds: null } : undefined
+            )
+          : await getHistoryTileAccessForStaff(options);
+      if (!access) return { status: "not-found" as const };
+      return {
+        status: "ok" as const,
+        value: await operation(access.device, access.authorizedStudentIds),
+      };
+    }
+  );
+}
 
 function normalizeGradeLevel(value: unknown): string | null {
   const raw = String(value ?? "").trim();
@@ -1750,11 +1816,17 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, deviceScreensh
 });
 
 // GET /api/classpilot/device/screenshot/:deviceId - Get screenshot
-router.get("/device/screenshot/:deviceId", ...staffAuth, async (req, res, next) => {
+router.get("/device/screenshot/:deviceId", ...tileReadAuth, async (req, res, next) => {
   try {
     const deviceId = param(req, "deviceId");
-    const device = await getDeviceById(deviceId);
-    if (!device || device.schoolId !== res.locals.schoolId) {
+    const authorization = await withAuthorizedTileDevice(
+      req,
+      res,
+      deviceId,
+      "live",
+      (device) => device.schoolId
+    );
+    if (authorization.status === "not-found") {
       return res.status(404).json({ error: "Device not found" });
     }
 
@@ -1891,41 +1963,58 @@ router.get("/heartbeats", ...staffAuth, async (req, res, next) => {
 });
 
 // GET /api/classpilot/heartbeats/:deviceId - Device heartbeat history
-router.get("/heartbeats/:deviceId", ...staffAuth, async (req, res, next) => {
+router.get("/heartbeats/:deviceId", ...tileReadAuth, async (req, res, next) => {
   try {
     const deviceId = param(req, "deviceId");
-    const device = await getDeviceById(deviceId);
-    if (!device || device.schoolId !== res.locals.schoolId) {
-      return res.status(404).json({ error: "Device not found" });
-    }
     const limit = parseInt(req.query.limit as string) || 50;
     const startTime = req.query.startTime as string | undefined;
     const endTime = req.query.endTime as string | undefined;
-
-    let heartbeats;
-    if (startTime) {
-      // Filter by time range (for session-scoped views)
-      const start = new Date(startTime);
-      const end = endTime ? new Date(endTime) : new Date();
-      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
-        return res
-          .status(400)
-          .json({ error: "Invalid startTime or endTime format" });
+    const authorization = await withAuthorizedTileDevice(
+      req,
+      res,
+      deviceId,
+      "history",
+      async (device, authorizedStudentIds) => {
+        const schoolId = device.schoolId;
+        if (startTime) {
+          // Filter by time range (for session-scoped views)
+          const start = new Date(startTime);
+          const end = endTime ? new Date(endTime) : new Date();
+          if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+            return { status: "invalid-range" as const };
+          }
+          return {
+            status: "ok" as const,
+            heartbeats: await getHeartbeatsByDeviceInRange(
+              schoolId,
+              deviceId,
+              start,
+              end,
+              authorizedStudentIds
+            ),
+          };
+        }
+        return {
+          status: "ok" as const,
+          heartbeats: await getHeartbeatsByDevice(
+            schoolId,
+            deviceId,
+            Math.min(Math.max(limit, 1), 100),
+            authorizedStudentIds
+          ),
+        };
       }
-      heartbeats = await getHeartbeatsByDeviceInRange(
-        res.locals.schoolId!,
-        deviceId,
-        start,
-        end
-      );
-    } else {
-      heartbeats = await getHeartbeatsByDevice(
-        res.locals.schoolId!,
-        deviceId,
-        Math.min(Math.max(limit, 1), 100)
-      );
+    );
+    if (authorization.status === "not-found") {
+      return res.status(404).json({ error: "Device not found" });
     }
-    return res.json({ heartbeats });
+    const result = authorization.value;
+    if (result.status === "invalid-range") {
+      return res
+        .status(400)
+        .json({ error: "Invalid startTime or endTime format" });
+    }
+    return res.json({ heartbeats: result.heartbeats });
   } catch (err) {
     next(err);
   }
