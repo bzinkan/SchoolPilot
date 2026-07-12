@@ -151,6 +151,7 @@ $global:SchoolPilotTestServiceState = @{
 $global:SchoolPilotTestWafCount = $false
 $global:SchoolPilotTestMetricQueryIds = @()
 $global:SchoolPilotTestMetricQueryPeriods = @{}
+$global:SchoolPilotTestMetricLookbackSeconds = $null
 $global:SchoolPilotTestRouteLatency = $true
 $global:SchoolPilotTestRedisNodeType = "cache.t4g.small"
 $global:SchoolPilotTestPublicIpv4 = $true
@@ -234,6 +235,13 @@ function global:aws {
         return '{"MetricAlarms":[{"AlarmName":"route53-alarm","StateValue":"OK"}]}'
     }
     if ($service -eq "cloudwatch" -and $operation -eq "get-metric-data") {
+        $metricStartArgument = Get-ArgumentValue -Arguments $arguments -Name "--start-time"
+        $metricEndArgument = Get-ArgumentValue -Arguments $arguments -Name "--end-time"
+        if ($null -ne $metricStartArgument -and $null -ne $metricEndArgument) {
+            $metricStart = [DateTimeOffset]$metricStartArgument
+            $metricEnd = [DateTimeOffset]$metricEndArgument
+            $global:SchoolPilotTestMetricLookbackSeconds = ($metricEnd - $metricStart).TotalSeconds
+        }
         $inputReference = Get-ArgumentValue -Arguments $arguments -Name "--metric-data-queries"
         $inputPath = $inputReference.Substring("file://".Length)
         $queries = @(Get-Content -LiteralPath $inputPath -Raw | ConvertFrom-Json -Depth 20)
@@ -384,6 +392,7 @@ try {
         Assert-Condition ($monitorCalls.Contains($expected)) "Monitor did not poll or notify through '$expected'."
     }
     Assert-Condition ($global:SchoolPilotTestMetricQueryIds -contains "waf_device_blocked" -and $global:SchoolPilotTestMetricQueryIds -contains "waf_api_blocked") "Monitor did not poll both WAF rate-rule metrics."
+    Assert-Condition ([double]$global:SchoolPilotTestMetricLookbackSeconds -eq 900) "CloudWatch metric lookback must retain 15 minutes of credit telemetry for three stale confirmations."
     foreach ($fiveMinuteMetric in @("rds_cpu_credit", "rds_surplus_charged", "redis_cpu_credit")) {
         Assert-Condition ([int]$global:SchoolPilotTestMetricQueryPeriods[$fiveMinuteMetric] -eq 300) "Five-minute metric '$fiveMinuteMetric' must use a 300-second CloudWatch period."
     }
@@ -1302,20 +1311,20 @@ process.exit(1);
         $slowFreshConfig.runId = "five-minute-runtime-freshness"
         $slowFreshConfig.minimumWallClockSeconds = 3
         $slowFreshConfig.maxIterations = 5
-        $env:SCHOOLPILOT_TEST_FIVE_MINUTE_METRIC_AGE_SECONDS = "350"
+        $env:SCHOOLPILOT_TEST_FIVE_MINUTE_METRIC_AGE_SECONDS = "600"
         $slowFreshCase = Invoke-ChildMonitorCase "five-minute-runtime-freshness" $slowFreshConfig
         Remove-Item Env:SCHOOLPILOT_TEST_FIVE_MINUTE_METRIC_AGE_SECONDS -ErrorAction SilentlyContinue
-        Assert-Condition ($slowFreshCase.process.ExitCode -eq 0 -and $slowFreshCase.result.status -eq "completed") "A healthy five-minute credit datapoint 350 seconds old must remain fresh while one-minute metrics stay current."
+        Assert-Condition ($slowFreshCase.process.ExitCode -eq 0 -and $slowFreshCase.result.status -eq "completed") "A healthy five-minute credit datapoint 600 seconds old must remain fresh while one-minute metrics stay current."
 
         $slowStaleConfig = $limitConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
         $slowStaleConfig.runId = "five-minute-runtime-stale"
         $slowStaleConfig.minimumWallClockSeconds = 10
         $slowStaleConfig.maxIterations = 4
-        $env:SCHOOLPILOT_TEST_FIVE_MINUTE_METRIC_AGE_SECONDS = "420"
+        $env:SCHOOLPILOT_TEST_FIVE_MINUTE_METRIC_AGE_SECONDS = "720"
         $slowStaleCase = Invoke-ChildMonitorCase "five-minute-runtime-stale" $slowStaleConfig
         Remove-Item Env:SCHOOLPILOT_TEST_FIVE_MINUTE_METRIC_AGE_SECONDS -ErrorAction SilentlyContinue
         foreach ($slowMetric in @("rds_cpu_credit", "rds_surplus_credits_charged", "redis_cpu_credit")) {
-            Assert-Condition ($slowStaleCase.result.failures -contains "stale_metric:$slowMetric") "Five-minute metric '$slowMetric' older than 360 seconds must fail closed after three checks."
+            Assert-Condition ($slowStaleCase.result.failures -contains "stale_metric:$slowMetric") "Five-minute metric '$slowMetric' older than 660 seconds must fail closed after three checks."
         }
 
         $fastStaleConfig = $limitConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
@@ -1792,6 +1801,7 @@ finally {
     Remove-Variable SchoolPilotTestWafCount -Scope Global -ErrorAction SilentlyContinue
     Remove-Variable SchoolPilotTestMetricQueryIds -Scope Global -ErrorAction SilentlyContinue
     Remove-Variable SchoolPilotTestMetricQueryPeriods -Scope Global -ErrorAction SilentlyContinue
+    Remove-Variable SchoolPilotTestMetricLookbackSeconds -Scope Global -ErrorAction SilentlyContinue
     Remove-Variable SchoolPilotTestRouteLatency -Scope Global -ErrorAction SilentlyContinue
     if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
 }

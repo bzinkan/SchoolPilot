@@ -503,7 +503,11 @@ function Read-Configuration {
         supervisedHeartbeatStaleSeconds = 150
         summaryCommitGraceSeconds = 30
         metricFreshnessMaximumSeconds = 180
-        fiveMinuteMetricFreshnessMaximumSeconds = 360
+        # Credit metrics are timestamped on a five-minute cadence and can remain
+        # invisible until after the following period starts. Allow two complete
+        # periods plus one bounded poll interval, while still failing closed when
+        # two consecutive credit periods are absent.
+        fiveMinuteMetricFreshnessMaximumSeconds = 660
         telemetryMinimumCoveragePercent = 95.0
         telemetryMaximumGapSeconds = 120
         natSixHourRequiredSamples = 360
@@ -644,8 +648,9 @@ function Invoke-CloudWatchMetricBatch {
     $end = [DateTimeOffset]::UtcNow
     # Burstable-credit metrics are published every five minutes and can arrive
     # after the next five-minute boundary. Keep enough lookback to distinguish
-    # a delayed healthy datapoint from genuinely missing telemetry.
-    $start = $end.AddMinutes(-12)
+    # a delayed healthy datapoint from genuinely missing telemetry and to retain
+    # it through all three fail-closed stale confirmations.
+    $start = $end.AddMinutes(-15)
     $queryPath = Join-Path ([IO.Path]::GetTempPath()) "schoolpilot-metrics-$([Guid]::NewGuid().ToString('N')).json"
     try {
         [IO.File]::WriteAllText($queryPath, ($Queries | ConvertTo-Json -Depth 15), [Text.UTF8Encoding]::new($false))
