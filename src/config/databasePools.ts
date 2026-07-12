@@ -2,6 +2,9 @@ import { intEnv, schedulerEnabled } from "./runtime.js";
 
 export type DatabaseProcessRole = "api" | "worker";
 
+const DEFAULT_POOL_IDLE_TIMEOUT_MS = 10_000;
+const API_MAIN_POOL_IDLE_TIMEOUT_MS = 75_000;
+
 export const DATABASE_POOL_CAPS = Object.freeze({
   api: Object.freeze({ main: 18, session: 2, scheduler: 1, schedulerLock: 1 }),
   worker: Object.freeze({ main: 2, session: 1, scheduler: 5, schedulerLock: 8 }),
@@ -31,6 +34,21 @@ export function databasePoolLimits(env: NodeJS.ProcessEnv = process.env) {
       intEnv("SCHEDULER_LOCK_POOL_MAX", caps.schedulerLock, env),
       caps.schedulerLock
     ),
+  };
+}
+
+export function databasePoolIdleTimeouts(
+  env: NodeJS.ProcessEnv = process.env
+) {
+  return {
+    // ClassPilot tile cohorts repeat every 30 seconds. Retaining the API's RLS
+    // connections across that interval avoids a burst of verify-full TLS
+    // handshakes to RDS without increasing the existing connection ceiling.
+    main:
+      databaseProcessRole(env) === "api"
+        ? API_MAIN_POOL_IDLE_TIMEOUT_MS
+        : DEFAULT_POOL_IDLE_TIMEOUT_MS,
+    session: DEFAULT_POOL_IDLE_TIMEOUT_MS,
   };
 }
 

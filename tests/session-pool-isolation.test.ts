@@ -6,6 +6,7 @@ import session, { type SessionData } from "express-session";
 import connectPgSimple from "connect-pg-simple";
 import type { Pool } from "pg";
 import {
+  databasePoolIdleTimeouts,
   databasePoolLimits,
   maximumLaunchDatabaseConnections,
 } from "../src/config/databasePools.js";
@@ -72,9 +73,22 @@ describe("PostgreSQL session-pool isolation", () => {
       scheduler: 1,
       schedulerLock: 1,
     });
+    assert.deepEqual(databasePoolIdleTimeouts({ SCHEDULER_ENABLED: "false" }), {
+      main: 75_000,
+      session: 10_000,
+    });
+    assert.deepEqual(databasePoolIdleTimeouts({ SCHEDULER_ENABLED: "true" }), {
+      main: 10_000,
+      session: 10_000,
+    });
+    assert.ok(
+      databasePoolIdleTimeouts({ SCHEDULER_ENABLED: "false" }).main > 30_000
+    );
     assert.match(appSource, /pool:\s*sessionPool as any/);
     assert.match(appSource, /disableTouch:\s*true/);
     assert.doesNotMatch(appSource, /new PgStore\(\{[\s\S]{0,200}pool:\s*pool as any/);
+    assert.match(dbSource, /idleTimeoutMillis:\s*poolIdleTimeouts\.main/);
+    assert.match(dbSource, /idleTimeoutMillis:\s*poolIdleTimeouts\.session/);
   });
 
   it("disables expiry-only touches while preserving explicit session saves", async () => {
