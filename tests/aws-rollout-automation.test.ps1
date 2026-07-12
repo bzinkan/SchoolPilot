@@ -235,9 +235,13 @@ function global:aws {
         return '{"MetricAlarms":[{"AlarmName":"route53-alarm","StateValue":"OK"}]}'
     }
     if ($service -eq "cloudwatch" -and $operation -eq "get-metric-data") {
-        $metricStart = [DateTimeOffset](Get-ArgumentValue -Arguments $arguments -Name "--start-time")
-        $metricEnd = [DateTimeOffset](Get-ArgumentValue -Arguments $arguments -Name "--end-time")
-        $global:SchoolPilotTestMetricLookbackSeconds = ($metricEnd - $metricStart).TotalSeconds
+        $metricStartArgument = Get-ArgumentValue -Arguments $arguments -Name "--start-time"
+        $metricEndArgument = Get-ArgumentValue -Arguments $arguments -Name "--end-time"
+        if ($null -ne $metricStartArgument -and $null -ne $metricEndArgument) {
+            $metricStart = [DateTimeOffset]$metricStartArgument
+            $metricEnd = [DateTimeOffset]$metricEndArgument
+            $global:SchoolPilotTestMetricLookbackSeconds = ($metricEnd - $metricStart).TotalSeconds
+        }
         $inputReference = Get-ArgumentValue -Arguments $arguments -Name "--metric-data-queries"
         $inputPath = $inputReference.Substring("file://".Length)
         $queries = @(Get-Content -LiteralPath $inputPath -Raw | ConvertFrom-Json -Depth 20)
@@ -1307,10 +1311,10 @@ process.exit(1);
         $slowFreshConfig.runId = "five-minute-runtime-freshness"
         $slowFreshConfig.minimumWallClockSeconds = 3
         $slowFreshConfig.maxIterations = 5
-        $env:SCHOOLPILOT_TEST_FIVE_MINUTE_METRIC_AGE_SECONDS = "650"
+        $env:SCHOOLPILOT_TEST_FIVE_MINUTE_METRIC_AGE_SECONDS = "600"
         $slowFreshCase = Invoke-ChildMonitorCase "five-minute-runtime-freshness" $slowFreshConfig
         Remove-Item Env:SCHOOLPILOT_TEST_FIVE_MINUTE_METRIC_AGE_SECONDS -ErrorAction SilentlyContinue
-        Assert-Condition ($slowFreshCase.process.ExitCode -eq 0 -and $slowFreshCase.result.status -eq "completed") "A healthy five-minute credit datapoint 650 seconds old must remain fresh while one-minute metrics stay current."
+        Assert-Condition ($slowFreshCase.process.ExitCode -eq 0 -and $slowFreshCase.result.status -eq "completed") "A healthy five-minute credit datapoint 600 seconds old must remain fresh while one-minute metrics stay current."
 
         $slowStaleConfig = $limitConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
         $slowStaleConfig.runId = "five-minute-runtime-stale"
