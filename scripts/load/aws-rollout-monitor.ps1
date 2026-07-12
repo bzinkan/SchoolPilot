@@ -503,6 +503,7 @@ function Read-Configuration {
         supervisedHeartbeatStaleSeconds = 150
         summaryCommitGraceSeconds = 30
         metricFreshnessMaximumSeconds = 180
+        fiveMinuteMetricFreshnessMaximumSeconds = 360
         telemetryMinimumCoveragePercent = 95.0
         telemetryMaximumGapSeconds = 120
         natSixHourRequiredSamples = 360
@@ -614,7 +615,9 @@ function New-MetricQuery {
         [string]$MetricName,
         [hashtable]$Dimensions,
         [ValidateSet("Average", "Maximum", "Minimum", "Sum")]
-        [string]$Statistic
+        [string]$Statistic,
+        [ValidateSet(60, 300)]
+        [int]$Period = 60
     )
     if ($Id -notmatch '^[a-z][a-z0-9_]{0,254}$') { throw "CloudWatch query id '$Id' is invalid." }
     $dimensionList = @($Dimensions.GetEnumerator() | Sort-Object Name | ForEach-Object {
@@ -629,7 +632,7 @@ function New-MetricQuery {
                 MetricName = $MetricName
                 Dimensions = $dimensionList
             }
-            Period = 60
+            Period = $Period
             Stat = $Statistic
         }
     }
@@ -639,7 +642,10 @@ function Invoke-CloudWatchMetricBatch {
     param([string]$Region, [object[]]$Queries)
     if ($Queries.Count -lt 1 -or $Queries.Count -gt 500) { throw "CloudWatch metric batch must contain 1-500 queries." }
     $end = [DateTimeOffset]::UtcNow
-    $start = $end.AddMinutes(-6)
+    # Burstable-credit metrics are published every five minutes and can arrive
+    # after the next five-minute boundary. Keep enough lookback to distinguish
+    # a delayed healthy datapoint from genuinely missing telemetry.
+    $start = $end.AddMinutes(-12)
     $queryPath = Join-Path ([IO.Path]::GetTempPath()) "schoolpilot-metrics-$([Guid]::NewGuid().ToString('N')).json"
     try {
         [IO.File]::WriteAllText($queryPath, ($Queries | ConvertTo-Json -Depth 15), [Text.UTF8Encoding]::new($false))
@@ -664,7 +670,12 @@ function Invoke-CloudWatchMetricBatch {
             }
         }
         $latest = @($points | Sort-Object Timestamp | Select-Object -Last 1)
-        $metrics[[string]$result.Id] = if ($latest.Count -eq 0) { $null } else { $latest[0] }
+        $id = [string]$result.Id
+        $isCompleteSparseWafZero = [string]$result.StatusCode -eq "Complete" -and $latest.Count -eq 0 -and
+            $id -in @("waf_device_blocked", "waf_api_blocked")
+        $metrics[$id] = if ($isCompleteSparseWafZero) {
+            [pscustomobject]@{ Timestamp = $end; Value = 0.0; SparseZero = $true }
+        } elseif ($latest.Count -eq 0) { $null } else { $latest[0] }
     }
     return $metrics
 }
@@ -967,6 +978,10 @@ function Get-WafState {
         blockedObserved = @($freshBlocked | Where-Object Value -gt 0).Count -gt 0
         deviceBlockedFresh = $null -ne $deviceBlocked -and $deviceBlocked.Timestamp -ge $freshCutoff
         apiBlockedFresh = $null -ne $apiBlocked -and $apiBlocked.Timestamp -ge $freshCutoff
+        deviceBlockedSparseZero = $null -ne $deviceBlocked -and
+            $null -ne $deviceBlocked.PSObject.Properties["SparseZero"] -and [bool]$deviceBlocked.SparseZero
+        apiBlockedSparseZero = $null -ne $apiBlocked -and
+            $null -ne $apiBlocked.PSObject.Properties["SparseZero"] -and [bool]$apiBlocked.SparseZero
         latestBlockedTimestamp = [string](@($freshBlocked | Where-Object Value -gt 0 |
             Sort-Object Timestamp | Select-Object -Last 1 | ForEach-Object { $_.Timestamp.ToString("o") }) | Select-Object -First 1)
     }
@@ -991,8 +1006,8 @@ function Get-MetricQueries {
     $queries.Add((New-MetricQuery "rds_free_storage" "AWS/RDS" "FreeStorageSpace" $rdsDimensions "Minimum"))
     $queries.Add((New-MetricQuery "rds_free_memory" "AWS/RDS" "FreeableMemory" $rdsDimensions "Minimum"))
     $queries.Add((New-MetricQuery "rds_swap" "AWS/RDS" "SwapUsage" $rdsDimensions "Maximum"))
-    $queries.Add((New-MetricQuery "rds_cpu_credit" "AWS/RDS" "CPUCreditBalance" $rdsDimensions "Minimum"))
-    $queries.Add((New-MetricQuery "rds_surplus_charged" "AWS/RDS" "CPUSurplusCreditsCharged" $rdsDimensions "Maximum"))
+    $queries.Add((New-MetricQuery "rds_cpu_credit" "AWS/RDS" "CPUCreditBalance" $rdsDimensions "Minimum" -Period 300))
+    $queries.Add((New-MetricQuery "rds_surplus_charged" "AWS/RDS" "CPUSurplusCreditsCharged" $rdsDimensions "Maximum" -Period 300))
 
     $redisDimensions = @{ CacheClusterId = $r.redisCacheClusterId }
     $queries.Add((New-MetricQuery "redis_cpu" "AWS/ElastiCache" "EngineCPUUtilization" $redisDimensions "Maximum"))
@@ -1000,7 +1015,7 @@ function Get-MetricQueries {
     $queries.Add((New-MetricQuery "redis_free" "AWS/ElastiCache" "FreeableMemory" $redisDimensions "Minimum"))
     $queries.Add((New-MetricQuery "redis_evictions" "AWS/ElastiCache" "Evictions" $redisDimensions "Sum"))
     $queries.Add((New-MetricQuery "redis_rejected" "AWS/ElastiCache" "RejectedConnections" $redisDimensions "Sum"))
-    $queries.Add((New-MetricQuery "redis_cpu_credit" "AWS/ElastiCache" "CPUCreditBalance" $redisDimensions "Minimum"))
+    $queries.Add((New-MetricQuery "redis_cpu_credit" "AWS/ElastiCache" "CPUCreditBalance" $redisDimensions "Minimum" -Period 300))
 
     $wafBase = @{ WebACL = $r.wafWebAclName }
     foreach ($definition in @(
@@ -1156,7 +1171,8 @@ function Add-MetricFinding {
         $Value,
         [scriptblock]$IsBreached,
         [int]$Required,
-        [switch]$ImmediateOnBreach
+        [switch]$ImmediateOnBreach,
+        [double]$FreshnessMaximumSeconds = $script:MetricFreshnessMaximumSeconds
     )
     if ($null -eq $Value) {
         $script:MissingMetrics[$Name] = 1 + [int]($script:MissingMetrics[$Name] ?? 0)
@@ -1166,7 +1182,7 @@ function Add-MetricFinding {
     $script:MissingMetrics[$Name] = 0
     $metricTimestamp = ([DateTimeOffset]$Value.Timestamp).ToUniversalTime().ToString("o")
     $metricAgeSeconds = ([DateTimeOffset]::UtcNow - ([DateTimeOffset]$Value.Timestamp).ToUniversalTime()).TotalSeconds
-    if ($metricAgeSeconds -gt [double]$script:MetricFreshnessMaximumSeconds) {
+    if ($metricAgeSeconds -gt $FreshnessMaximumSeconds) {
         if (Update-ConsecutiveBreach -Name "stale_metric:$Name" -Breached $true -Required $Required) {
             $Consecutive.Add("stale_metric:$Name")
         }
@@ -1454,8 +1470,10 @@ function Get-Sample {
     Add-MetricFinding $immediate $consecutive "rds_connections" $rdsConnections { param($v) $v -ge [double]$t.rdsConnectionsMaximum } $required
     Add-MetricFinding $immediate $consecutive "rds_storage_headroom" $rdsStorageHeadroomPercent { param($v) $v -le [double]$t.rdsStorageHeadroomMinimumPercent } $required
     Add-MetricFinding $immediate $consecutive "rds_free_memory" $rdsFreeMemory { param($v) $v -le [double]$t.rdsFreeableMemoryMinimumBytes } $required
-    Add-MetricFinding $immediate $consecutive "rds_cpu_credit" $rdsCpuCredit { param($v) $v -lt [double]$t.rdsCpuCreditMinimum } $required
-    Add-MetricFinding $immediate $consecutive "rds_surplus_credits_charged" $rdsSurplusCharged { param($v) $v -gt 0 } $required
+    Add-MetricFinding $immediate $consecutive "rds_cpu_credit" $rdsCpuCredit { param($v) $v -lt [double]$t.rdsCpuCreditMinimum } $required `
+        -FreshnessMaximumSeconds ([double]$t.fiveMinuteMetricFreshnessMaximumSeconds)
+    Add-MetricFinding $immediate $consecutive "rds_surplus_credits_charged" $rdsSurplusCharged { param($v) $v -gt 0 } $required `
+        -FreshnessMaximumSeconds ([double]$t.fiveMinuteMetricFreshnessMaximumSeconds)
     Add-MetricFinding $immediate $consecutive "rds_swap_telemetry" $rdsSwap { param($v) $false } $required
     Add-GrowthMetricFinding $consecutive "rds_swap_growing" $rdsSwap ([double]$t.rdsSwapGrowthMaximumBytesPerMinute) $required
     Add-MetricFinding $immediate $consecutive "redis_cpu" $redisCpu { param($v) $v -ge [double]$t.redisCpuMaximumPercent } $required
@@ -1463,7 +1481,8 @@ function Get-Sample {
     Add-MetricFinding $immediate $consecutive "redis_free_memory" $redisFree { param($v) $v -le [double]$t.redisFreeMemoryMinimumBytes } $required
     Add-MetricFinding $immediate $consecutive "redis_evictions" $redisEvictions { param($v) $v -gt 0 } $required -ImmediateOnBreach
     Add-MetricFinding $immediate $consecutive "redis_rejected_connections" $redisRejected { param($v) $v -gt 0 } $required -ImmediateOnBreach
-    Add-MetricFinding $immediate $consecutive "redis_cpu_credit" $redisCpuCredit { param($v) $v -lt [double]$t.redisCpuCreditMinimum } $required
+    Add-MetricFinding $immediate $consecutive "redis_cpu_credit" $redisCpuCredit { param($v) $v -lt [double]$t.redisCpuCreditMinimum } $required `
+        -FreshnessMaximumSeconds ([double]$t.fiveMinuteMetricFreshnessMaximumSeconds)
     foreach ($entry in @(
         @("rds_cpu", $rdsCpu), @("rds_connections", $rdsConnections), @("rds_storage_headroom", $rdsStorageHeadroomPercent),
         @("rds_free_memory", $rdsFreeMemory), @("rds_swap", $rdsSwap), @("rds_cpu_credit", $rdsCpuCredit), @("rds_surplus_charged", $rdsSurplusCharged),

@@ -11,7 +11,8 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const deploySource = readFileSync(new URL("../scripts/deploy.sh", import.meta.url), "utf8");
+const deploySource = readFileSync(new URL("../scripts/deploy.sh", import.meta.url), "utf8")
+  .replace(/\r\n/g, "\n");
 const libraryBoundary = deploySource.indexOf("# --- Preflight checks ---");
 assert.ok(libraryBoundary > 0, "deploy script should expose its helpers before preflight execution");
 const deployLibrarySource = deploySource.slice(0, libraryBoundary);

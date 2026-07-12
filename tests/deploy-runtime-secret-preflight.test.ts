@@ -302,7 +302,7 @@ describe("backend deploy integration", () => {
   const deploySource = readFileSync(
     new URL("../scripts/deploy.sh", import.meta.url),
     "utf8"
-  );
+  ).replace(/\r\n/g, "\n");
   const functionStart = deploySource.indexOf("runtime_securestring_preflight() {");
   const executionStart = deploySource.indexOf("# --- Preflight checks ---");
   const invocation = deploySource.indexOf("\n  runtime_securestring_preflight\n", executionStart);
