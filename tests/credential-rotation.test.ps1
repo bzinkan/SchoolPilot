@@ -353,9 +353,9 @@ try {
             if ([string]$state.LogMode -ceq "rollback-success") {
                 $pattern = $Arguments[[Array]::IndexOf($Arguments, "--filter-pattern") + 1].Trim('"')
                 $output = switch ($pattern) {
-                    "prewarmed" { "api-page-one`napi-page-two" }
-                    "WorkerHeartbeat" { "worker-page-one`nworker-page-two" }
-                    default { "None" }
+                    "prewarmed" { "None`napi-page-one`nNone`napi-page-two" }
+                    "WorkerHeartbeat" { "worker-page-one`nNone`nworker-page-two`nNone" }
+                    default { "None`nNone" }
                 }
                 return [pscustomobject]@{ ExitCode = 0; StdOut = $output; StdErr = "" }
             }
@@ -422,10 +422,12 @@ try {
     Assert-Condition (-not $logCall[0].Contains("length(events)")) "CloudWatch pagination must not use one scalar length per page."
     $global:RotationTestState.LogEventOutput = "None"
     Assert-Condition ((Get-CloudWatchFilterCount -LogGroup "/ecs/test" -StreamPrefix "" -FilterPattern "none" -StartTimeMs 1 -AwsRegion "us-east-1") -eq 0) "CloudWatch empty text projection must count as zero."
-    $global:RotationTestState.LogEventOutput = "valid-event`nNone"
+    $global:RotationTestState.LogEventOutput = "None`nvalid-event`nNone"
+    Assert-Condition ((Get-CloudWatchFilterCount -LogGroup "/ecs/test" -StreamPrefix "" -FilterPattern "mixed-pages" -StartTimeMs 1 -AwsRegion "us-east-1") -eq 1) "Per-page None markers must be ignored alongside valid CloudWatch event IDs."
+    $global:RotationTestState.LogEventOutput = "valid-event`n{}"
     Assert-Throws {
         Get-CloudWatchFilterCount -LogGroup "/ecs/test" -StreamPrefix "" -FilterPattern "invalid" -StartTimeMs 1 -AwsRegion "us-east-1"
-    } "Mixed invalid CloudWatch paginator output must fail closed."
+    } "Malformed CloudWatch paginator output must fail closed."
     $global:RotationTestState.LogMode = "empty"
 
     $contractSnapshot = [pscustomobject]@{

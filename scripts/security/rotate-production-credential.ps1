@@ -1083,7 +1083,7 @@ function Get-CloudWatchFilterCount {
     }
     $stdout = Invoke-ExternalCommand -Command "aws" -Arguments $arguments
     $tokens = @($stdout -split '\s+' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-    if ($tokens.Count -eq 0 -or ($tokens.Count -eq 1 -and [string]$tokens[0] -ceq "None")) {
+    if ($tokens.Count -eq 0) {
         return 0
     }
     $eventIds = [System.Collections.Generic.HashSet[string]]::new(
@@ -1091,8 +1091,13 @@ function Get-CloudWatchFilterCount {
     )
     foreach ($token in $tokens) {
         $eventId = [string]$token
+        # With text output the AWS CLI emits `None` for an empty projection on
+        # each paginator page, including between pages that contain event IDs.
+        # It is a page marker, not an event or malformed response.
+        if ($eventId -ceq "None") {
+            continue
+        }
         if (
-            $eventId -ceq "None" -or
             $eventId.Length -gt 512 -or
             $eventId -notmatch '^[A-Za-z0-9._:/+=-]+$'
         ) {
