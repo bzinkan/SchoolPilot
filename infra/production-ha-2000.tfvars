@@ -47,6 +47,7 @@ waf_rate_rule_action         = "block"
 # Domain — auto-creates ACM cert, DNS records, and derives app URLs
 # Accessible at school-pilot.net + www.school-pilot.net
 domain                  = "school-pilot.net"
+google_client_id        = "562964657318-l7k0b7iuh0e16m88nqqvngs83eh3ddki.apps.googleusercontent.com"
 route53_measure_latency = true
 
 # Alerts
