@@ -693,7 +693,12 @@ the newly rendered API definition, including its environment and secrets, but
 uses 512 CPU / 2048 MiB. The script prints its exact ARN and revision without
 changing either active service. It then runs the explicit
 `RUN_MIGRATIONS_ONLY=true` ECS migration task, updates both ECS services, waits
-for service stability, and cleans temporary task-definition files.
+for service stability, and cleans temporary task-definition files. After the
+standard ECS waiter, a bounded production-only poll requires the service and
+PRIMARY deployment task definitions to match the newly registered API and
+worker revisions with exactly one `COMPLETED` deployment each; a circuit-breaker
+rollback to old stable revisions fails closed while the autoscaling hold is
+still active.
 
 ```bash
 # Step 1: ECR login (required — tokens expire after 12 hours)

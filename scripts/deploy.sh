@@ -22,6 +22,7 @@ SKIP_WAIT=false
 IMAGE_TAG=""
 EMERGENCY_TASK_DEF_ARN=""
 EMERGENCY_TASK_DEF_REVISION=""
+WORKER_NEW_REV=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -81,22 +82,54 @@ ecs_service_status() {
 }
 
 production_service_snapshot() {
-  aws ecs describe-services \
+  AWS_MAX_ATTEMPTS=1 aws ecs describe-services \
     --cluster "$CLUSTER" \
     --services "$SERVICE" "$WORKER_SERVICE" \
-    --query 'services[].[serviceName,status,desiredCount,runningCount,pendingCount,length(deployments),deployments[?status==`PRIMARY`]|[0].rolloutState]' \
+    --query 'services[].[serviceName,status,desiredCount,runningCount,pendingCount,length(deployments),taskDefinition,deployments[?status==`PRIMARY`]|[0].taskDefinition,deployments[?status==`PRIMARY`]|[0].rolloutState]' \
     --output text \
-    --region "$REGION" 2>/dev/null
+    --region "$REGION" \
+    --cli-connect-timeout 3 \
+    --cli-read-timeout 5 2>/dev/null
+}
+
+normalize_task_definition_ref() {
+  local ref="${1%$'\r'}"
+
+  if [[ "$ref" =~ ^([A-Za-z0-9_-]+):([1-9][0-9]*)$ ]]; then
+    printf '%s:%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+    return 0
+  fi
+
+  if [[ "$ref" =~ ^arn:aws(-[a-z0-9-]+)?:ecs:[a-z0-9-]+:[0-9]{12}:task-definition/([A-Za-z0-9_-]+):([1-9][0-9]*)$ ]]; then
+    printf '%s:%s\n' "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}"
+    return 0
+  fi
+
+  return 1
 }
 
 validate_production_service_snapshot() {
   local snapshot="$1"
-  local service_name status desired running pending deployment_count rollout_state extra
+  local expected_api_ref="${2:-}"
+  local expected_worker_ref="${3:-}"
+  local expected_api=""
+  local expected_worker=""
+  local service_name status desired running pending deployment_count service_task_definition primary_task_definition rollout_state extra
+  local normalized_service_task_definition normalized_primary_task_definition
   local api_seen=0
   local worker_seen=0
   local api_desired=""
 
-  while IFS=$'\t' read -r service_name status desired running pending deployment_count rollout_state extra; do
+  if [[ -n "$expected_api_ref" || -n "$expected_worker_ref" ]]; then
+    if [[ -z "$expected_api_ref" || -z "$expected_worker_ref" ]] ||
+       ! expected_api=$(normalize_task_definition_ref "$expected_api_ref") ||
+       ! expected_worker=$(normalize_task_definition_ref "$expected_worker_ref"); then
+      error "Expected production task-definition revisions were missing or malformed; refusing the backend deployment."
+      return 1
+    fi
+  fi
+
+  while IFS=$'\t' read -r service_name status desired running pending deployment_count service_task_definition primary_task_definition rollout_state extra; do
     rollout_state="${rollout_state%$'\r'}"
     extra="${extra%$'\r'}"
 
@@ -106,6 +139,17 @@ validate_production_service_snapshot() {
           ! "$pending" =~ ^(0|[1-9][0-9]*)$ ||
           ! "$deployment_count" =~ ^(0|[1-9][0-9]*)$ ]]; then
       error "Production ECS service state was malformed or ambiguous; refusing the backend deployment."
+      return 1
+    fi
+
+    if ! normalized_service_task_definition=$(normalize_task_definition_ref "$service_task_definition") ||
+       ! normalized_primary_task_definition=$(normalize_task_definition_ref "$primary_task_definition"); then
+      error "Production ECS service ${service_name} returned a malformed task-definition reference; refusing the backend deployment."
+      return 1
+    fi
+
+    if [[ "$normalized_service_task_definition" != "$normalized_primary_task_definition" ]]; then
+      error "Production ECS service ${service_name} and its PRIMARY deployment disagree on task definition; refusing the backend deployment."
       return 1
     fi
 
@@ -119,6 +163,10 @@ validate_production_service_snapshot() {
       "$SERVICE")
         api_seen=$((api_seen + 1))
         api_desired="$desired"
+        if [[ -n "$expected_api" && "$normalized_service_task_definition" != "$expected_api" ]]; then
+          error "Production API completed an unexpected task definition (${normalized_service_task_definition}; expected ${expected_api}); refusing the backend deployment."
+          return 1
+        fi
         if [[ "$desired" != "1" && "$desired" != "2" ]]; then
           error "Production API desiredCount is ${desired}; backend deploys require desiredCount 1 or 2 so rolling database connections stay below the launch gate."
           return 1
@@ -126,6 +174,10 @@ validate_production_service_snapshot() {
         ;;
       "$WORKER_SERVICE")
         worker_seen=$((worker_seen + 1))
+        if [[ -n "$expected_worker" && "$normalized_service_task_definition" != "$expected_worker" ]]; then
+          error "Production scheduler worker completed an unexpected task definition (${normalized_service_task_definition}; expected ${expected_worker}); refusing the backend deployment."
+          return 1
+        fi
         if [[ "$desired" != "1" ]]; then
           error "Production scheduler worker desiredCount is ${desired}; backend deploys require exactly one worker so rolling database connections stay below the launch gate."
           return 1
@@ -169,6 +221,63 @@ production_backend_capacity_preflight() {
   fi
 
   success "Production backend capacity preflight OK: API desiredCount=${PRODUCTION_PREFLIGHT_API_DESIRED}, worker desiredCount=1, both stable"
+}
+
+wait_for_production_backend_strict_stability() {
+  if [[ "$ENV" != "production" || "$DEPLOY_BACKEND" != true ]]; then
+    return 0
+  fi
+
+  local expected_api_ref="${1:-}"
+  local expected_worker_ref="${2:-}"
+  local max_attempts="${3:-30}"
+  local interval_seconds="${4:-2}"
+  local attempt service_snapshot="" last_snapshot_read_ok=false
+
+  if [[ -z "$expected_api_ref" || -z "$expected_worker_ref" ]] ||
+     ! normalize_task_definition_ref "$expected_api_ref" > /dev/null ||
+     ! normalize_task_definition_ref "$expected_worker_ref" > /dev/null; then
+    error "Production ECS strict-stability polling requires exact API and worker task-definition revisions; refusing the backend deployment."
+    return 1
+  fi
+
+  if [[ ! "$max_attempts" =~ ^[1-9][0-9]*$ || ! "$interval_seconds" =~ ^(0|[1-9][0-9]*)$ ]]; then
+    error "Production ECS strict-stability polling bounds are invalid; refusing the backend deployment."
+    return 1
+  fi
+
+  info "Confirming strict production ECS stability with at most ${max_attempts} bounded observations (${interval_seconds}s interval; each AWS call has 3s connect and 5s read limits)..."
+  for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+    service_snapshot=""
+    last_snapshot_read_ok=false
+    if service_snapshot=$(production_service_snapshot); then
+      last_snapshot_read_ok=true
+      # The ECS services-stable waiter can return a few seconds before the
+      # rolloutState projection converges. Reuse the exact strict validator,
+      # but suppress its fail-closed diagnostic until the bounded poll expires.
+      if { validate_production_service_snapshot "$service_snapshot" "$expected_api_ref" "$expected_worker_ref"; } > /dev/null 2>&1; then
+        success "Strict production ECS stability verified: API desiredCount=${PRODUCTION_PREFLIGHT_API_DESIRED}, worker desiredCount=1, one COMPLETED deployment each"
+        return 0
+      fi
+    fi
+
+    if [[ "$attempt" != "$max_attempts" ]]; then
+      info "Production ECS rollout metadata has not fully converged (attempt ${attempt}/${max_attempts}); retrying in ${interval_seconds}s..."
+      sleep "$interval_seconds"
+    fi
+  done
+
+  # Surface the final strict-validator detail when AWS returned a snapshot;
+  # otherwise distinguish a control-plane read failure. In either case the
+  # caller exits while the autoscaling hold is still active, so the EXIT trap
+  # restores the exact prior suspended state.
+  if [[ "$last_snapshot_read_ok" == true ]]; then
+    validate_production_service_snapshot "$service_snapshot" "$expected_api_ref" "$expected_worker_ref" || true
+  else
+    error "The final production ECS describe-services call failed during strict-stability polling."
+  fi
+  error "Production ECS services did not reach one COMPLETED deployment each before the bounded deadline; refusing to report deployment success and requiring autoscaling recovery."
+  return 1
 }
 
 production_scaling_state_snapshot() {
@@ -811,9 +920,13 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
   fi
 
   # Keep dynamic scaling suspended until ECS itself reports a single, completed
-  # deployment for both services at the reviewed task counts. Scheduled scaling
-  # remains in its captured state so a 06:00/10:00 action cannot be skipped.
-  production_backend_capacity_preflight "after ECS stabilization"
+  # deployment for both services at the reviewed task counts. The standard ECS
+  # waiter can return just before rolloutState converges, so a production-only,
+  # bounded strict poll closes that control-plane propagation window. Scheduled
+  # scaling remains in its captured state so a 06:00/10:00 action cannot be skipped.
+  wait_for_production_backend_strict_stability \
+    "${NAME}-api:${NEW_REV}" \
+    "${WORKER_SERVICE}:${WORKER_NEW_REV}"
 
   if ! restore_production_scaling_hold; then
     error "Backend deployment stabilized, but autoscaling restoration failed; failing the deploy and retrying restoration from the EXIT trap."

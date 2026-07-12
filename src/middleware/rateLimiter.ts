@@ -8,6 +8,7 @@ import {
   type ApiRateLimitIdentity,
 } from "../util/apiRateLimitIdentity.js";
 import { usesDeviceScopedApiLimit } from "../util/apiRateLimitRoutes.js";
+import { createRedisReadyWaiter } from "../util/redisReadyWaiter.js";
 import { verifyUserToken } from "../services/jwt.js";
 
 // Shared Redis backing for all limiters so counts survive deploys and are
@@ -18,8 +19,13 @@ import { verifyUserToken } from "../services/jwt.js";
 // DB-persisted account lockouts in services/accountLockout.ts.
 const redisUrl = process.env.REDIS_URL;
 let redisClient: ReturnType<typeof createClient> | null = null;
+let waitForReady: ((timeoutMs?: number) => Promise<void>) | null = null;
 if (redisUrl) {
   redisClient = createClient({ url: redisUrl });
+  // Every RedisStore preloads two scripts during module initialization. Share
+  // one bounded readiness cycle so those concurrent commands do not each add
+  // a listener; timeout rejection still flows to passOnStoreError.
+  waitForReady = createRedisReadyWaiter(redisClient);
   redisClient.on("error", (err) =>
     console.warn("[RateLimit] Redis error:", (err as Error).message)
   );
@@ -28,34 +34,10 @@ if (redisUrl) {
     .catch((err) => console.warn("[RateLimit] Redis connect failed:", err.message));
 }
 
-// Wait (bounded) for the client to finish connecting instead of failing
-// commands issued during the boot window: RedisStore's constructor preloads
-// its Lua scripts immediately, before connect() has resolved, and a synchronous
-// throw there surfaces as an unhandled rejection (the store retries the load
-// on first use, so limiting still works — but boot logs a spurious FATAL).
-// If Redis is genuinely down, this rejects after the timeout and
-// passOnStoreError lets requests through.
-function waitForReady(timeoutMs = 2000): Promise<void> {
-  if (redisClient!.isReady) return Promise.resolve();
-  return new Promise((resolve, reject) => {
-    const onReady = () => {
-      cleanup();
-      resolve();
-    };
-    const timer = setTimeout(() => {
-      cleanup();
-      reject(new Error("redis not ready"));
-    }, timeoutMs);
-    const cleanup = () => {
-      clearTimeout(timer);
-      redisClient!.off("ready", onReady);
-    };
-    redisClient!.once("ready", onReady);
-  });
-}
-
 export function redisStore(prefix: string): Store | undefined {
-  if (!redisClient) return undefined; // express-rate-limit defaults to MemoryStore
+  if (!redisClient || !waitForReady) {
+    return undefined; // express-rate-limit defaults to MemoryStore
+  }
   const store = new RedisStore({
     prefix,
     sendCommand: async (...args: string[]) => {
@@ -77,7 +59,7 @@ export function redisStore(prefix: string): Store | undefined {
 }
 
 export async function redisCommand(args: string[]): Promise<unknown | undefined> {
-  if (!redisClient) return undefined;
+  if (!redisClient || !waitForReady) return undefined;
   await waitForReady();
   return redisClient.sendCommand(args);
 }
