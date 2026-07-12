@@ -6,7 +6,7 @@ import helmet from "helmet";
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
 import cookieParser from "cookie-parser";
-import { pool } from "./db.js";
+import { sessionPool } from "./db.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import { requestId } from "./middleware/requestId.js";
 import { sessionIdleTimeout } from "./middleware/sessionIdleTimeout.js";
@@ -149,9 +149,13 @@ export function createApp() {
 
   const webSession = session({
     store: new PgStore({
-      pool: pool as any,
+      pool: sessionPool as any,
       tableName: "session",
       createTableIfMissing: false,
+      // sessionIdleTimeout performs one bounded save per minute. Avoid a
+      // second write for every 5s/30s dashboard poll while still preserving
+      // rolling expiry with at most one minute of skew.
+      disableTouch: true,
     }),
     name: "schoolpilot.sid",
     secret: sessionSecret,

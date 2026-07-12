@@ -111,7 +111,7 @@ Safety/gates:
   LOAD_WAF_DEVICE_LIMIT=100000
   LOAD_WAF_GENERAL_LIMIT=50000
   LOAD_SHARED_IP_LABEL=single-generator-egress
-  LOAD_STAGE=500-baseline
+  LOAD_STAGE=500
   LOAD_RUN_ID=<supervisor-bound rollout id>
   LOAD_EXTERNAL_SUMMARY_PATH=<absolute path outside this repository>
   LOAD_EXTERNAL_PROGRESS_PATH=<absolute JSONL path outside this repository>

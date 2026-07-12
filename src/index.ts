@@ -9,7 +9,7 @@ import { setupWebSocket } from "./realtime/websocket.js";
 import { startScheduler, stopScheduler } from "./services/scheduler.js";
 import { startHealthMonitor, stopHealthMonitor } from "./services/healthMonitor.js";
 import errorMonitor from "./services/errorMonitor.js";
-import { pool } from "./db.js";
+import { pool, sessionPool } from "./db.js";
 import { schedulerLockPool, schedulerPool } from "./services/schedulerDb.js";
 import { migrationsOnStartup, migrationsOnly, schedulerEnabled } from "./config/runtime.js";
 
@@ -117,7 +117,7 @@ async function fatalShutdown(reason: string, err: unknown): Promise<void> {
     5_000
   );
   await bounded(closeServers.then(() => undefined), 4_000, "server shutdown");
-  await bounded(Promise.allSettled([pool.end(), schedulerPool.end(), schedulerLockPool.end()]).then(() => undefined), 4_000, "database pool shutdown");
+  await bounded(Promise.allSettled([pool.end(), sessionPool.end(), schedulerPool.end(), schedulerLockPool.end()]).then(() => undefined), 4_000, "database pool shutdown");
 
   clearTimeout(forceExit);
   process.exit(1);
@@ -1678,7 +1678,7 @@ async function startServer(): Promise<void> {
 async function runMigrationsAndExit(): Promise<void> {
   await runStartupMigrations();
   errorMonitor.dispose();
-  await Promise.allSettled([pool.end(), schedulerPool.end(), schedulerLockPool.end()]);
+  await Promise.allSettled([pool.end(), sessionPool.end(), schedulerPool.end(), schedulerLockPool.end()]);
   console.log("[migration] startup migrations complete");
   process.exit(0);
 }

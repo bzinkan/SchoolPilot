@@ -2,7 +2,7 @@
 // Sends shared monitor alerts on failure and recovery notifications when restored
 
 import type { WebSocketServer } from "ws";
-import { pool } from "../db.js";
+import { pool, sessionPool } from "../db.js";
 import { getIO } from "../realtime/socketio.js";
 import { isRedisEnabled } from "../realtime/ws-redis.js";
 import errorMonitor, { type ErrorCategory } from "./errorMonitor.js";
@@ -58,14 +58,20 @@ async function checkDbPool(): Promise<CheckResult> {
   const total = pool.totalCount;
   const idle = pool.idleCount;
   const waiting = pool.waitingCount;
+  const sessionTotal = sessionPool.totalCount;
+  const sessionIdle = sessionPool.idleCount;
+  const sessionWaiting = sessionPool.waitingCount;
 
-  if (waiting > 0) {
+  if (waiting > 0 || sessionWaiting > 0) {
     return {
       ok: false,
-      error: `${waiting} queries waiting - pool likely exhausted (${total} connections)`,
+      error: `queries waiting - app=${waiting}/${total}, session=${sessionWaiting}/${sessionTotal}`,
     };
   }
-  return { ok: true, detail: `${total} total, ${idle} idle, ${waiting} waiting` };
+  return {
+    ok: true,
+    detail: `app=${total} total/${idle} idle; session=${sessionTotal} total/${sessionIdle} idle`,
+  };
 }
 
 async function checkSocketIO(): Promise<CheckResult> {

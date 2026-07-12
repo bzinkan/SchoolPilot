@@ -1,5 +1,5 @@
 import { and, desc, eq, gte, lt, or, sql, type SQL } from "drizzle-orm";
-import db, { pool } from "../db.js";
+import db, { pool, sessionPool } from "../db.js";
 import { getIO } from "../realtime/socketio.js";
 import { errorLogs, type ErrorLog } from "../schema/shared.js";
 import errorMonitor, {
@@ -208,16 +208,20 @@ export async function buildMonitoringHealthSnapshot(
   }
 
   const waiting = pool.waitingCount;
+  const sessionWaiting = sessionPool.waitingCount;
   checks.dbPool = {
-    ok: waiting === 0,
+    ok: waiting === 0 && sessionWaiting === 0,
     total: pool.totalCount,
     idle: pool.idleCount,
     waiting,
+    sessionTotal: sessionPool.totalCount,
+    sessionIdle: sessionPool.idleCount,
+    sessionWaiting,
   };
-  if (waiting > 0) {
+  if (waiting > 0 || sessionWaiting > 0) {
     errorMonitor.trackError(
       "database_connectivity",
-      new Error(`${waiting} queries waiting in main DB pool`),
+      new Error(`queries waiting in DB pools: app=${waiting}, session=${sessionWaiting}`),
       { job: "health_endpoint", messageType: "db-pool", errorCode: "pool_waiting" },
       { persist: false, priority: "high" }
     );

@@ -4,7 +4,7 @@ import * as schema from "./schema/index.js";
 import { getTenantStore, rlsGucEnabled } from "./db/tenantContext.js";
 import { buildPgSslConfig } from "./db/ssl.js";
 import errorMonitor from "./services/errorMonitor.js";
-import { intEnv } from "./config/runtime.js";
+import { databasePoolLimits } from "./config/databasePools.js";
 
 // SOC 2 / SC-7: enforce TLS verify-full to AWS RDS using the bundled CA chain.
 // The Docker image ships /app/rds-ca.pem from AWS' truststore so we can verify
@@ -15,14 +15,31 @@ if (!url) {
     "FATAL: DATABASE_URL is not set. Refusing to fall back to pg defaults (localhost:5432 as the OS user)."
   );
 }
+const poolLimits = databasePoolLimits();
 
 const pool = new pg.Pool({
   connectionString: url,
-  max: intEnv("DB_POOL_MAX", 50),
+  max: poolLimits.main,
   idleTimeoutMillis: 10000,
   connectionTimeoutMillis: 5000,
   statement_timeout: 15000,
   ssl: buildPgSslConfig(url),
+});
+
+// Keep web-session reads/saves off the RLS application pool. A request-bound
+// RLS client is intentionally held until the response completes; using that
+// same pool for connect-pg-simple can make a classroom burst wait for a second
+// client to save its session before the first client is allowed to release.
+// All process pools are role-capped. Six API tasks plus one worker have a
+// configured ceiling of 148 connections, below the launch gate of 150.
+const sessionPool = new pg.Pool({
+  connectionString: url,
+  max: poolLimits.session,
+  idleTimeoutMillis: 10000,
+  connectionTimeoutMillis: 5000,
+  statement_timeout: 15000,
+  ssl: buildPgSslConfig(url),
+  allowExitOnIdle: process.env.NODE_ENV !== "production",
 });
 
 pool.on("error", (err) => {
@@ -32,6 +49,20 @@ pool.on("error", (err) => {
     err,
     {
       job: "main_pool",
+      messageType: "idle_client_error",
+      errorCode: (err as NodeJS.ErrnoException).code,
+    },
+    { persist: false, priority: "high" }
+  );
+});
+
+sessionPool.on("error", (err) => {
+  console.error("Unexpected error on idle session client", err);
+  errorMonitor.trackError(
+    "database_connectivity",
+    err,
+    {
+      job: "session_pool",
       messageType: "idle_client_error",
       errorCode: (err as NodeJS.ErrnoException).code,
     },
@@ -67,5 +98,5 @@ export const db: typeof globalDb = new Proxy(globalDb, {
   },
 });
 
-export { pool };
+export { pool, sessionPool };
 export default db;

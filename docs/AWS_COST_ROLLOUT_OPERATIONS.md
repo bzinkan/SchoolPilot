@@ -247,9 +247,9 @@ summary paths. Launch-profile runs are immutable:
 
 | Stage | Sockets | Duration | Screenshot | Expected targets/class |
 |---|---:|---:|---:|---:|
-| `500-baseline` | 510 | 1,800 s | 40 KiB | 25 |
-| `800-gate` | 810 | 5,400 s | 40 KiB | 40 |
-| `1000-burst` | 1,010 | 600 s | 50 KiB | 40 |
+| `500` | 510 | 1,800 s | 40 KiB | 25 |
+| `800` | 810 | 5,400 s | 40 KiB | 40 |
+| `burst` | 1,010 | 600 s | 50 KiB | 40 |
 | `endurance` | 810 | 28,800 s | 40 KiB | 40 |
 
 Every launch run includes ten second-school canaries first in the manifest,
