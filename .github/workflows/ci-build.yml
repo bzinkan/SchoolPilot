@@ -178,8 +178,11 @@ jobs:
           DATABASE_URL: ${{ env.ADMIN_DATABASE_URL }}
         run: node --import tsx tests/setup-rls-ci.ts
 
-      - name: RLS-enabled cross-tenant isolation tests
-        run: node --import tsx --test tests/cross-tenant-isolation.test.ts
+      - name: RLS-enabled cross-tenant and tile-read isolation tests
+        run: >-
+          node --import tsx --test --test-concurrency=1
+          tests/cross-tenant-isolation.test.ts
+          tests/classpilot-tile-read-scope.test.ts
 
       - name: Collect SOC 2 evidence
         if: always()
@@ -187,9 +190,9 @@ jobs:
           JOB_STATUS: ${{ job.status }}
         run: >
           node scripts/soc2/collect-ci-evidence.mjs
-          --job "RLS-enabled cross-tenant tests"
+          --job "RLS-enabled cross-tenant and tile-read tests"
           --controls "SP-SEC-002,SP-SEC-004"
-          --summary "RLS-enabled cross-tenant tests ran with a non-superuser database role and tenant-table allowlist."
+          --summary "RLS-enabled storage and real ClassPilot tile-read route tests ran with a non-superuser database role and tenant-table allowlist."
 
       - name: Upload SOC 2 evidence
         if: always()

@@ -1205,7 +1205,9 @@ throw "Unexpected child AWS call: $($arguments -join ' ')"
         $completedWaitSnapshotFile = Join-Path $childRoot "$completedWaitRunId-snapshot-time.txt"
         $completedWaitRollbackEvidence = Join-Path $childEvidence "$completedWaitRunId-rollback.jsonl"
         Remove-Item -LiteralPath $completedWaitSummary,$completedWaitSnapshotFile,$completedWaitRollbackEvidence -ErrorAction SilentlyContinue
-        $completedWaitHarness = Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList @("-NoProfile","-Command","Start-Sleep -Seconds 60") -PassThru -NoNewWindow
+        # Keep the bound dummy generator alive beyond every observation wait;
+        # the test stops it explicitly after snapshot acceptance.
+        $completedWaitHarness = Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList @("-NoProfile","-Command","Start-Sleep -Seconds 180") -PassThru -NoNewWindow
         Start-Sleep -Milliseconds 200
         $completedWaitStarted = [DateTimeOffset]::UtcNow.AddSeconds(-1)
         $initialCompletedWaitProgress = @{schemaVersion=1;type="progress";event="progress";runId=$completedWaitRunId;stage="endurance";timestamp=[DateTimeOffset]::UtcNow.ToString("o")}
@@ -1252,8 +1254,15 @@ throw "Unexpected child AWS call: $($arguments -join ' ')"
         (Get-Item -LiteralPath $completedWaitProgress).LastWriteTimeUtc = [DateTime]::UtcNow.AddMinutes(-10)
 
         $completedWaitSample = $null
-        $completedWaitSampleDeadline = [DateTimeOffset]::UtcNow.AddSeconds(15)
-        while ($null -eq $completedWaitSample -and [DateTimeOffset]::UtcNow -lt $completedWaitSampleDeadline) {
+        # A Windows mock-AWS sweep launches enough short-lived pwsh processes
+        # that the semantic sample after the progress->final transition can
+        # legitimately take longer than 15 seconds on a busy runner.
+        $completedWaitSampleDeadline = [DateTimeOffset]::UtcNow.AddSeconds(60)
+        while (
+            $null -eq $completedWaitSample -and
+            -not $completedWaitMonitor.HasExited -and
+            [DateTimeOffset]::UtcNow -lt $completedWaitSampleDeadline
+        ) {
             foreach ($line in @(Get-Content -LiteralPath $completedWaitEvidencePath -ErrorAction SilentlyContinue)) {
                 try { $candidate = $line | ConvertFrom-Json -Depth 30 }
                 catch { continue }
@@ -1263,14 +1272,22 @@ throw "Unexpected child AWS call: $($arguments -join ' ')"
             }
             if ($null -eq $completedWaitSample) { Start-Sleep -Milliseconds 100 }
         }
-        Assert-Condition ($null -ne $completedWaitSample -and $completedWaitSample.immediateFailures -notcontains "load_progress_stale") "A valid completed final workload must remain accepted after its progress artifact becomes old while the automated snapshot is pending."
+        $completedWaitMonitor.Refresh()
+        $completedWaitExitCode = if ($completedWaitMonitor.HasExited) { $completedWaitMonitor.ExitCode } else { $null }
+        $completedWaitDiagnosticResult = Get-Content -LiteralPath (Join-Path $childEvidence "$completedWaitRunId-monitor-result.json") -Raw -ErrorAction SilentlyContinue
+        $completedWaitDiagnosticError = Get-Content -LiteralPath (Join-Path $childRoot "$completedWaitRunId.err") -Raw -ErrorAction SilentlyContinue
+        $completedWaitDiagnosticEvidence = @(Get-Content -LiteralPath $completedWaitEvidencePath -Tail 3 -ErrorAction SilentlyContinue)
+        Assert-Condition (
+            $null -ne $completedWaitSample -and
+            $completedWaitSample.immediateFailures -notcontains "load_progress_stale"
+        ) "A valid completed final workload must remain accepted after its progress artifact becomes old while the automated snapshot is pending (monitorExited=$($completedWaitMonitor.HasExited); exitCode=$completedWaitExitCode; sample=$($completedWaitSample|ConvertTo-Json -Compress -Depth 20); result=$completedWaitDiagnosticResult; stderr=$completedWaitDiagnosticError; evidence=$($completedWaitDiagnosticEvidence -join ' || '))."
         Start-Sleep -Milliseconds 1200
         $completedWaitMonitor.Refresh()
         $earlyCompletedWaitResult = Get-Content -LiteralPath (Join-Path $childEvidence "$completedWaitRunId-monitor-result.json") -Raw -ErrorAction SilentlyContinue
         Assert-Condition (-not $completedWaitMonitor.HasExited -and -not (Test-Path -LiteralPath $completedWaitRollbackEvidence)) "The final monitor must keep waiting without Redis rollback after traffic completes and before the post-resize automated snapshot appears (result: $earlyCompletedWaitResult)."
 
         [IO.File]::WriteAllText($completedWaitSnapshotFile, [DateTimeOffset]::UtcNow.ToString("o"), [Text.UTF8Encoding]::new($false))
-        Assert-Condition ($completedWaitMonitor.WaitForExit(30000)) "Completed-final monitor did not accept the later automated snapshot."
+        Assert-Condition ($completedWaitMonitor.WaitForExit(60000)) "Completed-final monitor did not accept the later automated snapshot."
         $completedWaitResult = Get-Content -LiteralPath (Join-Path $childEvidence "$completedWaitRunId-monitor-result.json") -Raw | ConvertFrom-Json -Depth 30
         Assert-Condition ($completedWaitMonitor.ExitCode -eq 0 -and $completedWaitResult.status -eq "completed" -and $completedWaitResult.automatedRedisSnapshot.accepted -and
             -not (Test-Path -LiteralPath $completedWaitRollbackEvidence)) "An old, valid completed progress artifact must remain accepted until a qualifying post-resize automated snapshot arrives, with no Redis rollback."

@@ -2,7 +2,13 @@ import rateLimit, { ipKeyGenerator, type Store } from "express-rate-limit";
 import { RedisStore } from "rate-limit-redis";
 import { createClient } from "redis";
 import type { Request } from "express";
-import { resolveApiRateLimitIdentity } from "../util/apiRateLimitIdentity.js";
+import {
+  createCachedBearerUserIdVerifier,
+  resolveApiRateLimitIdentity,
+  type ApiRateLimitIdentity,
+} from "../util/apiRateLimitIdentity.js";
+import { usesDeviceScopedApiLimit } from "../util/apiRateLimitRoutes.js";
+import { verifyUserToken } from "../services/jwt.js";
 
 // Shared Redis backing for all limiters so counts survive deploys and are
 // shared across ECS tasks. Dedicated client (not the ws-redis publisher) to
@@ -76,13 +82,42 @@ export async function redisCommand(args: string[]): Promise<unknown | undefined>
   return redisClient.sendCommand(args);
 }
 
-function apiRateLimitIdentity(req: Request) {
-  return resolveApiRateLimitIdentity({
+const API_RATE_LIMIT_IDENTITY = Symbol("apiRateLimitIdentity");
+type RateLimitRequest = Request & {
+  [API_RATE_LIMIT_IDENTITY]?: ApiRateLimitIdentity;
+};
+
+const cachedStaffBearerUserId =
+  createCachedBearerUserIdVerifier(verifyUserToken);
+
+function verifiedStaffBearerUserId(req: Request): string | null {
+  // Device tokens use a separate secret and a token-hash key. Avoid attempting
+  // staff verification on every high-frequency device ingest request.
+  if (usesDeviceScopedApiLimit(req)) return null;
+  const authorization = req.get("authorization");
+  // Mirror authenticate.ts's exact bearer extraction so the limiter cannot
+  // select a different identity when a browser also has a valid session.
+  if (!authorization?.startsWith("Bearer ")) return null;
+  const token = authorization.split(" ")[1];
+  if (!token) return null;
+  // Invalid/unresolved traffic stays on the shared IP limit. Never key an
+  // unverified token directly or allow token rotation to bypass the limiter.
+  return cachedStaffBearerUserId(`Bearer ${token}`);
+}
+
+function apiRateLimitIdentity(req: RateLimitRequest) {
+  const cached = req[API_RATE_LIMIT_IDENTITY];
+  if (cached) return cached;
+  const identity = resolveApiRateLimitIdentity({
     request: req,
     authorization: req.get("authorization"),
     sessionUserId: req.session?.userId,
+    sessionImpersonating: Boolean((req.session as any)?.impersonating),
+    verifiedBearerUserId: verifiedStaffBearerUserId(req),
     normalizedIp: ipKeyGenerator(req.ip ?? req.socket?.remoteAddress ?? "unknown"),
   });
+  req[API_RATE_LIMIT_IDENTITY] = identity;
+  return identity;
 }
 
 export const authLimiter = rateLimit({

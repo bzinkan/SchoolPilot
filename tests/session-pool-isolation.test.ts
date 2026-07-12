@@ -131,9 +131,25 @@ describe("PostgreSQL session-pool isolation", () => {
 
   it("sets both request RLS GUCs in one database round trip", () => {
     const tenantSource = readFileSync(resolve(root, "src/middleware/tenantContext.ts"), "utf8");
+    assert.equal(
+      tenantSource.match(/SELECT set_config\('app\.is_super',[\s\S]*?set_config\('app\.school_id'/g)?.length,
+      2
+    );
+  });
+
+  it("forwards async school-context failures through Express 4 error handling", () => {
+    const contextSource = readFileSync(
+      resolve(root, "src/middleware/requireSchoolContext.ts"),
+      "utf8"
+    );
+
     assert.match(
-      tenantSource,
-      /SELECT set_config\('app\.is_super',[\s\S]*set_config\('app\.school_id'/
+      contextSource,
+      /requireSchoolContextWithoutTenantBinding:[\s\S]*Promise\.resolve\(resolveSchoolContext\(req,\s*res,\s*next\)\)\.catch\(next\)/
+    );
+    assert.match(
+      contextSource,
+      /export const requireSchoolContext:[\s\S]*Promise\.resolve\([\s\S]*resolveSchoolContext\([\s\S]*\.catch\(next\)/
     );
   });
 
@@ -141,6 +157,10 @@ describe("PostgreSQL session-pool isolation", () => {
     const routeSource = readFileSync(resolve(root, "src/routes/classpilot/devices.ts"), "utf8");
     const storageSource = readFileSync(resolve(root, "src/services/storage.ts"), "utf8");
 
+    assert.match(
+      routeSource,
+      /const staffAuth = \[[\s\S]*requireRole\("admin",\s*"school_admin",\s*"teacher",\s*"office_staff"\)/
+    );
     assert.match(routeSource, /Math\.min\(Math\.max\(limit,\s*1\),\s*100\)/);
     assert.match(
       routeSource,
@@ -148,7 +168,46 @@ describe("PostgreSQL session-pool isolation", () => {
     );
     assert.match(
       storageSource,
-      /where\(and\(eq\(heartbeats\.schoolId,\s*schoolId\),\s*eq\(heartbeats\.deviceId,\s*deviceId\)\)\)/
+      /getHeartbeatsByDevice[\s\S]*eq\(heartbeats\.schoolId,\s*schoolId\)[\s\S]*eq\(heartbeats\.deviceId,\s*deviceId\)/
     );
+    assert.match(
+      storageSource,
+      /inArray\(heartbeats\.studentId,\s*authorizedStudentIds\)/
+    );
+    assert.match(
+      storageSource,
+      /getHeartbeatsByDeviceInRange[\s\S]*?\.orderBy\(desc\(heartbeats\.timestamp\)\)[\s\S]*?\.limit\(5_000\)/
+    );
+    assert.match(
+      storageSource,
+      /getLiveTileReadableDeviceForStaff[\s\S]*getHistoryTileAccessForStaff/
+    );
+    assert.match(
+      routeSource,
+      /withAuthorizedTileDevice[\s\S]*runWithTenantContext\([\s\S]*getLiveTileReadableDeviceForStaff[\s\S]*getHistoryTileAccessForStaff/
+    );
+    const screenshotStart = routeSource.indexOf(
+      '// GET /api/classpilot/device/screenshot/:deviceId'
+    );
+    const screenshotEnd = routeSource.indexOf('// Events (item #3');
+    assert.ok(screenshotStart > -1 && screenshotEnd > screenshotStart);
+    const screenshotRoute = routeSource.slice(screenshotStart, screenshotEnd);
+    assert.match(screenshotRoute, /\.\.\.tileReadAuth/);
+    assert.match(screenshotRoute, /await withAuthorizedTileDevice/);
+    assert.match(screenshotRoute, /"live"/);
+    assert.ok(
+      screenshotRoute.indexOf("await withAuthorizedTileDevice") <
+        screenshotRoute.indexOf("await getScreenshot(deviceId)")
+    );
+    const historyStart = routeSource.indexOf(
+      '// GET /api/classpilot/heartbeats/:deviceId'
+    );
+    const historyEnd = routeSource.indexOf('// Remote Control Commands');
+    assert.ok(historyStart > -1 && historyEnd > historyStart);
+    const historyRoute = routeSource.slice(historyStart, historyEnd);
+    assert.match(historyRoute, /\.\.\.tileReadAuth/);
+    assert.match(historyRoute, /await withAuthorizedTileDevice/);
+    assert.match(historyRoute, /"history"/);
+    assert.match(historyRoute, /authorizedStudentIds/);
   });
 });

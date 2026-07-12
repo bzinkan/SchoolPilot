@@ -13,7 +13,7 @@ import { bindTenantContext } from "./tenantContext.js";
  * Also stores the user's membership role in res.locals.membershipRole
  * so downstream handlers can check role without extra DB queries.
  */
-export const requireSchoolContext: RequestHandler = async (req, res, next) => {
+const resolveSchoolContext: RequestHandler = async (req, res, next) => {
   if (!req.authUser) {
     return res.status(401).json({ error: "Authentication required" });
   }
@@ -29,7 +29,7 @@ export const requireSchoolContext: RequestHandler = async (req, res, next) => {
       res.locals.schoolId = schoolId as string;
     }
     res.locals.membershipRole = "super_admin";
-    return bindTenantContext(req, res, next);
+    return next();
   }
 
   // Session-based: schoolId already in session
@@ -81,7 +81,7 @@ export const requireSchoolContext: RequestHandler = async (req, res, next) => {
       )
       .limit(1);
     res.locals.membershipRole = membership?.role || null;
-    return bindTenantContext(req, res, next);
+    return next();
   }
 
   // JWT-based or session without schoolId: look up from params, query, header, or first membership
@@ -116,7 +116,7 @@ export const requireSchoolContext: RequestHandler = async (req, res, next) => {
 
     res.locals.schoolId = schoolId;
     res.locals.membershipRole = membership.role;
-    return bindTenantContext(req, res, next);
+    return next();
   }
 
   // Fallback: use first active membership
@@ -137,8 +137,27 @@ export const requireSchoolContext: RequestHandler = async (req, res, next) => {
 
   res.locals.schoolId = membership.schoolId;
   res.locals.membershipRole = membership.role;
-  // Bind the per-request tenant GUC on the fallback path too — the other four
-  // success branches above already do. Without this, a JWT user with no pinned
-  // school silently reads 0 rows / fails WITH CHECK on any RLS-enabled table.
-  return bindTenantContext(req, res, next);
+  return next();
+};
+
+/**
+ * Resolves and authorizes the school without checking out a response-lifetime
+ * RLS client. Callers must establish a narrow `runWithTenantContext` scope (or
+ * invoke `bindTenantContext`) before touching any tenant table.
+ */
+export const requireSchoolContextWithoutTenantBinding: RequestHandler = (
+  req,
+  res,
+  next
+) => {
+  void Promise.resolve(resolveSchoolContext(req, res, next)).catch(next);
+};
+
+export const requireSchoolContext: RequestHandler = (req, res, next) => {
+  void Promise.resolve(
+    resolveSchoolContext(req, res, (error?: unknown) => {
+      if (error) return next(error);
+      return bindTenantContext(req, res, next);
+    })
+  ).catch(next);
 };

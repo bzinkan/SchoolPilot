@@ -79,8 +79,10 @@ export async function runWithTenantContext<T>(
 
   const client = await pool.connect();
   try {
-    await client.query("SELECT set_config('app.is_super', $1, false)", [opts.isSuper ? "on" : "off"]);
-    await client.query("SELECT set_config('app.school_id', $1, false)", [opts.schoolId ?? ""]);
+    await client.query(
+      "SELECT set_config('app.is_super', $1, false), set_config('app.school_id', $2, false)",
+      [opts.isSuper ? "on" : "off", opts.schoolId ?? ""]
+    );
     const store: TenantStore = {
       client,
       db: drizzle(client, { schema }),
