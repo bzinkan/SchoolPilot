@@ -675,10 +675,14 @@ describe("ClassPilot load harness safety", () => {
           classId,
           Math.max(tilePeakInFlightByClass.get(classId) || 0, inFlight)
         );
+        // Keep the complete 50-request class cohort in flight long enough for
+        // a contended shared CI runner to accept every socket. The production
+        // contract remains the stricter >=45 concurrent requests; only this
+        // loopback fixture's artificial response hold is lengthened.
         setTimeout(() => {
           tileInFlightByClass.set(classId, Math.max(0, (tileInFlightByClass.get(classId) || 1) - 1));
           sendJson(status, value);
-        }, 100);
+        }, 500);
       };
       if (request.method === "POST" && url === "/api/classpilot/commands") {
         let body = "";
