@@ -118,6 +118,18 @@ describe("Terraform application-secret state detachment", () => {
     }
   });
 
+  it("pins the same public Google client ID in both production profiles", () => {
+    const profiles = ["infra/production.tfvars", "infra/production-ha-2000.tfvars"];
+    const clientIds = profiles.map((profile) => {
+      const match = read(profile).match(/^\s*google_client_id\s*=\s*"([^"]+)"/m);
+      assert.ok(match, `${profile} must pin google_client_id`);
+      assert.match(match[1]!, /^\d+-[A-Za-z0-9_-]+\.apps\.googleusercontent\.com$/);
+      return match[1]!;
+    });
+
+    assert.equal(clientIds[0], clientIds[1]);
+  });
+
   it("uses an address-only, backup-gated state-rm workflow before any plan", () => {
     const source = read("scripts/terraform-detach-application-secret-state.ps1");
     for (const resourceName of secretResourceNames) {
