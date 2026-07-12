@@ -164,6 +164,41 @@ try {
     Assert-Condition (-not $restoreOutputText.Contains($stateMarker)) "Restore output must not expose state contents."
     Assert-Condition (-not $restoreOutputText.Contains($passphraseText)) "Restore output must not expose the recovery passphrase."
 
+    $verifyOutput = @(
+        & $backupScript `
+            -Mode Verify `
+            -StatePath $statePath `
+            -BackupPath $dpapiBackups[0].FullName 6>&1
+        & $backupScript `
+            -Mode Verify `
+            -StatePath $statePath `
+            -BackupPath $recoveryPath `
+            -RecoveryPassphrase $securePassphrase 6>&1
+    )
+    $verifyOutputText = [string]::Join("`n", [string[]]$verifyOutput)
+    Assert-Condition (-not $verifyOutputText.Contains($stateMarker)) "Verify output must not expose state contents."
+    Assert-Condition (-not $verifyOutputText.Contains($passphraseText)) "Verify output must not expose the recovery passphrase."
+
+    $differentStatePath = Join-Path $testRoot "different.tfstate"
+    [System.IO.File]::WriteAllText(
+        $differentStatePath,
+        $fixtureJson.Replace('"serial":1', '"serial":2'),
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    & $backupScript -Mode Verify -StatePath $differentStatePath -BackupPath $dpapiBackups[0].FullName 2>$null 6>$null | Out-Null
+    $differentStateExitCode = $LASTEXITCODE
+    Assert-Condition ($differentStateExitCode -ne 0) "Verify must reject a valid backup for a different state serial/content."
+
+    $wrongPassphrase = ConvertTo-SecureString -String ([Guid]::NewGuid().ToString("N") + [Guid]::NewGuid().ToString("N")) -AsPlainText -Force
+    try {
+        & $backupScript -Mode Verify -StatePath $statePath -BackupPath $recoveryPath -RecoveryPassphrase $wrongPassphrase 2>$null 6>$null | Out-Null
+        $wrongPassphraseExitCode = $LASTEXITCODE
+        Assert-Condition ($wrongPassphraseExitCode -ne 0) "Verify must reject an AES-GCM backup with the wrong recovery passphrase."
+    }
+    finally {
+        $wrongPassphrase.Dispose()
+    }
+
     $junctionTarget = Join-Path $testRoot "junction-target"
     $junctionPath = Join-Path $testRoot "junction-output"
     [void][System.IO.Directory]::CreateDirectory($junctionTarget)

@@ -2,7 +2,7 @@
 
 [CmdletBinding()]
 param(
-    [ValidateSet("Backup", "Restore")]
+    [ValidateSet("Backup", "Restore", "Verify")]
     [string]$Mode = "Backup",
 
     [string]$StatePath,
@@ -1159,6 +1159,72 @@ function Invoke-Restore {
     }
 }
 
+function Invoke-Verify {
+    if ([string]::IsNullOrWhiteSpace($BackupPath)) {
+        throw "BackupPath is required in Verify mode."
+    }
+
+    $sourcePath = if ([string]::IsNullOrWhiteSpace($StatePath)) {
+        Join-Path $script:RepositoryRoot "infra\terraform.tfstate"
+    }
+    else {
+        Get-AbsolutePath -Path $StatePath -ParameterName "StatePath"
+    }
+    $encryptedPath = Get-AbsolutePath -Path $BackupPath -ParameterName "BackupPath"
+
+    if (-not [System.IO.File]::Exists($sourcePath)) {
+        throw "The source Terraform state does not exist."
+    }
+    if (-not [System.IO.File]::Exists($encryptedPath)) {
+        throw "The selected encrypted backup does not exist."
+    }
+    Assert-NoExistingReparsePoint -Path $sourcePath -ParameterName "StatePath"
+    Assert-OutsideRepository -Path $encryptedPath -ParameterName "BackupPath"
+    Assert-NoExistingReparsePoint -Path $encryptedPath -ParameterName "BackupPath"
+
+    $stateBytes = $null
+    $stateDigest = $null
+    $verified = $null
+    $isRecoveryBackup = $false
+    try {
+        $stateBytes = Read-LockedBytes -Path $sourcePath -Description "Terraform state"
+        $stateDigest = Get-Sha256 -Bytes $stateBytes
+        $isRecoveryBackup = Test-IsRecoveryBackup -Path $encryptedPath
+        if ($isRecoveryBackup) {
+            if ($null -eq $RecoveryPassphrase) {
+                throw "RecoveryPassphrase is required to verify an AES-GCM recovery backup."
+            }
+            $verified = Read-VerifiedRecoveryBackup `
+                -Path $encryptedPath `
+                -Passphrase $RecoveryPassphrase
+        }
+        else {
+            if ($null -ne $RecoveryPassphrase) {
+                throw "RecoveryPassphrase is valid only for an AES-GCM recovery backup."
+            }
+            $verified = Read-VerifiedBackup -Path $encryptedPath
+        }
+
+        if (
+            -not (Test-ByteArraysEqual -Left $stateDigest -Right $verified.Digest) -or
+            -not (Test-ByteArraysEqual -Left $stateBytes -Right $verified.Data)
+        ) {
+            throw "The encrypted backup is valid but does not match the exact current Terraform state."
+        }
+
+        $backupKind = if ($isRecoveryBackup) { "AES-256-GCM recovery" } else { "DPAPI" }
+        Write-Host "Verified $backupKind backup matches the exact current Terraform state."
+    }
+    finally {
+        if ($null -ne $verified) {
+            Clear-ByteArray -Bytes $verified.Data
+            Clear-ByteArray -Bytes $verified.Digest
+        }
+        Clear-ByteArray -Bytes $stateBytes
+        Clear-ByteArray -Bytes $stateDigest
+    }
+}
+
 try {
     if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
         throw "This tool requires Windows CurrentUser DPAPI."
@@ -1170,7 +1236,7 @@ try {
         }
         Invoke-Backup
     }
-    else {
+    elseif ($Mode -eq "Restore") {
         if (-not [string]::IsNullOrWhiteSpace($StatePath) -or -not [string]::IsNullOrWhiteSpace($OutputDirectory)) {
             throw "StatePath and OutputDirectory are valid only in Backup mode."
         }
@@ -1181,6 +1247,18 @@ try {
             throw "Phase and Usage are valid only in Backup mode."
         }
         Invoke-Restore
+    }
+    else {
+        if (-not [string]::IsNullOrWhiteSpace($OutputDirectory) -or -not [string]::IsNullOrWhiteSpace($RestorePath)) {
+            throw "OutputDirectory and RestorePath are not valid in Verify mode."
+        }
+        if (-not [string]::IsNullOrWhiteSpace($RecoveryPath)) {
+            throw "RecoveryPath is valid only in Backup mode; use BackupPath to verify a recovery copy."
+        }
+        if ($Phase -cne "manual" -or $Usage -cne "Manual") {
+            throw "Phase and Usage are valid only in Backup mode."
+        }
+        Invoke-Verify
     }
 }
 catch {
