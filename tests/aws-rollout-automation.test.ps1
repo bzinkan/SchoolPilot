@@ -150,6 +150,7 @@ $global:SchoolPilotTestServiceState = @{
 }
 $global:SchoolPilotTestWafCount = $false
 $global:SchoolPilotTestMetricQueryIds = @()
+$global:SchoolPilotTestMetricQueryPeriods = @{}
 $global:SchoolPilotTestRouteLatency = $true
 $global:SchoolPilotTestRedisNodeType = "cache.t4g.small"
 $global:SchoolPilotTestPublicIpv4 = $true
@@ -237,6 +238,10 @@ function global:aws {
         $inputPath = $inputReference.Substring("file://".Length)
         $queries = @(Get-Content -LiteralPath $inputPath -Raw | ConvertFrom-Json -Depth 20)
         $global:SchoolPilotTestMetricQueryIds = @($queries.Id)
+        $global:SchoolPilotTestMetricQueryPeriods = @{}
+        foreach ($query in $queries) {
+            $global:SchoolPilotTestMetricQueryPeriods[[string]$query.Id] = [int]$query.MetricStat.Period
+        }
         $timestamp = [DateTimeOffset]::UtcNow.ToString("o")
         $results = @($queries | ForEach-Object {
             $value = switch -Regex ([string]$_.Id) {
@@ -379,6 +384,12 @@ try {
         Assert-Condition ($monitorCalls.Contains($expected)) "Monitor did not poll or notify through '$expected'."
     }
     Assert-Condition ($global:SchoolPilotTestMetricQueryIds -contains "waf_device_blocked" -and $global:SchoolPilotTestMetricQueryIds -contains "waf_api_blocked") "Monitor did not poll both WAF rate-rule metrics."
+    foreach ($fiveMinuteMetric in @("rds_cpu_credit", "rds_surplus_charged", "redis_cpu_credit")) {
+        Assert-Condition ([int]$global:SchoolPilotTestMetricQueryPeriods[$fiveMinuteMetric] -eq 300) "Five-minute metric '$fiveMinuteMetric' must use a 300-second CloudWatch period."
+    }
+    foreach ($oneMinuteMetric in @("ecs_api_cpu", "waf_device_blocked", "waf_api_blocked")) {
+        Assert-Condition ([int]$global:SchoolPilotTestMetricQueryPeriods[$oneMinuteMetric] -eq 60) "One-minute metric '$oneMinuteMetric' must retain a 60-second CloudWatch period."
+    }
 
     $isolatedConfig = $monitorConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
     $isolatedConfig.runId = "missing-test-sentinel"
@@ -841,24 +852,39 @@ if ($service -eq "cloudwatch" -and $operation -eq "get-metric-data") {
   $swapValue=0
   if($env:SCHOOLPILOT_TEST_SWAP_COUNTER){$n=if(Test-Path -LiteralPath $env:SCHOOLPILOT_TEST_SWAP_COUNTER){[int](Get-Content -LiteralPath $env:SCHOOLPILOT_TEST_SWAP_COUNTER -Raw)}else{0};$n++;[IO.File]::WriteAllText($env:SCHOOLPILOT_TEST_SWAP_COUNTER,[string]$n);$swapValue=$n*20971520}
   $results = @($queries | ForEach-Object {
-    $value = switch -Regex ([string]$_.Id) {
-      '^waf_device_blocked$' { if($env:SCHOOLPILOT_TEST_WAF_DEVICE_BLOCK -or ($env:SCHOOLPILOT_TEST_WAF_DEVICE_BLOCK_FILE -and (Test-Path -LiteralPath $env:SCHOOLPILOT_TEST_WAF_DEVICE_BLOCK_FILE))){1}else{0}; break }
-      '^waf_api_blocked$' { if($env:SCHOOLPILOT_TEST_WAF_API_BLOCK){1}else{0}; break }
-      '^ecs_.*_(cpu|memory)$' { 10; break }
-      '^rds_cpu$' { 10; break }
-      '^rds_connections$' { 20; break }
-      '^rds_free_storage$' { 85899345920; break }
-      '^rds_free_memory$' { if($env:SCHOOLPILOT_TEST_AUX_BREACH){1}else{1073741824}; break }
-      '^rds_swap$' { $swapValue; break }
-      '^rds_cpu_credit$' { if($env:SCHOOLPILOT_TEST_AUX_BREACH){0}else{100}; break }
-      '^rds_surplus_charged$' { if($env:SCHOOLPILOT_TEST_AUX_BREACH){1}else{0}; break }
-      '^redis_cpu$' { 10; break }
-      '^redis_memory$' { 20; break }
-      '^redis_free$' { 209715200; break }
-      '^redis_cpu_credit$' { if($env:SCHOOLPILOT_TEST_AUX_BREACH){0}else{100}; break }
-      default { 0 }
+    $metricId = [string]$_.Id
+    if (($env:SCHOOLPILOT_TEST_WAF_SPARSE_ZERO -or $env:SCHOOLPILOT_TEST_WAF_PARTIAL_EMPTY) -and
+        $metricId -in @("waf_device_blocked", "waf_api_blocked")) {
+      $status = if ($env:SCHOOLPILOT_TEST_WAF_PARTIAL_EMPTY) { "PartialData" } else { "Complete" }
+      @{Id=$metricId;StatusCode=$status;Timestamps=@();Values=@()}
     }
-    @{Id=$_.Id;StatusCode="Complete";Timestamps=@($timestamp);Values=@($value)}
+    else {
+      $metricTimestamp = if ($env:SCHOOLPILOT_TEST_FIVE_MINUTE_METRIC_AGE_SECONDS -and
+          $metricId -in @("rds_cpu_credit", "rds_surplus_charged", "redis_cpu_credit")) {
+        [DateTimeOffset]::UtcNow.AddSeconds(-[int]$env:SCHOOLPILOT_TEST_FIVE_MINUTE_METRIC_AGE_SECONDS).ToString("o")
+      } elseif ($env:SCHOOLPILOT_TEST_FAST_METRIC_AGE_SECONDS -and
+          $metricId -notin @("rds_cpu_credit", "rds_surplus_charged", "redis_cpu_credit")) {
+        [DateTimeOffset]::UtcNow.AddSeconds(-[int]$env:SCHOOLPILOT_TEST_FAST_METRIC_AGE_SECONDS).ToString("o")
+      } else { $timestamp }
+      $value = switch -Regex ($metricId) {
+        '^waf_device_blocked$' { if($env:SCHOOLPILOT_TEST_WAF_DEVICE_BLOCK -or ($env:SCHOOLPILOT_TEST_WAF_DEVICE_BLOCK_FILE -and (Test-Path -LiteralPath $env:SCHOOLPILOT_TEST_WAF_DEVICE_BLOCK_FILE))){1}else{0}; break }
+        '^waf_api_blocked$' { if($env:SCHOOLPILOT_TEST_WAF_API_BLOCK){1}else{0}; break }
+        '^ecs_.*_(cpu|memory)$' { 10; break }
+        '^rds_cpu$' { 10; break }
+        '^rds_connections$' { 20; break }
+        '^rds_free_storage$' { 85899345920; break }
+        '^rds_free_memory$' { if($env:SCHOOLPILOT_TEST_AUX_BREACH){1}else{1073741824}; break }
+        '^rds_swap$' { $swapValue; break }
+        '^rds_cpu_credit$' { if($env:SCHOOLPILOT_TEST_AUX_BREACH){0}else{100}; break }
+        '^rds_surplus_charged$' { if($env:SCHOOLPILOT_TEST_AUX_BREACH){1}else{0}; break }
+        '^redis_cpu$' { 10; break }
+        '^redis_memory$' { 20; break }
+        '^redis_free$' { 209715200; break }
+        '^redis_cpu_credit$' { if($env:SCHOOLPILOT_TEST_AUX_BREACH){0}else{100}; break }
+        default { 0 }
+      }
+      @{Id=$metricId;StatusCode="Complete";Timestamps=@($metricTimestamp);Values=@($value)}
+    }
   })
   @{MetricDataResults=$results}|ConvertTo-Json -Depth 8 -Compress; exit 0
 }
@@ -1178,6 +1204,7 @@ process.exit(1);
             $raceConfig.automaticRollback = $false
             $raceConfig.PSObject.Properties.Remove("rollbackConfigPath")
             $raceConfig.maxIterations = 2
+            $raceConfig.deadlineUtc = [DateTimeOffset]::UtcNow.AddMinutes(5).ToString("o")
             $raceConfig.loadProgressPath = Join-Path $childRoot "$raceRunId-progress.jsonl"
             $raceConfig.loadSummaryPath = Join-Path $childRoot "$raceRunId-summary.json"
             $raceConfig.artifactsNotBeforeUtc = [DateTimeOffset]::UtcNow.AddSeconds(-1).ToString("o")
@@ -1248,6 +1275,57 @@ process.exit(1);
             $lastEvidence = Get-Content -LiteralPath (Join-Path $childEvidence "$CaseId-aws-monitor.jsonl") -Tail 1 -ErrorAction SilentlyContinue
             return [pscustomobject]@{ process=$process; result=$result; lastEvidence=$lastEvidence }
         }
+
+        $sparseWafConfig = $limitConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+        $sparseWafConfig.runId = "sparse-waf-zero"
+        $sparseWafConfig.minimumWallClockSeconds = 3
+        $sparseWafConfig.maxIterations = 5
+        $env:SCHOOLPILOT_TEST_WAF_SPARSE_ZERO = "1"
+        $sparseWafCase = Invoke-ChildMonitorCase "sparse-waf-zero" $sparseWafConfig
+        Remove-Item Env:SCHOOLPILOT_TEST_WAF_SPARSE_ZERO -ErrorAction SilentlyContinue
+        $sparseWafSample = $sparseWafCase.lastEvidence | ConvertFrom-Json -Depth 30
+        Assert-Condition ($sparseWafCase.process.ExitCode -eq 0 -and $sparseWafCase.result.status -eq "completed") "Sparse zero-event WAF counters must not invalidate a healthy monitor sample."
+        Assert-Condition ($sparseWafSample.waf.deviceBlockedSparseZero -eq $true -and $sparseWafSample.waf.apiBlockedSparseZero -eq $true) "Sparse WAF zero substitution must remain explicit in monitor evidence."
+
+        $partialWafConfig = $limitConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+        $partialWafConfig.runId = "partial-waf-unavailable"
+        $partialWafConfig.minimumWallClockSeconds = 10
+        $partialWafConfig.maxIterations = 4
+        $env:SCHOOLPILOT_TEST_WAF_PARTIAL_EMPTY = "1"
+        $partialWafCase = Invoke-ChildMonitorCase "partial-waf-unavailable" $partialWafConfig
+        Remove-Item Env:SCHOOLPILOT_TEST_WAF_PARTIAL_EMPTY -ErrorAction SilentlyContinue
+        Assert-Condition ($partialWafCase.process.ExitCode -eq 2 -and
+            $partialWafCase.result.failures -contains "missing_metric:waf_device_blocked" -and
+            $partialWafCase.result.failures -contains "missing_metric:waf_api_blocked") "Partial WAF telemetry must remain fail-closed instead of being converted to a sparse zero."
+
+        $slowFreshConfig = $limitConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+        $slowFreshConfig.runId = "five-minute-runtime-freshness"
+        $slowFreshConfig.minimumWallClockSeconds = 3
+        $slowFreshConfig.maxIterations = 5
+        $env:SCHOOLPILOT_TEST_FIVE_MINUTE_METRIC_AGE_SECONDS = "350"
+        $slowFreshCase = Invoke-ChildMonitorCase "five-minute-runtime-freshness" $slowFreshConfig
+        Remove-Item Env:SCHOOLPILOT_TEST_FIVE_MINUTE_METRIC_AGE_SECONDS -ErrorAction SilentlyContinue
+        Assert-Condition ($slowFreshCase.process.ExitCode -eq 0 -and $slowFreshCase.result.status -eq "completed") "A healthy five-minute credit datapoint 350 seconds old must remain fresh while one-minute metrics stay current."
+
+        $slowStaleConfig = $limitConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+        $slowStaleConfig.runId = "five-minute-runtime-stale"
+        $slowStaleConfig.minimumWallClockSeconds = 10
+        $slowStaleConfig.maxIterations = 4
+        $env:SCHOOLPILOT_TEST_FIVE_MINUTE_METRIC_AGE_SECONDS = "420"
+        $slowStaleCase = Invoke-ChildMonitorCase "five-minute-runtime-stale" $slowStaleConfig
+        Remove-Item Env:SCHOOLPILOT_TEST_FIVE_MINUTE_METRIC_AGE_SECONDS -ErrorAction SilentlyContinue
+        foreach ($slowMetric in @("rds_cpu_credit", "rds_surplus_credits_charged", "redis_cpu_credit")) {
+            Assert-Condition ($slowStaleCase.result.failures -contains "stale_metric:$slowMetric") "Five-minute metric '$slowMetric' older than 360 seconds must fail closed after three checks."
+        }
+
+        $fastStaleConfig = $limitConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+        $fastStaleConfig.runId = "one-minute-runtime-stale"
+        $fastStaleConfig.minimumWallClockSeconds = 10
+        $fastStaleConfig.maxIterations = 4
+        $env:SCHOOLPILOT_TEST_FAST_METRIC_AGE_SECONDS = "330"
+        $fastStaleCase = Invoke-ChildMonitorCase "one-minute-runtime-stale" $fastStaleConfig
+        Remove-Item Env:SCHOOLPILOT_TEST_FAST_METRIC_AGE_SECONDS -ErrorAction SilentlyContinue
+        Assert-Condition (@($fastStaleCase.result.failures | Where-Object { $_ -like "stale_metric:ecs_*" }).Count -gt 0) "One-minute metrics must retain the 180-second fail-closed freshness gate."
 
         foreach ($wafSignal in @(
             [pscustomobject]@{ id="device-blocked-no-valid403"; env="SCHOOLPILOT_TEST_WAF_DEVICE_BLOCK"; failure="waf_device_blocked" },
@@ -1367,6 +1445,7 @@ process.exit(1);
         $freshnessCase = Invoke-ChildMonitorCase "metric-freshness-gate" $freshnessConfig
         Assert-Condition (@($freshnessCase.result.failures | Where-Object { $_ -like "stale_metric:*" }).Count -gt 0) "Runtime telemetry must fail closed after three stale one-minute checks."
         Remove-Item Env:SCHOOLPILOT_TEST_METRIC_TIMESTAMP -ErrorAction SilentlyContinue
+        Remove-Item Env:SCHOOLPILOT_TEST_WAF_SPARSE_ZERO,Env:SCHOOLPILOT_TEST_WAF_PARTIAL_EMPTY,Env:SCHOOLPILOT_TEST_FIVE_MINUTE_METRIC_AGE_SECONDS,Env:SCHOOLPILOT_TEST_FAST_METRIC_AGE_SECONDS -ErrorAction SilentlyContinue
         Remove-Item Env:SCHOOLPILOT_TEST_WAF_DELAY -ErrorAction SilentlyContinue
         Remove-Item Env:SCHOOLPILOT_TEST_WAF_ZERO -ErrorAction SilentlyContinue
         Remove-Item Env:SCHOOLPILOT_TEST_WAF_DEVICE_BLOCK,Env:SCHOOLPILOT_TEST_WAF_API_BLOCK -ErrorAction SilentlyContinue
@@ -1712,6 +1791,7 @@ finally {
     Remove-Variable SchoolPilotTestServiceState -Scope Global -ErrorAction SilentlyContinue
     Remove-Variable SchoolPilotTestWafCount -Scope Global -ErrorAction SilentlyContinue
     Remove-Variable SchoolPilotTestMetricQueryIds -Scope Global -ErrorAction SilentlyContinue
+    Remove-Variable SchoolPilotTestMetricQueryPeriods -Scope Global -ErrorAction SilentlyContinue
     Remove-Variable SchoolPilotTestRouteLatency -Scope Global -ErrorAction SilentlyContinue
     if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
 }
