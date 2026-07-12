@@ -1060,7 +1060,7 @@ function Assert-TargetHealthGate {
 function Get-CloudWatchFilterCount {
     param(
         [Parameter(Mandatory = $true)][string]$LogGroup,
-        [Parameter(Mandatory = $true)][string]$StreamPrefix,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$StreamPrefix,
         [Parameter(Mandatory = $true)][string]$FilterPattern,
         [Parameter(Mandatory = $true)][int64]$StartTimeMs,
         [Parameter(Mandatory = $true)][string]$AwsRegion
@@ -1071,18 +1071,36 @@ function Get-CloudWatchFilterCount {
         "--start-time", [string]$StartTimeMs,
         "--filter-pattern", ('"' + $FilterPattern.Replace('"', '') + '"'),
         "--region", $AwsRegion,
-        "--query", "length(events)",
+        # AWS CLI applies text-output queries once per paginator page. Returning
+        # event IDs lets us aggregate every page locally; returning
+        # `length(events)` emits one scalar per page and cannot be parsed safely.
+        # Messages and log-stream content never enter this process.
+        "--query", "events[].eventId",
         "--output", "text"
     )
     if ($StreamPrefix) {
         $arguments = @($arguments[0..3] + @("--log-stream-name-prefix", $StreamPrefix) + $arguments[4..($arguments.Count - 1)])
     }
     $stdout = Invoke-ExternalCommand -Command "aws" -Arguments $arguments
-    $count = 0
-    if (-not [int]::TryParse($stdout.Trim(), [ref]$count)) {
-        throw "CloudWatch returned an invalid sanitized event count."
+    $tokens = @($stdout -split '\s+' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    if ($tokens.Count -eq 0 -or ($tokens.Count -eq 1 -and [string]$tokens[0] -ceq "None")) {
+        return 0
     }
-    return $count
+    $eventIds = [System.Collections.Generic.HashSet[string]]::new(
+        [System.StringComparer]::Ordinal
+    )
+    foreach ($token in $tokens) {
+        $eventId = [string]$token
+        if (
+            $eventId -ceq "None" -or
+            $eventId.Length -gt 512 -or
+            $eventId -notmatch '^[A-Za-z0-9._:/+=-]+$'
+        ) {
+            throw "CloudWatch returned an invalid sanitized event-ID projection."
+        }
+        [void]$eventIds.Add($eventId)
+    }
+    return $eventIds.Count
 }
 
 function Assert-PostDeployLogGate {

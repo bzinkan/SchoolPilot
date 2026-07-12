@@ -195,6 +195,8 @@ try {
         SourceTaskSecretScenario = "valid"
         ClonedTaskSecretScenario = "valid"
         TaskSecretScenarioTarget = "both"
+        LogMode = "empty"
+        LogEventOutput = ""
     }
     $global:SchoolPilotCredentialRotationTestHandler = {
         param([string]$Command, [string[]]$Arguments)
@@ -246,6 +248,14 @@ try {
                 }
                 "post-write-gate-failure" {
                     $state.SsmVersion = $next; $state.SsmCiphertext = "cipher-wrong"; $state.SsmPlaintext = "wrong-value"
+                    return [pscustomobject]@{ ExitCode = 0; StdOut = (@{ Version = $next } | ConvertTo-Json -Compress); StdErr = "" }
+                }
+                "success-from-request" {
+                    $fileArg = @($Arguments | Where-Object { $_ -like "file://*" })[0].Substring(7)
+                    $request = Get-Content -LiteralPath $fileArg -Raw | ConvertFrom-Json -Depth 10
+                    $state.SsmVersion = $next
+                    $state.SsmCiphertext = "cipher-success-$next"
+                    $state.SsmPlaintext = [string]$request.Value
                     return [pscustomobject]@{ ExitCode = 0; StdOut = (@{ Version = $next } | ConvertTo-Json -Compress); StdErr = "" }
                 }
                 default { throw "Unexpected mocked SSM write scenario." }
@@ -325,6 +335,32 @@ try {
             $arn = "arn:aws:ecs:us-east-1:000000000000:task-definition/$($request.family):$($state.RegisteredCount)"
             return [pscustomobject]@{ ExitCode = 0; StdOut = (@{ taskDefinition = @{ taskDefinitionArn = $arn } } | ConvertTo-Json -Compress); StdErr = "" }
         }
+        if ($Command -ceq "aws" -and $Arguments[0] -ceq "ecs" -and $Arguments[1] -ceq "update-service") {
+            $service = $Arguments[[Array]::IndexOf($Arguments, "--service") + 1]
+            $task = $Arguments[[Array]::IndexOf($Arguments, "--task-definition") + 1]
+            if ($service -ceq "schoolpilot-production-api") { $state.ApiArn = $task }
+            elseif ($service -ceq "schoolpilot-production-scheduler-worker") { $state.WorkerArn = $task }
+            else { throw "Unexpected mocked ECS service update." }
+            return [pscustomobject]@{ ExitCode = 0; StdOut = (@{ service = @{ serviceName = $service; taskDefinition = $task } } | ConvertTo-Json -Compress); StdErr = "" }
+        }
+        if ($Command -ceq "aws" -and $Arguments[0] -ceq "ecs" -and $Arguments[1] -ceq "wait") {
+            return [pscustomobject]@{ ExitCode = 0; StdOut = ""; StdErr = "" }
+        }
+        if ($Command -ceq "aws" -and $Arguments[0] -ceq "logs" -and $Arguments[1] -ceq "filter-log-events") {
+            if ([string]$state.LogMode -ceq "direct") {
+                return [pscustomobject]@{ ExitCode = 0; StdOut = [string]$state.LogEventOutput; StdErr = "" }
+            }
+            if ([string]$state.LogMode -ceq "rollback-success") {
+                $pattern = $Arguments[[Array]::IndexOf($Arguments, "--filter-pattern") + 1].Trim('"')
+                $output = switch ($pattern) {
+                    "prewarmed" { "api-page-one`napi-page-two" }
+                    "WorkerHeartbeat" { "worker-page-one`nworker-page-two" }
+                    default { "None" }
+                }
+                return [pscustomobject]@{ ExitCode = 0; StdOut = $output; StdErr = "" }
+            }
+            return [pscustomobject]@{ ExitCode = 0; StdOut = "None"; StdErr = "" }
+        }
         if ($Command -ceq "aws" -and $Arguments[0] -ceq "elbv2") {
             return [pscustomobject]@{ ExitCode = 0; StdOut = '{"TargetHealthDescriptions":[{"TargetHealth":{"State":"healthy"}}]}'; StdErr = "" }
         }
@@ -370,6 +406,27 @@ try {
     $replacement.Dispose()
     Assert-Condition ($script:MutationStarted) "SSM mutation attempt must be marked before the command."
     Assert-Condition (-not (($global:RotationTestState.Calls -join "`n").Contains([string]$global:RotationTestState.DesiredPlaintext))) "External command arguments must not contain plaintext."
+
+    $global:RotationTestState.LogMode = "direct"
+    $global:RotationTestState.LogEventOutput = "event-page-one`nevent-page-two`tevent-page-three"
+    $logCallsBefore = $global:RotationTestState.Calls.Count
+    $multiPageCount = Get-CloudWatchFilterCount `
+        -LogGroup "/ecs/schoolpilot-production-api" `
+        -StreamPrefix "api" `
+        -FilterPattern "prewarmed" `
+        -StartTimeMs 1 `
+        -AwsRegion "us-east-1"
+    Assert-Condition ($multiPageCount -eq 3) "CloudWatch event IDs from every paginator page must aggregate locally."
+    $logCall = @($global:RotationTestState.Calls | Select-Object -Skip $logCallsBefore | Where-Object { $_ -match 'logs filter-log-events' })
+    Assert-Condition ($logCall.Count -eq 1 -and $logCall[0].Contains("events[].eventId")) "CloudWatch queries must project only event IDs."
+    Assert-Condition (-not $logCall[0].Contains("length(events)")) "CloudWatch pagination must not use one scalar length per page."
+    $global:RotationTestState.LogEventOutput = "None"
+    Assert-Condition ((Get-CloudWatchFilterCount -LogGroup "/ecs/test" -StreamPrefix "" -FilterPattern "none" -StartTimeMs 1 -AwsRegion "us-east-1") -eq 0) "CloudWatch empty text projection must count as zero."
+    $global:RotationTestState.LogEventOutput = "valid-event`nNone"
+    Assert-Throws {
+        Get-CloudWatchFilterCount -LogGroup "/ecs/test" -StreamPrefix "" -FilterPattern "invalid" -StartTimeMs 1 -AwsRegion "us-east-1"
+    } "Mixed invalid CloudWatch paginator output must fail closed."
+    $global:RotationTestState.LogMode = "empty"
 
     $contractSnapshot = [pscustomobject]@{
         ApiTaskDefinitionArn = [string]$global:RotationTestState.ApiArn
@@ -469,6 +526,47 @@ try {
     }
     $global:RotationTestState.ClonedTaskSecretScenario = "valid"
     $global:RotationTestState.TaskSecretScenarioTarget = "both"
+
+    $rollbackPriorPlaintext = "rollback-prior-" + [Guid]::NewGuid().ToString("N")
+    $rollbackCurrentPlaintext = "rollback-current-" + [Guid]::NewGuid().ToString("N")
+    Set-MockedSsmState -Version 40 -Ciphertext "rollback-cipher-v40" -Plaintext $rollbackCurrentPlaintext -Scenario "success-from-request"
+    $rollbackExpectedSsm = New-TestSsmSnapshot -Version 40 -Ciphertext "rollback-cipher-v40" -Plaintext $rollbackCurrentPlaintext
+    $rollbackPriorSsm = New-TestSsmSnapshot -Version 39 -Ciphertext "rollback-cipher-v39" -Plaintext $rollbackPriorPlaintext
+    $rollbackApiArn = "arn:aws:ecs:us-east-1:000000000000:task-definition/schoolpilot-production-api:10"
+    $rollbackWorkerArn = "arn:aws:ecs:us-east-1:000000000000:task-definition/schoolpilot-production-scheduler-worker:11"
+    $global:RotationTestState.ApiArn = "arn:aws:ecs:us-east-1:000000000000:task-definition/schoolpilot-production-api:30"
+    $global:RotationTestState.WorkerArn = "arn:aws:ecs:us-east-1:000000000000:task-definition/schoolpilot-production-scheduler-worker:31"
+    $global:RotationTestState.LogMode = "rollback-success"
+    $rollbackManifest = [pscustomobject]@{
+        parameterName = [string]$global:RotationTestState.ParameterName
+        cluster = "schoolpilot-production-cluster"
+        apiService = "schoolpilot-production-api"
+        workerService = "schoolpilot-production-scheduler-worker"
+        project = "schoolpilot"
+        environment = "production"
+        prior = [pscustomobject]@{
+            ssm = $rollbackPriorSsm
+            apiTaskDefinitionArn = $rollbackApiArn
+            workerTaskDefinitionArn = $rollbackWorkerArn
+            imageDigest = "sha256:" + ("b" * 64)
+        }
+    }
+    $rollbackPriorSecret = ConvertTo-SecureString -String $rollbackPriorPlaintext -AsPlainText -Force
+    try {
+        $rollbackResult = Invoke-CredentialRollbackCore `
+            -Manifest $rollbackManifest `
+            -Configuration $catalog.google `
+            -AwsRegion "us-east-1" `
+            -RunDirectory $secureRoot `
+            -ExpectedCurrentSsmSnapshot $rollbackExpectedSsm `
+            -PriorSecret $rollbackPriorSecret `
+            -LogStartTimeMs 1
+        Assert-Condition ($rollbackResult.Services.ApiTaskDefinitionArn -ceq $rollbackApiArn) "Rollback must restore the captured API task definition."
+        Assert-Condition ($rollbackResult.Services.WorkerTaskDefinitionArn -ceq $rollbackWorkerArn) "Rollback must restore the captured worker task definition."
+        Assert-Condition ([string]$rollbackResult.Ssm.PlaintextHash -ceq [string]$rollbackPriorSsm.PlaintextHash) "Rollback must restore the prior SSM plaintext hash."
+    }
+    finally { $rollbackPriorSecret.Dispose() }
+    $global:RotationTestState.LogMode = "empty"
 
     $cloneCallsBefore = $global:RotationTestState.Calls.Count
     $expectedCloneRevision = [int]$global:RotationTestState.RegisteredCount + 1
