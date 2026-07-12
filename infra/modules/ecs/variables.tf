@@ -13,6 +13,22 @@ variable "container_port" { type = number }
 variable "ecs_security_group_id" { type = string }
 
 variable "desired_count" { type = number }
+variable "enable_api_arrival_capacity" {
+  type    = bool
+  default = false
+}
+variable "api_arrival_scale_up_schedule" {
+  type    = string
+  default = "cron(0 6 ? * MON-FRI *)"
+}
+variable "api_arrival_scale_down_schedule" {
+  type    = string
+  default = "cron(0 10 ? * MON-FRI *)"
+}
+variable "api_arrival_schedule_timezone" {
+  type    = string
+  default = "America/New_York"
+}
 variable "cpu" { type = number }
 variable "memory" { type = number }
 variable "worker_desired_count" { type = number }

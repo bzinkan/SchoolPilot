@@ -9,7 +9,7 @@ import { setupWebSocket } from "./realtime/websocket.js";
 import { startScheduler, stopScheduler } from "./services/scheduler.js";
 import { startHealthMonitor, stopHealthMonitor } from "./services/healthMonitor.js";
 import errorMonitor from "./services/errorMonitor.js";
-import { pool, sessionPool } from "./db.js";
+import { pool, prewarmMainPool, sessionPool } from "./db.js";
 import { schedulerLockPool, schedulerPool } from "./services/schedulerDb.js";
 import { migrationsOnStartup, migrationsOnly, schedulerEnabled } from "./config/runtime.js";
 
@@ -1642,6 +1642,14 @@ async function startServer(): Promise<void> {
     await runStartupMigrations();
   } else {
     console.log("[startup] RUN_MIGRATIONS_ON_STARTUP=false; skipping startup migrations");
+  }
+
+  // node-postgres does not proactively create its configured minimum. Verify
+  // the full API main-pool cohort before accepting traffic; worker-role and
+  // migration-only processes retain their existing non-prewarmed behavior.
+  const prewarmedMainClients = await prewarmMainPool();
+  if (prewarmedMainClients > 0) {
+    console.log(`[startup] prewarmed ${prewarmedMainClients} main database connections`);
   }
 
   const app = createApp();

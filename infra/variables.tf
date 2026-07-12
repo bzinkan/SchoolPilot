@@ -114,6 +114,30 @@ variable "ecs_desired_count" {
   default     = 2
 }
 
+variable "enable_api_arrival_capacity" {
+  description = "Temporarily raise the API autoscaling minimum to two during the weekday school-arrival window"
+  type        = bool
+  default     = false
+}
+
+variable "api_arrival_scale_up_schedule" {
+  description = "Application Auto Scaling cron expression for the weekday API arrival-capacity increase"
+  type        = string
+  default     = "cron(0 6 ? * MON-FRI *)"
+}
+
+variable "api_arrival_scale_down_schedule" {
+  description = "Application Auto Scaling cron expression that restores the ordinary API minimum"
+  type        = string
+  default     = "cron(0 10 ? * MON-FRI *)"
+}
+
+variable "api_arrival_schedule_timezone" {
+  description = "IANA time zone used by the API arrival-capacity schedules"
+  type        = string
+  default     = "America/New_York"
+}
+
 variable "ecs_cpu" {
   description = "Fargate task CPU (256, 512, 1024, 2048, 4096)"
   type        = number

@@ -28,15 +28,16 @@ redis_node_type     = "cache.t4g.small"
 redis_replica_count = 1
 
 # ECS — scheduler work runs in the singleton worker, so the API can scale out safely
-ecs_desired_count         = 2
-ecs_cpu                   = 512
-ecs_memory                = 1024
-worker_desired_count      = 1
-worker_cpu                = 256
-worker_memory             = 512
-db_pool_max               = 20
-scheduler_db_pool_max     = 5
-enable_container_insights = true
+ecs_desired_count           = 2
+enable_api_arrival_capacity = false
+ecs_cpu                     = 512
+ecs_memory                  = 1024
+worker_desired_count        = 1
+worker_cpu                  = 256
+worker_memory               = 512
+db_pool_max                 = 20
+scheduler_db_pool_max       = 5
+enable_container_insights   = true
 
 # Shared-school-IP WAF capacity remains compatible with the launch profile.
 waf_api_rate_limit           = 50000

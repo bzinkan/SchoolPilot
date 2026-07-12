@@ -1,6 +1,6 @@
 import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -1656,6 +1656,154 @@ describe("ClassPilot load harness safety", () => {
       server.closeAllConnections?.();
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     }
+  });
+
+  it("distinguishes unavailable isolation probes from confirmed cross-school access", async () => {
+    const probeManifestPath = join(tempDir, "probe-failure-devices.private.json");
+    writeFileSync(probeManifestPath, JSON.stringify([
+      {
+        deviceId: "probe-failure-primary-device",
+        studentId: "probe-failure-primary-student",
+        studentToken: "probe-failure-primary-secret",
+        schoolId: "school-1",
+      },
+      {
+        deviceId: "probe-failure-canary-device",
+        studentId: "probe-failure-canary-student",
+        studentToken: "probe-failure-canary-secret",
+        schoolId: "school-2",
+      },
+    ]));
+
+    const runProbeCase = async (probeStatus: number, label: string) => {
+      let requestCount = 0;
+      const server = createServer((request, response) => {
+        requestCount += 1;
+        const isCanaryProbe = request.method === "GET" && (
+          request.url === "/api/classpilot/heartbeats/probe-failure-canary-device" ||
+          request.url === "/api/classpilot/device/screenshot/probe-failure-canary-device"
+        );
+        response.writeHead(isCanaryProbe ? probeStatus : 200, { "content-type": "application/json" });
+        response.end(JSON.stringify(isCanaryProbe
+          ? { error: "probe result", deviceId: "probe-failure-canary-device" }
+          : {}));
+      });
+      const webSockets = new WebSocketServer({ server, path: "/ws" });
+      webSockets.on("connection", (socket) => socket.once("message", (raw) => {
+        const auth = JSON.parse(raw.toString());
+        socket.send(JSON.stringify({ type: "auth-success", role: auth.role }));
+      }));
+      await new Promise<void>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", resolve);
+      });
+      const address = server.address() as AddressInfo;
+      const summaryPath = join(tempDir, `${label}-probe-summary.json`);
+      const readyPath = join(tempDir, `${label}-probe-harness-ready.json`);
+      const startGatePath = join(tempDir, `${label}-probe-harness-start.json`);
+      const runId = `${label}-probe-start-gate`;
+      let child: ReturnType<typeof spawn> | null = null;
+      try {
+        const env = cleanEnv({
+          LOAD_BASE_URL: `http://127.0.0.1:${address.port}`,
+          LOAD_DEVICE_MANIFEST: probeManifestPath,
+          LOAD_DURATION_SECONDS: "10",
+          LOAD_TEST_ACCELERATED_RUNTIME_MS: "2000",
+          LOAD_TEST_REQUEST_STAGGER_MS: "100",
+          LOAD_COMMAND_SETTLE_MS: "0",
+          LOAD_REQUEST_TIMEOUT_MS: "500",
+          LOAD_SHUTDOWN_GRACE_MS: "500",
+          LOAD_TEACHER_COOKIE: "schoolpilot.sid=probe-failure-cookie-secret",
+          LOAD_TEACHER_TOKEN: "probe-failure-teacher-token-secret",
+          LOAD_TEACHER_SCHOOL_ID: "school-1",
+          LOAD_TEACHER_INTERVAL_MS: "100",
+          LOAD_TEST_ENABLE_ISOLATION_PROBES: "true",
+          LOAD_EXTERNAL_SUMMARY_PATH: summaryPath,
+          LOAD_RUN_ID: runId,
+          LOAD_SUPERVISOR_READY_PATH: readyPath,
+          LOAD_SUPERVISOR_START_GATE_PATH: startGatePath,
+          LOAD_SUPERVISOR_START_GATE_TIMEOUT_MS: "5000",
+        });
+        child = spawn(process.execPath, [script], { env });
+        let stdout = "";
+        let stderr = "";
+        child.stdout.setEncoding("utf8");
+        child.stderr.setEncoding("utf8");
+        child.stdout.on("data", (chunk) => { stdout += chunk; });
+        child.stderr.on("data", (chunk) => { stderr += chunk; });
+        const completed = new Promise<{ status: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string }>((resolve, reject) => {
+          child?.once("error", reject);
+          child?.once("close", (status, signal) => resolve({ status, signal, stdout, stderr }));
+        });
+
+        const readyDeadline = Date.now() + 2_000;
+        while (!existsSync(readyPath) && Date.now() < readyDeadline) {
+          assert.equal(child.exitCode, null, `${label} probe harness exited before monitor startup: ${stderr}`);
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        assert.ok(existsSync(readyPath), `${label} probe harness did not reach the supervisor start gate`);
+        const ready = JSON.parse(readFileSync(readyPath, "utf8"));
+        assert.equal(ready.runId, runId);
+        assert.equal(ready.harnessProcessId, child.pid);
+        assert.equal(ready.trafficStarted, false);
+
+        // Give an immediate fatal response enough time to arrive if any HTTP or
+        // WebSocket traffic could escape before the monitor releases the gate.
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        assert.equal(child.exitCode, null, `${label} probe harness exited before monitor startup: ${stderr}`);
+        assert.equal(requestCount, 0, `${label} probe emitted HTTP traffic before monitor startup`);
+        assert.equal(existsSync(summaryPath), false, `${label} probe wrote a terminal summary before monitor startup`);
+
+        writeFileSync(startGatePath, JSON.stringify({
+          schemaVersion: 1,
+          type: "load_supervisor_start",
+          runId,
+          harnessProcessId: child.pid,
+          monitorProcessId: process.pid,
+          releasedAt: new Date().toISOString(),
+        }));
+        const result = await Promise.race([
+          completed,
+          new Promise<never>((_resolve, reject) => setTimeout(
+            () => reject(new Error(`${label} probe harness did not exit after supervisor release`)),
+            5_000
+          )),
+        ]);
+        return { result, summary: JSON.parse(readFileSync(summaryPath, "utf8")) };
+      } finally {
+        if (child && child.exitCode === null) child.kill();
+        for (const client of webSockets.clients) client.terminate();
+        await new Promise<void>((resolve) => webSockets.close(() => resolve()));
+        server.closeAllConnections?.();
+        await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+      }
+    };
+
+    const unavailable = await runProbeCase(500, "unavailable");
+    assert.notEqual(unavailable.result.status, 0);
+    assert.ok(unavailable.summary.fatalGate.reasonCodes.includes("tenant-isolation-probe-unavailable"));
+    assert.equal(unavailable.summary.fatalGate.reason, "http-500");
+    assert.ok(unavailable.summary.counters.tenantIsolationProbeAttempts >= 1);
+    assert.ok(unavailable.summary.counters.tenantIsolationProbeAttempts <= 2);
+    assert.equal(unavailable.summary.counters.tenantIsolationProbePassed, 0);
+    assert.equal(
+      unavailable.summary.counters.tenantIsolationProbeFailed,
+      unavailable.summary.counters.tenantIsolationProbeAttempts
+    );
+    assert.equal(
+      unavailable.summary.counters.tenantIsolationProbeIndeterminate,
+      unavailable.summary.counters.tenantIsolationProbeAttempts
+    );
+    assert.equal(unavailable.summary.counters.crossSchoolHttpResponses, 0);
+    assert.notEqual(unavailable.summary.run.shutdownReason, "duration");
+
+    const exposed = await runProbeCase(200, "exposed");
+    assert.notEqual(exposed.result.status, 0);
+    assert.ok(exposed.summary.fatalGate.reasonCodes.includes("cross-school-http-response"));
+    assert.equal(exposed.summary.fatalGate.reason, "foreign-resource-access-succeeded");
+    assert.ok(exposed.summary.counters.crossSchoolHttpResponses >= 1);
+    assert.equal(exposed.summary.counters.tenantIsolationProbeIndeterminate, 0);
+    assert.notEqual(exposed.summary.run.shutdownReason, "duration");
   });
 
   it("rejects an enforced run with an outstanding reconnect or unauthenticated final socket", async () => {

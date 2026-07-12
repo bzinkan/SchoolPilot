@@ -644,7 +644,7 @@ not add a CloudFront `/livez` behavior; public synthetic checks should use
 | **CloudFront** | Distribution `E1TPPJOD7C2CXR` | Two origins: `alb-api` (HTTPS-only ALB origin) and `s3-frontend` (S3); WAF attached |
 | **ALB** | `schoolpilot-production-alb` (`schoolpilot-production-alb-1532292365.us-east-1.elb.amazonaws.com`) | HTTPS listener forwards to ECS target group; target health path `/livez`; inbound HTTPS access is restricted to the AWS CloudFront origin-facing managed prefix list |
 | **ECS Cluster** | `schoolpilot-production-cluster` | Fargate launch type |
-| **ECS API Service** | `schoolpilot-production-api` | Launch sizing: 1 desired task (autoscaling 1–6), 512 CPU / 1024 MiB, uses the ALB target group. The cost rollout stages it from private to public subnets with a public IPv4 only after the baseline gate. |
+| **ECS API Service** | `schoolpilot-production-api` | Launch sizing: ordinary minimum 1 task, weekday 06:00–10:00 America/New_York arrival minimum 2, autoscaling maximum 6; each task uses 512 CPU / 1024 MiB and the ALB target group. The cost rollout stages it from private to public subnets with a public IPv4 only after the baseline gate. |
 | **ECS Worker Service** | `schoolpilot-production-scheduler-worker` | Launch sizing: 1 desired singleton scheduler worker at 256 CPU / 512 MiB, staged to the same public-task egress posture as the API; no ALB target registration. |
 | **Task Definitions** | `schoolpilot-production-api`, `schoolpilot-production-api-emergency`, `schoolpilot-production-scheduler-worker` | API container named `api`, worker container named `scheduler-worker`, same digest-pinned image. The emergency family is pre-registered at 512 CPU / 2048 MiB and is never selected by the normal deploy path. |
 | **ECR** | `135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api` | Images are pushed with a git-SHA tag and also `:latest`; ECS revisions pin by digest |
@@ -676,7 +676,16 @@ Preferred path:
 
 The deploy script requires a clean local `main` equal to `origin/main`, green
 latest GitHub Actions runs per workflow, authenticated AWS + GitHub CLIs, and a
-git-SHA image tag by default. It builds and pushes the image, registers
+git-SHA image tag by default. A production backend deploy also fails closed
+unless the API is stable at one or two tasks and the scheduler worker is stable
+at exactly one task. Immediately before its migration it captures the API
+Application Auto Scaling suspended state, suspends dynamic scale-in/out while
+preserving the captured scheduled-scaling state, rechecks both services, keeps
+the dynamic hold through migration and service stabilization, and restores the
+exact prior state. Leaving the reviewed one/two-task schedules active prevents
+a deployment from skipping the 06:00 scale-up or 10:00 scale-down. Production `--skip-wait` is
+therefore prohibited. This bounds the 200% rolling database-connection overlap
+below the launch gate. It builds and pushes the image, registers
 digest-pinned API and scheduler-worker task definitions, and also pre-registers
 an unused digest-pinned API OOM target in the
 `schoolpilot-<environment>-api-emergency` family. The emergency target clones

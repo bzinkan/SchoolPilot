@@ -7,6 +7,8 @@ import errorMonitor from "./services/errorMonitor.js";
 import {
   databasePoolIdleTimeouts,
   databasePoolLimits,
+  databasePoolMinimums,
+  prewarmDatabasePool,
 } from "./config/databasePools.js";
 
 // SOC 2 / SC-7: enforce TLS verify-full to AWS RDS using the bundled CA chain.
@@ -19,11 +21,13 @@ if (!url) {
   );
 }
 const poolLimits = databasePoolLimits();
+const poolMinimums = databasePoolMinimums();
 const poolIdleTimeouts = databasePoolIdleTimeouts();
 
 const pool = new pg.Pool({
   connectionString: url,
   max: poolLimits.main,
+  min: poolMinimums.main,
   idleTimeoutMillis: poolIdleTimeouts.main,
   connectionTimeoutMillis: 5000,
   statement_timeout: 15000,
@@ -45,6 +49,11 @@ const sessionPool = new pg.Pool({
   ssl: buildPgSslConfig(url),
   allowExitOnIdle: process.env.NODE_ENV !== "production",
 });
+
+export async function prewarmMainPool(): Promise<number> {
+  await prewarmDatabasePool(pool, poolMinimums.main);
+  return poolMinimums.main;
+}
 
 pool.on("error", (err) => {
   console.error("Unexpected error on idle client", err);

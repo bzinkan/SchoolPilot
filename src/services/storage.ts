@@ -5278,7 +5278,6 @@ export async function getActiveHandsForStudent(
   schoolId: string,
   studentId: string
 ): Promise<ClasspilotActiveHand[]> {
-  await clearExpiredClasspilotActiveHands(schoolId);
   return db
     .select()
     .from(classpilotActiveHands)
@@ -5286,7 +5285,8 @@ export async function getActiveHandsForStudent(
       and(
         eq(classpilotActiveHands.schoolId, schoolId),
         eq(classpilotActiveHands.studentId, studentId),
-        isNull(classpilotActiveHands.clearedAt)
+        isNull(classpilotActiveHands.clearedAt),
+        sql`(${classpilotActiveHands.expiresAt} IS NULL OR ${classpilotActiveHands.expiresAt} > now())`
       )
     )
     .orderBy(desc(classpilotActiveHands.raisedAt));

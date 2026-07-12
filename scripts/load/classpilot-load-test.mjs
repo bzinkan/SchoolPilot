@@ -444,9 +444,35 @@ const externalProgressPath = validateExternalOutputPath(
   process.env.LOAD_EXTERNAL_PROGRESS_PATH,
   "LOAD_EXTERNAL_PROGRESS_PATH"
 );
+const supervisorReadyPath = validateExternalOutputPath(
+  process.env.LOAD_SUPERVISOR_READY_PATH,
+  "LOAD_SUPERVISOR_READY_PATH"
+);
+const supervisorStartGatePath = validateExternalOutputPath(
+  process.env.LOAD_SUPERVISOR_START_GATE_PATH,
+  "LOAD_SUPERVISOR_START_GATE_PATH"
+);
+if (Boolean(supervisorReadyPath) !== Boolean(supervisorStartGatePath)) {
+  throw new Error("LOAD_SUPERVISOR_READY_PATH and LOAD_SUPERVISOR_START_GATE_PATH must be configured together");
+}
 if (externalSummaryPath && externalProgressPath && externalSummaryPath === externalProgressPath) {
   throw new Error("LOAD_EXTERNAL_SUMMARY_PATH and LOAD_EXTERNAL_PROGRESS_PATH must be different files");
 }
+const externalOutputPaths = [
+  externalSummaryPath,
+  externalProgressPath,
+  supervisorReadyPath,
+  supervisorStartGatePath,
+].filter(Boolean);
+if (new Set(externalOutputPaths.map((value) => value.toLowerCase())).size !== externalOutputPaths.length) {
+  throw new Error("Load output, supervisor-ready, and supervisor-start-gate paths must be distinct files");
+}
+const supervisorStartGateTimeoutMs = intEnv(
+  "LOAD_SUPERVISOR_START_GATE_TIMEOUT_MS",
+  210_000,
+  1_000,
+  900_000
+);
 
 let manifestText;
 try {
@@ -1038,6 +1064,49 @@ let lastProgressAt = 0;
 let lastProgressCounters = null;
 let progressFinalized = !externalProgressPath;
 
+async function waitForSupervisorStartGate() {
+  if (!supervisorStartGatePath) return;
+
+  const readyAt = new Date();
+  writeAtomicJson(supervisorReadyPath, {
+    schemaVersion: 1,
+    type: "load_supervisor_ready",
+    runId,
+    stage,
+    harnessProcessId: process.pid,
+    readyAt: readyAt.toISOString(),
+    trafficStarted: false,
+  });
+
+  const deadline = Date.now() + supervisorStartGateTimeoutMs;
+  while (Date.now() < deadline) {
+    if (fs.existsSync(supervisorStartGatePath)) {
+      let release;
+      try {
+        release = JSON.parse(fs.readFileSync(supervisorStartGatePath, "utf8"));
+      } catch {
+        throw new Error("Supervisor start gate is not valid JSON");
+      }
+      const releasedAt = Date.parse(String(release?.releasedAt || ""));
+      if (
+        release?.schemaVersion !== 1 ||
+        release?.type !== "load_supervisor_start" ||
+        release?.runId !== runId ||
+        release?.harnessProcessId !== process.pid ||
+        !Number.isSafeInteger(release?.monitorProcessId) ||
+        release.monitorProcessId <= 0 ||
+        !Number.isFinite(releasedAt) ||
+        releasedAt < readyAt.getTime()
+      ) {
+        throw new Error("Supervisor start gate identity is invalid");
+      }
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error("Timed out waiting for the AWS rollout monitor start gate");
+}
+
 const counters = {
   heartbeat: 0,
   screenshotPost: 0,
@@ -1076,6 +1145,7 @@ const counters = {
   tenantIsolationProbeAttempts: 0,
   tenantIsolationProbePassed: 0,
   tenantIsolationProbeFailed: 0,
+  tenantIsolationProbeIndeterminate: 0,
   commandResponsesTracked: 0,
   commandResponsesInvalid: 0,
   commandMessagesReceived: 0,
@@ -1158,6 +1228,7 @@ function progressRecord(event) {
       probeAttempts: counters.tenantIsolationProbeAttempts,
       probePassed: counters.tenantIsolationProbePassed,
       probeFailed: counters.tenantIsolationProbeFailed,
+      probeIndeterminate: counters.tenantIsolationProbeIndeterminate,
       responseValidationErrors: counters.teacherResponseValidationErrors,
     },
     fatalGate: fatalGate ? { ...fatalGate, reasonCodes: [...fatalGate.reasonCodes] } : null,
@@ -1315,7 +1386,20 @@ function observeHttp(record, status, error, responseBytes = 0) {
         counters.tenantIsolationProbePassed += 1;
       } else {
         counters.tenantIsolationProbeFailed += 1;
-        triggerFatalGate("tenant-isolation-probe-failed", { kind: "tenant-isolation-probe" });
+        if (error || status === 0 || status >= 500) {
+          counters.tenantIsolationProbeIndeterminate += 1;
+          triggerFatalGate("tenant-isolation-probe-unavailable", {
+            kind: "tenant-isolation-probe",
+            reason: error || status === 0 ? "request-failed" : `http-${status}`,
+          });
+        } else if (status >= 200 && status < 300) {
+          record.probeUnexpectedSuccess = true;
+          counters.crossSchoolHttpResponses += 1;
+          triggerFatalGate("cross-school-http-response", {
+            kind: "tenant-isolation-probe",
+            reason: "foreign-resource-access-succeeded",
+          });
+        }
       }
     }
     return;
@@ -1450,6 +1534,7 @@ async function request(path, {
     countWorkload,
     probeExpectedStatus,
     probeObserved: false,
+    probeUnexpectedSuccess: false,
     endpointClass,
     expectedDeviceId,
     expectedStudentIds,
@@ -1497,11 +1582,11 @@ async function request(path, {
     ) {
       counters.screenshotGetSuccess += 1;
     }
-    if (expectedSchoolId && json !== null) {
+    if (expectedSchoolId && response.ok && json !== null) {
       counters.tenantValidatedResponses += 1;
       const isolationViolation = responseIsolationViolation(json, expectedSchoolId);
       if (isolationViolation) {
-        counters.crossSchoolHttpResponses += 1;
+        if (!record.probeUnexpectedSuccess) counters.crossSchoolHttpResponses += 1;
         triggerFatalGate("cross-school-http-response", { kind: "http-tenant-isolation", reason: isolationViolation });
       }
     }
@@ -2355,7 +2440,11 @@ function summarize(shutdownReason) {
         counters.tenantIsolationProbePassed !== expectedProbeCount ||
         counters.tenantIsolationProbeFailed !== 0
       ) {
-        failures.push(`tenant isolation probes passed ${counters.tenantIsolationProbePassed}/${expectedProbeCount}`);
+        const unavailable = counters.tenantIsolationProbeIndeterminate;
+        failures.push(
+          `tenant isolation probes passed ${counters.tenantIsolationProbePassed}/${expectedProbeCount}` +
+          (unavailable > 0 ? ` (${unavailable} indeterminate due to availability)` : "")
+        );
       }
     }
     if (fiveMinuteDeviceIngestRequests.peak >= wafDeviceLimit || projectedFiveMinuteDeviceRequests >= wafDeviceLimit) {
@@ -2639,6 +2728,10 @@ if (validateConfigOnly) {
     },
   }, null, 2));
 } else {
+  // A supervised production run must not emit even its first HTTP/WebSocket
+  // request until the bound AWS monitor has completed one healthy sample. The
+  // supervisor releases this gate only after validating both process identities.
+  await waitForSupervisorStartGate();
   progressDescriptor = externalProgressPath
     ? fs.openSync(externalProgressPath, "a", 0o600)
     : null;

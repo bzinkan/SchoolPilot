@@ -208,7 +208,10 @@ resource "aws_ecs_service" "api" {
 
   # Allow external changes (e.g., deploy script updating task definition)
   lifecycle {
-    ignore_changes = [task_definition]
+    # Deployments and Application Auto Scaling own these runtime fields. Keep
+    # Terraform focused on the reviewed task/network/capacity contracts rather
+    # than fighting a legitimate scale event on the next plan.
+    ignore_changes = [task_definition, desired_count]
   }
 
   tags = { Name = "${local.name}-api" }
@@ -299,5 +302,39 @@ resource "aws_appautoscaling_policy" "api_cpu" {
     target_value       = 70.0
     scale_in_cooldown  = 300
     scale_out_cooldown = 60
+  }
+}
+
+# CPU target tracking cannot react before a short morning reconnect wave. Keep
+# one additional task warm for the four-hour weekday arrival window, then
+# restore the ordinary one-task minimum and let target tracking scale it in.
+# Normal 1-6 target tracking continues to operate in both windows.
+resource "aws_appautoscaling_scheduled_action" "api_arrival_scale_up" {
+  count = var.enable_api_arrival_capacity ? 1 : 0
+
+  name               = "${local.name}-api-arrival-scale-up"
+  service_namespace  = aws_appautoscaling_target.api.service_namespace
+  resource_id        = aws_appautoscaling_target.api.resource_id
+  scalable_dimension = aws_appautoscaling_target.api.scalable_dimension
+  schedule           = var.api_arrival_scale_up_schedule
+  timezone           = var.api_arrival_schedule_timezone
+
+  scalable_target_action {
+    min_capacity = 2
+  }
+}
+
+resource "aws_appautoscaling_scheduled_action" "api_arrival_scale_down" {
+  count = var.enable_api_arrival_capacity ? 1 : 0
+
+  name               = "${local.name}-api-arrival-scale-down"
+  service_namespace  = aws_appautoscaling_target.api.service_namespace
+  resource_id        = aws_appautoscaling_target.api.resource_id
+  scalable_dimension = aws_appautoscaling_target.api.scalable_dimension
+  schedule           = var.api_arrival_scale_down_schedule
+  timezone           = var.api_arrival_schedule_timezone
+
+  scalable_target_action {
+    min_capacity = var.desired_count
   }
 }

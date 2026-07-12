@@ -161,10 +161,21 @@ Capture the current API and worker task-definition ARNs before deploying. Run:
 ./scripts/deploy.sh production --backend
 ```
 
-Require a successful migration task, API and worker `1/1`, one completed
-deployment per service, a healthy ALB target, public `/health`, a current
-scheduler heartbeat, and clean startup logs. The deploy also registers—but
-does not select—a `schoolpilot-production-api-emergency` revision at
+Do not use `--skip-wait` in production. The script fails closed unless the API
+is stable at `1/1` or `2/2` and the worker is stable at `1/1`. After the slow
+image work, it captures the exact API Application Auto Scaling suspended state,
+suspends dynamic scale-in/out while preserving the captured scheduled-scaling
+state, rechecks both services, and keeps that dynamic hold through migration and
+both service deployments. The reviewed one/two-task schedules remain active so
+a rollout cannot skip the 06:00 scale-up or 10:00 scale-down. It verifies both
+services again after stabilization and restores/verifies the exact prior scaling
+state; its EXIT trap retries restoration after a failure.
+
+Require a successful migration task, the API at `1/1` or `2/2`, the worker at
+`1/1`, one completed deployment per service, the exact prior autoscaling state
+restored, a healthy ALB target, public `/health`, a current scheduler heartbeat,
+and clean startup logs. The deploy also registers—but does not select—a
+`schoolpilot-production-api-emergency` revision at
 `512 CPU / 2048 MiB`. Record its exact ARN and verify that its image digest
 matches the deployed API digest before any load test.
 
@@ -263,6 +274,28 @@ staggered across the 30-second tile polling interval. Any valid 403/429, known f
 cross-school delivery writes `fatal_gate`, stops traffic, flushes evidence, and
 exits nonzero.
 
+An isolation probe passes only on the reviewed `404`. A `2xx` response is a
+confirmed foreign-resource access failure and stops immediately. A timeout or
+`5xx` is recorded as an indeterminate availability failure: it still fails the
+stage's 20/20 isolation acceptance, but it is not mislabeled as tenant leakage.
+
+Production keeps the ordinary API autoscaling minimum at one. From 06:00 to
+10:00 America/New_York on weekdays, Application Auto Scaling raises the minimum
+to two so both 512/1024 tasks and their retained 18-client database pools are
+warm before the school-arrival reconnect wave. CPU target tracking remains 1-6
+outside that window and 2-6 inside it; after 10:00 it is allowed to scale the
+extra task in under the existing cooldown. Before a joint API/worker deployment,
+require API desired capacity at or below two. At 200% deployment capacity this
+bounds the conservative overlap model to four API task cohorts plus two worker
+cohorts (120 configured connections), below the 150 gate. Do not create a new
+Terraform plan or run an unscoped apply between 06:00 and 10:00
+America/New_York on weekdays: the scheduled action intentionally owns the
+scalable target's temporary minimum during that window, and a refresh would
+otherwise present the expected `2` floor as drift from the ordinary Terraform
+baseline of `1`. A previously reviewed, digest-verified emergency rollback
+saved plan remains immediately applicable during this window because applying
+that immutable plan does not refresh or reinterpret the scheduled capacity.
+
 The harness rejects non-loopback HTTP targets and forces both HTTPS requests
 and WebSockets onto IPv4. The supervisor binds its filename-safe `runId` into
 the harness as `LOAD_RUN_ID`, then refuses to launch unless `--validate-config`
@@ -329,6 +362,47 @@ The monitor stops immediately on a hard gate and after three consecutive fresh
 one-minute resource breaches. A missing metric, missed duration, stale
 artifact, notification failure, or incomplete acceptance invalidates the run;
 monitoring-completeness failures never guess at an infrastructure mutation.
+
+## Arrival-capacity remediation phase
+
+Apply the API arrival-capacity remediation before repeating the failed WAF/500
+gate. Run this phase outside the weekday 06:00-10:00 America/New_York arrival
+window. First require production to remain on private ECS subnets with both NAT
+gateways present, Route 53 latency measurement enabled, Redis small, both WAF
+rate rules in `BLOCK`, and API desired capacity at or below two.
+
+Plan from the merged remediation commit with the existing launch overrides:
+
+```powershell
+terraform -chdir=infra plan -var-file=production.tfvars `
+  '-var=ecs_tasks_in_public_subnets=false' `
+  '-var=route53_measure_latency=true' `
+  '-var=waf_rate_rule_action=block' `
+  -out $PlanPath
+```
+
+The only accepted shape is **2 add / 1 change / 0 destroy**: the weekday API
+scale-up and scale-down scheduled actions are added, and the API running-task
+alarm changes to the `DesiredTaskCount - RunningTaskCount > 0` metric-math
+contract. Abort for any task-definition, ECS network, desired-count, NAT,
+Route 53, RDS, Redis, WAF, replacement, or destroy action. Create and verify the
+required before-plan, before-apply, and after-apply state backups; apply only
+the reviewed saved plan and delete it after success.
+
+After apply, verify both scheduled actions use `America/New_York`, the exact
+weekday 06:00 scale-up has minimum two, the exact weekday 10:00 scale-down has
+minimum one, and the API alarm has fresh desired/running datapoints. Outside the
+arrival window, perform a controlled runtime drill by temporarily setting the
+API scalable-target minimum to two, waiting for two healthy/warm API tasks, and
+then restoring the minimum to one after the repeated load gate. Do not lower
+the minimum while a gate is running.
+
+If the scheduled-action contract is invalid, use a separately reviewed saved
+Terraform plan with `enable_api_arrival_capacity=false`; it must destroy only
+the two scheduled actions. Retain the safer metric-math alarm. An application
+regression uses the captured previous API/worker task-definition rollback; an
+API OOM uses the digest-matched 512/2048 emergency revision. Never roll back
+this phase by changing ECS networking, NAT, or WAF.
 
 ## Phase 1: WAF and alarms
 

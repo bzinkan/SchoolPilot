@@ -218,12 +218,18 @@ function Resolve-GeneratorPublicIp {
     param($Config)
     if ($testMode) {
         $sequenceMember = $Config.PSObject.Properties["testGeneratorPublicIpSequence"]
+        $testLookupIndex = $script:GeneratorIpTestIndex
+        $script:GeneratorIpTestIndex++
+        $delayMember = $Config.PSObject.Properties["testPreReleaseGeneratorPublicIpDelayMilliseconds"]
+        if ($testLookupIndex -gt 0 -and $null -ne $delayMember -and $null -ne $delayMember.Value -and
+            [int]$delayMember.Value -gt 0) {
+            Start-Sleep -Milliseconds ([int]$delayMember.Value)
+        }
         if ($null -eq $sequenceMember -or @($sequenceMember.Value).Count -lt 1) {
             return Assert-Ipv4Literal -Value ([string]$Config.expectedGeneratorPublicIp) -Name "expectedGeneratorPublicIp"
         }
         $sequence = @($sequenceMember.Value)
-        $index = [math]::Min($script:GeneratorIpTestIndex, $sequence.Count - 1)
-        $script:GeneratorIpTestIndex++
+        $index = [math]::Min($testLookupIndex, $sequence.Count - 1)
         return Assert-Ipv4Literal -Value ([string]$sequence[$index]) -Name "testGeneratorPublicIpSequence"
     }
     try { $resolved = ([string](Invoke-RestMethod -Uri "https://checkip.amazonaws.com" -TimeoutSec 10)).Trim() }
@@ -316,6 +322,25 @@ function Get-RollbackWatchdogState {
     return [ordered]@{ action = [string]$heartbeat.action; step = [string]$heartbeat.step; status = $status; deadlineUtc = $deadline; ageSeconds = $age }
 }
 
+function Assert-HealthyMonitorArmingHeartbeat {
+    param(
+        $Heartbeat,
+        [string]$ExpectedRunId,
+        [string]$ExpectedPhase,
+        [DateTimeOffset]$MonitorStartedAt,
+        [DateTimeOffset]$Now,
+        [int]$StaleSeconds
+    )
+    try { $heartbeatTimestamp = ([DateTimeOffset]$Heartbeat.timestamp).ToUniversalTime() }
+    catch { throw "The AWS monitor heartbeat timestamp is invalid." }
+    if ([string]$Heartbeat.runId -ne $ExpectedRunId -or [string]$Heartbeat.phase -ne $ExpectedPhase -or
+        $Heartbeat.triggered -isnot [bool] -or $Heartbeat.triggered -ne $false -or
+        [int]$Heartbeat.iteration -lt 1 -or $heartbeatTimestamp -lt $MonitorStartedAt -or
+        $heartbeatTimestamp -gt $Now.AddSeconds(5) -or ($Now - $heartbeatTimestamp).TotalSeconds -gt $StaleSeconds) {
+        throw "The AWS monitor did not publish a fresh, healthy arming heartbeat for the bound run."
+    }
+}
+
 $resolvedConfigPath = Resolve-ExternalPath -Path $ConfigPath -Name "ConfigPath"
 try { $config = Get-Content -LiteralPath $resolvedConfigPath -Raw | ConvertFrom-Json -Depth 40 }
 catch { throw "ConfigPath must contain valid JSON." }
@@ -404,7 +429,18 @@ $runtimeMonitorScript = $monitorScript
 $generatorSequenceMember = $config.PSObject.Properties["testGeneratorPublicIpSequence"]
 if ($null -ne $generatorSequenceMember -and $null -ne $generatorSequenceMember.Value) {
     if (-not $testMode) { throw "testGeneratorPublicIpSequence is forbidden outside isolated testMode." }
-    foreach ($candidateIp in @($generatorSequenceMember.Value)) { [void](Assert-Ipv4Literal ([string]$candidateIp) "testGeneratorPublicIpSequence") }
+    foreach ($candidateIp in @($generatorSequenceMember.Value)) {
+        [void](Assert-Ipv4Literal -Value ([string]$candidateIp) -Name "testGeneratorPublicIpSequence")
+    }
+}
+$generatorDelayMember = $config.PSObject.Properties["testPreReleaseGeneratorPublicIpDelayMilliseconds"]
+if ($null -ne $generatorDelayMember -and $null -ne $generatorDelayMember.Value) {
+    if (-not $testMode) { throw "testPreReleaseGeneratorPublicIpDelayMilliseconds is forbidden outside isolated testMode." }
+    $generatorDelay = 0
+    if (-not [int]::TryParse([string]$generatorDelayMember.Value, [ref]$generatorDelay) -or
+        $generatorDelay -lt 0 -or $generatorDelay -gt 5000) {
+        throw "testPreReleaseGeneratorPublicIpDelayMilliseconds must be an integer from 0 through 5000."
+    }
 }
 foreach ($testHook in @("testRuntimeHarnessScriptPath", "testRuntimeMonitorScriptPath")) {
     $member = $config.PSObject.Properties[$testHook]
@@ -424,6 +460,44 @@ $pwsh = (Get-Process -Id $PID).Path
 if (-not (Test-Path -LiteralPath $monitorScript -PathType Leaf) -or -not (Test-Path -LiteralPath $runtimeMonitorScript -PathType Leaf) -or
     ($SupervisionKind -eq "Load" -and -not (Test-Path -LiteralPath $runtimeHarnessScript -PathType Leaf))) {
     throw "The required harness or monitor script is missing."
+}
+
+$staticMonitorConfigPath = Join-Path $evidenceDirectory "$runId-static-monitor-config.json"
+$heartbeatPath = Join-Path $evidenceDirectory "$runId-supervisor-heartbeat.json"
+$supervisorResultPath = Join-Path $evidenceDirectory "$runId-supervisor-result.json"
+$boundConfigPath = Join-Path $evidenceDirectory "$runId-bound-monitor-config.json"
+$harnessStdout = if ($SupervisionKind -eq "Load") { Join-Path $evidenceDirectory "$runId-harness.stdout.log" } else { $null }
+$harnessStderr = if ($SupervisionKind -eq "Load") { Join-Path $evidenceDirectory "$runId-harness.stderr.log" } else { $null }
+$monitorStdout = Join-Path $evidenceDirectory "$runId-monitor.stdout.log"
+$monitorStderr = Join-Path $evidenceDirectory "$runId-monitor.stderr.log"
+$generatorIpEvidencePath = if ($SupervisionKind -eq "Load") { Join-Path $evidenceDirectory "$runId-generator-public-ip.json" } else { $null }
+$harnessReadyPath = if ($SupervisionKind -eq "Load") { Join-Path $evidenceDirectory "$runId-harness-ready.json" } else { $null }
+$harnessStartGatePath = if ($SupervisionKind -eq "Load") { Join-Path $evidenceDirectory "$runId-harness-start.json" } else { $null }
+$awsMonitorEvidencePath = Join-Path $evidenceDirectory "$runId-aws-monitor.jsonl"
+$monitorHeartbeatPath = Join-Path $evidenceDirectory "$runId-monitor-heartbeat.json"
+$monitorResultPath = Join-Path $evidenceDirectory "$runId-monitor-result.json"
+$rollbackEvidencePath = Join-Path $evidenceDirectory "$runId-rollback.jsonl"
+$rollbackStatePath = Join-Path $evidenceDirectory "$runId-rollback-state.json"
+$rollbackHeartbeatPath = Join-Path $evidenceDirectory "$runId-rollback-heartbeat.json"
+
+if ($SupervisionKind -eq "Load") {
+    $generatedArtifactPaths = @(
+        $staticMonitorConfigPath, $heartbeatPath, $supervisorResultPath, $boundConfigPath,
+        $harnessStdout, $harnessStderr, $monitorStdout, $monitorStderr,
+        $generatorIpEvidencePath, $harnessReadyPath, $harnessStartGatePath,
+        $awsMonitorEvidencePath, $monitorHeartbeatPath, $monitorResultPath,
+        $rollbackEvidencePath, $rollbackStatePath, $rollbackHeartbeatPath
+    ) | Where-Object { $_ }
+    foreach ($loadArtifact in @(
+        [pscustomobject]@{ Name = "loadProgressPath"; Path = $progressPath },
+        [pscustomobject]@{ Name = "loadSummaryPath"; Path = $summaryPath }
+    )) {
+        foreach ($generatedArtifactPath in $generatedArtifactPaths) {
+            if ([string]::Equals($loadArtifact.Path, $generatedArtifactPath, [StringComparison]::OrdinalIgnoreCase)) {
+                throw "$($loadArtifact.Name) must not collide with generated supervisor, monitor, or rollback artifact '$generatedArtifactPath'."
+            }
+        }
+    }
 }
 
 [ordered]@{
@@ -463,16 +537,13 @@ if ($SupervisionKind -eq "Load") {
     }
 }
 New-Item -ItemType Directory -Path $evidenceDirectory -Force | Out-Null
-$heartbeatPath = Join-Path $evidenceDirectory "$runId-supervisor-heartbeat.json"
-$supervisorResultPath = Join-Path $evidenceDirectory "$runId-supervisor-result.json"
-$boundConfigPath = Join-Path $evidenceDirectory "$runId-bound-monitor-config.json"
-$harnessStdout = if ($SupervisionKind -eq "Load") { Join-Path $evidenceDirectory "$runId-harness.stdout.log" } else { $null }
-$harnessStderr = if ($SupervisionKind -eq "Load") { Join-Path $evidenceDirectory "$runId-harness.stderr.log" } else { $null }
-$monitorStdout = Join-Path $evidenceDirectory "$runId-monitor.stdout.log"
-$monitorStderr = Join-Path $evidenceDirectory "$runId-monitor.stderr.log"
-$generatorIpEvidencePath = if ($SupervisionKind -eq "Load") { Join-Path $evidenceDirectory "$runId-generator-public-ip.json" } else { $null }
 $supervisorArtifacts = @($heartbeatPath, $supervisorResultPath, $boundConfigPath, $monitorStdout, $monitorStderr)
-if ($SupervisionKind -eq "Load") { $supervisorArtifacts += @($harnessStdout, $harnessStderr, $generatorIpEvidencePath) }
+if ($SupervisionKind -eq "Load") {
+    $supervisorArtifacts += @(
+        $harnessStdout, $harnessStderr, $generatorIpEvidencePath,
+        $harnessReadyPath, $harnessStartGatePath
+    )
+}
 foreach ($path in $supervisorArtifacts) {
     if (Test-Path -LiteralPath $path) { throw "Supervisor artifact already exists: $path" }
 }
@@ -493,11 +564,41 @@ try {
         })
     }
     if ($SupervisionKind -eq "Load") {
-        $harness = Start-Process -FilePath $node.Source -ArgumentList @((Quote-ProcessArgument $runtimeHarnessScript)) -Environment @{ LOAD_RUN_ID = $runId } -PassThru -NoNewWindow `
+        $harnessEnvironment = @{
+            LOAD_RUN_ID                          = $runId
+            LOAD_STAGE                           = [string]$config.workload.stage
+            LOAD_EXTERNAL_PROGRESS_PATH          = $progressPath
+            LOAD_EXTERNAL_SUMMARY_PATH           = $summaryPath
+            LOAD_SUPERVISOR_READY_PATH            = $harnessReadyPath
+            LOAD_SUPERVISOR_START_GATE_PATH       = $harnessStartGatePath
+            LOAD_SUPERVISOR_START_GATE_TIMEOUT_MS = [string](($monitorHeartbeatStaleSeconds + 30) * 1000)
+        }
+        $harness = Start-Process -FilePath $node.Source -ArgumentList @((Quote-ProcessArgument $runtimeHarnessScript)) -Environment $harnessEnvironment -PassThru -NoNewWindow `
             -RedirectStandardOutput $harnessStdout -RedirectStandardError $harnessStderr
-        Start-Sleep -Milliseconds 250
-        $harness.Refresh()
-        if ($harness.HasExited) { throw "The load harness exited during startup." }
+
+        # The harness parses every private fixture and then blocks on an
+        # operator-owned start gate before opening progress output or emitting
+        # traffic. Prove that exact PID reached the gate before binding it into
+        # the monitor configuration.
+        $readyDeadline = [DateTimeOffset]::UtcNow.AddSeconds($monitorHeartbeatStaleSeconds)
+        $ready = $null
+        while ($null -eq $ready -and [DateTimeOffset]::UtcNow -lt $readyDeadline) {
+            $harness.Refresh()
+            if ($harness.HasExited) { throw "The load harness exited before reaching the supervisor start gate." }
+            if (Test-Path -LiteralPath $harnessReadyPath) {
+                try { $ready = Read-AtomicJson -Path $harnessReadyPath }
+                catch { throw "The load harness ready artifact is invalid: $($_.Exception.Message)" }
+                if ([int]$ready.schemaVersion -ne 1 -or [string]$ready.type -ne "load_supervisor_ready" -or
+                    [string]$ready.runId -ne $runId -or [int]$ready.harnessProcessId -ne $harness.Id -or
+                    [string]$ready.stage -ne [string]$config.workload.stage -or $ready.trafficStarted -ne $false -or
+                    ([DateTimeOffset]$ready.readyAt).ToUniversalTime() -lt $launchedAt) {
+                    throw "The load harness ready artifact does not match the bound run and process identity."
+                }
+                break
+            }
+            Start-Sleep -Milliseconds 100
+        }
+        if ($null -eq $ready) { throw "Timed out waiting for the load harness to reach the supervisor start gate." }
 
         $config | Add-Member -NotePropertyName artifactsNotBeforeUtc -NotePropertyValue $launchedAt.ToString("o") -Force
         $config | Add-Member -NotePropertyName harnessProcessId -NotePropertyValue $harness.Id -Force
@@ -516,12 +617,69 @@ try {
 
     & $pwsh -NoProfile -File $monitorScript -ConfigPath $boundConfigPath -Mode Validate | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "The bound monitor configuration failed validation." }
+    $monitorStartedAt = [DateTimeOffset]::UtcNow
     $monitor = Start-Process -FilePath $pwsh -ArgumentList @("-NoProfile", "-File", (Quote-ProcessArgument $runtimeMonitorScript), "-ConfigPath", (Quote-ProcessArgument $boundConfigPath), "-Mode", "Monitor") `
         -PassThru -NoNewWindow -RedirectStandardOutput $monitorStdout -RedirectStandardError $monitorStderr
-    $monitorStartedAt = [DateTimeOffset]::UtcNow
 
-    $monitorHeartbeatPath = Join-Path $evidenceDirectory "$runId-monitor-heartbeat.json"
-    $rollbackHeartbeatPath = Join-Path $evidenceDirectory "$runId-rollback-heartbeat.json"
+    if ($SupervisionKind -eq "Load") {
+        # Do not release traffic merely because the monitor process exists. Its
+        # first complete sample proves AWS access, immutable config, heartbeat
+        # output, and the bound harness identity before the gate can open.
+        $armedDeadline = [DateTimeOffset]::UtcNow.AddSeconds($monitorHeartbeatStaleSeconds)
+        $armedHeartbeat = $null
+        $lastArmingHeartbeatWrite = [DateTimeOffset]::MinValue
+        while ($null -eq $armedHeartbeat -and [DateTimeOffset]::UtcNow -lt $armedDeadline) {
+            $now = [DateTimeOffset]::UtcNow
+            $monitor.Refresh()
+            if ($monitor.HasExited) { throw "The AWS monitor exited before arming the load harness." }
+            $harness.Refresh()
+            if ($harness.HasExited) { throw "The load harness exited while waiting for the AWS monitor start gate." }
+            if (($now - $lastArmingHeartbeatWrite).TotalSeconds -ge 30) {
+                Write-AtomicJson -Path $heartbeatPath -Value ([ordered]@{
+                    runId = $runId; timestamp = $now.ToString("o"); status = "arming";
+                    supervisionKind = $SupervisionKind; monitorProcessId = $monitor.Id; harnessProcessId = $harness.Id
+                })
+                $lastArmingHeartbeatWrite = $now
+            }
+            if (Test-Path -LiteralPath $monitorHeartbeatPath) {
+                try { $candidateHeartbeat = Read-AtomicJson -Path $monitorHeartbeatPath }
+                catch { throw "The AWS monitor arming heartbeat is invalid: $($_.Exception.Message)" }
+                Assert-HealthyMonitorArmingHeartbeat -Heartbeat $candidateHeartbeat -ExpectedRunId $runId `
+                    -ExpectedPhase ([string]$config.phase) -MonitorStartedAt $monitorStartedAt `
+                    -Now $now -StaleSeconds $monitorHeartbeatStaleSeconds
+                $armedHeartbeat = $candidateHeartbeat
+                break
+            }
+            Start-Sleep -Milliseconds 100
+        }
+        if ($null -eq $armedHeartbeat) { throw "Timed out waiting for the AWS monitor to arm the load harness." }
+
+        $preReleaseGeneratorIp = Resolve-GeneratorPublicIp -Config $config
+        Write-AtomicJson -Path $generatorIpEvidencePath -Value ([ordered]@{
+            runId=$runId;timestamp=[DateTimeOffset]::UtcNow.ToString("o");expectedPublicIp=$expectedGeneratorPublicIp;actualPublicIp=$preReleaseGeneratorIp
+        })
+        if ($preReleaseGeneratorIp -ne $expectedGeneratorPublicIp) {
+            throw "Generator public IPv4 changed during supervised startup."
+        }
+        $monitor.Refresh()
+        if ($monitor.HasExited) { throw "The AWS monitor exited before releasing the load harness." }
+        $harness.Refresh()
+        if ($harness.HasExited) { throw "The load harness exited before the AWS monitor start gate could be released." }
+        if (-not (Test-Path -LiteralPath $monitorHeartbeatPath -PathType Leaf)) {
+            throw "The AWS monitor heartbeat disappeared before releasing the load harness."
+        }
+        try { $releaseHeartbeat = Read-AtomicJson -Path $monitorHeartbeatPath }
+        catch { throw "The AWS monitor release heartbeat is invalid: $($_.Exception.Message)" }
+        Assert-HealthyMonitorArmingHeartbeat -Heartbeat $releaseHeartbeat -ExpectedRunId $runId `
+            -ExpectedPhase ([string]$config.phase) -MonitorStartedAt $monitorStartedAt `
+            -Now ([DateTimeOffset]::UtcNow) -StaleSeconds $monitorHeartbeatStaleSeconds
+        Write-AtomicJson -Path $harnessStartGatePath -Value ([ordered]@{
+            schemaVersion = 1; type = "load_supervisor_start"; runId = $runId;
+            harnessProcessId = $harness.Id; monitorProcessId = $monitor.Id;
+            releasedAt = [DateTimeOffset]::UtcNow.ToString("o")
+        })
+    }
+
     $lastHeartbeatWrite = [DateTimeOffset]::MinValue
     $lastGeneratorIpCheck = $launchedAt
     while (-not $monitor.HasExited) {

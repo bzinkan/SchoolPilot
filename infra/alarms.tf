@@ -215,21 +215,53 @@ resource "aws_cloudwatch_metric_alarm" "api_running_tasks" {
   count = var.enable_container_insights ? 1 : 0
 
   alarm_name          = "${local.alarm_prefix}-api-running-tasks"
-  alarm_description   = "API ECS running task count dropped below desired minimum."
-  namespace           = "ECS/ContainerInsights"
-  metric_name         = "RunningTaskCount"
-  comparison_operator = "LessThanThreshold"
-  threshold           = var.ecs_desired_count
+  alarm_description   = "API ECS running task count is below the current desired count, including scheduled arrival capacity."
+  comparison_operator = "GreaterThanThreshold"
+  threshold           = 0
   evaluation_periods  = 2
-  period              = 60
-  statistic           = "Average"
   treat_missing_data  = "breaching"
   alarm_actions       = local.alarm_actions
   ok_actions          = local.alarm_ok_actions
 
-  dimensions = {
-    ClusterName = module.ecs.cluster_name
-    ServiceName = module.ecs.service_name
+  metric_query {
+    id          = "shortfall"
+    expression  = "desired - running"
+    label       = "Desired API tasks minus running API tasks"
+    return_data = true
+  }
+
+  metric_query {
+    id          = "desired"
+    return_data = false
+
+    metric {
+      namespace   = "ECS/ContainerInsights"
+      metric_name = "DesiredTaskCount"
+      period      = 60
+      stat        = "Average"
+
+      dimensions = {
+        ClusterName = module.ecs.cluster_name
+        ServiceName = module.ecs.service_name
+      }
+    }
+  }
+
+  metric_query {
+    id          = "running"
+    return_data = false
+
+    metric {
+      namespace   = "ECS/ContainerInsights"
+      metric_name = "RunningTaskCount"
+      period      = 60
+      stat        = "Average"
+
+      dimensions = {
+        ClusterName = module.ecs.cluster_name
+        ServiceName = module.ecs.service_name
+      }
+    }
   }
 }
 
