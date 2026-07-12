@@ -1,6 +1,7 @@
 variable "project" { type = string }
 variable "environment" { type = string }
 variable "aws_region" { type = string }
+variable "aws_account_id" { type = string }
 variable "vpc_id" { type = string }
 variable "task_subnet_ids" { type = list(string) }
 variable "assign_task_public_ip" {
@@ -43,26 +44,9 @@ variable "scheduler_db_pool_max" { type = number }
 variable "rls_enabled_tables" { type = string }
 
 # App environment variables
-variable "database_url" {
-  type      = string
-  sensitive = true
-}
 variable "redis_url" {
   type      = string
   sensitive = true
-}
-variable "session_secret" {
-  type      = string
-  sensitive = true
-}
-variable "jwt_secret" {
-  type      = string
-  sensitive = true
-}
-variable "student_token_secret" {
-  type      = string
-  sensitive = true
-  default   = ""
 }
 variable "public_base_url" {
   type    = string
@@ -80,35 +64,9 @@ variable "google_client_id" {
   type    = string
   default = ""
 }
-variable "google_client_secret" {
-  type      = string
-  sensitive = true
-  default   = ""
-}
-variable "google_oauth_encryption_key" {
-  type      = string
-  sensitive = true
-  default   = ""
-}
-variable "sendgrid_api_key" {
-  type      = string
-  sensitive = true
-  default   = ""
-}
-variable "stripe_secret_key" {
-  type      = string
-  sensitive = true
-  default   = ""
-}
-variable "stripe_webhook_secret" {
-  type      = string
-  sensitive = true
-  default   = ""
-}
-variable "openai_api_key" {
-  type      = string
-  sensitive = true
-  default   = ""
+variable "google_oauth_previous_encryption_key_parameter_arn" {
+  type    = string
+  default = ""
 }
 variable "anthropic_api_key_parameter_arn" {
   type    = string

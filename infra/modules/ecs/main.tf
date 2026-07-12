@@ -4,6 +4,26 @@
 
 locals {
   name = "${var.project}-${var.environment}"
+  application_secret_parameter_names = [
+    "DATABASE_URL",
+    "SESSION_SECRET",
+    "JWT_SECRET",
+    "STUDENT_TOKEN_SECRET",
+    "GOOGLE_CLIENT_SECRET",
+    "GOOGLE_OAUTH_ENCRYPTION_KEY",
+    "SENDGRID_API_KEY",
+    "STRIPE_SECRET_KEY",
+    "STRIPE_WEBHOOK_SECRET",
+  ]
+  application_secret_parameter_arns = {
+    for name in local.application_secret_parameter_names :
+    name => "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter/${var.project}/${var.environment}/${name}"
+  }
+  expected_google_oauth_previous_encryption_key_parameter_arn = "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:parameter/${var.project}/${var.environment}/GOOGLE_OAUTH_ENCRYPTION_KEY_PREVIOUS"
+  google_oauth_previous_encryption_key_parameter_arn_valid = (
+    var.google_oauth_previous_encryption_key_parameter_arn == "" ||
+    var.google_oauth_previous_encryption_key_parameter_arn == local.expected_google_oauth_previous_encryption_key_parameter_arn
+  )
   common_environment = [
     { name = "NODE_ENV", value = "production" },
     { name = "APP_ENV", value = var.environment },
@@ -24,20 +44,25 @@ locals {
     ] : [],
     var.telegram_bot_token_parameter_arn != "" ? [
       { name = "TELEGRAM_BOT_TOKEN", valueFrom = var.telegram_bot_token_parameter_arn },
+    ] : [],
+    var.google_oauth_previous_encryption_key_parameter_arn != "" ? [
+      {
+        name      = "GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY_PREVIOUS"
+        valueFrom = var.google_oauth_previous_encryption_key_parameter_arn
+      },
     ] : []
   )
   common_secrets = concat([
-    { name = "DATABASE_URL", valueFrom = aws_ssm_parameter.database_url.arn },
+    { name = "DATABASE_URL", valueFrom = local.application_secret_parameter_arns["DATABASE_URL"] },
     { name = "REDIS_URL", valueFrom = aws_ssm_parameter.redis_url.arn },
-    { name = "SESSION_SECRET", valueFrom = aws_ssm_parameter.session_secret.arn },
-    { name = "JWT_SECRET", valueFrom = aws_ssm_parameter.jwt_secret.arn },
-    { name = "STUDENT_TOKEN_SECRET", valueFrom = aws_ssm_parameter.student_token_secret.arn },
-    { name = "GOOGLE_CLIENT_SECRET", valueFrom = aws_ssm_parameter.google_client_secret.arn },
-    { name = "GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY", valueFrom = aws_ssm_parameter.google_oauth_encryption_key.arn },
-    { name = "SENDGRID_API_KEY", valueFrom = aws_ssm_parameter.sendgrid_api_key.arn },
-    { name = "STRIPE_SECRET_KEY", valueFrom = aws_ssm_parameter.stripe_secret_key.arn },
-    { name = "STRIPE_WEBHOOK_SECRET", valueFrom = aws_ssm_parameter.stripe_webhook_secret.arn },
-    { name = "OPENAI_API_KEY", valueFrom = aws_ssm_parameter.openai_api_key.arn },
+    { name = "SESSION_SECRET", valueFrom = local.application_secret_parameter_arns["SESSION_SECRET"] },
+    { name = "JWT_SECRET", valueFrom = local.application_secret_parameter_arns["JWT_SECRET"] },
+    { name = "STUDENT_TOKEN_SECRET", valueFrom = local.application_secret_parameter_arns["STUDENT_TOKEN_SECRET"] },
+    { name = "GOOGLE_CLIENT_SECRET", valueFrom = local.application_secret_parameter_arns["GOOGLE_CLIENT_SECRET"] },
+    { name = "GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY", valueFrom = local.application_secret_parameter_arns["GOOGLE_OAUTH_ENCRYPTION_KEY"] },
+    { name = "SENDGRID_API_KEY", valueFrom = local.application_secret_parameter_arns["SENDGRID_API_KEY"] },
+    { name = "STRIPE_SECRET_KEY", valueFrom = local.application_secret_parameter_arns["STRIPE_SECRET_KEY"] },
+    { name = "STRIPE_WEBHOOK_SECRET", valueFrom = local.application_secret_parameter_arns["STRIPE_WEBHOOK_SECRET"] },
   ], local.optional_common_secrets)
 }
 
@@ -174,6 +199,13 @@ resource "aws_ecs_task_definition" "api" {
     }
   }])
 
+  lifecycle {
+    precondition {
+      condition     = local.google_oauth_previous_encryption_key_parameter_arn_valid
+      error_message = "The previous Google OAuth encryption key ARN must be empty or the exact environment-scoped GOOGLE_OAUTH_ENCRYPTION_KEY_PREVIOUS SSM parameter ARN."
+    }
+  }
+
   tags = { Name = "${local.name}-api" }
 }
 
@@ -246,6 +278,13 @@ resource "aws_ecs_task_definition" "worker" {
       }
     }
   }])
+
+  lifecycle {
+    precondition {
+      condition     = local.google_oauth_previous_encryption_key_parameter_arn_valid
+      error_message = "The previous Google OAuth encryption key ARN must be empty or the exact environment-scoped GOOGLE_OAUTH_ENCRYPTION_KEY_PREVIOUS SSM parameter ARN."
+    }
+  }
 
   tags = { Name = "${local.name}-scheduler-worker" }
 }

@@ -245,33 +245,6 @@ variable "route53_measure_latency" {
   default     = true
 }
 
-# --- Application Secrets ---
-
-variable "database_url" {
-  description = "Full PostgreSQL connection string"
-  type        = string
-  sensitive   = true
-}
-
-variable "session_secret" {
-  description = "Express session secret"
-  type        = string
-  sensitive   = true
-}
-
-variable "jwt_secret" {
-  description = "JWT signing secret"
-  type        = string
-  sensitive   = true
-}
-
-variable "student_token_secret" {
-  description = "Student device token secret"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
 variable "public_base_url" {
   description = "Public API URL (e.g., https://api.classpilot.net)"
   type        = string
@@ -298,47 +271,9 @@ variable "google_client_id" {
   default     = ""
 }
 
-variable "google_client_secret" {
-  description = "Google OAuth client secret"
+variable "google_oauth_previous_encryption_key_parameter_arn" {
+  description = "Optional ARN for the externally managed /<project>/<environment>/GOOGLE_OAUTH_ENCRYPTION_KEY_PREVIOUS SecureString"
   type        = string
-  sensitive   = true
-  default     = ""
-}
-
-variable "google_oauth_encryption_key" {
-  description = "Google OAuth token encryption key"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
-# --- Optional Services ---
-
-variable "sendgrid_api_key" {
-  description = "SendGrid API key for email"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
-variable "stripe_secret_key" {
-  description = "Stripe secret key"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
-variable "stripe_webhook_secret" {
-  description = "Stripe webhook signing secret"
-  type        = string
-  sensitive   = true
-  default     = ""
-}
-
-variable "openai_api_key" {
-  description = "OpenAI API key for AI content classification"
-  type        = string
-  sensitive   = true
   default     = ""
 }
 

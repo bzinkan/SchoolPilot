@@ -298,11 +298,12 @@ Copy `.env.example` to `.env`. Required for local dev:
 - `DB_POOL_MAX` / `SCHEDULER_DB_POOL_MAX` — Main API and scheduler Postgres pool caps
 - `SESSION_SECRET`, `JWT_SECRET`, `STUDENT_TOKEN_SECRET` — Auth secrets
 - `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` — Google OAuth
+- `GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY` — Current AES-256-GCM key for admin-visible ClassPilot student PIN ciphertext (the legacy name is retained for compatibility)
+- `GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY_PREVIOUS` — Optional previous PIN key used only during a staged dual-read/current-write rotation; remove after the counts-only migration and rollback window pass
 - `SUPER_ADMIN_EMAIL` — Email address that gets super admin privileges
 - `CORS_ALLOWLIST` — Comma-separated frontend origins
 - `SENDGRID_API_KEY` — SendGrid email service (session reports, safety alerts, welcome emails)
 - `ANTHROPIC_API_KEY` — Anthropic Claude API for AI content classification + chat assistant
-- `OPENAI_API_KEY` — OpenAI API (legacy classification path)
 - `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` — Stripe billing
 - `SENTRY_DSN` — (optional, gated off) Sentry error tracking. Leave unset until DPA signed + added to subprocessors. See "Sentry" section below.
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` — (optional) developer error alerts via Telegram
@@ -315,6 +316,8 @@ Copy `.env.example` to `.env`. Required for local dev:
 - `.env`, `.env.local`, `.env.production` are in `.gitignore` — keep all real secrets there.
 - **Never** paste API keys, passwords, or tokens into source files, commit messages, PR descriptions, GitHub issues, or `CLAUDE.md`. Gitleaks runs on every push and will fail CI if a secret pattern leaks.
 - Production secrets live in the ECS task definition (or AWS Secrets Manager) — not in any committed file.
+- Terraform references application runtime secrets by deterministic/external SSM parameter ARN only. Do not add application secret-value variables back to `infra/variables.tf`, module inputs, tfvars, resources, plans, or state; `REDIS_URL` is the sole topology-derived SecureString that remains Terraform-managed.
+- Before the first plan after adopting the detached-secret configuration, run `scripts/terraform-detach-application-secret-state.ps1` with verified DPAPI and AES-GCM backup paths. It removes only the ten historical `module.ecs.aws_ssm_parameter.*` bindings via `terraform state rm`, preserves the live parameters and Redis binding, and prevents a first forget plan from carrying prior values in `terraform show -json`.
 - If a key ever lands in the repo by accident: rotate it immediately in the provider console, then scrub history. Assume any key visible in a diff or chat transcript is already compromised.
 - When rotating: update `.env` locally and the ECS task definition in prod. There is no `.env` checked in to update.
 

@@ -1,4 +1,4 @@
-import { eq, and, desc, asc, ilike, or, isNull, inArray, sql, ne, type SQL, type SQLWrapper } from "drizzle-orm";
+import { eq, and, desc, asc, gt, ilike, or, isNull, isNotNull, inArray, sql, ne, type SQL, type SQLWrapper } from "drizzle-orm";
 import db from "../db.js";
 import { runWithTenantContext } from "../middleware/tenantContext.js";
 import { localDateInTimeZone } from "../util/schoolTime.js";
@@ -743,6 +743,54 @@ export async function updateStudent(
   return student;
 }
 
+/** Counts-only credential-rotation helper. Caller must bind the school tenant. */
+export async function getEncryptedClasspilotPinBatch(
+  schoolId: string,
+  afterId: string | undefined,
+  batchSize: number
+): Promise<Array<{ id: string; ciphertext: string }>> {
+  const conditions = [
+    eq(students.schoolId, schoolId),
+    isNotNull(students.classpilotPinEncrypted),
+  ];
+  if (afterId) conditions.push(gt(students.id, afterId));
+
+  const rows = await db
+    .select({
+      id: students.id,
+      ciphertext: students.classpilotPinEncrypted,
+    })
+    .from(students)
+    .where(and(...conditions))
+    .orderBy(asc(students.id))
+    .limit(batchSize);
+
+  return rows.flatMap((row) =>
+    row.ciphertext === null ? [] : [{ id: row.id, ciphertext: row.ciphertext }]
+  );
+}
+
+/** Compare-and-swap prevents the rotation job from overwriting a concurrent PIN edit. */
+export async function replaceEncryptedClasspilotPin(
+  schoolId: string,
+  rowId: string,
+  expectedCiphertext: string,
+  replacementCiphertext: string
+): Promise<boolean> {
+  const updated = await db
+    .update(students)
+    .set({ classpilotPinEncrypted: replacementCiphertext })
+    .where(
+      and(
+        eq(students.id, rowId),
+        eq(students.schoolId, schoolId),
+        eq(students.classpilotPinEncrypted, expectedCiphertext)
+      )
+    )
+    .returning({ id: students.id });
+  return updated.length === 1;
+}
+
 export async function deleteStudent(id: string): Promise<boolean> {
   const result = await db.delete(students).where(eq(students.id, id));
   return (result.rowCount ?? 0) > 0;
@@ -836,6 +884,15 @@ export async function getAllSchools(options: {
     .from(schools)
     .where(and(...conditions))
     .orderBy(schools.name);
+}
+
+/** Includes soft-deleted tenants so restored student PIN ciphertext remains readable. */
+export async function getAllSchoolIdsForClasspilotPinMigration(): Promise<string[]> {
+  const rows = await db
+    .select({ id: schools.id })
+    .from(schools)
+    .orderBy(asc(schools.id));
+  return rows.map((row) => row.id);
 }
 
 export async function updateSchool(

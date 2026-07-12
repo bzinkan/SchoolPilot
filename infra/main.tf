@@ -3,7 +3,9 @@
 # ============================================================================
 
 terraform {
-  required_version = ">= 1.5"
+  # `removed { lifecycle { destroy = false } }` is required for the one-time
+  # non-destructive credential state detachment.
+  required_version = ">= 1.7, < 2.0"
 
   required_providers {
     aws = {
@@ -250,6 +252,7 @@ module "ecs" {
   project               = var.project
   environment           = var.environment
   aws_region            = var.aws_region
+  aws_account_id        = data.aws_caller_identity.current.account_id
   vpc_id                = module.vpc.vpc_id
   task_subnet_ids       = var.ecs_tasks_in_public_subnets ? module.vpc.public_subnet_ids : module.vpc.private_subnet_ids
   assign_task_public_ip = var.ecs_tasks_in_public_subnets
@@ -258,12 +261,9 @@ module "ecs" {
   container_port        = 4000
   ecs_security_group_id = aws_security_group.ecs_tasks.id
 
-  # Environment variables for the API
-  database_url         = var.database_url
-  redis_url            = module.redis.redis_url
-  session_secret       = var.session_secret
-  jwt_secret           = var.jwt_secret
-  student_token_secret = var.student_token_secret
+  # Runtime topology for the API. Rotated application credentials are externally
+  # managed SecureStrings referenced by deterministic ARN inside the ECS module.
+  redis_url = module.redis.redis_url
 
   # Auto-derive URLs from domain, with manual override
   public_base_url = local.has_domain ? "https://${module.dns[0].primary_domain}" : var.public_base_url
@@ -271,16 +271,10 @@ module "ecs" {
   cookie_domain   = local.has_domain ? ".${var.domain}" : var.cookie_domain
 
   # Google OAuth
-  google_client_id            = var.google_client_id
-  google_client_secret        = var.google_client_secret
-  google_oauth_encryption_key = var.google_oauth_encryption_key
+  google_client_id                                   = var.google_client_id
+  google_oauth_previous_encryption_key_parameter_arn = var.google_oauth_previous_encryption_key_parameter_arn
 
   # Optional services
-  sendgrid_api_key      = var.sendgrid_api_key
-  stripe_secret_key     = var.stripe_secret_key
-  stripe_webhook_secret = var.stripe_webhook_secret
-  openai_api_key        = var.openai_api_key
-
   # Existing SecureString parameters managed outside Terraform tfvars.
   anthropic_api_key_parameter_arn  = var.anthropic_api_key_parameter_arn
   telegram_bot_token_parameter_arn = var.telegram_bot_token_parameter_arn

@@ -463,6 +463,142 @@ deploy_exit_cleanup() {
   exit "$exit_code"
 }
 
+# Validate the active API and worker secret contracts without asking SSM to
+# decrypt values. Only the redacted Name/Type/Version/ARN projection is kept in
+# memory, and SSM's ten-name request limit is handled in bounded batches.
+runtime_securestring_preflight() {
+  if [[ "$DEPLOY_BACKEND" != true ]]; then
+    return 0
+  fi
+
+  local service_name container_name task_definition_ref task_secrets_json parameter_output
+  local parameter_sets_json="["
+  local first_parameter_set=true
+  local services=("$SERVICE" "$WORKER_SERVICE")
+  local containers=("api" "scheduler-worker")
+  local service_index
+
+  for service_index in 0 1; do
+    service_name="${services[$service_index]}"
+    container_name="${containers[$service_index]}"
+
+    if [[ "$service_name" == "$WORKER_SERVICE" && "$(ecs_service_status "$service_name")" != "ACTIVE" ]]; then
+      if [[ "$ENV" == "production" ]]; then
+        error "Production scheduler worker is unavailable during the runtime-secret preflight."
+        return 1
+      fi
+      warn "Scheduler worker is not active; validating only the API runtime-secret contract."
+      continue
+    fi
+
+    if ! task_definition_ref=$(aws ecs describe-services \
+      --cluster "$CLUSTER" \
+      --services "$service_name" \
+      --query 'services[0].taskDefinition' \
+      --output text \
+      --region "$REGION" \
+      --no-cli-pager); then
+      error "Could not read the active ${service_name} task definition for the runtime-secret preflight."
+      return 1
+    fi
+    task_definition_ref="${task_definition_ref%$'\r'}"
+    if [[ ! "$task_definition_ref" =~ ^arn:aws:ecs:${REGION}:${ACCOUNT_ID}:task-definition/[A-Za-z0-9_-]+:[1-9][0-9]*$ ]]; then
+      error "The active ${service_name} task-definition reference was missing or outside the expected AWS account and region."
+      return 1
+    fi
+
+    local secrets_query="taskDefinition.containerDefinitions[?name==\`${container_name}\`] | [0].secrets"
+    if ! task_secrets_json=$(aws ecs describe-task-definition \
+      --task-definition "$task_definition_ref" \
+      --query "$secrets_query" \
+      --output json \
+      --region "$REGION" \
+      --no-cli-pager); then
+      error "Could not read the redacted ${service_name} task secret references."
+      return 1
+    fi
+
+    if ! parameter_output=$(TASK_SECRETS_JSON="$task_secrets_json" \
+      REGION="$REGION" \
+      ACCOUNT_ID="$ACCOUNT_ID" \
+      PROJECT="$PROJECT" \
+      ENVIRONMENT="$ENV" \
+      node "$SCRIPT_DIR/validate-runtime-secret-metadata.mjs" references); then
+      error "The active ${service_name} task secret references failed closed validation."
+      return 1
+    fi
+    if [[ "$first_parameter_set" == true ]]; then
+      first_parameter_set=false
+    else
+      parameter_sets_json+=","
+    fi
+    parameter_sets_json+="$parameter_output"
+  done
+  parameter_sets_json+="]"
+
+  local expected_parameters_json
+  if ! expected_parameters_json=$(PARAMETER_SETS_JSON="$parameter_sets_json" node -e '
+    const sets = JSON.parse(process.env.PARAMETER_SETS_JSON || "[]");
+    if (!Array.isArray(sets) || sets.some((set) => !Array.isArray(set))) process.exit(1);
+    const unique = [...new Set(sets.flat())];
+    if (unique.length < 10 || unique.length > 13) process.exit(1);
+    process.stdout.write(JSON.stringify(unique));
+  '); then
+    error "The runtime-secret preflight produced an unexpected parameter-name set."
+    return 1
+  fi
+
+  local metadata_batches_json="["
+  local metadata_json
+  local first_batch=true
+  local parameter_name
+  local parameter_names=()
+  while IFS= read -r parameter_name; do
+    if [[ -n "$parameter_name" ]]; then
+      parameter_names+=("$parameter_name")
+    fi
+  done < <(EXPECTED_PARAMETER_NAMES_JSON="$expected_parameters_json" node -e '
+    for (const name of JSON.parse(process.env.EXPECTED_PARAMETER_NAMES_JSON || "[]")) {
+      process.stdout.write(`${name}\n`);
+    }
+  ')
+
+  local offset
+  for ((offset = 0; offset < ${#parameter_names[@]}; offset += 10)); do
+    local batch=("${parameter_names[@]:offset:10}")
+    # Git Bash otherwise treats leading-slash SSM names as local filesystem
+    # paths before invoking the Windows AWS CLI.
+    if ! metadata_json=$(MSYS2_ARG_CONV_EXCL="*" aws ssm get-parameters \
+      --names "${batch[@]}" \
+      --no-with-decryption \
+      --query '{Parameters:Parameters[].{Name:Name,Type:Type,Version:Version,ARN:ARN},InvalidParameters:InvalidParameters}' \
+      --output json \
+      --region "$REGION" \
+      --no-cli-pager); then
+      error "Could not read redacted SSM SecureString metadata."
+      return 1
+    fi
+    if [[ "$first_batch" == true ]]; then
+      first_batch=false
+    else
+      metadata_batches_json+=","
+    fi
+    metadata_batches_json+="$metadata_json"
+  done
+  metadata_batches_json+="]"
+
+  if ! SSM_METADATA_BATCHES_JSON="$metadata_batches_json" \
+    EXPECTED_PARAMETER_NAMES_JSON="$expected_parameters_json" \
+    REGION="$REGION" \
+    ACCOUNT_ID="$ACCOUNT_ID" \
+    PROJECT="$PROJECT" \
+    ENVIRONMENT="$ENV" \
+    node "$SCRIPT_DIR/validate-runtime-secret-metadata.mjs" metadata > /dev/null; then
+    error "Runtime SecureString metadata failed closed validation."
+    return 1
+  fi
+}
+
 # --- Preflight checks ---
 echo ""
 echo "=========================================="
@@ -574,6 +710,10 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
   echo "  Backend: Docker → ECR → ECS"
   echo "=========================================="
 
+  info "Validating active runtime SecureString metadata without decryption..."
+  runtime_securestring_preflight
+  success "Runtime SecureString metadata preflight passed"
+
   # Step 1: Build Docker image
   info "Building Docker image..."
   docker build -t "${NAME}-api:${IMAGE_TAG}" .
@@ -652,6 +792,20 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
       container.environment = (container.environment || []).filter(item => !secretNames.has(item.name));
     }
 
+    function reconcileOptionalSecrets(container, templateContainer) {
+      const optionalNames = new Set(["GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY_PREVIOUS"]);
+      const retiredNames = new Set(["OPENAI_API_KEY"]);
+      const enabledNames = new Set((templateContainer.secrets || []).map(item => item.name));
+      container.secrets = (container.secrets || []).filter(
+        item => !retiredNames.has(item.name) &&
+          (!optionalNames.has(item.name) || enabledNames.has(item.name))
+      );
+      container.environment = (container.environment || []).filter(
+        item => !retiredNames.has(item.name) &&
+          (!optionalNames.has(item.name) || enabledNames.has(item.name))
+      );
+    }
+
     function ssmParameterArn(name) {
       return `arn:aws:ssm:${process.env.REGION}:${process.env.ACCOUNT_ID}:parameter/${process.env.PROJECT}/${process.env.ENVIRONMENT}/${name}`;
     }
@@ -677,6 +831,7 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
     container.image = process.env.IMAGE_REF;
     container.environment = mergeNamed(liveEnvironment, templateContainer.environment);
     container.secrets = mergeNamed(liveSecrets, templateContainer.secrets);
+    reconcileOptionalSecrets(container, templateContainer);
     migratePlaintextSecrets(container);
     dedupeEnvAgainstSecrets(container);
 
@@ -867,11 +1022,26 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
         container.environment = (container.environment || []).filter(item => !secretNames.has(item.name));
       }
 
+      function reconcileOptionalSecrets(container, sourceContainer) {
+        const optionalNames = new Set(["GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY_PREVIOUS"]);
+        const retiredNames = new Set(["OPENAI_API_KEY"]);
+        const enabledNames = new Set((sourceContainer.secrets || []).map(item => item.name));
+        container.secrets = (container.secrets || []).filter(
+          item => !retiredNames.has(item.name) &&
+            (!optionalNames.has(item.name) || enabledNames.has(item.name))
+        );
+        container.environment = (container.environment || []).filter(
+          item => !retiredNames.has(item.name) &&
+            (!optionalNames.has(item.name) || enabledNames.has(item.name))
+        );
+      }
+
       const container = td.containerDefinitions.find(c => c.name === "scheduler-worker") || td.containerDefinitions[0];
       const apiContainer = (api.containerDefinitions || []).find(c => c.name === "api") || api.containerDefinitions?.[0] || {};
       container.image = process.env.IMAGE_REF;
       container.environment = mergeNamed(apiContainer.environment, container.environment);
       container.secrets = mergeNamed(apiContainer.secrets, container.secrets);
+      reconcileOptionalSecrets(container, apiContainer);
       dedupeEnvAgainstSecrets(container);
       fs.writeFileSync(".worker-taskdef-new.json", JSON.stringify(td));
     '
