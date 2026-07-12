@@ -159,6 +159,24 @@ try {
     Assert-Throws {
         Write-SanitizedEvidenceEvent -EvidencePath $evidencePath -RunId "run-test" -PhaseName "google" -Event "unknown" -Details @{}
     } "Evidence must reject unknown events."
+    Write-SanitizedEvidenceEvent -EvidencePath $evidencePath -RunId "run-test" -PhaseName "google" -Event "rotation_failed" -Details @{
+        mutationAttempted = $true
+        automaticRollbackRequired = $true
+        errorCode = "ROTATION_GATE_FAILED"
+        mutationDisposition = "intended"
+        activeStageCode = "ECS_CUTOVER_STRICT_CONVERGENCE"
+    }
+    $stageEvidence = (Get-Content -LiteralPath $evidencePath | Select-Object -Last 1) | ConvertFrom-Json -Depth 10
+    Assert-Condition ([string]$stageEvidence.details.activeStageCode -ceq "ECS_CUTOVER_STRICT_CONVERGENCE") "Failure evidence must retain the sanitized active-stage code."
+    Assert-Throws {
+        Write-SanitizedEvidenceEvent -EvidencePath $evidencePath -RunId "run-test" -PhaseName "google" -Event "rotation_failed" -Details @{
+            mutationAttempted = $true
+            automaticRollbackRequired = $false
+            errorCode = "ROTATION_GATE_FAILED"
+            mutationDisposition = "unchanged"
+            activeStageCode = "unsafe free-form stage"
+        }
+    } "Failure evidence must reject a non-code active stage."
 
     $manifestPath = Join-Path $secureRoot "integrity-plan.json"
     $manifest = [pscustomobject][ordered]@{
@@ -197,6 +215,8 @@ try {
         TaskSecretScenarioTarget = "both"
         LogMode = "empty"
         LogEventOutput = ""
+        ServiceObservationSequence = @()
+        ServiceObservationIndex = 0
     }
     $global:SchoolPilotCredentialRotationTestHandler = {
         param([string]$Command, [string[]]$Arguments)
@@ -263,13 +283,27 @@ try {
         }
         if ($Command -ceq "aws" -and $Arguments[0] -ceq "ecs" -and $Arguments[1] -ceq "describe-services") {
             $apiArn = [string]$state.ApiArn; $workerArn = [string]$state.WorkerArn
+            $rolloutState = "COMPLETED"
+            $failedTasks = 0
+            $apiRunning = 1
+            $workerRunning = 1
+            $pending = 0
+            if ([int]$state.ServiceObservationIndex -lt @($state.ServiceObservationSequence).Count) {
+                $observation = $state.ServiceObservationSequence[[int]$state.ServiceObservationIndex]
+                $state.ServiceObservationIndex = [int]$state.ServiceObservationIndex + 1
+                if ($observation.ContainsKey("RolloutState")) { $rolloutState = [string]$observation.RolloutState }
+                if ($observation.ContainsKey("FailedTasks")) { $failedTasks = [int]$observation.FailedTasks }
+                if ($observation.ContainsKey("ApiRunning")) { $apiRunning = [int]$observation.ApiRunning }
+                if ($observation.ContainsKey("WorkerRunning")) { $workerRunning = [int]$observation.WorkerRunning }
+                if ($observation.ContainsKey("Pending")) { $pending = [int]$observation.Pending }
+            }
             return [pscustomobject]@{
                 ExitCode = 0
                 StdOut = (@{
                     failures = @()
                     services = @(
-                        @{ serviceName = "schoolpilot-production-api"; desiredCount = 1; runningCount = 1; pendingCount = 0; taskDefinition = $apiArn; deployments = @(@{ status = "PRIMARY"; rolloutState = "COMPLETED"; taskDefinition = $apiArn }); loadBalancers = @(@{ targetGroupArn = "arn:aws:elasticloadbalancing:us-east-1:000000000000:targetgroup/test/abc" }) },
-                        @{ serviceName = "schoolpilot-production-scheduler-worker"; desiredCount = 1; runningCount = 1; pendingCount = 0; taskDefinition = $workerArn; deployments = @(@{ status = "PRIMARY"; rolloutState = "COMPLETED"; taskDefinition = $workerArn }); loadBalancers = @() }
+                        @{ serviceName = "schoolpilot-production-api"; status = "ACTIVE"; desiredCount = 1; runningCount = $apiRunning; pendingCount = $pending; taskDefinition = $apiArn; deployments = @(@{ status = "PRIMARY"; rolloutState = $rolloutState; failedTasks = $failedTasks; taskDefinition = $apiArn }); loadBalancers = @(@{ targetGroupArn = "arn:aws:elasticloadbalancing:us-east-1:000000000000:targetgroup/test/abc" }) },
+                        @{ serviceName = "schoolpilot-production-scheduler-worker"; status = "ACTIVE"; desiredCount = 1; runningCount = $workerRunning; pendingCount = $pending; taskDefinition = $workerArn; deployments = @(@{ status = "PRIMARY"; rolloutState = $rolloutState; failedTasks = $failedTasks; taskDefinition = $workerArn }); loadBalancers = @() }
                     )
                 } | ConvertTo-Json -Depth 12 -Compress)
                 StdErr = ""
@@ -529,6 +563,81 @@ try {
     $global:RotationTestState.ClonedTaskSecretScenario = "valid"
     $global:RotationTestState.TaskSecretScenarioTarget = "both"
 
+    $sourceApiArn = [string]$global:RotationTestState.ApiArn
+    $sourceWorkerArn = [string]$global:RotationTestState.WorkerArn
+    $expectedApplyApiRevision = [int]$global:RotationTestState.RegisteredCount + 1
+    $expectedApplyWorkerRevision = $expectedApplyApiRevision + 1
+    $global:RotationTestState.ServiceObservationSequence = @(
+        @{ RolloutState = "IN_PROGRESS"; ApiRunning = 1; WorkerRunning = 1; Pending = 1 },
+        @{ RolloutState = "IN_PROGRESS"; ApiRunning = 1; WorkerRunning = 1; Pending = 0 },
+        @{ RolloutState = "COMPLETED"; ApiRunning = 1; WorkerRunning = 1; Pending = 0 }
+    )
+    $global:RotationTestState.ServiceObservationIndex = 0
+    $convergedCutover = Invoke-SecretOnlyTaskCutover `
+        -Manifest $cutoverManifest `
+        -ExpectedSsmSnapshot $cutoverSsm `
+        -RunDirectory $secureRoot `
+        -AwsRegion "us-east-1"
+    Assert-Condition ($convergedCutover.ApiTaskDefinitionArn -match ":$expectedApplyApiRevision`$") "Apply cutover must converge on the exact cloned API revision."
+    Assert-Condition ($convergedCutover.WorkerTaskDefinitionArn -match ":$expectedApplyWorkerRevision`$") "Apply cutover must converge on the exact cloned worker revision."
+    Assert-Condition ([int]$global:RotationTestState.ServiceObservationIndex -eq 3) "Apply cutover must poll through multiple IN_PROGRESS observations."
+
+    $global:RotationTestState.ServiceObservationSequence = @(
+        @{ RolloutState = "IN_PROGRESS"; ApiRunning = 1; WorkerRunning = 1; Pending = 1 },
+        @{ RolloutState = "IN_PROGRESS"; ApiRunning = 1; WorkerRunning = 1; Pending = 0 },
+        @{ RolloutState = "COMPLETED"; ApiRunning = 1; WorkerRunning = 1; Pending = 0 }
+    )
+    $global:RotationTestState.ServiceObservationIndex = 0
+    $convergedRollback = Invoke-ServiceTaskRollback `
+        -Cluster "schoolpilot-production-cluster" `
+        -ApiService "schoolpilot-production-api" `
+        -WorkerService "schoolpilot-production-scheduler-worker" `
+        -ApiTaskDefinitionArn $sourceApiArn `
+        -WorkerTaskDefinitionArn $sourceWorkerArn `
+        -AwsRegion "us-east-1"
+    Assert-Condition ($convergedRollback.ApiTaskDefinitionArn -ceq $sourceApiArn) "Rollback must converge on the exact prior API revision."
+    Assert-Condition ($convergedRollback.WorkerTaskDefinitionArn -ceq $sourceWorkerArn) "Rollback must converge on the exact prior worker revision."
+    Assert-Condition ([int]$global:RotationTestState.ServiceObservationIndex -eq 3) "Rollback must poll through multiple IN_PROGRESS observations."
+
+    $global:RotationTestState.ServiceObservationSequence = @(
+        @{ RolloutState = "IN_PROGRESS" },
+        @{ RolloutState = "IN_PROGRESS" },
+        @{ RolloutState = "IN_PROGRESS" }
+    )
+    $global:RotationTestState.ServiceObservationIndex = 0
+    Assert-Throws {
+        Wait-ForExactServiceTaskConvergence `
+            -Cluster "schoolpilot-production-cluster" `
+            -ApiService "schoolpilot-production-api" `
+            -WorkerService "schoolpilot-production-scheduler-worker" `
+            -ExpectedApiTaskDefinitionArn $sourceApiArn `
+            -ExpectedWorkerTaskDefinitionArn $sourceWorkerArn `
+            -AwsRegion "us-east-1" `
+            -MaxAttempts 3 `
+            -IntervalSeconds 0
+    } "Strict convergence must fail closed at its bounded timeout."
+    Assert-Condition ([int]$global:RotationTestState.ServiceObservationIndex -eq 3) "Strict convergence timeout must remain bounded."
+
+    $global:RotationTestState.ServiceObservationSequence = @(
+        @{ RolloutState = "IN_PROGRESS"; FailedTasks = 1 },
+        @{ RolloutState = "COMPLETED"; FailedTasks = 0 }
+    )
+    $global:RotationTestState.ServiceObservationIndex = 0
+    Assert-Throws {
+        Wait-ForExactServiceTaskConvergence `
+            -Cluster "schoolpilot-production-cluster" `
+            -ApiService "schoolpilot-production-api" `
+            -WorkerService "schoolpilot-production-scheduler-worker" `
+            -ExpectedApiTaskDefinitionArn $sourceApiArn `
+            -ExpectedWorkerTaskDefinitionArn $sourceWorkerArn `
+            -AwsRegion "us-east-1" `
+            -MaxAttempts 3 `
+            -IntervalSeconds 0
+    } "Any failed ECS deployment task must fail strict convergence immediately."
+    Assert-Condition ([int]$global:RotationTestState.ServiceObservationIndex -eq 1) "failedTasks must stop strict convergence without retrying."
+    $global:RotationTestState.ServiceObservationSequence = @()
+    $global:RotationTestState.ServiceObservationIndex = 0
+
     $rollbackPriorPlaintext = "rollback-prior-" + [Guid]::NewGuid().ToString("N")
     $rollbackCurrentPlaintext = "rollback-current-" + [Guid]::NewGuid().ToString("N")
     Set-MockedSsmState -Version 40 -Ciphertext "rollback-cipher-v40" -Plaintext $rollbackCurrentPlaintext -Scenario "success-from-request"
@@ -539,6 +648,12 @@ try {
     $global:RotationTestState.ApiArn = "arn:aws:ecs:us-east-1:000000000000:task-definition/schoolpilot-production-api:30"
     $global:RotationTestState.WorkerArn = "arn:aws:ecs:us-east-1:000000000000:task-definition/schoolpilot-production-scheduler-worker:31"
     $global:RotationTestState.LogMode = "rollback-success"
+    $global:RotationTestState.ServiceObservationSequence = @(
+        @{ RolloutState = "IN_PROGRESS"; Pending = 1 },
+        @{ RolloutState = "IN_PROGRESS"; Pending = 0 },
+        @{ RolloutState = "COMPLETED"; Pending = 0 }
+    )
+    $global:RotationTestState.ServiceObservationIndex = 0
     $rollbackManifest = [pscustomobject]@{
         parameterName = [string]$global:RotationTestState.ParameterName
         cluster = "schoolpilot-production-cluster"
@@ -566,9 +681,12 @@ try {
         Assert-Condition ($rollbackResult.Services.ApiTaskDefinitionArn -ceq $rollbackApiArn) "Rollback must restore the captured API task definition."
         Assert-Condition ($rollbackResult.Services.WorkerTaskDefinitionArn -ceq $rollbackWorkerArn) "Rollback must restore the captured worker task definition."
         Assert-Condition ([string]$rollbackResult.Ssm.PlaintextHash -ceq [string]$rollbackPriorSsm.PlaintextHash) "Rollback must restore the prior SSM plaintext hash."
+        Assert-Condition ([int]$global:RotationTestState.ServiceObservationIndex -eq 3) "Rollback core must await strict ECS rolloutState convergence."
     }
     finally { $rollbackPriorSecret.Dispose() }
     $global:RotationTestState.LogMode = "empty"
+    $global:RotationTestState.ServiceObservationSequence = @()
+    $global:RotationTestState.ServiceObservationIndex = 0
 
     $cloneCallsBefore = $global:RotationTestState.Calls.Count
     $expectedCloneRevision = [int]$global:RotationTestState.RegisteredCount + 1
