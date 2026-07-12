@@ -1851,8 +1851,20 @@ function devicesForTeacher(auth, authIndex) {
     (device.teacherId && auth.actorId === device.teacherId) ||
     (device.classId && auth.classId === device.classId)
   );
-  if (explicit.length > 0 || teacherAuthInputs.length === 1) return explicit.length > 0 ? explicit : matchingDevices;
-  return matchingDevices.filter((_device, index) => index % teacherAuthInputs.length === authIndex);
+  if (explicit.length > 0) return explicit;
+
+  if (teacherAuthInputs.length === 1) return matchingDevices;
+
+  // A diagnostic subset may not contain devices from every provisioned class.
+  // Never redistribute a device claimed by one synthetic teacher to another
+  // teacher merely to keep every cohort busy: the real API correctly rejects
+  // those reads and the resulting 404s are not valid launch traffic. Preserve
+  // round-robin behavior only for legacy/unassigned devices that no supplied
+  // auth record claims.
+  const unclaimedDevices = matchingDevices.filter((device) =>
+    !teacherAuthInputs.some((candidate) => deviceBelongsToTeacherAuth(device, candidate))
+  );
+  return unclaimedDevices.filter((_device, index) => index % teacherAuthInputs.length === authIndex);
 }
 
 function expandTeacherPath(path, auth, authIndex) {
@@ -2572,6 +2584,9 @@ if (validateConfigOnly) {
   const canaryDevices = teacherSchoolId
     ? devices.filter((device) => device.schoolId && device.schoolId !== teacherSchoolId).length
     : 0;
+  const teacherTileAssignments = teacherAuthInputs.map((auth, authIndex) =>
+    devicesForTeacher(auth, authIndex).length
+  );
   console.log(JSON.stringify({
     ok: true,
     mode: "preflight-only",
@@ -2589,6 +2604,8 @@ if (validateConfigOnly) {
       expectedClassBodies,
       expectedTargetsPerClass,
       teacherActors: teacherAuthInputs.length,
+      teacherTileCohorts: teacherTileAssignments.filter((count) => count > 0).length,
+      teacherTileAssignments: teacherTileAssignments.reduce((total, count) => total + count, 0),
     },
     finalAcceptanceContract: {
       authenticatedDeviceSockets: devices.length,

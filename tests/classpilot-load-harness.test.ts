@@ -551,6 +551,8 @@ describe("ClassPilot load harness safety", () => {
         expectedClassBodies: 20,
         expectedTargetsPerClass: stage.targets,
         teacherActors: 20,
+        teacherTileCohorts: 20,
+        teacherTileAssignments: Math.min(stage.primary, 800),
       });
       assert.equal(preflight.finalAcceptanceContract.authenticatedDeviceSockets, stage.primary + 10);
       assert.equal(preflight.finalAcceptanceContract.authenticatedTeacherSockets, 20);
@@ -1136,6 +1138,149 @@ describe("ClassPilot load harness safety", () => {
       server.closeAllConnections?.();
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     }
+  });
+
+  it("does not assign a partial device subset to unrelated roster-scoped teachers", () => {
+    const baseUrl = "https://school-pilot.net";
+    const artifacts = createLaunchArtifacts({
+      label: "partial-roster",
+      baseUrl,
+      primaryDevices: 500,
+      targetsPerClass: 25,
+    });
+    const result = run(["--validate-config"], cleanEnv({
+      LOAD_BASE_URL: baseUrl,
+      LOAD_DEVICE_MANIFEST: artifacts.manifestPath,
+      LOAD_DEVICE_COUNT: "20",
+      LOAD_DURATION_SECONDS: "180",
+      LOAD_ENFORCE_THRESHOLDS: "true",
+      LOAD_GATE_PROFILE: "partial",
+      LOAD_TEACHER_AUTH_FILE: artifacts.authPath,
+      LOAD_TEACHER_PATHS: "/api/students-aggregated,/api/classpilot/heartbeats/{deviceId}",
+      LOAD_SCREENSHOT_GET_PATH_TEMPLATE: "/api/classpilot/device/screenshot/{deviceId}",
+      LOAD_FORCE_RECONNECT_AT_SECONDS: "120",
+    }));
+
+    assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+    const preflight = JSON.parse(result.stdout);
+    assert.equal(preflight.launchContract.totalSockets, 20);
+    assert.equal(preflight.launchContract.primaryDevices, 10);
+    assert.equal(preflight.launchContract.canaryDevices, 10);
+    assert.equal(preflight.launchContract.teacherActors, 20);
+    assert.equal(preflight.launchContract.teacherTileCohorts, 1);
+    assert.equal(preflight.launchContract.teacherTileAssignments, 10);
+  });
+
+  it("runs a partial roster with only the represented teacher's tile cohort", async () => {
+    let artifacts: ReturnType<typeof createLaunchArtifacts> | null = null;
+    const historyRequests: Array<{ cookie: string; deviceId: string }> = [];
+    const screenshotDeviceIds = new Set<string>();
+    const server = createServer((request, response) => {
+      const sendJson = (status: number, value: unknown) => {
+        response.writeHead(status, { "content-type": "application/json" });
+        response.end(JSON.stringify(value));
+      };
+      const url = request.url || "/";
+      if (request.method === "POST") {
+        request.resume();
+        request.on("end", () => sendJson(200, { ok: true }));
+        return;
+      }
+      if (url === "/api/students-aggregated") {
+        assert.ok(artifacts);
+        const teacherIndex = Number(
+          String(request.headers.cookie || "").match(/partial-runtime-cookie-secret-(\d+)/)?.[1] || 0
+        ) - 1;
+        const teacher = artifacts.teacherAuth[teacherIndex] as { studentIds?: string[] } | undefined;
+        sendJson(200, (teacher?.studentIds || []).map((studentId) => ({ studentId })));
+        return;
+      }
+      if (url.startsWith("/api/classpilot/heartbeats/")) {
+        const deviceId = decodeURIComponent(url.split("/").at(-1) || "");
+        const cookie = String(request.headers.cookie || "");
+        historyRequests.push({ cookie, deviceId });
+        if (!cookie.includes("partial-runtime-cookie-secret-1")) {
+          sendJson(404, { error: "Not found" });
+          return;
+        }
+        sendJson(200, { heartbeats: [{ deviceId }] });
+        return;
+      }
+      if (url.startsWith("/api/classpilot/device/screenshot/")) {
+        const deviceId = decodeURIComponent(url.split("/").at(-1) || "");
+        screenshotDeviceIds.add(deviceId);
+        sendJson(200, { screenshot: "data:image/jpeg;base64,/9j/2Q==", timestamp: Date.now() });
+        return;
+      }
+      sendJson(200, {});
+    });
+    const webSockets = new WebSocketServer({ server, path: "/ws" });
+    webSockets.on("connection", (socket) => socket.once("message", (raw) => {
+      const auth = JSON.parse(raw.toString());
+      socket.send(JSON.stringify({ type: "auth-success", role: auth.role }));
+    }));
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address() as AddressInfo;
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    artifacts = createLaunchArtifacts({
+      label: "partial-runtime",
+      baseUrl,
+      primaryDevices: 500,
+      targetsPerClass: 25,
+    });
+    try {
+      const result = await runAsync([], cleanEnv({
+        LOAD_BASE_URL: baseUrl,
+        LOAD_DEVICE_MANIFEST: artifacts.manifestPath,
+        LOAD_DEVICE_COUNT: "20",
+        LOAD_DURATION_SECONDS: "180",
+        LOAD_TEST_ACCELERATED_RUNTIME_MS: "3000",
+        LOAD_TEST_LATENCY_THRESHOLD_MULTIPLIER: "4",
+        LOAD_TEST_REQUEST_STAGGER_MS: "1000",
+        LOAD_COMMAND_SETTLE_MS: "0",
+        LOAD_REQUEST_TIMEOUT_MS: "1000",
+        LOAD_SHUTDOWN_GRACE_MS: "1000",
+        LOAD_ENFORCE_THRESHOLDS: "true",
+        LOAD_GATE_PROFILE: "partial",
+        LOAD_TEACHER_AUTH_FILE: artifacts.authPath,
+        LOAD_TEACHER_PATHS: "/api/students-aggregated,/api/classpilot/heartbeats/{deviceId}",
+        LOAD_SCREENSHOT_GET_PATH_TEMPLATE: "/api/classpilot/device/screenshot/{deviceId}",
+        LOAD_TEACHER_HISTORY_WARMUP_MS: "30000",
+        LOAD_SCREENSHOT_GET_WARMUP_MS: "30000",
+      }), 10_000);
+
+      assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+      const summary = parseSummary(result.stdout);
+      assert.ok(historyRequests.length > 0);
+      assert.ok(historyRequests.every((entry) => entry.cookie.includes("partial-runtime-cookie-secret-1")));
+      assert.equal(new Set(historyRequests.map((entry) => entry.deviceId)).size, 10);
+      assert.equal(screenshotDeviceIds.size, 10);
+      assert.equal(summary.counters.http4xx, 0);
+      assert.equal(summary.screenshotRetrieval.successPercent, 100);
+    } finally {
+      for (const client of webSockets.clients) client.terminate();
+      await new Promise<void>((resolve) => webSockets.close(() => resolve()));
+      server.closeAllConnections?.();
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
+  it("retains round-robin cohorts for legacy devices with no ownership mapping", () => {
+    const result = run(["--validate-config"], cleanEnv({
+      LOAD_BASE_URL: "http://localhost:4000",
+      LOAD_DEVICE_MANIFEST: manifestPath,
+      LOAD_TEACHER_AUTH_FILE: teacherAuthPath,
+      LOAD_TEACHER_PATHS: "/api/classpilot/heartbeats/{deviceId}",
+    }));
+
+    assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+    const preflight = JSON.parse(result.stdout);
+    assert.equal(preflight.launchContract.teacherActors, 20);
+    assert.equal(preflight.launchContract.teacherTileCohorts, 1);
+    assert.equal(preflight.launchContract.teacherTileAssignments, 1);
   });
 
   it("forces both HTTP and WebSocket workload connections onto IPv4", async () => {
