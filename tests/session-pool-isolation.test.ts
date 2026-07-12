@@ -59,6 +59,19 @@ describe("PostgreSQL session-pool isolation", () => {
     });
     assert.equal(databasePoolLimits({ SCHEDULER_ENABLED: "0" }).role, "api");
     assert.equal(databasePoolLimits({ SCHEDULER_ENABLED: "FALSE" }).role, "api");
+    assert.deepEqual(databasePoolLimits({
+      SCHEDULER_ENABLED: "false",
+      DB_POOL_MAX: "0",
+      SESSION_DB_POOL_MAX: "-1",
+      SCHEDULER_DB_POOL_MAX: "0",
+      SCHEDULER_LOCK_POOL_MAX: "-8",
+    }), {
+      role: "api",
+      main: 18,
+      session: 2,
+      scheduler: 1,
+      schedulerLock: 1,
+    });
     assert.match(appSource, /pool:\s*sessionPool as any/);
     assert.match(appSource, /disableTouch:\s*true/);
     assert.doesNotMatch(appSource, /new PgStore\(\{[\s\S]{0,200}pool:\s*pool as any/);
@@ -129,6 +142,10 @@ describe("PostgreSQL session-pool isolation", () => {
     const storageSource = readFileSync(resolve(root, "src/services/storage.ts"), "utf8");
 
     assert.match(routeSource, /Math\.min\(Math\.max\(limit,\s*1\),\s*100\)/);
+    assert.match(
+      routeSource,
+      /Number\.isNaN\(start\.getTime\(\)\)[\s\S]*Number\.isNaN\(end\.getTime\(\)\)[\s\S]*status\(400\)/
+    );
     assert.match(
       storageSource,
       /where\(and\(eq\(heartbeats\.schoolId,\s*schoolId\),\s*eq\(heartbeats\.deviceId,\s*deviceId\)\)\)/

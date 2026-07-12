@@ -1907,6 +1907,11 @@ router.get("/heartbeats/:deviceId", ...staffAuth, async (req, res, next) => {
       // Filter by time range (for session-scoped views)
       const start = new Date(startTime);
       const end = endTime ? new Date(endTime) : new Date();
+      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+        return res
+          .status(400)
+          .json({ error: "Invalid startTime or endTime format" });
+      }
       heartbeats = await getHeartbeatsByDeviceInRange(
         res.locals.schoolId!,
         deviceId,
