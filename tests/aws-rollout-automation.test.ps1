@@ -490,7 +490,7 @@ try {
     $supervisorConfig | Add-Member -NotePropertyName loadSummaryPath -NotePropertyValue (Join-Path $tempRoot "supervisor-summary.json") -Force
     $supervisorConfig | Add-Member -NotePropertyName workload -NotePropertyValue ([pscustomobject]@{ stage = "test"; devices = 1; durationSeconds = 1; screenshotBytes = 1024; canaryDevices = 0 }) -Force
     $validateHarness = Join-Path $tempRoot "validate-only-harness.mjs"
-    [IO.File]::WriteAllText($validateHarness, 'if(process.env.LOAD_RUN_ID!=="supervisor-validate")process.exit(8);console.log(JSON.stringify({ok:true,trafficStarted:false,runId:process.env.LOAD_RUN_ID,gateProfile:"launch",thresholdsEnforced:true,networkFamily:"IPv4"}));', [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText($validateHarness, 'if(process.env.LOAD_RUN_ID!=="supervisor-validate")process.exit(8);console.log(JSON.stringify({ok:true,trafficStarted:false,runId:process.env.LOAD_RUN_ID,gateProfile:"launch",thresholdsEnforced:true,networkFamily:"IPv4"},null,2));', [Text.UTF8Encoding]::new($false))
     $supervisorConfig | Add-Member -NotePropertyName testRuntimeHarnessScriptPath -NotePropertyValue $validateHarness -Force
     $supervisorConfig | Add-Member -NotePropertyName expectedGeneratorPublicIp -NotePropertyValue "203.0.113.10" -Force
     $supervisorConfig | Add-Member -NotePropertyName testGeneratorPublicIpSequence -NotePropertyValue @("203.0.113.10") -Force
@@ -498,6 +498,28 @@ try {
     [IO.File]::WriteAllText($supervisorConfigPath, ($supervisorConfig | ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false))
     & $supervisorScript -ConfigPath $supervisorConfigPath -Mode Validate | Out-Null
     Assert-Condition ($LASTEXITCODE -eq 0) "Supervisor validation should accept a unique external long-run contract."
+
+    $validPreflightExpression = '{ok:true,trafficStarted:false,runId:process.env.LOAD_RUN_ID,gateProfile:"launch",thresholdsEnforced:true,networkFamily:"IPv4"}'
+    foreach ($invalidDocument in @(
+        [pscustomobject]@{ id="root-array"; source="console.log(JSON.stringify([$validPreflightExpression]));"; expected="exactly one JSON object" },
+        [pscustomobject]@{ id="leading-noise"; source="console.log('noise');console.log(JSON.stringify($validPreflightExpression));"; expected="did not return valid JSON" },
+        [pscustomobject]@{ id="two-documents"; source="console.log(JSON.stringify($validPreflightExpression));console.log(JSON.stringify($validPreflightExpression));"; expected="did not return valid JSON" }
+    )) {
+        $invalidDocumentHarness = Join-Path $tempRoot "$($invalidDocument.id)-document.mjs"
+        [IO.File]::WriteAllText($invalidDocumentHarness, $invalidDocument.source, [Text.UTF8Encoding]::new($false))
+        $invalidDocumentConfig = $supervisorConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+        $invalidDocumentConfig.runId = "document-$($invalidDocument.id)"
+        $invalidDocumentConfig.evidenceDirectory = Join-Path $tempRoot "document-$($invalidDocument.id)-evidence"
+        $invalidDocumentConfig.loadProgressPath = Join-Path $tempRoot "document-$($invalidDocument.id)-progress.jsonl"
+        $invalidDocumentConfig.loadSummaryPath = Join-Path $tempRoot "document-$($invalidDocument.id)-summary.json"
+        $invalidDocumentConfig.testRuntimeHarnessScriptPath = $invalidDocumentHarness
+        $invalidDocumentConfigPath = Join-Path $tempRoot "document-$($invalidDocument.id)-supervisor.json"
+        [IO.File]::WriteAllText($invalidDocumentConfigPath, ($invalidDocumentConfig | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+        $invalidDocumentRejected = $false
+        try { & $supervisorScript -ConfigPath $invalidDocumentConfigPath -Mode Validate | Out-Null }
+        catch { $invalidDocumentRejected = $_.Exception.Message -match [regex]::Escape($invalidDocument.expected) }
+        Assert-Condition $invalidDocumentRejected "Supervisor must reject the $($invalidDocument.id) preflight stdout document shape."
+    }
 
     foreach ($invalidPreflight in @(
         [pscustomobject]@{ id="wrong-run-id"; runIdExpression='process.env.LOAD_RUN_ID+"-wrong"'; gateProfile='launch'; thresholds='true'; family='IPv4' },
