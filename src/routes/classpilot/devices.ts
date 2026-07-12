@@ -1881,7 +1881,7 @@ router.get("/heartbeats", ...staffAuth, async (req, res, next) => {
     const devices = await getDevicesBySchool(res.locals.schoolId!);
     const heartbeats: unknown[] = [];
     for (const device of devices.slice(0, 50)) {
-      const hb = await getHeartbeatsByDevice(device.deviceId, 1);
+      const hb = await getHeartbeatsByDevice(res.locals.schoolId!, device.deviceId, 1);
       if (hb.length > 0) heartbeats.push({ deviceId: device.deviceId, ...hb[0] });
     }
     return res.json({ heartbeats });
@@ -1907,9 +1907,23 @@ router.get("/heartbeats/:deviceId", ...staffAuth, async (req, res, next) => {
       // Filter by time range (for session-scoped views)
       const start = new Date(startTime);
       const end = endTime ? new Date(endTime) : new Date();
-      heartbeats = await getHeartbeatsByDeviceInRange(deviceId, start, end);
+      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+        return res
+          .status(400)
+          .json({ error: "Invalid startTime or endTime format" });
+      }
+      heartbeats = await getHeartbeatsByDeviceInRange(
+        res.locals.schoolId!,
+        deviceId,
+        start,
+        end
+      );
     } else {
-      heartbeats = await getHeartbeatsByDevice(deviceId, limit);
+      heartbeats = await getHeartbeatsByDevice(
+        res.locals.schoolId!,
+        deviceId,
+        Math.min(Math.max(limit, 1), 100)
+      );
     }
     return res.json({ heartbeats });
   } catch (err) {

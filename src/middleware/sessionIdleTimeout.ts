@@ -14,22 +14,23 @@ import type { RequestHandler } from "express";
  */
 
 const ADMIN_IDLE_TIMEOUT_MS = 60 * 60 * 1000; // 1 hour for admin/super_admin
+const ACTIVITY_PERSIST_INTERVAL_MS = 60 * 1000;
 const ELEVATED_ROLES = new Set(["admin", "school_admin", "super_admin"]);
 
 export const sessionIdleTimeout: RequestHandler = (req, res, next) => {
   const role = req.session?.role;
-  if (!role || !ELEVATED_ROLES.has(role)) {
-    // Not elevated — keep default 7-day rolling window
-    if (req.session) {
-      (req.session as any).lastActivityAt = Date.now();
-    }
-    return next();
-  }
+  // express-session creates an empty object even when no cookie exists. Do not
+  // mutate it for bearer-only/public requests or save a new anonymous session.
+  if (!req.session?.userId || !role) return next();
 
   const lastActivityAt = (req.session as any).lastActivityAt as number | undefined;
   const now = Date.now();
 
-  if (lastActivityAt && now - lastActivityAt > ADMIN_IDLE_TIMEOUT_MS) {
+  if (
+    ELEVATED_ROLES.has(role) &&
+    lastActivityAt &&
+    now - lastActivityAt > ADMIN_IDLE_TIMEOUT_MS
+  ) {
     // Session idle too long — destroy and force re-auth
     return req.session.destroy((err) => {
       if (err) {
@@ -40,6 +41,10 @@ export const sessionIdleTimeout: RequestHandler = (req, res, next) => {
     });
   }
 
-  (req.session as any).lastActivityAt = now;
+  // One mutation per minute is enough to preserve the rolling seven-day DB
+  // expiry and admin idle clock without writing PostgreSQL on every poll.
+  if (!lastActivityAt || now - lastActivityAt >= ACTIVITY_PERSIST_INTERVAL_MS) {
+    (req.session as any).lastActivityAt = now;
+  }
   next();
 };

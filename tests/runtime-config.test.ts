@@ -26,6 +26,7 @@ describe("runtime config", () => {
     assert.equal(intEnv("DB_POOL_MAX", 50, {}), 50);
     assert.equal(intEnv("DB_POOL_MAX", 50, { DB_POOL_MAX: "20" }), 20);
     assert.equal(intEnv("DB_POOL_MAX", 50, { DB_POOL_MAX: "0" }), 50);
+    assert.equal(intEnv("DB_POOL_MAX", 50, { DB_POOL_MAX: "-4" }), 50);
     assert.equal(intEnv("DB_POOL_MAX", 50, { DB_POOL_MAX: "not-a-number" }), 50);
   });
 

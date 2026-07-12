@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { initSentry } from "./services/sentry.js";
 import { startScheduler, stopScheduler } from "./services/scheduler.js";
-import { pool } from "./db.js";
+import { pool, sessionPool } from "./db.js";
 import { schedulerLockPool, schedulerPool } from "./services/schedulerDb.js";
 import errorMonitor from "./services/errorMonitor.js";
 import { schedulerEnabled } from "./config/runtime.js";
@@ -51,7 +51,7 @@ async function shutdown(reason: string, err?: unknown): Promise<void> {
     console.log(`[SchedulerWorker] ${reason}`);
   }
 
-  await Promise.allSettled([pool.end(), schedulerPool.end(), schedulerLockPool.end()]);
+  await Promise.allSettled([pool.end(), sessionPool.end(), schedulerPool.end(), schedulerLockPool.end()]);
   errorMonitor.dispose();
   process.exit(process.exitCode ?? 0);
 }

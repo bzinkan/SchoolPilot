@@ -3,7 +3,7 @@ import pg from "pg";
 import * as schema from "../schema/index.js";
 import { buildPgSslConfig } from "../db/ssl.js";
 import errorMonitor from "./errorMonitor.js";
-import { intEnv } from "../config/runtime.js";
+import { databasePoolLimits } from "../config/databasePools.js";
 
 // Dedicated pool for scheduler/background jobs.
 // Isolated from the main API pool so long-running rollup/purge queries can never
@@ -16,13 +16,14 @@ import { intEnv } from "../config/runtime.js";
 // BYPASSRLS DB role; it falls back to DATABASE_URL (same behaviour via the flag).
 const schedulerConnectionString =
   process.env.DATABASE_URL_PRIVILEGED || process.env.DATABASE_URL;
+const poolLimits = databasePoolLimits();
 
 // Mark scheduler query connections as RLS-exempt at connection startup. Harmless
 // when RLS is off (app.is_super is just an unread custom GUC); once policies
 // exist, this lets cross-school jobs (rollup/purge/digests) see every school.
 const schedulerPool = new pg.Pool({
   connectionString: schedulerConnectionString,
-  max: intEnv("SCHEDULER_DB_POOL_MAX", 3),
+  max: poolLimits.scheduler,
   idleTimeoutMillis: 10000,
   connectionTimeoutMillis: 10000,
   statement_timeout: 60000,
@@ -34,7 +35,7 @@ const schedulerPool = new pg.Pool({
 // on a separate pool so lock holders cannot starve the query pool the jobs use.
 const schedulerLockPool = new pg.Pool({
   connectionString: schedulerConnectionString,
-  max: intEnv("SCHEDULER_LOCK_POOL_MAX", 8),
+  max: poolLimits.schedulerLock,
   idleTimeoutMillis: 10000,
   connectionTimeoutMillis: 10000,
   statement_timeout: 60000,

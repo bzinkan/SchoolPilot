@@ -2896,32 +2896,34 @@ export async function updateHeartbeatClassification(
 }
 
 export async function getHeartbeatsByDevice(
+  schoolId: string,
   deviceId: string,
   limit = 50
 ): Promise<Heartbeat[]> {
   return db
     .select()
     .from(heartbeats)
-    .where(eq(heartbeats.deviceId, deviceId))
+    .where(and(eq(heartbeats.schoolId, schoolId), eq(heartbeats.deviceId, deviceId)))
     .orderBy(desc(heartbeats.timestamp))
     .limit(limit);
 }
 
 export async function getHeartbeatsByDeviceInRange(
+  schoolId: string,
   deviceId: string,
   startTime: Date,
   endTime: Date
 ): Promise<Heartbeat[]> {
+  const conditions = [
+    eq(heartbeats.schoolId, schoolId),
+    eq(heartbeats.deviceId, deviceId),
+    sql`${heartbeats.timestamp} >= ${startTime}`,
+    sql`${heartbeats.timestamp} <= ${endTime}`,
+  ];
   return db
     .select()
     .from(heartbeats)
-    .where(
-      and(
-        eq(heartbeats.deviceId, deviceId),
-        sql`${heartbeats.timestamp} >= ${startTime}`,
-        sql`${heartbeats.timestamp} <= ${endTime}`
-      )
-    )
+    .where(and(...conditions))
     .orderBy(desc(heartbeats.timestamp));
 }
 

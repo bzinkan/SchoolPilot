@@ -45,8 +45,10 @@ export const bindTenantContext: RequestHandler = async (req, res, next) => {
   try {
     // set_config(name, value, is_local=false) = session-level SET, but safely
     // parameterized (SET ... = $1 is not allowed in Postgres).
-    await client.query("SELECT set_config('app.is_super', $1, false)", [isSuper ? "on" : "off"]);
-    await client.query("SELECT set_config('app.school_id', $1, false)", [schoolId ?? ""]);
+    await client.query(
+      "SELECT set_config('app.is_super', $1, false), set_config('app.school_id', $2, false)",
+      [isSuper ? "on" : "off", schoolId ?? ""]
+    );
   } catch (err) {
     release();
     return next(err);
