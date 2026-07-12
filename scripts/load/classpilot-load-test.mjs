@@ -1840,7 +1840,10 @@ function startDeviceTraffic(state, index) {
   later(() => connectDevice(state), socketJitter, { scale: acceleratedJitter === null });
 }
 
+const devicesForTeacherCache = new Map();
+
 function devicesForTeacher(auth, authIndex) {
+  if (auth && devicesForTeacherCache.has(auth)) return devicesForTeacherCache.get(auth);
   const matchingDevices = devices.filter((device) =>
     !auth?.schoolId || !device.schoolId || device.schoolId === auth.schoolId
   );
@@ -1851,9 +1854,15 @@ function devicesForTeacher(auth, authIndex) {
     (device.teacherId && auth.actorId === device.teacherId) ||
     (device.classId && auth.classId === device.classId)
   );
-  if (explicit.length > 0) return explicit;
+  if (explicit.length > 0) {
+    devicesForTeacherCache.set(auth, explicit);
+    return explicit;
+  }
 
-  if (teacherAuthInputs.length === 1) return matchingDevices;
+  if (teacherAuthInputs.length === 1) {
+    devicesForTeacherCache.set(auth, matchingDevices);
+    return matchingDevices;
+  }
 
   // A diagnostic subset may not contain devices from every provisioned class.
   // Never redistribute a device claimed by one synthetic teacher to another
@@ -1864,7 +1873,11 @@ function devicesForTeacher(auth, authIndex) {
   const unclaimedDevices = matchingDevices.filter((device) =>
     !teacherAuthInputs.some((candidate) => deviceBelongsToTeacherAuth(device, candidate))
   );
-  return unclaimedDevices.filter((_device, index) => index % teacherAuthInputs.length === authIndex);
+  const assignedDevices = unclaimedDevices.filter(
+    (_device, index) => index % teacherAuthInputs.length === authIndex
+  );
+  devicesForTeacherCache.set(auth, assignedDevices);
+  return assignedDevices;
 }
 
 function expandTeacherPath(path, auth, authIndex) {
