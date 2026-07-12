@@ -3,8 +3,8 @@ import { RedisStore } from "rate-limit-redis";
 import { createClient } from "redis";
 import type { Request } from "express";
 import {
+  createCachedBearerUserIdVerifier,
   resolveApiRateLimitIdentity,
-  verifyBearerUserId,
   type ApiRateLimitIdentity,
 } from "../util/apiRateLimitIdentity.js";
 import { usesDeviceScopedApiLimit } from "../util/apiRateLimitRoutes.js";
@@ -87,14 +87,22 @@ type RateLimitRequest = Request & {
   [API_RATE_LIMIT_IDENTITY]?: ApiRateLimitIdentity;
 };
 
+const cachedStaffBearerUserId =
+  createCachedBearerUserIdVerifier(verifyUserToken);
+
 function verifiedStaffBearerUserId(req: Request): string | null {
   // Device tokens use a separate secret and a token-hash key. Avoid attempting
   // staff verification on every high-frequency device ingest request.
   if (usesDeviceScopedApiLimit(req)) return null;
   const authorization = req.get("authorization");
+  // Mirror authenticate.ts's exact bearer extraction so the limiter cannot
+  // select a different identity when a browser also has a valid session.
+  if (!authorization?.startsWith("Bearer ")) return null;
+  const token = authorization.split(" ")[1];
+  if (!token) return null;
   // Invalid/unresolved traffic stays on the shared IP limit. Never key an
   // unverified token directly or allow token rotation to bypass the limiter.
-  return verifyBearerUserId(authorization, verifyUserToken);
+  return cachedStaffBearerUserId(`Bearer ${token}`);
 }
 
 function apiRateLimitIdentity(req: RateLimitRequest) {

@@ -145,11 +145,19 @@ const resolveSchoolContext: RequestHandler = async (req, res, next) => {
  * RLS client. Callers must establish a narrow `runWithTenantContext` scope (or
  * invoke `bindTenantContext`) before touching any tenant table.
  */
-export const requireSchoolContextWithoutTenantBinding =
-  resolveSchoolContext;
+export const requireSchoolContextWithoutTenantBinding: RequestHandler = (
+  req,
+  res,
+  next
+) => {
+  void Promise.resolve(resolveSchoolContext(req, res, next)).catch(next);
+};
 
-export const requireSchoolContext: RequestHandler = (req, res, next) =>
-  resolveSchoolContext(req, res, (error?: unknown) => {
-    if (error) return next(error);
-    return bindTenantContext(req, res, next);
-  });
+export const requireSchoolContext: RequestHandler = (req, res, next) => {
+  void Promise.resolve(
+    resolveSchoolContext(req, res, (error?: unknown) => {
+      if (error) return next(error);
+      return bindTenantContext(req, res, next);
+    })
+  ).catch(next);
+};

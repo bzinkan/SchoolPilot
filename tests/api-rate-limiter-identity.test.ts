@@ -2,12 +2,101 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  createCachedBearerUserIdVerifier,
   resolveApiRateLimitIdentity,
   verifyBearerUserId,
 } from "../src/util/apiRateLimitIdentity.ts";
 import { signUserToken, verifyUserToken } from "../src/services/jwt.ts";
 
 describe("global API rate-limit identity", () => {
+  it("caches valid compact JWT verification by digest for only the configured TTL", () => {
+    let nowMs = 1_000_000;
+    let verificationCalls = 0;
+    const verify = createCachedBearerUserIdVerifier(
+      (token) => {
+        verificationCalls += 1;
+        assert.equal(token, "header.payload.signature");
+        return { userId: "teacher-cache", exp: 2_000 };
+      },
+      { ttlMs: 1_000, now: () => nowMs }
+    );
+
+    assert.equal(verify("Bearer header.payload.signature"), "teacher-cache");
+    assert.equal(verify("bEaReR   header.payload.signature"), "teacher-cache");
+    assert.equal(verificationCalls, 1);
+
+    nowMs += 1_001;
+    assert.equal(verify("Bearer header.payload.signature"), "teacher-cache");
+    assert.equal(verificationCalls, 2);
+  });
+
+  it("short-caches repeated invalid JWTs and rejects malformed input before verification", () => {
+    let nowMs = 1_000_000;
+    let verificationCalls = 0;
+    const verify = createCachedBearerUserIdVerifier(
+      () => {
+        verificationCalls += 1;
+        throw new Error("invalid signature");
+      },
+      { invalidTtlMs: 1_000, maxTokenLength: 128, now: () => nowMs }
+    );
+
+    assert.equal(verify("Bearer bad.payload.signature"), null);
+    assert.equal(verify("Bearer bad.payload.signature"), null);
+    assert.equal(verify("Bearer not-a-compact-jwt"), null);
+    assert.equal(
+      verify(`Bearer a.${"b".repeat(130)}.c`),
+      null
+    );
+    assert.equal(verificationCalls, 1);
+
+    nowMs += 1_001;
+    assert.equal(verify("Bearer bad.payload.signature"), null);
+    assert.equal(verificationCalls, 2);
+  });
+
+  it("keeps the bearer verification cache strictly bounded with LRU eviction", () => {
+    let verificationCalls = 0;
+    const verify = createCachedBearerUserIdVerifier(
+      (token) => {
+        verificationCalls += 1;
+        return { userId: token };
+      },
+      { maxEntries: 2, ttlMs: 60_000, now: () => 1_000_000 }
+    );
+
+    assert.equal(verify("Bearer a.a.a"), "a.a.a");
+    assert.equal(verify("Bearer b.b.b"), "b.b.b");
+    assert.equal(verify("Bearer a.a.a"), "a.a.a");
+    assert.equal(verify("Bearer c.c.c"), "c.c.c");
+    assert.equal(verify("Bearer b.b.b"), "b.b.b");
+    assert.equal(verificationCalls, 4);
+  });
+
+  it("never caches a valid bearer beyond its signed expiration", () => {
+    let nowMs = 1_000_000;
+    const signedExpiryMs = nowMs + 1_000;
+    let verificationCalls = 0;
+    const verify = createCachedBearerUserIdVerifier(
+      () => {
+        verificationCalls += 1;
+        if (nowMs >= signedExpiryMs) throw new Error("jwt expired");
+        return {
+          userId: "teacher-expiring",
+          exp: signedExpiryMs / 1_000,
+        };
+      },
+      { ttlMs: 60_000, now: () => nowMs }
+    );
+
+    assert.equal(verify("Bearer expiring.payload.signature"), "teacher-expiring");
+    assert.equal(verificationCalls, 1);
+
+    nowMs = signedExpiryMs + 1;
+    assert.equal(verify("Bearer expiring.payload.signature"), null);
+    assert.equal(verificationCalls, 2);
+  });
+
   it("accepts only a verifier-approved user bearer identity", () => {
     let verificationCalls = 0;
     const verified = verifyBearerUserId("Bearer signed-user-jwt", (token) => {

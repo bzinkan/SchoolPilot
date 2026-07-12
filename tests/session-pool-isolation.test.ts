@@ -137,6 +137,22 @@ describe("PostgreSQL session-pool isolation", () => {
     );
   });
 
+  it("forwards async school-context failures through Express 4 error handling", () => {
+    const contextSource = readFileSync(
+      resolve(root, "src/middleware/requireSchoolContext.ts"),
+      "utf8"
+    );
+
+    assert.match(
+      contextSource,
+      /requireSchoolContextWithoutTenantBinding:[\s\S]*Promise\.resolve\(resolveSchoolContext\(req,\s*res,\s*next\)\)\.catch\(next\)/
+    );
+    assert.match(
+      contextSource,
+      /export const requireSchoolContext:[\s\S]*Promise\.resolve\([\s\S]*resolveSchoolContext\([\s\S]*\.catch\(next\)/
+    );
+  });
+
   it("keeps tile history explicitly school scoped and clamps row count", () => {
     const routeSource = readFileSync(resolve(root, "src/routes/classpilot/devices.ts"), "utf8");
     const storageSource = readFileSync(resolve(root, "src/services/storage.ts"), "utf8");
