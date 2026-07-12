@@ -267,8 +267,14 @@ function Invoke-HarnessConfigurationPreflight {
     if ($LASTEXITCODE -ne 0 -or $raw.Count -lt 1) {
         throw "The load harness --validate-config preflight failed before traffic."
     }
-    try { $result = ([string]$raw[-1]).Trim() | ConvertFrom-Json -Depth 20 }
+    # The production harness emits its preflight contract as pretty-printed
+    # JSON. PowerShell returns each stdout line as a separate array element, so
+    # parse the complete document instead of only its closing line.
+    try { $result = (($raw -join [Environment]::NewLine).Trim() | ConvertFrom-Json -Depth 20 -NoEnumerate) }
     catch { throw "The load harness --validate-config preflight did not return valid JSON." }
+    if ($result -is [Array] -or $result -isnot [pscustomobject]) {
+        throw "The load harness --validate-config preflight must return exactly one JSON object."
+    }
     if ($result.ok -ne $true -or $result.trafficStarted -ne $false -or
         [string]$result.runId -ne $runId -or [string]$result.gateProfile -cne "launch" -or
         $result.thresholdsEnforced -ne $true -or [string]$result.networkFamily -cne "IPv4") {
