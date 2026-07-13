@@ -714,6 +714,9 @@ describe("ClassPilot load harness safety", () => {
     let completedAcks = 0;
     let studentAuthentications = 0;
     let teacherAuthentications = 0;
+    let studentKeepalivePings = 0;
+    let teacherKeepalivePings = 0;
+    let dropKeepalivePongs = false;
     let injectedTransient502 = false;
     let injectOverbroadSameSchoolTarget = false;
     let injectOverbroadAggregatedResponse = false;
@@ -912,6 +915,12 @@ describe("ClassPilot load harness safety", () => {
           socket.send(JSON.stringify({ type: "auth-success", role: "teacher" }));
           return;
         }
+        if (message.type === "ping") {
+          if (authenticatedDeviceId) studentKeepalivePings += 1;
+          else if (teacherSockets.has(socket)) teacherKeepalivePings += 1;
+          if (!dropKeepalivePongs) socket.send(JSON.stringify({ type: "pong" }));
+          return;
+        }
         if (message.type === "command-ack") {
           const commandId = String(message.commandId || "");
           const state = commandStates.get(commandId);
@@ -999,6 +1008,18 @@ describe("ClassPilot load harness safety", () => {
       assert.equal(completedAcks, 500);
       assert.ok(studentAuthentications >= 1020);
       assert.equal(teacherAuthentications, 20);
+      assert.ok(studentKeepalivePings >= 510);
+      assert.ok(teacherKeepalivePings >= 20);
+      assert.equal(summary.websocket.keepalive.deviceIntervalMs, 25_000);
+      assert.equal(summary.websocket.keepalive.teacherIntervalMs, 20_000);
+      assert.ok(summary.counters.wsKeepalivePingsSent >= studentKeepalivePings);
+      assert.ok(summary.counters.wsKeepalivePingsSent - studentKeepalivePings <= 510);
+      assert.ok(summary.counters.wsKeepalivePongsReceived > 0);
+      assert.ok(studentKeepalivePings - summary.counters.wsKeepalivePongsReceived <= 510);
+      assert.ok(summary.counters.teacherWsKeepalivePingsSent >= teacherKeepalivePings);
+      assert.ok(summary.counters.teacherWsKeepalivePingsSent - teacherKeepalivePings <= 20);
+      assert.ok(summary.counters.teacherWsKeepalivePongsReceived > 0);
+      assert.ok(teacherKeepalivePings - summary.counters.teacherWsKeepalivePongsReceived <= 20);
       assert.ok(schoolHeaders.length > 1000);
       assert.ok(httpUserAgents.length > 1000);
       assert.ok(httpUserAgents.every((value) => value.includes("Mozilla/5.0") && value.includes("SchoolPilot-ClassPilot-LoadGate/1.0")));
@@ -1066,6 +1087,51 @@ describe("ClassPilot load harness safety", () => {
         `${result.stdout}\n${result.stderr}\n${readFileSync(summaryPath, "utf8")}\n${readFileSync(progressPath, "utf8")}`,
         /launch-cookie-secret|launch-csrf-secret|test-signature/
       );
+
+      dropKeepalivePongs = true;
+      const keepaliveSummaryPath = join(tempDir, "launch-keepalive-summary.json");
+      const keepaliveProgressPath = join(tempDir, "launch-keepalive-progress.jsonl");
+      const missingPongs = await runAsync([], cleanEnv({
+        LOAD_BASE_URL: baseUrl,
+        LOAD_DEVICE_MANIFEST: artifacts.manifestPath,
+        LOAD_DEVICE_COUNT: "510",
+        LOAD_DURATION_SECONDS: String(30 * 60),
+        LOAD_COMMAND_SETTLE_MS: "0",
+        LOAD_REQUEST_TIMEOUT_MS: "5000",
+        LOAD_SHUTDOWN_GRACE_MS: "5000",
+        LOAD_WS_AUTH_TIMEOUT_MS: "10000",
+        LOAD_ENFORCE_THRESHOLDS: "true",
+        LOAD_GATE_PROFILE: "launch",
+        LOAD_TEACHER_AUTH_FILE: artifacts.authPath,
+        LOAD_TEACHER_PATHS: "/api/students-aggregated,/api/classpilot/heartbeats/{deviceId}",
+        LOAD_SCREENSHOT_GET_PATH_TEMPLATE: "/api/classpilot/device/screenshot/{deviceId}",
+        LOAD_COMMAND_ENDPOINT: "/api/classpilot/commands",
+        LOAD_COMMAND_BODIES_FILE: artifacts.commandsPath,
+        LOAD_COMMAND_WARMUP_MS: "600000",
+        LOAD_EXPECTED_TARGETS_PER_CLASS: "25",
+        LOAD_FORCE_RECONNECT_AT_SECONDS: "1200",
+        LOAD_RUN_ID: "missing-keepalive-pongs-test",
+        LOAD_EXTERNAL_SUMMARY_PATH: keepaliveSummaryPath,
+        LOAD_EXTERNAL_PROGRESS_PATH: keepaliveProgressPath,
+        LOAD_TEST_ACCELERATED_RUNTIME_MS: "8000",
+        LOAD_TEST_LATENCY_THRESHOLD_MULTIPLIER: "4",
+        LOAD_TEST_PROGRESS_INTERVAL_MS: "500",
+        LOAD_TEST_REQUEST_STAGGER_MS: "3000",
+      }), 20_000);
+      assert.notEqual(missingPongs.status, 0, missingPongs.stdout);
+      const keepaliveSummary = JSON.parse(readFileSync(keepaliveSummaryPath, "utf8"));
+      assert.equal(keepaliveSummary.thresholds.passed, false);
+      assert.ok(keepaliveSummary.counters.wsKeepalivePingsSent > 0);
+      assert.equal(keepaliveSummary.counters.wsKeepalivePongsReceived, 0);
+      assert.ok(keepaliveSummary.counters.teacherWsKeepalivePingsSent > 0);
+      assert.equal(keepaliveSummary.counters.teacherWsKeepalivePongsReceived, 0);
+      assert.ok(keepaliveSummary.thresholds.failures.includes(
+        "device WebSocket keepalive emitted no verified JSON ping/pong exchange"
+      ));
+      assert.ok(keepaliveSummary.thresholds.failures.includes(
+        "teacher WebSocket keepalive emitted no verified JSON ping/pong exchange"
+      ));
+      dropKeepalivePongs = false;
 
       injectOverbroadAggregatedResponse = true;
       const dashboardSummaryPath = join(tempDir, "launch-dashboard-scope-summary.json");
@@ -1314,9 +1380,13 @@ describe("ClassPilot load harness safety", () => {
       sendJson(200, {});
     });
     const webSockets = new WebSocketServer({ server, path: "/ws" });
-    webSockets.on("connection", (socket) => socket.once("message", (raw) => {
-      const auth = JSON.parse(raw.toString());
-      socket.send(JSON.stringify({ type: "auth-success", role: auth.role }));
+    webSockets.on("connection", (socket) => socket.on("message", (raw) => {
+      const message = JSON.parse(raw.toString());
+      if (message.type === "auth") {
+        socket.send(JSON.stringify({ type: "auth-success", role: message.role }));
+      } else if (message.type === "ping") {
+        socket.send(JSON.stringify({ type: "pong" }));
+      }
     }));
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);

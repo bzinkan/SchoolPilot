@@ -578,6 +578,12 @@ const screenshotGetWarmupMs = intEnv(
 const forceReconnectAtMs = intEnv("LOAD_FORCE_RECONNECT_AT_SECONDS", 0, 0, 24 * 60 * 60) * 1000;
 const forceReconnectStaggerMs = intEnv("LOAD_FORCE_RECONNECT_STAGGER_MS", 30_000, 0, 5 * 60 * 1000);
 const wsAuthTimeoutMs = intEnv("LOAD_WS_AUTH_TIMEOUT_MS", 15_000, 1_000, 60_000);
+// Match the production clients exactly. The teacher dashboard sends an
+// application ping every 20 seconds and the managed ClassPilot extension sends
+// one every 25 seconds. These JSON messages (and the server's JSON pong) keep
+// CloudFront from treating an otherwise healthy WebSocket as origin-idle.
+const teacherWsKeepaliveIntervalMs = 20_000;
+const deviceWsKeepaliveIntervalMs = 25_000;
 const maxTrackedCommands = intEnv("LOAD_MAX_TRACKED_COMMANDS", 2_000, 1, 100_000);
 const expectedCanaryDevices = intEnv("LOAD_EXPECTED_CANARY_DEVICES", 10, 0, 10_000);
 const wafDeviceLimit = intEnv("LOAD_WAF_DEVICE_LIMIT", 100_000, 1, 2_000_000_000);
@@ -1142,6 +1148,8 @@ const counters = {
   wsUnexpectedClosed: 0,
   wsIntentionalClosed: 0,
   wsErrors: 0,
+  wsKeepalivePingsSent: 0,
+  wsKeepalivePongsReceived: 0,
   wsReconnectRequested: 0,
   wsReconnectCompleted: 0,
   wsReconnectLate: 0,
@@ -1151,6 +1159,8 @@ const counters = {
   teacherWsAuthenticated: 0,
   teacherWsAuthErrors: 0,
   teacherWsUnexpectedClosed: 0,
+  teacherWsKeepalivePingsSent: 0,
+  teacherWsKeepalivePongsReceived: 0,
   teacherResponseValidationErrors: 0,
   tenantIsolationProbeAttempts: 0,
   tenantIsolationProbePassed: 0,
@@ -1219,6 +1229,12 @@ function progressRecord(event) {
       teacherAuthenticated: counters.teacherWsAuthenticated,
       teacherCurrentlyAuthenticated: teacherSocketStates.filter((state) => state.authenticated).length,
       teacherUnexpectedCloses: counters.teacherWsUnexpectedClosed,
+      keepalive: {
+        devicePingsSent: counters.wsKeepalivePingsSent,
+        devicePongsReceived: counters.wsKeepalivePongsReceived,
+        teacherPingsSent: counters.teacherWsKeepalivePingsSent,
+        teacherPongsReceived: counters.teacherWsKeepalivePongsReceived,
+      },
     },
     reconnect: {
       requested: counters.wsReconnectRequested,
@@ -1321,6 +1337,31 @@ function every(callback, intervalMs) {
 function workloadEvery(callback, intervalMs) {
   if (acceleratedRuntimeMs) return null;
   return every(callback, intervalMs);
+}
+
+function socketKeepaliveEvery(callback, intervalMs) {
+  const effectiveIntervalMs = acceleratedRuntimeMs
+    ? Math.max(1_000, Math.round(intervalMs * runtimeTimingScale))
+    : intervalMs;
+  return every(callback, effectiveIntervalMs);
+}
+
+function stopSocketKeepalive(timer) {
+  if (!timer) return;
+  clearInterval(timer);
+  intervals.delete(timer);
+}
+
+function startSocketKeepalive(socket, intervalMs, counterName) {
+  return socketKeepaliveEvery(() => {
+    if (stoppingTraffic || socket.readyState !== WebSocket.OPEN) return;
+    try {
+      socket.send(JSON.stringify({ type: "ping" }));
+      counters[counterName] += 1;
+    } catch {
+      counters.wsErrors += 1;
+    }
+  }, intervalMs);
 }
 
 function staggeredDelay(index, count, productionWindowMs) {
@@ -1765,7 +1806,7 @@ function sendCommandAck(state, commandId, status) {
   }
 }
 
-function handleDeviceMessage(state, raw) {
+function handleDeviceMessage(state, raw, onAuthenticated) {
   let message;
   try {
     message = JSON.parse(raw.toString());
@@ -1780,6 +1821,7 @@ function handleDeviceMessage(state, raw) {
     state.reconnectAttempt = 0;
     counters.wsAuthenticated += 1;
     authenticatedDeviceIds.add(state.device.deviceId);
+    onAuthenticated();
     if (state.reconnectStartedAt) {
       const elapsed = Date.now() - state.reconnectStartedAt;
       reconnectLatency.observe(elapsed, elapsed > 30_000);
@@ -1800,6 +1842,10 @@ function handleDeviceMessage(state, raw) {
   }
   if (message.type === "ping") {
     state.socket?.send(JSON.stringify({ type: "pong" }));
+    return;
+  }
+  if (message.type === "pong") {
+    counters.wsKeepalivePongsReceived += 1;
     return;
   }
 
@@ -1846,6 +1892,7 @@ function connectDevice(state) {
   state.socket = socket;
   state.authenticated = false;
   sockets.add(socket);
+  let keepaliveTimer = null;
   state.authTimer = later(() => {
     if (state.generation !== generation || state.authenticated || stoppingTraffic) return;
     counters.wsAuthErrors += 1;
@@ -1864,12 +1911,22 @@ function connectDevice(state) {
     }));
   });
   socket.on("message", (raw) => {
-    if (state.generation === generation) handleDeviceMessage(state, raw);
+    if (state.generation === generation) {
+      handleDeviceMessage(state, raw, () => {
+        keepaliveTimer ||= startSocketKeepalive(
+          socket,
+          deviceWsKeepaliveIntervalMs,
+          "wsKeepalivePingsSent"
+        );
+      });
+    }
   });
   socket.on("error", () => {
     if (state.generation === generation) counters.wsErrors += 1;
   });
   socket.on("close", () => {
+    stopSocketKeepalive(keepaliveTimer);
+    keepaliveTimer = null;
     sockets.delete(socket);
     cancelLater(state.authTimer);
     state.authTimer = null;
@@ -2214,6 +2271,7 @@ function connectTeacherWebSocket(state) {
   });
   state.socket = socket;
   sockets.add(socket);
+  let keepaliveTimer = null;
   socket.on("open", () => {
     socket.send(JSON.stringify({
       type: "auth",
@@ -2233,10 +2291,19 @@ function connectTeacherWebSocket(state) {
     if (message.type === "auth-success") {
       state.authenticated = true;
       counters.teacherWsAuthenticated += 1;
+      keepaliveTimer ||= startSocketKeepalive(
+        socket,
+        teacherWsKeepaliveIntervalMs,
+        "teacherWsKeepalivePingsSent"
+      );
       return;
     }
     if (message.type === "auth-error") {
       counters.teacherWsAuthErrors += 1;
+      return;
+    }
+    if (message.type === "pong") {
+      counters.teacherWsKeepalivePongsReceived += 1;
       return;
     }
     if (message.type !== "classpilot-command-update") return;
@@ -2259,6 +2326,8 @@ function connectTeacherWebSocket(state) {
   });
   socket.on("error", () => { counters.wsErrors += 1; });
   socket.on("close", () => {
+    stopSocketKeepalive(keepaliveTimer);
+    keepaliveTimer = null;
     sockets.delete(socket);
     if (!stoppingTraffic && state.authenticated) counters.teacherWsUnexpectedClosed += 1;
     state.authenticated = false;
@@ -2449,6 +2518,26 @@ function summarize(shutdownReason) {
     }
     if (counters.wsAuthErrors > 0) failures.push(`${counters.wsAuthErrors} device WebSocket authentications failed`);
     if (unexpectedCloseRate >= 0.001) failures.push("unexpected WebSocket close rate is not below 0.1%");
+    const deviceKeepaliveGap = counters.wsKeepalivePingsSent - counters.wsKeepalivePongsReceived;
+    const allowedDeviceKeepaliveGap = finalSocketGate?.selectedDevices ?? devices.length;
+    if (counters.wsKeepalivePingsSent === 0 || counters.wsKeepalivePongsReceived === 0) {
+      failures.push("device WebSocket keepalive emitted no verified JSON ping/pong exchange");
+    } else if (deviceKeepaliveGap < 0 || deviceKeepaliveGap > allowedDeviceKeepaliveGap) {
+      failures.push(
+        `device WebSocket keepalive has ${deviceKeepaliveGap} unverified pings; at most ${allowedDeviceKeepaliveGap} may be in flight`
+      );
+    }
+    if (teacherAuthInputs.length > 0) {
+      const teacherKeepaliveGap = counters.teacherWsKeepalivePingsSent - counters.teacherWsKeepalivePongsReceived;
+      const allowedTeacherKeepaliveGap = finalSocketGate?.selectedTeachers ?? teacherAuthInputs.length;
+      if (counters.teacherWsKeepalivePingsSent === 0 || counters.teacherWsKeepalivePongsReceived === 0) {
+        failures.push("teacher WebSocket keepalive emitted no verified JSON ping/pong exchange");
+      } else if (teacherKeepaliveGap < 0 || teacherKeepaliveGap > allowedTeacherKeepaliveGap) {
+        failures.push(
+          `teacher WebSocket keepalive has ${teacherKeepaliveGap} unverified pings; at most ${allowedTeacherKeepaliveGap} may be in flight`
+        );
+      }
+    }
     if (counters.crossSchoolCommandDeliveries > 0) failures.push("a teacher command crossed the declared school boundary");
     if (counters.commandTargetCountMismatch > 0) failures.push("a class command targeted a count other than the exact reviewed class cohort");
     if (counters.commandUnexpectedTargetDeliveries > 0) failures.push("a class command reached a same-school device outside its reviewed class cohort");
@@ -2548,6 +2637,14 @@ function summarize(shutdownReason) {
       uniqueDevicesAuthenticated: authenticatedDeviceIds.size,
       reconnectLatency: reconnectLatency.summary(),
       finalPreShutdown: finalSocketGate,
+      keepalive: {
+        deviceIntervalMs: deviceWsKeepaliveIntervalMs,
+        devicePingsSent: counters.wsKeepalivePingsSent,
+        devicePongsReceived: counters.wsKeepalivePongsReceived,
+        teacherIntervalMs: teacherWsKeepaliveIntervalMs,
+        teacherPingsSent: counters.teacherWsKeepalivePingsSent,
+        teacherPongsReceived: counters.teacherWsKeepalivePongsReceived,
+      },
     },
     commands: {
       configuredClassBodies: commandBodies.length,
