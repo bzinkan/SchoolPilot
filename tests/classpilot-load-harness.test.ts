@@ -8,7 +8,11 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
 import WebSocket, { WebSocketServer } from "ws";
-import { observeCommandTargetStatuses } from "../scripts/load/command-status-observer.mjs";
+import {
+  classifyCommandSnapshotOwnership,
+  observeCommandTargetStatuses,
+  teacherSessionOwnerKey,
+} from "../scripts/load/command-status-observer.mjs";
 
 const script = fileURLToPath(new URL("../scripts/load/classpilot-load-test.mjs", import.meta.url));
 let tempDir = "";
@@ -211,6 +215,45 @@ describe("ClassPilot load harness safety", () => {
     assert.equal(entry.serverReceivedAtByTarget.get("target-1"), 400);
     assert.equal(entry.serverCompletedAtByTarget.get("target-1"), 400);
     assert.equal(observeCommandTargetStatuses(entry, [{ id: "target-1", status: "received" }], 9_000), 0);
+  });
+
+  it("keeps command status ordering scoped to the issuing teacher stream", () => {
+    const owner = { actorId: "teacher-1", teachingSessionId: "session-1" };
+    const other = { actorId: "teacher-2", teachingSessionId: "session-2" };
+    const command = { teacherId: "teacher-1", teachingSessionId: "session-1" };
+    const knownOwnerKeys = new Set([
+      teacherSessionOwnerKey(owner.actorId, owner.teachingSessionId),
+      teacherSessionOwnerKey(other.actorId, other.teachingSessionId),
+    ]);
+    const entry = {
+      requestStartedAt: 1_000,
+      serverReceived: 0,
+      serverCompleted: 0,
+      serverReceivedWithin2s: 0,
+      serverCompletedWithin5s: 0,
+      serverReceivedAtByTarget: new Map(),
+      serverCompletedAtByTarget: new Map(),
+      serverTargetStatuses: new Map(),
+      serverRegressedTargetIds: new Set(),
+    };
+
+    assert.equal(classifyCommandSnapshotOwnership(command, owner, knownOwnerKeys), "owned");
+    assert.equal(observeCommandTargetStatuses(entry, [{ id: "target-1", status: "completed" }], 1_400), 0);
+    assert.equal(classifyCommandSnapshotOwnership(command, other, knownOwnerKeys), "other");
+    // A valid but older snapshot on another teacher connection is not part of
+    // the issuing teacher's ordered stream and must not be merged into it.
+    assert.equal(entry.serverTargetStatuses.get("target-1"), "completed");
+    assert.equal(observeCommandTargetStatuses(entry, [{ id: "target-1", status: "received" }], 1_500), 1);
+    assert.equal(classifyCommandSnapshotOwnership({ teacherId: "teacher-1" }, owner, knownOwnerKeys), "invalid");
+    assert.equal(classifyCommandSnapshotOwnership(
+      { teacherId: "teacher-1", teachingSessionId: "session-2" },
+      owner,
+      knownOwnerKeys
+    ), "invalid");
+    assert.equal(
+      classifyCommandSnapshotOwnership(command, { actorId: "admin-1" }, knownOwnerKeys),
+      "other"
+    );
   });
   before(() => {
     tempDir = mkdtempSync(join(tmpdir(), "schoolpilot-load-test-"));
@@ -653,7 +696,12 @@ describe("ClassPilot load harness safety", () => {
     let artifacts: ReturnType<typeof createLaunchArtifacts> | null = null;
     const studentSockets = new Map<string, WebSocket>();
     const teacherSockets = new Set<WebSocket>();
-    const commandStates = new Map<string, { targets: string[]; statuses: Map<string, string> }>();
+    const commandStates = new Map<string, {
+      targets: string[];
+      statuses: Map<string, string>;
+      teacherId: string;
+      teachingSessionId: string;
+    }>();
     const schoolHeaders: Array<{ path: string; schoolId: string; cookie: string }> = [];
     const httpUserAgents: string[] = [];
     const websocketUserAgents: string[] = [];
@@ -720,6 +768,8 @@ describe("ClassPilot load harness safety", () => {
           const parsed = JSON.parse(body);
           const teachingSessionId = String(parsed.teachingSessionId || "");
           const expectedTargets = artifacts.sessionTargets.get(teachingSessionId) || [];
+          const teacher = artifacts.teacherAuth.find((entry) => entry.teachingSessionId === teachingSessionId);
+          assert.ok(teacher);
           const unexpectedTarget = injectOverbroadSameSchoolTarget
             ? artifacts.manifest.find((entry) =>
                 entry.schoolId === "school-1" && !expectedTargets.includes(entry.deviceId)
@@ -730,6 +780,8 @@ describe("ClassPilot load harness safety", () => {
           commandStates.set(commandId, {
             targets,
             statuses: new Map(targets.map((deviceId) => [deviceId, "sent"])),
+            teacherId: String(teacher.teacherId),
+            teachingSessionId,
           });
           // The malicious case deliberately under-reports the extra same-school
           // recipient so the harness must validate actual device delivery, not
@@ -825,19 +877,23 @@ describe("ClassPilot load harness safety", () => {
     });
     const broadcastCommandState = (commandId: string) => {
       const state = commandStates.get(commandId);
-      const teacher = [...teacherSockets].find((socket) => socket.readyState === WebSocket.OPEN);
-      if (!state || !teacher) return;
-      teacher.send(JSON.stringify({
+      if (!state) return;
+      const payload = JSON.stringify({
         type: "classpilot-command-update",
         commandId,
         command: {
           id: commandId,
+          teacherId: state.teacherId,
+          teachingSessionId: state.teachingSessionId,
           targets: state.targets.map((deviceId) => ({
             id: `${commandId}:${deviceId}`,
             status: state.statuses.get(deviceId),
           })),
         },
-      }));
+      });
+      for (const teacher of teacherSockets) {
+        if (teacher.readyState === WebSocket.OPEN) teacher.send(payload);
+      }
     };
     webSockets.on("connection", (socket) => {
       let authenticatedDeviceId = "";

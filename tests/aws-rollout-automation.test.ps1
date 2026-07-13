@@ -476,6 +476,16 @@ try {
     catch { $thresholdWeakeningRejected = $_.Exception.Message -match "threshold 'ecsCpuMaximumPercent' is immutable" }
     Assert-Condition $thresholdWeakeningRejected "Production reviewed resource/stale/cadence thresholds must be immutable."
 
+    $productionRdsFreshnessConfig = $productionThresholdConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+    $productionRdsFreshnessConfig.runId = "production-rds-cpu-freshness-lock"
+    $productionRdsFreshnessConfig.thresholds = @{rdsCpuMetricFreshnessMaximumSeconds=241}
+    $productionRdsFreshnessPath = Join-Path $tempRoot "production-rds-cpu-freshness-lock.json"
+    [IO.File]::WriteAllText($productionRdsFreshnessPath, ($productionRdsFreshnessConfig|ConvertTo-Json -Depth 12), [Text.UTF8Encoding]::new($false))
+    $rdsFreshnessWeakeningRejected = $false
+    try { & $monitorScript -ConfigPath $productionRdsFreshnessPath -Mode Validate | Out-Null }
+    catch { $rdsFreshnessWeakeningRejected = $_.Exception.Message -match "threshold 'rdsCpuMetricFreshnessMaximumSeconds' is immutable" }
+    Assert-Condition $rdsFreshnessWeakeningRejected "Production RDS CPU publication-lag allowance must remain immutable."
+
     $global:SchoolPilotTestRouteLatency = $false
     $routeConfig = $monitorConfig | ConvertTo-Json -Depth 12 | ConvertFrom-Json -Depth 12
     $routeConfig.runId = "route53-three-ok-test"
@@ -871,6 +881,8 @@ if ($service -eq "cloudwatch" -and $operation -eq "get-metric-data") {
       $metricTimestamp = if ($env:SCHOOLPILOT_TEST_FIVE_MINUTE_METRIC_AGE_SECONDS -and
           $metricId -in @("rds_cpu_credit", "rds_surplus_charged", "redis_cpu_credit")) {
         [DateTimeOffset]::UtcNow.AddSeconds(-[int]$env:SCHOOLPILOT_TEST_FIVE_MINUTE_METRIC_AGE_SECONDS).ToString("o")
+      } elseif ($env:SCHOOLPILOT_TEST_RDS_CPU_METRIC_AGE_SECONDS -and $metricId -eq "rds_cpu") {
+        [DateTimeOffset]::UtcNow.AddSeconds(-[int]$env:SCHOOLPILOT_TEST_RDS_CPU_METRIC_AGE_SECONDS).ToString("o")
       } elseif ($env:SCHOOLPILOT_TEST_FAST_METRIC_AGE_SECONDS -and
           $metricId -notin @("rds_cpu_credit", "rds_surplus_charged", "redis_cpu_credit")) {
         [DateTimeOffset]::UtcNow.AddSeconds(-[int]$env:SCHOOLPILOT_TEST_FAST_METRIC_AGE_SECONDS).ToString("o")
@@ -1327,6 +1339,27 @@ process.exit(1);
             Assert-Condition ($slowStaleCase.result.failures -contains "stale_metric:$slowMetric") "Five-minute metric '$slowMetric' older than 660 seconds must fail closed after three checks."
         }
 
+        $rdsCpuLagConfig = $limitConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+        $rdsCpuLagConfig.runId = "rds-cpu-publication-lag"
+        $rdsCpuLagConfig.minimumWallClockSeconds = 3
+        $rdsCpuLagConfig.maxIterations = 5
+        $env:SCHOOLPILOT_TEST_RDS_CPU_METRIC_AGE_SECONDS = "210"
+        $rdsCpuLagCase = Invoke-ChildMonitorCase "rds-cpu-publication-lag" $rdsCpuLagConfig
+        Remove-Item Env:SCHOOLPILOT_TEST_RDS_CPU_METRIC_AGE_SECONDS -ErrorAction SilentlyContinue
+        Assert-Condition ($rdsCpuLagCase.process.ExitCode -eq 0 -and $rdsCpuLagCase.result.status -eq "completed") "A live RDS CPU series with one additional period of publication lag must remain valid."
+
+        $rdsCpuStaleConfig = $limitConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+        $rdsCpuStaleConfig.runId = "rds-cpu-truly-stale"
+        $rdsCpuStaleConfig.minimumWallClockSeconds = 10
+        $rdsCpuStaleConfig.maxIterations = 4
+        $env:SCHOOLPILOT_TEST_RDS_CPU_METRIC_AGE_SECONDS = "300"
+        $rdsCpuStaleCase = Invoke-ChildMonitorCase "rds-cpu-truly-stale" $rdsCpuStaleConfig
+        Remove-Item Env:SCHOOLPILOT_TEST_RDS_CPU_METRIC_AGE_SECONDS -ErrorAction SilentlyContinue
+        $rdsCpuStaleFailures = @($rdsCpuStaleCase.result.failures | Where-Object { $_ -like "stale_metric:*" })
+        Assert-Condition ($rdsCpuStaleCase.process.ExitCode -eq 2 -and
+            $rdsCpuStaleFailures.Count -eq 1 -and
+            $rdsCpuStaleFailures[0] -eq "stale_metric:rds_cpu") "An RDS CPU series older than four raw minutes must still fail closed without implicating current metrics."
+
         $fastStaleConfig = $limitConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
         $fastStaleConfig.runId = "one-minute-runtime-stale"
         $fastStaleConfig.minimumWallClockSeconds = 10
@@ -1454,7 +1487,7 @@ process.exit(1);
         $freshnessCase = Invoke-ChildMonitorCase "metric-freshness-gate" $freshnessConfig
         Assert-Condition (@($freshnessCase.result.failures | Where-Object { $_ -like "stale_metric:*" }).Count -gt 0) "Runtime telemetry must fail closed after three stale one-minute checks."
         Remove-Item Env:SCHOOLPILOT_TEST_METRIC_TIMESTAMP -ErrorAction SilentlyContinue
-        Remove-Item Env:SCHOOLPILOT_TEST_WAF_SPARSE_ZERO,Env:SCHOOLPILOT_TEST_WAF_PARTIAL_EMPTY,Env:SCHOOLPILOT_TEST_FIVE_MINUTE_METRIC_AGE_SECONDS,Env:SCHOOLPILOT_TEST_FAST_METRIC_AGE_SECONDS -ErrorAction SilentlyContinue
+        Remove-Item Env:SCHOOLPILOT_TEST_WAF_SPARSE_ZERO,Env:SCHOOLPILOT_TEST_WAF_PARTIAL_EMPTY,Env:SCHOOLPILOT_TEST_FIVE_MINUTE_METRIC_AGE_SECONDS,Env:SCHOOLPILOT_TEST_FAST_METRIC_AGE_SECONDS,Env:SCHOOLPILOT_TEST_RDS_CPU_METRIC_AGE_SECONDS -ErrorAction SilentlyContinue
         Remove-Item Env:SCHOOLPILOT_TEST_WAF_DELAY -ErrorAction SilentlyContinue
         Remove-Item Env:SCHOOLPILOT_TEST_WAF_ZERO -ErrorAction SilentlyContinue
         Remove-Item Env:SCHOOLPILOT_TEST_WAF_DEVICE_BLOCK,Env:SCHOOLPILOT_TEST_WAF_API_BLOCK -ErrorAction SilentlyContinue
