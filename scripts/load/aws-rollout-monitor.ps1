@@ -397,7 +397,8 @@ function Read-Configuration {
         $telemetryExpectedSeconds = Get-RequiredInteger $config "testTelemetryExpectedSeconds" 0 86400
     }
     $telemetryMetricNames = @(
-        "ecs_api_cpu", "ecs_api_memory", "ecs_worker_cpu", "ecs_worker_memory",
+        "ecs_api_cpu", "ecs_api_cpu_maximum", "ecs_api_memory",
+        "ecs_worker_cpu", "ecs_worker_cpu_maximum", "ecs_worker_memory",
         "rds_cpu", "rds_connections", "rds_storage_headroom", "rds_free_memory", "rds_swap",
         "rds_cpu_credit", "rds_surplus_charged", "redis_cpu", "redis_memory", "redis_free",
         "redis_evictions", "redis_rejected", "redis_cpu_credit"
@@ -1018,7 +1019,10 @@ function Get-MetricQueries {
     )
     foreach ($service in $serviceIds) {
         $dimensions = @{ ClusterName = $r.cluster; ServiceName = $service.Name }
-        $queries.Add((New-MetricQuery "ecs_$($service.Suffix)_cpu" "AWS/ECS" "CPUUtilization" $dimensions "Maximum"))
+        # Gate on AWS/ECS's one-minute Average. Retain Maximum separately so a
+        # peak remains reviewable evidence without redefining steady/p95 CPU.
+        $queries.Add((New-MetricQuery "ecs_$($service.Suffix)_cpu" "AWS/ECS" "CPUUtilization" $dimensions "Average"))
+        $queries.Add((New-MetricQuery "ecs_$($service.Suffix)_cpu_maximum" "AWS/ECS" "CPUUtilization" $dimensions "Maximum"))
         $queries.Add((New-MetricQuery "ecs_$($service.Suffix)_memory" "AWS/ECS" "MemoryUtilization" $dimensions "Maximum"))
     }
     $rdsDimensions = @{ DBInstanceIdentifier = $r.rdsInstanceId }
@@ -1447,15 +1451,18 @@ function Get-Sample {
         [pscustomobject]@{ Suffix = "worker"; Name = [string]$r.workerService }
     )) {
         $cpuPercent = Get-BatchMetric $metricBatch "ecs_$($service.Suffix)_cpu"
+        $cpuMaximumPercent = Get-BatchMetric $metricBatch "ecs_$($service.Suffix)_cpu_maximum"
         $memoryPercent = Get-BatchMetric $metricBatch "ecs_$($service.Suffix)_memory"
         $serviceName = $service.Name
         $ecsMetrics[$serviceName] = [ordered]@{
             cpuPercent = Get-MetricNumber $cpuPercent
+            cpuMaximumPercent = Get-MetricNumber $cpuMaximumPercent
             memoryPercent = Get-MetricNumber $memoryPercent
         }
         Add-MetricFinding $immediate $consecutive "ecs_cpu:$serviceName" $cpuPercent { param($v) $v -ge [double]$t.ecsCpuMaximumPercent } $required
         Add-MetricFinding $immediate $consecutive "ecs_memory:$serviceName" $memoryPercent { param($v) $v -ge [double]$t.ecsMemoryMaximumPercent } $required
         Add-AcceptanceDatapoint "ecs_$($service.Suffix)_cpu" $cpuPercent
+        Add-AcceptanceDatapoint "ecs_$($service.Suffix)_cpu_maximum" $cpuMaximumPercent
         Add-AcceptanceDatapoint "ecs_$($service.Suffix)_memory" $memoryPercent
     }
 

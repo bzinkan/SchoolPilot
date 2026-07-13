@@ -151,7 +151,12 @@ $global:SchoolPilotTestServiceState = @{
 $global:SchoolPilotTestWafCount = $false
 $global:SchoolPilotTestMetricQueryIds = @()
 $global:SchoolPilotTestMetricQueryPeriods = @{}
+$global:SchoolPilotTestMetricQueryStatistics = @{}
 $global:SchoolPilotTestMetricLookbackSeconds = $null
+$global:SchoolPilotTestEcsCpuAverage = 20.0
+$global:SchoolPilotTestEcsCpuMaximum = 20.0
+$global:SchoolPilotTestOmitEcsCpuMaximum = $false
+$global:SchoolPilotTestEcsCpuMaximumTimestamp = $null
 $global:SchoolPilotTestRouteLatency = $true
 $global:SchoolPilotTestRedisNodeType = "cache.t4g.small"
 $global:SchoolPilotTestPublicIpv4 = $true
@@ -253,25 +258,39 @@ function global:aws {
         $queries = @(Get-Content -LiteralPath $inputPath -Raw | ConvertFrom-Json -Depth 20)
         $global:SchoolPilotTestMetricQueryIds = @($queries.Id)
         $global:SchoolPilotTestMetricQueryPeriods = @{}
+        $global:SchoolPilotTestMetricQueryStatistics = @{}
         foreach ($query in $queries) {
             $global:SchoolPilotTestMetricQueryPeriods[[string]$query.Id] = [int]$query.MetricStat.Period
+            $global:SchoolPilotTestMetricQueryStatistics[[string]$query.Id] = [string]$query.MetricStat.Stat
         }
         $timestamp = [DateTimeOffset]::UtcNow.ToString("o")
         $results = @($queries | ForEach-Object {
-            $value = switch -Regex ([string]$_.Id) {
-                '^ecs_.*_(cpu|memory)$' { 20; break }
-                '^rds_cpu$' { 10; break }
-                '^rds_connections$' { 20; break }
-                '^rds_free_storage$' { 85899345920; break }
-                '^rds_free_memory$' { 1073741824; break }
-                '^rds_cpu_credit$' { 100; break }
-                '^redis_cpu$' { 10; break }
-                '^redis_memory$' { 20; break }
-                '^redis_free$' { 209715200; break }
-                '^redis_cpu_credit$' { 100; break }
-                default { 0 }
+            $metricId = [string]$_.Id
+            if ($global:SchoolPilotTestOmitEcsCpuMaximum -and $metricId -match '^ecs_.*_cpu_maximum$') {
+                @{ Id = $metricId; StatusCode = "Complete"; Timestamps = @(); Values = @() }
             }
-            @{ Id = $_.Id; StatusCode = "Complete"; Timestamps = @($timestamp); Values = @($value) }
+            else {
+                $value = switch -Regex ($metricId) {
+                    '^ecs_.*_cpu_maximum$' { $global:SchoolPilotTestEcsCpuMaximum; break }
+                    '^ecs_.*_cpu$' { $global:SchoolPilotTestEcsCpuAverage; break }
+                    '^ecs_.*_memory$' { 20; break }
+                    '^rds_cpu$' { 10; break }
+                    '^rds_connections$' { 20; break }
+                    '^rds_free_storage$' { 85899345920; break }
+                    '^rds_free_memory$' { 1073741824; break }
+                    '^rds_cpu_credit$' { 100; break }
+                    '^redis_cpu$' { 10; break }
+                    '^redis_memory$' { 20; break }
+                    '^redis_free$' { 209715200; break }
+                    '^redis_cpu_credit$' { 100; break }
+                    default { 0 }
+                }
+                $metricTimestamp = if ($null -ne $global:SchoolPilotTestEcsCpuMaximumTimestamp -and
+                    $metricId -match '^ecs_.*_cpu_maximum$') {
+                    [string]$global:SchoolPilotTestEcsCpuMaximumTimestamp
+                } else { $timestamp }
+                @{ Id = $metricId; StatusCode = "Complete"; Timestamps = @($metricTimestamp); Values = @($value) }
+            }
         })
         return (@{ MetricDataResults = $results } | ConvertTo-Json -Depth 8 -Compress)
     }
@@ -402,8 +421,71 @@ try {
     foreach ($fiveMinuteMetric in @("rds_cpu_credit", "rds_surplus_charged", "redis_cpu_credit")) {
         Assert-Condition ([int]$global:SchoolPilotTestMetricQueryPeriods[$fiveMinuteMetric] -eq 300) "Five-minute metric '$fiveMinuteMetric' must use a 300-second CloudWatch period."
     }
-    foreach ($oneMinuteMetric in @("ecs_api_cpu", "waf_device_blocked", "waf_api_blocked")) {
+    foreach ($oneMinuteMetric in @("ecs_api_cpu", "ecs_api_cpu_maximum", "ecs_worker_cpu", "ecs_worker_cpu_maximum", "waf_device_blocked", "waf_api_blocked")) {
         Assert-Condition ([int]$global:SchoolPilotTestMetricQueryPeriods[$oneMinuteMetric] -eq 60) "One-minute metric '$oneMinuteMetric' must retain a 60-second CloudWatch period."
+    }
+    Assert-Condition ($global:SchoolPilotTestMetricQueryStatistics["ecs_api_cpu"] -eq "Average" -and
+        $global:SchoolPilotTestMetricQueryStatistics["ecs_worker_cpu"] -eq "Average") "ECS CPU gate series must use CloudWatch one-minute Average."
+    Assert-Condition ($global:SchoolPilotTestMetricQueryStatistics["ecs_api_cpu_maximum"] -eq "Maximum" -and
+        $global:SchoolPilotTestMetricQueryStatistics["ecs_worker_cpu_maximum"] -eq "Maximum") "ECS CPU peak-evidence series must retain CloudWatch one-minute Maximum."
+
+    $global:SchoolPilotTestEcsCpuAverage = 20.0
+    $global:SchoolPilotTestEcsCpuMaximum = 99.0
+    $ecsCpuEvidenceConfig = $monitorConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+    $ecsCpuEvidenceConfig.runId = "ecs-cpu-maximum-evidence-only"
+    $ecsCpuEvidenceConfig.maxIterations = 4
+    $ecsCpuEvidenceConfig.minimumWallClockSeconds = 3
+    $ecsCpuEvidenceConfigPath = Join-Path $tempRoot "ecs-cpu-maximum-evidence-only.json"
+    [IO.File]::WriteAllText($ecsCpuEvidenceConfigPath, ($ecsCpuEvidenceConfig | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+    & $monitorScript -ConfigPath $ecsCpuEvidenceConfigPath -Mode Monitor | Out-Null
+    $ecsCpuEvidenceResult = Get-Content -LiteralPath (Join-Path $evidenceDirectory "ecs-cpu-maximum-evidence-only-monitor-result.json") -Raw | ConvertFrom-Json -Depth 30
+    $ecsCpuEvidenceSample = Get-Content -LiteralPath (Join-Path $evidenceDirectory "ecs-cpu-maximum-evidence-only-aws-monitor.jsonl") -Tail 1 | ConvertFrom-Json -Depth 30
+    Assert-Condition ($ecsCpuEvidenceResult.status -eq "completed" -and $ecsCpuEvidenceResult.acceptance.passed -and
+        -not ($ecsCpuEvidenceResult.acceptance.violations -contains "ecs_api_cpu_steady") -and
+        -not ($ecsCpuEvidenceResult.acceptance.violations -contains "ecs_api_cpu_p95")) "A high ECS Maximum with a healthy Average must remain evidence-only and must not trip runtime, steady, or p95 gates."
+    Assert-Condition ([double]$ecsCpuEvidenceSample.metrics.ecs.api.cpuPercent -eq 20.0 -and
+        [double]$ecsCpuEvidenceSample.metrics.ecs.api.cpuMaximumPercent -eq 99.0) "Per-sample ECS evidence must distinguish Average gate CPU from Maximum peak CPU."
+    Assert-Condition ([double]$ecsCpuEvidenceResult.acceptance.metrics.ecs_api_cpu.p95 -eq 20.0 -and
+        [double]$ecsCpuEvidenceResult.acceptance.metrics.ecs_api_cpu_maximum.maximum -eq 99.0) "Acceptance evidence must compute p95 from Average while retaining the separate Maximum series."
+    $global:SchoolPilotTestEcsCpuMaximum = 20.0
+
+    foreach ($maximumEvidenceCase in @(
+        [pscustomobject]@{
+            name = "missing"
+            omit = $true
+            timestamp = $null
+        },
+        [pscustomobject]@{
+            name = "stale"
+            omit = $false
+            timestamp = [DateTimeOffset]::UtcNow.AddMinutes(-10).ToString("o")
+        }
+    )) {
+        $global:SchoolPilotTestOmitEcsCpuMaximum = [bool]$maximumEvidenceCase.omit
+        $global:SchoolPilotTestEcsCpuMaximumTimestamp = $maximumEvidenceCase.timestamp
+        $maximumEvidenceConfig = $monitorConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+        $maximumEvidenceConfig.runId = "ecs-cpu-maximum-$($maximumEvidenceCase.name)-invalid"
+        $maximumEvidenceConfig.maxIterations = 4
+        $maximumEvidenceConfig.minimumWallClockSeconds = 3
+        $maximumEvidenceConfig | Add-Member -NotePropertyName testTelemetryExpectedSeconds -NotePropertyValue 120
+        $maximumEvidenceConfig | Add-Member -NotePropertyName testTelemetryMetricNames -NotePropertyValue @(
+            "ecs_api_cpu_maximum", "ecs_worker_cpu_maximum"
+        )
+        $maximumEvidenceConfigPath = Join-Path $tempRoot "$($maximumEvidenceConfig.runId).json"
+        [IO.File]::WriteAllText($maximumEvidenceConfigPath, ($maximumEvidenceConfig | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+        & $monitorScript -ConfigPath $maximumEvidenceConfigPath -Mode Monitor | Out-Null
+        $maximumEvidenceExitCode = $LASTEXITCODE
+        $global:SchoolPilotTestOmitEcsCpuMaximum = $false
+        $global:SchoolPilotTestEcsCpuMaximumTimestamp = $null
+
+        $maximumEvidenceResult = Get-Content -LiteralPath (Join-Path $evidenceDirectory "$($maximumEvidenceConfig.runId)-monitor-result.json") -Raw | ConvertFrom-Json -Depth 30
+        Assert-Condition ($maximumEvidenceExitCode -eq 2 -and $maximumEvidenceResult.status -eq "failed" -and
+            $maximumEvidenceResult.failures -contains "run_acceptance_failed") "Missing/stale ECS Maximum telemetry must invalidate the completed run."
+        foreach ($series in @("ecs_api_cpu_maximum", "ecs_worker_cpu_maximum")) {
+            Assert-Condition ($maximumEvidenceResult.acceptance.violations -contains "telemetry_coverage:$series") "Missing/stale ECS Maximum telemetry must fail mandatory coverage for $series."
+        }
+        Assert-Condition (-not $maximumEvidenceResult.rollback.approved -and -not $maximumEvidenceResult.rollback.attempted -and
+            $maximumEvidenceResult.rollback.reason -match "cumulative acceptance") "Missing/stale ECS Maximum evidence must invalidate without guessing at an infrastructure rollback."
     }
 
     $global:SchoolPilotTestStoppedTaskLifecycle = $true
@@ -914,7 +996,7 @@ if ($service -eq "cloudwatch" -and $operation -eq "get-metric-data") {
       $value = switch -Regex ($metricId) {
         '^waf_device_blocked$' { if($env:SCHOOLPILOT_TEST_WAF_DEVICE_BLOCK -or ($env:SCHOOLPILOT_TEST_WAF_DEVICE_BLOCK_FILE -and (Test-Path -LiteralPath $env:SCHOOLPILOT_TEST_WAF_DEVICE_BLOCK_FILE))){1}else{0}; break }
         '^waf_api_blocked$' { if($env:SCHOOLPILOT_TEST_WAF_API_BLOCK){1}else{0}; break }
-        '^ecs_.*_(cpu|memory)$' { 10; break }
+        '^ecs_.*_(cpu_maximum|cpu|memory)$' { 10; break }
         '^rds_cpu$' { 10; break }
         '^rds_connections$' { 20; break }
         '^rds_free_storage$' { 85899345920; break }
