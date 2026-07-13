@@ -7,7 +7,11 @@ import process from "node:process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
-import { observeCommandTargetStatuses } from "./command-status-observer.mjs";
+import {
+  classifyCommandSnapshotOwnership,
+  observeCommandTargetStatuses,
+  teacherSessionOwnerKey,
+} from "./command-status-observer.mjs";
 
 const JPEG_1X1 =
   "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAH/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAEFAqf/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAEDAQE/ASP/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAECAQE/ASP/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAY/ASP/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAE/ISP/2gAMAwEAAgADAAAAEP/EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQMBAT8QH//EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQIBAT8QH//EABQQAQAAAAAAAAAAAAAAAAAAABD/2gAIAQEAAT8QH//Z";
@@ -716,6 +720,11 @@ if (teacherAuthFileValue) {
 }
 const hasTeacherHttpAuth = teacherAuthInputs.some((auth) => Boolean(auth.cookie || auth.token));
 const authSchoolIds = new Set(teacherAuthInputs.map((auth) => auth.schoolId).filter(Boolean));
+const teacherCommandOwnerKeys = new Set(
+  teacherAuthInputs
+    .map((auth) => teacherSessionOwnerKey(auth.actorId, auth.teachingSessionId))
+    .filter(Boolean)
+);
 if (authSchoolIds.size > 1) throw new Error("Teacher auth entries must belong to one synthetic primary school");
 const teacherSchoolId = envTeacherSchoolId || [...authSchoolIds][0] || "";
 if (envTeacherSchoolId && authSchoolIds.size === 1 && !authSchoolIds.has(envTeacherSchoolId)) {
@@ -1153,6 +1162,8 @@ const counters = {
   commandReceivedAcksSent: 0,
   commandCompletedAcksSent: 0,
   commandUpdatesObserved: 0,
+  commandOwnedUpdatesObserved: 0,
+  commandUpdateOwnershipErrors: 0,
   commandTrackingOverflow: 0,
   commandTargetCountMismatch: 0,
   commandUnexpectedTargetDeliveries: 0,
@@ -1222,7 +1233,10 @@ function progressRecord(event) {
       expectedTargets: trackedCommands.reduce((total, entry) => total + entry.expected, 0),
       messagesReceived: counters.commandMessagesReceived,
       completedAcksSent: counters.commandCompletedAcksSent,
-      responseValidationErrors: counters.commandResponsesInvalid + counters.commandTrackingOverflow,
+      responseValidationErrors:
+        counters.commandResponsesInvalid +
+        counters.commandTrackingOverflow +
+        counters.commandUpdateOwnershipErrors,
     },
     tenantIsolation: {
       knownNonOwnedDeviceIds: nonOwnedDeviceIds.size,
@@ -2226,12 +2240,22 @@ function connectTeacherWebSocket(state) {
       return;
     }
     if (message.type !== "classpilot-command-update") return;
+    counters.commandUpdatesObserved += 1;
+    const ownership = classifyCommandSnapshotOwnership(message.command, auth, teacherCommandOwnerKeys);
+    if (ownership === "invalid") {
+      counters.commandUpdateOwnershipErrors += 1;
+      return;
+    }
+    // Staff updates are school-wide. Measure status timing and monotonicity on
+    // the issuing teacher's ordered TCP stream instead of merging all 20
+    // independently ordered teacher connections.
+    if (ownership !== "owned") return;
     const commandId = String(message.commandId || message.command?.id || "").trim();
     const entry = commandId ? getCommandEntry(commandId) : null;
     if (!entry) return;
     const targets = Array.isArray(message.command?.targets) ? message.command.targets : [];
     observeServerCommandTargets(entry, targets);
-    counters.commandUpdatesObserved += 1;
+    counters.commandOwnedUpdatesObserved += 1;
   });
   socket.on("error", () => { counters.wsErrors += 1; });
   socket.on("close", () => {
@@ -2474,7 +2498,11 @@ function summarize(shutdownReason) {
       }
       if (ratio(commandTotals.messagesWithin2s, commandTotals.expected) < 0.99) failures.push("fewer than 99% of command targets received the WebSocket command within 2 seconds");
       if (ratio(commandTotals.completedAcksWithin5s, commandTotals.expected) < 0.99) failures.push("fewer than 99% of command targets sent completed ACKs within 5 seconds");
-      if (counters.commandResponsesInvalid > 0 || counters.commandTrackingOverflow > 0) failures.push("one or more command responses could not be validated");
+      if (
+        counters.commandResponsesInvalid > 0 ||
+        counters.commandTrackingOverflow > 0 ||
+        counters.commandUpdateOwnershipErrors > 0
+      ) failures.push("one or more command responses or update owners could not be validated");
       if (counters.commandServerStatusRegressions > 0) failures.push("one or more server command target statuses regressed");
       if (teacherSchoolId) {
         if (counters.teacherWsAuthenticated !== teacherAuthInputs.length || counters.teacherWsAuthErrors > 0) {

@@ -503,6 +503,10 @@ function Read-Configuration {
         supervisedHeartbeatStaleSeconds = 150
         summaryCommitGraceSeconds = 30
         metricFreshnessMaximumSeconds = 180
+        # AWS/RDS CPU datapoints can arrive one additional one-minute period
+        # behind the other RDS series while still advancing every minute. Keep
+        # all other one-minute metrics on the stricter 180-second ceiling.
+        rdsCpuMetricFreshnessMaximumSeconds = 240
         # Credit metrics are timestamped on a five-minute cadence and can remain
         # invisible until after the following period starts. Allow two complete
         # periods plus one bounded poll interval, while still failing closed when
@@ -1471,7 +1475,8 @@ function Get-Sample {
     $redisRejected = Get-BatchMetric $metricBatch "redis_rejected"
     $redisCpuCredit = Get-BatchMetric $metricBatch "redis_cpu_credit"
 
-    Add-MetricFinding $immediate $consecutive "rds_cpu" $rdsCpu { param($v) $v -ge [double]$t.rdsCpuMaximumPercent } $required
+    Add-MetricFinding $immediate $consecutive "rds_cpu" $rdsCpu { param($v) $v -ge [double]$t.rdsCpuMaximumPercent } $required `
+        -FreshnessMaximumSeconds ([double]$t.rdsCpuMetricFreshnessMaximumSeconds)
     Add-MetricFinding $immediate $consecutive "rds_connections" $rdsConnections { param($v) $v -ge [double]$t.rdsConnectionsMaximum } $required
     Add-MetricFinding $immediate $consecutive "rds_storage_headroom" $rdsStorageHeadroomPercent { param($v) $v -le [double]$t.rdsStorageHeadroomMinimumPercent } $required
     Add-MetricFinding $immediate $consecutive "rds_free_memory" $rdsFreeMemory { param($v) $v -le [double]$t.rdsFreeableMemoryMinimumBytes } $required

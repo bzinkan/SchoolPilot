@@ -8,6 +8,31 @@ const commandStatusRank = new Map([
   ["expired", 3],
 ]);
 
+export function teacherSessionOwnerKey(teacherId, teachingSessionId) {
+  const normalizedTeacherId = String(teacherId || "").trim();
+  const normalizedSessionId = String(teachingSessionId || "").trim();
+  return normalizedTeacherId && normalizedSessionId
+    ? JSON.stringify([normalizedTeacherId, normalizedSessionId])
+    : "";
+}
+
+export function classifyCommandSnapshotOwnership(command, observer, knownOwnerKeys) {
+  const teacherId = String(command?.teacherId || "").trim();
+  const teachingSessionId = String(command?.teachingSessionId || "").trim();
+  const actorId = String(observer?.actorId || "").trim();
+  const observerSessionId = String(observer?.teachingSessionId || "").trim();
+  const commandOwnerKey = teacherSessionOwnerKey(teacherId, teachingSessionId);
+  const observerOwnerKey = teacherSessionOwnerKey(actorId, observerSessionId);
+
+  if (
+    !commandOwnerKey ||
+    !observerOwnerKey ||
+    !(knownOwnerKeys instanceof Set) ||
+    !knownOwnerKeys.has(commandOwnerKey)
+  ) return "invalid";
+  return commandOwnerKey === observerOwnerKey ? "owned" : "other";
+}
+
 export function observeCommandTargetStatuses(entry, targets, observedAt = Date.now()) {
   let regressions = 0;
 
