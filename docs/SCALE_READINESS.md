@@ -188,7 +188,11 @@ The HTTP/WebSocket/WAF harness scope passes only when all of the following hold:
 
 The external evidence that must also pass is:
 
-- API steady CPU <60%, p95 CPU <70%, memory peak <75%, with no OOM, restart,
+- API one-minute CloudWatch Average CPU has a run-wide mean <60% and p95 <70%;
+  the separately retained one-minute Maximum CPU series is peak evidence only
+  and does not drive steady, p95, or consecutive-breach gates. Missing or stale
+  Average or Maximum CPU evidence invalidates the run without selecting an
+  infrastructure rollback. Memory peak remains <75%, with no OOM, restart,
   unhealthy target, or sustained maximum autoscale.
 - RDS CPU <65%, connections <150, no pool exhaustion, rollup/purge <10 minutes,
   and at least 20% projected storage headroom at 60 school days.
