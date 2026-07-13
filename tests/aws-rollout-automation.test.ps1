@@ -834,7 +834,7 @@ if ($service -eq "ecs" -and $operation -eq "describe-services") {
     @{ serviceName="worker"; desiredCount=1; runningCount=1; pendingCount=0; taskDefinition=$workerTask; deployments=@(@{status="PRIMARY"}); networkConfiguration=@{awsvpcConfiguration=@{subnets=@("private-a","private-b");securityGroups=@("sg-1");assignPublicIp="DISABLED"}} }
   )} | ConvertTo-Json -Depth 12 -Compress; exit 0
 }
-if ($service -eq "ecs" -and $operation -eq "update-service") { $td=Arg "--task-definition";$name=Arg "--service";if($td){$flag=if($name -eq "worker"){$env:SCHOOLPILOT_TEST_WORKER_TASK_FLAG}else{$env:SCHOOLPILOT_TEST_API_TASK_FLAG};[IO.File]::WriteAllText($flag,$td)};'{}';exit 0 }
+if ($service -eq "ecs" -and $operation -eq "update-service") { $td=Arg "--task-definition";$name=Arg "--service";if($env:SCHOOLPILOT_TEST_UPDATE_LOG){[IO.File]::AppendAllText($env:SCHOOLPILOT_TEST_UPDATE_LOG,($arguments -join " ")+[Environment]::NewLine)};if($td){$flag=if($name -eq "worker"){$env:SCHOOLPILOT_TEST_WORKER_TASK_FLAG}else{$env:SCHOOLPILOT_TEST_API_TASK_FLAG};[IO.File]::WriteAllText($flag,$td)};'{}';exit 0 }
 if ($service -eq "ecs" -and $operation -eq "wait") { '{}';exit 0 }
 if ($service -eq "ecs" -and $operation -eq "list-tasks") {
   if ((Arg "--desired-status") -eq "RUNNING") { $name=Arg "--service-name"; @{taskArns=@("arn:aws:ecs:us-east-1:000000000000:task/cluster/$name-running")}|ConvertTo-Json -Compress; exit 0 }
@@ -1000,12 +1000,17 @@ process.exit(1);
     $apiTaskFlag = Join-Path $childRoot "api-task.flag"
     $oldWorkerTaskFlag = $env:SCHOOLPILOT_TEST_WORKER_TASK_FLAG
     $workerTaskFlag = Join-Path $childRoot "worker-task.flag"
+    $oldUpdateLog = $env:SCHOOLPILOT_TEST_UPDATE_LOG
+    $updateLog = Join-Path $childRoot "ecs-update.log"
     $env:PATH = "$childRoot$([IO.Path]::PathSeparator)$oldPath"
     $env:SCHOOLPILOT_TEST_WAF_FLAG = $wafFlag
     $env:SCHOOLPILOT_TEST_OOM_FLAG = $oomFlag
     $env:SCHOOLPILOT_TEST_API_TASK_FLAG = $apiTaskFlag
     $env:SCHOOLPILOT_TEST_WORKER_TASK_FLAG = $workerTaskFlag
+    $env:SCHOOLPILOT_TEST_UPDATE_LOG = $updateLog
     $childMonitor = $null
+    $oomOnlyMonitor = $null
+    $oomOnlyHarness = $null
     $limitMonitor = $null
     $completedWaitMonitor = $null
     $completedWaitHarness = $null
@@ -1035,6 +1040,48 @@ process.exit(1);
         Assert-Condition ($childResult.rollback.attempted -and $childResult.rollback.action -eq "Application" -and $childResult.rollback.exitCode -eq 0) "Tenant-isolation regression must outrank a simultaneous OOM and restore the previous API/worker revisions."
         $sleepProcess.Refresh()
         Assert-Condition $sleepProcess.HasExited "Hard gate must terminate the bound harness process."
+
+        $oomOnlyRunId = "oom-already-emergency-monitor"
+        $oomOnlyEvidence = Join-Path $childRoot "$oomOnlyRunId-evidence"
+        [void][IO.Directory]::CreateDirectory($oomOnlyEvidence)
+        $oomOnlyProgress = Join-Path $childRoot "$oomOnlyRunId-progress.jsonl"
+        $oomOnlySummary = Join-Path $childRoot "$oomOnlyRunId-summary.json"
+        $oomOnlyRollbackPath = Join-Path $childRoot "$oomOnlyRunId-rollback.json"
+        $oomOnlyRollback = $childRollback | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+        $oomOnlyRollback.runId = $oomOnlyRunId
+        $oomOnlyRollback.evidenceDirectory = $oomOnlyEvidence
+        [IO.File]::WriteAllText($oomOnlyRollbackPath, ($oomOnlyRollback | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+        $oomOnlyHarness = Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList @("-NoProfile", "-Command", "Start-Sleep -Seconds 60") -PassThru -NoNewWindow
+        Start-Sleep -Milliseconds 200
+        $oomOnlyConfig = $childConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+        $oomOnlyConfig.runId = $oomOnlyRunId
+        $oomOnlyConfig.evidenceDirectory = $oomOnlyEvidence
+        $oomOnlyConfig.loadProgressPath = $oomOnlyProgress
+        $oomOnlyConfig.loadSummaryPath = $oomOnlySummary
+        $oomOnlyConfig.rollbackConfigPath = $oomOnlyRollbackPath
+        $oomOnlyConfig.artifactsNotBeforeUtc = [DateTimeOffset]::UtcNow.AddSeconds(-1).ToString("o")
+        $oomOnlyConfig.deadlineUtc = [DateTimeOffset]::UtcNow.AddMinutes(1).ToString("o")
+        $oomOnlyConfig.harnessProcessId = $oomOnlyHarness.Id
+        $oomOnlyConfig.harnessProcessStartedAtUtc = ([DateTimeOffset]$oomOnlyHarness.StartTime).ToUniversalTime().ToString("o")
+        $oomOnlyConfig.harnessProcessPath = $oomOnlyHarness.Path
+        $oomOnlyConfigPath = Join-Path $childRoot "$oomOnlyRunId-monitor.json"
+        [IO.File]::WriteAllText($oomOnlyConfigPath, ($oomOnlyConfig | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText($apiTaskFlag, [string]$childRollback.emergencyApiTaskDefinition, [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText($oomFlag, "oom", [Text.UTF8Encoding]::new($false))
+        $updatesBeforeOomOnly = @(Get-Content -LiteralPath $updateLog -ErrorAction SilentlyContinue).Count
+        $oomOnlyMonitor = Start-Process -FilePath (Get-Process -Id $PID).Path `
+            -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$monitorScript,"-ConfigPath",$oomOnlyConfigPath,"-Mode","Monitor") `
+            -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $childRoot "$oomOnlyRunId.out") -RedirectStandardError (Join-Path $childRoot "$oomOnlyRunId.err")
+        Assert-Condition ($oomOnlyMonitor.WaitForExit(30000)) "Emergency-active OOM monitor did not fail fast."
+        $oomOnlyResult = Get-Content -LiteralPath (Join-Path $oomOnlyEvidence "$oomOnlyRunId-monitor-result.json") -Raw | ConvertFrom-Json -Depth 20
+        $updatesAfterOomOnly = @(Get-Content -LiteralPath $updateLog -ErrorAction SilentlyContinue).Count
+        $oomOnlyHarness.Refresh()
+        Assert-Condition ($oomOnlyMonitor.ExitCode -eq 3 -and $oomOnlyResult.status -eq "failed" -and
+            @($oomOnlyResult.failures | Where-Object { $_ -like "ecs_api_oom:*" }).Count -gt 0 -and
+            $oomOnlyResult.rollback.attempted -and $oomOnlyResult.rollback.action -eq "Oom" -and $oomOnlyResult.rollback.exitCode -eq 1 -and
+            $oomOnlyResult.rollback.error -match "already uses the reviewed emergency revision" -and
+            $updatesAfterOomOnly -eq $updatesBeforeOomOnly -and $oomOnlyHarness.HasExited) `
+            "An OOM on the active emergency revision must stop traffic and block progression without an ECS update."
 
         # The supervisor must arm the real monitor before releasing even the
         # first synthetic request. Exercise both immediate tenant exposure and
@@ -1637,6 +1684,7 @@ process.exit(1);
         $env:SCHOOLPILOT_TEST_OOM_FLAG = $oldOomFlag
         $env:SCHOOLPILOT_TEST_API_TASK_FLAG = $oldApiTaskFlag
         $env:SCHOOLPILOT_TEST_WORKER_TASK_FLAG = $oldWorkerTaskFlag
+        $env:SCHOOLPILOT_TEST_UPDATE_LOG = $oldUpdateLog
         Remove-Item Env:SCHOOLPILOT_TEST_NAT_ZERO -ErrorAction SilentlyContinue
         Remove-Item Env:SCHOOLPILOT_TEST_REDIS_TYPE -ErrorAction SilentlyContinue
         Remove-Item Env:SCHOOLPILOT_TEST_SNAPSHOT_TIME -ErrorAction SilentlyContinue
@@ -1646,6 +1694,8 @@ process.exit(1);
         Remove-Item Env:SCHOOLPILOT_TEST_SWAP_COUNTER -ErrorAction SilentlyContinue
         Remove-Item Env:SCHOOLPILOT_TEST_METRIC_TIMESTAMP -ErrorAction SilentlyContinue
         if ($childMonitor -and -not $childMonitor.HasExited) { Stop-Process -Id $childMonitor.Id -Force }
+        if ($oomOnlyMonitor -and -not $oomOnlyMonitor.HasExited) { Stop-Process -Id $oomOnlyMonitor.Id -Force }
+        if ($oomOnlyHarness -and -not $oomOnlyHarness.HasExited) { Stop-Process -Id $oomOnlyHarness.Id -Force }
         if ($limitMonitor -and -not $limitMonitor.HasExited) { Stop-Process -Id $limitMonitor.Id -Force }
         if ($completedWaitMonitor -and -not $completedWaitMonitor.HasExited) { Stop-Process -Id $completedWaitMonitor.Id -Force }
         if ($completedWaitHarness -and -not $completedWaitHarness.HasExited) { Stop-Process -Id $completedWaitHarness.Id -Force }
@@ -1753,6 +1803,18 @@ process.exit(1);
     try { & $rollbackScript -ConfigPath $rollbackConfigPath -Action Oom -Mode Validate | Out-Null }
     catch { $misconfiguredCloneRejected = $_.Exception.Message -match "not a configuration clone" }
     Assert-Condition $misconfiguredCloneRejected "OOM preflight must canonical-compare the full task/container configuration, not only image and roles."
+
+    $alreadyEmergencyConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+    $alreadyEmergencyConfig.runId = "oom-already-emergency"
+    [IO.File]::WriteAllText($rollbackConfigPath, ($alreadyEmergencyConfig | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+    $global:SchoolPilotTestServiceState.api.taskDefinition = $alreadyEmergencyConfig.emergencyApiTaskDefinition
+    $updateCallsBeforeEmergencyBlock = @($global:SchoolPilotTestAwsCalls | Where-Object { $_ -like "ecs update-service*" }).Count
+    $alreadyEmergencyRejected = $false
+    try { & $rollbackScript -ConfigPath $rollbackConfigPath -Action Oom -Mode Execute | Out-Null }
+    catch { $alreadyEmergencyRejected = $_.Exception.Message -match "already uses the reviewed emergency revision" }
+    $updateCallsAfterEmergencyBlock = @($global:SchoolPilotTestAwsCalls | Where-Object { $_ -like "ecs update-service*" }).Count
+    Assert-Condition ($alreadyEmergencyRejected -and $updateCallsAfterEmergencyBlock -eq $updateCallsBeforeEmergencyBlock) "OOM rollback must block without an ECS mutation when the API already runs the emergency revision."
+    $global:SchoolPilotTestServiceState.api.taskDefinition = "api-current"
 
     $badLineageConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
     $badLineageConfig.runId = "bad-state-lineage"

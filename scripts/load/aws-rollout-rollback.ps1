@@ -679,6 +679,14 @@ function Restore-Application {
 function Restore-Oom {
     param($Config)
     Assert-RollbackDeadline -Step "deploy-emergency-api-revision"
+    $services = @(Get-ServiceSnapshot -Config $Config)
+    $api = @($services | Where-Object serviceName -eq $Config.apiService)
+    if ($api.Count -ne 1) {
+        throw "OOM rollback could not resolve the current API service."
+    }
+    if ($api[0].taskDefinition -eq $Config.emergencyApiTaskDefinition) {
+        throw "OOM rollback is unavailable because the API already uses the reviewed emergency revision; progression is blocked without an AWS mutation."
+    }
     Invoke-Aws -Arguments @("ecs", "update-service", "--region", $Config.region, "--cluster", $Config.cluster,
         "--service", $Config.apiService, "--task-definition", $Config.emergencyApiTaskDefinition, "--force-new-deployment")
     Wait-Services -Config $Config -Services @($Config.apiService)
