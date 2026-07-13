@@ -16,7 +16,10 @@
 The launch gate is performance-first but cost-conscious. It is intentionally
 different from the deferred 2,000-device HA profile:
 
-- API: 1–6 Fargate tasks at `512 CPU / 1024 MB`, 70% CPU autoscaling target.
+- API: ordinary minimum 1, weekday 05:45–10:00 arrival minimum 6, and
+  autoscaling maximum 8 at `512 CPU / 2048 MB`, with a 70% CPU target. The
+  higher memory revision is retained because launch performance takes priority
+  over the original 1024 MB cost model.
 - Scheduler: exactly one task at `256 CPU / 512 MB`.
 - ECS application tasks: public subnets with public IPv4; the ALB remains the
   only inbound application path and RDS/Redis remain private.

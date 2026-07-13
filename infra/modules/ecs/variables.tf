@@ -18,6 +18,14 @@ variable "enable_api_arrival_capacity" {
   type    = bool
   default = false
 }
+variable "api_max_capacity" {
+  type    = number
+  default = 6
+}
+variable "api_arrival_min_capacity" {
+  type    = number
+  default = 2
+}
 variable "api_arrival_scale_up_schedule" {
   type    = string
   default = "cron(0 6 ? * MON-FRI *)"

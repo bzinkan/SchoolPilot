@@ -163,11 +163,12 @@ Capture the current API and worker task-definition ARNs before deploying. Run:
 
 Do not use `--skip-wait` in production. The script fails closed unless the API
 is stable at `1/1` or `2/2` and the worker is stable at `1/1`. After the slow
-image work, it captures the exact API Application Auto Scaling suspended state,
+image work, it rechecks the weekday 04:45-10:15 America/New_York deployment
+guard, then captures the exact API Application Auto Scaling suspended state,
 suspends dynamic scale-in/out while preserving the captured scheduled-scaling
 state, rechecks both services, and keeps that dynamic hold through migration and
-both service deployments. The reviewed one/two-task schedules remain active so
-a rollout cannot skip the 06:00 scale-up or 10:00 scale-down. It verifies both
+both service deployments. The reviewed one/six-task schedules remain active so
+a rollout cannot skip the 05:45 scale-up or 10:00 scale-down. It verifies both
 services again after stabilization and restores/verifies the exact prior scaling
 state; its EXIT trap retries restoration after a failure.
 
@@ -279,19 +280,24 @@ confirmed foreign-resource access failure and stops immediately. A timeout or
 `5xx` is recorded as an indeterminate availability failure: it still fails the
 stage's 20/20 isolation acceptance, but it is not mislabeled as tenant leakage.
 
-Production keeps the ordinary API autoscaling minimum at one. From 06:00 to
+Production keeps the ordinary API autoscaling minimum at one. From 05:45 to
 10:00 America/New_York on weekdays, Application Auto Scaling raises the minimum
-to two so both 512/1024 tasks and their retained 18-client database pools are
-warm before the school-arrival reconnect wave. CPU target tracking remains 1-6
-outside that window and 2-6 inside it; after 10:00 it is allowed to scale the
-extra task in under the existing cooldown. Before a joint API/worker deployment,
-require API desired capacity at or below two. At 200% deployment capacity this
-bounds the conservative overlap model to four API task cohorts plus two worker
-cohorts (120 configured connections), below the 150 gate. Do not create a new
-Terraform plan or run an unscoped apply between 06:00 and 10:00
+to six measured launch-safe `512 CPU / 2048 MiB` tasks before the school-arrival
+reconnect wave. CPU target tracking remains 1-8 outside that window and 6-8
+inside it; after 10:00 it may scale in under the existing cooldown. The active
+emergency revision retains `DB_POOL_MAX=20`, so six API pools plus the worker's
+five-client pool have a theoretical ceiling of 125 connections. Eight API
+pools plus the worker can reach 165; actual RDS connections therefore remain a
+hard monitored gate below 150 and max eight must not be represented as
+statically bounded below that gate. Before a joint API/worker deployment,
+require API desired capacity at or below two. The deployment script blocks
+weekday backend deployments from 04:45 through 10:14 America/New_York, including
+a one-hour safety buffer before the arrival action. Do not create a new
+Terraform plan or run an unscoped apply between
+05:45 and 10:00
 America/New_York on weekdays: the scheduled action intentionally owns the
 scalable target's temporary minimum during that window, and a refresh would
-otherwise present the expected `2` floor as drift from the ordinary Terraform
+otherwise present the expected `6` floor as drift from the ordinary Terraform
 baseline of `1`. A previously reviewed, digest-verified emergency rollback
 saved plan remains immediately applicable during this window because applying
 that immutable plan does not refresh or reinterpret the scheduled capacity.
@@ -366,7 +372,7 @@ monitoring-completeness failures never guess at an infrastructure mutation.
 ## Arrival-capacity remediation phase
 
 Apply the API arrival-capacity remediation before repeating the failed WAF/500
-gate. Run this phase outside the weekday 06:00-10:00 America/New_York arrival
+gate. Run this phase outside the weekday 05:45-10:00 America/New_York arrival
 window. First require production to remain on private ECS subnets with both NAT
 gateways present, Route 53 latency measurement enabled, Redis small, both WAF
 rate rules in `BLOCK`, and API desired capacity at or below two.
@@ -381,28 +387,31 @@ terraform -chdir=infra plan -var-file=production.tfvars `
   -out $PlanPath
 ```
 
-The only accepted shape is **2 add / 1 change / 0 destroy**: the weekday API
-scale-up and scale-down scheduled actions are added, and the API running-task
-alarm changes to the `DesiredTaskCount - RunningTaskCount > 0` metric-math
-contract. Abort for any task-definition, ECS network, desired-count, NAT,
-Route 53, RDS, Redis, WAF, replacement, or destroy action. Create and verify the
-required before-plan, before-apply, and after-apply state backups; apply only
-the reviewed saved plan and delete it after success.
+The existing arrival actions and metric-math running-task alarm are already
+live. The only accepted amendment shape is **0 add / 2 change / 0 destroy**:
+the API scalable target maximum changes from six to eight, and the weekday API
+scale-up action changes from 06:00/minimum two to 05:45/minimum six. The 10:00
+minimum-one scale-down and 70% Average CPU target remain unchanged. Abort for
+any task-definition, ECS network, desired-count, NAT, Route 53, RDS, Redis,
+WAF, alarm, replacement, or destroy action. Create and verify the required
+before-plan, before-apply, and after-apply state backups; apply only the reviewed
+saved plan and delete it after success.
 
 After apply, verify both scheduled actions use `America/New_York`, the exact
-weekday 06:00 scale-up has minimum two, the exact weekday 10:00 scale-down has
-minimum one, and the API alarm has fresh desired/running datapoints. Outside the
-arrival window, perform a controlled runtime drill by temporarily setting the
-API scalable-target minimum to two, waiting for two healthy/warm API tasks, and
-then restoring the minimum to one after the repeated load gate. Do not lower
-the minimum while a gate is running.
+weekday 05:45 scale-up has minimum six, the exact weekday 10:00 scale-down has
+minimum one, and the API alarm has fresh desired/running datapoints. If the
+same-day 05:45 action has already passed, temporarily set the API scalable
+target minimum to six and wait for six healthy/warm API tasks before the load
+gates. Restore the schedule-appropriate runtime minimum only after both WAF
+gates. Do not lower the minimum while a gate is running.
 
-If the scheduled-action contract is invalid, use a separately reviewed saved
-Terraform plan with `enable_api_arrival_capacity=false`; it must destroy only
-the two scheduled actions. Retain the safer metric-math alarm. An application
-regression uses the captured previous API/worker task-definition rollback; an
-API OOM uses the digest-matched 512/2048 emergency revision. Never roll back
-this phase by changing ECS networking, NAT, or WAF.
+If the scheduled-action contract is invalid, hold the live target at minimum
+six/maximum eight, stop progression, and correct it with a separately reviewed
+saved plan. Do not disable the schedules or restore the measured-unsafe
+minimum-two arrival floor. An application regression uses the captured previous
+API/worker task-definition rollback; an API OOM on the already-selected
+512/2048 emergency revision blocks progression. Never roll back this phase by
+changing ECS networking, NAT, Redis, Route 53, or WAF.
 
 ## Phase 1: WAF and alarms
 

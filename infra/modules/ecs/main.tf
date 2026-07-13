@@ -320,11 +320,28 @@ resource "aws_ecs_service" "worker" {
 # --- Auto Scaling ---
 
 resource "aws_appautoscaling_target" "api" {
-  max_capacity       = 6
+  max_capacity       = var.api_max_capacity
   min_capacity       = var.desired_count
   resource_id        = "service/${aws_ecs_cluster.main.name}/${aws_ecs_service.api.name}"
   scalable_dimension = "ecs:service:DesiredCount"
   service_namespace  = "ecs"
+
+  lifecycle {
+    precondition {
+      condition     = var.desired_count <= var.api_max_capacity
+      error_message = "The ordinary API minimum cannot exceed api_max_capacity."
+    }
+
+    precondition {
+      condition     = !var.enable_api_arrival_capacity || var.api_arrival_min_capacity <= var.api_max_capacity
+      error_message = "The API arrival minimum cannot exceed api_max_capacity."
+    }
+
+    precondition {
+      condition     = !var.enable_api_arrival_capacity || var.desired_count <= var.api_arrival_min_capacity
+      error_message = "The ordinary API minimum cannot exceed the enabled arrival minimum."
+    }
+  }
 }
 
 resource "aws_appautoscaling_policy" "api_cpu" {
@@ -345,9 +362,9 @@ resource "aws_appautoscaling_policy" "api_cpu" {
 }
 
 # CPU target tracking cannot react before a short morning reconnect wave. Keep
-# one additional task warm for the four-hour weekday arrival window, then
-# restore the ordinary one-task minimum and let target tracking scale it in.
-# Normal 1-6 target tracking continues to operate in both windows.
+# the measured arrival floor warm during the weekday arrival window, then
+# restore the ordinary minimum and let target tracking scale in. Target
+# tracking continues to operate up to the configured maximum in both windows.
 resource "aws_appautoscaling_scheduled_action" "api_arrival_scale_up" {
   count = var.enable_api_arrival_capacity ? 1 : 0
 
@@ -359,7 +376,7 @@ resource "aws_appautoscaling_scheduled_action" "api_arrival_scale_up" {
   timezone           = var.api_arrival_schedule_timezone
 
   scalable_target_action {
-    min_capacity = 2
+    min_capacity = var.api_arrival_min_capacity
   }
 }
 

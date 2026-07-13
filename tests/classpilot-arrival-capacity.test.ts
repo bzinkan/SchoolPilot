@@ -53,7 +53,7 @@ describe("ClassPilot school-arrival capacity controls", () => {
     assert.match(fab, /options\.schoolSettings/);
   });
 
-  it("enables only the production weekday arrival-capacity schedule", () => {
+  it("enables only the measured production weekday arrival-capacity schedule", () => {
     const ecs = source("infra/modules/ecs/main.tf");
     const alarms = source("infra/alarms.tf");
     const production = source("infra/production.tfvars");
@@ -61,9 +61,19 @@ describe("ClassPilot school-arrival capacity controls", () => {
 
     assert.equal((ecs.match(/resource "aws_appautoscaling_scheduled_action"/g) ?? []).length, 2);
     assert.match(ecs, /ignore_changes = \[task_definition, desired_count\]/);
-    assert.match(ecs, /api_arrival_scale_up[\s\S]*?min_capacity = 2/);
+    assert.match(ecs, /max_capacity\s*=\s*var\.api_max_capacity/);
+    assert.match(ecs, /api_arrival_scale_up[\s\S]*?min_capacity = var\.api_arrival_min_capacity/);
     assert.match(ecs, /api_arrival_scale_down[\s\S]*?min_capacity = var\.desired_count/);
+    assert.match(ecs, /var\.desired_count <= var\.api_max_capacity/);
+    assert.match(ecs, /var\.api_arrival_min_capacity <= var\.api_max_capacity/);
+    assert.match(ecs, /var\.desired_count <= var\.api_arrival_min_capacity/);
+    assert.match(ecs, /target_value\s*=\s*70\.0/);
     assert.match(production, /enable_api_arrival_capacity\s*=\s*true/);
+    assert.match(production, /api_arrival_min_capacity\s*=\s*6/);
+    assert.match(production, /api_max_capacity\s*=\s*8/);
+    assert.match(production, /api_arrival_scale_up_schedule\s*=\s*"cron\(45 5 \? \* MON-FRI \*\)"/);
+    assert.match(production, /api_arrival_scale_down_schedule\s*=\s*"cron\(0 10 \? \* MON-FRI \*\)"/);
+    assert.match(production, /api_arrival_schedule_timezone\s*=\s*"America\/New_York"/);
     assert.match(ha, /enable_api_arrival_capacity\s*=\s*false/);
     assert.match(alarms, /expression\s*=\s*"desired - running"/);
     assert.match(alarms, /metric_name\s*=\s*"DesiredTaskCount"/);

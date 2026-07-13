@@ -493,14 +493,22 @@ try {
     $stoppingTaskConfig = $monitorConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
     $stoppingTaskConfig.runId = "stopping-task-lifecycle-test"
     $stoppingTaskConfig.maxIterations = 2
-    $stoppingTaskConfig.minimumWallClockSeconds = 1
-    $stoppingTaskConfig.deadlineUtc = [DateTimeOffset]::UtcNow.AddMinutes(5).ToString("o")
+    # Keep completion deliberately out of reach so a slower CI runner cannot
+    # satisfy the wall clock after the first sample and skip the lifecycle's
+    # second observation. The bounded iteration-limit exit is expected here;
+    # this case verifies that the transition itself never triggers a gate.
+    $stoppingTaskConfig.minimumWallClockSeconds = 3600
+    $stoppingTaskConfig.deadlineUtc = [DateTimeOffset]::UtcNow.AddHours(2).ToString("o")
     $stoppingTaskConfigPath = Join-Path $tempRoot "stopping-task-lifecycle.json"
     [IO.File]::WriteAllText($stoppingTaskConfigPath, ($stoppingTaskConfig | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
     & $monitorScript -ConfigPath $stoppingTaskConfigPath -Mode Monitor | Out-Null
+    $stoppingTaskExitCode = $LASTEXITCODE
     $stoppingTaskResult = Get-Content -LiteralPath (Join-Path $evidenceDirectory "stopping-task-lifecycle-test-monitor-result.json") -Raw | ConvertFrom-Json -Depth 20
     $stoppingTaskSamples = @(Get-Content -LiteralPath (Join-Path $evidenceDirectory "stopping-task-lifecycle-test-aws-monitor.jsonl") | ForEach-Object { $_ | ConvertFrom-Json -Depth 30 })
-    Assert-Condition ($stoppingTaskResult.status -eq "completed" -and $stoppingTaskSamples.Count -eq 2) "A DEACTIVATING task without stoppedAt must not crash or invalidate monitoring."
+    Assert-Condition ($stoppingTaskExitCode -eq 2 -and $stoppingTaskResult.status -eq "failed" -and
+        $stoppingTaskResult.failures -contains "monitor_iteration_limit_reached_before_acceptance" -and
+        $stoppingTaskSamples.Count -eq 2) "The bounded lifecycle test must end only at its deliberate iteration limit after two samples."
+    Assert-Condition (@($stoppingTaskSamples | Where-Object { $_.triggered -or $_.immediateFailures -contains "monitor_exception" }).Count -eq 0) "A DEACTIVATING task without stoppedAt must not crash or trigger a monitoring gate."
     Assert-Condition (@($stoppingTaskSamples[0].stoppedTasks).Count -eq 0) "An incomplete ECS stop transition must remain pending until stoppedAt is published."
     Assert-Condition (@($stoppingTaskSamples[1].stoppedTasks).Count -eq 1 -and $stoppingTaskSamples[1].stoppedTasks[0].expectedScaleOrDeploymentStop) "The completed scale-in must be observed and classified on the next sample."
     $global:SchoolPilotTestStoppedTaskLifecycle = $false
