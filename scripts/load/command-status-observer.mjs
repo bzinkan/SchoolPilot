@@ -26,11 +26,10 @@ export function classifyCommandSnapshotOwnership(command, observer, knownOwnerKe
 
   if (
     !commandOwnerKey ||
-    !observerOwnerKey ||
     !(knownOwnerKeys instanceof Set) ||
     !knownOwnerKeys.has(commandOwnerKey)
   ) return "invalid";
-  return commandOwnerKey === observerOwnerKey ? "owned" : "other";
+  return observerOwnerKey && commandOwnerKey === observerOwnerKey ? "owned" : "other";
 }
 
 export function observeCommandTargetStatuses(entry, targets, observedAt = Date.now()) {

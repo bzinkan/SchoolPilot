@@ -250,6 +250,10 @@ describe("ClassPilot load harness safety", () => {
       owner,
       knownOwnerKeys
     ), "invalid");
+    assert.equal(
+      classifyCommandSnapshotOwnership(command, { actorId: "admin-1" }, knownOwnerKeys),
+      "other"
+    );
   });
   before(() => {
     tempDir = mkdtempSync(join(tmpdir(), "schoolpilot-load-test-"));
