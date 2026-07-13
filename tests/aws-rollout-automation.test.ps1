@@ -159,6 +159,8 @@ $global:SchoolPilotTestAutomatedSnapshotAfter = $null
 $global:SchoolPilotTestTerraformLineage = "test-lineage"
 $global:SchoolPilotTestNatAvailable = $true
 $global:SchoolPilotTestPlanShapeInvalid = $false
+$global:SchoolPilotTestStoppedTaskLifecycle = $false
+$global:SchoolPilotTestStoppedTaskDescribeCalls = 0
 
 function global:aws {
     $arguments = @($args | ForEach-Object { [string]$_ })
@@ -189,14 +191,18 @@ function global:aws {
             })
             return (@{tasks=$tasks}|ConvertTo-Json -Depth 8 -Compress)
         }
-        return (@{ tasks = @(@{
+        $global:SchoolPilotTestStoppedTaskDescribeCalls++
+        $stoppedTask = [ordered]@{
             taskArn = "arn:aws:ecs:us-east-1:123456789012:task/cluster/scale-in-task"
             group = "service:api"
-            stoppedAt = [DateTimeOffset]::UtcNow.ToString("o")
             stopCode = "ServiceSchedulerInitiated"
             stoppedReason = "Scaling activity initiated by deployment ecs-svc/test"
             containers = @(@{ exitCode = 0; reason = "" })
-        }) } | ConvertTo-Json -Depth 8 -Compress)
+        }
+        if (-not $global:SchoolPilotTestStoppedTaskLifecycle -or $global:SchoolPilotTestStoppedTaskDescribeCalls -gt 1) {
+            $stoppedTask.stoppedAt = [DateTimeOffset]::UtcNow.ToString("o")
+        }
+        return (@{ tasks = @($stoppedTask) } | ConvertTo-Json -Depth 8 -Compress)
     }
     if ($service -eq "elbv2" -and $operation -eq "describe-target-health") {
         return '{"TargetHealthDescriptions":[{"TargetHealth":{"State":"healthy"}}]}'
@@ -399,6 +405,24 @@ try {
     foreach ($oneMinuteMetric in @("ecs_api_cpu", "waf_device_blocked", "waf_api_blocked")) {
         Assert-Condition ([int]$global:SchoolPilotTestMetricQueryPeriods[$oneMinuteMetric] -eq 60) "One-minute metric '$oneMinuteMetric' must retain a 60-second CloudWatch period."
     }
+
+    $global:SchoolPilotTestStoppedTaskLifecycle = $true
+    $global:SchoolPilotTestStoppedTaskDescribeCalls = 0
+    $stoppingTaskConfig = $monitorConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+    $stoppingTaskConfig.runId = "stopping-task-lifecycle-test"
+    $stoppingTaskConfig.maxIterations = 2
+    $stoppingTaskConfig.minimumWallClockSeconds = 1
+    $stoppingTaskConfig.deadlineUtc = [DateTimeOffset]::UtcNow.AddMinutes(5).ToString("o")
+    $stoppingTaskConfigPath = Join-Path $tempRoot "stopping-task-lifecycle.json"
+    [IO.File]::WriteAllText($stoppingTaskConfigPath, ($stoppingTaskConfig | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+    & $monitorScript -ConfigPath $stoppingTaskConfigPath -Mode Monitor | Out-Null
+    $stoppingTaskResult = Get-Content -LiteralPath (Join-Path $evidenceDirectory "stopping-task-lifecycle-test-monitor-result.json") -Raw | ConvertFrom-Json -Depth 20
+    $stoppingTaskSamples = @(Get-Content -LiteralPath (Join-Path $evidenceDirectory "stopping-task-lifecycle-test-aws-monitor.jsonl") | ForEach-Object { $_ | ConvertFrom-Json -Depth 30 })
+    Assert-Condition ($stoppingTaskResult.status -eq "completed" -and $stoppingTaskSamples.Count -eq 2) "A DEACTIVATING task without stoppedAt must not crash or invalidate monitoring."
+    Assert-Condition (@($stoppingTaskSamples[0].stoppedTasks).Count -eq 0) "An incomplete ECS stop transition must remain pending until stoppedAt is published."
+    Assert-Condition (@($stoppingTaskSamples[1].stoppedTasks).Count -eq 1 -and $stoppingTaskSamples[1].stoppedTasks[0].expectedScaleOrDeploymentStop) "The completed scale-in must be observed and classified on the next sample."
+    $global:SchoolPilotTestStoppedTaskLifecycle = $false
+    $global:SchoolPilotTestStoppedTaskDescribeCalls = 0
 
     $isolatedConfig = $monitorConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
     $isolatedConfig.runId = "missing-test-sentinel"
