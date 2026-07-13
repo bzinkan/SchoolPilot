@@ -24,6 +24,8 @@ $script:NatSamples = [System.Collections.Generic.List[object]]::new()
 $script:Route53AlarmOkPeriods = 0
 $script:PreviousMetricDatapoints = @{}
 $script:MetricFreshnessMaximumSeconds = 180
+$script:TrafficStartedAtUtc = $null
+$script:TrafficStoppedAtUtc = $null
 
 function Get-AbsolutePath {
     param([string]$Path, [string]$Name)
@@ -327,6 +329,9 @@ function Read-Configuration {
         if ($minimumWallClockSeconds -gt $workload.DurationSeconds + 900) {
             throw "minimumWallClockSeconds cannot exceed the workload duration by more than 15 minutes."
         }
+        if (-not $testMode -and $minimumWallClockSeconds -ne $workload.DurationSeconds) {
+            throw "Production load monitoring requires minimumWallClockSeconds to equal workload.durationSeconds."
+        }
         $artifactsNotBeforeUtc = Get-RequiredUtcTimestamp -Object $config -Property "artifactsNotBeforeUtc"
         if ($artifactsNotBeforeUtc -gt [DateTimeOffset]::UtcNow.AddMinutes(1)) {
             throw "artifactsNotBeforeUtc cannot be in the future."
@@ -392,7 +397,16 @@ function Read-Configuration {
     }
     $maxIterations = [int](Get-OptionalValue $config "maxIterations" 0)
     if ($maxIterations -lt 0) { throw "maxIterations must be zero or positive." }
-    $telemetryExpectedSeconds = $minimumWallClockSeconds
+    $minuteTicks = [TimeSpan]::TicksPerMinute
+    $runtimeSeriesNotBeforeUtc = [DateTimeOffset]::new(
+        $script:StartedAt.Ticks - ($script:StartedAt.Ticks % $minuteTicks),
+        [TimeSpan]::Zero
+    )
+    if ($null -ne $config.PSObject.Properties["testRuntimeSeriesNotBeforeUtc"]) {
+        if (-not $testMode) { throw "testRuntimeSeriesNotBeforeUtc is test-only." }
+        $runtimeSeriesNotBeforeUtc = Get-RequiredUtcTimestamp $config "testRuntimeSeriesNotBeforeUtc"
+    }
+    $telemetryExpectedSeconds = if ($null -eq $workload) { $minimumWallClockSeconds } else { $workload.DurationSeconds }
     if ($testMode -and $null -ne $config.PSObject.Properties["testTelemetryExpectedSeconds"]) {
         $telemetryExpectedSeconds = Get-RequiredInteger $config "testTelemetryExpectedSeconds" 0 86400
     }
@@ -561,6 +575,7 @@ function Read-Configuration {
         MinimumWallClockSeconds = $minimumWallClockSeconds
         TelemetryExpectedSeconds = $telemetryExpectedSeconds
         TelemetryMetricNames = $telemetryMetricNames
+        RuntimeSeriesNotBeforeUtc = $runtimeSeriesNotBeforeUtc
         DeadlineUtc = $deadlineUtc
         TestMode = $testMode
         HarnessProcessId = $harnessProcessId
@@ -670,7 +685,9 @@ function Invoke-CloudWatchMetricBatch {
     finally {
         if (Test-Path -LiteralPath $queryPath) { Remove-Item -LiteralPath $queryPath -Force }
     }
-    $metrics = @{}
+    $collectedThroughUtc = [DateTimeOffset]::UtcNow
+    $latestMetrics = @{}
+    $series = @{}
     foreach ($result in @($response.MetricDataResults)) {
         if ([string]$result.StatusCode -notin @("Complete", "PartialData")) { continue }
         $points = for ($index = 0; $index -lt @($result.Timestamps).Count; $index++) {
@@ -679,21 +696,33 @@ function Invoke-CloudWatchMetricBatch {
                 Value = [double]$result.Values[$index]
             }
         }
-        $latest = @($points | Sort-Object Timestamp | Select-Object -Last 1)
+        $orderedPoints = @($points | Sort-Object Timestamp)
+        $latest = @($orderedPoints | Where-Object Timestamp -le $collectedThroughUtc | Select-Object -Last 1)
         $id = [string]$result.Id
+        $series[$id] = $orderedPoints
         $isCompleteSparseWafZero = [string]$result.StatusCode -eq "Complete" -and $latest.Count -eq 0 -and
             $id -in @("waf_device_blocked", "waf_api_blocked")
-        $metrics[$id] = if ($isCompleteSparseWafZero) {
+        $latestMetrics[$id] = if ($isCompleteSparseWafZero) {
             [pscustomobject]@{ Timestamp = $end; Value = 0.0; SparseZero = $true }
         } elseif ($latest.Count -eq 0) { $null } else { $latest[0] }
     }
-    return $metrics
+    return [pscustomobject]@{
+        Latest = $latestMetrics
+        Series = $series
+        CollectedThroughUtc = $collectedThroughUtc
+    }
 }
 
 function Get-BatchMetric {
-    param([hashtable]$Metrics, [string]$Id)
-    if (-not $Metrics.ContainsKey($Id)) { return $null }
-    return $Metrics[$Id]
+    param($Metrics, [string]$Id)
+    if (-not $Metrics.Latest.ContainsKey($Id)) { return $null }
+    return $Metrics.Latest[$Id]
+}
+
+function Get-BatchSeries {
+    param($Metrics, [string]$Id)
+    if (-not $Metrics.Series.ContainsKey($Id)) { return @() }
+    return @($Metrics.Series[$Id])
 }
 
 function Get-MetricNumber {
@@ -985,7 +1014,7 @@ function Get-NatState {
 }
 
 function Get-WafState {
-    param($Config, [hashtable]$Metrics)
+    param($Config, $Metrics)
     $deviceBlocked = Get-BatchMetric $Metrics "waf_device_blocked"
     $apiBlocked = Get-BatchMetric $Metrics "waf_api_blocked"
     $deviceCounted = Get-BatchMetric $Metrics "waf_device_counted"
@@ -1064,7 +1093,7 @@ function Get-MetricQueries {
 }
 
 function Add-NatMetrics {
-    param($NatState, [hashtable]$Metrics)
+    param($NatState, $Metrics)
     $bytes = 0.0
     $drops = 0.0
     $ports = 0.0
@@ -1119,6 +1148,26 @@ function Get-LoadProgress {
     if ($completeLines.Count -eq 0) {
         return [ordered]@{ exists = $true; staleSeconds = $stale; parseError = $false; incompleteTail = -not $hasTerminatedTail; summaryPending = $false; event = $null; summary = $null }
     }
+    if ($null -eq $script:TrafficStartedAtUtc) {
+        foreach ($candidateLine in $completeLines) {
+            try { $candidate = $candidateLine | ConvertFrom-Json -Depth 30 }
+            catch { continue }
+            if ([string](Get-OptionalValue $candidate "type" "") -ne "progress" -or
+                [string](Get-OptionalValue $candidate "event" "") -ne "start" -or
+                [string](Get-OptionalValue $candidate "runId" "") -ne $Config.RunId -or
+                [string](Get-OptionalValue $candidate "stage" "") -ne $Config.Workload.Stage) {
+                continue
+            }
+            try { $candidateStartedAt = ([DateTimeOffset](Get-OptionalValue $candidate "timestamp" "")).ToUniversalTime() }
+            catch { continue }
+            if ($candidateStartedAt -lt $Config.ArtifactsNotBeforeUtc -or
+                $candidateStartedAt -gt [DateTimeOffset]::UtcNow.AddSeconds(5)) {
+                continue
+            }
+            $script:TrafficStartedAtUtc = $candidateStartedAt
+            break
+        }
+    }
     $line = [string]$completeLines[-1]
     try { $event = $line | ConvertFrom-Json -Depth 30 }
     catch {
@@ -1139,7 +1188,52 @@ function Get-LoadProgress {
             return [ordered]@{ exists = $true; staleSeconds = $stale; parseError = -not $summaryPending; incompleteTail = -not $hasTerminatedTail; summaryPending = $summaryPending; event = $event; summary = $null }
         }
     }
-    return [ordered]@{ exists = $true; staleSeconds = $stale; parseError = $false; incompleteTail = -not $hasTerminatedTail; summaryPending = $false; event = $event; summary = $summary }
+    return [ordered]@{
+        exists = $true
+        staleSeconds = $stale
+        parseError = $false
+        incompleteTail = -not $hasTerminatedTail
+        summaryPending = $false
+        event = $event
+        summary = $summary
+        trafficStartedAtUtc = if ($null -eq $script:TrafficStartedAtUtc) { $null } else { $script:TrafficStartedAtUtc.ToString("o") }
+    }
+}
+
+function Get-ValidatedLoadSummaryTiming {
+    param($Config, $Progress)
+    if ($null -eq $Progress -or $null -eq $Progress.event -or $null -eq $Progress.summary -or
+        [string](Get-OptionalValue $Progress.event "event" "") -ne "final" -or
+        $null -eq $script:TrafficStartedAtUtc) {
+        return $null
+    }
+    $summary = $Progress.summary
+    $summaryRun = Get-OptionalValue $summary "run"
+    $fixture = Get-OptionalValue $summary "screenshotFixture"
+    $actualTrafficSeconds = [double](Get-OptionalValue $summaryRun "actualTrafficSeconds" -1)
+    if ([double]::IsNaN($actualTrafficSeconds) -or [double]::IsInfinity($actualTrafficSeconds)) { return $null }
+    try { $finalProgressAtUtc = ([DateTimeOffset](Get-OptionalValue $Progress.event "timestamp" "")).ToUniversalTime() }
+    catch { return $null }
+    $trafficStoppedAtUtc = $script:TrafficStartedAtUtc.AddSeconds($actualTrafficSeconds)
+    $valid = (
+        [string](Get-OptionalValue $summary "runId" "") -eq $Config.RunId -and
+        [string](Get-OptionalValue $summary "stage" "") -eq $Config.Workload.Stage -and
+        [int](Get-OptionalValue $summary "devices" -1) -eq $Config.Workload.Devices -and
+        [int](Get-OptionalValue $summary "declaredSecondSchoolCanaryDevices" -1) -eq $Config.Workload.CanaryDevices -and
+        [int](Get-OptionalValue $fixture "decodedBytes" -1) -eq $Config.Workload.ScreenshotBytes -and
+        [double](Get-OptionalValue $summaryRun "plannedTrafficSeconds" -1) -eq $Config.Workload.DurationSeconds -and
+        $actualTrafficSeconds -ge $Config.Workload.DurationSeconds -and
+        (Get-OptionalValue $summaryRun "completedConfiguredDuration" $false) -eq $true -and
+        $finalProgressAtUtc -ge $script:TrafficStartedAtUtc -and
+        $finalProgressAtUtc -le [DateTimeOffset]::UtcNow.AddSeconds(5) -and
+        $trafficStoppedAtUtc -le $finalProgressAtUtc.AddSeconds(5)
+    )
+    if (-not $valid) { return $null }
+    return [pscustomobject]@{
+        ActualTrafficSeconds = $actualTrafficSeconds
+        TrafficStoppedAtUtc = $trafficStoppedAtUtc
+        FinalProgressAtUtc = $finalProgressAtUtc
+    }
 }
 
 function Get-SupervisedHeartbeatState {
@@ -1221,6 +1315,68 @@ function Add-MetricFinding {
     if (Update-ConsecutiveBreach -Name $Name -Breached $breached -Required $Required) { $Consecutive.Add($Name) }
 }
 
+function Add-MetricSeriesFindings {
+    param(
+        [System.Collections.Generic.List[string]]$Immediate,
+        [System.Collections.Generic.List[string]]$Consecutive,
+        [string]$Name,
+        $MetricBatch,
+        [scriptblock]$IsBreached,
+        [int]$Required,
+        [DateTimeOffset]$NotBeforeUtc,
+        [double]$FreshnessMaximumSeconds
+    )
+    $latest = Get-BatchMetric $MetricBatch $Name
+    if ($null -eq $latest) {
+        Add-MetricFinding $Immediate $Consecutive $Name $null $IsBreached $Required `
+            -FreshnessMaximumSeconds $FreshnessMaximumSeconds
+        return
+    }
+
+    $collectedThroughUtc = $MetricBatch.CollectedThroughUtc.ToUniversalTime()
+    $now = [DateTimeOffset]::UtcNow
+    $lastTimestamp = $null
+    if ($script:LastMetricTimestamps.ContainsKey($Name) -and $script:LastMetricTimestamps[$Name]) {
+        $lastTimestamp = ([DateTimeOffset]$script:LastMetricTimestamps[$Name]).ToUniversalTime()
+    }
+    $freshUnseen = @(
+        (Get-BatchSeries $MetricBatch $Name) |
+            Where-Object {
+                $timestamp = ([DateTimeOffset]$_.Timestamp).ToUniversalTime()
+                $timestamp -le $collectedThroughUtc -and
+                $timestamp -ge $NotBeforeUtc.ToUniversalTime() -and
+                ($null -eq $lastTimestamp -or $timestamp -gt $lastTimestamp) -and
+                ($now - $timestamp).TotalSeconds -le $FreshnessMaximumSeconds
+            } |
+            Sort-Object Timestamp
+    )
+    if ($freshUnseen.Count -eq 0) {
+        $latestTimestamp = ([DateTimeOffset]$latest.Timestamp).ToUniversalTime()
+        if ($latestTimestamp -lt $NotBeforeUtc.ToUniversalTime()) {
+            [void](Update-ConsecutiveBreach -Name $Name -Breached $false -Required $Required)
+            Add-MetricFinding $Immediate $Consecutive $Name $latest { param($v) $false } $Required `
+                -FreshnessMaximumSeconds $FreshnessMaximumSeconds
+        }
+        else {
+            Add-MetricFinding $Immediate $Consecutive $Name $latest $IsBreached $Required `
+                -FreshnessMaximumSeconds $FreshnessMaximumSeconds
+        }
+        return
+    }
+
+    $previousTimestamp = $lastTimestamp
+    foreach ($point in $freshUnseen) {
+        $pointTimestamp = ([DateTimeOffset]$point.Timestamp).ToUniversalTime()
+        if ($null -ne $previousTimestamp -and ($pointTimestamp - $previousTimestamp).TotalSeconds -gt 90) {
+            [void](Update-ConsecutiveBreach -Name $Name -Breached $false -Required $Required)
+        }
+        Add-MetricFinding $Immediate $Consecutive $Name $point $IsBreached $Required `
+            -FreshnessMaximumSeconds $FreshnessMaximumSeconds
+        $previousTimestamp = $pointTimestamp
+        if ($Immediate.Contains($Name) -or $Consecutive.Contains($Name)) { break }
+    }
+}
+
 function Add-GrowthMetricFinding {
     param(
         [System.Collections.Generic.List[string]]$Consecutive,
@@ -1254,6 +1410,43 @@ function Add-AcceptanceDatapoint {
     $series = $script:AcceptanceSeries[$Name]
     $timestamp = ([DateTimeOffset]$Metric.Timestamp).ToUniversalTime().ToString("o")
     if ($series.timestamps.Add($timestamp)) { $series.values.Add([double]$Metric.Value) }
+}
+
+function Get-TelemetryAcceptanceWindow {
+    param($Config, [DateTimeOffset]$CollectedThroughUtc)
+    $logicalStart = if ($Config.LoadProgressPath) { $script:TrafficStartedAtUtc } else { $script:StartedAt }
+    if ($null -eq $logicalStart) { return $null }
+    $logicalStart = ([DateTimeOffset]$logicalStart).ToUniversalTime()
+    $logicalEnd = if ($Config.LoadProgressPath -and $null -ne $script:TrafficStoppedAtUtc) {
+        $script:TrafficStoppedAtUtc
+    } elseif ($Config.TelemetryExpectedSeconds -gt 0) {
+        $logicalStart.AddSeconds([double]$Config.TelemetryExpectedSeconds)
+    } else {
+        $CollectedThroughUtc.ToUniversalTime()
+    }
+    $minuteTicks = [TimeSpan]::TicksPerMinute
+    $startTicks = $logicalStart.Ticks - ($logicalStart.Ticks % $minuteTicks)
+    $endFloorTicks = $logicalEnd.Ticks - ($logicalEnd.Ticks % $minuteTicks)
+    $endExclusiveTicks = if ($logicalEnd.Ticks -eq $endFloorTicks) { $endFloorTicks } else { $endFloorTicks + $minuteTicks }
+    if ($endExclusiveTicks -le $startTicks) { $endExclusiveTicks = $startTicks + $minuteTicks }
+    return [pscustomobject]@{
+        StartInclusive = [DateTimeOffset]::new($startTicks, [TimeSpan]::Zero)
+        EndExclusive = [DateTimeOffset]::new($endExclusiveTicks, [TimeSpan]::Zero)
+    }
+}
+
+function Add-AcceptanceSeriesDatapoints {
+    param([string]$Name, $MetricBatch, $Config)
+    $window = Get-TelemetryAcceptanceWindow -Config $Config -CollectedThroughUtc $MetricBatch.CollectedThroughUtc
+    if ($null -eq $window) { return }
+    foreach ($point in @((Get-BatchSeries $MetricBatch $Name) | Sort-Object Timestamp)) {
+        $timestamp = ([DateTimeOffset]$point.Timestamp).ToUniversalTime()
+        if ($timestamp -lt $window.StartInclusive -or $timestamp -ge $window.EndExclusive -or
+            $timestamp -gt $MetricBatch.CollectedThroughUtc) {
+            continue
+        }
+        Add-AcceptanceDatapoint -Name $Name -Metric $point
+    }
 }
 
 function Get-SeriesSummary {
@@ -1413,6 +1606,18 @@ function Get-Sample {
     $script:MetricFreshnessMaximumSeconds = [double]$t.metricFreshnessMaximumSeconds
     $immediate = [System.Collections.Generic.List[string]]::new()
     $consecutive = [System.Collections.Generic.List[string]]::new()
+    # Parse the immutable harness start record before metric backfill so load
+    # acceptance can be bounded to the actual traffic window.
+    $progress = Get-LoadProgress -Config $Config
+    $validatedLoadTiming = Get-ValidatedLoadSummaryTiming -Config $Config -Progress $progress
+    if ($null -ne $validatedLoadTiming) {
+        if ($null -eq $script:TrafficStoppedAtUtc) {
+            $script:TrafficStoppedAtUtc = $validatedLoadTiming.TrafficStoppedAtUtc
+        }
+        elseif ([math]::Abs(($script:TrafficStoppedAtUtc - $validatedLoadTiming.TrafficStoppedAtUtc).TotalMilliseconds) -gt 1) {
+            $immediate.Add("load_workload_contract_mismatch")
+        }
+    }
 
     $ecs = Get-EcsState -Config $Config
     $ecsNetwork = Get-EcsNetworkState -Config $Config -ServiceState $ecs
@@ -1494,7 +1699,9 @@ function Get-Sample {
     $redisRejected = Get-BatchMetric $metricBatch "redis_rejected"
     $redisCpuCredit = Get-BatchMetric $metricBatch "redis_cpu_credit"
 
-    Add-MetricFinding $immediate $consecutive "rds_cpu" $rdsCpu { param($v) $v -ge [double]$t.rdsCpuMaximumPercent } $required `
+    Add-MetricSeriesFindings $immediate $consecutive "rds_cpu" $metricBatch `
+        { param($v) $v -ge [double]$t.rdsCpuMaximumPercent } $required `
+        -NotBeforeUtc $Config.RuntimeSeriesNotBeforeUtc `
         -FreshnessMaximumSeconds ([double]$t.rdsCpuMetricFreshnessMaximumSeconds)
     Add-MetricFinding $immediate $consecutive "rds_connections" $rdsConnections { param($v) $v -ge [double]$t.rdsConnectionsMaximum } $required
     Add-MetricFinding $immediate $consecutive "rds_storage_headroom" $rdsStorageHeadroomPercent { param($v) $v -le [double]$t.rdsStorageHeadroomMinimumPercent } $required
@@ -1512,8 +1719,9 @@ function Get-Sample {
     Add-MetricFinding $immediate $consecutive "redis_rejected_connections" $redisRejected { param($v) $v -gt 0 } $required -ImmediateOnBreach
     Add-MetricFinding $immediate $consecutive "redis_cpu_credit" $redisCpuCredit { param($v) $v -lt [double]$t.redisCpuCreditMinimum } $required `
         -FreshnessMaximumSeconds ([double]$t.fiveMinuteMetricFreshnessMaximumSeconds)
+    Add-AcceptanceSeriesDatapoints -Name "rds_cpu" -MetricBatch $metricBatch -Config $Config
     foreach ($entry in @(
-        @("rds_cpu", $rdsCpu), @("rds_connections", $rdsConnections), @("rds_storage_headroom", $rdsStorageHeadroomPercent),
+        @("rds_connections", $rdsConnections), @("rds_storage_headroom", $rdsStorageHeadroomPercent),
         @("rds_free_memory", $rdsFreeMemory), @("rds_swap", $rdsSwap), @("rds_cpu_credit", $rdsCpuCredit), @("rds_surplus_charged", $rdsSurplusCharged),
         @("redis_cpu", $redisCpu), @("redis_memory", $redisMemory), @("redis_free", $redisFree),
         @("redis_evictions", $redisEvictions), @("redis_rejected", $redisRejected), @("redis_cpu_credit", $redisCpuCredit)
@@ -1528,7 +1736,6 @@ function Get-Sample {
     if ($nat.packetDropsLastMinute -gt 0) { Add-AcceptanceViolation "nat_packet_drop_observed" }
     if ($nat.portAllocationErrorsLastMinute -gt 0) { Add-AcceptanceViolation "nat_port_allocation_error_observed" }
 
-    $progress = Get-LoadProgress -Config $Config
     $generatorIp = Get-GeneratorIpState -Config $Config
     if ($null -ne $generatorIp) {
         if (-not $generatorIp.exists -or $generatorIp.parseError -or -not $generatorIp.matched -or
@@ -1560,17 +1767,7 @@ function Get-Sample {
             }
             else {
                 $summary = $progress.summary
-                $summaryRun = Get-OptionalValue $summary "run"
-                $fixture = Get-OptionalValue $summary "screenshotFixture"
-                $contractValid = (
-                    [string](Get-OptionalValue $summary "stage" "") -eq $Config.Workload.Stage -and
-                    [int](Get-OptionalValue $summary "devices" -1) -eq $Config.Workload.Devices -and
-                    [int](Get-OptionalValue $summary "declaredSecondSchoolCanaryDevices" -1) -eq $Config.Workload.CanaryDevices -and
-                    [int](Get-OptionalValue $fixture "decodedBytes" -1) -eq $Config.Workload.ScreenshotBytes -and
-                    [double](Get-OptionalValue $summaryRun "plannedTrafficSeconds" -1) -eq $Config.Workload.DurationSeconds -and
-                    [double](Get-OptionalValue $summaryRun "actualTrafficSeconds" -1) -ge $Config.Workload.DurationSeconds -and
-                    (Get-OptionalValue $summaryRun "completedConfiguredDuration" $false) -eq $true
-                )
+                $contractValid = $null -ne $validatedLoadTiming
                 if (-not $contractValid) { $immediate.Add("load_workload_contract_mismatch") }
                 else { $loadCompleted = $true }
                 $summaryThresholds = Get-OptionalValue $progress.summary "thresholds"
