@@ -8,6 +8,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
 import WebSocket, { WebSocketServer } from "ws";
+import { observeCommandTargetStatuses } from "../scripts/load/command-status-observer.mjs";
 
 const script = fileURLToPath(new URL("../scripts/load/classpilot-load-test.mjs", import.meta.url));
 let tempDir = "";
@@ -186,6 +187,31 @@ function createLaunchArtifacts(options: {
 }
 
 describe("ClassPilot load harness safety", () => {
+  it("records first command acknowledgement timing and rejects later status regression", () => {
+    const entry = {
+      requestStartedAt: 1_000,
+      serverReceived: 0,
+      serverCompleted: 0,
+      serverReceivedWithin2s: 0,
+      serverCompletedWithin5s: 0,
+      serverReceivedAtByTarget: new Map(),
+      serverCompletedAtByTarget: new Map(),
+      serverTargetStatuses: new Map(),
+      serverRegressedTargetIds: new Set(),
+    };
+
+    assert.equal(observeCommandTargetStatuses(entry, [{ id: "target-1", status: "completed" }], 1_400), 0);
+    assert.equal(entry.serverReceived, 1);
+    assert.equal(entry.serverCompleted, 1);
+    assert.equal(entry.serverReceivedWithin2s, 1);
+    assert.equal(entry.serverCompletedWithin5s, 1);
+
+    assert.equal(observeCommandTargetStatuses(entry, [{ id: "target-1", status: "sent" }], 8_000), 1);
+    assert.equal(entry.serverTargetStatuses.get("target-1"), "completed");
+    assert.equal(entry.serverReceivedAtByTarget.get("target-1"), 400);
+    assert.equal(entry.serverCompletedAtByTarget.get("target-1"), 400);
+    assert.equal(observeCommandTargetStatuses(entry, [{ id: "target-1", status: "received" }], 9_000), 0);
+  });
   before(() => {
     tempDir = mkdtempSync(join(tmpdir(), "schoolpilot-load-test-"));
     manifestPath = join(tempDir, "devices.json");
@@ -640,6 +666,7 @@ describe("ClassPilot load harness safety", () => {
     let completedAcks = 0;
     let studentAuthentications = 0;
     let teacherAuthentications = 0;
+    let injectedTransient502 = false;
     let injectOverbroadSameSchoolTarget = false;
     let injectOverbroadAggregatedResponse = false;
 
@@ -772,6 +799,12 @@ describe("ClassPilot load harness safety", () => {
         }
         if (deviceId.includes("canary-device")) sendJson(404, { error: "Not found" });
         else {
+          if (!injectedTransient502) {
+            injectedTransient502 = true;
+            response.writeHead(502, { "content-type": "text/html" });
+            response.end("<html><body>transient origin failure</body></html>");
+            return;
+          }
           assert.ok(artifacts);
           const classId = artifacts.manifest.find((entry) => entry.deviceId === deviceId)?.classId;
           assert.ok(classId);
@@ -799,7 +832,10 @@ describe("ClassPilot load harness safety", () => {
         commandId,
         command: {
           id: commandId,
-          targets: state.targets.map((deviceId) => ({ status: state.statuses.get(deviceId) })),
+          targets: state.targets.map((deviceId) => ({
+            id: `${commandId}:${deviceId}`,
+            status: state.statuses.get(deviceId),
+          })),
         },
       }));
     };
@@ -890,6 +926,9 @@ describe("ClassPilot load harness safety", () => {
       assert.equal(summary.commands.deliveryWithin2sPercent, 100);
       assert.equal(summary.commands.completedAckWithin5sPercent, 100);
       assert.equal(summary.commands.serverCompletedPercent, 100);
+      assert.equal(summary.counters.http5xx, 1);
+      assert.equal(summary.counters.responseParseErrors, 0);
+      assert.equal(summary.counters.commandServerStatusRegressions, 0);
       assert.equal(summary.counters.forcedReconnectRequested, 510);
       assert.equal(summary.counters.forcedReconnectCompleted, 510);
       assert.equal(summary.websocket.finalPreShutdown.deviceAuthenticated, 510);

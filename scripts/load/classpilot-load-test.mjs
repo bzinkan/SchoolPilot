@@ -7,6 +7,7 @@ import process from "node:process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
+import { observeCommandTargetStatuses } from "./command-status-observer.mjs";
 
 const JPEG_1X1 =
   "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAH/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAEFAqf/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAEDAQE/ASP/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAECAQE/ASP/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAY/ASP/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAE/ISP/2gAMAwEAAgADAAAAEP/EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQMBAT8QH//EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQIBAT8QH//EABQQAQAAAAAAAAAAAAAAAAAAABD/2gAIAQEAAT8QH//Z";
@@ -1156,6 +1157,7 @@ const counters = {
   commandTargetCountMismatch: 0,
   commandUnexpectedTargetDeliveries: 0,
   commandDuplicateDeliveries: 0,
+  commandServerStatusRegressions: 0,
   crossSchoolCommandDeliveries: 0,
   crossSchoolHttpResponses: 0,
   tenantValidatedResponses: 0,
@@ -1562,7 +1564,7 @@ async function request(path, {
     const inspectJson = parseJson || Boolean(expectedSchoolId) || kind === "screenshotGet" || Boolean(endpointClass);
     const drained = await drainResponse(response, inspectJson);
     let json = null;
-    if (inspectJson && drained.text) {
+    if (response.ok && inspectJson && drained.text) {
       if (drained.truncated) {
         counters.responseParseErrors += 1;
       } else {
@@ -1672,11 +1674,19 @@ function getCommandEntry(commandId) {
     serverCompleted: 0,
     serverReceivedWithin2s: 0,
     serverCompletedWithin5s: 0,
+    serverReceivedAtByTarget: new Map(),
+    serverCompletedAtByTarget: new Map(),
+    serverTargetStatuses: new Map(),
+    serverRegressedTargetIds: new Set(),
     deliveredDeviceIds: new Set(),
     expectedDeviceIds: null,
   };
   commandEntries.set(commandId, entry);
   return entry;
+}
+
+function observeServerCommandTargets(entry, targets) {
+  counters.commandServerStatusRegressions += observeCommandTargetStatuses(entry, targets);
 }
 
 function heartbeatBody(device) {
@@ -2220,17 +2230,7 @@ function connectTeacherWebSocket(state) {
     const entry = commandId ? getCommandEntry(commandId) : null;
     if (!entry) return;
     const targets = Array.isArray(message.command?.targets) ? message.command.targets : [];
-    entry.serverReceived = Math.max(
-      entry.serverReceived,
-      targets.filter((target) => ["received", "completed"].includes(target.status)).length
-    );
-    entry.serverCompleted = Math.max(
-      entry.serverCompleted,
-      targets.filter((target) => target.status === "completed").length
-    );
-    const elapsed = entry.requestStartedAt ? Date.now() - entry.requestStartedAt : Infinity;
-    if (elapsed <= 2_000) entry.serverReceivedWithin2s = Math.max(entry.serverReceivedWithin2s, entry.serverReceived);
-    if (elapsed <= 5_000) entry.serverCompletedWithin5s = Math.max(entry.serverCompletedWithin5s, entry.serverCompleted);
+    observeServerCommandTargets(entry, targets);
     counters.commandUpdatesObserved += 1;
   });
   socket.on("error", () => { counters.wsErrors += 1; });
@@ -2475,6 +2475,7 @@ function summarize(shutdownReason) {
       if (ratio(commandTotals.messagesWithin2s, commandTotals.expected) < 0.99) failures.push("fewer than 99% of command targets received the WebSocket command within 2 seconds");
       if (ratio(commandTotals.completedAcksWithin5s, commandTotals.expected) < 0.99) failures.push("fewer than 99% of command targets sent completed ACKs within 5 seconds");
       if (counters.commandResponsesInvalid > 0 || counters.commandTrackingOverflow > 0) failures.push("one or more command responses could not be validated");
+      if (counters.commandServerStatusRegressions > 0) failures.push("one or more server command target statuses regressed");
       if (teacherSchoolId) {
         if (counters.teacherWsAuthenticated !== teacherAuthInputs.length || counters.teacherWsAuthErrors > 0) {
           failures.push(`only ${counters.teacherWsAuthenticated}/${teacherAuthInputs.length} teacher WebSockets authenticated`);

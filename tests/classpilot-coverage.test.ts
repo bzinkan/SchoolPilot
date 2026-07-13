@@ -40,13 +40,16 @@ import {
   getScheduledGroupsReadyToEnd,
   listCoverageScopeGroups,
   linkStudentDevice,
+  markClasspilotCommandTargetsSent,
   replaceCoverageScopeGroupMembers,
   releaseSupervisionStudents,
   setActiveStudentForDevice,
   updateCoverageAssignment,
   updateCoverageScopeGroup,
   updateClasspilotCommandTargetAck,
+  updateClasspilotCommandSummary,
   updateEnrollmentSettings,
+  withClasspilotCommandBroadcastLock,
 } from "../dist/services/storage.js";
 import {
   expireScheduledClassConflictsForSchool,
@@ -1866,5 +1869,295 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       contextId: context.id,
       releaseReason: "test_release",
     }));
+  });
+
+  it("keeps a completed command target terminal when sent and received updates arrive late", async () => {
+    const created = await inSchool(school.id, () => createClasspilotCommandWithTargets(
+      {
+        schoolId: school.id,
+        teachingSessionId: null,
+        supervisionContextId: null,
+        teacherId: teacher.id,
+        targetScope: "students",
+        subgroupId: null,
+        commandType: "lock-screen",
+        commandPayload: {},
+        requestedCount: 1,
+        unavailableCount: 0,
+      } as any,
+      [{
+        schoolId: school.id,
+        teachingSessionId: null,
+        supervisionContextId: null,
+        commandId: "",
+        studentId: studentDeviceGuard.id,
+        studentSessionId: null,
+        deviceId: deviceGuard,
+        status: "requested",
+        errorMessage: null,
+      } as any]
+    ));
+
+    const completed = await inSchool(school.id, () => updateClasspilotCommandTargetAck({
+      commandId: created.id,
+      schoolId: school.id,
+      deviceId: deviceGuard,
+      studentId: studentDeviceGuard.id,
+      ackState: "completed",
+      result: { ok: true },
+    }));
+    assert.equal(completed?.status, "completed");
+    assert.ok(completed?.receivedAt);
+    assert.ok(completed?.completedAt);
+
+    const originalReceivedAt = completed.receivedAt!.getTime();
+    const originalCompletedAt = completed.completedAt!.getTime();
+
+    const markedSent = await inSchool(school.id, () => markClasspilotCommandTargetsSent(
+      created.id,
+      [deviceGuard]
+    ));
+    assert.equal(markedSent[0]?.status, "completed");
+    assert.ok(markedSent[0]?.sentAt);
+
+    const lateReceived = await inSchool(school.id, () => updateClasspilotCommandTargetAck({
+      commandId: created.id,
+      schoolId: school.id,
+      deviceId: deviceGuard,
+      studentId: studentDeviceGuard.id,
+      ackState: "received",
+      result: { late: true },
+    }));
+    assert.equal(lateReceived, undefined);
+
+    const loaded = await inSchool(school.id, () => getClasspilotCommandByIdAndSchool(created.id, school.id));
+    assert.equal(loaded?.status, "completed");
+    assert.equal(loaded?.requestedCount, 1);
+    assert.equal(loaded?.sentCount, 1);
+    assert.equal(loaded?.receivedCount, 1);
+    assert.equal(loaded?.completedCount, 1);
+    assert.equal(loaded?.failedCount, 0);
+    assert.equal(loaded?.unavailableCount, 0);
+    assert.equal(loaded?.targets[0]?.status, "completed");
+    assert.equal(loaded?.targets[0]?.ackState, "completed");
+    assert.equal(loaded?.targets[0]?.receivedAt?.getTime(), originalReceivedAt);
+    assert.equal(loaded?.targets[0]?.completedAt?.getTime(), originalCompletedAt);
+    assert.deepEqual(loaded?.targets[0]?.result, { ok: true });
+  });
+
+  it("converges concurrent sent and acknowledgement updates on completed", async () => {
+    const created = await inSchool(school.id, () => createClasspilotCommandWithTargets(
+      {
+        schoolId: school.id,
+        teachingSessionId: null,
+        supervisionContextId: null,
+        teacherId: teacher.id,
+        targetScope: "students",
+        subgroupId: null,
+        commandType: "close-tab",
+        commandPayload: { url: "https://example.com/" },
+        requestedCount: 1,
+        unavailableCount: 0,
+      } as any,
+      [{
+        schoolId: school.id,
+        teachingSessionId: null,
+        supervisionContextId: null,
+        commandId: "",
+        studentId: studentDeviceGuard.id,
+        studentSessionId: null,
+        deviceId: deviceGuard,
+        status: "requested",
+        errorMessage: null,
+      } as any]
+    ));
+
+    await Promise.all([
+      inSchool(school.id, () => markClasspilotCommandTargetsSent(created.id, [deviceGuard])),
+      inSchool(school.id, () => updateClasspilotCommandTargetAck({
+        commandId: created.id,
+        schoolId: school.id,
+        deviceId: deviceGuard,
+        studentId: studentDeviceGuard.id,
+        ackState: "received",
+        result: { phase: "received" },
+      })),
+      inSchool(school.id, () => updateClasspilotCommandTargetAck({
+        commandId: created.id,
+        schoolId: school.id,
+        deviceId: deviceGuard,
+        studentId: studentDeviceGuard.id,
+        ackState: "completed",
+        result: { phase: "completed" },
+      })),
+    ]);
+
+    const loaded = await inSchool(school.id, () => getClasspilotCommandByIdAndSchool(created.id, school.id));
+    assert.equal(loaded?.status, "completed");
+    assert.equal(loaded?.requestedCount, 1);
+    assert.equal(loaded?.sentCount, 1);
+    assert.equal(loaded?.receivedCount, 1);
+    assert.equal(loaded?.completedCount, 1);
+    assert.equal(loaded?.failedCount, 0);
+    assert.equal(loaded?.unavailableCount, 0);
+    assert.equal(loaded?.targets[0]?.status, "completed");
+    assert.equal(loaded?.targets[0]?.ackState, "completed");
+    assert.ok(loaded?.targets[0]?.sentAt);
+    assert.ok(loaded?.targets[0]?.receivedAt);
+    assert.ok(loaded?.targets[0]?.completedAt);
+  });
+
+  it("records a late received milestone without reopening a failed target", async () => {
+    const created = await inSchool(school.id, () => createClasspilotCommandWithTargets(
+      {
+        schoolId: school.id,
+        teachingSessionId: null,
+        supervisionContextId: null,
+        teacherId: teacher.id,
+        targetScope: "students",
+        subgroupId: null,
+        commandType: "open-tab",
+        commandPayload: { url: "https://example.com/" },
+        requestedCount: 1,
+        unavailableCount: 0,
+      } as any,
+      [{
+        schoolId: school.id,
+        teachingSessionId: null,
+        supervisionContextId: null,
+        commandId: "",
+        studentId: studentDeviceGuard.id,
+        studentSessionId: null,
+        deviceId: deviceGuard,
+        status: "requested",
+        errorMessage: null,
+      } as any]
+    ));
+
+    await inSchool(school.id, () => updateClasspilotCommandTargetAck({
+      commandId: created.id,
+      schoolId: school.id,
+      deviceId: deviceGuard,
+      studentId: studentDeviceGuard.id,
+      ackState: "failed",
+      errorMessage: "synthetic failure",
+    }));
+    const lateReceived = await inSchool(school.id, () => updateClasspilotCommandTargetAck({
+      commandId: created.id,
+      schoolId: school.id,
+      deviceId: deviceGuard,
+      studentId: studentDeviceGuard.id,
+      ackState: "received",
+    }));
+    assert.equal(lateReceived?.status, "failed");
+    assert.equal(lateReceived?.ackState, "failed");
+
+    const loaded = await inSchool(school.id, () => getClasspilotCommandByIdAndSchool(created.id, school.id));
+    assert.equal(loaded?.status, "failed");
+    assert.equal(loaded?.receivedCount, 1);
+    assert.equal(loaded?.failedCount, 1);
+    assert.equal(loaded?.targets[0]?.status, "failed");
+    assert.equal(loaded?.targets[0]?.ackState, "failed");
+    assert.ok(loaded?.targets[0]?.receivedAt);
+    assert.ok(loaded?.targets[0]?.failedAt);
+  });
+
+  it("summarizes an empty command as unavailable", async () => {
+    const created = await inSchool(school.id, () => createClasspilotCommandWithTargets(
+      {
+        schoolId: school.id,
+        teachingSessionId: null,
+        supervisionContextId: null,
+        teacherId: teacher.id,
+        targetScope: "students",
+        subgroupId: null,
+        commandType: "lock-screen",
+        commandPayload: {},
+        requestedCount: 0,
+        unavailableCount: 0,
+      } as any,
+      []
+    ));
+
+    await inSchool(school.id, () => updateClasspilotCommandSummary(created.id));
+    const loaded = await inSchool(school.id, () => getClasspilotCommandByIdAndSchool(created.id, school.id));
+    assert.equal(loaded?.status, "unavailable");
+    assert.equal(loaded?.requestedCount, 0);
+    assert.deepEqual(loaded?.targets, []);
+  });
+
+  it("serializes command snapshots across concurrent publishers", async () => {
+    const created = await inSchool(school.id, () => createClasspilotCommandWithTargets(
+      {
+        schoolId: school.id,
+        teachingSessionId: null,
+        supervisionContextId: null,
+        teacherId: teacher.id,
+        targetScope: "students",
+        subgroupId: null,
+        commandType: "lock-screen",
+        commandPayload: {},
+        requestedCount: 1,
+        unavailableCount: 0,
+      } as any,
+      [{
+        schoolId: school.id,
+        teachingSessionId: null,
+        supervisionContextId: null,
+        commandId: "",
+        studentId: studentDeviceGuard.id,
+        studentSessionId: null,
+        deviceId: deviceGuard,
+        status: "requested",
+        errorMessage: null,
+      } as any]
+    ));
+    await inSchool(school.id, () => updateClasspilotCommandTargetAck({
+      commandId: created.id,
+      schoolId: school.id,
+      deviceId: deviceGuard,
+      studentId: studentDeviceGuard.id,
+      ackState: "received",
+    }));
+
+    const publishedStatuses: string[] = [];
+    const publishedRevisions: bigint[] = [];
+    let snapshotCaptured!: () => void;
+    const captured = new Promise<void>((resolve) => { snapshotCaptured = resolve; });
+    let releaseFirst!: () => void;
+    const release = new Promise<void>((resolve) => { releaseFirst = resolve; });
+
+    const firstPublisher = inSchool(school.id, () => withClasspilotCommandBroadcastLock(
+      created.id,
+      school.id,
+      async (command, revision) => {
+        publishedStatuses.push(command.targets[0]!.status);
+        publishedRevisions.push(BigInt(revision));
+        snapshotCaptured();
+        await release;
+      }
+    ));
+    await captured;
+
+    await inSchool(school.id, () => updateClasspilotCommandTargetAck({
+      commandId: created.id,
+      schoolId: school.id,
+      deviceId: deviceGuard,
+      studentId: studentDeviceGuard.id,
+      ackState: "completed",
+    }));
+    const secondPublisher = inSchool(school.id, () => withClasspilotCommandBroadcastLock(
+      created.id,
+      school.id,
+      (command, revision) => {
+        publishedStatuses.push(command.targets[0]!.status);
+        publishedRevisions.push(BigInt(revision));
+      }
+    ));
+
+    releaseFirst();
+    await Promise.all([firstPublisher, secondPublisher]);
+    assert.deepEqual(publishedStatuses, ["received", "completed"]);
+    assert.ok(publishedRevisions[1]! > publishedRevisions[0]!);
   });
 });

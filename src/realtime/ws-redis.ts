@@ -12,7 +12,53 @@ type WsRedisEnvelope = {
   instanceId: string;
   target: WsRedisTarget;
   message: unknown;
+  includeSource?: boolean;
+  orderedKey?: string;
+  revision?: string;
 };
+
+type PublishWSOptions = {
+  includeSource?: boolean;
+  signal?: AbortSignal;
+  orderedKey?: string;
+  revision?: string;
+};
+
+export const ORDERED_PUBLISH_TTL_SECONDS = 24 * 60 * 60;
+export const ORDERED_PUBLISH_SCRIPT = `
+local current = redis.call('GET', KEYS[1])
+if current and tonumber(current) >= tonumber(ARGV[1]) then
+  return -1
+end
+local subscribers = redis.call('PUBLISH', ARGV[3], ARGV[4])
+if subscribers > 0 then
+  redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
+end
+return subscribers
+`;
+const MAX_ORDERED_DELIVERY_REVISIONS = 10_000;
+const orderedDeliveryRevisions = new Map<string, bigint>();
+
+function recordOrderedDelivery(orderedKey: string, revision: string): boolean {
+  let next: bigint;
+  try {
+    next = BigInt(revision);
+  } catch {
+    return false;
+  }
+  const current = orderedDeliveryRevisions.get(orderedKey);
+  if (current !== undefined && next <= current) return false;
+  orderedDeliveryRevisions.set(orderedKey, next);
+  if (orderedDeliveryRevisions.size > MAX_ORDERED_DELIVERY_REVISIONS) {
+    const oldest = orderedDeliveryRevisions.keys().next().value;
+    if (oldest) orderedDeliveryRevisions.delete(oldest);
+  }
+  return true;
+}
+
+export function recordLocalOrderedDelivery(orderedKey: string, revision: string): boolean {
+  return recordOrderedDelivery(orderedKey, revision);
+}
 
 const instanceId = randomUUID();
 const instanceShortId = instanceId.slice(0, 8); // Short ID for logging
@@ -86,6 +132,7 @@ let redisEnabled = false;
 let redisWarned = false;
 let redisInitPromise: Promise<void> | null = null;
 let subscribed = false;
+let subscriptionStarted = false;
 
 function warnRedis(error?: unknown) {
   if (redisWarned) {
@@ -120,8 +167,14 @@ async function ensureRedisReady(): Promise<void> {
 
       redisSubscriber = redisPublisher.duplicate();
       redisSubscriber.on("error", (err: unknown) => {
+        subscribed = false;
         console.error(`[Redis] Instance ${instanceShortId} subscriber error:`, err);
         warnRedis(err);
+      });
+      redisSubscriber.on("reconnecting", () => { subscribed = false; });
+      redisSubscriber.on("end", () => { subscribed = false; });
+      redisSubscriber.on("ready", () => {
+        if (subscriptionStarted) subscribed = true;
       });
       await redisSubscriber.connect();
       console.log(`[Redis] Instance ${instanceShortId} subscriber connected`);
@@ -142,6 +195,14 @@ export function isRedisEnabled(): boolean {
   return redisEnabled;
 }
 
+export function isRedisBroadcastReady(): boolean {
+  return Boolean(redisEnabled && subscribed && redisSubscriber?.isReady);
+}
+
+export function isRedisPublisherReady(): boolean {
+  return Boolean(redisEnabled && redisPublisher?.isReady);
+}
+
 export function getRedisPublisher(): RedisClientType | null {
   return redisPublisher;
 }
@@ -153,21 +214,29 @@ export async function subscribeWS(
     return;
   }
   await ensureRedisReady();
-  if (!redisEnabled || !redisSubscriber || subscribed) {
+  if (!redisEnabled || !redisSubscriber || subscriptionStarted) {
     return;
   }
 
-  subscribed = true;
+  subscriptionStarted = true;
   console.log(`[Redis] Instance ${instanceShortId} subscribing to channel: ${redisChannel}`);
   try {
     await redisSubscriber.subscribe(redisChannel, (payload: string) => {
       try {
+        subscribed = true;
         const envelope = JSON.parse(payload) as WsRedisEnvelope;
         if (!envelope) {
           return;
         }
         // Skip messages from this instance (they were already handled locally)
-        if (envelope.instanceId === instanceId) {
+        if (envelope.instanceId === instanceId && !envelope.includeSource) {
+          return;
+        }
+        if (
+          envelope.orderedKey &&
+          envelope.revision &&
+          !recordOrderedDelivery(envelope.orderedKey, envelope.revision)
+        ) {
           return;
         }
         hotPathActivity.redisMessagesReceived += 1;
@@ -177,35 +246,67 @@ export async function subscribeWS(
         warnRedis(error);
       }
     });
+    subscribed = true;
     console.log(`[Redis] Instance ${instanceShortId} successfully subscribed to ${redisChannel}`);
   } catch (error) {
+    subscribed = false;
+    subscriptionStarted = false;
     console.error(`[Redis] Instance ${instanceShortId} subscription failed:`, error);
     warnRedis(error);
   }
 }
 
-export async function publishWS(target: WsRedisTarget, message: unknown): Promise<void> {
+export async function publishWS(
+  target: WsRedisTarget,
+  message: unknown,
+  options: PublishWSOptions = {}
+): Promise<boolean> {
   if (!redisUrl) {
-    return;
+    return false;
   }
   await ensureRedisReady();
   if (!redisEnabled || !redisPublisher) {
-    return;
+    return false;
   }
 
   const payload: WsRedisEnvelope = {
     instanceId,
     target,
     message,
+    includeSource: options.includeSource || undefined,
+    orderedKey: options.orderedKey,
+    revision: options.revision,
   };
 
   try {
-    const numSubscribers = await redisPublisher.publish(redisChannel, JSON.stringify(payload));
+    const serialized = JSON.stringify(payload);
+    const ordered = Boolean(options.orderedKey && options.revision);
+    const command = ordered
+      ? [
+          "EVAL",
+          ORDERED_PUBLISH_SCRIPT,
+          "1",
+          `${redisPrefix}:ws:ordered:${options.orderedKey}`,
+          options.revision!,
+          String(ORDERED_PUBLISH_TTL_SECONDS),
+          redisChannel,
+          serialized,
+        ]
+      : ["PUBLISH", redisChannel, serialized];
+    const numSubscribers = options.signal || ordered
+      ? await redisPublisher.sendCommand<number>(
+          command,
+          options.signal ? { signal: options.signal } : undefined
+        )
+      : await redisPublisher.publish(redisChannel, serialized);
+    if (numSubscribers === -1) return true;
     hotPathActivity.redisMessagesPublished += 1;
     hotPathActivity.redisSubscriberDeliveries += numSubscribers;
+    return numSubscribers > 0;
   } catch (error) {
     console.error(`[Redis] Instance ${instanceShortId} publish failed:`, error);
     warnRedis(error);
+    return false;
   }
 }
 

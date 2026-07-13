@@ -22,12 +22,14 @@ import {
 import {
   publishWS,
   subscribeWS,
+  isRedisPublisherReady,
+  recordLocalOrderedDelivery,
   type WsRedisTarget,
 } from "./ws-redis.js";
 import {
   getSettingsForSchool,
   getMembershipByUserAndSchool,
-  getClasspilotCommandByIdAndSchool,
+  withClasspilotCommandBroadcastLock,
   updateClasspilotCommandTargetAck,
   getTeachingSessionByIdAndSchool,
   getGroupTeachers,
@@ -84,6 +86,139 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
   // Track ping/pong state per client
   const clientPingTimers = new Map<WebSocket, NodeJS.Timeout>();
   const clientPongPending = new Map<WebSocket, boolean>();
+  const MAX_CONCURRENT_COMMAND_UPDATE_PUBLICATIONS = 2;
+  const COMMAND_UPDATE_PUBLISH_TIMEOUT_MS = 1_500;
+  type CommandUpdateState = {
+    key: string;
+    schoolId: string;
+    commandId: string;
+    timer: NodeJS.Timeout | null;
+    queued: boolean;
+    inFlight: boolean;
+    dirty: boolean;
+    retryCount: number;
+  };
+  const commandUpdateStates = new Map<string, CommandUpdateState>();
+  const commandUpdateQueue: CommandUpdateState[] = [];
+  let activeCommandUpdatePublications = 0;
+  let commandUpdateQueueClosed = false;
+
+  const armCommandUpdate = (state: CommandUpdateState) => {
+    state.timer = setTimeout(() => {
+      state.timer = null;
+      if (commandUpdateQueueClosed || state.queued || state.inFlight) return;
+      state.queued = true;
+      commandUpdateQueue.push(state);
+      drainCommandUpdates();
+    }, 50);
+    state.timer.unref();
+  };
+
+  const publishCommandUpdate = async (state: CommandUpdateState) => {
+    await runWithTenantContext({ schoolId: state.schoolId }, () =>
+      withClasspilotCommandBroadcastLock(state.commandId, state.schoolId, async (command, revision) => {
+        const payload = {
+          type: "classpilot-command-update",
+          commandId: state.commandId,
+          command,
+        };
+        if (recordLocalOrderedDelivery(state.key, revision)) {
+          broadcastToTeachersLocal(state.schoolId, payload);
+        }
+        if (!isRedisPublisherReady()) {
+          return;
+        }
+
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), COMMAND_UPDATE_PUBLISH_TIMEOUT_MS);
+        timeout.unref();
+        try {
+          // Remote tasks consume the Redis-ordered stream. This task delivers
+          // locally above even if only its subscriber connection is impaired.
+          const published = await publishWS(
+            { kind: "staff", schoolId: state.schoolId },
+            payload,
+            {
+              includeSource: false,
+              signal: controller.signal,
+              orderedKey: state.key,
+              revision,
+            }
+          );
+          if (!published) throw new Error("Ordered ClassPilot command publication failed");
+          state.retryCount = 0;
+        } finally {
+          clearTimeout(timeout);
+        }
+      })
+    );
+  };
+
+  function drainCommandUpdates() {
+    while (
+      !commandUpdateQueueClosed &&
+      activeCommandUpdatePublications < MAX_CONCURRENT_COMMAND_UPDATE_PUBLICATIONS &&
+      commandUpdateQueue.length > 0
+    ) {
+      const state = commandUpdateQueue.shift()!;
+      state.queued = false;
+      state.inFlight = true;
+      state.dirty = false;
+      activeCommandUpdatePublications += 1;
+
+      void publishCommandUpdate(state).catch((error) => {
+        if (state.retryCount < 3) {
+          state.retryCount += 1;
+          state.dirty = true;
+        }
+        errorMonitor.trackError("websocket_error", error as Error, {
+          operation: "classpilot_command_update",
+        });
+      }).finally(() => {
+        state.inFlight = false;
+        activeCommandUpdatePublications -= 1;
+        if (commandUpdateQueueClosed) {
+          commandUpdateStates.delete(state.key);
+        } else if (state.dirty) {
+          armCommandUpdate(state);
+        } else {
+          commandUpdateStates.delete(state.key);
+        }
+        drainCommandUpdates();
+      });
+    }
+  }
+
+  const scheduleCommandUpdate = (schoolId: string, commandId: string) => {
+    const key = `${schoolId}:${commandId}`;
+    const pending = commandUpdateStates.get(key);
+    if (pending) {
+      pending.dirty = true;
+      return;
+    }
+
+    const state: CommandUpdateState = {
+      key,
+      schoolId,
+      commandId,
+      timer: null,
+      queued: false,
+      inFlight: false,
+      dirty: false,
+      retryCount: 0,
+    };
+    commandUpdateStates.set(key, state);
+    armCommandUpdate(state);
+  };
+
+  wss.once("close", () => {
+    commandUpdateQueueClosed = true;
+    commandUpdateQueue.length = 0;
+    for (const state of commandUpdateStates.values()) {
+      if (state.timer) clearTimeout(state.timer);
+    }
+    commandUpdateStates.clear();
+  });
 
   // --- Redis cross-instance message delivery ---
   const deliverRedisMessage = (target: WsRedisTarget, message: unknown) => {
@@ -472,8 +607,8 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
 
           if (!commandId || !ackState) return;
 
-          const command = await runWithTenantContext({ schoolId: client.schoolId }, async () => {
-            await updateClasspilotCommandTargetAck({
+          const target = await runWithTenantContext({ schoolId: client.schoolId }, () =>
+            updateClasspilotCommandTargetAck({
               commandId,
               schoolId: client.schoolId!,
               deviceId: client.deviceId!,
@@ -481,19 +616,10 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
               ackState,
               result: message.result || message.state || message.data || null,
               errorMessage: message.error || message.errorMessage || null,
-            });
-            return getClasspilotCommandByIdAndSchool(commandId, client.schoolId!);
-          });
+            })
+          );
 
-          if (command) {
-            const payload = {
-              type: "classpilot-command-update",
-              commandId,
-              command,
-            };
-            broadcastToTeachersLocal(client.schoolId, payload);
-            void publishWS({ kind: "staff", schoolId: client.schoolId }, payload);
-          }
+          if (target) scheduleCommandUpdate(client.schoolId, commandId);
           return;
         }
 

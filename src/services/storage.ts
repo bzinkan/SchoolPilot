@@ -1,4 +1,5 @@
-import { eq, and, desc, asc, gt, ilike, or, isNull, isNotNull, inArray, sql, ne, type SQL, type SQLWrapper } from "drizzle-orm";
+import { eq, and, desc, asc, gt, ilike, or, isNull, isNotNull, inArray, getTableColumns, sql, ne, type SQL, type SQLWrapper } from "drizzle-orm";
+import type { PgUpdateSetSource } from "drizzle-orm/pg-core";
 import db from "../db.js";
 import { runWithTenantContext } from "../middleware/tenantContext.js";
 import { localDateInTimeZone } from "../util/schoolTime.js";
@@ -5513,44 +5514,50 @@ export async function createClasspilotCommandWithTargets(
 export async function updateClasspilotCommandSummary(
   commandId: string
 ): Promise<ClasspilotCommand | undefined> {
-  const targets = await db
-    .select()
+  const summary = db
+    .select({
+      commandId: sql<string>`${commandId}`.as("target_command_id"),
+      targetRequestedCount: sql<number>`count(*)::int`.as("target_requested_count"),
+      targetSentCount: sql<number>`count(*) filter (where ${classpilotCommandTargets.status} in ('sent', 'received', 'completed', 'failed'))::int`.as("target_sent_count"),
+      targetReceivedCount: sql<number>`count(*) filter (where ${classpilotCommandTargets.receivedAt} is not null)::int`.as("target_received_count"),
+      targetCompletedCount: sql<number>`count(*) filter (where ${classpilotCommandTargets.completedAt} is not null)::int`.as("target_completed_count"),
+      targetFailedCount: sql<number>`count(*) filter (where ${classpilotCommandTargets.failedAt} is not null)::int`.as("target_failed_count"),
+      targetUnavailableCount: sql<number>`count(*) filter (where ${classpilotCommandTargets.status} = 'unavailable')::int`.as("target_unavailable_count"),
+      targetExpiredCount: sql<number>`count(*) filter (where ${classpilotCommandTargets.status} = 'expired')::int`.as("target_expired_count"),
+    })
     .from(classpilotCommandTargets)
-    .where(eq(classpilotCommandTargets.commandId, commandId));
-
-  const requestedCount = targets.length;
-  const sentCount = targets.filter((target) =>
-    ["sent", "received", "completed", "failed"].includes(target.status)
-  ).length;
-  const receivedCount = targets.filter((target) =>
-    ["received", "completed"].includes(target.status)
-  ).length;
-  const completedCount = targets.filter((target) => target.status === "completed").length;
-  const failedCount = targets.filter((target) => target.status === "failed").length;
-  const unavailableCount = targets.filter((target) => target.status === "unavailable").length;
-  const expiredCount = targets.filter((target) => target.status === "expired").length;
-
-  let status: ClasspilotCommand["status"] = "requested";
-  if (requestedCount === 0 || unavailableCount === requestedCount) status = "unavailable";
-  else if (completedCount === requestedCount) status = "completed";
-  else if (failedCount + unavailableCount + expiredCount === requestedCount) status = "failed";
-  else if (receivedCount > 0) status = "received";
-  else if (sentCount > 0) status = "sent";
+    .where(eq(classpilotCommandTargets.commandId, commandId))
+    .as("classpilot_command_target_summary");
 
   const [command] = await db
     .update(classpilotCommands)
     .set({
-      status,
-      requestedCount,
-      sentCount,
-      receivedCount,
-      completedCount,
-      failedCount,
-      unavailableCount,
-      updatedAt: new Date(),
+      status: sql<ClasspilotCommand["status"]>`case
+        when ${classpilotCommands.status} in ('completed', 'failed', 'unavailable', 'expired') then ${classpilotCommands.status}
+        when greatest(${classpilotCommands.requestedCount}, ${summary.targetRequestedCount}) = 0
+          or greatest(${classpilotCommands.unavailableCount}, ${summary.targetUnavailableCount}) = greatest(${classpilotCommands.requestedCount}, ${summary.targetRequestedCount}) then 'unavailable'
+        when greatest(${classpilotCommands.completedCount}, ${summary.targetCompletedCount}) = greatest(${classpilotCommands.requestedCount}, ${summary.targetRequestedCount}) then 'completed'
+        when greatest(${classpilotCommands.failedCount}, ${summary.targetFailedCount})
+          + greatest(${classpilotCommands.unavailableCount}, ${summary.targetUnavailableCount})
+          + ${summary.targetExpiredCount} = greatest(${classpilotCommands.requestedCount}, ${summary.targetRequestedCount}) then 'failed'
+        when greatest(${classpilotCommands.receivedCount}, ${summary.targetReceivedCount}) > 0 then 'received'
+        when greatest(${classpilotCommands.sentCount}, ${summary.targetSentCount}) > 0 then 'sent'
+        else 'requested'
+      end`,
+      requestedCount: sql<number>`greatest(${classpilotCommands.requestedCount}, ${summary.targetRequestedCount})`,
+      sentCount: sql<number>`greatest(${classpilotCommands.sentCount}, ${summary.targetSentCount})`,
+      receivedCount: sql<number>`greatest(${classpilotCommands.receivedCount}, ${summary.targetReceivedCount})`,
+      completedCount: sql<number>`greatest(${classpilotCommands.completedCount}, ${summary.targetCompletedCount})`,
+      failedCount: sql<number>`greatest(${classpilotCommands.failedCount}, ${summary.targetFailedCount})`,
+      unavailableCount: sql<number>`greatest(${classpilotCommands.unavailableCount}, ${summary.targetUnavailableCount})`,
+      updatedAt: sql<Date>`clock_timestamp()`,
     })
-    .where(eq(classpilotCommands.id, commandId))
-    .returning();
+    .from(summary)
+    .where(and(
+      eq(classpilotCommands.id, commandId),
+      eq(classpilotCommands.id, summary.commandId)
+    ))
+    .returning({ ...getTableColumns(classpilotCommands) });
 
   return command;
 }
@@ -5563,7 +5570,14 @@ export async function markClasspilotCommandTargetsSent(
   const now = new Date();
   const targets = await db
     .update(classpilotCommandTargets)
-    .set({ status: "sent", sentAt: now, updatedAt: now })
+    .set({
+      status: sql<ClasspilotCommandTarget["status"]>`case
+        when ${classpilotCommandTargets.status} = 'requested' then 'sent'
+        else ${classpilotCommandTargets.status}
+      end`,
+      sentAt: sql<Date>`coalesce(${classpilotCommandTargets.sentAt}, ${now})`,
+      updatedAt: now,
+    })
     .where(
       and(
         eq(classpilotCommandTargets.commandId, commandId),
@@ -5586,31 +5600,60 @@ export async function updateClasspilotCommandTargetAck(options: {
 }): Promise<ClasspilotCommandTarget | undefined> {
   const now = new Date();
   const status = options.ackState === "failed" ? "failed" : options.ackState;
-  const update: Partial<InsertClasspilotCommandTarget> & Record<string, unknown> = {
+  const update: PgUpdateSetSource<typeof classpilotCommandTargets> = {
     status,
     ackState: options.ackState,
     result: options.result ?? null,
     errorMessage: options.errorMessage || null,
     updatedAt: now,
   };
-  if (options.ackState === "received") update.receivedAt = now;
-  if (options.ackState === "completed") update.completedAt = now;
+  if (options.ackState === "received") {
+    update.receivedAt = sql<Date>`coalesce(${classpilotCommandTargets.receivedAt}, ${now})`;
+  }
+  if (options.ackState === "completed") {
+    update.receivedAt = sql<Date>`coalesce(${classpilotCommandTargets.receivedAt}, ${now})`;
+    update.completedAt = sql<Date>`coalesce(${classpilotCommandTargets.completedAt}, ${now})`;
+  }
   if (options.ackState === "failed") update.failedAt = now;
 
-  const conditions = [
+  const identityConditions = [
     eq(classpilotCommandTargets.commandId, options.commandId),
     eq(classpilotCommandTargets.schoolId, options.schoolId),
     eq(classpilotCommandTargets.deviceId, options.deviceId),
   ];
   if (options.studentId) {
-    conditions.push(eq(classpilotCommandTargets.studentId, options.studentId));
+    identityConditions.push(eq(classpilotCommandTargets.studentId, options.studentId));
   }
+  const allowedStatuses: ClasspilotCommandTarget["status"][] = options.ackState === "received"
+    ? ["requested", "sent"]
+    : ["requested", "sent", "received"];
 
-  const [target] = await db
+  let [target] = await db
     .update(classpilotCommandTargets)
     .set(update)
-    .where(and(...conditions))
+    .where(and(
+      ...identityConditions,
+      inArray(classpilotCommandTargets.status, allowedStatuses)
+    ))
     .returning();
+
+  if (!target && options.ackState === "received") {
+    // A failed ACK can win the row lock even when the device sent `received`
+    // first. Record that cumulative milestone without reopening or downgrading
+    // the terminal target state.
+    [target] = await db
+      .update(classpilotCommandTargets)
+      .set({
+        receivedAt: sql<Date>`coalesce(${classpilotCommandTargets.receivedAt}, ${now})`,
+        updatedAt: now,
+      })
+      .where(and(
+        ...identityConditions,
+        eq(classpilotCommandTargets.status, "failed"),
+        isNull(classpilotCommandTargets.receivedAt)
+      ))
+      .returning();
+  }
 
   if (target) await updateClasspilotCommandSummary(options.commandId);
   return target;
@@ -5632,6 +5675,40 @@ export async function getClasspilotCommandByIdAndSchool(
     .where(eq(classpilotCommandTargets.commandId, command.id))
     .orderBy(classpilotCommandTargets.createdAt);
   return { ...command, targets };
+}
+
+export async function withClasspilotCommandBroadcastLock<T>(
+  commandId: string,
+  schoolId: string,
+  callback: (command: ClasspilotCommandWithTargets, revision: string) => Promise<T> | T
+): Promise<T | undefined> {
+  return db.transaction(async (tx) => {
+    // A command can receive ACKs on several ECS tasks. Hold a transaction-scoped
+    // advisory lock through publication so every full snapshot is read and sent
+    // in database order across the entire service, not just within one process.
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${commandId}, 0::bigint))`);
+
+    const [commandRow] = await tx
+      .select({
+        ...getTableColumns(classpilotCommands),
+        // Allocated only after the per-command advisory lock is held. PostgreSQL
+        // full transaction IDs are atomic, strictly increasing, and epoch-aware.
+        broadcastRevision: sql<string>`txid_current()::text`,
+      })
+      .from(classpilotCommands)
+      .where(and(eq(classpilotCommands.id, commandId), eq(classpilotCommands.schoolId, schoolId)))
+      .limit(1);
+    if (!commandRow) return undefined;
+    const { broadcastRevision, ...command } = commandRow;
+
+    const targets = await tx
+      .select()
+      .from(classpilotCommandTargets)
+      .where(eq(classpilotCommandTargets.commandId, command.id))
+      .orderBy(classpilotCommandTargets.createdAt);
+
+    return callback({ ...command, targets }, broadcastRevision);
+  });
 }
 
 export async function getRecentClasspilotCommands(
