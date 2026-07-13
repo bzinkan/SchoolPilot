@@ -830,23 +830,35 @@ function Get-NewStoppedTasks {
     foreach ($task in $allTasks) {
         $taskArn = [string]$task.taskArn
         if ($script:SeenStoppedTasks.ContainsKey($taskArn)) { continue }
+        # ECS can return a task from list-tasks --desired-status STOPPED while
+        # it is still DEACTIVATING. describe-tasks does not include stoppedAt
+        # until the transition completes, so leave it unseen and retry it on
+        # the next sample instead of treating a normal scale-in as bad data.
+        $stoppedAtValue = Get-OptionalValue $task "stoppedAt"
+        if ($null -eq $stoppedAtValue -or [string]::IsNullOrWhiteSpace([string]$stoppedAtValue)) { continue }
+        $stoppedAt = [DateTimeOffset]$stoppedAtValue
         $script:SeenStoppedTasks[$taskArn] = $true
-        $stoppedAt = if ($task.stoppedAt) { [DateTimeOffset]$task.stoppedAt } else { [DateTimeOffset]::MinValue }
         if ($stoppedAt -lt $script:StartedAt.AddSeconds(-5)) { continue }
-        $containerReasons = @($task.containers | ForEach-Object { [string]$_.reason } | Where-Object { $_ })
-        $exitCodes = @($task.containers | ForEach-Object { if ($null -ne $_.exitCode) { [int]$_.exitCode } })
-        $reasonText = (([string]$task.stoppedReason) + " " + ($containerReasons -join " ")).ToLowerInvariant()
+        $containers = @(Get-OptionalValue $task "containers" @())
+        $containerReasons = @($containers | ForEach-Object { [string](Get-OptionalValue $_ "reason" "") } | Where-Object { $_ })
+        $exitCodes = @($containers | ForEach-Object {
+            $exitCode = Get-OptionalValue $_ "exitCode"
+            if ($null -ne $exitCode) { [int]$exitCode }
+        })
+        $stopCode = [string](Get-OptionalValue $task "stopCode" "")
+        $stoppedReason = [string](Get-OptionalValue $task "stoppedReason" "")
+        $reasonText = ($stoppedReason + " " + ($containerReasons -join " ")).ToLowerInvariant()
         $expectedScaleOrDeploymentStop = (
-            [string]$task.stopCode -eq "ServiceSchedulerInitiated" -and
+            $stopCode -eq "ServiceSchedulerInitiated" -and
             $reasonText -match '(scaling activity|deployment|rolling update|desired count)' -and
             $reasonText -notmatch '(unhealthy|failed|failure|essential container|error|out.?of.?memory)'
         )
         $recent += [ordered]@{
             taskArnSuffix = $taskArn.Split('/')[-1]
-            service = ([string]$task.group -replace '^service:', '')
+            service = ([string](Get-OptionalValue $task "group" "") -replace '^service:', '')
             stoppedAt = $stoppedAt.ToString("o")
-            stopCode = [string]$task.stopCode
-            stoppedReason = [string]$task.stoppedReason
+            stopCode = $stopCode
+            stoppedReason = $stoppedReason
             exitCodes = $exitCodes
             oom = $reasonText.Contains("outofmemory") -or $reasonText.Contains("out of memory") -or $exitCodes -contains 137
             expectedScaleOrDeploymentStop = $expectedScaleOrDeploymentStop
