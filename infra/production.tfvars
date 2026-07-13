@@ -29,16 +29,23 @@ redis_replica_count = 0
 
 # ECS — scheduler work remains isolated; API runs single-task in pilot mode
 ecs_desired_count = 1
-# One extra 512/1024 task is retained for the weekday arrival wave. The ordinary
-# minimum remains one, and target tracking scales the extra task in afterward.
-enable_api_arrival_capacity = true
-ecs_cpu                     = 512
-ecs_memory                  = 1024
-worker_desired_count        = 1
-worker_cpu                  = 256
-worker_memory               = 512
-db_pool_max                 = 20
-scheduler_db_pool_max       = 5
+# Six 512/2048 live API tasks are pre-warmed for the weekday arrival wave. The
+# ordinary minimum remains one, and target tracking may scale up to eight. The
+# live emergency revision remains selected independently because ECS task
+# definitions are deliberately ignored by this staged Terraform profile.
+enable_api_arrival_capacity     = true
+api_arrival_min_capacity        = 6
+api_max_capacity                = 8
+api_arrival_scale_up_schedule   = "cron(45 5 ? * MON-FRI *)"
+api_arrival_scale_down_schedule = "cron(0 10 ? * MON-FRI *)"
+api_arrival_schedule_timezone   = "America/New_York"
+ecs_cpu                         = 512
+ecs_memory                      = 1024
+worker_desired_count            = 1
+worker_cpu                      = 256
+worker_memory                   = 512
+db_pool_max                     = 20
+scheduler_db_pool_max           = 5
 # Staged value: switch to false only after five stable live school days.
 enable_container_insights = true
 

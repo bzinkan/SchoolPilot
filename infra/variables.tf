@@ -115,9 +115,31 @@ variable "ecs_desired_count" {
 }
 
 variable "enable_api_arrival_capacity" {
-  description = "Temporarily raise the API autoscaling minimum to two during the weekday school-arrival window"
+  description = "Temporarily raise the API autoscaling minimum during the weekday school-arrival window"
   type        = bool
   default     = false
+}
+
+variable "api_max_capacity" {
+  description = "Maximum API task count for CPU target tracking"
+  type        = number
+  default     = 6
+
+  validation {
+    condition     = var.api_max_capacity >= 1 && floor(var.api_max_capacity) == var.api_max_capacity
+    error_message = "api_max_capacity must be a positive whole number."
+  }
+}
+
+variable "api_arrival_min_capacity" {
+  description = "Minimum API task count during the weekday school-arrival window"
+  type        = number
+  default     = 2
+
+  validation {
+    condition     = var.api_arrival_min_capacity >= 1 && floor(var.api_arrival_min_capacity) == var.api_arrival_min_capacity
+    error_message = "api_arrival_min_capacity must be a positive whole number."
+  }
 }
 
 variable "api_arrival_scale_up_schedule" {

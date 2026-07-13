@@ -223,6 +223,45 @@ production_backend_capacity_preflight() {
   success "Production backend capacity preflight OK: API desiredCount=${PRODUCTION_PREFLIGHT_API_DESIRED}, worker desiredCount=1, both stable"
 }
 
+production_eastern_weekday_hhmm() {
+  TZ=America/New_York date '+%u %H%M'
+}
+
+production_backend_deploy_window_preflight() {
+  if [[ "$ENV" != "production" || "$DEPLOY_BACKEND" != true ]]; then
+    return 0
+  fi
+
+  local phase="${1:-before deployment}"
+  local raw weekday hhmm extra hour minute numeric_hhmm
+  if ! raw=$(production_eastern_weekday_hhmm); then
+    error "Could not resolve the America/New_York deployment clock; refusing the production backend deployment."
+    return 1
+  fi
+  read -r weekday hhmm extra <<< "$raw"
+  hhmm="${hhmm%$'\r'}"
+  extra="${extra%$'\r'}"
+
+  if [[ ! "$weekday" =~ ^[1-7]$ || ! "$hhmm" =~ ^[0-2][0-9][0-5][0-9]$ || -n "$extra" ]]; then
+    error "The America/New_York deployment clock was malformed or ambiguous; refusing the production backend deployment."
+    return 1
+  fi
+  hour="${hhmm:0:2}"
+  minute="${hhmm:2:2}"
+  if (( 10#$hour > 23 )); then
+    error "The America/New_York deployment clock was malformed or ambiguous; refusing the production backend deployment."
+    return 1
+  fi
+
+  numeric_hhmm=$((10#$hour * 100 + 10#$minute))
+  if (( 10#$weekday <= 5 && numeric_hhmm >= 445 && numeric_hhmm < 1015 )); then
+    error "Production backend deploys are blocked weekdays 04:45-10:15 America/New_York so the 05:45 six-task arrival action cannot cross migration or a 200% ECS rollout (${phase})."
+    return 1
+  fi
+
+  success "Production backend deployment window preflight OK (${phase}; America/New_York weekday=${weekday} time=${hhmm})"
+}
+
 wait_for_production_backend_strict_stability() {
   if [[ "$ENV" != "production" || "$DEPLOY_BACKEND" != true ]]; then
     return 0
@@ -367,6 +406,8 @@ acquire_production_scaling_hold() {
     return 1
   fi
 
+  production_backend_deploy_window_preflight "before autoscaling hold"
+
   local raw prior
   if ! raw=$(production_scaling_state_snapshot); then
     error "Could not read the production API autoscaling suspended state; refusing the service rollout."
@@ -394,7 +435,8 @@ acquire_production_scaling_hold() {
 
   # The first check happens before Docker. This second snapshot closes the
   # build/push window and is protected from target-tracking drift. The reviewed
-  # scheduled actions remain live and can move only between one and two tasks.
+  # scheduled actions remain live; the deployment-window preflight prevents the
+  # six-task arrival action from crossing migration or service replacement.
   if ! production_backend_capacity_preflight "under the autoscaling hold"; then
     error "Production ECS capacity changed after the initial preflight; refusing the migration and service rollout."
     return 1
@@ -699,6 +741,7 @@ info "Image tag:   $IMAGE_TAG"
 # gate only while the API is stable at one or two tasks and the singleton
 # worker is stable at one task. This check runs before Docker/ECR/ECS work and
 # fails closed if ECS cannot provide one unambiguous two-service snapshot.
+production_backend_deploy_window_preflight
 production_backend_capacity_preflight
 
 # ============================================================================
@@ -979,6 +1022,7 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
   success "Startup migrations completed"
 
   # Step 6: Point the API service at the new revision
+  production_backend_deploy_window_preflight "before service rollout"
   production_backend_capacity_preflight "after migration under the autoscaling hold"
   info "Updating ECS service to revision ${NEW_REV}..."
   aws ecs update-service \
@@ -1093,7 +1137,8 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
   # deployment for both services at the reviewed task counts. The standard ECS
   # waiter can return just before rolloutState converges, so a production-only,
   # bounded strict poll closes that control-plane propagation window. Scheduled
-  # scaling remains in its captured state so a 06:00/10:00 action cannot be skipped.
+  # scaling remains in its captured state, and the guarded deployment window
+  # keeps the 05:45/10:00 actions away from the 200% rollout.
   wait_for_production_backend_strict_stability \
     "${NAME}-api:${NEW_REV}" \
     "${WORKER_SERVICE}:${WORKER_NEW_REV}"

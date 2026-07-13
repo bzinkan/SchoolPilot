@@ -88,6 +88,7 @@ type LibraryRunOptions = {
   environment?: string;
   deployBackend?: boolean;
   skipWait?: boolean;
+  easternClock?: string;
   serviceSnapshots?: string[];
   scalingSnapshots?: string[];
   registerFailCalls?: number[];
@@ -108,6 +109,12 @@ ${deployLibrarySource}
 ENV="$TEST_ENVIRONMENT"
 DEPLOY_BACKEND="$TEST_DEPLOY_BACKEND"
 SKIP_WAIT="$TEST_SKIP_WAIT"
+production_eastern_weekday_hhmm() {
+  if [[ "$TEST_EASTERN_CLOCK" == "__FAIL__" ]]; then
+    return 42
+  fi
+  printf '%s\n' "$TEST_EASTERN_CLOCK"
+}
 cleanup_temp_files() { :; }
 sleep() { :; }
 info() { printf 'INFO %s\\n' "$*"; }
@@ -171,6 +178,7 @@ ${body}
       TEST_ENVIRONMENT: options.environment ?? "production",
       TEST_DEPLOY_BACKEND: String(options.deployBackend ?? true),
       TEST_SKIP_WAIT: String(options.skipWait ?? false),
+      TEST_EASTERN_CLOCK: options.easternClock ?? "1 1200",
       TEST_FIXTURE_DIR: shellFixtureDir,
       TEST_REGISTER_FAIL_CALLS: (options.registerFailCalls ?? []).join(","),
     },
@@ -190,6 +198,7 @@ function registerCommands(commands: string[]): string[] {
 describe("production backend deployment capacity guard", () => {
   it("runs the initial preflight before every Docker, ECR, migration, and ECS mutation", () => {
     const execution = deploySource.slice(libraryBoundary);
+    const windowInvocation = execution.indexOf("\nproduction_backend_deploy_window_preflight\n");
     const invocation = execution.indexOf("\nproduction_backend_capacity_preflight\n");
     const mutationIndexes = [
       "docker build ",
@@ -205,7 +214,9 @@ describe("production backend deployment capacity guard", () => {
       return index;
     });
 
+    assert.ok(windowInvocation >= 0, "deployment-window preflight should be invoked");
     assert.ok(invocation >= 0, "capacity preflight should be invoked");
+    assert.ok(windowInvocation < Math.min(...mutationIndexes));
     assert.ok(invocation < Math.min(...mutationIndexes));
   });
 
@@ -218,6 +229,10 @@ describe("production backend deployment capacity guard", () => {
       'production_backend_capacity_preflight "after migration under the autoscaling hold"',
       apiUpdate
     );
+    const preUpdateWindowCheck = execution.lastIndexOf(
+      'production_backend_deploy_window_preflight "before service rollout"',
+      apiUpdate
+    );
     const workerUpdate = execution.indexOf("aws ecs update-service", apiUpdate + 1);
     const restore = execution.indexOf("\n  if ! restore_production_scaling_hold; then", workerUpdate);
     const lastServiceWait = execution.lastIndexOf("aws ecs wait services-stable", restore);
@@ -227,7 +242,8 @@ describe("production backend deployment capacity guard", () => {
     );
 
     assert.ok(hold >= 0 && hold < migration);
-    assert.ok(migration < preUpdateCapacityCheck && preUpdateCapacityCheck < apiUpdate);
+    assert.ok(migration < preUpdateWindowCheck && preUpdateWindowCheck < apiUpdate);
+    assert.ok(preUpdateWindowCheck < preUpdateCapacityCheck && preUpdateCapacityCheck < apiUpdate);
     assert.ok(apiUpdate < workerUpdate);
     assert.ok(workerUpdate < lastServiceWait && lastServiceWait < finalCapacityCheck);
     assert.ok(finalCapacityCheck < restore);
@@ -241,6 +257,34 @@ describe("production backend deployment capacity guard", () => {
       assert.equal(result.status, 0, result.stderr);
       assert.match(result.stdout, new RegExp(`API desiredCount=${apiDesired}`));
       assert.match(result.stdout, /worker desiredCount=1, both stable/);
+    }
+  });
+
+  it("blocks the measured arrival window plus its rollout safety buffer", () => {
+    for (const easternClock of ["1 0445", "1 0544", "1 0545", "3 1000", "5 1014"]) {
+      const result = runLibrary('production_backend_deploy_window_preflight "test phase"', { easternClock });
+      assert.notEqual(result.status, 0, `unexpectedly accepted ${easternClock}`);
+      assert.match(result.stderr, /blocked weekdays 04:45-10:15 America\/New_York/);
+      assert.match(result.stderr, /test phase/);
+      assert.deepEqual(result.commands, []);
+    }
+  });
+
+  it("allows safe weekday boundaries and weekends", () => {
+    for (const easternClock of ["1 0444", "1 1015", "5 2359", "6 0600", "7 0600"]) {
+      const result = runLibrary("production_backend_deploy_window_preflight", { easternClock });
+      assert.equal(result.status, 0, `${easternClock}: ${result.stderr}`);
+      assert.match(result.stdout, /deployment window preflight OK/);
+      assert.deepEqual(result.commands, []);
+    }
+  });
+
+  it("fails closed when the Eastern deployment clock is unavailable or malformed", () => {
+    for (const easternClock of ["__FAIL__", "", "1", "0 1200", "1 2400", "1 1260", "1 1200 extra"]) {
+      const result = runLibrary("production_backend_deploy_window_preflight", { easternClock });
+      assert.notEqual(result.status, 0, `unexpectedly accepted ${JSON.stringify(easternClock)}`);
+      assert.match(result.stderr, /Could not resolve.*clock|clock was malformed or ambiguous/);
+      assert.deepEqual(result.commands, []);
     }
   });
 

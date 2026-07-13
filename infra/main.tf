@@ -282,6 +282,8 @@ module "ecs" {
   # Scaling
   desired_count                   = var.ecs_desired_count
   enable_api_arrival_capacity     = var.enable_api_arrival_capacity
+  api_max_capacity                = var.api_max_capacity
+  api_arrival_min_capacity        = var.api_arrival_min_capacity
   api_arrival_scale_up_schedule   = var.api_arrival_scale_up_schedule
   api_arrival_scale_down_schedule = var.api_arrival_scale_down_schedule
   api_arrival_schedule_timezone   = var.api_arrival_schedule_timezone
