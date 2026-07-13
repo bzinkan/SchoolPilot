@@ -574,6 +574,17 @@ try {
     catch { $acceptanceWeakeningRejected = $_.Exception.Message -match "requireLoadAcceptance=true" }
     Assert-Condition $acceptanceWeakeningRejected "Production load runs must not weaken requireLoadAcceptance=true."
 
+    $productionShortTelemetry = $productionLoadAcceptance | ConvertTo-Json -Depth 12 | ConvertFrom-Json -Depth 12
+    $productionShortTelemetry.runId = "production-load-duration-lock"
+    $productionShortTelemetry.minimumWallClockSeconds = 60
+    $productionShortTelemetry.requireLoadAcceptance = $true
+    $productionShortTelemetryPath = Join-Path $tempRoot "production-load-duration-lock.json"
+    [IO.File]::WriteAllText($productionShortTelemetryPath, ($productionShortTelemetry|ConvertTo-Json -Depth 12), [Text.UTF8Encoding]::new($false))
+    $shortTelemetryRejected = $false
+    try { & $monitorScript -ConfigPath $productionShortTelemetryPath -Mode Validate | Out-Null }
+    catch { $shortTelemetryRejected = $_.Exception.Message -match "minimumWallClockSeconds to equal workload.durationSeconds" }
+    Assert-Condition $shortTelemetryRejected "Production load telemetry must cover the full immutable workload duration."
+
     $productionThresholdConfig = @{
         schemaVersion=1;runId="production-threshold-lock";phase="Application";evidenceDirectory=(Join-Path $tempRoot "production-threshold-evidence");
         automaticRollback=$true;rollbackConfigPath=$dummyRollbackPath;notificationTopicArn="arn:aws:sns:us-east-1:123456789012:production-alerts";
@@ -748,13 +759,29 @@ while(!fs.existsSync(gatePath))await new Promise(resolve=>setTimeout(resolve,25)
     $fakeMonitorPreamble = @'
 param([string]$ConfigPath,[string]$Mode)
 $c=Get-Content -LiteralPath $ConfigPath -Raw|ConvertFrom-Json -Depth 30
-function W([string]$p,$v){[IO.File]::WriteAllText($p,($v|ConvertTo-Json -Depth 10))}
+function W([string]$p,$v){
+  $temporary="$p.$([Guid]::NewGuid().ToString('N')).tmp"
+  try {
+    [IO.File]::WriteAllText($temporary,($v|ConvertTo-Json -Depth 10),[Text.UTF8Encoding]::new($false))
+    [IO.File]::Move($temporary,$p,$true)
+  }
+  finally {if([IO.File]::Exists($temporary)){[IO.File]::Delete($temporary)}}
+}
 $mh=Join-Path $c.evidenceDirectory "$($c.runId)-monitor-heartbeat.json"
 $rh=Join-Path $c.evidenceDirectory "$($c.runId)-rollback-heartbeat.json"
 '@
     [IO.File]::WriteAllText($fakeSlowRollbackMonitor, $fakeMonitorPreamble + "`n" + @'
+$gate=Join-Path $c.evidenceDirectory "$($c.runId)-harness-start.json"
+$gateDeadline=[DateTimeOffset]::UtcNow.AddSeconds(30)
+$iteration=0
+do {
+  $iteration++
+  W $mh @{runId=$c.runId;phase=$c.phase;timestamp=[DateTimeOffset]::UtcNow.ToString("o");iteration=$iteration;triggered=$false}
+  if(Test-Path -LiteralPath $gate -PathType Leaf){break}
+  Start-Sleep -Milliseconds 100
+} while([DateTimeOffset]::UtcNow -lt $gateDeadline)
+if(-not (Test-Path -LiteralPath $gate -PathType Leaf)){exit 91}
 W $rh @{runId=$c.runId;action="NatRemoved";status="running";step="slow-test";timestamp=[DateTimeOffset]::UtcNow.ToString("o");deadlineUtc=[DateTimeOffset]::UtcNow.AddMinutes(1).ToString("o")}
-W $mh @{runId=$c.runId;phase=$c.phase;timestamp=[DateTimeOffset]::UtcNow.ToString("o");iteration=1;triggered=$false}
 Start-Sleep -Seconds 4
 exit 0
 '@, [Text.UTF8Encoding]::new($false))
@@ -791,6 +818,7 @@ exit 42
         $slowDebug = @(
             "supervisor=$($_.Exception.Message)",
             "monitor.stderr=$((Get-Content -LiteralPath (Join-Path $tempRoot 'slow-rollback-watchdog-evidence\slow-rollback-watchdog-monitor.stderr.log') -Raw -ErrorAction SilentlyContinue))",
+            "monitor.heartbeat=$((Get-Content -LiteralPath (Join-Path $tempRoot 'slow-rollback-watchdog-evidence\slow-rollback-watchdog-monitor-heartbeat.json') -Raw -ErrorAction SilentlyContinue))",
             "rollback.heartbeat=$((Get-Content -LiteralPath (Join-Path $tempRoot 'slow-rollback-watchdog-evidence\slow-rollback-watchdog-rollback-heartbeat.json') -Raw -ErrorAction SilentlyContinue))",
             "artifacts=$((Get-ChildItem -LiteralPath (Join-Path $tempRoot 'slow-rollback-watchdog-evidence') -ErrorAction SilentlyContinue).Name -join ',')"
         ) -join " | "
@@ -1000,6 +1028,9 @@ if ($service -eq "cloudwatch" -and $operation -eq "get-metric-data") {
       } elseif ($env:SCHOOLPILOT_TEST_FAST_METRIC_AGE_SECONDS -and
           $metricId -notin @("rds_cpu_credit", "rds_surplus_charged", "redis_cpu_credit")) {
         [DateTimeOffset]::UtcNow.AddSeconds(-[int]$env:SCHOOLPILOT_TEST_FAST_METRIC_AGE_SECONDS).ToString("o")
+      } elseif ($env:SCHOOLPILOT_TEST_METRIC_STEP_FILE -and
+          $metricId -notin @("rds_cpu_credit", "rds_surplus_charged", "redis_cpu_credit")) {
+        [DateTimeOffset]::UtcNow.ToString("o")
       } else { $timestamp }
       $value = switch -Regex ($metricId) {
         '^waf_device_blocked$' { if($env:SCHOOLPILOT_TEST_WAF_DEVICE_BLOCK -or ($env:SCHOOLPILOT_TEST_WAF_DEVICE_BLOCK_FILE -and (Test-Path -LiteralPath $env:SCHOOLPILOT_TEST_WAF_DEVICE_BLOCK_FILE))){1}else{0}; break }
@@ -1018,7 +1049,35 @@ if ($service -eq "cloudwatch" -and $operation -eq "get-metric-data") {
         '^redis_cpu_credit$' { if($env:SCHOOLPILOT_TEST_AUX_BREACH){0}else{100}; break }
         default { 0 }
       }
-      @{Id=$metricId;StatusCode="Complete";Timestamps=@($metricTimestamp);Values=@($value)}
+      if($metricId -eq "rds_cpu" -and $env:SCHOOLPILOT_TEST_RDS_CPU_BOUNDARY_STEP_FILE){
+        $boundaryStep=if(Test-Path -LiteralPath $env:SCHOOLPILOT_TEST_RDS_CPU_BOUNDARY_STEP_FILE){[int](Get-Content -LiteralPath $env:SCHOOLPILOT_TEST_RDS_CPU_BOUNDARY_STEP_FILE -Raw)}else{0}
+        $boundaryStep++;[IO.File]::WriteAllText($env:SCHOOLPILOT_TEST_RDS_CPU_BOUNDARY_STEP_FILE,[string]$boundaryStep)
+        $base=[DateTimeOffset]$env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_BASE
+        $boundaryTimes=@($base.AddMinutes(-1).ToString("o"),$base.ToString("o"),$base.AddMinutes(1).ToString("o"),$base.AddMinutes(2).ToString("o"))
+        $boundaryCount=[Math]::Min($boundaryStep,4)
+        @{Id=$metricId;StatusCode="Complete";Timestamps=@($boundaryTimes[0..($boundaryCount-1)]);Values=@(1..$boundaryCount|ForEach-Object{70})}
+      } elseif($metricId -eq "rds_cpu" -and $env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_PATTERN){
+        $base=[DateTimeOffset]$env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_BASE
+        if($env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_PATTERN -eq "gapped"){
+          $runtimeTimes=@($base.ToString("o"),$base.AddMinutes(1).ToString("o"),$base.AddMinutes(3).ToString("o"));$runtimeValues=@(70,70,70)
+        } else {
+          $runtimeTimes=@($base.ToString("o"),$base.AddMinutes(1).ToString("o"),$base.AddMinutes(2).ToString("o"),$base.AddMinutes(3).ToString("o"))
+          $runtimeValues=if($env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_PATTERN -eq "three"){@(10,70,70,70)}elseif($env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_PATTERN -eq "historical"){@(70,70,70,10)}else{@(10,70,10,10)}
+        }
+        @{Id=$metricId;StatusCode="Complete";Timestamps=$runtimeTimes;Values=$runtimeValues}
+      } elseif($metricId -eq "rds_cpu" -and $env:SCHOOLPILOT_TEST_RDS_CPU_LOAD_WINDOW_START){
+        $base=[DateTimeOffset]$env:SCHOOLPILOT_TEST_RDS_CPU_LOAD_WINDOW_START
+        @{Id=$metricId;StatusCode="Complete";Timestamps=@($base.AddMinutes(-1).ToString("o"),$base.ToString("o"),$base.AddMinutes(1).ToString("o"),$base.AddMinutes(2).ToString("o"),$base.AddMinutes(3).ToString("o"),$base.AddMinutes(4).ToString("o"),[DateTimeOffset]::UtcNow.AddMinutes(1).ToString("o"));Values=@(99,10,70,10,11,98,97)}
+      } elseif($metricId -eq "rds_cpu" -and $env:SCHOOLPILOT_TEST_RDS_CPU_BACKFILL){
+        $pointTime=[DateTimeOffset]$metricTimestamp
+        $earlier=$pointTime.AddMilliseconds(-10).ToString("o")
+        $beforeWindow=$pointTime.AddMinutes(-3).ToString("o")
+        $afterCollection=$pointTime.AddMinutes(3).ToString("o")
+        $backfillValue=if($env:SCHOOLPILOT_TEST_RDS_CPU_BACKFILL_SPIKE){70}else{12}
+        @{Id=$metricId;StatusCode="Complete";Timestamps=@($metricTimestamp,$earlier,$beforeWindow,$afterCollection);Values=@($value,$backfillValue,99,98)}
+      } else {
+        @{Id=$metricId;StatusCode="Complete";Timestamps=@($metricTimestamp);Values=@($value)}
+      }
     }
   })
   @{MetricDataResults=$results}|ConvertTo-Json -Depth 8 -Compress; exit 0
@@ -1059,13 +1118,15 @@ const gate=JSON.parse(fs.readFileSync(gatePath,"utf8"));
 const monitorHeartbeatPath=path.join(path.dirname(gatePath),`${runId}-monitor-heartbeat.json`);
 if(!fs.existsSync(monitorHeartbeatPath))process.exit(11);
 const monitorHeartbeat=JSON.parse(fs.readFileSync(monitorHeartbeatPath,"utf8"));
+fs.writeFileSync(progressPath,JSON.stringify({schemaVersion:1,type:"progress",event:"start",runId,stage,timestamp:new Date().toISOString()})+"\n");
 if(process.env.SCHOOLPILOT_TEST_FATAL_OBSERVED_PATH){
   fs.writeFileSync(process.env.SCHOOLPILOT_TEST_FATAL_OBSERVED_PATH,JSON.stringify({runId,reason,gate,monitorHeartbeat,observedAt:new Date().toISOString()}));
 }
 const fatalGate={reasonCodes:[reason],observedAt:new Date().toISOString(),kind:"tenant-isolation-probe"};
+fs.appendFileSync(progressPath,JSON.stringify({schemaVersion:1,type:"fatal_gate",event:"fatal",runId,stage,timestamp:new Date().toISOString(),fatalGate})+"\n");
 const summary={runId,stage,devices:1,declaredSecondSchoolCanaryDevices:0,run:{plannedTrafficSeconds:1,actualTrafficSeconds:1,completedConfiguredDuration:true},screenshotFixture:{decodedBytes:1024},thresholds:{passed:false},fatalGate};
 fs.writeFileSync(summaryPath,JSON.stringify(summary));
-fs.writeFileSync(progressPath,JSON.stringify({schemaVersion:1,type:"progress",event:"final",runId,stage,timestamp:new Date().toISOString(),fatalGate})+"\n");
+fs.appendFileSync(progressPath,JSON.stringify({schemaVersion:1,type:"progress",event:"final",runId,stage,timestamp:new Date().toISOString(),fatalGate})+"\n");
 process.exit(1);
 '@
     [IO.File]::WriteAllText($immediateFatalHarness, $immediateFatalHarnessSource, [Text.UTF8Encoding]::new($false))
@@ -1126,6 +1187,10 @@ process.exit(1);
     $oomOnlyMonitor = $null
     $oomOnlyHarness = $null
     $limitMonitor = $null
+    $loadWindowMonitor = $null
+    $loadWindowHarness = $null
+    $futureFinalMonitor = $null
+    $futureFinalHarness = $null
     $completedWaitMonitor = $null
     $completedWaitHarness = $null
     try {
@@ -1259,7 +1324,7 @@ process.exit(1);
                 $caseMonitorResultPath = Join-Path $caseEvidence "$caseRunId-monitor-result.json"
                 Assert-Condition (Test-Path -LiteralPath $caseMonitorResultPath) "$caseRunId monitor did not write its failure result."
                 $caseMonitorResult = Get-Content -LiteralPath $caseMonitorResultPath -Raw | ConvertFrom-Json -Depth 20
-                Assert-Condition ($caseMonitorResult.failures -contains "load:$($startGateCase.reason)") "$caseRunId monitor did not preserve the immediate fatal reason."
+                Assert-Condition ($caseMonitorResult.failures -contains "load:$($startGateCase.reason)") "$caseRunId monitor did not preserve the immediate fatal reason (result=$($caseMonitorResult|ConvertTo-Json -Compress -Depth 20))."
                 if ($startGateCase.expectApplicationRollback) {
                     Assert-Condition ($caseMonitorResult.rollback.attempted -and $caseMonitorResult.rollback.action -eq "Application" -and $caseMonitorResult.rollback.exitCode -eq 0) "$caseRunId must invoke the pre-approved Application rollback."
                 }
@@ -1312,6 +1377,7 @@ process.exit(1);
         $uncorrelatedStarted = [DateTimeOffset]::UtcNow.AddSeconds(-1)
         $uncorrelatedConfig = $childConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
         $uncorrelatedConfig.runId = $uncorrelatedRunId
+        $uncorrelatedConfig.deadlineUtc = [DateTimeOffset]::UtcNow.AddMinutes(5).ToString("o")
         $uncorrelatedConfig.loadProgressPath = $uncorrelatedProgress
         $uncorrelatedConfig.loadSummaryPath = $uncorrelatedSummary
         $uncorrelatedConfig.rollbackConfigPath = $childRollbackConfigPath
@@ -1348,6 +1414,7 @@ process.exit(1);
         $correlatedSummary = Join-Path $childRoot "correlated-summary.json"
         $correlatedConfig = $childConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
         $correlatedConfig.runId = $correlatedRunId
+        $correlatedConfig.deadlineUtc = [DateTimeOffset]::UtcNow.AddMinutes(5).ToString("o")
         $correlatedConfig.loadProgressPath = $correlatedProgress
         $correlatedConfig.loadSummaryPath = $correlatedSummary
         $correlatedConfig.rollbackConfigPath = $childRollbackConfigPath
@@ -1502,12 +1569,14 @@ process.exit(1);
 
         $rdsCpuLagConfig = $limitConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
         $rdsCpuLagConfig.runId = "rds-cpu-publication-lag"
-        $rdsCpuLagConfig.minimumWallClockSeconds = 3
-        $rdsCpuLagConfig.maxIterations = 5
+        $rdsCpuLagConfig.minimumWallClockSeconds = 10
+        $rdsCpuLagConfig.maxIterations = 3
         $env:SCHOOLPILOT_TEST_RDS_CPU_METRIC_AGE_SECONDS = "210"
         $rdsCpuLagCase = Invoke-ChildMonitorCase "rds-cpu-publication-lag" $rdsCpuLagConfig
         Remove-Item Env:SCHOOLPILOT_TEST_RDS_CPU_METRIC_AGE_SECONDS -ErrorAction SilentlyContinue
-        Assert-Condition ($rdsCpuLagCase.process.ExitCode -eq 0 -and $rdsCpuLagCase.result.status -eq "completed") "A live RDS CPU series with one additional period of publication lag must remain valid."
+        Assert-Condition ($rdsCpuLagCase.process.ExitCode -eq 2 -and
+            $rdsCpuLagCase.result.failures -contains "monitor_iteration_limit_reached_before_acceptance" -and
+            $rdsCpuLagCase.result.failures -notcontains "stale_metric:rds_cpu") "A live RDS CPU series with one additional period of publication lag must remain runtime-valid without padding cumulative in-run evidence."
 
         $rdsCpuStaleConfig = $limitConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
         $rdsCpuStaleConfig.runId = "rds-cpu-truly-stale"
@@ -1599,6 +1668,193 @@ process.exit(1);
         Assert-Condition ($cadenceCase.process.ExitCode -eq 2 -and $cadenceCase.result.acceptance.violations -contains "telemetry_coverage:ecs_api_cpu" -and
             $cadenceCase.result.acceptance.violations -contains "telemetry_cadence:ecs_api_cpu") "Acceptance must reject sparse/repeated telemetry that lacks unique 60-second coverage and span."
 
+        $rdsBackfillConfig = $limitConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+        $rdsBackfillConfig.runId = "rds-cpu-publication-backfill"
+        $rdsBackfillConfig.minimumWallClockSeconds = 0
+        $rdsBackfillConfig.maxIterations = 1
+        $rdsBackfillConfig | Add-Member -NotePropertyName testTelemetryExpectedSeconds -NotePropertyValue 120 -Force
+        $rdsBackfillConfig | Add-Member -NotePropertyName testTelemetryMetricNames -NotePropertyValue @("rds_cpu") -Force
+        $env:SCHOOLPILOT_TEST_RDS_CPU_BACKFILL = "1"
+        $rdsBackfillCase = Invoke-ChildMonitorCase "rds-cpu-publication-backfill" $rdsBackfillConfig
+        Assert-Condition ($rdsBackfillCase.process.ExitCode -eq 0 -and $rdsBackfillCase.result.status -eq "completed" -and
+            $rdsBackfillCase.result.acceptance.metrics.rds_cpu.count -eq 2 -and
+            $rdsBackfillCase.result.acceptance.metrics.rds_cpu.maximum -eq 12) "Delayed RDS CPU datapoints returned in one poll must backfill strict one-minute acceptance coverage."
+
+        $rdsSpikeConfig = $rdsBackfillConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+        $rdsSpikeConfig.runId = "rds-cpu-publication-backfill-spike"
+        $env:SCHOOLPILOT_TEST_RDS_CPU_BACKFILL_SPIKE = "1"
+        $rdsSpikeCase = Invoke-ChildMonitorCase "rds-cpu-publication-backfill-spike" $rdsSpikeConfig
+        $rdsSpikeSample = $rdsSpikeCase.lastEvidence | ConvertFrom-Json -Depth 30
+        Assert-Condition ($rdsSpikeCase.process.ExitCode -eq 2 -and
+            $rdsSpikeCase.result.acceptance.violations -contains "rds_cpu_peak" -and
+            $rdsSpikeCase.result.acceptance.metrics.rds_cpu.maximum -eq 70 -and
+            $rdsSpikeSample.metrics.rdsCpuPercent -eq 10 -and
+            $rdsSpikeCase.result.failures -notcontains "rds_cpu") "A delayed RDS CPU spike must remain visible to cumulative acceptance without replacing the latest-only runtime sample."
+        Remove-Item Env:SCHOOLPILOT_TEST_RDS_CPU_BACKFILL,Env:SCHOOLPILOT_TEST_RDS_CPU_BACKFILL_SPIKE -ErrorAction SilentlyContinue
+
+        $runtimeBaseNow = [DateTimeOffset]::UtcNow.ToUniversalTime()
+        $runtimeMinuteTicks = [TimeSpan]::TicksPerMinute
+        $runtimeBase = [DateTimeOffset]::new(
+            $runtimeBaseNow.Ticks - ($runtimeBaseNow.Ticks % $runtimeMinuteTicks),
+            [TimeSpan]::Zero
+        ).AddMinutes(-3)
+        $runtimeSeriesConfig = $limitConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+        $runtimeSeriesConfig.minimumWallClockSeconds = 10
+        $runtimeSeriesConfig.maxIterations = 1
+        $runtimeSeriesConfig | Add-Member -NotePropertyName testRuntimeSeriesNotBeforeUtc -NotePropertyValue $runtimeBase.ToString("o") -Force
+        $env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_BASE = $runtimeBase.ToString("o")
+
+        $runtimeSeriesConfig.runId = "rds-cpu-delayed-single-runtime"
+        $env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_PATTERN = "one"
+        $singleRuntimeCase = Invoke-ChildMonitorCase "rds-cpu-delayed-single-runtime" $runtimeSeriesConfig
+        Assert-Condition ($singleRuntimeCase.result.failures -contains "monitor_iteration_limit_reached_before_acceptance" -and
+            $singleRuntimeCase.result.failures -notcontains "rds_cpu") "One delayed RDS CPU spike must not trigger the three-consecutive-minute runtime gate."
+
+        $runtimeSeriesConfig.runId = "rds-cpu-delayed-three-runtime"
+        $env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_PATTERN = "three"
+        $threeRuntimeCase = Invoke-ChildMonitorCase "rds-cpu-delayed-three-runtime" $runtimeSeriesConfig
+        Assert-Condition ($threeRuntimeCase.process.ExitCode -eq 2 -and
+            $threeRuntimeCase.result.failures -contains "rds_cpu") "Three consecutive delayed RDS CPU breach datapoints returned together must trigger the runtime gate."
+
+        $runtimeSeriesConfig.runId = "rds-cpu-delayed-gap-runtime"
+        $env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_PATTERN = "gapped"
+        $gappedRuntimeCase = Invoke-ChildMonitorCase "rds-cpu-delayed-gap-runtime" $runtimeSeriesConfig
+        Assert-Condition ($gappedRuntimeCase.result.failures -contains "monitor_iteration_limit_reached_before_acceptance" -and
+            $gappedRuntimeCase.result.failures -notcontains "rds_cpu") "A missing one-minute RDS datapoint must reset the consecutive runtime breach counter."
+
+        $historicalRuntimeConfig = $runtimeSeriesConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+        $historicalRuntimeConfig.runId = "rds-cpu-pre-monitor-history"
+        $historicalRuntimeConfig.testRuntimeSeriesNotBeforeUtc = $runtimeBase.AddMinutes(3).ToString("o")
+        $env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_PATTERN = "historical"
+        $historicalRuntimeCase = Invoke-ChildMonitorCase "rds-cpu-pre-monitor-history" $historicalRuntimeConfig
+        $historicalRuntimeSample = $historicalRuntimeCase.lastEvidence | ConvertFrom-Json -Depth 30
+        Assert-Condition ($historicalRuntimeCase.result.failures -contains "monitor_iteration_limit_reached_before_acceptance" -and
+            $historicalRuntimeCase.result.failures -notcontains "rds_cpu" -and
+            $historicalRuntimeSample.metrics.rdsCpuPercent -eq 10) "Pre-monitor RDS breach history must not trigger the active phase rollback when the current datapoint is healthy."
+
+        $boundaryRuntimeBase = $runtimeBase.AddMinutes(1)
+        $boundaryStepFile = Join-Path $childRoot "rds-cpu-boundary-step.txt"
+        $boundaryRuntimeConfig = $runtimeSeriesConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+        $boundaryRuntimeConfig.testRuntimeSeriesNotBeforeUtc = $boundaryRuntimeBase.ToString("o")
+        $boundaryRuntimeConfig.maxIterations = 3
+        $env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_BASE = $boundaryRuntimeBase.ToString("o")
+        $env:SCHOOLPILOT_TEST_RDS_CPU_BOUNDARY_STEP_FILE = $boundaryStepFile
+        Remove-Item -LiteralPath $boundaryStepFile -ErrorAction SilentlyContinue
+        $boundaryRuntimeConfig.runId = "rds-cpu-boundary-two-post-start"
+        $boundaryTwoCase = Invoke-ChildMonitorCase "rds-cpu-boundary-two-post-start" $boundaryRuntimeConfig
+        Assert-Condition ($boundaryTwoCase.result.failures -contains "monitor_iteration_limit_reached_before_acceptance" -and
+            $boundaryTwoCase.result.failures -notcontains "rds_cpu") "A pre-monitor RDS breach plus only two post-start breaches must not trigger rollback."
+
+        Remove-Item -LiteralPath $boundaryStepFile -ErrorAction SilentlyContinue
+        $boundaryRuntimeConfig.runId = "rds-cpu-boundary-three-post-start"
+        $boundaryRuntimeConfig.maxIterations = 4
+        $boundaryThreeCase = Invoke-ChildMonitorCase "rds-cpu-boundary-three-post-start" $boundaryRuntimeConfig
+        Assert-Condition ($boundaryThreeCase.process.ExitCode -eq 2 -and
+            $boundaryThreeCase.result.failures -contains "rds_cpu") "The third consecutive post-start RDS breach must trigger even when an earlier pre-monitor breach was ignored."
+        Remove-Item Env:SCHOOLPILOT_TEST_RDS_CPU_BOUNDARY_STEP_FILE -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $boundaryStepFile -ErrorAction SilentlyContinue
+        Remove-Item Env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_BASE,Env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_PATTERN -ErrorAction SilentlyContinue
+
+        $loadWindowRunId = "rds-cpu-load-window-boundaries"
+        $loadWindowProgress = Join-Path $childRoot "$loadWindowRunId-progress.jsonl"
+        $loadWindowSummary = Join-Path $childRoot "$loadWindowRunId-summary.json"
+        $loadWindowNow = [DateTimeOffset]::UtcNow.ToUniversalTime()
+        $loadWindowStart = [DateTimeOffset]::new(
+            $loadWindowNow.Ticks - ($loadWindowNow.Ticks % $runtimeMinuteTicks),
+            [TimeSpan]::Zero
+        ).AddMinutes(-4)
+        $loadWindowStartEvent = @{schemaVersion=1;type="progress";event="start";runId=$loadWindowRunId;stage="window";timestamp=$loadWindowStart.ToString("o")}
+        [IO.File]::WriteAllText($loadWindowProgress, ($loadWindowStartEvent|ConvertTo-Json -Compress -Depth 10)+[Environment]::NewLine, [Text.UTF8Encoding]::new($false))
+        Remove-Item -LiteralPath $loadWindowSummary -ErrorAction SilentlyContinue
+        $loadWindowHarness = Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList @("-NoProfile","-Command","Start-Sleep -Seconds 60") -PassThru -NoNewWindow
+        Start-Sleep -Milliseconds 200
+        $loadWindowConfig = $limitConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+        $loadWindowConfig.runId = $loadWindowRunId
+        $loadWindowConfig.phase = "Waf"
+        $loadWindowConfig.minimumWallClockSeconds = 2
+        $loadWindowConfig.deadlineUtc = [DateTimeOffset]::UtcNow.AddMinutes(5).ToString("o")
+        $loadWindowConfig.maxIterations = 10
+        $loadWindowConfig | Add-Member -NotePropertyName loadProgressPath -NotePropertyValue $loadWindowProgress -Force
+        $loadWindowConfig | Add-Member -NotePropertyName loadSummaryPath -NotePropertyValue $loadWindowSummary -Force
+        $loadWindowConfig | Add-Member -NotePropertyName artifactsNotBeforeUtc -NotePropertyValue $loadWindowStart.AddSeconds(-1).ToString("o") -Force
+        $loadWindowConfig | Add-Member -NotePropertyName harnessProcessId -NotePropertyValue $loadWindowHarness.Id -Force
+        $loadWindowConfig | Add-Member -NotePropertyName harnessProcessStartedAtUtc -NotePropertyValue ([DateTimeOffset]$loadWindowHarness.StartTime).ToUniversalTime().ToString("o") -Force
+        $loadWindowConfig | Add-Member -NotePropertyName harnessProcessPath -NotePropertyValue $loadWindowHarness.Path -Force
+        $loadWindowConfig | Add-Member -NotePropertyName requireLoadAcceptance -NotePropertyValue $true -Force
+        $loadWindowConfig | Add-Member -NotePropertyName workload -NotePropertyValue @{stage="window";devices=1;durationSeconds=180;screenshotBytes=1024;canaryDevices=0} -Force
+        $loadWindowConfig | Add-Member -NotePropertyName testTelemetryMetricNames -NotePropertyValue @("rds_cpu") -Force
+        $loadWindowConfigPath = Join-Path $childRoot "$loadWindowRunId-monitor.json"
+        [IO.File]::WriteAllText($loadWindowConfigPath, ($loadWindowConfig|ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+        $env:SCHOOLPILOT_TEST_RDS_CPU_LOAD_WINDOW_START = $loadWindowStart.ToString("o")
+        $loadWindowMonitor = Start-Process -FilePath (Get-Process -Id $PID).Path `
+            -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$monitorScript,"-ConfigPath",$loadWindowConfigPath,"-Mode","Monitor") `
+            -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $childRoot "$loadWindowRunId.out") -RedirectStandardError (Join-Path $childRoot "$loadWindowRunId.err")
+        $loadWindowEvidencePath = Join-Path $childEvidence "$loadWindowRunId-aws-monitor.jsonl"
+        $loadWindowStartDeadline = [DateTimeOffset]::UtcNow.AddSeconds(60)
+        while (-not (Test-Path -LiteralPath $loadWindowEvidencePath) -and -not $loadWindowMonitor.HasExited -and [DateTimeOffset]::UtcNow -lt $loadWindowStartDeadline) { Start-Sleep -Milliseconds 100 }
+        $loadWindowStartError = Get-Content -LiteralPath (Join-Path $childRoot "$loadWindowRunId.err") -Raw -ErrorAction SilentlyContinue
+        Assert-Condition (Test-Path -LiteralPath $loadWindowEvidencePath) "Load-window boundary monitor did not start (exited=$($loadWindowMonitor.HasExited); stderr=$loadWindowStartError)."
+        $loadWindowSummaryValue = @{runId=$loadWindowRunId;stage="window";devices=1;declaredSecondSchoolCanaryDevices=0;
+          run=@{plannedTrafficSeconds=180;actualTrafficSeconds=181;completedConfiguredDuration=$true};screenshotFixture=@{decodedBytes=1024};thresholds=@{passed=$true};fatalGate=$null}
+        [IO.File]::WriteAllText($loadWindowSummary, ($loadWindowSummaryValue|ConvertTo-Json -Depth 12), [Text.UTF8Encoding]::new($false))
+        $loadWindowFinalEvent = @{schemaVersion=1;type="progress";event="final";runId=$loadWindowRunId;stage="window";timestamp=[DateTimeOffset]::UtcNow.ToString("o")}
+        [IO.File]::AppendAllText($loadWindowProgress, ($loadWindowFinalEvent|ConvertTo-Json -Compress -Depth 10)+[Environment]::NewLine, [Text.UTF8Encoding]::new($false))
+        Assert-Condition ($loadWindowMonitor.WaitForExit(90000)) "Load-window boundary monitor did not finish."
+        $loadWindowResult = Get-Content -LiteralPath (Join-Path $childEvidence "$loadWindowRunId-monitor-result.json") -Raw | ConvertFrom-Json -Depth 30
+        Assert-Condition ($loadWindowMonitor.ExitCode -eq 2 -and
+            $loadWindowResult.failures -contains "run_acceptance_failed" -and
+            $loadWindowResult.failures -notcontains "rds_cpu" -and
+            $loadWindowResult.acceptance.violations -contains "rds_cpu_peak" -and
+            $loadWindowResult.acceptance.metrics.rds_cpu.count -eq 4 -and
+            $loadWindowResult.acceptance.metrics.rds_cpu.maximum -eq 70) "Load telemetry must use the full actual traffic window, retain its delayed tail spike, and exclude pre-start, post-stop, and future RDS points across later polls."
+        Remove-Item Env:SCHOOLPILOT_TEST_RDS_CPU_LOAD_WINDOW_START -ErrorAction SilentlyContinue
+        if (-not $loadWindowHarness.HasExited) { Stop-Process -Id $loadWindowHarness.Id -Force }
+
+        $futureFinalRunId = "load-future-final-rejected"
+        $futureFinalProgress = Join-Path $childRoot "$futureFinalRunId-progress.jsonl"
+        $futureFinalSummary = Join-Path $childRoot "$futureFinalRunId-summary.json"
+        $futureFinalStartedAt = [DateTimeOffset]::UtcNow
+        $futureFinalStartEvent = @{schemaVersion=1;type="progress";event="start";runId=$futureFinalRunId;stage="future";timestamp=$futureFinalStartedAt.ToString("o")}
+        [IO.File]::WriteAllText($futureFinalProgress, ($futureFinalStartEvent|ConvertTo-Json -Compress -Depth 10)+[Environment]::NewLine, [Text.UTF8Encoding]::new($false))
+        Remove-Item -LiteralPath $futureFinalSummary -ErrorAction SilentlyContinue
+        $futureFinalHarness = Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList @("-NoProfile","-Command","Start-Sleep -Seconds 60") -PassThru -NoNewWindow
+        Start-Sleep -Milliseconds 200
+        $futureFinalConfig = $limitConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+        $futureFinalConfig.runId = $futureFinalRunId
+        $futureFinalConfig.phase = "Waf"
+        $futureFinalConfig.minimumWallClockSeconds = 0
+        $futureFinalConfig.deadlineUtc = [DateTimeOffset]::UtcNow.AddMinutes(5).ToString("o")
+        $futureFinalConfig.maxIterations = 10
+        $futureFinalConfig | Add-Member -NotePropertyName loadProgressPath -NotePropertyValue $futureFinalProgress -Force
+        $futureFinalConfig | Add-Member -NotePropertyName loadSummaryPath -NotePropertyValue $futureFinalSummary -Force
+        $futureFinalConfig | Add-Member -NotePropertyName artifactsNotBeforeUtc -NotePropertyValue $futureFinalStartedAt.AddSeconds(-1).ToString("o") -Force
+        $futureFinalConfig | Add-Member -NotePropertyName harnessProcessId -NotePropertyValue $futureFinalHarness.Id -Force
+        $futureFinalConfig | Add-Member -NotePropertyName harnessProcessStartedAtUtc -NotePropertyValue ([DateTimeOffset]$futureFinalHarness.StartTime).ToUniversalTime().ToString("o") -Force
+        $futureFinalConfig | Add-Member -NotePropertyName harnessProcessPath -NotePropertyValue $futureFinalHarness.Path -Force
+        $futureFinalConfig | Add-Member -NotePropertyName requireLoadAcceptance -NotePropertyValue $true -Force
+        $futureFinalConfig | Add-Member -NotePropertyName workload -NotePropertyValue @{stage="future";devices=1;durationSeconds=1;screenshotBytes=1024;canaryDevices=0} -Force
+        $futureFinalConfigPath = Join-Path $childRoot "$futureFinalRunId-monitor.json"
+        [IO.File]::WriteAllText($futureFinalConfigPath, ($futureFinalConfig|ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+        $futureFinalMonitor = Start-Process -FilePath (Get-Process -Id $PID).Path `
+            -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$monitorScript,"-ConfigPath",$futureFinalConfigPath,"-Mode","Monitor") `
+            -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $childRoot "$futureFinalRunId.out") -RedirectStandardError (Join-Path $childRoot "$futureFinalRunId.err")
+        $futureFinalEvidencePath = Join-Path $childEvidence "$futureFinalRunId-aws-monitor.jsonl"
+        $futureFinalStartDeadline = [DateTimeOffset]::UtcNow.AddSeconds(60)
+        while (-not (Test-Path -LiteralPath $futureFinalEvidencePath) -and -not $futureFinalMonitor.HasExited -and [DateTimeOffset]::UtcNow -lt $futureFinalStartDeadline) { Start-Sleep -Milliseconds 100 }
+        $futureFinalStartError = Get-Content -LiteralPath (Join-Path $childRoot "$futureFinalRunId.err") -Raw -ErrorAction SilentlyContinue
+        Assert-Condition (Test-Path -LiteralPath $futureFinalEvidencePath) "Future-final rejection monitor did not start (exited=$($futureFinalMonitor.HasExited); stderr=$futureFinalStartError)."
+        $futureFinalSummaryValue = @{runId=$futureFinalRunId;stage="future";devices=1;declaredSecondSchoolCanaryDevices=0;
+          run=@{plannedTrafficSeconds=1;actualTrafficSeconds=1;completedConfiguredDuration=$true};screenshotFixture=@{decodedBytes=1024};thresholds=@{passed=$true};fatalGate=$null}
+        [IO.File]::WriteAllText($futureFinalSummary, ($futureFinalSummaryValue|ConvertTo-Json -Depth 12), [Text.UTF8Encoding]::new($false))
+        $futureFinalEvent = @{schemaVersion=1;type="progress";event="final";runId=$futureFinalRunId;stage="future";timestamp=[DateTimeOffset]::UtcNow.AddMinutes(10).ToString("o")}
+        [IO.File]::AppendAllText($futureFinalProgress, ($futureFinalEvent|ConvertTo-Json -Compress -Depth 10)+[Environment]::NewLine, [Text.UTF8Encoding]::new($false))
+        Assert-Condition ($futureFinalMonitor.WaitForExit(90000)) "Future-final rejection monitor did not finish."
+        $futureFinalResult = Get-Content -LiteralPath (Join-Path $childEvidence "$futureFinalRunId-monitor-result.json") -Raw | ConvertFrom-Json -Depth 30
+        Assert-Condition ($futureFinalMonitor.ExitCode -eq 2 -and
+            $futureFinalResult.failures -contains "load_workload_contract_mismatch" -and
+            -not $futureFinalResult.rollback.attempted) "A future-dated final progress record must fail closed without extending telemetry or guessing at rollback."
+        if (-not $futureFinalHarness.HasExited) { Stop-Process -Id $futureFinalHarness.Id -Force }
+
         $fiveMinuteConfig = $limitConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
         $fiveMinuteConfig.runId = "five-minute-telemetry-complete"
         $fiveMinuteConfig.minimumWallClockSeconds = 2
@@ -1687,7 +1943,7 @@ process.exit(1);
         $completedWaitHarness = Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList @("-NoProfile","-Command","Start-Sleep -Seconds 180") -PassThru -NoNewWindow
         Start-Sleep -Milliseconds 200
         $completedWaitStarted = [DateTimeOffset]::UtcNow.AddSeconds(-1)
-        $initialCompletedWaitProgress = @{schemaVersion=1;type="progress";event="progress";runId=$completedWaitRunId;stage="endurance";timestamp=[DateTimeOffset]::UtcNow.ToString("o")}
+        $initialCompletedWaitProgress = @{schemaVersion=1;type="progress";event="start";runId=$completedWaitRunId;stage="endurance";timestamp=[DateTimeOffset]::UtcNow.ToString("o")}
         [IO.File]::WriteAllText($completedWaitProgress, ($initialCompletedWaitProgress|ConvertTo-Json -Compress -Depth 10)+[Environment]::NewLine, [Text.UTF8Encoding]::new($false))
 
         $completedWaitRollback = $childRollback | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
@@ -1727,7 +1983,7 @@ process.exit(1);
           run=@{plannedTrafficSeconds=1;actualTrafficSeconds=1;completedConfiguredDuration=$true};screenshotFixture=@{decodedBytes=40960};thresholds=@{passed=$true};fatalGate=$null}
         [IO.File]::WriteAllText($completedWaitSummary, ($completedWaitSummaryValue|ConvertTo-Json -Depth 12), [Text.UTF8Encoding]::new($false))
         $completedWaitFinalProgress = @{schemaVersion=1;type="progress";event="final";runId=$completedWaitRunId;stage="endurance";timestamp=[DateTimeOffset]::UtcNow.ToString("o")}
-        [IO.File]::WriteAllText($completedWaitProgress, ($completedWaitFinalProgress|ConvertTo-Json -Compress -Depth 10)+[Environment]::NewLine, [Text.UTF8Encoding]::new($false))
+        [IO.File]::AppendAllText($completedWaitProgress, ($completedWaitFinalProgress|ConvertTo-Json -Compress -Depth 10)+[Environment]::NewLine, [Text.UTF8Encoding]::new($false))
         (Get-Item -LiteralPath $completedWaitProgress).LastWriteTimeUtc = [DateTime]::UtcNow.AddMinutes(-10)
 
         $completedWaitSample = $null
@@ -1807,10 +2063,15 @@ process.exit(1);
         Remove-Item Env:SCHOOLPILOT_TEST_AUX_BREACH -ErrorAction SilentlyContinue
         Remove-Item Env:SCHOOLPILOT_TEST_SWAP_COUNTER -ErrorAction SilentlyContinue
         Remove-Item Env:SCHOOLPILOT_TEST_METRIC_TIMESTAMP -ErrorAction SilentlyContinue
+        Remove-Item Env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_BASE,Env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_PATTERN,Env:SCHOOLPILOT_TEST_RDS_CPU_BOUNDARY_STEP_FILE,Env:SCHOOLPILOT_TEST_RDS_CPU_LOAD_WINDOW_START -ErrorAction SilentlyContinue
         if ($childMonitor -and -not $childMonitor.HasExited) { Stop-Process -Id $childMonitor.Id -Force }
         if ($oomOnlyMonitor -and -not $oomOnlyMonitor.HasExited) { Stop-Process -Id $oomOnlyMonitor.Id -Force }
         if ($oomOnlyHarness -and -not $oomOnlyHarness.HasExited) { Stop-Process -Id $oomOnlyHarness.Id -Force }
         if ($limitMonitor -and -not $limitMonitor.HasExited) { Stop-Process -Id $limitMonitor.Id -Force }
+        if ($loadWindowMonitor -and -not $loadWindowMonitor.HasExited) { Stop-Process -Id $loadWindowMonitor.Id -Force }
+        if ($loadWindowHarness -and -not $loadWindowHarness.HasExited) { Stop-Process -Id $loadWindowHarness.Id -Force }
+        if ($futureFinalMonitor -and -not $futureFinalMonitor.HasExited) { Stop-Process -Id $futureFinalMonitor.Id -Force }
+        if ($futureFinalHarness -and -not $futureFinalHarness.HasExited) { Stop-Process -Id $futureFinalHarness.Id -Force }
         if ($completedWaitMonitor -and -not $completedWaitMonitor.HasExited) { Stop-Process -Id $completedWaitMonitor.Id -Force }
         if ($completedWaitHarness -and -not $completedWaitHarness.HasExited) { Stop-Process -Id $completedWaitHarness.Id -Force }
         if (-not $sleepProcess.HasExited) { Stop-Process -Id $sleepProcess.Id -Force }

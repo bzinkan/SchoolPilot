@@ -340,6 +340,20 @@ Monitor configuration must bind the exact run ID, phase, deadline, resources,
 expected NAT count, expected Route 53 latency flag, immutable workload (when
 present), evidence/progress/summary paths, notification SNS topic, and a
 prevalidated rollback config. Production polling is fixed at 60 seconds.
+RDS CPU datapoints may publish one additional minute behind the other
+one-minute series. The monitor therefore permits 240-second freshness and
+backfills every returned RDS CPU datapoint inside the actual traffic-start/end
+minute buckets into cumulative acceptance; pre-run, post-run, and future points
+cannot pad the result. Production load monitoring requires its wall-clock
+minimum to equal the immutable workload duration. Once the final summary is
+validated, its bounded actual traffic duration fixes the end bucket and cannot
+grow while a later acceptance condition is pending. Runtime evidence continues
+to report the newest point, while every fresh unseen RDS CPU point is processed
+chronologically from the fixed monitor-start minute so pre-phase history cannot
+trigger rollback, three delayed consecutive breach minutes still trigger, and a
+missing minute resets the sequence. This preserves strict 60-second coverage,
+the 120-second maximum gap, and delayed peak detection. Every other one-minute
+metric retains 180-second freshness.
 Use these exact WAF CloudWatch dimensions; Validate mode confirms them against
 the deployed Web ACL before monitoring begins:
 
