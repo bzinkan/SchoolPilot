@@ -44,6 +44,8 @@ jobs:
           tests/daily-usage-rollup.test.ts
           tests/school-time-cache.test.ts
           tests/hot-path-logging.test.ts
+          tests/deploy-capacity-preflight.test.ts
+          tests/deploy-runtime-secret-preflight.test.ts
           tests/classpilot-load-preparer.test.ts
           tests/classpilot-load-harness.test.ts
 
