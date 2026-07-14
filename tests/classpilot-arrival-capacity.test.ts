@@ -53,6 +53,22 @@ describe("ClassPilot school-arrival capacity controls", () => {
     assert.match(fab, /options\.schoolSettings/);
   });
 
+  it("batch-loads tenant-validated command sessions instead of querying each student serially", () => {
+    const commands = source("src/routes/classpilot/commands.ts");
+    const storage = source("src/services/storage.ts");
+    const batchLookup = storage.slice(
+      storage.indexOf("export async function getActiveSessionsForStudents"),
+      storage.indexOf("export async function getActiveSessionByDevice")
+    );
+
+    assert.match(commands, /getActiveSessionsForStudents\(schoolId, selectedStudentIds\)/);
+    assert.doesNotMatch(commands, /getActiveSessionByStudent/);
+    assert.match(batchLookup, /inArray\(studentSessions\.studentId, uniqueStudentIds\)/);
+    assert.match(batchLookup, /eq\(studentSessions\.isActive, true\)/);
+    assert.match(batchLookup, /eq\(students\.schoolId, schoolId\)/);
+    assert.match(batchLookup, /eq\(devices\.schoolId, schoolId\)/);
+  });
+
   it("enables only the measured production weekday arrival-capacity schedule", () => {
     const ecs = source("infra/modules/ecs/main.tf");
     const alarms = source("infra/alarms.tf");

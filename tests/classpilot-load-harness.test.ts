@@ -306,6 +306,20 @@ describe("ClassPilot load harness safety", () => {
     const summary = JSON.parse(result.stdout);
     assert.deepEqual(summary.fixtureBytes, { standard: 40 * 1024, burst: 50 * 1024 });
     assert.equal(summary.boundedLatencyBuckets, 12);
+    assert.deepEqual(summary.boundedExactCommandLatency, {
+      exact: true,
+      method: "nearest-rank",
+      capacity: 5,
+      observedCount: 5,
+      retainedCount: 5,
+      droppedCount: 0,
+      thresholdMs: 1000,
+      errors: 0,
+      p95Ms: 1506,
+      maxMs: 1506,
+      aboveThresholdCount: 2,
+      aboveThresholdPercent: 40,
+    });
     assert.equal(summary.rollingWindowSlots, 300);
   });
 
@@ -991,6 +1005,11 @@ describe("ClassPilot load harness safety", () => {
       assert.equal(summary.commands.deliveryWithin2sPercent, 100);
       assert.equal(summary.commands.completedAckWithin5sPercent, 100);
       assert.equal(summary.commands.serverCompletedPercent, 100);
+      assert.equal(summary.commands.requestLatency.exact, true);
+      assert.equal(summary.commands.requestLatency.observedCount, commandSequence);
+      assert.equal(summary.commands.requestLatency.retainedCount, commandSequence);
+      assert.equal(summary.commands.requestLatency.droppedCount, 0);
+      assert.equal(summary.commands.requestLatency.observedCount, summary.kinds.command.count);
       assert.equal(summary.counters.http5xx, 1);
       assert.equal(summary.counters.responseParseErrors, 0);
       assert.equal(summary.counters.commandServerStatusRegressions, 0);
@@ -1083,6 +1102,8 @@ describe("ClassPilot load harness safety", () => {
       assert.ok(progress.some((record) => record.event === "minute"));
       assert.equal(progress.at(-1).event, "final");
       assert.ok(progress.at(-1).latency.teacherEndpoints["GET /api/students-aggregated"]);
+      assert.equal(progress.at(-1).commands.requestLatency.exact, true);
+      assert.equal(progress.at(-1).commands.requestLatency.observedCount, commandSequence);
       assert.doesNotMatch(
         `${result.stdout}\n${result.stderr}\n${readFileSync(summaryPath, "utf8")}\n${readFileSync(progressPath, "utf8")}`,
         /launch-cookie-secret|launch-csrf-secret|test-signature/
@@ -1638,7 +1659,7 @@ describe("ClassPilot load harness safety", () => {
     }
   });
 
-  it("enforces teacher latency independently for each redacted endpoint class", async () => {
+  it("enforces exact command latency and teacher latency independently for each redacted endpoint class", async () => {
     const server = createServer((request, response) => {
       const send = () => {
         response.writeHead(200, { "content-type": "application/json" });
@@ -1646,11 +1667,16 @@ describe("ClassPilot load harness safety", () => {
           response.end(JSON.stringify([{ studentId: "primary-student-1" }]));
         } else if (request.url === "/api/classpilot/heartbeats/device-1") {
           response.end(JSON.stringify({ heartbeats: [{ deviceId: "device-1" }] }));
+        } else if (request.url === "/api/classpilot/commands") {
+          response.end(JSON.stringify({ command: { id: "slow-command-1" }, summary: { sent: 0 } }));
         } else {
           response.end("{}");
         }
       };
-      if (request.url === "/api/classpilot/heartbeats/device-1") setTimeout(send, 1_100);
+      if (request.url === "/api/classpilot/heartbeats/device-1" || request.url === "/api/classpilot/commands") {
+        request.resume();
+        setTimeout(send, 1_100);
+      }
       else send();
     });
     const webSockets = new WebSocketServer({ server, path: "/ws" });
@@ -1669,24 +1695,105 @@ describe("ClassPilot load harness safety", () => {
         LOAD_DEVICE_MANIFEST: manifestPath,
         LOAD_DURATION_SECONDS: "2",
         LOAD_COMMAND_SETTLE_MS: "0",
-        LOAD_REQUEST_TIMEOUT_MS: "2000",
+        LOAD_REQUEST_TIMEOUT_MS: "5000",
         LOAD_SHUTDOWN_GRACE_MS: "500",
         LOAD_ENFORCE_THRESHOLDS: "true",
         LOAD_GATE_PROFILE: "partial",
         LOAD_TEACHER_COOKIE: "schoolpilot.sid=endpoint-latency-cookie-secret",
+        LOAD_CSRF_TOKEN: "endpoint-latency-csrf-secret",
         LOAD_TEACHER_TOKEN: "endpoint-latency-token-secret",
         LOAD_TEACHER_SCHOOL_ID: "school-1",
         LOAD_TEACHER_PATHS: "/api/students-aggregated,/api/classpilot/heartbeats/{deviceId}",
         LOAD_TEACHER_INTERVAL_MS: "100",
         LOAD_TEACHER_HISTORY_WARMUP_MS: "0",
+        LOAD_COMMAND_ENDPOINT: "/api/classpilot/commands",
+        LOAD_COMMAND_BODY: JSON.stringify({
+          teachingSessionId: "session-1",
+          targetScope: "class",
+          commandType: "lock-screen",
+          commandPayload: {},
+        }),
+        LOAD_COMMAND_WARMUP_MS: "0",
+        LOAD_COMMAND_INTERVAL_MS: "5000",
       }), 6_000);
       assert.notEqual(result.status, 0);
+      assert.match(result.stdout, /\{/, result.stderr);
       const summary = parseSummary(result.stdout);
       assert.ok(summary.kinds.teacher.p95 <= 1000);
       assert.ok(summary.teacherEndpoints["GET /api/students-aggregated"].p95 <= 1000);
       assert.ok(summary.teacherEndpoints["GET /api/classpilot/heartbeats/{deviceId}"].p95 > 1000);
       assert.ok(summary.thresholds.failures.includes("GET /api/classpilot/heartbeats/{deviceId} p95 exceeds 1000ms"));
+      assert.equal(summary.commands.requestLatency.exact, true);
+      assert.equal(summary.commands.requestLatency.observedCount, 1);
+      assert.ok(summary.commands.requestLatency.p95Ms > 1000);
+      assert.equal(summary.commands.requestLatency.errors, 0);
+      assert.ok(summary.kinds.command.p95 >= summary.commands.requestLatency.p95Ms);
+      assert.equal(summary.commands.requestLatency.aboveThresholdCount, 1);
+      assert.ok(summary.thresholds.failures.includes("teacher command p95 exceeds 1000ms"));
+      assert.ok(summary.thresholds.failures.includes("POST /api/classpilot/commands p95 exceeds 1000ms"));
       assert.doesNotMatch(JSON.stringify(summary.teacherEndpoints), /device-1/);
+    } finally {
+      for (const client of webSockets.clients) client.terminate();
+      await new Promise<void>((resolve) => webSockets.close(() => resolve()));
+      server.closeAllConnections?.();
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
+  it("fails closed when bounded exact command latency evidence overflows", async () => {
+    let commandSequence = 0;
+    const server = createServer((request, response) => {
+      request.resume();
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify(request.url === "/api/classpilot/commands"
+        ? { command: { id: `overflow-command-${++commandSequence}` }, summary: { sent: 0 } }
+        : {}));
+    });
+    const webSockets = new WebSocketServer({ server, path: "/ws" });
+    webSockets.on("connection", (socket) => socket.once("message", (raw) => {
+      const auth = JSON.parse(raw.toString());
+      socket.send(JSON.stringify({ type: "auth-success", role: auth.role }));
+    }));
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address() as AddressInfo;
+    try {
+      const result = await runAsync([], cleanEnv({
+        LOAD_BASE_URL: `http://127.0.0.1:${address.port}`,
+        LOAD_DEVICE_MANIFEST: manifestPath,
+        LOAD_DURATION_SECONDS: "2",
+        LOAD_COMMAND_SETTLE_MS: "0",
+        LOAD_REQUEST_TIMEOUT_MS: "1000",
+        LOAD_SHUTDOWN_GRACE_MS: "500",
+        LOAD_ENFORCE_THRESHOLDS: "true",
+        LOAD_GATE_PROFILE: "partial",
+        LOAD_TEACHER_COOKIE: "schoolpilot.sid=overflow-cookie-secret",
+        LOAD_CSRF_TOKEN: "overflow-csrf-secret",
+        LOAD_TEACHER_TOKEN: "overflow-token-secret",
+        LOAD_TEACHER_SCHOOL_ID: "school-1",
+        LOAD_COMMAND_ENDPOINT: "/api/classpilot/commands",
+        LOAD_COMMAND_BODY: JSON.stringify({
+          teachingSessionId: "session-1",
+          targetScope: "class",
+          commandType: "lock-screen",
+          commandPayload: {},
+        }),
+        LOAD_COMMAND_WARMUP_MS: "0",
+        LOAD_COMMAND_INTERVAL_MS: "100",
+        LOAD_MAX_TRACKED_COMMANDS: "1",
+      }), 6_000);
+      assert.notEqual(result.status, 0);
+      assert.match(result.stdout, /\{/, result.stderr);
+      const summary = parseSummary(result.stdout);
+      assert.ok(commandSequence > 1);
+      assert.equal(summary.commands.requestLatency.exact, false);
+      assert.equal(summary.commands.requestLatency.retainedCount, 1);
+      assert.ok(summary.commands.requestLatency.droppedCount > 0);
+      assert.equal(summary.commands.requestLatency.p95Ms, null);
+      assert.equal(summary.commands.requestLatency.aboveThresholdCount, null);
+      assert.ok(summary.thresholds.failures.includes("exact teacher command latency sampling overflowed its bounded capacity"));
     } finally {
       for (const client of webSockets.clients) client.terminate();
       await new Promise<void>((resolve) => webSockets.close(() => resolve()));

@@ -32,6 +32,8 @@ import {
   getSettingsForSchool,
   createDevice,
   linkStudentDevice,
+  setActiveStudentForDevice,
+  getActiveSessionsForStudents,
   createHomeroom,
   getHomeroomsBySchool,
   createFamilyGroup,
@@ -81,6 +83,7 @@ after(async () => {
     await asSystem(async () => {
       await db.execute(sql`DELETE FROM google_oauth_tokens WHERE user_id IN (SELECT id FROM users WHERE email LIKE ${`${TAG}%@%`})`);
       await db.execute(sql`DELETE FROM school_memberships WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`})`);
+      await db.execute(sql`DELETE FROM student_sessions WHERE student_id IN (SELECT id FROM students WHERE email_lc LIKE ${`${TAG}%@%`}) OR device_id LIKE ${`${TAG}-%`}`);
       await db.execute(sql`DELETE FROM student_devices WHERE student_id IN (SELECT id FROM students WHERE email_lc LIKE ${`${TAG}%@%`})`);
       await db.execute(sql`DELETE FROM devices WHERE device_id LIKE ${`${TAG}-%`}`);
       await db.execute(sql`DELETE FROM settings WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${`${TAG}_%`})`);
@@ -402,6 +405,53 @@ describe("cross-school isolation", () => {
       await inSchool(schoolA.id, () => deviceBelongsToSchoolAndStudent(`${TAG}-device-b`, schoolA.id, studentA.id)),
       undefined
     );
+  });
+
+  it("batch active-session lookup excludes other-school and mismatched devices", async () => {
+    const studentA = await inSchool(schoolA.id, () => createStudent({
+      schoolId: schoolA.id,
+      firstName: "Session",
+      lastName: "Alpha",
+      email: `${TAG}-session-a@${TAG}-a.example.edu`,
+      emailLc: `${TAG}-session-a@${TAG}-a.example.edu`,
+      status: "active",
+    } as any));
+    const studentB = await inSchool(schoolB.id, () => createStudent({
+      schoolId: schoolB.id,
+      firstName: "Session",
+      lastName: "Beta",
+      email: `${TAG}-session-b@${TAG}-b.example.edu`,
+      emailLc: `${TAG}-session-b@${TAG}-b.example.edu`,
+      status: "active",
+    } as any));
+    const corruptStudentA = await inSchool(schoolA.id, () => createStudent({
+      schoolId: schoolA.id,
+      firstName: "Session",
+      lastName: "Mismatch",
+      email: `${TAG}-session-mismatch@${TAG}-a.example.edu`,
+      emailLc: `${TAG}-session-mismatch@${TAG}-a.example.edu`,
+      status: "active",
+    } as any));
+    const deviceA = `${TAG}-session-device-a`;
+    const deviceB = `${TAG}-session-device-b`;
+    const mismatchedDeviceB = `${TAG}-session-device-b-mismatch`;
+    await inSchool(schoolA.id, () => createDevice({ deviceId: deviceA, schoolId: schoolA.id, classId: "default" } as any));
+    await inSchool(schoolB.id, () => createDevice({ deviceId: deviceB, schoolId: schoolB.id, classId: "default" } as any));
+    await inSchool(schoolB.id, () => createDevice({ deviceId: mismatchedDeviceB, schoolId: schoolB.id, classId: "default" } as any));
+    await inSchool(schoolA.id, () => linkStudentDevice({ studentId: studentA.id, deviceId: deviceA }));
+    await inSchool(schoolB.id, () => linkStudentDevice({ studentId: studentB.id, deviceId: deviceB }));
+    await inSchool(schoolA.id, () => setActiveStudentForDevice(deviceA, studentA.id));
+    await inSchool(schoolB.id, () => setActiveStudentForDevice(deviceB, studentB.id));
+    await asSystem(() => db.execute(sql`
+      INSERT INTO student_sessions (student_id, device_id, is_active)
+      VALUES (${corruptStudentA.id}, ${mismatchedDeviceB}, true)
+    `).then(() => undefined));
+
+    const requestedIds = [studentA.id, studentB.id, corruptStudentA.id, studentA.id];
+    const sessionsA = await inSchool(schoolA.id, () => getActiveSessionsForStudents(schoolA.id, requestedIds));
+    const sessionsB = await inSchool(schoolB.id, () => getActiveSessionsForStudents(schoolB.id, requestedIds));
+    assert.deepEqual(sessionsA.map((session: any) => session.studentId), [studentA.id]);
+    assert.deepEqual(sessionsB.map((session: any) => session.studentId), [studentB.id]);
   });
 
   it("updateEnrollmentSettings creates missing settings rows for legacy schools", async () => {
