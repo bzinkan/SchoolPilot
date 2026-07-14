@@ -13,15 +13,63 @@ export interface SchoolLocalPeriod {
 }
 
 const DEFAULT_TIME_ZONE = "America/New_York";
+const MAX_TIME_ZONE_CACHE_ENTRIES = 64;
+const MAX_TIME_ZONE_KEY_LENGTH = 128;
+const TIME_ZONE_VALIDATION_INSTANT = new Date(0);
+
+const resolvedTimeZones = new Map<string, string>();
+const localDateFormatters = new Map<string, Intl.DateTimeFormat>();
+const zonedPartsFormatters = new Map<string, Intl.DateTimeFormat>();
+
+function getOrCreateCached<K, V>(cache: Map<K, V>, key: K, create: () => V): V {
+  if (cache.has(key)) {
+    const value = cache.get(key)!;
+    // Refresh insertion order so frequently used school time zones remain hot.
+    cache.delete(key);
+    cache.set(key, value);
+    return value;
+  }
+
+  const value = create();
+  if (cache.size >= MAX_TIME_ZONE_CACHE_ENTRIES) {
+    const oldest = cache.keys().next();
+    if (!oldest.done) cache.delete(oldest.value);
+  }
+  cache.set(key, value);
+  return value;
+}
 
 function safeTimeZone(timeZone?: string | null): string {
   const candidate = timeZone || DEFAULT_TIME_ZONE;
-  try {
-    new Intl.DateTimeFormat("en-US", { timeZone: candidate }).format(new Date());
-    return candidate;
-  } catch {
-    return DEFAULT_TIME_ZONE;
-  }
+  if (candidate.length > MAX_TIME_ZONE_KEY_LENGTH) return DEFAULT_TIME_ZONE;
+
+  return getOrCreateCached(resolvedTimeZones, candidate, () => {
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone: candidate }).format(TIME_ZONE_VALIDATION_INSTANT);
+      return candidate;
+    } catch {
+      return DEFAULT_TIME_ZONE;
+    }
+  });
+}
+
+function localDateFormatter(timeZone?: string | null): Intl.DateTimeFormat {
+  const safe = safeTimeZone(timeZone);
+  return getOrCreateCached(
+    localDateFormatters,
+    safe,
+    () => new Intl.DateTimeFormat("en-CA", {
+      timeZone: safe,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    })
+  );
+}
+
+export function createLocalDateFormatter(timeZone?: string | null): (date: Date) => string {
+  const formatter = localDateFormatter(timeZone);
+  return (date: Date) => formatter.format(date);
 }
 
 export function normalizeAnalyticsPeriod(period?: string | null): AnalyticsPeriodKey {
@@ -38,26 +86,25 @@ export function addLocalDays(localDate: string, days: number): string {
 }
 
 export function localDateInTimeZone(date: Date, timeZone?: string | null): string {
-  const formatter = new Intl.DateTimeFormat("en-CA", {
-    timeZone: safeTimeZone(timeZone),
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
-  return formatter.format(date);
+  return localDateFormatter(timeZone).format(date);
 }
 
 function zonedParts(date: Date, timeZone: string) {
-  const parts = new Intl.DateTimeFormat("en-US", {
+  const formatter = getOrCreateCached(
+    zonedPartsFormatters,
     timeZone,
-    hourCycle: "h23",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).formatToParts(date);
+    () => new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      hourCycle: "h23",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    })
+  );
+  const parts = formatter.formatToParts(date);
   const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
   return {
     year: Number(values.year),

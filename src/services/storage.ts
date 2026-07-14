@@ -2,7 +2,7 @@ import { eq, and, desc, asc, gt, ilike, or, isNull, isNotNull, inArray, getTable
 import type { PgUpdateSetSource } from "drizzle-orm/pg-core";
 import db from "../db.js";
 import { runWithTenantContext } from "../middleware/tenantContext.js";
-import { localDateInTimeZone } from "../util/schoolTime.js";
+import { createLocalDateFormatter } from "../util/schoolTime.js";
 import {
   users,
   schools,
@@ -3628,11 +3628,12 @@ export async function aggregateClasspilotSessionUsage(
     };
     const buckets = new Map<string, UsageBucket>();
     const timezone = sessionRow.schoolTimezone || "America/New_York";
+    const formatLocalDate = createLocalDateFormatter(timezone);
 
     for (const hb of heartbeatRows) {
       if (!hb.studentId) continue;
       const heartbeatInstant = new Date(`${hb.timestampText.replace(" ", "T")}Z`);
-      const localDate = localDateInTimeZone(heartbeatInstant, timezone);
+      const localDate = formatLocalDate(heartbeatInstant);
       const key = `${hb.studentId}|${localDate}`;
       const existing = buckets.get(key) || {
         heartbeatCount: 0,

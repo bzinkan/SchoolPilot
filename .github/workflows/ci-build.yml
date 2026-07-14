@@ -42,6 +42,7 @@ jobs:
           node --import tsx --test --test-concurrency=1
           tests/api-rate-limiter-identity.test.ts
           tests/daily-usage-rollup.test.ts
+          tests/school-time-cache.test.ts
           tests/hot-path-logging.test.ts
           tests/classpilot-load-preparer.test.ts
           tests/classpilot-load-harness.test.ts
