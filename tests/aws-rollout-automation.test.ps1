@@ -2046,7 +2046,8 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         $completedWaitHarness = Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList @("-NoProfile","-Command","Start-Sleep -Seconds 180") -PassThru -NoNewWindow
         Start-Sleep -Milliseconds 200
         $completedWaitStarted = [DateTimeOffset]::UtcNow.AddSeconds(-1)
-        $initialCompletedWaitProgress = @{schemaVersion=1;type="progress";event="start";runId=$completedWaitRunId;stage="endurance";timestamp=[DateTimeOffset]::UtcNow.ToString("o")}
+        $completedWaitMetricTimestamp = [DateTimeOffset]::UtcNow
+        $initialCompletedWaitProgress = @{schemaVersion=1;type="progress";event="start";runId=$completedWaitRunId;stage="endurance";timestamp=$completedWaitMetricTimestamp.ToString("o")}
         [IO.File]::WriteAllText($completedWaitProgress, ($initialCompletedWaitProgress|ConvertTo-Json -Compress -Depth 10)+[Environment]::NewLine, [Text.UTF8Encoding]::new($false))
 
         $completedWaitRollback = $childRollback | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
@@ -2072,10 +2073,15 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         $completedWaitConfig | Add-Member -NotePropertyName thresholds -NotePropertyValue @{progressStaleSeconds=5} -Force
         $completedWaitConfigPath = Join-Path $childRoot "$completedWaitRunId-monitor.json"
         [IO.File]::WriteAllText($completedWaitConfigPath, ($completedWaitConfig|ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+        # Bind this one-second synthetic workload to a datapoint inside its
+        # acceptance window. Otherwise a minute rollover between progress
+        # completion and the mock CloudWatch poll can exclude only RDS CPU.
+        $env:SCHOOLPILOT_TEST_METRIC_TIMESTAMP = $completedWaitMetricTimestamp.ToString("o")
         $env:SCHOOLPILOT_TEST_SNAPSHOT_TIME_FILE = $completedWaitSnapshotFile
         $completedWaitMonitor = Start-Process -FilePath (Get-Process -Id $PID).Path `
             -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$monitorScript,"-ConfigPath",$completedWaitConfigPath,"-Mode","Monitor") `
             -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $childRoot "$completedWaitRunId.out") -RedirectStandardError (Join-Path $childRoot "$completedWaitRunId.err")
+        Remove-Item Env:SCHOOLPILOT_TEST_METRIC_TIMESTAMP -ErrorAction SilentlyContinue
         $completedWaitEvidencePath = Join-Path $childEvidence "$completedWaitRunId-aws-monitor.jsonl"
         $completedWaitStartDeadline = [DateTimeOffset]::UtcNow.AddSeconds(15)
         while (-not (Test-Path -LiteralPath $completedWaitEvidencePath) -and [DateTimeOffset]::UtcNow -lt $completedWaitStartDeadline) { Start-Sleep -Milliseconds 100 }
