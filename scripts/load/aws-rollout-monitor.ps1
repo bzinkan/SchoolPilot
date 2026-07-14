@@ -1200,6 +1200,34 @@ function Get-LoadProgress {
     }
 }
 
+function Get-LoadFatalGate {
+    param($Progress)
+    if ($null -eq $Progress -or $null -eq $Progress.event) { return $null }
+    if ([string](Get-OptionalValue $Progress.event "type" "") -eq "fatal_gate") {
+        return Get-OptionalValue $Progress.event "fatalGate"
+    }
+    if ([string](Get-OptionalValue $Progress.event "event" "") -eq "final") {
+        $summaryFatal = if ($null -eq $Progress.summary) { $null } else { Get-OptionalValue $Progress.summary "fatalGate" }
+        if ($null -ne $summaryFatal) { return $summaryFatal }
+        return Get-OptionalValue $Progress.event "fatalGate"
+    }
+    return $null
+}
+
+function Add-LoadFatalGateFindings {
+    param([System.Collections.Generic.List[string]]$Findings, $FatalGate)
+    if ($null -eq $FatalGate) { return }
+    $codes = @((Get-OptionalValue $FatalGate "reasonCodes" @()) | ForEach-Object { [string]$_ })
+    if ($codes.Count -eq 0) {
+        if (-not $Findings.Contains("load_fatal_gate")) { $Findings.Add("load_fatal_gate") }
+        return
+    }
+    foreach ($code in $codes) {
+        $finding = "load:$code"
+        if (-not $Findings.Contains($finding)) { $Findings.Add($finding) }
+    }
+}
+
 function Get-ValidatedLoadSummaryTiming {
     param($Config, $Progress)
     if ($null -eq $Progress -or $null -eq $Progress.event -or $null -eq $Progress.summary -or
@@ -1609,6 +1637,7 @@ function Get-Sample {
     # Parse the immutable harness start record before metric backfill so load
     # acceptance can be bounded to the actual traffic window.
     $progress = Get-LoadProgress -Config $Config
+    $progressAtSampleStart = $progress
     $validatedLoadTiming = Get-ValidatedLoadSummaryTiming -Config $Config -Progress $progress
     if ($null -ne $validatedLoadTiming) {
         if ($null -eq $script:TrafficStoppedAtUtc) {
@@ -1743,6 +1772,43 @@ function Get-Sample {
             $immediate.Add("generator_public_ip_unverifiable_or_changed")
         }
     }
+
+    # Metric collection can overlap a fail-fast harness committing its terminal
+    # evidence. Refresh the cheap local snapshot after the AWS calls so rollback
+    # priority is based on the latest fatal/final record from this same sample.
+    $harnessProcessLost = $Config.HarnessProcessId -gt 0 -and $null -eq (Get-BoundHarnessProcess -Config $Config)
+    $refreshedProgress = Get-LoadProgress -Config $Config
+    if (-not $harnessProcessLost -and $Config.HarnessProcessId -gt 0 -and $null -eq (Get-BoundHarnessProcess -Config $Config)) {
+        $harnessProcessLost = $true
+        # Once the process is confirmed gone, its synchronous evidence writes are
+        # closed; take one final snapshot before classifying the exit.
+        $refreshedProgress = Get-LoadProgress -Config $Config
+    }
+    $refreshedFatalGate = Get-LoadFatalGate -Progress $refreshedProgress
+    $initialFinalCommitted = $null -ne $progressAtSampleStart -and $null -ne $progressAtSampleStart.event -and
+        [string](Get-OptionalValue $progressAtSampleStart.event "event" "") -eq "final" -and
+        -not $progressAtSampleStart.summaryPending
+    $deferRefreshedCleanFinal = $false
+    if ($harnessProcessLost -or $null -ne $refreshedFatalGate) {
+        $progress = $refreshedProgress
+        Add-LoadFatalGateFindings -Findings $immediate -FatalGate $refreshedFatalGate
+        $refreshedFinalCommitted = $null -ne $progress -and $null -ne $progress.event -and
+            [string](Get-OptionalValue $progress.event "event" "") -eq "final" -and -not $progress.summaryPending
+        # Fatal evidence must affect rollback priority immediately. A clean final
+        # still waits for the next normal sample so delayed CloudWatch datapoints
+        # receive the same backfill opportunity as before this refresh existed.
+        $deferRefreshedCleanFinal = $refreshedFinalCommitted -and $null -eq $refreshedFatalGate -and -not $initialFinalCommitted
+        $validatedLoadTiming = Get-ValidatedLoadSummaryTiming -Config $Config -Progress $progress
+        if ($null -ne $validatedLoadTiming -and -not $deferRefreshedCleanFinal) {
+            if ($null -eq $script:TrafficStoppedAtUtc) {
+                $script:TrafficStoppedAtUtc = $validatedLoadTiming.TrafficStoppedAtUtc
+            }
+            elseif ([math]::Abs(($script:TrafficStoppedAtUtc - $validatedLoadTiming.TrafficStoppedAtUtc).TotalMilliseconds) -gt 1 -and
+                -not $immediate.Contains("load_workload_contract_mismatch")) {
+                $immediate.Add("load_workload_contract_mismatch")
+            }
+        }
+    }
     $loadCompleted = $false
     if ($progress) {
         if ($progress.parseError) { $immediate.Add("load_progress_parse_error") }
@@ -1756,12 +1822,9 @@ function Get-Sample {
             $immediate.Add("load_progress_stage_mismatch")
         }
         if ($progress.event -and $progress.event.type -eq "fatal_gate") {
-            $fatal = Get-OptionalValue $progress.event "fatalGate"
-            $codes = @((Get-OptionalValue $fatal "reasonCodes" @()) | ForEach-Object { [string]$_ })
-            if ($codes.Count -eq 0) { $immediate.Add("load_fatal_gate") }
-            else { foreach ($code in $codes) { $immediate.Add("load:$code") } }
+            Add-LoadFatalGateFindings -Findings $immediate -FatalGate (Get-OptionalValue $progress.event "fatalGate")
         }
-        if ($progress.event -and [string]$progress.event.event -eq "final" -and -not $progress.summaryPending) {
+        if ($progress.event -and [string]$progress.event.event -eq "final" -and -not $progress.summaryPending -and -not $deferRefreshedCleanFinal) {
             if ($null -eq $progress.summary -or [string](Get-OptionalValue $progress.summary "runId" "") -ne $Config.RunId) {
                 $immediate.Add("load_summary_invalid")
             }
@@ -1773,19 +1836,16 @@ function Get-Sample {
                 $summaryThresholds = Get-OptionalValue $progress.summary "thresholds"
                 $summaryPassed = Get-OptionalValue $summaryThresholds "passed" $false
                 $summaryFatal = Get-OptionalValue $progress.summary "fatalGate"
-                if ($null -ne $summaryFatal) {
-                    $summaryCodes = @((Get-OptionalValue $summaryFatal "reasonCodes" @()) | ForEach-Object { [string]$_ })
-                    if ($summaryCodes.Count -eq 0) { $immediate.Add("load_fatal_gate") }
-                    else { foreach ($code in $summaryCodes) { $immediate.Add("load:$code") } }
-                }
+                Add-LoadFatalGateFindings -Findings $immediate -FatalGate $summaryFatal
                 if ($Config.RequireLoadAcceptance -and $summaryPassed -ne $true) { $immediate.Add("load_acceptance_failed") }
             }
         }
         if ($progress.exists -and -not $loadCompleted -and $progress.staleSeconds -gt [double]$t.progressStaleSeconds) {
             $immediate.Add("load_progress_stale")
         }
-        $commitPending = $progress.summaryPending -or ($progress.incompleteTail -and $progress.staleSeconds -le [double]$t.summaryCommitGraceSeconds)
-        if (-not $loadCompleted -and -not $commitPending -and $Config.HarnessProcessId -gt 0 -and $null -eq (Get-BoundHarnessProcess -Config $Config)) {
+        $commitPending = $deferRefreshedCleanFinal -or $progress.summaryPending -or
+            ($progress.incompleteTail -and $progress.staleSeconds -le [double]$t.summaryCommitGraceSeconds)
+        if (-not $loadCompleted -and -not $commitPending -and $harnessProcessLost) {
             $immediate.Add("load_generator_process_lost")
         }
     }

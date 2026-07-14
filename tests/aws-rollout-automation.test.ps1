@@ -969,6 +969,18 @@ $service = $arguments[0]
 $operation = $arguments[1]
 function Arg([string]$name) { $index = [Array]::IndexOf($arguments, $name); if ($index -ge 0) { return $arguments[$index + 1] }; return $null }
 if ($service -eq "ecs" -and $operation -eq "describe-services") {
+  if ($env:SCHOOLPILOT_TEST_SAMPLE_BARRIER_ARM -and $env:SCHOOLPILOT_TEST_SAMPLE_BARRIER_READY -and
+      $env:SCHOOLPILOT_TEST_SAMPLE_BARRIER_RELEASE -and $env:SCHOOLPILOT_TEST_SAMPLE_BARRIER_CONSUMED -and
+      (Test-Path -LiteralPath $env:SCHOOLPILOT_TEST_SAMPLE_BARRIER_ARM) -and
+      -not (Test-Path -LiteralPath $env:SCHOOLPILOT_TEST_SAMPLE_BARRIER_CONSUMED)) {
+    [IO.File]::WriteAllText($env:SCHOOLPILOT_TEST_SAMPLE_BARRIER_CONSUMED,"1")
+    [IO.File]::WriteAllText($env:SCHOOLPILOT_TEST_SAMPLE_BARRIER_READY,"1")
+    $barrierDeadline=[DateTimeOffset]::UtcNow.AddSeconds(20)
+    while(-not (Test-Path -LiteralPath $env:SCHOOLPILOT_TEST_SAMPLE_BARRIER_RELEASE)){
+      if([DateTimeOffset]::UtcNow -ge $barrierDeadline){throw "Timed out waiting for the test sample barrier release."}
+      Start-Sleep -Milliseconds 10
+    }
+  }
   $apiTask=if($env:SCHOOLPILOT_TEST_API_TASK_FLAG -and (Test-Path -LiteralPath $env:SCHOOLPILOT_TEST_API_TASK_FLAG)){Get-Content -LiteralPath $env:SCHOOLPILOT_TEST_API_TASK_FLAG -Raw}else{"api-current"}
   $workerTask=if($env:SCHOOLPILOT_TEST_WORKER_TASK_FLAG -and (Test-Path -LiteralPath $env:SCHOOLPILOT_TEST_WORKER_TASK_FLAG)){Get-Content -LiteralPath $env:SCHOOLPILOT_TEST_WORKER_TASK_FLAG -Raw}else{"worker-current"}
   @{ services = @(
@@ -1125,11 +1137,40 @@ if(process.env.SCHOOLPILOT_TEST_FATAL_OBSERVED_PATH){
 const fatalGate={reasonCodes:[reason],observedAt:new Date().toISOString(),kind:"tenant-isolation-probe"};
 fs.appendFileSync(progressPath,JSON.stringify({schemaVersion:1,type:"fatal_gate",event:"fatal",runId,stage,timestamp:new Date().toISOString(),fatalGate})+"\n");
 const summary={runId,stage,devices:1,declaredSecondSchoolCanaryDevices:0,run:{plannedTrafficSeconds:1,actualTrafficSeconds:1,completedConfiguredDuration:true},screenshotFixture:{decodedBytes:1024},thresholds:{passed:false},fatalGate};
-fs.writeFileSync(summaryPath,JSON.stringify(summary));
 fs.appendFileSync(progressPath,JSON.stringify({schemaVersion:1,type:"progress",event:"final",runId,stage,timestamp:new Date().toISOString(),fatalGate})+"\n");
+if(process.env.SCHOOLPILOT_TEST_FINAL_WRITTEN_PATH)fs.writeFileSync(process.env.SCHOOLPILOT_TEST_FINAL_WRITTEN_PATH,"1");
+const summaryDelayMilliseconds=Number.parseInt(process.env.SCHOOLPILOT_TEST_SUMMARY_DELAY_MS||"0",10);
+if(Number.isFinite(summaryDelayMilliseconds)&&summaryDelayMilliseconds>0)await new Promise(resolve=>setTimeout(resolve,summaryDelayMilliseconds));
+fs.writeFileSync(summaryPath,JSON.stringify(summary));
 process.exit(1);
 '@
     [IO.File]::WriteAllText($immediateFatalHarness, $immediateFatalHarnessSource, [Text.UTF8Encoding]::new($false))
+    $sampleBarrierCoordinator = Join-Path $childRoot "sample-barrier-coordinator.ps1"
+    $sampleBarrierCoordinatorSource = @'
+param(
+  [string]$MonitorHeartbeatPath,
+  [string]$ArmPath,
+  [string]$ReadyPath,
+  [string]$ReleasePath,
+  [string]$TerminalProgressPath,
+  [string]$CompletedPath
+)
+$ErrorActionPreference="Stop"
+function Wait-ForPath([string]$Path,[string]$Label){
+  $deadline=[DateTimeOffset]::UtcNow.AddSeconds(30)
+  while(-not (Test-Path -LiteralPath $Path)){
+    if([DateTimeOffset]::UtcNow -ge $deadline){throw "Timed out waiting for $Label."}
+    Start-Sleep -Milliseconds 10
+  }
+}
+Wait-ForPath $MonitorHeartbeatPath "the first monitor heartbeat"
+[IO.File]::WriteAllText($ArmPath,"1")
+Wait-ForPath $ReadyPath "the monitor to enter mocked AWS collection"
+Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
+[IO.File]::WriteAllText($ReleasePath,"1")
+[IO.File]::WriteAllText($CompletedPath,"1")
+'@
+    [IO.File]::WriteAllText($sampleBarrierCoordinator, $sampleBarrierCoordinatorSource, [Text.UTF8Encoding]::new($false))
     $childProgress = Join-Path $childRoot "progress.jsonl"
     $childSummary = Join-Path $childRoot "summary.json"
     $childRollbackConfigPath = Join-Path $childRoot "rollback.json"
@@ -1298,6 +1339,12 @@ process.exit(1);
                 $caseConfig | Add-Member -NotePropertyName expectedGeneratorPublicIp -NotePropertyValue "203.0.113.10" -Force
                 $caseConfig | Add-Member -NotePropertyName testGeneratorPublicIpSequence -NotePropertyValue @("203.0.113.10") -Force
                 $caseConfig | Add-Member -NotePropertyName testRuntimeHarnessScriptPath -NotePropertyValue $immediateFatalHarness -Force
+                if ($startGateCase.label -eq "cross-school") {
+                    # Release traffic while the next monitor sample is inside its
+                    # mocked AWS calls. The final progress refresh must still retain
+                    # the immediate tenant-isolation reason and rollback priority.
+                    $caseConfig | Add-Member -NotePropertyName testPreReleaseGeneratorPublicIpDelayMilliseconds -NotePropertyValue 1500 -Force
+                }
                 $caseConfig | Add-Member -NotePropertyName supervisorWatchdog -NotePropertyValue ([pscustomobject]@{
                     monitorHeartbeatStaleSeconds=10;rollbackHeartbeatStaleSeconds=10;pollSeconds=1;generatorIpCheckSeconds=1
                 }) -Force
@@ -1306,6 +1353,39 @@ process.exit(1);
 
                 $env:SCHOOLPILOT_TEST_FATAL_REASON = $startGateCase.reason
                 $env:SCHOOLPILOT_TEST_FATAL_OBSERVED_PATH = $caseObserved
+                $barrierCoordinatorProcess = $null
+                $barrierCoordinatorExitCode = $null
+                $barrierCompleted = $null
+                $barrierReady = $null
+                $barrierConsumed = $null
+                $barrierEnvironment = [ordered]@{}
+                if ($startGateCase.label -eq "cross-school") {
+                    $barrierArm = Join-Path $childRoot "$caseRunId-sample-barrier-arm.flag"
+                    $barrierReady = Join-Path $childRoot "$caseRunId-sample-barrier-ready.flag"
+                    $barrierRelease = Join-Path $childRoot "$caseRunId-sample-barrier-release.flag"
+                    $barrierConsumed = Join-Path $childRoot "$caseRunId-sample-barrier-consumed.flag"
+                    $barrierCompleted = Join-Path $childRoot "$caseRunId-sample-barrier-completed.flag"
+                    $terminalProgressWritten = Join-Path $childRoot "$caseRunId-terminal-progress-written.flag"
+                    $caseMonitorHeartbeat = Join-Path $caseEvidence "$caseRunId-monitor-heartbeat.json"
+                    $barrierPaths = [ordered]@{
+                        SCHOOLPILOT_TEST_SAMPLE_BARRIER_ARM = $barrierArm
+                        SCHOOLPILOT_TEST_SAMPLE_BARRIER_READY = $barrierReady
+                        SCHOOLPILOT_TEST_SAMPLE_BARRIER_RELEASE = $barrierRelease
+                        SCHOOLPILOT_TEST_SAMPLE_BARRIER_CONSUMED = $barrierConsumed
+                        SCHOOLPILOT_TEST_FINAL_WRITTEN_PATH = $terminalProgressWritten
+                        SCHOOLPILOT_TEST_SUMMARY_DELAY_MS = "10000"
+                    }
+                    foreach ($entry in $barrierPaths.GetEnumerator()) {
+                        $barrierEnvironment[$entry.Key] = [Environment]::GetEnvironmentVariable($entry.Key, "Process")
+                        [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, "Process")
+                    }
+                    $barrierCoordinatorProcess = Start-Process -FilePath (Get-Process -Id $PID).Path `
+                        -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$sampleBarrierCoordinator,
+                            "-MonitorHeartbeatPath",$caseMonitorHeartbeat,"-ArmPath",$barrierArm,"-ReadyPath",$barrierReady,
+                            "-ReleasePath",$barrierRelease,"-TerminalProgressPath",$terminalProgressWritten,"-CompletedPath",$barrierCompleted) `
+                        -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $childRoot "$caseRunId-barrier.out") `
+                        -RedirectStandardError (Join-Path $childRoot "$caseRunId-barrier.err")
+                }
                 $supervisorRejected = $false
                 $supervisorFailure = ""
                 try { & $supervisorScript -ConfigPath $caseConfigPath -Mode Run | Out-Null }
@@ -1313,8 +1393,31 @@ process.exit(1);
                     $supervisorFailure = $_.Exception.Message
                     $supervisorRejected = $supervisorFailure -match "AWS monitor exited with code 2"
                 }
+                finally {
+                    if ($null -ne $barrierCoordinatorProcess) {
+                        if (-not $barrierCoordinatorProcess.WaitForExit(5000)) {
+                            Stop-Process -Id $barrierCoordinatorProcess.Id -Force -ErrorAction SilentlyContinue
+                        }
+                        $barrierCoordinatorProcess.Refresh()
+                        if ($barrierCoordinatorProcess.HasExited) { $barrierCoordinatorExitCode = $barrierCoordinatorProcess.ExitCode }
+                    }
+                    foreach ($entry in $barrierEnvironment.GetEnumerator()) {
+                        [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, "Process")
+                    }
+                }
                 Assert-Condition $supervisorRejected "$caseRunId must fail through the armed monitor, not before monitor startup (actual: $supervisorFailure)."
                 Assert-Condition (Test-Path -LiteralPath $caseObserved) "$caseRunId harness never observed the released start gate."
+                if ($startGateCase.label -eq "cross-school") {
+                    $barrierError = Get-Content -LiteralPath (Join-Path $childRoot "$caseRunId-barrier.err") -Raw -ErrorAction SilentlyContinue
+                    Assert-Condition ($barrierCoordinatorExitCode -eq 0 -and (Test-Path -LiteralPath $barrierCompleted) -and
+                        (Test-Path -LiteralPath $barrierReady) -and (Test-Path -LiteralPath $barrierConsumed) -and
+                        (Test-Path -LiteralPath $terminalProgressWritten)) `
+                        "$caseRunId did not exercise the deterministic in-sample AWS barrier (exit=$barrierCoordinatorExitCode; stderr=$barrierError)."
+                    Assert-Condition ((Get-Item -LiteralPath $barrierReady).LastWriteTimeUtc -le (Get-Item -LiteralPath $terminalProgressWritten).LastWriteTimeUtc) `
+                        "$caseRunId terminal evidence must be committed while the monitor is inside mocked AWS collection."
+                    Assert-Condition (-not (Test-Path -LiteralPath $caseSummary)) `
+                        "$caseRunId must preserve and act on terminal fatal evidence before the atomic summary exists."
+                }
 
                 $caseObservation = Get-Content -LiteralPath $caseObserved -Raw | ConvertFrom-Json -Depth 20
                 Assert-Condition ($caseObservation.reason -eq $startGateCase.reason) "$caseRunId observed the wrong immediate fatal reason."
@@ -2021,9 +2124,14 @@ process.exit(1);
 
         [IO.File]::WriteAllText($completedWaitSnapshotFile, [DateTimeOffset]::UtcNow.ToString("o"), [Text.UTF8Encoding]::new($false))
         Assert-Condition ($completedWaitMonitor.WaitForExit(60000)) "Completed-final monitor did not accept the later automated snapshot."
+        # Timed WaitForExit can leave redirected-stream completion and the native
+        # exit code stale on Windows. Drain once, then refresh before asserting.
+        $completedWaitMonitor.WaitForExit()
+        $completedWaitMonitor.Refresh()
+        $completedWaitFinalExitCode = $completedWaitMonitor.ExitCode
         $completedWaitResult = Get-Content -LiteralPath (Join-Path $childEvidence "$completedWaitRunId-monitor-result.json") -Raw | ConvertFrom-Json -Depth 30
-        Assert-Condition ($completedWaitMonitor.ExitCode -eq 0 -and $completedWaitResult.status -eq "completed" -and $completedWaitResult.automatedRedisSnapshot.accepted -and
-            -not (Test-Path -LiteralPath $completedWaitRollbackEvidence)) "An old, valid completed progress artifact must remain accepted until a qualifying post-resize automated snapshot arrives, with no Redis rollback."
+        Assert-Condition ($completedWaitFinalExitCode -eq 0 -and $completedWaitResult.status -eq "completed" -and $completedWaitResult.automatedRedisSnapshot.accepted -and
+            -not (Test-Path -LiteralPath $completedWaitRollbackEvidence)) "An old, valid completed progress artifact must remain accepted until a qualifying post-resize automated snapshot arrives, with no Redis rollback (exit=$completedWaitFinalExitCode; result=$($completedWaitResult|ConvertTo-Json -Compress -Depth 30); stderr=$completedWaitDiagnosticError)."
         if (-not $completedWaitHarness.HasExited) { Stop-Process -Id $completedWaitHarness.Id -Force }
         Remove-Item Env:SCHOOLPILOT_TEST_SNAPSHOT_TIME_FILE -ErrorAction SilentlyContinue
         Remove-Item Env:SCHOOLPILOT_TEST_REDIS_TYPE -ErrorAction SilentlyContinue

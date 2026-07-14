@@ -266,7 +266,20 @@ describe("ClassPilot admin analytics", () => {
             end_time = ${ts(new Date("2026-01-15T15:00:00.000Z"))}
         WHERE id = ${session.id}
       `);
-      await aggregateClasspilotSessionUsage(session.id);
+      const firstUsage = await aggregateClasspilotSessionUsage(session.id);
+      assert.equal(firstUsage.length, 1);
+      assert.equal(firstUsage[0]?.studentId, studentA.id);
+      assert.equal(firstUsage[0]?.localDate, "2026-01-15");
+      assert.equal(firstUsage[0]?.heartbeatCount, 6);
+      assert.equal(firstUsage[0]?.totalSeconds, 60);
+      assert.deepEqual(firstUsage[0]?.topDomains, [
+        { domain: "session.edu", seconds: 60, visits: 6 },
+      ]);
+
+      const repeatedUsage = await aggregateClasspilotSessionUsage(session.id);
+      assert.equal(repeatedUsage.length, 1);
+      assert.equal(repeatedUsage[0]?.heartbeatCount, 6);
+      assert.equal(repeatedUsage[0]?.totalSeconds, 60);
     });
 
     const result = await inSchool(school.id, () =>
