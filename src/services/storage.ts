@@ -3426,6 +3426,30 @@ export async function getActiveSessionByStudent(
   return session;
 }
 
+export async function getActiveSessionsForStudents(
+  schoolId: string,
+  studentIds: string[],
+  dbInstance: typeof db = db
+): Promise<StudentSession[]> {
+  const uniqueStudentIds = [...new Set(studentIds.map(String).filter(Boolean))];
+  if (uniqueStudentIds.length === 0) return [];
+
+  const rows = await dbInstance
+    .select({ session: studentSessions })
+    .from(studentSessions)
+    .innerJoin(students, eq(students.id, studentSessions.studentId))
+    .innerJoin(devices, eq(devices.deviceId, studentSessions.deviceId))
+    .where(
+      and(
+        eq(students.schoolId, schoolId),
+        eq(devices.schoolId, schoolId),
+        inArray(studentSessions.studentId, uniqueStudentIds),
+        eq(studentSessions.isActive, true)
+      )
+    );
+  return rows.map((row) => row.session);
+}
+
 export async function getActiveSessionByDevice(
   deviceId: string
 ): Promise<StudentSession | undefined> {

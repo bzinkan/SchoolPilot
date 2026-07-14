@@ -6,7 +6,7 @@ import { requireProductLicense } from "../../middleware/requireProductLicense.js
 import {
   getActiveClasspilotClassroomStates,
   getActiveClassOwnersForStudents,
-  getActiveSessionByStudent,
+  getActiveSessionsForStudents,
   getActiveSupervisionForStudents,
   getGroupByIdAndSchool,
   getGroupStudents,
@@ -102,16 +102,16 @@ async function resolveTargets(req: Request, res: Response, body: any): Promise<R
   const now = Date.now();
   const activeWindowMs = 5 * 60 * 1000;
   const resolved: ResolvedClasspilotCommandTarget[] = [];
-  const activeCoverage = await getActiveSupervisionForStudents(
-    schoolId,
-    selectedRows.map((row) => row.studentId)
-  );
+  const selectedStudentIds = selectedRows.map((row) => row.studentId);
+  // These queries intentionally run sequentially. Under RLS they share the
+  // request-scoped client, and without RLS this avoids tripling pool demand
+  // when many teachers issue commands at the same time.
+  const activeCoverage = await getActiveSupervisionForStudents(schoolId, selectedStudentIds);
+  const activeClassOwners = await getActiveClassOwnersForStudents(schoolId, selectedStudentIds);
+  const activeStudentSessions = await getActiveSessionsForStudents(schoolId, selectedStudentIds);
   const coverageByStudent = new Map(activeCoverage.map((entry) => [entry.studentId, entry.context]));
-  const activeClassOwners = await getActiveClassOwnersForStudents(
-    schoolId,
-    selectedRows.map((row) => row.studentId)
-  );
   const classOwnerByStudent = new Map(activeClassOwners.map((owner) => [owner.studentId, owner]));
+  const studentSessionByStudent = new Map(activeStudentSessions.map((session) => [session.studentId, session]));
   for (const row of selectedRows) {
     const coverage = coverageByStudent.get(row.studentId);
     const studentName = [row.student.firstName, row.student.lastName].filter(Boolean).join(" ") || row.student.email || row.studentId;
@@ -138,7 +138,7 @@ async function resolveTargets(req: Request, res: Response, body: any): Promise<R
       });
       continue;
     }
-    const studentSession = await getActiveSessionByStudent(row.studentId);
+    const studentSession = studentSessionByStudent.get(row.studentId);
     const lastSeenAt = studentSession?.lastSeenAt?.getTime?.() ?? 0;
     const active = !!studentSession && lastSeenAt > 0 && now - lastSeenAt <= activeWindowMs;
     resolved.push({

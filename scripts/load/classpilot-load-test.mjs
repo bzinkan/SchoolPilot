@@ -16,6 +16,7 @@ import {
 const JPEG_1X1 =
   "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAH/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAEFAqf/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAEDAQE/ASP/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAECAQE/ASP/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAY/ASP/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAE/ISP/2gAMAwEAAgADAAAAEP/EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQMBAT8QH//EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQIBAT8QH//EABQQAQAAAAAAAAAAAAAAAAAAABD/2gAIAQEAAT8QH//Z";
 const LATENCY_BUCKETS_MS = [25, 50, 100, 200, 300, 500, 750, 1_000, 2_000, 5_000, 10_000, Infinity];
+const COMMAND_LATENCY_CONTRACT_MS = 1_000;
 const MAX_RESPONSE_CAPTURE_BYTES = 5 * 1024 * 1024;
 const REPOSITORY_ROOT = fs.realpathSync(fileURLToPath(new URL("../../", import.meta.url)));
 // Low-level Node HTTP and ws clients do not add a User-Agent. Real managed
@@ -195,6 +196,66 @@ class LatencyHistogram {
   }
 }
 
+class BoundedExactLatencySamples {
+  constructor(capacity) {
+    this.capacity = capacity;
+    this.values = new Uint32Array(capacity);
+    this.observedCount = 0;
+    this.retainedCount = 0;
+    this.droppedCount = 0;
+    this.errors = 0;
+  }
+
+  observe(latencyMs, failed = false) {
+    this.observedCount += 1;
+    if (failed) this.errors += 1;
+    if (this.retainedCount >= this.capacity) {
+      this.droppedCount += 1;
+      return;
+    }
+    const value = Math.min(0xffff_ffff, Math.max(0, Math.round(latencyMs)));
+    this.values[this.retainedCount] = value;
+    this.retainedCount += 1;
+  }
+
+  summary(thresholdMs = COMMAND_LATENCY_CONTRACT_MS) {
+    const exact = this.droppedCount === 0;
+    const common = {
+      exact,
+      method: "nearest-rank",
+      capacity: this.capacity,
+      observedCount: this.observedCount,
+      retainedCount: this.retainedCount,
+      droppedCount: this.droppedCount,
+      thresholdMs,
+      errors: this.errors,
+    };
+    if (!exact || this.retainedCount === 0) {
+      return {
+        ...common,
+        p95Ms: this.retainedCount === 0 && exact ? 0 : null,
+        maxMs: this.retainedCount === 0 && exact ? 0 : null,
+        aboveThresholdCount: this.retainedCount === 0 && exact ? 0 : null,
+        aboveThresholdPercent: this.retainedCount === 0 && exact ? 0 : null,
+      };
+    }
+
+    const sorted = this.values.slice(0, this.retainedCount).sort();
+    const p95Index = Math.max(0, Math.ceil(0.95 * sorted.length) - 1);
+    const aboveThresholdCount = sorted.reduce(
+      (count, value) => count + (value > thresholdMs ? 1 : 0),
+      0
+    );
+    return {
+      ...common,
+      p95Ms: sorted[p95Index],
+      maxMs: sorted.at(-1),
+      aboveThresholdCount,
+      aboveThresholdPercent: Number(((aboveThresholdCount / sorted.length) * 100).toFixed(2)),
+    };
+  }
+}
+
 class RollingWindowCounter {
   constructor(windowSeconds) {
     this.windowSeconds = windowSeconds;
@@ -245,12 +306,15 @@ function validateFixtures() {
   }
   const histogram = new LatencyHistogram();
   for (let value = 1; value <= 10_000; value += 1) histogram.observe(value);
+  const exactCommandLatency = new BoundedExactLatencySamples(5);
+  for (const value of [100, 900, 1_000, 1_001, 1_506]) exactCommandLatency.observe(value);
   const rolling = new RollingWindowCounter(300);
   for (let value = 0; value < 1_000; value += 1) rolling.add(1_000_000 + value);
   console.log(JSON.stringify({
     ok: true,
     fixtureBytes: { standard: decoded[0].length, burst: decoded[1].length },
     boundedLatencyBuckets: histogram.counts.length,
+    boundedExactCommandLatency: exactCommandLatency.summary(),
     rollingWindowSlots: rolling.counts.length,
   }, null, 2));
 }
@@ -1055,6 +1119,7 @@ const inFlight = new Set();
 const pendingRequests = new Map();
 const histograms = new Map();
 const teacherEndpointHistograms = new Map();
+const exactCommandLatency = new BoundedExactLatencySamples(maxTrackedCommands);
 const fiveMinuteRequests = new RollingWindowCounter(300);
 const fiveMinuteDeviceIngestRequests = new RollingWindowCounter(300);
 const fiveMinuteGeneralApiRequests = new RollingWindowCounter(300);
@@ -1246,6 +1311,7 @@ function progressRecord(event) {
     commands: {
       configuredBodies: commandBodies.length,
       tracked: trackedCommands.length,
+      requestLatency: exactCommandLatency.summary(),
       expectedTargets: trackedCommands.reduce((total, entry) => total + entry.expected, 0),
       messagesReceived: counters.commandMessagesReceived,
       completedAcksSent: counters.commandCompletedAcksSent,
@@ -1464,6 +1530,7 @@ function observeHttp(record, status, error, responseBytes = 0) {
   const latencyMs = Date.now() - record.startedAt;
   const failed = Boolean(error) || status >= 400 || status === 0;
   histogram(record.kind).observe(latencyMs, failed);
+  if (record.kind === "command") exactCommandLatency.observe(latencyMs, failed);
   if (record.endpointClass) teacherEndpointHistogram(record.endpointClass).observe(latencyMs, failed);
   counters.responseBytes += responseBytes;
   if (status >= 200 && status < 300) counters.http2xx += 1;
@@ -2408,6 +2475,7 @@ function summarize(shutdownReason) {
   const teacherEndpoints = Object.fromEntries(
     [...teacherEndpointHistograms.entries()].map(([endpoint, value]) => [endpoint, value.summary()])
   );
+  const commandRequestLatency = exactCommandLatency.summary();
   const harnessCommands = [...commandEntries.values()].filter((entry) => entry.createdByHarness);
   const exercisedClassBodies = new Set(
     harnessCommands
@@ -2457,7 +2525,7 @@ function summarize(shutdownReason) {
     : 0;
   const heartbeatLatencyThresholdMs = 500 * testLatencyThresholdMultiplier;
   const screenshotLatencyThresholdMs = 750 * testLatencyThresholdMultiplier;
-  const teacherLatencyThresholdMs = 1_000 * testLatencyThresholdMultiplier;
+  const teacherLatencyThresholdMs = COMMAND_LATENCY_CONTRACT_MS * testLatencyThresholdMultiplier;
 
   if (enforceThresholds) {
     if (fatalGate) failures.push(`fatal gate triggered: ${fatalGate.reasonCodes.join(", ")}`);
@@ -2488,7 +2556,10 @@ function summarize(shutdownReason) {
     if (dashboardConfigured && !kinds.teacher?.count) failures.push("configured teacher/dashboard traffic emitted no completed samples");
     else if (kinds.teacher?.p95 > teacherLatencyThresholdMs) failures.push(`teacher/dashboard p95 exceeds ${teacherLatencyThresholdMs}ms`);
     if (commandEndpoint && !kinds.command?.count) failures.push("configured teacher command traffic emitted no completed samples");
-    else if (kinds.command?.p95 > teacherLatencyThresholdMs) failures.push(`teacher command p95 exceeds ${teacherLatencyThresholdMs}ms`);
+    else if (commandEndpoint && !commandRequestLatency.exact) failures.push("exact teacher command latency sampling overflowed its bounded capacity");
+    else if (commandEndpoint && commandRequestLatency.observedCount !== kinds.command?.count) failures.push("exact teacher command latency samples do not match completed command requests");
+    else if (commandRequestLatency.p95Ms > teacherLatencyThresholdMs) failures.push(`teacher command p95 exceeds ${teacherLatencyThresholdMs}ms`);
+    const commandEndpointClass = commandEndpoint ? redactedEndpointClass(commandEndpoint) : "";
     for (const endpoint of configuredTeacherEndpointClasses) {
       const endpointSummary = teacherEndpoints[endpoint];
       if (!endpointSummary?.count) {
@@ -2498,7 +2569,10 @@ function summarize(shutdownReason) {
       const threshold = endpoint === "GET /api/classpilot/device/screenshot/{deviceId}"
         ? screenshotLatencyThresholdMs
         : teacherLatencyThresholdMs;
-      if (endpointSummary.p95 > threshold) failures.push(`${endpoint} p95 exceeds ${threshold}ms`);
+      const endpointP95 = endpoint === commandEndpointClass
+        ? commandRequestLatency.p95Ms
+        : endpointSummary.p95;
+      if (endpointP95 !== null && endpointP95 > threshold) failures.push(`${endpoint} p95 exceeds ${threshold}ms`);
     }
     if (authenticatedDeviceIds.size !== devices.length) {
       failures.push(`only ${authenticatedDeviceIds.size}/${devices.length} devices received WebSocket auth-success`);
@@ -2653,6 +2727,7 @@ function summarize(shutdownReason) {
       classBodiesMeetingExpectedTargets: fullyTargetedClassBodies.size,
       expectedTargetsPerClass,
       tracked: harnessCommands.length,
+      requestLatency: commandRequestLatency,
       ...commandTotals,
       deliveryPercent: Number((ratio(commandTotals.messagesReceived, commandTotals.expected) * 100).toFixed(2)),
       deliveryWithin2sPercent: Number((ratio(commandTotals.messagesWithin2s, commandTotals.expected) * 100).toFixed(2)),

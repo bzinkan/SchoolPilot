@@ -27,11 +27,13 @@ import {
   getActiveCoverageAssignmentsForStaff,
   getActiveClassOwnerForStudent,
   getActiveSessionByStudent,
+  getActiveSessionsForStudents,
   getActiveSupervisionForStudent,
   getCoverageScopeGroupStudentIds,
   getCentralEmailRecipientForSchool,
   getClasspilotSessionStudents,
   getClasspilotCommandByIdAndSchool,
+  getGroupStudents,
   getSettingsForSchool,
   getOnlineUnassignedStudents,
   addCentralEmailRecipientForSchool,
@@ -448,6 +450,25 @@ after(async () => {
 });
 
 describe("ClassPilot supervision coverage storage contracts", () => {
+  it("batch-loads active student sessions within the requested school", async () => {
+    const sessions = await inSchool(school.id, () => getActiveSessionsForStudents(
+      school.id,
+      [studentUnassigned.id, studentDeviceGuard.id, studentUnassigned.id, ""]
+    ));
+    assert.deepEqual(
+      new Set(sessions.map((session) => session.studentId)),
+      new Set([studentUnassigned.id, studentDeviceGuard.id])
+    );
+    assert.equal(sessions.length, 2);
+
+    const wrongSchool = await inSchool(school.id, () => getActiveSessionsForStudents(
+      "not-the-requested-school",
+      [studentUnassigned.id, studentDeviceGuard.id]
+    ));
+    assert.deepEqual(wrongSchool, []);
+    assert.deepEqual(await inSchool(school.id, () => getActiveSessionsForStudents(school.id, [])), []);
+  });
+
   it("lists online unassigned students and excludes active class or temporary coverage students", async () => {
     const initial = await inSchool(school.id, () => getOnlineUnassignedStudents(school.id));
     assert.ok(ids(initial).has(studentUnassigned.id));
@@ -1133,6 +1154,106 @@ describe("ClassPilot supervision coverage storage contracts", () => {
 
     await inSchool(school.id, () => endTeachingSession(oldSession.id));
     await inSchool(school.id, () => endTeachingSession(newSession.id));
+  });
+
+  it("batch-resolves multiple command targets without changing class-row order", async () => {
+    const activeStudentA = await inSchool(school.id, () => createStudent({
+      schoolId: school.id,
+      firstName: "Batch",
+      lastName: "Active A",
+      email: `batch-active-a@${TAG}.example.edu`,
+      emailLc: `batch-active-a@${TAG}.example.edu`,
+      gradeLevel: "7",
+      status: "active",
+    } as any));
+    const activeStudentB = await inSchool(school.id, () => createStudent({
+      schoolId: school.id,
+      firstName: "Batch",
+      lastName: "Active B",
+      email: `batch-active-b@${TAG}.example.edu`,
+      emailLc: `batch-active-b@${TAG}.example.edu`,
+      gradeLevel: "7",
+      status: "active",
+    } as any));
+    const staleStudent = await inSchool(school.id, () => createStudent({
+      schoolId: school.id,
+      firstName: "Batch",
+      lastName: "Stale",
+      email: `batch-stale@${TAG}.example.edu`,
+      emailLc: `batch-stale@${TAG}.example.edu`,
+      gradeLevel: "7",
+      status: "active",
+    } as any));
+    const activeDeviceA = `${TAG}-batch-device-a`;
+    const activeDeviceB = `${TAG}-batch-device-b`;
+    const staleDevice = `${TAG}-batch-device-stale`;
+    const group = await inSchool(school.id, () => createGroup({
+      schoolId: school.id,
+      teacherId: teacher.id,
+      name: `${TAG}_Batch_Command_Class`,
+      groupType: "admin_class",
+      status: "active",
+    } as any));
+
+    await inSchool(school.id, async () => {
+      await createDevice({ deviceId: activeDeviceA, schoolId: school.id, classId: "default", deviceName: "Batch A" } as any);
+      await createDevice({ deviceId: activeDeviceB, schoolId: school.id, classId: "default", deviceName: "Batch B" } as any);
+      await createDevice({ deviceId: staleDevice, schoolId: school.id, classId: "default", deviceName: "Batch Stale" } as any);
+      await linkStudentDevice({ studentId: activeStudentA.id, deviceId: activeDeviceA });
+      await linkStudentDevice({ studentId: activeStudentB.id, deviceId: activeDeviceB });
+      await linkStudentDevice({ studentId: staleStudent.id, deviceId: staleDevice });
+      await setActiveStudentForDevice(activeDeviceA, activeStudentA.id);
+      await setActiveStudentForDevice(activeDeviceB, activeStudentB.id);
+      const staleSession = await setActiveStudentForDevice(staleDevice, staleStudent.id);
+      await db.execute(sql`
+        UPDATE student_sessions
+        SET last_seen_at = ${new Date(Date.now() - 10 * 60 * 1000)}
+        WHERE id = ${staleSession.id}
+      `);
+      await addGroupStudentsDetailed(group.id, [activeStudentA.id, staleStudent.id, activeStudentB.id]);
+    });
+
+    const teachingSession = await inSchool(school.id, () => createTeachingSession({
+      groupId: group.id,
+      teacherId: teacher.id,
+    }));
+    try {
+      const requestedStudentIds = [staleStudent.id, activeStudentB.id, activeStudentA.id];
+      const requestedSet = new Set(requestedStudentIds);
+      const classRows = await inSchool(school.id, () => getGroupStudents(group.id));
+      const expectedTargetOrder = classRows
+        .filter((row) => requestedSet.has(row.studentId))
+        .map((row) => row.studentId);
+
+      const command = await requestJson("POST", "/commands", {
+        teachingSessionId: teachingSession.id,
+        targetScope: "students",
+        targetStudentIds: requestedStudentIds,
+        commandType: "open-tab",
+        commandPayload: { url: "https://example.com/batch-targets" },
+      }, authFor(teacher, school.id));
+
+      assert.equal(command.status, 201);
+      assert.equal(command.body.summary.requested, 3);
+      assert.equal(command.body.summary.sent, 2);
+      assert.equal(command.body.summary.unavailable, 1);
+      assert.deepEqual(
+        command.body.command.targets.map((target: any) => target.studentId),
+        expectedTargetOrder
+      );
+      const targetsByStudent = new Map(
+        command.body.command.targets.map((target: any) => [target.studentId, target])
+      );
+      assert.equal((targetsByStudent.get(activeStudentA.id) as any)?.status, "sent");
+      assert.equal((targetsByStudent.get(activeStudentB.id) as any)?.status, "sent");
+      assert.equal((targetsByStudent.get(staleStudent.id) as any)?.status, "unavailable");
+      assert.match(
+        (targetsByStudent.get(staleStudent.id) as any)?.errorMessage,
+        /not signed in to the extension/
+      );
+    } finally {
+      await inSchool(school.id, () => endTeachingSession(teachingSession.id));
+    }
   });
 
   it("resyncs an active class roster and requires acknowledgement before reclaiming active students", async () => {

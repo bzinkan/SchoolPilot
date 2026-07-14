@@ -489,6 +489,11 @@ export async function executeClasspilotCommand(options: {
 
   const command = await getClasspilotCommandByIdAndSchool(created.id, options.schoolId);
   if (!command) throw Object.assign(new Error("Command was created but could not be loaded"), { status: 500 });
+  const targetOrder = new Map(options.targets.map((target, index) => [target.studentId, index]));
+  command.targets.sort((left, right) =>
+    (targetOrder.get(left.studentId) ?? Number.MAX_SAFE_INTEGER)
+    - (targetOrder.get(right.studentId) ?? Number.MAX_SAFE_INTEGER)
+  );
   const summary = commandSummary(command);
   return {
     command,
