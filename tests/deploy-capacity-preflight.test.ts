@@ -87,10 +87,13 @@ function stableServices(options: {
 type LibraryRunOptions = {
   environment?: string;
   deployBackend?: boolean;
+  deployFrontend?: boolean;
+  activateEmergency?: boolean;
   skipWait?: boolean;
   easternClock?: string;
   serviceSnapshots?: string[];
   scalingSnapshots?: string[];
+  taskDefinitionSnapshots?: string[];
   registerFailCalls?: number[];
 };
 
@@ -103,11 +106,16 @@ function runLibrary(body: string, options: LibraryRunOptions = {}) {
   for (const [index, snapshot] of (options.scalingSnapshots ?? []).entries()) {
     writeFileSync(join(fixtureDir, `scaling-${index + 1}.txt`), snapshot, "utf8");
   }
+  for (const [index, snapshot] of (options.taskDefinitionSnapshots ?? []).entries()) {
+    writeFileSync(join(fixtureDir, `taskdef-${index + 1}.txt`), snapshot, "utf8");
+  }
 
   const script = `
 ${deployLibrarySource}
 ENV="$TEST_ENVIRONMENT"
 DEPLOY_BACKEND="$TEST_DEPLOY_BACKEND"
+DEPLOY_FRONTEND="$TEST_DEPLOY_FRONTEND"
+ACTIVATE_EMERGENCY="$TEST_ACTIVATE_EMERGENCY"
 SKIP_WAIT="$TEST_SKIP_WAIT"
 production_eastern_weekday_hhmm() {
   if [[ "$TEST_EASTERN_CLOCK" == "__FAIL__" ]]; then
@@ -156,6 +164,10 @@ aws() {
     next_fixture scaling
     return $?
   fi
+  if [[ "$1" == "ecs" && "$2" == "describe-task-definition" ]]; then
+    next_fixture taskdef
+    return $?
+  fi
   if [[ "$1" == "application-autoscaling" && "$2" == "register-scalable-target" ]]; then
     local register_call
     register_call=$(next_counter register)
@@ -177,6 +189,8 @@ ${body}
       ...process.env,
       TEST_ENVIRONMENT: options.environment ?? "production",
       TEST_DEPLOY_BACKEND: String(options.deployBackend ?? true),
+      TEST_DEPLOY_FRONTEND: String(options.deployFrontend ?? false),
+      TEST_ACTIVATE_EMERGENCY: String(options.activateEmergency ?? false),
       TEST_SKIP_WAIT: String(options.skipWait ?? false),
       TEST_EASTERN_CLOCK: options.easternClock ?? "1 1200",
       TEST_FIXTURE_DIR: shellFixtureDir,
@@ -196,10 +210,105 @@ function registerCommands(commands: string[]): string[] {
 }
 
 describe("production backend deployment capacity guard", () => {
+  it("binds the reviewed 2048 MiB rollout to the freshly registered emergency revision", () => {
+    assert.match(deploySource, /--activate-emergency\) ACTIVATE_EMERGENCY=true/);
+    assert.match(
+      deploySource,
+      /--activate-emergency is allowed only with production --backend/
+    );
+
+    const selection = deploySource.indexOf('API_ROLLOUT_TASK_DEF="${NAME}-api:${NEW_REV}"');
+    const emergencySelection = deploySource.indexOf('API_ROLLOUT_TASK_DEF="$EMERGENCY_TASK_DEF_ARN"', selection);
+    const migration = deploySource.indexOf('aws ecs run-task', emergencySelection);
+    const migrationTaskDefinition = deploySource.indexOf('--task-definition "$API_ROLLOUT_TASK_DEF"', migration);
+    const apiUpdate = deploySource.indexOf('aws ecs update-service', migration);
+    const apiUpdateTaskDefinition = deploySource.indexOf('--task-definition "$API_ROLLOUT_TASK_DEF"', apiUpdate);
+    const workerUpdate = deploySource.indexOf('aws ecs update-service', apiUpdate + 1);
+    const strictStability = deploySource.indexOf('wait_for_production_backend_strict_stability', workerUpdate);
+    const strictApiReference = deploySource.indexOf('"$API_ROLLOUT_TASK_DEF"', strictStability);
+
+    assert.ok(selection > 0, "default rollout should retain the standard API revision");
+    assert.ok(emergencySelection > selection, "reviewed mode should select the fresh emergency ARN");
+    assert.ok(migration > emergencySelection && migrationTaskDefinition > migration);
+    assert.ok(apiUpdate > migrationTaskDefinition && apiUpdateTaskDefinition > apiUpdate);
+    assert.ok(workerUpdate > apiUpdateTaskDefinition);
+    assert.ok(strictStability > workerUpdate && strictApiReference > strictStability);
+
+    const migrationBlock = deploySource.slice(migration, apiUpdate);
+    const apiUpdateBlock = deploySource.slice(
+      apiUpdate,
+      deploySource.indexOf("  UPDATED_WORKER=false", apiUpdate)
+    );
+    assert.doesNotMatch(migrationBlock, /--task-definition "\$\{NAME\}-api:\$\{NEW_REV\}"/);
+    assert.doesNotMatch(apiUpdateBlock, /--task-definition "\$\{NAME\}-api:\$\{NEW_REV\}"/);
+  });
+
+  it("allows 2048 MiB activation only for a production backend-only deploy", () => {
+    const accepted = runLibrary("validate_emergency_activation_mode", {
+      activateEmergency: true,
+      deployFrontend: false,
+    });
+    assert.equal(accepted.status, 0, accepted.stderr);
+    assert.deepEqual(accepted.commands, []);
+
+    const rejectedCases: LibraryRunOptions[] = [
+      { activateEmergency: true, environment: "staging", deployFrontend: false },
+      { activateEmergency: true, deployBackend: false, deployFrontend: true },
+      { activateEmergency: true, deployBackend: true, deployFrontend: true },
+    ];
+    for (const options of rejectedCases) {
+      const rejected = runLibrary("validate_emergency_activation_mode", options);
+      assert.notEqual(rejected.status, 0);
+      assert.match(rejected.stderr, /allowed only with production --backend/);
+      assert.deepEqual(rejected.commands, []);
+    }
+  });
+
+  it("requires the currently serving API to retain the reviewed 512/2048 posture", () => {
+    const taskDefinition = (memory: string, hardMemory?: number) => JSON.stringify({
+      cpu: "512",
+      memory,
+      containers: [{
+        name: "api",
+        ...(hardMemory === undefined ? {} : { memory: hardMemory }),
+      }],
+    });
+    const body = `
+PRODUCTION_PREFLIGHT_API_TASK_DEFINITION="schoolpilot-production-api-emergency:10"
+launch_safe_active_api_preflight
+`;
+
+    const accepted = runLibrary(body, {
+      activateEmergency: true,
+      taskDefinitionSnapshots: [taskDefinition("2048")],
+    });
+    assert.equal(accepted.status, 0, accepted.stderr);
+    assert.match(accepted.stdout, /Active API launch-safe posture verified/);
+    assert.equal(accepted.commands.length, 1);
+    assert.match(accepted.commands[0], /ecs describe-task-definition/);
+
+    for (const unsafe of [taskDefinition("1024"), taskDefinition("2048", 1024)]) {
+      const rejected = runLibrary(body, {
+        activateEmergency: true,
+        taskDefinitionSnapshots: [unsafe],
+      });
+      assert.notEqual(rejected.status, 0);
+      assert.match(rejected.stderr, /currently serving API.*512 CPU \/ 2048 MiB/);
+      assert.equal(rejected.commands.length, 1);
+    }
+
+    const defaultMode = runLibrary(body, {
+      activateEmergency: false,
+    });
+    assert.equal(defaultMode.status, 0, defaultMode.stderr);
+    assert.deepEqual(defaultMode.commands, []);
+  });
+
   it("runs the initial preflight before every Docker, ECR, migration, and ECS mutation", () => {
     const execution = deploySource.slice(libraryBoundary);
     const windowInvocation = execution.indexOf("\nproduction_backend_deploy_window_preflight\n");
     const invocation = execution.indexOf("\nproduction_backend_capacity_preflight\n");
+    const launchSafeInvocation = execution.indexOf("\nlaunch_safe_active_api_preflight\n");
     const mutationIndexes = [
       "docker build ",
       "docker login ",
@@ -216,8 +325,15 @@ describe("production backend deployment capacity guard", () => {
 
     assert.ok(windowInvocation >= 0, "deployment-window preflight should be invoked");
     assert.ok(invocation >= 0, "capacity preflight should be invoked");
+    assert.ok(launchSafeInvocation > invocation, "2048 MiB posture check should follow the stable-service snapshot");
     assert.ok(windowInvocation < Math.min(...mutationIndexes));
     assert.ok(invocation < Math.min(...mutationIndexes));
+    assert.ok(launchSafeInvocation < Math.min(...mutationIndexes));
+    assert.equal(
+      execution.match(/\n\s*launch_safe_active_api_preflight\n/g)?.length,
+      3,
+      "launch-safe posture should be checked before build, under the scaling hold, and before API rollout"
+    );
   });
 
   it("acquires the scaling hold before migration and restores only after both service wait paths", () => {

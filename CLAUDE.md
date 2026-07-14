@@ -677,6 +677,19 @@ Preferred path:
 ./scripts/deploy.sh --backend
 ```
 
+When production is intentionally retained on the launch-safe 512 CPU / 2048
+MiB API posture, use the reviewed backend-only mode instead:
+
+```bash
+./scripts/deploy.sh production --backend --activate-emergency
+```
+
+That mode keeps the prior 2048 MiB API serving while the deploy script builds
+and registers the new image. It then uses the newly registered, digest-matched
+2048 MiB revision for the migration task, API service update, and strict
+stability check. The default backend deploy remains unchanged and selects the
+standard API family.
+
 The deploy script requires a clean local `main` equal to `origin/main`, green
 latest GitHub Actions runs per workflow, authenticated AWS + GitHub CLIs, and a
 git-SHA image tag by default. A production backend deploy also fails closed
@@ -737,10 +750,11 @@ MSYS_NO_PATHCONV=1 aws ecs describe-services --cluster schoolpilot-production-cl
 # If runningCount=0 or rolloutState=FAILED, check task logs in CloudWatch
 ```
 
-If the API deployment OOMs, use the exact emergency ARN printed by that same
-backend deploy; do not reuse an emergency revision from a different image. The
-command below is an operator action and is not run automatically by the deploy
-script:
+If a standard API deployment OOMs, use the exact emergency ARN printed by that
+same backend deploy; do not reuse an emergency revision from a different image.
+The command below is an operator action and is not run automatically by the
+default deploy path. The reviewed `--activate-emergency` mode performs this
+selection as part of its guarded rollout instead:
 
 ```bash
 EMERGENCY_TASK_DEF_ARN="arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:<PRINTED_REVISION>"

@@ -13,9 +13,10 @@ deployment checks, snapshots, and cost checks must also pass.
   filesystem or cryptographic operation.
 - Use the committed AWS provider `5.100.0` lock file. Never run
   `terraform init -upgrade` during this rollout.
-- Deploy only the backend from a clean merged `main` with
-  `./scripts/deploy.sh production --backend`. Do not deploy the frontend or
-  package/upload the ClassPilot extension.
+- Deploy only the backend from a clean merged `main`. While the launch-safe
+  2048 MiB API posture is selected, use
+  `./scripts/deploy.sh production --backend --activate-emergency`. Do not deploy
+  the frontend or package/upload the ClassPilot extension.
 - Keep RDS and Redis private. Public IPv4 is only for outbound egress from the
   staged ECS API and worker tasks; the ALB remains the only inbound API path.
 - Keep Route 53 DNS, nameservers, CloudFront routing, the HTTPS `/health`
@@ -158,8 +159,13 @@ equal to `origin/main`. Wait for post-merge CI and Trivy.
 Capture the current API and worker task-definition ARNs before deploying. Run:
 
 ```bash
-./scripts/deploy.sh production --backend
+./scripts/deploy.sh production --backend --activate-emergency
 ```
+
+The reviewed flag keeps the current 2048 MiB API serving until a newly
+registered, digest-matched 2048 MiB revision is healthy. It binds that exact
+revision to the migration task, API service update, and strict stability check;
+the worker is updated to the same image digest at its existing 256/512 size.
 
 Do not use `--skip-wait` in production. The script fails closed unless the API
 is stable at `1/1` or `2/2` and the worker is stable at `1/1`. After the slow
@@ -175,10 +181,11 @@ state; its EXIT trap retries restoration after a failure.
 Require a successful migration task, the API at `1/1` or `2/2`, the worker at
 `1/1`, one completed deployment per service, the exact prior autoscaling state
 restored, a healthy ALB target, public `/health`, a current scheduler heartbeat,
-and clean startup logs. The deploy also registers—but does not select—a
-`schoolpilot-production-api-emergency` revision at
-`512 CPU / 2048 MiB`. Record its exact ARN and verify that its image digest
-matches the deployed API digest before any load test.
+and clean startup logs. In the reviewed `--activate-emergency` mode, the deploy
+registers and selects a new `schoolpilot-production-api-emergency` revision at
+`512 CPU / 2048 MiB`; the standard 1024 MiB revision remains unused. Record the
+active emergency ARN and verify that its image digest matches the worker digest
+before any load test.
 
 ## Synthetic fixture lifecycle
 

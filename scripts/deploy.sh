@@ -7,6 +7,8 @@
 #   ./scripts/deploy.sh                  # Deploy everything (backend + frontend)
 #   ./scripts/deploy.sh --backend        # Backend only (Docker → ECR → ECS)
 #   ./scripts/deploy.sh --frontend       # Frontend only (Vite build → S3 → CloudFront)
+#   ./scripts/deploy.sh production --backend --activate-emergency
+#                                       # Backend only; activate the newly registered 512/2048 API revision
 #   ./scripts/deploy.sh --skip-wait      # Non-production only; production refuses this flag
 #   ./scripts/deploy.sh production       # Explicit environment (default: production)
 #   ./scripts/deploy.sh --tag abc123     # Override default git-SHA image tag
@@ -19,15 +21,18 @@ ENV="production"
 DEPLOY_BACKEND=true
 DEPLOY_FRONTEND=true
 SKIP_WAIT=false
+ACTIVATE_EMERGENCY=false
 IMAGE_TAG=""
 EMERGENCY_TASK_DEF_ARN=""
 EMERGENCY_TASK_DEF_REVISION=""
+API_ROLLOUT_TASK_DEF=""
 WORKER_NEW_REV=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --backend)  DEPLOY_FRONTEND=false; shift ;;
     --frontend) DEPLOY_BACKEND=false; shift ;;
+    --activate-emergency) ACTIVATE_EMERGENCY=true; shift ;;
     --skip-wait) SKIP_WAIT=true; shift ;;
     --tag)      IMAGE_TAG="$2"; shift 2 ;;
     staging|production) ENV="$1"; shift ;;
@@ -59,6 +64,7 @@ PRODUCTION_SCALING_HOLD_ACTIVE=false
 PRODUCTION_SCALING_PRIOR_IN=""
 PRODUCTION_SCALING_PRIOR_OUT=""
 PRODUCTION_SCALING_PRIOR_SCHEDULED=""
+PRODUCTION_PREFLIGHT_API_TASK_DEFINITION=""
 
 # Colors (works in most terminals)
 RED='\033[0;31m'
@@ -119,6 +125,7 @@ validate_production_service_snapshot() {
   local api_seen=0
   local worker_seen=0
   local api_desired=""
+  local api_task_definition=""
 
   if [[ -n "$expected_api_ref" || -n "$expected_worker_ref" ]]; then
     if [[ -z "$expected_api_ref" || -z "$expected_worker_ref" ]] ||
@@ -163,6 +170,7 @@ validate_production_service_snapshot() {
       "$SERVICE")
         api_seen=$((api_seen + 1))
         api_desired="$desired"
+        api_task_definition="$normalized_service_task_definition"
         if [[ -n "$expected_api" && "$normalized_service_task_definition" != "$expected_api" ]]; then
           error "Production API completed an unexpected task definition (${normalized_service_task_definition}; expected ${expected_api}); refusing the backend deployment."
           return 1
@@ -196,6 +204,7 @@ validate_production_service_snapshot() {
   fi
 
   PRODUCTION_PREFLIGHT_API_DESIRED="$api_desired"
+  PRODUCTION_PREFLIGHT_API_TASK_DEFINITION="$api_task_definition"
 }
 
 production_backend_capacity_preflight() {
@@ -641,6 +650,58 @@ runtime_securestring_preflight() {
   fi
 }
 
+validate_emergency_activation_mode() {
+  if [[ "$ACTIVATE_EMERGENCY" != true ]]; then
+    return 0
+  fi
+
+  if [[ "$ENV" != "production" || "$DEPLOY_BACKEND" != true || "$DEPLOY_FRONTEND" != false ]]; then
+    error "--activate-emergency is allowed only with production --backend so no frontend or staging rollout can share the 2048 MiB cutover."
+    return 1
+  fi
+}
+
+launch_safe_active_api_preflight() {
+  if [[ "$ACTIVATE_EMERGENCY" != true ]]; then
+    return 0
+  fi
+
+  if [[ -z "$PRODUCTION_PREFLIGHT_API_TASK_DEFINITION" ]]; then
+    error "The launch-safe API preflight has no bound active task-definition reference."
+    return 1
+  fi
+
+  local active_task_posture_json
+  if ! active_task_posture_json=$(aws ecs describe-task-definition \
+    --task-definition "$PRODUCTION_PREFLIGHT_API_TASK_DEFINITION" \
+    --query 'taskDefinition.{cpu:cpu,memory:memory,containers:containerDefinitions[?name==`api`].{name:name,memory:memory}}' \
+    --output json \
+    --region "$REGION" \
+    --no-cli-pager); then
+    error "Could not read the active API task definition for the launch-safe 2048 MiB preflight."
+    return 1
+  fi
+
+  if ! ACTIVE_TASK_POSTURE_JSON="$active_task_posture_json" node -e '
+    const task = JSON.parse(process.env.ACTIVE_TASK_POSTURE_JSON || "null");
+    const containers = Array.isArray(task?.containers) ? task.containers : [];
+    const container = containers[0];
+    const hardMemory = container?.memory;
+    const hardMemoryNumber = Number(hardMemory);
+    const hardMemoryInvalid = hardMemory !== undefined && hardMemory !== null &&
+      (!Number.isFinite(hardMemoryNumber) || hardMemoryNumber < 2048);
+    if (String(task?.cpu) !== "512" || String(task?.memory) !== "2048" ||
+        containers.length !== 1 || hardMemoryInvalid) {
+      process.exit(1);
+    }
+  '; then
+    error "--activate-emergency requires the currently serving API to be exactly 512 CPU / 2048 MiB with no lower container hard-memory ceiling."
+    return 1
+  fi
+
+  success "Active API launch-safe posture verified: ${PRODUCTION_PREFLIGHT_API_TASK_DEFINITION} (512 CPU / 2048 MiB)"
+}
+
 # --- Preflight checks ---
 echo ""
 echo "=========================================="
@@ -653,7 +714,12 @@ info "S3:         $BUCKET"
 info "CloudFront: $CF_DIST_ID"
 info "Backend:    $DEPLOY_BACKEND"
 info "Frontend:   $DEPLOY_FRONTEND"
+info "2048 API:   $ACTIVATE_EMERGENCY"
 echo ""
+
+if ! validate_emergency_activation_mode; then
+  exit 1
+fi
 
 # Verify AWS credentials
 if ! aws sts get-caller-identity --region "$REGION" > /dev/null 2>&1; then
@@ -743,6 +809,7 @@ info "Image tag:   $IMAGE_TAG"
 # fails closed if ECS cannot provide one unambiguous two-service snapshot.
 production_backend_deploy_window_preflight
 production_backend_capacity_preflight
+launch_safe_active_api_preflight
 
 # ============================================================================
 # BACKEND DEPLOY
@@ -951,6 +1018,12 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
   success "OOM emergency target registered but not deployed: ${EMERGENCY_TASK_DEF_ARN} (revision ${EMERGENCY_TASK_DEF_REVISION})"
   info "OOM recovery command: aws ecs update-service --cluster ${CLUSTER} --service ${SERVICE} --task-definition ${EMERGENCY_TASK_DEF_ARN} --region ${REGION}"
 
+  API_ROLLOUT_TASK_DEF="${NAME}-api:${NEW_REV}"
+  if [[ "$ACTIVATE_EMERGENCY" == true ]]; then
+    API_ROLLOUT_TASK_DEF="$EMERGENCY_TASK_DEF_ARN"
+    success "Launch-safe API rollout selected: ${API_ROLLOUT_TASK_DEF} (512 CPU / 2048 MiB)"
+  fi
+
   # Step 5: Run migrations as an explicit one-off task before any service rollout.
   info "Resolving ECS network configuration for migration task..."
   aws ecs describe-services \
@@ -975,12 +1048,13 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
   # keep it through the one-off migration and both ECS service deployments.
   # The helper rechecks API/worker stability after scaling is suspended.
   acquire_production_scaling_hold
+  launch_safe_active_api_preflight
 
-  info "Running startup migrations with ${NAME}-api:${NEW_REV}..."
+  info "Running startup migrations with ${API_ROLLOUT_TASK_DEF}..."
   aws ecs run-task \
     --cluster "$CLUSTER" \
     --launch-type FARGATE \
-    --task-definition "${NAME}-api:${NEW_REV}" \
+    --task-definition "$API_ROLLOUT_TASK_DEF" \
     --network-configuration "$NETWORK_CONFIG" \
     --overrides '{"containerOverrides":[{"name":"api","environment":[{"name":"RUN_MIGRATIONS_ONLY","value":"true"},{"name":"SCHEDULER_ENABLED","value":"false"}]}]}' \
     --region "$REGION" > .migration-task.json
@@ -1024,11 +1098,12 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
   # Step 6: Point the API service at the new revision
   production_backend_deploy_window_preflight "before service rollout"
   production_backend_capacity_preflight "after migration under the autoscaling hold"
-  info "Updating ECS service to revision ${NEW_REV}..."
+  launch_safe_active_api_preflight
+  info "Updating ECS API service to ${API_ROLLOUT_TASK_DEF}..."
   aws ecs update-service \
     --cluster "$CLUSTER" \
     --service "$SERVICE" \
-    --task-definition "${NAME}-api:${NEW_REV}" \
+    --task-definition "$API_ROLLOUT_TASK_DEF" \
     --region "$REGION" \
     --query 'service.{status:status,desired:desiredCount,running:runningCount,taskDef:taskDefinition}' \
     --output table
@@ -1140,7 +1215,7 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
   # scaling remains in its captured state, and the guarded deployment window
   # keeps the 05:45/10:00 actions away from the 200% rollout.
   wait_for_production_backend_strict_stability \
-    "${NAME}-api:${NEW_REV}" \
+    "$API_ROLLOUT_TASK_DEF" \
     "${WORKER_SERVICE}:${WORKER_NEW_REV}"
 
   if ! restore_production_scaling_hold; then
@@ -1220,7 +1295,11 @@ success "All done! Deployment summary:"
 echo "=========================================="
 [[ "$DEPLOY_BACKEND" == true ]]  && echo "  API:      ECS service updated (image: ${IMAGE_TAG})"
 if [[ "$DEPLOY_BACKEND" == true && -n "$EMERGENCY_TASK_DEF_ARN" ]]; then
-  echo "  OOM target: ${EMERGENCY_TASK_DEF_ARN} (revision ${EMERGENCY_TASK_DEF_REVISION}, 512 CPU / 2048 MiB; not deployed)"
+  if [[ "$ACTIVATE_EMERGENCY" == true ]]; then
+    echo "  API target: ${EMERGENCY_TASK_DEF_ARN} (revision ${EMERGENCY_TASK_DEF_REVISION}, 512 CPU / 2048 MiB; active)"
+  else
+    echo "  OOM target: ${EMERGENCY_TASK_DEF_ARN} (revision ${EMERGENCY_TASK_DEF_REVISION}, 512 CPU / 2048 MiB; not deployed)"
+  fi
 fi
 [[ "$DEPLOY_FRONTEND" == true ]] && echo "  Frontend: S3 synced, CloudFront invalidated"
 echo ""
