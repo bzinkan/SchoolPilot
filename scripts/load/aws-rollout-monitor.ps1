@@ -2077,6 +2077,12 @@ function Get-ApprovedActionForFailure {
         }
         return [ordered]@{ action = "Application"; priority = 84 }
     }
+    if ($Failure -match '^load:.*valid-http-(?:3\d\d|4\d\d)$') {
+        # A generic valid-traffic rejection restores the application by itself,
+        # but an independently confirmed active-phase resource breach must win
+        # so the infrastructure phase is not left in its failed posture.
+        return [ordered]@{ action = "Application"; priority = 79 }
+    }
 
     $phaseAction = switch ($Config.Phase) {
         "Application" { "Application" }

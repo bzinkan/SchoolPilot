@@ -2080,6 +2080,21 @@ describe("ClassPilot load harness safety", () => {
     assert.ok(exposed.summary.counters.crossSchoolHttpResponses >= 1);
     assert.equal(exposed.summary.counters.tenantIsolationProbeIndeterminate, 0);
     assert.notEqual(exposed.summary.run.shutdownReason, "duration");
+
+    for (const rejectedStatus of [401, 403]) {
+      const rejected = await runProbeCase(rejectedStatus, `rejected-${rejectedStatus}`);
+      assert.equal(rejected.result.status, 0, rejected.result.stderr);
+      assert.equal(rejected.summary.fatalGate, null);
+      assert.equal(rejected.summary.counters.tenantIsolationProbePassed, 0);
+      assert.equal(
+        rejected.summary.counters.tenantIsolationProbeFailed,
+        rejected.summary.counters.tenantIsolationProbeAttempts
+      );
+      assert.equal(rejected.summary.counters.tenantIsolationProbeIndeterminate, 0);
+      assert.equal(rejected.summary.counters.http4xx, 0);
+      assert.equal(rejected.summary.statusCodes[String(rejectedStatus)], undefined);
+      assert.equal(rejected.summary.run.shutdownReason, "duration");
+    }
   });
 
   it("rejects an enforced run with an outstanding reconnect or unauthenticated final socket", async () => {
@@ -2173,8 +2188,8 @@ describe("ClassPilot load harness safety", () => {
     }
   });
 
-  it("stops immediately and flushes fatal evidence on valid 403 and 429 responses", async () => {
-    for (const status of [403, 429]) {
+  it("stops immediately and flushes fatal evidence on valid redirects and 4xx responses", async () => {
+    for (const status of [302, 401, 403, 404, 429]) {
       const server = createServer((_request, response) => {
         response.writeHead(status, { "content-type": "application/json", connection: "close" });
         response.end(JSON.stringify({ error: "deliberately rejected" }));

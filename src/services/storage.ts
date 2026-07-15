@@ -3145,7 +3145,7 @@ export async function updateHeartbeatClassification(
 export async function getHeartbeatsByDevice(
   schoolId: string,
   deviceId: string,
-  limit = 50,
+  limit = 10,
   authorizedStudentIds?: string[] | null
 ): Promise<Heartbeat[]> {
   if (authorizedStudentIds?.length === 0) return [];

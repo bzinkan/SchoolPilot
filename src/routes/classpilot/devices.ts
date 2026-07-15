@@ -1965,7 +1965,10 @@ router.get("/heartbeats", ...staffAuth, async (req, res, next) => {
 router.get("/heartbeats/:deviceId", ...tileReadAuth, async (req, res, next) => {
   try {
     const deviceId = param(req, "deviceId");
-    const limit = parseInt(req.query.limit as string) || 50;
+    // Live tiles render only the ten most recent samples. Keep explicit limits
+    // available for callers that need them without making every 30-second tile
+    // poll materialize fifty full heartbeat rows from an aged table.
+    const limit = parseInt(req.query.limit as string) || 10;
     const startTime = req.query.startTime as string | undefined;
     const endTime = req.query.endTime as string | undefined;
     const authorization = await withAuthorizedTileDevice(

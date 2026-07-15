@@ -1680,7 +1680,10 @@ async function request(path, {
       signal: controller.signal,
     });
     status = response.status;
-    if (countWorkload && (status === 403 || status === 429)) {
+    // Any redirect or client rejection of valid workload traffic invalidates
+    // the launch gate immediately. Tenant-isolation probes are deliberately
+    // excluded via countWorkload=false and retain their exact-status contract.
+    if (countWorkload && status >= 300 && status < 500) {
       triggerFatalGate(`valid-http-${status}`, { status, kind });
     }
     const inspectJson = parseJson || Boolean(expectedSchoolId) || kind === "screenshotGet" || Boolean(endpointClass);
