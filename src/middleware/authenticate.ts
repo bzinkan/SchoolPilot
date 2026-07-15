@@ -21,6 +21,67 @@ function loadUserById(userId: string): Promise<typeof users.$inferSelect | undef
   });
 }
 
+const POSTGRES_SQLSTATE = /^[0-9A-Z]{5}$/;
+const SAFE_NODE_OPERATIONAL_ERROR_CODES = new Set([
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "EPIPE",
+  "ETIMEDOUT",
+]);
+
+function safeOperationalErrorCode(error: unknown): string | undefined {
+  for (const candidate of [error, (error as { cause?: unknown } | null)?.cause]) {
+    const code = (candidate as { code?: unknown } | null)?.code;
+    if (
+      typeof code === "string" &&
+      (POSTGRES_SQLSTATE.test(code) || SAFE_NODE_OPERATIONAL_ERROR_CODES.has(code))
+    ) {
+      return code;
+    }
+  }
+  return undefined;
+}
+
+export function authenticationServiceError(error: unknown): Error {
+  const safe = new Error("Authentication service unavailable") as Error & {
+    code?: string;
+    expose?: boolean;
+    status?: number;
+  };
+  safe.name = "AuthenticationServiceError";
+  safe.code = safeOperationalErrorCode(error);
+  safe.expose = true;
+  safe.status = 503;
+  return safe;
+}
+
+function logCredentialFailure(
+  message: string,
+  error: unknown,
+  requestId?: string
+): void {
+  console.warn(`[auth] ${message}`, {
+    requestId: requestId ?? "n/a",
+    name: error instanceof Error ? error.name : "UnknownError",
+  });
+}
+
+function logAuthenticationServiceFailure(
+  message: string,
+  error: unknown,
+  requestId?: string
+): Error {
+  const safe = authenticationServiceError(error) as Error & { code?: string };
+  console.error(`[auth] ${message}`, {
+    requestId: requestId ?? "n/a",
+    name: safe.name,
+    code: safe.code,
+  });
+  return safe;
+}
+
 /**
  * Dual authentication middleware.
  * Checks Bearer JWT first (explicit auth takes priority), then falls back to
@@ -39,8 +100,11 @@ export const authenticate: RequestHandler = async (req, res, next) => {
       }
       return res.status(401).json({ error: "Authentication required" });
     } catch (err) {
-      console.error("[auth] Impersonation session lookup failed:", err);
-      return next(err);
+      return next(logAuthenticationServiceFailure(
+        "Impersonation session lookup failed",
+        err,
+        req.requestId
+      ));
     }
   }
 
@@ -49,18 +113,34 @@ export const authenticate: RequestHandler = async (req, res, next) => {
   if (authHeader?.startsWith("Bearer ")) {
     const token = authHeader.split(" ")[1];
     if (token) {
+      let payload;
       try {
-        const payload = verifyUserToken(token);
-        const user = await loadUserById(payload.userId);
-
-        if (user) {
-          req.authUser = user;
-          req.authMethod = "jwt";
-          req.jwtPayload = payload;
-          return next();
-        }
+        payload = verifyUserToken(token);
       } catch (err) {
-        console.error("[auth] JWT verification failed, falling through to session:", err);
+        logCredentialFailure(
+          "JWT verification failed; falling through to session",
+          err,
+          req.requestId
+        );
+      }
+
+      if (payload) {
+        try {
+          const user = await loadUserById(payload.userId);
+
+          if (user) {
+            req.authUser = user;
+            req.authMethod = "jwt";
+            req.jwtPayload = payload;
+            return next();
+          }
+        } catch (err) {
+          return next(logAuthenticationServiceFailure(
+            "JWT user lookup failed",
+            err,
+            req.requestId
+          ));
+        }
       }
     }
   }
@@ -76,7 +156,11 @@ export const authenticate: RequestHandler = async (req, res, next) => {
         return next();
       }
     } catch (err) {
-      console.error("[auth] Session lookup failed:", err);
+      return next(logAuthenticationServiceFailure(
+        "Session lookup failed",
+        err,
+        req.requestId
+      ));
     }
   }
 
@@ -97,8 +181,11 @@ export const optionalAuth: RequestHandler = async (req, _res, next) => {
       }
       return next();
     } catch (err) {
-      console.error("[auth] Optional impersonation session lookup failed:", err);
-      return next(err);
+      return next(logAuthenticationServiceFailure(
+        "Optional impersonation session lookup failed",
+        err,
+        req.requestId
+      ));
     }
   }
 
@@ -107,17 +194,33 @@ export const optionalAuth: RequestHandler = async (req, _res, next) => {
   if (authHeader?.startsWith("Bearer ")) {
     const token = authHeader.split(" ")[1];
     if (token) {
+      let payload;
       try {
-        const payload = verifyUserToken(token);
-        const user = await loadUserById(payload.userId);
-        if (user) {
-          req.authUser = user;
-          req.authMethod = "jwt";
-          req.jwtPayload = payload;
-          return next();
-        }
+        payload = verifyUserToken(token);
       } catch (err) {
-        console.error("[auth] Optional JWT verification failed:", err);
+        logCredentialFailure(
+          "Optional JWT verification failed",
+          err,
+          req.requestId
+        );
+      }
+
+      if (payload) {
+        try {
+          const user = await loadUserById(payload.userId);
+          if (user) {
+            req.authUser = user;
+            req.authMethod = "jwt";
+            req.jwtPayload = payload;
+            return next();
+          }
+        } catch (err) {
+          return next(logAuthenticationServiceFailure(
+            "Optional JWT user lookup failed",
+            err,
+            req.requestId
+          ));
+        }
       }
     }
   }
@@ -130,7 +233,11 @@ export const optionalAuth: RequestHandler = async (req, _res, next) => {
         req.authMethod = "session";
       }
     } catch (err) {
-      console.error("[auth] Optional session lookup failed:", err);
+      return next(logAuthenticationServiceFailure(
+        "Optional session lookup failed",
+        err,
+        req.requestId
+      ));
     }
   }
   return next();

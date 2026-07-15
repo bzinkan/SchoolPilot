@@ -14,6 +14,10 @@ import {
   requireDeviceAuth,
   requireDeviceAuthWithoutTenant,
 } from "../../middleware/requireDeviceAuth.js";
+import {
+  classPilotTileAdmission,
+  releaseClassPilotTileAdmission,
+} from "../../middleware/classpilotTileAdmission.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import {
   getDeviceById,
@@ -23,7 +27,7 @@ import {
   createDevice,
   updateDevice,
   deleteDevice,
-  createHeartbeat,
+  createHeartbeatAndRefreshPresence,
   updateHeartbeatClassification,
   getHeartbeatsByDevice,
   getHeartbeatsByDeviceInRange,
@@ -31,10 +35,10 @@ import {
   getStudentById,
   getStudentsBySchool,
   createStudent,
-  touchStudentSession,
   resolveSchoolForStudent,
   getSchoolById,
   getSchoolBySlug,
+  getHeartbeatTrackingSettingsForSchool,
   getSettingsForSchool,
   updateEnrollmentSettings,
   getStudentsForDevice,
@@ -51,7 +55,11 @@ import {
   endStudentSession,
 } from "../../services/storage.js";
 import { sendSafetyAlertEmail } from "../../services/email.js";
-import { verifyStudentToken } from "../../services/deviceJwt.js";
+import {
+  InvalidTokenError,
+  TokenExpiredError,
+  verifyStudentToken,
+} from "../../services/deviceJwt.js";
 import { comparePassword } from "../../util/password.js";
 import { updateDeviceStatus, updateDeviceClassification, removeDeviceStatus } from "../../realtime/student-statuses.js";
 import {
@@ -75,6 +83,7 @@ import {
   enrollmentKeyFromRequest,
   issueStudentDeviceSessionToken,
   setClassPilotNoStore,
+  studentAuthenticationServiceError,
   validateEnrollmentKeyForSettings,
   verifyActiveStudentTokenSession,
 } from "../../services/classpilotStudentAuth.js";
@@ -278,6 +287,7 @@ const staffAuth = [
 // authorization first, then hold an RLS client only around the indexed tenant
 // query inside the handler. Never use this chain without a narrow tenant scope.
 const tileReadAuth = [
+  classPilotTileAdmission,
   authenticate,
   requireSchoolContextWithoutTenantBinding,
   requireRole("admin", "school_admin", "teacher", "office_staff"),
@@ -711,26 +721,45 @@ router.post("/school/status", extensionConfigLimiter, async (req, res, next) => 
 
     // Token-based lookup (authenticated): return full status
     if (studentToken) {
+      let payload;
       try {
-        const payload = verifyStudentToken(studentToken);
-        const hasActiveSession = await runWithTenantContext(
-          { schoolId: payload.schoolId },
-          () => verifyActiveStudentTokenSession(payload)
-        );
-        if (!hasActiveSession) {
-          return res.status(401).json({ error: "Student session is no longer active" });
+        payload = verifyStudentToken(studentToken);
+      } catch (error) {
+        if (
+          !(error instanceof InvalidTokenError) &&
+          !(error instanceof TokenExpiredError)
+        ) {
+          return next(studentAuthenticationServiceError(error));
         }
-        const school = await getSchoolById(payload.schoolId);
-        if (school) {
-          return res.json({
-            schoolId: school.id,
-            schoolActive: school.status === "active",
-            planStatus: school.planStatus || "active",
-            status: school.status,
-            schoolSessionVersion: 1,
-          });
+        // Invalid or expired tokens may use the deliberately minimal email
+        // lookup below when the extension supplies studentEmail.
+      }
+
+      if (payload) {
+        try {
+          const hasActiveSession = await runWithTenantContext(
+            { schoolId: payload.schoolId },
+            () => verifyActiveStudentTokenSession(payload)
+          );
+          if (!hasActiveSession) {
+            return res.status(401).json({ error: "Student session is no longer active" });
+          }
+          const school = await getSchoolById(payload.schoolId);
+          if (school) {
+            return res.json({
+              schoolId: school.id,
+              schoolActive: school.status === "active",
+              planStatus: school.planStatus || "active",
+              status: school.status,
+              schoolSessionVersion: 1,
+            });
+          }
+        } catch (error) {
+          // A verified token followed by a database/pool failure is a service
+          // outage, never an invalid credential or unauthenticated fallback.
+          return next(studentAuthenticationServiceError(error));
         }
-      } catch { /* fall through to email lookup */ }
+      }
     }
 
     if (!studentEmail) {
@@ -1461,7 +1490,7 @@ router.post("/extension/runtime-error", requireDeviceAuth, extensionTelemetryLim
 // ============================================================================
 
 // POST /api/classpilot/device/heartbeat - Device sends heartbeat (device JWT auth)
-router.post("/device/heartbeat", requireDeviceAuth, deviceHeartbeatLimiter, async (req, res, next) => {
+router.post("/device/heartbeat", requireDeviceAuthWithoutTenant, deviceHeartbeatLimiter, async (req, res, next) => {
   try {
     const {
       activeTabUrl, activeTabTitle, visibilityState, screenLocked,
@@ -1483,38 +1512,15 @@ router.post("/device/heartbeat", requireDeviceAuth, deviceHeartbeatLimiter, asyn
     }
     deviceLastHeartbeat.set(deviceId, now);
 
-    // --- ClassPilot license check (cached — saves 1 DB query per heartbeat) ---
-    if (!(await hasCachedClassPilotLicense(schoolId))) {
-      return res.status(403).json({ error: "school_not_entitled", planStatus: "inactive" });
-    }
-
-    // --- Student existence check ---
-    // If the student was deleted (e.g., duplicate cleanup migration), return 401
-    // to force the extension to re-register and get a JWT pointing to the surviving record.
-    const student = await getStudentById(studentId);
-    if (!student) {
-      return res.status(401).json({ error: "Student not found — re-register required" });
-    }
-    const studentEmail = tokenStudentEmail || student.email || "";
-
-    // --- Tracking window enforcement (item #2) ---
-    const schoolSettings = await getSettingsForSchool(schoolId);
-    if (schoolSettings && !isWithinTrackingWindow(schoolSettings)) {
-      const afterMode = schoolSettings.afterHoursMode || "off";
-      if (afterMode === "off") {
-        return res.status(204).send();
-      }
-      // "limited" or "full" mode: continue processing
-    }
-
-    // --- Get school for planStatus (item #3) — cached to reduce DB queries ---
-    const school = await getCachedSchool(schoolId);
-    if (!school || school.status !== "active") {
-      return res.status(402).json({ planStatus: "inactive" });
-    }
-
-    const activeSession = res.locals.activeStudentSession as { studentId?: string } | undefined;
-    if (!activeSession || activeSession.studentId !== studentId) {
+    // Active-session authentication already inner-joins the student and device
+    // inside this school. Reuse its email projection for legacy tokens that do
+    // not carry studentEmail instead of repeating a student lookup.
+    const activeSession = res.locals.activeStudentSession as {
+      studentId?: string;
+      studentEmail?: string | null;
+    } | undefined;
+    const studentEmail = tokenStudentEmail || activeSession?.studentEmail || "";
+    const rejectReplacedSession = async () => {
       removeDeviceStatus(schoolId, deviceId);
       const signOutUpdate = {
         type: "student-signed-out",
@@ -1531,33 +1537,75 @@ router.post("/device/heartbeat", requireDeviceAuth, deviceHeartbeatLimiter, asyn
         error: "student_session_replaced",
         message: "This student is signed in on another Chromebook.",
       });
+    };
+    if (!activeSession || activeSession.studentId !== studentId) {
+      return rejectReplacedSession();
     }
 
-    // --- Save heartbeat to DB (item #1 — capture all fields) ---
-    const heartbeat = await createHeartbeat({
-      deviceId,
-      studentId,
-      studentEmail,
-      schoolId,
-      activeTabTitle: activeTabTitle || "Unknown",
-      activeTabUrl: activeTabUrl || null,
-      favicon: favicon || null,
-      screenLocked: screenLocked || false,
-      flightPathActive: flightPathActive || false,
-      activeFlightPathName: activeFlightPathName || null,
-      isSharing: isScreenSharing || isScreenRecording || false,
-      cameraActive: cameraActive || false,
-      extensionVersion: extensionVersion || null,
-      chromeVersion: chromeVersion || null,
-      screenshotHealth: screenshotHealth || null,
+    // Keep the RLS connection only around the short database section. Redis,
+    // WebSocket fan-out, classification, and response serialization must not
+    // occupy one of the task's 18 PostgreSQL pool slots.
+    const heartbeatDbResult = await runWithTenantContext({ schoolId }, async () => {
+      // --- ClassPilot license check (cached — saves 1 DB query per heartbeat) ---
+      if (!(await hasCachedClassPilotLicense(schoolId))) {
+        return { outcome: "unlicensed" } as const;
+      }
+
+      // Cache only the non-secret tracking projection. Enrollment and other
+      // security settings are always read through the uncached full-row helper.
+      const trackingSettings = await getHeartbeatTrackingSettingsForSchool(schoolId);
+      if (trackingSettings && !isWithinTrackingWindow(trackingSettings)) {
+        const afterMode = trackingSettings.afterHoursMode || "off";
+        if (afterMode === "off") {
+          return { outcome: "outside_tracking_window" } as const;
+        }
+        // "limited" or "full" mode: continue processing.
+      }
+
+      // --- Get school for planStatus (item #3) — cached to reduce DB queries ---
+      const school = await getCachedSchool(schoolId);
+      if (!school || school.status !== "active") {
+        return { outcome: "inactive_school" } as const;
+      }
+
+      // --- Save heartbeat and throttled presence in one DB round trip ---
+      const heartbeat = await createHeartbeatAndRefreshPresence({
+        deviceId,
+        studentId,
+        studentEmail,
+        schoolId,
+        activeTabTitle: activeTabTitle || "Unknown",
+        activeTabUrl: activeTabUrl || null,
+        favicon: favicon || null,
+        screenLocked: screenLocked || false,
+        flightPathActive: flightPathActive || false,
+        activeFlightPathName: activeFlightPathName || null,
+        isSharing: isScreenSharing || isScreenRecording || false,
+        cameraActive: cameraActive || false,
+        extensionVersion,
+        chromeVersion,
+        screenshotHealth,
+      }, res.locals.studentSessionId as string);
+      if (!heartbeat) {
+        return { outcome: "inactive_session" } as const;
+      }
+
+      return { outcome: "recorded", heartbeat, school } as const;
     });
 
-    const deviceUpdate: Record<string, unknown> = { lastSeenAt: new Date() };
-    if (extensionVersion !== undefined) deviceUpdate.extensionVersion = extensionVersion || null;
-    if (chromeVersion !== undefined) deviceUpdate.chromeVersion = chromeVersion || null;
-    if (screenshotHealth !== undefined) deviceUpdate.lastScreenshotHealth = screenshotHealth || null;
-    void updateDevice(deviceId, deviceUpdate).catch(() => {});
-    void touchStudentSession(studentId, deviceId).catch(() => {});
+    if (heartbeatDbResult.outcome === "unlicensed") {
+      return res.status(403).json({ error: "school_not_entitled", planStatus: "inactive" });
+    }
+    if (heartbeatDbResult.outcome === "outside_tracking_window") {
+      return res.status(204).send();
+    }
+    if (heartbeatDbResult.outcome === "inactive_school") {
+      return res.status(402).json({ planStatus: "inactive" });
+    }
+    if (heartbeatDbResult.outcome === "inactive_session") {
+      return rejectReplacedSession();
+    }
+    const { heartbeat, school } = heartbeatDbResult;
 
     // --- Update in-memory real-time status ---
     updateDeviceStatus({
@@ -1711,10 +1759,14 @@ router.post("/device/heartbeat", requireDeviceAuth, deviceHeartbeatLimiter, asyn
           void publishWS({ kind: "staff", schoolId }, alert);
 
           // Send email to school admins if enabled
-          if (schoolSettings?.aiSafetyEmailsEnabled !== false) {
-            runWithTenantContext({ schoolId }, async () =>
-              addCentralEmailRecipientForSchool(schoolId, await getAdminEmailsBySchool(schoolId))
-            ).then((recipients) => {
+          runWithTenantContext({ schoolId }, async () => {
+            const freshSettings = await getSettingsForSchool(schoolId);
+            if (freshSettings?.aiSafetyEmailsEnabled === false) return [];
+            return addCentralEmailRecipientForSchool(
+              schoolId,
+              await getAdminEmailsBySchool(schoolId)
+            );
+          }).then((recipients) => {
               if (recipients.length > 0) {
                 void sendSafetyAlertEmail({
                   recipients,
@@ -1725,10 +1777,9 @@ router.post("/device/heartbeat", requireDeviceAuth, deviceHeartbeatLimiter, asyn
                   schoolName: school?.name || "Your School",
                 });
               }
-            }).catch((err) => {
-              console.error("[Safety] Failed to send alert emails:", err);
-            });
-          }
+          }).catch((err) => {
+            console.error("[Safety] Failed to send alert emails:", err);
+          });
 
           // AI handles unsafe content in real-time (tab close + safety alert above).
           // Domains are NOT auto-added to the school blocklist — only admin-entered domains go there.
@@ -1744,7 +1795,10 @@ router.post("/device/heartbeat", requireDeviceAuth, deviceHeartbeatLimiter, asyn
     const isFirstHeartbeat = !deliveredMessages.has(deviceId);
     if (isFirstHeartbeat) {
       try {
-        const recent = await getRecentMessagesForStudent(studentId, 5);
+        const recent = await runWithTenantContext(
+          { schoolId },
+          () => getRecentMessagesForStudent(studentId, 5)
+        );
         if (recent.length > 0) {
           const delivered = new Set<string>();
           deliveredMessages.set(deviceId, delivered);
@@ -1825,6 +1879,9 @@ router.get("/device/screenshot/:deviceId", ...tileReadAuth, async (req, res, nex
       "live",
       (device) => device.schoolId
     );
+    // The admission permit protects authentication and the bounded database
+    // scope only; Redis retrieval and JSON serialization do not consume it.
+    releaseClassPilotTileAdmission(res);
     if (authorization.status === "not-found") {
       return res.status(404).json({ error: "Device not found" });
     }
@@ -2007,6 +2064,7 @@ router.get("/heartbeats/:deviceId", ...tileReadAuth, async (req, res, next) => {
         };
       }
     );
+    releaseClassPilotTileAdmission(res);
     if (authorization.status === "not-found") {
       return res.status(404).json({ error: "Device not found" });
     }

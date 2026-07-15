@@ -1468,6 +1468,84 @@ export async function runStartupMigrations(): Promise<void> {
     }
   }
 
+  // Teacher tiles authorize by device id before loading history or screenshots.
+  // The existing unique index begins with student_id and cannot serve that lookup.
+  // Keep this migration online and fail closed: a failed concurrent build can
+  // leave an invalid index with the same name, and IF NOT EXISTS alone would
+  // otherwise mistake that unusable artifact for a completed safety fix.
+  const studentDeviceIndexLock = "schoolpilot:student_devices_device_student_idx";
+  const indexClient = await pool.connect();
+  type StudentDeviceIndexState = {
+    access_method: string;
+    indisready: boolean;
+    indisunique: boolean;
+    indisvalid: boolean;
+    is_plain: boolean;
+    key_columns: string[];
+    table_name: string;
+  };
+  const inspectStudentDeviceIndex = () =>
+    indexClient.query<StudentDeviceIndexState>(`
+      SELECT
+        access_method.amname AS access_method,
+        i.indisready,
+        i.indisunique,
+        i.indisvalid,
+        i.indpred IS NULL AND i.indexprs IS NULL AS is_plain,
+        table_class.relname AS table_name,
+        ARRAY(
+          SELECT attribute.attname::text
+          FROM unnest(i.indkey::smallint[]) WITH ORDINALITY AS key_column(attnum, position)
+          INNER JOIN pg_attribute AS attribute
+            ON attribute.attrelid = i.indrelid
+           AND attribute.attnum = key_column.attnum
+          WHERE key_column.position <= i.indnkeyatts
+          ORDER BY key_column.position
+        ) AS key_columns
+      FROM pg_class AS idx
+      INNER JOIN pg_index AS i ON i.indexrelid = idx.oid
+      INNER JOIN pg_class AS table_class ON table_class.oid = i.indrelid
+      INNER JOIN pg_am AS access_method ON access_method.oid = idx.relam
+      INNER JOIN pg_namespace AS n ON n.oid = idx.relnamespace
+      WHERE n.nspname = current_schema()
+        AND idx.relname = 'student_devices_device_student_idx'
+    `);
+  const isExpectedStudentDeviceIndex = (
+    state: StudentDeviceIndexState | undefined
+  ): boolean =>
+    state?.indisready === true &&
+    state.indisvalid === true &&
+    state.indisunique === false &&
+    state.is_plain === true &&
+    state.access_method === "btree" &&
+    state.table_name === "student_devices" &&
+    state.key_columns.length === 2 &&
+    state.key_columns[0] === "device_id" &&
+    state.key_columns[1] === "student_id";
+  try {
+    await indexClient.query("SELECT pg_advisory_lock(hashtext($1))", [studentDeviceIndexLock]);
+    const existing = await inspectStudentDeviceIndex();
+    if (existing.rows[0] && !isExpectedStudentDeviceIndex(existing.rows[0])) {
+      await indexClient.query(
+        "DROP INDEX CONCURRENTLY IF EXISTS student_devices_device_student_idx"
+      );
+    }
+    await indexClient.query(`CREATE INDEX CONCURRENTLY IF NOT EXISTS student_devices_device_student_idx ON student_devices (device_id, student_id)`);
+    const verified = await inspectStudentDeviceIndex();
+    if (!isExpectedStudentDeviceIndex(verified.rows[0])) {
+      throw new Error("student_devices device index is missing or invalid after concurrent creation");
+    }
+    console.log("[migration] student_devices (device_id, student_id) index ready");
+  } catch (err) {
+    console.error("[migration] student_devices device index failed:", (err as Error).message);
+    throw err;
+  } finally {
+    await indexClient
+      .query("SELECT pg_advisory_unlock(hashtext($1))", [studentDeviceIndexLock])
+      .catch(() => {});
+    indexClient.release();
+  }
+
   // Backfill emailLc for students that have email but emailLc is NULL
   try {
     const { rowCount } = await schedulerPool.query(`UPDATE students SET email_lc = LOWER(email) WHERE email IS NOT NULL AND email_lc IS NULL`);

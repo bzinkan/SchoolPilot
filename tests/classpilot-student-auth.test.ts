@@ -31,6 +31,7 @@ function lookupResult(
   return {
     studentSchoolId: overrides.studentSchoolId ?? payload.schoolId,
     deviceSchoolId: overrides.deviceSchoolId ?? payload.schoolId,
+    studentEmail: "student-a@example.invalid",
     session: {
       id: payload.sessionId,
       studentId: payload.studentId,
@@ -69,6 +70,11 @@ describe("active ClassPilot student token session resolver", () => {
     const sessions = await Promise.all(callers);
     assert.equal(sessions.length, 100);
     assert.ok(sessions.every((session) => session?.id === payload.sessionId));
+    assert.ok(
+      sessions.every(
+        (session) => session?.studentEmail === "student-a@example.invalid"
+      )
+    );
   });
 
   it("never coalesces different signed school, student, device, or session identities", async () => {
@@ -168,11 +174,16 @@ describe("active ClassPilot student token session resolver", () => {
         params: ["school-secret", "device-secret"],
       }
     );
-    const safe = studentAuthenticationServiceError(unsafe) as NodeJS.ErrnoException;
+    const safe = studentAuthenticationServiceError(unsafe) as NodeJS.ErrnoException & {
+      expose?: boolean;
+      status?: number;
+    };
 
     assert.equal(safe.name, "StudentAuthenticationServiceError");
     assert.equal(safe.message, "Student authentication service unavailable");
     assert.equal(safe.code, "57P01");
+    assert.equal(safe.status, 503);
+    assert.equal(safe.expose, true);
     assert.doesNotMatch(JSON.stringify(safe), /school-secret|device-secret|select|params/i);
     assert.equal((safe as Error & { cause?: unknown }).cause, undefined);
   });

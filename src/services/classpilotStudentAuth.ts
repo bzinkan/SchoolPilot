@@ -31,6 +31,11 @@ export type ActiveStudentTokenSessionLookupResult = {
   session: StudentSession;
   studentSchoolId: string;
   deviceSchoolId: string;
+  studentEmail: string | null;
+};
+
+export type ActiveStudentTokenSession = StudentSession & {
+  studentEmail: string | null;
 };
 
 export type ActiveStudentTokenSessionLookup = (
@@ -41,12 +46,23 @@ type ActiveStudentTokenSessionResolverOptions = {
   maxInFlight?: number;
 };
 
-const SAFE_OPERATIONAL_ERROR_CODE = /^[A-Za-z0-9_.-]{1,64}$/;
+const POSTGRES_SQLSTATE = /^[0-9A-Z]{5}$/;
+const SAFE_NODE_OPERATIONAL_ERROR_CODES = new Set([
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "EHOSTUNREACH",
+  "ENETUNREACH",
+  "EPIPE",
+  "ETIMEDOUT",
+]);
 
 function safeOperationalErrorCode(error: unknown): string | undefined {
   for (const candidate of [error, (error as { cause?: unknown } | null)?.cause]) {
     const code = (candidate as { code?: unknown } | null)?.code;
-    if (typeof code === "string" && SAFE_OPERATIONAL_ERROR_CODE.test(code)) {
+    if (
+      typeof code === "string" &&
+      (POSTGRES_SQLSTATE.test(code) || SAFE_NODE_OPERATIONAL_ERROR_CODES.has(code))
+    ) {
       return code;
     }
   }
@@ -54,9 +70,14 @@ function safeOperationalErrorCode(error: unknown): string | undefined {
 }
 
 export function studentAuthenticationServiceError(error: unknown): Error {
-  const safe = new Error("Student authentication service unavailable") as NodeJS.ErrnoException;
+  const safe = new Error("Student authentication service unavailable") as NodeJS.ErrnoException & {
+    expose?: boolean;
+    status?: number;
+  };
   safe.name = "StudentAuthenticationServiceError";
   safe.code = safeOperationalErrorCode(error);
+  safe.expose = true;
+  safe.status = 503;
   return safe;
 }
 
@@ -165,6 +186,7 @@ async function lookupActiveStudentTokenSession(
       session: studentSessions,
       studentSchoolId: students.schoolId,
       deviceSchoolId: devices.schoolId,
+      studentEmail: students.email,
     })
     .from(studentSessions)
     .innerJoin(
@@ -215,7 +237,7 @@ function isCompleteStudentTokenPayload(payload: StudentTokenPayload): boolean {
 function exactActiveStudentTokenSession(
   payload: StudentTokenPayload,
   match: ActiveStudentTokenSessionLookupResult | undefined
-): StudentSession | undefined {
+): ActiveStudentTokenSession | undefined {
   if (
     !match ||
     match.studentSchoolId !== payload.schoolId ||
@@ -227,22 +249,22 @@ function exactActiveStudentTokenSession(
   ) {
     return undefined;
   }
-  return match.session;
+  return { ...match.session, studentEmail: match.studentEmail };
 }
 
 export function createActiveStudentTokenSessionResolver(
   lookup: ActiveStudentTokenSessionLookup,
   options: ActiveStudentTokenSessionResolverOptions = {}
-): (payload: StudentTokenPayload) => Promise<StudentSession | undefined> {
+): (payload: StudentTokenPayload) => Promise<ActiveStudentTokenSession | undefined> {
   const maxInFlight =
     options.maxInFlight ?? MAX_IN_FLIGHT_ACTIVE_STUDENT_SESSION_LOOKUPS;
   if (!Number.isSafeInteger(maxInFlight) || maxInFlight <= 0) {
     throw new RangeError("maxInFlight must be a positive safe integer");
   }
 
-  const inFlight = new Map<string, Promise<StudentSession | undefined>>();
+  const inFlight = new Map<string, Promise<ActiveStudentTokenSession | undefined>>();
 
-  return (payload: StudentTokenPayload): Promise<StudentSession | undefined> => {
+  return (payload: StudentTokenPayload): Promise<ActiveStudentTokenSession | undefined> => {
     if (!isCompleteStudentTokenPayload(payload)) {
       return Promise.resolve(undefined);
     }
@@ -283,7 +305,7 @@ const activeStudentTokenSessionResolver =
  */
 export function resolveActiveStudentTokenSession(
   payload: StudentTokenPayload
-): Promise<StudentSession | undefined> {
+): Promise<ActiveStudentTokenSession | undefined> {
   return activeStudentTokenSessionResolver(payload);
 }
 
