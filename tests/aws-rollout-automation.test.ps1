@@ -1011,8 +1011,17 @@ if ($service -eq "elasticache" -and $operation -eq "describe-snapshots") {
 if ($service -eq "elasticache") { $node=if($env:SCHOOLPILOT_TEST_REDIS_TYPE){$env:SCHOOLPILOT_TEST_REDIS_TYPE}else{"cache.t4g.small"};$pending=if($env:SCHOOLPILOT_TEST_PENDING){@{CacheNodeType="cache.t4g.micro"}}else{@{}};@{ReplicationGroups=@(@{Status="available";CacheNodeType=$node;PendingModifiedValues=$pending})}|ConvertTo-Json -Depth 5 -Compress;exit 0 }
 if ($service -eq "ec2" -and $operation -eq "describe-nat-gateways") {
   if($env:SCHOOLPILOT_TEST_NAT_ZERO -eq "1"){'{"NatGateways":[]}';exit 0}
-  $gateways=@(@{NatGatewayId="nat-1";State="available"},@{NatGatewayId="nat-2";State="available"})
+  $gateways=@(
+    @{NatGatewayId="nat-1";State="available";NatGatewayAddresses=@(@{AssociationId="eipassoc-1"})},
+    @{NatGatewayId="nat-2";State="available";NatGatewayAddresses=@(@{AssociationId="eipassoc-2"})}
+  )
   @{NatGateways=$gateways}|ConvertTo-Json -Depth 5 -Compress;exit 0
+}
+if ($service -eq "ec2" -and $operation -eq "describe-route-tables") {
+  @{RouteTables=@(
+    @{RouteTableId="rtb-private-a";Routes=@(@{DestinationCidrBlock="0.0.0.0/0";NatGatewayId="nat-1";State="active"})},
+    @{RouteTableId="rtb-private-b";Routes=@(@{DestinationCidrBlock="0.0.0.0/0";NatGatewayId="nat-2";State="active"})}
+  )}|ConvertTo-Json -Depth 8 -Compress;exit 0
 }
 if ($service -eq "ec2" -and $operation -eq "describe-network-interfaces") { $ids=@($arguments|Where-Object {$_ -match '^eni-'});@{NetworkInterfaces=@($ids|ForEach-Object {$association=if($env:SCHOOLPILOT_TEST_PUBLIC_IP -eq "1"){@{PublicIp="198.51.100.20"}}else{@{}};@{NetworkInterfaceId=$_;Association=$association}})}|ConvertTo-Json -Depth 6 -Compress;exit 0 }
 if ($service -eq "route53" -and $operation -eq "get-health-check-status") { '{"HealthCheckObservations":[{"StatusReport":{"Status":"Success: HTTP Status Code 200"}}]}'; exit 0 }
@@ -1506,6 +1515,108 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         Assert-Condition ($uncorrelatedMonitor.WaitForExit(30000)) "Uncorrelated valid-403 monitor timed out."
         $uncorrelatedResult = Get-Content -LiteralPath (Join-Path $childEvidence "$uncorrelatedRunId-monitor-result.json") -Raw | ConvertFrom-Json -Depth 20
         Assert-Condition ($uncorrelatedResult.rollback.action -eq "Application" -and $uncorrelatedResult.rollback.exitCode -eq 0) "A valid synthetic 403 without a fresh rate-rule BlockedRequests datapoint must restore the application, not weaken WAF."
+
+        $genericRejectedRunId = "generic-valid-401"
+        $genericRejectedHarness = Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList @("-NoProfile","-Command","Start-Sleep -Seconds 30") -PassThru -NoNewWindow
+        $genericRejectedRollback = $childRollback | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+        $genericRejectedRollback.runId = $genericRejectedRunId
+        [IO.File]::WriteAllText($childRollbackConfigPath, ($genericRejectedRollback|ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+        $genericRejectedProgress = Join-Path $childRoot "generic-rejected-progress.jsonl"
+        $genericRejectedSummary = Join-Path $childRoot "generic-rejected-summary.json"
+        $genericRejectedStarted = [DateTimeOffset]::UtcNow.AddSeconds(-1)
+        $genericRejectedConfig = $childConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+        $genericRejectedConfig.runId = $genericRejectedRunId
+        $genericRejectedConfig.deadlineUtc = [DateTimeOffset]::UtcNow.AddMinutes(5).ToString("o")
+        $genericRejectedConfig.loadProgressPath = $genericRejectedProgress
+        $genericRejectedConfig.loadSummaryPath = $genericRejectedSummary
+        $genericRejectedConfig.rollbackConfigPath = $childRollbackConfigPath
+        $genericRejectedConfig.artifactsNotBeforeUtc = $genericRejectedStarted.ToString("o")
+        $genericRejectedConfig.harnessProcessId = $genericRejectedHarness.Id
+        $genericRejectedConfig.harnessProcessStartedAtUtc = ([DateTimeOffset]$genericRejectedHarness.StartTime).ToUniversalTime().ToString("o")
+        $genericRejectedConfig.harnessProcessPath = $genericRejectedHarness.Path
+        $genericRejectedConfigPath = Join-Path $childRoot "generic-rejected-monitor.json"
+        [IO.File]::WriteAllText($genericRejectedConfigPath, ($genericRejectedConfig|ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+        $genericRejectedMonitor = Start-Process -FilePath (Get-Process -Id $PID).Path `
+            -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$monitorScript,"-ConfigPath",$genericRejectedConfigPath,"-Mode","Monitor") `
+            -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $childRoot "generic-rejected.out") -RedirectStandardError (Join-Path $childRoot "generic-rejected.err")
+        $genericRejectedEvidencePath = Join-Path $childEvidence "$genericRejectedRunId-aws-monitor.jsonl"
+        $genericRejectedStartDeadline = [DateTimeOffset]::UtcNow.AddSeconds(15)
+        while (-not (Test-Path -LiteralPath $genericRejectedEvidencePath) -and [DateTimeOffset]::UtcNow -lt $genericRejectedStartDeadline) { Start-Sleep -Milliseconds 100 }
+        Assert-Condition (Test-Path -LiteralPath $genericRejectedEvidencePath) "Generic valid-401 monitor did not start."
+        $genericRejectedFatal = @{reasonCodes=@("valid-http-401");observedAt=[DateTimeOffset]::UtcNow.ToString("o")}
+        $genericRejectedSummaryValue = @{runId=$genericRejectedRunId;stage="fatal-stage";devices=1;declaredSecondSchoolCanaryDevices=0;
+          run=@{plannedTrafficSeconds=1;actualTrafficSeconds=1;completedConfiguredDuration=$true};screenshotFixture=@{decodedBytes=1024};thresholds=@{passed=$false};fatalGate=$genericRejectedFatal}
+        [IO.File]::WriteAllText($genericRejectedSummary, ($genericRejectedSummaryValue|ConvertTo-Json -Depth 12), [Text.UTF8Encoding]::new($false))
+        $genericRejectedProgressValue = @{schemaVersion=1;type="progress";event="final";runId=$genericRejectedRunId;stage="fatal-stage";timestamp=[DateTimeOffset]::UtcNow.ToString("o");fatalGate=$genericRejectedFatal}
+        [IO.File]::WriteAllText($genericRejectedProgress, ($genericRejectedProgressValue|ConvertTo-Json -Compress -Depth 12)+[Environment]::NewLine, [Text.UTF8Encoding]::new($false))
+        Assert-Condition ($genericRejectedMonitor.WaitForExit(30000)) "Generic valid-401 monitor timed out."
+        $genericRejectedResult = Get-Content -LiteralPath (Join-Path $childEvidence "$genericRejectedRunId-monitor-result.json") -Raw | ConvertFrom-Json -Depth 20
+        Assert-Condition ($genericRejectedResult.rollback.action -eq "Application" -and $genericRejectedResult.rollback.exitCode -eq 0) "Any valid workload 401 must invoke the reviewed application rollback."
+
+        $combinedRunId = "combined-valid-401-rds-cpu"
+        $combinedHarness = Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList @("-NoProfile","-Command","Start-Sleep -Seconds 30") -PassThru -NoNewWindow
+        $combinedRollbackPath = Join-Path $childRoot "combined-valid-401-rds-rollback.json"
+        $combinedRollback = $childRollback | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+        $combinedRollback.runId = $combinedRunId
+        $combinedRollback | Add-Member -NotePropertyName privateSubnetIds -NotePropertyValue @("private-a","private-b") -Force
+        $combinedRollback | Add-Member -NotePropertyName ecsSecurityGroupIds -NotePropertyValue @("sg-1") -Force
+        $combinedRollback | Add-Member -NotePropertyName privateRouteTableIds -NotePropertyValue @("rtb-private-a","rtb-private-b") -Force
+        $combinedRollback | Add-Member -NotePropertyName vpcId -NotePropertyValue "vpc" -Force
+        $combinedRollback | Add-Member -NotePropertyName expectedNatGatewayCount -NotePropertyValue 2 -Force
+        [IO.File]::WriteAllText($combinedRollbackPath, ($combinedRollback|ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+        $combinedProgress = Join-Path $childRoot "combined-valid-401-rds-progress.jsonl"
+        $combinedSummary = Join-Path $childRoot "combined-valid-401-rds-summary.json"
+        $combinedStarted = [DateTimeOffset]::UtcNow.AddSeconds(-1)
+        $combinedConfig = $childConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+        $combinedConfig.runId = $combinedRunId
+        $combinedConfig.phase = "PublicEcs"
+        $combinedConfig.loadProgressPath = $combinedProgress
+        $combinedConfig.loadSummaryPath = $combinedSummary
+        $combinedConfig.rollbackConfigPath = $combinedRollbackPath
+        $combinedConfig.artifactsNotBeforeUtc = $combinedStarted.ToString("o")
+        $combinedConfig.harnessProcessId = $combinedHarness.Id
+        $combinedConfig.harnessProcessStartedAtUtc = ([DateTimeOffset]$combinedHarness.StartTime).ToUniversalTime().ToString("o")
+        $combinedConfig.harnessProcessPath = $combinedHarness.Path
+        $combinedConfig.maxIterations = 1
+        $combinedConfig.deadlineUtc = [DateTimeOffset]::UtcNow.AddMinutes(5).ToString("o")
+        $combinedNow = [DateTimeOffset]::UtcNow.ToUniversalTime()
+        $combinedMinuteTicks = [TimeSpan]::TicksPerMinute
+        $combinedRuntimeBase = [DateTimeOffset]::new(
+            $combinedNow.Ticks - ($combinedNow.Ticks % $combinedMinuteTicks),
+            [TimeSpan]::Zero
+        ).AddMinutes(-3)
+        $combinedConfig | Add-Member -NotePropertyName testRuntimeSeriesNotBeforeUtc -NotePropertyValue $combinedRuntimeBase.ToString("o") -Force
+        $combinedConfigPath = Join-Path $childRoot "combined-valid-401-rds-monitor.json"
+        [IO.File]::WriteAllText($combinedConfigPath, ($combinedConfig|ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+        $combinedFatal = @{reasonCodes=@("valid-http-401");observedAt=[DateTimeOffset]::UtcNow.ToString("o")}
+        # Commit terminal progress before monitor startup, but deliberately leave
+        # the atomic summary absent. This models the real fatal-gate commit
+        # window while allowing config validation to require a unique summary.
+        $combinedProgressValue = @{schemaVersion=1;type="progress";event="final";runId=$combinedRunId;stage="fatal-stage";timestamp=[DateTimeOffset]::UtcNow.ToString("o");fatalGate=$combinedFatal}
+        [IO.File]::WriteAllText($combinedProgress, ($combinedProgressValue|ConvertTo-Json -Compress -Depth 12)+[Environment]::NewLine, [Text.UTF8Encoding]::new($false))
+        $oldCombinedRuntimeBase = $env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_BASE
+        $oldCombinedRuntimePattern = $env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_PATTERN
+        $env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_BASE = $combinedRuntimeBase.ToString("o")
+        $env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_PATTERN = "three"
+        try {
+            $combinedMonitor = Start-Process -FilePath (Get-Process -Id $PID).Path `
+                -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$monitorScript,"-ConfigPath",$combinedConfigPath,"-Mode","Monitor") `
+                -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $childRoot "combined-valid-401-rds.out") -RedirectStandardError (Join-Path $childRoot "combined-valid-401-rds.err")
+            Assert-Condition ($combinedMonitor.WaitForExit(30000)) "Combined valid-401/RDS monitor timed out."
+        }
+        finally {
+            if ($null -eq $oldCombinedRuntimeBase) { Remove-Item Env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_BASE -ErrorAction SilentlyContinue }
+            else { $env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_BASE = $oldCombinedRuntimeBase }
+            if ($null -eq $oldCombinedRuntimePattern) { Remove-Item Env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_PATTERN -ErrorAction SilentlyContinue }
+            else { $env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_PATTERN = $oldCombinedRuntimePattern }
+        }
+        $combinedResultPath = Join-Path $childEvidence "$combinedRunId-monitor-result.json"
+        $combinedError = Get-Content -LiteralPath (Join-Path $childRoot "combined-valid-401-rds.err") -Raw -ErrorAction SilentlyContinue
+        Assert-Condition (Test-Path -LiteralPath $combinedResultPath) "Combined valid-401/RDS monitor did not write a result (stderr=$combinedError)."
+        $combinedResult = Get-Content -LiteralPath $combinedResultPath -Raw | ConvertFrom-Json -Depth 20
+        Assert-Condition ($combinedResult.failures -contains "load:valid-http-401" -and $combinedResult.failures -contains "rds_cpu") "Combined regression must observe both the valid workload 401 and three consecutive RDS CPU breaches."
+        Assert-Condition ($combinedResult.rollback.attempted -and $combinedResult.rollback.action -eq "PublicEcs" -and $combinedResult.rollback.exitCode -eq 0) "An active-phase RDS breach must outrank a simultaneous generic 401 application rollback (actual=$($combinedResult.rollback|ConvertTo-Json -Compress -Depth 20); stderr=$combinedError)."
+
         $correlatedWafBlockFlag = Join-Path $childRoot "correlated-waf-block.flag"
         $env:SCHOOLPILOT_TEST_WAF_DEVICE_BLOCK_FILE = $correlatedWafBlockFlag
         $correlatedRunId = "correlated-valid-403"

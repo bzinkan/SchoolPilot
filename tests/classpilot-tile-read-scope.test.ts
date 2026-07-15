@@ -414,6 +414,45 @@ after(async () => {
 });
 
 describe("ClassPilot tile-read tenant scope", () => {
+  it("defaults live tile history to ten rows while preserving explicit limits", async () => {
+    const deviceId = primaryDeviceIds.at(-1)!;
+    const studentId = authorizedStudentIds.at(-1)!;
+    const firstTimestamp = Date.now() - 20_000;
+    await inSchool(schoolA.id, async () => {
+      await db
+        .delete(heartbeats)
+        .where(and(eq(heartbeats.schoolId, schoolA.id), eq(heartbeats.deviceId, deviceId)));
+      await db.insert(heartbeats).values(
+        Array.from({ length: 14 }, (_unused, index) => ({
+          deviceId,
+          studentId,
+          schoolId: schoolA.id,
+          activeTabTitle: `Bounded history ${index + 1}`,
+          activeTabUrl: `https://example.invalid/bounded/${index + 1}`,
+          timestamp: new Date(firstTimestamp + index * 1_000),
+        }))
+      );
+    });
+
+    const recent = await requestJson(`/api/classpilot/heartbeats/${deviceId}`, teacher);
+    assert.equal(recent.status, 200);
+    assert.deepEqual(Object.keys(recent.body), ["heartbeats"]);
+    assert.equal(recent.body.heartbeats.length, 10);
+    assert.equal(recent.body.heartbeats[0].activeTabTitle, "Bounded history 14");
+    assert.equal(recent.body.heartbeats.at(-1).activeTabTitle, "Bounded history 5");
+    assert.ok(recent.body.heartbeats.every((heartbeat: any) =>
+      heartbeat.schoolId === schoolA.id && heartbeat.studentId === studentId
+    ));
+
+    const explicit = await requestJson(
+      `/api/classpilot/heartbeats/${deviceId}?limit=14`,
+      teacher
+    );
+    assert.equal(explicit.status, 200);
+    assert.equal(explicit.body.heartbeats.length, 14);
+    assert.equal(explicit.body.heartbeats.at(-1).activeTabTitle, "Bounded history 1");
+  });
+
   it("allows classroom staff, denies parents, and hides unassigned office-staff tiles", async () => {
     const path = `/api/classpilot/device/screenshot/${primaryDeviceIds[0]}`;
 

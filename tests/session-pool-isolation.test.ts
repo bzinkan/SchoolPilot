@@ -228,6 +228,7 @@ describe("PostgreSQL session-pool isolation", () => {
       /const staffAuth = \[[\s\S]*requireRole\("admin",\s*"school_admin",\s*"teacher",\s*"office_staff"\)/
     );
     assert.match(routeSource, /Math\.min\(Math\.max\(limit,\s*1\),\s*100\)/);
+    assert.match(routeSource, /parseInt\(req\.query\.limit as string\) \|\| 10/);
     assert.match(
       routeSource,
       /Number\.isNaN\(start\.getTime\(\)\)[\s\S]*Number\.isNaN\(end\.getTime\(\)\)[\s\S]*status\(400\)/
@@ -238,11 +239,19 @@ describe("PostgreSQL session-pool isolation", () => {
     );
     assert.match(
       storageSource,
+      /getHeartbeatsByDevice\([\s\S]*limit = 10,[\s\S]*\.limit\(limit\)/
+    );
+    assert.match(
+      storageSource,
       /inArray\(heartbeats\.studentId,\s*authorizedStudentIds\)/
     );
     assert.match(
       storageSource,
       /getHeartbeatsByDeviceInRange[\s\S]*?\.orderBy\(desc\(heartbeats\.timestamp\)\)[\s\S]*?\.limit\(5_000\)/
+    );
+    assert.match(
+      routeSource,
+      /if \(startTime\)[\s\S]*getHeartbeatsByDeviceInRange\([\s\S]*return \{[\s\S]*getHeartbeatsByDevice\(/
     );
     assert.match(
       storageSource,
