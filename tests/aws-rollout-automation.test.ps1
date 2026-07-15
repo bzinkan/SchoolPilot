@@ -144,9 +144,13 @@ $global:SchoolPilotTestAwsCalls = [System.Collections.Generic.List[string]]::new
 $global:SchoolPilotTestTerraformCalls = [System.Collections.Generic.List[string]]::new()
 $global:SchoolPilotTestWafUpdate = $null
 $global:SchoolPilotTestNetworkPayloads = [System.Collections.Generic.List[object]]::new()
+$global:SchoolPilotTestDeploymentPayloads = [System.Collections.Generic.List[object]]::new()
+$global:SchoolPilotTestTaskUpdateObservations = [System.Collections.Generic.List[object]]::new()
+$global:SchoolPilotTestUpdateServiceCallCount = 0
+$global:SchoolPilotTestFailUpdateServiceCalls = @()
 $global:SchoolPilotTestServiceState = @{
-    api = [ordered]@{ taskDefinition = "api-current"; subnets = @("subnet-public-a", "subnet-public-b"); securityGroups = @("sg-ecs"); assignPublicIp = "ENABLED" }
-    worker = [ordered]@{ taskDefinition = "worker-current"; subnets = @("subnet-public-a", "subnet-public-b"); securityGroups = @("sg-ecs"); assignPublicIp = "ENABLED" }
+    api = [ordered]@{ taskDefinition = "api-current"; desired = 1; running = 1; pending = 0; subnets = @("subnet-public-a", "subnet-public-b"); securityGroups = @("sg-ecs"); assignPublicIp = "ENABLED"; deploymentConfiguration = [ordered]@{ deploymentCircuitBreaker = [ordered]@{ enable = $true; rollback = $true }; maximumPercent = 200; minimumHealthyPercent = 100; strategy = "ROLLING" } }
+    worker = [ordered]@{ taskDefinition = "worker-current"; desired = 1; running = 1; pending = 0; subnets = @("subnet-public-a", "subnet-public-b"); securityGroups = @("sg-ecs"); assignPublicIp = "ENABLED"; deploymentConfiguration = [ordered]@{ deploymentCircuitBreaker = [ordered]@{ enable = $true; rollback = $true }; maximumPercent = 200; minimumHealthyPercent = 100; strategy = "ROLLING" } }
 }
 $global:SchoolPilotTestWafCount = $false
 $global:SchoolPilotTestMetricQueryIds = @()
@@ -177,8 +181,8 @@ function global:aws {
     if ($service -eq "ecs" -and $operation -eq "describe-services") {
         return (@{
             services = @(
-                @{ serviceName = "api"; desiredCount = 1; runningCount = 1; pendingCount = 0; taskDefinition = $global:SchoolPilotTestServiceState.api.taskDefinition; deployments = @(@{ status = "PRIMARY" }); networkConfiguration = @{ awsvpcConfiguration = @{ subnets = $global:SchoolPilotTestServiceState.api.subnets; securityGroups = $global:SchoolPilotTestServiceState.api.securityGroups; assignPublicIp = $global:SchoolPilotTestServiceState.api.assignPublicIp } } },
-                @{ serviceName = "worker"; desiredCount = 1; runningCount = 1; pendingCount = 0; taskDefinition = $global:SchoolPilotTestServiceState.worker.taskDefinition; deployments = @(@{ status = "PRIMARY" }); networkConfiguration = @{ awsvpcConfiguration = @{ subnets = $global:SchoolPilotTestServiceState.worker.subnets; securityGroups = $global:SchoolPilotTestServiceState.worker.securityGroups; assignPublicIp = $global:SchoolPilotTestServiceState.worker.assignPublicIp } } }
+                @{ serviceName = "api"; desiredCount = $global:SchoolPilotTestServiceState.api.desired; runningCount = $global:SchoolPilotTestServiceState.api.running; pendingCount = $global:SchoolPilotTestServiceState.api.pending; taskDefinition = $global:SchoolPilotTestServiceState.api.taskDefinition; deploymentConfiguration = $global:SchoolPilotTestServiceState.api.deploymentConfiguration; deployments = @(@{ status = "PRIMARY" }); networkConfiguration = @{ awsvpcConfiguration = @{ subnets = $global:SchoolPilotTestServiceState.api.subnets; securityGroups = $global:SchoolPilotTestServiceState.api.securityGroups; assignPublicIp = $global:SchoolPilotTestServiceState.api.assignPublicIp } } },
+                @{ serviceName = "worker"; desiredCount = $global:SchoolPilotTestServiceState.worker.desired; runningCount = $global:SchoolPilotTestServiceState.worker.running; pendingCount = $global:SchoolPilotTestServiceState.worker.pending; taskDefinition = $global:SchoolPilotTestServiceState.worker.taskDefinition; deploymentConfiguration = $global:SchoolPilotTestServiceState.worker.deploymentConfiguration; deployments = @(@{ status = "PRIMARY" }); networkConfiguration = @{ awsvpcConfiguration = @{ subnets = $global:SchoolPilotTestServiceState.worker.subnets; securityGroups = $global:SchoolPilotTestServiceState.worker.securityGroups; assignPublicIp = $global:SchoolPilotTestServiceState.worker.assignPublicIp } } }
             )
         } | ConvertTo-Json -Depth 8 -Compress)
     }
@@ -322,9 +326,31 @@ function global:aws {
         return '{}'
     }
     if ($service -eq "ecs" -and $operation -eq "update-service") {
+        $global:SchoolPilotTestUpdateServiceCallCount++
+        if ($global:SchoolPilotTestUpdateServiceCallCount -in @($global:SchoolPilotTestFailUpdateServiceCalls)) {
+            throw "Mock update-service failure at call $($global:SchoolPilotTestUpdateServiceCallCount)."
+        }
         $serviceName = Get-ArgumentValue -Arguments $arguments -Name "--service"
         $taskDefinition = Get-ArgumentValue -Arguments $arguments -Name "--task-definition"
-        if ($taskDefinition) { $global:SchoolPilotTestServiceState[$serviceName].taskDefinition = $taskDefinition }
+        if ($taskDefinition) {
+            $global:SchoolPilotTestTaskUpdateObservations.Add([pscustomobject]@{
+                service = $serviceName
+                taskDefinition = $taskDefinition
+                desired = [int]$global:SchoolPilotTestServiceState[$serviceName].desired
+                deploymentConfiguration = ($global:SchoolPilotTestServiceState[$serviceName].deploymentConfiguration | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20)
+            })
+            $global:SchoolPilotTestServiceState[$serviceName].taskDefinition = $taskDefinition
+        }
+        $deploymentReference = Get-ArgumentValue -Arguments $arguments -Name "--deployment-configuration"
+        if ($deploymentReference) {
+            $deploymentPath = $deploymentReference.Substring("file://".Length)
+            $deploymentPayload = Get-Content -LiteralPath $deploymentPath -Raw | ConvertFrom-Json -Depth 20
+            $global:SchoolPilotTestDeploymentPayloads.Add([pscustomobject]@{
+                service = $serviceName
+                configuration = $deploymentPayload
+            })
+            $global:SchoolPilotTestServiceState[$serviceName].deploymentConfiguration = $deploymentPayload
+        }
         $networkReference = Get-ArgumentValue -Arguments $arguments -Name "--network-configuration"
         if ($networkReference) {
             $networkPath = $networkReference.Substring("file://".Length)
@@ -2377,6 +2403,145 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
     $global:SchoolPilotTestNatAvailable = $true
     Assert-Condition ($publicPreconditionRejected -and $global:SchoolPilotTestNetworkPayloads.Count -eq $networkCallsBeforePrecondition) "Public-ECS rollback must verify retained NAT gateways/private default routes before any ECS network mutation."
 
+    $connectionSafeConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+    $connectionSafeConfig.runId = "connection-safe-application-six"
+    [IO.File]::WriteAllText($rollbackConfigPath, ($connectionSafeConfig | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+    $global:SchoolPilotTestServiceState.api.taskDefinition = "api-current"
+    $global:SchoolPilotTestServiceState.api.desired = 6
+    $global:SchoolPilotTestServiceState.api.running = 6
+    $global:SchoolPilotTestServiceState.api.pending = 0
+    $global:SchoolPilotTestServiceState.worker.taskDefinition = "worker-current"
+    $global:SchoolPilotTestServiceState.worker.desired = 1
+    $global:SchoolPilotTestServiceState.worker.running = 1
+    $global:SchoolPilotTestServiceState.worker.pending = 0
+    $capturedApiDeploymentJson = $global:SchoolPilotTestServiceState.api.deploymentConfiguration | ConvertTo-Json -Compress -Depth 20
+    $capturedWorkerDeploymentJson = $global:SchoolPilotTestServiceState.worker.deploymentConfiguration | ConvertTo-Json -Compress -Depth 20
+    $deploymentPayloadStart = $global:SchoolPilotTestDeploymentPayloads.Count
+    $taskObservationStart = $global:SchoolPilotTestTaskUpdateObservations.Count
+    & $rollbackScript -ConfigPath $rollbackConfigPath -Action Application -Mode Execute | Out-Null
+
+    $connectionSafePayloads = @($global:SchoolPilotTestDeploymentPayloads | Select-Object -Skip $deploymentPayloadStart)
+    Assert-Condition ($connectionSafePayloads.Count -eq 4) "Six-task Application rollback must install and then restore captured API/worker deployment configurations."
+    Assert-Condition (
+        $connectionSafePayloads[0].service -eq "api" -and
+        [int]$connectionSafePayloads[0].configuration.maximumPercent -eq 100 -and
+        [int]$connectionSafePayloads[0].configuration.minimumHealthyPercent -eq 83
+    ) "Six-task Application rollback must cap API replacement capacity at desired count while keeping five tasks available."
+    Assert-Condition (
+        $connectionSafePayloads[1].service -eq "worker" -and
+        [int]$connectionSafePayloads[1].configuration.maximumPercent -eq 100 -and
+        [int]$connectionSafePayloads[1].configuration.minimumHealthyPercent -eq 0
+    ) "Six-task Application rollback must prevent the singleton worker from overlapping its replacement."
+    Assert-Condition (
+        ($connectionSafePayloads[2].configuration | ConvertTo-Json -Compress -Depth 20) -ceq $capturedApiDeploymentJson -and
+        ($connectionSafePayloads[3].configuration | ConvertTo-Json -Compress -Depth 20) -ceq $capturedWorkerDeploymentJson
+    ) "Six-task Application rollback must restore the exact captured deployment configurations."
+
+    $connectionSafeTaskUpdates = @($global:SchoolPilotTestTaskUpdateObservations | Select-Object -Skip $taskObservationStart)
+    Assert-Condition (
+        $connectionSafeTaskUpdates.Count -eq 2 -and
+        $connectionSafeTaskUpdates[0].service -eq "api" -and
+        $connectionSafeTaskUpdates[1].service -eq "worker"
+    ) "Connection-safe Application rollback must stabilize the API revision before replacing the worker revision."
+    Assert-Condition (@($connectionSafeTaskUpdates | Where-Object {
+        [int]$_.deploymentConfiguration.maximumPercent -ne 100
+    }).Count -eq 0) "No six-task Application task-definition update may use an overlapping deployment maximum."
+    Assert-Condition (
+        ($global:SchoolPilotTestServiceState.api.deploymentConfiguration | ConvertTo-Json -Compress -Depth 20) -ceq $capturedApiDeploymentJson -and
+        ($global:SchoolPilotTestServiceState.worker.deploymentConfiguration | ConvertTo-Json -Compress -Depth 20) -ceq $capturedWorkerDeploymentJson
+    ) "Application rollback postconditions must verify both captured deployment configurations were restored."
+    $connectionSafeEvidencePath = Join-Path $evidenceDirectory "$($connectionSafeConfig.runId)-rollback.jsonl"
+    $connectionSafeEvidence = @(Get-Content -LiteralPath $connectionSafeEvidencePath | ForEach-Object { $_ | ConvertFrom-Json -Depth 30 })
+    $connectionSafeCompleted = @($connectionSafeEvidence | Where-Object status -eq "completed")
+    Assert-Condition (
+        $connectionSafeCompleted.Count -eq 1 -and
+        $connectionSafeCompleted[0].details.postcondition.connectionSafeDeployment -eq $true -and
+        [int]$connectionSafeCompleted[0].details.postcondition.apiDesired -eq 6
+    ) "Completed rollback evidence must record the connection-safe six-task path."
+
+    $secondConfigurationFailureConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+    $secondConfigurationFailureConfig.runId = "connection-safe-second-config-failure"
+    [IO.File]::WriteAllText($rollbackConfigPath, ($secondConfigurationFailureConfig | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+    $global:SchoolPilotTestServiceState.api.taskDefinition = "api-current"
+    $global:SchoolPilotTestServiceState.worker.taskDefinition = "worker-current"
+    $secondConfigurationCallStart = $global:SchoolPilotTestUpdateServiceCallCount
+    $secondConfigurationPayloadStart = $global:SchoolPilotTestDeploymentPayloads.Count
+    $secondConfigurationTaskStart = $global:SchoolPilotTestTaskUpdateObservations.Count
+    $global:SchoolPilotTestFailUpdateServiceCalls = @($secondConfigurationCallStart + 2)
+    $secondConfigurationError = $null
+    try { & $rollbackScript -ConfigPath $rollbackConfigPath -Action Application -Mode Execute | Out-Null }
+    catch { $secondConfigurationError = $_ }
+    finally { $global:SchoolPilotTestFailUpdateServiceCalls = @() }
+    Assert-Condition (
+        $null -ne $secondConfigurationError -and
+        $secondConfigurationError.Exception.Message -eq "Mock update-service failure at call $($secondConfigurationCallStart + 2)."
+    ) "Failure on the second temporary deployment update must preserve the original rollback exception."
+    $secondConfigurationPayloads = @($global:SchoolPilotTestDeploymentPayloads | Select-Object -Skip $secondConfigurationPayloadStart)
+    Assert-Condition (
+        $secondConfigurationPayloads.Count -eq 3 -and
+        $secondConfigurationPayloads[1].service -eq "api" -and
+        $secondConfigurationPayloads[2].service -eq "worker"
+    ) "A partial temporary-configuration failure must best-effort restore both captured service configurations."
+    Assert-Condition (
+        ($global:SchoolPilotTestServiceState.api.deploymentConfiguration | ConvertTo-Json -Compress -Depth 20) -ceq $capturedApiDeploymentJson -and
+        ($global:SchoolPilotTestServiceState.worker.deploymentConfiguration | ConvertTo-Json -Compress -Depth 20) -ceq $capturedWorkerDeploymentJson -and
+        $global:SchoolPilotTestTaskUpdateObservations.Count -eq $secondConfigurationTaskStart
+    ) "Second-configuration failure compensation must restore both policies before any task revision changes."
+    $secondConfigurationEvidence = @(Get-Content -LiteralPath (Join-Path $evidenceDirectory "$($secondConfigurationFailureConfig.runId)-rollback.jsonl") |
+        ForEach-Object { $_ | ConvertFrom-Json -Depth 30 })
+    $secondConfigurationFailed = @($secondConfigurationEvidence | Where-Object status -eq "failed")
+    Assert-Condition (
+        $secondConfigurationFailed.Count -eq 1 -and
+        $secondConfigurationFailed[0].details.deploymentConfigurationRestoration.success -eq $true -and
+        @($secondConfigurationFailed[0].details.deploymentConfigurationRestoration.services).Count -eq 2
+    ) "Failed rollback evidence must record successful best-effort policy compensation."
+
+    $taskFailureConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+    $taskFailureConfig.runId = "connection-safe-task-update-failure"
+    [IO.File]::WriteAllText($rollbackConfigPath, ($taskFailureConfig | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+    $global:SchoolPilotTestServiceState.api.taskDefinition = "api-current"
+    $global:SchoolPilotTestServiceState.worker.taskDefinition = "worker-current"
+    $taskFailureCallStart = $global:SchoolPilotTestUpdateServiceCallCount
+    $taskFailurePayloadStart = $global:SchoolPilotTestDeploymentPayloads.Count
+    $taskFailureObservationStart = $global:SchoolPilotTestTaskUpdateObservations.Count
+    $global:SchoolPilotTestFailUpdateServiceCalls = @(($taskFailureCallStart + 3), ($taskFailureCallStart + 4))
+    $taskFailureError = $null
+    try { & $rollbackScript -ConfigPath $rollbackConfigPath -Action Application -Mode Execute | Out-Null }
+    catch { $taskFailureError = $_ }
+    finally { $global:SchoolPilotTestFailUpdateServiceCalls = @() }
+    Assert-Condition (
+        $null -ne $taskFailureError -and
+        $taskFailureError.Exception.Message -eq "Mock update-service failure at call $($taskFailureCallStart + 3)."
+    ) "Task-update failure must remain the surfaced rollback exception when policy compensation also fails."
+    $taskFailurePayloads = @($global:SchoolPilotTestDeploymentPayloads | Select-Object -Skip $taskFailurePayloadStart)
+    Assert-Condition (
+        $taskFailurePayloads.Count -eq 3 -and
+        $taskFailurePayloads[2].service -eq "worker" -and
+        $global:SchoolPilotTestTaskUpdateObservations.Count -eq $taskFailureObservationStart
+    ) "Task-update failure compensation must still attempt the worker policy after the API policy restore fails."
+    $taskFailureEvidence = @(Get-Content -LiteralPath (Join-Path $evidenceDirectory "$($taskFailureConfig.runId)-rollback.jsonl") |
+        ForEach-Object { $_ | ConvertFrom-Json -Depth 30 })
+    $taskFailureFailed = @($taskFailureEvidence | Where-Object status -eq "failed")
+    $taskFailureRestoration = $taskFailureFailed[0].details.deploymentConfigurationRestoration
+    Assert-Condition (
+        $taskFailureFailed.Count -eq 1 -and
+        $taskFailureRestoration.success -eq $false -and
+        @($taskFailureRestoration.services).Count -eq 2 -and
+        $taskFailureRestoration.services[0].service -eq "api" -and
+        $taskFailureRestoration.services[0].success -eq $false -and
+        $taskFailureRestoration.services[1].service -eq "worker" -and
+        $taskFailureRestoration.services[1].success -eq $true -and
+        $taskFailureRestoration.errors[0] -match "Mock update-service failure at call $($taskFailureCallStart + 4)"
+    ) "Failed compensation details must be recorded without replacing the original rollback failure."
+
+    $global:SchoolPilotTestServiceState.api.deploymentConfiguration = $capturedApiDeploymentJson | ConvertFrom-Json -Depth 20
+    $global:SchoolPilotTestServiceState.worker.deploymentConfiguration = $capturedWorkerDeploymentJson | ConvertFrom-Json -Depth 20
+
+    $global:SchoolPilotTestServiceState.api.taskDefinition = "api-current"
+    $global:SchoolPilotTestServiceState.api.desired = 1
+    $global:SchoolPilotTestServiceState.api.running = 1
+    $global:SchoolPilotTestServiceState.worker.taskDefinition = "worker-current"
+
     $badOomConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
     $badOomConfig.runId = "bad-emergency-digest"
     $badOomConfig.emergencyTaskDefinitionEvidence.emergencyTaskDefinition.containerDefinitions[0].image = "repo@sha256:$('d'*64)"
@@ -2492,6 +2657,10 @@ finally {
     Remove-Variable SchoolPilotTestTerraformCalls -Scope Global -ErrorAction SilentlyContinue
     Remove-Variable SchoolPilotTestWafUpdate -Scope Global -ErrorAction SilentlyContinue
     Remove-Variable SchoolPilotTestNetworkPayloads -Scope Global -ErrorAction SilentlyContinue
+    Remove-Variable SchoolPilotTestDeploymentPayloads -Scope Global -ErrorAction SilentlyContinue
+    Remove-Variable SchoolPilotTestTaskUpdateObservations -Scope Global -ErrorAction SilentlyContinue
+    Remove-Variable SchoolPilotTestUpdateServiceCallCount -Scope Global -ErrorAction SilentlyContinue
+    Remove-Variable SchoolPilotTestFailUpdateServiceCalls -Scope Global -ErrorAction SilentlyContinue
     Remove-Variable SchoolPilotTestServiceState -Scope Global -ErrorAction SilentlyContinue
     Remove-Variable SchoolPilotTestWafCount -Scope Global -ErrorAction SilentlyContinue
     Remove-Variable SchoolPilotTestMetricQueryIds -Scope Global -ErrorAction SilentlyContinue

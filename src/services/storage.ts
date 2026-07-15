@@ -1,7 +1,12 @@
 import { eq, and, desc, asc, gt, ilike, or, isNull, isNotNull, inArray, getTableColumns, sql, ne, type SQL, type SQLWrapper } from "drizzle-orm";
 import type { PgUpdateSetSource } from "drizzle-orm/pg-core";
 import db from "../db.js";
+import { getTenantStore, rlsGucEnabled } from "../db/tenantContext.js";
 import { runWithTenantContext } from "../middleware/tenantContext.js";
+import {
+  publishCacheInvalidation,
+  registerCacheInvalidationHandler,
+} from "../realtime/cacheInvalidation.js";
 import { createLocalDateFormatter } from "../util/schoolTime.js";
 import {
   users,
@@ -3132,6 +3137,113 @@ export async function createHeartbeat(
 ): Promise<Heartbeat> {
   const [hb] = await db.insert(heartbeats).values(data).returning();
   return hb!;
+}
+
+export async function createHeartbeatAndRefreshPresence(
+  data: InsertHeartbeat & {
+    deviceId: string;
+    schoolId: string;
+    studentId: string;
+  },
+  studentSessionId: string
+): Promise<{ id: string } | undefined> {
+  const screenshotHealthJson =
+    data.screenshotHealth === undefined || data.screenshotHealth === null
+      ? null
+      : JSON.stringify(data.screenshotHealth);
+  const result = await db.execute(sql`
+    WITH eligible_session AS MATERIALIZED (
+      SELECT active_session.id
+      FROM student_sessions AS active_session
+      INNER JOIN students AS student
+        ON student.id = active_session.student_id
+       AND student.school_id = ${data.schoolId}
+      INNER JOIN devices AS session_device
+        ON session_device.device_id = active_session.device_id
+       AND session_device.school_id = ${data.schoolId}
+      WHERE active_session.id = ${studentSessionId}
+        AND active_session.student_id = ${data.studentId}
+        AND active_session.device_id = ${data.deviceId}
+        AND active_session.is_active = true
+      FOR UPDATE OF active_session
+    ),
+    inserted_heartbeat AS (
+      INSERT INTO heartbeats (
+        device_id,
+        student_id,
+        student_email,
+        school_id,
+        active_tab_title,
+        active_tab_url,
+        favicon,
+        screen_locked,
+        flight_path_active,
+        active_flight_path_name,
+        is_sharing,
+        camera_active,
+        extension_version,
+        chrome_version,
+        screenshot_health
+      )
+      SELECT
+        ${data.deviceId},
+        ${data.studentId},
+        ${data.studentEmail ?? null},
+        ${data.schoolId},
+        ${data.activeTabTitle},
+        ${data.activeTabUrl ?? null},
+        ${data.favicon ?? null},
+        ${data.screenLocked ?? false},
+        ${data.flightPathActive ?? false},
+        ${data.activeFlightPathName ?? null},
+        ${data.isSharing ?? false},
+        ${data.cameraActive ?? false},
+        ${data.extensionVersion ?? null},
+        ${data.chromeVersion ?? null},
+        ${screenshotHealthJson}::jsonb
+      FROM eligible_session
+      RETURNING id
+    ),
+    refreshed_device AS (
+      UPDATE devices
+      SET
+        last_seen_at = now(),
+        extension_version = CASE
+          WHEN ${data.extensionVersion !== undefined}::boolean
+            THEN ${data.extensionVersion ?? null}
+          ELSE extension_version
+        END,
+        chrome_version = CASE
+          WHEN ${data.chromeVersion !== undefined}::boolean
+            THEN ${data.chromeVersion ?? null}
+          ELSE chrome_version
+        END,
+        last_screenshot_health = CASE
+          WHEN ${data.screenshotHealth !== undefined}::boolean
+            THEN ${screenshotHealthJson}::jsonb
+          ELSE last_screenshot_health
+        END
+      WHERE device_id = ${data.deviceId}
+        AND school_id = ${data.schoolId}
+        AND EXISTS (SELECT 1 FROM eligible_session)
+        AND (last_seen_at IS NULL OR last_seen_at < now() - interval '60 seconds')
+    ),
+    refreshed_session AS (
+      UPDATE student_sessions
+      SET last_seen_at = now()
+      WHERE id = ${studentSessionId}
+        AND student_id = ${data.studentId}
+        AND device_id = ${data.deviceId}
+        AND is_active = true
+        AND EXISTS (SELECT 1 FROM eligible_session)
+        AND (last_seen_at IS NULL OR last_seen_at < now() - interval '60 seconds')
+    )
+    SELECT id FROM inserted_heartbeat
+  `);
+  const id = (result.rows[0] as { id?: unknown } | undefined)?.id;
+  if (id === undefined) return undefined;
+  if (typeof id !== "string" || !id) throw new Error("Heartbeat insert returned an invalid id");
+  return { id };
 }
 
 export async function updateHeartbeatClassification(
@@ -7116,6 +7228,51 @@ export async function markGoogleRosterConnectorSynced(
 // Settings operations
 // ============================================================================
 
+export const HEARTBEAT_TRACKING_SETTINGS_CACHE_TTL_MS = 5_000;
+export type HeartbeatTrackingSettings = Pick<
+  Settings,
+  | "enableTrackingHours"
+  | "trackingStartTime"
+  | "trackingEndTime"
+  | "trackingDays"
+  | "schoolTimezone"
+  | "afterHoursMode"
+>;
+const heartbeatTrackingSettingsCache = new Map<
+  string,
+  { expiresAt: number; value: HeartbeatTrackingSettings | undefined }
+>();
+const heartbeatTrackingSettingsLoads = new Map<
+  string,
+  Promise<HeartbeatTrackingSettings | undefined>
+>();
+const heartbeatTrackingSettingsGenerations = new Map<string, number>();
+
+function canUseHeartbeatTrackingSettingsCache(
+  schoolId: string,
+  dbInstance: typeof db
+): boolean {
+  if (dbInstance !== db) return false;
+  if (!rlsGucEnabled()) return true;
+  const tenant = getTenantStore();
+  return Boolean(tenant && (tenant.isSuper || tenant.schoolId === schoolId));
+}
+
+export function invalidateHeartbeatTrackingSettingsCache(schoolId: string): void {
+  heartbeatTrackingSettingsCache.delete(schoolId);
+  heartbeatTrackingSettingsLoads.delete(schoolId);
+  heartbeatTrackingSettingsGenerations.set(
+    schoolId,
+    (heartbeatTrackingSettingsGenerations.get(schoolId) ?? 0) + 1
+  );
+}
+
+registerCacheInvalidationHandler((target) => {
+  if (target.cache === "heartbeat-tracking-settings") {
+    invalidateHeartbeatTrackingSettingsCache(target.schoolId);
+  }
+});
+
 export async function getSettingsForSchool(
   schoolId: string,
   dbInstance: typeof db = db
@@ -7128,10 +7285,66 @@ export async function getSettingsForSchool(
   return row;
 }
 
+// Heartbeats only need the tracking-window fields. Cache that deliberately
+// narrow, non-secret projection; Redis invalidates healthy peer API tasks and
+// the short TTL bounds staleness if pub/sub is temporarily unavailable.
+export async function getHeartbeatTrackingSettingsForSchool(
+  schoolId: string,
+  dbInstance: typeof db = db
+): Promise<HeartbeatTrackingSettings | undefined> {
+  const cacheAllowed = canUseHeartbeatTrackingSettingsCache(schoolId, dbInstance);
+  if (cacheAllowed) {
+    const cached = heartbeatTrackingSettingsCache.get(schoolId);
+    if (cached && cached.expiresAt > Date.now()) return cached.value;
+    if (cached) heartbeatTrackingSettingsCache.delete(schoolId);
+    const loading = heartbeatTrackingSettingsLoads.get(schoolId);
+    if (loading) return loading;
+  }
+
+  const load = async (): Promise<HeartbeatTrackingSettings | undefined> => {
+    const [row] = await dbInstance
+      .select({
+        enableTrackingHours: settings.enableTrackingHours,
+        trackingStartTime: settings.trackingStartTime,
+        trackingEndTime: settings.trackingEndTime,
+        trackingDays: settings.trackingDays,
+        schoolTimezone: settings.schoolTimezone,
+        afterHoursMode: settings.afterHoursMode,
+      })
+      .from(settings)
+      .where(eq(settings.schoolId, schoolId))
+      .limit(1);
+    return row;
+  };
+
+  if (!cacheAllowed) return load();
+
+  const generation = heartbeatTrackingSettingsGenerations.get(schoolId) ?? 0;
+  let pending!: Promise<HeartbeatTrackingSettings | undefined>;
+  pending = load()
+    .then((row) => {
+      if ((heartbeatTrackingSettingsGenerations.get(schoolId) ?? 0) === generation) {
+        heartbeatTrackingSettingsCache.set(schoolId, {
+          expiresAt: Date.now() + HEARTBEAT_TRACKING_SETTINGS_CACHE_TTL_MS,
+          value: row,
+        });
+      }
+      return row;
+    })
+    .finally(() => {
+      if (heartbeatTrackingSettingsLoads.get(schoolId) === pending) {
+        heartbeatTrackingSettingsLoads.delete(schoolId);
+      }
+    });
+  heartbeatTrackingSettingsLoads.set(schoolId, pending);
+  return pending;
+}
+
 export async function upsertSettings(
   schoolId: string,
   data: Partial<InsertSettings>
 ): Promise<Settings> {
+  invalidateHeartbeatTrackingSettingsCache(schoolId);
   const settingsData: Partial<InsertSettings> = {
     ...data,
   };
@@ -7159,6 +7372,12 @@ export async function upsertSettings(
       set: settingsData,
     })
     .returning();
+  invalidateHeartbeatTrackingSettingsCache(schoolId);
+  await publishCacheInvalidation({
+    kind: "cache-invalidation",
+    schoolId,
+    cache: "heartbeat-tracking-settings",
+  });
   return row!;
 }
 
@@ -7167,6 +7386,7 @@ export async function updateEnrollmentSettings(
   schoolId: string,
   data: { enrollmentKey?: string; enrollmentKeyRequired?: boolean; autoEnrollStudents?: boolean }
 ): Promise<Settings> {
+  invalidateHeartbeatTrackingSettingsCache(schoolId);
   const school = await getSchoolById(schoolId);
   const [row] = await db
     .insert(settings)
@@ -7182,6 +7402,7 @@ export async function updateEnrollmentSettings(
       set: data,
     })
     .returning();
+  invalidateHeartbeatTrackingSettingsCache(schoolId);
   return row!;
 }
 

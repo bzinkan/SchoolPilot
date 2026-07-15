@@ -7,7 +7,7 @@ const root = resolve(import.meta.dirname, "..");
 const source = (path: string) => readFileSync(resolve(root, path), "utf8");
 
 describe("ClassPilot school-arrival capacity controls", () => {
-  it("uses one bound tenant lease and reuses the validated heartbeat session", () => {
+  it("uses short tenant leases and reuses the validated heartbeat session", () => {
     const middleware = source("src/middleware/requireDeviceAuth.ts");
     const routes = source("src/routes/classpilot/devices.ts");
 
@@ -19,8 +19,23 @@ describe("ClassPilot school-arrival capacity controls", () => {
     assert.match(middleware, /next\(studentAuthenticationServiceError\(error\)\)/);
     assert.match(
       routes,
-      /const activeSession = res\.locals\.activeStudentSession as \{ studentId\?: string \} \| undefined;/
+      /const activeSession = res\.locals\.activeStudentSession as \{[\s\S]*?studentId\?: string;[\s\S]*?studentEmail\?: string \| null;[\s\S]*?\} \| undefined;/
     );
+    const heartbeatRoute = routes.slice(
+      routes.indexOf('router.post("/device/heartbeat"'),
+      routes.indexOf('router.post("/device/screenshot"')
+    );
+    assert.match(
+      heartbeatRoute,
+      /router\.post\("\/device\/heartbeat", requireDeviceAuthWithoutTenant/
+    );
+    const databaseSection = heartbeatRoute.slice(
+      heartbeatRoute.indexOf("const heartbeatDbResult = await runWithTenantContext"),
+      heartbeatRoute.indexOf("if (heartbeatDbResult.outcome")
+    );
+    assert.match(databaseSection, /createHeartbeatAndRefreshPresence/);
+    assert.doesNotMatch(databaseSection, /publishWS|broadcastToTeachersLocal|classifyUrl/);
+    assert.doesNotMatch(heartbeatRoute, /getStudentById/);
     assert.doesNotMatch(routes, /getActiveSessionByDevice/);
   });
 

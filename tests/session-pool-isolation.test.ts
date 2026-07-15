@@ -214,9 +214,15 @@ describe("PostgreSQL session-pool isolation", () => {
       /const membership = await loadActiveMembershipContext\([\s\S]*if \(!membership\)[\s\S]*status\(403\)/
     );
     assert.match(requiredImpersonation, /return res\.status\(401\)/);
-    assert.match(requiredImpersonation, /return next\(err\)/);
+    assert.match(
+      requiredImpersonation,
+      /return next\(logAuthenticationServiceFailure\(/
+    );
     assert.match(optionalImpersonation, /return next\(\)/);
-    assert.match(optionalImpersonation, /return next\(err\)/);
+    assert.match(
+      optionalImpersonation,
+      /return next\(logAuthenticationServiceFailure\(/
+    );
   });
 
   it("keeps tile history explicitly school scoped and clamps row count", () => {

@@ -1,12 +1,18 @@
 import { randomUUID } from "crypto";
 import { createClient, type RedisClientType } from "redis";
+import {
+  dispatchCacheInvalidation,
+  registerCacheInvalidationPublisher,
+  type CacheInvalidationTarget,
+} from "./cacheInvalidation.js";
 
 export type WsRedisTarget =
   | { kind: "staff"; schoolId: string }
   | { kind: "staff-session"; schoolId: string; sessionId: string }
   | { kind: "students"; schoolId: string; targetDeviceIds?: string[] }
   | { kind: "device"; schoolId: string; deviceId: string }
-  | { kind: "role"; schoolId: string; role: "teacher" | "school_admin" | "super_admin" | "student" };
+  | { kind: "role"; schoolId: string; role: "teacher" | "school_admin" | "super_admin" | "student" }
+  | CacheInvalidationTarget;
 
 type WsRedisEnvelope = {
   instanceId: string;
@@ -232,6 +238,11 @@ export async function subscribeWS(
         if (envelope.instanceId === instanceId && !envelope.includeSource) {
           return;
         }
+        if (envelope.target.kind === "cache-invalidation") {
+          dispatchCacheInvalidation(envelope.target);
+          hotPathActivity.redisMessagesReceived += 1;
+          return;
+        }
         if (
           envelope.orderedKey &&
           envelope.revision &&
@@ -309,6 +320,10 @@ export async function publishWS(
     return false;
   }
 }
+
+registerCacheInvalidationPublisher((target) =>
+  publishWS(target, { type: "cache-invalidation" })
+);
 
 // Screenshot storage in Redis (for multi-instance deployments)
 const SCREENSHOT_KEY_PREFIX = `${redisPrefix}:screenshot:`;

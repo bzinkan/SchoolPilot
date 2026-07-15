@@ -44,6 +44,7 @@ export const studentDevices = pgTable(
   },
   (table) => [
     unique("student_devices_unique").on(table.studentId, table.deviceId),
+    index("student_devices_device_student_idx").on(table.deviceId, table.studentId),
   ]
 );
 
