@@ -11,12 +11,16 @@ import {
   getFlightPathById,
   getPollById,
   markClasspilotCommandTargetsSent,
-  updateClasspilotCommandSummary,
   upsertClasspilotClassroomStates,
   type ClasspilotCommandWithTargets,
 } from "./storage.js";
 import { broadcastToStaffSessionLocal, sendToDeviceLocal } from "../realtime/ws-broadcast.js";
-import { publishWS } from "../realtime/ws-redis.js";
+import {
+  publishWS,
+  publishWSBatch,
+  recordCommandHotPathPhase,
+  type PublishWSBatchItem,
+} from "../realtime/ws-redis.js";
 import { removeDeviceStatus } from "../realtime/student-statuses.js";
 
 export type ClasspilotCommandTargetScope = "class" | "subgroup" | "students" | "context";
@@ -444,28 +448,82 @@ export async function executeClasspilotCommand(options: {
   );
 
   const sentTargets: ResolvedClasspilotCommandTarget[] = [];
-  for (const target of options.targets.filter((target) => target.available && target.deviceId)) {
-    const message = payloadForTarget(options.commandType, normalized.extensionType, {
-      ...commandPayload,
-      commandId: created.id,
-    }, target);
-    if (!message) continue;
+  const deliveryCandidates: ResolvedClasspilotCommandTarget[] = [];
+  const remotePublications: PublishWSBatchItem[] = [];
+  const localDeliveryStartedAt = performance.now();
+  let localDeliverySucceeded = false;
+  try {
+    for (const target of options.targets.filter((target) => target.available && target.deviceId)) {
+      const message = payloadForTarget(options.commandType, normalized.extensionType, {
+        ...commandPayload,
+        commandId: created.id,
+      }, target);
+      if (!message) continue;
 
-    if (options.commandType === "teacher-message") {
-      await createMessage({
-        fromUserId: options.actorId,
-        toStudentId: target.studentId,
-        message: commandPayload.message,
-        isAnnouncement: false,
-      }, options.schoolId);
+      if (options.commandType === "teacher-message") {
+        await createMessage({
+          fromUserId: options.actorId,
+          toStudentId: target.studentId,
+          message: commandPayload.message,
+          isAnnouncement: false,
+        }, options.schoolId);
+      }
+
+      // Keep both arrays in the caller's exact target order. Local delivery is
+      // immediate; Redis publication below sends the corresponding envelopes in
+      // that same order using one network round trip.
+      sendToDeviceLocal(options.schoolId, target.deviceId!, message);
+      remotePublications.push({
+        target: { kind: "device", schoolId: options.schoolId, deviceId: target.deviceId! },
+        message,
+      });
+      deliveryCandidates.push(target);
     }
-
-    sendToDeviceLocal(options.schoolId, target.deviceId!, message);
-    await publishWS({ kind: "device", schoolId: options.schoolId, deviceId: target.deviceId! }, message);
-    sentTargets.push(target);
+    localDeliverySucceeded = true;
+  } finally {
+    recordCommandHotPathPhase(
+      "command_local_delivery",
+      performance.now() - localDeliveryStartedAt,
+      { success: localDeliverySucceeded, items: deliveryCandidates.length }
+    );
   }
 
-  await markClasspilotCommandTargetsSent(created.id, sentTargets.map((target) => target.deviceId!).filter(Boolean));
+  const redisPublishStartedAt = performance.now();
+  let redisPublishSucceeded = false;
+  let publicationResults: boolean[] = [];
+  try {
+    publicationResults = await publishWSBatch(remotePublications);
+    redisPublishSucceeded = publicationResults.every(Boolean);
+  } finally {
+    recordCommandHotPathPhase(
+      "command_redis_batch",
+      performance.now() - redisPublishStartedAt,
+      { success: redisPublishSucceeded, items: remotePublications.length }
+    );
+  }
+
+  // `sent` records that this process attempted dispatch for a valid available
+  // target, matching the established command contract. Local socket presence
+  // and Redis subscriber count do not prove device receipt; received/completed
+  // ACKs remain separately authoritative. Batch failures stay visible in the
+  // phase metrics without changing the persisted dispatch-attempt semantics.
+  sentTargets.push(...deliveryCandidates);
+
+  const markSentStartedAt = performance.now();
+  let markSentSucceeded = false;
+  try {
+    await markClasspilotCommandTargetsSent(
+      created.id,
+      sentTargets.map((target) => target.deviceId!).filter(Boolean)
+    );
+    markSentSucceeded = true;
+  } finally {
+    recordCommandHotPathPhase(
+      "command_mark_sent",
+      performance.now() - markSentStartedAt,
+      { success: markSentSucceeded, items: sentTargets.length }
+    );
+  }
   if (options.commandType === "student-sign-out" && options.teachingSessionId) {
     await endStudentSessionsForSignOut({
       schoolId: options.schoolId,
@@ -485,8 +543,6 @@ export async function executeClasspilotCommand(options: {
       sentTargets,
     });
   }
-  await updateClasspilotCommandSummary(created.id);
-
   const command = await getClasspilotCommandByIdAndSchool(created.id, options.schoolId);
   if (!command) throw Object.assign(new Error("Command was created but could not be loaded"), { status: 500 });
   const targetOrder = new Map(options.targets.map((target, index) => [target.studentId, index]));

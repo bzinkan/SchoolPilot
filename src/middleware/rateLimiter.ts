@@ -58,10 +58,16 @@ export function redisStore(prefix: string): Store | undefined {
   return store;
 }
 
-export async function redisCommand(args: string[]): Promise<unknown | undefined> {
+export async function redisCommand(
+  args: string[],
+  options: { readyTimeoutMs?: number; signal?: AbortSignal } = {}
+): Promise<unknown | undefined> {
   if (!redisClient || !waitForReady) return undefined;
-  await waitForReady();
-  return redisClient.sendCommand(args);
+  await waitForReady(options.readyTimeoutMs);
+  return redisClient.sendCommand(
+    args,
+    options.signal ? { signal: options.signal } : undefined
+  );
 }
 
 const API_RATE_LIMIT_IDENTITY = Symbol("apiRateLimitIdentity");

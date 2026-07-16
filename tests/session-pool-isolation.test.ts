@@ -233,7 +233,7 @@ describe("PostgreSQL session-pool isolation", () => {
       routeSource,
       /const staffAuth = \[[\s\S]*requireRole\("admin",\s*"school_admin",\s*"teacher",\s*"office_staff"\)/
     );
-    assert.match(routeSource, /Math\.min\(Math\.max\(limit,\s*1\),\s*100\)/);
+    assert.match(routeSource, /Math\.min\([\s\S]*Math\.max\(parseInt\(req\.query\.limit as string\) \|\| 10, 1\)[\s\S]*100/);
     assert.match(routeSource, /parseInt\(req\.query\.limit as string\) \|\| 10/);
     assert.match(
       routeSource,
@@ -259,14 +259,12 @@ describe("PostgreSQL session-pool isolation", () => {
       routeSource,
       /if \(startTime\)[\s\S]*getHeartbeatsByDeviceInRange\([\s\S]*return \{[\s\S]*getHeartbeatsByDevice\(/
     );
-    assert.match(
-      storageSource,
-      /getLiveTileReadableDeviceForStaff[\s\S]*getHistoryTileAccessForStaff/
-    );
+    assert.match(storageSource, /getTileAuthorizationScopeForStaff/);
     assert.match(
       routeSource,
-      /withAuthorizedTileDevice[\s\S]*runWithTenantContext\([\s\S]*getLiveTileReadableDeviceForStaff[\s\S]*getHistoryTileAccessForStaff/
+      /withAuthorizedTileDevice[\s\S]*getCoalescedTileAuthorization/
     );
+    assert.match(routeSource, /readHeartbeatTileCache/);
     const screenshotStart = routeSource.indexOf(
       '// GET /api/classpilot/device/screenshot/:deviceId'
     );

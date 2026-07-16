@@ -42,16 +42,11 @@ import {
   getGroupStudents,
   getGroupByIdAndSchool,
   getUserById,
-  getAttendanceBySchool,
-  getActivePassesBySchool,
-  getActiveSupervisionForStudents,
-  getActiveClassOwnersForStudents,
   validateStaffEmailDomainForSchool,
 } from "../services/storage.js";
 import db from "../db.js";
-import { heartbeats, devices as deviceTable, groups, dailyUsage, studentDevices, studentSessions } from "../schema/classpilot.js";
-import { dismissalQueue, dismissalSessions } from "../schema/gopilot.js";
-import { eq, and, sql, inArray } from "drizzle-orm";
+import { heartbeats, devices as deviceTable, groups, dailyUsage } from "../schema/classpilot.js";
+import { eq, and, sql } from "drizzle-orm";
 import { createGradeSchema } from "../schema/validation.js";
 import { hashPassword } from "../util/password.js";
 import { logAudit, getAuditLogs, countAuditLogs } from "../services/audit.js";
@@ -69,15 +64,15 @@ import {
   getClasspilotAdminAnalyticsByTeacher,
   getClasspilotAdminAnalyticsSummary,
 } from "../services/classpilotAdminAnalytics.js";
+import {
+  getClasspilotDashboardSchoolTimezone,
+  getClasspilotDashboardSnapshot,
+} from "../services/classpilotDashboardSnapshot.js";
 
 const router = Router();
 
 function param(req: any, key: string): string {
   return String(req.params[key] ?? "");
-}
-
-function displayNameForUser(user: any): string {
-  return user?.displayName || [user?.firstName, user?.lastName].filter(Boolean).join(" ") || user?.email || "Staff";
 }
 
 const auth = [authenticate] as const;
@@ -864,8 +859,8 @@ router.get("/students-aggregated", ...schoolAuth, async (req, res, next) => {
 
     const realtimeStatuses = getSchoolDeviceStatuses(schoolId);
     const connectedDevices = getConnectedStudentDeviceIds(schoolId);
-    const school = await getSchoolById(schoolId);
-    const today = todayInTimeZone(school?.schoolTimezone);
+    const schoolTimezone = await getClasspilotDashboardSchoolTimezone(schoolId);
+    const today = todayInTimeZone(schoolTimezone);
 
     // Build lookups for real-time status
     const statusByDevice = new Map(
@@ -880,88 +875,25 @@ router.get("/students-aggregated", ...schoolAuth, async (req, res, next) => {
         .map((s) => [s.studentEmail!.toLowerCase(), s])
     );
 
-    // Fallback: query student_devices for students without realtime status
-    // This ensures primaryDeviceId is always resolved even after server restart
     const studentIds = dbStudents.map((s) => s.id);
-    const deviceMappings = studentIds.length > 0
-      ? await db.select({ studentId: studentDevices.studentId, deviceId: studentDevices.deviceId, lastSeenAt: studentDevices.lastSeenAt })
-          .from(studentDevices)
-          .where(inArray(studentDevices.studentId, studentIds))
-      : [];
-    const [activeStudentSessions, attendanceRows, activePasses, dismissalRows, activeCoverageRows, activeClassRows] = await Promise.all([
-      studentIds.length > 0
-        ? db
-            .select()
-            .from(studentSessions)
-            .where(
-              and(
-                inArray(studentSessions.studentId, studentIds),
-                eq(studentSessions.isActive, true)
-              )
-            )
-        : [],
-      getAttendanceBySchool(schoolId, today),
-      getActivePassesBySchool(schoolId),
-      studentIds.length > 0
-        ? db
-            .select({ queue: dismissalQueue, session: dismissalSessions })
-            .from(dismissalQueue)
-            .innerJoin(dismissalSessions, eq(dismissalQueue.sessionId, dismissalSessions.id))
-            .where(
-              and(
-                eq(dismissalSessions.schoolId, schoolId),
-                eq(dismissalSessions.date, today),
-                inArray(dismissalQueue.studentId, studentIds),
-                inArray(dismissalSessions.status, ["active", "paused", "completed"])
-              )
-            )
-        : [],
-      studentIds.length > 0 ? getActiveSupervisionForStudents(schoolId, studentIds) : [],
-      studentIds.length > 0 ? getActiveClassOwnersForStudents(schoolId, studentIds) : [],
-    ]);
-    const attendanceByStudent = new Map(attendanceRows.map((row) => [row.attendance.studentId, row.attendance]));
-    const activePassByStudent = new Map(activePasses.map((pass) => [pass.studentId, pass]));
-    const activeSessionByStudent = new Map(activeStudentSessions.map((session) => [session.studentId, session]));
-    const activeCoverageByStudent = new Map(activeCoverageRows.map((entry) => [entry.studentId, entry.context]));
-    const activeClassByStudent = new Map(activeClassRows.map((row) => [row.studentId, row]));
-    const activeCoverageStaffEntries = await Promise.all(
-      [...new Set(activeCoverageRows.map((entry) => entry.context.assignedStaffId).filter(Boolean))]
-        .map(async (staffId) => [staffId, await getUserById(staffId)] as const)
-    );
-    const activeCoverageStaffById = new Map(activeCoverageStaffEntries);
-    const dismissalByStudent = new Map<string, any>();
-    for (const row of dismissalRows) {
-      const existing = dismissalByStudent.get(row.queue.studentId);
-      if (!existing || row.queue.createdAt > existing.queue.createdAt) {
-        dismissalByStudent.set(row.queue.studentId, row);
-      }
-    }
-    // Build map: studentId → most recent deviceId
-    const deviceByStudent = new Map<string, string>();
-    for (const row of deviceMappings) {
-      const existing = deviceByStudent.get(row.studentId);
-      if (!existing) {
-        deviceByStudent.set(row.studentId, row.deviceId);
-      }
-      // student_devices rows are unordered; keep any mapping (typically one device per student)
-    }
+    const snapshotRows = await getClasspilotDashboardSnapshot(schoolId, studentIds, today);
+    const snapshotByStudent = new Map(snapshotRows.map((row) => [row.studentId, row]));
 
     const aggregated = dbStudents.map((student) => {
+      const snapshot = snapshotByStudent.get(student.id);
       const rt =
         (student.deviceId ? statusByDevice.get(student.deviceId) : null) ||
         statusByStudent.get(student.id) ||
         (student.email ? statusByEmail.get(student.email.toLowerCase()) : null) ||
         null;
-      const activeStudentSession = activeSessionByStudent.get(student.id);
-      const activeCoverage = activeCoverageByStudent.get(student.id);
-      const activeClass = activeClassByStudent.get(student.id);
+      const activeCoverage = snapshot?.coverage || null;
+      const activeClass = snapshot?.activeClass || null;
       // Fallback to student_devices table when realtime status has no device mapping
-      const deviceId = rt?.deviceId || activeStudentSession?.deviceId || student.deviceId || deviceByStudent.get(student.id) || null;
+      const deviceId = rt?.deviceId || snapshot?.sessionDeviceId || student.deviceId || snapshot?.mappedDeviceId || null;
       const isConnected = deviceId ? connectedDevices.has(deviceId) : false;
-      const attendance = attendanceByStudent.get(student.id);
-      const attendanceStatus = attendance?.status || "present";
-      const activePass = activePassByStudent.get(student.id) || null;
-      const dismissal = dismissalByStudent.get(student.id)?.queue || null;
+      const attendanceStatus = snapshot?.attendanceStatus || "present";
+      const activePass = snapshot?.activePass || null;
+      const dismissal = snapshot?.dismissal || null;
       let suppressionReason: string | null = null;
       if (attendanceStatus === "absent") suppressionReason = "Student is marked absent";
       else if (attendanceStatus === "tardy") suppressionReason = "Student is marked tardy";
@@ -970,12 +902,12 @@ router.get("/students-aggregated", ...schoolAuth, async (req, res, next) => {
       else if (dismissal?.status === "dismissed") suppressionReason = "Student is dismissed";
       else if (dismissal?.status === "released") suppressionReason = "Student is released for dismissal";
       else if (dismissal) suppressionReason = "Student is in the dismissal flow";
-      const sessionLastSeenAt = activeStudentSession?.lastSeenAt
-        ? activeStudentSession.lastSeenAt.getTime()
+      const sessionLastSeenAt = snapshot?.sessionLastSeenAt
+        ? new Date(snapshot.sessionLastSeenAt).getTime()
         : 0;
       const lastActivityAt = rt?.lastSeenAt || sessionLastSeenAt || 0;
       const timeSinceLastSeen = lastActivityAt ? Date.now() - lastActivityAt : Infinity;
-      const isLoggedIn = !!activeStudentSession && timeSinceLastSeen < 300000;
+      const isLoggedIn = !!snapshot?.sessionDeviceId && timeSinceLastSeen < 300000;
       let status: "online" | "idle" | "offline" = "offline";
       if (timeSinceLastSeen < 60000 || (isConnected && timeSinceLastSeen < 90000)) {
         status = "online";
@@ -1042,18 +974,18 @@ router.get("/students-aggregated", ...schoolAuth, async (req, res, next) => {
           type: activeCoverage.contextType,
           name: activeCoverage.name,
           assignedStaffId: activeCoverage.assignedStaffId,
-          assignedStaff: activeCoverage.assignedStaffId ? {
+          assignedStaff: {
             id: activeCoverage.assignedStaffId,
-            displayName: displayNameForUser(activeCoverageStaffById.get(activeCoverage.assignedStaffId)),
-          } : null,
+            displayName: activeCoverage.assignedStaffDisplayName,
+          },
           endsAt: activeCoverage.endsAt,
         } : activeClass ? {
-          id: activeClass.session.id,
+          id: activeClass.sessionId,
           type: "class",
           name: activeClass.groupName,
           groupId: activeClass.groupId,
-          teacherId: activeClass.session.teacherId,
-          startTime: activeClass.session.startTime,
+          teacherId: activeClass.teacherId,
+          startTime: activeClass.startTime,
         } : null,
         monitoringContext: rt?.aiClassification?.safetyAlert
           ? "safety_with_context"

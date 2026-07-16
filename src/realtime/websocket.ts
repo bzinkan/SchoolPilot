@@ -21,14 +21,17 @@ import {
 } from "./ws-broadcast.js";
 import {
   publishWS,
+  publishOrderedWS,
   subscribeWS,
   isRedisPublisherReady,
+  recordCommandHotPathPhase,
   recordLocalOrderedDelivery,
   type WsRedisTarget,
 } from "./ws-redis.js";
 import {
   getSettingsForSchool,
   getMembershipByUserAndSchool,
+  updateClasspilotCommandSummary,
   withClasspilotCommandBroadcastLock,
   updateClasspilotCommandTargetAck,
   getTeachingSessionByIdAndSchool,
@@ -115,43 +118,106 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
   };
 
   const publishCommandUpdate = async (state: CommandUpdateState) => {
-    await runWithTenantContext({ schoolId: state.schoolId }, () =>
-      withClasspilotCommandBroadcastLock(state.commandId, state.schoolId, async (command, revision) => {
-        const payload = {
-          type: "classpilot-command-update",
-          commandId: state.commandId,
-          command,
-        };
-        if (recordLocalOrderedDelivery(state.key, revision)) {
-          broadcastToTeachersLocal(state.schoolId, payload);
-        }
-        if (!isRedisPublisherReady()) {
-          return;
-        }
+    await runWithTenantContext({ schoolId: state.schoolId }, async () => {
+      // ACK handlers update only their target row. The existing 50 ms dirty
+      // window coalesces a burst into one summary aggregation before a complete
+      // revisioned snapshot is read and broadcast.
+      const summaryStartedAt = performance.now();
+      let summarySucceeded = false;
+      try {
+        await updateClasspilotCommandSummary(state.commandId);
+        summarySucceeded = true;
+      } finally {
+        recordCommandHotPathPhase(
+          "ack_summary_refresh",
+          performance.now() - summaryStartedAt,
+          { success: summarySucceeded }
+        );
+      }
 
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), COMMAND_UPDATE_PUBLISH_TIMEOUT_MS);
-        timeout.unref();
-        try {
-          // Remote tasks consume the Redis-ordered stream. This task delivers
-          // locally above even if only its subscriber connection is impaired.
-          const published = await publishWS(
-            { kind: "staff", schoolId: state.schoolId },
-            payload,
-            {
-              includeSource: false,
-              signal: controller.signal,
-              orderedKey: state.key,
-              revision,
+      const snapshotStartedAt = performance.now();
+      let snapshotSucceeded = false;
+      try {
+        await withClasspilotCommandBroadcastLock(state.commandId, state.schoolId, async (command, revision) => {
+          const payload = {
+            type: "classpilot-command-update",
+            commandId: state.commandId,
+            command,
+          };
+          if (!isRedisPublisherReady()) {
+            throw new Error("Ordered ClassPilot command publication requires Redis");
+          }
+
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), COMMAND_UPDATE_PUBLISH_TIMEOUT_MS);
+          timeout.unref();
+          const redisStartedAt = performance.now();
+          let redisSucceeded = false;
+          try {
+            // Redis makes the cross-task ordering decision before any local
+            // fan-out. A delayed callback on another API task therefore cannot
+            // deliver an older snapshot locally and only then be rejected by
+            // the global revision watermark.
+            const outcome = await publishOrderedWS(
+              { kind: "staff", schoolId: state.schoolId },
+              payload,
+              {
+                includeSource: false,
+                signal: controller.signal,
+                orderedKey: state.key,
+                revision,
+              }
+            );
+            if (outcome.status === "failed") {
+              throw new Error("Ordered ClassPilot command publication failed");
             }
-          );
-          if (!published) throw new Error("Ordered ClassPilot command publication failed");
-          state.retryCount = 0;
-        } finally {
-          clearTimeout(timeout);
-        }
-      })
-    );
+            if (
+              outcome.status === "accepted" &&
+              recordLocalOrderedDelivery(state.key, revision)
+            ) {
+              broadcastToTeachersLocal(state.schoolId, payload);
+            }
+            if (
+              outcome.status === "accepted" &&
+              outcome.subscriberCount === 0
+            ) {
+              // The global watermark is valid and source-local teachers have
+              // the snapshot, but no Redis subscriber could receive it. Mark
+              // this attempt failed so the bounded scheduler reads a fresh
+              // revision and republishes after subscribers reconnect.
+              throw new Error(
+                "Ordered ClassPilot command publication had no subscribers"
+              );
+            }
+            if (outcome.status === "stale") {
+              // Redis pub/sub is intentionally non-durable. This process may
+              // have missed the newer publication while its subscriber was
+              // reconnecting, so read a fresh snapshot/revision on the bounded
+              // retry instead of assuming its local teachers are current.
+              throw new Error(
+                "Ordered ClassPilot command publication was superseded"
+              );
+            }
+            state.retryCount = 0;
+            redisSucceeded = true;
+          } finally {
+            clearTimeout(timeout);
+            recordCommandHotPathPhase(
+              "ack_redis_publish",
+              performance.now() - redisStartedAt,
+              { success: redisSucceeded }
+            );
+          }
+        });
+        snapshotSucceeded = true;
+      } finally {
+        recordCommandHotPathPhase(
+          "ack_snapshot_publish",
+          performance.now() - snapshotStartedAt,
+          { success: snapshotSucceeded }
+        );
+      }
+    });
   };
 
   function drainCommandUpdates() {
@@ -607,17 +673,29 @@ export function setupWebSocket(httpServer: Server): WebSocketServer {
 
           if (!commandId || !ackState) return;
 
-          const target = await runWithTenantContext({ schoolId: client.schoolId }, () =>
-            updateClasspilotCommandTargetAck({
-              commandId,
-              schoolId: client.schoolId!,
-              deviceId: client.deviceId!,
-              studentId: message.studentId ? String(message.studentId) : undefined,
-              ackState,
-              result: message.result || message.state || message.data || null,
-              errorMessage: message.error || message.errorMessage || null,
-            })
-          );
+          const ackStartedAt = performance.now();
+          let ackSucceeded = false;
+          let target;
+          try {
+            target = await runWithTenantContext({ schoolId: client.schoolId }, () =>
+              updateClasspilotCommandTargetAck({
+                commandId,
+                schoolId: client.schoolId!,
+                deviceId: client.deviceId!,
+                studentId: message.studentId ? String(message.studentId) : undefined,
+                ackState,
+                result: message.result || message.state || message.data || null,
+                errorMessage: message.error || message.errorMessage || null,
+              })
+            );
+            ackSucceeded = true;
+          } finally {
+            recordCommandHotPathPhase(
+              "ack_target_update",
+              performance.now() - ackStartedAt,
+              { success: ackSucceeded }
+            );
+          }
 
           if (target) scheduleCommandUpdate(client.schoolId, commandId);
           return;

@@ -7,7 +7,7 @@ const root = resolve(import.meta.dirname, "..");
 const source = (path: string) => readFileSync(resolve(root, path), "utf8");
 
 describe("ClassPilot school-arrival capacity controls", () => {
-  it("uses short tenant leases and reuses the validated heartbeat session", () => {
+  it("uses short tenant leases and makes the heartbeat CTE the sole session authority", () => {
     const middleware = source("src/middleware/requireDeviceAuth.ts");
     const routes = source("src/routes/classpilot/devices.ts");
 
@@ -18,8 +18,8 @@ describe("ClassPilot school-arrival capacity controls", () => {
     );
     assert.match(middleware, /next\(studentAuthenticationServiceError\(error\)\)/);
     assert.match(
-      routes,
-      /const activeSession = res\.locals\.activeStudentSession as \{[\s\S]*?studentId\?: string;[\s\S]*?studentEmail\?: string \| null;[\s\S]*?\} \| undefined;/
+      middleware,
+      /requireCryptographicDeviceAuth[\s\S]*validateActiveSession: false/
     );
     const heartbeatRoute = routes.slice(
       routes.indexOf('router.post("/device/heartbeat"'),
@@ -27,8 +27,9 @@ describe("ClassPilot school-arrival capacity controls", () => {
     );
     assert.match(
       heartbeatRoute,
-      /router\.post\("\/device\/heartbeat", requireDeviceAuthWithoutTenant/
+      /router\.post\("\/device\/heartbeat", requireCryptographicDeviceAuth/
     );
+    assert.doesNotMatch(heartbeatRoute, /activeStudentSession/);
     const databaseSection = heartbeatRoute.slice(
       heartbeatRoute.indexOf("const heartbeatDbResult = await runWithTenantContext"),
       heartbeatRoute.indexOf("if (heartbeatDbResult.outcome")
@@ -37,6 +38,12 @@ describe("ClassPilot school-arrival capacity controls", () => {
     assert.doesNotMatch(databaseSection, /publishWS|broadcastToTeachersLocal|classifyUrl/);
     assert.doesNotMatch(heartbeatRoute, /getStudentById/);
     assert.doesNotMatch(routes, /getActiveSessionByDevice/);
+    assert.match(
+      source("src/services/storage.ts"),
+      /represented\.id,[\s\S]*student\.email AS student_email[\s\S]*FOR UPDATE OF represented/
+    );
+    assert.match(heartbeatRoute, /outcome === "replaced_session"/);
+    assert.match(heartbeatRoute, /error: "student_session_replaced"/);
   });
 
   it("uses one tenant lease for student WebSocket bootstrap without per-auth success logs", () => {

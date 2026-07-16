@@ -76,11 +76,12 @@ resource "aws_lb" "main" {
 # --- Target Group ---
 
 resource "aws_lb_target_group" "api" {
-  name        = "${local.name}-api-tg"
-  port        = 4000
-  protocol    = "HTTP"
-  vpc_id      = var.vpc_id
-  target_type = "ip"
+  name                 = "${local.name}-api-tg"
+  port                 = 4000
+  protocol             = "HTTP"
+  vpc_id               = var.vpc_id
+  target_type          = "ip"
+  deregistration_delay = 300
 
   health_check {
     enabled             = true

@@ -128,7 +128,8 @@ describe("ClassPilot heartbeat presence hot path", () => {
       1,
       "the hot path must issue one database statement"
     );
-    assert.match(functionSource, /WITH\s+eligible_session\s+AS\s+MATERIALIZED/i);
+    assert.match(functionSource, /WITH\s+represented_session\s+AS\s+MATERIALIZED/i);
+    assert.match(functionSource, /eligible_session\s+AS\s+MATERIALIZED/i);
     assert.match(functionSource, /inserted_heartbeat\s+AS/i);
     assert.match(functionSource, /refreshed_device\s+AS/i);
     assert.match(functionSource, /refreshed_session\s+AS/i);
@@ -145,7 +146,7 @@ describe("ClassPilot heartbeat presence hot path", () => {
     assert.match(functionSource, /AND\s+is_active\s*=\s*true/i);
     assert.match(
       functionSource,
-      /FOR\s+UPDATE\s+OF\s+active_session/i,
+      /FOR\s+UPDATE\s+OF\s+represented/i,
       "session eligibility must linearize with a concurrent revoke"
     );
     assert.match(functionSource, /FROM\s+eligible_session/i);
@@ -361,7 +362,9 @@ describe("ClassPilot heartbeat presence hot path", () => {
     const revoker = await pool.connect();
     let transactionOpen = false;
     let heartbeatSettled = false;
-    let pendingHeartbeat: Promise<{ id: string } | undefined> | undefined;
+    let pendingHeartbeat:
+      | Promise<{ outcome: string; id?: string } | undefined>
+      | undefined;
     try {
       await revoker.query(
         "SELECT set_config('app.is_super', 'off', false), set_config('app.school_id', $1, false)",
@@ -398,7 +401,7 @@ describe("ClassPilot heartbeat presence hot path", () => {
 
       await revoker.query("COMMIT");
       transactionOpen = false;
-      assert.equal(await pendingHeartbeat, undefined);
+      assert.deepEqual(await pendingHeartbeat, { outcome: "inactive_session" });
     } finally {
       if (transactionOpen) await revoker.query("ROLLBACK").catch(() => {});
       await revoker
@@ -448,7 +451,7 @@ describe("ClassPilot heartbeat presence hot path", () => {
         sessionId
       )
     );
-    assert.equal(rejected, undefined);
+    assert.deepEqual(rejected, { outcome: "inactive_session" });
 
     const afterRevocation = await inSchool(async () => {
       const rows = await db

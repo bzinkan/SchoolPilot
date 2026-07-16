@@ -13,6 +13,7 @@ import { requireProductLicense } from "../../middleware/requireProductLicense.js
 import {
   requireDeviceAuth,
   requireDeviceAuthWithoutTenant,
+  requireCryptographicDeviceAuth,
 } from "../../middleware/requireDeviceAuth.js";
 import {
   classPilotTileAdmission,
@@ -21,14 +22,11 @@ import {
 import { requireRole } from "../../middleware/requireRole.js";
 import {
   getDeviceById,
-  getLiveTileReadableDeviceForStaff,
-  getHistoryTileAccessForStaff,
   getDevicesBySchool,
   createDevice,
   updateDevice,
   deleteDevice,
   createHeartbeatAndRefreshPresence,
-  updateHeartbeatClassification,
   getHeartbeatsByDevice,
   getHeartbeatsByDeviceInRange,
   createEvent,
@@ -96,6 +94,21 @@ import {
   trackExtensionRuntimeTelemetry,
 } from "../../services/runtimeTelemetry.js";
 import { redisCommand, redisStore } from "../../middleware/rateLimiter.js";
+import { getCoalescedTileAuthorization } from "../../services/classpilotTileAuthorization.js";
+import {
+  invalidateHeartbeatTileCaches,
+  patchHeartbeatTileCacheClassifications,
+  readHeartbeatTileCache,
+  writeHeartbeatTileCache,
+} from "../../services/heartbeatTileCache.js";
+import {
+  persistHeartbeatClassification,
+  trackHeartbeatClassificationProducer,
+} from "../../services/heartbeatClassificationBatcher.js";
+import {
+  recordHeartbeatHotPathCounter,
+  recordHeartbeatHotPathTiming,
+} from "../../services/heartbeatHotPathMetrics.js";
 
 const router = Router();
 
@@ -319,29 +332,29 @@ async function withAuthorizedTileDevice<T>(
     | "office_staff"
     | "super_admin";
 
-  return runWithTenantContext(
-    { schoolId },
-    async () => {
-      const options = {
-        schoolId,
-        deviceId,
-        staffId: req.authUser!.id,
-        role,
-        isSuperAdmin: req.authUser!.isSuperAdmin,
-      };
-      const access =
-        accessMode === "live"
-          ? await getLiveTileReadableDeviceForStaff(options).then((device) =>
-              device ? { device, authorizedStudentIds: null } : undefined
-            )
-          : await getHistoryTileAccessForStaff(options);
-      if (!access) return { status: "not-found" as const };
-      return {
-        status: "ok" as const,
-        value: await operation(access.device, access.authorizedStudentIds),
-      };
-    }
+  const rawSessionScope =
+    req.sessionID || req.get("authorization") || "no-session";
+  const sessionScope = crypto
+    .createHash("sha256")
+    .update(rawSessionScope)
+    .digest("hex")
+    .slice(0, 24);
+  const access = await getCoalescedTileAuthorization(
+    {
+      schoolId,
+      staffId: req.authUser!.id,
+      role,
+      isSuperAdmin: req.authUser!.isSuperAdmin,
+      sessionScope,
+    },
+    deviceId,
+    accessMode
   );
+  if (!access) return { status: "not-found" as const };
+  return {
+    status: "ok" as const,
+    value: await operation(access.device, access.authorizedStudentIds),
+  };
 }
 
 function normalizeGradeLevel(value: unknown): string | null {
@@ -1490,7 +1503,7 @@ router.post("/extension/runtime-error", requireDeviceAuth, extensionTelemetryLim
 // ============================================================================
 
 // POST /api/classpilot/device/heartbeat - Device sends heartbeat (device JWT auth)
-router.post("/device/heartbeat", requireDeviceAuthWithoutTenant, deviceHeartbeatLimiter, async (req, res, next) => {
+router.post("/device/heartbeat", requireCryptographicDeviceAuth, deviceHeartbeatLimiter, async (req, res, next) => {
   try {
     const {
       activeTabUrl, activeTabTitle, visibilityState, screenLocked,
@@ -1502,7 +1515,6 @@ router.post("/device/heartbeat", requireDeviceAuthWithoutTenant, deviceHeartbeat
     const schoolId = res.locals.schoolId as string;
     const studentId = res.locals.studentId as string;
     const deviceId = res.locals.deviceId as string;
-    const tokenStudentEmail = res.locals.studentEmail as string | undefined;
 
     // --- Per-device rate limiting (item #9) ---
     const lastHb = deviceLastHeartbeat.get(deviceId);
@@ -1512,39 +1524,10 @@ router.post("/device/heartbeat", requireDeviceAuthWithoutTenant, deviceHeartbeat
     }
     deviceLastHeartbeat.set(deviceId, now);
 
-    // Active-session authentication already inner-joins the student and device
-    // inside this school. Reuse its email projection for legacy tokens that do
-    // not carry studentEmail instead of repeating a student lookup.
-    const activeSession = res.locals.activeStudentSession as {
-      studentId?: string;
-      studentEmail?: string | null;
-    } | undefined;
-    const studentEmail = tokenStudentEmail || activeSession?.studentEmail || "";
-    const rejectReplacedSession = async () => {
-      removeDeviceStatus(schoolId, deviceId);
-      const signOutUpdate = {
-        type: "student-signed-out",
-        studentId,
-        deviceId,
-        schoolId,
-        status: "offline",
-        reason: "session_replaced",
-        timestamp: new Date().toISOString(),
-      };
-      broadcastToTeachersLocal(schoolId, signOutUpdate);
-      await publishWS({ kind: "staff", schoolId }, signOutUpdate);
-      return res.status(409).json({
-        error: "student_session_replaced",
-        message: "This student is signed in on another Chromebook.",
-      });
-    };
-    if (!activeSession || activeSession.studentId !== studentId) {
-      return rejectReplacedSession();
-    }
-
     // Keep the RLS connection only around the short database section. Redis,
     // WebSocket fan-out, classification, and response serialization must not
     // occupy one of the task's 18 PostgreSQL pool slots.
+    const heartbeatDatabaseStartedAt = Date.now();
     const heartbeatDbResult = await runWithTenantContext({ schoolId }, async () => {
       // --- ClassPilot license check (cached — saves 1 DB query per heartbeat) ---
       if (!(await hasCachedClassPilotLicense(schoolId))) {
@@ -1572,7 +1555,6 @@ router.post("/device/heartbeat", requireDeviceAuthWithoutTenant, deviceHeartbeat
       const heartbeat = await createHeartbeatAndRefreshPresence({
         deviceId,
         studentId,
-        studentEmail,
         schoolId,
         activeTabTitle: activeTabTitle || "Unknown",
         activeTabUrl: activeTabUrl || null,
@@ -1586,12 +1568,19 @@ router.post("/device/heartbeat", requireDeviceAuthWithoutTenant, deviceHeartbeat
         chromeVersion,
         screenshotHealth,
       }, res.locals.studentSessionId as string);
-      if (!heartbeat) {
+      if (heartbeat.outcome === "replaced_session") {
+        return { outcome: "replaced_session" } as const;
+      }
+      if (heartbeat.outcome === "inactive_session") {
         return { outcome: "inactive_session" } as const;
       }
 
       return { outcome: "recorded", heartbeat, school } as const;
     });
+    recordHeartbeatHotPathTiming(
+      "heartbeatDatabaseMs",
+      Date.now() - heartbeatDatabaseStartedAt
+    );
 
     if (heartbeatDbResult.outcome === "unlicensed") {
       return res.status(403).json({ error: "school_not_entitled", planStatus: "inactive" });
@@ -1602,10 +1591,76 @@ router.post("/device/heartbeat", requireDeviceAuthWithoutTenant, deviceHeartbeat
     if (heartbeatDbResult.outcome === "inactive_school") {
       return res.status(402).json({ planStatus: "inactive" });
     }
+    if (heartbeatDbResult.outcome === "replaced_session") {
+      recordHeartbeatHotPathCounter("heartbeatReplacedSession");
+      removeDeviceStatus(schoolId, deviceId);
+      const signOutUpdate = {
+        type: "student-signed-out",
+        studentId,
+        deviceId,
+        schoolId,
+        status: "offline",
+        reason: "session_replaced",
+        timestamp: new Date().toISOString(),
+      };
+      broadcastToTeachersLocal(schoolId, signOutUpdate);
+      await publishWS({ kind: "staff", schoolId }, signOutUpdate);
+      return res.status(409).json({
+        error: "student_session_replaced",
+        message: "This student is signed in on another Chromebook.",
+      });
+    }
     if (heartbeatDbResult.outcome === "inactive_session") {
-      return rejectReplacedSession();
+      recordHeartbeatHotPathCounter("heartbeatInactiveSession");
+      // Preserve requireDeviceAuthWithoutTenant's established response while
+      // letting the insert CTE remain the sole database authority.
+      return res.status(401).json({ error: "Student session is no longer active" });
     }
     const { heartbeat, school } = heartbeatDbResult;
+    const studentEmail = heartbeat.studentEmail;
+    recordHeartbeatHotPathCounter("heartbeatRecorded");
+
+    // Write through the bounded latest-history cache without extending the
+    // request's PostgreSQL connection lifetime. A cache failure is deliberately
+    // non-authoritative; authorized history reads fall back to PostgreSQL.
+    const heartbeatTileCacheWrite = writeHeartbeatTileCache({
+      id: heartbeat.id,
+      deviceId,
+      studentId,
+      studentEmail,
+      schoolId,
+      activeTabTitle: activeTabTitle || "Unknown",
+      activeTabUrl: activeTabUrl || null,
+      favicon: favicon || null,
+      screenLocked: screenLocked || false,
+      flightPathActive: flightPathActive || false,
+      activeFlightPathName: activeFlightPathName || null,
+      isSharing: isScreenSharing || isScreenRecording || false,
+      cameraActive: cameraActive || false,
+      aiCategory: null,
+      safetyAlert: null,
+      extensionVersion: extensionVersion ?? null,
+      chromeVersion: chromeVersion ?? null,
+      screenshotHealth: screenshotHealth ?? null,
+      timestamp: heartbeat.timestamp,
+      classificationPending: Boolean(
+        activeTabUrl && !activeTabUrl.startsWith("chrome")
+      ),
+    });
+    // A write-through cache must never keep serving an older complete list when
+    // this heartbeat could not be inserted into Redis. Finish the single Redis
+    // round trip after releasing PostgreSQL, then fail closed by deleting (or
+    // locally suppressing) the affected cache key before the HTTP response.
+    const heartbeatTileCacheWritten = await heartbeatTileCacheWrite;
+    if (!heartbeatTileCacheWritten) {
+      // invalidate() marks this process fail-closed before its first await.
+      // Do not stack a second bounded Redis readiness wait onto heartbeat
+      // latency during an outage; the detached DEL provides cross-task cleanup.
+      void invalidateHeartbeatTileCaches([{ schoolId, deviceId }]);
+    }
+    const completedHeartbeatTileCacheWrite = Promise.resolve(
+      heartbeatTileCacheWritten
+    );
 
     // --- Update in-memory real-time status ---
     updateDeviceStatus({
@@ -1654,8 +1709,25 @@ router.post("/device/heartbeat", requireDeviceAuthWithoutTenant, deviceHeartbeat
 
     // --- AI content classification (item #8) — async, non-blocking ---
     if (activeTabUrl && !activeTabUrl.startsWith("chrome")) {
-      classifyUrl(activeTabUrl, activeTabTitle, { schoolDomain: school.domain }).then(async (classification) => {
-        if (!classification) return;
+      const classificationProducer = classifyUrl(
+        activeTabUrl,
+        activeTabTitle,
+        { schoolDomain: school.domain }
+      ).then(async (classification) => {
+        if (!classification) {
+          await completedHeartbeatTileCacheWrite;
+          const completion = {
+            schoolId,
+            deviceId,
+            heartbeatId: heartbeat.id,
+            aiCategory: null,
+            safetyAlert: null,
+          };
+          if (!(await patchHeartbeatTileCacheClassifications([completion]))) {
+            await invalidateHeartbeatTileCaches([completion]);
+          }
+          return;
+        }
 
         // Store classification in realtime status so students-aggregated includes it
         updateDeviceClassification(schoolId, deviceId, {
@@ -1663,11 +1735,16 @@ router.post("/device/heartbeat", requireDeviceAuthWithoutTenant, deviceHeartbeat
           safetyAlert: classification.safetyAlert,
         });
 
-        // Persist classification to the heartbeat record
-        // Detached callback (request connection already released) → re-establish
-        // this school's context so classification persists under heartbeats RLS.
-        void runWithTenantContext({ schoolId }, async () => {
-          await updateHeartbeatClassification(heartbeat.id, classification.category, classification.safetyAlert);
+        // Critical classifications persist immediately. Educational/unknown
+        // results retain the same historical fields but share one school-bound
+        // transaction in batches of at most 100 rows / 250 ms.
+        void persistHeartbeatClassification({
+          schoolId,
+          deviceId,
+          heartbeatId: heartbeat.id,
+          aiCategory: classification.category,
+          safetyAlert: classification.safetyAlert,
+          cacheWrite: completedHeartbeatTileCacheWrite,
         }).catch(() => {});
 
         // Broadcast classification to teachers
@@ -1784,7 +1861,9 @@ router.post("/device/heartbeat", requireDeviceAuthWithoutTenant, deviceHeartbeat
           // AI handles unsafe content in real-time (tab close + safety alert above).
           // Domains are NOT auto-added to the school blocklist — only admin-entered domains go there.
         }
-      }).catch(() => { /* non-blocking */ });
+      });
+      void trackHeartbeatClassificationProducer(classificationProducer)
+        .catch(() => { /* non-blocking */ });
     }
 
     // --- Deliver any missed messages (item #3b) ---
@@ -2025,7 +2104,10 @@ router.get("/heartbeats/:deviceId", ...tileReadAuth, async (req, res, next) => {
     // Live tiles render only the ten most recent samples. Keep explicit limits
     // available for callers that need them without making every 30-second tile
     // poll materialize fifty full heartbeat rows from an aged table.
-    const limit = parseInt(req.query.limit as string) || 10;
+    const limit = Math.min(
+      Math.max(parseInt(req.query.limit as string) || 10, 1),
+      100
+    );
     const startTime = req.query.startTime as string | undefined;
     const endTime = req.query.endTime as string | undefined;
     const authorization = await withAuthorizedTileDevice(
@@ -2042,25 +2124,55 @@ router.get("/heartbeats/:deviceId", ...tileReadAuth, async (req, res, next) => {
           if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
             return { status: "invalid-range" as const };
           }
-          return {
-            status: "ok" as const,
-            heartbeats: await getHeartbeatsByDeviceInRange(
+          const databaseStartedAt = Date.now();
+          const heartbeats = await runWithTenantContext({ schoolId }, () =>
+            getHeartbeatsByDeviceInRange(
               schoolId,
               deviceId,
               start,
               end,
               authorizedStudentIds
-            ),
+            )
+          );
+          recordHeartbeatHotPathCounter("tileHistoryDatabaseReads");
+          recordHeartbeatHotPathTiming(
+            "tileHistoryDatabaseMs",
+            Date.now() - databaseStartedAt
+          );
+          return {
+            status: "ok" as const,
+            heartbeats,
           };
         }
-        return {
-          status: "ok" as const,
-          heartbeats: await getHeartbeatsByDevice(
+
+        if (!endTime && limit === 10) {
+          const cached = await readHeartbeatTileCache(
             schoolId,
             deviceId,
-            Math.min(Math.max(limit, 1), 100),
             authorizedStudentIds
-          ),
+          );
+          if (cached.status === "hit") {
+            return { status: "ok" as const, heartbeats: cached.heartbeats };
+          }
+        }
+
+        const databaseStartedAt = Date.now();
+        const heartbeats = await runWithTenantContext({ schoolId }, () =>
+          getHeartbeatsByDevice(
+            schoolId,
+            deviceId,
+            limit,
+            authorizedStudentIds
+          )
+        );
+        recordHeartbeatHotPathCounter("tileHistoryDatabaseReads");
+        recordHeartbeatHotPathTiming(
+          "tileHistoryDatabaseMs",
+          Date.now() - databaseStartedAt
+        );
+        return {
+          status: "ok" as const,
+          heartbeats: heartbeats.slice(0, limit),
         };
       }
     );

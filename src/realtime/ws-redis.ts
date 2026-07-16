@@ -30,16 +30,39 @@ type PublishWSOptions = {
   revision?: string;
 };
 
+export type OrderedPublishOutcome =
+  | { status: "accepted"; subscriberCount: number }
+  | { status: "stale"; subscriberCount: 0 }
+  | { status: "failed"; subscriberCount: 0 };
+
+export type PublishWSBatchItem = {
+  target: WsRedisTarget;
+  message: unknown;
+  includeSource?: boolean;
+};
+
+export type CommandHotPathPhase =
+  | "command_local_delivery"
+  | "command_redis_batch"
+  | "command_mark_sent"
+  | "ack_target_update"
+  | "ack_summary_refresh"
+  | "ack_snapshot_publish"
+  | "ack_redis_publish";
+
 export const ORDERED_PUBLISH_TTL_SECONDS = 24 * 60 * 60;
 export const ORDERED_PUBLISH_SCRIPT = `
 local current = redis.call('GET', KEYS[1])
 if current and tonumber(current) >= tonumber(ARGV[1]) then
   return -1
 end
+-- Reserve the revision even when no subscriber is currently attached. ACK
+-- snapshot callbacks run after their database lock is released, so an older
+-- delayed callback must never become publishable merely because a newer
+-- callback observed zero subscribers. The newer state will take a fresh
+-- database revision on its bounded retry.
+redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
 local subscribers = redis.call('PUBLISH', ARGV[3], ARGV[4])
-if subscribers > 0 then
-  redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
-end
 return subscribers
 `;
 const MAX_ORDERED_DELIVERY_REVISIONS = 10_000;
@@ -81,6 +104,13 @@ type HotPathActivity = {
   screenshotPayloadBytes: number;
   screenshotRedisStores: number;
   screenshotMemoryFallbacks: number;
+  commandPhases: Partial<Record<CommandHotPathPhase, {
+    count: number;
+    failures: number;
+    items: number;
+    totalDurationMs: number;
+    maxDurationMs: number;
+  }>>;
 };
 
 function emptyHotPathActivity(): HotPathActivity {
@@ -92,6 +122,7 @@ function emptyHotPathActivity(): HotPathActivity {
     screenshotPayloadBytes: 0,
     screenshotRedisStores: 0,
     screenshotMemoryFallbacks: 0,
+    commandPhases: {},
   };
 }
 
@@ -103,7 +134,8 @@ function flushHotPathActivity(): void {
   if (
     activity.redisMessagesPublished === 0 &&
     activity.redisMessagesReceived === 0 &&
-    activity.screenshotUploads === 0
+    activity.screenshotUploads === 0 &&
+    Object.keys(activity.commandPhases).length === 0
   ) {
     return;
   }
@@ -128,6 +160,27 @@ export function recordScreenshotUpload(payloadBytes: number, storedInRedis: bool
   } else {
     hotPathActivity.screenshotMemoryFallbacks += 1;
   }
+}
+
+export function recordCommandHotPathPhase(
+  phase: CommandHotPathPhase,
+  durationMs: number,
+  options: { success?: boolean; items?: number } = {}
+): void {
+  const metric = hotPathActivity.commandPhases[phase] ?? {
+    count: 0,
+    failures: 0,
+    items: 0,
+    totalDurationMs: 0,
+    maxDurationMs: 0,
+  };
+  const boundedDurationMs = Number.isFinite(durationMs) ? Math.max(0, durationMs) : 0;
+  metric.count += 1;
+  metric.failures += options.success === false ? 1 : 0;
+  metric.items += Math.max(0, Math.trunc(options.items ?? 1));
+  metric.totalDurationMs += boundedDurationMs;
+  metric.maxDurationMs = Math.max(metric.maxDurationMs, boundedDurationMs);
+  hotPathActivity.commandPhases[phase] = metric;
 }
 
 console.log(`[Redis] Instance ${instanceShortId} starting, Redis URL: ${redisUrl ? 'configured' : 'NOT configured'}`);
@@ -318,6 +371,105 @@ export async function publishWS(
     console.error(`[Redis] Instance ${instanceShortId} publish failed:`, error);
     warnRedis(error);
     return false;
+  }
+}
+
+/**
+ * Atomically claim and publish a revisioned WebSocket snapshot.
+ *
+ * Callers that also fan out locally must wait for this result and perform the
+ * local fan-out only when status is "accepted". That global Redis decision
+ * prevents a delayed callback on another API task from broadcasting an older
+ * snapshot locally before Redis rejects it as stale.
+ */
+export async function publishOrderedWS(
+  target: WsRedisTarget,
+  message: unknown,
+  options: {
+    orderedKey: string;
+    revision: string;
+    includeSource?: boolean;
+    signal?: AbortSignal;
+  }
+): Promise<OrderedPublishOutcome> {
+  if (!redisUrl) return { status: "failed", subscriberCount: 0 };
+  await ensureRedisReady();
+  if (!redisEnabled || !redisPublisher) {
+    return { status: "failed", subscriberCount: 0 };
+  }
+
+  const payload: WsRedisEnvelope = {
+    instanceId,
+    target,
+    message,
+    includeSource: options.includeSource || undefined,
+    orderedKey: options.orderedKey,
+    revision: options.revision,
+  };
+
+  try {
+    const serialized = JSON.stringify(payload);
+    const subscriberCount = await redisPublisher.sendCommand<number>([
+      "EVAL",
+      ORDERED_PUBLISH_SCRIPT,
+      "1",
+      `${redisPrefix}:ws:ordered:${options.orderedKey}`,
+      options.revision,
+      String(ORDERED_PUBLISH_TTL_SECONDS),
+      redisChannel,
+      serialized,
+    ], options.signal ? { signal: options.signal } : undefined);
+    if (subscriberCount === -1) {
+      return { status: "stale", subscriberCount: 0 };
+    }
+    hotPathActivity.redisMessagesPublished += 1;
+    hotPathActivity.redisSubscriberDeliveries += subscriberCount;
+    return { status: "accepted", subscriberCount };
+  } catch (error) {
+    console.error(`[Redis] Instance ${instanceShortId} ordered publish failed:`, error);
+    warnRedis(error);
+    return { status: "failed", subscriberCount: 0 };
+  }
+}
+
+/**
+ * Publish an ordered input list in one Redis round trip. Redis executes the
+ * queued PUBLISH commands in input order, so remote tasks observe the same
+ * target/message order used for local delivery. This intentionally supports
+ * only ordinary (non-revisioned) publications; revisioned command snapshots
+ * continue to use publishWS and its compare-and-publish script.
+ */
+export async function publishWSBatch(
+  items: readonly PublishWSBatchItem[]
+): Promise<boolean[]> {
+  if (items.length === 0) return [];
+  if (!redisUrl) return items.map(() => false);
+  await ensureRedisReady();
+  if (!redisEnabled || !redisPublisher) return items.map(() => false);
+
+  try {
+    const serialized = items.map(({ target, message, includeSource }) => JSON.stringify({
+      instanceId,
+      target,
+      message,
+      includeSource: includeSource || undefined,
+    } satisfies WsRedisEnvelope));
+    const pipeline = redisPublisher.multi();
+    for (const payload of serialized) {
+      pipeline.publish(redisChannel, payload);
+    }
+    const results = await pipeline.exec();
+    const subscriberCounts = results.map((value) => Number(value ?? 0));
+    hotPathActivity.redisMessagesPublished += subscriberCounts.length;
+    hotPathActivity.redisSubscriberDeliveries += subscriberCounts.reduce(
+      (total, count) => total + Math.max(0, count),
+      0
+    );
+    return subscriberCounts.map((count) => count > 0);
+  } catch (error) {
+    console.error(`[Redis] Instance ${instanceShortId} batch publish failed:`, error);
+    warnRedis(error);
+    return items.map(() => false);
   }
 }
 
