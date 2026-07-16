@@ -448,10 +448,7 @@ export async function executeClasspilotCommand(options: {
   );
 
   const sentTargets: ResolvedClasspilotCommandTarget[] = [];
-  const deliveryCandidates: Array<{
-    target: ResolvedClasspilotCommandTarget;
-    locallyDelivered: boolean;
-  }> = [];
+  const deliveryCandidates: ResolvedClasspilotCommandTarget[] = [];
   const remotePublications: PublishWSBatchItem[] = [];
   const localDeliveryStartedAt = performance.now();
   let localDeliverySucceeded = false;
@@ -475,12 +472,12 @@ export async function executeClasspilotCommand(options: {
       // Keep both arrays in the caller's exact target order. Local delivery is
       // immediate; Redis publication below sends the corresponding envelopes in
       // that same order using one network round trip.
-      const locallyDelivered = sendToDeviceLocal(options.schoolId, target.deviceId!, message);
+      sendToDeviceLocal(options.schoolId, target.deviceId!, message);
       remotePublications.push({
         target: { kind: "device", schoolId: options.schoolId, deviceId: target.deviceId! },
         message,
       });
-      deliveryCandidates.push({ target, locallyDelivered });
+      deliveryCandidates.push(target);
     }
     localDeliverySucceeded = true;
   } finally {
@@ -505,13 +502,12 @@ export async function executeClasspilotCommand(options: {
     );
   }
 
-  // `sent` means this process reached the local socket or Redis handed the
-  // envelope to at least one API broadcast subscriber. Device receipt remains
-  // separately authoritative through received/completed ACKs. A failed batch
-  // stays visible in metrics and cannot silently advance a target.
-  deliveryCandidates.forEach(({ target, locallyDelivered }, index) => {
-    if (locallyDelivered || publicationResults[index]) sentTargets.push(target);
-  });
+  // `sent` records that this process attempted dispatch for a valid available
+  // target, matching the established command contract. Local socket presence
+  // and Redis subscriber count do not prove device receipt; received/completed
+  // ACKs remain separately authoritative. Batch failures stay visible in the
+  // phase metrics without changing the persisted dispatch-attempt semantics.
+  sentTargets.push(...deliveryCandidates);
 
   const markSentStartedAt = performance.now();
   let markSentSucceeded = false;

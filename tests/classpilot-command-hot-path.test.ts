@@ -15,11 +15,15 @@ describe("ClassPilot command and ACK hot path", () => {
       dispatcher.indexOf("const command = await getClasspilotCommandByIdAndSchool")
     );
 
-    assert.match(dispatchSection, /remotePublications\.push\(\{[\s\S]*?sentTargets\.push\(target\)/);
+    assert.match(dispatchSection, /remotePublications\.push\(\{[\s\S]*?deliveryCandidates\.push\(target\)/);
     assert.match(dispatchSection, /await publishWSBatch\(remotePublications\)/);
     assert.doesNotMatch(dispatchSection, /await publishWS\(\{ kind: "device"/);
     assert.match(dispatchSection, /redisPublishSucceeded = publicationResults\.every\(Boolean\)/);
-    assert.match(dispatchSection, /locallyDelivered \|\| publicationResults\[index\]/);
+    assert.match(
+      dispatchSection,
+      /await publishWSBatch\(remotePublications\)[\s\S]*?sentTargets\.push\(\.\.\.deliveryCandidates\)/
+    );
+    assert.doesNotMatch(dispatchSection, /locallyDelivered \|\| publicationResults\[index\]/);
     assert.equal(
       dispatchSection.match(/markClasspilotCommandTargetsSent\(/g)?.length,
       1

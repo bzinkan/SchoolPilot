@@ -250,8 +250,26 @@ describe("heartbeat classification batching", () => {
 });
 
 describe("aligned tile authorization coalescing", () => {
-  it("shares one scope load across a cohort and isolates mode/role/session keys", async () => {
-    let now = 1_000;
+  const request = {
+    schoolId: "school-a",
+    staffId: "teacher-a",
+    role: "teacher" as const,
+    isSuperAdmin: false,
+    sessionScope: "session-a",
+  };
+
+  const authorizedScope = () =>
+    new Map([
+      [
+        "device-0",
+        {
+          device: { deviceId: "device-0", schoolId: "school-a" },
+          authorizedStudentIds: ["student-0"],
+        },
+      ],
+    ]) as any;
+
+  it("shares one in-flight scope load across 40 concurrent calls", async () => {
     let loads = 0;
     const loader = async () => {
       loads += 1;
@@ -266,16 +284,7 @@ describe("aligned tile authorization coalescing", () => {
         ])
       ) as any;
     };
-    const coalescer = createClassPilotTileAuthorizationCoalescer(loader, {
-      now: () => now,
-    });
-    const request = {
-      schoolId: "school-a",
-      staffId: "teacher-a",
-      role: "teacher" as const,
-      isSuperAdmin: false,
-      sessionScope: "session-a",
-    };
+    const coalescer = createClassPilotTileAuthorizationCoalescer(loader);
 
     const cohort = await Promise.all(
       Array.from({ length: 40 }, (_, index) =>
@@ -284,23 +293,80 @@ describe("aligned tile authorization coalescing", () => {
     );
     assert.equal(loads, 1);
     assert.equal(cohort.filter(Boolean).length, 40);
+  });
 
-    await coalescer.authorize(request, "device-0", "live");
-    await coalescer.authorize(
-      { ...request, sessionScope: "session-b" },
-      "device-0",
-      "history"
+  it("reloads a settled denial immediately so a new grant is visible", async () => {
+    let loads = 0;
+    let allowed = false;
+    const coalescer = createClassPilotTileAuthorizationCoalescer(async () => {
+      loads += 1;
+      return allowed ? authorizedScope() : (new Map() as any);
+    });
+
+    assert.equal(
+      await coalescer.authorize(request, "device-0", "history"),
+      undefined
     );
-    await coalescer.authorize(
-      { ...request, role: "office_staff" },
-      "device-0",
-      "history"
+    allowed = true;
+    assert.ok(await coalescer.authorize(request, "device-0", "history"));
+    assert.equal(loads, 2);
+  });
+
+  it("reloads a settled grant immediately so a revocation is visible", async () => {
+    let loads = 0;
+    let allowed = true;
+    const coalescer = createClassPilotTileAuthorizationCoalescer(async () => {
+      loads += 1;
+      return allowed ? authorizedScope() : (new Map() as any);
+    });
+
+    assert.ok(await coalescer.authorize(request, "device-0", "history"));
+    allowed = false;
+    assert.equal(
+      await coalescer.authorize(request, "device-0", "history"),
+      undefined
     );
-    assert.equal(loads, 4);
+    assert.equal(loads, 2);
+  });
+
+  it("uses the two-second bound only to replace a still-pending load", async () => {
+    let now = 1_000;
+    let loads = 0;
+    const releases: Array<(scope: any) => void> = [];
+    const coalescer = createClassPilotTileAuthorizationCoalescer(
+      async () => {
+        loads += 1;
+        return new Promise((resolve) => releases.push(resolve));
+      },
+      { now: () => now }
+    );
+
+    const first = coalescer.authorize(request, "device-0", "history");
+    await Promise.resolve();
+    assert.equal(loads, 1);
 
     now += 2_001;
-    await coalescer.authorize(request, "device-0", "history");
-    assert.equal(loads, 5);
+    const replacement = coalescer.authorize(request, "device-0", "history");
+    await Promise.resolve();
+    assert.equal(loads, 2);
+
+    releases[0]!(authorizedScope());
+    assert.ok(await first);
+
+    const coalescedReplacement = coalescer.authorize(
+      request,
+      "device-0",
+      "history"
+    );
+    assert.equal(loads, 2);
+
+    releases[1]!(authorizedScope());
+    const [replacementAccess, coalescedAccess] = await Promise.all([
+      replacement,
+      coalescedReplacement,
+    ]);
+    assert.ok(replacementAccess);
+    assert.ok(coalescedAccess);
   });
 });
 
