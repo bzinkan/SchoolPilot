@@ -28,6 +28,7 @@ $script:RollbackDeadline = [DateTimeOffset]::MaxValue
 $script:RollbackProgressStatePath = $null
 $script:RollbackRunId = ""
 $script:RollbackFailureDetails = $null
+$script:RollbackCurrentStep = "initializing"
 
 function Test-IsInsideDirectory {
     param([string]$Path, [string]$Directory)
@@ -141,6 +142,7 @@ function Set-RollbackProgress {
 
 function Assert-RollbackDeadline {
     param([string]$Step)
+    $script:RollbackCurrentStep = $Step
     if ([DateTimeOffset]::UtcNow -ge $script:RollbackDeadline) {
         throw "Rollback action deadline reached before '$Step'."
     }
@@ -285,7 +287,7 @@ function Read-Config {
     $resolvedEvidenceDirectory = Get-ExternalPath -Path (Get-RequiredString $config "evidenceDirectory") -Name "evidenceDirectory" -AllowMissing
     $config | Add-Member -NotePropertyName resolvedEvidenceDirectory -NotePropertyValue $resolvedEvidenceDirectory -Force
     $timeoutDefaults = [ordered]@{
-        Application = 900
+        Application = 3600
         Oom = 900
         Waf = 600
         PublicEcs = 900
@@ -671,12 +673,22 @@ function Set-EcsServiceDeploymentConfiguration {
 }
 
 function Restore-EcsServiceDeploymentConfigurationsBestEffort {
-    param($Config, $ApiDeploymentConfiguration, $WorkerDeploymentConfiguration)
+    param(
+        $Config,
+        $ApiDeploymentConfiguration,
+        $WorkerDeploymentConfiguration,
+        [bool]$RestoreApi = $true,
+        [bool]$RestoreWorker = $true
+    )
     $results = [Collections.Generic.List[object]]::new()
-    foreach ($restore in @(
-        [pscustomobject]@{ service = [string]$Config.apiService; configuration = $ApiDeploymentConfiguration },
-        [pscustomobject]@{ service = [string]$Config.workerService; configuration = $WorkerDeploymentConfiguration }
-    )) {
+    $restores = [Collections.Generic.List[object]]::new()
+    if ($RestoreApi) {
+        $restores.Add([pscustomobject]@{ service = [string]$Config.apiService; configuration = $ApiDeploymentConfiguration })
+    }
+    if ($RestoreWorker) {
+        $restores.Add([pscustomobject]@{ service = [string]$Config.workerService; configuration = $WorkerDeploymentConfiguration })
+    }
+    foreach ($restore in $restores) {
         try {
             Set-EcsServiceDeploymentConfiguration -Config $Config -Service $restore.service -DeploymentConfiguration $restore.configuration
             $results.Add([ordered]@{ service = $restore.service; success = $true })
@@ -687,11 +699,23 @@ function Restore-EcsServiceDeploymentConfigurationsBestEffort {
     }
     $failed = @($results | Where-Object { -not $_.success })
     return [ordered]@{
-        attempted = $true
+        attempted = $restores.Count -gt 0
         success = $failed.Count -eq 0
         services = @($results)
         errors = @($failed | ForEach-Object { "$($_.service): $($_.error)" })
     }
+}
+
+function Get-OptionalObjectValue {
+    param($Object, [string]$Property, $Default = $null)
+    if ($null -eq $Object) { return $Default }
+    if ($Object -is [Collections.IDictionary]) {
+        if ($Object.Contains($Property)) { return $Object[$Property] }
+        return $Default
+    }
+    $member = $Object.PSObject.Properties[$Property]
+    if ($null -eq $member -or $null -eq $member.Value) { return $Default }
+    return $member.Value
 }
 
 function Get-ServiceSnapshot {
@@ -702,12 +726,25 @@ function Get-ServiceSnapshot {
     )
     return @($response.services | ForEach-Object {
         $deploymentConfigurationMember = $_.PSObject.Properties["deploymentConfiguration"]
+        $deployments = @($_.deployments | ForEach-Object {
+            [ordered]@{
+                id = [string](Get-OptionalObjectValue -Object $_ -Property "id" -Default "")
+                status = [string](Get-OptionalObjectValue -Object $_ -Property "status" -Default "")
+                rolloutState = [string](Get-OptionalObjectValue -Object $_ -Property "rolloutState" -Default "")
+                taskDefinition = [string](Get-OptionalObjectValue -Object $_ -Property "taskDefinition" -Default "")
+                desired = [int](Get-OptionalObjectValue -Object $_ -Property "desiredCount" -Default 0)
+                running = [int](Get-OptionalObjectValue -Object $_ -Property "runningCount" -Default 0)
+                pending = [int](Get-OptionalObjectValue -Object $_ -Property "pendingCount" -Default 0)
+            }
+        })
         [ordered]@{
             serviceName = [string]$_.serviceName
             taskDefinition = [string]$_.taskDefinition
             desired = [int]$_.desiredCount
             running = [int]$_.runningCount
             pending = [int]$_.pendingCount
+            deploymentCount = $deployments.Count
+            deployments = $deployments
             subnets = @($_.networkConfiguration.awsvpcConfiguration.subnets)
             securityGroups = @($_.networkConfiguration.awsvpcConfiguration.securityGroups)
             assignPublicIp = [string]$_.networkConfiguration.awsvpcConfiguration.assignPublicIp
@@ -718,6 +755,179 @@ function Get-ServiceSnapshot {
             }
         }
     })
+}
+
+function Get-RunningTaskSnapshot {
+    param($Config, [string]$Service)
+    $listed = Invoke-AwsJson -Arguments @(
+        "ecs", "list-tasks", "--region", $Config.region, "--cluster", $Config.cluster,
+        "--service-name", $Service, "--desired-status", "RUNNING"
+    )
+    $taskArns = @($listed.taskArns | ForEach-Object { [string]$_ } | Where-Object { $_ })
+    if ($taskArns.Count -eq 0) { return @() }
+    $described = Invoke-AwsJson -Arguments (@(
+        "ecs", "describe-tasks", "--region", $Config.region, "--cluster", $Config.cluster, "--tasks"
+    ) + $taskArns)
+    return @($described.tasks | ForEach-Object {
+        [ordered]@{
+            taskDefinition = [string](Get-OptionalObjectValue -Object $_ -Property "taskDefinitionArn" -Default "")
+            lastStatus = [string](Get-OptionalObjectValue -Object $_ -Property "lastStatus" -Default "")
+            desiredStatus = [string](Get-OptionalObjectValue -Object $_ -Property "desiredStatus" -Default "")
+        }
+    })
+}
+
+function Get-TargetHealthSnapshot {
+    param($Config)
+    $response = Invoke-AwsJson -Arguments @(
+        "elbv2", "describe-target-health", "--region", $Config.region,
+        "--target-group-arn", $Config.targetGroupArn
+    )
+    $states = @($response.TargetHealthDescriptions | ForEach-Object {
+        [string](Get-OptionalObjectValue -Object $_.TargetHealth -Property "State" -Default "unknown")
+    })
+    return [ordered]@{
+        total = $states.Count
+        healthy = @($states | Where-Object { $_ -eq "healthy" }).Count
+        draining = @($states | Where-Object { $_ -eq "draining" }).Count
+        unhealthy = @($states | Where-Object { $_ -eq "unhealthy" }).Count
+        other = @($states | Where-Object { $_ -notin @("healthy", "draining", "unhealthy") }).Count
+        states = @($states | Sort-Object)
+    }
+}
+
+function Assert-TargetGroupDeregistrationDelay {
+    param($Config)
+    $response = Invoke-AwsJson -Arguments @(
+        "elbv2", "describe-target-group-attributes", "--region", $Config.region,
+        "--target-group-arn", $Config.targetGroupArn
+    )
+    $matches = @($response.Attributes | Where-Object Key -eq "deregistration_delay.timeout_seconds")
+    if ($matches.Count -ne 1) {
+        throw "Application rollback requires exactly one deregistration_delay.timeout_seconds target-group attribute."
+    }
+    $seconds = 0
+    if (-not [int]::TryParse([string]$matches[0].Value, [ref]$seconds) -or $seconds -ne 300) {
+        throw "Application rollback requires the reviewed 300-second ALB deregistration delay; observed '$($matches[0].Value)'."
+    }
+    return [ordered]@{
+        targetGroupArn = [string]$Config.targetGroupArn
+        deregistrationDelaySeconds = $seconds
+        verified = $true
+    }
+}
+
+function Get-ServiceConvergenceSnapshot {
+    param(
+        $Config,
+        [string]$Service,
+        [string]$ExpectedTaskDefinition,
+        [switch]$RequireHealthyTargets
+    )
+    $errors = [Collections.Generic.List[string]]::new()
+    $services = @(Get-ServiceSnapshot -Config $Config)
+    $matches = @($services | Where-Object serviceName -eq $Service)
+    if ($matches.Count -ne 1) {
+        $errors.Add("service_count:$($matches.Count)")
+        return [ordered]@{
+            serviceName = $Service
+            expectedTaskDefinition = $ExpectedTaskDefinition
+            stable = $false
+            failedDeployment = $false
+            errors = @($errors)
+        }
+    }
+
+    $serviceState = $matches[0]
+    $deployments = @($serviceState.deployments)
+    $failedDeployment = @($deployments | Where-Object rolloutState -eq "FAILED").Count -gt 0
+    if ($serviceState.taskDefinition -ne $ExpectedTaskDefinition) { $errors.Add("service_task_definition") }
+    if ($serviceState.desired -lt 1) { $errors.Add("desired_count_zero") }
+    if ($serviceState.running -ne $serviceState.desired) { $errors.Add("running_count") }
+    if ($serviceState.pending -ne 0) { $errors.Add("pending_count") }
+    if ($deployments.Count -ne 1) {
+        $errors.Add("deployment_count:$($deployments.Count)")
+    }
+    else {
+        $deployment = $deployments[0]
+        if ($deployment.status -ne "PRIMARY") { $errors.Add("deployment_status") }
+        if ($deployment.rolloutState -ne "COMPLETED") { $errors.Add("deployment_rollout_state") }
+        if ($deployment.taskDefinition -ne $ExpectedTaskDefinition) { $errors.Add("deployment_task_definition") }
+        if ($deployment.desired -ne $serviceState.desired -or
+            $deployment.running -ne $serviceState.desired -or $deployment.pending -ne 0) {
+            $errors.Add("deployment_counts")
+        }
+    }
+
+    $tasks = @(Get-RunningTaskSnapshot -Config $Config -Service $Service)
+    $taskDefinitions = @($tasks | ForEach-Object taskDefinition | Sort-Object -Unique)
+    if ($tasks.Count -ne $serviceState.desired) { $errors.Add("running_task_count:$($tasks.Count)") }
+    if (@($tasks | Where-Object {
+        $_.taskDefinition -ne $ExpectedTaskDefinition -or $_.lastStatus -ne "RUNNING" -or $_.desiredStatus -ne "RUNNING"
+    }).Count -gt 0) { $errors.Add("running_task_contract") }
+
+    $targets = $null
+    if ($RequireHealthyTargets) {
+        $targets = Get-TargetHealthSnapshot -Config $Config
+        if ($targets.total -ne $serviceState.desired -or $targets.healthy -ne $serviceState.desired -or
+            $targets.draining -ne 0 -or $targets.unhealthy -ne 0 -or $targets.other -ne 0) {
+            $errors.Add("target_health_contract")
+        }
+    }
+
+    return [ordered]@{
+        serviceName = $Service
+        expectedTaskDefinition = $ExpectedTaskDefinition
+        observedTaskDefinition = [string]$serviceState.taskDefinition
+        desired = [int]$serviceState.desired
+        running = [int]$serviceState.running
+        pending = [int]$serviceState.pending
+        deploymentCount = $deployments.Count
+        deployments = @($deployments)
+        runningTaskCount = $tasks.Count
+        runningTaskDefinitions = $taskDefinitions
+        targets = $targets
+        stable = $errors.Count -eq 0
+        failedDeployment = $failedDeployment
+        errors = @($errors)
+    }
+}
+
+function Wait-ServiceConvergence {
+    param(
+        $Config,
+        [string]$Service,
+        [string]$ExpectedTaskDefinition,
+        [string]$Step,
+        [switch]$RequireHealthyTargets
+    )
+    $requiredConsecutivePolls = 2
+    $pollMilliseconds = if ($Config.resolvedTestMode) { 10 } else { 15000 }
+    $consecutive = 0
+    $polls = 0
+    do {
+        Assert-RollbackDeadline -Step $Step
+        $polls++
+        $observed = Get-ServiceConvergenceSnapshot -Config $Config -Service $Service `
+            -ExpectedTaskDefinition $ExpectedTaskDefinition -RequireHealthyTargets:$RequireHealthyTargets
+        if ($null -ne $script:RollbackFailureDetails) {
+            $script:RollbackFailureDetails["lastObservedConvergence"] = $observed
+        }
+        if ($observed.failedDeployment) {
+            throw "Rollback convergence failed because service '$Service' reported rolloutState=FAILED."
+        }
+        if ($observed.stable) { $consecutive++ } else { $consecutive = 0 }
+        if ($consecutive -ge $requiredConsecutivePolls) {
+            return [ordered]@{
+                serviceName = $Service
+                expectedTaskDefinition = $ExpectedTaskDefinition
+                polls = $polls
+                consecutiveStablePolls = $consecutive
+                observation = $observed
+            }
+        }
+        Start-Sleep -Milliseconds $pollMilliseconds
+    } while ($true)
 }
 
 function Assert-HealthyTarget {
@@ -741,37 +951,33 @@ function Assert-ServiceTaskDefinitions {
         $ExpectedApiDeploymentConfiguration = $null,
         $ExpectedWorkerDeploymentConfiguration = $null
     )
+    $apiConvergence = Get-ServiceConvergenceSnapshot -Config $Config -Service $Config.apiService `
+        -ExpectedTaskDefinition $ApiTaskDefinition -RequireHealthyTargets
+    if (-not $apiConvergence.stable) {
+        throw "Rollback postcondition failed for the API service task definition: $($apiConvergence.errors -join ', ')."
+    }
     $services = @(Get-ServiceSnapshot -Config $Config)
     $api = @($services | Where-Object serviceName -eq $Config.apiService)
-    if ($api.Count -ne 1 -or $api[0].taskDefinition -ne $ApiTaskDefinition -or
-        $api[0].running -ne $api[0].desired -or $api[0].pending -ne 0) {
-        throw "Rollback postcondition failed for the API service task definition."
-    }
     if ($null -ne $ExpectedApiDeploymentConfiguration -and
         (Get-EcsDeploymentConfigurationJson $api[0].deploymentConfiguration) -cne
         (Get-EcsDeploymentConfigurationJson $ExpectedApiDeploymentConfiguration)) {
         throw "Rollback postcondition failed to restore the API deployment configuration."
     }
     if ($WorkerTaskDefinition) {
-        $worker = @($services | Where-Object serviceName -eq $Config.workerService)
-        if ($worker.Count -ne 1 -or $worker[0].taskDefinition -ne $WorkerTaskDefinition -or
-            $worker[0].running -ne $worker[0].desired -or $worker[0].pending -ne 0) {
-            throw "Rollback postcondition failed for the worker service task definition."
+        $workerConvergence = Get-ServiceConvergenceSnapshot -Config $Config -Service $Config.workerService `
+            -ExpectedTaskDefinition $WorkerTaskDefinition
+        if (-not $workerConvergence.stable) {
+            throw "Rollback postcondition failed for the worker service task definition: $($workerConvergence.errors -join ', ')."
         }
+        $services = @(Get-ServiceSnapshot -Config $Config)
+        $worker = @($services | Where-Object serviceName -eq $Config.workerService)
         if ($null -ne $ExpectedWorkerDeploymentConfiguration -and
             (Get-EcsDeploymentConfigurationJson $worker[0].deploymentConfiguration) -cne
             (Get-EcsDeploymentConfigurationJson $ExpectedWorkerDeploymentConfiguration)) {
             throw "Rollback postcondition failed to restore the worker deployment configuration."
         }
     }
-    Assert-HealthyTarget -Config $Config
     return $services
-}
-
-function Wait-Services {
-    param($Config, [string[]]$Services)
-    $arguments = @("ecs", "wait", "services-stable", "--region", $Config.region, "--cluster", $Config.cluster, "--services") + $Services
-    Invoke-Aws -Arguments $arguments
 }
 
 function Restore-Application {
@@ -782,18 +988,12 @@ function Restore-Application {
     if ($api.Count -ne 1 -or $worker.Count -ne 1) {
         throw "Application rollback could not resolve the current API and worker services."
     }
-    if ($api[0].desired -le 2) {
-        Assert-RollbackDeadline -Step "restore-previous-api-revision"
-        Invoke-Aws -Arguments @("ecs", "update-service", "--region", $Config.region, "--cluster", $Config.cluster,
-            "--service", $Config.apiService, "--task-definition", $Config.previousApiTaskDefinition, "--force-new-deployment")
-        Invoke-Aws -Arguments @("ecs", "update-service", "--region", $Config.region, "--cluster", $Config.cluster,
-            "--service", $Config.workerService, "--task-definition", $Config.previousWorkerTaskDefinition, "--force-new-deployment")
-        Assert-RollbackDeadline -Step "wait-application-services-stable"
-        Wait-Services -Config $Config -Services @($Config.apiService, $Config.workerService)
-        return Assert-ServiceTaskDefinitions -Config $Config -ApiTaskDefinition $Config.previousApiTaskDefinition `
-            -WorkerTaskDefinition $Config.previousWorkerTaskDefinition
-    }
-
+    Assert-RollbackDeadline -Step "verify-api-target-group-drain"
+    $targetGroupDrain = Assert-TargetGroupDeregistrationDelay -Config $Config
+    $initialApiConvergence = Get-ServiceConvergenceSnapshot -Config $Config -Service $Config.apiService `
+        -ExpectedTaskDefinition $Config.previousApiTaskDefinition -RequireHealthyTargets
+    $initialWorkerConvergence = Get-ServiceConvergenceSnapshot -Config $Config -Service $Config.workerService `
+        -ExpectedTaskDefinition $Config.previousWorkerTaskDefinition
     $capturedApiConfiguration = Copy-EcsDeploymentConfiguration -DeploymentConfiguration $api[0].deploymentConfiguration
     $capturedWorkerConfiguration = Copy-EcsDeploymentConfiguration -DeploymentConfiguration $worker[0].deploymentConfiguration
     $safeApiConfiguration = Copy-EcsDeploymentConfiguration -DeploymentConfiguration $capturedApiConfiguration
@@ -804,7 +1004,16 @@ function Restore-Application {
     $safeWorkerConfiguration.minimumHealthyPercent = if ([int]$worker[0].desired -gt 0) {
         [int][Math]::Floor((([int]$worker[0].desired - 1) * 100.0) / [int]$worker[0].desired)
     } else { 0 }
-    $script:RollbackFailureDetails = [ordered]@{
+    $recovery = [ordered]@{
+        recoveryRequired = $true
+        recoveryStatus = "running"
+        failedStep = $null
+        deadlineUtc = $script:RollbackDeadline.ToString("o")
+        expectedTaskDefinitions = [ordered]@{
+            api = [string]$Config.previousApiTaskDefinition
+            worker = [string]$Config.previousWorkerTaskDefinition
+        }
+        targetGroupDrain = $targetGroupDrain
         connectionSafeDeployment = $true
         apiDesired = [int]$api[0].desired
         workerDesired = [int]$worker[0].desired
@@ -812,56 +1021,102 @@ function Restore-Application {
         capturedWorkerDeploymentConfiguration = $capturedWorkerConfiguration
         temporaryApiDeploymentConfiguration = $safeApiConfiguration
         temporaryWorkerDeploymentConfiguration = $safeWorkerConfiguration
+        apiSafetyPolicyTouched = $false
+        apiRollbackDispatched = $false
+        apiRevisionAlreadySelected = $api[0].taskDefinition -eq $Config.previousApiTaskDefinition
+        apiInitiallyConverged = [bool]$initialApiConvergence.stable
+        initialApiConvergence = $initialApiConvergence
+        apiConverged = $false
+        apiConvergence = $null
+        workerSafetyPolicyTouched = $false
+        workerRollbackDispatched = $false
+        workerRevisionAlreadySelected = $worker[0].taskDefinition -eq $Config.previousWorkerTaskDefinition
+        workerInitiallyConverged = [bool]$initialWorkerConvergence.stable
+        initialWorkerConvergence = $initialWorkerConvergence
+        workerConverged = $false
+        workerConvergence = $null
+        safetyPolicyRetained = $false
+        safetyPolicyRetention = $null
+        deploymentConfigurationRestoration = $null
+        finalServices = $null
+        initialServices = $services
     }
+    $script:RollbackFailureDetails = $recovery
 
-    $rollbackError = $null
     $configurationRestoration = $null
     try {
-        Assert-RollbackDeadline -Step "cap-application-rollback-capacity"
-        Set-EcsServiceDeploymentConfiguration -Config $Config -Service $Config.apiService -DeploymentConfiguration $safeApiConfiguration
-        Set-EcsServiceDeploymentConfiguration -Config $Config -Service $Config.workerService -DeploymentConfiguration $safeWorkerConfiguration
+        if (-not $recovery.apiInitiallyConverged) {
+            Assert-RollbackDeadline -Step "install-api-connection-safe-policy"
+            $recovery.apiSafetyPolicyTouched = $true
+            Set-EcsServiceDeploymentConfiguration -Config $Config -Service $Config.apiService `
+                -DeploymentConfiguration $safeApiConfiguration
 
-        Assert-RollbackDeadline -Step "restore-previous-api-revision"
-        Invoke-Aws -Arguments @("ecs", "update-service", "--region", $Config.region, "--cluster", $Config.cluster,
-            "--service", $Config.apiService, "--task-definition", $Config.previousApiTaskDefinition, "--force-new-deployment")
-        Assert-RollbackDeadline -Step "wait-api-service-stable"
-        Wait-Services -Config $Config -Services @($Config.apiService)
-        [void](Assert-ServiceTaskDefinitions -Config $Config -ApiTaskDefinition $Config.previousApiTaskDefinition)
+            if (-not $recovery.apiRevisionAlreadySelected) {
+                Assert-RollbackDeadline -Step "restore-previous-api-revision"
+                Invoke-Aws -Arguments @("ecs", "update-service", "--region", $Config.region, "--cluster", $Config.cluster,
+                    "--service", $Config.apiService, "--task-definition", $Config.previousApiTaskDefinition, "--force-new-deployment")
+                $recovery.apiRollbackDispatched = $true
+            }
+        }
+        $recovery.apiConvergence = Wait-ServiceConvergence -Config $Config -Service $Config.apiService `
+            -ExpectedTaskDefinition $Config.previousApiTaskDefinition -Step "wait-api-exact-convergence" -RequireHealthyTargets
+        $recovery.apiConverged = $true
 
-        Assert-RollbackDeadline -Step "restore-previous-worker-revision"
-        Invoke-Aws -Arguments @("ecs", "update-service", "--region", $Config.region, "--cluster", $Config.cluster,
-            "--service", $Config.workerService, "--task-definition", $Config.previousWorkerTaskDefinition, "--force-new-deployment")
-        Assert-RollbackDeadline -Step "wait-worker-service-stable"
-        Wait-Services -Config $Config -Services @($Config.workerService)
-        [void](Assert-ServiceTaskDefinitions -Config $Config -ApiTaskDefinition $Config.previousApiTaskDefinition `
-            -WorkerTaskDefinition $Config.previousWorkerTaskDefinition)
+        if (-not $recovery.workerInitiallyConverged) {
+            Assert-RollbackDeadline -Step "install-worker-zero-overlap-policy"
+            $recovery.workerSafetyPolicyTouched = $true
+            Set-EcsServiceDeploymentConfiguration -Config $Config -Service $Config.workerService `
+                -DeploymentConfiguration $safeWorkerConfiguration
+
+            if (-not $recovery.workerRevisionAlreadySelected) {
+                Assert-RollbackDeadline -Step "restore-previous-worker-revision"
+                Invoke-Aws -Arguments @("ecs", "update-service", "--region", $Config.region, "--cluster", $Config.cluster,
+                    "--service", $Config.workerService, "--task-definition", $Config.previousWorkerTaskDefinition, "--force-new-deployment")
+                $recovery.workerRollbackDispatched = $true
+            }
+        }
+        $recovery.workerConvergence = Wait-ServiceConvergence -Config $Config -Service $Config.workerService `
+            -ExpectedTaskDefinition $Config.previousWorkerTaskDefinition -Step "wait-worker-exact-convergence"
+        $recovery.workerConverged = $true
+
         Assert-RollbackDeadline -Step "restore-captured-deployment-configurations"
-    }
-    catch { $rollbackError = $_ }
-    finally {
         $configurationRestoration = Restore-EcsServiceDeploymentConfigurationsBestEffort -Config $Config `
             -ApiDeploymentConfiguration $capturedApiConfiguration `
-            -WorkerDeploymentConfiguration $capturedWorkerConfiguration
-        $script:RollbackFailureDetails["deploymentConfigurationRestoration"] = $configurationRestoration
+            -WorkerDeploymentConfiguration $capturedWorkerConfiguration `
+            -RestoreApi ([bool]$recovery.apiSafetyPolicyTouched) `
+            -RestoreWorker ([bool]$recovery.workerSafetyPolicyTouched)
+        $recovery.deploymentConfigurationRestoration = $configurationRestoration
+        if (-not $configurationRestoration.success) {
+            throw "Application rollback restored the task definitions but failed to restore captured deployment configuration: $($configurationRestoration.errors -join '; ')"
+        }
+
+        $finalServices = Assert-ServiceTaskDefinitions -Config $Config -ApiTaskDefinition $Config.previousApiTaskDefinition `
+            -WorkerTaskDefinition $Config.previousWorkerTaskDefinition `
+            -ExpectedApiDeploymentConfiguration $capturedApiConfiguration `
+            -ExpectedWorkerDeploymentConfiguration $capturedWorkerConfiguration
+        $recovery.recoveryRequired = $false
+        $recovery.recoveryStatus = "completed"
+        $recovery.safetyPolicyRetained = $false
+        $recovery.finalServices = $finalServices
+        $result = $recovery
+        $script:RollbackFailureDetails = $null
+        return $result
     }
-    if ($null -ne $rollbackError) { throw $rollbackError }
-    if (-not $configurationRestoration.success) {
-        throw "Application rollback restored the task definitions but failed to restore captured deployment configuration: $($configurationRestoration.errors -join '; ')"
-    }
-    $finalServices = Assert-ServiceTaskDefinitions -Config $Config -ApiTaskDefinition $Config.previousApiTaskDefinition `
-        -WorkerTaskDefinition $Config.previousWorkerTaskDefinition `
-        -ExpectedApiDeploymentConfiguration $capturedApiConfiguration `
-        -ExpectedWorkerDeploymentConfiguration $capturedWorkerConfiguration
-    $script:RollbackFailureDetails = $null
-    return [ordered]@{
-        connectionSafeDeployment = $true
-        apiDesired = [int]$api[0].desired
-        workerDesired = [int]$worker[0].desired
-        temporaryApiDeploymentConfiguration = $safeApiConfiguration
-        temporaryWorkerDeploymentConfiguration = $safeWorkerConfiguration
-        restoredApiDeploymentConfiguration = $capturedApiConfiguration
-        restoredWorkerDeploymentConfiguration = $capturedWorkerConfiguration
-        services = $finalServices
+    catch {
+        $originalError = $_
+        $recovery.failedStep = $script:RollbackCurrentStep
+        $recovery.recoveryRequired = $true
+        $recovery.recoveryStatus = "incomplete"
+        $retention = Restore-EcsServiceDeploymentConfigurationsBestEffort -Config $Config `
+            -ApiDeploymentConfiguration $safeApiConfiguration `
+            -WorkerDeploymentConfiguration $safeWorkerConfiguration `
+            -RestoreApi ([bool]$recovery.apiSafetyPolicyTouched) `
+            -RestoreWorker ([bool]$recovery.workerSafetyPolicyTouched)
+        $recovery.safetyPolicyRetention = $retention
+        $recovery.safetyPolicyRetained = $retention.success -and
+            ($recovery.apiSafetyPolicyTouched -or $recovery.workerSafetyPolicyTouched)
+        $script:RollbackFailureDetails = $recovery
+        throw $originalError
     }
 }
 
@@ -878,13 +1133,17 @@ function Restore-Oom {
     }
     Invoke-Aws -Arguments @("ecs", "update-service", "--region", $Config.region, "--cluster", $Config.cluster,
         "--service", $Config.apiService, "--task-definition", $Config.emergencyApiTaskDefinition, "--force-new-deployment")
-    Wait-Services -Config $Config -Services @($Config.apiService)
+    [void](Wait-ServiceConvergence -Config $Config -Service $Config.apiService `
+        -ExpectedTaskDefinition $Config.emergencyApiTaskDefinition -Step "wait-emergency-api-exact-convergence" -RequireHealthyTargets)
     return Assert-ServiceTaskDefinitions -Config $Config -ApiTaskDefinition $Config.emergencyApiTaskDefinition
 }
 
 function Restore-PrivateEcs {
     param($Config)
     Assert-RollbackDeadline -Step "restore-captured-private-network"
+    $beforeServices = @(Get-ServiceSnapshot -Config $Config)
+    $expectedApiTaskDefinition = @($beforeServices | Where-Object serviceName -eq $Config.apiService)[0].taskDefinition
+    $expectedWorkerTaskDefinition = @($beforeServices | Where-Object serviceName -eq $Config.workerService)[0].taskDefinition
     $networkPath = Join-Path ([IO.Path]::GetTempPath()) "schoolpilot-network-$([Guid]::NewGuid().ToString('N')).json"
     try {
         $network = [ordered]@{
@@ -899,7 +1158,10 @@ function Restore-PrivateEcs {
             Invoke-Aws -Arguments @("ecs", "update-service", "--region", $Config.region, "--cluster", $Config.cluster,
                 "--service", $service, "--network-configuration", "file://$networkPath", "--force-new-deployment")
         }
-        Wait-Services -Config $Config -Services @($Config.apiService, $Config.workerService)
+        [void](Wait-ServiceConvergence -Config $Config -Service $Config.apiService `
+            -ExpectedTaskDefinition $expectedApiTaskDefinition -Step "wait-private-api-exact-convergence" -RequireHealthyTargets)
+        [void](Wait-ServiceConvergence -Config $Config -Service $Config.workerService `
+            -ExpectedTaskDefinition $expectedWorkerTaskDefinition -Step "wait-private-worker-exact-convergence")
         $services = @(Get-ServiceSnapshot -Config $Config)
         foreach ($service in $services) {
             if ($service.running -ne $service.desired -or $service.pending -ne 0 -or $service.assignPublicIp -ne "DISABLED") {

@@ -9,6 +9,7 @@ import {
   resolveActiveStudentTokenSession,
   studentAuthenticationServiceError,
 } from "../services/classpilotStudentAuth.js";
+import { recordHeartbeatHotPathCounter } from "../services/heartbeatHotPathMetrics.js";
 
 function extractBearerToken(rawHeader?: string | string[]): string | null {
   if (!rawHeader) return null;
@@ -21,9 +22,10 @@ function extractBearerToken(rawHeader?: string | string[]): string | null {
 }
 
 function createRequireDeviceAuth(
-  options: { bindTenant?: boolean } = {}
+  options: { bindTenant?: boolean; validateActiveSession?: boolean } = {}
 ): RequestHandler {
   const shouldBindTenant = options.bindTenant ?? true;
+  const shouldValidateActiveSession = options.validateActiveSession ?? true;
 
   /**
    * Device authentication middleware for ClassPilot Chrome extension.
@@ -49,6 +51,15 @@ function createRequireDeviceAuth(
       res.locals.studentSessionId = payload.sessionId;
       res.locals.studentEmail = payload.studentEmail;
       res.locals.authType = "device";
+
+      // The heartbeat CTE already validates and locks the exact active session,
+      // device, student, and school before it inserts. Its dedicated middleware
+      // therefore performs cryptographic validation only and avoids a duplicate
+      // database lookup. Other device routes retain the existing DB check.
+      if (!shouldValidateActiveSession) {
+        recordHeartbeatHotPathCounter("heartbeatCryptoAuth");
+        return next();
+      }
 
       if (shouldBindTenant) {
         return bindTenantContext(req, res, (bindError?: unknown) => {
@@ -90,4 +101,8 @@ function createRequireDeviceAuth(
 export const requireDeviceAuth = createRequireDeviceAuth();
 export const requireDeviceAuthWithoutTenant = createRequireDeviceAuth({
   bindTenant: false,
+});
+export const requireCryptographicDeviceAuth = createRequireDeviceAuth({
+  bindTenant: false,
+  validateActiveSession: false,
 });

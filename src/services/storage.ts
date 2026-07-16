@@ -4,6 +4,7 @@ import db from "../db.js";
 import { getTenantStore, rlsGucEnabled } from "../db/tenantContext.js";
 import { runWithTenantContext } from "../middleware/tenantContext.js";
 import {
+  dispatchCacheInvalidation,
   publishCacheInvalidation,
   registerCacheInvalidationHandler,
 } from "../realtime/cacheInvalidation.js";
@@ -910,6 +911,11 @@ export async function updateSchool(
     .set({ ...data, updatedAt: new Date() })
     .where(eq(schools.id, id))
     .returning();
+  if (school) {
+    const target = { kind: "cache-invalidation", schoolId: id, cache: "classpilot-dashboard-school" } as const;
+    dispatchCacheInvalidation(target);
+    await publishCacheInvalidation(target);
+  }
   return school;
 }
 
@@ -921,6 +927,11 @@ export async function softDeleteSchool(
     .set({ deletedAt: new Date(), updatedAt: new Date() })
     .where(eq(schools.id, id))
     .returning();
+  if (school) {
+    const target = { kind: "cache-invalidation", schoolId: id, cache: "classpilot-dashboard-school" } as const;
+    dispatchCacheInvalidation(target);
+    await publishCacheInvalidation(target);
+  }
   return school;
 }
 
@@ -2818,15 +2829,18 @@ export type ClassPilotTileReadRole =
   | "office_staff"
   | "super_admin";
 
-type ClassPilotTileReadOptions = {
+export type ClassPilotTileScopeOptions = {
   schoolId: string;
-  deviceId: string;
   staffId: string;
   role: ClassPilotTileReadRole;
   isSuperAdmin?: boolean;
 };
 
-function hasSchoolWideTileRead(options: ClassPilotTileReadOptions): boolean {
+type ClassPilotTileReadOptions = ClassPilotTileScopeOptions & {
+  deviceId: string;
+};
+
+function hasSchoolWideTileRead(options: ClassPilotTileScopeOptions): boolean {
   return Boolean(
     options.isSuperAdmin ||
       options.role === "super_admin" ||
@@ -2836,7 +2850,7 @@ function hasSchoolWideTileRead(options: ClassPilotTileReadOptions): boolean {
 }
 
 function restrictedTileStudentScope(
-  options: ClassPilotTileReadOptions,
+  options: ClassPilotTileScopeOptions,
   studentId: SQLWrapper
 ): SQL | undefined {
   const assignedSupervision = sql<boolean>`EXISTS (
@@ -2954,6 +2968,105 @@ export type ClassPilotHistoryTileAccess = {
   // device. Restricted staff must filter to this explicit student allowlist.
   authorizedStudentIds: string[] | null;
 };
+
+export type ClassPilotTileAuthorizationScope = Map<
+  string,
+  ClassPilotHistoryTileAccess
+>;
+
+/**
+ * Loads one complete, short-lived authorization snapshot for an aligned tile
+ * cohort. The caller coalesces this query for at most two seconds; individual
+ * tile requests then perform an in-memory device lookup instead of reserving a
+ * PostgreSQL connection apiece.
+ */
+export async function getTileAuthorizationScopeForStaff(
+  options: ClassPilotTileScopeOptions,
+  accessMode: "live" | "history"
+): Promise<ClassPilotTileAuthorizationScope> {
+  if (hasSchoolWideTileRead(options)) {
+    const schoolDevices = await db
+      .select()
+      .from(devices)
+      .where(eq(devices.schoolId, options.schoolId));
+    return new Map(
+      schoolDevices.map((device) => [
+        device.deviceId,
+        { device, authorizedStudentIds: null },
+      ])
+    );
+  }
+
+  if (accessMode === "live") {
+    const staffScope = restrictedTileStudentScope(
+      options,
+      studentSessions.studentId
+    );
+    if (!staffScope) return new Map();
+    const rows = await db
+      .select({ device: devices })
+      .from(devices)
+      .innerJoin(
+        studentSessions,
+        and(
+          eq(studentSessions.deviceId, devices.deviceId),
+          eq(studentSessions.isActive, true)
+        )
+      )
+      .innerJoin(
+        students,
+        and(
+          eq(students.id, studentSessions.studentId),
+          eq(students.schoolId, options.schoolId)
+        )
+      )
+      .where(and(eq(devices.schoolId, options.schoolId), staffScope));
+    const scope: ClassPilotTileAuthorizationScope = new Map();
+    for (const row of rows) {
+      scope.set(row.device.deviceId, {
+        device: row.device,
+        authorizedStudentIds: null,
+      });
+    }
+    return scope;
+  }
+
+  const staffScope = restrictedTileStudentScope(
+    options,
+    studentDevices.studentId
+  );
+  if (!staffScope) return new Map();
+  const rows = await db
+    .select({ device: devices, studentId: studentDevices.studentId })
+    .from(devices)
+    .innerJoin(studentDevices, eq(studentDevices.deviceId, devices.deviceId))
+    .innerJoin(
+      students,
+      and(
+        eq(students.id, studentDevices.studentId),
+        eq(students.schoolId, options.schoolId)
+      )
+    )
+    .where(and(eq(devices.schoolId, options.schoolId), staffScope));
+  const scope: ClassPilotTileAuthorizationScope = new Map();
+  for (const row of rows) {
+    const current = scope.get(row.device.deviceId);
+    if (!current) {
+      scope.set(row.device.deviceId, {
+        device: row.device,
+        authorizedStudentIds: [row.studentId],
+      });
+      continue;
+    }
+    if (
+      current.authorizedStudentIds &&
+      !current.authorizedStudentIds.includes(row.studentId)
+    ) {
+      current.authorizedStudentIds.push(row.studentId);
+    }
+  }
+  return scope;
+}
 
 /**
  * Authorizes historical device mappings for heartbeat tiles. Unlike live
@@ -3146,26 +3259,38 @@ export async function createHeartbeatAndRefreshPresence(
     studentId: string;
   },
   studentSessionId: string
-): Promise<{ id: string } | undefined> {
+): Promise<
+  | { outcome: "recorded"; id: string; studentEmail: string; timestamp: Date }
+  | { outcome: "replaced_session" }
+  | { outcome: "inactive_session" }
+> {
   const screenshotHealthJson =
     data.screenshotHealth === undefined || data.screenshotHealth === null
       ? null
       : JSON.stringify(data.screenshotHealth);
   const result = await db.execute(sql`
-    WITH eligible_session AS MATERIALIZED (
-      SELECT active_session.id
-      FROM student_sessions AS active_session
+    WITH represented_session AS MATERIALIZED (
+      SELECT
+        represented.id,
+        represented.student_id,
+        represented.is_active,
+        student.email AS student_email
+      FROM student_sessions AS represented
       INNER JOIN students AS student
-        ON student.id = active_session.student_id
+        ON student.id = represented.student_id
        AND student.school_id = ${data.schoolId}
       INNER JOIN devices AS session_device
-        ON session_device.device_id = active_session.device_id
+        ON session_device.device_id = represented.device_id
        AND session_device.school_id = ${data.schoolId}
-      WHERE active_session.id = ${studentSessionId}
-        AND active_session.student_id = ${data.studentId}
-        AND active_session.device_id = ${data.deviceId}
-        AND active_session.is_active = true
-      FOR UPDATE OF active_session
+      WHERE represented.id = ${studentSessionId}
+        AND represented.student_id = ${data.studentId}
+        AND represented.device_id = ${data.deviceId}
+      FOR UPDATE OF represented
+    ),
+    eligible_session AS MATERIALIZED (
+      SELECT id, student_email
+      FROM represented_session
+      WHERE is_active = true
     ),
     inserted_heartbeat AS (
       INSERT INTO heartbeats (
@@ -3188,7 +3313,7 @@ export async function createHeartbeatAndRefreshPresence(
       SELECT
         ${data.deviceId},
         ${data.studentId},
-        ${data.studentEmail ?? null},
+        eligible_session.student_email,
         ${data.schoolId},
         ${data.activeTabTitle},
         ${data.activeTabUrl ?? null},
@@ -3202,7 +3327,7 @@ export async function createHeartbeatAndRefreshPresence(
         ${data.chromeVersion ?? null},
         ${screenshotHealthJson}::jsonb
       FROM eligible_session
-      RETURNING id
+      RETURNING id, student_email, timestamp
     ),
     refreshed_device AS (
       UPDATE devices
@@ -3238,12 +3363,64 @@ export async function createHeartbeatAndRefreshPresence(
         AND EXISTS (SELECT 1 FROM eligible_session)
         AND (last_seen_at IS NULL OR last_seen_at < now() - interval '60 seconds')
     )
-    SELECT id FROM inserted_heartbeat
+    SELECT
+      'recorded'::text AS outcome,
+      id,
+      student_email,
+      timestamp
+    FROM inserted_heartbeat
+    UNION ALL
+    SELECT
+      CASE
+        WHEN EXISTS (
+          SELECT 1
+          FROM student_sessions AS replacement
+          WHERE replacement.student_id = ${data.studentId}
+            AND replacement.id <> ${studentSessionId}
+            AND replacement.is_active = true
+        ) THEN 'replaced_session'::text
+        ELSE 'inactive_session'::text
+      END AS outcome,
+      NULL::varchar AS id,
+      NULL::text AS student_email,
+      NULL::timestamp AS timestamp
+    WHERE NOT EXISTS (SELECT 1 FROM inserted_heartbeat)
+    LIMIT 1
   `);
-  const id = (result.rows[0] as { id?: unknown } | undefined)?.id;
-  if (id === undefined) return undefined;
+  const row = result.rows[0] as {
+    outcome?: unknown;
+    id?: unknown;
+    student_email?: unknown;
+    timestamp?: unknown;
+  } | undefined;
+  if (row?.outcome === "replaced_session") {
+    return { outcome: "replaced_session" };
+  }
+  if (row?.outcome === "inactive_session") {
+    return { outcome: "inactive_session" };
+  }
+  if (row?.outcome !== "recorded") {
+    throw new Error("Heartbeat insert returned an invalid outcome");
+  }
+  const id = row?.id;
   if (typeof id !== "string" || !id) throw new Error("Heartbeat insert returned an invalid id");
-  return { id };
+  if (row.student_email !== null && typeof row.student_email !== "string") {
+    throw new Error("Heartbeat insert returned an invalid student email");
+  }
+  const timestamp = row.timestamp instanceof Date
+    ? row.timestamp
+    : new Date(String(row.timestamp ?? ""));
+  if (Number.isNaN(timestamp.getTime())) {
+    throw new Error("Heartbeat insert returned an invalid timestamp");
+  }
+  return {
+    outcome: "recorded",
+    id,
+    // Student email is intentionally nullable for PIN/shared-device sessions.
+    // Realtime payloads historically normalize that optional value to "".
+    studentEmail: row.student_email || "",
+    timestamp,
+  };
 }
 
 export async function updateHeartbeatClassification(
@@ -3252,6 +3429,54 @@ export async function updateHeartbeatClassification(
   safetyAlert: string | null
 ): Promise<void> {
   await db.update(heartbeats).set({ aiCategory, safetyAlert }).where(eq(heartbeats.id, heartbeatId));
+}
+
+export type HeartbeatClassificationUpdate = {
+  heartbeatId: string;
+  aiCategory: string;
+  safetyAlert: string | null;
+};
+
+type HeartbeatClassificationExecutor = {
+  execute(query: SQLWrapper): Promise<{ rows: unknown[] }>;
+};
+
+export async function updateHeartbeatClassifications(
+  schoolId: string,
+  updates: HeartbeatClassificationUpdate[],
+  executor: HeartbeatClassificationExecutor = db as unknown as HeartbeatClassificationExecutor
+): Promise<void> {
+  if (updates.length === 0) return;
+  if (updates.length > 100) {
+    throw new RangeError("Heartbeat classification batch cannot exceed 100 rows");
+  }
+  const deduplicated = [...new Map(
+    updates.map((update) => [update.heartbeatId, update])
+  ).values()];
+  const payload = JSON.stringify(
+    deduplicated.map((update) => ({
+      heartbeat_id: update.heartbeatId,
+      ai_category: update.aiCategory,
+      safety_alert: update.safetyAlert,
+    }))
+  );
+  const result = await executor.execute(sql`
+    UPDATE heartbeats AS heartbeat
+    SET
+      ai_category = batch.ai_category,
+      safety_alert = batch.safety_alert
+    FROM jsonb_to_recordset(${payload}::jsonb) AS batch(
+      heartbeat_id text,
+      ai_category text,
+      safety_alert text
+    )
+    WHERE heartbeat.id = batch.heartbeat_id
+      AND heartbeat.school_id = ${schoolId}
+    RETURNING heartbeat.id
+  `);
+  if (result.rows.length !== deduplicated.length) {
+    throw new Error("Heartbeat classification batch did not update every expected row");
+  }
 }
 
 export async function getHeartbeatsByDevice(
@@ -5703,7 +5928,12 @@ export async function markClasspilotCommandTargetsSent(
   commandId: string,
   deviceIds: string[]
 ): Promise<ClasspilotCommandTarget[]> {
-  if (deviceIds.length === 0) return [];
+  if (deviceIds.length === 0) {
+    // The dispatcher uses this as the single post-delivery summary refresh even
+    // when every requested target was unavailable.
+    await updateClasspilotCommandSummary(commandId);
+    return [];
+  }
   const now = new Date();
   const targets = await db
     .update(classpilotCommandTargets)
@@ -5792,7 +6022,6 @@ export async function updateClasspilotCommandTargetAck(options: {
       .returning();
   }
 
-  if (target) await updateClasspilotCommandSummary(options.commandId);
   return target;
 }
 
@@ -5819,10 +6048,10 @@ export async function withClasspilotCommandBroadcastLock<T>(
   schoolId: string,
   callback: (command: ClasspilotCommandWithTargets, revision: string) => Promise<T> | T
 ): Promise<T | undefined> {
-  return db.transaction(async (tx) => {
-    // A command can receive ACKs on several ECS tasks. Hold a transaction-scoped
-    // advisory lock through publication so every full snapshot is read and sent
-    // in database order across the entire service, not just within one process.
+  const snapshot = await db.transaction(async (tx) => {
+    // A command can receive ACKs on several ECS tasks. Serialize snapshot reads
+    // and revision allocation across the service, but never hold the database
+    // transaction while local or Redis network publication runs.
     await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${commandId}, 0::bigint))`);
 
     const [commandRow] = await tx
@@ -5844,8 +6073,14 @@ export async function withClasspilotCommandBroadcastLock<T>(
       .where(eq(classpilotCommandTargets.commandId, command.id))
       .orderBy(classpilotCommandTargets.createdAt);
 
-    return callback({ ...command, targets }, broadcastRevision);
+    return { command: { ...command, targets }, revision: broadcastRevision };
   });
+  if (!snapshot) return undefined;
+
+  // Revision-aware local and Redis publication reject a stale revision if a
+  // later committed snapshot happens to publish first after this transaction
+  // releases its advisory lock.
+  return callback(snapshot.command, snapshot.revision);
 }
 
 export async function getRecentClasspilotCommands(

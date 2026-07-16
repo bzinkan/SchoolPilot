@@ -27,6 +27,22 @@ describe("cache invalidation bus", () => {
     assert.deepEqual(received, target);
   });
 
+  it("notifies every registered cache without allowing one handler to replace another", () => {
+    const received: string[] = [];
+    const unregisterFirst = registerCacheInvalidationHandler(() => received.push("first"));
+    const unregisterSecond = registerCacheInvalidationHandler(() => received.push("second"));
+
+    dispatchCacheInvalidation({
+      kind: "cache-invalidation",
+      schoolId: "school-a",
+      cache: "classpilot-dashboard-school",
+    });
+    assert.deepEqual(received.slice(-2), ["first", "second"]);
+
+    unregisterFirst();
+    unregisterSecond();
+  });
+
   it("delegates publication only after the realtime layer registers a publisher", async () => {
     let published: CacheInvalidationTarget | undefined;
     registerCacheInvalidationPublisher(async (next) => {

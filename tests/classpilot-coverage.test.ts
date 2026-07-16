@@ -1981,6 +1981,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       ackState: "completed",
       result: { ok: true },
     }));
+    await inSchool(school.id, () => updateClasspilotCommandSummary(created.id));
     const loaded = await inSchool(school.id, () => getClasspilotCommandByIdAndSchool(created.id, school.id));
     assert.equal(loaded?.status, "completed");
     assert.equal(loaded?.targets[0]?.status, "completed");
@@ -2112,6 +2113,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
         result: { phase: "completed" },
       })),
     ]);
+    await inSchool(school.id, () => updateClasspilotCommandSummary(created.id));
 
     const loaded = await inSchool(school.id, () => getClasspilotCommandByIdAndSchool(created.id, school.id));
     assert.equal(loaded?.status, "completed");
@@ -2172,6 +2174,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     }));
     assert.equal(lateReceived?.status, "failed");
     assert.equal(lateReceived?.ackState, "failed");
+    await inSchool(school.id, () => updateClasspilotCommandSummary(created.id));
 
     const loaded = await inSchool(school.id, () => getClasspilotCommandByIdAndSchool(created.id, school.id));
     assert.equal(loaded?.status, "failed");
@@ -2207,7 +2210,7 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     assert.deepEqual(loaded?.targets, []);
   });
 
-  it("serializes command snapshots across concurrent publishers", async () => {
+  it("serializes command snapshot revisions without holding the lock during publication", async () => {
     const created = await inSchool(school.id, () => createClasspilotCommandWithTargets(
       {
         schoolId: school.id,
@@ -2247,6 +2250,8 @@ describe("ClassPilot supervision coverage storage contracts", () => {
     const captured = new Promise<void>((resolve) => { snapshotCaptured = resolve; });
     let releaseFirst!: () => void;
     const release = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    let secondPublished!: () => void;
+    const secondPublication = new Promise<void>((resolve) => { secondPublished = resolve; });
 
     const firstPublisher = inSchool(school.id, () => withClasspilotCommandBroadcastLock(
       created.id,
@@ -2273,9 +2278,14 @@ describe("ClassPilot supervision coverage storage contracts", () => {
       (command, revision) => {
         publishedStatuses.push(command.targets[0]!.status);
         publishedRevisions.push(BigInt(revision));
+        secondPublished();
       }
     ));
 
+    // Publication callbacks run after the advisory-lock transaction commits.
+    // A slow Redis/local callback must not keep the next snapshot waiting on a
+    // database connection or advisory lock.
+    await secondPublication;
     releaseFirst();
     await Promise.all([firstPublisher, secondPublisher]);
     assert.deepEqual(publishedStatuses, ["received", "completed"]);

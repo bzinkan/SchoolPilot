@@ -1,5 +1,6 @@
 import type { RequestHandler, Response } from "express";
 import { databasePoolLimits } from "../config/databasePools.js";
+import { recordHeartbeatHotPathCounter } from "../services/heartbeatHotPathMetrics.js";
 
 export function classPilotTileMaxActiveForPool(mainPoolLimit: number): number {
   if (!Number.isSafeInteger(mainPoolLimit) || mainPoolLimit <= 0) {
@@ -228,6 +229,12 @@ export function releaseClassPilotTileAdmission(res: Response): void {
 }
 
 export const classPilotTileAdmission: RequestHandler = async (req, res, next) => {
+  const requestPath = req.path ?? "";
+  const routeFamily = requestPath.startsWith("/device/screenshot/")
+    ? "screenshot"
+    : requestPath.startsWith("/heartbeats/")
+      ? "history"
+      : undefined;
   const controller = new AbortController();
   const abortQueuedRequest = () => controller.abort();
   req.once("aborted", abortQueuedRequest);
@@ -243,10 +250,21 @@ export const classPilotTileAdmission: RequestHandler = async (req, res, next) =>
       return;
     }
     if (error instanceof AdmissionGateError) {
+      if (routeFamily === "screenshot") {
+        recordHeartbeatHotPathCounter("tileAdmissionRejectedScreenshot");
+      } else if (routeFamily === "history") {
+        recordHeartbeatHotPathCounter("tileAdmissionRejectedHistory");
+      }
       res.setHeader("Retry-After", "1");
       return res.status(503).json({ error: "ClassPilot tile service is busy; retry shortly" });
     }
     return next(error);
+  }
+
+  if (routeFamily === "screenshot") {
+    recordHeartbeatHotPathCounter("tileAdmissionScreenshot");
+  } else if (routeFamily === "history") {
+    recordHeartbeatHotPathCounter("tileAdmissionHistory");
   }
 
   // The response can close in the narrow interval between gate dispatch and

@@ -49,6 +49,7 @@ import {
   scopedDeviceTargets,
   deviceBelongsToSchoolAndStudent,
 } from "../dist/services/classpilotDeviceScope.js";
+import { getClasspilotDashboardSnapshot } from "../dist/services/classpilotDashboardSnapshot.js";
 import db, { pool } from "../dist/db.js";
 import { runWithTenantContext } from "../dist/middleware/tenantContext.js";
 
@@ -222,6 +223,40 @@ describe("cross-school isolation", () => {
     );
     assert.equal(s.schoolId, schoolA.id);
     assert.notEqual(s.schoolId, schoolB.id);
+  });
+
+  it("dashboard snapshots return only the active school's requested students", async () => {
+    const studentA = await inSchool(schoolA.id, () =>
+      createStudent({
+        schoolId: schoolA.id,
+        firstName: "Snapshot",
+        lastName: "Alpha",
+        email: `${TAG}-snapshot-a@example.edu`,
+        emailLc: `${TAG}-snapshot-a@example.edu`,
+        status: "active",
+      } as any)
+    );
+    const studentB = await inSchool(schoolB.id, () =>
+      createStudent({
+        schoolId: schoolB.id,
+        firstName: "Snapshot",
+        lastName: "Bravo",
+        email: `${TAG}-snapshot-b@example.edu`,
+        emailLc: `${TAG}-snapshot-b@example.edu`,
+        status: "active",
+      } as any)
+    );
+    const requestedStudentIds = [studentA.id, studentB.id];
+
+    const snapshotA = await inSchool(schoolA.id, () =>
+      getClasspilotDashboardSnapshot(schoolA.id, requestedStudentIds, "2026-07-16")
+    );
+    const snapshotB = await inSchool(schoolB.id, () =>
+      getClasspilotDashboardSnapshot(schoolB.id, requestedStudentIds, "2026-07-16")
+    );
+
+    assert.deepEqual(snapshotA.map((row) => row.studentId), [studentA.id]);
+    assert.deepEqual(snapshotB.map((row) => row.studentId), [studentB.id]);
   });
 
   it("extension roster lookup requires an exact email match, not fuzzy search", async () => {

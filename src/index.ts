@@ -87,6 +87,13 @@ function closeWebSocketServer(): Promise<void> {
   });
 }
 
+async function flushHeartbeatClassificationWrites(): Promise<void> {
+  const { flushHeartbeatClassificationBatches } = await import(
+    "./services/heartbeatClassificationBatcher.js"
+  );
+  await flushHeartbeatClassificationBatches();
+}
+
 async function fatalShutdown(reason: string, err: unknown): Promise<void> {
   const error = err instanceof Error ? err : new Error(String(err));
   if (fatalShutdownStarted) {
@@ -99,7 +106,7 @@ async function fatalShutdown(reason: string, err: unknown): Promise<void> {
   const forceExit = setTimeout(() => {
     console.error("[FATAL] Force exiting after shutdown timeout");
     process.exit(1);
-  }, 10_000);
+  }, 15_000);
 
   console.error(`[FATAL] ${reason}:`, error);
   stopScheduler();
@@ -117,10 +124,56 @@ async function fatalShutdown(reason: string, err: unknown): Promise<void> {
     5_000
   );
   await bounded(closeServers.then(() => undefined), 4_000, "server shutdown");
+  await bounded(
+    flushHeartbeatClassificationWrites(),
+    3_000,
+    "heartbeat classification flush"
+  );
   await bounded(Promise.allSettled([pool.end(), sessionPool.end(), schedulerPool.end(), schedulerLockPool.end()]).then(() => undefined), 4_000, "database pool shutdown");
 
   clearTimeout(forceExit);
   process.exit(1);
+}
+
+async function gracefulShutdown(signal: "SIGTERM" | "SIGINT"): Promise<void> {
+  if (fatalShutdownStarted) return;
+  fatalShutdownStarted = true;
+  process.exitCode = 0;
+  const forceExit = setTimeout(() => {
+    console.error(`[shutdown] Force exiting after ${signal} timeout`);
+    process.exit(1);
+  }, 15_000);
+
+  console.log(`[shutdown] ${signal} received; draining service`);
+  stopScheduler();
+  stopHealthMonitor();
+  await bounded(
+    Promise.allSettled([
+      closeHttpServer(),
+      closeSocketIo(),
+      closeWebSocketServer(),
+    ]).then(() => undefined),
+    4_000,
+    "server shutdown"
+  );
+  await bounded(
+    flushHeartbeatClassificationWrites(),
+    3_000,
+    "heartbeat classification flush"
+  );
+  errorMonitor.dispose();
+  await bounded(
+    Promise.allSettled([
+      pool.end(),
+      sessionPool.end(),
+      schedulerPool.end(),
+      schedulerLockPool.end(),
+    ]).then(() => undefined),
+    4_000,
+    "database pool shutdown"
+  );
+  clearTimeout(forceExit);
+  process.exit(0);
 }
 
 // ---------------------------------------------------------------------------
@@ -132,6 +185,14 @@ process.on("uncaughtException", (err) => {
 
 process.on("unhandledRejection", (reason) => {
   void fatalShutdown("unhandledRejection", reason instanceof Error ? reason : new Error(String(reason)));
+});
+
+process.once("SIGTERM", () => {
+  void gracefulShutdown("SIGTERM");
+});
+
+process.once("SIGINT", () => {
+  void gracefulShutdown("SIGINT");
 });
 
 // ---------------------------------------------------------------------------
