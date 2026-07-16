@@ -1545,7 +1545,29 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         Start-Sleep -Milliseconds 1500
         $secondSlowHeartbeatWrite = (Get-Item -LiteralPath $slowHeartbeatPath).LastWriteTimeUtc
         Assert-Condition ($secondSlowHeartbeatWrite -gt $firstSlowHeartbeatWrite) "Rollback heartbeat must keep advancing while a slow AWS mutation blocks the monitor process."
-        Assert-Condition ($slowRollbackProcess.WaitForExit(15000) -and $slowRollbackProcess.ExitCode -eq 0) "Slow WAF rollback must complete within its bounded action deadline."
+        $slowRollbackExited = $slowRollbackProcess.WaitForExit(15000)
+        $slowRollbackExitCode = $null
+        if ($slowRollbackExited) {
+            # A timed wait can return before Start-Process finishes draining its
+            # redirected streams on Windows. The parameterless wait releases
+            # slow-rollback.out/.err before the outer test removes $tempRoot.
+            $slowRollbackProcess.WaitForExit()
+            $slowRollbackProcess.Refresh()
+            $slowRollbackExitCode = $slowRollbackProcess.ExitCode
+            foreach ($redirectedPath in @(
+                (Join-Path $childRoot "slow-rollback.out"),
+                (Join-Path $childRoot "slow-rollback.err")
+            )) {
+                $redirectProbe = [IO.File]::Open(
+                    $redirectedPath,
+                    [IO.FileMode]::Open,
+                    [IO.FileAccess]::ReadWrite,
+                    [IO.FileShare]::None
+                )
+                $redirectProbe.Dispose()
+            }
+        }
+        Assert-Condition ($slowRollbackExited -and $slowRollbackExitCode -eq 0) "Slow WAF rollback must complete within its bounded action deadline."
         $slowState = Get-Content -LiteralPath (Join-Path $childEvidence "slow-waf-rollback-heartbeat-rollback-state.json") -Raw | ConvertFrom-Json
         Assert-Condition ($slowState.status -eq "completed") "Rollback progress state must end in completed after the slow action."
         Remove-Item Env:SCHOOLPILOT_TEST_WAF_DELAY -ErrorAction SilentlyContinue
