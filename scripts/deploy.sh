@@ -9,6 +9,11 @@
 #   ./scripts/deploy.sh --frontend       # Frontend only (Vite build → S3 → CloudFront)
 #   ./scripts/deploy.sh production --backend --activate-emergency
 #                                       # Backend only; activate the newly registered 512/2048 API revision
+#   ./scripts/deploy.sh production --backend --same-image-networking-stage PublicEcs \
+#     --expected-app-sha <40-hex-sha> --expected-image-digest sha256:<64-hex> \
+#     --expected-api-task-definition <full-arn> --expected-worker-task-definition <full-arn> \
+#     --expected-network-config-sha256 <64-hex>
+#                                       # Networking-only fresh deployment; never builds or publishes an image
 #   ./scripts/deploy.sh --skip-wait      # Non-production only; production refuses this flag
 #   ./scripts/deploy.sh production       # Explicit environment (default: production)
 #   ./scripts/deploy.sh --tag abc123     # Override default git-SHA image tag
@@ -22,6 +27,20 @@ DEPLOY_BACKEND=true
 DEPLOY_FRONTEND=true
 SKIP_WAIT=false
 ACTIVATE_EMERGENCY=false
+SAME_IMAGE_NETWORKING_STAGE=""
+EXPECTED_APP_SHA=""
+EXPECTED_IMAGE_DIGEST=""
+EXPECTED_API_TASK_DEFINITION=""
+EXPECTED_WORKER_TASK_DEFINITION=""
+SAME_IMAGE_API_TASK_DEFINITION=""
+SAME_IMAGE_WORKER_TASK_DEFINITION=""
+SAME_IMAGE_NETWORK_HASH=""
+SAME_IMAGE_BOUND_NETWORK_HASH=""
+EXPECTED_NETWORK_CONFIG_SHA256=""
+SAME_IMAGE_SERVICE_MUTATION_STARTED=false
+SAME_IMAGE_SAFE_TERMINAL_REACHED=false
+SAME_IMAGE_RECOVERY_MAX_ATTEMPTS=30
+SAME_IMAGE_RECOVERY_POLL_SECONDS=2
 IMAGE_TAG=""
 EMERGENCY_TASK_DEF_ARN=""
 EMERGENCY_TASK_DEF_REVISION=""
@@ -29,12 +48,39 @@ API_ROLLOUT_TASK_DEF=""
 WORKER_NEW_REV=""
 MIGRATION_TASK_WAIT_SECONDS=3600
 MIGRATION_TASK_POLL_SECONDS=15
+MIGRATION_TASK_STOP_WAIT_SECONDS=300
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --backend)  DEPLOY_FRONTEND=false; shift ;;
     --frontend) DEPLOY_BACKEND=false; shift ;;
     --activate-emergency) ACTIVATE_EMERGENCY=true; shift ;;
+    --same-image-networking-stage)
+      [[ $# -ge 2 ]] || { echo "--same-image-networking-stage requires PublicEcs or NatRemoved"; exit 1; }
+      SAME_IMAGE_NETWORKING_STAGE="$2"
+      DEPLOY_FRONTEND=false
+      shift 2
+      ;;
+    --expected-app-sha)
+      [[ $# -ge 2 ]] || { echo "--expected-app-sha requires a value"; exit 1; }
+      EXPECTED_APP_SHA="$2"; shift 2
+      ;;
+    --expected-image-digest)
+      [[ $# -ge 2 ]] || { echo "--expected-image-digest requires a value"; exit 1; }
+      EXPECTED_IMAGE_DIGEST="$2"; shift 2
+      ;;
+    --expected-api-task-definition)
+      [[ $# -ge 2 ]] || { echo "--expected-api-task-definition requires a value"; exit 1; }
+      EXPECTED_API_TASK_DEFINITION="$2"; shift 2
+      ;;
+    --expected-worker-task-definition)
+      [[ $# -ge 2 ]] || { echo "--expected-worker-task-definition requires a value"; exit 1; }
+      EXPECTED_WORKER_TASK_DEFINITION="$2"; shift 2
+      ;;
+    --expected-network-config-sha256)
+      [[ $# -ge 2 ]] || { echo "--expected-network-config-sha256 requires a value"; exit 1; }
+      EXPECTED_NETWORK_CONFIG_SHA256="$2"; shift 2
+      ;;
     --skip-wait) SKIP_WAIT=true; shift ;;
     --tag)      IMAGE_TAG="$2"; shift 2 ;;
     staging|production) ENV="$1"; shift ;;
@@ -93,8 +139,9 @@ ecs_service_status() {
 # minutes. Online index work can legitimately span more than one bounded SQL
 # statement, so that waiter can abandon a still-running migration task. Keep
 # observing the exact task for up to one hour. If the controller deadline is
-# reached, request a stop and continue observing until ECS confirms STOPPED;
-# production service rollout must never begin while migration DDL is unobserved.
+# reached, request a stop and observe it for at most five additional minutes.
+# Production service rollout must never begin while migration DDL is unobserved,
+# but a task that never reports STOPPED must not strand the autoscaling hold.
 wait_for_migration_task_stopped() {
   local task_arn="$1"
   local deadline=$((SECONDS + MIGRATION_TASK_WAIT_SECONDS))
@@ -102,10 +149,14 @@ wait_for_migration_task_stopped() {
   local stop_requested=false
   local deadline_exceeded=false
   local deadline_announced=false
+  local stop_observation_deadline=-1
 
   while true; do
     if (( SECONDS >= deadline )); then
       deadline_exceeded=true
+      if (( stop_observation_deadline < 0 )); then
+        stop_observation_deadline=$((SECONDS + MIGRATION_TASK_STOP_WAIT_SECONDS))
+      fi
     fi
     if status=$(aws ecs describe-tasks \
       --cluster "$CLUSTER" \
@@ -143,6 +194,11 @@ wait_for_migration_task_stopped() {
           warn "Migration stop request was not accepted yet; continuing to observe and retry. Task: ${task_arn}"
         fi
       fi
+    fi
+
+    if (( stop_observation_deadline >= 0 && SECONDS >= stop_observation_deadline )); then
+      error "Migration task ${task_arn} did not report STOPPED within ${MIGRATION_TASK_STOP_WAIT_SECONDS}s after the stop deadline."
+      return 125
     fi
 
     sleep "$MIGRATION_TASK_POLL_SECONDS"
@@ -555,6 +611,16 @@ TEMP_FILES=(
   .worker-taskdef-current.json
   .worker-env-source.json
   .worker-taskdef-new.json
+  .same-image-network.json
+  .same-image-network-candidate.json
+  .same-image-api-source.json
+  .same-image-api-request.json
+  .same-image-api-registration.json
+  .same-image-api-registered.json
+  .same-image-worker-source.json
+  .same-image-worker-request.json
+  .same-image-worker-registration.json
+  .same-image-worker-registered.json
 )
 
 cleanup_temp_files() {
@@ -566,6 +632,17 @@ deploy_exit_cleanup() {
   trap - EXIT
 
   if [[ "$PRODUCTION_SCALING_HOLD_ACTIVE" == true ]]; then
+    if [[ -n "$SAME_IMAGE_NETWORKING_STAGE" &&
+          "$SAME_IMAGE_SERVICE_MUTATION_STARTED" == true &&
+          "$SAME_IMAGE_SAFE_TERMINAL_REACHED" != true ]]; then
+      warn "Same-image deploy exited after an ECS service mutation; retaining the autoscaling hold during bounded terminal-state recovery..."
+      if ! recover_same_image_mutated_services; then
+        emit_same_image_hard_stop_record "service_terminal_state_unresolved"
+        cleanup_temp_files
+        error "Dynamic autoscaling remains suspended because the same-image service revisions are not in an exact safe terminal state. Manual recovery is required immediately."
+        exit 1
+      fi
+    fi
     warn "Deploy exited while the production autoscaling hold was active; attempting recovery..."
     if ! restore_production_scaling_hold; then
       error "EXIT recovery could not restore production API autoscaling. Manual recovery is required immediately."
@@ -765,6 +842,954 @@ launch_safe_active_api_preflight() {
   success "Active API launch-safe posture verified: ${PRODUCTION_PREFLIGHT_API_TASK_DEFINITION} (512 CPU / 2048 MiB)"
 }
 
+validate_same_image_networking_mode() {
+  if [[ -z "$SAME_IMAGE_NETWORKING_STAGE" ]]; then
+    if [[ -n "$EXPECTED_APP_SHA" || -n "$EXPECTED_IMAGE_DIGEST" ||
+          -n "$EXPECTED_API_TASK_DEFINITION" || -n "$EXPECTED_WORKER_TASK_DEFINITION" ||
+          -n "$EXPECTED_NETWORK_CONFIG_SHA256" ]]; then
+      error "Expected application identity flags are valid only with --same-image-networking-stage."
+      return 1
+    fi
+    return 0
+  fi
+
+  if [[ "$ENV" != "production" || "$DEPLOY_BACKEND" != true || "$DEPLOY_FRONTEND" != false ]]; then
+    error "--same-image-networking-stage is allowed only for a production backend-only deployment."
+    return 1
+  fi
+  if [[ "$SAME_IMAGE_NETWORKING_STAGE" != "PublicEcs" && "$SAME_IMAGE_NETWORKING_STAGE" != "NatRemoved" ]]; then
+    error "--same-image-networking-stage must be exactly PublicEcs or NatRemoved."
+    return 1
+  fi
+  if [[ "$ACTIVATE_EMERGENCY" == true || "$SKIP_WAIT" == true || -n "$IMAGE_TAG" ]]; then
+    error "Same-image networking deployment rejects --activate-emergency, --skip-wait, and --tag."
+    return 1
+  fi
+  if [[ ! "$EXPECTED_APP_SHA" =~ ^[0-9a-f]{40}$ ||
+        ! "$EXPECTED_IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+    error "Same-image networking deployment requires a full lowercase application SHA and image digest."
+    return 1
+  fi
+  if [[ ! "$EXPECTED_NETWORK_CONFIG_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+    error "Same-image networking deployment requires --expected-network-config-sha256 with the exact 64-hex saved-plan validator network hash."
+    return 1
+  fi
+
+  local api_pattern="^arn:aws:ecs:${REGION}:${ACCOUNT_ID}:task-definition/${NAME}-api(-emergency)?:[1-9][0-9]*$"
+  local worker_pattern="^arn:aws:ecs:${REGION}:${ACCOUNT_ID}:task-definition/${WORKER_SERVICE}:[1-9][0-9]*$"
+  if [[ ! "$EXPECTED_API_TASK_DEFINITION" =~ $api_pattern ||
+        ! "$EXPECTED_WORKER_TASK_DEFINITION" =~ $worker_pattern ]]; then
+    error "Same-image networking deployment requires exact full API and worker task-definition ARNs in the production account."
+    return 1
+  fi
+}
+
+same_image_application_identity_preflight() {
+  local resolved_sha image_tag observed_digest
+  if ! resolved_sha=$(git rev-parse --verify "${EXPECTED_APP_SHA}^{commit}" 2>/dev/null); then
+    error "The expected deployed application SHA is not resolvable in this repository."
+    return 1
+  fi
+  resolved_sha="${resolved_sha%$'\r'}"
+  if [[ "$resolved_sha" != "$EXPECTED_APP_SHA" ]]; then
+    error "The expected deployed application SHA did not resolve exactly."
+    return 1
+  fi
+
+  image_tag="${EXPECTED_APP_SHA:0:12}"
+  if ! observed_digest=$(aws ecr describe-images \
+    --repository-name "${NAME}-api" \
+    --image-ids "imageTag=${image_tag}" \
+    --query 'imageDetails[0].imageDigest' \
+    --output text \
+    --region "$REGION" \
+    --no-cli-pager); then
+    error "Could not resolve the immutable digest for the expected application SHA tag."
+    return 1
+  fi
+  observed_digest="${observed_digest%$'\r'}"
+  if [[ "$observed_digest" != "$EXPECTED_IMAGE_DIGEST" ]]; then
+    error "The expected application SHA tag and deployed image digest do not match."
+    return 1
+  fi
+  success "Application identity bound: ${EXPECTED_APP_SHA} -> ${EXPECTED_IMAGE_DIGEST}"
+}
+
+same_image_autoscaling_contract_preflight() {
+  local target_json
+  if ! target_json=$(aws application-autoscaling describe-scalable-targets \
+    --service-namespace ecs \
+    --resource-ids "$AUTOSCALING_RESOURCE_ID" \
+    --scalable-dimension "$AUTOSCALING_DIMENSION" \
+    --output json \
+    --region "$REGION" \
+    --cli-connect-timeout 3 \
+    --cli-read-timeout 5 \
+    --no-cli-pager); then
+    error "Could not read the API scalable target for the same-image deployment."
+    return 1
+  fi
+  if ! SAME_IMAGE_TARGET_JSON="$target_json" \
+    EXPECTED_RESOURCE_ID="$AUTOSCALING_RESOURCE_ID" \
+    EXPECTED_DIMENSION="$AUTOSCALING_DIMENSION" node <<'NODE'
+const response = JSON.parse(process.env.SAME_IMAGE_TARGET_JSON || "null");
+const targets = Array.isArray(response?.ScalableTargets) ? response.ScalableTargets : [];
+const target = targets[0];
+const suspended = target?.SuspendedState;
+if (targets.length !== 1 || target?.ServiceNamespace !== "ecs" ||
+    target?.ResourceId !== process.env.EXPECTED_RESOURCE_ID ||
+    target?.ScalableDimension !== process.env.EXPECTED_DIMENSION ||
+    ![1, 2].includes(Number(target?.MinCapacity)) || Number(target?.MaxCapacity) !== 8 ||
+    typeof suspended?.DynamicScalingInSuspended !== "boolean" ||
+    typeof suspended?.DynamicScalingOutSuspended !== "boolean" ||
+    typeof suspended?.ScheduledScalingSuspended !== "boolean") {
+  process.exit(1);
+}
+NODE
+  then
+    error "Same-image deployment requires one exact API scalable target at min 1/2, max 8, with an observable suspended state."
+    return 1
+  fi
+}
+
+same_image_service_contract_preflight() {
+  local expected_api_ref="$1"
+  local expected_worker_ref="$2"
+  local phase="${3:-before same-image deployment}"
+  local services_json network_hash
+  rm -f .same-image-network-candidate.json
+  if ! services_json=$(aws ecs describe-services \
+    --cluster "$CLUSTER" \
+    --services "$SERVICE" "$WORKER_SERVICE" \
+    --query '{services:services[].{serviceName:serviceName,status:status,desiredCount:desiredCount,runningCount:runningCount,pendingCount:pendingCount,taskDefinition:taskDefinition,deployments:deployments[].{status:status,rolloutState:rolloutState,failedTasks:failedTasks,taskDefinition:taskDefinition},deploymentConfiguration:deploymentConfiguration,loadBalancers:loadBalancers,networkConfiguration:networkConfiguration},failures:failures}' \
+    --output json \
+    --region "$REGION" \
+    --cli-connect-timeout 3 \
+    --cli-read-timeout 5 \
+    --no-cli-pager); then
+    error "Could not read the ECS service contract ${phase}."
+    return 1
+  fi
+
+  if ! network_hash=$(SAME_IMAGE_SERVICES_JSON="$services_json" \
+    EXPECTED_API_SERVICE="$SERVICE" \
+    EXPECTED_WORKER_SERVICE="$WORKER_SERVICE" \
+    EXPECTED_API_TASK_DEFINITION="$expected_api_ref" \
+    EXPECTED_WORKER_TASK_DEFINITION="$expected_worker_ref" \
+    SAME_IMAGE_NETWORK_PATH=".same-image-network-candidate.json" node <<'NODE'
+const fs = require("fs");
+const crypto = require("crypto");
+const response = JSON.parse(process.env.SAME_IMAGE_SERVICES_JSON || "null");
+const services = Array.isArray(response?.services) ? response.services : [];
+if ((response?.failures || []).length !== 0 || services.length !== 2) process.exit(1);
+
+const byName = (name) => services.filter((service) => service?.serviceName === name);
+const apiMatches = byName(process.env.EXPECTED_API_SERVICE);
+const workerMatches = byName(process.env.EXPECTED_WORKER_SERVICE);
+if (apiMatches.length !== 1 || workerMatches.length !== 1) process.exit(1);
+
+function normalizedNetwork(service) {
+  const network = service?.networkConfiguration?.awsvpcConfiguration;
+  const subnets = Array.isArray(network?.subnets) ? [...network.subnets].sort() : [];
+  const securityGroups = Array.isArray(network?.securityGroups) ? [...network.securityGroups].sort() : [];
+  if (subnets.length < 2 || new Set(subnets).size !== subnets.length ||
+      securityGroups.length < 1 || new Set(securityGroups).size !== securityGroups.length ||
+      network?.assignPublicIp !== "ENABLED") process.exit(1);
+  return { subnets, securityGroups, assignPublicIp: "ENABLED" };
+}
+
+function assertService(service, expectedTask, desiredCounts, loadBalancerCount) {
+  const deployments = Array.isArray(service?.deployments) ? service.deployments : [];
+  const deployment = deployments[0];
+  const configuration = service?.deploymentConfiguration;
+  if (service?.status !== "ACTIVE" || !desiredCounts.includes(Number(service?.desiredCount)) ||
+      Number(service?.runningCount) !== Number(service?.desiredCount) || Number(service?.pendingCount) !== 0 ||
+      service?.taskDefinition !== expectedTask || deployments.length !== 1 ||
+      deployment?.status !== "PRIMARY" || deployment?.rolloutState !== "COMPLETED" ||
+      deployment?.taskDefinition !== expectedTask || !Object.hasOwn(deployment || {}, "failedTasks") ||
+      Number(deployment?.failedTasks) !== 0 ||
+      Number(configuration?.minimumHealthyPercent) !== 100 || Number(configuration?.maximumPercent) !== 200 ||
+      configuration?.deploymentCircuitBreaker?.enable !== true ||
+      configuration?.deploymentCircuitBreaker?.rollback !== true || configuration?.strategy !== "ROLLING" ||
+      (service?.loadBalancers || []).length !== loadBalancerCount) process.exit(1);
+}
+
+const api = apiMatches[0];
+const worker = workerMatches[0];
+assertService(api, process.env.EXPECTED_API_TASK_DEFINITION, [1, 2], 1);
+assertService(worker, process.env.EXPECTED_WORKER_TASK_DEFINITION, [1], 0);
+const apiNetwork = normalizedNetwork(api);
+const workerNetwork = normalizedNetwork(worker);
+if (JSON.stringify(apiNetwork) !== JSON.stringify(workerNetwork)) process.exit(1);
+const payload = { awsvpcConfiguration: apiNetwork };
+const canonical = JSON.stringify(payload);
+fs.writeFileSync(process.env.SAME_IMAGE_NETWORK_PATH, canonical);
+process.stdout.write(crypto.createHash("sha256").update(canonical).digest("hex"));
+NODE
+  ); then
+    error "ECS services violated exact identity, public-network, deployment-policy, or stability requirements ${phase}."
+    return 1
+  fi
+  if [[ -n "$SAME_IMAGE_BOUND_NETWORK_HASH" && "$network_hash" != "$SAME_IMAGE_BOUND_NETWORK_HASH" ]]; then
+    rm -f .same-image-network-candidate.json
+    error "ECS network configuration drifted after its initial same-image binding ${phase}."
+    return 1
+  fi
+  if [[ "$network_hash" != "$EXPECTED_NETWORK_CONFIG_SHA256" ]]; then
+    rm -f .same-image-network-candidate.json
+    error "Observed ECS network configuration does not match the attested expected SHA-256 ${phase}."
+    return 1
+  fi
+  if [[ -z "$SAME_IMAGE_BOUND_NETWORK_HASH" ]]; then
+    SAME_IMAGE_BOUND_NETWORK_HASH="$network_hash"
+    if ! mv -f .same-image-network-candidate.json .same-image-network.json; then
+      error "Could not bind the initial same-image network configuration."
+      return 1
+    fi
+  else
+    rm -f .same-image-network-candidate.json
+  fi
+  SAME_IMAGE_NETWORK_HASH="$SAME_IMAGE_BOUND_NETWORK_HASH"
+  success "Same-image ECS contract verified ${phase}; bound network sha256=${SAME_IMAGE_NETWORK_HASH}"
+}
+
+same_image_runtime_task_network_preflight() {
+  local expected_api_ref="$1"
+  local expected_worker_ref="$2"
+  local phase="${3:-during same-image deployment}"
+  local services_json api_list_json worker_list_json task_arns_text tasks_json eni_ids_text
+  local network_interfaces_json target_group_arn target_group_json target_health_json
+  local task_arns=() eni_ids=() value
+
+  if ! services_json=$(aws ecs describe-services \
+    --cluster "$CLUSTER" \
+    --services "$SERVICE" "$WORKER_SERVICE" \
+    --query '{services:services[].{serviceName:serviceName,status:status,desiredCount:desiredCount,runningCount:runningCount,pendingCount:pendingCount,taskDefinition:taskDefinition,loadBalancers:loadBalancers,networkConfiguration:networkConfiguration},failures:failures}' \
+    --output json --region "$REGION" --cli-connect-timeout 3 --cli-read-timeout 5 --no-cli-pager); then
+    error "Could not read service state for the exact running-task network proof ${phase}."
+    return 1
+  fi
+  if ! api_list_json=$(aws ecs list-tasks \
+    --cluster "$CLUSTER" --service-name "$SERVICE" --desired-status RUNNING \
+    --query '{taskArns:taskArns}' --output json --region "$REGION" \
+    --cli-connect-timeout 3 --cli-read-timeout 5 --no-cli-pager); then
+    error "Could not list every running API task ${phase}."
+    return 1
+  fi
+  if ! worker_list_json=$(aws ecs list-tasks \
+    --cluster "$CLUSTER" --service-name "$WORKER_SERVICE" --desired-status RUNNING \
+    --query '{taskArns:taskArns}' --output json --region "$REGION" \
+    --cli-connect-timeout 3 --cli-read-timeout 5 --no-cli-pager); then
+    error "Could not list every running worker task ${phase}."
+    return 1
+  fi
+  if ! task_arns_text=$(SAME_IMAGE_SERVICES_JSON="$services_json" \
+    SAME_IMAGE_API_TASKS_JSON="$api_list_json" SAME_IMAGE_WORKER_TASKS_JSON="$worker_list_json" \
+    EXPECTED_API_SERVICE="$SERVICE" EXPECTED_WORKER_SERVICE="$WORKER_SERVICE" \
+    EXPECTED_API_TASK_DEFINITION="$expected_api_ref" EXPECTED_WORKER_TASK_DEFINITION="$expected_worker_ref" node <<'NODE'
+const servicesResponse = JSON.parse(process.env.SAME_IMAGE_SERVICES_JSON || "null");
+const apiList = JSON.parse(process.env.SAME_IMAGE_API_TASKS_JSON || "null");
+const workerList = JSON.parse(process.env.SAME_IMAGE_WORKER_TASKS_JSON || "null");
+const services = Array.isArray(servicesResponse?.services) ? servicesResponse.services : [];
+if ((servicesResponse?.failures || []).length !== 0 || services.length !== 2) process.exit(1);
+function oneService(name, expectedTask) {
+  const matches = services.filter((service) => service?.serviceName === name);
+  if (matches.length !== 1) process.exit(1);
+  const service = matches[0];
+  if (service?.status !== "ACTIVE" || Number(service?.desiredCount) < 1 ||
+      Number(service?.runningCount) !== Number(service?.desiredCount) || Number(service?.pendingCount) !== 0 ||
+      service?.taskDefinition !== expectedTask) process.exit(1);
+  return service;
+}
+const api = oneService(process.env.EXPECTED_API_SERVICE, process.env.EXPECTED_API_TASK_DEFINITION);
+const worker = oneService(process.env.EXPECTED_WORKER_SERVICE, process.env.EXPECTED_WORKER_TASK_DEFINITION);
+const apiTasks = Array.isArray(apiList?.taskArns) ? apiList.taskArns : [];
+const workerTasks = Array.isArray(workerList?.taskArns) ? workerList.taskArns : [];
+const all = [...apiTasks, ...workerTasks];
+if (apiTasks.length !== Number(api.desiredCount) || workerTasks.length !== Number(worker.desiredCount) ||
+    all.length < 2 || new Set(all).size !== all.length || all.some((arn) => typeof arn !== "string" || !arn.startsWith("arn:aws:ecs:"))) {
+  process.exit(1);
+}
+process.stdout.write(all.join("\n"));
+NODE
+  ); then
+    error "Running task enumeration did not exactly match stable API and worker desired counts ${phase}."
+    return 1
+  fi
+  while IFS= read -r value; do [[ -n "$value" ]] && task_arns+=("$value"); done <<< "$task_arns_text"
+  if [[ "${#task_arns[@]}" -lt 2 ]]; then
+    error "Running task enumeration was empty or incomplete ${phase}."
+    return 1
+  fi
+
+  if ! tasks_json=$(aws ecs describe-tasks \
+    --cluster "$CLUSTER" --tasks "${task_arns[@]}" \
+    --query '{tasks:tasks[].{taskArn:taskArn,taskDefinitionArn:taskDefinitionArn,lastStatus:lastStatus,group:group,attachments:attachments},failures:failures}' \
+    --output json --region "$REGION" --cli-connect-timeout 3 --cli-read-timeout 5 --no-cli-pager); then
+    error "Could not describe every enumerated running task ${phase}."
+    return 1
+  fi
+  if ! eni_ids_text=$(SAME_IMAGE_TASKS_JSON="$tasks_json" \
+    SAME_IMAGE_API_TASKS_JSON="$api_list_json" SAME_IMAGE_WORKER_TASKS_JSON="$worker_list_json" \
+    EXPECTED_API_SERVICE="$SERVICE" EXPECTED_WORKER_SERVICE="$WORKER_SERVICE" \
+    EXPECTED_API_TASK_DEFINITION="$expected_api_ref" EXPECTED_WORKER_TASK_DEFINITION="$expected_worker_ref" node <<'NODE'
+const response = JSON.parse(process.env.SAME_IMAGE_TASKS_JSON || "null");
+const apiArns = JSON.parse(process.env.SAME_IMAGE_API_TASKS_JSON || "null")?.taskArns || [];
+const workerArns = JSON.parse(process.env.SAME_IMAGE_WORKER_TASKS_JSON || "null")?.taskArns || [];
+const expectedArns = [...apiArns, ...workerArns];
+const tasks = Array.isArray(response?.tasks) ? response.tasks : [];
+if ((response?.failures || []).length !== 0 || tasks.length !== expectedArns.length ||
+    JSON.stringify(tasks.map((task) => task?.taskArn).sort()) !== JSON.stringify([...expectedArns].sort())) process.exit(1);
+const apiSet = new Set(apiArns); const workerSet = new Set(workerArns); const enis = [];
+for (const task of tasks) {
+  const isApi = apiSet.has(task.taskArn); const isWorker = workerSet.has(task.taskArn);
+  const expectedTask = isApi ? process.env.EXPECTED_API_TASK_DEFINITION : process.env.EXPECTED_WORKER_TASK_DEFINITION;
+  const expectedGroup = `service:${isApi ? process.env.EXPECTED_API_SERVICE : process.env.EXPECTED_WORKER_SERVICE}`;
+  if (isApi === isWorker || task?.lastStatus !== "RUNNING" || task?.taskDefinitionArn !== expectedTask || task?.group !== expectedGroup) process.exit(1);
+  const attachments = (task?.attachments || []).filter((attachment) => attachment?.type === "ElasticNetworkInterface");
+  const ids = attachments.flatMap((attachment) => (attachment?.details || []))
+    .filter((detail) => detail?.name === "networkInterfaceId").map((detail) => detail?.value).filter(Boolean);
+  if (attachments.length !== 1 || ids.length !== 1 || !/^eni-[A-Za-z0-9]+$/.test(ids[0])) process.exit(1);
+  enis.push(ids[0]);
+}
+if (new Set(enis).size !== enis.length) process.exit(1);
+process.stdout.write(enis.join("\n"));
+NODE
+  ); then
+    error "Running task revisions, service ownership, or ENI attachments were mixed or incomplete ${phase}."
+    return 1
+  fi
+  while IFS= read -r value; do [[ -n "$value" ]] && eni_ids+=("$value"); done <<< "$eni_ids_text"
+  if [[ "${#eni_ids[@]}" -ne "${#task_arns[@]}" ]]; then
+    error "Every running task must bind to exactly one unique ENI ${phase}."
+    return 1
+  fi
+  if ! network_interfaces_json=$(aws ec2 describe-network-interfaces \
+    --network-interface-ids "${eni_ids[@]}" \
+    --query '{NetworkInterfaces:NetworkInterfaces[].{NetworkInterfaceId:NetworkInterfaceId,Status:Status,SubnetId:SubnetId,Groups:Groups[].{GroupId:GroupId},Association:Association,PrivateIpAddress:PrivateIpAddress}}' \
+    --output json --region "$REGION" --cli-connect-timeout 3 --cli-read-timeout 5 --no-cli-pager); then
+    error "Could not describe every running task ENI ${phase}."
+    return 1
+  fi
+  if ! target_group_arn=$(SAME_IMAGE_SERVICES_JSON="$services_json" EXPECTED_API_SERVICE="$SERVICE" node <<'NODE'
+const response=JSON.parse(process.env.SAME_IMAGE_SERVICES_JSON||"null");
+const matches=(response?.services||[]).filter((service)=>service?.serviceName===process.env.EXPECTED_API_SERVICE);
+const balancers=matches[0]?.loadBalancers||[];
+if(matches.length!==1||balancers.length!==1||typeof balancers[0]?.targetGroupArn!=="string")process.exit(1);
+process.stdout.write(balancers[0].targetGroupArn);
+NODE
+  ); then
+    error "Could not bind the API service to exactly one target group ${phase}."
+    return 1
+  fi
+  if ! target_group_json=$(aws elbv2 describe-target-groups \
+    --target-group-arns "$target_group_arn" \
+    --query '{TargetGroups:TargetGroups[].{TargetGroupArn:TargetGroupArn,Port:Port,TargetType:TargetType}}' \
+    --output json --region "$REGION" --cli-connect-timeout 3 --cli-read-timeout 5 --no-cli-pager); then
+    error "Could not describe the API target group ${phase}."
+    return 1
+  fi
+  if ! target_health_json=$(aws elbv2 describe-target-health \
+    --target-group-arn "$target_group_arn" \
+    --query '{TargetHealthDescriptions:TargetHealthDescriptions[].{Target:Target,TargetHealth:TargetHealth}}' \
+    --output json --region "$REGION" --cli-connect-timeout 3 --cli-read-timeout 5 --no-cli-pager); then
+    error "Could not describe every API target ${phase}."
+    return 1
+  fi
+
+  if ! SAME_IMAGE_NETWORK_PATH=".same-image-network.json" SAME_IMAGE_TASKS_JSON="$tasks_json" \
+    SAME_IMAGE_API_TASKS_JSON="$api_list_json" SAME_IMAGE_ENIS_JSON="$network_interfaces_json" \
+    SAME_IMAGE_TARGET_GROUP_JSON="$target_group_json" SAME_IMAGE_TARGET_HEALTH_JSON="$target_health_json" \
+    SAME_IMAGE_TARGET_GROUP_ARN="$target_group_arn" node <<'NODE'
+const fs=require("fs"); const net=require("net");
+const network=JSON.parse(fs.readFileSync(process.env.SAME_IMAGE_NETWORK_PATH,"utf8"))?.awsvpcConfiguration;
+const taskResponse=JSON.parse(process.env.SAME_IMAGE_TASKS_JSON||"null");
+const apiArns=new Set(JSON.parse(process.env.SAME_IMAGE_API_TASKS_JSON||"null")?.taskArns||[]);
+const eniResponse=JSON.parse(process.env.SAME_IMAGE_ENIS_JSON||"null");
+const targetGroupResponse=JSON.parse(process.env.SAME_IMAGE_TARGET_GROUP_JSON||"null");
+const healthResponse=JSON.parse(process.env.SAME_IMAGE_TARGET_HEALTH_JSON||"null");
+const tasks=taskResponse?.tasks||[]; const enis=eniResponse?.NetworkInterfaces||[];
+const expectedSubnets=[...(network?.subnets||[])].sort(); const expectedGroups=[...(network?.securityGroups||[])].sort();
+const expectedEniIds=[]; const taskByEni=new Map();
+for(const task of tasks){
+  const id=(task?.attachments||[]).flatMap((a)=>a?.details||[]).find((d)=>d?.name==="networkInterfaceId")?.value;
+  if(!id||taskByEni.has(id))process.exit(1); expectedEniIds.push(id); taskByEni.set(id,task);
+}
+if(expectedSubnets.length<2||expectedGroups.length<1||network?.assignPublicIp!=="ENABLED"||
+   enis.length!==expectedEniIds.length||JSON.stringify(enis.map((eni)=>eni?.NetworkInterfaceId).sort())!==JSON.stringify(expectedEniIds.sort()))process.exit(1);
+const apiPrivateIps=[]; const publicIps=[];
+for(const eni of enis){
+  const groups=(eni?.Groups||[]).map((group)=>group?.GroupId).sort(); const publicIp=eni?.Association?.PublicIp;
+  if(eni?.Status!=="in-use"||!expectedSubnets.includes(eni?.SubnetId)||JSON.stringify(groups)!==JSON.stringify(expectedGroups)||
+     net.isIP(eni?.PrivateIpAddress||"")!==4||net.isIP(publicIp||"")!==4)process.exit(1);
+  publicIps.push(publicIp);
+  if(apiArns.has(taskByEni.get(eni.NetworkInterfaceId)?.taskArn))apiPrivateIps.push(eni.PrivateIpAddress);
+}
+if(new Set(publicIps).size!==publicIps.length||new Set(apiPrivateIps).size!==apiPrivateIps.length||apiPrivateIps.length!==apiArns.size)process.exit(1);
+const groups=targetGroupResponse?.TargetGroups||[]; const group=groups[0]; const targets=healthResponse?.TargetHealthDescriptions||[];
+if(groups.length!==1||group?.TargetGroupArn!==process.env.SAME_IMAGE_TARGET_GROUP_ARN||group?.TargetType!=="ip"||
+   !Number.isInteger(Number(group?.Port))||Number(group.Port)<1||targets.length!==apiPrivateIps.length||
+   JSON.stringify(targets.map((entry)=>entry?.Target?.Id).sort())!==JSON.stringify([...apiPrivateIps].sort())||
+   targets.some((entry)=>Number(entry?.Target?.Port)!==Number(group.Port)||entry?.TargetHealth?.State!=="healthy"))process.exit(1);
+NODE
+  then
+    error "Running task ENIs, public IPv4 egress, security groups, subnets, or ALB targets failed exact verification ${phase}."
+    return 1
+  fi
+  success "Every running API/worker task, ENI, public IPv4, and healthy API target was verified ${phase}"
+}
+
+same_image_nat_posture_preflight() {
+  local subnet_ids=() subnet_id subnets_json vpc_id route_tables_json internet_gateways_json nat_json
+  while IFS= read -r subnet_id; do
+    [[ -n "$subnet_id" ]] && subnet_ids+=("$subnet_id")
+  done < <(node -e '
+    const fs = require("fs");
+    const network = JSON.parse(fs.readFileSync(".same-image-network.json", "utf8"));
+    for (const subnet of network?.awsvpcConfiguration?.subnets || []) console.log(subnet);
+  ')
+  if [[ "${#subnet_ids[@]}" -lt 2 ]]; then
+    error "Same-image NAT posture could not bind the ECS public subnet set."
+    return 1
+  fi
+  if ! subnets_json=$(aws ec2 describe-subnets \
+    --subnet-ids "${subnet_ids[@]}" \
+    --query '{Subnets:Subnets[].{SubnetId:SubnetId,VpcId:VpcId,State:State}}' \
+    --output json \
+    --region "$REGION" \
+    --cli-connect-timeout 3 \
+    --cli-read-timeout 5 \
+    --no-cli-pager); then
+    error "Could not resolve the VPC for the same-image ECS subnet set."
+    return 1
+  fi
+  if ! vpc_id=$(SAME_IMAGE_SUBNETS_JSON="$subnets_json" \
+    SAME_IMAGE_NETWORK_PATH=".same-image-network.json" node <<'NODE'
+const fs = require("fs");
+const response = JSON.parse(process.env.SAME_IMAGE_SUBNETS_JSON || "null");
+const subnets = Array.isArray(response?.Subnets) ? response.Subnets : [];
+const network = JSON.parse(fs.readFileSync(process.env.SAME_IMAGE_NETWORK_PATH, "utf8"));
+const expectedSubnetIds = [...(network?.awsvpcConfiguration?.subnets || [])].sort();
+const actualSubnetIds = subnets.map((subnet) => subnet?.SubnetId).sort();
+const vpcs = new Set(subnets.map((subnet) => subnet?.VpcId));
+if (expectedSubnetIds.length < 2 || JSON.stringify(actualSubnetIds) !== JSON.stringify(expectedSubnetIds) || vpcs.size !== 1 ||
+    [...vpcs][0] === undefined || subnets.some((subnet) => subnet?.State !== "available")) process.exit(1);
+process.stdout.write([...vpcs][0]);
+NODE
+  ); then
+    error "The ECS subnet set is incomplete, unavailable, or spans multiple VPCs."
+    return 1
+  fi
+  if ! nat_json=$(aws ec2 describe-nat-gateways \
+    --filter "Name=vpc-id,Values=${vpc_id}" \
+    --query '{NatGateways:NatGateways[].{NatGatewayId:NatGatewayId,State:State}}' \
+    --output json \
+    --region "$REGION" \
+    --cli-connect-timeout 3 \
+    --cli-read-timeout 5 \
+    --no-cli-pager); then
+    error "Could not observe the live NAT posture for ${SAME_IMAGE_NETWORKING_STAGE}."
+    return 1
+  fi
+  if ! route_tables_json=$(aws ec2 describe-route-tables \
+    --filters "Name=vpc-id,Values=${vpc_id}" \
+    --query '{RouteTables:RouteTables[].{RouteTableId:RouteTableId,Associations:Associations[].{Main:Main,SubnetId:SubnetId},Routes:Routes[].{DestinationCidrBlock:DestinationCidrBlock,GatewayId:GatewayId,NatGatewayId:NatGatewayId,State:State}}}' \
+    --output json \
+    --region "$REGION" \
+    --cli-connect-timeout 3 \
+    --cli-read-timeout 5 \
+    --no-cli-pager); then
+    error "Could not observe effective route tables for the same-image ECS subnet set."
+    return 1
+  fi
+  if ! internet_gateways_json=$(aws ec2 describe-internet-gateways \
+    --filters "Name=attachment.vpc-id,Values=${vpc_id}" \
+    --query '{InternetGateways:InternetGateways[].{InternetGatewayId:InternetGatewayId,Attachments:Attachments[].{VpcId:VpcId,State:State}}}' \
+    --output json \
+    --region "$REGION" \
+    --cli-connect-timeout 3 \
+    --cli-read-timeout 5 \
+    --no-cli-pager); then
+    error "Could not observe the internet gateway for the same-image ECS VPC."
+    return 1
+  fi
+  if ! SAME_IMAGE_ROUTE_TABLES_JSON="$route_tables_json" \
+    SAME_IMAGE_INTERNET_GATEWAYS_JSON="$internet_gateways_json" \
+    SAME_IMAGE_VPC_ID="$vpc_id" node <<'NODE'
+const fs = require("fs");
+const network = JSON.parse(fs.readFileSync(".same-image-network.json", "utf8"));
+const subnets = network?.awsvpcConfiguration?.subnets || [];
+const routeResponse = JSON.parse(process.env.SAME_IMAGE_ROUTE_TABLES_JSON || "null");
+const gatewayResponse = JSON.parse(process.env.SAME_IMAGE_INTERNET_GATEWAYS_JSON || "null");
+const routeTables = Array.isArray(routeResponse?.RouteTables) ? routeResponse.RouteTables : [];
+const gateways = Array.isArray(gatewayResponse?.InternetGateways) ? gatewayResponse.InternetGateways : [];
+const vpcId = process.env.SAME_IMAGE_VPC_ID;
+if (subnets.length < 2 || routeTables.length < 1 || gateways.length !== 1) process.exit(1);
+const gateway = gateways[0];
+const attachments = Array.isArray(gateway?.Attachments) ? gateway.Attachments : [];
+if (!/^igw-[A-Za-z0-9]+$/.test(gateway?.InternetGatewayId || "") || attachments.length !== 1 ||
+    attachments[0]?.VpcId !== vpcId || attachments[0]?.State !== "available") process.exit(1);
+const mainTables = routeTables.filter((table) =>
+  (table?.Associations || []).some((association) => association?.Main === true)
+);
+if (mainTables.length !== 1) process.exit(1);
+for (const subnetId of subnets) {
+  const explicit = routeTables.filter((table) =>
+    (table?.Associations || []).some((association) => association?.SubnetId === subnetId)
+  );
+  if (explicit.length > 1) process.exit(1);
+  const effective = explicit[0] || mainTables[0];
+  const defaults = (effective?.Routes || []).filter((route) => route?.DestinationCidrBlock === "0.0.0.0/0");
+  if (defaults.length !== 1 || defaults[0]?.State !== "active" ||
+      defaults[0]?.GatewayId !== gateway.InternetGatewayId) process.exit(1);
+}
+NODE
+  then
+    error "Each ECS subnet must resolve through one active IPv4 default route to the VPC's attached internet gateway."
+    return 1
+  fi
+  if ! SAME_IMAGE_NAT_JSON="$nat_json" SAME_IMAGE_STAGE="$SAME_IMAGE_NETWORKING_STAGE" node <<'NODE'
+const response = JSON.parse(process.env.SAME_IMAGE_NAT_JSON || "null");
+const gateways = Array.isArray(response?.NatGateways) ? response.NatGateways : [];
+const live = gateways.filter((gateway) => gateway?.State !== "deleted");
+if (process.env.SAME_IMAGE_STAGE === "PublicEcs") {
+  if (live.length !== 2 || live.some((gateway) => gateway?.State !== "available")) process.exit(1);
+} else if (process.env.SAME_IMAGE_STAGE === "NatRemoved") {
+  if (live.length !== 0) process.exit(1);
+} else {
+  process.exit(1);
+}
+NODE
+  then
+    error "Live NAT posture does not match ${SAME_IMAGE_NETWORKING_STAGE} (PublicEcs=two available; NatRemoved=zero)."
+    return 1
+  fi
+  success "Live NAT posture verified for ${SAME_IMAGE_NETWORKING_STAGE} in ${vpc_id}"
+}
+
+render_same_image_clone_request() {
+  local label="$1"
+  local source_arn="$2"
+  local container_name="$3"
+  local source_path=".same-image-${label}-source.json"
+  local request_path=".same-image-${label}-request.json"
+
+  if ! aws ecs describe-task-definition \
+    --task-definition "$source_arn" \
+    --include TAGS \
+    --output json \
+    --region "$REGION" \
+    --no-cli-pager > "$source_path"; then
+    error "Could not read the exact ${label} task definition for same-image cloning."
+    return 1
+  fi
+
+  if ! SAME_IMAGE_SOURCE_PATH="$source_path" \
+    SAME_IMAGE_REQUEST_PATH="$request_path" \
+    EXPECTED_SOURCE_ARN="$source_arn" \
+    EXPECTED_CONTAINER_NAME="$container_name" \
+    EXPECTED_IMAGE_REF="${ECR_REPO}@${EXPECTED_IMAGE_DIGEST}" node <<'NODE'
+const fs = require("fs");
+const response = JSON.parse(fs.readFileSync(process.env.SAME_IMAGE_SOURCE_PATH, "utf8"));
+const task = response?.taskDefinition;
+const requestFields = [
+  "family", "taskRoleArn", "executionRoleArn", "networkMode", "containerDefinitions",
+  "volumes", "placementConstraints", "requiresCompatibilities", "cpu", "memory",
+  "runtimePlatform", "ephemeralStorage", "proxyConfiguration", "inferenceAccelerators",
+  "pidMode", "ipcMode", "enableFaultInjection"
+];
+const readOnlyFields = new Set([
+  "taskDefinitionArn", "revision", "status", "requiresAttributes", "compatibilities",
+  "registeredAt", "registeredBy", "deregisteredAt"
+]);
+if (!task || task.taskDefinitionArn !== process.env.EXPECTED_SOURCE_ARN || task.status !== "ACTIVE") {
+  process.exit(1);
+}
+for (const key of Object.keys(task)) {
+  if (!requestFields.includes(key) && !readOnlyFields.has(key)) process.exit(1);
+}
+const containers = Array.isArray(task.containerDefinitions) ? task.containerDefinitions : [];
+const primary = containers.filter((container) => container?.name === process.env.EXPECTED_CONTAINER_NAME);
+if (containers.length < 1 || primary.length !== 1 || primary[0].image !== process.env.EXPECTED_IMAGE_REF) {
+  process.exit(1);
+}
+if (containers.some((container) => typeof container?.image !== "string" ||
+    !/@sha256:[0-9a-f]{64}$/.test(container.image))) {
+  process.exit(1);
+}
+const request = {};
+for (const key of requestFields) {
+  if (Object.hasOwn(task, key) && task[key] !== null) request[key] = task[key];
+}
+if (!request.family || !Array.isArray(request.containerDefinitions)) process.exit(1);
+const tags = Array.isArray(response.tags) ? response.tags : [];
+if (tags.length > 0) request.tags = tags;
+fs.writeFileSync(process.env.SAME_IMAGE_REQUEST_PATH, JSON.stringify(request));
+NODE
+  then
+    error "The ${label} task definition is mutable, mismatched, or cannot be cloned exactly."
+    return 1
+  fi
+}
+
+register_same_image_clone_request() {
+  local label="$1"
+  local source_arn="$2"
+  local container_name="$3"
+  local request_path=".same-image-${label}-request.json"
+  local registration_path=".same-image-${label}-registration.json"
+  local registered_path=".same-image-${label}-registered.json"
+  local registered_arn
+
+  if ! aws ecs register-task-definition \
+    --cli-input-json "file://${request_path}" \
+    --output json \
+    --region "$REGION" \
+    --no-cli-pager > "$registration_path"; then
+    error "Could not register the exact same-image ${label} task-definition clone."
+    return 1
+  fi
+  if ! registered_arn=$(SAME_IMAGE_REGISTRATION_PATH="$registration_path" \
+    EXPECTED_SOURCE_ARN="$source_arn" node <<'NODE'
+const fs = require("fs");
+const response = JSON.parse(fs.readFileSync(process.env.SAME_IMAGE_REGISTRATION_PATH, "utf8"));
+const source = process.env.EXPECTED_SOURCE_ARN;
+const arn = response?.taskDefinition?.taskDefinitionArn;
+const familyPrefix = source.replace(/:[1-9][0-9]*$/, ":");
+if (typeof arn !== "string" || arn === source || !arn.startsWith(familyPrefix) || !/:[1-9][0-9]*$/.test(arn)) {
+  process.exit(1);
+}
+process.stdout.write(arn);
+NODE
+  ); then
+    error "ECS returned an invalid same-image ${label} task-definition identity."
+    return 1
+  fi
+
+  if ! aws ecs describe-task-definition \
+    --task-definition "$registered_arn" \
+    --include TAGS \
+    --output json \
+    --region "$REGION" \
+    --no-cli-pager > "$registered_path"; then
+    error "Could not verify the registered same-image ${label} task definition."
+    return 1
+  fi
+
+  if ! SAME_IMAGE_REQUEST_PATH="$request_path" \
+    SAME_IMAGE_REGISTERED_PATH="$registered_path" \
+    EXPECTED_REGISTERED_ARN="$registered_arn" \
+    EXPECTED_CONTAINER_NAME="$container_name" \
+    EXPECTED_IMAGE_REF="${ECR_REPO}@${EXPECTED_IMAGE_DIGEST}" node <<'NODE'
+const fs = require("fs");
+const expected = JSON.parse(fs.readFileSync(process.env.SAME_IMAGE_REQUEST_PATH, "utf8"));
+const response = JSON.parse(fs.readFileSync(process.env.SAME_IMAGE_REGISTERED_PATH, "utf8"));
+const task = response?.taskDefinition;
+const fields = [
+  "family", "taskRoleArn", "executionRoleArn", "networkMode", "containerDefinitions",
+  "volumes", "placementConstraints", "requiresCompatibilities", "cpu", "memory",
+  "runtimePlatform", "ephemeralStorage", "proxyConfiguration", "inferenceAccelerators",
+  "pidMode", "ipcMode", "enableFaultInjection"
+];
+if (!task || task.taskDefinitionArn !== process.env.EXPECTED_REGISTERED_ARN || task.status !== "ACTIVE") {
+  process.exit(1);
+}
+const actual = {};
+for (const key of fields) {
+  if (Object.hasOwn(task, key) && task[key] !== null) actual[key] = task[key];
+}
+if (Array.isArray(response.tags) && response.tags.length > 0) actual.tags = response.tags;
+function canonical(value, key = "") {
+  if (Array.isArray(value)) {
+    const values = value.map((item) => canonical(item));
+    if (key === "tags") values.sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+    return values;
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.keys(value).sort().map((name) => [name, canonical(value[name], name)]));
+  }
+  return value;
+}
+if (JSON.stringify(canonical(actual)) !== JSON.stringify(canonical(expected))) process.exit(1);
+const containers = Array.isArray(task.containerDefinitions) ? task.containerDefinitions : [];
+const primary = containers.filter((container) => container?.name === process.env.EXPECTED_CONTAINER_NAME);
+if (primary.length !== 1 || primary[0].image !== process.env.EXPECTED_IMAGE_REF ||
+    containers.some((container) => !/@sha256:[0-9a-f]{64}$/.test(container?.image || ""))) {
+  process.exit(1);
+}
+NODE
+  then
+    error "The registered ${label} revision is not an exact digest-preserving clone."
+    return 1
+  fi
+
+  if [[ "$label" == "api" ]]; then
+    SAME_IMAGE_API_TASK_DEFINITION="$registered_arn"
+  else
+    SAME_IMAGE_WORKER_TASK_DEFINITION="$registered_arn"
+  fi
+  success "Registered exact same-image ${label} clone: ${registered_arn}"
+}
+
+run_same_image_migration_task() {
+  local migration_task_arn migration_wait_result
+  info "Running startup migrations with exact same-image API revision ${SAME_IMAGE_API_TASK_DEFINITION}..."
+  aws ecs run-task \
+    --cluster "$CLUSTER" \
+    --launch-type FARGATE \
+    --task-definition "$SAME_IMAGE_API_TASK_DEFINITION" \
+    --network-configuration "file://.same-image-network.json" \
+    --overrides '{"containerOverrides":[{"name":"api","environment":[{"name":"RUN_MIGRATIONS_ONLY","value":"true"},{"name":"SCHEDULER_ENABLED","value":"false"}]}]}' \
+    --output json \
+    --region "$REGION" \
+    --no-cli-pager > .migration-task.json
+
+  if ! migration_task_arn=$(node -e '
+    const fs = require("fs");
+    const response = JSON.parse(fs.readFileSync(".migration-task.json", "utf8"));
+    if ((response.failures || []).length !== 0 || !response.tasks?.[0]?.taskArn || response.tasks.length !== 1) process.exit(1);
+    process.stdout.write(response.tasks[0].taskArn);
+  '); then
+    error "The same-image migration task was not started exactly once."
+    return 1
+  fi
+
+  set +e
+  wait_for_migration_task_stopped "$migration_task_arn"
+  migration_wait_result=$?
+  set -e
+  aws ecs describe-tasks \
+    --cluster "$CLUSTER" \
+    --tasks "$migration_task_arn" \
+    --output json \
+    --region "$REGION" \
+    --no-cli-pager > .migration-result.json
+
+  if [[ "$migration_wait_result" -eq 124 ]]; then
+    error "Same-image migration exceeded the one-hour controller deadline and was stopped; no service rollout was attempted."
+    return 1
+  elif [[ "$migration_wait_result" -eq 125 ]]; then
+    error "Same-image migration stop could not be confirmed within the bounded five-minute stop-observation window; no service rollout was attempted."
+    return 1
+  elif [[ "$migration_wait_result" -ne 0 ]]; then
+    error "Same-image migration observation failed; no service rollout was attempted."
+    return 1
+  fi
+  if ! SAME_IMAGE_MIGRATION_RESULT_PATH=".migration-result.json" \
+    EXPECTED_MIGRATION_TASK_ARN="$migration_task_arn" node <<'NODE'
+const fs = require("fs");
+const response = JSON.parse(fs.readFileSync(process.env.SAME_IMAGE_MIGRATION_RESULT_PATH, "utf8"));
+const tasks = Array.isArray(response?.tasks) ? response.tasks : [];
+const task = tasks[0];
+const containers = Array.isArray(task?.containers) ? task.containers.filter((container) => container?.name === "api") : [];
+if ((response?.failures || []).length !== 0 || tasks.length !== 1 ||
+    task?.taskArn !== process.env.EXPECTED_MIGRATION_TASK_ARN || task?.lastStatus !== "STOPPED" ||
+    containers.length !== 1 || Number(containers[0]?.exitCode) !== 0) process.exit(1);
+NODE
+  then
+    error "The exact same-image migration task did not stop successfully."
+    return 1
+  fi
+  success "Same-image startup migrations completed"
+}
+
+observe_same_image_safe_terminal() {
+  if AWS_MAX_ATTEMPTS=1 same_image_service_contract_preflight \
+      "$SAME_IMAGE_API_TASK_DEFINITION" "$SAME_IMAGE_WORKER_TASK_DEFINITION" \
+      "during bounded candidate recovery" > /dev/null 2>&1 &&
+     AWS_MAX_ATTEMPTS=1 same_image_runtime_task_network_preflight \
+      "$SAME_IMAGE_API_TASK_DEFINITION" "$SAME_IMAGE_WORKER_TASK_DEFINITION" \
+      "during bounded candidate recovery" > /dev/null 2>&1 &&
+     AWS_MAX_ATTEMPTS=1 same_image_nat_posture_preflight > /dev/null 2>&1; then
+    SAME_IMAGE_RECOVERY_TERMINAL="candidate"
+    return 0
+  fi
+  if AWS_MAX_ATTEMPTS=1 same_image_service_contract_preflight \
+      "$EXPECTED_API_TASK_DEFINITION" "$EXPECTED_WORKER_TASK_DEFINITION" \
+      "during bounded source recovery" > /dev/null 2>&1 &&
+     AWS_MAX_ATTEMPTS=1 same_image_runtime_task_network_preflight \
+      "$EXPECTED_API_TASK_DEFINITION" "$EXPECTED_WORKER_TASK_DEFINITION" \
+      "during bounded source recovery" > /dev/null 2>&1 &&
+     AWS_MAX_ATTEMPTS=1 same_image_nat_posture_preflight > /dev/null 2>&1; then
+    SAME_IMAGE_RECOVERY_TERMINAL="source"
+    return 0
+  fi
+  return 1
+}
+
+recover_same_image_mutated_services() {
+  local attempt
+  SAME_IMAGE_RECOVERY_TERMINAL=""
+
+  # A circuit breaker may already have returned both services to the captured
+  # source revisions. Observe that exact safe state before continuing the
+  # intended same-digest clone rollout.
+  if observe_same_image_safe_terminal; then
+    SAME_IMAGE_SAFE_TERMINAL_REACHED=true
+    success "Same-image failure recovery observed exact ${SAME_IMAGE_RECOVERY_TERMINAL} revisions before retry."
+    return 0
+  fi
+
+  warn "Reasserting only the reviewed digest-identical API and worker clone revisions during bounded recovery..."
+  if ! AWS_MAX_ATTEMPTS=1 aws ecs update-service \
+    --cluster "$CLUSTER" \
+    --service "$SERVICE" \
+    --task-definition "$SAME_IMAGE_API_TASK_DEFINITION" \
+    --output json \
+    --region "$REGION" \
+    --cli-connect-timeout 10 \
+    --cli-read-timeout 30 \
+    --no-cli-pager > /dev/null; then
+    warn "Could not reassert the exact same-image API clone; continuing bounded observation."
+  fi
+  if ! AWS_MAX_ATTEMPTS=1 aws ecs update-service \
+    --cluster "$CLUSTER" \
+    --service "$WORKER_SERVICE" \
+    --task-definition "$SAME_IMAGE_WORKER_TASK_DEFINITION" \
+    --output json \
+    --region "$REGION" \
+    --cli-connect-timeout 10 \
+    --cli-read-timeout 30 \
+    --no-cli-pager > /dev/null; then
+    warn "Could not reassert the exact same-image worker clone; continuing bounded observation."
+  fi
+
+  for ((attempt = 1; attempt <= SAME_IMAGE_RECOVERY_MAX_ATTEMPTS; attempt++)); do
+    if observe_same_image_safe_terminal; then
+      SAME_IMAGE_SAFE_TERMINAL_REACHED=true
+      success "Same-image failure recovery reached exact ${SAME_IMAGE_RECOVERY_TERMINAL} revisions while the autoscaling hold remained active."
+      return 0
+    fi
+    if (( attempt < SAME_IMAGE_RECOVERY_MAX_ATTEMPTS )); then
+      sleep "$SAME_IMAGE_RECOVERY_POLL_SECONDS"
+    fi
+  done
+  return 1
+}
+
+emit_same_image_hard_stop_record() {
+  local reason="$1" record
+  if ! record=$(SAME_IMAGE_HARD_STOP_REASON="$reason" \
+    SAME_IMAGE_HARD_STOP_STAGE="$SAME_IMAGE_NETWORKING_STAGE" \
+    SAME_IMAGE_HARD_STOP_APP_SHA="$EXPECTED_APP_SHA" \
+    SAME_IMAGE_HARD_STOP_DIGEST="$EXPECTED_IMAGE_DIGEST" \
+    SAME_IMAGE_HARD_STOP_SOURCE_API="$EXPECTED_API_TASK_DEFINITION" \
+    SAME_IMAGE_HARD_STOP_SOURCE_WORKER="$EXPECTED_WORKER_TASK_DEFINITION" \
+    SAME_IMAGE_HARD_STOP_CANDIDATE_API="$SAME_IMAGE_API_TASK_DEFINITION" \
+    SAME_IMAGE_HARD_STOP_CANDIDATE_WORKER="$SAME_IMAGE_WORKER_TASK_DEFINITION" \
+    SAME_IMAGE_HARD_STOP_NETWORK_HASH="$SAME_IMAGE_BOUND_NETWORK_HASH" \
+    SAME_IMAGE_HARD_STOP_ATTEMPTS="$SAME_IMAGE_RECOVERY_MAX_ATTEMPTS" node <<'NODE'
+const record = {
+  schemaVersion: 1,
+  event: "same_image_deploy_hard_stop",
+  timestamp: new Date().toISOString(),
+  reason: process.env.SAME_IMAGE_HARD_STOP_REASON,
+  stage: process.env.SAME_IMAGE_HARD_STOP_STAGE,
+  applicationSha: process.env.SAME_IMAGE_HARD_STOP_APP_SHA,
+  imageDigest: process.env.SAME_IMAGE_HARD_STOP_DIGEST,
+  sourceApiTaskDefinition: process.env.SAME_IMAGE_HARD_STOP_SOURCE_API,
+  sourceWorkerTaskDefinition: process.env.SAME_IMAGE_HARD_STOP_SOURCE_WORKER,
+  candidateApiTaskDefinition: process.env.SAME_IMAGE_HARD_STOP_CANDIDATE_API,
+  candidateWorkerTaskDefinition: process.env.SAME_IMAGE_HARD_STOP_CANDIDATE_WORKER,
+  networkConfigurationSha256: process.env.SAME_IMAGE_HARD_STOP_NETWORK_HASH,
+  boundedRecoveryAttempts: Number(process.env.SAME_IMAGE_HARD_STOP_ATTEMPTS),
+  dynamicAutoscalingHoldRetained: true,
+  operatorActionRequired: true,
+};
+process.stdout.write(JSON.stringify(record));
+NODE
+  ); then
+    record='{"schemaVersion":1,"event":"same_image_deploy_hard_stop","reason":"record_generation_failed","dynamicAutoscalingHoldRetained":true,"operatorActionRequired":true}'
+  fi
+  error "SAME_IMAGE_HARD_STOP_RECORD ${record}"
+}
+
+same_image_networking_redeploy() {
+  same_image_application_identity_preflight
+  same_image_service_contract_preflight \
+    "$EXPECTED_API_TASK_DEFINITION" "$EXPECTED_WORKER_TASK_DEFINITION" \
+    "before ${SAME_IMAGE_NETWORKING_STAGE} cloning"
+  same_image_runtime_task_network_preflight \
+    "$EXPECTED_API_TASK_DEFINITION" "$EXPECTED_WORKER_TASK_DEFINITION" \
+    "before ${SAME_IMAGE_NETWORKING_STAGE} cloning"
+  same_image_nat_posture_preflight
+  same_image_autoscaling_contract_preflight
+
+  # Validate both source definitions before the first registration mutation.
+  # Each request is a field-for-field clone after removing only ECS read-only
+  # metadata; no template overlay or image rewrite is permitted in this mode.
+  render_same_image_clone_request "api" "$EXPECTED_API_TASK_DEFINITION" "api"
+  render_same_image_clone_request "worker" "$EXPECTED_WORKER_TASK_DEFINITION" "scheduler-worker"
+  register_same_image_clone_request "api" "$EXPECTED_API_TASK_DEFINITION" "api"
+  register_same_image_clone_request "worker" "$EXPECTED_WORKER_TASK_DEFINITION" "scheduler-worker"
+
+  acquire_production_scaling_hold
+  same_image_autoscaling_contract_preflight
+  same_image_service_contract_preflight \
+    "$EXPECTED_API_TASK_DEFINITION" "$EXPECTED_WORKER_TASK_DEFINITION" \
+    "under the autoscaling hold"
+  same_image_runtime_task_network_preflight \
+    "$EXPECTED_API_TASK_DEFINITION" "$EXPECTED_WORKER_TASK_DEFINITION" \
+    "under the autoscaling hold"
+  same_image_nat_posture_preflight
+
+  run_same_image_migration_task
+
+  production_backend_deploy_window_preflight "before same-image service rollout"
+  production_backend_capacity_preflight "after same-image migration under the autoscaling hold"
+  same_image_autoscaling_contract_preflight
+  same_image_service_contract_preflight \
+    "$EXPECTED_API_TASK_DEFINITION" "$EXPECTED_WORKER_TASK_DEFINITION" \
+    "after migration"
+  same_image_runtime_task_network_preflight \
+    "$EXPECTED_API_TASK_DEFINITION" "$EXPECTED_WORKER_TASK_DEFINITION" \
+    "after migration"
+  same_image_nat_posture_preflight
+
+  info "Updating API first to ${SAME_IMAGE_API_TASK_DEFINITION}..."
+  # Set before the mutating request so a lost AWS response is treated as an
+  # uncertain mutation and the EXIT trap retains the scaling hold.
+  SAME_IMAGE_SERVICE_MUTATION_STARTED=true
+  aws ecs update-service \
+    --cluster "$CLUSTER" \
+    --service "$SERVICE" \
+    --task-definition "$SAME_IMAGE_API_TASK_DEFINITION" \
+    --output json \
+    --region "$REGION" \
+    --no-cli-pager > /dev/null
+  info "Updating singleton worker to ${SAME_IMAGE_WORKER_TASK_DEFINITION}..."
+  aws ecs update-service \
+    --cluster "$CLUSTER" \
+    --service "$WORKER_SERVICE" \
+    --task-definition "$SAME_IMAGE_WORKER_TASK_DEFINITION" \
+    --output json \
+    --region "$REGION" \
+    --no-cli-pager > /dev/null
+
+  aws ecs wait services-stable \
+    --cluster "$CLUSTER" \
+    --services "$SERVICE" "$WORKER_SERVICE" \
+    --region "$REGION"
+  wait_for_production_backend_strict_stability \
+    "$SAME_IMAGE_API_TASK_DEFINITION" \
+    "$SAME_IMAGE_WORKER_TASK_DEFINITION"
+  same_image_service_contract_preflight \
+    "$SAME_IMAGE_API_TASK_DEFINITION" "$SAME_IMAGE_WORKER_TASK_DEFINITION" \
+    "after strict convergence"
+  same_image_runtime_task_network_preflight \
+    "$SAME_IMAGE_API_TASK_DEFINITION" "$SAME_IMAGE_WORKER_TASK_DEFINITION" \
+    "after strict convergence"
+  same_image_nat_posture_preflight
+  SAME_IMAGE_SAFE_TERMINAL_REACHED=true
+
+  if ! restore_production_scaling_hold; then
+    error "Same-image deployment converged, but exact autoscaling restoration failed."
+    return 1
+  fi
+  same_image_autoscaling_contract_preflight
+  success "${SAME_IMAGE_NETWORKING_STAGE} same-image deployment complete: app=${EXPECTED_APP_SHA} digest=${EXPECTED_IMAGE_DIGEST} api=${SAME_IMAGE_API_TASK_DEFINITION} worker=${SAME_IMAGE_WORKER_TASK_DEFINITION} networkSha256=${SAME_IMAGE_NETWORK_HASH}"
+}
+
 # --- Preflight checks ---
 echo ""
 echo "=========================================="
@@ -778,9 +1803,13 @@ info "CloudFront: $CF_DIST_ID"
 info "Backend:    $DEPLOY_BACKEND"
 info "Frontend:   $DEPLOY_FRONTEND"
 info "2048 API:   $ACTIVATE_EMERGENCY"
+info "Same image: ${SAME_IMAGE_NETWORKING_STAGE:-false}"
 echo ""
 
 if ! validate_emergency_activation_mode; then
+  exit 1
+fi
+if ! validate_same_image_networking_mode; then
   exit 1
 fi
 
@@ -862,9 +1891,14 @@ NODE
   exit 1
 fi
 
-IMAGE_TAG="${IMAGE_TAG:-$(git rev-parse --short=12 HEAD)}"
-success "Git deploy preflight OK: main@$IMAGE_TAG has green GitHub checks"
-info "Image tag:   $IMAGE_TAG"
+if [[ -n "$SAME_IMAGE_NETWORKING_STAGE" ]]; then
+  success "Controller/tooling preflight OK: main@${LOCAL_SHA} has green GitHub checks"
+  info "Deployed app identity: ${EXPECTED_APP_SHA} / ${EXPECTED_IMAGE_DIGEST}"
+else
+  IMAGE_TAG="${IMAGE_TAG:-$(git rev-parse --short=12 HEAD)}"
+  success "Git deploy preflight OK: main@$IMAGE_TAG has green GitHub checks"
+  info "Image tag:   $IMAGE_TAG"
+fi
 
 # A 200% API/worker rollout is safe under the reviewed 150-connection launch
 # gate only while the API is stable at one or two tasks and the singleton
@@ -886,6 +1920,11 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
   info "Validating active runtime SecureString metadata without decryption..."
   runtime_securestring_preflight
   success "Runtime SecureString metadata preflight passed"
+
+  if [[ -n "$SAME_IMAGE_NETWORKING_STAGE" ]]; then
+    same_image_networking_redeploy
+    exit 0
+  fi
 
   # Step 1: Build Docker image
   info "Building Docker image..."
@@ -1147,6 +2186,13 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
 
   if [[ "$MIGRATION_WAIT_RESULT" -eq 124 ]]; then
     error "Migration task exceeded the controller deadline and was stopped. No ECS service rollout was attempted."
+    cat .migration-result.json
+    if [[ -f .migration-stop.json ]]; then
+      cat .migration-stop.json
+    fi
+    exit 1
+  elif [[ "$MIGRATION_WAIT_RESULT" -eq 125 ]]; then
+    error "Migration task did not report STOPPED within the bounded five-minute stop-observation window. No ECS service rollout was attempted."
     cat .migration-result.json
     if [[ -f .migration-stop.json ]]; then
       cat .migration-stop.json

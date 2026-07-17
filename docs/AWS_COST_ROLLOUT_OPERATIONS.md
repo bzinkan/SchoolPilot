@@ -135,11 +135,24 @@ $Destroys = @($Changes | Where-Object { $_.change.actions -contains "delete" }).
 ```
 
 Apply only the reviewed saved plan, create the verified after-apply backups,
-then delete the plan:
+then delete the plan. `$PlanSha256` below is the 64-hex digest recorded during
+review. Hold a read-only, no-write/no-delete share on the exact bytes through
+`terraform apply`; a separate pre-apply hash command without this handle leaves
+a check/use race:
 
 ```powershell
-terraform -chdir=infra apply -input=false $PlanPath
-if ($LASTEXITCODE -ne 0) { throw "Saved plan apply failed" }
+$PlanHandle = [IO.File]::Open($PlanPath, [IO.FileMode]::Open,
+  [IO.FileAccess]::Read, [IO.FileShare]::Read)
+try {
+  $Hasher = [Security.Cryptography.SHA256]::Create()
+  try { $ActualPlanSha256 = [Convert]::ToHexString($Hasher.ComputeHash($PlanHandle)).ToLowerInvariant() }
+  finally { $Hasher.Dispose() }
+  if ($ActualPlanSha256 -ne $PlanSha256) { throw "Reviewed plan digest changed before apply" }
+  $PlanHandle.Position = 0
+  terraform -chdir=infra apply -input=false $PlanPath
+  if ($LASTEXITCODE -ne 0) { throw "Saved plan apply failed" }
+}
+finally { $PlanHandle.Dispose() }
 # Create and verify the unique After backup here.
 Remove-Item -LiteralPath $PlanPath -Force
 ```
@@ -279,6 +292,16 @@ summary paths. Launch-profile runs are immutable:
 | `burst` | 1,010 | 600 s | 50 KiB | 40 |
 | `endurance` | 810 | 28,800 s | 40 KiB | 40 |
 
+Before an accepted `Waf/800` or private `Waf/endurance` run, fixture
+verification must read both synthetic schools back through the supported API
+and prove that `schoolTimezone` and `schoolHours.timezone` equal the configured
+timezone. For `Waf/800`, it must also prove from the planned UTC start/end
+instants that the run contains that timezone's `01:30` purge tick and `02:00`
+rollup eligibility. The live-schedule endurance window is not subject to that
+night-window condition. A config default or locally persisted fixture value is
+not evidence of the live school setting. If a required proof fails or credential
+reverification would compress the run window, defer and prepare a new run.
+
 Every launch run includes ten second-school canaries first in the manifest,
 20 distinct teacher sessions, shared-IP traffic, authenticated WebSockets and
 ACKs, forced reconnects, dashboard/history/screenshot GETs, and one-minute
@@ -376,10 +399,109 @@ the deployed Web ACL before monitoring begins:
 - `wafDeviceRuleMetricName=schoolpilot-production-device-ingest-rate-limit`
 - `wafApiRuleMetricName=schoolpilot-production-api-rate-limit`
 
-Every accepted result is SHA-256-bound as the next stage's predecessor. The
-immutable production chain is:
+Every accepted result is written by the monitor and sealed by the supervisor in
+a separate terminal envelope. The next stage hashes that envelope and verifies
+the enclosed monitor-result hash; raw monitor output, historical evidence, a
+recomputed operator summary, or an unsealed result cannot be a predecessor.
+`Validate` produces a single-use receipt bound to the exact controller SHA,
+deployed application SHA/digest and task definitions, fixture generation,
+config/script hashes, generator IPv4, AWS posture, rollback identities, and
+output paths. It also freezes the operator config and executable rollback JSON
+by SHA-256. `Run` consumes the receipt, copies the rollback JSON to
+`<evidenceDirectory>/<runId>-bound-rollback-config.json`, writes
+`<runId>-bound-monitor-config.json`, and passes that runtime config's hash to
+the monitor. Any byte change blocks traffic or, after arming, blocks the
+automatic mutation. A receipt or evidence directory cannot be replayed.
+
+The production certification member must use this concrete shape. Every path
+is an absolute external file and every `REPLACE_*` value must be populated
+before Validate. A later stage adds `certification.chainRoot` plus top-level
+`predecessorResultPath` and `predecessorResultSha256`; it never mints a second
+root.
+
+```json
+{
+  "rollbackConfigPath": "C:/absolute/evidence/reviewed-rollback.json",
+  "resources": {
+    "expectedRdsInstanceClass": "db.t4g.medium",
+    "expectedActiveApiTaskDefinitionArn": "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:17",
+    "expectedActiveWorkerTaskDefinitionArn": "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:37"
+  },
+  "certification": {
+    "schemaVersion": 1,
+    "chainId": "REPLACE_FRESH_CHAIN_ID",
+    "deployedApplicationGitSha": "REPLACE_40_HEX_APP_SHA",
+    "deployedImageDigest": "sha256:REPLACE_64_HEX_IMAGE_DIGEST",
+    "controllerGitSha": "REPLACE_40_HEX_CONTROLLER_SHA",
+    "activeApiTaskDefinitionArn": "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:17",
+    "activeWorkerTaskDefinitionArn": "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:37",
+    "rollbackApiTaskDefinitionArn": "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:13",
+    "rollbackWorkerTaskDefinitionArn": "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:35",
+    "rollbackApiGitSha": "REPLACE_EXACT_FULL_ROLLBACK_API_GIT_SHA",
+    "rollbackWorkerGitSha": "REPLACE_EXACT_FULL_ROLLBACK_WORKER_GIT_SHA",
+    "rollbackApiImageDigest": "sha256:REPLACE_64_HEX_ROLLBACK_API_DIGEST",
+    "rollbackWorkerImageDigest": "sha256:REPLACE_64_HEX_ROLLBACK_WORKER_DIGEST",
+    "rollbackSchemaCompatibilityEvidence": {"path": "C:/absolute/evidence/schema-compatibility.json", "sha256": "REPLACE_64_HEX"},
+    "fixture": {
+      "expectedFixtureId": "REPLACE_EXACT_FIXTURE_ID",
+      "state": {"path": "C:/absolute/evidence/fixture-state.json", "sha256": "REPLACE_64_HEX"},
+      "verification": {"path": "C:/absolute/evidence/fixture-verification.json", "sha256": "REPLACE_64_HEX"},
+      "artifacts": [{"path": "C:/absolute/evidence/primary-fixture.json", "sha256": "REPLACE_64_HEX"}, {"path": "C:/absolute/evidence/canary-fixture.json", "sha256": "REPLACE_64_HEX"}],
+      "expectedTimezone": "America/New_York",
+      "maximumVerificationAgeMinutes": 60,
+      "plannedTrafficStartUtc": "REPLACE_ISO_8601_UTC"
+    },
+    "alarmNames": ["REPLACE_EVERY_REQUIRED_ALARM"],
+    "scheduleNames": ["REPLACE_EVERY_API_SCHEDULE"],
+    "historicalEvidence": []
+  }
+}
+```
+
+The :17/:37 and `805a0f73...` identities describe the current initial
+controller-landing baseline, not a permanent allowlist. A same-image deployment
+creates fresh active task-definition revisions, and an activated index pivot
+creates a fresh application SHA/digest; in either case start a fresh chain with
+those exact supplied identities while retaining the reviewed :13/:35 rollback
+identities and proving ECR/service provenance.
+
+The rollback JSON must set `previousApiTaskDefinition` and
+`previousWorkerTaskDefinition` to those exact :13/:35 full ARNs. The generated
+receipt has type `certification_validation_receipt`, run/chain IDs, a 30-minute
+expiry, nonce, operator-config hash, controller SHA/component hashes,
+application SHA/digest, full AWS preflight, and rollback path/hash. Its separate
+seal contains the receipt hash. Never hand-author, re-seal, or copy either file
+between runs. `issuedAtUtc` cannot be in the future, `expiresAtUtc` must be
+exactly 30 minutes later, and Run consumes only the exact
+`<receiptPath>.consumed` destination. Every predecessor re-hashes and loads that
+consumed receipt and cross-checks its complete task, fixture, datastore,
+network, alarm, schedule, rollback, operator-config, and bound-runtime evidence
+against the stage attestation and supervisor terminal envelope. The chain root
+is always a supervised Waf/500 load result with a bound generator IPv4; a
+MonitorOnly or minimal hand-authored root is not accepted.
+
+The two `fixture.artifacts` entries must be distinct hashed primary/canary
+artifacts. Live verification must prove exactly two schools, 20 teachers and
+classes, 1,010 students/devices/live device sessions, 800 disjoint roster
+students, 20 active sessions and safe command bodies, one live command admin,
+20 live teacher auth artifacts, and every disabled-tracking/auto-enroll/schedule
+and exact-timezone gate.
+
+Production monitor `Validate` and `Monitor` invocations require the supervisor's
+`-ExpectedConfigSha256`; direct production invocation without that bound config
+digest is rejected. Isolated `testMode` unit calls may omit it.
+
+The medium-RDS production chain is:
 
 `Waf/500 -> Waf/800 -> PublicEcs/800 -> PublicEcs/24h no-load -> NatRemoved/800 -> Route53/no-load -> Redis/500 -> Redis/800 -> Redis/burst -> Final/endurance`.
+
+If the approved RDS capacity fallback is used, the private prefix is instead:
+
+`Waf/500 -> Waf/800 -> Waf/endurance -> PublicEcs/800`.
+
+The monitor resolves this choice from the exact observed
+`resources.expectedRdsInstanceClass`: `db.t4g.medium` requires `Waf/800` as the
+PublicEcs predecessor, while `db.t4g.xlarge` requires `Waf/endurance`.
 
 The small Week 1 partial smoke is diagnostic only and cannot appear in this
 acceptance chain.
@@ -391,6 +513,15 @@ Automatic rollback may dispatch only one unambiguous pre-approved action:
 - public ECS: captured private subnets/security groups while NAT still exists;
 - NAT removal: digest-verified saved NAT recreation plan, then private ECS;
 - Redis: `cache.t4g.small` and wait for `available`.
+
+RDS CPU, connection, free-memory/swap, credit, latency, queue-depth, or IOPS
+capacity evidence is a stop-and-preserve condition, not an infrastructure
+rollback selector. It must never change WAF, ECS networking, NAT, Route 53,
+Redis, or application revisions. PI may corroborate a database-only result but
+cannot override any failed application, valid-traffic, isolation, WebSocket,
+ECS/ALB, Redis, WAF, scheduler, duration, or evidence-completeness gate. An OOM
+while the API already runs the bound emergency revision is also a hard stop;
+there is no second corrective redeploy.
 
 Application rollback keeps the reviewed ALB deregistration delay at **300
 seconds** and restores the API before the worker. For API desired capacity two
@@ -439,33 +570,120 @@ one-minute resource breaches. A missing metric, missed duration, stale
 artifact, notification failure, or incomplete acceptance invalidates the run;
 monitoring-completeness failures never guess at an infrastructure mutation.
 
-## Arrival-capacity remediation phase
+## Optimized-build certification and conditional capacity path (2026-07-17)
 
-Apply the API arrival-capacity remediation before repeating the failed WAF/500
-gate. Run this phase outside the weekday 05:45-10:00 America/New_York arrival
-window. First require production to remain on private ECS subnets with both NAT
-gateways present, Route 53 latency measurement enabled, Redis small, both WAF
-rate rules in `BLOCK`, and API desired capacity at or below two.
+The current application baseline is `805a0f73c63e0c8f5706776d3d8bbcb4afcbbc00`
+at digest
+`sha256:5fff93d966279516e247f11c506163ebe144321a8316730b56313f34ec4c92fa`,
+served by `schoolpilot-production-api-emergency:17` and scheduler worker `:37`.
+Controller-only changes record their own Git SHA separately and do not change
+that deployed application identity. Existing Waf results cannot seed this
+optimized-build chain.
 
-Plan from the merged remediation commit with the existing launch overrides:
+At supervisor Validate and again immediately before traffic, bind the full
+revisioned ARNs for `schoolpilot-production-api-emergency:13` and
+`schoolpilot-production-scheduler-worker:35`. Both must be ACTIVE, use
+digest-pinned images whose manifests remain retrievable from ECR, and match the
+recorded task-definition JSON hashes. Reject shorthand family names, mutable
+image tags, missing manifests, or a schema audit that finds a destructive table,
+column, or constraint change since source SHAs `3e1933534c4c` and
+`4377622408a9`. The supervisor treats the controller's complete bounded
+rollback interval as recovery, not a new monitored stage.
 
-```powershell
-terraform -chdir=infra plan -var-file=production.tfvars `
-  '-var=ecs_tasks_in_public_subnets=false' `
-  '-var=route53_measure_latency=true' `
-  '-var=waf_rate_rule_action=block' `
-  -out $PlanPath
+Run a fresh private `Waf/500` with no predecessor, then a fresh private
+`Waf/800` whose sole predecessor is the sealed Waf/500 terminal envelope. Pin
+API min 6/max 8 only for these night gates, require six healthy exact-digest
+targets and worker 1/1, and restore schedule-appropriate scaling after the
+terminal result. Do not add a separate 40-45% Waf/500 margin gate.
+
+Keep the heartbeat-index pivot as an unmerged, undeployed draft. It may be
+activated once only when an otherwise-valid Waf/800 fails solely the RDS CPU
+gate, one-minute Maximum is 65%-85% inclusive, PI shows heartbeat writes
+leading, and a representative stats-reset-bound observation window proves all
+six candidates unused. Merging it creates a new application SHA/digest and
+requires a new no-predecessor Waf/500 followed by Waf/800. If that chain still
+fails solely from database headroom, do not take another app iteration.
+
+Go directly to the RDS capacity path when CPU exceeds 85%, heartbeat writes do
+not lead, index safety is unproven, or another strictly RDS-only class-capacity
+gate fails. Before resize, require the monitor amendment, explicit approval, a
+fresh price/Cost Explorer projection, PITR/orderability checks, and a new
+encrypted manual snapshot. Handle a pending OS update separately. The resize
+plan must be exactly 0 add / 1 in-place change / 0 destroy, limited to the
+existing instance and temporary immediate application. After availability and
+empty pending modifications, restore `db_apply_immediately=false` with a
+separate normalization plan. Then run the xlarge private chain including the
+eight-hour `Waf/endurance`; no additional min-6 endurance lease is authorized.
+Every T4g stage retains credit balance strictly >24 and zero surplus charges.
+Only the resized capacity track enforces the new latency, queue, total-IOPS,
+and hours-2-8 regression gates: read and write latency p95 <20 ms and peak <50
+ms, queue-depth p95 <1 with no three-minute period >=2, total ReadIOPS +
+WriteIOPS p95 <2400 and peak <3000, and a nonnegative regression slope over at
+least 5h50 of the intended six-hour hours-2-8 window. Directional IOPS remain
+evidence only. The medium baseline does not acquire these new capacity
+thresholds.
+
+Use `scripts/load/validate-rollout-plan.ps1` before any saved-plan apply. Its
+phase-specific resource allowlists and action counts are authoritative; a
+Terraform summary count alone is insufficient. Plan validation and state
+backup do not grant approval to apply.
+
+For `RdsResize`, pass `BudgetAcknowledgementPath` and its SHA-256 to the
+validator. The acknowledgement must bind the exact saved resize-plan hash,
+account, region, USD currency, approval, and all three hashed fresh evidence
+files: price, Cost Explorer projection, and the verified manual snapshot.
+These are the accepted typed shapes (timestamps, identifiers, storage values,
+and prices must be freshly observed, not copied from this example):
+
+```json
+{"schemaVersion":1,"type":"aws_rds_price_evidence","observedAtUtc":"REPLACE_ISO_8601_UTC","accountId":"135775632425","region":"us-east-1","currency":"USD","targetRdsInstanceClass":"db.t4g.xlarge","hourlyOnDemandUsd":0.29,"estimatedMonthlyUsd":211.70,"sourceUrl":"https://aws.amazon.com/rds/pricing/"}
 ```
 
-The existing arrival actions and metric-math running-task alarm are already
-live. The only accepted amendment shape is **0 add / 2 change / 0 destroy**:
-the API scalable target maximum changes from six to eight, and the weekday API
-scale-up action changes from 06:00/minimum two to 05:45/minimum six. The 10:00
-minimum-one scale-down and 70% Average CPU target remain unchanged. Abort for
-any task-definition, ECS network, desired-count, NAT, Route 53, RDS, Redis,
-WAF, alarm, replacement, or destroy action. Create and verify the required
-before-plan, before-apply, and after-apply state backups; apply only the reviewed
-saved plan and delete it after success.
+```json
+{"schemaVersion":1,"type":"rds_cost_explorer_projection","generatedAtUtc":"REPLACE_ISO_8601_UTC","accountId":"135775632425","region":"us-east-1","currency":"USD","targetRdsInstanceClass":"db.t4g.xlarge","monthlyEstimateUsd":365.25,"monthlyBudgetUsd":350}
+```
+
+```json
+{"schemaVersion":1,"type":"rds_manual_snapshot_evidence","observedAtUtc":"REPLACE_ISO_8601_UTC","snapshotCreateTimeUtc":"REPLACE_ISO_8601_UTC","accountId":"135775632425","region":"us-east-1","snapshotArn":"arn:aws:rds:us-east-1:135775632425:snapshot:REPLACE_NAME","sourceDbInstanceIdentifier":"schoolpilot-production-db","sourceDbInstanceClass":"db.t4g.medium","engine":"postgres","status":"available","encrypted":true,"kmsKeyId":"REPLACE_KMS_KEY_ARN"}
+```
+
+```json
+{"schemaVersion":1,"type":"rds_resize_budget_acknowledgement","approved":true,"approver":"REPLACE_APPROVER","acknowledgedAtUtc":"REPLACE_ISO_8601_UTC","targetRdsInstanceClass":"db.t4g.xlarge","resizePlanSha256":"REPLACE_EXACT_64_HEX_PLAN_HASH","accountId":"135775632425","region":"us-east-1","currency":"USD","monthlyBudgetUsd":350,"temporaryBudgetBreachAcknowledged":true,"pendingOsUpdateHandledSeparately":true,"orderabilityVerified":true,"pointInTimeRecoveryVerified":true,"manualSnapshotEncrypted":true,"manualSnapshotArn":"arn:aws:rds:us-east-1:135775632425:snapshot:REPLACE_NAME","manualSnapshotEvidence":{"path":"C:/absolute/evidence/rds-snapshot.json","sha256":"REPLACE_64_HEX"},"awsPriceEvidence":{"path":"C:/absolute/evidence/rds-price.json","sha256":"REPLACE_64_HEX"},"costExplorerProjectionEvidence":{"path":"C:/absolute/evidence/rds-projection.json","sha256":"REPLACE_64_HEX"}}
+```
+
+The approval's own `acknowledgedAtUtc` is evidence too: both saved-plan
+validation and certification reject it when older than 24 hours or more than
+five minutes in the future, even if every file hash is recomputed.
+
+The resized monitor configuration must also copy the exact observed post-resize
+values into `resources.expectedRdsPosture`; placeholders are not valid:
+
+```json
+{"expectedRdsPosture":{"engine":"postgres","engineVersion":"REPLACE_EXACT_VERSION","allocatedStorageGiB":0,"maxAllocatedStorageGiB":0,"storageType":"REPLACE_EXACT_TYPE","storageEncrypted":true,"multiAz":false,"publiclyAccessible":false,"performanceInsightsEnabled":true,"dbSubnetGroupName":"REPLACE_EXACT_NAME","vpcSecurityGroupIds":["sg-REPLACE"]}}
+```
+
+Replace both numeric zero placeholders with the exact positive observed GiB
+values (maximum must be at least allocated), and replace every string
+placeholder. The supervisor compares this object to the live RDS engine,
+version, storage, encryption, Multi-AZ, subnet-group, security-group, private
+access, and Performance Insights posture at Validate and immediately before
+traffic.
+
+The arrival-capacity and WAF/alarm sections below document controls already
+present in the current production baseline. Do not reapply them merely to start
+the optimized-build chain.
+
+## Current arrival-capacity baseline (already applied; verification only)
+
+Do not plan or reapply the historical arrival-capacity remediation. Before the
+fresh Waf chain, verify production remains on private ECS subnets with both NAT
+gateways present, Route 53 latency measurement enabled, Redis small, both WAF
+rate rules in `BLOCK`, and API desired capacity at or below two outside the
+night-gate lease. The already-live contract is API scalable-target maximum
+eight, weekday 05:45 America/New_York scale-up to minimum six, weekday 10:00
+scale-down to minimum one, 70% Average CPU target tracking, and the metric-math
+running-task alarm. Any drift is a separate reviewed correction; starting this
+certification chain does not authorize an infrastructure apply.
 
 After apply, verify both scheduled actions use `America/New_York`, the exact
 weekday 05:45 scale-up has minimum six, the exact weekday 10:00 scale-down has
@@ -483,30 +701,14 @@ API/worker task-definition rollback; an API OOM on the already-selected
 512/2048 emergency revision blocks progression. Never roll back this phase by
 changing ECS networking, NAT, Redis, Route 53, or WAF.
 
-## Phase 1: WAF and alarms
+## Current WAF and alarm baseline (already applied; verification only)
 
-Plan from merged `main` with:
-
-```powershell
-terraform -chdir=infra plan -var-file=production.tfvars `
-  '-var=ecs_tasks_in_public_subnets=false' `
-  '-var=route53_measure_latency=true' `
-  '-var=waf_rate_rule_action=block' `
-  -out $PlanPath
-```
-
-Required shape: **9 add / 6 change / 0 destroy**. Abort for any ECS networking,
-Route 53, NAT, RDS/Redis instance-size, replacement, or unexpected action.
-
-After apply, verify 100,000/5-minute device-ingest and 50,000/5-minute generic
-API rules, both per-rule WAF alarms, and real `CacheClusterId` datapoints for
-the Redis alarms. Perform a saved-plan `block -> count -> block` drill; each
-direction must be only the WebACL in-place change. Never detach WAF. Delete
-legacy alarms only after their Terraform replacements have real datapoints and
-are healthy.
-
-Run a partial smoke, then the 510-socket 30-minute and 810-socket 90-minute
-baselines. Time the latter across school-local 02:00 and a `:30` purge boundary.
+Do not rerun the historical WAF/alarm creation plan or the prior diagnostic
+partial smoke. Verify the live 100,000/5-minute device-ingest and 50,000/5-minute
+generic API rules remain in `BLOCK`, both per-rule WAF alarms are healthy, and
+the Redis alarms have real `CacheClusterId` datapoints. Never detach WAF. The
+next authorized traffic is the fresh supervisor-owned Waf/500 -> Waf/800 chain
+described above; historical results and drills cannot seed it.
 
 ## Phase 2: public ECS while NAT remains
 
@@ -520,10 +722,43 @@ terraform -chdir=infra plan -var-file=production.tfvars `
 ```
 
 Required shape: **0 add / 2 change / 0 destroy**, limited to API/worker network
-configuration. Apply, force a fresh backend deployment, and verify public task
+configuration. Before apply, record fresh typed public-subnet evidence with
+exactly two unique subnet IDs in two availability zones, validate the saved
+plan, and retain its canonical network hash:
+
+```powershell
+$PublicValidation = pwsh -NoProfile -File scripts/load/validate-rollout-plan.ps1 `
+  -Phase PublicEcs -PlanPath $PlanPath -PlanSha256 $PlanSha256 `
+  -PublicSubnetEvidencePath $PublicSubnetEvidencePath `
+  -PublicSubnetEvidenceSha256 $PublicSubnetEvidenceSha256 | ConvertFrom-Json
+if (-not $PublicValidation.valid) { throw "PublicEcs plan validation failed" }
+$ExpectedNetworkSha256 = $PublicValidation.shape.network.canonicalNetworkSha256
+```
+
+Apply only that saved plan, run the guarded same-image networking deployment, and verify public task
 IPs, ALB-only inbound access, migration, ECR, SSM, CloudWatch, RDS, Redis,
 Google, SendGrid, read-only Stripe, minimal Anthropic, Telegram `getMe`, login,
 WebSockets, and scheduler egress.
+
+```bash
+./scripts/deploy.sh production --backend \
+  --same-image-networking-stage PublicEcs \
+  --expected-app-sha <40-hex-certified-app-sha> \
+  --expected-image-digest sha256:<64-hex-certified-digest> \
+  --expected-api-task-definition <full-active-api-task-definition-arn> \
+  --expected-worker-task-definition <full-active-worker-task-definition-arn> \
+  --expected-network-config-sha256 <PublicValidation.shape.network.canonicalNetworkSha256>
+```
+
+This mode requires the stage's exact public-network and NAT posture, clones the
+two exact digest-pinned definitions into fresh revisions, runs the normal
+migrations-only task, and uses the existing scaling hold and strict convergence
+checks. It re-enumerates every running API/worker task and ENI before mutation,
+under the hold, after migration, after final convergence, and throughout
+bounded recovery. Every task must use the expected revision, every ENI must use
+the hashed subnet/security-group set and have a public IPv4 address, and every
+API private IP must be the complete healthy ALB target set. It contains no
+Docker build, push, or tag path.
 
 Run the 810-socket 90-minute gate, then the exact 24-hour `MonitorOnly` soak.
 The final six hours require all 360 fresh one-minute datapoints, under 1 MiB
@@ -536,14 +771,56 @@ Only after the soak passes, merge the minimal `production.tfvars` change to
 Required shape: **0 add / 0 change / 6 destroy**—two private default routes,
 two NAT gateways, and two EIPs only.
 
-After apply, immediately create a separate saved rollback plan with
-`-var=enable_nat_gateway=true`; it must be exactly six additions. Record its
-SHA-256 in the rollback config and retain a verified OneDrive AES-GCM state
-backup. The rollback controller applies only that reviewed plan, waits for NAT,
-then restores both ECS services to captured private networking. Delete the
-unused rollback plan after phase acceptance.
+Validate the destroy plan first with `-Phase NatRemoved` and retain its saved
+file, SHA-256, verified state backup, and the validator's
+`nat_pre_destroy_recovery_contract`. Capture and hash that contract outside the
+repository before apply; it contains the exact six resource addresses, original
+per-AZ subnet/route-table/allocation topology, forward-plan hash, and required
+six-add inverse shape.
 
-Force another backend deployment, repeat all egress checks and the 810-socket
+A Terraform saved plan is bound to the state lineage and serial from which it
+was created. It therefore cannot be both a valid six-create plan and be created
+while those same six objects still exist in production state. This runbook does
+not mislabel a stale synthetic-state plan as an applicable rollback. The sealed
+pre-destroy contract plus verified state backup is the reviewed recovery
+artifact available before destruction. Immediately after the reviewed destroy
+apply—and before guarded redeployment, egress checks, or progression—create the
+real `enable_nat_gateway=true` saved plan against the new production state and
+validate it as the exact inverse of the retained forward plan:
+
+```powershell
+$NatDestroyValidation = pwsh -NoProfile -File scripts/load/validate-rollout-plan.ps1 `
+  -Phase NatRemoved -PlanPath $NatDestroyPlan -PlanSha256 $NatDestroyPlanSha256 |
+  ConvertFrom-Json
+if ($NatDestroyValidation.shape.preDestroyRecoveryContract.type -ne
+    "nat_pre_destroy_recovery_contract") { throw "Missing NAT recovery contract" }
+$NatDestroyValidation | ConvertTo-Json -Depth 30 |
+  Set-Content -LiteralPath $NatPreDestroyContractPath -Encoding utf8NoBOM
+$NatPreDestroyContractSha256 = (Get-FileHash -LiteralPath $NatPreDestroyContractPath -Algorithm SHA256).Hash.ToLowerInvariant()
+# Apply that exact saved destroy plan, then create $NatRollbackPlan.
+pwsh -NoProfile -File scripts/load/validate-rollout-plan.ps1 `
+  -Phase NatRollback -PlanPath $NatRollbackPlan -PlanSha256 $NatRollbackPlanSha256 `
+  -ForwardPlanPath $NatDestroyPlan -ForwardPlanSha256 $NatDestroyPlanSha256
+```
+
+`NatRollback` must be exactly six additions and an exact per-address inverse:
+two VPC EIPs, two public NAT gateways in the original distinct subnets, and two
+default routes in the original distinct route tables. Provider-computed IDs
+must be driven by the reviewed EIP-to-NAT and NAT-to-route references; unknown
+stable fields or cross-wired AZ paths fail validation. Record the rollback-plan
+SHA-256 in `natRollbackPlanSha256` and retain the exact forward plan as
+`natForwardPlanPath`/`natForwardPlanSha256` (with its filename phase in
+`natForwardPlanPhase`) in the rollback config. The rollback controller opens
+both files read-only, keeps both handles locked, re-runs the trusted
+`NatRollback` inverse validator, re-hashes both open streams immediately before
+apply, and applies only the reviewed six-add plan. Retain a verified OneDrive
+AES-GCM state backup. The controller then waits for NAT,
+then restores both ECS services to captured private networking. Delete both
+unused saved plans only after phase acceptance.
+
+Run the same guarded command with `--same-image-networking-stage NatRemoved`
+and the same canonical PublicEcs network hash,
+repeat all egress checks and the 810-socket
 gate, and verify no NAT gateway remains. Confirm delayed billing reports
 `NatGateway-Hours` at zero before final cost acceptance.
 
@@ -593,3 +870,8 @@ alerts at 85%/100%, delivered to the billing email and production SNS. Cost
 Anomaly Detection remains $10 absolute and 20% impact. After one complete fully
 tagged school month, add a SchoolPilot-specific budget at 115% of that month's
 tagged gross cost.
+
+An RDS resize approval must attach a fresh AWS price and Cost Explorer
+projection and explicitly acknowledge any temporary breach of the $350 gross
+budget. Budget and forecast alerts remain enabled and informational; they are
+never automatic rollback triggers.

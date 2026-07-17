@@ -306,6 +306,10 @@ export function validateConfig(raw) {
   if (!Number.isInteger(registrationRequestsPerMinute) || registrationRequestsPerMinute < 60 || registrationRequestsPerMinute > 900) {
     throw new SafeError("registrationRequestsPerMinute must be an integer from 60 through 900");
   }
+  const timezone = typeof raw.timezone === "string" && raw.timezone.trim() ? raw.timezone.trim() : "America/New_York";
+  if (timezone !== "America/New_York") {
+    throw new SafeError("Certification fixture timezone must equal America/New_York");
+  }
   return Object.freeze({
     version: 1,
     fixtureId,
@@ -320,7 +324,7 @@ export function validateConfig(raw) {
     aliases,
     commandUrl: commandUrl.toString(),
     registrationRequestsPerMinute,
-    timezone: typeof raw.timezone === "string" && raw.timezone.trim() ? raw.timezone.trim() : "America/New_York",
+    timezone,
   });
 }
 
@@ -1147,7 +1151,7 @@ async function verifyBillingAndEnsureClassPilot(client, superAuth, school) {
   return detail.data?.schoolHours || {};
 }
 
-async function disableTrackingAfterInventoryPreflight(client, superAuth, school, hours = {}) {
+async function disableTrackingAfterInventoryPreflight(client, superAuth, school, hours = {}, timezone = "America/New_York") {
   await client.request(`/api/super-admin/schools/${encodeURIComponent(school.id)}`, {
     method: "PATCH",
     bearer: superAuth.bearer,
@@ -1156,7 +1160,7 @@ async function disableTrackingAfterInventoryPreflight(client, superAuth, school,
         enabled: false,
         startTime: hours.startTime || "08:00",
         endTime: hours.endTime || "15:00",
-        timezone: hours.timezone || "America/New_York",
+        timezone,
         days: hours.days || ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
         afterHoursMode: "off",
       },
@@ -1244,7 +1248,7 @@ function assertCheckpointedSchoolRepairDetail(school, spec, role, requireAdmin) 
   }
 }
 
-async function repairCheckpointedSchool(client, superAuth, spec, role, adminPassword, outputDirectory, ownership, schoolId) {
+async function repairCheckpointedSchool(client, superAuth, spec, role, adminPassword, outputDirectory, ownership, schoolId, timezone) {
   const detailRoute = `/api/super-admin/schools/${encodeURIComponent(schoolId)}`;
   let detail = await client.request(detailRoute, { bearer: superAuth.bearer });
   assertCheckpointedSchoolRepairDetail(detail.data, spec, role, false);
@@ -1287,7 +1291,7 @@ async function repairCheckpointedSchool(client, superAuth, spec, role, adminPass
         enabled: false,
         startTime: "08:00",
         endTime: "15:00",
-        timezone: "America/New_York",
+        timezone,
         days: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
         afterHoursMode: "off",
       },
@@ -1326,7 +1330,7 @@ async function discoverOrCreateSchool(client, superAuth, config, role, adminPass
     }
     if (crashReconciliationMatch) {
       school = await repairCheckpointedSchool(
-        client, superAuth, spec, role, adminPassword, outputDirectory, ownership, school.id,
+        client, superAuth, spec, role, adminPassword, outputDirectory, ownership, school.id, config.timezone,
       );
     }
     createdByTool = true;
@@ -1352,6 +1356,14 @@ async function discoverOrCreateSchool(client, superAuth, config, role, adminPass
         adminFirstName: role === "primary" ? "Load Fixture" : "Canary Fixture",
         adminLastName: "Admin",
         adminPassword,
+        schoolHours: {
+          enabled: false,
+          startTime: "08:00",
+          endTime: "15:00",
+          timezone: config.timezone,
+          days: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
+          afterHoursMode: "off",
+        },
       },
     });
     school = response.data?.school;
@@ -2056,8 +2068,8 @@ async function runProvision(client, config, outputDirectory) {
     blueprint,
     ownership,
   );
-  await disableTrackingAfterInventoryPreflight(client, superAuth, primarySchool, primarySchoolHours);
-  await disableTrackingAfterInventoryPreflight(client, superAuth, canarySchool, canarySchoolHours);
+  await disableTrackingAfterInventoryPreflight(client, superAuth, primarySchool, primarySchoolHours, config.timezone);
+  await disableTrackingAfterInventoryPreflight(client, superAuth, canarySchool, canarySchoolHours, config.timezone);
   const primaryEnrollment = await ensureEnrollmentSafety(client, primaryAdmin);
   const canaryEnrollment = await ensureEnrollmentSafety(client, canaryAdmin);
   const teachers = await ensureTeachers(client, primaryAdmin, blueprint, teacherPassword, outputDirectory, ownership);
@@ -2314,7 +2326,11 @@ async function runVerify(client, config, outputDirectory) {
     fixtureId: config.fixtureId,
     passed: true,
     counts: { schools: 2, teachers: 20, students: 1010, classes: 20, classRosterStudents: seenRosterIds.size, devices: 1010, activeDeviceSessions, activeSessions: exactInventory.activeTeachingSessions, commandBodies: 20, liveAuth },
-    gates: { autoEnrollDisabled: true, trackingDisabled: true, schedulesDisabled: true, classRostersExactAndDisjoint: true, allDeviceTokensLive: true, allStaffAuthArtifactsLive: true },
+    schoolTimezones: Object.fromEntries(["primary", "canary"].map((schoolKey) => [schoolKey, {
+      schoolTimezone: verifiedSchools[schoolKey].schoolTimezone,
+      schoolHoursTimezone: verifiedSchools[schoolKey].schoolHours.timezone,
+    }])),
+    gates: { autoEnrollDisabled: true, trackingDisabled: true, schedulesDisabled: true, exactSchoolTimezones: true, classRostersExactAndDisjoint: true, allDeviceTokensLive: true, allStaffAuthArtifactsLive: true },
   };
   writePrivateJson(outputDirectory, FILES.verification, report);
   return { command: "verify", fixtureId: config.fixtureId, passed: true, ...report.counts, outputFiles: [FILES.verification] };
@@ -2360,6 +2376,9 @@ async function verifySchoolsWithSuper(client, config, state, superAuth, options 
       || school.name !== config.schools[schoolKey].name
       || String(school.domain || "").toLowerCase() !== config.schools[schoolKey].domain
     ) throw new SafeError("Live synthetic school identity differs from validated state");
+    if (school.schoolTimezone !== config.timezone || school.schoolHours?.timezone !== config.timezone) {
+      throw new SafeError(`Live ${schoolKey} schoolTimezone and schoolHours.timezone must both equal ${config.timezone}`);
+    }
     assertSchoolIsNonBillable(school, `Live ${schoolKey}`);
     const billing = await client.request(`/api/super-admin/schools/${encodeURIComponent(expected.id)}/billing`, { bearer: superAuth.bearer });
     assertNoStripeBilling(billing.data);

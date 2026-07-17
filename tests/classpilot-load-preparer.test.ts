@@ -96,8 +96,8 @@ function runCli(args: string[], env: NodeJS.ProcessEnv = cleanEnv()) {
 
 function stateFromBlueprint(config: ReturnType<typeof validateConfig>) {
   const blueprint = buildFixtureBlueprint(config);
-  const primarySchool = { ...config.schools.primary, id: "school-primary", createdByTool: true, nonBillableVerifiedAt: new Date().toISOString(), billingProtectionVerified: true };
-  const canarySchool = { ...config.schools.canary, id: "school-canary", createdByTool: true, nonBillableVerifiedAt: new Date().toISOString(), billingProtectionVerified: true };
+  const primarySchool = { ...config.schools.primary, id: "school-primary", schoolTimezone: "America/New_York", createdByTool: true, nonBillableVerifiedAt: new Date().toISOString(), billingProtectionVerified: true };
+  const canarySchool = { ...config.schools.canary, id: "school-canary", schoolTimezone: "America/New_York", createdByTool: true, nonBillableVerifiedAt: new Date().toISOString(), billingProtectionVerified: true };
   const primaryStudents = blueprint.primaryStudents.map((student: any) => ({ ...student, id: `primary-${student.ordinal}` }));
   const canaryStudents = blueprint.canaryStudents.map((student: any) => ({ ...student, id: `canary-${student.ordinal}` }));
   const teachers = blueprint.teachers.map((teacher: any) => ({
@@ -766,6 +766,7 @@ describe("ClassPilot synthetic load fixture preparer", () => {
           stripeCustomerId: null,
           stripeSubscriptionId: null,
           maxStudents: 1200,
+          schoolTimezone: "America/New_York",
           deletedAt: null,
         };
         if (dropFirstCreateResponse) {
@@ -1059,6 +1060,7 @@ describe("ClassPilot synthetic load fixture preparer", () => {
             stripeCustomerId: null,
             stripeSubscriptionId: null,
             products: new Set<string>(),
+            schoolTimezone: "America/New_York",
             trackingEnabled: true,
             deleted: false,
           };
@@ -1490,6 +1492,7 @@ describe("ClassPilot synthetic load fixture preparer", () => {
               products: ["CLASSPILOT"],
               teachers: schoolKey === "primary" ? state.teachers : [],
               studentCount: state.students[schoolKey].length,
+              schoolHours: { enabled: false, timezone: "America/New_York" },
             });
           }
           if (request.method === "GET" && url.pathname === `/api/super-admin/schools/${school.id}/billing`) {

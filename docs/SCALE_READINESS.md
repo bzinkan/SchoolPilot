@@ -141,6 +141,14 @@ infrastructure stage:
 4. 800 primary devices plus 10 canaries (810 sockets), again with 40 targets per
    class, for eight hours followed by idle recovery.
 
+For accepted `Waf/800` and private `Waf/endurance`, verify through the live
+fixture API that both synthetic schools' `schoolTimezone` and
+`schoolHours.timezone` equal the configured timezone. For `Waf/800`, convert
+the planned UTC interval through that timezone and require it to contain local
+`01:30` purge and `02:00` rollup eligibility. The live-schedule endurance run
+does not inherit that night-window condition. Locally defaulted timezone values
+are not acceptance evidence.
+
 Set `LOAD_DEVICE_COUNT` to `510`, `810`, `1010`, and `810` respectively. Order
 the ignored manifest so its first ten entries are the second-school canaries;
 every tested prefix then includes the tenant-isolation probe.
@@ -198,7 +206,18 @@ The external evidence that must also pass is:
   infrastructure rollback. Memory peak remains <75%, with no OOM, restart,
   unhealthy target, or sustained maximum autoscale.
 - RDS CPU <65%, connections <150, no pool exhaustion, rollup/purge <10 minutes,
-  and at least 20% projected storage headroom at 60 school days.
+  and at least 20% projected storage headroom at 60 school days. The observed
+  class must equal the stage's exact `expectedRdsInstanceClass`. On T4g,
+  CPUCreditBalance stays strictly above 24 and surplus charged credits remain
+  zero. The additional capacity gates apply only after the approved resize to
+  `db.t4g.xlarge`: during the eight-hour endurance run, the hours-2-8 credit
+  regression slope must be nonnegative; read and write latency each require
+  p95 <20 ms and peak <50 ms; DiskQueueDepth p95 is <1 with no three
+  consecutive one-minute values >=2; and total ReadIOPS + WriteIOPS requires
+  p95 <2400 and peak <3000. Directional IOPS series remain evidence, not
+  separate thresholds. These new capacity series are collected as evidence on
+  the medium baseline but do not create new medium-track gates. Missing, stale,
+  or incomplete required series invalidate the resized run.
 - Redis sustained CPU/memory <60%, peak <70%, free memory >100 MiB, zero
   evictions/rejected connections, ≥99% screenshot retrieval, and available
   manual and subsequent automated snapshots.
@@ -215,26 +234,32 @@ evidence, but never retain the manifest or authentication values with them.
    alarms with NAT, current Redis, and Container Insights still enabled. Stop on
    any valid 403/429 or failed gate.
 2. **Public ECS:** move API/worker tasks to public subnets while NAT remains.
-   Verify fresh deployments, migration tasks, ALB health, ECR/SSM/CloudWatch and
-   every required third-party egress path. Soak 24 hours and require NAT bytes
-   to approach zero before destroying NAT/routes.
-3. **No NAT:** force fresh API/worker deployments and repeat egress plus the
+   Use the guarded same-image networking mode: it must clone the certified
+   digest-pinned task definitions and run migrations/stability without any
+   image build, push, or retag. Verify fresh deployments, ALB health,
+   ECR/SSM/CloudWatch and every required third-party egress path. Soak 24 hours
+   and require NAT bytes to approach zero before destroying NAT/routes.
+3. **No NAT:** rerun the guarded same-image mode and repeat egress plus the
    800-device gate. Roll back by recreating NAT/routes first, then moving both
    services to private subnets; restoring NAT alone does not reroute public tasks.
 4. **Redis micro:** create and verify a manual snapshot, confirm no pending
    maintenance, resize only Redis, then run 800 devices for 90 minutes and eight
    hours. Any eviction, rejected connection, three consecutive one-minute
    resource breaches, or missing follow-up snapshot restores `cache.t4g.small`.
-5. **Post-launch telemetry:** after five stable live school days, disable
-   Container Insights. Restore it if native alarms cannot explain a health or
-   capacity event. RDS small and API 256 CPU remain separate, deferred tests.
+5. **Post-launch telemetry:** retain Container Insights and native alarms for at
+   least five stable live school days. Any telemetry reduction is a separate
+   reviewed change, not an automatic cost-ladder step. RDS downsize and API 256
+   CPU remain separate, deferred tests.
 
-Automatic rollback triggers are any valid 403/429, cross-school event,
-OOM/restart/unhealthy target, Redis eviction/rejection, or three consecutive
-one-minute resource breaches. WAF rollback changes only the two rate rules to
-`COUNT`/prior reviewed thresholds; never detach WAF. Application rollback uses
-the previous image digest. An API OOM uses the pre-registered `512 CPU / 2048
-MB` revision—returning to `512/1024` does not add memory.
+Automatic rollback remains cause-specific. A valid WAF 403/429 can change only
+the reviewed rate rules to `COUNT`; application restart/unhealthy-target or
+non-OOM regression can restore only the bound prior API/worker revisions;
+networking and Redis failures use only their corresponding reviewed actions.
+RDS CPU, memory/swap, connection, credit, latency, queue, or IOPS failures stop
+traffic and preserve evidence without mutating unrelated infrastructure. PI is
+corroboration only and cannot excuse a failed non-RDS gate. An API OOM uses the
+bound pre-registered `512 CPU / 2048 MB` revision only when that revision is not
+already active; OOM on the active emergency revision is a hard stop.
 
 ## Deferred 2,000-device HA gate
 
