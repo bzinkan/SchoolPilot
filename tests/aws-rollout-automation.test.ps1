@@ -213,6 +213,9 @@ $global:SchoolPilotTestAutomatedSnapshotAfter = $null
 $global:SchoolPilotTestTerraformLineage = "test-lineage"
 $global:SchoolPilotTestNatAvailable = $true
 $global:SchoolPilotTestPlanShapeInvalid = $false
+$global:SchoolPilotTestTamperNatPlanBeforeApplyPath = ""
+$global:SchoolPilotTestNatPlanTampered = $false
+$global:SchoolPilotTestNatForwardPlanPath = ""
 $global:SchoolPilotTestStoppedTaskLifecycle = $false
 $global:SchoolPilotTestStoppedTaskDescribeCalls = 0
 
@@ -421,8 +424,14 @@ function global:aws {
         $global:SchoolPilotTestMetricQueryPeriods = @{}
         $global:SchoolPilotTestMetricQueryStatistics = @{}
         foreach ($query in $queries) {
-            $global:SchoolPilotTestMetricQueryPeriods[[string]$query.Id] = [int]$query.MetricStat.Period
-            $global:SchoolPilotTestMetricQueryStatistics[[string]$query.Id] = [string]$query.MetricStat.Stat
+            if ($null -ne $query.PSObject.Properties["MetricStat"]) {
+                $global:SchoolPilotTestMetricQueryPeriods[[string]$query.Id] = [int]$query.MetricStat.Period
+                $global:SchoolPilotTestMetricQueryStatistics[[string]$query.Id] = [string]$query.MetricStat.Stat
+            }
+            else {
+                $global:SchoolPilotTestMetricQueryPeriods[[string]$query.Id] = 60
+                $global:SchoolPilotTestMetricQueryStatistics[[string]$query.Id] = "Expression"
+            }
         }
         $timestamp = [DateTimeOffset]::UtcNow.ToString("o")
         $results = @($queries | ForEach-Object {
@@ -560,17 +569,40 @@ function global:terraform {
     $global:SchoolPilotTestTerraformCalls.Add($arguments -join " ")
     $global:LASTEXITCODE = 0
     if (($arguments -join " ") -eq "state pull") {
+        if (-not $global:SchoolPilotTestNatPlanTampered -and
+            -not [string]::IsNullOrWhiteSpace($global:SchoolPilotTestTamperNatPlanBeforeApplyPath)) {
+            [IO.File]::WriteAllBytes($global:SchoolPilotTestTamperNatPlanBeforeApplyPath,[Text.Encoding]::UTF8.GetBytes("tampered-after-initial-validation"))
+            $global:SchoolPilotTestNatPlanTampered = $true
+        }
         return (@{version=4;terraform_version="1.12.2";serial=1;lineage=$global:SchoolPilotTestTerraformLineage;outputs=@{};resources=@()}|ConvertTo-Json -Depth 5 -Compress)
     }
     if ($arguments.Count -ge 2 -and $arguments[0] -eq "show" -and $arguments[1] -eq "-json") {
-        $addresses = @(
-            "module.vpc.aws_eip.nat[0]", "module.vpc.aws_eip.nat[1]",
-            "module.vpc.aws_nat_gateway.main[0]", "module.vpc.aws_nat_gateway.main[1]",
-            "module.vpc.aws_route.private_nat[0]", "module.vpc.aws_route.private_nat[1]"
-        )
-        $changes = @($addresses | ForEach-Object { @{address=$_;change=@{actions=@("create")}} })
+        $isForward = [string]$arguments[2] -eq [string]$global:SchoolPilotTestNatForwardPlanPath
+        $changes = @()
+        foreach ($index in 0..1) {
+            $eip = @{domain="vpc";tags=@{Name="nat-$index"};allocation_id="eipalloc-$index";public_ip="198.51.100.$($index+1)"}
+            $gateway = @{connectivity_type="public";subnet_id="subnet-a$($index+1)";tags=@{Name="nat-$index"};allocation_id="eipalloc-$index";id="nat-$index"}
+            $route = @{destination_cidr_block="0.0.0.0/0";route_table_id="rtb-a$($index+1)";nat_gateway_id="nat-$index"}
+            foreach ($entry in @(
+                @{address="module.vpc.aws_eip.nat[$index]";value=$eip;unknown=@{}},
+                @{address="module.vpc.aws_nat_gateway.main[$index]";value=$gateway;unknown=@{allocation_id=$true}},
+                @{address="module.vpc.aws_route.private_nat[$index]";value=$route;unknown=@{nat_gateway_id=$true}}
+            )) {
+                $changes += @{address=$entry.address;change=@{
+                    actions=@($(if($isForward){"delete"}else{"create"}))
+                    before=$(if($isForward){$entry.value}else{$null})
+                    after=$(if($isForward){$null}else{$entry.value})
+                    after_unknown=$(if($isForward){@{}}else{$entry.unknown})
+                }}
+            }
+        }
+        $changes += @{address="module.vpc.aws_vpc.main";change=@{actions=@("no-op")}}
         if ($global:SchoolPilotTestPlanShapeInvalid) { $changes += @{address="module.vpc.aws_security_group.unreviewed";change=@{actions=@("update")}} }
-        return (@{format_version="1.2";resource_changes=$changes}|ConvertTo-Json -Depth 8 -Compress)
+        $configuration = @{root_module=@{child_modules=@(@{address="module.vpc";resources=@(
+            @{address="aws_nat_gateway.main";expressions=@{allocation_id=@{references=@("aws_eip.nat[count.index].id")}}},
+            @{address="aws_route.private_nat";expressions=@{nat_gateway_id=@{references=@("aws_nat_gateway.main[count.index].id")}}}
+        )})}}
+        return (@{format_version="1.2";errored=$false;complete=$true;applyable=$true;deferred_changes=@();resource_drift=@();checks=@();resource_changes=$changes;configuration=$configuration}|ConvertTo-Json -Depth 15 -Compress)
     }
 }
 
@@ -770,7 +802,7 @@ try {
     [IO.File]::WriteAllText($natProgressionPath, ($natProgression|ConvertTo-Json -Depth 12), [Text.UTF8Encoding]::new($false))
     $natRejectedLoadOnlyPredecessor = $false
     try { & $monitorScript -ConfigPath $natProgressionPath -Mode Validate | Out-Null }
-    catch { $natRejectedLoadOnlyPredecessor = $_.Exception.Message -match "PublicEcs no-load posture" }
+    catch { $natRejectedLoadOnlyPredecessor = $_.Exception.Message -match "PublicEcs no-load posture|supervisor-sealed terminal result" }
     Assert-Condition $natRejectedLoadOnlyPredecessor "NatRemoved 800 must require the accepted 24-hour PublicEcs soak, not merely the earlier PublicEcs 800 load result."
 
     $productionLoadAcceptance = $production800 | ConvertTo-Json -Depth 12 | ConvertFrom-Json -Depth 12
@@ -972,7 +1004,7 @@ while(!fs.existsSync(gatePath))await new Promise(resolve=>setTimeout(resolve,25)
     [IO.File]::WriteAllText($fakeHarnessFail, $fakeHarnessPreamble + "`nsetTimeout(() => process.exit(7), 1000);", [Text.UTF8Encoding]::new($false))
     [IO.File]::WriteAllText($fakeHarnessPreflightFail, 'if(process.argv.includes("--validate-config")){process.exit(9)}setTimeout(() => process.exit(0), 5000);', [Text.UTF8Encoding]::new($false))
     $fakeMonitorPreamble = @'
-param([string]$ConfigPath,[string]$Mode)
+param([string]$ConfigPath,[string]$ExpectedConfigSha256,[string]$Mode)
 $c=Get-Content -LiteralPath $ConfigPath -Raw|ConvertFrom-Json -Depth 30
 function W([string]$p,$v){
   $temporary="$p.$([Guid]::NewGuid().ToString('N')).tmp"
@@ -984,6 +1016,7 @@ function W([string]$p,$v){
 }
 $mh=Join-Path $c.evidenceDirectory "$($c.runId)-monitor-heartbeat.json"
 $rh=Join-Path $c.evidenceDirectory "$($c.runId)-rollback-heartbeat.json"
+$mr=Join-Path $c.evidenceDirectory "$($c.runId)-monitor-result.json"
 '@
     [IO.File]::WriteAllText($fakeSlowRollbackMonitor, $fakeMonitorPreamble + "`n" + @'
 $gate=Join-Path $c.evidenceDirectory "$($c.runId)-harness-start.json"
@@ -998,11 +1031,12 @@ do {
 if(-not (Test-Path -LiteralPath $gate -PathType Leaf)){exit 91}
 W $rh @{runId=$c.runId;action="NatRemoved";status="running";step="slow-test";timestamp=[DateTimeOffset]::UtcNow.ToString("o");deadlineUtc=[DateTimeOffset]::UtcNow.AddMinutes(1).ToString("o")}
 Start-Sleep -Seconds 4
+W $mr @{runId=$c.runId;phase=$c.phase;status="completed";postureAccepted=$true;acceptance=@{passed=$true}}
 exit 0
 '@, [Text.UTF8Encoding]::new($false))
-    [IO.File]::WriteAllText($fakeLostHeartbeatMonitor, $fakeMonitorPreamble + "`nW `$mh @{runId=`$c.runId;phase=`$c.phase;timestamp=[DateTimeOffset]::UtcNow.ToString(`"o`");iteration=1;triggered=`$false}`nStart-Sleep -Seconds 4`nexit 0`n", [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText($fakeLostHeartbeatMonitor, $fakeMonitorPreamble + "`nW `$mh @{runId=`$c.runId;phase=`$c.phase;timestamp=[DateTimeOffset]::UtcNow.ToString(`"o`");iteration=1;triggered=`$false}`nStart-Sleep -Seconds 8`nexit 0`n", [Text.UTF8Encoding]::new($false))
     [IO.File]::WriteAllText($fakeHealthyMonitor, $fakeMonitorPreamble + "`n" + @'
-for($i=0;$i-lt 4;$i++){W $mh @{runId=$c.runId;phase=$c.phase;timestamp=[DateTimeOffset]::UtcNow.ToString("o");iteration=($i+1);triggered=$false};Start-Sleep -Milliseconds 500}
+for($i=0;$i-lt 12;$i++){W $mh @{runId=$c.runId;phase=$c.phase;timestamp=[DateTimeOffset]::UtcNow.ToString("o");iteration=($i+1);triggered=$false};Start-Sleep -Milliseconds 500}
 exit 0
 '@, [Text.UTF8Encoding]::new($false))
     [IO.File]::WriteAllText($fakeExitBeforeReleaseMonitor, $fakeMonitorPreamble + "`n" + @'
@@ -1018,7 +1052,7 @@ exit 42
         $runtime.evidenceDirectory = Join-Path $tempRoot "$RunId-evidence"
         $runtime.loadProgressPath = Join-Path $tempRoot "$RunId-progress.jsonl"
         $runtime.loadSummaryPath = Join-Path $tempRoot "$RunId-summary.json"
-        $runtime | Add-Member -NotePropertyName supervisorWatchdog -NotePropertyValue ([pscustomobject]@{monitorHeartbeatStaleSeconds=2;rollbackHeartbeatStaleSeconds=10;pollSeconds=1;generatorIpCheckSeconds=1}) -Force
+        $runtime | Add-Member -NotePropertyName supervisorWatchdog -NotePropertyValue ([pscustomobject]@{monitorHeartbeatStaleSeconds=5;rollbackHeartbeatStaleSeconds=10;pollSeconds=1;generatorIpCheckSeconds=1}) -Force
         $runtime | Add-Member -NotePropertyName testRuntimeMonitorScriptPath -NotePropertyValue $MonitorPath -Force
         $runtime | Add-Member -NotePropertyName testRuntimeHarnessScriptPath -NotePropertyValue $HarnessPath -Force
         $runtime.deadlineUtc = [DateTimeOffset]::UtcNow.AddMinutes(2).ToString("o")
@@ -1583,7 +1617,7 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
                     $caseConfig | Add-Member -NotePropertyName testPreReleaseGeneratorPublicIpDelayMilliseconds -NotePropertyValue 1500 -Force
                 }
                 $caseConfig | Add-Member -NotePropertyName supervisorWatchdog -NotePropertyValue ([pscustomobject]@{
-                    monitorHeartbeatStaleSeconds=10;rollbackHeartbeatStaleSeconds=10;pollSeconds=1;generatorIpCheckSeconds=1
+                    monitorHeartbeatStaleSeconds=30;rollbackHeartbeatStaleSeconds=10;pollSeconds=1;generatorIpCheckSeconds=1
                 }) -Force
                 $caseConfigPath = Join-Path $childRoot "$caseRunId-supervisor.json"
                 [IO.File]::WriteAllText($caseConfigPath, ($caseConfig|ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
@@ -1865,7 +1899,7 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         Assert-Condition (Test-Path -LiteralPath $combinedResultPath) "Combined valid-401/RDS monitor did not write a result (stderr=$combinedError)."
         $combinedResult = Get-Content -LiteralPath $combinedResultPath -Raw | ConvertFrom-Json -Depth 20
         Assert-Condition ($combinedResult.failures -contains "load:valid-http-401" -and $combinedResult.failures -contains "rds_cpu") "Combined regression must observe both the valid workload 401 and three consecutive RDS CPU breaches."
-        Assert-Condition ($combinedResult.rollback.attempted -and $combinedResult.rollback.action -eq "PublicEcs" -and $combinedResult.rollback.exitCode -eq 0) "An active-phase RDS breach must outrank a simultaneous generic 401 application rollback (actual=$($combinedResult.rollback|ConvertTo-Json -Compress -Depth 20); stderr=$combinedError)."
+        Assert-Condition ($combinedResult.rollback.attempted -and $combinedResult.rollback.action -eq "Application" -and $combinedResult.rollback.exitCode -eq 0) "RDS capacity evidence must not select an unrelated PublicEcs mutation; the simultaneous valid-traffic 401 may invoke only its corresponding Application recovery (actual=$($combinedResult.rollback|ConvertTo-Json -Compress -Depth 20); stderr=$combinedError)."
 
         $correlatedWafBlockFlag = Join-Path $childRoot "correlated-waf-block.flag"
         $env:SCHOOLPILOT_TEST_WAF_DEVICE_BLOCK_FILE = $correlatedWafBlockFlag
@@ -2095,7 +2129,7 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         $env:SCHOOLPILOT_TEST_PENDING = "1"
         $wafResourceCase = Invoke-ChildMonitorCase $wafResourceRunId $wafResourceConfig
         Remove-Item Env:SCHOOLPILOT_TEST_PENDING -ErrorAction SilentlyContinue
-        Assert-Condition ($wafResourceCase.result.rollback.action -eq "Application" -and $wafResourceCase.result.rollback.exitCode -eq 0) "Week-1 ECS/RDS/Redis resource regressions must restore the application, never switch WAF to COUNT."
+        Assert-Condition (-not $wafResourceCase.result.rollback.attempted -and $null -eq $wafResourceCase.result.rollback.action) "RDS/Redis posture failures without proven application cause must hard-stop instead of guessing an Application or WAF mutation."
 
         $publicContract = $limitConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
         $publicContract.runId = "public-ip-contract"
@@ -2434,27 +2468,62 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         $completedWaitConfig | Add-Member -NotePropertyName thresholds -NotePropertyValue @{progressStaleSeconds=5} -Force
         $completedWaitConfigPath = Join-Path $childRoot "$completedWaitRunId-monitor.json"
         [IO.File]::WriteAllText($completedWaitConfigPath, ($completedWaitConfig|ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+        $completedWaitBarrierArm = Join-Path $childRoot "$completedWaitRunId-sample-barrier-arm.flag"
+        $completedWaitBarrierReady = Join-Path $childRoot "$completedWaitRunId-sample-barrier-ready.flag"
+        $completedWaitBarrierRelease = Join-Path $childRoot "$completedWaitRunId-sample-barrier-release.flag"
+        $completedWaitBarrierConsumed = Join-Path $childRoot "$completedWaitRunId-sample-barrier-consumed.flag"
+        [IO.File]::WriteAllText($completedWaitBarrierArm, "1", [Text.UTF8Encoding]::new($false))
+        $completedWaitBarrierEnvironment = [ordered]@{}
+        foreach ($entry in ([ordered]@{
+            SCHOOLPILOT_TEST_SAMPLE_BARRIER_ARM = $completedWaitBarrierArm
+            SCHOOLPILOT_TEST_SAMPLE_BARRIER_READY = $completedWaitBarrierReady
+            SCHOOLPILOT_TEST_SAMPLE_BARRIER_RELEASE = $completedWaitBarrierRelease
+            SCHOOLPILOT_TEST_SAMPLE_BARRIER_CONSUMED = $completedWaitBarrierConsumed
+        }).GetEnumerator()) {
+            $completedWaitBarrierEnvironment[$entry.Key] = [Environment]::GetEnvironmentVariable($entry.Key, "Process")
+            [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, "Process")
+        }
         # Bind this one-second synthetic workload to a datapoint inside its
         # acceptance window. Otherwise a minute rollover between progress
         # completion and the mock CloudWatch poll can exclude only RDS CPU.
         $env:SCHOOLPILOT_TEST_METRIC_TIMESTAMP = $completedWaitMetricTimestamp.ToString("o")
         $env:SCHOOLPILOT_TEST_SNAPSHOT_TIME_FILE = $completedWaitSnapshotFile
-        $completedWaitMonitor = Start-Process -FilePath (Get-Process -Id $PID).Path `
-            -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$monitorScript,"-ConfigPath",$completedWaitConfigPath,"-Mode","Monitor") `
-            -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $childRoot "$completedWaitRunId.out") -RedirectStandardError (Join-Path $childRoot "$completedWaitRunId.err")
-        Remove-Item Env:SCHOOLPILOT_TEST_METRIC_TIMESTAMP -ErrorAction SilentlyContinue
+        try {
+            $completedWaitMonitor = Start-Process -FilePath (Get-Process -Id $PID).Path `
+                -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$monitorScript,"-ConfigPath",$completedWaitConfigPath,"-Mode","Monitor") `
+                -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $childRoot "$completedWaitRunId.out") -RedirectStandardError (Join-Path $childRoot "$completedWaitRunId.err")
+            Remove-Item Env:SCHOOLPILOT_TEST_METRIC_TIMESTAMP -ErrorAction SilentlyContinue
+            $completedWaitBarrierDeadline = [DateTimeOffset]::UtcNow.AddSeconds(15)
+            while (-not (Test-Path -LiteralPath $completedWaitBarrierReady) -and
+                -not $completedWaitMonitor.HasExited -and [DateTimeOffset]::UtcNow -lt $completedWaitBarrierDeadline) {
+                Start-Sleep -Milliseconds 100
+            }
+            $completedWaitBarrierError = Get-Content -LiteralPath (Join-Path $childRoot "$completedWaitRunId.err") -Raw -ErrorAction SilentlyContinue
+            Assert-Condition (Test-Path -LiteralPath $completedWaitBarrierReady) "Completed-final snapshot-wait monitor did not reach its first sample barrier (stderr: $completedWaitBarrierError)."
+
+            $completedWaitSummaryValue = @{runId=$completedWaitRunId;stage="endurance";devices=810;declaredSecondSchoolCanaryDevices=10;
+              run=@{plannedTrafficSeconds=1;actualTrafficSeconds=1;completedConfiguredDuration=$true};screenshotFixture=@{decodedBytes=40960};thresholds=@{passed=$true};fatalGate=$null}
+            [IO.File]::WriteAllText($completedWaitSummary, ($completedWaitSummaryValue|ConvertTo-Json -Depth 12), [Text.UTF8Encoding]::new($false))
+            $completedWaitFinalProgress = @{schemaVersion=1;type="progress";event="final";runId=$completedWaitRunId;stage="endurance";timestamp=[DateTimeOffset]::UtcNow.ToString("o")}
+            [IO.File]::AppendAllText($completedWaitProgress, ($completedWaitFinalProgress|ConvertTo-Json -Compress -Depth 10)+[Environment]::NewLine, [Text.UTF8Encoding]::new($false))
+            (Get-Item -LiteralPath $completedWaitProgress).LastWriteTimeUtc = [DateTime]::UtcNow.AddMinutes(-10)
+            [IO.File]::WriteAllText($completedWaitBarrierRelease, "1", [Text.UTF8Encoding]::new($false))
+        }
+        finally {
+            Remove-Item Env:SCHOOLPILOT_TEST_METRIC_TIMESTAMP -ErrorAction SilentlyContinue
+            if (-not (Test-Path -LiteralPath $completedWaitBarrierRelease)) {
+                [IO.File]::WriteAllText($completedWaitBarrierRelease, "1", [Text.UTF8Encoding]::new($false))
+            }
+            foreach ($entry in $completedWaitBarrierEnvironment.GetEnumerator()) {
+                [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, "Process")
+            }
+        }
+
         $completedWaitEvidencePath = Join-Path $childEvidence "$completedWaitRunId-aws-monitor.jsonl"
         $completedWaitStartDeadline = [DateTimeOffset]::UtcNow.AddSeconds(15)
         while (-not (Test-Path -LiteralPath $completedWaitEvidencePath) -and [DateTimeOffset]::UtcNow -lt $completedWaitStartDeadline) { Start-Sleep -Milliseconds 100 }
         $completedWaitStartError = Get-Content -LiteralPath (Join-Path $childRoot "$completedWaitRunId.err") -Raw -ErrorAction SilentlyContinue
         Assert-Condition (Test-Path -LiteralPath $completedWaitEvidencePath) "Completed-final snapshot-wait monitor did not start (stderr: $completedWaitStartError)."
-
-        $completedWaitSummaryValue = @{runId=$completedWaitRunId;stage="endurance";devices=810;declaredSecondSchoolCanaryDevices=10;
-          run=@{plannedTrafficSeconds=1;actualTrafficSeconds=1;completedConfiguredDuration=$true};screenshotFixture=@{decodedBytes=40960};thresholds=@{passed=$true};fatalGate=$null}
-        [IO.File]::WriteAllText($completedWaitSummary, ($completedWaitSummaryValue|ConvertTo-Json -Depth 12), [Text.UTF8Encoding]::new($false))
-        $completedWaitFinalProgress = @{schemaVersion=1;type="progress";event="final";runId=$completedWaitRunId;stage="endurance";timestamp=[DateTimeOffset]::UtcNow.ToString("o")}
-        [IO.File]::AppendAllText($completedWaitProgress, ($completedWaitFinalProgress|ConvertTo-Json -Compress -Depth 10)+[Environment]::NewLine, [Text.UTF8Encoding]::new($false))
-        (Get-Item -LiteralPath $completedWaitProgress).LastWriteTimeUtc = [DateTime]::UtcNow.AddMinutes(-10)
 
         $completedWaitSample = $null
         # A Windows mock-AWS sweep launches enough short-lived pwsh processes
@@ -2556,6 +2625,9 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
     $exactGitSha = ([string](@(& git -C $repositoryRoot rev-parse --verify HEAD) | Select-Object -First 1)).Trim().ToLowerInvariant()
     $natPlanPath = Join-Path $tempRoot "20260711T120000Z-$exactGitSha-nat-restore.tfplan"
     [IO.File]::WriteAllBytes($natPlanPath, [Text.Encoding]::UTF8.GetBytes("reviewed-nat-plan"))
+    $natForwardPlanPath = Join-Path $tempRoot "20260711T110000Z-$exactGitSha-nat-remove.tfplan"
+    [IO.File]::WriteAllBytes($natForwardPlanPath, [Text.Encoding]::UTF8.GetBytes("reviewed-nat-forward-plan"))
+    $global:SchoolPilotTestNatForwardPlanPath = $natForwardPlanPath
     $terraformStatePath = Join-Path $tempRoot "terraform.tfstate"
     [IO.File]::WriteAllText($terraformStatePath, '{"version":4,"serial":1,"lineage":"test-lineage","outputs":{},"resources":[]}', [Text.UTF8Encoding]::new($false))
     $stateBackupDirectory = Join-Path $tempRoot "state-backups"
@@ -2597,6 +2669,9 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         natRollbackPlanPath = $natPlanPath
         natRollbackPlanPhase = "nat-restore"
         natRollbackPlanSha256 = (Get-FileHash -LiteralPath $natPlanPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        natForwardPlanPath = $natForwardPlanPath
+        natForwardPlanPhase = "nat-remove"
+        natForwardPlanSha256 = (Get-FileHash -LiteralPath $natForwardPlanPath -Algorithm SHA256).Hash.ToLowerInvariant()
         vpcId = "vpc-1"
         expectedNatGatewayCount = 2
         privateRouteTableIds = @("rtb-private-a", "rtb-private-b")
@@ -3785,7 +3860,7 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
     $global:SchoolPilotTestPlanShapeInvalid = $true
     $invalidPlanShapeRejected = $false
     try { & $rollbackScript -ConfigPath $rollbackConfigPath -Action NatRemoved -Mode Validate | Out-Null }
-    catch { $invalidPlanShapeRejected = $_.Exception.Message -match "exactly six create-only|update/delete/non-create|unreviewed" }
+    catch { $invalidPlanShapeRejected = $_.Exception.Message -match "exactly six create-only|update/delete/non-create|unreviewed|extra, missing, or duplicate" }
     $global:SchoolPilotTestPlanShapeInvalid = $false
     Assert-Condition $invalidPlanShapeRejected "NAT rollback must reject any extra, updated, or unreviewed Terraform plan change."
 
@@ -3796,6 +3871,23 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
     try { & $rollbackScript -ConfigPath $rollbackConfigPath -Action NatRemoved -Mode Validate | Out-Null }
     catch { $longNatRunIdRejected = $_.Exception.Message -match "at most 44" }
     Assert-Condition $longNatRunIdRejected "NatRemoved validation must reject runIds whose derived backup phase exceeds 64 characters."
+
+    $tamperPlanConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+    $tamperPlanConfig.runId = "nat-plan-pre-apply-tamper"
+    [IO.File]::WriteAllText($rollbackConfigPath, ($tamperPlanConfig | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+    $applyCallsBeforeTamper = @($global:SchoolPilotTestTerraformCalls | Where-Object { $_ -like 'apply *' }).Count
+    $global:SchoolPilotTestTamperNatPlanBeforeApplyPath = $natPlanPath
+    $global:SchoolPilotTestNatPlanTampered = $false
+    $tamperBeforeApplyRejected = $false
+    try { & $rollbackScript -ConfigPath $rollbackConfigPath -Action NatRemoved -Mode Execute | Out-Null }
+    catch { $tamperBeforeApplyRejected = $_.Exception.Message -match "changed after initial validation" }
+    $applyCallsAfterTamper = @($global:SchoolPilotTestTerraformCalls | Where-Object { $_ -like 'apply *' }).Count
+    Assert-Condition ($tamperBeforeApplyRejected -and $global:SchoolPilotTestNatPlanTampered -and
+        $applyCallsAfterTamper -eq $applyCallsBeforeTamper) `
+        "NAT rollback must rehash the saved plan after initial validation and block a tampered plan before terraform apply."
+    [IO.File]::WriteAllBytes($natPlanPath, [Text.Encoding]::UTF8.GetBytes("reviewed-nat-plan"))
+    $global:SchoolPilotTestTamperNatPlanBeforeApplyPath = ""
+    $global:SchoolPilotTestNatPlanTampered = $false
 
     foreach ($action in @("Application", "Oom", "Waf", "PublicEcs", "Redis", "NatRemoved")) {
         $actionConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
@@ -3825,13 +3917,23 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
     Assert-Condition ($terraformApplyCalls.Count -eq 1) "NAT rollback must apply exactly one reviewed Terraform plan."
     Assert-Condition ($terraformApplyCalls[0].Contains($natPlanPath)) "NAT rollback must apply the digest-verified saved plan."
     Assert-Condition (-not (Test-Path -LiteralPath $natPlanPath)) "Applied NAT rollback plans must be deleted."
+    Assert-Condition (Test-Path -LiteralPath $natForwardPlanPath) "The hashed NatRemoved forward plan must remain as rollback-chain evidence."
 
     $rollbackEvidence = @($rollbackEvidencePaths | ForEach-Object { Get-Content -LiteralPath $_ } | ForEach-Object { $_ | ConvertFrom-Json })
     Assert-Condition ($rollbackEvidence.Count -eq 12) "Each of six rollback drills must record start and completion evidence."
     Assert-Condition (@($rollbackEvidence | Where-Object status -eq "failed").Count -eq 0) "Mock rollback drills must have no failure evidence."
     $aesCopies = @(Get-ChildItem -LiteralPath $stateRecoveryDirectory -Filter "*.aesgcm" -File)
     $dpapiCopies = @(Get-ChildItem -LiteralPath $stateBackupDirectory -Filter "*.dpapi" -File)
-    Assert-Condition ($aesCopies.Count -eq 2 -and $dpapiCopies.Count -eq 2) "NAT rollback must create before/after DPAPI and real AES-GCM recovery copies."
+    $expectedRecoveryPhases = @(
+        "nat-plan-pre-apply-tamper-nat-rollback-before",
+        "rollback-test-natremoved-nat-rollback-before",
+        "rollback-test-natremoved-nat-rollback-after"
+    )
+    Assert-Condition ($aesCopies.Count -eq 3 -and $dpapiCopies.Count -eq 3) "NAT rollback must protect the fail-closed tamper checkpoint plus the successful before/after state with DPAPI and real AES-GCM recovery copies."
+    foreach ($recoveryPhase in $expectedRecoveryPhases) {
+        Assert-Condition (@($aesCopies | Where-Object Name -like "*$recoveryPhase*").Count -eq 1) "NAT rollback must retain one AES-GCM recovery copy for '$recoveryPhase'."
+        Assert-Condition (@($dpapiCopies | Where-Object Name -like "*$recoveryPhase*").Count -eq 1) "NAT rollback must retain one DPAPI state backup for '$recoveryPhase'."
+    }
     $natCompletedEvidence = @($rollbackEvidence | Where-Object { $_.action -eq "NatRemoved" -and $_.status -eq "completed" })
     Assert-Condition ($natCompletedEvidence.Count -eq 1 -and $natCompletedEvidence[0].details.postcondition.afterStateBackup.recoveryDecryptionVerified -eq $true) "NAT rollback evidence must prove AES-GCM decrypt-and-compare verification."
 
@@ -3855,6 +3957,9 @@ finally {
     Remove-Variable SchoolPilotTestFailedDeploymentService -Scope Global -ErrorAction SilentlyContinue
     Remove-Variable SchoolPilotTestTransientMixedDeploymentPolls -Scope Global -ErrorAction SilentlyContinue
     Remove-Variable SchoolPilotTestTargetDrainingPolls -Scope Global -ErrorAction SilentlyContinue
+    Remove-Variable SchoolPilotTestTamperNatPlanBeforeApplyPath -Scope Global -ErrorAction SilentlyContinue
+    Remove-Variable SchoolPilotTestNatPlanTampered -Scope Global -ErrorAction SilentlyContinue
+    Remove-Variable SchoolPilotTestNatForwardPlanPath -Scope Global -ErrorAction SilentlyContinue
     Remove-Variable SchoolPilotTestTargetHealthCallCount -Scope Global -ErrorAction SilentlyContinue
     Remove-Variable SchoolPilotTestDeregistrationDelaySeconds -Scope Global -ErrorAction SilentlyContinue
     Remove-Variable SchoolPilotTestServiceState -Scope Global -ErrorAction SilentlyContinue

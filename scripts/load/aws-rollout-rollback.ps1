@@ -353,6 +353,11 @@ function Read-Config {
             if ($expectedPlanHash -notmatch '^[0-9a-f]{64}$') { throw "natRollbackPlanSha256 must be a SHA-256 hex digest." }
             $actualPlanHash = (Get-FileHash -LiteralPath $plan -Algorithm SHA256).Hash.ToLowerInvariant()
             if ($actualPlanHash -ne $expectedPlanHash) { throw "The NAT rollback plan hash does not match the reviewed plan." }
+            $forwardPlan = Get-ExternalPath -Path (Get-RequiredString $config "natForwardPlanPath") -Name "natForwardPlanPath"
+            $expectedForwardPlanHash = (Get-RequiredString $config "natForwardPlanSha256").ToLowerInvariant()
+            if ($expectedForwardPlanHash -notmatch '^[0-9a-f]{64}$') { throw "natForwardPlanSha256 must be a SHA-256 hex digest." }
+            $actualForwardPlanHash = (Get-FileHash -LiteralPath $forwardPlan -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actualForwardPlanHash -ne $expectedForwardPlanHash) { throw "The NAT forward plan hash does not match the reviewed plan." }
             [void](Get-RequiredString $config "vpcId")
             [void](Get-RequiredStringArray $config "privateSubnetIds")
             [void](Get-RequiredStringArray $config "ecsSecurityGroupIds")
@@ -381,7 +386,14 @@ function Read-Config {
             if ([IO.Path]::GetFileName($plan) -cnotmatch $expectedPlanPattern) {
                 throw "natRollbackPlanPath must be named <UTC>-<exact git SHA>-<phase>.tfplan."
             }
-            Assert-NatRollbackPlanShape -PlanPath $plan
+            $forwardPlanPhase = Assert-SafeIdentifier -Value (Get-RequiredString $config "natForwardPlanPhase") -Name "natForwardPlanPhase"
+            $expectedForwardPlanPattern = '^\d{8}T\d{6}Z-' + [regex]::Escape($gitSha) + '-' + [regex]::Escape($forwardPlanPhase) + '\.tfplan$'
+            if ([IO.Path]::GetFileName($forwardPlan) -cnotmatch $expectedForwardPlanPattern) {
+                throw "natForwardPlanPath must be named <UTC>-<exact git SHA>-<phase>.tfplan."
+            }
+            Assert-NatRollbackPlanContract -PlanPath $plan -PlanSha256 $expectedPlanHash `
+                -ForwardPlanPath $forwardPlan -ForwardPlanSha256 $expectedForwardPlanHash
+            $config | Add-Member -NotePropertyName resolvedNatForwardPlanPath -NotePropertyValue $forwardPlan -Force
             $backupDirectory = Get-ExternalPath -Path (Get-RequiredString $config "stateBackupOutputDirectory") `
                 -Name "stateBackupOutputDirectory" -AllowMissing
             $recoveryDirectory = Get-ExternalPath -Path (Get-RequiredString $config "stateRecoveryDirectory") `
@@ -423,7 +435,7 @@ function Read-Config {
             throw "testMode requires the explicit config/environment sentinel and reserved mock account."
         }
         $testPaths = @($path, $resolvedEvidenceDirectory)
-        foreach ($name in @("resolvedNatRollbackPlanPath", "resolvedTerraformStatePath", "resolvedStateBackupOutputDirectory", "resolvedStateRecoveryDirectory", "resolvedRecoveryCredentialPath")) {
+        foreach ($name in @("resolvedNatRollbackPlanPath", "resolvedNatForwardPlanPath", "resolvedTerraformStatePath", "resolvedStateBackupOutputDirectory", "resolvedStateRecoveryDirectory", "resolvedRecoveryCredentialPath")) {
             $member = $config.PSObject.Properties[$name]
             if ($null -ne $member -and $member.Value) { $testPaths += [string]$member.Value }
         }
@@ -478,33 +490,47 @@ function Invoke-AwsJson {
     return $text | ConvertFrom-Json -Depth 60
 }
 
-function Assert-NatRollbackPlanShape {
-    param([string]$PlanPath)
-    Push-Location (Join-Path $script:RepositoryRoot "infra")
-    try { $raw = (& terraform show -json $PlanPath 2>$null | Out-String).Trim() }
-    finally { Pop-Location }
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($raw)) {
-        throw "terraform show -json failed for the reviewed NAT rollback plan."
+function Assert-NatRollbackPlanContract {
+    param(
+        [string]$PlanPath,
+        [string]$PlanSha256,
+        [string]$ForwardPlanPath,
+        [string]$ForwardPlanSha256
+    )
+    $validator = Join-Path $PSScriptRoot "validate-rollout-plan.ps1"
+    if (-not (Test-Path -LiteralPath $validator -PathType Leaf)) {
+        throw "The trusted saved-plan validator is missing; NAT rollback is blocked."
     }
-    try { $plan = $raw | ConvertFrom-Json -Depth 80 }
-    catch { throw "The reviewed NAT rollback plan did not produce valid Terraform plan JSON." }
-    $expectedAddresses = @(
-        "module.vpc.aws_eip.nat[0]", "module.vpc.aws_eip.nat[1]",
-        "module.vpc.aws_nat_gateway.main[0]", "module.vpc.aws_nat_gateway.main[1]",
-        "module.vpc.aws_route.private_nat[0]", "module.vpc.aws_route.private_nat[1]"
-    ) | Sort-Object
-    $changes = @($plan.resource_changes)
-    if ($changes.Count -ne 6) { throw "NAT rollback plan must contain exactly six create-only resource changes." }
-    foreach ($change in $changes) {
-        $actions = @($change.change.actions)
-        if ($actions.Count -ne 1 -or [string]$actions[0] -ne "create") {
-            throw "NAT rollback plan contains an update/delete/non-create action."
-        }
+    try {
+        $raw = (& $validator -Phase NatRollback -PlanPath $PlanPath -PlanSha256 $PlanSha256 `
+            -ForwardPlanPath $ForwardPlanPath -ForwardPlanSha256 $ForwardPlanSha256 | Out-String).Trim()
     }
-    $actualAddresses = @($changes | ForEach-Object { [string]$_.address } | Sort-Object)
-    if (@(Compare-Object $expectedAddresses $actualAddresses).Count -gt 0 -or @($actualAddresses | Sort-Object -Unique).Count -ne 6) {
-        throw "NAT rollback plan contains an unreviewed or missing resource address."
+    catch { throw "The trusted NatRollback saved-plan validator rejected the reviewed plans: $($_.Exception.Message)" }
+    try { $result = $raw | ConvertFrom-Json -Depth 80 }
+    catch { throw "The trusted NatRollback saved-plan validator did not return valid JSON." }
+    $expectedPlanPath = [IO.Path]::GetFullPath($PlanPath)
+    $expectedForwardPath = [IO.Path]::GetFullPath($ForwardPlanPath)
+    if ($result.valid -ne $true -or [string]$result.phase -ne "NatRollback" -or
+        -not [string]::Equals([string]$result.planPath, $expectedPlanPath, [StringComparison]::OrdinalIgnoreCase) -or
+        [string]$result.planSha256 -ne $PlanSha256 -or
+        -not [string]::Equals([string]$result.shape.forwardPlanPath, $expectedForwardPath, [StringComparison]::OrdinalIgnoreCase) -or
+        [string]$result.shape.forwardPlanSha256 -ne $ForwardPlanSha256 -or
+        [int]$result.shape.rollback.add -ne 6 -or [int]$result.shape.rollback.change -ne 0 -or [int]$result.shape.rollback.destroy -ne 0 -or
+        [int]$result.shape.forward.add -ne 0 -or [int]$result.shape.forward.change -ne 0 -or [int]$result.shape.forward.destroy -ne 6) {
+        throw "The trusted NatRollback saved-plan validator returned an incomplete or mismatched inverse-plan binding."
     }
+}
+
+function Get-OpenStreamSha256 {
+    param([IO.FileStream]$Stream)
+    $originalPosition = $Stream.Position
+    try {
+        $Stream.Position = 0
+        $algorithm = [Security.Cryptography.SHA256]::Create()
+        try { return [Convert]::ToHexString($algorithm.ComputeHash($Stream)).ToLowerInvariant() }
+        finally { $algorithm.Dispose() }
+    }
+    finally { $Stream.Position = $originalPosition }
 }
 
 function ConvertTo-CanonicalValue {
@@ -1956,12 +1982,47 @@ function Restore-NatThenPrivateEcs {
     Assert-RollbackDeadline -Step "backup-state-before-nat-restore"
     $beforeBackup = New-RollbackStateBackup -Config $Config -Usage before
     Push-Location (Join-Path $script:RepositoryRoot "infra")
+    $planLock = $null
+    $forwardPlanLock = $null
     try {
         Assert-RollbackDeadline -Step "apply-reviewed-nat-rollback-plan"
+        # Re-open both exact reviewed plans without write/delete sharing and keep
+        # both handles through terraform apply. Re-run the trusted inverse-plan
+        # validator, then hash the same open bytes one final time before apply.
+        $planLock = [IO.File]::Open(
+            $Config.resolvedNatRollbackPlanPath,
+            [IO.FileMode]::Open,
+            [IO.FileAccess]::Read,
+            [IO.FileShare]::Read
+        )
+        $forwardPlanLock = [IO.File]::Open(
+            $Config.resolvedNatForwardPlanPath,
+            [IO.FileMode]::Open,
+            [IO.FileAccess]::Read,
+            [IO.FileShare]::Read
+        )
+        $expectedPlanHash = ([string]$Config.natRollbackPlanSha256).ToLowerInvariant()
+        $expectedForwardPlanHash = ([string]$Config.natForwardPlanSha256).ToLowerInvariant()
+        if ((Get-OpenStreamSha256 $planLock) -ne $expectedPlanHash) {
+            throw "The NAT rollback plan changed after initial validation; Terraform apply was blocked."
+        }
+        if ((Get-OpenStreamSha256 $forwardPlanLock) -ne $expectedForwardPlanHash) {
+            throw "The NAT forward plan changed after initial validation; Terraform apply was blocked."
+        }
+        Assert-NatRollbackPlanContract -PlanPath $Config.resolvedNatRollbackPlanPath -PlanSha256 $expectedPlanHash `
+            -ForwardPlanPath $Config.resolvedNatForwardPlanPath -ForwardPlanSha256 $expectedForwardPlanHash
+        if ((Get-OpenStreamSha256 $planLock) -ne $expectedPlanHash -or
+            (Get-OpenStreamSha256 $forwardPlanLock) -ne $expectedForwardPlanHash) {
+            throw "A NAT plan changed during pre-apply inverse validation; Terraform apply was blocked."
+        }
         & terraform apply -input=false $Config.resolvedNatRollbackPlanPath
         if ($LASTEXITCODE -ne 0) { throw "Terraform NAT rollback plan failed." }
     }
-    finally { Pop-Location }
+    finally {
+        if ($null -ne $planLock) { $planLock.Dispose() }
+        if ($null -ne $forwardPlanLock) { $forwardPlanLock.Dispose() }
+        Pop-Location
+    }
     Assert-RollbackDeadline -Step "backup-state-immediately-after-nat-apply"
     $afterBackup = New-RollbackStateBackup -Config $Config -Usage after
     $script:RollbackFailureDetails = [ordered]@{

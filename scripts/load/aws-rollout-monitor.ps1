@@ -5,6 +5,8 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$ConfigPath,
 
+    [string]$ExpectedConfigSha256 = "",
+
     [ValidateSet("Validate", "Monitor")]
     [string]$Mode = "Validate"
 )
@@ -26,6 +28,14 @@ $script:PreviousMetricDatapoints = @{}
 $script:MetricFreshnessMaximumSeconds = 180
 $script:TrafficStartedAtUtc = $null
 $script:TrafficStoppedAtUtc = $null
+$normalizedConfigSha = $null
+if ($ExpectedConfigSha256) {
+    $normalizedConfigSha = $ExpectedConfigSha256.ToLowerInvariant()
+    if ($normalizedConfigSha -notmatch '^[0-9a-f]{64}$' -or
+        (Get-FileHash -LiteralPath $ConfigPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne $normalizedConfigSha) {
+        throw "Bound monitor config SHA-256 validation failed."
+    }
+}
 
 function Get-AbsolutePath {
     param([string]$Path, [string]$Name)
@@ -197,7 +207,14 @@ function ConvertTo-Hashtable {
 }
 
 function Get-VerifiedPredecessorEvidence {
-    param($RawConfig, [string]$ExpectedPhase, [AllowNull()][string]$ExpectedStage, [bool]$ExpectedLoad, [int]$MinimumPostureSeconds = 0)
+    param(
+        $RawConfig,
+        [string]$ExpectedPhase,
+        [AllowNull()][string]$ExpectedStage,
+        [bool]$ExpectedLoad,
+        [int]$MinimumPostureSeconds = 0,
+        [bool]$RequireSupervisorSeal = $true
+    )
     $predecessorPath = Assert-ExternalPath -Path (Get-RequiredString $RawConfig "predecessorResultPath") `
         -Name "predecessorResultPath"
     $expectedHash = (Get-RequiredString $RawConfig "predecessorResultSha256").ToLowerInvariant()
@@ -205,8 +222,43 @@ function Get-VerifiedPredecessorEvidence {
         (Get-FileHash -LiteralPath $predecessorPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expectedHash) {
         throw "predecessorResultPath does not match predecessorResultSha256."
     }
-    try { $predecessor = Get-Content -LiteralPath $predecessorPath -Raw | ConvertFrom-Json -Depth 40 }
-    catch { throw "predecessorResultPath must contain valid monitor result JSON." }
+    try { $predecessorEnvelope = Get-Content -LiteralPath $predecessorPath -Raw | ConvertFrom-Json -Depth 40 }
+    catch { throw "predecessorResultPath must contain valid supervisor terminal JSON." }
+
+    $predecessor = $predecessorEnvelope
+    $monitorResultPath = $predecessorPath
+    $monitorResultSha256 = $expectedHash
+    if ($RequireSupervisorSeal) {
+        if ([int](Get-OptionalValue $predecessorEnvelope "schemaVersion" 0) -ne 2 -or
+            [string](Get-OptionalValue $predecessorEnvelope "type" "") -ne "certification_supervisor_terminal" -or
+            (Get-OptionalValue $predecessorEnvelope "supervisorSealed" $false) -ne $true -or
+            [string](Get-OptionalValue $predecessorEnvelope "status" "") -ne "completed") {
+            throw "predecessorResultPath must be a supervisor-sealed terminal result; raw monitor results and historical evidence cannot seed the chain."
+        }
+        $terminal = Get-OptionalValue $predecessorEnvelope "terminalMonitorResult"
+        $monitorResultPath = Assert-ExternalPath -Path (Get-RequiredString $terminal "path") -Name "terminalMonitorResult.path"
+        $monitorResultSha256 = (Get-RequiredString $terminal "sha256").ToLowerInvariant()
+        if ($monitorResultSha256 -notmatch '^[0-9a-f]{64}$' -or
+            (Get-FileHash -LiteralPath $monitorResultPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne $monitorResultSha256) {
+            throw "The supervisor-sealed terminal monitor result is missing or has been tampered with."
+        }
+        try { $predecessor = Get-Content -LiteralPath $monitorResultPath -Raw | ConvertFrom-Json -Depth 40 }
+        catch { throw "The supervisor-sealed terminal monitor result is invalid JSON." }
+        if ([string](Get-OptionalValue $terminal "runId" "") -ne [string](Get-OptionalValue $predecessor "runId" "") -or
+            [string](Get-OptionalValue $predecessorEnvelope "runId" "") -ne [string](Get-OptionalValue $predecessor "runId" "") -or
+            [string](Get-OptionalValue $terminal "phase" "") -ne [string](Get-OptionalValue $predecessor "phase" "")) {
+            throw "The supervisor terminal envelope does not bind the enclosed monitor result identity."
+        }
+    }
+    elseif ([string](Get-OptionalValue $predecessorEnvelope "type" "") -eq "certification_supervisor_terminal") {
+        $terminal = Get-OptionalValue $predecessorEnvelope "terminalMonitorResult"
+        $monitorResultPath = Assert-ExternalPath -Path (Get-RequiredString $terminal "path") -Name "terminalMonitorResult.path"
+        $monitorResultSha256 = (Get-RequiredString $terminal "sha256").ToLowerInvariant()
+        if ((Get-FileHash -LiteralPath $monitorResultPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne $monitorResultSha256) {
+            throw "The test supervisor terminal envelope does not match its monitor result."
+        }
+        $predecessor = Get-Content -LiteralPath $monitorResultPath -Raw | ConvertFrom-Json -Depth 40
+    }
     $predecessorWorkload = Get-OptionalValue $predecessor "workload"
     $actualStage = [string](Get-OptionalValue $predecessorWorkload "stage" "")
     $loadAccepted = Get-OptionalValue $predecessor "loadAccepted" $false
@@ -230,6 +282,9 @@ function Get-VerifiedPredecessorEvidence {
     return [ordered]@{
         path = $predecessorPath
         sha256 = $expectedHash
+        supervisorSealed = $RequireSupervisorSeal
+        terminalMonitorResultPath = $monitorResultPath
+        terminalMonitorResultSha256 = $monitorResultSha256
         runId = [string](Get-OptionalValue $predecessor "runId" "")
         phase = $ExpectedPhase
         stage = if ($ExpectedLoad) { $ExpectedStage } else { $null }
@@ -294,6 +349,8 @@ function Read-Configuration {
     $workload = $null
     $predecessorEvidence = $null
     $artifactsNotBeforeUtc = $null
+    $rawResources = Get-OptionalValue $config "resources"
+    $progressionRdsClass = [string](Get-OptionalValue $rawResources "expectedRdsInstanceClass" "")
     if ($null -ne $progress) {
         $workloadObject = $config.workload
         $workloadStage = Assert-SafeIdentifier -Value (Get-RequiredString $workloadObject "stage") -Name "workload.stage"
@@ -316,7 +373,7 @@ function Read-Configuration {
                 throw "workload stage/name/signature does not match an approved immutable launch-gate profile."
             }
             $allowedStages = @{
-                Waf = @("500", "800")
+                Waf = @("500", "800", "endurance")
                 PublicEcs = @("800")
                 NatRemoved = @("800")
                 Redis = @("500", "800", "burst")
@@ -324,6 +381,9 @@ function Read-Configuration {
             }
             if (-not $allowedStages.ContainsKey($phase) -or $workload.Stage -notin $allowedStages[$phase]) {
                 throw "workload stage '$($workload.Stage)' is not authorized during phase '$phase'."
+            }
+            if ($phase -eq "Waf" -and $workload.Stage -eq "endurance" -and $progressionRdsClass -ne "db.t4g.xlarge") {
+                throw "Private Waf/endurance is authorized only after observing resources.expectedRdsInstanceClass=db.t4g.xlarge."
             }
         }
         if ($minimumWallClockSeconds -gt $workload.DurationSeconds + 900) {
@@ -354,7 +414,21 @@ function Read-Configuration {
             "Application:no-load" { $null }
             "Waf:500" { $null }
             "Waf:800" { [ordered]@{ phase="Waf"; stage="500"; load=$true; postureSeconds=0 } }
-            "PublicEcs:800" { [ordered]@{ phase="Waf"; stage="800"; load=$true; postureSeconds=0 } }
+            "Waf:endurance" {
+                if ($progressionRdsClass -ne "db.t4g.xlarge") {
+                    throw "Waf/endurance requires the resized db.t4g.xlarge capacity track."
+                }
+                [ordered]@{ phase="Waf"; stage="800"; load=$true; postureSeconds=0 }
+            }
+            "PublicEcs:800" {
+                if ($progressionRdsClass -eq "db.t4g.xlarge") {
+                    [ordered]@{ phase="Waf"; stage="endurance"; load=$true; postureSeconds=0 }
+                }
+                elseif ($progressionRdsClass -eq "db.t4g.medium") {
+                    [ordered]@{ phase="Waf"; stage="800"; load=$true; postureSeconds=0 }
+                }
+                else { throw "PublicEcs/800 requires an exact expected RDS class before resolving its predecessor." }
+            }
             "PublicEcs:no-load" { [ordered]@{ phase="PublicEcs"; stage="800"; load=$true; postureSeconds=0 } }
             "NatRemoved:800" { [ordered]@{ phase="PublicEcs"; stage=$null; load=$false; postureSeconds=86400 } }
             "Route53:no-load" { [ordered]@{ phase="NatRemoved"; stage="800"; load=$true; postureSeconds=0 } }
@@ -372,7 +446,8 @@ function Read-Configuration {
         else {
             $predecessorEvidence = Get-VerifiedPredecessorEvidence -RawConfig $config `
                 -ExpectedPhase $predecessorContract.phase -ExpectedStage $predecessorContract.stage `
-                -ExpectedLoad ([bool]$predecessorContract.load) -MinimumPostureSeconds ([int]$predecessorContract.postureSeconds)
+                -ExpectedLoad ([bool]$predecessorContract.load) -MinimumPostureSeconds ([int]$predecessorContract.postureSeconds) `
+                -RequireSupervisorSeal (-not $testMode)
         }
     }
 
@@ -384,6 +459,14 @@ function Read-Configuration {
     }
     if ($automaticRollbackValue) {
         $rollbackConfig = Assert-ExternalPath -Path (Get-RequiredString $config "rollbackConfigPath") -Name "rollbackConfigPath"
+    }
+    $expectedRollbackConfigSha256 = [string](Get-OptionalValue $config "expectedRollbackConfigSha256" "")
+    if ($expectedRollbackConfigSha256) {
+        $expectedRollbackConfigSha256 = $expectedRollbackConfigSha256.ToLowerInvariant()
+        if ($expectedRollbackConfigSha256 -notmatch '^[0-9a-f]{64}$' -or -not $rollbackConfig -or
+            (Get-FileHash -LiteralPath $rollbackConfig -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expectedRollbackConfigSha256) {
+            throw "Bound rollback config SHA-256 validation failed."
+        }
     }
     $requireLoadAcceptanceValue = Get-OptionalValue $config "requireLoadAcceptance" $true
     if ($requireLoadAcceptanceValue -isnot [bool]) { throw "requireLoadAcceptance must be a JSON boolean." }
@@ -414,7 +497,8 @@ function Read-Configuration {
         "ecs_api_cpu", "ecs_api_cpu_maximum", "ecs_api_memory",
         "ecs_worker_cpu", "ecs_worker_cpu_maximum", "ecs_worker_memory",
         "rds_cpu", "rds_connections", "rds_storage_headroom", "rds_free_memory", "rds_swap",
-        "rds_cpu_credit", "rds_surplus_charged", "redis_cpu", "redis_memory", "redis_free",
+        "rds_cpu_credit", "rds_surplus_charged", "rds_read_latency_ms", "rds_write_latency_ms",
+        "rds_disk_queue_depth", "rds_read_iops", "rds_write_iops", "rds_total_iops", "redis_cpu", "redis_memory", "redis_free",
         "redis_evictions", "redis_rejected", "redis_cpu_credit"
     )
     if ($testMode -and $null -ne $config.PSObject.Properties["testTelemetryMetricNames"]) {
@@ -438,6 +522,58 @@ function Read-Configuration {
     $expectedEcsAssignPublicIp = Get-RequiredBoolean $resources "expectedEcsAssignPublicIp"
     $ecsTaskSubnetIds = @(Get-RequiredStringArray $resources "ecsTaskSubnetIds")
     $expectedRedisNodeType = Get-RequiredString $resources "expectedRedisNodeType"
+    $expectedRdsInstanceClass = [string](Get-OptionalValue $resources "expectedRdsInstanceClass" "")
+    if ($expectedRdsInstanceClass -and $expectedRdsInstanceClass -notin @("db.t4g.medium", "db.t4g.xlarge")) {
+        throw "resources.expectedRdsInstanceClass must be db.t4g.medium or db.t4g.xlarge."
+    }
+    $expectedRdsPosture = $null
+    $rawExpectedRdsPosture = Get-OptionalValue $resources "expectedRdsPosture"
+    if ($null -ne $rawExpectedRdsPosture) {
+        $expectedRdsPosture = [ordered]@{
+            engine=Get-RequiredString $rawExpectedRdsPosture "engine"
+            engineVersion=Get-RequiredString $rawExpectedRdsPosture "engineVersion"
+            allocatedStorageGiB=Get-RequiredInteger $rawExpectedRdsPosture "allocatedStorageGiB" 1 65536
+            maxAllocatedStorageGiB=Get-RequiredInteger $rawExpectedRdsPosture "maxAllocatedStorageGiB" 1 65536
+            storageType=Get-RequiredString $rawExpectedRdsPosture "storageType"
+            storageEncrypted=Get-RequiredBoolean $rawExpectedRdsPosture "storageEncrypted"
+            multiAz=Get-RequiredBoolean $rawExpectedRdsPosture "multiAz"
+            publiclyAccessible=Get-RequiredBoolean $rawExpectedRdsPosture "publiclyAccessible"
+            performanceInsightsEnabled=Get-RequiredBoolean $rawExpectedRdsPosture "performanceInsightsEnabled"
+            dbSubnetGroupName=Get-RequiredString $rawExpectedRdsPosture "dbSubnetGroupName"
+            vpcSecurityGroupIds=@((Get-RequiredStringArray $rawExpectedRdsPosture "vpcSecurityGroupIds")|Sort-Object -Unique)
+        }
+        if ($expectedRdsPosture.engine -ne "postgres" -or
+            $expectedRdsPosture.maxAllocatedStorageGiB -lt $expectedRdsPosture.allocatedStorageGiB -or
+            $expectedRdsPosture.storageEncrypted -ne $true -or $expectedRdsPosture.publiclyAccessible -ne $false -or
+            $expectedRdsPosture.performanceInsightsEnabled -ne $true -or
+            @($expectedRdsPosture.vpcSecurityGroupIds|Where-Object{$_ -notmatch '^sg-[0-9a-f]+$'}).Count -gt 0) {
+            throw "resources.expectedRdsPosture must define exact encrypted private PostgreSQL storage, networking, and PI posture."
+        }
+    }
+    if (-not $testMode -and $expectedRdsInstanceClass -eq "db.t4g.xlarge" -and $null -eq $expectedRdsPosture) {
+        throw "The production resized capacity track requires resources.expectedRdsPosture."
+    }
+    # These series are always collected and retained in sample evidence, but
+    # their acceptance thresholds are authorized only on the resized capacity
+    # track. Do not silently add new baseline gates to the medium certification.
+    if ($expectedRdsInstanceClass -ne "db.t4g.xlarge") {
+        $capacityOnlyTelemetry = @(
+            "rds_read_latency_ms","rds_write_latency_ms","rds_disk_queue_depth",
+            "rds_read_iops","rds_write_iops","rds_total_iops"
+        )
+        $telemetryMetricNames = @($telemetryMetricNames | Where-Object { $_ -notin $capacityOnlyTelemetry })
+    }
+    $expectedActiveApiTaskDefinitionArn = [string](Get-OptionalValue $resources "expectedActiveApiTaskDefinitionArn" "")
+    $expectedActiveWorkerTaskDefinitionArn = [string](Get-OptionalValue $resources "expectedActiveWorkerTaskDefinitionArn" "")
+    foreach ($expectedTaskIdentity in @(
+        @("expectedActiveApiTaskDefinitionArn",$expectedActiveApiTaskDefinitionArn),
+        @("expectedActiveWorkerTaskDefinitionArn",$expectedActiveWorkerTaskDefinitionArn)
+    )) {
+        if ($expectedTaskIdentity[1] -and
+            $expectedTaskIdentity[1] -notmatch '^arn:aws:ecs:[a-z0-9-]+:\d{12}:task-definition/[A-Za-z0-9_-]+:\d+$') {
+            throw "resources.$($expectedTaskIdentity[0]) must be a full revisioned ECS task-definition ARN."
+        }
+    }
     if ($expectedRedisNodeType -notin @("cache.t4g.small", "cache.t4g.micro")) {
         throw "resources.expectedRedisNodeType must be cache.t4g.small or cache.t4g.micro."
     }
@@ -507,6 +643,12 @@ function Read-Configuration {
         rdsStorageHeadroomMinimumPercent = 20.0
         rdsFreeableMemoryMinimumBytes = 536870912.0
         rdsCpuCreditMinimum = 24.0
+        rdsLatencyP95MaximumMilliseconds = 20.0
+        rdsLatencyPeakMaximumMilliseconds = 50.0
+        rdsQueueDepthP95Maximum = 1.0
+        rdsQueueDepthConsecutiveMaximum = 2.0
+        rdsIopsP95Maximum = 2400.0
+        rdsIopsPeakMaximum = 3000.0
         redisCpuCreditMinimum = 10.0
         rdsSwapGrowthMaximumBytesPerMinute = 16777216.0
         ecsCpuSteadyMaximumPercent = 60.0
@@ -558,6 +700,13 @@ function Read-Configuration {
             throw "A production PublicEcs soak without a load harness must run exactly 24 hours and require the final-six-hour NAT gate."
         }
     }
+    if (-not $testMode -and [string]::IsNullOrWhiteSpace($expectedRdsInstanceClass)) {
+        throw "Production monitoring requires resources.expectedRdsInstanceClass."
+    }
+    if (-not $testMode -and ([string]::IsNullOrWhiteSpace($expectedActiveApiTaskDefinitionArn) -or
+        [string]::IsNullOrWhiteSpace($expectedActiveWorkerTaskDefinitionArn))) {
+        throw "Production monitoring requires exact active API and worker task-definition ARNs."
+    }
 
     return [pscustomobject]@{
         Raw = $config
@@ -570,6 +719,7 @@ function Read-Configuration {
         ExpectedGeneratorPublicIp = $expectedGeneratorPublicIp
         GeneratorIpEvidencePath = $generatorIpEvidencePath
         RollbackConfigPath = $rollbackConfig
+        ExpectedRollbackConfigSha256 = if ($expectedRollbackConfigSha256) { $expectedRollbackConfigSha256 } else { $null }
         PollSeconds = $pollSeconds
         MaxIterations = $maxIterations
         MinimumWallClockSeconds = $minimumWallClockSeconds
@@ -594,6 +744,10 @@ function Read-Configuration {
         ExpectedEcsAssignPublicIp = $expectedEcsAssignPublicIp
         EcsTaskSubnetIds = $ecsTaskSubnetIds
         ExpectedRedisNodeType = $expectedRedisNodeType
+        ExpectedRdsInstanceClass = if ($expectedRdsInstanceClass) { $expectedRdsInstanceClass } else { $null }
+        ExpectedRdsPosture = $expectedRdsPosture
+        ExpectedActiveApiTaskDefinitionArn = if ($expectedActiveApiTaskDefinitionArn) { $expectedActiveApiTaskDefinitionArn } else { $null }
+        ExpectedActiveWorkerTaskDefinitionArn = if ($expectedActiveWorkerTaskDefinitionArn) { $expectedActiveWorkerTaskDefinitionArn } else { $null }
         RedisResizeCompletedAtUtc = $redisResizeCompletedAtUtc
         Thresholds = $thresholds
     }
@@ -660,6 +814,14 @@ function New-MetricQuery {
             Stat = $Statistic
         }
     }
+}
+
+function New-MetricMathQuery {
+    param([string]$Id, [string]$Expression, [string]$Label)
+    if ($Id -notmatch '^[a-z][a-z0-9_]{0,254}$' -or [string]::IsNullOrWhiteSpace($Expression)) {
+        throw "CloudWatch metric-math query is invalid."
+    }
+    return [ordered]@{Id=$Id;Expression=$Expression;Label=$Label;ReturnData=$true}
 }
 
 function Invoke-CloudWatchMetricBatch {
@@ -783,6 +945,7 @@ function Get-EcsNetworkState {
     }
 
     $networkInterfaceIds = [System.Collections.Generic.List[string]]::new()
+    $taskDefinitionMismatches = [System.Collections.Generic.List[object]]::new()
     if ($taskArns.Count -gt 0) {
         for ($offset = 0; $offset -lt $taskArns.Count; $offset += 100) {
             $last = [math]::Min($taskArns.Count - 1, $offset + 99)
@@ -790,6 +953,25 @@ function Get-EcsNetworkState {
                 "ecs", "describe-tasks", "--region", $r.region, "--cluster", $r.cluster, "--tasks"
             ) + @($taskArns[$offset..$last]))
             foreach ($task in @($described.tasks)) {
+                $taskService = ([string](Get-OptionalValue $task "group" "") -replace '^service:', '')
+                $expectedTaskDefinition = if ($taskService -eq [string]$r.apiService) {
+                    $Config.ExpectedActiveApiTaskDefinitionArn
+                }
+                elseif ($taskService -eq [string]$r.workerService) {
+                    $Config.ExpectedActiveWorkerTaskDefinitionArn
+                }
+                else { $null }
+                if ($expectedTaskDefinition -and
+                    ([string](Get-OptionalValue $task "taskDefinitionArn" "") -ne [string]$expectedTaskDefinition -or
+                    [string](Get-OptionalValue $task "lastStatus" "") -ne "RUNNING")) {
+                    $taskDefinitionMismatches.Add([ordered]@{
+                        taskArn=[string](Get-OptionalValue $task "taskArn" "")
+                        service=$taskService
+                        expectedTaskDefinitionArn=[string]$expectedTaskDefinition
+                        actualTaskDefinitionArn=[string](Get-OptionalValue $task "taskDefinitionArn" "")
+                        lastStatus=[string](Get-OptionalValue $task "lastStatus" "")
+                    })
+                }
                 foreach ($attachment in @($task.attachments | Where-Object type -eq "ElasticNetworkInterface")) {
                     $eni = @($attachment.details | Where-Object name -eq "networkInterfaceId" | Select-Object -First 1)
                     if ($eni.Count -eq 1 -and -not [string]::IsNullOrWhiteSpace([string]$eni[0].value)) {
@@ -828,6 +1010,7 @@ function Get-EcsNetworkState {
         eniCount = $interfaces.Count
         publicIpv4Count = $publicCount
         allInterfacesReturned = $allInterfacesReturned
+        taskDefinitionMismatches = @($taskDefinitionMismatches)
         satisfied = $serviceMismatches.Count -eq 0 -and $publicIpContractSatisfied
     }
 }
@@ -907,9 +1090,29 @@ function Get-RdsState {
     $instance = @($response.DBInstances)[0]
     return [ordered]@{
         status = [string]$instance.DBInstanceStatus
+        instanceClass = [string](Get-OptionalValue $instance "DBInstanceClass" "")
+        dbInstanceArn = [string](Get-OptionalValue $instance "DBInstanceArn" "")
+        engine = [string](Get-OptionalValue $instance "Engine" "")
+        engineVersion = [string](Get-OptionalValue $instance "EngineVersion" "")
         allocatedStorageGiB = [int]$instance.AllocatedStorage
         maxAllocatedStorageGiB = [int]$instance.MaxAllocatedStorage
+        storageType = [string](Get-OptionalValue $instance "StorageType" "")
+        storageEncrypted = [bool](Get-OptionalValue $instance "StorageEncrypted" $false)
+        multiAz = [bool](Get-OptionalValue $instance "MultiAZ" $false)
+        publiclyAccessible = [bool](Get-OptionalValue $instance "PubliclyAccessible" $false)
+        performanceInsightsEnabled = [bool](Get-OptionalValue $instance "PerformanceInsightsEnabled" $false)
+        dbSubnetGroup = [string](Get-OptionalValue (Get-OptionalValue $instance "DBSubnetGroup") "DBSubnetGroupName" "")
+        vpcSecurityGroupIds = @((Get-OptionalValue $instance "VpcSecurityGroups" @()) | ForEach-Object { [string]$_.VpcSecurityGroupId } | Sort-Object)
         pendingModifiedValues = $instance.PendingModifiedValues
+    }
+}
+
+function Convert-MetricScale {
+    param($Metric, [double]$Multiplier)
+    if ($null -eq $Metric) { return $null }
+    return [pscustomobject]@{
+        Timestamp = ([DateTimeOffset]$Metric.Timestamp).ToUniversalTime()
+        Value = [double]$Metric.Value * $Multiplier
     }
 }
 
@@ -1062,6 +1265,12 @@ function Get-MetricQueries {
     $queries.Add((New-MetricQuery "rds_swap" "AWS/RDS" "SwapUsage" $rdsDimensions "Maximum"))
     $queries.Add((New-MetricQuery "rds_cpu_credit" "AWS/RDS" "CPUCreditBalance" $rdsDimensions "Minimum" -Period 300))
     $queries.Add((New-MetricQuery "rds_surplus_charged" "AWS/RDS" "CPUSurplusCreditsCharged" $rdsDimensions "Maximum" -Period 300))
+    $queries.Add((New-MetricQuery "rds_read_latency_seconds" "AWS/RDS" "ReadLatency" $rdsDimensions "Maximum"))
+    $queries.Add((New-MetricQuery "rds_write_latency_seconds" "AWS/RDS" "WriteLatency" $rdsDimensions "Maximum"))
+    $queries.Add((New-MetricQuery "rds_disk_queue_depth" "AWS/RDS" "DiskQueueDepth" $rdsDimensions "Maximum"))
+    $queries.Add((New-MetricQuery "rds_read_iops" "AWS/RDS" "ReadIOPS" $rdsDimensions "Maximum"))
+    $queries.Add((New-MetricQuery "rds_write_iops" "AWS/RDS" "WriteIOPS" $rdsDimensions "Maximum"))
+    $queries.Add((New-MetricMathQuery "rds_total_iops" "rds_read_iops+rds_write_iops" "Total read + write IOPS"))
 
     $redisDimensions = @{ CacheClusterId = $r.redisCacheClusterId }
     $queries.Add((New-MetricQuery "redis_cpu" "AWS/ElastiCache" "EngineCPUUtilization" $redisDimensions "Maximum"))
@@ -1433,11 +1642,68 @@ function Add-AcceptanceDatapoint {
         $script:AcceptanceSeries[$Name] = [ordered]@{
             timestamps = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
             values = [System.Collections.Generic.List[double]]::new()
+            points = @{}
         }
     }
     $series = $script:AcceptanceSeries[$Name]
     $timestamp = ([DateTimeOffset]$Metric.Timestamp).ToUniversalTime().ToString("o")
-    if ($series.timestamps.Add($timestamp)) { $series.values.Add([double]$Metric.Value) }
+    if ($series.timestamps.Add($timestamp)) {
+        $series.values.Add([double]$Metric.Value)
+        $series.points[$timestamp] = [double]$Metric.Value
+    }
+}
+
+function Get-RdsCreditSlopeResult {
+    param($Config)
+    $result = [ordered]@{
+        required = $false
+        pointCount = 0
+        spanSeconds = 0.0
+        firstBalance = $null
+        lastBalance = $null
+        delta = $null
+        slopePerHour = $null
+        passed = $false
+    }
+    if ($Config.ExpectedRdsInstanceClass -ne "db.t4g.xlarge" -or
+        $null -eq $Config.Workload -or $Config.Workload.Stage -ne "endurance" -or
+        $Config.TelemetryExpectedSeconds -lt 28800) {
+        $result.passed = $true
+        return $result
+    }
+    $result.required = $true
+    $trafficStart = if ($null -ne $script:TrafficStartedAtUtc) {
+        ([DateTimeOffset]$script:TrafficStartedAtUtc).ToUniversalTime()
+    } else { $script:StartedAt.ToUniversalTime() }
+    $windowStart = $trafficStart.AddHours(2)
+    $windowEnd = $trafficStart.AddHours(8)
+    if (-not $script:AcceptanceSeries.ContainsKey("rds_cpu_credit")) { return $result }
+    $series = $script:AcceptanceSeries["rds_cpu_credit"]
+    $points = @($series.points.GetEnumerator() | ForEach-Object {
+        [pscustomobject]@{ Timestamp = ([DateTimeOffset]$_.Key).ToUniversalTime(); Value = [double]$_.Value }
+    } | Where-Object { $_.Timestamp -ge $windowStart -and $_.Timestamp -le $windowEnd } | Sort-Object Timestamp)
+    $result.pointCount = $points.Count
+    if ($points.Count -lt 2) { return $result }
+    $result.spanSeconds = [math]::Round(($points[-1].Timestamp - $points[0].Timestamp).TotalSeconds, 1)
+    $result.firstBalance = [double]$points[0].Value
+    $result.lastBalance = [double]$points[-1].Value
+    $result.delta = [double]$points[-1].Value - [double]$points[0].Value
+    $xValues = @($points | ForEach-Object { ($_.Timestamp - $points[0].Timestamp).TotalHours })
+    $meanX = [double](($xValues | Measure-Object -Average).Average)
+    $meanY = [double](($points.Value | Measure-Object -Average).Average)
+    $numerator = 0.0; $denominator = 0.0
+    for ($index = 0; $index -lt $points.Count; $index++) {
+        $xDelta = [double]$xValues[$index] - $meanX
+        $numerator += $xDelta * ([double]$points[$index].Value - $meanY)
+        $denominator += $xDelta * $xDelta
+    }
+    $result.slopePerHour = if ($denominator -gt 0) { $numerator / $denominator } else { $null }
+    # CloudWatch's five-minute series may place the first and last samples just
+    # inside the exact hour-2/hour-8 boundaries. Require at least 5h50m so the
+    # gate represents the full six-hour observation, allowing no more than one
+    # five-minute boundary alignment interval at each edge.
+    $result.passed = $result.spanSeconds -ge 21000.0 -and $null -ne $result.slopePerHour -and $result.slopePerHour -ge 0.0
+    return $result
 }
 
 function Get-TelemetryAcceptanceWindow {
@@ -1565,6 +1831,31 @@ function Get-AcceptanceResult {
     if ($rdsFreeMemory.count -gt 0 -and $rdsFreeMemory.minimum -le [double]$t.rdsFreeableMemoryMinimumBytes) { Add-AcceptanceViolation "rds_freeable_memory_minimum" }
     if ($rdsCpuCredit.count -gt 0 -and $rdsCpuCredit.minimum -le [double]$t.rdsCpuCreditMinimum) { Add-AcceptanceViolation "rds_cpu_credit_minimum" }
     if ($rdsSurplus.count -gt 0 -and $rdsSurplus.maximum -gt 0) { Add-AcceptanceViolation "rds_surplus_credits_charged" }
+    if ($Config.ExpectedRdsInstanceClass -eq "db.t4g.xlarge") {
+        foreach ($latencyName in @("rds_read_latency_ms", "rds_write_latency_ms")) {
+            $latency = Get-SeriesSummary $latencyName
+            if ($latency.count -lt 1) { Add-AcceptanceViolation "missing_acceptance_metric:$latencyName"; continue }
+            if ($latency.p95 -ge [double]$t.rdsLatencyP95MaximumMilliseconds) {
+                Add-AcceptanceViolation "${latencyName}_p95"
+            }
+            if ($latency.maximum -ge [double]$t.rdsLatencyPeakMaximumMilliseconds) {
+                Add-AcceptanceViolation "${latencyName}_peak"
+            }
+        }
+        $rdsQueue = Get-SeriesSummary "rds_disk_queue_depth"
+        if ($rdsQueue.count -lt 1) { Add-AcceptanceViolation "missing_acceptance_metric:rds_disk_queue_depth" }
+        elseif ($rdsQueue.p95 -ge [double]$t.rdsQueueDepthP95Maximum) { Add-AcceptanceViolation "rds_disk_queue_depth_p95" }
+        $totalIops = Get-SeriesSummary "rds_total_iops"
+        if ($totalIops.count -lt 1) { Add-AcceptanceViolation "missing_acceptance_metric:rds_total_iops" }
+        else {
+            if ($totalIops.p95 -ge [double]$t.rdsIopsP95Maximum) { Add-AcceptanceViolation "rds_total_iops_p95" }
+            if ($totalIops.maximum -ge [double]$t.rdsIopsPeakMaximum) { Add-AcceptanceViolation "rds_total_iops_peak" }
+        }
+    }
+    $rdsCreditSlope = Get-RdsCreditSlopeResult -Config $Config
+    if ($rdsCreditSlope.required -and -not $rdsCreditSlope.passed) {
+        Add-AcceptanceViolation "rds_cpu_credit_hours_2_8_slope"
+    }
     if ($script:AcceptanceSeries.ContainsKey("rds_swap") -and $script:AcceptanceSeries["rds_swap"].values.Count -ge 3) {
         $swapValues = $script:AcceptanceSeries["rds_swap"].values
         if ($swapValues[$swapValues.Count - 1] -gt $swapValues[0] + 67108864.0) { Add-AcceptanceViolation "rds_swap_growing" }
@@ -1622,6 +1913,7 @@ function Get-AcceptanceResult {
         passed = $script:AcceptanceViolations.Count -eq 0
         violations = @($script:AcceptanceViolations | Sort-Object)
         metrics = $summaries
+        rdsCpuCreditHours2Through8 = $rdsCreditSlope
         natFinalSixHours = $natWindow
     }
 }
@@ -1649,7 +1941,18 @@ function Get-Sample {
     }
 
     $ecs = Get-EcsState -Config $Config
+    if ($Config.ExpectedActiveApiTaskDefinitionArn -and
+        [string]$ecs[$r.apiService].taskDefinition -ne $Config.ExpectedActiveApiTaskDefinitionArn) {
+        $immediate.Add("ecs_active_api_task_definition_mismatch")
+    }
+    if ($Config.ExpectedActiveWorkerTaskDefinitionArn -and
+        [string]$ecs[$r.workerService].taskDefinition -ne $Config.ExpectedActiveWorkerTaskDefinitionArn) {
+        $immediate.Add("ecs_active_worker_task_definition_mismatch")
+    }
     $ecsNetwork = Get-EcsNetworkState -Config $Config -ServiceState $ecs
+    if (@($ecsNetwork.taskDefinitionMismatches).Count -gt 0) {
+        $immediate.Add("ecs_active_running_task_revision_mismatch")
+    }
     if (-not $ecsNetwork.satisfied) { $immediate.Add("ecs_network_contract_mismatch") }
     foreach ($serviceName in @($r.apiService, $r.workerService)) {
         $state = $ecs[$serviceName]
@@ -1661,6 +1964,12 @@ function Get-Sample {
     $stoppedTasks = @(Get-NewStoppedTasks -Config $Config)
     foreach ($task in $stoppedTasks) {
         if ($task.expectedScaleOrDeploymentStop) { continue }
+        elseif ($task.oom -and $task.service -eq $r.apiService -and
+            $Config.ExpectedActiveApiTaskDefinitionArn -and
+            [string]$ecs[$r.apiService].taskDefinition -eq $Config.ExpectedActiveApiTaskDefinitionArn -and
+            $Config.ExpectedActiveApiTaskDefinitionArn -match '/[A-Za-z0-9_-]*api-emergency:\d+$') {
+            $immediate.Add("ecs_active_emergency_api_oom:$($task.taskArnSuffix)")
+        }
         elseif ($task.oom -and $task.service -eq $r.apiService) { $immediate.Add("ecs_api_oom:$($task.taskArnSuffix)") }
         else { $immediate.Add("ecs_task_stopped:$($task.taskArnSuffix)") }
     }
@@ -1702,6 +2011,22 @@ function Get-Sample {
 
     $rdsState = Get-RdsState -Config $Config
     if ($rdsState.status -ne "available") { $immediate.Add("rds_unavailable") }
+    if ($Config.ExpectedRdsInstanceClass -and $rdsState.instanceClass -ne $Config.ExpectedRdsInstanceClass) {
+        $immediate.Add("rds_instance_class_mismatch")
+    }
+    if ($null -ne $Config.ExpectedRdsPosture) {
+        $observedRdsPosture = [ordered]@{
+            engine=$rdsState.engine;engineVersion=$rdsState.engineVersion
+            allocatedStorageGiB=$rdsState.allocatedStorageGiB;maxAllocatedStorageGiB=$rdsState.maxAllocatedStorageGiB
+            storageType=$rdsState.storageType;storageEncrypted=$rdsState.storageEncrypted;multiAz=$rdsState.multiAz
+            publiclyAccessible=$rdsState.publiclyAccessible;performanceInsightsEnabled=$rdsState.performanceInsightsEnabled
+            dbSubnetGroupName=$rdsState.dbSubnetGroup;vpcSecurityGroupIds=@($rdsState.vpcSecurityGroupIds|Sort-Object -Unique)
+        }
+        if (($observedRdsPosture|ConvertTo-Json -Depth 10 -Compress) -cne
+            ($Config.ExpectedRdsPosture|ConvertTo-Json -Depth 10 -Compress)) {
+            $immediate.Add("rds_exact_posture_mismatch")
+        }
+    }
     if (Test-HasObjectMembers $rdsState.pendingModifiedValues) { $immediate.Add("rds_pending_modifications") }
     $rdsCpu = Get-BatchMetric $metricBatch "rds_cpu"
     $rdsConnections = Get-BatchMetric $metricBatch "rds_connections"
@@ -1710,6 +2035,14 @@ function Get-Sample {
     $rdsSwap = Get-BatchMetric $metricBatch "rds_swap"
     $rdsCpuCredit = Get-BatchMetric $metricBatch "rds_cpu_credit"
     $rdsSurplusCharged = Get-BatchMetric $metricBatch "rds_surplus_charged"
+    $rdsReadLatencySeconds = Get-BatchMetric $metricBatch "rds_read_latency_seconds"
+    $rdsWriteLatencySeconds = Get-BatchMetric $metricBatch "rds_write_latency_seconds"
+    $rdsReadLatencyMs = Convert-MetricScale $rdsReadLatencySeconds 1000.0
+    $rdsWriteLatencyMs = Convert-MetricScale $rdsWriteLatencySeconds 1000.0
+    $rdsDiskQueueDepth = Get-BatchMetric $metricBatch "rds_disk_queue_depth"
+    $rdsReadIops = Get-BatchMetric $metricBatch "rds_read_iops"
+    $rdsWriteIops = Get-BatchMetric $metricBatch "rds_write_iops"
+    $rdsTotalIops = Get-BatchMetric $metricBatch "rds_total_iops"
     $rdsStorageHeadroomPercent = if ($null -ne $rdsFreeStorage -and $rdsState.allocatedStorageGiB -gt 0) {
         [pscustomobject]@{
             Value = 100.0 * $rdsFreeStorage.Value / ([double]$rdsState.allocatedStorageGiB * 1GB)
@@ -1735,10 +2068,20 @@ function Get-Sample {
     Add-MetricFinding $immediate $consecutive "rds_connections" $rdsConnections { param($v) $v -ge [double]$t.rdsConnectionsMaximum } $required
     Add-MetricFinding $immediate $consecutive "rds_storage_headroom" $rdsStorageHeadroomPercent { param($v) $v -le [double]$t.rdsStorageHeadroomMinimumPercent } $required
     Add-MetricFinding $immediate $consecutive "rds_free_memory" $rdsFreeMemory { param($v) $v -le [double]$t.rdsFreeableMemoryMinimumBytes } $required
-    Add-MetricFinding $immediate $consecutive "rds_cpu_credit" $rdsCpuCredit { param($v) $v -lt [double]$t.rdsCpuCreditMinimum } $required `
+    Add-MetricFinding $immediate $consecutive "rds_cpu_credit" $rdsCpuCredit { param($v) $v -le [double]$t.rdsCpuCreditMinimum } $required `
         -FreshnessMaximumSeconds ([double]$t.fiveMinuteMetricFreshnessMaximumSeconds)
     Add-MetricFinding $immediate $consecutive "rds_surplus_credits_charged" $rdsSurplusCharged { param($v) $v -gt 0 } $required `
         -FreshnessMaximumSeconds ([double]$t.fiveMinuteMetricFreshnessMaximumSeconds)
+    if ($Config.ExpectedRdsInstanceClass -eq "db.t4g.xlarge") {
+        Add-MetricFinding $immediate $consecutive "rds_read_latency_peak" $rdsReadLatencyMs `
+            { param($v) $v -ge [double]$t.rdsLatencyPeakMaximumMilliseconds } $required -ImmediateOnBreach
+        Add-MetricFinding $immediate $consecutive "rds_write_latency_peak" $rdsWriteLatencyMs `
+            { param($v) $v -ge [double]$t.rdsLatencyPeakMaximumMilliseconds } $required -ImmediateOnBreach
+        Add-MetricFinding $immediate $consecutive "rds_disk_queue_depth" $rdsDiskQueueDepth `
+            { param($v) $v -ge [double]$t.rdsQueueDepthConsecutiveMaximum } $required
+        Add-MetricFinding $immediate $consecutive "rds_total_iops_peak" $rdsTotalIops `
+            { param($v) $v -ge [double]$t.rdsIopsPeakMaximum } $required -ImmediateOnBreach
+    }
     Add-MetricFinding $immediate $consecutive "rds_swap_telemetry" $rdsSwap { param($v) $false } $required
     Add-GrowthMetricFinding $consecutive "rds_swap_growing" $rdsSwap ([double]$t.rdsSwapGrowthMaximumBytesPerMinute) $required
     Add-MetricFinding $immediate $consecutive "redis_cpu" $redisCpu { param($v) $v -ge [double]$t.redisCpuMaximumPercent } $required
@@ -1752,6 +2095,8 @@ function Get-Sample {
     foreach ($entry in @(
         @("rds_connections", $rdsConnections), @("rds_storage_headroom", $rdsStorageHeadroomPercent),
         @("rds_free_memory", $rdsFreeMemory), @("rds_swap", $rdsSwap), @("rds_cpu_credit", $rdsCpuCredit), @("rds_surplus_charged", $rdsSurplusCharged),
+        @("rds_read_latency_ms", $rdsReadLatencyMs), @("rds_write_latency_ms", $rdsWriteLatencyMs),
+        @("rds_disk_queue_depth", $rdsDiskQueueDepth), @("rds_read_iops", $rdsReadIops), @("rds_write_iops", $rdsWriteIops), @("rds_total_iops", $rdsTotalIops),
         @("redis_cpu", $redisCpu), @("redis_memory", $redisMemory), @("redis_free", $redisFree),
         @("redis_evictions", $redisEvictions), @("redis_rejected", $redisRejected), @("redis_cpu_credit", $redisCpuCredit)
     )) { Add-AcceptanceDatapoint $entry[0] $entry[1] }
@@ -1897,6 +2242,14 @@ function Get-Sample {
             rdsSwapUsageBytes = Get-MetricNumber $rdsSwap
             rdsCpuCreditBalance = Get-MetricNumber $rdsCpuCredit
             rdsSurplusCreditsCharged = Get-MetricNumber $rdsSurplusCharged
+            rdsReadLatencyMilliseconds = Get-MetricNumber $rdsReadLatencyMs
+            rdsWriteLatencyMilliseconds = Get-MetricNumber $rdsWriteLatencyMs
+            rdsReadLatencySeconds = Get-MetricNumber $rdsReadLatencySeconds
+            rdsWriteLatencySeconds = Get-MetricNumber $rdsWriteLatencySeconds
+            rdsDiskQueueDepth = Get-MetricNumber $rdsDiskQueueDepth
+            rdsReadIops = Get-MetricNumber $rdsReadIops
+            rdsWriteIops = Get-MetricNumber $rdsWriteIops
+            rdsTotalIops = Get-MetricNumber $rdsTotalIops
             redisCpuPercent = Get-MetricNumber $redisCpu
             redisMemoryPercent = Get-MetricNumber $redisMemory
             redisFreeMemoryBytes = Get-MetricNumber $redisFree
@@ -2058,12 +2411,29 @@ function Send-Notification {
 
 function Get-ApprovedActionForFailure {
     param($Config, $Sample, [string]$Failure)
+    # Database capacity, credits, latency, queue depth, I/O, availability, and
+    # telemetry failures are evidence-preserving hard stops. They must never be
+    # translated into an unrelated application, WAF, networking, or Redis
+    # mutation merely because one of those phases happens to be active.
+    if ($Failure -match '^(?:rds_|missing_metric:rds_|stale_metric:rds_)') { return $null }
+    if ($Failure -match '^(?:missing_metric:|stale_metric:)') { return $null }
+    if ($Failure -match '^ecs_active_emergency_api_oom:') { return $null }
     if ($Failure -in @(
         'load:cross-school-delivery', 'load:cross-school-http-response',
         'load:tenant-isolation-probe-failed', 'load:command-target-scope',
         'load:invalid-teacher-response'
     )) { return [ordered]@{ action = "Application"; priority = 110 } }
     if ($Failure -match '^ecs_api_oom:') { return [ordered]@{ action = "Oom"; priority = 100 } }
+    if ($Failure -match '^(?:ecs_active_(?:api|worker)_task_definition_mismatch$|ecs_active_running_task_revision_mismatch$|ecs_cpu:|ecs_memory:)') {
+        return [ordered]@{ action = "Application"; priority = 80 }
+    }
+    # A stopped task, unstable service, or unhealthy target is an observed
+    # symptom, not proof of an application regression. In particular, each can
+    # be caused by the PublicEcs/NatRemoved networking change. Leave these
+    # unclassified so they hard-stop on their own; a separate, cause-specific
+    # finding (for example a task-definition mismatch or exact network-contract
+    # mismatch) may still select only its corresponding reviewed recovery.
+    if ($Failure -match '^(?:ecs_task_stopped:|alb_unhealthy$|ecs_unstable:)') { return $null }
     if ($Failure -match '^load:.*(?:valid-http-429|valid-429)$') {
         return [ordered]@{ action = "Application"; priority = 90 }
     }
@@ -2084,17 +2454,23 @@ function Get-ApprovedActionForFailure {
         return [ordered]@{ action = "Application"; priority = 79 }
     }
 
-    $phaseAction = switch ($Config.Phase) {
-        "Application" { "Application" }
-        "Waf" { "Application" }
-        "PublicEcs" { "PublicEcs" }
-        "NatRemoved" { "NatRemoved" }
-        { $_ -in @("Redis", "Final") } { "Redis" }
-        default { $null }
+    # Infrastructure recovery is cause-first. A stage name never relabels an
+    # unrelated failure into that stage's rollback action.
+    if ($Failure -eq "ecs_network_contract_mismatch") {
+        if ($Config.Phase -eq "PublicEcs") { return [ordered]@{ action = "PublicEcs"; priority = 80 } }
+        if ($Config.Phase -eq "NatRemoved") { return [ordered]@{ action = "NatRemoved"; priority = 80 } }
+        return $null
     }
-    if ($phaseAction -and ($Failure -match '^(ecs_task_stopped:|alb_unhealthy$|ecs_unstable:|ecs_network_contract_mismatch$)' -or
-        $Failure -match '^(rds_|redis_|nat_|route53_|ecs_cpu:|ecs_memory:)')) {
-        return [ordered]@{ action = $phaseAction; priority = 80 }
+    if ($Failure -match '^nat_(?:failed|count_mismatch|packet_drops|port_allocation_errors)$') {
+        if ($Config.Phase -eq "NatRemoved") { return [ordered]@{ action = "NatRemoved"; priority = 80 } }
+        return $null
+    }
+    if ($Failure -match '^redis_') {
+        if ($Config.Phase -in @("Redis","Final") -and
+            [string]$Config.ExpectedRedisNodeType -eq "cache.t4g.micro") {
+            return [ordered]@{ action = "Redis"; priority = 80 }
+        }
+        return $null
     }
     if ($Failure -match '^load:(?:load-fatal-gate|fatal-gate|application-regression)$') {
         return [ordered]@{ action = "Application"; priority = 70 }
@@ -2112,13 +2488,17 @@ function Resolve-ApprovedRollback {
             $candidates.Add([pscustomobject]@{ action = [string]$candidate.action; priority = [int]$candidate.priority; reason = [string]$reason })
         }
     }
-    $winner = @($candidates | Sort-Object @{ Expression = "priority"; Descending = $true }, @{ Expression = "action"; Descending = $false } | Select-Object -First 1)
+    $highestPriority = if ($candidates.Count -gt 0) { [int](($candidates | Measure-Object priority -Maximum).Maximum) } else { $null }
+    $topCandidates = if ($null -eq $highestPriority) { @() } else { @($candidates | Where-Object priority -eq $highestPriority) }
+    $topActions = @($topCandidates | ForEach-Object action | Sort-Object -Unique)
+    $ambiguous = $topActions.Count -gt 1
+    $winner = @(if ($topActions.Count -eq 1) { $topCandidates | Sort-Object reason | Select-Object -First 1 })
     return [ordered]@{
-        approved = $winner.Count -eq 1
-        ambiguous = $false
+        approved = $winner.Count -eq 1 -and -not $ambiguous
+        ambiguous = $ambiguous
         action = if ($winner.Count -eq 1) { [string]$winner[0].action } else { $null }
         priority = if ($winner.Count -eq 1) { [int]$winner[0].priority } else { $null }
-        approvedReasons = if ($winner.Count -eq 1) {
+        approvedReasons = if ($winner.Count -eq 1 -and -not $ambiguous) {
             @($candidates | Where-Object action -eq $winner[0].action | ForEach-Object reason)
         } else { @() }
         candidates = @($candidates)
@@ -2153,7 +2533,10 @@ function Assert-RollbackPreflight {
     # OOM detection is always active, including monitor-only soaks. Load runs
     # can also dispatch application rollback and a correlated WAF rollback in
     # every rollout phase, not only while phase=Waf.
-    [void]$actions.Add("Oom")
+    if (-not ($Config.ExpectedActiveApiTaskDefinitionArn -and
+        $Config.ExpectedActiveApiTaskDefinitionArn -match '/[A-Za-z0-9_-]*api-emergency:\d+$')) {
+        [void]$actions.Add("Oom")
+    }
     if ($Config.LoadProgressPath) {
         [void]$actions.Add("Application")
         [void]$actions.Add("Waf")
@@ -2171,6 +2554,13 @@ function Assert-RollbackPreflight {
 }
 
 $config = Read-Configuration
+if (-not $config.TestMode -and [string]::IsNullOrWhiteSpace($ExpectedConfigSha256)) {
+    throw "Production monitor Validate and Monitor modes require ExpectedConfigSha256 from the rollout supervisor."
+}
+if ($normalizedConfigSha -and
+    (Get-FileHash -LiteralPath $ConfigPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne $normalizedConfigSha) {
+    throw "Bound monitor config changed while it was being parsed."
+}
 Assert-RollbackPreflight -Config $config
 $safeValidation = [ordered]@{
     valid = $true
@@ -2296,7 +2686,13 @@ try {
                     -Message "Run $($config.RunId) stopped. Gates: $($failures -join ', '). Approved unambiguous rollback: $($rollbackDecision.approved); automatic rollback enabled: $($config.AutomaticRollback)."
             }
             catch { $rollback.notificationError = $_.Exception.Message }
-            if ($config.AutomaticRollback -and $rollbackDecision.approved) {
+            if ($config.AutomaticRollback -and $config.ExpectedRollbackConfigSha256 -and
+                (Get-FileHash -LiteralPath $config.RollbackConfigPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne $config.ExpectedRollbackConfigSha256) {
+                $rollback.approved = $false
+                $rollback.error = "Bound rollback config changed after arming; no automatic mutation was attempted."
+                $failures += "rollback_config_sha256_mismatch"
+            }
+            if ($config.AutomaticRollback -and $rollbackDecision.approved -and -not $rollback.error) {
                 $action = $rollbackDecision.action
                 $controller = Join-Path $PSScriptRoot "aws-rollout-rollback.ps1"
                 $rollback.attempted = $true
