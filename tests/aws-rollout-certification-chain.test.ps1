@@ -20,7 +20,8 @@ $functionNames = @(
     "Get-CertificationTextSha256","Assert-CertificationSha256","Assert-CertificationEvidenceReference",
     "Get-CertificationConfigHash","New-CertificationValidationReceipt","Use-CertificationValidationReceipt",
     "Assert-CertificationReceiptLifetime","Assert-CertificationTaskDefinitionAttestations","Assert-CertificationPreflightContract",
-    "Assert-CertificationFixtureVerificationContract","Assert-CertificationFixtureAttestation",
+    "Assert-CertificationFixtureVerificationContract","Get-CertificationHarnessArtifactBindings","Assert-CertificationHarnessArtifactContract",
+    "Assert-CertificationHarnessArtifactEnvironment","Assert-CertificationFixtureAttestation",
     "Assert-CertificationConsumedReceiptAttestation","Assert-CertificationAttestedStageEvidence",
     "Assert-CertificationChainContinuity","Test-CertificationIntervalIncludesLocalTime",
     "Assert-CertificationFixtureVerificationTimestamp","Assert-CertificationProductionRollbackTaskIdentities",
@@ -63,8 +64,21 @@ try {
 
     $schemaPath=Join-Path $tempRoot "schema.json";[IO.File]::WriteAllText($schemaPath,'{"schemaVersion":1,"type":"rollback_schema_compatibility","compatible":true}',[Text.UTF8Encoding]::new($false))
     $schemaBinding=[ordered]@{path=$schemaPath;sha256=Get-CertificationSha256 $schemaPath}
-    $artifactOne=Join-Path $tempRoot "primary-fixture.json";$artifactTwo=Join-Path $tempRoot "canary-fixture.json"
-    [IO.File]::WriteAllText($artifactOne,'{"school":"primary"}',[Text.UTF8Encoding]::new($false));[IO.File]::WriteAllText($artifactTwo,'{"school":"canary"}',[Text.UTF8Encoding]::new($false))
+    $artifactOne=Join-Path $tempRoot "load-devices.private.json";$artifactTwo=Join-Path $tempRoot "load-auth.private.json";$artifactThree=Join-Path $tempRoot "load-command-bodies.private.json"
+    $primarySchoolId="school-primary";$canarySchoolId="school-canary"
+    $deviceArtifact=@(1..10|ForEach-Object{[ordered]@{deviceId="canary-device-$_";studentId="canary-student-$_";studentToken="canary-token-$_";schoolId=$canarySchoolId}})
+    $deviceArtifact+=@(1..1000|ForEach-Object{
+        $primaryIndex=$_
+        $studentId=if($primaryIndex -le 500){
+            $teacher=[Math]::Floor(($primaryIndex-1)/25)+1;$student=(($primaryIndex-1)%25)+1;"student-$teacher-$student"
+        }elseif($primaryIndex -le 800){
+            $teacher=[Math]::Floor(($primaryIndex-501)/15)+1;$student=(($primaryIndex-501)%15)+26;"student-$teacher-$student"
+        }else{"extra-student-$primaryIndex"}
+        [ordered]@{deviceId="primary-device-$primaryIndex";studentId=$studentId;studentToken="primary-token-$primaryIndex";schoolId=$primarySchoolId}
+    })
+    $teacherArtifact=@(1..20|ForEach-Object{$teacher=$_;[ordered]@{teacherId="teacher-$teacher";schoolId=$primarySchoolId;role="teacher";teachingSessionId="session-$teacher";teacherCookie="cookie-$teacher";csrfToken="csrf-$teacher";teacherToken="token-$teacher";studentIds=@(1..40|ForEach-Object{"student-$teacher-$_"})}})
+    $commandArtifact=@(1..20|ForEach-Object{[ordered]@{teachingSessionId="session-$_";targetScope="class";commandType="open-tab";commandPayload=@{url="https://example.edu/$_"}}})
+    Write-AtomicJson $artifactOne $deviceArtifact;Write-AtomicJson $artifactTwo ([ordered]@{schemaVersion=2;schoolId=$primarySchoolId;teacherAuth=$teacherArtifact});Write-AtomicJson $artifactThree $commandArtifact
     $fixtureId="fixture-chain";$fixtureNow=[DateTimeOffset]::UtcNow
     $statePath=Join-Path $tempRoot "fixture-state.json";Write-AtomicJson $statePath ([ordered]@{schemaVersion=1;fixtureId=$fixtureId;generatedAt=$fixtureNow.AddMinutes(-10).ToString("o");refreshedAt=$fixtureNow.AddMinutes(-5).ToString("o")})
     $verificationPath=Join-Path $tempRoot "fixture-verification.json";Write-AtomicJson $verificationPath ([ordered]@{
@@ -75,9 +89,96 @@ try {
     })
     $fixture=[ordered]@{
         state=@{path=$statePath;sha256=Get-CertificationSha256 $statePath};verification=@{path=$verificationPath;sha256=Get-CertificationSha256 $verificationPath}
-        artifacts=@(@{path=$artifactOne;sha256=Get-CertificationSha256 $artifactOne},@{path=$artifactTwo;sha256=Get-CertificationSha256 $artifactTwo})
+        artifacts=@(
+            [pscustomobject]@{kind="device-manifest";path=$artifactOne;sha256=Get-CertificationSha256 $artifactOne},
+            [pscustomobject]@{kind="teacher-auth";path=$artifactTwo;sha256=Get-CertificationSha256 $artifactTwo},
+            [pscustomobject]@{kind="command-bodies";path=$artifactThree;sha256=Get-CertificationSha256 $artifactThree}
+        )
         fixtureId=$fixtureId;generatedAtUtc=$fixtureNow.AddMinutes(-10).ToString("o");refreshedAtUtc=$fixtureNow.AddMinutes(-5).ToString("o");verifiedAtUtc=$fixtureNow.AddMinutes(-1).ToString("o");timezone="America/New_York";plannedTrafficStartUtc=$fixtureNow.ToString("o")
     }
+    $artifactBindings=@(Get-CertificationHarnessArtifactBindings $fixture.artifacts "fixture.artifacts")
+    Assert-Condition ($artifactBindings.Count -eq 3 -and
+        (@($artifactBindings | ForEach-Object { [string]$_.kind } | Sort-Object) -join ",") -eq "command-bodies,device-manifest,teacher-auth") `
+        "Fixture custody must bind the three role-tagged harness inputs exactly once."
+    $assertions++
+    Assert-CertificationHarnessArtifactContract $artifactBindings "fixture.artifacts"
+    $assertions++
+
+    $missingStudentDevices=@(Get-Content -LiteralPath $artifactOne -Raw|ConvertFrom-Json -Depth 20)
+    $missingStudentDevices[10].PSObject.Properties.Remove("studentId")
+    Write-AtomicJson $artifactOne $missingStudentDevices
+    $missingStudentBindings=@(Get-CertificationHarnessArtifactBindings @(
+        [pscustomobject]@{kind="device-manifest";path=$artifactOne;sha256=Get-CertificationSha256 $artifactOne},
+        $fixture.artifacts[1],$fixture.artifacts[2]
+    ) "fixture.artifacts")
+    $missingStudentRejected=$false
+    try{Assert-CertificationHarnessArtifactContract $missingStudentBindings "fixture.artifacts"}catch{$missingStudentRejected=$true}
+    Assert-Condition $missingStudentRejected "Every selected device must bind a nonblank student ID."
+    $assertions++
+    Write-AtomicJson $artifactOne $deviceArtifact
+
+    $mismatchedStudentDevices=@(Get-Content -LiteralPath $artifactOne -Raw|ConvertFrom-Json -Depth 20)
+    $mismatchedStudentDevices[10].studentId="unrelated-student"
+    Write-AtomicJson $artifactOne $mismatchedStudentDevices
+    $mismatchedStudentBindings=@(Get-CertificationHarnessArtifactBindings @(
+        [pscustomobject]@{kind="device-manifest";path=$artifactOne;sha256=Get-CertificationSha256 $artifactOne},
+        $fixture.artifacts[1],$fixture.artifacts[2]
+    ) "fixture.artifacts")
+    $mismatchedStudentRejected=$false
+    try{Assert-CertificationHarnessArtifactContract $mismatchedStudentBindings "fixture.artifacts"}catch{$mismatchedStudentRejected=$_.Exception.Message -match "selected Waf/800 primary devices"}
+    Assert-Condition $mismatchedStudentRejected "The first 800 primary devices must be the 800 disjoint teacher-roster students."
+    $assertions++
+    Write-AtomicJson $artifactOne $deviceArtifact
+
+    $skewedWaf500Devices=@(Get-Content -LiteralPath $artifactOne -Raw|ConvertFrom-Json -Depth 20)
+    $firstTeacherStudent=$skewedWaf500Devices[10].studentId
+    $skewedWaf500Devices[10].studentId=$skewedWaf500Devices[525].studentId
+    $skewedWaf500Devices[525].studentId=$firstTeacherStudent
+    Write-AtomicJson $artifactOne $skewedWaf500Devices
+    $skewedWaf500Bindings=@(Get-CertificationHarnessArtifactBindings @(
+        [pscustomobject]@{kind="device-manifest";path=$artifactOne;sha256=Get-CertificationSha256 $artifactOne},
+        $fixture.artifacts[1],$fixture.artifacts[2]
+    ) "fixture.artifacts")
+    $skewedWaf500Rejected=$false
+    try{Assert-CertificationHarnessArtifactContract $skewedWaf500Bindings "fixture.artifacts"}catch{$skewedWaf500Rejected=$_.Exception.Message -match "25 roster students per class"}
+    Assert-Condition $skewedWaf500Rejected "Waf/500 must select exactly 25 students from every teacher roster."
+    $assertions++
+    Write-AtomicJson $artifactOne $deviceArtifact
+
+    $artifactEnvironment=[ordered]@{LOAD_DEVICE_MANIFEST=$artifactOne;LOAD_TEACHER_AUTH_FILE=$artifactTwo;LOAD_COMMAND_BODIES_FILE=$artifactThree}
+    $previousArtifactEnvironment=@{}
+    foreach($entry in $artifactEnvironment.GetEnumerator()){
+        $previousArtifactEnvironment[$entry.Key]=[Environment]::GetEnvironmentVariable($entry.Key,"Process")
+        [Environment]::SetEnvironmentVariable($entry.Key,$entry.Value,"Process")
+    }
+    try{
+        Assert-CertificationHarnessArtifactEnvironment $artifactBindings
+        $artifactEnvironmentMismatchRejected=$false
+        [Environment]::SetEnvironmentVariable("LOAD_DEVICE_MANIFEST",$artifactTwo,"Process")
+        try{Assert-CertificationHarnessArtifactEnvironment $artifactBindings}catch{$artifactEnvironmentMismatchRejected=$_.Exception.Message -match "differs from its role-tagged"}
+        Assert-Condition $artifactEnvironmentMismatchRejected "The supervisor must reject a harness path that differs from the attested artifact."
+        $assertions++
+        [Environment]::SetEnvironmentVariable("LOAD_DEVICE_MANIFEST",$artifactOne.ToUpperInvariant(),"Process")
+        $caseVariantRejected=$false
+        try{Assert-CertificationHarnessArtifactEnvironment $artifactBindings}catch{$caseVariantRejected=$true}
+        Assert-Condition ($(if($IsWindows){-not $caseVariantRejected}else{$caseVariantRejected})) `
+            "Harness artifact path comparison must follow the host filesystem's case semantics."
+        $assertions++
+    }finally{
+        foreach($entry in $previousArtifactEnvironment.GetEnumerator()){
+            [Environment]::SetEnvironmentVariable($entry.Key,$entry.Value,"Process")
+        }
+    }
+
+    $duplicateArtifactKindRejected=$false
+    try{
+        Get-CertificationHarnessArtifactBindings @(
+            $fixture.artifacts[0],$fixture.artifacts[1],
+            [pscustomobject]@{kind="teacher-auth";path=$artifactThree;sha256=Get-CertificationSha256 $artifactThree}
+        ) "fixture.artifacts" | Out-Null
+    }catch{$duplicateArtifactKindRejected=$_.Exception.Message -match "each reviewed harness artifact kind exactly once"}
+    Assert-Condition $duplicateArtifactKindRejected "Duplicate or missing harness artifact roles must fail closed."
+    $assertions++
     function New-TaskAttestation($arn,$imageDigest,$gitSha,$container,$cpu,$memory){[ordered]@{taskDefinitionArn=$arn;taskDefinitionJsonSha256="8"*64;image="repo@$imageDigest";imageDigest=$imageDigest;imageManifestSha256="9"*64;gitSha=$gitSha;provenanceTag=$gitSha.Substring(0,12);cpu=$cpu;memory=$memory;containerName=$container}}
     $taskDefinitions=[ordered]@{
         activeApi=New-TaskAttestation $activeApiArn $digest $appSha "api" 512 2048

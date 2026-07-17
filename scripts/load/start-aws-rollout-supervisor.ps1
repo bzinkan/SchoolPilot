@@ -498,6 +498,122 @@ function Get-CertificationFixtureGenerationBinding {
     return [ordered]@{fixtureId=$expectedFixtureId;generatedAtUtc=$generatedAt.ToString("o");refreshedAtUtc=$refreshedAt.ToString("o")}
 }
 
+function Get-CertificationHarnessArtifactBindings {
+    param($References, [string]$Name)
+    $requiredKinds = @("device-manifest", "teacher-auth", "command-bodies")
+    $bindings = @()
+    foreach ($reference in @($References)) {
+        $kind = [string](Get-CertificationValue $reference "kind" "")
+        if ($kind -notin $requiredKinds -or @($bindings | Where-Object { $_.kind -eq $kind }).Count -gt 0) {
+            throw "$Name must contain each reviewed harness artifact kind exactly once."
+        }
+        $binding = Assert-CertificationEvidenceReference $reference $Name
+        $bindings += [ordered]@{kind=$kind;path=$binding.path;sha256=$binding.sha256}
+    }
+    $observedKinds = @($bindings | ForEach-Object { [string]$_.kind } | Sort-Object -Unique)
+    if ($bindings.Count -ne 3 -or @(Compare-Object $requiredKinds $observedKinds).Count -ne 0 -or
+        @($bindings.path | Sort-Object -Unique).Count -ne 3 -or @($bindings.sha256 | Sort-Object -Unique).Count -ne 3) {
+        throw "$Name must bind distinct device-manifest, teacher-auth, and command-bodies artifacts."
+    }
+    return @($bindings | Sort-Object { [string]$_.kind })
+}
+
+function Assert-CertificationHarnessArtifactContract {
+    param($ArtifactBindings, [string]$Name)
+    $byKind = @{}
+    foreach ($binding in @($ArtifactBindings)) { $byKind[[string]$binding.kind] = $binding }
+    try { $devices = @(Get-Content -LiteralPath $byKind["device-manifest"].path -Raw | ConvertFrom-Json -Depth 30) }
+    catch { throw "$Name device manifest must contain valid JSON." }
+    try { $auth = Get-Content -LiteralPath $byKind["teacher-auth"].path -Raw | ConvertFrom-Json -Depth 40 }
+    catch { throw "$Name teacher-auth artifact must contain valid JSON." }
+    try { $commands = @(Get-Content -LiteralPath $byKind["command-bodies"].path -Raw | ConvertFrom-Json -Depth 30) }
+    catch { throw "$Name command-bodies artifact must contain valid JSON." }
+
+    $primarySchoolId = [string](Get-CertificationValue $auth "schoolId" "")
+    $teachers = @(Get-CertificationValue $auth "teacherAuth" @())
+    $firstCanaries = @($devices | Select-Object -First 10)
+    $primaryDevices = @($devices | Select-Object -Skip 10)
+    $deviceIds = @($devices | ForEach-Object { [string]$_.deviceId })
+    $deviceStudentIds = @($devices | ForEach-Object { [string]$_.studentId })
+    $schoolIds = @($devices | ForEach-Object { [string]$_.schoolId } | Sort-Object -Unique)
+    if ($devices.Count -ne 1010 -or $firstCanaries.Count -ne 10 -or $primaryDevices.Count -ne 1000 -or
+        [string]::IsNullOrWhiteSpace($primarySchoolId) -or $schoolIds.Count -ne 2 -or
+        @($deviceIds | Sort-Object -Unique).Count -ne 1010 -or
+        @($deviceStudentIds | Sort-Object -Unique).Count -ne 1010 -or
+        @($devices | Where-Object {
+            [string]::IsNullOrWhiteSpace([string]$_.deviceId) -or
+            [string]::IsNullOrWhiteSpace([string]$_.studentId) -or
+            [string]::IsNullOrWhiteSpace([string]$_.studentToken) -or
+            [string]::IsNullOrWhiteSpace([string]$_.schoolId)
+        }).Count -gt 0 -or
+        @($firstCanaries | ForEach-Object { [string]$_.schoolId } | Sort-Object -Unique).Count -ne 1 -or
+        @($firstCanaries | Where-Object { [string]$_.schoolId -eq $primarySchoolId }).Count -gt 0 -or
+        @($primaryDevices | Where-Object { [string]$_.schoolId -ne $primarySchoolId }).Count -gt 0) {
+        throw "$Name device manifest does not prove the exact 10-canary plus 1000-primary fixture order."
+    }
+
+    $teacherIds = @($teachers | ForEach-Object { [string]$_.teacherId })
+    $teacherSessionIds = @($teachers | ForEach-Object { [string]$_.teachingSessionId })
+    $rosterStudentIds = @($teachers | ForEach-Object { @($_.studentIds) } | ForEach-Object { [string]$_ })
+    if ([int](Get-CertificationValue $auth "schemaVersion" 0) -ne 2 -or $teachers.Count -ne 20 -or
+        @($teacherIds | Sort-Object -Unique).Count -ne 20 -or
+        @($teacherSessionIds | Sort-Object -Unique).Count -ne 20 -or
+        $rosterStudentIds.Count -ne 800 -or @($rosterStudentIds | Sort-Object -Unique).Count -ne 800 -or
+        @($teachers | Where-Object {
+            [string]$_.schoolId -ne $primarySchoolId -or [string]$_.role -ne "teacher" -or
+            @($_.studentIds).Count -ne 40 -or [string]::IsNullOrWhiteSpace([string]$_.teacherCookie) -or
+            [string]::IsNullOrWhiteSpace([string]$_.csrfToken) -or
+            [string]::IsNullOrWhiteSpace([string]$_.teacherToken)
+        }).Count -gt 0) {
+        throw "$Name teacher-auth artifact does not prove 20 live disjoint 40-student teacher cohorts."
+    }
+    $selectedWaf500StudentIds = @($primaryDevices | Select-Object -First 500 | ForEach-Object { [string]$_.studentId })
+    $selectedPrimaryStudentIds = @($primaryDevices | Select-Object -First 800 | ForEach-Object { [string]$_.studentId })
+    if ($selectedPrimaryStudentIds.Count -ne 800 -or
+        @(Compare-Object @($rosterStudentIds | Sort-Object) @($selectedPrimaryStudentIds | Sort-Object)).Count -ne 0) {
+        throw "$Name device manifest does not bind the selected Waf/800 primary devices to the 800 teacher-roster students."
+    }
+    foreach ($teacher in $teachers) {
+        $teacherRosterStudentIds = @($teacher.studentIds | ForEach-Object { [string]$_ })
+        $waf500TeacherTargets = @($selectedWaf500StudentIds | Where-Object { $_ -in $teacherRosterStudentIds })
+        $waf800TeacherTargets = @($selectedPrimaryStudentIds | Where-Object { $_ -in $teacherRosterStudentIds })
+        if ($waf500TeacherTargets.Count -ne 25 -or $waf800TeacherTargets.Count -ne 40) {
+            throw "$Name device manifest must select exactly 25 roster students per class for Waf/500 and 40 per class for Waf/800."
+        }
+    }
+
+    $commandSessionIds = @($commands | ForEach-Object { [string]$_.teachingSessionId })
+    if ($commands.Count -ne 20 -or @($commandSessionIds | Sort-Object -Unique).Count -ne 20 -or
+        @(Compare-Object @($teacherSessionIds | Sort-Object) @($commandSessionIds | Sort-Object)).Count -ne 0 -or
+        @($commands | Where-Object {
+            [string]$_.targetScope -ne "class" -or [string]$_.commandType -ne "open-tab" -or
+            [string]::IsNullOrWhiteSpace([string]$_.commandPayload.url)
+        }).Count -gt 0) {
+        throw "$Name command-bodies artifact does not prove the exact 20 safe class-scoped command cohorts."
+    }
+}
+
+function Assert-CertificationHarnessArtifactEnvironment {
+    param($ArtifactBindings)
+    $environmentByKind = [ordered]@{
+        "device-manifest" = "LOAD_DEVICE_MANIFEST"
+        "teacher-auth" = "LOAD_TEACHER_AUTH_FILE"
+        "command-bodies" = "LOAD_COMMAND_BODIES_FILE"
+    }
+    foreach ($entry in $environmentByKind.GetEnumerator()) {
+        $binding = @($ArtifactBindings | Where-Object { $_.kind -eq $entry.Key })
+        $configured = [Environment]::GetEnvironmentVariable([string]$entry.Value, "Process")
+        if ($binding.Count -ne 1 -or [string]::IsNullOrWhiteSpace($configured)) {
+            throw "Certification load supervision requires the exact $($entry.Value) artifact binding."
+        }
+        $configuredPath = Resolve-ExternalPath -Path $configured -Name ([string]$entry.Value)
+        $comparison = if ($IsWindows) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+        if (-not [string]::Equals($configuredPath,[string]$binding[0].path,$comparison)) {
+            throw "Certification $($entry.Value) differs from its role-tagged fixture artifact."
+        }
+    }
+}
+
 function Assert-CertificationFixtureVerificationContract {
     param($Verification)
     $counts = Get-RequiredProperty $Verification "counts"
@@ -521,7 +637,7 @@ function Assert-CertificationFixtureVerificationContract {
 }
 
 function Get-CertificationContract {
-    param($Config, [bool]$TestMode)
+    param($Config, [bool]$TestMode, [bool]$BindHarnessArtifacts = $false)
     $certification = Get-CertificationValue $Config "certification"
     if ($null -eq $certification) {
         if ($TestMode) { return $null }
@@ -548,14 +664,11 @@ function Get-CertificationContract {
     $fixture = Get-RequiredProperty $certification "fixture"
     $state = Assert-CertificationEvidenceReference (Get-RequiredProperty $fixture "state") "fixture.state"
     $verification = Assert-CertificationEvidenceReference (Get-RequiredProperty $fixture "verification") "fixture.verification"
-    $artifactReferences = @()
-    foreach ($reference in @(Get-RequiredProperty $fixture "artifacts")) {
-        $artifactReferences += Assert-CertificationEvidenceReference $reference "fixture.artifacts"
-    }
-    if ($artifactReferences.Count -ne 2 -or
-        @($artifactReferences.path | Sort-Object -Unique).Count -ne 2 -or
-        @($artifactReferences.sha256 | Sort-Object -Unique).Count -ne 2) {
-        throw "Certification fixture.artifacts must contain exactly two distinct hashed primary/canary fixture artifacts."
+    $artifactReferences = @(Get-CertificationHarnessArtifactBindings `
+        (Get-RequiredProperty $fixture "artifacts") "fixture.artifacts")
+    Assert-CertificationHarnessArtifactContract $artifactReferences "fixture.artifacts"
+    if ($BindHarnessArtifacts) {
+        Assert-CertificationHarnessArtifactEnvironment $artifactReferences
     }
     try { $stateJson = Get-Content -LiteralPath $state.path -Raw | ConvertFrom-Json -Depth 30 }
     catch { throw "fixture.state must contain valid JSON." }
@@ -800,11 +913,27 @@ function Get-CertificationTaskPreflight {
         $repositoryUri = ($manifestImage -split '@')[0]
         $repositoryName = ($repositoryUri -split '/',2)[1]
         $manifest = Invoke-CertificationAwsJson @("ecr","batch-get-image","--region",$region,"--repository-name",$repositoryName,"--image-ids","imageDigest=$($entry[3])")
-        $images = @($manifest.images)
-        if ($images.Count -ne 1 -or [string]$images[0].imageId.imageDigest -ne $entry[3] -or
-            [string]::IsNullOrWhiteSpace([string]$images[0].imageManifest)) {
-            throw "Task definition '$($entry[0])' digest is not resolvable from ECR."
+        $images = @(Get-CertificationValue $manifest "images" @())
+        $manifestFailures = @(Get-CertificationValue $manifest "failures" @())
+        $wrongDigestImages = @($images | Where-Object { [string]$_.imageId.imageDigest -cne [string]$entry[3] })
+        $resolvedManifests = @($images | ForEach-Object { [string]$_.imageManifest })
+        $resolvedMediaTypes = @($images | ForEach-Object { [string]$_.imageManifestMediaType })
+        $manifestHashes = @($resolvedManifests | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            ForEach-Object { Get-CertificationTextSha256 $_ } | Sort-Object -Unique)
+        $mediaTypeHashes = @($resolvedMediaTypes | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            ForEach-Object { Get-CertificationTextSha256 $_ } | Sort-Object -Unique)
+        # ECR may return one row per tag even when queried by an immutable
+        # digest. Accept that representation only when every row is the exact
+        # same digest, manifest media type, and manifest bytes. Any failure,
+        # mismatch, blank field, or conflicting duplicate remains fail-closed.
+        if ($manifestFailures.Count -gt 0 -or $images.Count -lt 1 -or $wrongDigestImages.Count -gt 0 -or
+            $resolvedManifests.Count -ne $images.Count -or $resolvedMediaTypes.Count -ne $images.Count -or
+            @($resolvedManifests | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count -gt 0 -or
+            @($resolvedMediaTypes | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count -gt 0 -or
+            $manifestHashes.Count -ne 1 -or $mediaTypeHashes.Count -ne 1) {
+            throw "Task definition '$($entry[0])' digest is not resolvable as one immutable ECR manifest."
         }
+        $canonicalManifest = $resolvedManifests[0]
         $provenanceTag = ([string]$entry[6]).Substring(0,12)
         $tagLookup = Invoke-CertificationAwsJson @(
             "ecr","describe-images","--region",$region,"--repository-name",$repositoryName,
@@ -816,7 +945,7 @@ function Get-CertificationTaskPreflight {
         }
         $definitions[$entry[0]] = [ordered]@{
             taskDefinitionArn=[string]$task.taskDefinitionArn;taskDefinitionJsonSha256=Get-CertificationTextSha256 ($task|ConvertTo-Json -Compress -Depth 60)
-            image=$manifestImage;imageDigest=$entry[3];imageManifestSha256=Get-CertificationTextSha256 ([string]$images[0].imageManifest)
+            image=$manifestImage;imageDigest=$entry[3];imageManifestSha256=Get-CertificationTextSha256 $canonicalManifest
             gitSha=[string]$entry[6];provenanceTag=$provenanceTag
             cpu=[int]$task.cpu;memory=[int]$task.memory;containerName=$entry[2]
         }
@@ -1113,11 +1242,8 @@ function Assert-CertificationFixtureAttestation {
     param($Fixture, [string]$Name)
     $stateBinding=Assert-CertificationEvidenceReference (Get-RequiredProperty $Fixture "state") "$Name.state"
     $verificationBinding=Assert-CertificationEvidenceReference (Get-RequiredProperty $Fixture "verification") "$Name.verification"
-    $artifacts=@()
-    foreach($reference in @(Get-RequiredProperty $Fixture "artifacts")){$artifacts+=Assert-CertificationEvidenceReference $reference "$Name.artifacts"}
-    if($artifacts.Count -ne 2 -or @($artifacts.path|Sort-Object -Unique).Count -ne 2 -or @($artifacts.sha256|Sort-Object -Unique).Count -ne 2){
-        throw "$Name must bind exactly two distinct hashed primary/canary fixture artifacts."
-    }
+    $artifacts=@(Get-CertificationHarnessArtifactBindings (Get-RequiredProperty $Fixture "artifacts") "$Name.artifacts")
+    Assert-CertificationHarnessArtifactContract $artifacts "$Name.artifacts"
     try{$state=Get-Content -LiteralPath $stateBinding.path -Raw|ConvertFrom-Json -Depth 60}catch{throw "$Name.state must contain valid JSON."}
     try{$verification=Get-Content -LiteralPath $verificationBinding.path -Raw|ConvertFrom-Json -Depth 60}catch{throw "$Name.verification must contain valid JSON."}
     Assert-CertificationFixtureVerificationContract $verification
@@ -1617,7 +1743,7 @@ if ($SupervisionKind -eq "Load") {
 } | ConvertTo-Json
 if ($Mode -eq "Validate") {
     Invoke-StaticMonitorValidation -Config $config -EvidenceDirectory $evidenceDirectory -PwshPath $pwsh
-    $certificationContract = Get-CertificationContract -Config $config -TestMode $testMode
+    $certificationContract = Get-CertificationContract -Config $config -TestMode $testMode -BindHarnessArtifacts:($SupervisionKind -eq "Load")
     Assert-CertificationChainContinuity -Config $config -Contract $certificationContract
     $validationRollbackBinding = Assert-CertificationRollbackConfigBinding -Config $config -Contract $certificationContract
     if ($SupervisionKind -eq "Load") {
@@ -1638,7 +1764,7 @@ Invoke-StaticMonitorValidation -Config $config -EvidenceDirectory $evidenceDirec
 if ($SupervisionKind -eq "Load") {
     Invoke-HarnessConfigurationPreflight -Config $config -NodePath $node.Source -HarnessPath $runtimeHarnessScript
 }
-$certificationContract = Get-CertificationContract -Config $config -TestMode $testMode
+$certificationContract = Get-CertificationContract -Config $config -TestMode $testMode -BindHarnessArtifacts:($SupervisionKind -eq "Load")
 Assert-CertificationChainContinuity -Config $config -Contract $certificationContract
 $runRollbackBinding = Assert-CertificationRollbackConfigBinding -Config $config -Contract $certificationContract
 $initialGeneratorPublicIp = if ($SupervisionKind -eq "Load") { Resolve-GeneratorPublicIp -Config $config } else { $null }
@@ -1752,7 +1878,7 @@ try {
     & $pwsh -NoProfile -File $monitorScript -ConfigPath $boundConfigPath -ExpectedConfigSha256 $boundRuntimeConfigSha256 -Mode Validate | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "The bound monitor configuration failed validation." }
     if ($SupervisionKind -eq "MonitorOnly" -and $null -ne $certificationContract) {
-        $certificationContract = Get-CertificationContract -Config $config -TestMode $testMode
+        $certificationContract = Get-CertificationContract -Config $config -TestMode $testMode -BindHarnessArtifacts:($SupervisionKind -eq "Load")
         Assert-CertificationOperatorConfigUnchanged
         $monitorOnlyRollbackBinding = Assert-CertificationRollbackConfigBinding -Config $config -Contract $certificationContract
         if ($monitorOnlyRollbackBinding.sha256 -ne $boundRollbackConfigBinding.sha256) { throw "Bound rollback config changed before MonitorOnly supervision." }
@@ -1811,7 +1937,7 @@ try {
         if ($null -ne $certificationContract) {
             # Re-read every hashed fixture/schema input and re-observe all four
             # active/rollback task identities immediately before traffic.
-            $certificationContract = Get-CertificationContract -Config $config -TestMode $testMode
+            $certificationContract = Get-CertificationContract -Config $config -TestMode $testMode -BindHarnessArtifacts:($SupervisionKind -eq "Load")
             Assert-CertificationOperatorConfigUnchanged
             $preTrafficRollbackBinding = Assert-CertificationRollbackConfigBinding -Config $config -Contract $certificationContract
             if ($preTrafficRollbackBinding.sha256 -ne $boundRollbackConfigBinding.sha256) { throw "Bound rollback config changed before traffic." }

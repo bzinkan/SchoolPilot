@@ -444,9 +444,13 @@ root.
     "rollbackSchemaCompatibilityEvidence": {"path": "C:/absolute/evidence/schema-compatibility.json", "sha256": "REPLACE_64_HEX"},
     "fixture": {
       "expectedFixtureId": "REPLACE_EXACT_FIXTURE_ID",
-      "state": {"path": "C:/absolute/evidence/fixture-state.json", "sha256": "REPLACE_64_HEX"},
-      "verification": {"path": "C:/absolute/evidence/fixture-verification.json", "sha256": "REPLACE_64_HEX"},
-      "artifacts": [{"path": "C:/absolute/evidence/primary-fixture.json", "sha256": "REPLACE_64_HEX"}, {"path": "C:/absolute/evidence/canary-fixture.json", "sha256": "REPLACE_64_HEX"}],
+      "state": {"path": "C:/Users/OPERATOR/AppData/Local/SchoolPilot/load-gates/certification/CHAIN/RUN/fixture-state.private.json", "sha256": "REPLACE_64_HEX"},
+      "verification": {"path": "C:/Users/OPERATOR/AppData/Local/SchoolPilot/load-gates/certification/CHAIN/RUN/verification.private.json", "sha256": "REPLACE_64_HEX"},
+      "artifacts": [
+        {"kind": "device-manifest", "path": "C:/Users/OPERATOR/AppData/Local/SchoolPilot/load-gates/certification/CHAIN/RUN/load-devices.private.json", "sha256": "REPLACE_64_HEX"},
+        {"kind": "teacher-auth", "path": "C:/Users/OPERATOR/AppData/Local/SchoolPilot/load-gates/certification/CHAIN/RUN/load-auth.private.json", "sha256": "REPLACE_64_HEX"},
+        {"kind": "command-bodies", "path": "C:/Users/OPERATOR/AppData/Local/SchoolPilot/load-gates/certification/CHAIN/RUN/load-command-bodies.private.json", "sha256": "REPLACE_64_HEX"}
+      ],
       "expectedTimezone": "America/New_York",
       "maximumVerificationAgeMinutes": 60,
       "plannedTrafficStartUtc": "REPLACE_ISO_8601_UTC"
@@ -480,11 +484,24 @@ against the stage attestation and supervisor terminal envelope. The chain root
 is always a supervised Waf/500 load result with a bound generator IPv4; a
 MonitorOnly or minimal hand-authored root is not accepted.
 
-The two `fixture.artifacts` entries must be distinct hashed primary/canary
-artifacts. Live verification must prove exactly two schools, 20 teachers and
-classes, 1,010 students/devices/live device sessions, 800 disjoint roster
-students, 20 active sessions and safe command bodies, one live command admin,
-20 live teacher auth artifacts, and every disabled-tracking/auto-enroll/schedule
+The three role-tagged `fixture.artifacts` entries must be immutable,
+stage-specific copies of the exact device manifest, teacher-auth artifact, and
+command-bodies file supplied to the harness. The supervisor requires their
+paths to match `LOAD_DEVICE_MANIFEST`, `LOAD_TEACHER_AUTH_FILE`, and
+`LOAD_COMMAND_BODIES_FILE`; refreshing the shared fixture therefore cannot
+silently change a predecessor stage. After every refresh/verify, copy the
+state, verification, manifest, auth, and command files into a new
+ACL-restricted stage directory below `%LOCALAPPDATA%\SchoolPilot\load-gates`
+and bind those copies; the harness rejects private inputs stored elsewhere.
+MonitorOnly stages must bind freshly verified preparer outputs even though no
+LOAD process consumes them. The manifest must also prove that Waf/500 selects
+exactly 25 students from each teacher roster and Waf/800 selects all 40 from
+each roster, with the latter covering exactly the 800 disjoint roster students.
+Live verification must prove exactly two schools, 20
+teachers and classes, 1,010 students/devices/live device sessions, 800
+disjoint roster students, 20 active sessions and safe command bodies, one live
+command admin, 20 live teacher auth artifacts, and every
+disabled-tracking/auto-enroll/schedule
 and exact-timezone gate.
 
 Production monitor `Validate` and `Monitor` invocations require the supervisor's
