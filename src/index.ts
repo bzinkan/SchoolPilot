@@ -12,6 +12,7 @@ import errorMonitor from "./services/errorMonitor.js";
 import { pool, prewarmMainPool, sessionPool } from "./db.js";
 import { schedulerLockPool, schedulerPool } from "./services/schedulerDb.js";
 import { migrationsOnStartup, migrationsOnly, schedulerEnabled } from "./config/runtime.js";
+import { ensureHeartbeatHistoryIndexOnline } from "./db/heartbeatHistoryIndex.js";
 
 // Initialize Sentry as early as possible. No-op unless SENTRY_DSN is set
 // (gated off until the DPA is signed + subprocessors list updated).
@@ -1527,6 +1528,34 @@ export async function runStartupMigrations(): Promise<void> {
     } catch (err2) {
       console.warn("[migration] heartbeats index skipped:", (err2 as Error).message);
     }
+  }
+
+  // Teacher tile history requires the exact mixed-order index below. Keep the
+  // expensive online replacement exclusive to the one-off migration task: web
+  // and worker startup must never race or initiate production index DDL.
+  if (migrationsOnly()) {
+    const heartbeatIndexClient = await pool.connect();
+    let heartbeatIndexClientError: Error | undefined;
+    try {
+      await ensureHeartbeatHistoryIndexOnline(heartbeatIndexClient);
+      console.log(
+        "[migration] heartbeats (school_id, device_id, timestamp DESC) index ready"
+      );
+    } catch (err) {
+      console.error(
+        "[migration] heartbeat history index failed:",
+        (err as Error).message
+      );
+      heartbeatIndexClientError =
+        err instanceof Error ? err : new Error(String(err));
+      throw err;
+    } finally {
+      heartbeatIndexClient.release(heartbeatIndexClientError);
+    }
+  } else {
+    console.log(
+      "[migration] heartbeat history online index skipped outside migrations-only mode"
+    );
   }
 
   // Teacher tiles authorize by device id before loading history or screenshots.

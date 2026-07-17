@@ -142,6 +142,7 @@ $albModule = Join-Path $repositoryRoot "infra\modules\alb\main.tf"
 $rollbackScriptSource = Get-Content -LiteralPath $rollbackScript -Raw
 Assert-Condition ($rollbackScriptSource -match '(?m)^\s*Application\s*=\s*3600\s*$') "Application rollback must retain the approved 3,600-second recovery deadline."
 Assert-Condition ($rollbackScriptSource -notmatch 'services-stable') "Rollback automation must not use the fixed AWS ECS services-stable waiter."
+Assert-Condition ($rollbackScriptSource -match 'singleton-one-replacement-slot') "Singleton API rollback must declare its bounded availability-preserving replacement mode."
 Assert-Condition ((Get-Content -LiteralPath $albModule -Raw) -match '(?m)^\s*deregistration_delay\s*=\s*300\s*$') "The API target group must explicitly declare the current 300-second drain."
 $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("schoolpilot-rollout-test-" + [Guid]::NewGuid().ToString("N"))
 $evidenceDirectory = Join-Path $tempRoot "evidence"
@@ -150,6 +151,7 @@ $global:SchoolPilotTestTerraformCalls = [System.Collections.Generic.List[string]
 $global:SchoolPilotTestWafUpdate = $null
 $global:SchoolPilotTestNetworkPayloads = [System.Collections.Generic.List[object]]::new()
 $global:SchoolPilotTestDeploymentPayloads = [System.Collections.Generic.List[object]]::new()
+$global:SchoolPilotTestAutoscalingPayloads = [System.Collections.Generic.List[object]]::new()
 $global:SchoolPilotTestTaskUpdateObservations = [System.Collections.Generic.List[object]]::new()
 $global:SchoolPilotTestUpdateServiceCallCount = 0
 $global:SchoolPilotTestFailUpdateServiceCalls = @()
@@ -157,11 +159,43 @@ $global:SchoolPilotTestForceUnstableService = ""
 $global:SchoolPilotTestFailedDeploymentService = ""
 $global:SchoolPilotTestTransientMixedDeploymentPolls = @{ api = 0; worker = 0 }
 $global:SchoolPilotTestTargetDrainingPolls = 0
+$global:SchoolPilotTestZeroHealthyTargetPolls = 0
+$global:SchoolPilotTestInjectTargetDrainingPollsOnApiUpdate = 0
+$global:SchoolPilotTestInjectZeroHealthyTargetPollsOnApiUpdate = 0
+$global:SchoolPilotTestInjectDesiredDriftAfterApiPolicyApply = 0
+$global:SchoolPilotTestInjectDesiredDriftOnApiTaskUpdate = 0
+$global:SchoolPilotTestDeleteCheckpointAfterApiPolicyApplyPath = ""
 $global:SchoolPilotTestTargetHealthCallCount = 0
 $global:SchoolPilotTestDeregistrationDelaySeconds = 300
 $global:SchoolPilotTestServiceState = @{
     api = [ordered]@{ taskDefinition = "api-current"; desired = 1; running = 1; pending = 0; subnets = @("subnet-public-a", "subnet-public-b"); securityGroups = @("sg-ecs"); assignPublicIp = "ENABLED"; deploymentConfiguration = [ordered]@{ deploymentCircuitBreaker = [ordered]@{ enable = $true; rollback = $true }; maximumPercent = 200; minimumHealthyPercent = 100; strategy = "ROLLING" } }
     worker = [ordered]@{ taskDefinition = "worker-current"; desired = 1; running = 1; pending = 0; subnets = @("subnet-public-a", "subnet-public-b"); securityGroups = @("sg-ecs"); assignPublicIp = "ENABLED"; deploymentConfiguration = [ordered]@{ deploymentCircuitBreaker = [ordered]@{ enable = $true; rollback = $true }; maximumPercent = 200; minimumHealthyPercent = 100; strategy = "ROLLING" } }
+}
+$global:SchoolPilotTestAutoscalingState = [ordered]@{
+    resourceId = "service/cluster/api"
+    minCapacity = 1
+    maxCapacity = 8
+    dynamicScalingInSuspended = $false
+    dynamicScalingOutSuspended = $false
+    scheduledScalingSuspended = $false
+}
+$global:SchoolPilotTestAutoscalingDescribeCallCount = 0
+$global:SchoolPilotTestAutoscalingRegisterCallCount = 0
+$global:SchoolPilotTestFailAutoscalingRegisterCalls = @()
+$global:SchoolPilotTestAutoscalingPropagationDelayPolls = 0
+$global:SchoolPilotTestPendingAutoscalingState = $null
+$global:SchoolPilotTestInjectDesiredAfterAutoscalingRestore = 0
+
+function Reset-SchoolPilotTestAutoscalingState {
+    $global:SchoolPilotTestAutoscalingState.resourceId = "service/cluster/api"
+    $global:SchoolPilotTestAutoscalingState.minCapacity = 1
+    $global:SchoolPilotTestAutoscalingState.maxCapacity = 8
+    $global:SchoolPilotTestAutoscalingState.dynamicScalingInSuspended = $false
+    $global:SchoolPilotTestAutoscalingState.dynamicScalingOutSuspended = $false
+    $global:SchoolPilotTestAutoscalingState.scheduledScalingSuspended = $false
+    $global:SchoolPilotTestAutoscalingPropagationDelayPolls = 0
+    $global:SchoolPilotTestPendingAutoscalingState = $null
+    $global:SchoolPilotTestInjectDesiredAfterAutoscalingRestore = 0
 }
 $global:SchoolPilotTestWafCount = $false
 $global:SchoolPilotTestMetricQueryIds = @()
@@ -248,9 +282,15 @@ function global:aws {
     }
     if ($service -eq "elbv2" -and $operation -eq "describe-target-health") {
         $global:SchoolPilotTestTargetHealthCallCount++
-        $targets = @(1..([int]$global:SchoolPilotTestServiceState.api.desired) | ForEach-Object {
-            @{ Target = @{ Id = "10.0.0.$_"; Port = 4000 }; TargetHealth = @{ State = "healthy" } }
-        })
+        $targets = @()
+        if ($global:SchoolPilotTestZeroHealthyTargetPolls -gt 0) {
+            $global:SchoolPilotTestZeroHealthyTargetPolls--
+        }
+        else {
+            $targets = @(1..([int]$global:SchoolPilotTestServiceState.api.desired) | ForEach-Object {
+                @{ Target = @{ Id = "10.0.0.$_"; Port = 4000 }; TargetHealth = @{ State = "healthy" } }
+            })
+        }
         if ($global:SchoolPilotTestTargetDrainingPolls -gt 0) {
             $global:SchoolPilotTestTargetDrainingPolls--
             $targets += @{ Target = @{ Id = "10.0.1.250"; Port = 4000 }; TargetHealth = @{ State = "draining" } }
@@ -262,6 +302,76 @@ function global:aws {
             @{ Key = "deregistration_delay.timeout_seconds"; Value = [string]$global:SchoolPilotTestDeregistrationDelaySeconds },
             @{ Key = "stickiness.enabled"; Value = "false" }
         ) } | ConvertTo-Json -Depth 5 -Compress)
+    }
+    if ($service -eq "application-autoscaling" -and $operation -eq "describe-scalable-targets") {
+        $global:SchoolPilotTestAutoscalingDescribeCallCount++
+        if ($null -ne $global:SchoolPilotTestPendingAutoscalingState) {
+            if ($global:SchoolPilotTestAutoscalingPropagationDelayPolls -gt 0) {
+                $global:SchoolPilotTestAutoscalingPropagationDelayPolls--
+            }
+            else {
+                $pending = $global:SchoolPilotTestPendingAutoscalingState
+                $global:SchoolPilotTestAutoscalingState.resourceId = $pending.resourceId
+                $global:SchoolPilotTestAutoscalingState.minCapacity = $pending.minCapacity
+                $global:SchoolPilotTestAutoscalingState.maxCapacity = $pending.maxCapacity
+                $global:SchoolPilotTestAutoscalingState.dynamicScalingInSuspended = $pending.dynamicScalingInSuspended
+                $global:SchoolPilotTestAutoscalingState.dynamicScalingOutSuspended = $pending.dynamicScalingOutSuspended
+                $global:SchoolPilotTestAutoscalingState.scheduledScalingSuspended = $pending.scheduledScalingSuspended
+                $global:SchoolPilotTestPendingAutoscalingState = $null
+            }
+        }
+        return (@{ ScalableTargets = @(@{
+            ResourceId = $global:SchoolPilotTestAutoscalingState.resourceId
+            MinCapacity = $global:SchoolPilotTestAutoscalingState.minCapacity
+            MaxCapacity = $global:SchoolPilotTestAutoscalingState.maxCapacity
+            SuspendedState = @{
+                DynamicScalingInSuspended = $global:SchoolPilotTestAutoscalingState.dynamicScalingInSuspended
+                DynamicScalingOutSuspended = $global:SchoolPilotTestAutoscalingState.dynamicScalingOutSuspended
+                ScheduledScalingSuspended = $global:SchoolPilotTestAutoscalingState.scheduledScalingSuspended
+            }
+        }) } | ConvertTo-Json -Depth 8 -Compress)
+    }
+    if ($service -eq "application-autoscaling" -and $operation -eq "register-scalable-target") {
+        $global:SchoolPilotTestAutoscalingRegisterCallCount++
+        if ($global:SchoolPilotTestFailAutoscalingRegisterCalls -contains $global:SchoolPilotTestAutoscalingRegisterCallCount) {
+            throw "Mock register-scalable-target failure at call $($global:SchoolPilotTestAutoscalingRegisterCallCount)."
+        }
+        $stateArgument = Get-ArgumentValue -Arguments $arguments -Name "--suspended-state"
+        $state = @{}
+        foreach ($entry in @($stateArgument -split ',')) {
+            $parts = @($entry -split '=', 2)
+            if ($parts.Count -ne 2) { throw "Invalid mocked suspended-state entry '$entry'." }
+            $state[$parts[0]] = [bool]::Parse($parts[1])
+        }
+        $payload = [pscustomobject]@{
+            resourceId = Get-ArgumentValue -Arguments $arguments -Name "--resource-id"
+            minCapacity = [int](Get-ArgumentValue -Arguments $arguments -Name "--min-capacity")
+            maxCapacity = [int](Get-ArgumentValue -Arguments $arguments -Name "--max-capacity")
+            dynamicScalingInSuspended = [bool]$state.DynamicScalingInSuspended
+            dynamicScalingOutSuspended = [bool]$state.DynamicScalingOutSuspended
+            scheduledScalingSuspended = [bool]$state.ScheduledScalingSuspended
+        }
+        $global:SchoolPilotTestAutoscalingPayloads.Add($payload)
+        if ($global:SchoolPilotTestAutoscalingPropagationDelayPolls -gt 0) {
+            $global:SchoolPilotTestPendingAutoscalingState = $payload
+        }
+        else {
+            $global:SchoolPilotTestAutoscalingState.resourceId = $payload.resourceId
+            $global:SchoolPilotTestAutoscalingState.minCapacity = $payload.minCapacity
+            $global:SchoolPilotTestAutoscalingState.maxCapacity = $payload.maxCapacity
+            $global:SchoolPilotTestAutoscalingState.dynamicScalingInSuspended = $payload.dynamicScalingInSuspended
+            $global:SchoolPilotTestAutoscalingState.dynamicScalingOutSuspended = $payload.dynamicScalingOutSuspended
+            $global:SchoolPilotTestAutoscalingState.scheduledScalingSuspended = $payload.scheduledScalingSuspended
+        }
+        if ($global:SchoolPilotTestInjectDesiredAfterAutoscalingRestore -gt 0 -and
+            -not $payload.dynamicScalingInSuspended -and -not $payload.dynamicScalingOutSuspended -and
+            -not $payload.scheduledScalingSuspended) {
+            $global:SchoolPilotTestServiceState.api.desired = $global:SchoolPilotTestInjectDesiredAfterAutoscalingRestore
+            $global:SchoolPilotTestServiceState.api.running = $global:SchoolPilotTestInjectDesiredAfterAutoscalingRestore
+            $global:SchoolPilotTestServiceState.api.pending = 0
+            $global:SchoolPilotTestInjectDesiredAfterAutoscalingRestore = 0
+        }
+        return '{}'
     }
     if ($service -eq "rds" -and $operation -eq "describe-db-instances") {
         return '{"DBInstances":[{"DBInstanceStatus":"available","AllocatedStorage":100,"MaxAllocatedStorage":1000,"PendingModifiedValues":{}}]}'
@@ -380,13 +490,34 @@ function global:aws {
         $serviceName = Get-ArgumentValue -Arguments $arguments -Name "--service"
         $taskDefinition = Get-ArgumentValue -Arguments $arguments -Name "--task-definition"
         if ($taskDefinition) {
+            $desiredCount = [int]$global:SchoolPilotTestServiceState[$serviceName].desired
+            $deploymentConfiguration = $global:SchoolPilotTestServiceState[$serviceName].deploymentConfiguration
             $global:SchoolPilotTestTaskUpdateObservations.Add([pscustomobject]@{
                 service = $serviceName
                 taskDefinition = $taskDefinition
-                desired = [int]$global:SchoolPilotTestServiceState[$serviceName].desired
-                deploymentConfiguration = ($global:SchoolPilotTestServiceState[$serviceName].deploymentConfiguration | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20)
+                desired = $desiredCount
+                minimumHealthyTasks = [int][Math]::Ceiling(($desiredCount * [int]$deploymentConfiguration.minimumHealthyPercent) / 100.0)
+                maximumConcurrentTasks = [int][Math]::Floor(($desiredCount * [int]$deploymentConfiguration.maximumPercent) / 100.0)
+                deploymentConfiguration = ($deploymentConfiguration | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20)
             })
             $global:SchoolPilotTestServiceState[$serviceName].taskDefinition = $taskDefinition
+            if ($serviceName -eq "api") {
+                if ($global:SchoolPilotTestInjectDesiredDriftOnApiTaskUpdate -gt 0) {
+                    $driftDesired = [int]$global:SchoolPilotTestInjectDesiredDriftOnApiTaskUpdate
+                    $global:SchoolPilotTestServiceState.api.desired = $driftDesired
+                    $global:SchoolPilotTestServiceState.api.running = $driftDesired
+                    $global:SchoolPilotTestServiceState.api.pending = 0
+                    $global:SchoolPilotTestInjectDesiredDriftOnApiTaskUpdate = 0
+                }
+                if ($global:SchoolPilotTestInjectTargetDrainingPollsOnApiUpdate -gt 0) {
+                    $global:SchoolPilotTestTargetDrainingPolls = $global:SchoolPilotTestInjectTargetDrainingPollsOnApiUpdate
+                    $global:SchoolPilotTestInjectTargetDrainingPollsOnApiUpdate = 0
+                }
+                if ($global:SchoolPilotTestInjectZeroHealthyTargetPollsOnApiUpdate -gt 0) {
+                    $global:SchoolPilotTestZeroHealthyTargetPolls = $global:SchoolPilotTestInjectZeroHealthyTargetPollsOnApiUpdate
+                    $global:SchoolPilotTestInjectZeroHealthyTargetPollsOnApiUpdate = 0
+                }
+            }
         }
         $deploymentReference = Get-ArgumentValue -Arguments $arguments -Name "--deployment-configuration"
         if ($deploymentReference) {
@@ -397,6 +528,18 @@ function global:aws {
                 configuration = $deploymentPayload
             })
             $global:SchoolPilotTestServiceState[$serviceName].deploymentConfiguration = $deploymentPayload
+            if ($serviceName -eq "api" -and $global:SchoolPilotTestInjectDesiredDriftAfterApiPolicyApply -gt 0) {
+                $driftDesired = [int]$global:SchoolPilotTestInjectDesiredDriftAfterApiPolicyApply
+                $global:SchoolPilotTestServiceState.api.desired = $driftDesired
+                $global:SchoolPilotTestServiceState.api.running = $driftDesired
+                $global:SchoolPilotTestServiceState.api.pending = 0
+                $global:SchoolPilotTestInjectDesiredDriftAfterApiPolicyApply = 0
+            }
+            if ($serviceName -eq "api" -and
+                -not [string]::IsNullOrWhiteSpace($global:SchoolPilotTestDeleteCheckpointAfterApiPolicyApplyPath)) {
+                [IO.File]::Delete($global:SchoolPilotTestDeleteCheckpointAfterApiPolicyApplyPath)
+                $global:SchoolPilotTestDeleteCheckpointAfterApiPolicyApplyPath = ""
+            }
         }
         $networkReference = Get-ArgumentValue -Arguments $arguments -Name "--network-configuration"
         if ($networkReference) {
@@ -1073,6 +1216,16 @@ if ($service -eq "ecs" -and $operation -eq "describe-tasks") {
 }
 if ($service -eq "elbv2" -and $operation -eq "describe-target-health") { '{"TargetHealthDescriptions":[{"TargetHealth":{"State":"healthy"}}]}'; exit 0 }
 if ($service -eq "elbv2" -and $operation -eq "describe-target-group-attributes") { '{"Attributes":[{"Key":"deregistration_delay.timeout_seconds","Value":"300"},{"Key":"stickiness.enabled","Value":"false"}]}'; exit 0 }
+if ($service -eq "application-autoscaling" -and $operation -eq "describe-scalable-targets") {
+  $suspended=Test-Path -LiteralPath $env:SCHOOLPILOT_TEST_AUTOSCALING_FLAG
+  @{ScalableTargets=@(@{ResourceId="service/cluster/api";MinCapacity=1;MaxCapacity=8;SuspendedState=@{DynamicScalingInSuspended=$suspended;DynamicScalingOutSuspended=$suspended;ScheduledScalingSuspended=$suspended}})}|ConvertTo-Json -Depth 8 -Compress;exit 0
+}
+if ($service -eq "application-autoscaling" -and $operation -eq "register-scalable-target") {
+  $state=Arg "--suspended-state"
+  $hold=$state -match 'DynamicScalingInSuspended=true' -and $state -match 'DynamicScalingOutSuspended=true' -and $state -match 'ScheduledScalingSuspended=true'
+  if($hold){[IO.File]::WriteAllText($env:SCHOOLPILOT_TEST_AUTOSCALING_FLAG,"held")}elseif(Test-Path -LiteralPath $env:SCHOOLPILOT_TEST_AUTOSCALING_FLAG){[IO.File]::Delete($env:SCHOOLPILOT_TEST_AUTOSCALING_FLAG)}
+  '{}';exit 0
+}
 if ($service -eq "rds") { $pending=if($env:SCHOOLPILOT_TEST_PENDING){@{DBInstanceClass="db.t4g.small"}}else{@{}};@{DBInstances=@(@{DBInstanceStatus="available";AllocatedStorage=100;MaxAllocatedStorage=1000;PendingModifiedValues=$pending})}|ConvertTo-Json -Depth 6 -Compress; exit 0 }
 if ($service -eq "elasticache" -and $operation -eq "describe-snapshots") {
   $snapshotTime=$env:SCHOOLPILOT_TEST_SNAPSHOT_TIME
@@ -1299,12 +1452,15 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
     $workerTaskFlag = Join-Path $childRoot "worker-task.flag"
     $oldUpdateLog = $env:SCHOOLPILOT_TEST_UPDATE_LOG
     $updateLog = Join-Path $childRoot "ecs-update.log"
+    $oldAutoscalingFlag = $env:SCHOOLPILOT_TEST_AUTOSCALING_FLAG
+    $autoscalingFlag = Join-Path $childRoot "autoscaling-held.flag"
     $env:PATH = "$childRoot$([IO.Path]::PathSeparator)$oldPath"
     $env:SCHOOLPILOT_TEST_WAF_FLAG = $wafFlag
     $env:SCHOOLPILOT_TEST_OOM_FLAG = $oomFlag
     $env:SCHOOLPILOT_TEST_API_TASK_FLAG = $apiTaskFlag
     $env:SCHOOLPILOT_TEST_WORKER_TASK_FLAG = $workerTaskFlag
     $env:SCHOOLPILOT_TEST_UPDATE_LOG = $updateLog
+    $env:SCHOOLPILOT_TEST_AUTOSCALING_FLAG = $autoscalingFlag
     $childMonitor = $null
     $oomOnlyMonitor = $null
     $oomOnlyHarness = $null
@@ -2374,6 +2530,7 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         $env:SCHOOLPILOT_TEST_API_TASK_FLAG = $oldApiTaskFlag
         $env:SCHOOLPILOT_TEST_WORKER_TASK_FLAG = $oldWorkerTaskFlag
         $env:SCHOOLPILOT_TEST_UPDATE_LOG = $oldUpdateLog
+        $env:SCHOOLPILOT_TEST_AUTOSCALING_FLAG = $oldAutoscalingFlag
         Remove-Item Env:SCHOOLPILOT_TEST_NAT_ZERO -ErrorAction SilentlyContinue
         Remove-Item Env:SCHOOLPILOT_TEST_REDIS_TYPE -ErrorAction SilentlyContinue
         Remove-Item Env:SCHOOLPILOT_TEST_SNAPSHOT_TIME -ErrorAction SilentlyContinue
@@ -2459,6 +2616,7 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
                 containerDefinitions=@(@{name="api";image="repo@sha256:$('c'*64)";memory=2048})}
         }
     }
+    $applicationRecoveryCheckpointPath = Join-Path $evidenceDirectory "application-recovery-checkpoint.json"
     $rollbackEvidencePaths = @()
     $publicPreconditionConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
     $publicPreconditionConfig.runId = "public-ecs-missing-nat-precondition"
@@ -2485,6 +2643,369 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         $wrongDrainError.Exception.Message -match "reviewed 300-second ALB deregistration delay" -and
         $global:SchoolPilotTestUpdateServiceCallCount -eq $wrongDrainUpdateStart
     ) "Application rollback must verify the live 300-second ALB drain before any service mutation."
+
+    $checkpointNormalApi = $global:SchoolPilotTestServiceState.api.deploymentConfiguration | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+    $checkpointNormalWorker = $global:SchoolPilotTestServiceState.worker.deploymentConfiguration | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+    $invalidCheckpointBase = [ordered]@{
+        schemaVersion = 1
+        status = "active"
+        action = "Application"
+        cluster = "cluster"
+        apiService = "api"
+        workerService = "worker"
+        initialRunId = "invalid-checkpoint-source"
+        resumeCount = 0
+        expectedTaskDefinitions = [ordered]@{ api = "api-previous"; worker = "worker-previous" }
+        normalApiDeploymentConfiguration = $checkpointNormalApi
+        normalWorkerDeploymentConfiguration = $checkpointNormalWorker
+        originalApiAutoscalingTarget = [ordered]@{
+            resourceId = "service/other-cluster/api"
+            minCapacity = 1
+            maxCapacity = 8
+            suspendedState = [ordered]@{
+                dynamicScalingInSuspended = $false
+                dynamicScalingOutSuspended = $false
+                scheduledScalingSuspended = $false
+            }
+        }
+        recoveryState = [ordered]@{
+            rollbackMutationBegan = $false
+            availability = [ordered]@{
+                apiInitialHealthyTargets = 1
+                apiMinimumObservedHealthyTargets = 1
+                apiZeroHealthyObserved = $false
+                apiAvailabilityViolation = $false
+            }
+            apiPolicy = [ordered]@{
+                apiInitialDesired = 1
+                apiDesired = 1
+                apiDesiredDriftObserved = $false
+                apiPolicyApplyCount = 0
+                apiPolicyHistory = @()
+            }
+        }
+    }
+    [IO.File]::WriteAllText($applicationRecoveryCheckpointPath, ($invalidCheckpointBase | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+    $wrongCheckpointConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+    $wrongCheckpointConfig.runId = "application-wrong-recovery-checkpoint-target"
+    [IO.File]::WriteAllText($rollbackConfigPath, ($wrongCheckpointConfig | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+    $wrongCheckpointUpdateStart = $global:SchoolPilotTestUpdateServiceCallCount
+    $wrongCheckpointRegisterStart = $global:SchoolPilotTestAutoscalingRegisterCallCount
+    $wrongCheckpointError = $null
+    try { & $rollbackScript -ConfigPath $rollbackConfigPath -Action Application -Mode Execute | Out-Null }
+    catch { $wrongCheckpointError = $_ }
+    Assert-Condition (
+        $null -ne $wrongCheckpointError -and
+        $wrongCheckpointError.Exception.Message -match "invalid API scalable target" -and
+        $global:SchoolPilotTestUpdateServiceCallCount -eq $wrongCheckpointUpdateStart -and
+        $global:SchoolPilotTestAutoscalingRegisterCallCount -eq $wrongCheckpointRegisterStart
+    ) "A recovery checkpoint bound to another scalable target must fail closed before any autoscaling or ECS mutation."
+    [IO.File]::Delete($applicationRecoveryCheckpointPath)
+
+    $invalidCheckpointBase.originalApiAutoscalingTarget.resourceId = "service/cluster/api"
+    $invalidCheckpointBase.normalApiDeploymentConfiguration.maximumPercent = 100
+    [IO.File]::WriteAllText($applicationRecoveryCheckpointPath, ($invalidCheckpointBase | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+    $wrongCheckpointPolicyConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+    $wrongCheckpointPolicyConfig.runId = "application-wrong-recovery-checkpoint-policy"
+    [IO.File]::WriteAllText($rollbackConfigPath, ($wrongCheckpointPolicyConfig | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+    $wrongCheckpointPolicyUpdateStart = $global:SchoolPilotTestUpdateServiceCallCount
+    $wrongCheckpointPolicyRegisterStart = $global:SchoolPilotTestAutoscalingRegisterCallCount
+    $wrongCheckpointPolicyError = $null
+    try { & $rollbackScript -ConfigPath $rollbackConfigPath -Action Application -Mode Execute | Out-Null }
+    catch { $wrongCheckpointPolicyError = $_ }
+    Assert-Condition (
+        $null -ne $wrongCheckpointPolicyError -and
+        $wrongCheckpointPolicyError.Exception.Message -match "non-normal deployment configuration" -and
+        $global:SchoolPilotTestUpdateServiceCallCount -eq $wrongCheckpointPolicyUpdateStart -and
+        $global:SchoolPilotTestAutoscalingRegisterCallCount -eq $wrongCheckpointPolicyRegisterStart
+    ) "A recovery checkpoint with a non-normal deployment policy must fail closed before any autoscaling or ECS mutation."
+    [IO.File]::Delete($applicationRecoveryCheckpointPath)
+
+    $singletonConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+    $singletonConfig.runId = "availability-safe-application-singleton"
+    [IO.File]::WriteAllText($rollbackConfigPath, ($singletonConfig | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+    $global:SchoolPilotTestServiceState.api.taskDefinition = "api-current"
+    $global:SchoolPilotTestServiceState.api.desired = 1
+    $global:SchoolPilotTestServiceState.api.running = 1
+    $global:SchoolPilotTestServiceState.api.pending = 0
+    $global:SchoolPilotTestServiceState.api.deploymentConfiguration = [ordered]@{
+        deploymentCircuitBreaker = [ordered]@{ enable = $true; rollback = $true }
+        maximumPercent = 200
+        minimumHealthyPercent = 100
+        strategy = "ROLLING"
+    }
+    $global:SchoolPilotTestServiceState.worker.taskDefinition = "worker-current"
+    $global:SchoolPilotTestServiceState.worker.desired = 1
+    $global:SchoolPilotTestServiceState.worker.running = 1
+    $global:SchoolPilotTestServiceState.worker.pending = 0
+    $global:SchoolPilotTestServiceState.worker.deploymentConfiguration = [ordered]@{
+        deploymentCircuitBreaker = [ordered]@{ enable = $true; rollback = $true }
+        maximumPercent = 200
+        minimumHealthyPercent = 100
+        strategy = "ROLLING"
+    }
+    $singletonCapturedApiJson = $global:SchoolPilotTestServiceState.api.deploymentConfiguration | ConvertTo-Json -Compress -Depth 20
+    $singletonPayloadStart = $global:SchoolPilotTestDeploymentPayloads.Count
+    $singletonTaskStart = $global:SchoolPilotTestTaskUpdateObservations.Count
+    $singletonTargetPollStart = $global:SchoolPilotTestTargetHealthCallCount
+    $singletonAutoscalingStart = $global:SchoolPilotTestAutoscalingPayloads.Count
+    $singletonAutoscalingDescribeStart = $global:SchoolPilotTestAutoscalingDescribeCallCount
+    Reset-SchoolPilotTestAutoscalingState
+    $global:SchoolPilotTestAutoscalingPropagationDelayPolls = 2
+    $global:SchoolPilotTestInjectTargetDrainingPollsOnApiUpdate = 3
+    & $rollbackScript -ConfigPath $rollbackConfigPath -Action Application -Mode Execute | Out-Null
+
+    $singletonPayloads = @($global:SchoolPilotTestDeploymentPayloads | Select-Object -Skip $singletonPayloadStart)
+    $singletonTaskUpdates = @($global:SchoolPilotTestTaskUpdateObservations | Select-Object -Skip $singletonTaskStart)
+    $singletonAutoscalingPayloads = @($global:SchoolPilotTestAutoscalingPayloads | Select-Object -Skip $singletonAutoscalingStart)
+    Assert-Condition (
+        $singletonAutoscalingPayloads.Count -eq 2 -and
+        $singletonAutoscalingPayloads[0].dynamicScalingInSuspended -and
+        $singletonAutoscalingPayloads[0].dynamicScalingOutSuspended -and
+        $singletonAutoscalingPayloads[0].scheduledScalingSuspended -and
+        -not $singletonAutoscalingPayloads[1].dynamicScalingInSuspended -and
+        -not $singletonAutoscalingPayloads[1].dynamicScalingOutSuspended -and
+        -not $singletonAutoscalingPayloads[1].scheduledScalingSuspended -and
+        ($global:SchoolPilotTestAutoscalingDescribeCallCount - $singletonAutoscalingDescribeStart) -ge 5
+    ) "Singleton Application rollback must tolerate delayed autoscaling propagation, hold all scaling sources before mutation, and restore the exact captured state."
+    Assert-Condition (
+        $singletonPayloads.Count -eq 4 -and
+        $singletonPayloads[0].service -eq "api" -and
+        [int]$singletonPayloads[0].configuration.maximumPercent -eq 200 -and
+        [int]$singletonPayloads[0].configuration.minimumHealthyPercent -eq 100
+    ) "Singleton Application rollback must reserve exactly one replacement slot and keep one API task healthy."
+    Assert-Condition (
+        $singletonTaskUpdates.Count -eq 2 -and
+        $singletonTaskUpdates[0].service -eq "api" -and
+        [int]$singletonTaskUpdates[0].desired -eq 1 -and
+        [int]$singletonTaskUpdates[0].minimumHealthyTasks -eq 1 -and
+        [int]$singletonTaskUpdates[0].maximumConcurrentTasks -eq 2 -and
+        $singletonTaskUpdates[1].service -eq "worker"
+    ) "Singleton Application rollback must stay API-first with a one-healthy/two-maximum task envelope."
+    Assert-Condition (
+        $global:SchoolPilotTestTargetDrainingPolls -eq 0 -and
+        ($global:SchoolPilotTestTargetHealthCallCount - $singletonTargetPollStart) -ge 6
+    ) "Singleton Application rollback must retain one healthy target while waiting out the old target's 300-second drain."
+    Assert-Condition (
+        ($singletonPayloads[2].configuration | ConvertTo-Json -Compress -Depth 20) -ceq $singletonCapturedApiJson -and
+        [int]$global:SchoolPilotTestServiceState.api.desired -eq 1 -and
+        [int]$global:SchoolPilotTestServiceState.api.running -eq 1
+    ) "Singleton Application rollback must restore its captured deployment policy and original desired capacity."
+    $singletonEvidence = @(Get-Content -LiteralPath (Join-Path $evidenceDirectory "$($singletonConfig.runId)-rollback.jsonl") |
+        ForEach-Object { $_ | ConvertFrom-Json -Depth 30 })
+    $singletonCompleted = @($singletonEvidence | Where-Object status -eq "completed")
+    Assert-Condition (
+        $singletonCompleted.Count -eq 1 -and
+        $singletonCompleted[0].details.postcondition.apiAvailabilityMode -eq "singleton-one-replacement-slot" -and
+        [int]$singletonCompleted[0].details.postcondition.apiMinimumHealthyTasks -eq 1 -and
+        [int]$singletonCompleted[0].details.postcondition.apiMaximumConcurrentTasks -eq 2 -and
+        [int]$singletonCompleted[0].details.postcondition.apiSingletonReplacementSlots -eq 1 -and
+        [int]$singletonCompleted[0].details.postcondition.apiMinimumObservedHealthyTargets -eq 1 -and
+        $singletonCompleted[0].details.postcondition.apiAvailabilityViolation -eq $false -and
+        $singletonCompleted[0].details.postcondition.apiAutoscalingHoldApplied -eq $true -and
+        $singletonCompleted[0].details.postcondition.apiAutoscalingHoldRetained -eq $false -and
+        $singletonCompleted[0].details.postcondition.apiAutoscalingRestoration.success -eq $true -and
+        [int]$singletonCompleted[0].details.postcondition.targetGroupDrain.deregistrationDelaySeconds -eq 300
+    ) "Singleton completion evidence must prove the one-target availability floor and bounded replacement slot."
+
+    $scaleResumeConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+    $scaleResumeConfig.runId = "availability-safe-autoscaling-resume"
+    [IO.File]::WriteAllText($rollbackConfigPath, ($scaleResumeConfig | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+    Reset-SchoolPilotTestAutoscalingState
+    $global:SchoolPilotTestServiceState.api.taskDefinition = "api-current"
+    $global:SchoolPilotTestServiceState.api.desired = 1
+    $global:SchoolPilotTestServiceState.api.running = 1
+    $global:SchoolPilotTestServiceState.api.pending = 0
+    $global:SchoolPilotTestServiceState.api.deploymentConfiguration = $singletonCapturedApiJson | ConvertFrom-Json -Depth 20
+    $global:SchoolPilotTestServiceState.worker.taskDefinition = "worker-current"
+    $global:SchoolPilotTestServiceState.worker.deploymentConfiguration = $singletonCapturedApiJson | ConvertFrom-Json -Depth 20
+    $global:SchoolPilotTestInjectDesiredAfterAutoscalingRestore = 6
+    & $rollbackScript -ConfigPath $rollbackConfigPath -Action Application -Mode Execute | Out-Null
+    $scaleResumeEvidence = @(Get-Content -LiteralPath (Join-Path $evidenceDirectory "$($scaleResumeConfig.runId)-rollback.jsonl") |
+        ForEach-Object { $_ | ConvertFrom-Json -Depth 30 })
+    $scaleResumeCompleted = @($scaleResumeEvidence | Where-Object status -eq "completed")
+    $scaleResumeFinalApi = @($scaleResumeCompleted[0].details.postcondition.finalServices | Where-Object serviceName -eq "api")
+    Assert-Condition (
+        $scaleResumeCompleted.Count -eq 1 -and
+        [int]$scaleResumeCompleted[0].details.postcondition.postAutoscalingApiConvergence.observation.desired -eq 6 -and
+        [int]$scaleResumeCompleted[0].details.postcondition.postAutoscalingApiConvergence.consecutiveStablePolls -eq 2 -and
+        $scaleResumeFinalApi.Count -eq 1 -and [int]$scaleResumeFinalApi[0].desired -eq 6 -and
+        [int]$scaleResumeFinalApi[0].running -eq 6 -and [int]$scaleResumeFinalApi[0].pending -eq 0 -and
+        [int]$global:SchoolPilotTestServiceState.api.deploymentConfiguration.maximumPercent -eq 200 -and
+        [int]$global:SchoolPilotTestServiceState.api.deploymentConfiguration.minimumHealthyPercent -eq 100 -and
+        -not $global:SchoolPilotTestAutoscalingState.dynamicScalingInSuspended -and
+        -not $global:SchoolPilotTestAutoscalingState.dynamicScalingOutSuspended -and
+        -not $global:SchoolPilotTestAutoscalingState.scheduledScalingSuspended
+    ) "Autoscaling restoration must be followed by two fresh exact API/target polls and final evidence that includes an immediate desired-capacity change."
+
+    $zeroHealthyConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+    $zeroHealthyConfig.runId = "availability-floor-zero-healthy-hard-stop"
+    [IO.File]::WriteAllText($rollbackConfigPath, ($zeroHealthyConfig | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+    $global:SchoolPilotTestServiceState.api.taskDefinition = "api-current"
+    $global:SchoolPilotTestServiceState.api.desired = 1
+    $global:SchoolPilotTestServiceState.api.running = 1
+    $global:SchoolPilotTestServiceState.api.pending = 0
+    $global:SchoolPilotTestServiceState.api.deploymentConfiguration = $singletonCapturedApiJson | ConvertFrom-Json -Depth 20
+    $global:SchoolPilotTestServiceState.worker.taskDefinition = "worker-current"
+    $zeroHealthyPayloadStart = $global:SchoolPilotTestDeploymentPayloads.Count
+    $zeroHealthyTaskStart = $global:SchoolPilotTestTaskUpdateObservations.Count
+    $global:SchoolPilotTestInjectZeroHealthyTargetPollsOnApiUpdate = 1
+    $zeroHealthyError = $null
+    try { & $rollbackScript -ConfigPath $rollbackConfigPath -Action Application -Mode Execute | Out-Null }
+    catch { $zeroHealthyError = $_ }
+    $zeroHealthyPayloads = @($global:SchoolPilotTestDeploymentPayloads | Select-Object -Skip $zeroHealthyPayloadStart)
+    $zeroHealthyTaskUpdates = @($global:SchoolPilotTestTaskUpdateObservations | Select-Object -Skip $zeroHealthyTaskStart)
+    Assert-Condition (
+        $null -ne $zeroHealthyError -and
+        $zeroHealthyError.Exception.Message -match "restored the exact API and worker revisions" -and
+        $zeroHealthyTaskUpdates.Count -eq 2 -and
+        $zeroHealthyTaskUpdates[0].service -eq "api" -and
+        $zeroHealthyTaskUpdates[1].service -eq "worker" -and
+        $global:SchoolPilotTestServiceState.api.taskDefinition -eq "api-previous" -and
+        $global:SchoolPilotTestServiceState.worker.taskDefinition -eq "worker-previous" -and
+        $zeroHealthyPayloads.Count -eq 4 -and
+        ($global:SchoolPilotTestServiceState.api.deploymentConfiguration | ConvertTo-Json -Compress -Depth 20) -ceq $singletonCapturedApiJson
+    ) "A controller-time zero-healthy singleton observation must finish exact API/worker recovery, restore configuration, and then fail closed."
+    $zeroHealthyEvidence = @(Get-Content -LiteralPath (Join-Path $evidenceDirectory "$($zeroHealthyConfig.runId)-rollback.jsonl") |
+        ForEach-Object { $_ | ConvertFrom-Json -Depth 30 })
+    $zeroHealthyFailed = @($zeroHealthyEvidence | Where-Object status -eq "failed")
+    Assert-Condition (
+        $zeroHealthyFailed.Count -eq 1 -and
+        $zeroHealthyFailed[0].details.recoveryRequired -eq $false -and
+        $zeroHealthyFailed[0].details.recoveryStatus -eq "completed_with_availability_violation" -and
+        $zeroHealthyFailed[0].details.failedStep -eq "verify-api-availability-floor" -and
+        [int]$zeroHealthyFailed[0].details.apiInitialHealthyTargets -eq 1 -and
+        $zeroHealthyFailed[0].details.apiAvailabilityPreExistingOutage -eq $false -and
+        $zeroHealthyFailed[0].details.apiZeroHealthyObserved -eq $true -and
+        $zeroHealthyFailed[0].details.apiAvailabilityViolation -eq $true -and
+        $zeroHealthyFailed[0].details.apiAvailabilityRecovered -eq $true -and
+        [int]$zeroHealthyFailed[0].details.apiMinimumObservedHealthyTargets -eq 0 -and
+        $zeroHealthyFailed[0].details.safetyPolicyRetained -eq $false -and
+        [int]$zeroHealthyFailed[0].details.temporaryApiDeploymentConfiguration.maximumPercent -eq 200 -and
+        [int]$zeroHealthyFailed[0].details.temporaryApiDeploymentConfiguration.minimumHealthyPercent -eq 100
+    ) "Controller-time availability failure evidence must prove exact recovery while blocking progression."
+    [IO.File]::Delete($applicationRecoveryCheckpointPath)
+
+    $preExistingOutageConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+    $preExistingOutageConfig.runId = "availability-floor-pre-existing-outage-recovery"
+    [IO.File]::WriteAllText($rollbackConfigPath, ($preExistingOutageConfig | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+    $global:SchoolPilotTestServiceState.api.taskDefinition = "api-current"
+    $global:SchoolPilotTestServiceState.api.desired = 1
+    $global:SchoolPilotTestServiceState.api.running = 1
+    $global:SchoolPilotTestServiceState.api.pending = 0
+    $global:SchoolPilotTestServiceState.api.deploymentConfiguration = $singletonCapturedApiJson | ConvertFrom-Json -Depth 20
+    $global:SchoolPilotTestServiceState.worker.taskDefinition = "worker-current"
+    $global:SchoolPilotTestServiceState.worker.deploymentConfiguration = $singletonCapturedApiJson | ConvertFrom-Json -Depth 20
+    $global:SchoolPilotTestZeroHealthyTargetPolls = 1
+    & $rollbackScript -ConfigPath $rollbackConfigPath -Action Application -Mode Execute | Out-Null
+    $preExistingOutageEvidence = @(Get-Content -LiteralPath (Join-Path $evidenceDirectory "$($preExistingOutageConfig.runId)-rollback.jsonl") |
+        ForEach-Object { $_ | ConvertFrom-Json -Depth 30 })
+    $preExistingOutageCompleted = @($preExistingOutageEvidence | Where-Object status -eq "completed")
+    Assert-Condition (
+        $preExistingOutageCompleted.Count -eq 1 -and
+        [int]$preExistingOutageCompleted[0].details.postcondition.apiInitialHealthyTargets -eq 0 -and
+        [int]$preExistingOutageCompleted[0].details.postcondition.apiMinimumObservedHealthyTargets -eq 0 -and
+        $preExistingOutageCompleted[0].details.postcondition.apiAvailabilityPreExistingOutage -eq $true -and
+        $preExistingOutageCompleted[0].details.postcondition.apiZeroHealthyObserved -eq $true -and
+        $preExistingOutageCompleted[0].details.postcondition.apiAvailabilityViolation -eq $false -and
+        $preExistingOutageCompleted[0].details.postcondition.apiAvailabilityRecovered -eq $true -and
+        $preExistingOutageCompleted[0].details.postcondition.recoveryRequired -eq $false -and
+        $global:SchoolPilotTestServiceState.api.taskDefinition -eq "api-previous" -and
+        $global:SchoolPilotTestServiceState.worker.taskDefinition -eq "worker-previous"
+    ) "A pre-existing zero-target outage must not abort rollback; evidence must distinguish it and prove recovery."
+
+    $driftOneToSixConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+    $driftOneToSixConfig.runId = "availability-policy-desired-drift-one-to-six"
+    [IO.File]::WriteAllText($rollbackConfigPath, ($driftOneToSixConfig | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+    $global:SchoolPilotTestServiceState.api.taskDefinition = "api-current"
+    $global:SchoolPilotTestServiceState.api.desired = 1
+    $global:SchoolPilotTestServiceState.api.running = 1
+    $global:SchoolPilotTestServiceState.api.pending = 0
+    $global:SchoolPilotTestServiceState.api.deploymentConfiguration = $singletonCapturedApiJson | ConvertFrom-Json -Depth 20
+    $global:SchoolPilotTestServiceState.worker.taskDefinition = "worker-current"
+    $global:SchoolPilotTestServiceState.worker.deploymentConfiguration = $singletonCapturedApiJson | ConvertFrom-Json -Depth 20
+    $oneToSixPayloadStart = $global:SchoolPilotTestDeploymentPayloads.Count
+    $oneToSixTaskStart = $global:SchoolPilotTestTaskUpdateObservations.Count
+    $global:SchoolPilotTestInjectDesiredDriftOnApiTaskUpdate = 6
+    & $rollbackScript -ConfigPath $rollbackConfigPath -Action Application -Mode Execute | Out-Null
+    $oneToSixPayloads = @($global:SchoolPilotTestDeploymentPayloads | Select-Object -Skip $oneToSixPayloadStart)
+    $oneToSixTaskUpdates = @($global:SchoolPilotTestTaskUpdateObservations | Select-Object -Skip $oneToSixTaskStart)
+    Assert-Condition (
+        $oneToSixPayloads.Count -eq 5 -and
+        $oneToSixPayloads[0].service -eq "api" -and
+        [int]$oneToSixPayloads[0].configuration.maximumPercent -eq 200 -and
+        [int]$oneToSixPayloads[0].configuration.minimumHealthyPercent -eq 100 -and
+        $oneToSixPayloads[1].service -eq "api" -and
+        [int]$oneToSixPayloads[1].configuration.maximumPercent -eq 100 -and
+        [int]$oneToSixPayloads[1].configuration.minimumHealthyPercent -eq 83 -and
+        $oneToSixTaskUpdates.Count -eq 2 -and
+        $oneToSixTaskUpdates[0].service -eq "api" -and
+        [int]$oneToSixTaskUpdates[0].desired -eq 1 -and
+        [int]$oneToSixTaskUpdates[0].maximumConcurrentTasks -eq 2 -and
+        [int]$oneToSixTaskUpdates[0].minimumHealthyTasks -eq 1
+    ) "A 1-to-6 desired drift at task dispatch must start under the held singleton envelope and replace it with the six-task policy on the first poll."
+    $oneToSixEvidence = @(Get-Content -LiteralPath (Join-Path $evidenceDirectory "$($driftOneToSixConfig.runId)-rollback.jsonl") |
+        ForEach-Object { $_ | ConvertFrom-Json -Depth 30 })
+    $oneToSixCompleted = @($oneToSixEvidence | Where-Object status -eq "completed")
+    Assert-Condition (
+        $oneToSixCompleted.Count -eq 1 -and
+        [int]$oneToSixCompleted[0].details.postcondition.apiInitialDesired -eq 1 -and
+        [int]$oneToSixCompleted[0].details.postcondition.apiDesired -eq 6 -and
+        $oneToSixCompleted[0].details.postcondition.apiDesiredDriftObserved -eq $true -and
+        [int]$oneToSixCompleted[0].details.postcondition.apiPolicyApplyCount -eq 2 -and
+        @($oneToSixCompleted[0].details.postcondition.apiPolicyHistory).Count -eq 2 -and
+        [int]$oneToSixCompleted[0].details.postcondition.apiPolicyHistory[0].maximumConcurrentTasks -eq 2 -and
+        [int]$oneToSixCompleted[0].details.postcondition.apiPolicyHistory[1].maximumConcurrentTasks -eq 6 -and
+        $oneToSixCompleted[0].details.postcondition.apiAutoscalingHoldApplied -eq $true -and
+        $oneToSixCompleted[0].details.postcondition.apiAutoscalingRestoration.success -eq $true -and
+        $oneToSixCompleted[0].details.postcondition.recoveryRequired -eq $false -and
+        [int]$global:SchoolPilotTestServiceState.api.desired -eq 6
+    ) "A 1-to-6 drift must bind both policies in evidence and complete without retaining the stale 200% recovery policy."
+
+    $driftSixToOneConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+    $driftSixToOneConfig.runId = "availability-policy-desired-drift-six-to-one"
+    [IO.File]::WriteAllText($rollbackConfigPath, ($driftSixToOneConfig | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+    $global:SchoolPilotTestServiceState.api.taskDefinition = "api-current"
+    $global:SchoolPilotTestServiceState.api.desired = 6
+    $global:SchoolPilotTestServiceState.api.running = 6
+    $global:SchoolPilotTestServiceState.api.pending = 0
+    $global:SchoolPilotTestServiceState.api.deploymentConfiguration = $singletonCapturedApiJson | ConvertFrom-Json -Depth 20
+    $global:SchoolPilotTestServiceState.worker.taskDefinition = "worker-current"
+    $global:SchoolPilotTestServiceState.worker.deploymentConfiguration = $singletonCapturedApiJson | ConvertFrom-Json -Depth 20
+    $sixToOnePayloadStart = $global:SchoolPilotTestDeploymentPayloads.Count
+    $sixToOneTaskStart = $global:SchoolPilotTestTaskUpdateObservations.Count
+    $global:SchoolPilotTestInjectDesiredDriftOnApiTaskUpdate = 1
+    & $rollbackScript -ConfigPath $rollbackConfigPath -Action Application -Mode Execute | Out-Null
+    $sixToOnePayloads = @($global:SchoolPilotTestDeploymentPayloads | Select-Object -Skip $sixToOnePayloadStart)
+    $sixToOneTaskUpdates = @($global:SchoolPilotTestTaskUpdateObservations | Select-Object -Skip $sixToOneTaskStart)
+    Assert-Condition (
+        $sixToOnePayloads.Count -eq 5 -and
+        $sixToOnePayloads[0].service -eq "api" -and
+        [int]$sixToOnePayloads[0].configuration.maximumPercent -eq 100 -and
+        [int]$sixToOnePayloads[0].configuration.minimumHealthyPercent -eq 83 -and
+        $sixToOnePayloads[1].service -eq "api" -and
+        [int]$sixToOnePayloads[1].configuration.maximumPercent -eq 200 -and
+        [int]$sixToOnePayloads[1].configuration.minimumHealthyPercent -eq 100 -and
+        $sixToOneTaskUpdates.Count -eq 2 -and
+        $sixToOneTaskUpdates[0].service -eq "api" -and
+        [int]$sixToOneTaskUpdates[0].desired -eq 6 -and
+        [int]$sixToOneTaskUpdates[0].maximumConcurrentTasks -eq 6
+    ) "A 6-to-1 desired drift must replace the non-overlap policy with a one-healthy/two-maximum singleton policy on the first convergence poll."
+    $sixToOneEvidence = @(Get-Content -LiteralPath (Join-Path $evidenceDirectory "$($driftSixToOneConfig.runId)-rollback.jsonl") |
+        ForEach-Object { $_ | ConvertFrom-Json -Depth 30 })
+    $sixToOneCompleted = @($sixToOneEvidence | Where-Object status -eq "completed")
+    Assert-Condition (
+        $sixToOneCompleted.Count -eq 1 -and
+        [int]$sixToOneCompleted[0].details.postcondition.apiInitialDesired -eq 6 -and
+        [int]$sixToOneCompleted[0].details.postcondition.apiDesired -eq 1 -and
+        $sixToOneCompleted[0].details.postcondition.apiDesiredDriftObserved -eq $true -and
+        [int]$sixToOneCompleted[0].details.postcondition.apiPolicyApplyCount -eq 2 -and
+        @($sixToOneCompleted[0].details.postcondition.apiPolicyHistory).Count -eq 2 -and
+        [int]$sixToOneCompleted[0].details.postcondition.apiPolicyHistory[0].maximumConcurrentTasks -eq 6 -and
+        [int]$sixToOneCompleted[0].details.postcondition.apiPolicyHistory[1].maximumConcurrentTasks -eq 2 -and
+        $sixToOneCompleted[0].details.postcondition.recoveryRequired -eq $false -and
+        [int]$global:SchoolPilotTestServiceState.api.desired -eq 1
+    ) "A 6-to-1 drift must bind the replacement policy in evidence and complete without retaining stale 100% singleton capacity."
 
     $connectionSafeConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
     $connectionSafeConfig.runId = "connection-safe-application-six"
@@ -2524,6 +3045,8 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
     Assert-Condition (
         $connectionSafeTaskUpdates.Count -eq 2 -and
         $connectionSafeTaskUpdates[0].service -eq "api" -and
+        [int]$connectionSafeTaskUpdates[0].minimumHealthyTasks -eq 5 -and
+        [int]$connectionSafeTaskUpdates[0].maximumConcurrentTasks -eq 6 -and
         $connectionSafeTaskUpdates[1].service -eq "worker"
     ) "Connection-safe Application rollback must stabilize the API revision before replacing the worker revision."
     Assert-Condition (@($connectionSafeTaskUpdates | Where-Object {
@@ -2531,7 +3054,11 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
     }).Count -eq 0) "No six-task Application task-definition update may use an overlapping deployment maximum."
     Assert-Condition (
         ($global:SchoolPilotTestServiceState.api.deploymentConfiguration | ConvertTo-Json -Compress -Depth 20) -ceq $capturedApiDeploymentJson -and
-        ($global:SchoolPilotTestServiceState.worker.deploymentConfiguration | ConvertTo-Json -Compress -Depth 20) -ceq $capturedWorkerDeploymentJson
+        ($global:SchoolPilotTestServiceState.worker.deploymentConfiguration | ConvertTo-Json -Compress -Depth 20) -ceq $capturedWorkerDeploymentJson -and
+        [int]$global:SchoolPilotTestServiceState.api.deploymentConfiguration.maximumPercent -eq 200 -and
+        [int]$global:SchoolPilotTestServiceState.api.deploymentConfiguration.minimumHealthyPercent -eq 100 -and
+        [int]$global:SchoolPilotTestServiceState.worker.deploymentConfiguration.maximumPercent -eq 200 -and
+        [int]$global:SchoolPilotTestServiceState.worker.deploymentConfiguration.minimumHealthyPercent -eq 100
     ) "Application rollback postconditions must verify both captured deployment configurations were restored."
     $connectionSafeEvidencePath = Join-Path $evidenceDirectory "$($connectionSafeConfig.runId)-rollback.jsonl"
     $connectionSafeEvidence = @(Get-Content -LiteralPath $connectionSafeEvidencePath | ForEach-Object { $_ | ConvertFrom-Json -Depth 30 })
@@ -2540,11 +3067,18 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         $connectionSafeCompleted.Count -eq 1 -and
         $connectionSafeCompleted[0].details.postcondition.connectionSafeDeployment -eq $true -and
         [int]$connectionSafeCompleted[0].details.postcondition.apiDesired -eq 6 -and
+        $connectionSafeCompleted[0].details.postcondition.apiAvailabilityMode -eq "non-overlap-one-at-a-time" -and
+        [int]$connectionSafeCompleted[0].details.postcondition.apiMinimumHealthyTasks -eq 5 -and
+        [int]$connectionSafeCompleted[0].details.postcondition.apiMaximumConcurrentTasks -eq 6 -and
+        [int]$connectionSafeCompleted[0].details.postcondition.apiSingletonReplacementSlots -eq 0 -and
+        $connectionSafeCompleted[0].details.postcondition.apiAvailabilityViolation -eq $false -and
         $connectionSafeCompleted[0].details.postcondition.recoveryRequired -eq $false -and
         [int]$connectionSafeCompleted[0].details.postcondition.targetGroupDrain.deregistrationDelaySeconds -eq 300 -and
         $connectionSafeCompleted[0].details.postcondition.targetGroupDrain.verified -eq $true -and
         [int]$connectionSafeCompleted[0].details.postcondition.apiConvergence.consecutiveStablePolls -eq 2 -and
-        [int]$connectionSafeCompleted[0].details.postcondition.workerConvergence.consecutiveStablePolls -eq 2
+        [int]$connectionSafeCompleted[0].details.postcondition.workerConvergence.consecutiveStablePolls -eq 2 -and
+        [int]$connectionSafeCompleted[0].details.postcondition.postAutoscalingApiConvergence.consecutiveStablePolls -eq 2 -and
+        [int]$connectionSafeCompleted[0].details.postcondition.postAutoscalingWorkerConvergence.consecutiveStablePolls -eq 2
     ) "Completed rollback evidence must prove exact two-poll API/worker convergence for the connection-safe six-task path."
 
     $eightTaskConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
@@ -2568,6 +3102,8 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
     Assert-Condition (
         $eightTaskUpdates.Count -eq 2 -and
         $eightTaskUpdates[0].service -eq "api" -and
+        [int]$eightTaskUpdates[0].minimumHealthyTasks -eq 7 -and
+        [int]$eightTaskUpdates[0].maximumConcurrentTasks -eq 8 -and
         $eightTaskUpdates[1].service -eq "worker"
     ) "Eight-task Application rollback must converge the API before dispatching worker rollback."
 
@@ -2586,11 +3122,113 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         ($global:SchoolPilotTestTargetHealthCallCount - $targetPollStart) -ge 5
     ) "Application rollback must wait through long target draining and then observe two consecutive exact API polls."
 
+    $singletonRestartConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+    $singletonRestartConfig.runId = "availability-safe-singleton-controller-restart"
+    [IO.File]::WriteAllText($rollbackConfigPath, ($singletonRestartConfig | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+    $global:SchoolPilotTestServiceState.api.taskDefinition = "api-previous"
+    $global:SchoolPilotTestServiceState.api.desired = 1
+    $global:SchoolPilotTestServiceState.api.running = 1
+    $global:SchoolPilotTestServiceState.api.pending = 0
+    $global:SchoolPilotTestServiceState.api.deploymentConfiguration = $capturedApiDeploymentJson | ConvertFrom-Json -Depth 20
+    $global:SchoolPilotTestServiceState.worker.taskDefinition = "worker-current"
+    $global:SchoolPilotTestServiceState.worker.deploymentConfiguration = $capturedWorkerDeploymentJson | ConvertFrom-Json -Depth 20
+    $global:SchoolPilotTestTransientMixedDeploymentPolls.api = 3
+    $global:SchoolPilotTestTargetDrainingPolls = 4
+    $singletonRestartPayloadStart = $global:SchoolPilotTestDeploymentPayloads.Count
+    $singletonRestartTaskStart = $global:SchoolPilotTestTaskUpdateObservations.Count
+    & $rollbackScript -ConfigPath $rollbackConfigPath -Action Application -Mode Execute | Out-Null
+    $singletonRestartPayloads = @($global:SchoolPilotTestDeploymentPayloads | Select-Object -Skip $singletonRestartPayloadStart)
+    $singletonRestartTaskUpdates = @($global:SchoolPilotTestTaskUpdateObservations | Select-Object -Skip $singletonRestartTaskStart)
+    Assert-Condition (
+        $singletonRestartTaskUpdates.Count -eq 1 -and
+        $singletonRestartTaskUpdates[0].service -eq "worker" -and
+        $singletonRestartPayloads.Count -eq 4 -and
+        $singletonRestartPayloads[0].service -eq "api" -and
+        [int]$singletonRestartPayloads[0].configuration.maximumPercent -eq 200 -and
+        [int]$singletonRestartPayloads[0].configuration.minimumHealthyPercent -eq 100 -and
+        $global:SchoolPilotTestTransientMixedDeploymentPolls.api -eq 0 -and
+        $global:SchoolPilotTestTargetDrainingPolls -eq 0
+    ) "A restarted singleton controller must reassert the availability policy and fully drain the mixed API deployment before touching the worker."
+    $singletonRestartEvidence = @(Get-Content -LiteralPath (Join-Path $evidenceDirectory "$($singletonRestartConfig.runId)-rollback.jsonl") |
+        ForEach-Object { $_ | ConvertFrom-Json -Depth 30 })
+    $singletonRestartCompleted = @($singletonRestartEvidence | Where-Object status -eq "completed")
+    Assert-Condition (
+        $singletonRestartCompleted.Count -eq 1 -and
+        $singletonRestartCompleted[0].details.postcondition.apiRevisionAlreadySelected -eq $true -and
+        $singletonRestartCompleted[0].details.postcondition.apiInitiallyConverged -eq $false -and
+        $singletonRestartCompleted[0].details.postcondition.apiSafetyPolicyTouched -eq $true -and
+        $singletonRestartCompleted[0].details.postcondition.apiRollbackDispatched -eq $false -and
+        $singletonRestartCompleted[0].details.postcondition.apiAvailabilityMode -eq "singleton-one-replacement-slot" -and
+        [int]$singletonRestartCompleted[0].details.postcondition.apiMinimumObservedHealthyTargets -eq 1 -and
+        $singletonRestartCompleted[0].details.postcondition.workerRollbackDispatched -eq $true
+    ) "Singleton restart evidence must prove availability-safe recovery without duplicate API dispatch."
+
+    $global:SchoolPilotTestServiceState.api.desired = 6
+    $global:SchoolPilotTestServiceState.api.running = 6
+    $global:SchoolPilotTestServiceState.api.deploymentConfiguration = $capturedApiDeploymentJson | ConvertFrom-Json -Depth 20
+    $global:SchoolPilotTestServiceState.worker.deploymentConfiguration = $capturedWorkerDeploymentJson | ConvertFrom-Json -Depth 20
+
     $restartConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
     $restartConfig.runId = "connection-safe-controller-restart"
     [IO.File]::WriteAllText($rollbackConfigPath, ($restartConfig | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
     $global:SchoolPilotTestServiceState.api.taskDefinition = "api-previous"
+    $global:SchoolPilotTestServiceState.api.deploymentConfiguration = $capturedApiDeploymentJson | ConvertFrom-Json -Depth 20
+    $global:SchoolPilotTestServiceState.api.deploymentConfiguration.maximumPercent = 100
+    $global:SchoolPilotTestServiceState.api.deploymentConfiguration.minimumHealthyPercent = 83
     $global:SchoolPilotTestServiceState.worker.taskDefinition = "worker-current"
+    $global:SchoolPilotTestServiceState.worker.deploymentConfiguration = $capturedWorkerDeploymentJson | ConvertFrom-Json -Depth 20
+    Reset-SchoolPilotTestAutoscalingState
+    $global:SchoolPilotTestAutoscalingState.dynamicScalingInSuspended = $true
+    $global:SchoolPilotTestAutoscalingState.dynamicScalingOutSuspended = $true
+    $global:SchoolPilotTestAutoscalingState.scheduledScalingSuspended = $true
+    $restartCheckpoint = [ordered]@{
+        schemaVersion = 1
+        status = "active"
+        action = "Application"
+        cluster = "cluster"
+        apiService = "api"
+        workerService = "worker"
+        createdAt = [DateTimeOffset]::UtcNow.AddMinutes(-5).ToString("o")
+        initialRunId = "simulated-crashed-controller"
+        resumeCount = 0
+        expectedTaskDefinitions = [ordered]@{ api = "api-previous"; worker = "worker-previous" }
+        normalApiDeploymentConfiguration = $capturedApiDeploymentJson | ConvertFrom-Json -Depth 20
+        normalWorkerDeploymentConfiguration = $capturedWorkerDeploymentJson | ConvertFrom-Json -Depth 20
+        originalApiAutoscalingTarget = [ordered]@{
+            resourceId = "service/cluster/api"
+            minCapacity = 1
+            maxCapacity = 8
+            suspendedState = [ordered]@{
+                dynamicScalingInSuspended = $false
+                dynamicScalingOutSuspended = $false
+                scheduledScalingSuspended = $false
+            }
+        }
+        recoveryState = [ordered]@{
+            rollbackMutationBegan = $true
+            availability = [ordered]@{
+                apiInitialHealthyTargets = 6
+                apiMinimumObservedHealthyTargets = 6
+                apiZeroHealthyObserved = $false
+                apiAvailabilityViolation = $false
+            }
+            apiPolicy = [ordered]@{
+                apiInitialDesired = 6
+                apiDesired = 6
+                apiDesiredDriftObserved = $false
+                apiPolicyApplyCount = 1
+                apiPolicyHistory = @([ordered]@{
+                    reason = "simulated-prior-controller"
+                    desired = 6
+                    mode = "non-overlap-one-at-a-time"
+                    minimumHealthyTasks = 5
+                    maximumConcurrentTasks = 6
+                    configuration = $global:SchoolPilotTestServiceState.api.deploymentConfiguration
+                })
+            }
+        }
+    }
+    [IO.File]::WriteAllText($applicationRecoveryCheckpointPath, ($restartCheckpoint | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
     $global:SchoolPilotTestTransientMixedDeploymentPolls.api = 3
     $restartPayloadStart = $global:SchoolPilotTestDeploymentPayloads.Count
     $restartTaskStart = $global:SchoolPilotTestTaskUpdateObservations.Count
@@ -2603,8 +3241,13 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         $restartPayloads[0].service -eq "api" -and
         [int]$restartPayloads[0].configuration.maximumPercent -eq 100 -and
         [int]$restartPayloads[0].configuration.minimumHealthyPercent -eq 83 -and
-        $global:SchoolPilotTestTransientMixedDeploymentPolls.api -eq 0
-    ) "A restarted controller must install the safe API policy before waiting on an already-selected but mixed API revision, without redeploying it."
+        $global:SchoolPilotTestTransientMixedDeploymentPolls.api -eq 0 -and
+        [int]$global:SchoolPilotTestServiceState.api.deploymentConfiguration.maximumPercent -eq 200 -and
+        [int]$global:SchoolPilotTestServiceState.api.deploymentConfiguration.minimumHealthyPercent -eq 100 -and
+        -not $global:SchoolPilotTestAutoscalingState.dynamicScalingInSuspended -and
+        -not $global:SchoolPilotTestAutoscalingState.dynamicScalingOutSuspended -and
+        -not $global:SchoolPilotTestAutoscalingState.scheduledScalingSuspended
+    ) "A restarted controller must resume the durable pre-mutation capture, safely converge the mixed API revision, and restore normal policy/scaling without redeploying API."
     $restartEvidence = @(Get-Content -LiteralPath (Join-Path $evidenceDirectory "$($restartConfig.runId)-rollback.jsonl") |
         ForEach-Object { $_ | ConvertFrom-Json -Depth 30 })
     $restartCompleted = @($restartEvidence | Where-Object status -eq "completed")
@@ -2616,14 +3259,158 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         $restartCompleted[0].details.postcondition.apiSafetyPolicyTouched -eq $true -and
         $restartCompleted[0].details.postcondition.apiRollbackDispatched -eq $false -and
         $restartCompleted[0].details.postcondition.workerRollbackDispatched -eq $true -and
+        $restartCompleted[0].details.postcondition.recoveryCheckpointResumed -eq $true -and
+        $restartCompleted[0].details.postcondition.recoveryCheckpointInitialRunId -eq "simulated-crashed-controller" -and
+        [int]$restartCompleted[0].details.postcondition.recoveryCheckpointResumeCount -eq 1 -and
+        $restartCompleted[0].details.postcondition.recoveryCheckpointStatus -eq "completed" -and
         $restartCompleted[0].details.postcondition.recoveryRequired -eq $false
     ) "Controller-restart evidence must prove the mixed API revision was safely converged before the worker rollback was dispatched."
+    $completedRestartCheckpoint = Get-Content -LiteralPath $applicationRecoveryCheckpointPath -Raw | ConvertFrom-Json -Depth 30
+    Assert-Condition (
+        $completedRestartCheckpoint.status -eq "completed" -and
+        $completedRestartCheckpoint.initialRunId -eq "simulated-crashed-controller" -and
+        [int]$completedRestartCheckpoint.resumeCount -eq 1 -and
+        $completedRestartCheckpoint.completedByRunId -eq $restartConfig.runId
+    ) "Stateful controller restart must durably close the original checkpoint only after exact service/config/scaling recovery."
+
+    $apiStableRestartConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+    $apiStableRestartConfig.runId = "connection-safe-api-stable-policy-restart"
+    [IO.File]::WriteAllText($rollbackConfigPath, ($apiStableRestartConfig | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+    $apiStableCheckpoint = $restartCheckpoint | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30
+    $apiStableCheckpoint.initialRunId = "simulated-api-stable-crash"
+    [IO.File]::WriteAllText($applicationRecoveryCheckpointPath, ($apiStableCheckpoint | ConvertTo-Json -Depth 30), [Text.UTF8Encoding]::new($false))
+    $global:SchoolPilotTestServiceState.api.taskDefinition = "api-previous"
+    $global:SchoolPilotTestServiceState.api.deploymentConfiguration = $capturedApiDeploymentJson | ConvertFrom-Json -Depth 20
+    $global:SchoolPilotTestServiceState.api.deploymentConfiguration.maximumPercent = 100
+    $global:SchoolPilotTestServiceState.api.deploymentConfiguration.minimumHealthyPercent = 83
+    $global:SchoolPilotTestServiceState.worker.taskDefinition = "worker-current"
+    $global:SchoolPilotTestServiceState.worker.deploymentConfiguration = $capturedWorkerDeploymentJson | ConvertFrom-Json -Depth 20
+    Reset-SchoolPilotTestAutoscalingState
+    $global:SchoolPilotTestAutoscalingState.dynamicScalingInSuspended = $true
+    $global:SchoolPilotTestAutoscalingState.dynamicScalingOutSuspended = $true
+    $global:SchoolPilotTestAutoscalingState.scheduledScalingSuspended = $true
+    $apiStableTaskStart = $global:SchoolPilotTestTaskUpdateObservations.Count
+    & $rollbackScript -ConfigPath $rollbackConfigPath -Action Application -Mode Execute | Out-Null
+    $apiStableTaskUpdates = @($global:SchoolPilotTestTaskUpdateObservations | Select-Object -Skip $apiStableTaskStart)
+    $apiStableEvidence = @(Get-Content -LiteralPath (Join-Path $evidenceDirectory "$($apiStableRestartConfig.runId)-rollback.jsonl") |
+        ForEach-Object { $_ | ConvertFrom-Json -Depth 30 })
+    $apiStableCompleted = @($apiStableEvidence | Where-Object status -eq "completed")
+    Assert-Condition (
+        $apiStableTaskUpdates.Count -eq 1 -and $apiStableTaskUpdates[0].service -eq "worker" -and
+        $apiStableCompleted.Count -eq 1 -and
+        $apiStableCompleted[0].details.postcondition.apiInitiallyConverged -eq $true -and
+        $apiStableCompleted[0].details.postcondition.apiConfigurationNeedsRestoration -eq $true -and
+        $apiStableCompleted[0].details.postcondition.apiRollbackDispatched -eq $false -and
+        [int]$global:SchoolPilotTestServiceState.api.deploymentConfiguration.maximumPercent -eq 200 -and
+        [int]$global:SchoolPilotTestServiceState.api.deploymentConfiguration.minimumHealthyPercent -eq 100 -and
+        -not $global:SchoolPilotTestAutoscalingState.dynamicScalingInSuspended
+    ) "A restart after exact API convergence must still restore its temporary API policy and original scaling state without duplicate API dispatch."
+
+    $bothStableRestartConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+    $bothStableRestartConfig.runId = "connection-safe-both-stable-policy-restart"
+    [IO.File]::WriteAllText($rollbackConfigPath, ($bothStableRestartConfig | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+    $bothStableCheckpoint = $restartCheckpoint | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30
+    $bothStableCheckpoint.initialRunId = "simulated-both-stable-crash"
+    [IO.File]::WriteAllText($applicationRecoveryCheckpointPath, ($bothStableCheckpoint | ConvertTo-Json -Depth 30), [Text.UTF8Encoding]::new($false))
+    $global:SchoolPilotTestServiceState.api.taskDefinition = "api-previous"
+    $global:SchoolPilotTestServiceState.api.deploymentConfiguration = $capturedApiDeploymentJson | ConvertFrom-Json -Depth 20
+    $global:SchoolPilotTestServiceState.api.deploymentConfiguration.maximumPercent = 100
+    $global:SchoolPilotTestServiceState.api.deploymentConfiguration.minimumHealthyPercent = 83
+    $global:SchoolPilotTestServiceState.worker.taskDefinition = "worker-previous"
+    $global:SchoolPilotTestServiceState.worker.deploymentConfiguration = $capturedWorkerDeploymentJson | ConvertFrom-Json -Depth 20
+    $global:SchoolPilotTestServiceState.worker.deploymentConfiguration.maximumPercent = 100
+    $global:SchoolPilotTestServiceState.worker.deploymentConfiguration.minimumHealthyPercent = 0
+    Reset-SchoolPilotTestAutoscalingState
+    $global:SchoolPilotTestAutoscalingState.dynamicScalingInSuspended = $true
+    $global:SchoolPilotTestAutoscalingState.dynamicScalingOutSuspended = $true
+    $global:SchoolPilotTestAutoscalingState.scheduledScalingSuspended = $true
+    $bothStableTaskStart = $global:SchoolPilotTestTaskUpdateObservations.Count
+    & $rollbackScript -ConfigPath $rollbackConfigPath -Action Application -Mode Execute | Out-Null
+    $bothStableTaskUpdates = @($global:SchoolPilotTestTaskUpdateObservations | Select-Object -Skip $bothStableTaskStart)
+    $bothStableEvidence = @(Get-Content -LiteralPath (Join-Path $evidenceDirectory "$($bothStableRestartConfig.runId)-rollback.jsonl") |
+        ForEach-Object { $_ | ConvertFrom-Json -Depth 30 })
+    $bothStableCompleted = @($bothStableEvidence | Where-Object status -eq "completed")
+    Assert-Condition (
+        $bothStableTaskUpdates.Count -eq 0 -and $bothStableCompleted.Count -eq 1 -and
+        $bothStableCompleted[0].details.postcondition.apiInitiallyConverged -eq $true -and
+        $bothStableCompleted[0].details.postcondition.workerInitiallyConverged -eq $true -and
+        $bothStableCompleted[0].details.postcondition.apiConfigurationNeedsRestoration -eq $true -and
+        $bothStableCompleted[0].details.postcondition.workerConfigurationNeedsRestoration -eq $true -and
+        $bothStableCompleted[0].details.postcondition.apiRollbackDispatched -eq $false -and
+        $bothStableCompleted[0].details.postcondition.workerRollbackDispatched -eq $false -and
+        [int]$global:SchoolPilotTestServiceState.api.deploymentConfiguration.maximumPercent -eq 200 -and
+        [int]$global:SchoolPilotTestServiceState.worker.deploymentConfiguration.maximumPercent -eq 200 -and
+        -not $global:SchoolPilotTestAutoscalingState.dynamicScalingInSuspended
+    ) "A restart after both revisions converge must restore both temporary policies and original scaling without duplicate deployments."
+
+    $violationRestartConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+    $violationRestartConfig.runId = "availability-violation-stateful-restart"
+    [IO.File]::WriteAllText($rollbackConfigPath, ($violationRestartConfig | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+    $violationCheckpoint = $restartCheckpoint | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30
+    $violationCheckpoint.initialRunId = "simulated-availability-violation-crash"
+    $violationCheckpoint.recoveryState.availability.apiMinimumObservedHealthyTargets = 0
+    $violationCheckpoint.recoveryState.availability.apiZeroHealthyObserved = $true
+    $violationCheckpoint.recoveryState.availability.apiAvailabilityViolation = $true
+    [IO.File]::WriteAllText($applicationRecoveryCheckpointPath, ($violationCheckpoint | ConvertTo-Json -Depth 30), [Text.UTF8Encoding]::new($false))
+    $global:SchoolPilotTestServiceState.api.taskDefinition = "api-previous"
+    $global:SchoolPilotTestServiceState.api.deploymentConfiguration = $capturedApiDeploymentJson | ConvertFrom-Json -Depth 20
+    $global:SchoolPilotTestServiceState.api.deploymentConfiguration.maximumPercent = 100
+    $global:SchoolPilotTestServiceState.api.deploymentConfiguration.minimumHealthyPercent = 83
+    $global:SchoolPilotTestServiceState.worker.taskDefinition = "worker-previous"
+    $global:SchoolPilotTestServiceState.worker.deploymentConfiguration = $capturedWorkerDeploymentJson | ConvertFrom-Json -Depth 20
+    $global:SchoolPilotTestServiceState.worker.deploymentConfiguration.maximumPercent = 100
+    $global:SchoolPilotTestServiceState.worker.deploymentConfiguration.minimumHealthyPercent = 0
+    Reset-SchoolPilotTestAutoscalingState
+    $global:SchoolPilotTestAutoscalingState.dynamicScalingInSuspended = $true
+    $global:SchoolPilotTestAutoscalingState.dynamicScalingOutSuspended = $true
+    $global:SchoolPilotTestAutoscalingState.scheduledScalingSuspended = $true
+    $violationRestartTaskStart = $global:SchoolPilotTestTaskUpdateObservations.Count
+    $violationRestartError = $null
+    try { & $rollbackScript -ConfigPath $rollbackConfigPath -Action Application -Mode Execute | Out-Null }
+    catch { $violationRestartError = $_ }
+    $violationRestartTaskUpdates = @($global:SchoolPilotTestTaskUpdateObservations | Select-Object -Skip $violationRestartTaskStart)
+    $violationRestartEvidence = @(Get-Content -LiteralPath (Join-Path $evidenceDirectory "$($violationRestartConfig.runId)-rollback.jsonl") |
+        ForEach-Object { $_ | ConvertFrom-Json -Depth 30 })
+    $violationRestartFailed = @($violationRestartEvidence | Where-Object status -eq "failed")
+    $terminalViolationCheckpoint = Get-Content -LiteralPath $applicationRecoveryCheckpointPath -Raw | ConvertFrom-Json -Depth 30
+    Assert-Condition (
+        $null -ne $violationRestartError -and $violationRestartError.Exception.Message -match "availability-floor violation" -and
+        $violationRestartTaskUpdates.Count -eq 0 -and $violationRestartFailed.Count -eq 1 -and
+        $violationRestartFailed[0].details.recoveryRequired -eq $false -and
+        $violationRestartFailed[0].details.recoveryStatus -eq "completed_with_availability_violation" -and
+        $violationRestartFailed[0].details.apiAvailabilityViolation -eq $true -and
+        [int]$violationRestartFailed[0].details.apiMinimumObservedHealthyTargets -eq 0 -and
+        $violationRestartFailed[0].details.recoveryCheckpointStatus -eq "completed_with_availability_violation" -and
+        $terminalViolationCheckpoint.status -eq "completed_with_availability_violation" -and
+        [int]$global:SchoolPilotTestServiceState.api.deploymentConfiguration.maximumPercent -eq 200 -and
+        [int]$global:SchoolPilotTestServiceState.worker.deploymentConfiguration.maximumPercent -eq 200 -and
+        -not $global:SchoolPilotTestAutoscalingState.dynamicScalingInSuspended
+    ) "A restarted controller must preserve a prior availability violation, finish exact recovery, and durably block progression."
+
+    $terminalReuseConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+    $terminalReuseConfig.runId = "availability-violation-terminal-reuse-rejected"
+    [IO.File]::WriteAllText($rollbackConfigPath, ($terminalReuseConfig | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+    $terminalReuseUpdateStart = $global:SchoolPilotTestUpdateServiceCallCount
+    $terminalReuseRegisterStart = $global:SchoolPilotTestAutoscalingRegisterCallCount
+    $terminalReuseError = $null
+    try { & $rollbackScript -ConfigPath $rollbackConfigPath -Action Application -Mode Execute | Out-Null }
+    catch { $terminalReuseError = $_ }
+    Assert-Condition (
+        $null -ne $terminalReuseError -and $terminalReuseError.Exception.Message -match "terminal availability-violation checkpoint" -and
+        $global:SchoolPilotTestUpdateServiceCallCount -eq $terminalReuseUpdateStart -and
+        $global:SchoolPilotTestAutoscalingRegisterCallCount -eq $terminalReuseRegisterStart
+    ) "A terminal availability-violation checkpoint must fail closed on reuse before any recovery mutation."
+    [IO.File]::Delete($applicationRecoveryCheckpointPath)
 
     $workerRestartConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
     $workerRestartConfig.runId = "connection-safe-worker-controller-restart"
     [IO.File]::WriteAllText($rollbackConfigPath, ($workerRestartConfig | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
     $global:SchoolPilotTestServiceState.api.taskDefinition = "api-previous"
+    $global:SchoolPilotTestServiceState.api.deploymentConfiguration = $capturedApiDeploymentJson | ConvertFrom-Json -Depth 20
     $global:SchoolPilotTestServiceState.worker.taskDefinition = "worker-previous"
+    $global:SchoolPilotTestServiceState.worker.deploymentConfiguration = $capturedWorkerDeploymentJson | ConvertFrom-Json -Depth 20
+    $global:SchoolPilotTestServiceState.worker.deploymentConfiguration.maximumPercent = 100
+    $global:SchoolPilotTestServiceState.worker.deploymentConfiguration.minimumHealthyPercent = 0
     $global:SchoolPilotTestTransientMixedDeploymentPolls.worker = 4
     $workerRestartPayloadStart = $global:SchoolPilotTestDeploymentPayloads.Count
     $workerRestartTaskStart = $global:SchoolPilotTestTaskUpdateObservations.Count
@@ -2637,7 +3424,9 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         $workerRestartPayloads[0].service -eq "worker" -and
         [int]$workerRestartPayloads[0].configuration.maximumPercent -eq 100 -and
         [int]$workerRestartPayloads[0].configuration.minimumHealthyPercent -eq 0 -and
-        $global:SchoolPilotTestTransientMixedDeploymentPolls.worker -eq 0
+        $global:SchoolPilotTestTransientMixedDeploymentPolls.worker -eq 0 -and
+        [int]$global:SchoolPilotTestServiceState.worker.deploymentConfiguration.maximumPercent -eq 200 -and
+        [int]$global:SchoolPilotTestServiceState.worker.deploymentConfiguration.minimumHealthyPercent -eq 100
     ) "A restarted controller must install the zero-overlap worker policy before waiting on an already-selected but mixed worker revision."
     $workerRestartEvidence = @(Get-Content -LiteralPath (Join-Path $evidenceDirectory "$($workerRestartConfig.runId)-rollback.jsonl") |
         ForEach-Object { $_ | ConvertFrom-Json -Depth 30 })
@@ -2651,6 +3440,122 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         $workerRestartCompleted[0].details.postcondition.workerRollbackDispatched -eq $false -and
         $workerRestartCompleted[0].details.postcondition.recoveryRequired -eq $false
     ) "Worker-restart evidence must prove the mixed already-selected worker revision converged under zero-overlap policy."
+
+    $preMutationFailureConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+    $preMutationFailureConfig.runId = "connection-safe-pre-mutation-autoscaling-failure"
+    [IO.File]::WriteAllText($rollbackConfigPath, ($preMutationFailureConfig | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+    $global:SchoolPilotTestServiceState.api.taskDefinition = "api-current"
+    $global:SchoolPilotTestServiceState.api.deploymentConfiguration = $capturedApiDeploymentJson | ConvertFrom-Json -Depth 20
+    $global:SchoolPilotTestServiceState.worker.taskDefinition = "worker-current"
+    $global:SchoolPilotTestServiceState.worker.deploymentConfiguration = $capturedWorkerDeploymentJson | ConvertFrom-Json -Depth 20
+    Reset-SchoolPilotTestAutoscalingState
+    $global:SchoolPilotTestAutoscalingState.dynamicScalingInSuspended = $true
+    $global:SchoolPilotTestAutoscalingState.dynamicScalingOutSuspended = $false
+    $global:SchoolPilotTestAutoscalingState.scheduledScalingSuspended = $true
+    $preMutationRegisterFailure = $global:SchoolPilotTestAutoscalingRegisterCallCount + 1
+    $preMutationUpdateStart = $global:SchoolPilotTestUpdateServiceCallCount
+    $global:SchoolPilotTestFailAutoscalingRegisterCalls = @($preMutationRegisterFailure)
+    $preMutationFailureError = $null
+    try { & $rollbackScript -ConfigPath $rollbackConfigPath -Action Application -Mode Execute | Out-Null }
+    catch { $preMutationFailureError = $_ }
+    finally { $global:SchoolPilotTestFailAutoscalingRegisterCalls = @() }
+    Assert-Condition (
+        $null -ne $preMutationFailureError -and
+        $preMutationFailureError.Exception.Message -eq "Mock register-scalable-target failure at call $preMutationRegisterFailure." -and
+        $global:SchoolPilotTestUpdateServiceCallCount -eq $preMutationUpdateStart -and
+        $global:SchoolPilotTestAutoscalingState.dynamicScalingInSuspended -and
+        -not $global:SchoolPilotTestAutoscalingState.dynamicScalingOutSuspended -and
+        $global:SchoolPilotTestAutoscalingState.scheduledScalingSuspended
+    ) "A failure before API mutation must leave services untouched and restore the exact captured autoscaling state."
+    $preMutationFailureEvidence = @(Get-Content -LiteralPath (Join-Path $evidenceDirectory "$($preMutationFailureConfig.runId)-rollback.jsonl") |
+        ForEach-Object { $_ | ConvertFrom-Json -Depth 30 })
+    $preMutationFailed = @($preMutationFailureEvidence | Where-Object status -eq "failed")
+    Assert-Condition (
+        $preMutationFailed.Count -eq 1 -and
+        $preMutationFailed[0].details.recoveryRequired -eq $true -and
+        $preMutationFailed[0].details.apiSafetyPolicyTouched -eq $false -and
+        $preMutationFailed[0].details.apiAutoscalingHoldAttempted -eq $true -and
+        $preMutationFailed[0].details.apiAutoscalingHoldApplied -eq $false -and
+        $preMutationFailed[0].details.apiAutoscalingHoldRetained -eq $false -and
+        $preMutationFailed[0].details.apiAutoscalingRestoration.success -eq $true
+    ) "Pre-mutation failure evidence must prove exact autoscaling restoration rather than retaining a hold."
+    [IO.File]::Delete($applicationRecoveryCheckpointPath)
+    Reset-SchoolPilotTestAutoscalingState
+
+    $restartHoldFailureConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+    $restartHoldFailureConfig.runId = "connection-safe-restart-hold-failure"
+    [IO.File]::WriteAllText($rollbackConfigPath, ($restartHoldFailureConfig | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+    $restartHoldFailureCheckpoint = $restartCheckpoint | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30
+    $restartHoldFailureCheckpoint.initialRunId = "simulated-restart-before-hold-failure"
+    [IO.File]::WriteAllText($applicationRecoveryCheckpointPath, ($restartHoldFailureCheckpoint | ConvertTo-Json -Depth 30), [Text.UTF8Encoding]::new($false))
+    $global:SchoolPilotTestServiceState.api.taskDefinition = "api-previous"
+    $global:SchoolPilotTestServiceState.api.deploymentConfiguration = $capturedApiDeploymentJson | ConvertFrom-Json -Depth 20
+    $global:SchoolPilotTestServiceState.api.deploymentConfiguration.maximumPercent = 100
+    $global:SchoolPilotTestServiceState.api.deploymentConfiguration.minimumHealthyPercent = 83
+    $global:SchoolPilotTestServiceState.worker.taskDefinition = "worker-current"
+    $global:SchoolPilotTestServiceState.worker.deploymentConfiguration = $capturedWorkerDeploymentJson | ConvertFrom-Json -Depth 20
+    $global:SchoolPilotTestAutoscalingState.dynamicScalingInSuspended = $true
+    $global:SchoolPilotTestAutoscalingState.dynamicScalingOutSuspended = $true
+    $global:SchoolPilotTestAutoscalingState.scheduledScalingSuspended = $true
+    $restartHoldRegisterFailure = $global:SchoolPilotTestAutoscalingRegisterCallCount + 1
+    $restartHoldUpdateStart = $global:SchoolPilotTestUpdateServiceCallCount
+    $global:SchoolPilotTestFailAutoscalingRegisterCalls = @($restartHoldRegisterFailure)
+    $restartHoldFailureError = $null
+    try { & $rollbackScript -ConfigPath $rollbackConfigPath -Action Application -Mode Execute | Out-Null }
+    catch { $restartHoldFailureError = $_ }
+    finally { $global:SchoolPilotTestFailAutoscalingRegisterCalls = @() }
+    $restartHoldFailureEvidence = @(Get-Content -LiteralPath (Join-Path $evidenceDirectory "$($restartHoldFailureConfig.runId)-rollback.jsonl") |
+        ForEach-Object { $_ | ConvertFrom-Json -Depth 30 })
+    $restartHoldFailed = @($restartHoldFailureEvidence | Where-Object status -eq "failed")
+    Assert-Condition (
+        $null -ne $restartHoldFailureError -and
+        $restartHoldFailureError.Exception.Message -eq "Mock register-scalable-target failure at call $restartHoldRegisterFailure." -and
+        $global:SchoolPilotTestUpdateServiceCallCount -eq $restartHoldUpdateStart -and
+        $restartHoldFailed.Count -eq 1 -and
+        $restartHoldFailed[0].details.recoveryCheckpointResumed -eq $true -and
+        $restartHoldFailed[0].details.apiConfigurationNeedsRestoration -eq $true -and
+        $restartHoldFailed[0].details.apiSafetyPolicyTouched -eq $false -and
+        $restartHoldFailed[0].details.apiAutoscalingRestoration.success -eq $true -and
+        [int]$global:SchoolPilotTestServiceState.api.deploymentConfiguration.maximumPercent -eq 100 -and
+        [int]$global:SchoolPilotTestServiceState.api.deploymentConfiguration.minimumHealthyPercent -eq 83 -and
+        -not $global:SchoolPilotTestAutoscalingState.dynamicScalingInSuspended -and
+        -not $global:SchoolPilotTestAutoscalingState.dynamicScalingOutSuspended -and
+        -not $global:SchoolPilotTestAutoscalingState.scheduledScalingSuspended
+    ) "A restarted controller that cannot establish the scaling hold must restore scaling and make zero ECS mutations even when a temporary API policy needs later restoration."
+    [IO.File]::Delete($applicationRecoveryCheckpointPath)
+    Reset-SchoolPilotTestAutoscalingState
+
+    $checkpointLossConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+    $checkpointLossConfig.runId = "connection-safe-checkpoint-loss"
+    [IO.File]::WriteAllText($rollbackConfigPath, ($checkpointLossConfig | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+    $global:SchoolPilotTestServiceState.api.taskDefinition = "api-current"
+    $global:SchoolPilotTestServiceState.api.deploymentConfiguration = $capturedApiDeploymentJson | ConvertFrom-Json -Depth 20
+    $global:SchoolPilotTestServiceState.worker.taskDefinition = "worker-current"
+    $global:SchoolPilotTestServiceState.worker.deploymentConfiguration = $capturedWorkerDeploymentJson | ConvertFrom-Json -Depth 20
+    $global:SchoolPilotTestDeleteCheckpointAfterApiPolicyApplyPath = $applicationRecoveryCheckpointPath
+    $checkpointLossError = $null
+    try { & $rollbackScript -ConfigPath $rollbackConfigPath -Action Application -Mode Execute | Out-Null }
+    catch { $checkpointLossError = $_ }
+    finally { $global:SchoolPilotTestDeleteCheckpointAfterApiPolicyApplyPath = "" }
+    $checkpointLossEvidence = @(Get-Content -LiteralPath (Join-Path $evidenceDirectory "$($checkpointLossConfig.runId)-rollback.jsonl") |
+        ForEach-Object { $_ | ConvertFrom-Json -Depth 30 })
+    $checkpointLossFailed = @($checkpointLossEvidence | Where-Object status -eq "failed")
+    $checkpointLossRecovery = Get-Content -LiteralPath $applicationRecoveryCheckpointPath -Raw | ConvertFrom-Json -Depth 30
+    Assert-Condition (
+        $null -ne $checkpointLossError -and $checkpointLossError.Exception.Message -match "lost its active durable recovery checkpoint" -and
+        $checkpointLossFailed.Count -eq 1 -and
+        $checkpointLossFailed[0].details.recoveryRequired -eq $true -and
+        $checkpointLossFailed[0].details.safetyPolicyRetained -eq $true -and
+        $checkpointLossFailed[0].details.apiAutoscalingHoldRetained -eq $true -and
+        [int]$global:SchoolPilotTestServiceState.api.deploymentConfiguration.maximumPercent -eq 100 -and
+        $global:SchoolPilotTestAutoscalingState.dynamicScalingInSuspended -and
+        $global:SchoolPilotTestAutoscalingState.dynamicScalingOutSuspended -and
+        $global:SchoolPilotTestAutoscalingState.scheduledScalingSuspended -and
+        $checkpointLossRecovery.status -eq "active" -and
+        $checkpointLossRecovery.lastFailure -match "lost its active durable recovery checkpoint"
+    ) "Losing the active checkpoint after policy mutation must fail closed, retain policy/scaling containment, and recreate active recovery evidence."
+    [IO.File]::Delete($applicationRecoveryCheckpointPath)
+    Reset-SchoolPilotTestAutoscalingState
 
     $apiUpdateFailureConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
     $apiUpdateFailureConfig.runId = "connection-safe-api-update-failure"
@@ -2688,9 +3593,19 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         $apiFailureFailed[0].details.failedStep -eq "restore-previous-api-revision" -and
         $apiFailureFailed[0].details.apiConverged -eq $false -and
         $apiFailureFailed[0].details.workerRollbackDispatched -eq $false -and
-        $apiFailureFailed[0].details.safetyPolicyRetained -eq $true
+        $apiFailureFailed[0].details.safetyPolicyRetained -eq $true -and
+        $apiFailureFailed[0].details.apiAutoscalingHoldRetained -eq $true -and
+        $apiFailureFailed[0].details.apiAutoscalingHoldRetention.success -eq $true -and
+        $apiFailureFailed[0].details.apiAutoscalingHoldRetention.verified.suspendedState.dynamicScalingInSuspended -eq $true -and
+        $apiFailureFailed[0].details.apiAutoscalingHoldRetention.verified.suspendedState.dynamicScalingOutSuspended -eq $true -and
+        $apiFailureFailed[0].details.apiAutoscalingHoldRetention.verified.suspendedState.scheduledScalingSuspended -eq $true -and
+        $global:SchoolPilotTestAutoscalingState.dynamicScalingInSuspended -and
+        $global:SchoolPilotTestAutoscalingState.dynamicScalingOutSuspended -and
+        $global:SchoolPilotTestAutoscalingState.scheduledScalingSuspended
     ) "API failure evidence must explicitly require recovery and prove the safe policy was retained."
 
+    [IO.File]::Delete($applicationRecoveryCheckpointPath)
+    Reset-SchoolPilotTestAutoscalingState
     $global:SchoolPilotTestServiceState.api.deploymentConfiguration = $capturedApiDeploymentJson | ConvertFrom-Json -Depth 20
     $global:SchoolPilotTestServiceState.worker.deploymentConfiguration = $capturedWorkerDeploymentJson | ConvertFrom-Json -Depth 20
     $workerUpdateFailureConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
@@ -2723,9 +3638,16 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         $workerFailureFailed[0].details.recoveryRequired -eq $true -and
         $workerFailureFailed[0].details.apiConverged -eq $true -and
         $workerFailureFailed[0].details.workerConverged -eq $false -and
-        $workerFailureFailed[0].details.safetyPolicyRetained -eq $true
+        $workerFailureFailed[0].details.safetyPolicyRetained -eq $true -and
+        $workerFailureFailed[0].details.apiAutoscalingHoldRetained -eq $true -and
+        $workerFailureFailed[0].details.apiAutoscalingHoldRetention.success -eq $true -and
+        $global:SchoolPilotTestAutoscalingState.dynamicScalingInSuspended -and
+        $global:SchoolPilotTestAutoscalingState.dynamicScalingOutSuspended -and
+        $global:SchoolPilotTestAutoscalingState.scheduledScalingSuspended
     ) "Worker failure evidence must retain the mixed-revision recovery state without claiming success."
 
+    [IO.File]::Delete($applicationRecoveryCheckpointPath)
+    Reset-SchoolPilotTestAutoscalingState
     $global:SchoolPilotTestServiceState.api.deploymentConfiguration = $capturedApiDeploymentJson | ConvertFrom-Json -Depth 20
     $global:SchoolPilotTestServiceState.worker.deploymentConfiguration = $capturedWorkerDeploymentJson | ConvertFrom-Json -Depth 20
     $failedDeploymentConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
@@ -2751,9 +3673,17 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         $failedDeploymentFailed[0].details.recoveryRequired -eq $true -and
         $failedDeploymentFailed[0].details.failedStep -eq "wait-api-exact-convergence" -and
         $failedDeploymentFailed[0].details.workerRollbackDispatched -eq $false -and
-        $failedDeploymentFailed[0].details.lastObservedConvergence.failedDeployment -eq $true
+        $failedDeploymentFailed[0].details.lastObservedConvergence.failedDeployment -eq $true -and
+        $failedDeploymentFailed[0].details.safetyPolicyRetained -eq $true -and
+        $failedDeploymentFailed[0].details.apiAutoscalingHoldRetained -eq $true -and
+        $failedDeploymentFailed[0].details.apiAutoscalingHoldRetention.success -eq $true -and
+        $global:SchoolPilotTestAutoscalingState.dynamicScalingInSuspended -and
+        $global:SchoolPilotTestAutoscalingState.dynamicScalingOutSuspended -and
+        $global:SchoolPilotTestAutoscalingState.scheduledScalingSuspended
     ) "Failed-deployment evidence must record the exact failed observation and recovery requirement."
 
+    [IO.File]::Delete($applicationRecoveryCheckpointPath)
+    Reset-SchoolPilotTestAutoscalingState
     $global:SchoolPilotTestServiceState.api.deploymentConfiguration = $capturedApiDeploymentJson | ConvertFrom-Json -Depth 20
     $global:SchoolPilotTestServiceState.worker.deploymentConfiguration = $capturedWorkerDeploymentJson | ConvertFrom-Json -Depth 20
     $deadlineConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
@@ -2779,9 +3709,16 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         $deadlineFailed.Count -eq 1 -and
         $deadlineFailed[0].details.recoveryRequired -eq $true -and
         $deadlineFailed[0].details.failedStep -eq "wait-api-exact-convergence" -and
-        $deadlineFailed[0].details.safetyPolicyRetained -eq $true
+        $deadlineFailed[0].details.safetyPolicyRetained -eq $true -and
+        $deadlineFailed[0].details.apiAutoscalingHoldRetained -eq $true -and
+        $deadlineFailed[0].details.apiAutoscalingHoldRetention.success -eq $true -and
+        $global:SchoolPilotTestAutoscalingState.dynamicScalingInSuspended -and
+        $global:SchoolPilotTestAutoscalingState.dynamicScalingOutSuspended -and
+        $global:SchoolPilotTestAutoscalingState.scheduledScalingSuspended
     ) "Deadline evidence must require recovery and retain the API non-overlap policy."
 
+    [IO.File]::Delete($applicationRecoveryCheckpointPath)
+    Reset-SchoolPilotTestAutoscalingState
     $global:SchoolPilotTestServiceState.api.deploymentConfiguration = $capturedApiDeploymentJson | ConvertFrom-Json -Depth 20
     $global:SchoolPilotTestServiceState.worker.deploymentConfiguration = $capturedWorkerDeploymentJson | ConvertFrom-Json -Depth 20
 

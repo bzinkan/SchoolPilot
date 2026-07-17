@@ -652,6 +652,48 @@ function Get-EcsDeploymentConfigurationJson {
         ConvertTo-Json -Compress -Depth 60)
 }
 
+function Get-ApiRollbackDeploymentPolicy {
+    param($CapturedDeploymentConfiguration, [int]$DesiredCount)
+    if ($DesiredCount -lt 1) {
+        throw "Application rollback requires API desired capacity of at least one."
+    }
+
+    $configuration = Copy-EcsDeploymentConfiguration -DeploymentConfiguration $CapturedDeploymentConfiguration
+    if ($DesiredCount -eq 1) {
+        # A 100/0 singleton rollout lets ECS stop the only target before it starts
+        # the replacement. With the reviewed 300-second ALB drain that creates an
+        # avoidable outage. One bounded surge slot is the only rolling strategy
+        # that preserves a healthy singleton target while leaving the drain intact.
+        $configuration.maximumPercent = 200
+        $configuration.minimumHealthyPercent = 100
+        $mode = "singleton-one-replacement-slot"
+    }
+    else {
+        # At measured 6/8-task capacity, prohibit any surge so database connection
+        # capacity cannot exceed the captured desired count. ECS rounds the minimum
+        # up, so this percentage keeps exactly desired-1 tasks healthy.
+        $configuration.maximumPercent = 100
+        $configuration.minimumHealthyPercent = [int][Math]::Floor((($DesiredCount - 1) * 100.0) / $DesiredCount)
+        $mode = "non-overlap-one-at-a-time"
+    }
+
+    $minimumHealthyTasks = [int][Math]::Ceiling(($DesiredCount * [int]$configuration.minimumHealthyPercent) / 100.0)
+    $maximumConcurrentTasks = [int][Math]::Floor(($DesiredCount * [int]$configuration.maximumPercent) / 100.0)
+    $expectedMaximum = if ($DesiredCount -eq 1) { 2 } else { $DesiredCount }
+    if ($minimumHealthyTasks -lt 1 -or $maximumConcurrentTasks -ne $expectedMaximum) {
+        throw "Application rollback could not construct the reviewed API availability/connection policy."
+    }
+
+    return [ordered]@{
+        configuration = $configuration
+        mode = $mode
+        desiredCount = $DesiredCount
+        minimumHealthyTasks = $minimumHealthyTasks
+        maximumConcurrentTasks = $maximumConcurrentTasks
+        singletonReplacementSlots = if ($DesiredCount -eq 1) { 1 } else { 0 }
+    }
+}
+
 function Set-EcsServiceDeploymentConfiguration {
     param($Config, [string]$Service, $DeploymentConfiguration)
     $configurationPath = Join-Path ([IO.Path]::GetTempPath()) "schoolpilot-deployment-$([Guid]::NewGuid().ToString('N')).json"
@@ -669,6 +711,64 @@ function Set-EcsServiceDeploymentConfiguration {
     }
     finally {
         if (Test-Path -LiteralPath $configurationPath) { Remove-Item -LiteralPath $configurationPath -Force }
+    }
+}
+
+function Sync-ApiRollbackDeploymentPolicy {
+    param($Config, [string]$Reason, [switch]$Force)
+    if ($null -eq $script:RollbackFailureDetails) {
+        throw "API rollback policy synchronization requires active recovery evidence."
+    }
+
+    $services = @(Get-ServiceSnapshot -Config $Config)
+    $api = @($services | Where-Object serviceName -eq $Config.apiService)
+    if ($api.Count -ne 1) {
+        throw "Application rollback could not resolve the API while synchronizing desired capacity."
+    }
+    $liveDesired = [int]$api[0].desired
+    $boundDesired = [int](Get-OptionalObjectValue -Object $script:RollbackFailureDetails `
+        -Property "apiPolicyDesired" -Default 0)
+    $policy = Get-ApiRollbackDeploymentPolicy `
+        -CapturedDeploymentConfiguration $script:RollbackFailureDetails.normalApiDeploymentConfiguration `
+        -DesiredCount $liveDesired
+    $expectedJson = Get-EcsDeploymentConfigurationJson $policy.configuration
+    $liveJson = Get-EcsDeploymentConfigurationJson $api[0].deploymentConfiguration
+    $requiresApply = $Force -or $liveDesired -ne $boundDesired -or $liveJson -cne $expectedJson
+
+    $script:RollbackFailureDetails["apiDesired"] = $liveDesired
+    $script:RollbackFailureDetails["apiPolicyDesired"] = $liveDesired
+    $script:RollbackFailureDetails["apiAvailabilityMode"] = [string]$policy.mode
+    $script:RollbackFailureDetails["apiMinimumHealthyTasks"] = [int]$policy.minimumHealthyTasks
+    $script:RollbackFailureDetails["apiMaximumConcurrentTasks"] = [int]$policy.maximumConcurrentTasks
+    $script:RollbackFailureDetails["apiSingletonReplacementSlots"] = [int]$policy.singletonReplacementSlots
+    $script:RollbackFailureDetails["temporaryApiDeploymentConfiguration"] = $policy.configuration
+    if ($liveDesired -ne [int]$script:RollbackFailureDetails.apiInitialDesired) {
+        $script:RollbackFailureDetails["apiDesiredDriftObserved"] = $true
+    }
+
+    if ($requiresApply) {
+        $history = @($script:RollbackFailureDetails.apiPolicyHistory)
+        $script:RollbackFailureDetails["apiPolicyHistory"] = @($history) + @([ordered]@{
+            timestamp = [DateTimeOffset]::UtcNow.ToString("o")
+            reason = $Reason
+            desired = $liveDesired
+            mode = [string]$policy.mode
+            minimumHealthyTasks = [int]$policy.minimumHealthyTasks
+            maximumConcurrentTasks = [int]$policy.maximumConcurrentTasks
+            configuration = $policy.configuration
+        })
+        $script:RollbackFailureDetails["apiPolicyApplyCount"] = `
+            [int]$script:RollbackFailureDetails.apiPolicyApplyCount + 1
+        $script:RollbackFailureDetails["apiSafetyPolicyTouched"] = $true
+        Set-EcsServiceDeploymentConfiguration -Config $Config -Service $Config.apiService `
+            -DeploymentConfiguration $policy.configuration
+    }
+    Update-ApplicationRecoveryCheckpointState -Recovery $script:RollbackFailureDetails
+
+    return [ordered]@{
+        desired = $liveDesired
+        applied = $requiresApply
+        policy = $policy
     }
 }
 
@@ -706,6 +806,185 @@ function Restore-EcsServiceDeploymentConfigurationsBestEffort {
     }
 }
 
+function Get-ApiAutoscalingTarget {
+    param($Config)
+    $resourceId = "service/$($Config.cluster)/$($Config.apiService)"
+    $response = Invoke-AwsJson -Arguments @(
+        "application-autoscaling", "describe-scalable-targets", "--region", $Config.region,
+        "--service-namespace", "ecs", "--resource-ids", $resourceId,
+        "--scalable-dimension", "ecs:service:DesiredCount"
+    )
+    $targets = @($response.ScalableTargets)
+    if ($targets.Count -ne 1 -or [string]$targets[0].ResourceId -ne $resourceId) {
+        throw "Application rollback requires exactly one API ECS scalable target."
+    }
+    $target = $targets[0]
+    $state = Get-OptionalObjectValue -Object $target -Property "SuspendedState" -Default ([pscustomobject]@{})
+    $minimum = [int](Get-OptionalObjectValue -Object $target -Property "MinCapacity" -Default -1)
+    $maximum = [int](Get-OptionalObjectValue -Object $target -Property "MaxCapacity" -Default -1)
+    if ($minimum -lt 0 -or $maximum -lt 1 -or $minimum -gt $maximum) {
+        throw "Application rollback rejected an invalid API scalable-target capacity range."
+    }
+    return [ordered]@{
+        resourceId = $resourceId
+        minCapacity = $minimum
+        maxCapacity = $maximum
+        suspendedState = [ordered]@{
+            dynamicScalingInSuspended = [bool](Get-OptionalObjectValue -Object $state -Property "DynamicScalingInSuspended" -Default $false)
+            dynamicScalingOutSuspended = [bool](Get-OptionalObjectValue -Object $state -Property "DynamicScalingOutSuspended" -Default $false)
+            scheduledScalingSuspended = [bool](Get-OptionalObjectValue -Object $state -Property "ScheduledScalingSuspended" -Default $false)
+        }
+    }
+}
+
+function Set-ApiAutoscalingSuspendedState {
+    param($Config, $Target, $SuspendedState, [switch]$AllowAfterDeadline)
+    $stateArgument = @(
+        "DynamicScalingInSuspended=$(([bool]$SuspendedState.dynamicScalingInSuspended).ToString().ToLowerInvariant())"
+        "DynamicScalingOutSuspended=$(([bool]$SuspendedState.dynamicScalingOutSuspended).ToString().ToLowerInvariant())"
+        "ScheduledScalingSuspended=$(([bool]$SuspendedState.scheduledScalingSuspended).ToString().ToLowerInvariant())"
+    ) -join ","
+    Invoke-Aws -Arguments @(
+        "application-autoscaling", "register-scalable-target", "--region", $Config.region,
+        "--service-namespace", "ecs", "--resource-id", [string]$Target.resourceId,
+        "--scalable-dimension", "ecs:service:DesiredCount",
+        "--min-capacity", [string][int]$Target.minCapacity,
+        "--max-capacity", [string][int]$Target.maxCapacity,
+        "--suspended-state", $stateArgument
+    )
+    # register-scalable-target is eventually consistent. A single immediate
+    # describe can still return the previous state even though the update was
+    # accepted. Keep this verification locally bounded while also honoring the
+    # immutable outer recovery deadline.
+    $verificationSeconds = if ($Config.resolvedTestMode) { 2 } else { 30 }
+    $verificationDeadline = [DateTimeOffset]::UtcNow.AddSeconds($verificationSeconds)
+    $pollMilliseconds = if ($Config.resolvedTestMode) { 10 } else { 1000 }
+    do {
+        if (-not $AllowAfterDeadline) {
+            Assert-RollbackDeadline -Step "verify-api-autoscaling-suspended-state"
+        }
+        $verified = Get-ApiAutoscalingTarget -Config $Config
+        $matches = [int]$verified.minCapacity -eq [int]$Target.minCapacity -and
+            [int]$verified.maxCapacity -eq [int]$Target.maxCapacity -and
+            [bool]$verified.suspendedState.dynamicScalingInSuspended -eq [bool]$SuspendedState.dynamicScalingInSuspended -and
+            [bool]$verified.suspendedState.dynamicScalingOutSuspended -eq [bool]$SuspendedState.dynamicScalingOutSuspended -and
+            [bool]$verified.suspendedState.scheduledScalingSuspended -eq [bool]$SuspendedState.scheduledScalingSuspended
+        if ($matches) { return $verified }
+        if ([DateTimeOffset]::UtcNow -ge $verificationDeadline) { break }
+        Start-Sleep -Milliseconds $pollMilliseconds
+    } while ($true)
+    throw "Application rollback could not verify the exact API autoscaling suspended state within $verificationSeconds seconds."
+}
+
+function Restore-ApiAutoscalingStateBestEffort {
+    param($Config, $CapturedTarget, [switch]$AllowAfterDeadline)
+    try {
+        $verified = Set-ApiAutoscalingSuspendedState -Config $Config -Target $CapturedTarget `
+            -SuspendedState $CapturedTarget.suspendedState -AllowAfterDeadline:$AllowAfterDeadline
+        return [ordered]@{ attempted = $true; success = $true; verified = $verified }
+    }
+    catch {
+        return [ordered]@{ attempted = $true; success = $false; error = $_.Exception.Message }
+    }
+}
+
+function Get-ApplicationRecoveryCheckpointPath {
+    param($Config)
+    return Join-ContainedPath $Config.resolvedEvidenceDirectory "application-recovery-checkpoint.json"
+}
+
+function Assert-ApplicationRecoveryCheckpointBinding {
+    param($Config, $Checkpoint)
+    $expected = Get-OptionalObjectValue -Object $Checkpoint -Property "expectedTaskDefinitions" -Default $null
+    if ([int](Get-OptionalObjectValue -Object $Checkpoint -Property "schemaVersion" -Default 0) -ne 1 -or
+        [string](Get-OptionalObjectValue -Object $Checkpoint -Property "action" -Default "") -ne "Application" -or
+        [string](Get-OptionalObjectValue -Object $Checkpoint -Property "cluster" -Default "") -ne [string]$Config.cluster -or
+        [string](Get-OptionalObjectValue -Object $Checkpoint -Property "apiService" -Default "") -ne [string]$Config.apiService -or
+        [string](Get-OptionalObjectValue -Object $Checkpoint -Property "workerService" -Default "") -ne [string]$Config.workerService -or
+        [string](Get-OptionalObjectValue -Object $expected -Property "api" -Default "") -ne [string]$Config.previousApiTaskDefinition -or
+        [string](Get-OptionalObjectValue -Object $expected -Property "worker" -Default "") -ne [string]$Config.previousWorkerTaskDefinition) {
+        throw "Application rollback found an active recovery checkpoint that is not bound to this exact recovery."
+    }
+    $checkpointNormalApi = Get-OptionalObjectValue -Object $Checkpoint -Property "normalApiDeploymentConfiguration" -Default $null
+    $checkpointNormalWorker = Get-OptionalObjectValue -Object $Checkpoint -Property "normalWorkerDeploymentConfiguration" -Default $null
+    $checkpointAutoscalingTarget = Get-OptionalObjectValue -Object $Checkpoint -Property "originalApiAutoscalingTarget" -Default $null
+    if ($null -eq $checkpointNormalApi -or $null -eq $checkpointNormalWorker -or
+        $null -eq $checkpointAutoscalingTarget) {
+        throw "Application rollback found an incomplete active recovery checkpoint."
+    }
+    $normalApi = Copy-EcsDeploymentConfiguration -DeploymentConfiguration $checkpointNormalApi
+    $normalWorker = Copy-EcsDeploymentConfiguration -DeploymentConfiguration $checkpointNormalWorker
+    if ([int]$normalApi.maximumPercent -ne 200 -or [int]$normalApi.minimumHealthyPercent -ne 100 -or
+        [string](Get-OptionalObjectValue -Object $normalApi -Property "strategy" -Default "") -ne "ROLLING" -or
+        [int]$normalWorker.maximumPercent -ne 200 -or [int]$normalWorker.minimumHealthyPercent -ne 100 -or
+        [string](Get-OptionalObjectValue -Object $normalWorker -Property "strategy" -Default "") -ne "ROLLING") {
+        throw "Application rollback rejected non-normal deployment configuration in the active recovery checkpoint."
+    }
+    $target = $checkpointAutoscalingTarget
+    $expectedResourceId = "service/$($Config.cluster)/$($Config.apiService)"
+    $minimum = 0
+    $maximum = 0
+    $state = Get-OptionalObjectValue -Object $target -Property "suspendedState" -Default $null
+    $dynamicIn = Get-OptionalObjectValue -Object $state -Property "dynamicScalingInSuspended" -Default $null
+    $dynamicOut = Get-OptionalObjectValue -Object $state -Property "dynamicScalingOutSuspended" -Default $null
+    $scheduled = Get-OptionalObjectValue -Object $state -Property "scheduledScalingSuspended" -Default $null
+    if ([string](Get-OptionalObjectValue -Object $target -Property "resourceId" -Default "") -ne $expectedResourceId -or
+        -not [int]::TryParse([string](Get-OptionalObjectValue -Object $target -Property "minCapacity" -Default ""), [ref]$minimum) -or
+        -not [int]::TryParse([string](Get-OptionalObjectValue -Object $target -Property "maxCapacity" -Default ""), [ref]$maximum) -or
+        $minimum -lt 0 -or $maximum -lt 1 -or $minimum -gt $maximum -or
+        $dynamicIn -isnot [bool] -or $dynamicOut -isnot [bool] -or $scheduled -isnot [bool]) {
+        throw "Application rollback rejected an invalid API scalable target in the active recovery checkpoint."
+    }
+    $recoveryState = Get-OptionalObjectValue -Object $Checkpoint -Property "recoveryState" -Default $null
+    $availability = Get-OptionalObjectValue -Object $recoveryState -Property "availability" -Default $null
+    $policy = Get-OptionalObjectValue -Object $recoveryState -Property "apiPolicy" -Default $null
+    if ($null -eq $availability -or $null -eq $policy -or
+        (Get-OptionalObjectValue -Object $availability -Property "apiAvailabilityViolation" -Default $null) -isnot [bool] -or
+        (Get-OptionalObjectValue -Object $availability -Property "apiZeroHealthyObserved" -Default $null) -isnot [bool] -or
+        (Get-OptionalObjectValue -Object $recoveryState -Property "rollbackMutationBegan" -Default $null) -isnot [bool]) {
+        throw "Application rollback found incomplete durable recovery state in the active checkpoint."
+    }
+}
+
+function Get-ApplicationRecoveryStateSnapshot {
+    param($Recovery)
+    return [ordered]@{
+        rollbackMutationBegan = [bool](Get-OptionalObjectValue -Object $Recovery -Property "rollbackMutationBegan" -Default $false)
+        availability = [ordered]@{
+            apiInitialHealthyTargets = [int]$Recovery.apiInitialHealthyTargets
+            apiMinimumObservedHealthyTargets = [int]$Recovery.apiMinimumObservedHealthyTargets
+            apiZeroHealthyObserved = [bool]$Recovery.apiZeroHealthyObserved
+            apiAvailabilityViolation = [bool]$Recovery.apiAvailabilityViolation
+        }
+        apiPolicy = [ordered]@{
+            apiInitialDesired = [int]$Recovery.apiInitialDesired
+            apiDesired = [int]$Recovery.apiDesired
+            apiDesiredDriftObserved = [bool]$Recovery.apiDesiredDriftObserved
+            apiPolicyApplyCount = [int]$Recovery.apiPolicyApplyCount
+            apiPolicyHistory = @($Recovery.apiPolicyHistory)
+        }
+    }
+}
+
+function Update-ApplicationRecoveryCheckpointState {
+    param($Recovery)
+    $path = [string](Get-OptionalObjectValue -Object $Recovery -Property "recoveryCheckpointPath" -Default "")
+    if ([string]::IsNullOrWhiteSpace($path) -or -not (Test-Path -LiteralPath $path)) {
+        throw "Application rollback lost its active durable recovery checkpoint."
+    }
+    $checkpoint = Read-AtomicJson -Path $path
+    $status = [string](Get-OptionalObjectValue -Object $checkpoint -Property "status" -Default "")
+    if ($status -ne "active") {
+        throw "Application rollback recovery checkpoint became '$status' before terminal recovery evidence."
+    }
+    $state = Get-ApplicationRecoveryStateSnapshot -Recovery $Recovery
+    Set-ObjectValue -Object $checkpoint -Property "recoveryState" -Value $state
+    Set-ObjectValue -Object $checkpoint -Property "lastStateCheckpointAt" `
+        -Value ([DateTimeOffset]::UtcNow.ToString("o"))
+    Set-ObjectValue -Object $checkpoint -Property "lastStateCheckpointRunId" -Value ([string]$script:RollbackRunId)
+    Write-AtomicJson -Path $path -Value $checkpoint
+}
+
 function Get-OptionalObjectValue {
     param($Object, [string]$Property, $Default = $null)
     if ($null -eq $Object) { return $Default }
@@ -716,6 +995,15 @@ function Get-OptionalObjectValue {
     $member = $Object.PSObject.Properties[$Property]
     if ($null -eq $member -or $null -eq $member.Value) { return $Default }
     return $member.Value
+}
+
+function Set-ObjectValue {
+    param($Object, [string]$Property, $Value)
+    if ($Object -is [Collections.IDictionary]) {
+        $Object[$Property] = $Value
+        return
+    }
+    $Object | Add-Member -NotePropertyName $Property -NotePropertyValue $Value -Force
 }
 
 function Get-ServiceSnapshot {
@@ -899,19 +1187,58 @@ function Wait-ServiceConvergence {
         [string]$Service,
         [string]$ExpectedTaskDefinition,
         [string]$Step,
-        [switch]$RequireHealthyTargets
+        [switch]$RequireHealthyTargets,
+        [switch]$SynchronizeApiRollbackPolicy,
+        [int]$MinimumHealthyTargets = 0
     )
     $requiredConsecutivePolls = 2
-    $pollMilliseconds = if ($Config.resolvedTestMode) { 10 } else { 15000 }
+    $pollMilliseconds = if ($Config.resolvedTestMode) { 10 } elseif ($RequireHealthyTargets) { 5000 } else { 15000 }
     $consecutive = 0
     $polls = 0
     do {
         Assert-RollbackDeadline -Step $Step
         $polls++
+        if ($SynchronizeApiRollbackPolicy -and $RequireHealthyTargets -and
+            $Service -eq [string]$Config.apiService -and
+            $null -ne $script:RollbackFailureDetails -and
+            [bool](Get-OptionalObjectValue -Object $script:RollbackFailureDetails `
+                -Property "apiSafetyPolicyTouched" -Default $false)) {
+            [void](Sync-ApiRollbackDeploymentPolicy -Config $Config -Reason "api-convergence-poll-$polls")
+        }
         $observed = Get-ServiceConvergenceSnapshot -Config $Config -Service $Service `
             -ExpectedTaskDefinition $ExpectedTaskDefinition -RequireHealthyTargets:$RequireHealthyTargets
         if ($null -ne $script:RollbackFailureDetails) {
             $script:RollbackFailureDetails["lastObservedConvergence"] = $observed
+        }
+        if ($RequireHealthyTargets -and $MinimumHealthyTargets -gt 0) {
+            $availabilityChanged = $false
+            $healthyTargets = if ($null -eq $observed.targets) { 0 } else { [int]$observed.targets.healthy }
+            if ($null -ne $script:RollbackFailureDetails) {
+                $previousMinimum = Get-OptionalObjectValue -Object $script:RollbackFailureDetails `
+                    -Property "apiMinimumObservedHealthyTargets" -Default $null
+                if ($null -eq $previousMinimum -or $healthyTargets -lt [int]$previousMinimum) {
+                    $script:RollbackFailureDetails["apiMinimumObservedHealthyTargets"] = $healthyTargets
+                    $availabilityChanged = $true
+                }
+                if ($healthyTargets -lt $MinimumHealthyTargets) {
+                    if (-not [bool]$script:RollbackFailureDetails.apiZeroHealthyObserved) {
+                        $script:RollbackFailureDetails["apiZeroHealthyObserved"] = $true
+                        $availabilityChanged = $true
+                    }
+                    $initialHealthy = [int](Get-OptionalObjectValue -Object $script:RollbackFailureDetails `
+                        -Property "apiInitialHealthyTargets" -Default 0)
+                    $mutationBegan = [bool](Get-OptionalObjectValue -Object $script:RollbackFailureDetails `
+                        -Property "rollbackMutationBegan" -Default $false)
+                    if ($initialHealthy -ge $MinimumHealthyTargets -and $mutationBegan -and
+                        -not [bool]$script:RollbackFailureDetails.apiAvailabilityViolation) {
+                        $script:RollbackFailureDetails["apiAvailabilityViolation"] = $true
+                        $availabilityChanged = $true
+                    }
+                }
+                if ($availabilityChanged) {
+                    Update-ApplicationRecoveryCheckpointState -Recovery $script:RollbackFailureDetails
+                }
+            }
         }
         if ($observed.failedDeployment) {
             throw "Rollback convergence failed because service '$Service' reported rolloutState=FAILED."
@@ -994,16 +1321,127 @@ function Restore-Application {
         -ExpectedTaskDefinition $Config.previousApiTaskDefinition -RequireHealthyTargets
     $initialWorkerConvergence = Get-ServiceConvergenceSnapshot -Config $Config -Service $Config.workerService `
         -ExpectedTaskDefinition $Config.previousWorkerTaskDefinition
+    $initialHealthyTargets = if ($null -eq $initialApiConvergence.targets) {
+        0
+    } else {
+        [int]$initialApiConvergence.targets.healthy
+    }
     $capturedApiConfiguration = Copy-EcsDeploymentConfiguration -DeploymentConfiguration $api[0].deploymentConfiguration
     $capturedWorkerConfiguration = Copy-EcsDeploymentConfiguration -DeploymentConfiguration $worker[0].deploymentConfiguration
-    $safeApiConfiguration = Copy-EcsDeploymentConfiguration -DeploymentConfiguration $capturedApiConfiguration
-    $safeWorkerConfiguration = Copy-EcsDeploymentConfiguration -DeploymentConfiguration $capturedWorkerConfiguration
-    $safeApiConfiguration.maximumPercent = 100
-    $safeApiConfiguration.minimumHealthyPercent = [int][Math]::Floor((([int]$api[0].desired - 1) * 100.0) / [int]$api[0].desired)
+    $observedApiAutoscalingTarget = Get-ApiAutoscalingTarget -Config $Config
+    $recoveryCheckpointPath = Get-ApplicationRecoveryCheckpointPath -Config $Config
+    $recoveryCheckpoint = $null
+    $recoveryCheckpointResumed = $false
+    if (Test-Path -LiteralPath $recoveryCheckpointPath) {
+        $candidateCheckpoint = Read-AtomicJson -Path $recoveryCheckpointPath
+        $candidateStatus = [string](Get-OptionalObjectValue -Object $candidateCheckpoint -Property "status" -Default "")
+        if ($candidateStatus -eq "completed_with_availability_violation") {
+            throw "Application rollback found a terminal availability-violation checkpoint; progression remains blocked and this evidence directory cannot be reused."
+        }
+        if ($candidateStatus -eq "active") {
+            Assert-ApplicationRecoveryCheckpointBinding -Config $Config -Checkpoint $candidateCheckpoint
+            $recoveryCheckpoint = $candidateCheckpoint
+            $recoveryCheckpointResumed = $true
+        }
+    }
+    if ($recoveryCheckpointResumed) {
+        # The live service/scaling values can already be temporary after a
+        # crashed controller. Resume the immutable pre-mutation capture rather
+        # than treating the temporary safety state as the new normal.
+        $normalApiConfiguration = Copy-EcsDeploymentConfiguration `
+            -DeploymentConfiguration $recoveryCheckpoint.normalApiDeploymentConfiguration
+        $normalWorkerConfiguration = Copy-EcsDeploymentConfiguration `
+            -DeploymentConfiguration $recoveryCheckpoint.normalWorkerDeploymentConfiguration
+        $capturedApiAutoscalingTarget = $recoveryCheckpoint.originalApiAutoscalingTarget
+        Set-ObjectValue -Object $recoveryCheckpoint -Property "resumeCount" -Value `
+            ([int](Get-OptionalObjectValue -Object $recoveryCheckpoint -Property "resumeCount" -Default 0) + 1)
+        Set-ObjectValue -Object $recoveryCheckpoint -Property "lastResumedAt" `
+            -Value ([DateTimeOffset]::UtcNow.ToString("o"))
+        Set-ObjectValue -Object $recoveryCheckpoint -Property "lastResumeRunId" -Value ([string]$Config.runId)
+    }
+    else {
+        $normalApiConfiguration = Copy-EcsDeploymentConfiguration -DeploymentConfiguration $capturedApiConfiguration
+        $normalWorkerConfiguration = Copy-EcsDeploymentConfiguration -DeploymentConfiguration $capturedWorkerConfiguration
+        $normalApiConfiguration.maximumPercent = 200
+        $normalApiConfiguration.minimumHealthyPercent = 100
+        $normalWorkerConfiguration.maximumPercent = 200
+        $normalWorkerConfiguration.minimumHealthyPercent = 100
+        $capturedApiAutoscalingTarget = $observedApiAutoscalingTarget
+        $recoveryCheckpoint = [ordered]@{
+            schemaVersion = 1
+            status = "active"
+            action = "Application"
+            cluster = [string]$Config.cluster
+            apiService = [string]$Config.apiService
+            workerService = [string]$Config.workerService
+            createdAt = [DateTimeOffset]::UtcNow.ToString("o")
+            initialRunId = [string]$Config.runId
+            resumeCount = 0
+            expectedTaskDefinitions = [ordered]@{
+                api = [string]$Config.previousApiTaskDefinition
+                worker = [string]$Config.previousWorkerTaskDefinition
+            }
+            normalApiDeploymentConfiguration = $normalApiConfiguration
+            normalWorkerDeploymentConfiguration = $normalWorkerConfiguration
+            originalApiAutoscalingTarget = $capturedApiAutoscalingTarget
+            recoveryState = [ordered]@{
+                rollbackMutationBegan = $false
+                availability = [ordered]@{
+                    apiInitialHealthyTargets = $initialHealthyTargets
+                    apiMinimumObservedHealthyTargets = $initialHealthyTargets
+                    apiZeroHealthyObserved = $initialHealthyTargets -lt 1
+                    apiAvailabilityViolation = $false
+                }
+                apiPolicy = [ordered]@{
+                    apiInitialDesired = [int]$api[0].desired
+                    apiDesired = [int]$api[0].desired
+                    apiDesiredDriftObserved = $false
+                    apiPolicyApplyCount = 0
+                    apiPolicyHistory = @()
+                }
+            }
+        }
+    }
+    # This checkpoint must be durable before the first autoscaling or ECS
+    # mutation so a replacement controller can recover the real prior state.
+    Write-AtomicJson -Path $recoveryCheckpointPath -Value $recoveryCheckpoint
+    $checkpointRecoveryState = Get-OptionalObjectValue -Object $recoveryCheckpoint -Property "recoveryState" -Default $null
+    $checkpointAvailability = Get-OptionalObjectValue -Object $checkpointRecoveryState -Property "availability" -Default $null
+    $checkpointPolicy = Get-OptionalObjectValue -Object $checkpointRecoveryState -Property "apiPolicy" -Default $null
+    $durableInitialHealthyTargets = if ($recoveryCheckpointResumed) {
+        [int](Get-OptionalObjectValue -Object $checkpointAvailability -Property "apiInitialHealthyTargets" -Default $initialHealthyTargets)
+    } else { $initialHealthyTargets }
+    $durableMinimumHealthyTargets = if ($recoveryCheckpointResumed) {
+        [Math]::Min([int](Get-OptionalObjectValue -Object $checkpointAvailability `
+            -Property "apiMinimumObservedHealthyTargets" -Default $initialHealthyTargets), $initialHealthyTargets)
+    } else { $initialHealthyTargets }
+    $durableZeroHealthyObserved = [bool](Get-OptionalObjectValue -Object $checkpointAvailability `
+        -Property "apiZeroHealthyObserved" -Default ($initialHealthyTargets -lt 1)) -or $initialHealthyTargets -lt 1
+    $durableMutationBegan = [bool](Get-OptionalObjectValue -Object $checkpointRecoveryState `
+        -Property "rollbackMutationBegan" -Default $false)
+    $durableAvailabilityViolation = [bool](Get-OptionalObjectValue -Object $checkpointAvailability `
+        -Property "apiAvailabilityViolation" -Default $false) -or
+        ($recoveryCheckpointResumed -and $durableMutationBegan -and $durableInitialHealthyTargets -ge 1 -and $initialHealthyTargets -lt 1)
+    $durableInitialDesired = if ($recoveryCheckpointResumed) {
+        [int](Get-OptionalObjectValue -Object $checkpointPolicy -Property "apiInitialDesired" -Default ([int]$api[0].desired))
+    } else { [int]$api[0].desired }
+    $apiAutoscalingHoldState = [ordered]@{
+        dynamicScalingInSuspended = $true
+        dynamicScalingOutSuspended = $true
+        scheduledScalingSuspended = $true
+    }
+    $apiPolicy = Get-ApiRollbackDeploymentPolicy -CapturedDeploymentConfiguration $normalApiConfiguration `
+        -DesiredCount ([int]$api[0].desired)
+    $safeApiConfiguration = $apiPolicy.configuration
+    $safeWorkerConfiguration = Copy-EcsDeploymentConfiguration -DeploymentConfiguration $normalWorkerConfiguration
     $safeWorkerConfiguration.maximumPercent = 100
     $safeWorkerConfiguration.minimumHealthyPercent = if ([int]$worker[0].desired -gt 0) {
         [int][Math]::Floor((([int]$worker[0].desired - 1) * 100.0) / [int]$worker[0].desired)
     } else { 0 }
+    $apiConfigurationNeedsRestoration = (Get-EcsDeploymentConfigurationJson $capturedApiConfiguration) -cne `
+        (Get-EcsDeploymentConfigurationJson $normalApiConfiguration)
+    $workerConfigurationNeedsRestoration = (Get-EcsDeploymentConfigurationJson $capturedWorkerConfiguration) -cne `
+        (Get-EcsDeploymentConfigurationJson $normalWorkerConfiguration)
     $recovery = [ordered]@{
         recoveryRequired = $true
         recoveryStatus = "running"
@@ -1015,12 +1453,47 @@ function Restore-Application {
         }
         targetGroupDrain = $targetGroupDrain
         connectionSafeDeployment = $true
+        apiInitialDesired = $durableInitialDesired
         apiDesired = [int]$api[0].desired
+        apiPolicyDesired = [int]$api[0].desired
+        apiDesiredDriftObserved = [bool](Get-OptionalObjectValue -Object $checkpointPolicy `
+            -Property "apiDesiredDriftObserved" -Default $false) -or [int]$api[0].desired -ne $durableInitialDesired
+        apiPolicyApplyCount = [int](Get-OptionalObjectValue -Object $checkpointPolicy -Property "apiPolicyApplyCount" -Default 0)
+        apiPolicyHistory = @(Get-OptionalObjectValue -Object $checkpointPolicy -Property "apiPolicyHistory" -Default @())
+        apiAvailabilityMode = [string]$apiPolicy.mode
+        apiMinimumHealthyTasks = [int]$apiPolicy.minimumHealthyTasks
+        apiMaximumConcurrentTasks = [int]$apiPolicy.maximumConcurrentTasks
+        apiSingletonReplacementSlots = [int]$apiPolicy.singletonReplacementSlots
+        apiInitialHealthyTargets = $durableInitialHealthyTargets
+        apiMinimumObservedHealthyTargets = $durableMinimumHealthyTargets
+        apiAvailabilityPreExistingOutage = $durableInitialHealthyTargets -lt 1
+        apiZeroHealthyObserved = $durableZeroHealthyObserved
+        apiAvailabilityViolation = $durableAvailabilityViolation
+        apiAvailabilityRecovered = $false
+        rollbackMutationBegan = $durableMutationBegan
         workerDesired = [int]$worker[0].desired
         capturedApiDeploymentConfiguration = $capturedApiConfiguration
         capturedWorkerDeploymentConfiguration = $capturedWorkerConfiguration
+        normalApiDeploymentConfiguration = $normalApiConfiguration
+        normalWorkerDeploymentConfiguration = $normalWorkerConfiguration
+        capturedApiAutoscalingTarget = $capturedApiAutoscalingTarget
+        observedApiAutoscalingTarget = $observedApiAutoscalingTarget
+        recoveryCheckpointPath = $recoveryCheckpointPath
+        recoveryCheckpointResumed = $recoveryCheckpointResumed
+        recoveryCheckpointInitialRunId = [string]$recoveryCheckpoint.initialRunId
+        recoveryCheckpointResumeCount = [int]$recoveryCheckpoint.resumeCount
+        recoveryCheckpointStatus = "active"
+        apiAutoscalingHoldState = $apiAutoscalingHoldState
+        apiAutoscalingHoldAttempted = $false
+        apiAutoscalingHoldApplied = $false
+        apiAutoscalingHoldVerification = $null
+        apiAutoscalingHoldRetained = $false
+        apiAutoscalingHoldRetention = $null
+        apiAutoscalingRestoration = $null
         temporaryApiDeploymentConfiguration = $safeApiConfiguration
         temporaryWorkerDeploymentConfiguration = $safeWorkerConfiguration
+        apiConfigurationNeedsRestoration = $apiConfigurationNeedsRestoration
+        workerConfigurationNeedsRestoration = $workerConfigurationNeedsRestoration
         apiSafetyPolicyTouched = $false
         apiRollbackDispatched = $false
         apiRevisionAlreadySelected = $api[0].taskDefinition -eq $Config.previousApiTaskDefinition
@@ -1042,33 +1515,51 @@ function Restore-Application {
         initialServices = $services
     }
     $script:RollbackFailureDetails = $recovery
+    # Hydrated restart state (especially a prior availability violation or a
+    # currently-zero target after mutation began) must be durable before this
+    # controller performs another recovery mutation.
+    Update-ApplicationRecoveryCheckpointState -Recovery $recovery
 
     $configurationRestoration = $null
     try {
-        if (-not $recovery.apiInitiallyConverged) {
-            Assert-RollbackDeadline -Step "install-api-connection-safe-policy"
-            $recovery.apiSafetyPolicyTouched = $true
-            Set-EcsServiceDeploymentConfiguration -Config $Config -Service $Config.apiService `
-                -DeploymentConfiguration $safeApiConfiguration
+        Assert-RollbackDeadline -Step "suspend-api-autoscaling-for-rollback"
+        $recovery.apiAutoscalingHoldAttempted = $true
+        $recovery.apiAutoscalingHoldVerification = Set-ApiAutoscalingSuspendedState -Config $Config `
+            -Target $capturedApiAutoscalingTarget -SuspendedState $apiAutoscalingHoldState
+        $recovery.apiAutoscalingHoldApplied = $true
+        $recovery.rollbackMutationBegan = $true
+        Update-ApplicationRecoveryCheckpointState -Recovery $recovery
 
-            if (-not $recovery.apiRevisionAlreadySelected) {
+        if (-not $recovery.apiInitiallyConverged -or $recovery.apiConfigurationNeedsRestoration) {
+            Assert-RollbackDeadline -Step "install-api-connection-safe-policy"
+            [void](Sync-ApiRollbackDeploymentPolicy -Config $Config -Reason "initial-api-policy" -Force)
+
+            if (-not $recovery.apiInitiallyConverged -and -not $recovery.apiRevisionAlreadySelected) {
                 Assert-RollbackDeadline -Step "restore-previous-api-revision"
+                [void](Sync-ApiRollbackDeploymentPolicy -Config $Config -Reason "pre-api-task-definition-dispatch")
                 Invoke-Aws -Arguments @("ecs", "update-service", "--region", $Config.region, "--cluster", $Config.cluster,
                     "--service", $Config.apiService, "--task-definition", $Config.previousApiTaskDefinition, "--force-new-deployment")
                 $recovery.apiRollbackDispatched = $true
             }
         }
         $recovery.apiConvergence = Wait-ServiceConvergence -Config $Config -Service $Config.apiService `
-            -ExpectedTaskDefinition $Config.previousApiTaskDefinition -Step "wait-api-exact-convergence" -RequireHealthyTargets
+            -ExpectedTaskDefinition $Config.previousApiTaskDefinition -Step "wait-api-exact-convergence" `
+            -RequireHealthyTargets -SynchronizeApiRollbackPolicy -MinimumHealthyTargets 1
         $recovery.apiConverged = $true
+        $recovery.apiAvailabilityRecovered = [int]$recovery.apiConvergence.observation.targets.healthy -ge 1
 
-        if (-not $recovery.workerInitiallyConverged) {
+        if ($recovery.apiSafetyPolicyTouched) {
+            Assert-RollbackDeadline -Step "sync-api-policy-before-worker-rollback"
+            [void](Sync-ApiRollbackDeploymentPolicy -Config $Config -Reason "before-worker-rollback")
+        }
+
+        if (-not $recovery.workerInitiallyConverged -or $recovery.workerConfigurationNeedsRestoration) {
             Assert-RollbackDeadline -Step "install-worker-zero-overlap-policy"
             $recovery.workerSafetyPolicyTouched = $true
             Set-EcsServiceDeploymentConfiguration -Config $Config -Service $Config.workerService `
                 -DeploymentConfiguration $safeWorkerConfiguration
 
-            if (-not $recovery.workerRevisionAlreadySelected) {
+            if (-not $recovery.workerInitiallyConverged -and -not $recovery.workerRevisionAlreadySelected) {
                 Assert-RollbackDeadline -Step "restore-previous-worker-revision"
                 Invoke-Aws -Arguments @("ecs", "update-service", "--region", $Config.region, "--cluster", $Config.cluster,
                     "--service", $Config.workerService, "--task-definition", $Config.previousWorkerTaskDefinition, "--force-new-deployment")
@@ -1081,43 +1572,145 @@ function Restore-Application {
 
         Assert-RollbackDeadline -Step "restore-captured-deployment-configurations"
         $configurationRestoration = Restore-EcsServiceDeploymentConfigurationsBestEffort -Config $Config `
-            -ApiDeploymentConfiguration $capturedApiConfiguration `
-            -WorkerDeploymentConfiguration $capturedWorkerConfiguration `
-            -RestoreApi ([bool]$recovery.apiSafetyPolicyTouched) `
-            -RestoreWorker ([bool]$recovery.workerSafetyPolicyTouched)
+            -ApiDeploymentConfiguration $normalApiConfiguration `
+            -WorkerDeploymentConfiguration $normalWorkerConfiguration `
+            -RestoreApi ([bool]$recovery.apiSafetyPolicyTouched -or [bool]$recovery.apiConfigurationNeedsRestoration) `
+            -RestoreWorker ([bool]$recovery.workerSafetyPolicyTouched -or [bool]$recovery.workerConfigurationNeedsRestoration)
         $recovery.deploymentConfigurationRestoration = $configurationRestoration
         if (-not $configurationRestoration.success) {
             throw "Application rollback restored the task definitions but failed to restore captured deployment configuration: $($configurationRestoration.errors -join '; ')"
         }
 
+        Assert-RollbackDeadline -Step "restore-api-autoscaling-suspended-state"
+        $autoscalingRestoration = Restore-ApiAutoscalingStateBestEffort -Config $Config `
+            -CapturedTarget $capturedApiAutoscalingTarget
+        $recovery.apiAutoscalingRestoration = $autoscalingRestoration
+        if (-not $autoscalingRestoration.success) {
+            throw "Application rollback restored exact services but failed to restore the captured API autoscaling suspended state: $($autoscalingRestoration.error)"
+        }
+        # Resuming schedules/dynamic scaling can immediately change desired
+        # capacity. Re-establish two consecutive exact service/target polls
+        # after the original scaling state is live; never certify a stale
+        # pre-resume snapshot.
+        $recovery.postAutoscalingApiConvergence = Wait-ServiceConvergence -Config $Config `
+            -Service $Config.apiService -ExpectedTaskDefinition $Config.previousApiTaskDefinition `
+            -Step "verify-api-after-autoscaling-restore" -RequireHealthyTargets -MinimumHealthyTargets 1
+        $recovery.postAutoscalingWorkerConvergence = Wait-ServiceConvergence -Config $Config `
+            -Service $Config.workerService -ExpectedTaskDefinition $Config.previousWorkerTaskDefinition `
+            -Step "verify-worker-after-autoscaling-restore"
         $finalServices = Assert-ServiceTaskDefinitions -Config $Config -ApiTaskDefinition $Config.previousApiTaskDefinition `
             -WorkerTaskDefinition $Config.previousWorkerTaskDefinition `
-            -ExpectedApiDeploymentConfiguration $capturedApiConfiguration `
-            -ExpectedWorkerDeploymentConfiguration $capturedWorkerConfiguration
+            -ExpectedApiDeploymentConfiguration $normalApiConfiguration `
+            -ExpectedWorkerDeploymentConfiguration $normalWorkerConfiguration
+        $recovery.apiAutoscalingHoldRetained = $false
         $recovery.recoveryRequired = $false
-        $recovery.recoveryStatus = "completed"
+        $recovery.recoveryStatus = if ($recovery.apiAvailabilityViolation) {
+            "completed_with_availability_violation"
+        } else { "completed" }
+        if ($recovery.apiAvailabilityViolation) {
+            $recovery.failedStep = "verify-api-availability-floor"
+        }
+        Update-ApplicationRecoveryCheckpointState -Recovery $recovery
+        # Re-read so the terminal write preserves the latest durable
+        # availability/policy history checkpointed by convergence.
+        $recoveryCheckpoint = Read-AtomicJson -Path $recoveryCheckpointPath
+        Set-ObjectValue -Object $recoveryCheckpoint -Property "status" -Value ([string]$recovery.recoveryStatus)
+        Set-ObjectValue -Object $recoveryCheckpoint -Property "completedAt" `
+            -Value ([DateTimeOffset]::UtcNow.ToString("o"))
+        Set-ObjectValue -Object $recoveryCheckpoint -Property "completedByRunId" -Value ([string]$Config.runId)
+        Write-AtomicJson -Path $recoveryCheckpointPath -Value $recoveryCheckpoint
+        $recovery.recoveryCheckpointStatus = [string]$recovery.recoveryStatus
         $recovery.safetyPolicyRetained = $false
         $recovery.finalServices = $finalServices
-        $result = $recovery
-        $script:RollbackFailureDetails = $null
-        return $result
     }
     catch {
         $originalError = $_
         $recovery.failedStep = $script:RollbackCurrentStep
         $recovery.recoveryRequired = $true
         $recovery.recoveryStatus = "incomplete"
+        if ($recovery.apiSafetyPolicyTouched) {
+            try {
+                [void](Sync-ApiRollbackDeploymentPolicy -Config $Config -Reason "failure-policy-retention")
+            }
+            catch {
+                $recovery["apiPolicyRetentionSyncError"] = $_.Exception.Message
+            }
+        }
         $retention = Restore-EcsServiceDeploymentConfigurationsBestEffort -Config $Config `
-            -ApiDeploymentConfiguration $safeApiConfiguration `
+            -ApiDeploymentConfiguration $recovery.temporaryApiDeploymentConfiguration `
             -WorkerDeploymentConfiguration $safeWorkerConfiguration `
             -RestoreApi ([bool]$recovery.apiSafetyPolicyTouched) `
             -RestoreWorker ([bool]$recovery.workerSafetyPolicyTouched)
         $recovery.safetyPolicyRetention = $retention
         $recovery.safetyPolicyRetained = $retention.success -and
             ($recovery.apiSafetyPolicyTouched -or $recovery.workerSafetyPolicyTouched)
+        if ($recovery.apiAutoscalingHoldAttempted) {
+            if ($recovery.apiSafetyPolicyTouched) {
+                try {
+                    $retainedHold = Set-ApiAutoscalingSuspendedState -Config $Config `
+                        -Target $capturedApiAutoscalingTarget -SuspendedState $apiAutoscalingHoldState `
+                        -AllowAfterDeadline
+                    $recovery.apiAutoscalingHoldRetention = [ordered]@{
+                        attempted = $true
+                        success = $true
+                        verified = $retainedHold
+                    }
+                    $recovery.apiAutoscalingHoldRetained = $true
+                }
+                catch {
+                    $recovery.apiAutoscalingHoldRetention = [ordered]@{
+                        attempted = $true
+                        success = $false
+                        error = $_.Exception.Message
+                    }
+                    $recovery.apiAutoscalingHoldRetained = $false
+                }
+            }
+            else {
+                $autoscalingRestoration = Restore-ApiAutoscalingStateBestEffort -Config $Config `
+                    -CapturedTarget $capturedApiAutoscalingTarget -AllowAfterDeadline
+                $recovery.apiAutoscalingRestoration = $autoscalingRestoration
+                $recovery.apiAutoscalingHoldRetained = -not $autoscalingRestoration.success
+            }
+        }
+        try {
+            $checkpointCanBeUpdated = $true
+            if (Test-Path -LiteralPath $recoveryCheckpointPath) {
+                $currentCheckpoint = Read-AtomicJson -Path $recoveryCheckpointPath
+                if ([string](Get-OptionalObjectValue -Object $currentCheckpoint -Property "status" -Default "") -eq "active") {
+                    $recoveryCheckpoint = $currentCheckpoint
+                }
+                else {
+                    $checkpointCanBeUpdated = $false
+                    $recovery["recoveryCheckpointUpdateError"] = "Recovery checkpoint was no longer active during failure containment."
+                }
+            }
+            if ($checkpointCanBeUpdated) {
+                Set-ObjectValue -Object $recoveryCheckpoint -Property "recoveryState" `
+                    -Value (Get-ApplicationRecoveryStateSnapshot -Recovery $recovery)
+                Set-ObjectValue -Object $recoveryCheckpoint -Property "status" -Value "active"
+                Set-ObjectValue -Object $recoveryCheckpoint -Property "lastFailedAt" `
+                    -Value ([DateTimeOffset]::UtcNow.ToString("o"))
+                Set-ObjectValue -Object $recoveryCheckpoint -Property "lastFailedRunId" -Value ([string]$Config.runId)
+                Set-ObjectValue -Object $recoveryCheckpoint -Property "lastFailedStep" -Value ([string]$recovery.failedStep)
+                Set-ObjectValue -Object $recoveryCheckpoint -Property "lastFailure" -Value ([string]$originalError.Exception.Message)
+                Write-AtomicJson -Path $recoveryCheckpointPath -Value $recoveryCheckpoint
+            }
+        }
+        catch {
+            $recovery["recoveryCheckpointUpdateError"] = $_.Exception.Message
+        }
         $script:RollbackFailureDetails = $recovery
         throw $originalError
     }
+
+    if ($recovery.apiAvailabilityViolation) {
+        $script:RollbackFailureDetails = $recovery
+        throw "Application rollback restored the exact API and worker revisions but observed a controller-time API availability-floor violation; progression is blocked."
+    }
+
+    $script:RollbackFailureDetails = $null
+    return $recovery
 }
 
 function Restore-Oom {
