@@ -15,17 +15,21 @@ import {
 // ============================================================================
 // Devices - ClassPilot Chromebook registration
 // ============================================================================
-export const devices = pgTable("devices", {
-  deviceId: varchar("device_id").primaryKey(),
-  deviceName: text("device_name"),
-  schoolId: text("school_id").notNull(),
-  classId: text("class_id").notNull(),
-  extensionVersion: text("extension_version"),
-  chromeVersion: text("chrome_version"),
-  lastScreenshotHealth: jsonb("last_screenshot_health"),
-  lastSeenAt: timestamp("last_seen_at"),
-  registeredAt: timestamp("registered_at").notNull().default(sql`now()`),
-});
+export const devices = pgTable(
+  "devices",
+  {
+    deviceId: varchar("device_id").primaryKey(),
+    deviceName: text("device_name"),
+    schoolId: text("school_id").notNull(),
+    classId: text("class_id").notNull(),
+    extensionVersion: text("extension_version"),
+    chromeVersion: text("chrome_version"),
+    lastScreenshotHealth: jsonb("last_screenshot_health"),
+    lastSeenAt: timestamp("last_seen_at"),
+    registeredAt: timestamp("registered_at").notNull().default(sql`now()`),
+  },
+  (table) => [index("devices_school_id_idx").on(table.schoolId)]
+);
 
 export type Device = typeof devices.$inferSelect;
 export type InsertDevice = typeof devices.$inferInsert;
@@ -114,26 +118,18 @@ export const heartbeats = pgTable(
     timestamp: timestamp("timestamp").notNull().default(sql`now()`),
   },
   (table) => [
-    index("heartbeats_timestamp_idx").on(table.timestamp),
-    index("heartbeats_student_id_idx").on(table.studentId),
-    index("heartbeats_student_email_idx").on(table.studentEmail),
-    index("heartbeats_device_id_idx").on(table.deviceId),
     index("heartbeats_student_timestamp_idx").on(
       table.studentId,
       table.timestamp
     ),
-    index("heartbeats_email_timestamp_idx").on(
-      table.studentEmail,
-      table.timestamp
-    ),
-    index("heartbeats_school_email_idx").on(
+    index("heartbeats_school_timestamp_idx").on(
       table.schoolId,
-      table.studentEmail
+      table.timestamp.desc().nullsFirst()
     ),
     index("heartbeats_school_device_timestamp_idx").on(
       table.schoolId,
       table.deviceId,
-      table.timestamp.desc()
+      table.timestamp.desc().nullsFirst()
     ),
   ]
 );

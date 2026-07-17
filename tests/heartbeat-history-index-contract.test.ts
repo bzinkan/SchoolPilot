@@ -119,7 +119,7 @@ describe("heartbeat teacher-tile history index contract", () => {
 
     assert.match(
       tableSource,
-      /index\("heartbeats_school_device_timestamp_idx"\)\.on\(\s*table\.schoolId,\s*table\.deviceId,\s*table\.timestamp\.desc\(\)\s*\)/
+      /index\("heartbeats_school_device_timestamp_idx"\)\.on\(\s*table\.schoolId,\s*table\.deviceId,\s*table\.timestamp\.desc\(\)\.nullsFirst\(\)\s*\)/
     );
   });
 

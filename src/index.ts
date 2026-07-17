@@ -13,6 +13,7 @@ import { pool, prewarmMainPool, sessionPool } from "./db.js";
 import { schedulerLockPool, schedulerPool } from "./services/schedulerDb.js";
 import { migrationsOnStartup, migrationsOnly, schedulerEnabled } from "./config/runtime.js";
 import { ensureHeartbeatHistoryIndexOnline } from "./db/heartbeatHistoryIndex.js";
+import { applyHeartbeatIndexPivotOnline } from "./db/heartbeatIndexPivot.js";
 
 // Initialize Sentry as early as possible. No-op unless SENTRY_DSN is set
 // (gated off until the DPA is signed + subprocessors list updated).
@@ -1516,20 +1517,6 @@ export async function runStartupMigrations(): Promise<void> {
   // primary address. Re-applying that rename broke Google OAuth sign-in by
   // creating a DB email that didn't match the Google profile.email.
 
-  // Composite index for heartbeat queries (purge, rollup, analytics) — critical for scale
-  try {
-    await pool.query(`CREATE INDEX CONCURRENTLY IF NOT EXISTS heartbeats_school_timestamp_idx ON heartbeats (school_id, timestamp DESC)`);
-    console.log("[migration] heartbeats (school_id, timestamp) index ready");
-  } catch (err) {
-    // CONCURRENTLY can't run inside a transaction, retry without it
-    try {
-      await pool.query(`CREATE INDEX IF NOT EXISTS heartbeats_school_timestamp_idx ON heartbeats (school_id, timestamp DESC)`);
-      console.log("[migration] heartbeats (school_id, timestamp) index ready (non-concurrent)");
-    } catch (err2) {
-      console.warn("[migration] heartbeats index skipped:", (err2 as Error).message);
-    }
-  }
-
   // Teacher tile history requires the exact mixed-order index below. Keep the
   // expensive online replacement exclusive to the one-off migration task: web
   // and worker startup must never race or initiate production index DDL.
@@ -1541,9 +1528,13 @@ export async function runStartupMigrations(): Promise<void> {
       console.log(
         "[migration] heartbeats (school_id, device_id, timestamp DESC) index ready"
       );
+      await applyHeartbeatIndexPivotOnline(heartbeatIndexClient);
+      console.log(
+        "[migration] redundant heartbeat indexes removed and devices (school_id) index ready"
+      );
     } catch (err) {
       console.error(
-        "[migration] heartbeat history index failed:",
+        "[migration] heartbeat online index migration failed:",
         (err as Error).message
       );
       heartbeatIndexClientError =
