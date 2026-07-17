@@ -27,6 +27,8 @@ EMERGENCY_TASK_DEF_ARN=""
 EMERGENCY_TASK_DEF_REVISION=""
 API_ROLLOUT_TASK_DEF=""
 WORKER_NEW_REV=""
+MIGRATION_TASK_WAIT_SECONDS=3600
+MIGRATION_TASK_POLL_SECONDS=15
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -85,6 +87,66 @@ ecs_service_status() {
     --query 'services[0].status' \
     --output text \
     --region "$REGION" 2>/dev/null || true
+}
+
+# The stock `aws ecs wait tasks-stopped` waiter gives up after roughly ten
+# minutes. Online index work can legitimately span more than one bounded SQL
+# statement, so that waiter can abandon a still-running migration task. Keep
+# observing the exact task for up to one hour. If the controller deadline is
+# reached, request a stop and continue observing until ECS confirms STOPPED;
+# production service rollout must never begin while migration DDL is unobserved.
+wait_for_migration_task_stopped() {
+  local task_arn="$1"
+  local deadline=$((SECONDS + MIGRATION_TASK_WAIT_SECONDS))
+  local status=""
+  local stop_requested=false
+  local deadline_exceeded=false
+  local deadline_announced=false
+
+  while true; do
+    if (( SECONDS >= deadline )); then
+      deadline_exceeded=true
+    fi
+    if status=$(aws ecs describe-tasks \
+      --cluster "$CLUSTER" \
+      --tasks "$task_arn" \
+      --query 'tasks[0].lastStatus' \
+      --output text \
+      --cli-connect-timeout 10 \
+      --cli-read-timeout 30 \
+      --region "$REGION" 2>/dev/null); then
+      if [[ "$status" == "STOPPED" ]]; then
+        if [[ "$deadline_exceeded" == true ]]; then
+          return 124
+        fi
+        return 0
+      fi
+    else
+      warn "Could not read migration task status; retaining observation and retrying. Task: ${task_arn}"
+    fi
+
+    if [[ "$deadline_exceeded" == true ]]; then
+      if [[ "$stop_requested" != true ]]; then
+        if [[ "$deadline_announced" != true ]]; then
+          error "Migration controller deadline (${MIGRATION_TASK_WAIT_SECONDS}s) reached; stopping task ${task_arn}."
+          deadline_announced=true
+        fi
+        if aws ecs stop-task \
+          --cluster "$CLUSTER" \
+          --task "$task_arn" \
+          --reason "SchoolPilot migration controller deadline" \
+          --cli-connect-timeout 10 \
+          --cli-read-timeout 30 \
+          --region "$REGION" > .migration-stop.json 2>/dev/null; then
+          stop_requested=true
+        else
+          warn "Migration stop request was not accepted yet; continuing to observe and retry. Task: ${task_arn}"
+        fi
+      fi
+    fi
+
+    sleep "$MIGRATION_TASK_POLL_SECONDS"
+  done
 }
 
 production_service_snapshot() {
@@ -489,6 +551,7 @@ TEMP_FILES=(
   .ecs-network.json
   .migration-task.json
   .migration-result.json
+  .migration-stop.json
   .worker-taskdef-current.json
   .worker-env-source.json
   .worker-taskdef-new.json
@@ -1069,10 +1132,11 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
     console.log(result.tasks[0].taskArn);
   ')
 
-  aws ecs wait tasks-stopped \
-    --cluster "$CLUSTER" \
-    --tasks "$MIGRATION_TASK_ARN" \
-    --region "$REGION"
+  info "Migration task started: ${MIGRATION_TASK_ARN}"
+  set +e
+  wait_for_migration_task_stopped "$MIGRATION_TASK_ARN"
+  MIGRATION_WAIT_RESULT=$?
+  set -e
 
   aws ecs describe-tasks \
     --cluster "$CLUSTER" \
@@ -1080,6 +1144,19 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
     --query 'tasks[0].containers[0].{exitCode:exitCode,reason:reason,logStream:logStreamName}' \
     --output json \
     --region "$REGION" > .migration-result.json
+
+  if [[ "$MIGRATION_WAIT_RESULT" -eq 124 ]]; then
+    error "Migration task exceeded the controller deadline and was stopped. No ECS service rollout was attempted."
+    cat .migration-result.json
+    if [[ -f .migration-stop.json ]]; then
+      cat .migration-stop.json
+    fi
+    exit 1
+  elif [[ "$MIGRATION_WAIT_RESULT" -ne 0 ]]; then
+    error "Migration task observation failed for ${MIGRATION_TASK_ARN}. No ECS service rollout was attempted."
+    cat .migration-result.json
+    exit 1
+  fi
 
   MIGRATION_EXIT_CODE=$(node -e '
     const fs = require("fs");
@@ -1089,10 +1166,9 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
   if [[ "$MIGRATION_EXIT_CODE" != "0" ]]; then
     error "Migration task failed:"
     cat .migration-result.json
-    rm -f .ecs-network.json .migration-task.json .migration-result.json
     exit 1
   fi
-  rm -f .ecs-network.json .migration-task.json .migration-result.json
+  rm -f .ecs-network.json .migration-task.json .migration-result.json .migration-stop.json
   success "Startup migrations completed"
 
   # Step 6: Point the API service at the new revision

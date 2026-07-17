@@ -178,6 +178,14 @@ a rollout cannot skip the 05:45 scale-up or 10:00 scale-down. It verifies both
 services again after stabilization and restores/verifies the exact prior scaling
 state; its EXIT trap retries restoration after a failure.
 
+The one-off migration controller polls the exact ECS task every 15 seconds for
+up to 3,600 seconds instead of using the fixed ten-minute AWS waiter. This is
+required for online `CREATE INDEX CONCURRENTLY` work, where multiple bounded
+statements may legitimately exceed that waiter in aggregate. At the controller
+deadline it requests `stop-task`, continues observing until ECS reports
+`STOPPED`, records the task/result in deploy output, and hard-stops before any
+API or worker service update.
+
 Require a successful migration task, the API at `1/1` or `2/2`, the worker at
 `1/1`, one completed deployment per service, the exact prior autoscaling state
 restored, a healthy ALB target, public `/health`, a current scheduler heartbeat,
@@ -383,6 +391,47 @@ Automatic rollback may dispatch only one unambiguous pre-approved action:
 - public ECS: captured private subnets/security groups while NAT still exists;
 - NAT removal: digest-verified saved NAT recreation plan, then private ECS;
 - Redis: `cache.t4g.small` and wait for `available`.
+
+Application rollback keeps the reviewed ALB deregistration delay at **300
+seconds** and restores the API before the worker. For API desired capacity two
+or greater, it uses a non-overlapping one-at-a-time policy: total API capacity
+cannot exceed desired capacity and at least `desired - 1` tasks remain healthy.
+For desired capacity one, zero overlap is not availability-safe; the controller
+instead uses `maximumPercent=200` and `minimumHealthyPercent=100`, permitting
+exactly one replacement slot (two API tasks maximum) while requiring one
+healthy target throughout. It waits for zero draining/unhealthy targets, one
+completed exact-revision deployment, and two consecutive exact polls before
+touching the worker. If zero healthy targets predate rollback, the controller
+records a pre-existing outage and continues recovery. If a rollback that began
+with a healthy target later observes zero, it still restores the exact API and
+worker revisions and captured deployment configurations, then exits failed to
+block progression while recording the recovered availability violation. A
+failed deployment or deadline before exact recovery leaves
+`recoveryRequired=true` and retains both the bounded safety policy and the API
+scaling hold. The controller never claims success over a mixed deployment.
+Before its first mutation it durably checkpoints the exact normal `200/100`
+API/worker deployment configurations and the API scalable target's min/max and
+three suspended-state flags. A restarted controller resumes that bound capture;
+it must not reinterpret a prior controller's temporary policy or all-suspended
+state as normal. Dynamic scale-in, dynamic scale-out, and scheduled scaling are
+all held during recovery so a scheduled `1 -> 6/8` change cannot race the
+singleton `200%` policy. The controller still binds any externally observed
+desired-count drift immediately before revision dispatch and on every
+five-second API convergence poll, replacing `200/100` with the live multi-task
+non-overlap policy (or the reverse) before waiting further. After both services
+converge, it restores the exact captured scaling state and then requires two
+fresh exact API/target and worker polls before completing the checkpoint.
+The checkpoint also carries original/minimum healthy-target history, any
+zero-target/availability violation, the mutation-start marker, original desired
+count, desired drift, and policy-application history. Losing, corrupting, or
+replacing it after mutation is a hard recovery failure that retains the safe
+deployment policy and scaling hold. A recovered availability violation is
+durably terminal and cannot be erased by restarting the controller.
+Application rollback callers must continue enforcing the approved off-hours
+window and must not start a recovery that can span the 05:45 or 10:00 ET
+scheduled-minimum boundary while scheduled scaling is held. Drift, checkpoint
+resume, scaling hold/restoration, and every policy application are retained in
+recovery evidence. The 300-second ALB drain remains unchanged.
 
 The supervisor stops traffic if the generator/watcher heartbeat disappears.
 The monitor stops immediately on a hard gate and after three consecutive fresh
