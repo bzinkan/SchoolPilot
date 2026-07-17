@@ -30,6 +30,12 @@ foreach ($name in @(
 $script:BadScalableTarget = $false
 $script:MixedTaskRevision = $false
 $script:ScalableTargetCalls = 0
+$script:DuplicateEcrManifestRows = $false
+$script:ConflictingEcrManifest = $false
+$script:ConflictingEcrMediaType = $false
+$script:WrongEcrDigest = $false
+$script:BlankEcrMediaType = $false
+$script:EcrManifestFailure = $false
 $apiArn = "arn:aws:ecs:us-east-1:123456789012:task-definition/api:17"
 $workerArn = "arn:aws:ecs:us-east-1:123456789012:task-definition/worker:37"
 $rollbackApiArn = "arn:aws:ecs:us-east-1:123456789012:task-definition/api-emergency:13"
@@ -68,7 +74,20 @@ function Invoke-CertificationAwsJson {
     }
     if ($service -eq "ecr" -and $operation -eq "batch-get-image") {
         $digest = ($Arguments[[Array]::IndexOf($Arguments,"--image-ids") + 1] -split '=',2)[1]
-        return [pscustomobject]@{images=@([pscustomobject]@{imageId=[pscustomobject]@{imageDigest=$digest};imageManifest="{}`n$digest"})}
+        $imageManifest = "{}`n$digest"
+        $mediaType = "application/vnd.docker.distribution.manifest.v2+json"
+        $images = @([pscustomobject]@{
+            imageId=[pscustomobject]@{imageDigest=if($script:WrongEcrDigest){"sha256:"+("f"*64)}else{$digest};imageTag="provenance"}
+            imageManifest=$imageManifest;imageManifestMediaType=if($script:BlankEcrMediaType){""}else{$mediaType}
+        })
+        if ($script:DuplicateEcrManifestRows) {
+            $images += [pscustomobject]@{
+                imageId=[pscustomobject]@{imageDigest=$digest;imageTag="latest"}
+                imageManifest=if($script:ConflictingEcrManifest){"{}`nconflict"}else{$imageManifest}
+                imageManifestMediaType=if($script:ConflictingEcrMediaType){"application/vnd.oci.image.manifest.v1+json"}else{$mediaType}
+            }
+        }
+        return [pscustomobject]@{images=$images;failures=if($script:EcrManifestFailure){@([pscustomobject]@{failureCode="ImageNotFound"})}else{@()}}
     }
     if ($service -eq "ecr" -and $operation -eq "describe-images") {
         $tag = ($Arguments[[Array]::IndexOf($Arguments,"--image-ids") + 1] -split '=',2)[1]
@@ -154,6 +173,55 @@ Assert-Condition ($valid.posture.loadStability.healthyTargetCount -eq 6 -and
     @($valid.posture.loadStability.tasks.api).Count -eq 6 -and
     @($valid.posture.loadStability.tasks.worker).Count -eq 1) "The night preflight must attest exact capacity, targets, and task revisions."
 $assertions++
+
+$script:DuplicateEcrManifestRows = $true
+$duplicateManifestResult = Get-CertificationTaskPreflight -Config $config -Contract $contract
+Assert-Condition (
+    [string]$duplicateManifestResult.taskDefinitions.activeApi.imageManifestSha256 -eq
+    (Get-CertificationTextSha256 ("{}`n$activeDigest"))
+) "ECR may return one identical manifest row per tag for the same immutable digest."
+$assertions++
+
+$script:ConflictingEcrManifest = $true
+$conflictingManifestRejected = $false
+try { Get-CertificationTaskPreflight -Config $config -Contract $contract | Out-Null }
+catch { $conflictingManifestRejected = $_.Exception.Message -match "one immutable ECR manifest" }
+Assert-Condition $conflictingManifestRejected "Conflicting ECR manifests for one digest must fail closed."
+$assertions++
+$script:ConflictingEcrManifest = $false
+
+$script:ConflictingEcrMediaType = $true
+$conflictingMediaTypeRejected = $false
+try { Get-CertificationTaskPreflight -Config $config -Contract $contract | Out-Null }
+catch { $conflictingMediaTypeRejected = $_.Exception.Message -match "one immutable ECR manifest" }
+Assert-Condition $conflictingMediaTypeRejected "Conflicting ECR media types for one digest must fail closed."
+$assertions++
+$script:ConflictingEcrMediaType = $false
+$script:DuplicateEcrManifestRows = $false
+
+$script:WrongEcrDigest = $true
+$wrongDigestRejected = $false
+try { Get-CertificationTaskPreflight -Config $config -Contract $contract | Out-Null }
+catch { $wrongDigestRejected = $_.Exception.Message -match "one immutable ECR manifest" }
+Assert-Condition $wrongDigestRejected "A mismatched ECR digest row must fail closed."
+$assertions++
+$script:WrongEcrDigest = $false
+
+$script:BlankEcrMediaType = $true
+$blankMediaTypeRejected = $false
+try { Get-CertificationTaskPreflight -Config $config -Contract $contract | Out-Null }
+catch { $blankMediaTypeRejected = $_.Exception.Message -match "one immutable ECR manifest" }
+Assert-Condition $blankMediaTypeRejected "A blank ECR manifest media type must fail closed."
+$assertions++
+$script:BlankEcrMediaType = $false
+
+$script:EcrManifestFailure = $true
+$ecrFailureRejected = $false
+try { Get-CertificationTaskPreflight -Config $config -Contract $contract | Out-Null }
+catch { $ecrFailureRejected = $_.Exception.Message -match "one immutable ECR manifest" }
+Assert-Condition $ecrFailureRejected "An explicit ECR manifest resolution failure must fail closed."
+$assertions++
+$script:EcrManifestFailure = $false
 
 $script:BadScalableTarget = $true
 $badTargetRejected = $false
