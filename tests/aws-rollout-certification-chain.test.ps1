@@ -24,6 +24,7 @@ $functionNames = @(
     "Assert-CertificationHarnessArtifactEnvironment","Assert-CertificationFixtureAttestation",
     "Assert-CertificationConsumedReceiptAttestation","Assert-CertificationAttestedStageEvidence",
     "Assert-CertificationChainContinuity","Test-CertificationIntervalIncludesLocalTime",
+    "ConvertTo-CertificationUtcTimestamp",
     "Assert-CertificationFixtureVerificationTimestamp","Assert-CertificationProductionRollbackTaskIdentities",
     "Assert-CertificationFreshTimestamp",
     "Get-CertificationFixtureGenerationBinding","Assert-CertificationOperatorConfigUnchanged",
@@ -355,31 +356,33 @@ try {
     Assert-Condition $futureVerificationRejected "Fixture verification must reject any future verifiedAt timestamp."
     $assertions++
 
-    $failedRunObservedNow = [DateTimeOffset]::Parse("2026-07-18T02:15:09.000Z")
+    $failedRunObservedNow = [DateTimeOffset]::Parse("2026-07-18T03:40:20.3511840Z")
+    $convertedVerification = '{"verifiedAt":"2026-07-18T03:40:04.601Z"}' | ConvertFrom-Json
+    Assert-Condition ($convertedVerification.verifiedAt -is [DateTime]) `
+        "The regression must exercise PowerShell ConvertFrom-Json automatic DateTime conversion."
+    $assertions++
     $failedRunVerifiedAt = Assert-CertificationFixtureVerificationTimestamp `
-        "2026-07-18T02:01:03.536Z" 60 $failedRunObservedNow "Fixture verification verifiedAt"
+        $convertedVerification.verifiedAt 60 $failedRunObservedNow "Fixture verification verifiedAt"
+    $convertedState = '{"schemaVersion":1,"fixtureId":"launch-safe-20260711","generatedAt":"2026-07-11T21:37:04.729Z","refreshedAt":"2026-07-18T03:39:11.540Z"}' | ConvertFrom-Json
     $failedRunFixtureGeneration = Get-CertificationFixtureGenerationBinding `
-        ([pscustomobject]@{
-            schemaVersion=1;fixtureId="launch-safe-20260711"
-            generatedAt="2026-07-11T21:37:04.729Z";refreshedAt="2026-07-18T02:00:11.540Z"
-        }) `
+        $convertedState `
         ([pscustomobject]@{schemaVersion=1;fixtureId="launch-safe-20260711";passed=$true}) `
         ([pscustomobject]@{expectedFixtureId="launch-safe-20260711"}) `
         $failedRunVerifiedAt 60 $failedRunObservedNow
     Assert-Condition `
-        ($failedRunVerifiedAt.ToString("o") -eq "2026-07-18T02:01:03.5360000+00:00" -and
-         [string]$failedRunFixtureGeneration.refreshedAtUtc -eq "2026-07-18T02:00:11.5400000+00:00") `
-        "The exact failed-run refresh, verification, and validation timestamps must be accepted deterministically."
+        ($failedRunVerifiedAt.ToString("o") -eq "2026-07-18T03:40:04.6010000+00:00" -and
+         [string]$failedRunFixtureGeneration.refreshedAtUtc -eq "2026-07-18T03:39:11.5400000+00:00") `
+        "JSON DateTime values must retain their original UTC instants without a second local offset."
     $assertions++
 
     $fixedNowFutureRejected = $false
     try {
         Assert-CertificationFixtureVerificationTimestamp `
-            "2026-07-18T02:15:09.001Z" 60 $failedRunObservedNow "Fixture verification verifiedAt" | Out-Null
+            "2026-07-18T03:40:20.3521840Z" 60 $failedRunObservedNow "Fixture verification verifiedAt" | Out-Null
     }
     catch {
         $fixedNowFutureRejected = $_.Exception.Message -match `
-            "value=2026-07-18T02:15:09.0010000\+00:00; observedNowUtc=2026-07-18T02:15:09.0000000\+00:00"
+            "value=2026-07-18T03:40:20.3521840\+00:00; observedNowUtc=2026-07-18T03:40:20.3511840\+00:00"
     }
     Assert-Condition $fixedNowFutureRejected "Fixture verification must reject and diagnose an exact future timestamp."
     $assertions++

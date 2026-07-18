@@ -439,27 +439,40 @@ function Test-CertificationIntervalIncludesLocalTime {
     return $false
 }
 
-function Assert-CertificationFreshTimestamp {
-    param([string]$Value, [string]$Name)
+function ConvertTo-CertificationUtcTimestamp {
+    param($Value, [string]$Name)
+    if ($Value -is [DateTimeOffset]) { return ([DateTimeOffset]$Value).ToUniversalTime() }
+    if ($Value -is [DateTime]) {
+        $dateTime = [DateTime]$Value
+        if ($dateTime.Kind -eq [DateTimeKind]::Unspecified) { throw "$Name must include an explicit UTC offset." }
+        return ([DateTimeOffset]$dateTime).ToUniversalTime()
+    }
+    $text = [string]$Value
+    if ([string]::IsNullOrWhiteSpace($text) -or $text -notmatch '(?:Z|[+-]\d{2}:\d{2})$') {
+        throw "$Name must be an ISO-8601 timestamp with an explicit UTC offset."
+    }
     $parsed = [DateTimeOffset]::MinValue
-    if (-not [DateTimeOffset]::TryParse($Value,[ref]$parsed)) { throw "$Name must be an ISO-8601 timestamp." }
-    $utc=$parsed.ToUniversalTime();$now=[DateTimeOffset]::UtcNow
+    if (-not [DateTimeOffset]::TryParse($text,[ref]$parsed)) {
+        throw "$Name must be an ISO-8601 timestamp with an explicit UTC offset."
+    }
+    return $parsed.ToUniversalTime()
+}
+
+function Assert-CertificationFreshTimestamp {
+    param($Value, [string]$Name)
+    $utc=ConvertTo-CertificationUtcTimestamp $Value $Name;$now=[DateTimeOffset]::UtcNow
     if ($utc -gt $now.AddMinutes(5) -or $utc -lt $now.AddHours(-24)) { throw "$Name must be fresh within 24 hours." }
     return $utc
 }
 
 function Assert-CertificationFixtureVerificationTimestamp {
     param(
-        [string]$Value,
+        $Value,
         [int]$MaximumAgeMinutes,
         [DateTimeOffset]$ObservedNowUtc = [DateTimeOffset]::UtcNow,
         [string]$Name = "Fixture live verification"
     )
-    $verifiedAt = [DateTimeOffset]::MinValue
-    if (-not [DateTimeOffset]::TryParse($Value,[ref]$verifiedAt)) {
-        throw "$Name must be an ISO-8601 timestamp."
-    }
-    $verifiedAt = $verifiedAt.ToUniversalTime()
+    $verifiedAt = ConvertTo-CertificationUtcTimestamp $Value $Name
     $now = $ObservedNowUtc.ToUniversalTime()
     $verifiedTicks = $verifiedAt.UtcDateTime.Ticks
     $nowTicks = $now.UtcDateTime.Ticks
@@ -500,13 +513,9 @@ function Get-CertificationFixtureGenerationBinding {
         $Verification.passed -ne $true) {
         throw "Fixture state and verification must bind the exact expected fixture generation and accepted schema."
     }
-    $generatedAt = [DateTimeOffset]::MinValue
-    if (-not [DateTimeOffset]::TryParse([string]$State.generatedAt,[ref]$generatedAt)) {
-        throw "Fixture state generatedAt must be an ISO-8601 timestamp."
-    }
-    $generatedAt = $generatedAt.ToUniversalTime()
+    $generatedAt = ConvertTo-CertificationUtcTimestamp $State.generatedAt "Fixture state generatedAt"
     $refreshedAt = Assert-CertificationFixtureVerificationTimestamp `
-        ([string]$State.refreshedAt) $MaximumAgeMinutes $ObservedNowUtc "Fixture state refreshedAt"
+        $State.refreshedAt $MaximumAgeMinutes $ObservedNowUtc "Fixture state refreshedAt"
     if ($generatedAt -gt $refreshedAt -or $refreshedAt -gt $VerifiedAt) {
         throw "Fixture generatedAt/refreshedAt/verifiedAt chronology is invalid."
     }
@@ -702,7 +711,7 @@ function Get-CertificationContract {
     $maximumAgeMinutes = [int](Get-CertificationValue $fixture "maximumVerificationAgeMinutes" 60)
     $fixtureObservedNowUtc = [DateTimeOffset]::UtcNow
     $verifiedAt = Assert-CertificationFixtureVerificationTimestamp `
-        ([string]$verificationJson.verifiedAt) $maximumAgeMinutes $fixtureObservedNowUtc "Fixture verification verifiedAt"
+        $verificationJson.verifiedAt $maximumAgeMinutes $fixtureObservedNowUtc "Fixture verification verifiedAt"
     $fixtureGeneration = Get-CertificationFixtureGenerationBinding `
         $stateJson $verificationJson $fixture $verifiedAt $maximumAgeMinutes $fixtureObservedNowUtc
     $stage = if ($null -eq (Get-CertificationValue $Config "workload")) { $null } else { [string]$Config.workload.stage }
@@ -821,10 +830,10 @@ function Get-CertificationContract {
         try { $priceJson=Get-Content -LiteralPath $priceBinding.path -Raw|ConvertFrom-Json -Depth 30 } catch { throw "AWS price evidence must be valid JSON." }
         try { $projectionJson=Get-Content -LiteralPath $projectionBinding.path -Raw|ConvertFrom-Json -Depth 30 } catch { throw "Cost Explorer projection evidence must be valid JSON." }
         try { $snapshotJson=Get-Content -LiteralPath $snapshotBinding.path -Raw|ConvertFrom-Json -Depth 30 } catch { throw "Manual RDS snapshot evidence must be valid JSON." }
-        [void](Assert-CertificationFreshTimestamp ([string]$priceJson.observedAtUtc) "AWS price evidence observedAtUtc")
-        [void](Assert-CertificationFreshTimestamp ([string]$projectionJson.generatedAtUtc) "Cost Explorer projection generatedAtUtc")
-        $snapshotObservedAt=Assert-CertificationFreshTimestamp ([string]$snapshotJson.observedAtUtc) "Manual RDS snapshot evidence observedAtUtc"
-        $snapshotCreatedAt=Assert-CertificationFreshTimestamp ([string]$snapshotJson.snapshotCreateTimeUtc) "Manual RDS snapshot evidence snapshotCreateTimeUtc"
+        [void](Assert-CertificationFreshTimestamp $priceJson.observedAtUtc "AWS price evidence observedAtUtc")
+        [void](Assert-CertificationFreshTimestamp $projectionJson.generatedAtUtc "Cost Explorer projection generatedAtUtc")
+        $snapshotObservedAt=Assert-CertificationFreshTimestamp $snapshotJson.observedAtUtc "Manual RDS snapshot evidence observedAtUtc"
+        $snapshotCreatedAt=Assert-CertificationFreshTimestamp $snapshotJson.snapshotCreateTimeUtc "Manual RDS snapshot evidence snapshotCreateTimeUtc"
         if ([int]$priceJson.schemaVersion -ne 1 -or [string]$priceJson.type -ne "aws_rds_price_evidence" -or
             [string]$priceJson.accountId -ne [string]$budgetJson.accountId -or [string]$priceJson.region -ne [string]$budgetJson.region -or
             [string]$priceJson.currency -ne "USD" -or [string]$priceJson.targetRdsInstanceClass -ne "db.t4g.xlarge" -or
@@ -1152,13 +1161,12 @@ function Copy-CertificationFileIfHashMatches {
 
 function Assert-CertificationReceiptLifetime {
     param($Receipt, [DateTimeOffset]$ReferenceTime, [switch]$RequireUnexpired)
-    $issuedAt = [DateTimeOffset]::MinValue
-    $expiresAt = [DateTimeOffset]::MinValue
-    if (-not [DateTimeOffset]::TryParse([string](Get-CertificationValue $Receipt "issuedAtUtc" ""),[ref]$issuedAt) -or
-        -not [DateTimeOffset]::TryParse([string](Get-CertificationValue $Receipt "expiresAtUtc" ""),[ref]$expiresAt)) {
-        throw "Validation receipt issuance and expiry must be ISO-8601 timestamps."
+    try {
+        $issuedAt=ConvertTo-CertificationUtcTimestamp (Get-CertificationValue $Receipt "issuedAtUtc" "") "Validation receipt issuedAtUtc"
+        $expiresAt=ConvertTo-CertificationUtcTimestamp (Get-CertificationValue $Receipt "expiresAtUtc" "") "Validation receipt expiresAtUtc"
     }
-    $issuedAt=$issuedAt.ToUniversalTime();$expiresAt=$expiresAt.ToUniversalTime();$reference=$ReferenceTime.ToUniversalTime()
+    catch { throw "Validation receipt issuance and expiry must be ISO-8601 timestamps." }
+    $reference=$ReferenceTime.ToUniversalTime()
     if ($issuedAt -gt [DateTimeOffset]::UtcNow -or $issuedAt -gt $reference) {
         throw "Validation receipt issuedAtUtc cannot be in the future."
     }
@@ -1195,11 +1203,8 @@ function Assert-CertificationTaskDefinitionAttestations {
 
 function Assert-CertificationPreflightContract {
     param($Preflight, $Contract, [DateTimeOffset]$IssuedAt, [string]$Name)
-    $observedAt = [DateTimeOffset]::MinValue
-    if (-not [DateTimeOffset]::TryParse([string](Get-CertificationValue $Preflight "observedAtUtc" ""),[ref]$observedAt)) {
-        throw "$Name.observedAtUtc must be an ISO-8601 timestamp."
-    }
-    $observedAt=$observedAt.ToUniversalTime()
+    try { $observedAt=ConvertTo-CertificationUtcTimestamp (Get-CertificationValue $Preflight "observedAtUtc" "") "$Name.observedAtUtc" }
+    catch { throw "$Name.observedAtUtc must be an ISO-8601 timestamp." }
     if ($observedAt -gt $IssuedAt -or $observedAt -lt $IssuedAt.AddHours(-24)) {
         throw "$Name must be observed before receipt issuance and no more than 24 hours earlier."
     }
@@ -1271,13 +1276,13 @@ function Assert-CertificationFixtureAttestation {
         [string](Get-RequiredProperty $Fixture "timezone") -ne "America/New_York"){
         throw "$Name does not bind the exact accepted America/New_York fixture generation."
     }
-    $generated=[DateTimeOffset]::MinValue;$refreshed=[DateTimeOffset]::MinValue;$verified=[DateTimeOffset]::MinValue
-    if(-not [DateTimeOffset]::TryParse([string]$Fixture.generatedAtUtc,[ref]$generated) -or
-        -not [DateTimeOffset]::TryParse([string]$Fixture.refreshedAtUtc,[ref]$refreshed) -or
-        -not [DateTimeOffset]::TryParse([string]$Fixture.verifiedAtUtc,[ref]$verified) -or
-        $generated.ToUniversalTime() -gt $refreshed.ToUniversalTime() -or $refreshed.ToUniversalTime() -gt $verified.ToUniversalTime()){
-        throw "$Name fixture-generation chronology is invalid."
+    try {
+        $generated=ConvertTo-CertificationUtcTimestamp $Fixture.generatedAtUtc "$Name.generatedAtUtc"
+        $refreshed=ConvertTo-CertificationUtcTimestamp $Fixture.refreshedAtUtc "$Name.refreshedAtUtc"
+        $verified=ConvertTo-CertificationUtcTimestamp $Fixture.verifiedAtUtc "$Name.verifiedAtUtc"
     }
+    catch { throw "$Name fixture-generation chronology is invalid." }
+    if($generated -gt $refreshed -or $refreshed -gt $verified){throw "$Name fixture-generation chronology is invalid."}
     return [ordered]@{state=$stateBinding;verification=$verificationBinding;artifacts=$artifacts;fixtureId=$fixtureId}
 }
 
@@ -1469,11 +1474,9 @@ function Assert-CertificationChainContinuity {
         (ConvertTo-CertificationComparableJson $root.controllerHashes) -cne (ConvertTo-CertificationComparableJson $Contract.ControllerHashes)) {
         throw "Certification chain root identity/controller continuity failed."
     }
-    $rootCreatedAt=[DateTimeOffset]::MinValue
-    if(-not [DateTimeOffset]::TryParse([string]$root.createdAtUtc,[ref]$rootCreatedAt) -or $rootCreatedAt.ToUniversalTime() -gt [DateTimeOffset]::UtcNow){
-        throw "Certification chain root creation timestamp is invalid or in the future."
-    }
-    $rootReceiptEvidence=Assert-CertificationConsumedReceiptAttestation $root.validationReceipt $root $Contract $rootCreatedAt.ToUniversalTime() "certification.chainRoot"
+    try{$rootCreatedAt=ConvertTo-CertificationUtcTimestamp $root.createdAtUtc "Certification chain root createdAtUtc"}catch{throw "Certification chain root creation timestamp is invalid or in the future."}
+    if($rootCreatedAt -gt [DateTimeOffset]::UtcNow){throw "Certification chain root creation timestamp is invalid or in the future."}
+    $rootReceiptEvidence=Assert-CertificationConsumedReceiptAttestation $root.validationReceipt $root $Contract $rootCreatedAt "certification.chainRoot"
     Assert-CertificationAttestedStageEvidence $root $rootReceiptEvidence $Contract "certification.chainRoot" ([string]$root.supervisionKind -eq "Load")
     $predecessorPath = Resolve-ExternalPath -Path ([string](Get-RequiredProperty $Config "predecessorResultPath")) -Name "predecessorResultPath"
     $predecessorSha = Assert-CertificationSha256 ([string](Get-RequiredProperty $Config "predecessorResultSha256")) "predecessorResultSha256"
@@ -1509,11 +1512,9 @@ function Assert-CertificationChainContinuity {
         (ConvertTo-CertificationComparableJson $attestation.controllerHashes) -cne (ConvertTo-CertificationComparableJson $Contract.ControllerHashes)) {
         throw "Predecessor stage attestation identity/root/controller continuity failed."
     }
-    $attestedAt=[DateTimeOffset]::MinValue
-    if(-not [DateTimeOffset]::TryParse([string]$attestation.attestedAtUtc,[ref]$attestedAt) -or $attestedAt.ToUniversalTime() -gt [DateTimeOffset]::UtcNow){
-        throw "Predecessor stage attestation timestamp is invalid or in the future."
-    }
-    $stageReceiptEvidence=Assert-CertificationConsumedReceiptAttestation $attestation.validationReceipt $attestation $Contract $attestedAt.ToUniversalTime() "predecessor.stageAttestation"
+    try{$attestedAt=ConvertTo-CertificationUtcTimestamp $attestation.attestedAtUtc "Predecessor stage attestedAtUtc"}catch{throw "Predecessor stage attestation timestamp is invalid or in the future."}
+    if($attestedAt -gt [DateTimeOffset]::UtcNow){throw "Predecessor stage attestation timestamp is invalid or in the future."}
+    $stageReceiptEvidence=Assert-CertificationConsumedReceiptAttestation $attestation.validationReceipt $attestation $Contract $attestedAt "predecessor.stageAttestation"
     Assert-CertificationAttestedStageEvidence $attestation $stageReceiptEvidence $Contract "predecessor.stageAttestation" ([string]$envelope.supervisionKind -eq "Load")
     [void](Assert-CertificationEvidenceReference $envelope.rollbackConfig "predecessor.rollbackConfig")
     if([string]$envelope.operatorConfigSha256 -ne [string]$attestation.operatorConfigSha256 -or
