@@ -449,21 +449,28 @@ function Assert-CertificationFreshTimestamp {
 }
 
 function Assert-CertificationFixtureVerificationTimestamp {
-    param([string]$Value, [int]$MaximumAgeMinutes)
+    param(
+        [string]$Value,
+        [int]$MaximumAgeMinutes,
+        [DateTimeOffset]$ObservedNowUtc = [DateTimeOffset]::UtcNow,
+        [string]$Name = "Fixture live verification"
+    )
     $verifiedAt = [DateTimeOffset]::MinValue
     if (-not [DateTimeOffset]::TryParse($Value,[ref]$verifiedAt)) {
-        throw "Fixture live verification verifiedAt must be an ISO-8601 timestamp."
+        throw "$Name must be an ISO-8601 timestamp."
     }
     $verifiedAt = $verifiedAt.ToUniversalTime()
-    $now = [DateTimeOffset]::UtcNow
+    $now = $ObservedNowUtc.ToUniversalTime()
+    $verifiedTicks = $verifiedAt.UtcDateTime.Ticks
+    $nowTicks = $now.UtcDateTime.Ticks
     if ($MaximumAgeMinutes -lt 1 -or $MaximumAgeMinutes -gt 120) {
         throw "Fixture maximumVerificationAgeMinutes must be between 1 and 120."
     }
-    if ($verifiedAt -gt $now) {
-        throw "Fixture live verification timestamp is in the future; refresh and reverify the owned two-school fixture."
+    if ($verifiedTicks -gt $nowTicks) {
+        throw "$Name timestamp is in the future (value=$($verifiedAt.ToString('o')); observedNowUtc=$($now.ToString('o'))); refresh and reverify the owned two-school fixture."
     }
-    if (($now - $verifiedAt).TotalMinutes -gt $MaximumAgeMinutes) {
-        throw "Fixture live verification is stale; refresh and reverify the owned two-school fixture."
+    if (($nowTicks - $verifiedTicks) -gt [TimeSpan]::FromMinutes($MaximumAgeMinutes).Ticks) {
+        throw "$Name is stale; refresh and reverify the owned two-school fixture."
     }
     return $verifiedAt
 }
@@ -478,7 +485,14 @@ function Assert-CertificationProductionRollbackTaskIdentities {
 }
 
 function Get-CertificationFixtureGenerationBinding {
-    param($State, $Verification, $Fixture, [DateTimeOffset]$VerifiedAt, [int]$MaximumAgeMinutes)
+    param(
+        $State,
+        $Verification,
+        $Fixture,
+        [DateTimeOffset]$VerifiedAt,
+        [int]$MaximumAgeMinutes,
+        [DateTimeOffset]$ObservedNowUtc = [DateTimeOffset]::UtcNow
+    )
     $expectedFixtureId = [string](Get-RequiredProperty $Fixture "expectedFixtureId")
     if ($expectedFixtureId -notmatch '^[a-z0-9][a-z0-9-]{2,40}$' -or
         [int]$State.schemaVersion -ne 1 -or [int]$Verification.schemaVersion -ne 1 -or
@@ -491,7 +505,8 @@ function Get-CertificationFixtureGenerationBinding {
         throw "Fixture state generatedAt must be an ISO-8601 timestamp."
     }
     $generatedAt = $generatedAt.ToUniversalTime()
-    $refreshedAt = Assert-CertificationFixtureVerificationTimestamp ([string]$State.refreshedAt) $MaximumAgeMinutes
+    $refreshedAt = Assert-CertificationFixtureVerificationTimestamp `
+        ([string]$State.refreshedAt) $MaximumAgeMinutes $ObservedNowUtc "Fixture state refreshedAt"
     if ($generatedAt -gt $refreshedAt -or $refreshedAt -gt $VerifiedAt) {
         throw "Fixture generatedAt/refreshedAt/verifiedAt chronology is invalid."
     }
@@ -685,8 +700,11 @@ function Get-CertificationContract {
         }
     }
     $maximumAgeMinutes = [int](Get-CertificationValue $fixture "maximumVerificationAgeMinutes" 60)
-    $verifiedAt = Assert-CertificationFixtureVerificationTimestamp ([string]$verificationJson.verifiedAt) $maximumAgeMinutes
-    $fixtureGeneration = Get-CertificationFixtureGenerationBinding $stateJson $verificationJson $fixture $verifiedAt $maximumAgeMinutes
+    $fixtureObservedNowUtc = [DateTimeOffset]::UtcNow
+    $verifiedAt = Assert-CertificationFixtureVerificationTimestamp `
+        ([string]$verificationJson.verifiedAt) $maximumAgeMinutes $fixtureObservedNowUtc "Fixture verification verifiedAt"
+    $fixtureGeneration = Get-CertificationFixtureGenerationBinding `
+        $stateJson $verificationJson $fixture $verifiedAt $maximumAgeMinutes $fixtureObservedNowUtc
     $stage = if ($null -eq (Get-CertificationValue $Config "workload")) { $null } else { [string]$Config.workload.stage }
     $plannedStart = $null
     if ([string]$Config.phase -eq "Waf" -and $stage -eq "800") {
