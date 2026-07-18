@@ -135,6 +135,12 @@ export const heartbeats = pgTable(
       table.deviceId,
       table.timestamp.desc()
     ),
+    index("heartbeats_school_device_student_timestamp_idx").on(
+      table.schoolId,
+      table.deviceId,
+      table.studentId,
+      table.timestamp.desc()
+    ),
   ]
 );
 

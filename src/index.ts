@@ -1530,16 +1530,17 @@ export async function runStartupMigrations(): Promise<void> {
     }
   }
 
-  // Teacher tile history requires the exact mixed-order index below. Keep the
-  // expensive online replacement exclusive to the one-off migration task: web
-  // and worker startup must never race or initiate production index DDL.
+  // Teacher tile history requires exact mixed-order indexes for both the
+  // general device path and the student-authorized path. Keep the expensive
+  // online work exclusive to the one-off migration task: web and worker
+  // startup must never race or initiate production index DDL.
   if (migrationsOnly()) {
     const heartbeatIndexClient = await pool.connect();
     let heartbeatIndexClientError: Error | undefined;
     try {
       await ensureHeartbeatHistoryIndexOnline(heartbeatIndexClient);
       console.log(
-        "[migration] heartbeats (school_id, device_id, timestamp DESC) index ready"
+        "[migration] heartbeat device and student-authorized history indexes ready"
       );
     } catch (err) {
       console.error(

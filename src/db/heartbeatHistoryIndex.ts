@@ -4,6 +4,10 @@ export const HEARTBEAT_HISTORY_INDEX_NAME =
   "heartbeats_school_device_timestamp_idx";
 export const HEARTBEAT_HISTORY_BUILD_INDEX_NAME =
   "heartbeats_school_device_timestamp_desc_build_idx";
+export const HEARTBEAT_STUDENT_HISTORY_INDEX_NAME =
+  "heartbeats_school_device_student_timestamp_idx";
+export const HEARTBEAT_STUDENT_HISTORY_BUILD_INDEX_NAME =
+  "heartbeats_school_device_student_timestamp_build_idx";
 
 const HEARTBEAT_HISTORY_INDEX_LOCK =
   "schoolpilot:heartbeats_school_device_timestamp_desc_idx";
@@ -29,6 +33,43 @@ export type HeartbeatHistoryIndexState = {
   table_name: string;
 };
 
+type HeartbeatHistoryIndexSpec = {
+  buildName: string;
+  canonicalName: string;
+  createColumnsSql: string;
+  definitionKeysPattern: RegExp;
+  keyColumns: string[];
+  keyDescending: boolean[];
+  label: string;
+};
+
+const HEARTBEAT_HISTORY_INDEX_SPEC: HeartbeatHistoryIndexSpec = {
+  buildName: HEARTBEAT_HISTORY_BUILD_INDEX_NAME,
+  canonicalName: HEARTBEAT_HISTORY_INDEX_NAME,
+  createColumnsSql: "school_id, device_id, timestamp DESC",
+  definitionKeysPattern:
+    /\bUSING btree \(school_id, device_id, "?timestamp"? DESC(?: NULLS FIRST)?\)$/i,
+  keyColumns: ["school_id", "device_id", "timestamp"],
+  keyDescending: [false, false, true],
+  label: "heartbeat history",
+};
+
+const HEARTBEAT_STUDENT_HISTORY_INDEX_SPEC: HeartbeatHistoryIndexSpec = {
+  buildName: HEARTBEAT_STUDENT_HISTORY_BUILD_INDEX_NAME,
+  canonicalName: HEARTBEAT_STUDENT_HISTORY_INDEX_NAME,
+  createColumnsSql: "school_id, device_id, student_id, timestamp DESC",
+  definitionKeysPattern:
+    /\bUSING btree \(school_id, device_id, student_id, "?timestamp"? DESC(?: NULLS FIRST)?\)$/i,
+  keyColumns: ["school_id", "device_id", "student_id", "timestamp"],
+  keyDescending: [false, false, false, true],
+  label: "student-scoped heartbeat history",
+};
+
+const HEARTBEAT_HISTORY_INDEX_SPECS = [
+  HEARTBEAT_HISTORY_INDEX_SPEC,
+  HEARTBEAT_STUDENT_HISTORY_INDEX_SPEC,
+] as const;
+
 const normalizeIndexDefinition = (definition: string): string =>
   definition.replace(/\s+/g, " ").trim();
 
@@ -37,16 +78,13 @@ const normalizeIndexDefinition = (definition: string): string =>
  * pg_get_indexdef check is intentionally additional: it makes the migration
  * fail closed if PostgreSQL reports a definition that contradicts pg_index.
  */
-export function isExpectedHeartbeatHistoryIndex(
-  state: HeartbeatHistoryIndexState | undefined
+function isExpectedHeartbeatIndex(
+  state: HeartbeatHistoryIndexState | undefined,
+  spec: HeartbeatHistoryIndexSpec
 ): boolean {
   if (!state) return false;
 
   const definition = normalizeIndexDefinition(state.index_definition);
-  const definitionHasExpectedKeys =
-    /\bUSING btree \(school_id, device_id, "?timestamp"? DESC(?: NULLS FIRST)?\)$/i.test(
-      definition
-    );
 
   return (
     state.indisready === true &&
@@ -57,18 +95,30 @@ export function isExpectedHeartbeatHistoryIndex(
     state.is_plain === true &&
     state.access_method === "btree" &&
     state.table_name === "heartbeats" &&
-    state.key_count === 3 &&
-    state.total_column_count === 3 &&
-    state.key_columns.length === 3 &&
-    state.key_columns[0] === "school_id" &&
-    state.key_columns[1] === "device_id" &&
-    state.key_columns[2] === "timestamp" &&
-    state.key_descending.length === 3 &&
-    state.key_descending[0] === false &&
-    state.key_descending[1] === false &&
-    state.key_descending[2] === true &&
-    definitionHasExpectedKeys
+    state.key_count === spec.keyColumns.length &&
+    state.total_column_count === spec.keyColumns.length &&
+    state.key_columns.length === spec.keyColumns.length &&
+    state.key_columns.every(
+      (column, index) => column === spec.keyColumns[index]
+    ) &&
+    state.key_descending.length === spec.keyDescending.length &&
+    state.key_descending.every(
+      (descending, index) => descending === spec.keyDescending[index]
+    ) &&
+    spec.definitionKeysPattern.test(definition)
   );
+}
+
+export function isExpectedHeartbeatHistoryIndex(
+  state: HeartbeatHistoryIndexState | undefined
+): boolean {
+  return isExpectedHeartbeatIndex(state, HEARTBEAT_HISTORY_INDEX_SPEC);
+}
+
+export function isExpectedHeartbeatStudentHistoryIndex(
+  state: HeartbeatHistoryIndexState | undefined
+): boolean {
+  return isExpectedHeartbeatIndex(state, HEARTBEAT_STUDENT_HISTORY_INDEX_SPEC);
 }
 
 async function inspectHeartbeatHistoryIndex(
@@ -136,13 +186,83 @@ function assertHeartbeatIndexOwnership(
       `${indexName} is owned by a database constraint; refusing online replacement`
     );
   }
+  if (state.indisunique) {
+    throw new Error(
+      `${indexName} enforces uniqueness; refusing online replacement`
+    );
+  }
+}
+
+async function ensureHeartbeatIndexOnline(
+  client: PoolClient,
+  spec: HeartbeatHistoryIndexSpec
+): Promise<void> {
+  const canonical = await inspectHeartbeatHistoryIndex(
+    client,
+    spec.canonicalName
+  );
+  assertHeartbeatIndexOwnership(canonical, spec.canonicalName);
+  if (isExpectedHeartbeatIndex(canonical, spec)) {
+    const staleBuild = await inspectHeartbeatHistoryIndex(client, spec.buildName);
+    assertHeartbeatIndexOwnership(staleBuild, spec.buildName);
+    if (staleBuild) {
+      await client.query(
+        `DROP INDEX CONCURRENTLY IF EXISTS public.${spec.buildName}`
+      );
+    }
+    return;
+  }
+
+  let build = await inspectHeartbeatHistoryIndex(client, spec.buildName);
+  assertHeartbeatIndexOwnership(build, spec.buildName);
+  if (build && !isExpectedHeartbeatIndex(build, spec)) {
+    await client.query(
+      `DROP INDEX CONCURRENTLY IF EXISTS public.${spec.buildName}`
+    );
+    build = undefined;
+  }
+
+  if (!build) {
+    await client.query(
+      `CREATE INDEX CONCURRENTLY ${spec.buildName} ON public.heartbeats USING btree (${spec.createColumnsSql})`
+    );
+    build = await inspectHeartbeatHistoryIndex(client, spec.buildName);
+  }
+
+  if (!isExpectedHeartbeatIndex(build, spec)) {
+    throw new Error(
+      `${spec.label} build index is missing or invalid after concurrent creation`
+    );
+  }
+
+  // Only remove a malformed canonical index after the online replacement is
+  // fully valid. If a later metadata rename fails, the valid build remains
+  // available and the next migrations-only run can safely resume.
+  if (canonical) {
+    await client.query(
+      `DROP INDEX CONCURRENTLY IF EXISTS public.${spec.canonicalName}`
+    );
+  }
+  await client.query(
+    `ALTER INDEX public.${spec.buildName} RENAME TO ${spec.canonicalName}`
+  );
+
+  const verified = await inspectHeartbeatHistoryIndex(
+    client,
+    spec.canonicalName
+  );
+  if (!isExpectedHeartbeatIndex(verified, spec)) {
+    throw new Error(
+      `${spec.label} index is missing or invalid after online replacement`
+    );
+  }
 }
 
 /**
- * Build and verify the teacher-tile heartbeat history index without taking the
- * table-wide lock used by a regular CREATE INDEX. A differently named build
- * keeps the existing (including legacy ASC) canonical index available until
- * the replacement has passed all catalog checks.
+ * Build and verify both teacher-tile heartbeat history indexes without taking
+ * the table-wide lock used by a regular CREATE INDEX. Differently named build
+ * indexes keep any existing canonical access path available until each
+ * replacement has passed all catalog checks.
  *
  * This function must only be called by the one-off migrations-only process.
  * It deliberately has no non-concurrent fallback.
@@ -178,81 +298,12 @@ export async function ensureHeartbeatHistoryIndexOnline(
     ]);
     statementTimeoutChanged = true;
 
-    const canonical = await inspectHeartbeatHistoryIndex(
-      client,
-      HEARTBEAT_HISTORY_INDEX_NAME
-    );
-    assertHeartbeatIndexOwnership(canonical, HEARTBEAT_HISTORY_INDEX_NAME);
-    if (isExpectedHeartbeatHistoryIndex(canonical)) {
-      const staleBuild = await inspectHeartbeatHistoryIndex(
-        client,
-        HEARTBEAT_HISTORY_BUILD_INDEX_NAME
-      );
-      assertHeartbeatIndexOwnership(
-        staleBuild,
-        HEARTBEAT_HISTORY_BUILD_INDEX_NAME
-      );
-      if (staleBuild) {
-        await client.query(
-          `DROP INDEX CONCURRENTLY IF EXISTS public.${HEARTBEAT_HISTORY_BUILD_INDEX_NAME}`
-        );
-      }
-      // ANALYZE is intentionally retried on every migrations-only run. If a
-      // prior task completed the index swap but timed out during ANALYZE, the
-      // canonical exact index is not mistaken for a fully finished amendment.
-      await client.query("ANALYZE public.heartbeats");
-      return;
+    for (const spec of HEARTBEAT_HISTORY_INDEX_SPECS) {
+      await ensureHeartbeatIndexOnline(client, spec);
     }
 
-    let build = await inspectHeartbeatHistoryIndex(
-      client,
-      HEARTBEAT_HISTORY_BUILD_INDEX_NAME
-    );
-    assertHeartbeatIndexOwnership(build, HEARTBEAT_HISTORY_BUILD_INDEX_NAME);
-    if (build && !isExpectedHeartbeatHistoryIndex(build)) {
-      await client.query(
-        `DROP INDEX CONCURRENTLY IF EXISTS public.${HEARTBEAT_HISTORY_BUILD_INDEX_NAME}`
-      );
-      build = undefined;
-    }
-
-    if (!build) {
-      await client.query(
-        `CREATE INDEX CONCURRENTLY ${HEARTBEAT_HISTORY_BUILD_INDEX_NAME} ON public.heartbeats USING btree (school_id, device_id, timestamp DESC)`
-      );
-      build = await inspectHeartbeatHistoryIndex(
-        client,
-        HEARTBEAT_HISTORY_BUILD_INDEX_NAME
-      );
-    }
-
-    if (!isExpectedHeartbeatHistoryIndex(build)) {
-      throw new Error(
-        "heartbeat history build index is missing or invalid after concurrent creation"
-      );
-    }
-
-    // Only remove the legacy canonical index after the online replacement is
-    // fully valid. If a later metadata rename fails, the valid build remains
-    // available and the next migrations-only run can safely resume.
-    if (canonical) {
-      await client.query(
-        `DROP INDEX CONCURRENTLY IF EXISTS public.${HEARTBEAT_HISTORY_INDEX_NAME}`
-      );
-    }
-    await client.query(
-      `ALTER INDEX public.${HEARTBEAT_HISTORY_BUILD_INDEX_NAME} RENAME TO ${HEARTBEAT_HISTORY_INDEX_NAME}`
-    );
-
-    const verified = await inspectHeartbeatHistoryIndex(
-      client,
-      HEARTBEAT_HISTORY_INDEX_NAME
-    );
-    if (!isExpectedHeartbeatHistoryIndex(verified)) {
-      throw new Error(
-        "heartbeat history index is missing or invalid after online replacement"
-      );
-    }
+    // Run once only after both exact postconditions pass. A later rerun still
+    // retries ANALYZE if an earlier task built both indexes but timed out here.
     await client.query("ANALYZE public.heartbeats");
   } catch (err) {
     operationFailed = true;
