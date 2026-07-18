@@ -355,6 +355,35 @@ try {
     Assert-Condition $futureVerificationRejected "Fixture verification must reject any future verifiedAt timestamp."
     $assertions++
 
+    $failedRunObservedNow = [DateTimeOffset]::Parse("2026-07-18T02:15:09.000Z")
+    $failedRunVerifiedAt = Assert-CertificationFixtureVerificationTimestamp `
+        "2026-07-18T02:01:03.536Z" 60 $failedRunObservedNow "Fixture verification verifiedAt"
+    $failedRunFixtureGeneration = Get-CertificationFixtureGenerationBinding `
+        ([pscustomobject]@{
+            schemaVersion=1;fixtureId="launch-safe-20260711"
+            generatedAt="2026-07-11T21:37:04.729Z";refreshedAt="2026-07-18T02:00:11.540Z"
+        }) `
+        ([pscustomobject]@{schemaVersion=1;fixtureId="launch-safe-20260711";passed=$true}) `
+        ([pscustomobject]@{expectedFixtureId="launch-safe-20260711"}) `
+        $failedRunVerifiedAt 60 $failedRunObservedNow
+    Assert-Condition `
+        ($failedRunVerifiedAt.ToString("o") -eq "2026-07-18T02:01:03.5360000+00:00" -and
+         [string]$failedRunFixtureGeneration.refreshedAtUtc -eq "2026-07-18T02:00:11.5400000+00:00") `
+        "The exact failed-run refresh, verification, and validation timestamps must be accepted deterministically."
+    $assertions++
+
+    $fixedNowFutureRejected = $false
+    try {
+        Assert-CertificationFixtureVerificationTimestamp `
+            "2026-07-18T02:15:09.001Z" 60 $failedRunObservedNow "Fixture verification verifiedAt" | Out-Null
+    }
+    catch {
+        $fixedNowFutureRejected = $_.Exception.Message -match `
+            "value=2026-07-18T02:15:09.0010000\+00:00; observedNowUtc=2026-07-18T02:15:09.0000000\+00:00"
+    }
+    Assert-Condition $fixedNowFutureRejected "Fixture verification must reject and diagnose an exact future timestamp."
+    $assertions++
+
     $staleBudgetTimestampRejected=$false
     try{Assert-CertificationFreshTimestamp ([DateTimeOffset]::UtcNow.AddHours(-25).ToString("o")) "Budget acknowledgement acknowledgedAtUtc"|Out-Null}catch{$staleBudgetTimestampRejected=$_.Exception.Message -match "fresh within 24 hours"}
     Assert-Condition $staleBudgetTimestampRejected "Certification contract budget approval must reject an acknowledgement older than 24 hours.";$assertions++
