@@ -522,6 +522,13 @@ PublicEcs predecessor, while `db.t4g.xlarge` requires `Waf/endurance`.
 
 The small Week 1 partial smoke is diagnostic only and cannot appear in this
 acceptance chain.
+
+The conditional heartbeat-index build is not an acceptance stage and cannot
+reuse a predecessor. Its activation evidence, online-migration contract, and
+exact restoration SQL are in
+[HEARTBEAT_INDEX_PIVOT.md](./HEARTBEAT_INDEX_PIVOT.md). If activated, deploy it
+as a new application build and restart the chain at `Waf/500`.
+
 Automatic rollback may dispatch only one unambiguous pre-approved action:
 
 - application regression: previous API and worker task definitions;
