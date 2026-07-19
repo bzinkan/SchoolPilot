@@ -362,6 +362,10 @@ function ConvertTo-CertificationComparableJson {
 function Get-CertificationValue {
     param($Object, [string]$Name, $Default = $null)
     if ($null -eq $Object) { return $Default }
+    if ($Object -is [System.Collections.IDictionary]) {
+        if (-not $Object.Contains($Name) -or $null -eq $Object[$Name]) { return $Default }
+        return $Object[$Name]
+    }
     $member = $Object.PSObject.Properties[$Name]
     if ($null -eq $member -or $null -eq $member.Value) { return $Default }
     return $member.Value
