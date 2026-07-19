@@ -43,6 +43,11 @@ $tempRoot = Join-Path ([IO.Path]::GetTempPath()) "schoolpilot-cert-chain-$([Guid
 [void][IO.Directory]::CreateDirectory($tempRoot)
 $assertions = 0
 try {
+    $orderedDictionary = [ordered]@{sha256="a"*64}
+    Assert-Condition ((Get-CertificationValue $orderedDictionary "sha256" ("0"*64)) -eq ("a"*64)) `
+        "Certification lookup must read OrderedDictionary keys."
+    $assertions++
+
     $resolvedConfigPath = Join-Path $tempRoot "current-config.json"
     [IO.File]::WriteAllText($resolvedConfigPath, '{"schemaVersion":1}', [Text.UTF8Encoding]::new($false))
     $script:OperatorConfigSha256 = Get-CertificationSha256 $resolvedConfigPath
@@ -220,7 +225,19 @@ try {
     $stageRef=[ordered]@{path=$stagePath;sha256=Get-CertificationSha256 $stagePath}
     $monitorPath=Join-Path $tempRoot "prior-monitor.json";Write-AtomicJson $monitorPath ([ordered]@{runId=$priorRunId;phase="Waf";status="completed";postureAccepted=$true;workload=@{stage="500"};acceptance=@{passed=$true}})
     $monitorRef=[ordered]@{path=$monitorPath;sha256=Get-CertificationSha256 $monitorPath;runId=$priorRunId;phase="Waf"}
-    $envelopePath=Join-Path $tempRoot "prior-supervisor.json";$linkInput=@($rootRef.sha256,("0"*64),$stageRef.sha256,$monitorRef.sha256)-join "`n"
+    $producerRootRef=[ordered]@{path=$rootRef.path;sha256=$rootRef.sha256}
+    $producerPredecessorSha=""
+    $linkInput=(@(
+        [string](Get-CertificationValue $producerRootRef "sha256" ("0"*64)),
+        $(if($producerPredecessorSha){$producerPredecessorSha}else{"0"*64}),
+        [string](Get-CertificationValue $stageRef "sha256" ("0"*64)),
+        [string]$monitorRef.sha256
+    )-join "`n")
+    $consumerLinkInput=@($rootRef.sha256,("0"*64),$stageRef.sha256,$monitorRef.sha256)-join "`n"
+    Assert-Condition ((Get-CertificationTextSha256 $linkInput) -eq (Get-CertificationTextSha256 $consumerLinkInput)) `
+        "A producer link built from ordered bindings must match consumer recomputation."
+    $assertions++
+    $envelopePath=Join-Path $tempRoot "prior-supervisor.json"
     $envelope=[ordered]@{schemaVersion=2;type="certification_supervisor_terminal";supervisorSealed=$true;status="completed";runId=$priorRunId;phase="Waf";stage="500";chainId=$chainId;applicationGitSha=$appSha;deployedImageDigest=$digest;controllerGitSha=$controllerSha;controllerHashes=$controllerHashes;operatorConfigSha256=$operatorHash;boundRuntimeConfigSha256=$runtimeHash;rollbackConfig=$boundRollback;supervisionKind="Load";chainRoot=$rootRef;stageAttestation=$stageRef;terminalMonitorResult=$monitorRef;predecessorSupervisorResultSha256=$null;linkSha256=Get-CertificationTextSha256 $linkInput}
     Write-AtomicJson $envelopePath $envelope
     $contract.Raw|Add-Member -NotePropertyName chainRoot -NotePropertyValue $rootRef
