@@ -13,6 +13,10 @@ const validatorPath = new URL(
   "../scripts/validate-classpilot-tile-auth-plan-evidence.mjs",
   import.meta.url
 );
+const logBindingResolverPath = new URL(
+  "../scripts/resolve-classpilot-tile-auth-plan-log-binding.mjs",
+  import.meta.url
+);
 
 function bashExecutable(): string {
   if (process.platform !== "win32") return "bash";
@@ -87,6 +91,70 @@ function runValidator(report: Record<string, unknown>) {
   return spawnSync(process.execPath, [fileURLToPath(validatorPath)], {
     encoding: "utf8",
     input,
+  });
+}
+
+const taskId = "b05a4c81fc274ee98b3f2aa2dc751e05";
+const taskArn =
+  `arn:aws:ecs:us-east-1:135775632425:task/schoolpilot-production-cluster/${taskId}`;
+const taskDefinitionArn =
+  "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:19";
+
+function validTaskResult(logStreamName?: unknown) {
+  const api: Record<string, unknown> = {
+    name: "api",
+    lastStatus: "STOPPED",
+    exitCode: 0,
+  };
+  if (arguments.length > 0) api.logStreamName = logStreamName;
+  return {
+    failures: [],
+    tasks: [{
+      taskArn,
+      taskDefinitionArn,
+      lastStatus: "STOPPED",
+      containers: [api],
+    }],
+  };
+}
+
+function runLogBindingResolver(
+  taskResult: Record<string, unknown>,
+  logConfiguration: Record<string, unknown> = {
+    logDriver: "awslogs",
+    options: {
+      "awslogs-group": "/ecs/schoolpilot-production-api",
+      "awslogs-region": "us-east-1",
+      "awslogs-stream-prefix": "api",
+    },
+  },
+  expectedTaskArn = taskArn
+) {
+  const script = `
+    import { resolveClasspilotTileAuthorizationPlanLogBinding as resolve } from ${JSON.stringify(
+      logBindingResolverPath.href
+    )};
+    try {
+      const result = resolve(JSON.parse(process.env.TEST_BINDING_INPUT));
+      process.stdout.write(JSON.stringify(result));
+    } catch {
+      process.stderr.write("binding_invalid\\n");
+      process.exitCode = 1;
+    }
+  `;
+  return spawnSync(process.execPath, ["--input-type=module", "--eval", script], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      TEST_BINDING_INPUT: JSON.stringify({
+        taskResult,
+        logConfiguration,
+        expectedTaskArn,
+        expectedTaskDefinitionArn: taskDefinitionArn,
+        expectedRegion: "us-east-1",
+        expectedAccountId: "135775632425",
+      }),
+    },
   });
 }
 
@@ -171,11 +239,86 @@ validate_classpilot_tile_auth_plan_gate_mode
     assert.doesNotMatch(implementation, /--samples/);
     assert.match(implementation, /TILE_AUTH_PLAN_TASK_WAIT_SECONDS=|900-second controller deadline/);
     assert.match(implementation, /validate-classpilot-tile-auth-plan-evidence\.mjs/);
+    assert.match(implementation, /resolve-classpilot-tile-auth-plan-log-binding\.mjs/);
     assert.doesNotMatch(implementation, /tile-auth-plan-events|cat .*log/);
+    assert.doesNotMatch(implementation, /describe-log-streams|filter-log-events/);
     assert.match(
       implementation,
       /events_json=\$\(aws logs get-log-events[\s\S]*printf '%s' "\$events_json" \|/
     );
+  });
+
+  it("derives the exact awslogs stream when ECS omits logStreamName", () => {
+    for (const taskResult of [validTaskResult(), validTaskResult(null)]) {
+      const result = runLogBindingResolver(taskResult);
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(JSON.parse(result.stdout), {
+        logGroup: "/ecs/schoolpilot-production-api",
+        logRegion: "us-east-1",
+        logPrefix: "api",
+        logStream: `api/api/${taskId}`,
+      });
+    }
+  });
+
+  it("accepts only an exact reported stream and rejects unsafe task bindings", () => {
+    const exact = runLogBindingResolver(validTaskResult(`api/api/${taskId}`));
+    assert.equal(exact.status, 0, exact.stderr);
+
+    const cases = [
+      validTaskResult("api/api/00000000000000000000000000000000"),
+      validTaskResult(123),
+      validTaskResult(""),
+      { ...validTaskResult(), failures: [{ arn: taskArn, reason: "test" }] },
+      {
+        ...validTaskResult(),
+        tasks: [{
+          ...validTaskResult().tasks[0],
+          taskDefinitionArn: `${taskDefinitionArn}-wrong`,
+        }],
+      },
+      {
+        ...validTaskResult(),
+        tasks: [{
+          ...validTaskResult().tasks[0],
+          containers: [
+            { name: "api", lastStatus: "STOPPED", exitCode: 0 },
+            { name: "api", lastStatus: "STOPPED", exitCode: 0 },
+          ],
+        }],
+      },
+    ];
+    for (const taskResult of cases) {
+      const result = runLogBindingResolver(taskResult);
+      assert.notEqual(result.status, 0);
+      assert.equal(result.stdout, "");
+      assert.equal(result.stderr.trim(), "binding_invalid");
+    }
+
+    const invalidTaskArn = taskArn.replace(taskId, "not-a-task-id");
+    const invalidTaskResult = validTaskResult();
+    invalidTaskResult.tasks[0].taskArn = invalidTaskArn;
+    const invalidTaskId = runLogBindingResolver(invalidTaskResult, undefined, invalidTaskArn);
+    assert.notEqual(invalidTaskId.status, 0);
+
+    for (const options of [
+      {
+        "awslogs-group": "/ecs/schoolpilot-production-api",
+        "awslogs-region": "us-west-2",
+        "awslogs-stream-prefix": "api",
+      },
+      {
+        "awslogs-group": "/ecs/schoolpilot-production-api",
+        "awslogs-region": "us-east-1",
+        "awslogs-stream-prefix": "api\tforged",
+      },
+    ]) {
+      const unsafeConfig = runLogBindingResolver(validTaskResult(), {
+        logDriver: "awslogs",
+        options,
+      });
+      assert.notEqual(unsafeConfig.status, 0);
+    }
   });
 
   it("accepts and canonicalizes only fixed aggregate evidence", () => {
