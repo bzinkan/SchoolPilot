@@ -45,6 +45,7 @@ jobs:
           tests/school-time-cache.test.ts
           tests/hot-path-logging.test.ts
           tests/deploy-capacity-preflight.test.ts
+          tests/deploy-classpilot-tile-auth-plan-gate.test.ts
           tests/deploy-runtime-secret-preflight.test.ts
           tests/classpilot-load-preparer.test.ts
           tests/classpilot-load-harness.test.ts
@@ -245,6 +246,9 @@ jobs:
       - name: Rollout monitor and rollback tests
         run: pwsh -NoProfile -File tests/aws-rollout-automation.test.ps1
 
+      - name: Waf/800 diagnostic-only contract tests
+        run: pwsh -NoProfile -File tests/aws-rollout-diagnostic.test.ps1
+
   frontend:
     name: Frontend (Vite Build)
     runs-on: ubuntu-latest
@@ -267,6 +271,10 @@ jobs:
         working-directory: schoolpilot-app
         run: npm audit --audit-level=high
 
+      - name: Test ClassPilot tile batching contract
+        working-directory: schoolpilot-app
+        run: npm run test:classpilot-tile-batching
+
       - name: Lint frontend
         working-directory: schoolpilot-app
         run: npm run lint
@@ -283,7 +291,7 @@ jobs:
           node scripts/soc2/collect-ci-evidence.mjs
           --job "Frontend lint and build"
           --controls "SP-SEC-004"
-          --summary "Frontend dependency audit, lint, and production Vite build ran for this commit."
+          --summary "Frontend dependency audit, ClassPilot tile-batching contract, lint, and production Vite build ran for this commit."
 
       - name: Upload SOC 2 evidence
         if: always()

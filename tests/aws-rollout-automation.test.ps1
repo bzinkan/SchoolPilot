@@ -779,7 +779,7 @@ try {
         artifactsNotBeforeUtc=[DateTimeOffset]::UtcNow.ToString("o");
         expectedGeneratorPublicIp="203.0.113.10";
         minimumWallClockSeconds=5400;deadlineUtc=[DateTimeOffset]::UtcNow.AddHours(2).ToString("o");
-        workload=@{stage="800";devices=810;durationSeconds=5400;screenshotBytes=40960;canaryDevices=10}
+        workload=@{stage="800";devices=810;durationSeconds=5400;screenshotBytes=40960;canaryDevices=10;workloadSchemaVersion="classpilot-tile-batch-v1";endpointShapeSha256="8e9f1942e4b3a27de7dd0571a9f60ffeb276c089e4baae96a885dba69e3233b2"}
     }
     $production800Path = Join-Path $tempRoot "production-800-missing-predecessor.json"
     [IO.File]::WriteAllText($production800Path, ($production800|ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false))
@@ -807,7 +807,7 @@ try {
 
     $productionLoadAcceptance = $production800 | ConvertTo-Json -Depth 12 | ConvertFrom-Json -Depth 12
     $productionLoadAcceptance.runId = "production-load-acceptance-lock"
-    $productionLoadAcceptance.workload = [pscustomobject]@{stage="500";devices=510;durationSeconds=1800;screenshotBytes=40960;canaryDevices=10}
+    $productionLoadAcceptance.workload = [pscustomobject]@{stage="500";devices=510;durationSeconds=1800;screenshotBytes=40960;canaryDevices=10;workloadSchemaVersion="classpilot-tile-batch-v1";endpointShapeSha256="8e9f1942e4b3a27de7dd0571a9f60ffeb276c089e4baae96a885dba69e3233b2"}
     $productionLoadAcceptance.minimumWallClockSeconds = 1800
     $productionLoadAcceptance.deadlineUtc = [DateTimeOffset]::UtcNow.AddHours(1).ToString("o")
     $productionLoadAcceptance | Add-Member -NotePropertyName artifactsNotBeforeUtc -NotePropertyValue ([DateTimeOffset]::UtcNow.ToString("o")) -Force
@@ -1716,18 +1716,21 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
 
         $slowRollbackConfig = $childRollback | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
         $slowRollbackConfig.runId = "slow-waf-rollback-heartbeat"
+        $slowEvidence = Join-Path $childRoot "slow-heartbeat-evidence"
+        [void][IO.Directory]::CreateDirectory($slowEvidence)
+        $slowRollbackConfig.evidenceDirectory = $slowEvidence
         [IO.File]::WriteAllText($childRollbackConfigPath, ($slowRollbackConfig|ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
         Remove-Item -LiteralPath $wafFlag -ErrorAction SilentlyContinue
         $env:SCHOOLPILOT_TEST_WAF_DELAY = "3"
         $slowRollbackProcess = Start-Process -FilePath (Get-Process -Id $PID).Path `
             -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$rollbackScript,"-ConfigPath",$childRollbackConfigPath,"-Action","Waf","-Mode","Execute") `
             -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $childRoot "slow-rollback.out") -RedirectStandardError (Join-Path $childRoot "slow-rollback.err")
-        $slowHeartbeatPath = Join-Path $childEvidence "slow-waf-rollback-heartbeat-rollback-heartbeat.json"
+        $slowHeartbeatPath = Join-Path $slowEvidence "slow-waf-rollback-heartbeat-rollback-heartbeat.json"
         $slowHeartbeatDeadline = [DateTimeOffset]::UtcNow.AddSeconds(10)
         while (-not (Test-Path -LiteralPath $slowHeartbeatPath) -and [DateTimeOffset]::UtcNow -lt $slowHeartbeatDeadline) { Start-Sleep -Milliseconds 100 }
         $slowRollbackError = Get-Content -LiteralPath (Join-Path $childRoot "slow-rollback.err") -Raw -ErrorAction SilentlyContinue
         $slowRollbackOut = Get-Content -LiteralPath (Join-Path $childRoot "slow-rollback.out") -Raw -ErrorAction SilentlyContinue
-        $slowStateDebugPath = Join-Path $childEvidence "slow-waf-rollback-heartbeat-rollback-state.json"
+        $slowStateDebugPath = Join-Path $slowEvidence "slow-waf-rollback-heartbeat-rollback-state.json"
         $slowStateDebug = Get-Content -LiteralPath $slowStateDebugPath -Raw -ErrorAction SilentlyContinue
         $slowRollbackProcess.Refresh()
         Assert-Condition (Test-Path -LiteralPath $slowHeartbeatPath) "Slow rollback did not create its independent heartbeat (exited=$($slowRollbackProcess.HasExited); state=$slowStateDebug; stdout=$slowRollbackOut; stderr=$slowRollbackError)."
@@ -1758,8 +1761,19 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
             }
         }
         Assert-Condition ($slowRollbackExited -and $slowRollbackExitCode -eq 0) "Slow WAF rollback must complete within its bounded action deadline."
-        $slowState = Get-Content -LiteralPath (Join-Path $childEvidence "slow-waf-rollback-heartbeat-rollback-state.json") -Raw | ConvertFrom-Json
+        $slowState = Get-Content -LiteralPath (Join-Path $slowEvidence "slow-waf-rollback-heartbeat-rollback-state.json") -Raw | ConvertFrom-Json
         Assert-Condition ($slowState.status -eq "completed") "Rollback progress state must end in completed after the slow action."
+        foreach ($slowEvidenceFile in @(Get-ChildItem -LiteralPath $slowEvidence -File -Force)) {
+            $slowEvidenceProbe = [IO.File]::Open(
+                $slowEvidenceFile.FullName,
+                [IO.FileMode]::Open,
+                [IO.FileAccess]::ReadWrite,
+                [IO.FileShare]::None
+            )
+            $slowEvidenceProbe.Dispose()
+        }
+        Remove-Item -LiteralPath $slowEvidence -Recurse -Force
+        Assert-Condition (-not (Test-Path -LiteralPath $slowEvidence)) "Rollback parent exit must release every heartbeat descendant evidence handle."
         Remove-Item Env:SCHOOLPILOT_TEST_WAF_DELAY -ErrorAction SilentlyContinue
 
         Remove-Item -LiteralPath $oomFlag -ErrorAction SilentlyContinue
@@ -2462,7 +2476,11 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         $completedWaitConfig.harnessProcessId = $completedWaitHarness.Id
         $completedWaitConfig.harnessProcessStartedAtUtc = ([DateTimeOffset]$completedWaitHarness.StartTime).ToUniversalTime().ToString("o")
         $completedWaitConfig.harnessProcessPath = $completedWaitHarness.Path
-        $completedWaitConfig.workload = @{stage="endurance";devices=810;durationSeconds=1;screenshotBytes=40960;canaryDevices=10}
+        $completedWaitConfig.workload = @{
+            stage="endurance";devices=810;durationSeconds=1;screenshotBytes=40960;canaryDevices=10
+            workloadSchemaVersion="classpilot-tile-batch-v1"
+            endpointShapeSha256="8e9f1942e4b3a27de7dd0571a9f60ffeb276c089e4baae96a885dba69e3233b2"
+        }
         $completedWaitConfig.resources.expectedRedisNodeType = "cache.t4g.micro"
         $completedWaitConfig | Add-Member -NotePropertyName redisResizeCompletedAtUtc -NotePropertyValue ([DateTimeOffset]::UtcNow.AddHours(-1).ToString("o")) -Force
         $completedWaitConfig | Add-Member -NotePropertyName thresholds -NotePropertyValue @{progressStaleSeconds=5} -Force
@@ -2501,8 +2519,20 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
             $completedWaitBarrierError = Get-Content -LiteralPath (Join-Path $childRoot "$completedWaitRunId.err") -Raw -ErrorAction SilentlyContinue
             Assert-Condition (Test-Path -LiteralPath $completedWaitBarrierReady) "Completed-final snapshot-wait monitor did not reach its first sample barrier (stderr: $completedWaitBarrierError)."
 
-            $completedWaitSummaryValue = @{runId=$completedWaitRunId;stage="endurance";devices=810;declaredSecondSchoolCanaryDevices=10;
-              run=@{plannedTrafficSeconds=1;actualTrafficSeconds=1;completedConfiguredDuration=$true};screenshotFixture=@{decodedBytes=40960};thresholds=@{passed=$true};fatalGate=$null}
+            $completedWaitSummaryValue = @{
+              runId=$completedWaitRunId;stage="endurance";devices=810;declaredSecondSchoolCanaryDevices=10
+              workloadSchemaVersion="classpilot-tile-batch-v1"
+              workloadEndpointShapeSha256="8e9f1942e4b3a27de7dd0571a9f60ffeb276c089e4baae96a885dba69e3233b2"
+              run=@{plannedTrafficSeconds=1;actualTrafficSeconds=1;completedConfiguredDuration=$true}
+              screenshotFixture=@{decodedBytes=40960};thresholds=@{passed=$true};fatalGate=$null
+              screenshotRetrieval=@{attempts=800;successes=800;successPercent=100}
+              tileBatch=@{
+                configured=$true;teacherCohorts=20;studentsPerCohort=40;teacherTileAssignments=800
+                requestsPerCohortPerPoll=2;logicalOperationsPerPoll=1600
+                historyRequests=20;screenshotRequests=20;historyLogicalOperations=800;screenshotLogicalOperations=800
+                networkRequests=40;logicalOperations=1600
+              }
+            }
             [IO.File]::WriteAllText($completedWaitSummary, ($completedWaitSummaryValue|ConvertTo-Json -Depth 12), [Text.UTF8Encoding]::new($false))
             $completedWaitFinalProgress = @{schemaVersion=1;type="progress";event="final";runId=$completedWaitRunId;stage="endurance";timestamp=[DateTimeOffset]::UtcNow.ToString("o")}
             [IO.File]::AppendAllText($completedWaitProgress, ($completedWaitFinalProgress|ConvertTo-Json -Compress -Depth 10)+[Environment]::NewLine, [Text.UTF8Encoding]::new($false))
@@ -2568,6 +2598,16 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         $completedWaitResult = Get-Content -LiteralPath (Join-Path $childEvidence "$completedWaitRunId-monitor-result.json") -Raw | ConvertFrom-Json -Depth 30
         Assert-Condition ($completedWaitFinalExitCode -eq 0 -and $completedWaitResult.status -eq "completed" -and $completedWaitResult.automatedRedisSnapshot.accepted -and
             -not (Test-Path -LiteralPath $completedWaitRollbackEvidence)) "An old, valid completed progress artifact must remain accepted until a qualifying post-resize automated snapshot arrives, with no Redis rollback (exit=$completedWaitFinalExitCode; result=$($completedWaitResult|ConvertTo-Json -Compress -Depth 30); stderr=$completedWaitDiagnosticError)."
+        Assert-Condition (
+            $completedWaitResult.workload.workloadSchemaVersion -eq "classpilot-tile-batch-v1" -and
+            $completedWaitResult.workload.endpointShapeSha256 -eq "8e9f1942e4b3a27de7dd0571a9f60ffeb276c089e4baae96a885dba69e3233b2" -and
+            $completedWaitResult.workload.tileBatch.teacherCohorts -eq 20 -and
+            $completedWaitResult.workload.tileBatch.studentsPerCohort -eq 40 -and
+            $completedWaitResult.workload.tileBatch.requestsPerCohortPerPoll -eq 2 -and
+            $completedWaitResult.workload.tileBatch.historyLogicalOperations -eq 800 -and
+            $completedWaitResult.workload.tileBatch.screenshotLogicalOperations -eq 800 -and
+            $completedWaitResult.workload.tileBatch.screenshotAttempts -eq 800
+        ) "The actual monitor writer must seal the schema, endpoint shape, 20x40 cohort contract, and per-tile logical accounting for supervisor continuity."
         if (-not $completedWaitHarness.HasExited) { Stop-Process -Id $completedWaitHarness.Id -Force }
         Remove-Item Env:SCHOOLPILOT_TEST_SNAPSHOT_TIME_FILE -ErrorAction SilentlyContinue
         Remove-Item Env:SCHOOLPILOT_TEST_REDIS_TYPE -ErrorAction SilentlyContinue

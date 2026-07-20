@@ -2849,66 +2849,318 @@ function hasSchoolWideTileRead(options: ClassPilotTileScopeOptions): boolean {
   );
 }
 
-function restrictedTileStudentScope(
+function hasSelectedTileTenantContext(schoolId: string): boolean {
+  if (!rlsGucEnabled()) return true;
+  const tenant = getTenantStore();
+  return Boolean(tenant && (tenant.isSuper || tenant.schoolId === schoolId));
+}
+
+export type ClassPilotStudentTileAccess = {
+  studentId: string;
+  deviceId: string;
+  schoolId: string;
+  studentSessionId: string | null;
+};
+
+type ClassPilotTileAuthorizationRow = ClassPilotStudentTileAccess & {
+  ordinal: number;
+  device: Device;
+};
+
+function requestedTileStudentsSql(
+  schoolId: string,
+  studentIds?: readonly string[]
+): SQL {
+  if (studentIds) {
+    if (studentIds.length === 0) {
+      return sql`SELECT NULL::text AS student_id, NULL::bigint AS ordinal WHERE false`;
+    }
+    return sql`VALUES ${sql.join(
+      studentIds.map((studentId, index) => sql`(${studentId}::text, ${index + 1}::bigint)`),
+      sql`, `
+    )}`;
+  }
+  return sql`
+    SELECT student.id AS student_id,
+           row_number() OVER (ORDER BY student.id)::bigint AS ordinal
+    FROM ${students} AS student
+    WHERE student.school_id = ${schoolId}
+  `;
+}
+
+/**
+ * Builds the complete set-based authorization query used by both legacy
+ * device tiles and the student batch endpoints. It is exported so the guarded
+ * production plan checker can wrap the exact statement in EXPLAIN without
+ * maintaining a second, potentially divergent copy of the authorization SQL.
+ * Values remain parameterized by Drizzle; callers must execute it inside the
+ * selected school's RLS tenant context.
+ */
+export function buildClassPilotTileAuthorizationQuery(
   options: ClassPilotTileScopeOptions,
-  studentId: SQLWrapper
-): SQL | undefined {
-  const assignedSupervision = sql<boolean>`EXISTS (
-    SELECT 1
-    FROM ${classpilotSupervisionStudents}
-    INNER JOIN ${classpilotSupervisionContexts}
-      ON ${classpilotSupervisionContexts.id} = ${classpilotSupervisionStudents.contextId}
-    WHERE ${classpilotSupervisionStudents.schoolId} = ${options.schoolId}
-      AND ${classpilotSupervisionStudents.studentId} = ${studentId}
-      AND ${classpilotSupervisionStudents.releasedAt} IS NULL
-      AND ${classpilotSupervisionContexts.schoolId} = ${options.schoolId}
-      AND ${classpilotSupervisionContexts.assignedStaffId} = ${options.staffId}
-      AND ${classpilotSupervisionContexts.status} = 'active'
-      AND ${classpilotSupervisionContexts.endsAt} > now()
-  )`;
+  accessMode: "live" | "history",
+  studentIds?: readonly string[]
+): SQL {
+  const requestedStudents = requestedTileStudentsSql(options.schoolId, studentIds);
+  const schoolWide = hasSchoolWideTileRead(options);
 
-  if (options.role === "office_staff") return assignedSupervision;
-  if (options.role !== "teacher") return undefined;
+  const authorizedStudents = schoolWide
+    ? sql`SELECT requested.student_id FROM requested_students AS requested`
+    : options.role === "office_staff"
+      ? sql`
+          SELECT supervision.student_id
+          FROM active_supervision AS supervision
+          WHERE supervision.assigned_staff_id = ${options.staffId}
+        `
+      : options.role === "teacher"
+        ? sql`
+            SELECT supervision.student_id
+            FROM active_supervision AS supervision
+            WHERE supervision.assigned_staff_id = ${options.staffId}
+            UNION
+            SELECT roster.student_id
+            FROM active_roster_students AS roster
+            LEFT JOIN active_supervision AS reassigned
+              ON reassigned.student_id = roster.student_id
+             AND reassigned.assigned_staff_id <> ${options.staffId}
+            WHERE reassigned.student_id IS NULL
+          `
+        : sql`SELECT NULL::text AS student_id WHERE false`;
 
-  const activeClassRoster = sql<boolean>`EXISTS (
-    SELECT 1
-    FROM ${groupStudents}
-    INNER JOIN ${groups} ON ${groups.id} = ${groupStudents.groupId}
-    INNER JOIN ${teachingSessions} ON ${teachingSessions.groupId} = ${groups.id}
-    WHERE ${groupStudents.studentId} = ${studentId}
-      AND ${groups.schoolId} = ${options.schoolId}
-      AND ${teachingSessions.sessionMode} = 'live'
-      AND ${teachingSessions.endTime} IS NULL
-      AND (
-        ${teachingSessions.teacherId} = ${options.staffId}
-        OR EXISTS (
-          SELECT 1
-          FROM ${groupTeachers}
-          WHERE ${groupTeachers.groupId} = ${groups.id}
-            AND ${groupTeachers.teacherId} = ${options.staffId}
-        )
-      )
-      AND NOT EXISTS (
-        SELECT 1
-        FROM ${classpilotSupervisionStudents}
-        INNER JOIN ${classpilotSupervisionContexts}
-          ON ${classpilotSupervisionContexts.id} = ${classpilotSupervisionStudents.contextId}
-        WHERE ${classpilotSupervisionStudents.schoolId} = ${options.schoolId}
-          AND ${classpilotSupervisionStudents.studentId} = ${studentId}
-          AND ${classpilotSupervisionStudents.releasedAt} IS NULL
-          AND ${classpilotSupervisionContexts.schoolId} = ${options.schoolId}
-          AND ${classpilotSupervisionContexts.assignedStaffId} <> ${options.staffId}
-          AND ${classpilotSupervisionContexts.status} = 'active'
-          AND ${classpilotSupervisionContexts.endsAt} > now()
-      )
-  )`;
+  const resolvedStudents = accessMode === "live"
+    ? sql`
+        SELECT
+          authorized.student_id,
+          requested.ordinal,
+          session.device_id,
+          session.id AS student_session_id
+        FROM authorized_students AS authorized
+        INNER JOIN requested_students AS requested
+          ON requested.student_id = authorized.student_id
+        INNER JOIN ${studentSessions} AS session
+          ON session.student_id = authorized.student_id
+         AND session.is_active = true
+      `
+    : studentIds
+      ? sql`
+        SELECT
+          ranked.student_id,
+          ranked.ordinal,
+          ranked.device_id,
+          NULL::text AS student_session_id
+        FROM (
+          SELECT
+            authorized.student_id,
+            requested.ordinal,
+            mapping.device_id,
+            row_number() OVER (
+              PARTITION BY authorized.student_id
+              ORDER BY
+                (active_session.device_id IS NOT NULL) DESC,
+                mapping.last_seen_at DESC,
+                device.last_seen_at DESC NULLS LAST,
+                mapping.device_id
+            ) AS device_rank
+          FROM authorized_students AS authorized
+          INNER JOIN requested_students AS requested
+            ON requested.student_id = authorized.student_id
+          INNER JOIN ${studentDevices} AS mapping
+            ON mapping.student_id = authorized.student_id
+          INNER JOIN ${devices} AS device
+            ON device.device_id = mapping.device_id
+           AND device.school_id = ${options.schoolId}
+          LEFT JOIN ${studentSessions} AS active_session
+            ON active_session.student_id = authorized.student_id
+           AND active_session.device_id = mapping.device_id
+           AND active_session.is_active = true
+        ) AS ranked
+        WHERE ranked.device_rank = 1
+      `
+      : sql`
+          SELECT
+            authorized.student_id,
+            requested.ordinal,
+            mapping.device_id,
+            NULL::text AS student_session_id
+          FROM authorized_students AS authorized
+          INNER JOIN requested_students AS requested
+            ON requested.student_id = authorized.student_id
+          INNER JOIN ${studentDevices} AS mapping
+            ON mapping.student_id = authorized.student_id
+          INNER JOIN ${devices} AS device
+            ON device.device_id = mapping.device_id
+           AND device.school_id = ${options.schoolId}
+        `;
 
-  return sql<boolean>`(${activeClassRoster} OR ${assignedSupervision})`;
+  return sql`
+    WITH
+    requested_students(student_id, ordinal) AS MATERIALIZED (
+      ${requestedStudents}
+    ),
+    active_supervision AS MATERIALIZED (
+      SELECT DISTINCT
+        supervised.student_id,
+        context.assigned_staff_id
+      FROM ${classpilotSupervisionStudents} AS supervised
+      INNER JOIN ${classpilotSupervisionContexts} AS context
+        ON context.id = supervised.context_id
+       AND context.school_id = ${options.schoolId}
+       AND context.status = 'active'
+       AND context.ends_at > now()
+      INNER JOIN requested_students AS requested
+        ON requested.student_id = supervised.student_id
+      WHERE supervised.school_id = ${options.schoolId}
+        AND supervised.released_at IS NULL
+    ),
+    active_staff_groups AS MATERIALIZED (
+      SELECT session.group_id
+      FROM ${teachingSessions} AS session
+      INNER JOIN ${groups} AS class_group
+        ON class_group.id = session.group_id
+       AND class_group.school_id = ${options.schoolId}
+      WHERE session.school_id = ${options.schoolId}
+        AND session.session_mode = 'live'
+        AND session.end_time IS NULL
+        AND session.teacher_id = ${options.staffId}
+      UNION
+      SELECT session.group_id
+      FROM ${teachingSessions} AS session
+      INNER JOIN ${groups} AS class_group
+        ON class_group.id = session.group_id
+       AND class_group.school_id = ${options.schoolId}
+      INNER JOIN ${groupTeachers} AS co_teacher
+        ON co_teacher.group_id = session.group_id
+       AND co_teacher.teacher_id = ${options.staffId}
+      WHERE session.school_id = ${options.schoolId}
+        AND session.session_mode = 'live'
+        AND session.end_time IS NULL
+    ),
+    active_roster_students AS MATERIALIZED (
+      SELECT DISTINCT roster.student_id
+      FROM active_staff_groups AS staff_group
+      INNER JOIN ${groupStudents} AS roster
+        ON roster.group_id = staff_group.group_id
+      INNER JOIN requested_students AS requested
+        ON requested.student_id = roster.student_id
+    ),
+    authorized_students AS MATERIALIZED (
+      ${authorizedStudents}
+    ),
+    resolved_students AS MATERIALIZED (
+      ${resolvedStudents}
+    )
+    SELECT
+      resolved.student_id,
+      resolved.ordinal,
+      resolved.student_session_id,
+      device.device_id,
+      device.device_name,
+      device.school_id,
+      device.class_id,
+      device.extension_version,
+      device.chrome_version,
+      device.last_screenshot_health,
+      device.last_seen_at,
+      device.registered_at
+    FROM resolved_students AS resolved
+    INNER JOIN ${students} AS student
+      ON student.id = resolved.student_id
+     AND student.school_id = ${options.schoolId}
+    INNER JOIN ${devices} AS device
+      ON device.device_id = resolved.device_id
+     AND device.school_id = ${options.schoolId}
+    ORDER BY resolved.ordinal
+  `;
+}
+
+function tileDeviceFromRow(row: Record<string, unknown>): Device | undefined {
+  if (
+    typeof row.device_id !== "string" ||
+    typeof row.school_id !== "string" ||
+    typeof row.class_id !== "string"
+  ) {
+    return undefined;
+  }
+  const lastSeenAt = row.last_seen_at == null
+    ? null
+    : row.last_seen_at instanceof Date
+      ? row.last_seen_at
+      : new Date(String(row.last_seen_at));
+  const registeredAt = row.registered_at instanceof Date
+    ? row.registered_at
+    : new Date(String(row.registered_at ?? ""));
+  if (
+    (lastSeenAt && Number.isNaN(lastSeenAt.getTime())) ||
+    Number.isNaN(registeredAt.getTime())
+  ) {
+    return undefined;
+  }
+  return {
+    deviceId: row.device_id,
+    deviceName: typeof row.device_name === "string" ? row.device_name : null,
+    schoolId: row.school_id,
+    classId: row.class_id,
+    extensionVersion: typeof row.extension_version === "string" ? row.extension_version : null,
+    chromeVersion: typeof row.chrome_version === "string" ? row.chrome_version : null,
+    lastScreenshotHealth: row.last_screenshot_health ?? null,
+    lastSeenAt,
+    registeredAt,
+  };
+}
+
+async function loadClassPilotTileAuthorizationRows(
+  options: ClassPilotTileScopeOptions,
+  accessMode: "live" | "history",
+  studentIds?: readonly string[]
+): Promise<ClassPilotTileAuthorizationRow[]> {
+  if (
+    studentIds?.length === 0 ||
+    !hasSelectedTileTenantContext(options.schoolId)
+  ) {
+    return [];
+  }
+  const result = await db.execute(
+    buildClassPilotTileAuthorizationQuery(options, accessMode, studentIds)
+  );
+  const rows: ClassPilotTileAuthorizationRow[] = [];
+  for (const raw of result.rows as Record<string, unknown>[]) {
+    const device = tileDeviceFromRow(raw);
+    if (!device || typeof raw.student_id !== "string") continue;
+    rows.push({
+      studentId: raw.student_id,
+      deviceId: device.deviceId,
+      schoolId: device.schoolId,
+      studentSessionId:
+        typeof raw.student_session_id === "string" ? raw.student_session_id : null,
+      ordinal: Number(raw.ordinal),
+      device,
+    });
+  }
+  return rows;
+}
+
+export async function getBatchTileAccessForStaff(
+  options: ClassPilotTileScopeOptions,
+  studentIds: readonly string[],
+  accessMode: "live" | "history"
+): Promise<Map<string, ClassPilotStudentTileAccess>> {
+  const rows = await loadClassPilotTileAuthorizationRows(
+    options,
+    accessMode,
+    studentIds
+  );
+  return new Map(rows.map((row) => [row.studentId, {
+    studentId: row.studentId,
+    deviceId: row.deviceId,
+    schoolId: row.schoolId,
+    studentSessionId: row.studentSessionId,
+  }]));
 }
 
 async function getSchoolWideTileDevice(
   options: ClassPilotTileReadOptions
 ): Promise<Device | undefined> {
+  if (!hasSelectedTileTenantContext(options.schoolId)) return undefined;
   const [device] = await db
     .select()
     .from(devices)
@@ -2929,44 +3181,24 @@ async function getSchoolWideTileDevice(
 export async function getLiveTileReadableDeviceForStaff(
   options: ClassPilotTileReadOptions
 ): Promise<Device | undefined> {
-  if (hasSchoolWideTileRead(options)) return getSchoolWideTileDevice(options);
-
-  const staffScope = restrictedTileStudentScope(options, studentSessions.studentId);
-  if (!staffScope) return undefined;
-
-  const [row] = await db
-    .select({ device: devices })
-    .from(devices)
-    .innerJoin(
-      studentSessions,
-      and(
-        eq(studentSessions.deviceId, devices.deviceId),
-        eq(studentSessions.isActive, true)
-      )
-    )
-    .innerJoin(
-      students,
-      and(
-        eq(students.id, studentSessions.studentId),
-        eq(students.schoolId, options.schoolId)
-      )
-    )
-    .where(
-      and(
-        eq(devices.schoolId, options.schoolId),
-        eq(devices.deviceId, options.deviceId),
-        staffScope
-      )
-    )
-    .limit(1);
-  return row?.device;
+  const scope = await getTileAuthorizationScopeForStaff(options, "live");
+  return scope.get(options.deviceId)?.device;
 }
 
 export type ClassPilotHistoryTileAccess = {
   device: Device;
+  // School-wide staff retain the legacy per-device detail capability even
+  // when the device has no active student session. Batch tile reads do not use
+  // this scope and remain student/session-bound.
+  schoolWide?: true;
   // null means an administrator may read all school-scoped history on the
   // device. Restricted staff must filter to this explicit student allowlist.
   authorizedStudentIds: string[] | null;
+  // Present only for live screenshot authorization. These internal fields bind
+  // a device-keyed screenshot to the exact currently represented student
+  // session and are never serialized in a teacher response.
+  liveStudentId?: string;
+  liveStudentSessionId?: string;
 };
 
 export type ClassPilotTileAuthorizationScope = Map<
@@ -2984,6 +3216,7 @@ export async function getTileAuthorizationScopeForStaff(
   options: ClassPilotTileScopeOptions,
   accessMode: "live" | "history"
 ): Promise<ClassPilotTileAuthorizationScope> {
+  if (!hasSelectedTileTenantContext(options.schoolId)) return new Map();
   if (hasSchoolWideTileRead(options)) {
     const schoolDevices = await db
       .select()
@@ -2992,69 +3225,26 @@ export async function getTileAuthorizationScopeForStaff(
     return new Map(
       schoolDevices.map((device) => [
         device.deviceId,
-        { device, authorizedStudentIds: null },
+        { device, schoolWide: true as const, authorizedStudentIds: null },
       ])
     );
   }
 
-  if (accessMode === "live") {
-    const staffScope = restrictedTileStudentScope(
-      options,
-      studentSessions.studentId
-    );
-    if (!staffScope) return new Map();
-    const rows = await db
-      .select({ device: devices })
-      .from(devices)
-      .innerJoin(
-        studentSessions,
-        and(
-          eq(studentSessions.deviceId, devices.deviceId),
-          eq(studentSessions.isActive, true)
-        )
-      )
-      .innerJoin(
-        students,
-        and(
-          eq(students.id, studentSessions.studentId),
-          eq(students.schoolId, options.schoolId)
-        )
-      )
-      .where(and(eq(devices.schoolId, options.schoolId), staffScope));
-    const scope: ClassPilotTileAuthorizationScope = new Map();
-    for (const row of rows) {
-      scope.set(row.device.deviceId, {
-        device: row.device,
-        authorizedStudentIds: null,
-      });
-    }
-    return scope;
-  }
-
-  const staffScope = restrictedTileStudentScope(
-    options,
-    studentDevices.studentId
-  );
-  if (!staffScope) return new Map();
-  const rows = await db
-    .select({ device: devices, studentId: studentDevices.studentId })
-    .from(devices)
-    .innerJoin(studentDevices, eq(studentDevices.deviceId, devices.deviceId))
-    .innerJoin(
-      students,
-      and(
-        eq(students.id, studentDevices.studentId),
-        eq(students.schoolId, options.schoolId)
-      )
-    )
-    .where(and(eq(devices.schoolId, options.schoolId), staffScope));
+  const rows = await loadClassPilotTileAuthorizationRows(options, accessMode);
   const scope: ClassPilotTileAuthorizationScope = new Map();
   for (const row of rows) {
-    const current = scope.get(row.device.deviceId);
+    const current = scope.get(row.deviceId);
     if (!current) {
-      scope.set(row.device.deviceId, {
+      scope.set(row.deviceId, {
         device: row.device,
-        authorizedStudentIds: [row.studentId],
+        authorizedStudentIds:
+          accessMode === "history" ? [row.studentId] : null,
+        ...(accessMode === "live" && row.studentSessionId
+          ? {
+              liveStudentId: row.studentId,
+              liveStudentSessionId: row.studentSessionId,
+            }
+          : {}),
       });
       continue;
     }
@@ -3077,40 +3267,13 @@ export async function getHistoryTileAccessForStaff(
 ): Promise<ClassPilotHistoryTileAccess | undefined> {
   if (hasSchoolWideTileRead(options)) {
     const device = await getSchoolWideTileDevice(options);
-    return device ? { device, authorizedStudentIds: null } : undefined;
+    return device
+      ? { device, schoolWide: true, authorizedStudentIds: null }
+      : undefined;
   }
 
-  const staffScope = restrictedTileStudentScope(options, studentDevices.studentId);
-  if (!staffScope) return undefined;
-
-  const rows = await db
-    .select({ device: devices, studentId: studentDevices.studentId })
-    .from(devices)
-    .innerJoin(studentDevices, eq(studentDevices.deviceId, devices.deviceId))
-    .innerJoin(
-      students,
-      and(
-        eq(students.id, studentDevices.studentId),
-        eq(students.schoolId, options.schoolId)
-      )
-    )
-    .where(
-      and(
-        eq(devices.schoolId, options.schoolId),
-        eq(devices.deviceId, options.deviceId),
-        staffScope
-      )
-    )
-    // Shared devices normally map to a handful of students. Keep even corrupt
-    // historical mappings bounded before using them in an IN predicate.
-    .limit(100);
-
-  const device = rows[0]?.device;
-  if (!device) return undefined;
-  return {
-    device,
-    authorizedStudentIds: [...new Set(rows.map((row) => row.studentId))],
-  };
+  return (await getTileAuthorizationScopeForStaff(options, "history"))
+    .get(options.deviceId);
 }
 
 export async function getDevicesBySchool(
@@ -3499,6 +3662,112 @@ export async function getHeartbeatsByDevice(
     .where(and(...conditions))
     .orderBy(desc(heartbeats.timestamp))
     .limit(limit);
+}
+
+/**
+ * Loads cache misses for an authorized student cohort in one statement. The
+ * exact student/device pairs come from the immediately preceding authorization
+ * query; matching both columns prevents history from another student on a
+ * shared Chromebook from entering that student's tile.
+ */
+export async function getHeartbeatTileHistoryBatch(
+  schoolId: string,
+  accesses: readonly ClassPilotStudentTileAccess[],
+  limit: number
+): Promise<Map<string, Heartbeat[]>> {
+  if (accesses.length === 0) return new Map();
+  const boundedLimit = Math.min(Math.max(Math.trunc(limit), 1), 10);
+  const requested = sql.join(
+    accesses.map((access, index) =>
+      sql`(${access.studentId}::text, ${access.deviceId}::text, ${index + 1}::bigint)`
+    ),
+    sql`, `
+  );
+  const result = await db.execute(sql`
+    WITH requested_tiles(student_id, device_id, ordinal) AS MATERIALIZED (
+      VALUES ${requested}
+    ),
+    ranked_history AS (
+      SELECT
+        requested.student_id AS tile_student_id,
+        requested.ordinal,
+        heartbeat.id,
+        heartbeat.device_id,
+        heartbeat.student_id,
+        heartbeat.student_email,
+        heartbeat.school_id,
+        heartbeat.active_tab_title,
+        heartbeat.active_tab_url,
+        heartbeat.favicon,
+        heartbeat.screen_locked,
+        heartbeat.flight_path_active,
+        heartbeat.active_flight_path_name,
+        heartbeat.is_sharing,
+        heartbeat.camera_active,
+        heartbeat.ai_category,
+        heartbeat.safety_alert,
+        heartbeat.extension_version,
+        heartbeat.chrome_version,
+        heartbeat.screenshot_health,
+        heartbeat.timestamp,
+        row_number() OVER (
+          PARTITION BY requested.student_id
+          ORDER BY heartbeat.timestamp DESC
+        ) AS history_rank
+      FROM requested_tiles AS requested
+      INNER JOIN ${heartbeats} AS heartbeat
+        ON heartbeat.school_id = ${schoolId}
+       AND heartbeat.device_id = requested.device_id
+       AND heartbeat.student_id = requested.student_id
+    )
+    SELECT *
+    FROM ranked_history
+    WHERE history_rank <= ${boundedLimit}
+    ORDER BY ordinal, history_rank
+  `);
+
+  const byStudent = new Map<string, Heartbeat[]>();
+  for (const raw of result.rows as Record<string, unknown>[]) {
+    if (
+      typeof raw.tile_student_id !== "string" ||
+      typeof raw.id !== "string" ||
+      typeof raw.device_id !== "string" ||
+      typeof raw.active_tab_title !== "string"
+    ) {
+      continue;
+    }
+    const timestamp = raw.timestamp instanceof Date
+      ? raw.timestamp
+      : new Date(String(raw.timestamp ?? ""));
+    if (Number.isNaN(timestamp.getTime())) continue;
+    const heartbeat: Heartbeat = {
+      id: raw.id,
+      deviceId: raw.device_id,
+      studentId: typeof raw.student_id === "string" ? raw.student_id : null,
+      studentEmail: typeof raw.student_email === "string" ? raw.student_email : null,
+      schoolId: typeof raw.school_id === "string" ? raw.school_id : null,
+      activeTabTitle: raw.active_tab_title,
+      activeTabUrl: typeof raw.active_tab_url === "string" ? raw.active_tab_url : null,
+      favicon: typeof raw.favicon === "string" ? raw.favicon : null,
+      screenLocked: typeof raw.screen_locked === "boolean" ? raw.screen_locked : null,
+      flightPathActive: typeof raw.flight_path_active === "boolean" ? raw.flight_path_active : null,
+      activeFlightPathName: typeof raw.active_flight_path_name === "string"
+        ? raw.active_flight_path_name
+        : null,
+      isSharing: typeof raw.is_sharing === "boolean" ? raw.is_sharing : null,
+      cameraActive: typeof raw.camera_active === "boolean" ? raw.camera_active : null,
+      aiCategory: typeof raw.ai_category === "string" ? raw.ai_category : null,
+      safetyAlert: typeof raw.safety_alert === "string" ? raw.safety_alert : null,
+      extensionVersion: typeof raw.extension_version === "string" ? raw.extension_version : null,
+      chromeVersion: typeof raw.chrome_version === "string" ? raw.chrome_version : null,
+      screenshotHealth: raw.screenshot_health ?? null,
+      timestamp,
+    };
+    const current = byStudent.get(raw.tile_student_id) ?? [];
+    current.push(heartbeat);
+    byStudent.set(raw.tile_student_id, current);
+  }
+  return byStudent;
 }
 
 export async function getHeartbeatsByDeviceInRange(

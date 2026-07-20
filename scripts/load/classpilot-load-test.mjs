@@ -4,7 +4,7 @@ import http from "node:http";
 import https from "node:https";
 import path from "node:path";
 import process from "node:process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
 import {
@@ -17,6 +17,13 @@ const JPEG_1X1 =
   "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAH/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAEFAqf/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAEDAQE/ASP/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAECAQE/ASP/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAY/ASP/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAE/ISP/2gAMAwEAAgADAAAAEP/EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQMBAT8QH//EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQIBAT8QH//EABQQAQAAAAAAAAAAAAAAAAAAABD/2gAIAQEAAT8QH//Z";
 const LATENCY_BUCKETS_MS = [25, 50, 100, 200, 300, 500, 750, 1_000, 2_000, 5_000, 10_000, Infinity];
 const COMMAND_LATENCY_CONTRACT_MS = 1_000;
+const TILE_BATCH_WORKLOAD_SCHEMA_VERSION = "classpilot-tile-batch-v1";
+const TILE_BATCH_ENDPOINT_SHAPE =
+  "classpilot-tile-batch-v1|POST /api/classpilot/tiles/screenshots studentIds[1..50]|" +
+  "POST /api/classpilot/tiles/history studentIds[1..50] limit[1..10]";
+const TILE_BATCH_ENDPOINT_SHAPE_SHA256 = createHash("sha256")
+  .update(TILE_BATCH_ENDPOINT_SHAPE, "utf8")
+  .digest("hex");
 const MAX_RESPONSE_CAPTURE_BYTES = 5 * 1024 * 1024;
 const REPOSITORY_ROOT = fs.realpathSync(fileURLToPath(new URL("../../", import.meta.url)));
 // Low-level Node HTTP and ws clients do not add a User-Agent. Real managed
@@ -85,13 +92,12 @@ Teacher/dashboard options:
   LOAD_CSRF_TOKEN=<csrf-token>                       # required with cookie for command POST
   LOAD_TEACHER_TOKEN=<jwt>                           # required for staff WebSocket auth
   LOAD_TEACHER_AUTH_FILE=%LOCALAPPDATA%\\SchoolPilot\\load-gates\\load-auth.private.json
-  LOAD_TEACHER_PATHS=/api/students-aggregated,/api/classpilot/heartbeats/{deviceId}
+  LOAD_TEACHER_PATHS=/api/students-aggregated
   LOAD_DASHBOARD_PATHS=<additional comma-separated paths>
   LOAD_TEACHER_INTERVAL_MS=5000
-  LOAD_TEACHER_TEMPLATE_INTERVAL_MS=30000
-  LOAD_TEACHER_HISTORY_WARMUP_MS=25000 # initial heartbeat jitter plus request timeout
-  LOAD_TEACHER_TEMPLATE_DEVICE_COUNT=0 # 0=all primary-school tiles (launch default)
-  LOAD_SCREENSHOT_GET_PATH_TEMPLATE=/api/classpilot/device/screenshot/{deviceId}
+  LOAD_TILE_HISTORY_PATH=/api/classpilot/tiles/history
+  LOAD_TILE_SCREENSHOTS_PATH=/api/classpilot/tiles/screenshots
+  LOAD_WORKLOAD_SCHEMA_VERSION=classpilot-tile-batch-v1
   LOAD_SCREENSHOT_GET_INTERVAL_MS=30000
   LOAD_SCREENSHOT_GET_WARMUP_MS=45000 # wait for the staggered initial uploads
 
@@ -113,6 +119,7 @@ WebSocket and command validation:
 Safety/gates:
   LOAD_ENFORCE_THRESHOLDS=true
   LOAD_GATE_PROFILE=launch              # launch requires every documented traffic input
+  LOAD_DIAGNOSTIC_ONLY=true             # only 810 devices / 1800s; never certification eligible
   LOAD_EXPECTED_CANARY_DEVICES=10
   LOAD_WAF_DEVICE_LIMIT=100000
   LOAD_WAF_GENERAL_LIMIT=50000
@@ -122,7 +129,9 @@ Safety/gates:
   LOAD_EXTERNAL_SUMMARY_PATH=<absolute path outside this repository>
   LOAD_EXTERNAL_PROGRESS_PATH=<absolute JSONL path outside this repository>
 
-Template paths may contain {deviceId} or {studentId}. All HTTP and WebSocket
+Legacy diagnostic-only template paths may contain {deviceId} or {studentId}.
+Launch certification uses one history batch and one screenshot batch for each
+40-student teacher cohort every 30 seconds. All HTTP and WebSocket
 connections are forced onto IPv4 and originate from this one generator; the
 summary reports the rolling five-minute request count that a shared school
 egress IP would present to WAF.
@@ -820,6 +829,8 @@ const privateResponseIdentifiers = new Set(
 function redactedEndpointClass(rawPath) {
   const pathname = rawPath.split("?", 1)[0];
   if (pathname === "/api/students-aggregated") return "GET /api/students-aggregated";
+  if (pathname === "/api/classpilot/tiles/history") return "POST /api/classpilot/tiles/history";
+  if (pathname === "/api/classpilot/tiles/screenshots") return "POST /api/classpilot/tiles/screenshots";
   if (/^\/api\/classpilot\/heartbeats\/[^/]+$/.test(pathname)) {
     return "GET /api/classpilot/heartbeats/{deviceId}";
   }
@@ -858,22 +869,39 @@ if (screenshotGetTemplate) {
     throw new Error("LOAD_SCREENSHOT_GET_PATH_TEMPLATE must contain {deviceId}");
   }
 }
+const tileHistoryPath = process.env.LOAD_TILE_HISTORY_PATH?.trim() || "";
+const tileScreenshotsPath = process.env.LOAD_TILE_SCREENSHOTS_PATH?.trim() || "";
+const workloadSchemaVersion = process.env.LOAD_WORKLOAD_SCHEMA_VERSION?.trim() || "";
+for (const [value, name, expected] of [
+  [tileHistoryPath, "LOAD_TILE_HISTORY_PATH", "/api/classpilot/tiles/history"],
+  [tileScreenshotsPath, "LOAD_TILE_SCREENSHOTS_PATH", "/api/classpilot/tiles/screenshots"],
+]) {
+  if (!value) continue;
+  validateRelativePath(value, name);
+  if (value !== expected) throw new Error(`${name} must be ${expected}`);
+}
+if (Boolean(tileHistoryPath) !== Boolean(tileScreenshotsPath)) {
+  throw new Error("LOAD_TILE_HISTORY_PATH and LOAD_TILE_SCREENSHOTS_PATH must be configured together");
+}
+const tileBatchConfigured = Boolean(tileHistoryPath && tileScreenshotsPath);
 const hasTeacherTemplatePaths = teacherPaths.some((path) =>
   path.includes("{deviceId}") || path.includes("{studentId}")
 );
-// StudentTile mounts its history and screenshot queries together. Once the
-// initial screenshot POST window is safely warm, align both 30-second poll
-// phases so each teacher cohort exercises the browser's combined tile burst.
-const teacherTileCohortWarmupMs = hasTeacherTemplatePaths && screenshotGetTemplate
+// The dashboard mounts its history and screenshot batch queries together. Once
+// the initial screenshot POST window is safely warm, align both 30-second poll
+// phases so each teacher cohort issues exactly two parent-level requests.
+const teacherTileCohortWarmupMs = tileBatchConfigured || (hasTeacherTemplatePaths && screenshotGetTemplate)
   ? Math.max(teacherHistoryWarmupMs, screenshotGetWarmupMs)
   : teacherHistoryWarmupMs;
-const screenshotCohortWarmupMs = hasTeacherTemplatePaths
+const screenshotCohortWarmupMs = tileBatchConfigured || hasTeacherTemplatePaths
   ? teacherTileCohortWarmupMs
   : screenshotGetWarmupMs;
 const commandEndpoint = process.env.LOAD_COMMAND_ENDPOINT?.trim() || "";
 if (commandEndpoint) validateRelativePath(commandEndpoint, "LOAD_COMMAND_ENDPOINT");
 const configuredTeacherEndpointClasses = new Set([
   ...teacherPaths.map(redactedEndpointClass),
+  ...(tileHistoryPath ? [redactedEndpointClass(tileHistoryPath)] : []),
+  ...(tileScreenshotsPath ? [redactedEndpointClass(tileScreenshotsPath)] : []),
   ...(screenshotGetTemplate ? [redactedEndpointClass(screenshotGetTemplate)] : []),
   ...(commandEndpoint ? [redactedEndpointClass(commandEndpoint)] : []),
 ]);
@@ -883,6 +911,10 @@ if (!["launch", "partial"].includes(gateProfile)) {
   throw new Error("LOAD_GATE_PROFILE must be launch or partial");
 }
 const isLaunchGate = enforceThresholds && gateProfile === "launch";
+const diagnosticOnly = boolEnv("LOAD_DIAGNOSTIC_ONLY", false);
+if (diagnosticOnly && !isLaunchGate) {
+  throw new Error("LOAD_DIAGNOSTIC_ONLY=true requires the fully enforced launch gate profile");
+}
 const commandBodyValue = process.env.LOAD_COMMAND_BODY?.trim() || "";
 const commandBodiesFile = process.env.LOAD_COMMAND_BODIES_FILE?.trim() || "";
 if (commandBodyValue && commandBodiesFile) {
@@ -933,7 +965,7 @@ if (isLaunchGate && commandBodies.length > 0) {
     throw new Error("Launch gate command bodies must use targetScope=class");
   }
 }
-if ((teacherPaths.length > 0 || screenshotGetTemplate || commandEndpoint || commandBodies.length > 0) && !hasTeacherHttpAuth) {
+if ((teacherPaths.length > 0 || tileBatchConfigured || screenshotGetTemplate || commandEndpoint || commandBodies.length > 0) && !hasTeacherHttpAuth) {
   throw new Error("LOAD_TEACHER_COOKIE or LOAD_TEACHER_TOKEN is required for teacher/dashboard HTTP traffic");
 }
 if (teacherSchoolId && teacherAuthInputs.length > 0 && teacherAuthInputs.some((auth) => !auth.token)) {
@@ -948,12 +980,6 @@ if (commandEndpoint && teacherAuthInputs.some((auth) => auth.cookie && !auth.csr
 if (isLaunchGate) {
   const hasDashboardPath = teacherPaths.some((path) =>
     !path.includes("screenshot") && !path.includes("{deviceId}") && !path.includes("{studentId}")
-  );
-  const hasHistoryPath = teacherPaths.some((path) =>
-    !path.includes("screenshot") && (path.includes("{deviceId}") || path.includes("{studentId}"))
-  );
-  const hasDeviceHistoryPath = teacherPaths.some((path) =>
-    !path.includes("screenshot") && path.includes("{deviceId}")
   );
   if (!teacherAuthFileValue) {
     throw new Error("Launch gate requires LOAD_TEACHER_AUTH_FILE with 20 distinct synthetic teacher sessions");
@@ -979,21 +1005,14 @@ if (isLaunchGate) {
   if (!externalSummaryPath || !externalProgressPath) {
     throw new Error("Launch gate requires LOAD_EXTERNAL_SUMMARY_PATH and LOAD_EXTERNAL_PROGRESS_PATH outside this repository");
   }
-  if (!hasDashboardPath || !hasHistoryPath) {
-    throw new Error("Launch gate requires both dashboard and per-device/per-student history paths");
+  if (!hasDashboardPath || !tileBatchConfigured) {
+    throw new Error("Launch gate requires the dashboard path plus both student-ID tile batch paths");
   }
-  if (!hasDeviceHistoryPath) {
-    const primaryDevices = devices.filter((device) => device.schoolId === teacherSchoolId);
-    const primaryStudentsWithIds = primaryDevices.filter((device) => Boolean(device.studentId)).length;
-    const requiredStudentIds = teacherTemplateDeviceCount === 0
-      ? primaryDevices.length
-      : Math.min(teacherTemplateDeviceCount, primaryDevices.length);
-    if (primaryStudentsWithIds < requiredStudentIds) {
-      throw new Error("Launch gate student history templates require studentId values in the selected primary manifest entries");
-    }
+  if (workloadSchemaVersion !== TILE_BATCH_WORKLOAD_SCHEMA_VERSION) {
+    throw new Error(`Launch gate requires LOAD_WORKLOAD_SCHEMA_VERSION=${TILE_BATCH_WORKLOAD_SCHEMA_VERSION}`);
   }
-  if (!screenshotGetTemplate) {
-    throw new Error("Launch gate requires LOAD_SCREENSHOT_GET_PATH_TEMPLATE");
+  if (hasTeacherTemplatePaths || screenshotGetTemplate) {
+    throw new Error("Launch gate forbids legacy per-device/per-student tile polling; use the two cohort batch paths");
   }
   if (!commandEndpoint || commandSessionCount < expectedClassBodies) {
     throw new Error(`Launch gate requires a command endpoint and ${expectedClassBodies} unique class-session bodies`);
@@ -1030,15 +1049,25 @@ if (isLaunchGate) {
   const expectedDurationSeconds = configuredPrimaryDevices === 500
     ? 30 * 60
     : configuredPrimaryDevices === 800
-      ? (durationMs === 8 * 60 * 60 * 1000 ? 8 * 60 * 60 : 90 * 60)
+      ? (diagnosticOnly ? 30 * 60 : (durationMs === 8 * 60 * 60 * 1000 ? 8 * 60 * 60 : 90 * 60))
       : configuredPrimaryDevices === 1_000
         ? 10 * 60
         : 0;
   const expectedStageTargets = configuredPrimaryDevices === 500 ? 25 : 40;
   const expectedScreenshotBytes = configuredPrimaryDevices === 1_000 ? 50 * 1024 : 40 * 1024;
+  const tileCohortSizes = teacherAuthInputs.map((auth) =>
+    devices.filter((device) =>
+      device.schoolId === teacherSchoolId &&
+      Boolean(device.studentId) &&
+      deviceBelongsToTeacherAuth(device, auth)
+    ).length
+  );
 
   if (!expectedDurationSeconds || ![510, 810, 1_010].includes(devices.length)) {
     throw new Error("Launch gate requires exactly 500, 800, or 1,000 primary devices plus 10 canaries");
+  }
+  if (diagnosticOnly && (devices.length !== 810 || configuredPrimaryDevices !== 800 || durationMs !== 30 * 60 * 1000)) {
+    throw new Error("Diagnostic-only launch requires exactly 800 primary devices, 10 canaries, and 1800 seconds");
   }
   if (configuredCanaries !== 10 || expectedCanaryDevices !== 10 || canarySchoolIds.size !== 1) {
     throw new Error("Launch gate requires exactly 10 devices from one declared second-school canary");
@@ -1051,6 +1080,9 @@ if (isLaunchGate) {
   }
   if (expectedTargetsPerClass !== expectedStageTargets) {
     throw new Error(`Launch gate requires LOAD_EXPECTED_TARGETS_PER_CLASS=${expectedStageTargets} for this stage`);
+  }
+  if (tileCohortSizes.length !== 20 || tileCohortSizes.some((count) => count !== expectedStageTargets)) {
+    throw new Error(`Launch gate requires exactly 20 tile cohorts of ${expectedStageTargets} student IDs`);
   }
   if (durationMs !== expectedDurationSeconds * 1000) {
     throw new Error(`Launch gate requires LOAD_DURATION_SECONDS=${expectedDurationSeconds} for this stage`);
@@ -1193,6 +1225,10 @@ const counters = {
   screenshotPost: 0,
   screenshotGet: 0,
   screenshotGetSuccess: 0,
+  tileBatchScreenshotRequests: 0,
+  tileBatchHistoryRequests: 0,
+  tileScreenshotLogicalOperations: 0,
+  tileHistoryLogicalOperations: 0,
   teacher: 0,
   command: 0,
   httpTotal: 0,
@@ -1204,6 +1240,7 @@ const counters = {
   unfinishedHttpRequests: 0,
   responseParseErrors: 0,
   responseBytes: 0,
+  admissionTimeout503: 0,
   wafDeviceIngestRequests: 0,
   wafGeneralApiRequests: 0,
   wafOutsideApiRequests: 0,
@@ -1270,6 +1307,8 @@ function progressRecord(event) {
     event,
     runId,
     stage,
+    diagnosticOnly,
+    certificationEligible: isLaunchGate && !diagnosticOnly,
     timestamp: new Date(now).toISOString(),
     elapsedSeconds: Number((Math.max(0, now - runStartedAt) / 1000).toFixed(1)),
     deltaWindowSeconds: Number((Math.max(0, now - (lastProgressAt || runStartedAt)) / 1000).toFixed(1)),
@@ -1605,6 +1644,42 @@ function teacherResponseValidationError(endpointClass, json, expectedDeviceId, e
       return "history-invalid-heartbeat";
     }
   }
+  if (
+    endpointClass === "POST /api/classpilot/tiles/history" ||
+    endpointClass === "POST /api/classpilot/tiles/screenshots"
+  ) {
+    if (!json || typeof json !== "object" || !Array.isArray(json.tiles) || json.tiles.length === 0) {
+      return "tile-batch-empty-or-invalid";
+    }
+    const expected = expectedStudentIds || new Set();
+    const actualIds = json.tiles.map((tile) => tile?.studentId);
+    const actualUniqueIds = new Set(actualIds);
+    if (
+      actualIds.some((studentId) => typeof studentId !== "string" || !studentId) ||
+      actualUniqueIds.size !== actualIds.length ||
+      actualUniqueIds.size !== expected.size ||
+      actualIds.some((studentId) => !expected.has(studentId))
+    ) {
+      return "tile-batch-class-scope-mismatch";
+    }
+    const stack = [...json.tiles];
+    while (stack.length > 0) {
+      const value = stack.pop();
+      if (!value || typeof value !== "object") continue;
+      if (!Array.isArray(value) && Object.hasOwn(value, "deviceId")) return "tile-batch-exposed-device-id";
+      stack.push(...(Array.isArray(value) ? value : Object.values(value)));
+    }
+    if (endpointClass === "POST /api/classpilot/tiles/history") {
+      if (json.tiles.some((tile) => !Array.isArray(tile.heartbeats) || tile.heartbeats.length === 0)) {
+        return "tile-history-empty-or-invalid";
+      }
+    } else if (json.tiles.some((tile) =>
+      tile.screenshot !== null &&
+      (!tile.screenshot || typeof tile.screenshot !== "object")
+    )) {
+      return "tile-screenshot-invalid";
+    }
+  }
   return null;
 }
 
@@ -1689,25 +1764,37 @@ async function request(path, {
     const inspectJson = parseJson || Boolean(expectedSchoolId) || kind === "screenshotGet" || Boolean(endpointClass);
     const drained = await drainResponse(response, inspectJson);
     let json = null;
-    if (response.ok && inspectJson && drained.text) {
+    if (inspectJson && drained.text) {
       if (drained.truncated) {
-        counters.responseParseErrors += 1;
+        if (response.ok) counters.responseParseErrors += 1;
       } else {
         try {
           json = JSON.parse(drained.text);
         } catch {
-          counters.responseParseErrors += 1;
+          if (response.ok) counters.responseParseErrors += 1;
         }
       }
     }
     finalizePendingRequest(record, status, null, drained.bytes);
     if (
-      kind === "screenshotGet" &&
-      response.ok &&
-      typeof json?.screenshot === "string" &&
-      json.screenshot.startsWith("data:image/jpeg;base64,")
+      countWorkload &&
+      status === 503 &&
+      json?.code === "admission_timeout"
     ) {
-      counters.screenshotGetSuccess += 1;
+      counters.admissionTimeout503 += 1;
+    }
+    if (kind === "screenshotGet" && response.ok) {
+      if (endpointClass === "POST /api/classpilot/tiles/screenshots" && Array.isArray(json?.tiles)) {
+        counters.screenshotGetSuccess += json.tiles.filter((tile) =>
+          typeof tile?.screenshot?.screenshot === "string" &&
+          tile.screenshot.screenshot.startsWith("data:image/jpeg;base64,")
+        ).length;
+      } else if (
+        typeof json?.screenshot === "string" &&
+        json.screenshot.startsWith("data:image/jpeg;base64,")
+      ) {
+        counters.screenshotGetSuccess += 1;
+      }
     }
     if (expectedSchoolId && response.ok && json !== null) {
       counters.tenantValidatedResponses += 1;
@@ -2226,6 +2313,55 @@ function startScreenshotPolling() {
   }, screenshotCohortWarmupMs);
 }
 
+function startTileBatchPolling() {
+  if (!hasTeacherHttpAuth || !tileBatchConfigured) return;
+  const poll = () => {
+    if (stoppingTraffic) return;
+    const cohorts = [];
+    for (const [authIndex, auth] of teacherAuthInputs.entries()) {
+      const matchingDevices = devicesForTeacher(auth, authIndex).filter((device) => Boolean(device.studentId));
+      const selectedDevices = teacherTemplateDeviceCount === 0
+        ? matchingDevices
+        : matchingDevices.slice(0, teacherTemplateDeviceCount);
+      const studentIds = [...new Set(selectedDevices.map((device) => device.studentId))];
+      if (studentIds.length > 0) cohorts.push({ auth, studentIds });
+    }
+    scheduleStaggered(cohorts, screenshotGetIntervalMs, ({ auth, studentIds }) => {
+      if (stoppingTraffic) return;
+      const expectedStudentIds = new Set(studentIds);
+
+      counters.teacher += 2;
+      counters.tileBatchHistoryRequests += 1;
+      counters.tileHistoryLogicalOperations += studentIds.length;
+      void issue(tileHistoryPath, {
+        ...teacherHttpAuth(auth),
+        method: "POST",
+        body: { studentIds, limit: 10 },
+        kind: "historyBatch",
+        endpointClass: redactedEndpointClass(tileHistoryPath),
+        expectedStudentIds,
+      });
+
+      counters.tileBatchScreenshotRequests += 1;
+      counters.tileScreenshotLogicalOperations += studentIds.length;
+      counters.screenshotGet += studentIds.length;
+      void issue(tileScreenshotsPath, {
+        ...teacherHttpAuth(auth),
+        method: "POST",
+        body: { studentIds },
+        kind: "screenshotGet",
+        endpointClass: redactedEndpointClass(tileScreenshotsPath),
+        expectedStudentIds,
+      });
+    });
+  };
+  later(() => {
+    if (stoppingTraffic) return;
+    poll();
+    workloadEvery(poll, screenshotGetIntervalMs);
+  }, teacherTileCohortWarmupMs);
+}
+
 function startTenantIsolationProbes() {
   const testProbe = process.env.NODE_ENV === "test" && boolEnv("LOAD_TEST_ENABLE_ISOLATION_PROBES");
   if (testProbe && !["localhost", "127.0.0.1", "::1"].includes(targetUrl.hostname)) {
@@ -2542,6 +2678,7 @@ function summarize(shutdownReason) {
     if (counters.http3xx > 0) failures.push(`valid traffic received ${counters.http3xx} unexpected redirects`);
     if (fiveXxRate >= 0.001) failures.push(`HTTP 5xx rate ${(fiveXxRate * 100).toFixed(3)}% is not below 0.1%`);
     if (networkErrorRate >= 0.001) failures.push(`network error rate ${(networkErrorRate * 100).toFixed(3)}% is not below 0.1%`);
+    if (counters.admissionTimeout503 > 0) failures.push(`${counters.admissionTimeout503} admission-timeout 503 responses were observed`);
     if (counters.unfinishedHttpRequests > 0) failures.push(`${counters.unfinishedHttpRequests} HTTP requests remained unfinished after shutdown grace`);
     if (counters.responseParseErrors > 0) failures.push(`${counters.responseParseErrors} inspected HTTP responses could not be parsed completely`);
     if (counters.teacherResponseValidationErrors > 0) failures.push(`${counters.teacherResponseValidationErrors} teacher responses were empty, structurally invalid, or outside the exact class scope`);
@@ -2549,7 +2686,7 @@ function summarize(shutdownReason) {
     else if (kinds.heartbeat.p95 > heartbeatLatencyThresholdMs) failures.push(`heartbeat p95 exceeds ${heartbeatLatencyThresholdMs}ms`);
     if (!kinds.screenshotPost?.count) failures.push("screenshot POST traffic emitted no completed samples");
     else if (kinds.screenshotPost.p95 > screenshotLatencyThresholdMs) failures.push(`screenshot POST p95 exceeds ${screenshotLatencyThresholdMs}ms`);
-    const screenshotGetConfigured = Boolean(screenshotGetTemplate || teacherPaths.some((path) => path.includes("screenshot")));
+    const screenshotGetConfigured = Boolean(tileScreenshotsPath || screenshotGetTemplate || teacherPaths.some((path) => path.includes("screenshot")));
     if (screenshotGetConfigured && !kinds.screenshotGet?.count) failures.push("configured screenshot GET traffic emitted no completed samples");
     else if (kinds.screenshotGet?.p95 > screenshotLatencyThresholdMs) failures.push(`screenshot GET p95 exceeds ${screenshotLatencyThresholdMs}ms`);
     if (screenshotGetConfigured && ratio(counters.screenshotGetSuccess, counters.screenshotGet) < 0.99) {
@@ -2558,6 +2695,8 @@ function summarize(shutdownReason) {
     const dashboardConfigured = teacherPaths.some((path) => !path.includes("screenshot"));
     if (dashboardConfigured && !kinds.teacher?.count) failures.push("configured teacher/dashboard traffic emitted no completed samples");
     else if (kinds.teacher?.p95 > teacherLatencyThresholdMs) failures.push(`teacher/dashboard p95 exceeds ${teacherLatencyThresholdMs}ms`);
+    if (tileHistoryPath && !kinds.historyBatch?.count) failures.push("configured history batch traffic emitted no completed samples");
+    else if (kinds.historyBatch?.p95 > teacherLatencyThresholdMs) failures.push(`history batch p95 exceeds ${teacherLatencyThresholdMs}ms`);
     if (commandEndpoint && !kinds.command?.count) failures.push("configured teacher command traffic emitted no completed samples");
     else if (commandEndpoint && !commandRequestLatency.exact) failures.push("exact teacher command latency sampling overflowed its bounded capacity");
     else if (commandEndpoint && commandRequestLatency.observedCount !== kinds.command?.count) failures.push("exact teacher command latency samples do not match completed command requests");
@@ -2569,7 +2708,8 @@ function summarize(shutdownReason) {
         failures.push(`${endpoint} emitted no completed samples`);
         continue;
       }
-      const threshold = endpoint === "GET /api/classpilot/device/screenshot/{deviceId}"
+      const threshold = endpoint === "GET /api/classpilot/device/screenshot/{deviceId}" ||
+        endpoint === "POST /api/classpilot/tiles/screenshots"
         ? screenshotLatencyThresholdMs
         : teacherLatencyThresholdMs;
       const endpointP95 = endpoint === commandEndpointClass
@@ -2684,9 +2824,23 @@ function summarize(shutdownReason) {
     failures.unshift(`fatal gate triggered: ${fatalGate.reasonCodes.join(", ")}`);
   }
 
+  const tileCohortSizes = teacherAuthInputs.map((auth, authIndex) =>
+    devicesForTeacher(auth, authIndex).filter((device) => Boolean(device.studentId)).length
+  );
+  const activeTileCohortSizes = tileCohortSizes.filter((count) => count > 0);
+  const uniformTileCohortSize = activeTileCohortSizes.length > 0 &&
+    activeTileCohortSizes.every((count) => count === activeTileCohortSizes[0])
+    ? activeTileCohortSizes[0]
+    : null;
+  const teacherTileAssignments = activeTileCohortSizes.reduce((total, count) => total + count, 0);
+
   const summary = {
     runId,
     stage,
+    diagnosticOnly,
+    certificationEligible: isLaunchGate && !diagnosticOnly,
+    workloadSchemaVersion: workloadSchemaVersion || null,
+    workloadEndpointShapeSha256: tileBatchConfigured ? TILE_BATCH_ENDPOINT_SHAPE_SHA256 : null,
     targetOrigin: baseUrl,
     devices: devices.length,
     declaredSecondSchoolCanaryDevices: canaryDevices,
@@ -2744,6 +2898,20 @@ function summarize(shutdownReason) {
       attempts: counters.screenshotGet,
       successes: counters.screenshotGetSuccess,
       successPercent: Number((ratio(counters.screenshotGetSuccess, counters.screenshotGet) * 100).toFixed(2)),
+    },
+    tileBatch: {
+      configured: tileBatchConfigured,
+      teacherCohorts: activeTileCohortSizes.length,
+      studentsPerCohort: uniformTileCohortSize,
+      teacherTileAssignments,
+      requestsPerCohortPerPoll: tileBatchConfigured ? 2 : 0,
+      logicalOperationsPerPoll: tileBatchConfigured ? teacherTileAssignments * 2 : 0,
+      historyRequests: counters.tileBatchHistoryRequests,
+      screenshotRequests: counters.tileBatchScreenshotRequests,
+      historyLogicalOperations: counters.tileHistoryLogicalOperations,
+      screenshotLogicalOperations: counters.tileScreenshotLogicalOperations,
+      networkRequests: counters.tileBatchHistoryRequests + counters.tileBatchScreenshotRequests,
+      logicalOperations: counters.tileHistoryLogicalOperations + counters.tileScreenshotLogicalOperations,
     },
     sharedIpModel: {
       label: sharedIpLabel,
@@ -2898,10 +3066,16 @@ if (validateConfigOnly) {
     mode: "preflight-only",
     trafficStarted: false,
     runId,
+    diagnosticOnly,
+    certificationEligible: isLaunchGate && !diagnosticOnly,
+    workloadSchemaVersion: workloadSchemaVersion || null,
+    workloadEndpointShapeSha256: tileBatchConfigured ? TILE_BATCH_ENDPOINT_SHAPE_SHA256 : null,
     gateProfile,
     thresholdsEnforced: enforceThresholds,
     networkFamily: "IPv4",
     launchContract: {
+      workloadSchemaVersion: workloadSchemaVersion || null,
+      endpointShapeSha256: tileBatchConfigured ? TILE_BATCH_ENDPOINT_SHAPE_SHA256 : null,
       totalSockets: devices.length,
       primaryDevices,
       canaryDevices,
@@ -2912,6 +3086,8 @@ if (validateConfigOnly) {
       teacherActors: teacherAuthInputs.length,
       teacherTileCohorts: teacherTileAssignments.filter((count) => count > 0).length,
       teacherTileAssignments: teacherTileAssignments.reduce((total, count) => total + count, 0),
+      tileBatchRequestsPerCohort: tileBatchConfigured ? 2 : 0,
+      tileLogicalOperationsPerPoll: teacherTileAssignments.reduce((total, count) => total + count, 0) * 2,
     },
     finalAcceptanceContract: {
       authenticatedDeviceSockets: devices.length,
@@ -2947,6 +3123,7 @@ if (validateConfigOnly) {
     deviceStates.forEach(startDeviceTraffic);
     startTeacherTraffic();
     startScreenshotPolling();
+    startTileBatchPolling();
     startTenantIsolationProbes();
     scheduleStaggered(teacherSocketStates, teacherIntervalMs, connectTeacherWebSocket);
     startCommandTraffic();

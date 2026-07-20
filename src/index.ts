@@ -408,7 +408,6 @@ export async function runStartupMigrations(): Promise<void> {
     await pool.query(`CREATE INDEX IF NOT EXISTS subgroups_school_id_idx ON subgroups (school_id)`);
 
     await pool.query(`ALTER TABLE teaching_sessions ADD COLUMN IF NOT EXISTS school_id TEXT`);
-    await pool.query(`UPDATE teaching_sessions ts SET school_id = g.school_id FROM groups g WHERE g.id = ts.group_id AND ts.school_id IS NULL`);
     await pool.query(`CREATE INDEX IF NOT EXISTS teaching_sessions_school_id_idx ON teaching_sessions (school_id)`);
     await pool.query(`ALTER TABLE teaching_sessions ADD COLUMN IF NOT EXISTS control_updated_at TIMESTAMP`);
     await pool.query(`CREATE INDEX IF NOT EXISTS teaching_sessions_control_updated_at_idx ON teaching_sessions (control_updated_at)`);
@@ -474,6 +473,30 @@ export async function runStartupMigrations(): Promise<void> {
   } catch (err) {
     console.warn("[migration] derived-table school_id migration skipped:", (err as Error).message);
   }
+
+  // The tile authorization plan relies on teaching_sessions.school_id as both
+  // an indexed tenant predicate and an RLS boundary. Do not repair bad rows in
+  // place here: a migration/deploy must fail before a new release can serve if
+  // any session is missing its school, references a missing group, or differs
+  // from its parent group's school. schedulerPool carries app.is_super='on',
+  // so this audit remains complete after FORCE RLS has been enabled.
+  const teachingSessionSchoolIntegrity = await schedulerPool.query(`
+    SELECT count(*)::integer AS invalid_count
+    FROM teaching_sessions AS session
+    LEFT JOIN groups AS class_group ON class_group.id = session.group_id
+    WHERE session.school_id IS NULL
+       OR class_group.id IS NULL
+       OR session.school_id IS DISTINCT FROM class_group.school_id
+  `);
+  const invalidTeachingSessionSchools = Number(
+    teachingSessionSchoolIntegrity.rows[0]?.invalid_count ?? 0
+  );
+  if (invalidTeachingSessionSchools > 0) {
+    throw new Error(
+      `teaching_sessions.school_id integrity check failed (${invalidTeachingSessionSchools} invalid rows)`
+    );
+  }
+  console.log("[migration] teaching_sessions.school_id integrity check passed");
 
   // ClassPilot teacher command tracking. These tables are school-scoped and
   // participate in the generic RLS policy authoring block below.

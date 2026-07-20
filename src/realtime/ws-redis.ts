@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import { createClient, type RedisClientType } from "redis";
+import { redisCommand } from "../middleware/rateLimiter.js";
 import {
   dispatchCacheInvalidation,
   registerCacheInvalidationPublisher,
@@ -487,7 +488,50 @@ export type ScreenshotData = {
   tabTitle?: string;
   tabUrl?: string;
   tabFavicon?: string;
+  // Internal authority binding. Public tile responses strip both fields.
+  studentId?: string;
+  studentSessionId?: string;
 };
+
+const SCREENSHOT_MAX_CLOCK_SKEW_MS = 30_000;
+
+export function decodeScreenshotData(value: unknown): ScreenshotData | null {
+  let parsed: unknown = value;
+  if (typeof value === "string") {
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const candidate = parsed as Partial<ScreenshotData>;
+  if (
+    typeof candidate.screenshot !== "string" ||
+    typeof candidate.timestamp !== "number" ||
+    !Number.isFinite(candidate.timestamp)
+  ) {
+    return null;
+  }
+  const ageMs = Date.now() - candidate.timestamp;
+  if (
+    ageMs > SCREENSHOT_TTL_SECONDS * 1_000 ||
+    ageMs < -SCREENSHOT_MAX_CLOCK_SKEW_MS
+  ) {
+    return null;
+  }
+  return {
+    screenshot: candidate.screenshot,
+    timestamp: candidate.timestamp,
+    ...(typeof candidate.tabTitle === "string" ? { tabTitle: candidate.tabTitle } : {}),
+    ...(typeof candidate.tabUrl === "string" ? { tabUrl: candidate.tabUrl } : {}),
+    ...(typeof candidate.tabFavicon === "string" ? { tabFavicon: candidate.tabFavicon } : {}),
+    ...(typeof candidate.studentId === "string" ? { studentId: candidate.studentId } : {}),
+    ...(typeof candidate.studentSessionId === "string"
+      ? { studentSessionId: candidate.studentSessionId }
+      : {}),
+  };
+}
 
 export async function setScreenshot(deviceId: string, data: ScreenshotData): Promise<boolean> {
   if (!redisUrl) {
@@ -523,10 +567,46 @@ export async function getScreenshot(deviceId: string): Promise<ScreenshotData | 
     if (!data) {
       return null;
     }
-    return JSON.parse(data) as ScreenshotData;
+    return decodeScreenshotData(data);
   } catch (error) {
     console.warn("[Screenshot] Redis get failed:", error);
     return null;
+  }
+}
+
+/**
+ * Fetch a dashboard cohort with one Redis MGET. Missing/corrupt entries remain
+ * null so the caller can use the existing per-process in-memory fallback
+ * without issuing per-device Redis GETs.
+ */
+export async function getScreenshots(
+  deviceIds: readonly string[]
+): Promise<(ScreenshotData | null)[]> {
+  if (deviceIds.length === 0) return [];
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 250);
+  timeout.unref?.();
+  try {
+    const result = await redisCommand(
+      [
+        "MGET",
+        ...deviceIds.map((deviceId) => `${SCREENSHOT_KEY_PREFIX}${deviceId}`),
+      ],
+      { readyTimeoutMs: 100, signal: controller.signal }
+    );
+    if (!Array.isArray(result) || result.length !== deviceIds.length) {
+      return deviceIds.map(() => null);
+    }
+    const values = result as unknown[];
+    return values.map((raw) => {
+      if (typeof raw !== "string" || !raw) return null;
+      return decodeScreenshotData(raw);
+    });
+  } catch (error) {
+    console.warn("[Screenshot] Redis mGet failed:", error);
+    return deviceIds.map(() => null);
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

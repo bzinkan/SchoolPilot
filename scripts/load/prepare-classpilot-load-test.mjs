@@ -38,7 +38,19 @@ export const FILES = Object.freeze({
   cleanup: "cleanup-result.private.json",
 });
 
-const COUNTS = Object.freeze({ teachers: 20, classes: 20, classSize: 40, primaryStudents: 1000, canaryStudents: 10 });
+const COUNTS = Object.freeze({
+  teachers: 20,
+  officeStaff: 1,
+  classes: 20,
+  classSize: 40,
+  planCohortSize: 40,
+  primaryStudents: 1000,
+  canaryStudents: 10,
+});
+const PLAN_CO_TEACHER_CLASS_ORDINAL = 1;
+const PLAN_CO_TEACHER_ORDINAL = 20;
+const PLAN_OFFICE_STUDENT_START_INDEX = 800;
+const PLAN_OFFICE_CONTEXT_HOURS = 72;
 // ClassPilot PIN generation uses bcrypt cost 12 for every imported student.
 // Keep each request well below CloudFront's 30-second origin-response ceiling
 // on a 0.5-vCPU launch task; total provisioning throughput is unchanged because
@@ -342,6 +354,11 @@ export function buildFixtureBlueprint(config) {
     email: numberedEmail(config.aliases.teacherPrefix, index + 1, 2, config.schools.primary.domain),
     name: `${config.fixtureId} Load Teacher ${String(index + 1).padStart(2, "0")}`,
   }));
+  const officeStaff = {
+    email: `${config.aliases.teacherPrefix}-office@${config.schools.primary.domain}`,
+    name: `${config.fixtureId} Load Office Staff`,
+    role: "office_staff",
+  };
   const primaryStudents = Array.from({ length: COUNTS.primaryStudents }, (_, index) => ({
     ordinal: index + 1,
     email: numberedEmail(config.aliases.primaryStudentPrefix, index + 1, 4, config.schools.primary.domain),
@@ -365,6 +382,9 @@ export function buildFixtureBlueprint(config) {
       name: `${config.fixtureId} Load Class ${String(index + 1).padStart(2, "0")}`,
       description: `synthetic-load-fixture:${config.fixtureId}:class:${String(index + 1).padStart(2, "0")}`,
       teacherEmail: teachers[index].email,
+      coTeacherEmails: index + 1 === PLAN_CO_TEACHER_CLASS_ORDINAL
+        ? [teachers[PLAN_CO_TEACHER_ORDINAL - 1].email]
+        : [],
       studentEmails: [...first, ...second].map((student) => student.email),
     };
   });
@@ -391,6 +411,7 @@ export function buildFixtureBlueprint(config) {
   return {
     fixtureId: config.fixtureId,
     teachers,
+    officeStaff,
     primaryStudents,
     canaryStudents,
     classes,
@@ -406,9 +427,14 @@ export function buildDryRunSummary(config) {
     mutationsPerformed: 0,
     expected: {
       schools: 2,
-      loadActors: { teachers: 20, commandAdmin: 1 },
+      loadActors: { teachers: 20, officeStaff: 1, commandAdmin: 1 },
       students: { primary: 1000, canary: 10, total: 1010, autoEnroll: false },
       classes: { count: 20, studentsEach: 40, disjoint: true, schedulesEnabled: false },
+      authorizationPlanCohorts: {
+        coTeacherStudents: COUNTS.planCohortSize,
+        officeSupervisionStudents: COUNTS.planCohortSize,
+        officeStudentsOutsideTeacherRosters: true,
+      },
       deviceTokens: blueprint.devices.length,
       commandBodies: 20,
     },
@@ -907,7 +933,8 @@ function emptyOwnership(config) {
     updatedAt: new Date().toISOString(),
     schools: {},
     teachers: {},
-    pendingCreateIntents: { schools: {}, teachers: {} },
+    staff: {},
+    pendingCreateIntents: { schools: {}, teachers: {}, staff: {} },
   };
 }
 
@@ -916,11 +943,20 @@ function validateOwnershipContract(value, config) {
     throw new SafeError("Fixture ownership ledger does not match the current config");
   }
   if (value.ownershipAcknowledgement !== OWNERSHIP_ACK) throw new SafeError("Fixture ownership ledger lacks the ownership acknowledgement");
+  // Version 2 ownership files predate the authorization-plan office actor.
+  // Additive defaults let a reviewed provision upgrade the same durable
+  // fixture without adopting any unowned identity.
+  if (value.staff === undefined) value.staff = {};
+  if (value.pendingCreateIntents && value.pendingCreateIntents.staff === undefined) {
+    value.pendingCreateIntents.staff = {};
+  }
   if (
     !value.schools || typeof value.schools !== "object"
     || !value.teachers || typeof value.teachers !== "object"
+    || !value.staff || typeof value.staff !== "object"
     || !value.pendingCreateIntents?.schools || typeof value.pendingCreateIntents.schools !== "object"
     || !value.pendingCreateIntents?.teachers || typeof value.pendingCreateIntents.teachers !== "object"
+    || !value.pendingCreateIntents?.staff || typeof value.pendingCreateIntents.staff !== "object"
   ) {
     throw new SafeError("Fixture ownership ledger is malformed");
   }
@@ -944,6 +980,29 @@ function validateOwnershipContract(value, config) {
     const teacher = plannedTeacherByEmail.get(email);
     if (!teacher || intent?.email !== email || intent.name !== teacher.name || intent.role !== "teacher" || !intent.schoolId) {
       throw new SafeError("Fixture ownership ledger contains an invalid pending teacher create intent");
+    }
+  }
+  const plannedOfficeStaff = buildFixtureBlueprint(config).officeStaff;
+  for (const [email, owned] of Object.entries(value.staff)) {
+    if (
+      email !== plannedOfficeStaff.email
+      || owned?.email !== plannedOfficeStaff.email
+      || owned.name !== plannedOfficeStaff.name
+      || owned.role !== plannedOfficeStaff.role
+      || !owned.userId
+      || !owned.membershipId
+    ) {
+      throw new SafeError("Fixture ownership ledger contains an unexpected staff identity");
+    }
+  }
+  for (const [email, intent] of Object.entries(value.pendingCreateIntents.staff)) {
+    if (
+      typeof intent?.schoolId !== "string"
+      || !intent.schoolId
+      || !staffIntentMatches(intent, plannedOfficeStaff, intent.schoolId)
+      || email !== plannedOfficeStaff.email
+    ) {
+      throw new SafeError("Fixture ownership ledger contains an invalid pending staff create intent");
     }
   }
   return value;
@@ -999,6 +1058,23 @@ function recordOwnedTeacher(outputDirectory, ownership, teacher, entry) {
   persistOwnership(outputDirectory, ownership);
 }
 
+function recordOwnedStaff(outputDirectory, ownership, staff, entry) {
+  const existing = ownership.staff[staff.email];
+  if (existing && (existing.userId !== entry.userId || existing.membershipId !== entry.membershipId)) {
+    throw new SafeError("Durable staff ownership conflicts with the discovered identity");
+  }
+  ownership.staff[staff.email] = {
+    email: staff.email,
+    name: staff.name,
+    role: staff.role,
+    userId: entry.userId,
+    membershipId: entry.membershipId,
+    recordedAt: existing?.recordedAt || new Date().toISOString(),
+  };
+  delete ownership.pendingCreateIntents.staff[staff.email];
+  persistOwnership(outputDirectory, ownership);
+}
+
 function checkpointSchoolCreateIntent(outputDirectory, ownership, role, spec) {
   const current = ownership.pendingCreateIntents.schools[role];
   const intent = {
@@ -1035,6 +1111,23 @@ function checkpointTeacherCreateIntent(outputDirectory, ownership, teacher, scho
   return intent;
 }
 
+function checkpointStaffCreateIntent(outputDirectory, ownership, staff, schoolId) {
+  const current = ownership.pendingCreateIntents.staff[staff.email];
+  const intent = {
+    email: staff.email,
+    name: staff.name,
+    schoolId,
+    role: staff.role,
+    requestedAt: current?.requestedAt || new Date().toISOString(),
+  };
+  if (current && !staffIntentMatches(current, staff, schoolId)) {
+    throw new SafeError("Pending staff creation intent conflicts with the exact fixture identity");
+  }
+  ownership.pendingCreateIntents.staff[staff.email] = intent;
+  persistOwnership(outputDirectory, ownership);
+  return intent;
+}
+
 function schoolIntentMatches(intent, spec) {
   return intent?.role && intent.name === spec.name && intent.domain === spec.domain
     && intent.adminEmail === spec.adminEmail && intent.marker === SYNTHETIC_SCHOOL_MARKER;
@@ -1057,6 +1150,11 @@ function bindSchoolCreateIntentToResource(outputDirectory, ownership, role, spec
 function teacherIntentMatches(intent, teacher, schoolId) {
   return intent?.email === teacher.email && intent.name === teacher.name
     && intent.schoolId === schoolId && intent.role === "teacher";
+}
+
+function staffIntentMatches(intent, staff, schoolId) {
+  return intent?.email === staff.email && intent.name === staff.name
+    && intent.schoolId === schoolId && intent.role === staff.role;
 }
 
 function seedOwnershipFromState(ownership, state) {
@@ -1086,6 +1184,21 @@ function seedOwnershipFromState(ownership, state) {
       name: teacher.name,
       userId: teacher.userId,
       membershipId: teacher.membershipId,
+      recordedAt: current?.recordedAt || state.generatedAt || new Date().toISOString(),
+    };
+  }
+  if (state.officeStaff?.email) {
+    const staff = state.officeStaff;
+    const current = ownership.staff[staff.email];
+    if (current && (current.userId !== staff.userId || current.membershipId !== staff.membershipId)) {
+      throw new SafeError("Existing state and ownership ledger disagree on a staff identity");
+    }
+    ownership.staff[staff.email] = {
+      email: staff.email,
+      name: staff.name,
+      role: staff.role,
+      userId: staff.userId,
+      membershipId: staff.membershipId,
       recordedAt: current?.recordedAt || state.generatedAt || new Date().toISOString(),
     };
   }
@@ -1420,6 +1533,21 @@ function assertOwnedTeacherEntry(teacher, entry, ownership) {
   }
 }
 
+function assertOwnedStaffEntry(staff, entry, ownership) {
+  const owned = ownership.staff[staff.email];
+  if (
+    !owned
+    || owned.userId !== entry?.userId
+    || owned.membershipId !== entry?.membershipId
+    || owned.role !== staff.role
+  ) {
+    throw new SafeError("An existing staff alias is not present in the durable fixture ownership ledger");
+  }
+  if (owned.name !== staff.name || staffDisplayName(entry) !== staff.name || entry.role !== staff.role) {
+    throw new SafeError("An existing staff alias lacks the exact fixture role and display-name marker");
+  }
+}
+
 async function preflightDedicatedInventory(client, config, schools, authBySchool, blueprint, ownership) {
   const expectedStudents = { primary: blueprint.primaryStudents, canary: blueprint.canaryStudents };
   const expectedDeviceIds = {
@@ -1447,14 +1575,33 @@ async function preflightDedicatedInventory(client, config, schools, authBySchool
       const email = String(entry.user?.email || "").toLowerCase();
       if (email === expectedAdminEmail) continue;
       const teacher = schoolKey === "primary" ? blueprint.teachers.find((candidate) => candidate.email === email) : null;
-      if (!teacher || entry.role !== "teacher" || staffDisplayName(entry) !== teacher.name) {
+      const officeStaff = schoolKey === "primary" && blueprint.officeStaff.email === email
+        ? blueprint.officeStaff
+        : null;
+      if (!teacher && !officeStaff) {
         throw new SafeError(`Unexpected staff identity exists in the dedicated ${schoolKey} tenant before provisioning`);
       }
-      const owned = ownership.teachers[email];
-      const pending = ownership.pendingCreateIntents.teachers[email];
-      const ownedMatch = owned?.userId === entry.userId && owned?.membershipId === entry.membershipId && owned.name === teacher.name;
-      if (!ownedMatch && !teacherIntentMatches(pending, teacher, school.id)) {
-        throw new SafeError("Existing teacher is not covered by durable ownership or an exact pending create intent");
+      if (teacher) {
+        if (entry.role !== "teacher" || staffDisplayName(entry) !== teacher.name) {
+          throw new SafeError(`Unexpected staff identity exists in the dedicated ${schoolKey} tenant before provisioning`);
+        }
+        const owned = ownership.teachers[email];
+        const pending = ownership.pendingCreateIntents.teachers[email];
+        const ownedMatch = owned?.userId === entry.userId && owned?.membershipId === entry.membershipId && owned.name === teacher.name;
+        if (!ownedMatch && !teacherIntentMatches(pending, teacher, school.id)) {
+          throw new SafeError("Existing teacher is not covered by durable ownership or an exact pending create intent");
+        }
+      } else {
+        if (entry.role !== officeStaff.role || staffDisplayName(entry) !== officeStaff.name) {
+          throw new SafeError(`Unexpected staff identity exists in the dedicated ${schoolKey} tenant before provisioning`);
+        }
+        const owned = ownership.staff[email];
+        const pending = ownership.pendingCreateIntents.staff[email];
+        const ownedMatch = owned?.userId === entry.userId && owned?.membershipId === entry.membershipId
+          && owned.name === officeStaff.name && owned.role === officeStaff.role;
+        if (!ownedMatch && !staffIntentMatches(pending, officeStaff, school.id)) {
+          throw new SafeError("Existing office staff is not covered by durable ownership or an exact pending create intent");
+        }
       }
     }
 
@@ -1565,6 +1712,78 @@ async function ensureTeachers(client, adminAuth, blueprint, teacherPassword, out
   });
 }
 
+async function ensureOfficeStaff(client, adminAuth, blueprint, staffPassword, outputDirectory, ownership) {
+  if (!adminAuth?.sessionVerified || !adminAuth.schoolId) {
+    throw new SafeError("Office-staff provisioning requires an exact verified admin context");
+  }
+  const planned = blueprint.officeStaff;
+  let response = await client.request("/api/admin/users", { bearer: adminAuth.bearer });
+  let users = Array.isArray(response.data?.users) ? response.data.users : [];
+  let existing = users.find((entry) => String(entry.user?.email || "").toLowerCase() === planned.email);
+  if (existing && !ownership.staff[planned.email]) {
+    const intent = ownership.pendingCreateIntents.staff[planned.email];
+    if (
+      !staffIntentMatches(intent, planned, adminAuth.schoolId)
+      || staffDisplayName(existing) !== planned.name
+      || existing.role !== planned.role
+      || !existing.userId
+      || !existing.membershipId
+    ) {
+      throw new SafeError("Refusing to adopt existing office staff without exact durable ownership or a matching pending create intent");
+    }
+    recordOwnedStaff(outputDirectory, ownership, planned, existing);
+  }
+  if (!existing) {
+    if (ownership.staff[planned.email]) {
+      throw new SafeError("Durably owned office staff is missing; refusing to recreate the identity");
+    }
+    checkpointStaffCreateIntent(outputDirectory, ownership, planned, adminAuth.schoolId);
+    const created = await client.request("/api/admin/users", {
+      method: "POST",
+      bearer: adminAuth.bearer,
+      body: { email: planned.email, role: planned.role, name: planned.name, password: staffPassword },
+    });
+    const createdEntry = {
+      user: created.data?.user,
+      userId: created.data?.user?.id,
+      membershipId: created.data?.membership?.id,
+      role: created.data?.membership?.role,
+    };
+    if (
+      !createdEntry.userId
+      || !createdEntry.membershipId
+      || createdEntry.role !== planned.role
+      || staffDisplayName(createdEntry) !== planned.name
+    ) {
+      if (createdEntry.membershipId) {
+        await client.request(`/api/admin/users/${encodeURIComponent(createdEntry.membershipId)}`, {
+          method: "DELETE", bearer: adminAuth.bearer, allowedStatuses: [200, 404],
+        });
+      }
+      throw new SafeError("Office-staff creation returned an unexpected identity");
+    }
+    try {
+      recordOwnedStaff(outputDirectory, ownership, planned, createdEntry);
+    } catch (error) {
+      await client.request(`/api/admin/users/${encodeURIComponent(createdEntry.membershipId)}`, {
+        method: "DELETE", bearer: adminAuth.bearer, allowedStatuses: [200, 404],
+      });
+      throw error;
+    }
+    response = await client.request("/api/admin/users", { bearer: adminAuth.bearer });
+    users = Array.isArray(response.data?.users) ? response.data.users : [];
+    existing = users.find((entry) => String(entry.user?.email || "").toLowerCase() === planned.email);
+  }
+  if (!existing?.membershipId || !existing?.userId) {
+    throw new SafeError("Office-staff API did not return the expected synthetic membership");
+  }
+  assertOwnedStaffEntry(planned, existing, ownership);
+  await client.request(`/api/admin/users/${encodeURIComponent(existing.membershipId)}/password`, {
+    method: "POST", bearer: adminAuth.bearer, body: { newPassword: staffPassword },
+  });
+  return { ...planned, userId: existing.userId, membershipId: existing.membershipId };
+}
+
 async function ensureStudents(client, adminAuth, plannedStudents) {
   let response = await client.request("/api/students", { bearer: adminAuth.bearer, timeoutMs: 60_000 });
   let existing = Array.isArray(response.data?.students) ? response.data.students : [];
@@ -1615,6 +1834,11 @@ async function ensureClasses(client, adminAuth, blueprint, teachers, primaryStud
   for (const planned of blueprint.classes) {
     const teacher = teacherByEmail.get(planned.teacherEmail);
     if (!teacher) throw new SafeError("Synthetic class has no matching teacher");
+    const coTeachers = planned.coTeacherEmails.map((email) => teacherByEmail.get(email));
+    if (coTeachers.some((entry) => !entry)) {
+      throw new SafeError("Synthetic class has an unresolved co-teacher");
+    }
+    const coTeacherIds = coTeachers.map((entry) => entry.userId);
     let existing = byName.get(planned.name);
     if (existing && existing.description !== planned.description) {
       throw new SafeError("A class name collision lacks the fixture ownership marker");
@@ -1630,6 +1854,7 @@ async function ensureClasses(client, adminAuth, blueprint, teachers, primaryStud
           name: planned.name,
           description: planned.description,
           primaryTeacherId: teacher.userId,
+          coTeacherIds,
           gradeLevel: "8",
           scheduleEnabled: false,
         },
@@ -1643,6 +1868,7 @@ async function ensureClasses(client, adminAuth, blueprint, teachers, primaryStud
           name: planned.name,
           description: planned.description,
           primaryTeacherId: teacher.userId,
+          coTeacherIds,
           gradeLevel: "8",
           scheduleEnabled: false,
         },
@@ -1650,6 +1876,10 @@ async function ensureClasses(client, adminAuth, blueprint, teachers, primaryStud
       existing = updated.data?.class;
     }
     if (!existing?.id || existing.scheduleEnabled === true) throw new SafeError("Synthetic class creation or schedule disablement failed");
+    const actualCoTeacherIds = new Set((existing.coTeachers || []).map((entry) => entry.id));
+    if (actualCoTeacherIds.size !== coTeacherIds.length || coTeacherIds.some((id) => !actualCoTeacherIds.has(id))) {
+      throw new SafeError("Synthetic class co-teachers did not converge to the exact plan fixture");
+    }
     const rosterResponse = await client.request(`/api/classpilot/admin/classes/${encodeURIComponent(existing.id)}/students`, { bearer: adminAuth.bearer });
     const roster = Array.isArray(rosterResponse.data?.students) ? rosterResponse.data.students : [];
     const expectedIds = planned.studentEmails.map((email) => studentByEmail.get(email)?.id).filter(Boolean);
@@ -1668,7 +1898,13 @@ async function ensureClasses(client, adminAuth, blueprint, teachers, primaryStud
     if (verifiedIds.size !== COUNTS.classSize || expectedIds.some((id) => !verifiedIds.has(id))) {
       throw new SafeError("Synthetic class roster did not converge to the required 40 students");
     }
-    result.push({ ...planned, id: existing.id, teacherUserId: teacher.userId, studentIds: expectedIds });
+    result.push({
+      ...planned,
+      id: existing.id,
+      teacherUserId: teacher.userId,
+      coTeacherUserIds: coTeacherIds,
+      studentIds: expectedIds,
+    });
   }
   const allStudentIds = result.flatMap((entry) => entry.studentIds);
   if (new Set(allStudentIds).size !== COUNTS.classes * COUNTS.classSize) throw new SafeError("Synthetic class rosters are not disjoint");
@@ -1676,6 +1912,12 @@ async function ensureClasses(client, adminAuth, blueprint, teachers, primaryStud
 }
 
 function buildState(config, blueprint, resources) {
+  const coTeacherClass = resources.classes[PLAN_CO_TEACHER_CLASS_ORDINAL - 1];
+  const coTeacher = resources.teachers[PLAN_CO_TEACHER_ORDINAL - 1];
+  const officeStudents = resources.primaryStudents.slice(
+    PLAN_OFFICE_STUDENT_START_INDEX,
+    PLAN_OFFICE_STUDENT_START_INDEX + COUNTS.planCohortSize,
+  );
   return {
     schemaVersion: 1,
     fixtureId: config.fixtureId,
@@ -1685,6 +1927,7 @@ function buildState(config, blueprint, resources) {
     ownershipAcknowledgement: config.ownershipAcknowledgement,
     schools: resources.schools,
     admin: { email: config.schools.primary.adminEmail, userId: resources.primaryAdmin.user?.id || null },
+    officeStaff: resources.officeStaff,
     teachers: resources.teachers.map((teacher, index) => ({
       ...teacher,
       classId: resources.classes[index].id,
@@ -1704,6 +1947,19 @@ function buildState(config, blueprint, resources) {
       };
     }),
     sessions: Array.isArray(resources.previousSessions) ? resources.previousSessions : [],
+    planCohorts: {
+      schemaVersion: 1,
+      coTeacher: {
+        staffUserId: coTeacher.userId,
+        classId: coTeacherClass.id,
+        studentIds: coTeacherClass.studentIds,
+      },
+      officeStaff: {
+        staffUserId: resources.officeStaff.userId,
+        contextId: resources.previousPlanCohorts?.officeStaff?.contextId || null,
+        studentIds: officeStudents.map((student) => student.id),
+      },
+    },
     enrollmentKeyGeneratedByTool: resources.enrollmentKeyGeneratedByTool,
   };
 }
@@ -1747,6 +2003,19 @@ export function validateStateContract(state, config) {
       || actual.className !== blueprint.classes[index].name
     ) {
       throw new SafeError("Fixture state contains an unowned or mismatched teacher identity");
+    }
+  }
+  const hasPlanFixture = state.officeStaff !== undefined || state.planCohorts !== undefined;
+  if (hasPlanFixture) {
+    if (
+      state.officeStaff?.email !== blueprint.officeStaff.email
+      || state.officeStaff.name !== blueprint.officeStaff.name
+      || state.officeStaff.role !== blueprint.officeStaff.role
+      || !state.officeStaff.userId
+      || !state.officeStaff.membershipId
+      || state.planCohorts?.schemaVersion !== 1
+    ) {
+      throw new SafeError("Fixture state contains an incomplete authorization-plan staff identity");
     }
   }
   if (!Array.isArray(state.students?.primary) || state.students.primary.length !== 1000 || !Array.isArray(state.students?.canary) || state.students.canary.length !== 10) {
@@ -1794,6 +2063,42 @@ export function validateStateContract(state, config) {
   }
   const classIds = new Set(state.teachers.map((teacher) => teacher.classId));
   if (classIds.size !== 20 || classIds.has(undefined) || classIds.has(null)) throw new SafeError("Fixture state must map 20 distinct classes");
+  if (hasPlanFixture) {
+    const coTeacher = state.planCohorts.coTeacher;
+    const expectedCoTeacher = state.teachers[PLAN_CO_TEACHER_ORDINAL - 1];
+    const expectedCoTeacherClass = state.teachers[PLAN_CO_TEACHER_CLASS_ORDINAL - 1];
+    const expectedCoTeacherStudentIds = state.devices
+      .filter((device) => device.schoolKey === "primary" && device.classId === expectedCoTeacherClass.classId)
+      .map((device) => device.studentId);
+    const office = state.planCohorts.officeStaff;
+    const expectedOfficeStudentIds = state.students.primary
+      .slice(PLAN_OFFICE_STUDENT_START_INDEX, PLAN_OFFICE_STUDENT_START_INDEX + COUNTS.planCohortSize)
+      .map((student) => student.id);
+    if (
+      coTeacher?.staffUserId !== expectedCoTeacher.userId
+      || coTeacher.classId !== expectedCoTeacherClass.classId
+      || !Array.isArray(coTeacher.studentIds)
+      || coTeacher.studentIds.length !== COUNTS.planCohortSize
+      || new Set(coTeacher.studentIds).size !== COUNTS.planCohortSize
+      || expectedCoTeacherStudentIds.some((id) => !coTeacher.studentIds.includes(id))
+      || office?.staffUserId !== state.officeStaff.userId
+      || !Array.isArray(office.studentIds)
+      || office.studentIds.length !== COUNTS.planCohortSize
+      || new Set(office.studentIds).size !== COUNTS.planCohortSize
+      || expectedOfficeStudentIds.some((id) => !office.studentIds.includes(id))
+      || (office.contextId !== null && (typeof office.contextId !== "string" || !office.contextId))
+      || state.devices.some((device) => office.studentIds.includes(device.studentId) && device.classId !== null)
+    ) {
+      throw new SafeError("Fixture state contains an invalid authorization-plan cohort");
+    }
+  }
+  return state;
+}
+
+function requireAuthorizationPlanFixtureState(state) {
+  if (!state.officeStaff?.userId || state.planCohorts?.schemaVersion !== 1) {
+    throw new SafeError("Authorization-plan fixture is missing; run provision before refresh or verification");
+  }
   return state;
 }
 
@@ -1806,7 +2111,133 @@ function readState(outputDirectory, config) {
   return validateStateContract(readJsonFile(statePath(outputDirectory), "Fixture state"), config);
 }
 
+function authorizationPlanContextName(config) {
+  return `synthetic-load-fixture:${config.fixtureId}:authorization-plan-office-40`;
+}
+
+async function activeContextStudentIds(client, adminAuth, contextId) {
+  const response = await client.request(
+    `/api/classpilot/coverage/contexts/${encodeURIComponent(contextId)}/students`,
+    { bearer: adminAuth.bearer },
+  );
+  return (response.data?.students || []).map((entry) => entry.studentId || entry.id).filter(Boolean);
+}
+
+async function ensureAuthorizationPlanSupervision(client, config, state, adminAuth) {
+  requireAuthorizationPlanFixtureState(state);
+  const marker = authorizationPlanContextName(config);
+  const expectedIds = state.planCohorts.officeStaff.studentIds;
+  const contextsResponse = await client.request("/api/classpilot/coverage/contexts?active=false", {
+    bearer: adminAuth.bearer,
+  });
+  const contexts = Array.isArray(contextsResponse.data?.contexts) ? contextsResponse.data.contexts : [];
+  const now = Date.now();
+  const active = contexts.filter((context) =>
+    context?.status === "active" && Number.isFinite(Date.parse(context.endsAt || "")) && Date.parse(context.endsAt) > now
+  );
+  const foreignActive = active.filter((context) => context.name !== marker);
+  if (foreignActive.length > 0) {
+    throw new SafeError("Dedicated fixture contains an unexpected active supervision context");
+  }
+
+  const markedActive = active.filter((context) => context.name === marker);
+  if (markedActive.length === 1) {
+    const current = markedActive[0];
+    const actualIds = await activeContextStudentIds(client, adminAuth, current.id);
+    const actualSet = new Set(actualIds);
+    if (
+      current.assignedStaffId === state.officeStaff.userId
+      && actualSet.size === expectedIds.length
+      && expectedIds.every((id) => actualSet.has(id))
+    ) {
+      const endsAt = new Date(Date.now() + PLAN_OFFICE_CONTEXT_HOURS * 60 * 60 * 1_000).toISOString();
+      const updated = await client.request(
+        `/api/classpilot/coverage/contexts/${encodeURIComponent(current.id)}`,
+        {
+          method: "PATCH",
+          bearer: adminAuth.bearer,
+          body: {
+            endsAt,
+            assignedStaffId: state.officeStaff.userId,
+            note: `synthetic authorization-plan fixture ${config.fixtureId}`,
+          },
+        },
+      );
+      if (updated.data?.context?.id !== current.id) {
+        throw new SafeError("Authorization-plan supervision context refresh returned an unexpected resource");
+      }
+      return current.id;
+    }
+  }
+
+  for (const context of markedActive) {
+    await client.request(`/api/classpilot/coverage/contexts/${encodeURIComponent(context.id)}/release`, {
+      method: "POST",
+      bearer: adminAuth.bearer,
+      body: { releaseReason: "fixture_refresh" },
+    });
+  }
+
+  const created = await client.request("/api/classpilot/coverage/contexts", {
+    method: "POST",
+    bearer: adminAuth.bearer,
+    body: {
+      contextType: "office",
+      name: marker,
+      studentIds: expectedIds,
+      assignedStaffId: state.officeStaff.userId,
+      endsAt: new Date(Date.now() + PLAN_OFFICE_CONTEXT_HOURS * 60 * 60 * 1_000).toISOString(),
+      note: `synthetic authorization-plan fixture ${config.fixtureId}`,
+    },
+  });
+  const contextId = created.data?.context?.id;
+  if (typeof contextId !== "string" || !contextId) {
+    throw new SafeError("Authorization-plan supervision context creation did not return an id");
+  }
+  const verifiedIds = await activeContextStudentIds(client, adminAuth, contextId);
+  const verifiedSet = new Set(verifiedIds);
+  if (verifiedSet.size !== expectedIds.length || expectedIds.some((id) => !verifiedSet.has(id))) {
+    throw new SafeError("Authorization-plan supervision context did not retain the exact 40 students");
+  }
+  return contextId;
+}
+
+async function verifyAuthorizationPlanSupervision(client, config, state, adminAuth, teacherRosterIds) {
+  requireAuthorizationPlanFixtureState(state);
+  const contextsResponse = await client.request("/api/classpilot/coverage/contexts", {
+    bearer: adminAuth.bearer,
+  });
+  const active = Array.isArray(contextsResponse.data?.contexts) ? contextsResponse.data.contexts : [];
+  const marker = authorizationPlanContextName(config);
+  if (active.length !== 1) {
+    throw new SafeError("Dedicated fixture must contain exactly one active supervision context");
+  }
+  const context = active[0];
+  if (
+    context?.id !== state.planCohorts.officeStaff.contextId
+    || context.name !== marker
+    || context.status !== "active"
+    || context.assignedStaffId !== state.officeStaff.userId
+    || !Number.isFinite(Date.parse(context.endsAt || ""))
+    || Date.parse(context.endsAt) <= Date.now()
+  ) {
+    throw new SafeError("Authorization-plan supervision context does not match private fixture state");
+  }
+  const studentIds = await activeContextStudentIds(client, adminAuth, context.id);
+  const actual = new Set(studentIds);
+  const expected = state.planCohorts.officeStaff.studentIds;
+  if (
+    actual.size !== COUNTS.planCohortSize
+    || expected.some((id) => !actual.has(id))
+    || studentIds.some((id) => teacherRosterIds.has(id))
+  ) {
+    throw new SafeError("Authorization-plan office cohort is not the exact unrostered 40-student fixture");
+  }
+  return { contexts: 1, officeSupervisionStudents: actual.size };
+}
+
 async function refreshArtifacts(client, config, outputDirectory, state, adminPassword, teacherPassword) {
+  requireAuthorizationPlanFixtureState(state);
   const registrationPacer = runtimePacer(config.registrationRequestsPerMinute);
   const superAuth = await superAuthFromEnvironment(client, config);
   const verifiedSchools = await verifySchoolsWithSuper(client, config, state, superAuth);
@@ -1909,6 +2340,7 @@ async function refreshArtifacts(client, config, outputDirectory, state, adminPas
     commandType: "open-tab",
     commandPayload: { url: config.commandUrl },
   }));
+  const planContextId = await ensureAuthorizationPlanSupervision(client, config, state, primaryAuth);
   const csrfToken = await csrfForSession(client, primaryAuth);
   const refreshedAt = new Date().toISOString();
   const deviceManifestExpiresAt = manifest.map((entry) => decodeJwtExpiry(entry.studentToken)).filter(Boolean).sort()[0] || null;
@@ -1919,6 +2351,13 @@ async function refreshArtifacts(client, config, outputDirectory, state, adminPas
     ...state,
     refreshedAt,
     sessions,
+    planCohorts: {
+      ...state.planCohorts,
+      officeStaff: {
+        ...state.planCohorts.officeStaff,
+        contextId: planContextId,
+      },
+    },
     tokenExpiry: {
       earliestDevice: deviceManifestExpiresAt,
       commandAdmin: commandAdminExpiresAt,
@@ -1950,6 +2389,8 @@ async function refreshArtifacts(client, config, outputDirectory, state, adminPas
     fixtureId: config.fixtureId,
     devicesRegistered: manifest.length,
     teachingSessionsStarted: sessions.length,
+    authorizationPlanCohortsReady: true,
+    officeSupervisionStudents: COUNTS.planCohortSize,
     commandBodiesWritten: commands.length,
     outputFiles: [FILES.state, FILES.devices, FILES.commands, FILES.auth],
   };
@@ -1969,7 +2410,12 @@ function existingProvisionContext(outputDirectory, config) {
     }
   }
   const ownership = seedOwnershipFromState(readOwnership(outputDirectory, config), priorState);
-  if (priorState || Object.keys(ownership.schools).length > 0 || Object.keys(ownership.teachers).length > 0) {
+  if (
+    priorState
+    || Object.keys(ownership.schools).length > 0
+    || Object.keys(ownership.teachers).length > 0
+    || Object.keys(ownership.staff).length > 0
+  ) {
     persistOwnership(outputDirectory, ownership);
   }
   return { priorState, ownership };
@@ -2073,6 +2519,14 @@ async function runProvision(client, config, outputDirectory) {
   const primaryEnrollment = await ensureEnrollmentSafety(client, primaryAdmin);
   const canaryEnrollment = await ensureEnrollmentSafety(client, canaryAdmin);
   const teachers = await ensureTeachers(client, primaryAdmin, blueprint, teacherPassword, outputDirectory, ownership);
+  const officeStaff = await ensureOfficeStaff(
+    client,
+    primaryAdmin,
+    blueprint,
+    teacherPassword,
+    outputDirectory,
+    ownership,
+  );
   const primaryStudents = await ensureStudents(client, primaryAdmin, blueprint.primaryStudents);
   const canaryStudents = await ensureStudents(client, canaryAdmin, blueprint.canaryStudents);
   const classes = await ensureClasses(client, primaryAdmin, blueprint, teachers, primaryStudents);
@@ -2080,11 +2534,13 @@ async function runProvision(client, config, outputDirectory) {
     schools: { primary: primarySchool, canary: canarySchool },
     primaryAdmin,
     teachers,
+    officeStaff,
     primaryStudents,
     canaryStudents,
     classes,
     enrollmentKeyGeneratedByTool: { primary: primaryEnrollment.generatedByTool, canary: canaryEnrollment.generatedByTool },
     previousSessions: priorState?.sessions || [],
+    previousPlanCohorts: priorState?.planCohorts || null,
     previousRefreshedAt: priorState?.refreshedAt || null,
   });
   validateStateContract(state, config);
@@ -2096,11 +2552,14 @@ async function runProvision(client, config, outputDirectory) {
     fixtureId: config.fixtureId,
     schools: 2,
     teachers: teachers.length,
+    officeStaff: 1,
     students: primaryStudents.length + canaryStudents.length,
     classes: classes.length,
     devicesRegistered: refreshed.devicesRegistered,
     teachingSessionsStarted: refreshed.teachingSessionsStarted,
     commandBodiesWritten: refreshed.commandBodiesWritten,
+    authorizationPlanCohortsReady: refreshed.authorizationPlanCohortsReady,
+    officeSupervisionStudents: refreshed.officeSupervisionStudents,
     outputFiles: refreshed.outputFiles,
   };
 }
@@ -2223,7 +2682,7 @@ async function verifyAuthArtifactLive(client, config, state, validatedAuth) {
 }
 
 async function runVerify(client, config, outputDirectory) {
-  const state = readState(outputDirectory, config);
+  const state = requireAuthorizationPlanFixtureState(readState(outputDirectory, config));
   const manifest = readPrivateArray(outputDirectory, FILES.devices, "Device manifest");
   const commands = readPrivateArray(outputDirectory, FILES.commands, "Command body artifact");
   validateLocalArtifacts(config, state, manifest, commands);
@@ -2267,6 +2726,15 @@ async function runVerify(client, config, outputDirectory) {
     if (!entry || entry.role !== "teacher") throw new SafeError("A synthetic teacher is missing or no longer a teacher");
     assertOwnedTeacherEntry(teacher, entry, ownership);
   }
+  const officeEntry = staffByEmail.get(state.officeStaff.email);
+  if (
+    !officeEntry
+    || officeEntry.userId !== state.officeStaff.userId
+    || officeEntry.membershipId !== state.officeStaff.membershipId
+  ) {
+    throw new SafeError("Synthetic office staff is missing or no longer matches private fixture state");
+  }
+  assertOwnedStaffEntry(state.officeStaff, officeEntry, ownership);
   for (const [schoolKey, response] of [["primary", primaryRoster], ["canary", canaryRoster]]) {
     const byEmail = new Map((response.data?.students || []).map((student) => [String(student.email || "").toLowerCase(), student]));
     for (const expected of state.students[schoolKey]) {
@@ -2292,6 +2760,16 @@ async function runVerify(client, config, outputDirectory) {
       || classRecord.description !== expectedDescription || primaryTeacherId !== teacher.userId) {
       throw new SafeError("A synthetic class is missing, misassigned, unowned, archived, or scheduled");
     }
+    const expectedCoTeacherIds = teacher.classId === state.planCohorts.coTeacher.classId
+      ? [state.planCohorts.coTeacher.staffUserId]
+      : [];
+    const actualCoTeacherIds = new Set((classRecord.coTeachers || []).map((entry) => entry.id));
+    if (
+      actualCoTeacherIds.size !== expectedCoTeacherIds.length
+      || expectedCoTeacherIds.some((id) => !actualCoTeacherIds.has(id))
+    ) {
+      throw new SafeError("Synthetic class co-teacher fixture is missing or has broadened authority");
+    }
     const roster = await client.request(`/api/classpilot/admin/classes/${encodeURIComponent(teacher.classId)}/students`, { bearer: primaryAuth.bearer });
     const ids = (roster.data?.students || []).map((student) => student.id);
     const expectedIds = state.devices
@@ -2306,6 +2784,13 @@ async function runVerify(client, config, outputDirectory) {
     ) throw new SafeError("Synthetic class roster does not match its exact disjoint fixture students");
     ids.forEach((id) => seenRosterIds.add(id));
   }
+  const planSupervision = await verifyAuthorizationPlanSupervision(
+    client,
+    config,
+    state,
+    primaryAuth,
+    seenRosterIds,
+  );
   for (const session of state.sessions || []) {
     const response = await client.request(`/api/classpilot/teaching-sessions/${encodeURIComponent(session.sessionId)}`, { bearer: primaryAuth.bearer });
     if (response.data?.session?.endTime || response.data?.session?.groupId !== session.classId) throw new SafeError("A synthetic teaching session is not active for its expected class");
@@ -2325,12 +2810,38 @@ async function runVerify(client, config, outputDirectory) {
     verifiedAt: new Date().toISOString(),
     fixtureId: config.fixtureId,
     passed: true,
-    counts: { schools: 2, teachers: 20, students: 1010, classes: 20, classRosterStudents: seenRosterIds.size, devices: 1010, activeDeviceSessions, activeSessions: exactInventory.activeTeachingSessions, commandBodies: 20, liveAuth },
+    counts: {
+      schools: 2,
+      teachers: 20,
+      officeStaff: 1,
+      students: 1010,
+      classes: 20,
+      classRosterStudents: seenRosterIds.size,
+      devices: 1010,
+      activeDeviceSessions,
+      activeSessions: exactInventory.activeTeachingSessions,
+      commandBodies: 20,
+      authorizationPlanCohorts: {
+        coTeacherStudents: COUNTS.planCohortSize,
+        officeSupervisionStudents: planSupervision.officeSupervisionStudents,
+      },
+      liveAuth,
+    },
     schoolTimezones: Object.fromEntries(["primary", "canary"].map((schoolKey) => [schoolKey, {
       schoolTimezone: verifiedSchools[schoolKey].schoolTimezone,
       schoolHoursTimezone: verifiedSchools[schoolKey].schoolHours.timezone,
     }])),
-    gates: { autoEnrollDisabled: true, trackingDisabled: true, schedulesDisabled: true, exactSchoolTimezones: true, classRostersExactAndDisjoint: true, allDeviceTokensLive: true, allStaffAuthArtifactsLive: true },
+    gates: {
+      autoEnrollDisabled: true,
+      trackingDisabled: true,
+      schedulesDisabled: true,
+      exactSchoolTimezones: true,
+      classRostersExactAndDisjoint: true,
+      authorizationPlanCohortsExact: true,
+      authorizationPlanOfficeStudentsOutsideTeacherRosters: true,
+      allDeviceTokensLive: true,
+      allStaffAuthArtifactsLive: true,
+    },
   };
   writePrivateJson(outputDirectory, FILES.verification, report);
   return { command: "verify", fixtureId: config.fixtureId, passed: true, ...report.counts, outputFiles: [FILES.verification] };
@@ -2354,6 +2865,8 @@ export function buildCleanupPlan(config, state, tokenCount = 1010) {
       schoolSuspensions: 2,
       schoolSoftDeletes: ownedSchoolKeys.length,
       teacherMembershipDeletes: state.teachers.length,
+      officeStaffMembershipDeletes: state.officeStaff ? 1 : 0,
+      supervisionContextReleases: state.planCohorts?.officeStaff?.contextId ? 1 : 0,
       studentDeletes: state.students.primary.length + state.students.canary.length,
       localCredentialArtifactsRevoked: 3,
     },
@@ -2409,7 +2922,11 @@ async function collectLiveTenantInventory(client, config, state, authBySchool, o
     client.request("/api/classpilot/devices", { bearer: authBySchool.canary.bearer }),
   ]);
 
-  const primaryExpectedStaff = new Set([state.schools.primary.adminEmail, ...state.teachers.map((teacher) => teacher.email)]);
+  const primaryExpectedStaff = new Set([
+    state.schools.primary.adminEmail,
+    ...state.teachers.map((teacher) => teacher.email),
+    ...(state.officeStaff?.email ? [state.officeStaff.email] : []),
+  ]);
   const canaryExpectedStaff = new Set([state.schools.canary.adminEmail]);
   for (const [schoolKey, response, expectedEmails] of [
     ["primary", primaryStaff, primaryExpectedStaff],
@@ -2429,6 +2946,14 @@ async function collectLiveTenantInventory(client, config, state, authBySchool, o
       continue;
     }
     assertOwnedTeacherEntry(teacher, entry, ownership);
+  }
+  if (state.officeStaff) {
+    const officeEntry = primaryStaffByEmail.get(state.officeStaff.email);
+    if (!officeEntry) {
+      if (!allowMissing) throw new SafeError("Fixture office staff is missing during live dry-run verification");
+    } else {
+      assertOwnedStaffEntry(state.officeStaff, officeEntry, ownership);
+    }
   }
 
   const liveStudentCounts = {};
@@ -2493,6 +3018,7 @@ async function collectLiveTenantInventory(client, config, state, authBySchool, o
     verifiedAt: new Date().toISOString(),
     staff: { primary: primaryStaff.data?.users?.length || 0, canary: canaryStaff.data?.users?.length || 0 },
     teachers: state.teachers.filter((teacher) => primaryStaffByEmail.has(teacher.email)).length,
+    officeStaff: state.officeStaff && primaryStaffByEmail.has(state.officeStaff.email) ? 1 : 0,
     students: { ...liveStudentCounts, total: liveStudentCounts.primary + liveStudentCounts.canary },
     classes: liveClasses.length,
     devices: { ...liveDeviceCounts, total: liveDeviceCounts.primary + liveDeviceCounts.canary },
@@ -2512,7 +3038,9 @@ function initializeDeactivationState(state) {
       telemetryPurgeProof: state.deactivation?.telemetryPurgeProof || {},
       rotatedEnrollmentSchoolKeys: state.deactivation?.rotatedEnrollmentSchoolKeys || [],
       enrollmentKeyRotationProof: state.deactivation?.enrollmentKeyRotationProof || {},
+      releasedSupervisionContextIds: state.deactivation?.releasedSupervisionContextIds || [],
       deletedTeacherMembershipIds: state.deactivation?.deletedTeacherMembershipIds || [],
+      deletedStaffMembershipIds: state.deactivation?.deletedStaffMembershipIds || [],
       deletedStudentIds: state.deactivation?.deletedStudentIds || [],
       disabledLicenseSchoolKeys: state.deactivation?.disabledLicenseSchoolKeys || [],
       suspendedSchoolKeys: state.deactivation?.suspendedSchoolKeys || [],
@@ -2602,6 +3130,7 @@ async function verifyPreHoldTenantPostconditions(client, config, state, authBySc
     report.schools[schoolKey] = {
       retainedFixtureAdmins: 1,
       syntheticTeachers: 0,
+      syntheticOfficeStaff: 0,
       syntheticStudents: 0,
       activeClasses: 0,
       archivedFixtureClassesRetained: allClasses.length,
@@ -2646,6 +3175,7 @@ async function runDeactivate(client, config, outputDirectory, confirm, dryRun) {
   }
   const preHoldComplete = Boolean(originalState.deactivation?.preHoldCompleteAt);
   let state = initializeDeactivationState(originalState);
+  const supervisionContextId = state.planCohorts?.officeStaff?.contextId;
   const checkpoint = () => writePrivateJson(outputDirectory, FILES.state, state);
   const ownership = seedOwnershipFromState(readOwnership(outputDirectory, config), originalState);
   const superAuth = await superAuthFromEnvironment(client, config);
@@ -2712,6 +3242,18 @@ async function runDeactivate(client, config, outputDirectory, confirm, dryRun) {
     state.deactivation.archivedClassIds = [...archived];
     checkpoint();
   }
+  const releasedSupervisionContexts = new Set(state.deactivation.releasedSupervisionContextIds);
+  if (supervisionContextId && !releasedSupervisionContexts.has(supervisionContextId)) {
+    await client.request(`/api/classpilot/coverage/contexts/${encodeURIComponent(supervisionContextId)}/release`, {
+      method: "POST",
+      bearer: authBySchool.primary.bearer,
+      body: { releaseReason: "fixture_deactivation" },
+      allowedStatuses: [200, 404],
+    });
+    releasedSupervisionContexts.add(supervisionContextId);
+    state.deactivation.releasedSupervisionContextIds = [...releasedSupervisionContexts];
+    checkpoint();
+  }
   for (const schoolKey of ["primary", "canary"]) {
     if (!state.deactivation.telemetryPurgedSchoolKeys.includes(schoolKey)) {
       const purged = await client.request("/api/admin/cleanup-students", { method: "POST", bearer: authBySchool[schoolKey].bearer, body: {} });
@@ -2744,6 +3286,15 @@ async function runDeactivate(client, config, outputDirectory, confirm, dryRun) {
     });
     deletedTeachers.add(teacher.membershipId);
     state.deactivation.deletedTeacherMembershipIds = [...deletedTeachers];
+    checkpoint();
+  }
+  const deletedStaff = new Set(state.deactivation.deletedStaffMembershipIds);
+  if (state.officeStaff?.membershipId && !deletedStaff.has(state.officeStaff.membershipId)) {
+    await client.request(`/api/admin/users/${encodeURIComponent(state.officeStaff.membershipId)}`, {
+      method: "DELETE", bearer: authBySchool.primary.bearer, allowedStatuses: [200, 404],
+    });
+    deletedStaff.add(state.officeStaff.membershipId);
+    state.deactivation.deletedStaffMembershipIds = [...deletedStaff];
     checkpoint();
   }
   const deletedStudents = new Set(state.deactivation.deletedStudentIds);
@@ -2801,6 +3352,8 @@ async function runDeactivate(client, config, outputDirectory, confirm, dryRun) {
       deviceSessionsRevoked: true,
       telemetryAndDevicesPurged: true,
       syntheticTeacherMembershipsRemoved: true,
+      syntheticOfficeStaffMembershipRemoved: state.officeStaff ? true : undefined,
+      authorizationPlanSupervisionReleased: supervisionContextId ? true : undefined,
       syntheticStudentsRemoved: true,
       retainedFixtureAdmins: 2,
       retainedArchivedClasses: state.teachers.length,

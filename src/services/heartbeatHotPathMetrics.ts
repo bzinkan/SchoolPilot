@@ -26,7 +26,14 @@ export type HeartbeatHotPathCounter =
   | "tileAdmissionScreenshot"
   | "tileAdmissionHistory"
   | "tileAdmissionRejectedScreenshot"
-  | "tileAdmissionRejectedHistory";
+  | "tileAdmissionRejectedHistory"
+  | "tileBatchScreenshotRequests"
+  | "tileBatchHistoryRequests"
+  | "tileBatchScreenshotItems"
+  | "tileBatchHistoryItems"
+  | "tileBatchAuthorizedItems"
+  | "tileBatchScreenshotFallbackItems"
+  | "tileBatchHistoryFallbackItems";
 
 export type HeartbeatHotPathTiming =
   | "heartbeatDatabaseMs"
@@ -34,7 +41,11 @@ export type HeartbeatHotPathTiming =
   | "classificationBatchMs"
   | "tileAuthLiveMs"
   | "tileAuthHistoryMs"
-  | "tileHistoryDatabaseMs";
+  | "tileHistoryDatabaseMs"
+  | "tileBatchAuthorizationMs"
+  | "tileBatchScreenshotRedisMs"
+  | "tileBatchHistoryRedisMs"
+  | "tileBatchHistoryDatabaseMs";
 
 type TimingSummary = {
   count: number;

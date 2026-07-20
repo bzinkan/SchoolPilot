@@ -9,6 +9,7 @@
     "lint": "eslint src",
     "preview": "vite preview",
     "test:api-routing": "node scripts/assert-api-routing.mjs",
+    "test:classpilot-tile-batching": "node scripts/assert-classpilot-tile-batching.mjs",
     "build:gopilot": "cross-env VITE_APP_PRODUCT=gopilot vite build",
     "build:passpilot": "cross-env VITE_APP_PRODUCT=passpilot vite build",
     "cap:config:gopilot": "node -e \"require('fs').copyFileSync('capacitor.gopilot.config.ts','capacitor.config.ts')\"",
