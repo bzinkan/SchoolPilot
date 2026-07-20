@@ -1034,7 +1034,9 @@ NODE
   local events_json sanitized_report=""
   while (( SECONDS < log_deadline )); do
     events_json=""
-    if events_json=$(aws logs get-log-events \
+    # Git Bash on Windows rewrites a leading /ecs/... argument unless path
+    # conversion is disabled for this native AWS CLI invocation.
+    if events_json=$(MSYS_NO_PATHCONV=1 aws logs get-log-events \
       --log-group-name "$log_group" \
       --log-stream-name "$log_stream" \
       --start-from-head \
