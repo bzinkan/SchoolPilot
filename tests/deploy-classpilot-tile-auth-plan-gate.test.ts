@@ -244,7 +244,7 @@ validate_classpilot_tile_auth_plan_gate_mode
     assert.doesNotMatch(implementation, /describe-log-streams|filter-log-events/);
     assert.match(
       implementation,
-      /events_json=\$\(aws logs get-log-events[\s\S]*printf '%s' "\$events_json" \|/
+      /events_json=\$\(MSYS_NO_PATHCONV=1 aws logs get-log-events[\s\S]*printf '%s' "\$events_json" \|/
     );
   });
 
