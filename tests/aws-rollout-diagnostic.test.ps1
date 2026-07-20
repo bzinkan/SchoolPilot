@@ -61,6 +61,8 @@ foreach ($required in @(
     'DynamicScalingInSuspended=$true','DynamicScalingOutSuspended=$true','ScheduledScalingSuspended=$true',
     'Restore-ScalingCapture','scaling_restoration_failed','scheduledActionsSha256','scalingPoliciesSha256',
     'Group=db.sql_tokenized,Limit=25','rawSqlPersisted=$false','dominanceThresholdPercent=50.0',
+    'GeneratorIpCheckSeconds = 60','MonitorHeartbeatStaleSeconds = 150','Update-GeneratorPublicIpEvidence',
+    'Assert-HealthyMonitorHeartbeat','GeneratorIpCheckSeconds -ge $script:MonitorHeartbeatStaleSeconds',
     'LOAD_TILE_HISTORY_PATH="/api/classpilot/tiles/history"',
     'LOAD_TILE_SCREENSHOTS_PATH="/api/classpilot/tiles/screenshots"',
     'LOAD_SCREENSHOT_GET_PATH_TEMPLATE=""'
@@ -75,6 +77,24 @@ Assert-Condition ($controller.Contains('-ProgressPath $validationScratch.Progres
 Assert-Condition ($controller.Contains('nonMutating=$true')) "Validate output must attest that it was non-mutating."
 Assert-Condition ($controller.IndexOf('if ($Mode -eq "Validate")') -lt $controller.IndexOf('New-Item -ItemType Directory')) "Validate must exit before the first evidence-directory write."
 Assert-Condition ($controller.Contains('$terminal.preTrafficAwsPosture = Get-AwsPosture $config')) "Exact AWS posture must be revalidated immediately before traffic."
+Assert-Condition ($controller.Contains('($now - $lastGeneratorIpCheck).TotalSeconds -ge $script:GeneratorIpCheckSeconds')) "Generator IP evidence must be refreshed on the immutable 60-second cadence."
+Assert-Condition ($monitor.Contains('supervisedHeartbeatStaleSeconds = 150')) "The monitor's 150-second fail-closed freshness threshold must remain unchanged."
+$preTrafficPostureIndex = $controller.IndexOf('$terminal.preTrafficAwsPosture = Get-AwsPosture $config')
+$preReleaseIpIndex = $controller.IndexOf('$lastGeneratorIpCheck = Update-GeneratorPublicIpEvidence', $preTrafficPostureIndex)
+$preReleaseLivenessIndex = $controller.IndexOf('$monitor.Refresh(); $harness.Refresh()', $preReleaseIpIndex)
+$preReleaseHeartbeatIndex = $controller.IndexOf('Assert-HealthyMonitorHeartbeat -Heartbeat $monitorHeartbeat', $preReleaseLivenessIndex)
+$startGateIndex = $controller.IndexOf('Write-AtomicJson $startGatePath', $preReleaseHeartbeatIndex)
+Assert-Condition ($preTrafficPostureIndex -ge 0 -and $preReleaseIpIndex -gt $preTrafficPostureIndex -and
+    $preReleaseLivenessIndex -gt $preReleaseIpIndex -and $preReleaseHeartbeatIndex -gt $preReleaseLivenessIndex -and
+    $startGateIndex -gt $preReleaseHeartbeatIndex) "Pre-release IP refresh, child liveness, and fresh monitor heartbeat validation must precede the start gate."
+$runtimeLoopIndex = $controller.IndexOf('while ([DateTimeOffset]::UtcNow -lt $deadline)', $startGateIndex)
+$runtimePreLookupExitIndex = $controller.IndexOf('if ($monitor.HasExited) { break }', $runtimeLoopIndex)
+$runtimeIpIndex = $controller.IndexOf('if (($now - $lastGeneratorIpCheck).TotalSeconds -ge $script:GeneratorIpCheckSeconds)', $runtimePreLookupExitIndex)
+$runtimePostLookupRefreshIndex = $controller.IndexOf('$monitor.Refresh(); $harness.Refresh()', $runtimeIpIndex)
+$runtimePostLookupExitIndex = $controller.IndexOf('if ($monitor.HasExited) { break }', $runtimePostLookupRefreshIndex)
+Assert-Condition ($runtimeLoopIndex -ge 0 -and $runtimePreLookupExitIndex -gt $runtimeLoopIndex -and
+    $runtimeIpIndex -gt $runtimePreLookupExitIndex -and $runtimePostLookupRefreshIndex -gt $runtimeIpIndex -and
+    $runtimePostLookupExitIndex -gt $runtimePostLookupRefreshIndex) "Runtime child liveness checks must surround each potentially blocking generator IP refresh."
 Assert-Condition ($controller.Contains('$terminal.terminalAwsPosture = Get-AwsPosture $config')) "Exact AWS posture must be revalidated at terminal success."
 Assert-Condition ($controller.Contains('$healthyTargets = Get-HealthyTargetCount $Config')) "Read-only AWS posture validation must retain strict target-health enforcement."
 Assert-Condition ($controller.Contains('$output.Count -ne 1')) "Controller Git identity must require exactly one native-command output line."
@@ -97,7 +117,8 @@ foreach ($name in @(
     'Get-Value','Assert-GitSha','Get-ControllerSha','Get-StableJsonSha256','Get-StringSha256','Get-DiagnosticRunMutexName','Enter-DiagnosticRunLock','Exit-DiagnosticRunLock',
     'Resolve-ExternalPath','Get-ValidationScratchPaths','Get-WafLabelMatch','Assert-WafDeviceIngestClassifierContract',
     'Assert-WafRateRuleContract','Assert-RedisReplicationIdentity','Assert-NoScheduledBoundaryOverlap','Get-TargetHealthSnapshot',
-    'Wait-TargetHealthConvergence','Get-HealthyTargetCount','Restore-ScalingCapture'
+    'Wait-TargetHealthConvergence','Get-HealthyTargetCount','Restore-ScalingCapture',
+    'Update-GeneratorPublicIpEvidence','Assert-HealthyMonitorHeartbeat'
 )) { Import-ScriptFunction $controllerAst $name }
 
 $script:RepositoryRoot = $root
@@ -108,6 +129,67 @@ Remove-Variable -Name LASTEXITCODE -Scope Global -ErrorAction SilentlyContinue
 $resolvedControllerSha = Get-ControllerSha
 Assert-Condition ($resolvedControllerSha -ceq $expectedControllerSha.ToLowerInvariant()) 'Controller SHA resolution must succeed when LASTEXITCODE starts unset.'
 Assert-Throws { Assert-GitSha 'abc123' 'test SHA' } 'full 40-character' 'Controller SHA validation must reject abbreviated Git identities.'
+
+$script:GeneratorIpCheckSeconds = 60
+$script:MonitorHeartbeatStaleSeconds = 150
+$script:testGeneratorIp = '203.0.113.10'
+$script:testGeneratorIpFailure = $false
+$script:generatorIpWrites = [System.Collections.Generic.List[object]]::new()
+function Resolve-GeneratorPublicIp {
+    if ($script:testGeneratorIpFailure) { throw 'test generator IP lookup failed' }
+    return $script:testGeneratorIp
+}
+function Write-AtomicJson {
+    param([string]$Path, $Value)
+    $script:generatorIpWrites.Add([pscustomobject]@{Path=$Path;Value=$Value})
+}
+$generatorIpConfig = [pscustomobject]@{RunId='diagnostic-ip-test';ExpectedGeneratorPublicIp='203.0.113.10'}
+$generatorIpObservedAt = Update-GeneratorPublicIpEvidence -Config $generatorIpConfig -Path 'generator-ip.json' -FailureMessage 'changed'
+Assert-Condition ($script:generatorIpWrites.Count -eq 1 -and $script:generatorIpWrites[0].Path -eq 'generator-ip.json') 'A matching generator IP must write one fresh evidence record.'
+Assert-Condition ($script:generatorIpWrites[0].Value.runId -eq $generatorIpConfig.RunId -and
+    $script:generatorIpWrites[0].Value.expectedPublicIp -eq $generatorIpConfig.ExpectedGeneratorPublicIp -and
+    $script:generatorIpWrites[0].Value.actualPublicIp -eq $generatorIpConfig.ExpectedGeneratorPublicIp -and
+    [DateTimeOffset]$script:generatorIpWrites[0].Value.timestamp -eq $generatorIpObservedAt) 'Generator IP evidence must bind the exact run, expected IP, actual IP, and observation time.'
+$script:testGeneratorIp = '203.0.113.11'
+Assert-Throws { Update-GeneratorPublicIpEvidence -Config $generatorIpConfig -Path 'generator-ip.json' -FailureMessage 'changed during test' } 'changed during test' 'A changed generator IP must fail closed.'
+Assert-Condition ($script:generatorIpWrites.Count -eq 2 -and $script:generatorIpWrites[1].Value.actualPublicIp -eq '203.0.113.11') 'A changed generator IP must be recorded before the controller fails.'
+$writesBeforeResolverFailure = $script:generatorIpWrites.Count
+$script:testGeneratorIpFailure = $true
+Assert-Throws { Update-GeneratorPublicIpEvidence -Config $generatorIpConfig -Path 'generator-ip.json' -FailureMessage 'changed' } 'lookup failed' 'A generator IP resolver failure must fail closed.'
+Assert-Condition ($script:generatorIpWrites.Count -eq $writesBeforeResolverFailure) 'A resolver failure must not refresh stale generator IP evidence.'
+
+$monitorStartedAt = [DateTimeOffset]'2026-07-20T12:00:00Z'
+$heartbeatNow = $monitorStartedAt.AddSeconds(60)
+$healthyHeartbeat = [pscustomobject]@{runId='diagnostic-ip-test';phase='Waf';timestamp=$heartbeatNow.ToString('o');iteration=1;triggered=$false}
+Assert-HealthyMonitorHeartbeat -Heartbeat $healthyHeartbeat -ExpectedRunId 'diagnostic-ip-test' -ExpectedPhase 'Waf' -MonitorStartedAt $monitorStartedAt -Now $heartbeatNow
+$wrongRunHeartbeat = $healthyHeartbeat | ConvertTo-Json | ConvertFrom-Json
+$wrongRunHeartbeat.runId = 'wrong-run'
+Assert-Throws { Assert-HealthyMonitorHeartbeat -Heartbeat $wrongRunHeartbeat -ExpectedRunId 'diagnostic-ip-test' -ExpectedPhase 'Waf' -MonitorStartedAt $monitorStartedAt -Now $heartbeatNow } 'fresh, healthy' 'A wrong-run monitor heartbeat must fail closed.'
+$wrongPhaseHeartbeat = $healthyHeartbeat | ConvertTo-Json | ConvertFrom-Json
+$wrongPhaseHeartbeat.phase = 'Application'
+Assert-Throws { Assert-HealthyMonitorHeartbeat -Heartbeat $wrongPhaseHeartbeat -ExpectedRunId 'diagnostic-ip-test' -ExpectedPhase 'Waf' -MonitorStartedAt $monitorStartedAt -Now $heartbeatNow } 'fresh, healthy' 'A wrong-phase monitor heartbeat must fail closed.'
+$triggeredHeartbeat = $healthyHeartbeat | ConvertTo-Json | ConvertFrom-Json
+$triggeredHeartbeat.triggered = $true
+Assert-Throws { Assert-HealthyMonitorHeartbeat -Heartbeat $triggeredHeartbeat -ExpectedRunId 'diagnostic-ip-test' -ExpectedPhase 'Waf' -MonitorStartedAt $monitorStartedAt -Now $heartbeatNow } 'fresh, healthy' 'A triggered monitor heartbeat must fail closed.'
+$nonBooleanHeartbeat = $healthyHeartbeat | ConvertTo-Json | ConvertFrom-Json
+$nonBooleanHeartbeat.triggered = 'false'
+Assert-Throws { Assert-HealthyMonitorHeartbeat -Heartbeat $nonBooleanHeartbeat -ExpectedRunId 'diagnostic-ip-test' -ExpectedPhase 'Waf' -MonitorStartedAt $monitorStartedAt -Now $heartbeatNow } 'fresh, healthy' 'A non-Boolean trigger field must fail closed.'
+$staleHeartbeat = $healthyHeartbeat | ConvertTo-Json | ConvertFrom-Json
+$staleHeartbeat.timestamp = $heartbeatNow.AddSeconds(-151).ToString('o')
+Assert-Throws { Assert-HealthyMonitorHeartbeat -Heartbeat $staleHeartbeat -ExpectedRunId 'diagnostic-ip-test' -ExpectedPhase 'Waf' -MonitorStartedAt $monitorStartedAt.AddMinutes(-10) -Now $heartbeatNow } 'fresh, healthy' 'A heartbeat beyond the unchanged 150-second threshold must fail closed.'
+$zeroIterationHeartbeat = $healthyHeartbeat | ConvertTo-Json | ConvertFrom-Json
+$zeroIterationHeartbeat.iteration = 0
+Assert-Throws { Assert-HealthyMonitorHeartbeat -Heartbeat $zeroIterationHeartbeat -ExpectedRunId 'diagnostic-ip-test' -ExpectedPhase 'Waf' -MonitorStartedAt $monitorStartedAt -Now $heartbeatNow } 'fresh, healthy' 'A zero-iteration monitor heartbeat must fail closed.'
+$preLaunchHeartbeat = $healthyHeartbeat | ConvertTo-Json | ConvertFrom-Json
+$preLaunchHeartbeat.timestamp = $monitorStartedAt.AddSeconds(-1).ToString('o')
+Assert-Throws { Assert-HealthyMonitorHeartbeat -Heartbeat $preLaunchHeartbeat -ExpectedRunId 'diagnostic-ip-test' -ExpectedPhase 'Waf' -MonitorStartedAt $monitorStartedAt -Now $heartbeatNow } 'fresh, healthy' 'A pre-launch monitor heartbeat must fail closed.'
+$futureHeartbeat = $healthyHeartbeat | ConvertTo-Json | ConvertFrom-Json
+$futureHeartbeat.timestamp = $heartbeatNow.AddSeconds(6).ToString('o')
+Assert-Throws { Assert-HealthyMonitorHeartbeat -Heartbeat $futureHeartbeat -ExpectedRunId 'diagnostic-ip-test' -ExpectedPhase 'Waf' -MonitorStartedAt $monitorStartedAt -Now $heartbeatNow } 'fresh, healthy' 'A monitor heartbeat beyond the five-second clock-skew allowance must fail closed.'
+$invalidTimestampHeartbeat = $healthyHeartbeat | ConvertTo-Json | ConvertFrom-Json
+$invalidTimestampHeartbeat.timestamp = 'invalid'
+Assert-Throws { Assert-HealthyMonitorHeartbeat -Heartbeat $invalidTimestampHeartbeat -ExpectedRunId 'diagnostic-ip-test' -ExpectedPhase 'Waf' -MonitorStartedAt $monitorStartedAt -Now $heartbeatNow } 'timestamp is invalid' 'An invalid monitor heartbeat timestamp must fail closed.'
+Assert-Condition ($script:GeneratorIpCheckSeconds -lt $script:MonitorHeartbeatStaleSeconds) 'The 60-second generator IP refresh must remain inside the unchanged 150-second monitor threshold.'
 
 $script:fakeGitExitCode = 0
 $script:fakeGitOutput = @()

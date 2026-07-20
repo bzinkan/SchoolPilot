@@ -26,6 +26,11 @@ $script:ScheduleBoundaryGuardSeconds = 7200
 $script:AlbDeregistrationDelaySeconds = 300
 $script:TargetHealthConvergenceTimeoutSeconds = $script:AlbDeregistrationDelaySeconds + 120
 $script:TargetHealthPollSeconds = 5
+$script:GeneratorIpCheckSeconds = 60
+$script:MonitorHeartbeatStaleSeconds = 150
+if ($script:GeneratorIpCheckSeconds -ge $script:MonitorHeartbeatStaleSeconds) {
+    throw "The generator IP refresh interval must remain below the monitor freshness threshold."
+}
 $script:AuthSqlMarkers = @(
     "requested_students", "active_supervision", "active_staff_groups",
     "active_roster_students", "authorized_students", "resolved_students"
@@ -886,6 +891,37 @@ function Resolve-GeneratorPublicIp {
     return $resolved
 }
 
+function Update-GeneratorPublicIpEvidence {
+    param($Config, [string]$Path, [string]$FailureMessage)
+    $actualIp = Resolve-GeneratorPublicIp
+    $observedAt = [DateTimeOffset]::UtcNow
+    Write-AtomicJson -Path $Path -Value ([ordered]@{
+        runId=$Config.RunId;timestamp=$observedAt.ToString("o")
+        expectedPublicIp=$Config.ExpectedGeneratorPublicIp;actualPublicIp=$actualIp
+    })
+    if ($actualIp -cne $Config.ExpectedGeneratorPublicIp) { throw $FailureMessage }
+    return $observedAt
+}
+
+function Assert-HealthyMonitorHeartbeat {
+    param(
+        $Heartbeat,
+        [string]$ExpectedRunId,
+        [string]$ExpectedPhase,
+        [DateTimeOffset]$MonitorStartedAt,
+        [DateTimeOffset]$Now
+    )
+    try { $heartbeatTimestamp = ([DateTimeOffset]$Heartbeat.timestamp).ToUniversalTime() }
+    catch { throw "The diagnostic monitor heartbeat timestamp is invalid." }
+    if ([string]$Heartbeat.runId -ne $ExpectedRunId -or [string]$Heartbeat.phase -ne $ExpectedPhase -or
+        $Heartbeat.triggered -isnot [bool] -or $Heartbeat.triggered -ne $false -or
+        [int]$Heartbeat.iteration -lt 1 -or $heartbeatTimestamp -lt $MonitorStartedAt -or
+        $heartbeatTimestamp -gt $Now.AddSeconds(5) -or
+        ($Now - $heartbeatTimestamp).TotalSeconds -gt $script:MonitorHeartbeatStaleSeconds) {
+        throw "The diagnostic monitor did not publish a fresh, healthy heartbeat for the bound run."
+    }
+}
+
 function Get-TrafficWindow {
     param([string]$ProgressPath, [string]$SummaryPath)
     $records = @(Get-Content -LiteralPath $ProgressPath | ForEach-Object { $_ | ConvertFrom-Json -Depth 20 })
@@ -1093,9 +1129,6 @@ try {
     Write-AtomicJson $capturePath $capture
     $terminal.pinnedAwsPosture = Set-DiagnosticCapacity $config
 
-    $actualIp = Resolve-GeneratorPublicIp
-    if ($actualIp -ne $config.ExpectedGeneratorPublicIp) { throw "Generator public IPv4 changed from its bound config value." }
-    $launchedAt = [DateTimeOffset]::UtcNow
     $generatorIpPath = Join-Path $config.EvidenceDirectory "$($config.RunId)-generator-ip.json"
     $readyPath = Join-Path $config.EvidenceDirectory "$($config.RunId)-harness-ready.json"
     $startGatePath = Join-Path $config.EvidenceDirectory "$($config.RunId)-harness-start.json"
@@ -1107,9 +1140,10 @@ try {
     foreach ($path in @($generatorIpPath,$readyPath,$startGatePath,$harnessStdout,$harnessStderr,$monitorStdout,$monitorStderr,$monitorConfigPath)) {
         if (Test-Path -LiteralPath $path) { throw "Diagnostic child artifact already exists: $path" }
     }
+    $launchedAt = Update-GeneratorPublicIpEvidence -Config $config -Path $generatorIpPath `
+        -FailureMessage "Generator public IPv4 changed from its bound config value."
+    $lastGeneratorIpCheck = $launchedAt
     Write-AtomicJson $heartbeatPath ([ordered]@{runId=$config.RunId;status="starting";timestamp=$launchedAt.ToString("o")})
-    Write-AtomicJson $generatorIpPath ([ordered]@{runId=$config.RunId;timestamp=$launchedAt.ToString("o");
-        expectedPublicIp=$config.ExpectedGeneratorPublicIp;actualPublicIp=$actualIp})
     $node = (Get-Command node -ErrorAction Stop).Source
     $harness = Start-Process -FilePath $node -ArgumentList @($script:HarnessScript) -Environment `
         (Get-HarnessEnvironment $config $progressPath $summaryPath $readyPath $startGatePath) -PassThru -NoNewWindow `
@@ -1130,6 +1164,7 @@ try {
     $pwsh = (Get-Process -Id $PID).Path
     & $pwsh -NoProfile -File $script:MonitorScript -ConfigPath $monitorConfigPath -ExpectedConfigSha256 $monitorConfigSha -Mode Validate | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Bound diagnostic monitor configuration failed validation." }
+    $monitorStartedAt = [DateTimeOffset]::UtcNow
     $monitor = Start-Process -FilePath $pwsh -ArgumentList @("-NoProfile","-File",$script:MonitorScript,"-ConfigPath",$monitorConfigPath,
         "-ExpectedConfigSha256",$monitorConfigSha,"-Mode","Monitor") -PassThru -NoNewWindow `
         -RedirectStandardOutput $monitorStdout -RedirectStandardError $monitorStderr
@@ -1144,13 +1179,22 @@ try {
     }
     if (-not (Test-Path -LiteralPath $monitorHeartbeatPath)) { throw "Monitor did not arm the diagnostic within five minutes." }
     $monitorHeartbeat = Read-AtomicJson $monitorHeartbeatPath
-    if ([string]$monitorHeartbeat.runId -ne $config.RunId -or $monitorHeartbeat.triggered -eq $true) {
-        throw "Monitor first sample was not a healthy exact-run sample."
-    }
+    Assert-HealthyMonitorHeartbeat -Heartbeat $monitorHeartbeat -ExpectedRunId $config.RunId -ExpectedPhase "Waf" `
+        -MonitorStartedAt $monitorStartedAt -Now ([DateTimeOffset]::UtcNow)
     # Re-read the complete immutable posture immediately before releasing
     # traffic. This closes the gap between the initial read-only validation and
     # the end of capacity/readiness convergence.
     $terminal.preTrafficAwsPosture = Get-AwsPosture $config
+    $lastGeneratorIpCheck = Update-GeneratorPublicIpEvidence -Config $config -Path $generatorIpPath `
+        -FailureMessage "Generator public IPv4 changed during diagnostic startup."
+    $monitor.Refresh(); $harness.Refresh()
+    if ($monitor.HasExited -or $harness.HasExited) { throw "Diagnostic child exited before traffic release." }
+    if (-not (Test-Path -LiteralPath $monitorHeartbeatPath -PathType Leaf)) {
+        throw "Diagnostic monitor heartbeat disappeared before traffic release."
+    }
+    $monitorHeartbeat = Read-AtomicJson $monitorHeartbeatPath
+    Assert-HealthyMonitorHeartbeat -Heartbeat $monitorHeartbeat -ExpectedRunId $config.RunId -ExpectedPhase "Waf" `
+        -MonitorStartedAt $monitorStartedAt -Now ([DateTimeOffset]::UtcNow)
     $releasedAt = [DateTimeOffset]::UtcNow
     Write-AtomicJson $startGatePath ([ordered]@{schemaVersion=1;type="load_supervisor_start";runId=$config.RunId;
         harnessProcessId=$harness.Id;monitorProcessId=$monitor.Id;releasedAt=$releasedAt.ToString("o")})
@@ -1161,6 +1205,16 @@ try {
             harnessProcessId=$harness.Id;monitorProcessId=$monitor.Id;harnessExited=$harness.HasExited;monitorExited=$monitor.HasExited})
         if ($monitor.HasExited) { break }
         if ($harness.HasExited -and $harness.ExitCode -ne 0) { throw "Diagnostic harness failed before monitor acceptance." }
+        $now = [DateTimeOffset]::UtcNow
+        if (($now - $lastGeneratorIpCheck).TotalSeconds -ge $script:GeneratorIpCheckSeconds) {
+            $lastGeneratorIpCheck = Update-GeneratorPublicIpEvidence -Config $config -Path $generatorIpPath `
+                -FailureMessage "Generator public IPv4 changed during the diagnostic load run."
+            $monitor.Refresh(); $harness.Refresh()
+            if ($monitor.HasExited) { break }
+            if ($harness.HasExited -and $harness.ExitCode -ne 0) {
+                throw "Diagnostic harness failed during the generator IP check."
+            }
+        }
         Start-Sleep -Seconds 30
     }
     $monitor.Refresh()
