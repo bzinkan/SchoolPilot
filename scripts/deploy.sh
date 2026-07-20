@@ -1002,32 +1002,7 @@ NODE
     return 1
   fi
 
-  local log_stream
-  if ! log_stream=$(TILE_AUTH_PLAN_RESULT_PATH=".tile-auth-plan-result.json" \
-    EXPECTED_TASK_ARN="$task_arn" \
-    EXPECTED_TASK_DEFINITION="$API_ROLLOUT_TASK_DEF" node <<'NODE'
-const fs = require("fs");
-const response = JSON.parse(fs.readFileSync(process.env.TILE_AUTH_PLAN_RESULT_PATH, "utf8"));
-const tasks = Array.isArray(response?.tasks) ? response.tasks : [];
-const failures = Array.isArray(response?.failures) ? response.failures : [];
-const task = tasks[0];
-const containers = Array.isArray(task?.containers) ? task.containers : [];
-const apiContainers = containers.filter((container) => container?.name === "api");
-const api = apiContainers[0];
-if (failures.length !== 0 || tasks.length !== 1 ||
-    task?.taskArn !== process.env.EXPECTED_TASK_ARN ||
-    task?.taskDefinitionArn !== process.env.EXPECTED_TASK_DEFINITION ||
-    task?.lastStatus !== "STOPPED" || apiContainers.length !== 1 ||
-    api?.lastStatus !== "STOPPED" || api?.exitCode !== 0 ||
-    typeof api?.logStreamName !== "string" || api.logStreamName.length === 0) process.exit(1);
-process.stdout.write(api.logStreamName);
-NODE
-  ); then
-    error "The ClassPilot tile authorization plan task did not finish successfully on the exact expected revision. No migration or service rollout was attempted."
-    return 1
-  fi
-
-  local log_configuration_json log_binding log_group log_region log_prefix extra
+  local log_configuration_json log_binding log_group log_region log_prefix log_stream extra
   if ! log_configuration_json=$(aws ecs describe-task-definition \
     --task-definition "$API_ROLLOUT_TASK_DEF" \
     --query 'taskDefinition.containerDefinitions[?name==`api`] | [0].logConfiguration' \
@@ -1037,25 +1012,20 @@ NODE
     error "The ClassPilot tile authorization plan task log binding could not be resolved. No migration or service rollout was attempted."
     return 1
   fi
-  if ! log_binding=$(TILE_AUTH_PLAN_LOG_CONFIGURATION_JSON="$log_configuration_json" \
-    EXPECTED_REGION="$REGION" node <<'NODE'
-const config = JSON.parse(process.env.TILE_AUTH_PLAN_LOG_CONFIGURATION_JSON || "null");
-const options = config?.options || {};
-const group = options["awslogs-group"];
-const region = options["awslogs-region"];
-const prefix = options["awslogs-stream-prefix"];
-const safe = (value) => typeof value === "string" && /^[A-Za-z0-9_.\-/#]+$/.test(value);
-if (config?.logDriver !== "awslogs" || !safe(group) || !safe(prefix) ||
-    region !== process.env.EXPECTED_REGION) process.exit(1);
-process.stdout.write(`${group}\t${region}\t${prefix}`);
-NODE
+  if ! log_binding=$(TILE_AUTH_PLAN_RESULT_PATH=".tile-auth-plan-result.json" \
+    TILE_AUTH_PLAN_LOG_CONFIGURATION_JSON="$log_configuration_json" \
+    EXPECTED_TASK_ARN="$task_arn" \
+    EXPECTED_TASK_DEFINITION="$API_ROLLOUT_TASK_DEF" \
+    EXPECTED_REGION="$REGION" \
+    EXPECTED_ACCOUNT_ID="$ACCOUNT_ID" \
+    node "$SCRIPT_DIR/resolve-classpilot-tile-auth-plan-log-binding.mjs" 2>/dev/null
   ); then
-    error "The exact API task definition does not have a valid regional awslogs binding. No migration or service rollout was attempted."
+    error "The ClassPilot tile authorization plan task or its exact awslogs binding is invalid. No migration or service rollout was attempted."
     return 1
   fi
-  IFS=$'\t' read -r log_group log_region log_prefix extra <<< "$log_binding"
+  IFS=$'\t' read -r log_group log_region log_prefix log_stream extra <<< "$log_binding"
   if [[ -z "$log_group" || "$log_region" != "$REGION" || -z "$log_prefix" || -n "$extra" ||
-        "$log_stream" != "${log_prefix}/api/"* ]]; then
+        -z "$log_stream" || "$log_stream" != "${log_prefix}/api/"* ]]; then
     error "The ClassPilot tile authorization plan log stream does not match the exact API task definition. No migration or service rollout was attempted."
     return 1
   fi
