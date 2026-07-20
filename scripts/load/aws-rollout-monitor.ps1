@@ -1343,7 +1343,7 @@ function Get-RedisState {
         $clusters = @($clusterResponse.CacheClusters)
         if ($clusters.Count -ne 1) {
             $state.clusterIdentityValid = $false
-            return $state
+            return [pscustomobject]$state
         }
         $cluster = $clusters[0]
         $state.cacheClusterId = [string](Get-OptionalValue $cluster "CacheClusterId" "")
@@ -1359,7 +1359,7 @@ function Get-RedisState {
             $state.clusterNodeType -ceq [string]$Config.ExpectedRedisNodeType
         )
     }
-    return $state
+    return [pscustomobject]$state
 }
 
 function Get-AutomatedRedisSnapshotState {
