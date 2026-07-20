@@ -23,6 +23,9 @@ $script:EndpointShapeSha256 = "8e9f1942e4b3a27de7dd0571a9f60ffeb276c089e4baae96a
 $script:ExpectedAccountId = "135775632425"
 $script:ExpectedRegion = "us-east-1"
 $script:ScheduleBoundaryGuardSeconds = 7200
+$script:AlbDeregistrationDelaySeconds = 300
+$script:TargetHealthConvergenceTimeoutSeconds = $script:AlbDeregistrationDelaySeconds + 120
+$script:TargetHealthPollSeconds = 5
 $script:AuthSqlMarkers = @(
     "requested_students", "active_supervision", "active_staff_groups",
     "active_roster_students", "authorized_students", "resolved_students"
@@ -206,9 +209,14 @@ function Invoke-AwsCommand {
 }
 
 function Get-ControllerSha {
-    $sha = (& git -C $script:RepositoryRoot rev-parse HEAD 2>$null | Select-Object -First 1).Trim().ToLowerInvariant()
-    if ($LASTEXITCODE -ne 0) { throw "Unable to resolve the diagnostic controller Git SHA." }
-    return Assert-GitSha $sha "controller Git SHA"
+    # Keep the native command out of a PowerShell pipeline. In PowerShell 7.6,
+    # a successful native-command pipeline can leave $LASTEXITCODE undefined
+    # under StrictMode, which made a read-only validation fail before traffic.
+    $output = @(& git -C $script:RepositoryRoot rev-parse HEAD 2>$null)
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -ne 0) { throw "Unable to resolve the diagnostic controller Git SHA." }
+    if ($output.Count -ne 1) { throw "Diagnostic controller Git SHA resolution must return exactly one output line." }
+    return Assert-GitSha ([string]$output[0]) "controller Git SHA"
 }
 
 function Read-DiagnosticConfiguration {
@@ -498,16 +506,59 @@ function Get-ServicePosture {
     return [ordered]@{api=$result.api;worker=$result.worker}
 }
 
-function Get-HealthyTargetCount {
+function Get-TargetHealthSnapshot {
     param($Config)
     $response = Invoke-AwsJson @("elbv2","describe-target-health","--region",$Config.Resources.region,
         "--target-group-arn",$Config.Resources.targetGroupArn)
     $descriptions = @($response.TargetHealthDescriptions)
-    $healthy = @($descriptions | Where-Object { [string]$_.TargetHealth.State -eq "healthy" }).Count
-    if (@($descriptions | Where-Object { [string]$_.TargetHealth.State -ne "healthy" }).Count -gt 0) {
+    $states = @($descriptions | ForEach-Object { [string](Get-Value $_.TargetHealth "State" "") })
+    $healthy = @($states | Where-Object { $_ -eq "healthy" }).Count
+    $initial = @($states | Where-Object { $_ -eq "initial" }).Count
+    $draining = @($states | Where-Object { $_ -eq "draining" }).Count
+    $prohibited = @($states | Where-Object { $_ -notin @("healthy","initial","draining") })
+    return [ordered]@{
+        total=$states.Count;healthy=$healthy;nonHealthy=($states.Count - $healthy);initial=$initial;draining=$draining
+        prohibited=$prohibited.Count;states=@($states | Sort-Object)
+    }
+}
+
+function Wait-TargetHealthConvergence {
+    param(
+        $Config,
+        [int]$DesiredHealthyCount,
+        [Parameter(Mandatory = $true)]
+        [ValidateSet("initial","draining")]
+        [string[]]$AllowedTransitionalStates,
+        [int]$TimeoutSeconds = $script:TargetHealthConvergenceTimeoutSeconds,
+        [int]$PollSeconds = $script:TargetHealthPollSeconds
+    )
+    if ($DesiredHealthyCount -lt 1) { throw "Target-health convergence requires at least one desired healthy target." }
+    if ($TimeoutSeconds -lt 0 -or $PollSeconds -lt 0) { throw "Target-health convergence bounds must not be negative." }
+    $deadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
+    do {
+        $snapshot = Get-TargetHealthSnapshot $Config
+        $prohibitedStates = @($snapshot.states | Where-Object { $_ -ne "healthy" -and $_ -notin $AllowedTransitionalStates })
+        if ($prohibitedStates.Count -gt 0) {
+            throw "Target-health convergence observed a prohibited non-transitional state: $($snapshot.states -join ',')."
+        }
+        if ([int]$snapshot.total -eq $DesiredHealthyCount -and [int]$snapshot.healthy -eq $DesiredHealthyCount -and
+            [int]$snapshot.nonHealthy -eq 0) {
+            return $snapshot
+        }
+        if ([DateTimeOffset]::UtcNow -ge $deadline) {
+            throw "Target health did not converge to exactly $DesiredHealthyCount healthy targets before the bounded timeout; observed $($snapshot.states -join ',')."
+        }
+        Start-Sleep -Seconds $PollSeconds
+    } while ($true)
+}
+
+function Get-HealthyTargetCount {
+    param($Config)
+    $snapshot = Get-TargetHealthSnapshot $Config
+    if ([int]$snapshot.nonHealthy -gt 0) {
         throw "The API target group contains a non-healthy target."
     }
-    return $healthy
+    return [int]$snapshot.healthy
 }
 
 function Get-WafLabelMatch {
@@ -768,8 +819,9 @@ function Set-DiagnosticCapacity {
     Invoke-AwsCommand @("ecs","wait","services-stable","--region",$Config.Resources.region,"--cluster",$Config.Resources.cluster,
         "--services",$Config.Resources.apiService,$Config.Resources.workerService)
     $services = Get-ServicePosture $Config
+    $targetHealth = Wait-TargetHealthConvergence $Config 6 -AllowedTransitionalStates @("initial")
     if ([int]$services.api.desired -ne 6 -or [int]$services.api.running -ne 6 -or [int]$services.worker.desired -ne 1 -or
-        (Get-HealthyTargetCount $Config) -ne 6) {
+        [int]$targetHealth.healthy -ne 6 -or [int]$targetHealth.nonHealthy -ne 0) {
         throw "Diagnostic capacity failed to converge to six exact API targets and one worker."
     }
     $scaling = Get-ScalingSnapshot $Config
@@ -779,7 +831,7 @@ function Set-DiagnosticCapacity {
         -not [bool]$scaling.suspendedState.ScheduledScalingSuspended) {
         throw "Diagnostic autoscaling pin was not observed exactly."
     }
-    return [ordered]@{services=$services;healthyApiTargets=6;scaling=$scaling}
+    return [ordered]@{services=$services;healthyApiTargets=[int]$targetHealth.healthy;scaling=$scaling}
 }
 
 function Restore-ScalingCapture {
@@ -791,12 +843,20 @@ function Restore-ScalingCapture {
         "--service",$Config.Resources.apiService,"--desired-count",[string]$original.services.api.desired)
     Invoke-AwsCommand @("ecs","wait","services-stable","--region",$Config.Resources.region,"--cluster",$Config.Resources.cluster,
         "--services",$Config.Resources.apiService,$Config.Resources.workerService)
+    # The target group uses a reviewed 300-second deregistration delay. Keep
+    # all scaling modes held while the old targets drain, and allow only ALB's
+    # draining transitional state until the exact target set exists.
+    $targetHealth = Wait-TargetHealthConvergence $Config ([int]$original.services.api.desired) -AllowedTransitionalStates @("draining")
     Set-ScalingTarget $Config ([int]$original.scaling.minCapacity) ([int]$original.scaling.maxCapacity) $original.scaling.suspendedState
     $deadline = [DateTimeOffset]::UtcNow.AddMinutes(2)
     do {
         $observedScaling = Get-ScalingSnapshot $Config
         $observedServices = Get-ServicePosture $Config
-        $healthy = Get-HealthyTargetCount $Config
+        $targetHealth = Get-TargetHealthSnapshot $Config
+        $prohibitedStates = @($targetHealth.states | Where-Object { $_ -notin @("healthy","draining") })
+        if ($prohibitedStates.Count -gt 0) {
+            throw "Scaling restoration observed a prohibited non-transitional target state: $($targetHealth.states -join ',')."
+        }
         $matched = [int]$observedScaling.minCapacity -eq [int]$original.scaling.minCapacity -and
             [int]$observedScaling.maxCapacity -eq [int]$original.scaling.maxCapacity -and
             (Get-StableJsonSha256 $observedScaling.suspendedState) -ceq (Get-StableJsonSha256 $original.scaling.suspendedState) -and
@@ -805,13 +865,14 @@ function Restore-ScalingCapture {
             [int]$observedServices.api.desired -eq [int]$original.services.api.desired -and
             [int]$observedServices.api.running -eq [int]$original.services.api.desired -and
             [int]$observedServices.worker.desired -eq [int]$original.services.worker.desired -and
-            $healthy -eq [int]$original.services.api.desired
+            [int]$targetHealth.total -eq [int]$original.services.api.desired -and
+            [int]$targetHealth.healthy -eq [int]$original.services.api.desired -and [int]$targetHealth.nonHealthy -eq 0
         if ($matched) { break }
         Start-Sleep -Seconds 5
     } while ([DateTimeOffset]::UtcNow -lt $deadline)
     if (-not $matched) { throw "Exact API scaling, schedule, policy, desired-count, or target-health restoration was not observed." }
     return [ordered]@{restored=$true;restoredAtUtc=[DateTimeOffset]::UtcNow.ToString("o");services=$observedServices;
-        healthyApiTargets=$healthy;scaling=$observedScaling}
+        healthyApiTargets=[int]$targetHealth.healthy;scaling=$observedScaling}
 }
 
 function Resolve-GeneratorPublicIp {
