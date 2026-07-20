@@ -56,6 +56,8 @@ foreach ($required in @(
     'cloudFrontDistributionId','list-distributions-by-web-acl-id','EvaluationWindowSec','100000','50000',
     'Assert-RedisReplicationIdentity','describe-cache-clusters','clusterReplicationGroupId',
     'ScheduleBoundaryGuardSeconds = 7200','Enter-DiagnosticRunLock','Exit-DiagnosticRunLock',
+    'AlbDeregistrationDelaySeconds = 300','TargetHealthConvergenceTimeoutSeconds = $script:AlbDeregistrationDelaySeconds + 120',
+    'Wait-TargetHealthConvergence','AllowedTransitionalStates @("initial")','AllowedTransitionalStates @("draining")',
     'DynamicScalingInSuspended=$true','DynamicScalingOutSuspended=$true','ScheduledScalingSuspended=$true',
     'Restore-ScalingCapture','scaling_restoration_failed','scheduledActionsSha256','scalingPoliciesSha256',
     'Group=db.sql_tokenized,Limit=25','rawSqlPersisted=$false','dominanceThresholdPercent=50.0',
@@ -74,6 +76,8 @@ Assert-Condition ($controller.Contains('nonMutating=$true')) "Validate output mu
 Assert-Condition ($controller.IndexOf('if ($Mode -eq "Validate")') -lt $controller.IndexOf('New-Item -ItemType Directory')) "Validate must exit before the first evidence-directory write."
 Assert-Condition ($controller.Contains('$terminal.preTrafficAwsPosture = Get-AwsPosture $config')) "Exact AWS posture must be revalidated immediately before traffic."
 Assert-Condition ($controller.Contains('$terminal.terminalAwsPosture = Get-AwsPosture $config')) "Exact AWS posture must be revalidated at terminal success."
+Assert-Condition ($controller.Contains('$healthyTargets = Get-HealthyTargetCount $Config')) "Read-only AWS posture validation must retain strict target-health enforcement."
+Assert-Condition ($controller.Contains('$output.Count -ne 1')) "Controller Git identity must require exactly one native-command output line."
 Assert-Condition (-not $controller.Contains('start-aws-rollout-supervisor.ps1')) "Diagnostic controller must never call the certification supervisor."
 Assert-Condition ($monitor.Contains('Diagnostic-only evidence must not declare or consume predecessor evidence.')) "Monitor must reject diagnostic predecessor consumption."
 Assert-Condition ($monitor.Contains('DiagnosticOnly = $diagnosticOnly')) "Monitor must retain the diagnostic marker in bound runtime state."
@@ -90,12 +94,100 @@ Assert-Condition ($harness.Contains('diagnosticOnly ? 30 * 60')) "Only explicit 
 $tokens = $null; $parseErrors = $null
 $controllerAst = [Management.Automation.Language.Parser]::ParseFile($controllerPath, [ref]$tokens, [ref]$parseErrors)
 foreach ($name in @(
-    'Get-Value','Get-StableJsonSha256','Get-StringSha256','Get-DiagnosticRunMutexName','Enter-DiagnosticRunLock','Exit-DiagnosticRunLock',
+    'Get-Value','Assert-GitSha','Get-ControllerSha','Get-StableJsonSha256','Get-StringSha256','Get-DiagnosticRunMutexName','Enter-DiagnosticRunLock','Exit-DiagnosticRunLock',
     'Resolve-ExternalPath','Get-ValidationScratchPaths','Get-WafLabelMatch','Assert-WafDeviceIngestClassifierContract',
-    'Assert-WafRateRuleContract','Assert-RedisReplicationIdentity','Assert-NoScheduledBoundaryOverlap','Restore-ScalingCapture'
+    'Assert-WafRateRuleContract','Assert-RedisReplicationIdentity','Assert-NoScheduledBoundaryOverlap','Get-TargetHealthSnapshot',
+    'Wait-TargetHealthConvergence','Get-HealthyTargetCount','Restore-ScalingCapture'
 )) { Import-ScriptFunction $controllerAst $name }
 
 $script:RepositoryRoot = $root
+$expectedControllerShaOutput = @(& git -C $root rev-parse HEAD 2>$null)
+Assert-Condition ($LASTEXITCODE -eq 0 -and $expectedControllerShaOutput.Count -eq 1) 'The test fixture must resolve one current Git SHA.'
+$expectedControllerSha = [string]$expectedControllerShaOutput[0]
+Remove-Variable -Name LASTEXITCODE -Scope Global -ErrorAction SilentlyContinue
+$resolvedControllerSha = Get-ControllerSha
+Assert-Condition ($resolvedControllerSha -ceq $expectedControllerSha.ToLowerInvariant()) 'Controller SHA resolution must succeed when LASTEXITCODE starts unset.'
+Assert-Throws { Assert-GitSha 'abc123' 'test SHA' } 'full 40-character' 'Controller SHA validation must reject abbreviated Git identities.'
+
+$script:fakeGitExitCode = 0
+$script:fakeGitOutput = @()
+function git {
+    $global:LASTEXITCODE = $script:fakeGitExitCode
+    foreach ($line in $script:fakeGitOutput) { Write-Output $line }
+}
+try {
+    $script:fakeGitExitCode = 128
+    $script:fakeGitOutput = @()
+    Assert-Throws { Get-ControllerSha } 'Unable to resolve' 'Controller SHA resolution must reject a nonzero native Git exit.'
+    $script:fakeGitExitCode = 0
+    $script:fakeGitOutput = @('1111111111111111111111111111111111111111','2222222222222222222222222222222222222222')
+    Assert-Throws { Get-ControllerSha } 'exactly one output line' 'Controller SHA resolution must reject ambiguous multiline native output.'
+    $script:fakeGitOutput = @('not-a-full-sha')
+    Assert-Throws { Get-ControllerSha } 'full 40-character' 'Controller SHA resolution must reject malformed native output.'
+}
+finally { Remove-Item -Path Function:git -Force }
+
+$script:TargetHealthConvergenceTimeoutSeconds = 420
+$script:TargetHealthPollSeconds = 5
+$script:targetHealthResponses = [Collections.Generic.Queue[object]]::new()
+$script:traceRestoreTargetHealth = $false
+$script:restoreEvents = [System.Collections.Generic.List[string]]::new()
+function New-TargetHealthResponse {
+    param([string[]]$States)
+    return [pscustomobject]@{TargetHealthDescriptions=@($States | ForEach-Object {
+        [pscustomobject]@{TargetHealth=[pscustomobject]@{State=$_}}
+    })}
+}
+function Set-TargetHealthResponses {
+    param([object[]]$Responses)
+    $script:targetHealthResponses.Clear()
+    foreach ($response in $Responses) { $script:targetHealthResponses.Enqueue($response) }
+}
+function Invoke-AwsJson {
+    param([string[]]$Arguments)
+    Assert-Condition ($Arguments[0] -eq 'elbv2' -and $Arguments[1] -eq 'describe-target-health') 'Target-health tests must invoke only the expected read-only ELB query.'
+    if ($script:targetHealthResponses.Count -eq 0) { throw 'Target-health test response queue was exhausted.' }
+    if ($script:traceRestoreTargetHealth) { $script:restoreEvents.Add('target-health') }
+    return $script:targetHealthResponses.Dequeue()
+}
+function Start-Sleep { param([int]$Seconds,[int]$Milliseconds) }
+$targetConfig = [pscustomobject]@{Resources=[pscustomobject]@{region='us-east-1';targetGroupArn='target-group'}}
+
+Set-TargetHealthResponses @(
+    (New-TargetHealthResponse @('healthy','healthy','healthy','healthy','healthy','initial')),
+    (New-TargetHealthResponse @('healthy','healthy','healthy','healthy','healthy','healthy'))
+)
+$scaleUpTargets = Wait-TargetHealthConvergence $targetConfig 6 -AllowedTransitionalStates @('initial') -TimeoutSeconds 1 -PollSeconds 0
+Assert-Condition ($scaleUpTargets.healthy -eq 6 -and $scaleUpTargets.nonHealthy -eq 0) 'Scale-up must tolerate initial targets and finish with exactly six healthy targets.'
+
+Set-TargetHealthResponses @(
+    (New-TargetHealthResponse @('healthy','draining','draining','draining','draining','draining')),
+    (New-TargetHealthResponse @('healthy'))
+)
+$scaleDownTargets = Wait-TargetHealthConvergence $targetConfig 1 -AllowedTransitionalStates @('draining') -TimeoutSeconds 1 -PollSeconds 0
+Assert-Condition ($scaleDownTargets.healthy -eq 1 -and $scaleDownTargets.nonHealthy -eq 0) 'Scale-down must tolerate draining targets and finish with exactly one healthy target.'
+
+Set-TargetHealthResponses @((New-TargetHealthResponse @('healthy','initial')))
+Assert-Throws { Wait-TargetHealthConvergence $targetConfig 2 -AllowedTransitionalStates @('initial') -TimeoutSeconds 0 -PollSeconds 0 } `
+    'bounded timeout' 'Persistent scale-up initial state must time out closed.'
+Set-TargetHealthResponses @((New-TargetHealthResponse @('healthy','draining')))
+Assert-Throws { Wait-TargetHealthConvergence $targetConfig 1 -AllowedTransitionalStates @('draining') -TimeoutSeconds 0 -PollSeconds 0 } `
+    'bounded timeout' 'Persistent scale-down draining state must time out closed.'
+Set-TargetHealthResponses @((New-TargetHealthResponse @('healthy','draining')))
+Assert-Throws { Wait-TargetHealthConvergence $targetConfig 2 -AllowedTransitionalStates @('initial') -TimeoutSeconds 1 -PollSeconds 0 } `
+    'prohibited non-transitional' 'Scale-up must reject a draining target instead of treating it as an allowed transition.'
+Set-TargetHealthResponses @((New-TargetHealthResponse @('healthy','initial')))
+Assert-Throws { Wait-TargetHealthConvergence $targetConfig 1 -AllowedTransitionalStates @('draining') -TimeoutSeconds 1 -PollSeconds 0 } `
+    'prohibited non-transitional' 'Scale-down must reject an initial target instead of treating it as an allowed transition.'
+Set-TargetHealthResponses @((New-TargetHealthResponse @('healthy','unhealthy')))
+Assert-Throws { Wait-TargetHealthConvergence $targetConfig 2 -AllowedTransitionalStates @('initial') -TimeoutSeconds 1 -PollSeconds 0 } `
+    'prohibited non-transitional' 'Target convergence must immediately reject unhealthy targets.'
+Set-TargetHealthResponses @((New-TargetHealthResponse @('healthy','healthy','healthy','healthy','healthy','healthy','healthy')))
+Assert-Throws { Wait-TargetHealthConvergence $targetConfig 6 -AllowedTransitionalStates @('initial') -TimeoutSeconds 0 -PollSeconds 0 } `
+    'bounded timeout' 'An extra healthy target must not satisfy exact target-health convergence.'
+Set-TargetHealthResponses @((New-TargetHealthResponse @('healthy','initial')))
+Assert-Throws { Get-HealthyTargetCount $targetConfig } 'non-healthy target' 'Strict AWS posture target validation must reject even an expected transition.'
+
 $missingEvidenceDirectory = Join-Path ([IO.Path]::GetTempPath()) "schoolpilot-missing-evidence-$([Guid]::NewGuid().ToString('N'))"
 $scratchConfig = [pscustomobject]@{EvidenceDirectory=$missingEvidenceDirectory;RunId="fresh-validate-$([Guid]::NewGuid().ToString('N'))"}
 Assert-Condition (-not (Test-Path -LiteralPath $scratchConfig.EvidenceDirectory)) 'The fresh Validate behavioral fixture must start without an evidence directory.'
@@ -181,17 +273,44 @@ Exit-DiagnosticRunLock $replacementLock
 $script:restoreCalls = [System.Collections.Generic.List[object]]::new()
 $script:restoredScaling = [ordered]@{minCapacity=1;maxCapacity=8;suspendedState=[ordered]@{DynamicScalingInSuspended=$false;DynamicScalingOutSuspended=$false;ScheduledScalingSuspended=$false};scheduledActionsSha256='schedule';scalingPoliciesSha256='policy'}
 $script:restoredServices = [ordered]@{api=[ordered]@{desired=2;running=2};worker=[ordered]@{desired=1;running=1}}
-function Set-ScalingTarget { param($Config,[int]$Minimum,[int]$Maximum,$SuspendedState) $script:restoreCalls.Add([ordered]@{minimum=$Minimum;maximum=$Maximum;suspended=$SuspendedState}) }
-function Invoke-AwsCommand { param([string[]]$Arguments) }
-function Get-ScalingSnapshot { param($Config) return $script:restoredScaling }
-function Get-ServicePosture { param($Config) return $script:restoredServices }
-function Get-HealthyTargetCount { param($Config) return 2 }
-function Start-Sleep { param([int]$Seconds,[int]$Milliseconds) }
-$restoreConfig = [pscustomobject]@{Resources=[pscustomobject]@{region='us-east-1';cluster='cluster';apiService='api';workerService='worker'}}
+function Set-ScalingTarget {
+    param($Config,[int]$Minimum,[int]$Maximum,$SuspendedState)
+    $script:restoreCalls.Add([ordered]@{minimum=$Minimum;maximum=$Maximum;suspended=$SuspendedState})
+    $script:restoreEvents.Add("scaling:$Minimum`:$Maximum`:$([bool]$SuspendedState.ScheduledScalingSuspended)")
+}
+function Invoke-AwsCommand {
+    param([string[]]$Arguments)
+    $script:restoreEvents.Add("aws:$($Arguments[0])`:$($Arguments[1])")
+}
+function Get-ScalingSnapshot {
+    param($Config)
+    $script:restoreEvents.Add('scaling-snapshot')
+    return $script:restoredScaling
+}
+function Get-ServicePosture {
+    param($Config)
+    $script:restoreEvents.Add('service-posture')
+    return $script:restoredServices
+}
+$restoreConfig = [pscustomobject]@{Resources=[pscustomobject]@{region='us-east-1';cluster='cluster';apiService='api';workerService='worker';targetGroupArn='target-group'}}
 $restoreCapture = [pscustomobject]@{original=[pscustomobject]@{scaling=$script:restoredScaling;services=$script:restoredServices}}
+Set-TargetHealthResponses @(
+    (New-TargetHealthResponse @('healthy','draining')),
+    (New-TargetHealthResponse @('healthy','healthy')),
+    (New-TargetHealthResponse @('healthy','healthy'))
+)
+$script:restoreEvents.Clear()
+$script:traceRestoreTargetHealth = $true
 $restoreResult = Restore-ScalingCapture $restoreConfig $restoreCapture
+$script:traceRestoreTargetHealth = $false
 Assert-Condition ($restoreResult.restored -eq $true) 'Exact scaling restoration should produce successful terminal evidence.'
 Assert-Condition ($script:restoreCalls.Count -eq 2) 'Restoration must hold scaling while desired capacity converges, then restore the original suspended state.'
+$expectedRestoreEvents = @(
+    'scaling:1:8:True','aws:ecs:update-service','aws:ecs:wait','target-health','target-health',
+    'scaling:1:8:False','scaling-snapshot','service-posture','target-health'
+)
+Assert-Condition (($script:restoreEvents -join '|') -ceq ($expectedRestoreEvents -join '|')) `
+    'Restoration must hold scaling through ECS stabilization and ALB draining, then restore and reverify the exact posture.'
 
 $monitorTokens = $null; $monitorParseErrors = $null
 $monitorAst = [Management.Automation.Language.Parser]::ParseFile($monitorPath, [ref]$monitorTokens, [ref]$monitorParseErrors)
