@@ -251,7 +251,7 @@ $wrongRateLabel[2].Statement.RateBasedStatement.ScopeDownStatement.AndStatement.
 Assert-Throws { Assert-WafRateRuleContract $wrongRateLabel 'device-metric' 'api-metric' } 'device-ingest classifier label' 'Rate rules must consume the exact unqualified classifier label.'
 
 $redisResources = [pscustomobject]@{redisReplicationGroupId='schoolpilot-production';redisCacheClusterId='schoolpilot-production-001'}
-$redisGroup = [pscustomobject]@{ReplicationGroupId='schoolpilot-production';Status='available';CacheNodeType='cache.t4g.small';MemberClusters=@('schoolpilot-production-001')}
+$redisGroup = [pscustomobject]@{ReplicationGroupId='schoolpilot-production';Status='available';CacheNodeType='cache.t4g.small';MemberClusters=@('schoolpilot-production-001');PendingModifiedValues=[pscustomobject]@{}}
 $redisCluster = [pscustomobject]@{CacheClusterId='schoolpilot-production-001';ReplicationGroupId='schoolpilot-production';CacheClusterStatus='available';CacheNodeType='cache.t4g.small'}
 $redisEvidence = Assert-RedisReplicationIdentity $redisGroup $redisCluster $redisResources
 Assert-Condition ($redisEvidence.clusterNodeType -eq 'cache.t4g.small') 'Valid Redis group/member identity should pass.'
@@ -316,7 +316,7 @@ $monitorTokens = $null; $monitorParseErrors = $null
 $monitorAst = [Management.Automation.Language.Parser]::ParseFile($monitorPath, [ref]$monitorTokens, [ref]$monitorParseErrors)
 foreach ($name in @(
     'Get-OptionalValue','Get-WafDeviceLabelMatch','Assert-DiagnosticWafDeviceIngestClassifierContract',
-    'Assert-DiagnosticWafRateRuleContract','Get-SeriesSummary','Get-DiagnosticRdsCpuCoverageResult'
+    'Assert-DiagnosticWafRateRuleContract','Get-RedisState','Get-SeriesSummary','Get-DiagnosticRdsCpuCoverageResult'
 )) { Import-ScriptFunction $monitorAst $name }
 $monitorWafResources = [pscustomobject]@{
     wafDeviceClassifierMetricName='classifier-metric';wafDeviceRuleMetricName='device-metric';wafApiRuleMetricName='api-metric'
@@ -325,6 +325,42 @@ Assert-DiagnosticWafDeviceIngestClassifierContract -Rules $validRules -Resources
 Assert-DiagnosticWafRateRuleContract -Rules $validRules -Resources $monitorWafResources
 Assert-Throws { Assert-DiagnosticWafDeviceIngestClassifierContract -Rules $wrongClassifierRegex -Resources $monitorWafResources } 'exact reviewed device-ingest URI regex' 'Monitor classifier validation must reject path drift.'
 Assert-Throws { Assert-DiagnosticWafRateRuleContract -Rules $wrongRateLabel -Resources $monitorWafResources } 'reviewed device/API split' 'Monitor rate validation must reject both consumers drifting to another label key.'
+
+$script:monitorRedisGroupResponse = [pscustomobject]@{ReplicationGroups=@($redisGroup)}
+$script:monitorRedisClusterResponse = [pscustomobject]@{CacheClusters=@($redisCluster)}
+function Invoke-AwsJson {
+    param([string[]]$Arguments)
+    if ($Arguments[0] -eq 'elasticache' -and $Arguments[1] -eq 'describe-replication-groups') {
+        return $script:monitorRedisGroupResponse
+    }
+    if ($Arguments[0] -eq 'elasticache' -and $Arguments[1] -eq 'describe-cache-clusters') {
+        return $script:monitorRedisClusterResponse
+    }
+    throw "Unexpected monitor Redis test command: $($Arguments -join ' ')"
+}
+$monitorRedisConfig = [pscustomobject]@{
+    DiagnosticOnly=$true
+    ExpectedRedisNodeType='cache.t4g.small'
+    Resources=[pscustomobject]@{
+        region='us-east-1'
+        redisReplicationGroupId='schoolpilot-production'
+        redisCacheClusterId='schoolpilot-production-001'
+    }
+}
+$monitorRedisState = Get-RedisState -Config $monitorRedisConfig
+Assert-Condition ((Get-OptionalValue $monitorRedisState 'clusterIdentityValid' $false) -eq $true) `
+    'A valid diagnostic Redis group/member identity must remain true when the runtime gate reads the state through Get-OptionalValue.'
+$wrongMonitorRedisCluster = $redisCluster | ConvertTo-Json -Depth 10 | ConvertFrom-Json -Depth 10
+$wrongMonitorRedisCluster.ReplicationGroupId = 'other-group'
+$script:monitorRedisClusterResponse = [pscustomobject]@{CacheClusters=@($wrongMonitorRedisCluster)}
+$wrongMonitorRedisState = Get-RedisState -Config $monitorRedisConfig
+Assert-Condition ((Get-OptionalValue $wrongMonitorRedisState 'clusterIdentityValid' $true) -eq $false) `
+    'A diagnostic Redis member bound to another replication group must remain a fail-closed false identity through the runtime gate.'
+$script:monitorRedisClusterResponse = [pscustomobject]@{CacheClusters=@()}
+$missingMonitorRedisState = Get-RedisState -Config $monitorRedisConfig
+Assert-Condition ((Get-OptionalValue $missingMonitorRedisState 'clusterIdentityValid' $true) -eq $false) `
+    'A missing diagnostic Redis member must remain a fail-closed false identity through the runtime gate.'
+
 function Set-TestRdsCpuSeries([int]$Count,[double]$LastValue = 40.0) {
     $timestamps = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $values = [System.Collections.Generic.List[double]]::new()
