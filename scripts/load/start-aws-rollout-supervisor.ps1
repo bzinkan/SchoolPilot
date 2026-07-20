@@ -20,6 +20,8 @@ $harnessScript = Join-Path $PSScriptRoot "classpilot-load-test.mjs"
 $monitorScript = Join-Path $PSScriptRoot "aws-rollout-monitor.ps1"
 $script:GeneratorIpTestIndex = 0
 $script:RollbackWatchdogDiagnostic = "not_checked"
+$script:RequiredWorkloadSchemaVersion = "classpilot-tile-batch-v1"
+$script:RequiredWorkloadEndpointShapeSha256 = "8e9f1942e4b3a27de7dd0571a9f60ffeb276c089e4baae96a885dba69e3233b2"
 
 function Resolve-ExternalPath {
     param([string]$Path, [string]$Name, [switch]$AllowMissing)
@@ -263,14 +265,28 @@ function Invoke-StaticMonitorValidation {
 
 function Invoke-HarnessConfigurationPreflight {
     param($Config, [string]$NodePath, [string]$HarnessPath)
-    $previousRunId = $env:LOAD_RUN_ID
+    $managedEnvironment = [ordered]@{
+        LOAD_RUN_ID = $runId
+        LOAD_DIAGNOSTIC_ONLY = "false"
+        LOAD_WORKLOAD_SCHEMA_VERSION = $script:RequiredWorkloadSchemaVersion
+        LOAD_TILE_HISTORY_PATH = "/api/classpilot/tiles/history"
+        LOAD_TILE_SCREENSHOTS_PATH = "/api/classpilot/tiles/screenshots"
+        LOAD_TEACHER_PATHS = "/api/students-aggregated"
+        LOAD_DASHBOARD_PATHS = ""
+        LOAD_SCREENSHOT_GET_PATH_TEMPLATE = ""
+    }
+    $previousEnvironment = @{}
     try {
-        $env:LOAD_RUN_ID = $runId
+        foreach ($entry in $managedEnvironment.GetEnumerator()) {
+            $previousEnvironment[$entry.Key] = [Environment]::GetEnvironmentVariable($entry.Key, "Process")
+            [Environment]::SetEnvironmentVariable($entry.Key, [string]$entry.Value, "Process")
+        }
         $raw = @(& $NodePath $HarnessPath "--validate-config" 2>$null)
     }
     finally {
-        if ($null -eq $previousRunId) { Remove-Item Env:LOAD_RUN_ID -ErrorAction SilentlyContinue }
-        else { $env:LOAD_RUN_ID = $previousRunId }
+        foreach ($entry in $previousEnvironment.GetEnumerator()) {
+            [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, "Process")
+        }
     }
     if ($LASTEXITCODE -ne 0 -or $raw.Count -lt 1) {
         throw "The load harness --validate-config preflight failed before traffic."
@@ -288,11 +304,23 @@ function Invoke-HarnessConfigurationPreflight {
         $result.thresholdsEnforced -ne $true -or [string]$result.networkFamily -cne "IPv4") {
         throw "The load harness preflight did not prove the bound runId, launch profile, enforced thresholds, IPv4-only traffic, and trafficStarted=false."
     }
+    if (-not $testMode -and (
+        [string]$result.workloadSchemaVersion -cne $script:RequiredWorkloadSchemaVersion -or
+        [string]$result.workloadEndpointShapeSha256 -cne $script:RequiredWorkloadEndpointShapeSha256 -or
+        [string]$Config.workload.workloadSchemaVersion -cne $script:RequiredWorkloadSchemaVersion -or
+        [string]$Config.workload.endpointShapeSha256 -cne $script:RequiredWorkloadEndpointShapeSha256)) {
+        throw "The load harness preflight did not prove the reviewed tile-batch workload schema and endpoint shape."
+    }
     if (-not $testMode) {
         $contract = $result.launchContract
         $expectedPrimary = [int]$Config.workload.devices - [int]$Config.workload.canaryDevices
         $expectedTargets = if ($expectedPrimary -eq 500) { 25 } elseif ($expectedPrimary -in @(800,1000)) { 40 } else { 0 }
-        if ($null -eq $contract -or [int]$contract.totalSockets -ne [int]$Config.workload.devices -or
+        if ($null -eq $contract -or
+            [string]$contract.workloadSchemaVersion -cne $script:RequiredWorkloadSchemaVersion -or
+            [string]$contract.endpointShapeSha256 -cne $script:RequiredWorkloadEndpointShapeSha256 -or
+            [int]$contract.tileBatchRequestsPerCohort -ne 2 -or
+            [int]$contract.tileLogicalOperationsPerPoll -ne (2 * $expectedPrimary) -or
+            [int]$contract.totalSockets -ne [int]$Config.workload.devices -or
             [int]$contract.primaryDevices -ne $expectedPrimary -or
             [int]$contract.canaryDevices -ne [int]$Config.workload.canaryDevices -or
             [int]$contract.durationSeconds -ne [int]$Config.workload.durationSeconds -or
@@ -646,17 +674,25 @@ function Assert-CertificationFixtureVerificationContract {
     param($Verification)
     $counts = Get-RequiredProperty $Verification "counts"
     $liveAuth = Get-RequiredProperty $counts "liveAuth"
+    $authorizationPlanCohorts = Get-RequiredProperty $counts "authorizationPlanCohorts"
     $gates = Get-RequiredProperty $Verification "gates"
-    if ([int]$counts.schools -ne 2 -or [int]$counts.teachers -ne 20 -or [int]$counts.students -ne 1010 -or
+    $officeStaff = Get-RequiredProperty $counts "officeStaff"
+    $coTeacherStudents = Get-RequiredProperty $authorizationPlanCohorts "coTeacherStudents"
+    $officeSupervisionStudents = Get-RequiredProperty $authorizationPlanCohorts "officeSupervisionStudents"
+    if ([int]$counts.schools -ne 2 -or [int]$counts.teachers -ne 20 -or [int]$officeStaff -ne 1 -or
+        [int]$counts.students -ne 1010 -or
         [int]$counts.classes -ne 20 -or [int]$counts.classRosterStudents -ne 800 -or
         [int]$counts.devices -ne 1010 -or [int]$counts.activeDeviceSessions -ne 1010 -or
         [int]$counts.activeSessions -ne 20 -or [int]$counts.commandBodies -ne 20 -or
+        [int]$coTeacherStudents -ne 40 -or
+        [int]$officeSupervisionStudents -ne 40 -or
         [int]$liveAuth.commandAdministrators -ne 1 -or [int]$liveAuth.teachers -ne 20) {
-        throw "Fixture live verification does not prove the exact owned two-school, 20-class, 1010-device certification inventory."
+        throw "Fixture live verification does not prove the exact owned two-school, 20-class, 1010-device and authorization-plan cohort certification inventory."
     }
     foreach ($gate in @(
         "autoEnrollDisabled","trackingDisabled","schedulesDisabled","exactSchoolTimezones",
-        "classRostersExactAndDisjoint","allDeviceTokensLive","allStaffAuthArtifactsLive"
+        "classRostersExactAndDisjoint","authorizationPlanCohortsExact",
+        "authorizationPlanOfficeStudentsOutsideTeacherRosters","allDeviceTokensLive","allStaffAuthArtifactsLive"
     )) {
         if ((Get-CertificationValue $gates $gate $false) -ne $true) {
             throw "Fixture live verification gate '$gate' is not proven."
@@ -666,6 +702,9 @@ function Assert-CertificationFixtureVerificationContract {
 
 function Get-CertificationContract {
     param($Config, [bool]$TestMode, [bool]$BindHarnessArtifacts = $false)
+    if ((Get-CertificationValue $Config "diagnosticOnly" $false) -ne $false) {
+        throw "Diagnostic-only runs can never enter or seed the certification supervisor."
+    }
     $certification = Get-CertificationValue $Config "certification"
     if ($null -eq $certification) {
         if ($TestMode) { return $null }
@@ -673,6 +712,14 @@ function Get-CertificationContract {
     }
     if ([int](Get-CertificationValue $certification "schemaVersion" 0) -ne 1) {
         throw "certification.schemaVersion must be 1."
+    }
+    $workload = Get-RequiredProperty $Config "workload"
+    $workloadSchemaVersion = [string](Get-RequiredProperty $workload "workloadSchemaVersion")
+    $workloadEndpointShapeSha256 = Assert-CertificationSha256 `
+        ([string](Get-RequiredProperty $workload "endpointShapeSha256")) "workload.endpointShapeSha256"
+    if ($workloadSchemaVersion -cne $script:RequiredWorkloadSchemaVersion -or
+        $workloadEndpointShapeSha256 -cne $script:RequiredWorkloadEndpointShapeSha256) {
+        throw "Certification workload must bind the reviewed student-ID tile-batch schema and endpoint shape."
     }
     $chainId = [string](Get-RequiredProperty $certification "chainId")
     if ($chainId -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$') { throw "certification.chainId is invalid." }
@@ -867,6 +914,8 @@ function Get-CertificationContract {
         Fixture = [ordered]@{ state=$state;verification=$verification;artifacts=$artifactReferences;fixtureId=$fixtureGeneration.fixtureId;generatedAtUtc=$fixtureGeneration.generatedAtUtc;refreshedAtUtc=$fixtureGeneration.refreshedAtUtc;verifiedAtUtc=$verifiedAt.ToString("o");timezone=$expectedTimezone;plannedTrafficStartUtc=if($null -eq $plannedStart){$null}else{$plannedStart.ToString("o")} }
         SchemaCompatibility = $schemaCompatibility; HistoricalEvidence = $historical; CapacityTrack = $capacityTrack
         BudgetAcknowledgement = $budgetAcknowledgement
+        WorkloadSchemaVersion = $workloadSchemaVersion
+        WorkloadEndpointShapeSha256 = $workloadEndpointShapeSha256
         ControllerHashes = Get-CertificationControllerHashes
     }
 }
@@ -1360,6 +1409,7 @@ function Get-CertificationChainRootBinding {
         $root = [ordered]@{
             schemaVersion=1;type="certification_chain_root";runId=$runId;chainId=$Contract.ChainId;phase=[string]$config.phase;stage=[string]$config.workload.stage;supervisionKind=$SupervisionKind;createdAtUtc=[DateTimeOffset]::UtcNow.ToString("o")
             capacityTrack=$Contract.CapacityTrack;applicationGitSha=$Contract.ApplicationGitSha;deployedImageDigest=$Contract.DeployedImageDigest
+            workloadSchemaVersion=$Contract.WorkloadSchemaVersion;workloadEndpointShapeSha256=$Contract.WorkloadEndpointShapeSha256
             controllerGitSha=$Contract.ControllerGitSha;controllerHashes=$Contract.ControllerHashes
             operatorConfigSha256=Get-CertificationConfigHash;boundRuntimeConfigSha256=$boundRuntimeConfigSha256;rollbackConfig=$boundRollbackConfigBinding;validationReceipt=$Receipt
             taskDefinitions=$Preflight.taskDefinitions;fixture=$Contract.Fixture;schemaCompatibility=$Contract.SchemaCompatibility;budgetAcknowledgement=$Contract.BudgetAcknowledgement
@@ -1375,7 +1425,9 @@ function Get-CertificationChainRootBinding {
     $binding = Assert-CertificationEvidenceReference $rootReference "certification.chainRoot"
     $rootJson = Get-Content -LiteralPath $binding.path -Raw | ConvertFrom-Json -Depth 60
     if ([string]$rootJson.type -ne "certification_chain_root" -or [string]$rootJson.chainId -ne $Contract.ChainId -or
-        [string]$rootJson.capacityTrack -ne $Contract.CapacityTrack) {
+        [string]$rootJson.capacityTrack -ne $Contract.CapacityTrack -or
+        [string]$rootJson.workloadSchemaVersion -cne $Contract.WorkloadSchemaVersion -or
+        [string]$rootJson.workloadEndpointShapeSha256 -cne $Contract.WorkloadEndpointShapeSha256) {
         throw "Configured chain root does not match this stage and capacity track."
     }
     return [ordered]@{path=$binding.path;sha256=$binding.sha256;created=$false}
@@ -1457,6 +1509,55 @@ function Assert-CertificationAttestedStageEvidence {
     }
 }
 
+function Test-CertificationTerminalTileBatchContract {
+    param(
+        $Workload,
+        [string]$ExpectedStage,
+        [string]$ExpectedSchemaVersion,
+        [string]$ExpectedEndpointShapeSha256
+    )
+    if ($null -eq $Workload -or $ExpectedStage -notin @("500","800","endurance","burst")) { return $false }
+    $tileBatch = Get-CertificationValue $Workload "tileBatch"
+    if ($null -eq $tileBatch) { return $false }
+    try {
+        $expectedStudentsPerCohort = if ($ExpectedStage -eq "500") { 25 } else { 40 }
+        $teacherCohorts = [int](Get-CertificationValue $tileBatch "teacherCohorts" -1)
+        $studentsPerCohort = [int](Get-CertificationValue $tileBatch "studentsPerCohort" -1)
+        $teacherTileAssignments = [int](Get-CertificationValue $tileBatch "teacherTileAssignments" -1)
+        $requestsPerCohortPerPoll = [int](Get-CertificationValue $tileBatch "requestsPerCohortPerPoll" -1)
+        $logicalOperationsPerPoll = [int](Get-CertificationValue $tileBatch "logicalOperationsPerPoll" -1)
+        $historyRequests = [int64](Get-CertificationValue $tileBatch "historyRequests" -1)
+        $screenshotRequests = [int64](Get-CertificationValue $tileBatch "screenshotRequests" -1)
+        $historyLogicalOperations = [int64](Get-CertificationValue $tileBatch "historyLogicalOperations" -1)
+        $screenshotLogicalOperations = [int64](Get-CertificationValue $tileBatch "screenshotLogicalOperations" -1)
+        $networkRequests = [int64](Get-CertificationValue $tileBatch "networkRequests" -1)
+        $logicalOperations = [int64](Get-CertificationValue $tileBatch "logicalOperations" -1)
+        $screenshotAttempts = [int64](Get-CertificationValue $tileBatch "screenshotAttempts" -1)
+        $screenshotSuccesses = [int64](Get-CertificationValue $tileBatch "screenshotSuccesses" -1)
+    }
+    catch { return $false }
+    return (
+        [string](Get-CertificationValue $Workload "stage" "") -ceq $ExpectedStage -and
+        [string](Get-CertificationValue $Workload "workloadSchemaVersion" "") -ceq $ExpectedSchemaVersion -and
+        [string](Get-CertificationValue $Workload "endpointShapeSha256" "") -ceq $ExpectedEndpointShapeSha256 -and
+        $teacherCohorts -eq 20 -and
+        $studentsPerCohort -eq $expectedStudentsPerCohort -and
+        $teacherTileAssignments -eq (20 * $expectedStudentsPerCohort) -and
+        $requestsPerCohortPerPoll -eq 2 -and
+        $logicalOperationsPerPoll -eq (2 * $teacherTileAssignments) -and
+        $historyRequests -gt 0 -and
+        $historyRequests -eq $screenshotRequests -and
+        ($historyRequests % $teacherCohorts) -eq 0 -and
+        $historyLogicalOperations -eq ($historyRequests * $studentsPerCohort) -and
+        $screenshotLogicalOperations -eq ($screenshotRequests * $studentsPerCohort) -and
+        $networkRequests -eq ($historyRequests + $screenshotRequests) -and
+        $logicalOperations -eq ($historyLogicalOperations + $screenshotLogicalOperations) -and
+        $screenshotAttempts -eq $screenshotLogicalOperations -and
+        $screenshotSuccesses -ge 0 -and
+        $screenshotSuccesses -le $screenshotAttempts
+    )
+}
+
 function Assert-CertificationChainContinuity {
     param($Config, $Contract)
     if ($null -eq $Contract) { return }
@@ -1475,6 +1576,8 @@ function Assert-CertificationChainContinuity {
         [string]$root.phase -ne "Waf" -or [string]$root.stage -ne "500" -or [string]$root.supervisionKind -ne "Load" -or
         [string]$root.capacityTrack -ne $Contract.CapacityTrack -or [string]$root.applicationGitSha -ne $Contract.ApplicationGitSha -or
         [string]$root.deployedImageDigest -ne $Contract.DeployedImageDigest -or [string]$root.controllerGitSha -ne $Contract.ControllerGitSha -or
+        [string]$root.workloadSchemaVersion -cne $Contract.WorkloadSchemaVersion -or
+        [string]$root.workloadEndpointShapeSha256 -cne $Contract.WorkloadEndpointShapeSha256 -or
         (ConvertTo-CertificationComparableJson $root.controllerHashes) -cne (ConvertTo-CertificationComparableJson $Contract.ControllerHashes)) {
         throw "Certification chain root identity/controller continuity failed."
     }
@@ -1491,6 +1594,8 @@ function Assert-CertificationChainContinuity {
         [string]$envelope.chainId -ne $Contract.ChainId -or
         [string]$envelope.applicationGitSha -ne $Contract.ApplicationGitSha -or
         [string]$envelope.deployedImageDigest -ne $Contract.DeployedImageDigest -or
+        [string]$envelope.workloadSchemaVersion -cne $Contract.WorkloadSchemaVersion -or
+        [string]$envelope.workloadEndpointShapeSha256 -cne $Contract.WorkloadEndpointShapeSha256 -or
         [string]$envelope.controllerGitSha -ne $Contract.ControllerGitSha -or
         (ConvertTo-CertificationComparableJson $envelope.controllerHashes) -cne (ConvertTo-CertificationComparableJson $Contract.ControllerHashes) -or
         [string]$envelope.supervisionKind -notin @("Load","MonitorOnly")) {
@@ -1512,6 +1617,8 @@ function Assert-CertificationChainContinuity {
         [string]$attestation.chainRoot.sha256 -ne $rootBinding.sha256 -or
         [string]$attestation.applicationGitSha -ne $Contract.ApplicationGitSha -or
         [string]$attestation.deployedImageDigest -ne $Contract.DeployedImageDigest -or
+        [string]$attestation.workloadSchemaVersion -cne $Contract.WorkloadSchemaVersion -or
+        [string]$attestation.workloadEndpointShapeSha256 -cne $Contract.WorkloadEndpointShapeSha256 -or
         [string]$attestation.controllerGitSha -ne $Contract.ControllerGitSha -or
         (ConvertTo-CertificationComparableJson $attestation.controllerHashes) -cne (ConvertTo-CertificationComparableJson $Contract.ControllerHashes)) {
         throw "Predecessor stage attestation identity/root/controller continuity failed."
@@ -1533,7 +1640,7 @@ function Assert-CertificationChainContinuity {
             [string]$attestation.supervisionKind -ne "Load" -or [string]$root.runId -ne [string]$envelope.runId){
             throw "The first accepted predecessor must be the exact fresh Waf/500 chain-root stage."
         }
-        foreach($field in @("operatorConfigSha256","boundRuntimeConfigSha256","rollbackConfig","validationReceipt","taskDefinitions","fixture","generatorPublicIpv4","datastorePosture","networkPosture","alarms","schedules","rollbackIdentities")){
+        foreach($field in @("workloadSchemaVersion","workloadEndpointShapeSha256","operatorConfigSha256","boundRuntimeConfigSha256","rollbackConfig","validationReceipt","taskDefinitions","fixture","generatorPublicIpv4","datastorePosture","networkPosture","alarms","schedules","rollbackIdentities")){
             if((ConvertTo-CertificationComparableJson (Get-CertificationValue $root $field)) -cne
                 (ConvertTo-CertificationComparableJson (Get-CertificationValue $attestation $field))){
                 throw "Waf/500 chain root field '$field' differs from its supervisor-sealed stage attestation."
@@ -1542,9 +1649,14 @@ function Assert-CertificationChainContinuity {
     }
     if ([string]$monitor.runId -ne [string]$envelope.runId -or [string]$monitor.phase -ne [string]$envelope.phase -or
         [string]$monitor.status -ne "completed" -or $monitor.postureAccepted -ne $true -or $monitor.acceptance.passed -ne $true -or
+        (Get-CertificationValue $monitor "diagnosticOnly" $false) -ne $false -or
+        (Get-CertificationValue $monitor "certificationEligible" $true) -ne $true -or
         [string]$envelope.terminalMonitorResult.runId -ne [string]$monitor.runId -or
         [string]$envelope.terminalMonitorResult.phase -ne [string]$monitor.phase -or
-        [string](Get-CertificationValue $monitor.workload "stage" "") -ne [string](Get-CertificationValue $envelope "stage" "")) {
+        [string](Get-CertificationValue $monitor.workload "stage" "") -ne [string](Get-CertificationValue $envelope "stage" "") -or
+        [string](Get-CertificationValue $monitor.workload "workloadSchemaVersion" "") -cne $Contract.WorkloadSchemaVersion -or
+        [string](Get-CertificationValue $monitor.workload "endpointShapeSha256" "") -cne $Contract.WorkloadEndpointShapeSha256 -or
+        -not (Test-CertificationTerminalTileBatchContract $monitor.workload ([string]$envelope.stage) $Contract.WorkloadSchemaVersion $Contract.WorkloadEndpointShapeSha256)) {
         throw "Predecessor terminal monitor result is not bound to its supervisor envelope and accepted stage."
     }
 }
@@ -1562,6 +1674,7 @@ function Write-CertificationStageAttestation {
         attestedAtUtc=[DateTimeOffset]::UtcNow.ToString("o");chainRoot=$ChainRoot;validationReceipt=$Receipt
         predecessor=if(Get-CertificationValue $config "predecessorResultPath"){@{path=[string]$config.predecessorResultPath;sha256=[string]$config.predecessorResultSha256}}else{$null}
         applicationGitSha=$Contract.ApplicationGitSha;deployedImageDigest=$Contract.DeployedImageDigest
+        workloadSchemaVersion=$Contract.WorkloadSchemaVersion;workloadEndpointShapeSha256=$Contract.WorkloadEndpointShapeSha256
         controllerGitSha=$Contract.ControllerGitSha;controllerHashes=$Contract.ControllerHashes
         operatorConfigSha256=Get-CertificationConfigHash;boundRuntimeConfigSha256=$boundRuntimeConfigSha256;rollbackConfig=$boundRollbackConfigBinding
         taskDefinitions=$Preflight.taskDefinitions;fixture=$Contract.Fixture;generatorPublicIpv4=$GeneratorIp
@@ -1847,12 +1960,19 @@ try {
     if ($SupervisionKind -eq "Load") {
         $harnessEnvironment = @{
             LOAD_RUN_ID                          = $runId
+            LOAD_DIAGNOSTIC_ONLY                 = "false"
             LOAD_STAGE                           = [string]$config.workload.stage
             LOAD_EXTERNAL_PROGRESS_PATH          = $progressPath
             LOAD_EXTERNAL_SUMMARY_PATH           = $summaryPath
             LOAD_SUPERVISOR_READY_PATH            = $harnessReadyPath
             LOAD_SUPERVISOR_START_GATE_PATH       = $harnessStartGatePath
             LOAD_SUPERVISOR_START_GATE_TIMEOUT_MS = [string](($monitorHeartbeatStaleSeconds + 30) * 1000)
+            LOAD_WORKLOAD_SCHEMA_VERSION            = $script:RequiredWorkloadSchemaVersion
+            LOAD_TILE_HISTORY_PATH                  = "/api/classpilot/tiles/history"
+            LOAD_TILE_SCREENSHOTS_PATH              = "/api/classpilot/tiles/screenshots"
+            LOAD_TEACHER_PATHS                      = "/api/students-aggregated"
+            LOAD_DASHBOARD_PATHS                    = ""
+            LOAD_SCREENSHOT_GET_PATH_TEMPLATE       = ""
         }
         $harness = Start-Process -FilePath $node.Source -ArgumentList @((Quote-ProcessArgument $runtimeHarnessScript)) -Environment $harnessEnvironment -PassThru -NoNewWindow `
             -RedirectStandardOutput $harnessStdout -RedirectStandardError $harnessStderr
@@ -2051,8 +2171,15 @@ try {
     $terminalMonitor = Get-Content -LiteralPath $monitorResultPath -Raw | ConvertFrom-Json -Depth 60
     if ([string]$terminalMonitor.runId -ne $runId -or [string]$terminalMonitor.phase -ne [string]$config.phase -or
         [string]$terminalMonitor.status -ne "completed" -or $terminalMonitor.postureAccepted -ne $true -or
-        $terminalMonitor.acceptance.passed -ne $true) {
+        $terminalMonitor.acceptance.passed -ne $true -or
+        (Get-CertificationValue $terminalMonitor "diagnosticOnly" $false) -ne $false -or
+        (Get-CertificationValue $terminalMonitor "certificationEligible" $true) -ne $true) {
         throw "The monitor terminal result is not accepted evidence for this exact supervised stage."
+    }
+    if ($null -ne $certificationContract -and -not (Test-CertificationTerminalTileBatchContract `
+        $terminalMonitor.workload ([string]$config.workload.stage) `
+        $certificationContract.WorkloadSchemaVersion $certificationContract.WorkloadEndpointShapeSha256)) {
+        throw "The monitor terminal result does not prove the exact reviewed tile-batch workload contract."
     }
     if ($null -ne $certificationContract -and ($null -eq $chainRootBinding -or $null -eq $stageAttestationBinding)) {
         throw "Certification stage/root attestations were not sealed before traffic."
@@ -2072,6 +2199,8 @@ try {
         chainId = if ($null -eq $certificationContract) { $null } else { $certificationContract.ChainId }
         applicationGitSha = if ($null -eq $certificationContract) { $null } else { $certificationContract.ApplicationGitSha }
         deployedImageDigest = if ($null -eq $certificationContract) { $null } else { $certificationContract.DeployedImageDigest }
+        workloadSchemaVersion = if ($null -eq $certificationContract) { $null } else { $certificationContract.WorkloadSchemaVersion }
+        workloadEndpointShapeSha256 = if ($null -eq $certificationContract) { $null } else { $certificationContract.WorkloadEndpointShapeSha256 }
         controllerGitSha = if ($null -eq $certificationContract) { $null } else { $certificationContract.ControllerGitSha }
         controllerHashes = if ($null -eq $certificationContract) { $null } else { $certificationContract.ControllerHashes }
         operatorConfigSha256 = if ($null -eq $certificationContract) { $null } else { Get-CertificationConfigHash }

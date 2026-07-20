@@ -1,0 +1,593 @@
+import type { SQL } from "drizzle-orm";
+import { PgDialect } from "drizzle-orm/pg-core";
+
+export const CLASSPILOT_TILE_AUTHORIZATION_PLAN_SAMPLES = 20;
+export const CLASSPILOT_TILE_AUTHORIZATION_PLAN_WARMUPS = 2;
+export const CLASSPILOT_TILE_AUTHORIZATION_PLAN_COHORT_SIZE = 40;
+export const CLASSPILOT_TILE_AUTHORIZATION_PLAN_P95_MS = 50;
+export const CLASSPILOT_TILE_AUTHORIZATION_PLAN_MAX_MS = 100;
+
+const MAX_SAMPLES = 100;
+const STATEMENT_TIMEOUT_MS = 5_000;
+const LOCK_TIMEOUT_MS = 1_000;
+
+export type ClasspilotTilePlanScenarioLabel =
+  | "teacher.live"
+  | "teacher.history"
+  | "co_teacher.live"
+  | "co_teacher.history"
+  | "office_staff.live"
+  | "office_staff.history";
+
+type ClasspilotTilePlanScenarioKind =
+  | "teacher"
+  | "co_teacher"
+  | "office_staff";
+
+type ClasspilotTilePlanMode = "live" | "history";
+
+type QueryResult<Row extends Record<string, unknown> = Record<string, unknown>> = {
+  rows: Row[];
+};
+
+export type ClasspilotTilePlanQueryClient = {
+  query<Row extends Record<string, unknown> = Record<string, unknown>>(
+    text: string,
+    values?: readonly unknown[]
+  ): Promise<QueryResult<Row>>;
+};
+
+export type ClasspilotTileAuthorizationQueryBuilder = (
+  options: {
+    schoolId: string;
+    staffId: string;
+    role: "teacher" | "office_staff";
+  },
+  accessMode: ClasspilotTilePlanMode,
+  studentIds: readonly string[]
+) => SQL;
+
+type DiscoveredScenario = {
+  label: ClasspilotTilePlanScenarioLabel;
+  kind: ClasspilotTilePlanScenarioKind;
+  mode: ClasspilotTilePlanMode;
+  schoolId: string;
+  staffId: string;
+  studentIds: string[];
+};
+
+export type ClasspilotTilePlanEvidence = {
+  executionMs: number;
+  tempReadBlocks: number;
+  tempWrittenBlocks: number;
+  subPlanNodes: number;
+};
+
+export type ClasspilotTilePlanScenarioSummary = {
+  label: ClasspilotTilePlanScenarioLabel;
+  cohortSize: number;
+  samples: number;
+  p95Ms: number;
+  maxMs: number;
+  tempReadBlocks: number;
+  tempWrittenBlocks: number;
+  subPlanNodes: number;
+  passed: boolean;
+};
+
+export type ClasspilotTileAuthorizationPlanReport = {
+  status: "passed" | "failed";
+  precheck: {
+    invalidTeachingSessionSchools: number;
+  };
+  samples: number;
+  warmups: number;
+  cohortSize: number;
+  thresholds: {
+    p95Ms: number;
+    maxMs: number;
+    tempReadBlocks: 0;
+    tempWrittenBlocks: 0;
+    subPlanNodes: 0;
+  };
+  scenarios: ClasspilotTilePlanScenarioSummary[];
+};
+
+export class ClasspilotTileAuthorizationPlanCheckError extends Error {
+  constructor(
+    readonly failureCode:
+      | "invalid_configuration"
+      | "teaching_session_school_integrity_failed"
+      | "representative_scenario_missing"
+      | "invalid_explain_document",
+    readonly labels: ClasspilotTilePlanScenarioLabel[] = [],
+    readonly invalidCount = 0
+  ) {
+    super(failureCode);
+    this.name = "ClasspilotTileAuthorizationPlanCheckError";
+  }
+}
+
+const SCENARIOS: ReadonlyArray<{
+  label: ClasspilotTilePlanScenarioLabel;
+  kind: ClasspilotTilePlanScenarioKind;
+  mode: ClasspilotTilePlanMode;
+}> = [
+  { label: "teacher.live", kind: "teacher", mode: "live" },
+  { label: "teacher.history", kind: "teacher", mode: "history" },
+  { label: "co_teacher.live", kind: "co_teacher", mode: "live" },
+  { label: "co_teacher.history", kind: "co_teacher", mode: "history" },
+  { label: "office_staff.live", kind: "office_staff", mode: "live" },
+  { label: "office_staff.history", kind: "office_staff", mode: "history" },
+];
+
+const TEACHING_SESSION_SCHOOL_PRECHECK_SQL = `
+  SELECT count(*)::integer AS invalid_count
+  FROM teaching_sessions AS session
+  LEFT JOIN groups AS class_group ON class_group.id = session.group_id
+  WHERE session.school_id IS NULL
+     OR class_group.id IS NULL
+     OR session.school_id IS DISTINCT FROM class_group.school_id
+`;
+
+function modeJoin(mode: ClasspilotTilePlanMode): string {
+  if (mode === "live") {
+    return `
+      INNER JOIN student_sessions AS student_session
+        ON student_session.student_id = candidate.student_id
+       AND student_session.is_active = true
+      INNER JOIN devices AS device
+        ON device.device_id = student_session.device_id
+       AND device.school_id = candidate.school_id
+    `;
+  }
+  return `
+    INNER JOIN student_devices AS student_device
+      ON student_device.student_id = candidate.student_id
+    INNER JOIN devices AS device
+      ON device.device_id = student_device.device_id
+     AND device.school_id = candidate.school_id
+  `;
+}
+
+function authorizedCandidateSql(kind: ClasspilotTilePlanScenarioKind): string {
+  if (kind === "teacher") {
+    return `
+      SELECT DISTINCT
+        class_group.school_id,
+        session.teacher_id AS staff_id,
+        roster.student_id
+      FROM teaching_sessions AS session
+      INNER JOIN groups AS class_group
+        ON class_group.id = session.group_id
+       AND class_group.school_id = session.school_id
+      INNER JOIN school_memberships AS staff_membership
+        ON staff_membership.user_id = session.teacher_id
+       AND staff_membership.school_id = class_group.school_id
+       AND staff_membership.role = 'teacher'
+       AND staff_membership.status = 'active'
+      INNER JOIN group_students AS roster ON roster.group_id = session.group_id
+      INNER JOIN students AS student
+        ON student.id = roster.student_id
+       AND student.school_id = class_group.school_id
+      WHERE session.session_mode = 'live'
+        AND session.end_time IS NULL
+        AND NOT EXISTS (
+          SELECT 1
+          FROM classpilot_supervision_students AS supervised
+          INNER JOIN classpilot_supervision_contexts AS context
+            ON context.id = supervised.context_id
+           AND context.school_id = class_group.school_id
+           AND context.status = 'active'
+           AND context.ends_at > now()
+          WHERE supervised.school_id = class_group.school_id
+            AND supervised.student_id = roster.student_id
+            AND supervised.released_at IS NULL
+            AND context.assigned_staff_id <> session.teacher_id
+        )
+    `;
+  }
+  if (kind === "co_teacher") {
+    return `
+      SELECT DISTINCT
+        class_group.school_id,
+        co_teacher.teacher_id AS staff_id,
+        roster.student_id
+      FROM teaching_sessions AS session
+      INNER JOIN groups AS class_group
+        ON class_group.id = session.group_id
+       AND class_group.school_id = session.school_id
+      INNER JOIN group_teachers AS co_teacher
+        ON co_teacher.group_id = session.group_id
+       AND co_teacher.teacher_id <> session.teacher_id
+       AND co_teacher.role IN ('co-teacher', 'co_teacher')
+      INNER JOIN school_memberships AS staff_membership
+        ON staff_membership.user_id = co_teacher.teacher_id
+       AND staff_membership.school_id = class_group.school_id
+       AND staff_membership.role = 'teacher'
+       AND staff_membership.status = 'active'
+      INNER JOIN group_students AS roster ON roster.group_id = session.group_id
+      INNER JOIN students AS student
+        ON student.id = roster.student_id
+       AND student.school_id = class_group.school_id
+      WHERE session.session_mode = 'live'
+        AND session.end_time IS NULL
+        AND NOT EXISTS (
+          SELECT 1
+          FROM classpilot_supervision_students AS supervised
+          INNER JOIN classpilot_supervision_contexts AS context
+            ON context.id = supervised.context_id
+           AND context.school_id = class_group.school_id
+           AND context.status = 'active'
+           AND context.ends_at > now()
+          WHERE supervised.school_id = class_group.school_id
+            AND supervised.student_id = roster.student_id
+            AND supervised.released_at IS NULL
+            AND context.assigned_staff_id <> co_teacher.teacher_id
+        )
+    `;
+  }
+  return `
+    SELECT DISTINCT
+      context.school_id,
+      context.assigned_staff_id AS staff_id,
+      supervised.student_id
+    FROM classpilot_supervision_contexts AS context
+    INNER JOIN classpilot_supervision_students AS supervised
+      ON supervised.context_id = context.id
+     AND supervised.school_id = context.school_id
+     AND supervised.released_at IS NULL
+    INNER JOIN students AS student
+      ON student.id = supervised.student_id
+     AND student.school_id = context.school_id
+    INNER JOIN school_memberships AS staff_membership
+      ON staff_membership.user_id = context.assigned_staff_id
+     AND staff_membership.school_id = context.school_id
+     AND staff_membership.role = 'office_staff'
+     AND staff_membership.status = 'active'
+    WHERE context.status = 'active'
+      AND context.ends_at > now()
+  `;
+}
+
+function discoverySql(
+  kind: ClasspilotTilePlanScenarioKind,
+  mode: ClasspilotTilePlanMode
+): string {
+  return `
+    WITH authorized_candidate AS MATERIALIZED (
+      ${authorizedCandidateSql(kind)}
+    ),
+    accessible_candidate AS MATERIALIZED (
+      SELECT DISTINCT candidate.school_id, candidate.staff_id, candidate.student_id
+      FROM authorized_candidate AS candidate
+      ${modeJoin(mode)}
+    ),
+    ranked_candidate AS (
+      SELECT
+        candidate.*,
+        row_number() OVER (
+          PARTITION BY candidate.school_id, candidate.staff_id
+          ORDER BY candidate.student_id
+        ) AS student_rank,
+        count(*) OVER (
+          PARTITION BY candidate.school_id, candidate.staff_id
+        ) AS cohort_count
+      FROM accessible_candidate AS candidate
+    )
+    SELECT
+      school_id,
+      staff_id,
+      array_agg(student_id ORDER BY student_rank) AS student_ids
+    FROM ranked_candidate
+    WHERE student_rank <= $1
+      AND cohort_count >= $1
+    GROUP BY school_id, staff_id, cohort_count
+    ORDER BY cohort_count DESC
+    LIMIT 1
+  `;
+}
+
+async function beginReadOnly(client: ClasspilotTilePlanQueryClient): Promise<void> {
+  await client.query("BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED READ ONLY");
+  await client.query(
+    "SELECT set_config('statement_timeout', $1, true)",
+    [`${STATEMENT_TIMEOUT_MS}ms`]
+  );
+  await client.query(
+    "SELECT set_config('lock_timeout', $1, true)",
+    [`${LOCK_TIMEOUT_MS}ms`]
+  );
+}
+
+async function rollbackQuietly(client: ClasspilotTilePlanQueryClient): Promise<void> {
+  try {
+    await client.query("ROLLBACK");
+  } catch {
+    // The caller reports only a sanitized failure code. Never print driver SQL.
+  }
+}
+
+async function discoverScenarios(
+  client: ClasspilotTilePlanQueryClient,
+  cohortSize: number
+): Promise<{
+  invalidTeachingSessionSchools: number;
+  scenarios: DiscoveredScenario[];
+}> {
+  await beginReadOnly(client);
+  try {
+    await client.query("SELECT set_config('app.is_super', 'on', true)");
+    const integrity = await client.query<{ invalid_count: number | string }>(
+      TEACHING_SESSION_SCHOOL_PRECHECK_SQL
+    );
+    const invalidTeachingSessionSchools = Number(
+      integrity.rows[0]?.invalid_count ?? 0
+    );
+    if (!Number.isInteger(invalidTeachingSessionSchools)) {
+      throw new ClasspilotTileAuthorizationPlanCheckError(
+        "invalid_explain_document"
+      );
+    }
+    if (invalidTeachingSessionSchools > 0) {
+      throw new ClasspilotTileAuthorizationPlanCheckError(
+        "teaching_session_school_integrity_failed",
+        [],
+        invalidTeachingSessionSchools
+      );
+    }
+
+    const discovered: DiscoveredScenario[] = [];
+    const missing: ClasspilotTilePlanScenarioLabel[] = [];
+    for (const scenario of SCENARIOS) {
+      const result = await client.query<{
+        school_id: string;
+        staff_id: string;
+        student_ids: string[];
+      }>(discoverySql(scenario.kind, scenario.mode), [cohortSize]);
+      const row = result.rows[0];
+      if (
+        !row ||
+        typeof row.school_id !== "string" ||
+        typeof row.staff_id !== "string" ||
+        !Array.isArray(row.student_ids) ||
+        row.student_ids.length !== cohortSize ||
+        row.student_ids.some((studentId) => typeof studentId !== "string")
+      ) {
+        missing.push(scenario.label);
+        continue;
+      }
+      discovered.push({
+        ...scenario,
+        schoolId: row.school_id,
+        staffId: row.staff_id,
+        studentIds: row.student_ids,
+      });
+    }
+    if (missing.length > 0) {
+      throw new ClasspilotTileAuthorizationPlanCheckError(
+        "representative_scenario_missing",
+        missing
+      );
+    }
+    await client.query("COMMIT");
+    return { invalidTeachingSessionSchools, scenarios: discovered };
+  } catch (error) {
+    await rollbackQuietly(client);
+    throw error;
+  }
+}
+
+function numericField(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function traversePlan(value: unknown, evidence: ClasspilotTilePlanEvidence): void {
+  if (Array.isArray(value)) {
+    for (const child of value) traversePlan(child, evidence);
+    return;
+  }
+  if (!value || typeof value !== "object") return;
+  const node = value as Record<string, unknown>;
+  evidence.tempReadBlocks = Math.max(
+    evidence.tempReadBlocks,
+    numericField(node["Temp Read Blocks"])
+  );
+  evidence.tempWrittenBlocks = Math.max(
+    evidence.tempWrittenBlocks,
+    numericField(node["Temp Written Blocks"])
+  );
+  if (
+    node["Parent Relationship"] === "SubPlan" ||
+    (typeof node["Subplan Name"] === "string" &&
+      /^SubPlan\b/i.test(node["Subplan Name"]))
+  ) {
+    evidence.subPlanNodes += 1;
+  }
+  for (const child of Object.values(node)) traversePlan(child, evidence);
+}
+
+export function inspectClasspilotTileExplainDocument(
+  raw: unknown
+): ClasspilotTilePlanEvidence {
+  let parsed = raw;
+  if (typeof raw === "string") {
+    try {
+      parsed = JSON.parse(raw) as unknown;
+    } catch {
+      throw new ClasspilotTileAuthorizationPlanCheckError(
+        "invalid_explain_document"
+      );
+    }
+  }
+  const document = Array.isArray(parsed) ? parsed[0] : undefined;
+  if (!document || typeof document !== "object") {
+    throw new ClasspilotTileAuthorizationPlanCheckError(
+      "invalid_explain_document"
+    );
+  }
+  const executionMs = numericField(
+    (document as Record<string, unknown>)["Execution Time"]
+  );
+  if (executionMs <= 0) {
+    throw new ClasspilotTileAuthorizationPlanCheckError(
+      "invalid_explain_document"
+    );
+  }
+  const evidence: ClasspilotTilePlanEvidence = {
+    executionMs,
+    tempReadBlocks: 0,
+    tempWrittenBlocks: 0,
+    subPlanNodes: 0,
+  };
+  traversePlan((document as Record<string, unknown>)["Plan"], evidence);
+  return evidence;
+}
+
+function roundMilliseconds(value: number): number {
+  return Math.round(value * 1_000) / 1_000;
+}
+
+export function summarizeClasspilotTilePlanScenario(
+  label: ClasspilotTilePlanScenarioLabel,
+  cohortSize: number,
+  samples: readonly ClasspilotTilePlanEvidence[]
+): ClasspilotTilePlanScenarioSummary {
+  if (samples.length < CLASSPILOT_TILE_AUTHORIZATION_PLAN_SAMPLES) {
+    throw new ClasspilotTileAuthorizationPlanCheckError(
+      "invalid_configuration"
+    );
+  }
+  const timings = samples.map((sample) => sample.executionMs).sort((a, b) => a - b);
+  const p95Index = Math.max(0, Math.ceil(timings.length * 0.95) - 1);
+  const p95Ms = timings[p95Index] ?? Number.POSITIVE_INFINITY;
+  const maxMs = timings[timings.length - 1] ?? Number.POSITIVE_INFINITY;
+  const tempReadBlocks = Math.max(...samples.map((sample) => sample.tempReadBlocks));
+  const tempWrittenBlocks = Math.max(...samples.map((sample) => sample.tempWrittenBlocks));
+  const subPlanNodes = Math.max(...samples.map((sample) => sample.subPlanNodes));
+  return {
+    label,
+    cohortSize,
+    samples: samples.length,
+    p95Ms: roundMilliseconds(p95Ms),
+    maxMs: roundMilliseconds(maxMs),
+    tempReadBlocks,
+    tempWrittenBlocks,
+    subPlanNodes,
+    passed:
+      p95Ms <= CLASSPILOT_TILE_AUTHORIZATION_PLAN_P95_MS &&
+      maxMs <= CLASSPILOT_TILE_AUTHORIZATION_PLAN_MAX_MS &&
+      tempReadBlocks === 0 &&
+      tempWrittenBlocks === 0 &&
+      subPlanNodes === 0,
+  };
+}
+
+function compileExplain(query: SQL): { text: string; params: unknown[] } {
+  const compiled = new PgDialect().sqlToQuery(query);
+  return {
+    text: `EXPLAIN (ANALYZE, BUFFERS, WAL, SETTINGS, FORMAT JSON) ${compiled.sql}`,
+    params: compiled.params,
+  };
+}
+
+async function measureScenario(
+  client: ClasspilotTilePlanQueryClient,
+  buildQuery: ClasspilotTileAuthorizationQueryBuilder,
+  scenario: DiscoveredScenario,
+  samples: number
+): Promise<ClasspilotTilePlanScenarioSummary> {
+  await beginReadOnly(client);
+  try {
+    await client.query("SELECT set_config('app.is_super', 'off', true)");
+    await client.query("SELECT set_config('app.school_id', $1, true)", [
+      scenario.schoolId,
+    ]);
+    const query = buildQuery(
+      {
+        schoolId: scenario.schoolId,
+        staffId: scenario.staffId,
+        role: scenario.kind === "office_staff" ? "office_staff" : "teacher",
+      },
+      scenario.mode,
+      scenario.studentIds
+    );
+    const explain = compileExplain(query);
+    for (
+      let warmup = 0;
+      warmup < CLASSPILOT_TILE_AUTHORIZATION_PLAN_WARMUPS;
+      warmup += 1
+    ) {
+      await client.query(explain.text, explain.params);
+    }
+    const evidence: ClasspilotTilePlanEvidence[] = [];
+    for (let sample = 0; sample < samples; sample += 1) {
+      const result = await client.query<Record<string, unknown>>(
+        explain.text,
+        explain.params
+      );
+      evidence.push(
+        inspectClasspilotTileExplainDocument(result.rows[0]?.["QUERY PLAN"])
+      );
+    }
+    await client.query("COMMIT");
+    return summarizeClasspilotTilePlanScenario(
+      scenario.label,
+      scenario.studentIds.length,
+      evidence
+    );
+  } catch (error) {
+    await rollbackQuietly(client);
+    throw error;
+  }
+}
+
+export async function runClasspilotTileAuthorizationPlanCheck(options: {
+  client: ClasspilotTilePlanQueryClient;
+  buildQuery: ClasspilotTileAuthorizationQueryBuilder;
+  samples?: number;
+}): Promise<ClasspilotTileAuthorizationPlanReport> {
+  const samples = options.samples ?? CLASSPILOT_TILE_AUTHORIZATION_PLAN_SAMPLES;
+  if (
+    !Number.isInteger(samples) ||
+    samples < CLASSPILOT_TILE_AUTHORIZATION_PLAN_SAMPLES ||
+    samples > MAX_SAMPLES
+  ) {
+    throw new ClasspilotTileAuthorizationPlanCheckError(
+      "invalid_configuration"
+    );
+  }
+  const discovery = await discoverScenarios(
+    options.client,
+    CLASSPILOT_TILE_AUTHORIZATION_PLAN_COHORT_SIZE
+  );
+  const scenarios: ClasspilotTilePlanScenarioSummary[] = [];
+  for (const scenario of discovery.scenarios) {
+    scenarios.push(
+      await measureScenario(
+        options.client,
+        options.buildQuery,
+        scenario,
+        samples
+      )
+    );
+  }
+  return {
+    status: scenarios.every((scenario) => scenario.passed) ? "passed" : "failed",
+    precheck: {
+      invalidTeachingSessionSchools:
+        discovery.invalidTeachingSessionSchools,
+    },
+    samples,
+    warmups: CLASSPILOT_TILE_AUTHORIZATION_PLAN_WARMUPS,
+    cohortSize: CLASSPILOT_TILE_AUTHORIZATION_PLAN_COHORT_SIZE,
+    thresholds: {
+      p95Ms: CLASSPILOT_TILE_AUTHORIZATION_PLAN_P95_MS,
+      maxMs: CLASSPILOT_TILE_AUTHORIZATION_PLAN_MAX_MS,
+      tempReadBlocks: 0,
+      tempWrittenBlocks: 0,
+      subPlanNodes: 0,
+    },
+    scenarios,
+  };
+}

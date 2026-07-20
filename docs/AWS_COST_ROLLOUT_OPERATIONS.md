@@ -304,14 +304,36 @@ reverification would compress the run window, defer and prepare a new run.
 
 Every launch run includes ten second-school canaries first in the manifest,
 20 distinct teacher sessions, shared-IP traffic, authenticated WebSockets and
-ACKs, forced reconnects, dashboard/history/screenshot GETs, and one-minute
+ACKs, forced reconnects, dashboard reads, student-ID tile batches, and one-minute
 JSONL progress. Teacher WebSocket startups, dashboard polls, and isolation
 probes are staggered across their real polling intervals. After screenshot
-cache warm-up, each teacher's history and screenshot reads fire together as one
-class-sized browser burst, while the 20 independent teacher cohorts are
-staggered across the 30-second tile polling interval. Any valid redirect/4xx, known foreign tenant identifier, or
+cache warm-up, each teacher issues exactly one `POST /api/classpilot/tiles/history`
+and one `POST /api/classpilot/tiles/screenshots` request for its 25- or
+40-student cohort. The two requests fire together, while the 20 independent
+cohorts are staggered across the 30-second tile polling interval. The harness
+still accounts for every returned/requested student as a logical history or
+screenshot operation, counts screenshot success per tile, and counts response
+bytes once per HTTP response. The old per-device history/screenshot requests
+remain only as explicit foreign-canary isolation probes. Any valid redirect/4xx, known foreign tenant identifier, or
 cross-school delivery writes `fatal_gate`, stops traffic, flushes evidence, and
 exits nonzero.
+
+Certification configs must bind
+`workload.workloadSchemaVersion="classpilot-tile-batch-v1"` and
+`workload.endpointShapeSha256="8e9f1942e4b3a27de7dd0571a9f60ffeb276c089e4baae96a885dba69e3233b2"`.
+The supervisor supplies the two reviewed endpoint paths to both preflight and
+traffic, seals the schema and endpoint-shape hash into the chain root, stage
+attestation, and terminal envelope, and rejects any historical per-device
+predecessor that lacks those bindings.
+The atomic load summary must repeat both bindings and prove exactly 20 tile
+cohorts, two requests per cohort per poll, 25 students per cohort for Waf/500
+or 40 for Waf/800, and history/screenshot logical counts equal to their batch
+request counts times the cohort size. The monitor copies that validated
+accounting into `workload.tileBatch` in its terminal result; the supervisor
+rejects a current or predecessor result when the accounting is missing or
+inconsistent. Any fresh-chain config generator must populate both workload
+fields shown below and verify the emitted monitor evidence before constructing
+the Waf/800 predecessor link.
 
 An isolation probe passes only on the reviewed `404`. A `2xx` response is a
 confirmed foreign-resource access failure and stops immediately. A timeout or
@@ -396,6 +418,7 @@ Use these exact WAF CloudWatch dimensions; Validate mode confirms them against
 the deployed Web ACL before monitoring begins:
 
 - `wafWebAclName=schoolpilot-production-cloudfront-waf`
+- `wafDeviceClassifierMetricName=schoolpilot-production-device-ingest-classifier`
 - `wafDeviceRuleMetricName=schoolpilot-production-device-ingest-rate-limit`
 - `wafApiRuleMetricName=schoolpilot-production-api-rate-limit`
 
@@ -422,6 +445,15 @@ root.
 ```json
 {
   "rollbackConfigPath": "C:/absolute/evidence/reviewed-rollback.json",
+  "workload": {
+    "stage": "500",
+    "devices": 510,
+    "durationSeconds": 1800,
+    "screenshotBytes": 40960,
+    "canaryDevices": 10,
+    "workloadSchemaVersion": "classpilot-tile-batch-v1",
+    "endpointShapeSha256": "8e9f1942e4b3a27de7dd0571a9f60ffeb276c089e4baae96a885dba69e3233b2"
+  },
   "resources": {
     "expectedRdsInstanceClass": "db.t4g.medium",
     "expectedActiveApiTaskDefinitionArn": "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:17",
@@ -613,19 +645,132 @@ API min 6/max 8 only for these night gates, require six healthy exact-digest
 targets and worker 1/1, and restore schedule-appropriate scaling after the
 terminal result. Do not add a separate 40-45% Waf/500 margin gate.
 
-Keep the heartbeat-index pivot as an unmerged, undeployed draft. It may be
-activated once only when an otherwise-valid Waf/800 fails solely the RDS CPU
-gate, one-minute Maximum is 65%-85% inclusive, PI shows heartbeat writes
-leading, and a representative stats-reset-bound observation window proves all
-six candidates unused. Merging it creates a new application SHA/digest and
-requires a new no-predecessor Waf/500 followed by Waf/800. If that chain still
-fails solely from database headroom, do not take another app iteration.
+The terminal r8 chain
+`optimized-medium-20260719T143700Z-b50f7656-d6f889bb-r8` is historical-only.
+Its Waf/800 evidence showed a mixed application/database failure: 1,502 HTTP
+503s in 47,226 requests (3.18%), 5,895/6,800 successful screenshots (86.69%),
+and three one-minute RDS CPU samples at 75.35%, 73.16%, and 72.93%. Performance
+Insights attributed the dominant database load to the per-tile live/history
+authorization reads, not heartbeat writes, Redis, WAF, I/O, purge, or rollup.
+The controller/evidence link succeeded; r8 is not a valid predecessor for the
+new batch workload.
 
-Go directly to the RDS capacity path when CPU exceeds 85%, heartbeat writes do
-not lead, index safety is unproven, or another strictly RDS-only class-capacity
-gate fails. Before resize, require the monitor amendment, explicit approval, a
-fresh price/Cost Explorer projection, PITR/orderability checks, and a new
-encrypted manual snapshot. Handle a pending OS update separately. The resize
+Exactly one bounded `db.t4g.medium` remediation is authorized: rewrite the
+tile authorization query as set-based SQL, add only plan-proven indexes, and
+replace each class's per-student fan-out with the two student-ID batch reads.
+This authorization does **not** permit an RDS resize, admission-timeout or pool
+change, workload-duration change, purge/rollup exception, or threshold
+relaxation. Keep RDS `db.t4g.medium`, Redis `cache.t4g.small`, WAF `BLOCK`, the
+private ECS/NAT posture, existing schedules, and the 512 CPU / 2048 MiB API
+posture. The backward-compatible backend deploys before the matching frontend,
+both from one new release commit.
+
+For this one remediation, deploy the backend with the release-bound plan gate:
+
+```bash
+./scripts/deploy.sh production --backend --activate-emergency \
+  --classpilot-tile-auth-plan-gate
+```
+
+The gate uses the freshly registered digest-pinned emergency revision and the
+service network configuration. It must produce the fixed six-scenario,
+40-student, 20-sample sanitized aggregate with the teaching-session school
+precheck at zero and every unchanged plan threshold passing. It runs before
+the autoscaling hold, migration, or service update and cannot start during the
+actual 01:15-02:15 America/New_York purge/rollup window. There is no bypass or
+sample/cohort/threshold override. A failed, timed-out, malformed, or missing
+report stops the deploy without changing either ECS service.
+
+Before certification, run one 30-minute diagnostic-only Waf/800 using the new
+batch workload. Every RDS CPU minute must be below 65%; HTTP 5xx and network
+errors must each remain below 0.1%; screenshot tile success must be at least
+99%; admission-timeout 503s must be zero; screenshot-batch p95 must be at most
+750 ms and history-batch p95 at most one second; and authorization SQL must no
+longer dominate Performance Insights. Diagnostic evidence cannot seed a
+certification chain.
+
+Use `scripts/load/start-waf800-batch-diagnostic.ps1` for that one run. Its
+operator config is external and hash-bound and must declare
+`diagnosticOnly=true`, the exact 810/1800/40960/10 workload, the batch schema
+and endpoint-shape hash above, the new release SHA/digest/revisioned API and
+worker task definitions, three role-tagged private harness artifacts with
+SHA-256 bindings, the expected generator IPv4, and the same exact `resources`
+posture used by the Waf monitor. Add `resources.accountId=135775632425` and put
+the existing SNS topic ARN at `resources.notificationTopicArn`. Bind the exact
+production CloudFront distribution at `resources.cloudFrontDistributionId`;
+the controller proves that distribution still serves the `school-pilot.net`
+alias and is associated with the bound global WebACL. Bind the classifier
+metric at `resources.wafDeviceClassifierMetricName=schoolpilot-production-device-ingest-classifier`.
+Do not add a
+`certification` or `predecessorResultPath` property.
+
+```powershell
+$config = "$env:LOCALAPPDATA\SchoolPilot\load-gates\diagnostic-waf800-batch.json"
+$sha = (Get-FileHash -LiteralPath $config -Algorithm SHA256).Hash.ToLowerInvariant()
+pwsh -NoProfile -File scripts/load/start-waf800-batch-diagnostic.ps1 `
+  -ConfigPath $config -ExpectedConfigSha256 $sha -Mode Validate
+pwsh -NoProfile -File scripts/load/start-waf800-batch-diagnostic.ps1 `
+  -ConfigPath $config -ExpectedConfigSha256 $sha -Mode Run
+```
+
+`Validate` is non-mutating: its harness preflight is captured in memory and it
+does not create the evidence directory or any run artifact. It proves the
+exact private production task, WAF `BLOCK`, RDS medium, Redis small, NAT,
+fixture, batch endpoint, and 20x40 cohort contract. WAF validation requires the
+live `DeviceIngestClassifier` to remain priority 25 with `COUNT`, an exact
+`POST` method match, the exact
+`^/api/(classpilot/)?device/(heartbeat|screenshot)$` URI regex, the
+`device-ingest` output label, and its bound visibility metric. It also requires
+`DeviceIngestRateLimit` to remain exactly 100000 requests per five minutes
+and `ApiRateLimit` exactly 50000 requests per five minutes, including the
+reviewed priorities, IP aggregation, scope-down statements, metrics, global
+CloudFront scope, and distribution/WebACL association. Redis validation proves
+that `redisCacheClusterId` is an available `cache.t4g.small` member of the exact
+bound replication group, with the group and cluster independently reporting
+the same node type and identity.
+
+`Run` takes a run-wide OS mutex keyed by evidence directory and run ID before
+checking or creating artifacts, preventing two same-run controllers from
+racing. It refuses any start whose conservative two-hour
+mutation/readiness/monitor/terminal-validation/restoration window overlaps the
+weekday 05:45 or 10:00 ET scaling boundaries, durably captures desired
+capacity plus the scalable target,
+scheduled-action hash, policy hash, and suspended flags, then pins API 6/6
+healthy with min 6/max 8 while traffic runs. It never edits a schedule, WAF,
+RDS, Redis, task definition, or deployment. Its `finally` path restores the
+exact capture and verifies service/target health; after a killed controller,
+run the same command with `-Mode Restore` to complete that idempotent recovery.
+A restoration failure is terminal `scaling_restoration_failed` evidence.
+
+The coordinator revalidates the complete WAF association/rule and Redis
+group/member posture immediately before releasing traffic and again before a
+successful terminal result. It runs the normal AWS monitor with the diagnostic
+profile, which requires 30 of 30 contiguous one-minute RDS CPU points across
+the 30-minute traffic window and requires every point to remain strictly below
+65%; the generic 95% telemetry allowance does not apply to diagnostic RDS CPU.
+All normal traffic/latency/coverage gates remain intact. It also queries PI only
+with `db.sql_tokenized`, retains hashes/categories rather than SQL text, and
+fails if aggregate tile-authorization load reaches 50% of average DB load.
+The terminal artifact is explicitly
+`diagnosticOnly=true`, `certificationEligible=false`,
+`supervisorSealed=false`, and `predecessor=null`. The certification supervisor
+also forces `LOAD_DIAGNOSTIC_ONLY=false` and rejects any monitor or predecessor
+carrying diagnostic markers, so this result cannot seed or be sealed into the
+fresh Waf/500 -> Waf/800 chain.
+
+The corrected release requires a completely fresh Waf/500 with no predecessor,
+then Waf/800 using only that sealed Waf/500 result. Both stages must bind the
+same new application SHA/digest, the tile-batch workload schema/shape, and
+`expectedRdsInstanceClass=db.t4g.medium`. Start Waf/800 around 01:15 ET so its
+90-minute interval contains the existing 01:30 purge and 02:00 rollup. Restore
+schedule-appropriate scaling after every terminal outcome. If the corrected
+run is otherwise valid and still fails solely on RDS CPU, medium remains
+uncertified and work stops; an xlarge path requires separate approval.
+
+The RDS capacity path below is retained as a separately reviewable procedure;
+it is not authorized by this remediation. Before any future resize, require the
+monitor amendment, explicit approval, a fresh price/Cost Explorer projection,
+PITR/orderability checks, and a new encrypted manual snapshot. Handle a pending OS update separately. The resize
 plan must be exactly 0 add / 1 in-place change / 0 destroy, limited to the
 existing instance and temporary immediate application. After availability and
 empty pending modifications, restore `db_apply_immediately=false` with a

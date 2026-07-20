@@ -9,6 +9,9 @@
 #   ./scripts/deploy.sh --frontend       # Frontend only (Vite build → S3 → CloudFront)
 #   ./scripts/deploy.sh production --backend --activate-emergency
 #                                       # Backend only; activate the newly registered 512/2048 API revision
+#   ./scripts/deploy.sh production --backend --activate-emergency \
+#     --classpilot-tile-auth-plan-gate
+#                                       # Run the fixed ClassPilot authorization plan gate against that exact revision before migration/rollout
 #   ./scripts/deploy.sh production --backend --same-image-networking-stage PublicEcs \
 #     --expected-app-sha <40-hex-sha> --expected-image-digest sha256:<64-hex> \
 #     --expected-api-task-definition <full-arn> --expected-worker-task-definition <full-arn> \
@@ -27,6 +30,7 @@ DEPLOY_BACKEND=true
 DEPLOY_FRONTEND=true
 SKIP_WAIT=false
 ACTIVATE_EMERGENCY=false
+RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE=false
 SAME_IMAGE_NETWORKING_STAGE=""
 EXPECTED_APP_SHA=""
 EXPECTED_IMAGE_DIGEST=""
@@ -49,12 +53,18 @@ WORKER_NEW_REV=""
 MIGRATION_TASK_WAIT_SECONDS=3600
 MIGRATION_TASK_POLL_SECONDS=15
 MIGRATION_TASK_STOP_WAIT_SECONDS=300
+TILE_AUTH_PLAN_TASK_WAIT_SECONDS=900
+TILE_AUTH_PLAN_TASK_POLL_SECONDS=5
+TILE_AUTH_PLAN_TASK_STOP_WAIT_SECONDS=120
+TILE_AUTH_PLAN_LOG_WAIT_SECONDS=60
+TILE_AUTH_PLAN_LOG_POLL_SECONDS=3
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --backend)  DEPLOY_FRONTEND=false; shift ;;
     --frontend) DEPLOY_BACKEND=false; shift ;;
     --activate-emergency) ACTIVATE_EMERGENCY=true; shift ;;
+    --classpilot-tile-auth-plan-gate) RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE=true; shift ;;
     --same-image-networking-stage)
       [[ $# -ge 2 ]] || { echo "--same-image-networking-stage requires PublicEcs or NatRemoved"; exit 1; }
       SAME_IMAGE_NETWORKING_STAGE="$2"
@@ -202,6 +212,69 @@ wait_for_migration_task_stopped() {
     fi
 
     sleep "$MIGRATION_TASK_POLL_SECONDS"
+  done
+}
+
+# The authorization plan check is deliberately shorter than a migration task.
+# Observe it for fifteen minutes, request a stop at the controller deadline,
+# and keep observing for at most two more minutes. The caller has not acquired
+# the autoscaling hold or started a migration/service mutation at this point.
+wait_for_classpilot_tile_auth_plan_task_stopped() {
+  local task_arn="$1"
+  local deadline=$((SECONDS + TILE_AUTH_PLAN_TASK_WAIT_SECONDS))
+  local status=""
+  local stop_requested=false
+  local deadline_exceeded=false
+  local stop_observation_deadline=-1
+
+  while true; do
+    if (( SECONDS >= deadline )); then
+      deadline_exceeded=true
+      if (( stop_observation_deadline < 0 )); then
+        stop_observation_deadline=$((SECONDS + TILE_AUTH_PLAN_TASK_STOP_WAIT_SECONDS))
+      fi
+    fi
+
+    if status=$(aws ecs describe-tasks \
+      --cluster "$CLUSTER" \
+      --tasks "$task_arn" \
+      --query 'tasks[0].lastStatus' \
+      --output text \
+      --cli-connect-timeout 10 \
+      --cli-read-timeout 30 \
+      --region "$REGION" \
+      --no-cli-pager 2>/dev/null); then
+      status="${status%$'\r'}"
+      if [[ "$status" == "STOPPED" ]]; then
+        if [[ "$deadline_exceeded" == true ]]; then
+          return 124
+        fi
+        return 0
+      fi
+    else
+      warn "Could not read the ClassPilot tile authorization plan task status; retaining bounded observation."
+    fi
+
+    if [[ "$deadline_exceeded" == true && "$stop_requested" != true ]]; then
+      if aws ecs stop-task \
+        --cluster "$CLUSTER" \
+        --task "$task_arn" \
+        --reason "SchoolPilot tile authorization plan controller deadline" \
+        --cli-connect-timeout 10 \
+        --cli-read-timeout 30 \
+        --region "$REGION" \
+        --no-cli-pager > /dev/null 2>&1; then
+        stop_requested=true
+      else
+        warn "The ClassPilot tile authorization plan stop request was not accepted yet; retrying within the bounded stop window."
+      fi
+    fi
+
+    if (( stop_observation_deadline >= 0 && SECONDS >= stop_observation_deadline )); then
+      return 125
+    fi
+
+    sleep "$TILE_AUTH_PLAN_TASK_POLL_SECONDS"
   done
 }
 
@@ -387,6 +460,37 @@ production_backend_deploy_window_preflight() {
   fi
 
   success "Production backend deployment window preflight OK (${phase}; America/New_York weekday=${weekday} time=${hhmm})"
+}
+
+classpilot_tile_auth_plan_window_preflight() {
+  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE" != true ]]; then
+    return 0
+  fi
+
+  local raw weekday hhmm extra hour minute numeric_hhmm
+  if ! raw=$(production_eastern_weekday_hhmm); then
+    error "Could not resolve the America/New_York clock for the ClassPilot tile authorization plan gate."
+    return 1
+  fi
+  read -r weekday hhmm extra <<< "$raw"
+  hhmm="${hhmm%$'\r'}"
+  extra="${extra%$'\r'}"
+  if [[ ! "$weekday" =~ ^[1-7]$ || ! "$hhmm" =~ ^[0-2][0-9][0-5][0-9]$ || -n "$extra" ]]; then
+    error "The America/New_York clock for the ClassPilot tile authorization plan gate was malformed or ambiguous."
+    return 1
+  fi
+  hour="${hhmm:0:2}"
+  minute="${hhmm:2:2}"
+  if (( 10#$hour > 23 )); then
+    error "The America/New_York clock for the ClassPilot tile authorization plan gate was malformed or ambiguous."
+    return 1
+  fi
+  numeric_hhmm=$((10#$hour * 100 + 10#$minute))
+  if (( numeric_hhmm >= 115 && numeric_hhmm < 215 )); then
+    error "The ClassPilot tile authorization plan gate cannot start during the 01:15-02:15 America/New_York purge/rollup window."
+    return 1
+  fi
+  success "ClassPilot tile authorization plan gate window preflight OK (America/New_York time=${hhmm})"
 }
 
 wait_for_production_backend_strict_stability() {
@@ -605,6 +709,8 @@ TEMP_FILES=(
   .taskdef-emergency.json
   .taskdef-emergency-registered.json
   .ecs-network.json
+  .tile-auth-plan-task.json
+  .tile-auth-plan-result.json
   .migration-task.json
   .migration-result.json
   .migration-stop.json
@@ -799,6 +905,187 @@ validate_emergency_activation_mode() {
     error "--activate-emergency is allowed only with production --backend so no frontend or staging rollout can share the 2048 MiB cutover."
     return 1
   fi
+}
+
+validate_classpilot_tile_auth_plan_gate_mode() {
+  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE" != true ]]; then
+    return 0
+  fi
+
+  if [[ "$ENV" != "production" || "$DEPLOY_BACKEND" != true ||
+        "$DEPLOY_FRONTEND" != false || "$ACTIVATE_EMERGENCY" != true ||
+        -n "$SAME_IMAGE_NETWORKING_STAGE" || "$SKIP_WAIT" == true ]]; then
+    error "--classpilot-tile-auth-plan-gate is allowed only with production --backend --activate-emergency and rejects frontend, same-image, and --skip-wait modes."
+    return 1
+  fi
+}
+
+run_classpilot_tile_auth_plan_gate() {
+  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE" != true ]]; then
+    return 0
+  fi
+
+  classpilot_tile_auth_plan_window_preflight
+
+  local expected_task_pattern="^arn:aws:ecs:${REGION}:${ACCOUNT_ID}:task-definition/${NAME}-api-emergency:[1-9][0-9]*$"
+  if [[ ! "$API_ROLLOUT_TASK_DEF" =~ $expected_task_pattern ]]; then
+    error "The ClassPilot tile authorization plan gate requires the exact freshly registered emergency task-definition ARN."
+    return 1
+  fi
+
+  local started_by="sp-tile-plan-${IMAGE_TAG}"
+  if [[ ! "$started_by" =~ ^[A-Za-z0-9_-]{1,36}$ ]]; then
+    error "The release image tag cannot be bound safely to the ClassPilot tile authorization plan task."
+    return 1
+  fi
+
+  info "Running the fixed ClassPilot tile authorization plan gate against ${API_ROLLOUT_TASK_DEF} before migration or service rollout..."
+  if ! aws ecs run-task \
+    --cluster "$CLUSTER" \
+    --launch-type FARGATE \
+    --task-definition "$API_ROLLOUT_TASK_DEF" \
+    --network-configuration "$NETWORK_CONFIG" \
+    --count 1 \
+    --started-by "$started_by" \
+    --overrides '{"containerOverrides":[{"name":"api","command":["node","dist/cli/checkClasspilotTileAuthorizationPlans.js","--execute"],"environment":[{"name":"RUN_MIGRATIONS_ON_STARTUP","value":"false"},{"name":"RUN_MIGRATIONS_ONLY","value":"false"},{"name":"SCHEDULER_ENABLED","value":"false"}]}]}' \
+    --output json \
+    --region "$REGION" \
+    --no-cli-pager > .tile-auth-plan-task.json; then
+    error "The ClassPilot tile authorization plan task could not be started. No migration or service rollout was attempted."
+    return 1
+  fi
+
+  local task_arn
+  if ! task_arn=$(TILE_AUTH_PLAN_TASK_PATH=".tile-auth-plan-task.json" \
+    EXPECTED_TASK_DEFINITION="$API_ROLLOUT_TASK_DEF" \
+    EXPECTED_REGION="$REGION" \
+    EXPECTED_ACCOUNT_ID="$ACCOUNT_ID" node <<'NODE'
+const fs = require("fs");
+const response = JSON.parse(fs.readFileSync(process.env.TILE_AUTH_PLAN_TASK_PATH, "utf8"));
+const tasks = Array.isArray(response?.tasks) ? response.tasks : [];
+const failures = Array.isArray(response?.failures) ? response.failures : [];
+const task = tasks[0];
+const prefix = `arn:aws:ecs:${process.env.EXPECTED_REGION}:${process.env.EXPECTED_ACCOUNT_ID}:task/`;
+if (failures.length !== 0 || tasks.length !== 1 ||
+    task?.taskDefinitionArn !== process.env.EXPECTED_TASK_DEFINITION ||
+    typeof task?.taskArn !== "string" || !task.taskArn.startsWith(prefix)) process.exit(1);
+process.stdout.write(task.taskArn);
+NODE
+  ); then
+    error "ECS did not return exactly one ClassPilot tile authorization plan task bound to the expected revision. No migration or service rollout was attempted."
+    return 1
+  fi
+
+  set +e
+  wait_for_classpilot_tile_auth_plan_task_stopped "$task_arn"
+  local wait_result=$?
+  set -e
+  if [[ "$wait_result" -eq 124 ]]; then
+    error "The ClassPilot tile authorization plan task exceeded its 900-second controller deadline and was stopped. No migration or service rollout was attempted."
+    return 1
+  elif [[ "$wait_result" -eq 125 ]]; then
+    error "The ClassPilot tile authorization plan task did not report STOPPED within the bounded stop-observation window. No migration or service rollout was attempted."
+    return 1
+  elif [[ "$wait_result" -ne 0 ]]; then
+    error "ClassPilot tile authorization plan task observation failed. No migration or service rollout was attempted."
+    return 1
+  fi
+
+  if ! aws ecs describe-tasks \
+    --cluster "$CLUSTER" \
+    --tasks "$task_arn" \
+    --query '{failures:failures,tasks:tasks[].{taskArn:taskArn,taskDefinitionArn:taskDefinitionArn,lastStatus:lastStatus,containers:containers[].{name:name,lastStatus:lastStatus,exitCode:exitCode,logStreamName:logStreamName}}}' \
+    --output json \
+    --region "$REGION" \
+    --no-cli-pager > .tile-auth-plan-result.json; then
+    error "The terminal ClassPilot tile authorization plan task could not be described. No migration or service rollout was attempted."
+    return 1
+  fi
+
+  local log_stream
+  if ! log_stream=$(TILE_AUTH_PLAN_RESULT_PATH=".tile-auth-plan-result.json" \
+    EXPECTED_TASK_ARN="$task_arn" \
+    EXPECTED_TASK_DEFINITION="$API_ROLLOUT_TASK_DEF" node <<'NODE'
+const fs = require("fs");
+const response = JSON.parse(fs.readFileSync(process.env.TILE_AUTH_PLAN_RESULT_PATH, "utf8"));
+const tasks = Array.isArray(response?.tasks) ? response.tasks : [];
+const failures = Array.isArray(response?.failures) ? response.failures : [];
+const task = tasks[0];
+const containers = Array.isArray(task?.containers) ? task.containers : [];
+const apiContainers = containers.filter((container) => container?.name === "api");
+const api = apiContainers[0];
+if (failures.length !== 0 || tasks.length !== 1 ||
+    task?.taskArn !== process.env.EXPECTED_TASK_ARN ||
+    task?.taskDefinitionArn !== process.env.EXPECTED_TASK_DEFINITION ||
+    task?.lastStatus !== "STOPPED" || apiContainers.length !== 1 ||
+    api?.lastStatus !== "STOPPED" || api?.exitCode !== 0 ||
+    typeof api?.logStreamName !== "string" || api.logStreamName.length === 0) process.exit(1);
+process.stdout.write(api.logStreamName);
+NODE
+  ); then
+    error "The ClassPilot tile authorization plan task did not finish successfully on the exact expected revision. No migration or service rollout was attempted."
+    return 1
+  fi
+
+  local log_configuration_json log_binding log_group log_region log_prefix extra
+  if ! log_configuration_json=$(aws ecs describe-task-definition \
+    --task-definition "$API_ROLLOUT_TASK_DEF" \
+    --query 'taskDefinition.containerDefinitions[?name==`api`] | [0].logConfiguration' \
+    --output json \
+    --region "$REGION" \
+    --no-cli-pager); then
+    error "The ClassPilot tile authorization plan task log binding could not be resolved. No migration or service rollout was attempted."
+    return 1
+  fi
+  if ! log_binding=$(TILE_AUTH_PLAN_LOG_CONFIGURATION_JSON="$log_configuration_json" \
+    EXPECTED_REGION="$REGION" node <<'NODE'
+const config = JSON.parse(process.env.TILE_AUTH_PLAN_LOG_CONFIGURATION_JSON || "null");
+const options = config?.options || {};
+const group = options["awslogs-group"];
+const region = options["awslogs-region"];
+const prefix = options["awslogs-stream-prefix"];
+const safe = (value) => typeof value === "string" && /^[A-Za-z0-9_.\-/#]+$/.test(value);
+if (config?.logDriver !== "awslogs" || !safe(group) || !safe(prefix) ||
+    region !== process.env.EXPECTED_REGION) process.exit(1);
+process.stdout.write(`${group}\t${region}\t${prefix}`);
+NODE
+  ); then
+    error "The exact API task definition does not have a valid regional awslogs binding. No migration or service rollout was attempted."
+    return 1
+  fi
+  IFS=$'\t' read -r log_group log_region log_prefix extra <<< "$log_binding"
+  if [[ -z "$log_group" || "$log_region" != "$REGION" || -z "$log_prefix" || -n "$extra" ||
+        "$log_stream" != "${log_prefix}/api/"* ]]; then
+    error "The ClassPilot tile authorization plan log stream does not match the exact API task definition. No migration or service rollout was attempted."
+    return 1
+  fi
+
+  local log_deadline=$((SECONDS + TILE_AUTH_PLAN_LOG_WAIT_SECONDS))
+  local events_json sanitized_report=""
+  while (( SECONDS < log_deadline )); do
+    events_json=""
+    if events_json=$(aws logs get-log-events \
+      --log-group-name "$log_group" \
+      --log-stream-name "$log_stream" \
+      --start-from-head \
+      --limit 100 \
+      --output json \
+      --region "$REGION" \
+      --no-cli-pager 2>/dev/null) &&
+       sanitized_report=$(printf '%s' "$events_json" | \
+         node "$SCRIPT_DIR/validate-classpilot-tile-auth-plan-evidence.mjs" 2>/dev/null); then
+      break
+    fi
+    sanitized_report=""
+    sleep "$TILE_AUTH_PLAN_LOG_POLL_SECONDS"
+  done
+  if [[ -z "$sanitized_report" ]]; then
+    error "No valid sanitized ClassPilot tile authorization plan evidence appeared within the bounded CloudWatch window. No migration or service rollout was attempted."
+    return 1
+  fi
+
+  success "ClassPilot tile authorization plan gate passed (logGroup=${log_group}, logStream=${log_stream})"
+  printf '%s\n' "$sanitized_report"
 }
 
 launch_safe_active_api_preflight() {
@@ -1803,6 +2090,7 @@ info "CloudFront: $CF_DIST_ID"
 info "Backend:    $DEPLOY_BACKEND"
 info "Frontend:   $DEPLOY_FRONTEND"
 info "2048 API:   $ACTIVATE_EMERGENCY"
+info "Tile plans: $RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE"
 info "Same image: ${SAME_IMAGE_NETWORKING_STAGE:-false}"
 echo ""
 
@@ -1810,6 +2098,9 @@ if ! validate_emergency_activation_mode; then
   exit 1
 fi
 if ! validate_same_image_networking_mode; then
+  exit 1
+fi
+if ! validate_classpilot_tile_auth_plan_gate_mode; then
   exit 1
 fi
 
@@ -2145,6 +2436,12 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
     const assignPublicIp = cfg.assignPublicIp || "DISABLED";
     console.log(`awsvpcConfiguration={subnets=[${cfg.subnets.join(",")}],securityGroups=[${securityGroups.join(",")}],assignPublicIp=${assignPublicIp}}`);
   ')
+
+  # This opt-in release gate runs the exact digest-pinned 512/2048 revision in
+  # the service VPC before the autoscaling hold, migration, or service update.
+  # It cannot seed certification; it only proves the reviewed authorization
+  # SQL plans and teaching-session school integrity for this release.
+  run_classpilot_tile_auth_plan_gate
 
   # Acquire the hold only after the slow image and task-definition work, then
   # keep it through the one-off migration and both ECS service deployments.

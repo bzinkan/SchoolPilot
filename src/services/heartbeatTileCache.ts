@@ -36,6 +36,11 @@ export type HeartbeatTileCacheReadResult =
       status: "miss" | "unavailable" | "incomplete" | "authorization-filtered";
     };
 
+export type HeartbeatTileCacheBatchEntry = {
+  studentId: string;
+  deviceId: string;
+};
+
 export type HeartbeatClassificationCachePatch = {
   schoolId: string;
   deviceId: string;
@@ -85,6 +90,14 @@ for keyIndex = 1, #KEYS do
   end
 end
 return matched
+`;
+
+const BATCH_READ_SCRIPT = `
+local results = {}
+for keyIndex = 1, #KEYS do
+  results[keyIndex] = redis.call('LRANGE', KEYS[keyIndex], 0, tonumber(ARGV[1]) - 1)
+end
+return results
 `;
 
 function cacheComponent(value: string): string {
@@ -315,6 +328,96 @@ export function createHeartbeatTileCache(
     };
   }
 
+  async function readBatch(
+    schoolId: string,
+    entries: readonly HeartbeatTileCacheBatchEntry[],
+    limit: number
+  ): Promise<Map<string, HeartbeatTileCacheReadResult>> {
+    const results = new Map<string, HeartbeatTileCacheReadResult>();
+    if (entries.length === 0) return results;
+    const boundedLimit = Math.min(
+      Math.max(Math.trunc(limit), 1),
+      HEARTBEAT_TILE_CACHE_DEFAULT_RECORDS
+    );
+    const redisEntries: HeartbeatTileCacheBatchEntry[] = [];
+    const keys: string[] = [];
+    for (const entry of entries) {
+      const key = heartbeatTileCacheKey(schoolId, entry.deviceId);
+      const invalidUntil = locallyInvalidatedUntil.get(key) ?? 0;
+      if (invalidUntil > Date.now()) {
+        results.set(entry.studentId, { status: "unavailable" });
+        recordHeartbeatHotPathCounter("tileCacheFallbacks");
+        continue;
+      }
+      if (invalidUntil > 0) locallyInvalidatedUntil.delete(key);
+      redisEntries.push(entry);
+      keys.push(key);
+    }
+    if (redisEntries.length === 0) return results;
+
+    let batch: unknown;
+    try {
+      batch = await command([
+        "EVAL",
+        BATCH_READ_SCRIPT,
+        String(keys.length),
+        ...keys,
+        String(HEARTBEAT_TILE_CACHE_MAX_RECORDS),
+      ]);
+    } catch {
+      recordHeartbeatHotPathCounter("tileCacheErrors");
+      recordHeartbeatHotPathCounter("tileCacheFallbacks", redisEntries.length);
+      for (const entry of redisEntries) {
+        results.set(entry.studentId, { status: "unavailable" });
+      }
+      return results;
+    }
+    if (!Array.isArray(batch) || batch.length !== redisEntries.length) {
+      recordHeartbeatHotPathCounter("tileCacheFallbacks", redisEntries.length);
+      for (const entry of redisEntries) {
+        results.set(entry.studentId, { status: "unavailable" });
+      }
+      return results;
+    }
+
+    for (let index = 0; index < redisEntries.length; index += 1) {
+      const entry = redisEntries[index]!;
+      const rawRows = batch[index];
+      if (!Array.isArray(rawRows) || rawRows.length === 0) {
+        results.set(entry.studentId, { status: "miss" });
+        recordHeartbeatHotPathCounter("tileCacheMisses");
+        continue;
+      }
+      const decoded = rawRows.map((raw) =>
+        decodeHeartbeat(raw, schoolId, entry.deviceId)
+      );
+      if (
+        decoded.some((row) => row === undefined) ||
+        (decoded as HeartbeatTileCacheWrite[]).some((row) => row.classificationPending)
+      ) {
+        results.set(entry.studentId, { status: "incomplete" });
+        recordHeartbeatHotPathCounter("tileCacheErrors");
+        recordHeartbeatHotPathCounter("tileCacheFallbacks");
+        continue;
+      }
+      const allowed = (decoded as HeartbeatTileCacheWrite[])
+        .filter((row) => row.studentId === entry.studentId);
+      if (allowed.length < boundedLimit) {
+        results.set(entry.studentId, { status: "authorization-filtered" });
+        recordHeartbeatHotPathCounter("tileCacheFallbacks");
+        continue;
+      }
+      results.set(entry.studentId, {
+        status: "hit",
+        heartbeats: allowed
+          .slice(0, boundedLimit)
+          .map(({ classificationPending: _classificationPending, ...heartbeat }) => heartbeat),
+      });
+      recordHeartbeatHotPathCounter("tileCacheHits");
+    }
+    return results;
+  }
+
   async function patchClassifications(
     patches: HeartbeatClassificationCachePatch[]
   ): Promise<boolean> {
@@ -353,7 +456,7 @@ export function createHeartbeatTileCache(
     return false;
   }
 
-  return { write, replace, read, patchClassifications, invalidate };
+  return { write, replace, read, readBatch, patchClassifications, invalidate };
 }
 
 const heartbeatTileCache = createHeartbeatTileCache();
@@ -361,6 +464,7 @@ const heartbeatTileCache = createHeartbeatTileCache();
 export const writeHeartbeatTileCache = heartbeatTileCache.write;
 export const replaceHeartbeatTileCache = heartbeatTileCache.replace;
 export const readHeartbeatTileCache = heartbeatTileCache.read;
+export const readHeartbeatTileCacheBatch = heartbeatTileCache.readBatch;
 export const patchHeartbeatTileCacheClassifications =
   heartbeatTileCache.patchClassifications;
 export const invalidateHeartbeatTileCaches = heartbeatTileCache.invalidate;

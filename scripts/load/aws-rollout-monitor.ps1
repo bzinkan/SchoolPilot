@@ -28,6 +28,8 @@ $script:PreviousMetricDatapoints = @{}
 $script:MetricFreshnessMaximumSeconds = 180
 $script:TrafficStartedAtUtc = $null
 $script:TrafficStoppedAtUtc = $null
+$script:RequiredWorkloadSchemaVersion = "classpilot-tile-batch-v1"
+$script:RequiredWorkloadEndpointShapeSha256 = "8e9f1942e4b3a27de7dd0571a9f60ffeb276c089e4baae96a885dba69e3233b2"
 $normalizedConfigSha = $null
 if ($ExpectedConfigSha256) {
     $normalizedConfigSha = $ExpectedConfigSha256.ToLowerInvariant()
@@ -319,6 +321,12 @@ function Read-Configuration {
     $testModeValue = Get-OptionalValue $config "testMode" $false
     if ($testModeValue -isnot [bool]) { throw "testMode must be a JSON boolean." }
     $testMode = [bool]$testModeValue
+    $diagnosticOnlyValue = Get-OptionalValue $config "diagnosticOnly" $false
+    if ($diagnosticOnlyValue -isnot [bool]) { throw "diagnosticOnly must be a JSON boolean." }
+    $diagnosticOnly = [bool]$diagnosticOnlyValue
+    if ($diagnosticOnly -and $testMode) {
+        throw "diagnosticOnly is reserved for the governed production Waf/800 diagnostic path."
+    }
 
     $expectedGeneratorPublicIp = $null
     $generatorIpEvidencePath = $null
@@ -354,23 +362,38 @@ function Read-Configuration {
     if ($null -ne $progress) {
         $workloadObject = $config.workload
         $workloadStage = Assert-SafeIdentifier -Value (Get-RequiredString $workloadObject "stage") -Name "workload.stage"
+        $workloadSchemaVersion = [string](Get-OptionalValue $workloadObject "workloadSchemaVersion" "")
+        $workloadEndpointShapeSha256 = [string](Get-OptionalValue $workloadObject "endpointShapeSha256" "").ToLowerInvariant()
         $workload = [pscustomobject]@{
             Stage = $workloadStage
             Devices = Get-RequiredInteger $workloadObject "devices" 1 2000
             DurationSeconds = Get-RequiredInteger $workloadObject "durationSeconds" 1 86400
             ScreenshotBytes = Get-RequiredInteger $workloadObject "screenshotBytes" 1024 1048576
             CanaryDevices = Get-RequiredInteger $workloadObject "canaryDevices" 0 1000
+            WorkloadSchemaVersion = $workloadSchemaVersion
+            EndpointShapeSha256 = $workloadEndpointShapeSha256
         }
         if (-not $testMode) {
-            $approved = [ordered]@{
-                "510:1800:40960:10" = "500"
-                "810:5400:40960:10" = "800"
-                "1010:600:51200:10" = "burst"
-                "810:28800:40960:10" = "endurance"
+            if ($workload.WorkloadSchemaVersion -cne $script:RequiredWorkloadSchemaVersion -or
+                $workload.EndpointShapeSha256 -cne $script:RequiredWorkloadEndpointShapeSha256) {
+                throw "Production load monitoring requires the reviewed tile-batch workload schema and endpoint shape."
             }
             $signature = "$($workload.Devices):$($workload.DurationSeconds):$($workload.ScreenshotBytes):$($workload.CanaryDevices)"
-            if (-not $approved.Contains($signature) -or $workload.Stage -ne [string]$approved[$signature]) {
-                throw "workload stage/name/signature does not match an approved immutable launch-gate profile."
+            if ($diagnosticOnly) {
+                if ($phase -ne "Waf" -or $workload.Stage -ne "800" -or $signature -ne "810:1800:40960:10") {
+                    throw "Diagnostic-only monitoring permits only the exact private Waf/800 810-device, 1800-second, 40-KiB, 10-canary profile."
+                }
+            }
+            else {
+                $approved = [ordered]@{
+                    "510:1800:40960:10" = "500"
+                    "810:5400:40960:10" = "800"
+                    "1010:600:51200:10" = "burst"
+                    "810:28800:40960:10" = "endurance"
+                }
+                if (-not $approved.Contains($signature) -or $workload.Stage -ne [string]$approved[$signature]) {
+                    throw "workload stage/name/signature does not match an approved immutable launch-gate profile."
+                }
             }
             $allowedStages = @{
                 Waf = @("500", "800", "endurance")
@@ -407,7 +430,7 @@ function Read-Configuration {
         }
     }
 
-    if (-not $testMode) {
+    if (-not $testMode -and -not $diagnosticOnly) {
         $stageKey = if ($null -eq $workload) { "no-load" } else { [string]$workload.Stage }
         $progressionKey = "$phase`:$stageKey"
         $predecessorContract = switch ($progressionKey) {
@@ -450,12 +473,18 @@ function Read-Configuration {
                 -RequireSupervisorSeal (-not $testMode)
         }
     }
+    elseif ($diagnosticOnly -and (Get-OptionalValue $config "predecessorResultPath")) {
+        throw "Diagnostic-only evidence must not declare or consume predecessor evidence."
+    }
 
     $rollbackConfig = $null
     $automaticRollbackValue = Get-OptionalValue $config "automaticRollback" $false
     if ($automaticRollbackValue -isnot [bool]) { throw "automaticRollback must be a JSON boolean." }
-    if (-not $testMode -and -not [bool]$automaticRollbackValue) {
+    if (-not $testMode -and -not $diagnosticOnly -and -not [bool]$automaticRollbackValue) {
         throw "Production monitoring requires automaticRollback=true."
+    }
+    if ($diagnosticOnly -and [bool]$automaticRollbackValue) {
+        throw "Diagnostic-only monitoring must not mutate application, WAF, or infrastructure rollback posture."
     }
     if ($automaticRollbackValue) {
         $rollbackConfig = Assert-ExternalPath -Path (Get-RequiredString $config "rollbackConfigPath") -Name "rollbackConfigPath"
@@ -522,6 +551,13 @@ function Read-Configuration {
     $expectedEcsAssignPublicIp = Get-RequiredBoolean $resources "expectedEcsAssignPublicIp"
     $ecsTaskSubnetIds = @(Get-RequiredStringArray $resources "ecsTaskSubnetIds")
     $expectedRedisNodeType = Get-RequiredString $resources "expectedRedisNodeType"
+    if ($diagnosticOnly) {
+        [void](Get-RequiredString $resources "wafDeviceClassifierMetricName")
+        $cloudFrontDistributionId = Get-RequiredString $resources "cloudFrontDistributionId"
+        if ($cloudFrontDistributionId -notmatch '^E[A-Z0-9]{8,20}$') {
+            throw "Diagnostic resources.cloudFrontDistributionId must bind the exact production distribution."
+        }
+    }
     $expectedRdsInstanceClass = [string](Get-OptionalValue $resources "expectedRdsInstanceClass" "")
     if ($expectedRdsInstanceClass -and $expectedRdsInstanceClass -notin @("db.t4g.medium", "db.t4g.xlarge")) {
         throw "resources.expectedRdsInstanceClass must be db.t4g.medium or db.t4g.xlarge."
@@ -594,7 +630,8 @@ function Read-Configuration {
             [bool]$expectedRoute53MeasureLatencyValue -ne $phaseContract.latency) {
             throw "AWS resource expectations do not match the immutable $phase phase contract."
         }
-        Assert-WafMetricIdentity -Resources $resources
+        Assert-WafMetricIdentity -Resources $resources -RequireDiagnosticContract:$diagnosticOnly
+        if ($diagnosticOnly) { [void](Assert-DiagnosticRedisIdentity -Resources $resources -ExpectedNodeType $expectedRedisNodeType) }
     }
 
     $redisResizeCompletedAtUtc = $null
@@ -703,6 +740,11 @@ function Read-Configuration {
     if (-not $testMode -and [string]::IsNullOrWhiteSpace($expectedRdsInstanceClass)) {
         throw "Production monitoring requires resources.expectedRdsInstanceClass."
     }
+    if ($diagnosticOnly -and ($expectedRdsInstanceClass -ne "db.t4g.medium" -or
+        $expectedRedisNodeType -ne "cache.t4g.small" -or $expectedNatGatewayCount -ne 2 -or
+        $expectedEcsAssignPublicIp -ne $false)) {
+        throw "Diagnostic-only Waf/800 requires db.t4g.medium, cache.t4g.small, two NAT gateways, and private ECS tasks."
+    }
     if (-not $testMode -and ([string]::IsNullOrWhiteSpace($expectedActiveApiTaskDefinitionArn) -or
         [string]::IsNullOrWhiteSpace($expectedActiveWorkerTaskDefinitionArn))) {
         throw "Production monitoring requires exact active API and worker task-definition ARNs."
@@ -728,6 +770,7 @@ function Read-Configuration {
         RuntimeSeriesNotBeforeUtc = $runtimeSeriesNotBeforeUtc
         DeadlineUtc = $deadlineUtc
         TestMode = $testMode
+        DiagnosticOnly = $diagnosticOnly
         HarnessProcessId = $harnessProcessId
         HarnessProcessStartedAtUtc = $harnessProcessStartedAtUtc
         HarnessProcessPath = $harnessProcessPath
@@ -762,8 +805,124 @@ function Invoke-AwsJson {
     return $text | ConvertFrom-Json -Depth 40
 }
 
+function Get-WafDeviceLabelMatch {
+    param($Statement)
+    $label = Get-OptionalValue $Statement "LabelMatchStatement"
+    if ($null -eq $label -or [string](Get-OptionalValue $label "Scope" "") -cne "LABEL") { return $null }
+    $key = [string](Get-OptionalValue $label "Key" "")
+    if ($key -cne "device-ingest") { return $null }
+    return $label
+}
+
+function Assert-DiagnosticWafDeviceIngestClassifierContract {
+    param([object[]]$Rules, $Resources)
+    $matches = @($Rules | Where-Object Name -eq "DeviceIngestClassifier")
+    if ($matches.Count -ne 1) { throw "Diagnostic WAF requires exactly one DeviceIngestClassifier rule." }
+    $rule = $matches[0]
+    $action = Get-OptionalValue $rule "Action"
+    $actionNames = @(if ($null -eq $action) { @() } else { @($action.PSObject.Properties.Name) })
+    $countAction = Get-OptionalValue $action "Count"
+    $statement = Get-OptionalValue $rule "Statement"
+    $statementNames = @(if ($null -eq $statement) { @() } else { @($statement.PSObject.Properties.Name) })
+    $and = Get-OptionalValue $statement "AndStatement"
+    $statements = @((Get-OptionalValue $and "Statements" @()))
+    $visibility = Get-OptionalValue $rule "VisibilityConfig"
+    $labels = @((Get-OptionalValue $rule "RuleLabels" @()))
+    if ($actionNames.Count -ne 1 -or [string]$actionNames[0] -cne "Count" -or $null -eq $countAction -or
+        @($countAction.PSObject.Properties).Count -ne 0 -or [int](Get-OptionalValue $rule "Priority" -1) -ne 25 -or
+        $statementNames.Count -ne 1 -or [string]$statementNames[0] -cne "AndStatement" -or
+        $null -eq $and -or $statements.Count -ne 2 -or $labels.Count -ne 1 -or
+        [string](Get-OptionalValue $labels[0] "Name" "") -cne "device-ingest" -or
+        [string](Get-OptionalValue $visibility "MetricName" "") -cne [string]$Resources.wafDeviceClassifierMetricName -or
+        (Get-OptionalValue $visibility "CloudWatchMetricsEnabled" $false) -ne $true -or
+        (Get-OptionalValue $visibility "SampledRequestsEnabled" $false) -ne $true) {
+        throw "Diagnostic DeviceIngestClassifier no longer matches its exact priority-25 COUNT, device-ingest label, AND statement, and metric contract."
+    }
+
+    $byteStatements = @($statements | ForEach-Object { Get-OptionalValue $_ "ByteMatchStatement" } | Where-Object { $null -ne $_ })
+    $regexStatements = @($statements | ForEach-Object { Get-OptionalValue $_ "RegexMatchStatement" } | Where-Object { $null -ne $_ })
+    if ($byteStatements.Count -ne 1 -or $regexStatements.Count -ne 1) {
+        throw "Diagnostic DeviceIngestClassifier must contain exactly one method match and one URI-path regex match."
+    }
+    $byte = $byteStatements[0]
+    $byteField = Get-OptionalValue $byte "FieldToMatch"
+    $byteFieldNames = @(if ($null -eq $byteField) { @() } else { @($byteField.PSObject.Properties.Name) })
+    $byteTransforms = @((Get-OptionalValue $byte "TextTransformations" @()))
+    if ([string](Get-OptionalValue $byte "SearchString" "") -notin @("POST", "UE9TVA==") -or
+        $byteFieldNames.Count -ne 1 -or [string]$byteFieldNames[0] -cne "Method" -or
+        $null -eq (Get-OptionalValue $byteField "Method") -or
+        [string](Get-OptionalValue $byte "PositionalConstraint" "") -cne "EXACTLY" -or
+        $byteTransforms.Count -ne 1 -or [int](Get-OptionalValue $byteTransforms[0] "Priority" -1) -ne 0 -or
+        [string](Get-OptionalValue $byteTransforms[0] "Type" "") -cne "NONE") {
+        throw "Diagnostic DeviceIngestClassifier must match the exact POST method with no text transformation."
+    }
+
+    $regex = $regexStatements[0]
+    $regexField = Get-OptionalValue $regex "FieldToMatch"
+    $regexFieldNames = @(if ($null -eq $regexField) { @() } else { @($regexField.PSObject.Properties.Name) })
+    $regexTransforms = @((Get-OptionalValue $regex "TextTransformations" @()))
+    if ([string](Get-OptionalValue $regex "RegexString" "") -cne '^/api/(classpilot/)?device/(heartbeat|screenshot)$' -or
+        $regexFieldNames.Count -ne 1 -or [string]$regexFieldNames[0] -cne "UriPath" -or
+        $null -eq (Get-OptionalValue $regexField "UriPath") -or
+        $regexTransforms.Count -ne 1 -or [int](Get-OptionalValue $regexTransforms[0] "Priority" -1) -ne 0 -or
+        [string](Get-OptionalValue $regexTransforms[0] "Type" "") -cne "NONE") {
+        throw "Diagnostic DeviceIngestClassifier must match the exact reviewed device-ingest URI regex with no text transformation."
+    }
+}
+
+function Assert-DiagnosticWafRateRuleContract {
+    param([object[]]$Rules, $Resources)
+    $contracts = @(
+        [pscustomobject]@{Name="DeviceIngestRateLimit";Priority=30;Limit=100000;Metric=[string]$Resources.wafDeviceRuleMetricName},
+        [pscustomobject]@{Name="ApiRateLimit";Priority=40;Limit=50000;Metric=[string]$Resources.wafApiRuleMetricName}
+    )
+    $validated = @{}
+    foreach ($contract in $contracts) {
+        $matches = @($Rules | Where-Object Name -eq $contract.Name)
+        if ($matches.Count -ne 1) { throw "Diagnostic WAF requires exactly one $($contract.Name) rule." }
+        $rule = $matches[0]
+        $action = Get-OptionalValue $rule "Action"
+        $actionNames = @(if ($null -eq $action) { @() } else { @($action.PSObject.Properties.Name) })
+        $visibility = Get-OptionalValue $rule "VisibilityConfig"
+        $rate = Get-OptionalValue (Get-OptionalValue $rule "Statement") "RateBasedStatement"
+        $scope = Get-OptionalValue $rate "ScopeDownStatement"
+        if ($actionNames.Count -ne 1 -or [string]$actionNames[0] -cne "Block" -or
+            [int](Get-OptionalValue $rule "Priority" -1) -ne $contract.Priority -or $null -eq $rate -or
+            [int](Get-OptionalValue $rate "Limit" -1) -ne $contract.Limit -or
+            [int](Get-OptionalValue $rate "EvaluationWindowSec" 300) -ne 300 -or
+            [string](Get-OptionalValue $rate "AggregateKeyType" "") -cne "IP" -or $null -eq $scope -or
+            [string](Get-OptionalValue $visibility "MetricName" "") -cne $contract.Metric -or
+            (Get-OptionalValue $visibility "CloudWatchMetricsEnabled" $false) -ne $true -or
+            (Get-OptionalValue $visibility "SampledRequestsEnabled" $false) -ne $true) {
+            throw "$($contract.Name) does not match its exact diagnostic BLOCK, priority, IP/5-minute limit, scope, and metric contract."
+        }
+        $validated[$contract.Name] = [pscustomobject]@{rate=$rate;scope=$scope}
+    }
+    $deviceLabel = Get-WafDeviceLabelMatch $validated.DeviceIngestRateLimit.scope
+    $and = Get-OptionalValue $validated.ApiRateLimit.scope "AndStatement"
+    $statements = @((Get-OptionalValue $and "Statements" @()))
+    $byteStatements = @($statements | ForEach-Object { Get-OptionalValue $_ "ByteMatchStatement" } | Where-Object { $null -ne $_ })
+    $notStatements = @($statements | ForEach-Object { Get-OptionalValue $_ "NotStatement" } | Where-Object { $null -ne $_ })
+    if ($null -eq $deviceLabel -or $null -eq $and -or $statements.Count -ne 2 -or
+        $byteStatements.Count -ne 1 -or $notStatements.Count -ne 1) {
+        throw "Diagnostic WAF rate-rule scopes no longer match the reviewed device/API split."
+    }
+    $byte = $byteStatements[0]
+    $search = [string](Get-OptionalValue $byte "SearchString" "")
+    $transforms = @((Get-OptionalValue $byte "TextTransformations" @()))
+    $uriPath = Get-OptionalValue (Get-OptionalValue $byte "FieldToMatch") "UriPath"
+    $excludedLabel = Get-WafDeviceLabelMatch (Get-OptionalValue $notStatements[0] "Statement")
+    if ($search -notin @("/api/", "L2FwaS8=") -or $null -eq $uriPath -or
+        [string](Get-OptionalValue $byte "PositionalConstraint" "") -cne "STARTS_WITH" -or
+        $transforms.Count -ne 1 -or [int](Get-OptionalValue $transforms[0] "Priority" -1) -ne 0 -or
+        [string](Get-OptionalValue $transforms[0] "Type" "") -cne "NONE" -or $null -eq $excludedLabel -or
+        [string](Get-OptionalValue $excludedLabel "Key" "") -cne [string](Get-OptionalValue $deviceLabel "Key" "")) {
+        throw "Diagnostic ApiRateLimit no longer scopes /api/ while excluding the exact device-ingest label."
+    }
+}
+
 function Assert-WafMetricIdentity {
-    param($Resources)
+    param($Resources, [switch]$RequireDiagnosticContract)
     $region = [string]$Resources.region
     $listed = Invoke-AwsJson -Arguments @("wafv2", "list-web-acls", "--region", $region, "--scope", "CLOUDFRONT")
     $matches = @($listed.WebACLs | Where-Object Name -eq ([string]$Resources.wafWebAclName))
@@ -784,6 +943,51 @@ function Assert-WafMetricIdentity {
             throw "WAF rule metric identity for $ruleName does not match the deployed WebACL."
         }
     }
+    if ($RequireDiagnosticContract) {
+        [void](Assert-DiagnosticWafDeviceIngestClassifierContract -Rules @($acl.WebACL.Rules) -Resources $Resources)
+        [void](Assert-DiagnosticWafRateRuleContract -Rules @($acl.WebACL.Rules) -Resources $Resources)
+        $webAclArn = [string](Get-OptionalValue $acl.WebACL "ARN" "")
+        if ($webAclArn -notmatch '^arn:aws:wafv2:us-east-1:135775632425:global/webacl/') {
+            throw "Diagnostic WAF must remain a production-account CloudFront-scope WebACL."
+        }
+        $distribution = Invoke-AwsJson -Arguments @("cloudfront","get-distribution-config","--id",[string]$Resources.cloudFrontDistributionId)
+        $distributionConfig = Get-OptionalValue $distribution "DistributionConfig"
+        $aliases = @((Get-OptionalValue (Get-OptionalValue $distributionConfig "Aliases") "Items" @()) | ForEach-Object { [string]$_ })
+        if ([string](Get-OptionalValue $distributionConfig "WebACLId" "") -cne $webAclArn -or "school-pilot.net" -notin $aliases) {
+            throw "Diagnostic CloudFront distribution is not associated with the reviewed WAF WebACL."
+        }
+        $association = Invoke-AwsJson -Arguments @("cloudfront","list-distributions-by-web-acl-id","--web-acl-id",$webAclArn)
+        $associatedIds = @((Get-OptionalValue (Get-OptionalValue $association "DistributionList") "Items" @()) |
+            ForEach-Object { [string](Get-OptionalValue $_ "Id" "") })
+        if ([string]$Resources.cloudFrontDistributionId -notin $associatedIds) {
+            throw "CloudFront did not report the bound production distribution in the WebACL association set."
+        }
+    }
+}
+
+function Assert-DiagnosticRedisIdentity {
+    param($Resources, [string]$ExpectedNodeType)
+    $groupResponse = Invoke-AwsJson -Arguments @("elasticache","describe-replication-groups","--region",$Resources.region,
+        "--replication-group-id",$Resources.redisReplicationGroupId)
+    $groups = @($groupResponse.ReplicationGroups)
+    $clusterResponse = Invoke-AwsJson -Arguments @("elasticache","describe-cache-clusters","--region",$Resources.region,
+        "--cache-cluster-id",$Resources.redisCacheClusterId,"--show-cache-node-info")
+    $clusters = @($clusterResponse.CacheClusters)
+    if ($groups.Count -ne 1 -or $clusters.Count -ne 1) { throw "Diagnostic Redis group/member resources were not uniquely resolved." }
+    $group = $groups[0]; $cluster = $clusters[0]
+    $members = @((Get-OptionalValue $group "MemberClusters" @()) | ForEach-Object { [string]$_ })
+    if ([string](Get-OptionalValue $group "ReplicationGroupId" "") -cne [string]$Resources.redisReplicationGroupId -or
+        [string](Get-OptionalValue $group "Status" "") -cne "available" -or
+        [string](Get-OptionalValue $group "CacheNodeType" "") -cne $ExpectedNodeType -or
+        [string]$Resources.redisCacheClusterId -notin $members -or
+        [string](Get-OptionalValue $cluster "CacheClusterId" "") -cne [string]$Resources.redisCacheClusterId -or
+        [string](Get-OptionalValue $cluster "ReplicationGroupId" "") -cne [string]$Resources.redisReplicationGroupId -or
+        [string](Get-OptionalValue $cluster "CacheClusterStatus" "") -cne "available" -or
+        [string](Get-OptionalValue $cluster "CacheNodeType" "") -cne $ExpectedNodeType) {
+        throw "Diagnostic redisCacheClusterId is not an available expected-node-type member of the bound replication group."
+    }
+    return [ordered]@{replicationGroupId=[string]$Resources.redisReplicationGroupId;cacheClusterId=[string]$Resources.redisCacheClusterId;
+        groupNodeType=[string]$group.CacheNodeType;clusterNodeType=[string]$cluster.CacheNodeType;memberClusterIds=$members}
 }
 
 function New-MetricQuery {
@@ -1124,11 +1328,38 @@ function Get-RedisState {
         "--replication-group-id", $r.redisReplicationGroupId
     )
     $group = @($response.ReplicationGroups)[0]
-    return [ordered]@{
+    $state = [ordered]@{
         status = [string]$group.Status
         nodeType = [string]$group.CacheNodeType
         pendingModifiedValues = $group.PendingModifiedValues
+        replicationGroupId = [string](Get-OptionalValue $group "ReplicationGroupId" "")
+        memberClusterIds = @((Get-OptionalValue $group "MemberClusters" @()) | ForEach-Object { [string]$_ })
     }
+    if ($Config.DiagnosticOnly) {
+        $clusterResponse = Invoke-AwsJson -Arguments @(
+            "elasticache", "describe-cache-clusters", "--region", $r.region,
+            "--cache-cluster-id", $r.redisCacheClusterId, "--show-cache-node-info"
+        )
+        $clusters = @($clusterResponse.CacheClusters)
+        if ($clusters.Count -ne 1) {
+            $state.clusterIdentityValid = $false
+            return $state
+        }
+        $cluster = $clusters[0]
+        $state.cacheClusterId = [string](Get-OptionalValue $cluster "CacheClusterId" "")
+        $state.clusterStatus = [string](Get-OptionalValue $cluster "CacheClusterStatus" "")
+        $state.clusterNodeType = [string](Get-OptionalValue $cluster "CacheNodeType" "")
+        $state.clusterReplicationGroupId = [string](Get-OptionalValue $cluster "ReplicationGroupId" "")
+        $state.clusterIdentityValid = (
+            $state.replicationGroupId -ceq [string]$r.redisReplicationGroupId -and
+            [string]$r.redisCacheClusterId -in @($state.memberClusterIds) -and
+            $state.cacheClusterId -ceq [string]$r.redisCacheClusterId -and
+            $state.clusterReplicationGroupId -ceq [string]$r.redisReplicationGroupId -and
+            $state.clusterStatus -ceq "available" -and
+            $state.clusterNodeType -ceq [string]$Config.ExpectedRedisNodeType
+        )
+    }
+    return $state
 }
 
 function Get-AutomatedRedisSnapshotState {
@@ -1447,11 +1678,77 @@ function Get-ValidatedLoadSummaryTiming {
     $summary = $Progress.summary
     $summaryRun = Get-OptionalValue $summary "run"
     $fixture = Get-OptionalValue $summary "screenshotFixture"
+    $tileBatch = Get-OptionalValue $summary "tileBatch"
+    $screenshotRetrieval = Get-OptionalValue $summary "screenshotRetrieval"
     $actualTrafficSeconds = [double](Get-OptionalValue $summaryRun "actualTrafficSeconds" -1)
     if ([double]::IsNaN($actualTrafficSeconds) -or [double]::IsInfinity($actualTrafficSeconds)) { return $null }
     try { $finalProgressAtUtc = ([DateTimeOffset](Get-OptionalValue $Progress.event "timestamp" "")).ToUniversalTime() }
     catch { return $null }
     $trafficStoppedAtUtc = $script:TrafficStartedAtUtc.AddSeconds($actualTrafficSeconds)
+    $requiresTileBatchContract = (
+        [string]$Config.Workload.WorkloadSchemaVersion -ceq $script:RequiredWorkloadSchemaVersion -or
+        [string]$Config.Workload.EndpointShapeSha256 -ceq $script:RequiredWorkloadEndpointShapeSha256
+    )
+    $validatedTileBatch = $null
+    $tileBatchValid = -not $requiresTileBatchContract
+    if ($requiresTileBatchContract) {
+        $expectedStudentsPerCohort = if ([string]$Config.Workload.Stage -eq "500") { 25 } else { 40 }
+        $teacherCohorts = [int](Get-OptionalValue $tileBatch "teacherCohorts" -1)
+        $studentsPerCohort = [int](Get-OptionalValue $tileBatch "studentsPerCohort" -1)
+        $teacherTileAssignments = [int](Get-OptionalValue $tileBatch "teacherTileAssignments" -1)
+        $requestsPerCohortPerPoll = [int](Get-OptionalValue $tileBatch "requestsPerCohortPerPoll" -1)
+        $logicalOperationsPerPoll = [int](Get-OptionalValue $tileBatch "logicalOperationsPerPoll" -1)
+        $historyRequests = [int64](Get-OptionalValue $tileBatch "historyRequests" -1)
+        $screenshotRequests = [int64](Get-OptionalValue $tileBatch "screenshotRequests" -1)
+        $historyLogicalOperations = [int64](Get-OptionalValue $tileBatch "historyLogicalOperations" -1)
+        $screenshotLogicalOperations = [int64](Get-OptionalValue $tileBatch "screenshotLogicalOperations" -1)
+        $networkRequests = [int64](Get-OptionalValue $tileBatch "networkRequests" -1)
+        $logicalOperations = [int64](Get-OptionalValue $tileBatch "logicalOperations" -1)
+        $screenshotAttempts = [int64](Get-OptionalValue $screenshotRetrieval "attempts" -1)
+        $screenshotSuccesses = [int64](Get-OptionalValue $screenshotRetrieval "successes" -1)
+        $tileBatchValid = (
+            [string](Get-OptionalValue $summary "workloadSchemaVersion" "") -ceq $script:RequiredWorkloadSchemaVersion -and
+            [string](Get-OptionalValue $summary "workloadEndpointShapeSha256" "").ToLowerInvariant() -ceq $script:RequiredWorkloadEndpointShapeSha256 -and
+            (Get-OptionalValue $tileBatch "configured" $false) -eq $true -and
+            $teacherCohorts -eq 20 -and
+            $studentsPerCohort -eq $expectedStudentsPerCohort -and
+            $teacherTileAssignments -eq (20 * $expectedStudentsPerCohort) -and
+            $requestsPerCohortPerPoll -eq 2 -and
+            $logicalOperationsPerPoll -eq (2 * $teacherTileAssignments) -and
+            $historyRequests -gt 0 -and
+            $historyRequests -eq $screenshotRequests -and
+            ($historyRequests % $teacherCohorts) -eq 0 -and
+            $historyLogicalOperations -eq ($historyRequests * $studentsPerCohort) -and
+            $screenshotLogicalOperations -eq ($screenshotRequests * $studentsPerCohort) -and
+            $networkRequests -eq ($historyRequests + $screenshotRequests) -and
+            $logicalOperations -eq ($historyLogicalOperations + $screenshotLogicalOperations) -and
+            $screenshotAttempts -eq $screenshotLogicalOperations -and
+            $screenshotSuccesses -ge 0 -and
+            $screenshotSuccesses -le $screenshotAttempts
+        )
+        if ($tileBatchValid) {
+            $validatedTileBatch = [ordered]@{
+                teacherCohorts = $teacherCohorts
+                studentsPerCohort = $studentsPerCohort
+                teacherTileAssignments = $teacherTileAssignments
+                requestsPerCohortPerPoll = $requestsPerCohortPerPoll
+                logicalOperationsPerPoll = $logicalOperationsPerPoll
+                pollsPerCohort = [int64]($historyRequests / $teacherCohorts)
+                historyRequests = $historyRequests
+                screenshotRequests = $screenshotRequests
+                historyLogicalOperations = $historyLogicalOperations
+                screenshotLogicalOperations = $screenshotLogicalOperations
+                networkRequests = $networkRequests
+                logicalOperations = $logicalOperations
+                screenshotAttempts = $screenshotAttempts
+                screenshotSuccesses = $screenshotSuccesses
+            }
+        }
+    }
+    $diagnosticContractValid = -not [bool](Get-OptionalValue $Config "DiagnosticOnly" $false) -or (
+        (Get-OptionalValue $summary "diagnosticOnly" $false) -eq $true -and
+        (Get-OptionalValue $summary "certificationEligible" $true) -eq $false
+    )
     $valid = (
         [string](Get-OptionalValue $summary "runId" "") -eq $Config.RunId -and
         [string](Get-OptionalValue $summary "stage" "") -eq $Config.Workload.Stage -and
@@ -1461,6 +1758,8 @@ function Get-ValidatedLoadSummaryTiming {
         [double](Get-OptionalValue $summaryRun "plannedTrafficSeconds" -1) -eq $Config.Workload.DurationSeconds -and
         $actualTrafficSeconds -ge $Config.Workload.DurationSeconds -and
         (Get-OptionalValue $summaryRun "completedConfiguredDuration" $false) -eq $true -and
+        $diagnosticContractValid -and
+        $tileBatchValid -and
         $finalProgressAtUtc -ge $script:TrafficStartedAtUtc -and
         $finalProgressAtUtc -le [DateTimeOffset]::UtcNow.AddSeconds(5) -and
         $trafficStoppedAtUtc -le $finalProgressAtUtc.AddSeconds(5)
@@ -1470,6 +1769,7 @@ function Get-ValidatedLoadSummaryTiming {
         ActualTrafficSeconds = $actualTrafficSeconds
         TrafficStoppedAtUtc = $trafficStoppedAtUtc
         FinalProgressAtUtc = $finalProgressAtUtc
+        TileBatch = $validatedTileBatch
     }
 }
 
@@ -1774,17 +2074,38 @@ function Get-SeriesSummary {
     }
 }
 
+function Get-DiagnosticRdsCpuCoverageResult {
+    param($Config)
+    $requiredPoints = 30
+    if (-not $Config.DiagnosticOnly) {
+        return [ordered]@{required=$false;requiredPointCount=$requiredPoints;observedPointCount=0;
+            coveragePercent=$null;maximumGapSeconds=$null;spanSeconds=$null;maximumPercent=$null;
+            fullCoverage=$true;allPointsBelowMaximum=$true;passed=$true}
+    }
+    $summary = Get-SeriesSummary "rds_cpu"
+    $coveragePercent = [math]::Round([math]::Min(100.0, 100.0 * [double]$summary.count / $requiredPoints), 3)
+    $fullCoverage = $summary.count -ge $requiredPoints -and $summary.spanSeconds -ge 1740.0 -and
+        $null -ne $summary.maximumGapSeconds -and $summary.maximumGapSeconds -le 60.0
+    $allBelow = $summary.count -ge $requiredPoints -and $null -ne $summary.maximum -and
+        [double]$summary.maximum -lt [double]$Config.Thresholds.rdsCpuMaximumPercent
+    return [ordered]@{required=$true;requiredPointCount=$requiredPoints;observedPointCount=[int]$summary.count;
+        coveragePercent=$coveragePercent;maximumGapSeconds=$summary.maximumGapSeconds;spanSeconds=$summary.spanSeconds;
+        maximumPercent=$summary.maximum;maximumAllowedExclusivePercent=[double]$Config.Thresholds.rdsCpuMaximumPercent;
+        fullCoverage=$fullCoverage;allPointsBelowMaximum=$allBelow;passed=($fullCoverage -and $allBelow)}
+}
+
 function Assert-TelemetryCoverage {
     param($Config, [string[]]$MetricNames)
     if ($Config.TelemetryExpectedSeconds -le 0) { return }
     $fiveMinuteMetrics = @("rds_cpu_credit", "rds_surplus_charged", "redis_cpu_credit")
     foreach ($name in $MetricNames) {
         $periodSeconds = if ($name -in $fiveMinuteMetrics) { 300.0 } else { 60.0 }
-        $maximumGapSeconds = if ($periodSeconds -eq 300.0) { 360.0 } else { [double]$Config.Thresholds.telemetryMaximumGapSeconds }
+        $diagnosticRdsCpu = $Config.DiagnosticOnly -and $name -eq "rds_cpu"
+        $maximumGapSeconds = if ($diagnosticRdsCpu) { 60.0 } elseif ($periodSeconds -eq 300.0) { 360.0 } else { [double]$Config.Thresholds.telemetryMaximumGapSeconds }
         $expectedPoints = [math]::Floor([double]$Config.TelemetryExpectedSeconds / $periodSeconds)
         if ($expectedPoints -lt 1) { continue }
-        $minimumPoints = [math]::Ceiling($expectedPoints * ([double]$Config.Thresholds.telemetryMinimumCoveragePercent / 100.0))
-        $minimumSpan = [math]::Max(0.0, [double]$Config.TelemetryExpectedSeconds - $maximumGapSeconds)
+        $minimumPoints = if ($diagnosticRdsCpu) { $expectedPoints } else { [math]::Ceiling($expectedPoints * ([double]$Config.Thresholds.telemetryMinimumCoveragePercent / 100.0)) }
+        $minimumSpan = if ($diagnosticRdsCpu) { [math]::Max(0.0, ($expectedPoints - 1) * $periodSeconds) } else { [math]::Max(0.0, [double]$Config.TelemetryExpectedSeconds - $maximumGapSeconds) }
         $summary = Get-SeriesSummary $name
         if ($summary.count -lt $minimumPoints) { Add-AcceptanceViolation "telemetry_coverage:$name" }
         if ($summary.spanSeconds -lt $minimumSpan) { Add-AcceptanceViolation "telemetry_span:$name" }
@@ -1823,6 +2144,13 @@ function Get-AcceptanceResult {
         Add-AcceptanceViolation "missing_acceptance_metric:rds"
     }
     if ($rdsCpu.maximum -ge [double]$t.rdsCpuMaximumPercent) { Add-AcceptanceViolation "rds_cpu_peak" }
+    $diagnosticRdsCpuCoverage = Get-DiagnosticRdsCpuCoverageResult -Config $Config
+    if ($diagnosticRdsCpuCoverage.required -and -not $diagnosticRdsCpuCoverage.fullCoverage) {
+        Add-AcceptanceViolation "diagnostic_rds_cpu_30_of_30_coverage"
+    }
+    if ($diagnosticRdsCpuCoverage.required -and -not $diagnosticRdsCpuCoverage.allPointsBelowMaximum) {
+        Add-AcceptanceViolation "diagnostic_rds_cpu_every_minute_below_65"
+    }
     if ($rdsConnections.maximum -ge [double]$t.rdsConnectionsMaximum) { Add-AcceptanceViolation "rds_connections_peak" }
     if ($rdsHeadroom.minimum -le [double]$t.rdsStorageHeadroomMinimumPercent) { Add-AcceptanceViolation "rds_storage_headroom_minimum" }
     $rdsFreeMemory = Get-SeriesSummary "rds_free_memory"
@@ -1913,6 +2241,7 @@ function Get-AcceptanceResult {
         passed = $script:AcceptanceViolations.Count -eq 0
         violations = @($script:AcceptanceViolations | Sort-Object)
         metrics = $summaries
+        diagnosticRdsCpuCoverage = $diagnosticRdsCpuCoverage
         rdsCpuCreditHours2Through8 = $rdsCreditSlope
         natFinalSixHours = $natWindow
     }
@@ -2054,6 +2383,9 @@ function Get-Sample {
     if ($redisState.status -ne "available") { $immediate.Add("redis_unavailable") }
     if (Test-HasObjectMembers $redisState.pendingModifiedValues) { $immediate.Add("redis_pending_modifications") }
     if ($redisState.nodeType -ne $Config.ExpectedRedisNodeType) { $immediate.Add("redis_node_type_mismatch") }
+    if ($Config.DiagnosticOnly -and (Get-OptionalValue $redisState "clusterIdentityValid" $false) -ne $true) {
+        $immediate.Add("redis_group_member_identity_mismatch")
+    }
     $redisCpu = Get-BatchMetric $metricBatch "redis_cpu"
     $redisMemory = Get-BatchMetric $metricBatch "redis_memory"
     $redisFree = Get-BatchMetric $metricBatch "redis_free"
@@ -2265,6 +2597,7 @@ function Get-Sample {
         automatedRedisSnapshot = $automatedRedisSnapshot
         route53ConsecutiveOkPeriods = $script:Route53AlarmOkPeriods
         load = $progress
+        validatedTileBatch = if ($null -eq $validatedLoadTiming) { $null } else { $validatedLoadTiming.TileBatch }
         generatorPublicIp = $generatorIp
         supervisedHeartbeats = $supervisedHeartbeats
         loadCompleted = $loadCompleted
@@ -2567,6 +2900,8 @@ $safeValidation = [ordered]@{
     schemaVersion = 1
     runId = $config.RunId
     phase = $config.Phase
+    diagnosticOnly = $config.DiagnosticOnly
+    certificationEligible = -not $config.DiagnosticOnly
     pollSeconds = $config.PollSeconds
     automaticRollback = $config.AutomaticRollback
     evidenceDirectory = $config.EvidenceDirectory
@@ -2709,6 +3044,8 @@ try {
             $result = [ordered]@{
                 runId = $config.RunId
                 phase = $config.Phase
+                diagnosticOnly = $config.DiagnosticOnly
+                certificationEligible = -not $config.DiagnosticOnly
                 status = "failed"
                 timestamp = [DateTimeOffset]::UtcNow.ToString("o")
                 failures = $failures
@@ -2731,6 +3068,8 @@ try {
                 $failedResult = [ordered]@{
                     runId = $config.RunId
                     phase = $config.Phase
+                    diagnosticOnly = $config.DiagnosticOnly
+                    certificationEligible = -not $config.DiagnosticOnly
                     status = "failed"
                     timestamp = [DateTimeOffset]::UtcNow.ToString("o")
                     failures = @("run_acceptance_failed") + @($acceptance.violations)
@@ -2748,6 +3087,8 @@ try {
             $result = [ordered]@{
                 runId = $config.RunId
                 phase = $config.Phase
+                diagnosticOnly = $config.DiagnosticOnly
+                certificationEligible = -not $config.DiagnosticOnly
                 status = "completed"
                 timestamp = [DateTimeOffset]::UtcNow.ToString("o")
                 iterations = $iteration
@@ -2758,10 +3099,15 @@ try {
                 acceptance = $acceptance
                 workload = if ($null -eq $config.Workload) { $null } else { [ordered]@{
                     stage = $config.Workload.Stage
+                    diagnosticOnly = $config.DiagnosticOnly
+                    certificationEligible = -not $config.DiagnosticOnly
                     devices = $config.Workload.Devices
                     durationSeconds = $config.Workload.DurationSeconds
                     screenshotBytes = $config.Workload.ScreenshotBytes
                     canaryDevices = $config.Workload.CanaryDevices
+                    workloadSchemaVersion = $config.Workload.WorkloadSchemaVersion
+                    endpointShapeSha256 = $config.Workload.EndpointShapeSha256
+                    tileBatch = $sample.validatedTileBatch
                 } }
                 predecessorEvidence = $config.PredecessorEvidence
                 automatedRedisSnapshot = $sample.automatedRedisSnapshot
@@ -2790,6 +3136,8 @@ try {
             $failedResult = [ordered]@{
                 runId = $config.RunId
                 phase = $config.Phase
+                diagnosticOnly = $config.DiagnosticOnly
+                certificationEligible = -not $config.DiagnosticOnly
                 status = "failed"
                 timestamp = [DateTimeOffset]::UtcNow.ToString("o")
                 failures = @($reason)

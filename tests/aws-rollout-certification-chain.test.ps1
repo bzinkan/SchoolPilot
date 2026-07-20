@@ -2,6 +2,8 @@
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+$script:RequiredWorkloadSchemaVersion = "classpilot-tile-batch-v1"
+$script:RequiredWorkloadEndpointShapeSha256 = "8e9f1942e4b3a27de7dd0571a9f60ffeb276c089e4baae96a885dba69e3233b2"
 
 function Assert-Condition {
     param([bool]$Condition, [string]$Message)
@@ -9,6 +11,7 @@ function Assert-Condition {
 }
 
 $supervisorPath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\scripts\load\start-aws-rollout-supervisor.ps1"))
+$monitorPathUnderTest = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\scripts\load\aws-rollout-monitor.ps1"))
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $tokens = $null
 $parseErrors = $null
@@ -23,6 +26,7 @@ $functionNames = @(
     "Assert-CertificationFixtureVerificationContract","Get-CertificationHarnessArtifactBindings","Assert-CertificationHarnessArtifactContract",
     "Assert-CertificationHarnessArtifactEnvironment","Assert-CertificationFixtureAttestation",
     "Assert-CertificationConsumedReceiptAttestation","Assert-CertificationAttestedStageEvidence",
+    "Test-CertificationTerminalTileBatchContract",
     "Assert-CertificationChainContinuity","Test-CertificationIntervalIncludesLocalTime",
     "ConvertTo-CertificationUtcTimestamp",
     "Assert-CertificationFixtureVerificationTimestamp","Assert-CertificationProductionRollbackTaskIdentities",
@@ -38,11 +42,59 @@ foreach ($name in $functionNames) {
     if ($null -eq $definition) { throw "Missing supervisor function $name." }
     Invoke-Expression $definition.Extent.Text
 }
+$monitorTokens = $null
+$monitorParseErrors = $null
+$monitorAst = [Management.Automation.Language.Parser]::ParseFile($monitorPathUnderTest, [ref]$monitorTokens, [ref]$monitorParseErrors)
+if ($monitorParseErrors.Count -gt 0) { throw "Unable to parse rollout monitor." }
+foreach ($name in @("Get-OptionalValue","Get-ValidatedLoadSummaryTiming")) {
+    $definition = $monitorAst.Find({
+        param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
+    }, $true)
+    if ($null -eq $definition) { throw "Missing monitor function $name." }
+    Invoke-Expression $definition.Extent.Text
+}
 
 $tempRoot = Join-Path ([IO.Path]::GetTempPath()) "schoolpilot-cert-chain-$([Guid]::NewGuid().ToString('N'))"
 [void][IO.Directory]::CreateDirectory($tempRoot)
 $assertions = 0
 try {
+    $summaryFinalAt = [DateTimeOffset]::UtcNow
+    $script:TrafficStartedAtUtc = $summaryFinalAt.AddSeconds(-1800)
+    $summaryConfig = [pscustomobject]@{
+        RunId="summary-contract";Workload=[pscustomobject]@{
+            Stage="500";Devices=510;CanaryDevices=10;ScreenshotBytes=40960;DurationSeconds=1800
+            WorkloadSchemaVersion=$script:RequiredWorkloadSchemaVersion
+            EndpointShapeSha256=$script:RequiredWorkloadEndpointShapeSha256
+        }
+    }
+    $summaryProgress = [pscustomobject]@{
+        event=[pscustomobject]@{event="final";timestamp=$summaryFinalAt.ToString("o")}
+        summary=[pscustomobject]@{
+            runId="summary-contract";stage="500";devices=510;declaredSecondSchoolCanaryDevices=10
+            workloadSchemaVersion=$script:RequiredWorkloadSchemaVersion
+            workloadEndpointShapeSha256=$script:RequiredWorkloadEndpointShapeSha256
+            screenshotFixture=[pscustomobject]@{decodedBytes=40960}
+            run=[pscustomobject]@{plannedTrafficSeconds=1800;actualTrafficSeconds=1800;completedConfiguredDuration=$true}
+            screenshotRetrieval=[pscustomobject]@{attempts=500;successes=500}
+            tileBatch=[pscustomobject]@{configured=$true;teacherCohorts=20;studentsPerCohort=25;teacherTileAssignments=500;requestsPerCohortPerPoll=2;logicalOperationsPerPoll=1000;historyRequests=20;screenshotRequests=20;historyLogicalOperations=500;screenshotLogicalOperations=500;networkRequests=40;logicalOperations=1000}
+        }
+    }
+    $validatedSummary = Get-ValidatedLoadSummaryTiming $summaryConfig $summaryProgress
+    Assert-Condition ($null -ne $validatedSummary -and $validatedSummary.TileBatch.teacherCohorts -eq 20 -and $validatedSummary.TileBatch.screenshotLogicalOperations -eq 500) `
+        "The monitor must accept and expose exact Waf/500 tile-batch logical evidence."
+    $assertions++
+    $summaryProgress.summary.tileBatch.historyLogicalOperations = 499
+    Assert-Condition ($null -eq (Get-ValidatedLoadSummaryTiming $summaryConfig $summaryProgress)) `
+        "The monitor must reject inconsistent per-tile logical accounting."
+    $assertions++
+    $summaryProgress.summary.tileBatch.historyLogicalOperations = 500
+    $summaryProgress.summary.workloadSchemaVersion = "legacy-per-device-v1"
+    Assert-Condition ($null -eq (Get-ValidatedLoadSummaryTiming $summaryConfig $summaryProgress)) `
+        "The monitor must reject a load summary that is not bound to the reviewed tile-batch schema."
+    $assertions++
+    $summaryProgress.summary.workloadSchemaVersion = $script:RequiredWorkloadSchemaVersion
+
     $orderedDictionary = [ordered]@{sha256="a"*64}
     Assert-Condition ((Get-CertificationValue $orderedDictionary "sha256" ("0"*64)) -eq ("a"*64)) `
         "Certification lookup must read OrderedDictionary keys."
@@ -89,9 +141,9 @@ try {
     $statePath=Join-Path $tempRoot "fixture-state.json";Write-AtomicJson $statePath ([ordered]@{schemaVersion=1;fixtureId=$fixtureId;generatedAt=$fixtureNow.AddMinutes(-10).ToString("o");refreshedAt=$fixtureNow.AddMinutes(-5).ToString("o")})
     $verificationPath=Join-Path $tempRoot "fixture-verification.json";Write-AtomicJson $verificationPath ([ordered]@{
         schemaVersion=1;fixtureId=$fixtureId;verifiedAt=$fixtureNow.AddMinutes(-1).ToString("o");passed=$true
-        counts=[ordered]@{schools=2;teachers=20;students=1010;classes=20;classRosterStudents=800;devices=1010;activeDeviceSessions=1010;activeSessions=20;commandBodies=20;liveAuth=@{commandAdministrators=1;teachers=20}}
+        counts=[ordered]@{schools=2;teachers=20;officeStaff=1;students=1010;classes=20;classRosterStudents=800;devices=1010;activeDeviceSessions=1010;activeSessions=20;commandBodies=20;authorizationPlanCohorts=@{coTeacherStudents=40;officeSupervisionStudents=40};liveAuth=@{commandAdministrators=1;teachers=20}}
         schoolTimezones=@{primary=@{schoolTimezone="America/New_York";schoolHoursTimezone="America/New_York"};canary=@{schoolTimezone="America/New_York";schoolHoursTimezone="America/New_York"}}
-        gates=@{autoEnrollDisabled=$true;trackingDisabled=$true;schedulesDisabled=$true;exactSchoolTimezones=$true;classRostersExactAndDisjoint=$true;allDeviceTokensLive=$true;allStaffAuthArtifactsLive=$true}
+        gates=@{autoEnrollDisabled=$true;trackingDisabled=$true;schedulesDisabled=$true;exactSchoolTimezones=$true;classRostersExactAndDisjoint=$true;authorizationPlanCohortsExact=$true;authorizationPlanOfficeStudentsOutsideTeacherRosters=$true;allDeviceTokensLive=$true;allStaffAuthArtifactsLive=$true}
     })
     $fixture=[ordered]@{
         state=@{path=$statePath;sha256=Get-CertificationSha256 $statePath};verification=@{path=$verificationPath;sha256=Get-CertificationSha256 $verificationPath}
@@ -102,6 +154,38 @@ try {
         )
         fixtureId=$fixtureId;generatedAtUtc=$fixtureNow.AddMinutes(-10).ToString("o");refreshedAtUtc=$fixtureNow.AddMinutes(-5).ToString("o");verifiedAtUtc=$fixtureNow.AddMinutes(-1).ToString("o");timezone="America/New_York";plannedTrafficStartUtc=$fixtureNow.ToString("o")
     }
+    $validFixtureVerification=Get-Content -LiteralPath $verificationPath -Raw|ConvertFrom-Json -Depth 20
+    Assert-CertificationFixtureVerificationContract $validFixtureVerification
+    $assertions++
+
+    $missingPlanCohorts=$validFixtureVerification|ConvertTo-Json -Depth 20|ConvertFrom-Json -Depth 20
+    $missingPlanCohorts.counts.PSObject.Properties.Remove("authorizationPlanCohorts")
+    $missingPlanCohortsRejected=$false
+    try{Assert-CertificationFixtureVerificationContract $missingPlanCohorts}catch{$missingPlanCohortsRejected=$_.Exception.Message -match "authorizationPlanCohorts"}
+    Assert-Condition $missingPlanCohortsRejected "Certification preflight must reject fixture evidence missing the authorization-plan cohorts."
+    $assertions++
+
+    $mismatchedPlanCohorts=$validFixtureVerification|ConvertTo-Json -Depth 20|ConvertFrom-Json -Depth 20
+    $mismatchedPlanCohorts.counts.authorizationPlanCohorts.officeSupervisionStudents=39
+    $mismatchedPlanCohortsRejected=$false
+    try{Assert-CertificationFixtureVerificationContract $mismatchedPlanCohorts}catch{$mismatchedPlanCohortsRejected=$_.Exception.Message -match "authorization-plan cohort"}
+    Assert-Condition $mismatchedPlanCohortsRejected "Certification preflight must reject a non-deterministic office-supervision plan cohort."
+    $assertions++
+
+    $missingOfficeStaff=$validFixtureVerification|ConvertTo-Json -Depth 20|ConvertFrom-Json -Depth 20
+    $missingOfficeStaff.counts.PSObject.Properties.Remove("officeStaff")
+    $missingOfficeStaffRejected=$false
+    try{Assert-CertificationFixtureVerificationContract $missingOfficeStaff}catch{$missingOfficeStaffRejected=$true}
+    Assert-Condition $missingOfficeStaffRejected "Certification preflight must reject fixture evidence missing the office-staff count."
+    $assertions++
+
+    $disabledPlanGate=$validFixtureVerification|ConvertTo-Json -Depth 20|ConvertFrom-Json -Depth 20
+    $disabledPlanGate.gates.authorizationPlanOfficeStudentsOutsideTeacherRosters=$false
+    $disabledPlanGateRejected=$false
+    try{Assert-CertificationFixtureVerificationContract $disabledPlanGate}catch{$disabledPlanGateRejected=$_.Exception.Message -match "authorizationPlanOfficeStudentsOutsideTeacherRosters"}
+    Assert-Condition $disabledPlanGateRejected "Certification preflight must reject office-supervision students that were not proven outside teacher rosters."
+    $assertions++
+
     $artifactBindings=@(Get-CertificationHarnessArtifactBindings $fixture.artifacts "fixture.artifacts")
     Assert-Condition ($artifactBindings.Count -eq 3 -and
         (@($artifactBindings | ForEach-Object { [string]$_.kind } | Sort-Object) -join ",") -eq "command-bodies,device-manifest,teacher-auth") `
@@ -205,6 +289,7 @@ try {
         ChainId=$chainId;CapacityTrack="baseline";ApplicationGitSha=$appSha;DeployedImageDigest=$digest;ControllerGitSha=$controllerSha;ControllerHashes=$controllerHashes
         ActiveApiArn=$activeApiArn;ActiveWorkerArn=$activeWorkerArn;RollbackApiArn=$rollbackApiArn;RollbackWorkerArn=$rollbackWorkerArn
         RollbackApiGitSha=$rollbackApiSha;RollbackWorkerGitSha=$rollbackWorkerSha;RollbackApiImageDigest=$rollbackApiDigest;RollbackWorkerImageDigest=$rollbackWorkerDigest;SchemaCompatibility=$schemaBinding
+        WorkloadSchemaVersion=$script:RequiredWorkloadSchemaVersion;WorkloadEndpointShapeSha256=$script:RequiredWorkloadEndpointShapeSha256
         Raw=[pscustomobject]@{alarmNames=@("api-alarm");scheduleNames=@("night")}
     }
     $rollbackPath = Join-Path $tempRoot "rollback.json";[IO.File]::WriteAllText($rollbackPath,'{"schemaVersion":1}',[Text.UTF8Encoding]::new($false))
@@ -219,11 +304,12 @@ try {
     $network=[ordered]@{expectedNatGatewayCount=2;expectedEcsAssignPublicIp=$false;ecsTaskSubnetIds=@("subnet-a1","subnet-a2");observedServices=$services}
     $rollbackIdentities=[ordered]@{api=$rollbackApiArn;worker=$rollbackWorkerArn;schemaCompatibility=$schemaBinding}
 
-    $rootPath=Join-Path $tempRoot "root.json";Write-AtomicJson $rootPath ([ordered]@{schemaVersion=1;type="certification_chain_root";runId=$priorRunId;chainId=$chainId;phase="Waf";stage="500";supervisionKind="Load";createdAtUtc=[DateTimeOffset]::UtcNow.ToString("o");capacityTrack="baseline";applicationGitSha=$appSha;deployedImageDigest=$digest;controllerGitSha=$controllerSha;controllerHashes=$controllerHashes;operatorConfigSha256=$operatorHash;boundRuntimeConfigSha256=$runtimeHash;rollbackConfig=$boundRollback;validationReceipt=$receiptBinding;taskDefinitions=$taskDefinitions;fixture=$fixture;schemaCompatibility=$schemaBinding;budgetAcknowledgement=$null;generatorPublicIpv4="198.51.100.10";historicalEvidenceDiagnosticOnly=@();datastorePosture=$datastore;networkPosture=$network;alarms=$alarms;schedules=$schedules;rollbackIdentities=$rollbackIdentities})
+    $rootPath=Join-Path $tempRoot "root.json";Write-AtomicJson $rootPath ([ordered]@{schemaVersion=1;type="certification_chain_root";runId=$priorRunId;chainId=$chainId;phase="Waf";stage="500";supervisionKind="Load";createdAtUtc=[DateTimeOffset]::UtcNow.ToString("o");capacityTrack="baseline";applicationGitSha=$appSha;deployedImageDigest=$digest;workloadSchemaVersion=$script:RequiredWorkloadSchemaVersion;workloadEndpointShapeSha256=$script:RequiredWorkloadEndpointShapeSha256;controllerGitSha=$controllerSha;controllerHashes=$controllerHashes;operatorConfigSha256=$operatorHash;boundRuntimeConfigSha256=$runtimeHash;rollbackConfig=$boundRollback;validationReceipt=$receiptBinding;taskDefinitions=$taskDefinitions;fixture=$fixture;schemaCompatibility=$schemaBinding;budgetAcknowledgement=$null;generatorPublicIpv4="198.51.100.10";historicalEvidenceDiagnosticOnly=@();datastorePosture=$datastore;networkPosture=$network;alarms=$alarms;schedules=$schedules;rollbackIdentities=$rollbackIdentities})
     $rootRef=[pscustomobject]@{path=$rootPath;sha256=Get-CertificationSha256 $rootPath}
-    $stagePath=Join-Path $tempRoot "prior-stage.json";Write-AtomicJson $stagePath ([ordered]@{schemaVersion=1;type="certification_stage_attestation";runId=$priorRunId;chainId=$chainId;phase="Waf";stage="500";supervisionKind="Load";attestedAtUtc=[DateTimeOffset]::UtcNow.ToString("o");chainRoot=$rootRef;validationReceipt=$receiptBinding;predecessor=$null;applicationGitSha=$appSha;deployedImageDigest=$digest;controllerGitSha=$controllerSha;controllerHashes=$controllerHashes;operatorConfigSha256=$operatorHash;boundRuntimeConfigSha256=$runtimeHash;rollbackConfig=$boundRollback;taskDefinitions=$taskDefinitions;fixture=$fixture;generatorPublicIpv4="198.51.100.10";datastorePosture=$datastore;networkPosture=$network;alarms=$alarms;schedules=$schedules;rollbackIdentities=$rollbackIdentities;budgetAcknowledgement=$null;historicalEvidence=@{diagnosticOnly=$true;artifacts=@()}})
+    $stagePath=Join-Path $tempRoot "prior-stage.json";Write-AtomicJson $stagePath ([ordered]@{schemaVersion=1;type="certification_stage_attestation";runId=$priorRunId;chainId=$chainId;phase="Waf";stage="500";supervisionKind="Load";attestedAtUtc=[DateTimeOffset]::UtcNow.ToString("o");chainRoot=$rootRef;validationReceipt=$receiptBinding;predecessor=$null;applicationGitSha=$appSha;deployedImageDigest=$digest;workloadSchemaVersion=$script:RequiredWorkloadSchemaVersion;workloadEndpointShapeSha256=$script:RequiredWorkloadEndpointShapeSha256;controllerGitSha=$controllerSha;controllerHashes=$controllerHashes;operatorConfigSha256=$operatorHash;boundRuntimeConfigSha256=$runtimeHash;rollbackConfig=$boundRollback;taskDefinitions=$taskDefinitions;fixture=$fixture;generatorPublicIpv4="198.51.100.10";datastorePosture=$datastore;networkPosture=$network;alarms=$alarms;schedules=$schedules;rollbackIdentities=$rollbackIdentities;budgetAcknowledgement=$null;historicalEvidence=@{diagnosticOnly=$true;artifacts=@()}})
     $stageRef=[ordered]@{path=$stagePath;sha256=Get-CertificationSha256 $stagePath}
-    $monitorPath=Join-Path $tempRoot "prior-monitor.json";Write-AtomicJson $monitorPath ([ordered]@{runId=$priorRunId;phase="Waf";status="completed";postureAccepted=$true;workload=@{stage="500"};acceptance=@{passed=$true}})
+    $monitorTileBatch=[ordered]@{teacherCohorts=20;studentsPerCohort=25;teacherTileAssignments=500;requestsPerCohortPerPoll=2;logicalOperationsPerPoll=1000;pollsPerCohort=1;historyRequests=20;screenshotRequests=20;historyLogicalOperations=500;screenshotLogicalOperations=500;networkRequests=40;logicalOperations=1000;screenshotAttempts=500;screenshotSuccesses=500}
+    $monitorPath=Join-Path $tempRoot "prior-monitor.json";Write-AtomicJson $monitorPath ([ordered]@{runId=$priorRunId;phase="Waf";diagnosticOnly=$false;certificationEligible=$true;status="completed";postureAccepted=$true;workload=@{stage="500";workloadSchemaVersion=$script:RequiredWorkloadSchemaVersion;endpointShapeSha256=$script:RequiredWorkloadEndpointShapeSha256;tileBatch=$monitorTileBatch};acceptance=@{passed=$true}})
     $monitorRef=[ordered]@{path=$monitorPath;sha256=Get-CertificationSha256 $monitorPath;runId=$priorRunId;phase="Waf"}
     $producerRootRef=[ordered]@{path=$rootRef.path;sha256=$rootRef.sha256}
     $producerPredecessorSha=""
@@ -238,11 +324,37 @@ try {
         "A producer link built from ordered bindings must match consumer recomputation."
     $assertions++
     $envelopePath=Join-Path $tempRoot "prior-supervisor.json"
-    $envelope=[ordered]@{schemaVersion=2;type="certification_supervisor_terminal";supervisorSealed=$true;status="completed";runId=$priorRunId;phase="Waf";stage="500";chainId=$chainId;applicationGitSha=$appSha;deployedImageDigest=$digest;controllerGitSha=$controllerSha;controllerHashes=$controllerHashes;operatorConfigSha256=$operatorHash;boundRuntimeConfigSha256=$runtimeHash;rollbackConfig=$boundRollback;supervisionKind="Load";chainRoot=$rootRef;stageAttestation=$stageRef;terminalMonitorResult=$monitorRef;predecessorSupervisorResultSha256=$null;linkSha256=Get-CertificationTextSha256 $linkInput}
+    $envelope=[ordered]@{schemaVersion=2;type="certification_supervisor_terminal";supervisorSealed=$true;status="completed";runId=$priorRunId;phase="Waf";stage="500";chainId=$chainId;applicationGitSha=$appSha;deployedImageDigest=$digest;workloadSchemaVersion=$script:RequiredWorkloadSchemaVersion;workloadEndpointShapeSha256=$script:RequiredWorkloadEndpointShapeSha256;controllerGitSha=$controllerSha;controllerHashes=$controllerHashes;operatorConfigSha256=$operatorHash;boundRuntimeConfigSha256=$runtimeHash;rollbackConfig=$boundRollback;supervisionKind="Load";chainRoot=$rootRef;stageAttestation=$stageRef;terminalMonitorResult=$monitorRef;predecessorSupervisorResultSha256=$null;linkSha256=Get-CertificationTextSha256 $linkInput}
     Write-AtomicJson $envelopePath $envelope
     $contract.Raw|Add-Member -NotePropertyName chainRoot -NotePropertyValue $rootRef
-    $config=[pscustomobject]@{phase="Waf";workload=[pscustomobject]@{stage="800"};predecessorResultPath=$envelopePath;predecessorResultSha256=Get-CertificationSha256 $envelopePath}
+    $config=[pscustomobject]@{phase="Waf";workload=[pscustomobject]@{stage="800";workloadSchemaVersion=$script:RequiredWorkloadSchemaVersion;endpointShapeSha256=$script:RequiredWorkloadEndpointShapeSha256};predecessorResultPath=$envelopePath;predecessorResultSha256=Get-CertificationSha256 $envelopePath}
     Assert-CertificationChainContinuity -Config $config -Contract $contract;$assertions++
+
+    $invalidLogicalMonitor=Get-Content -LiteralPath $monitorPath -Raw|ConvertFrom-Json -Depth 60
+    $invalidLogicalMonitor.workload.tileBatch.historyLogicalOperations=499
+    Write-AtomicJson $monitorPath $invalidLogicalMonitor
+    $invalidLogicalMonitorRef=[ordered]@{path=$monitorPath;sha256=Get-CertificationSha256 $monitorPath;runId=$priorRunId;phase="Waf"}
+    $invalidLogicalEnvelope=$envelope|ConvertTo-Json -Depth 60|ConvertFrom-Json -Depth 60
+    $invalidLogicalEnvelope.terminalMonitorResult=$invalidLogicalMonitorRef
+    $invalidLogicalEnvelope.linkSha256=Get-CertificationTextSha256 (@($rootRef.sha256,("0"*64),$stageRef.sha256,$invalidLogicalMonitorRef.sha256)-join "`n")
+    Write-AtomicJson $envelopePath $invalidLogicalEnvelope;$config.predecessorResultSha256=Get-CertificationSha256 $envelopePath
+    $invalidLogicalRejected=$false
+    try{Assert-CertificationChainContinuity -Config $config -Contract $contract}catch{$invalidLogicalRejected=$_.Exception.Message -match "terminal monitor result"}
+    Assert-Condition $invalidLogicalRejected "A re-sealed monitor result with inconsistent batch logical accounting must not seed certification.";$assertions++
+    Write-AtomicJson $monitorPath ([ordered]@{runId=$priorRunId;phase="Waf";diagnosticOnly=$false;certificationEligible=$true;status="completed";postureAccepted=$true;workload=@{stage="500";workloadSchemaVersion=$script:RequiredWorkloadSchemaVersion;endpointShapeSha256=$script:RequiredWorkloadEndpointShapeSha256;tileBatch=$monitorTileBatch};acceptance=@{passed=$true}})
+    $monitorRef=[ordered]@{path=$monitorPath;sha256=Get-CertificationSha256 $monitorPath;runId=$priorRunId;phase="Waf"}
+    $envelope.terminalMonitorResult=$monitorRef
+    $envelope.linkSha256=Get-CertificationTextSha256 (@($rootRef.sha256,("0"*64),$stageRef.sha256,$monitorRef.sha256)-join "`n")
+    Write-AtomicJson $envelopePath $envelope;$config.predecessorResultSha256=Get-CertificationSha256 $envelopePath
+
+    $legacyPerDeviceEnvelope=$envelope|ConvertTo-Json -Depth 60|ConvertFrom-Json -Depth 60
+    $legacyPerDeviceEnvelope.PSObject.Properties.Remove("workloadSchemaVersion")
+    $legacyPerDeviceEnvelope.PSObject.Properties.Remove("workloadEndpointShapeSha256")
+    Write-AtomicJson $envelopePath $legacyPerDeviceEnvelope;$config.predecessorResultSha256=Get-CertificationSha256 $envelopePath
+    $legacyPerDeviceRejected=$false
+    try{Assert-CertificationChainContinuity -Config $config -Contract $contract}catch{$legacyPerDeviceRejected=$true}
+    Assert-Condition $legacyPerDeviceRejected "A historical per-device predecessor without the tile-batch schema/shape binding must be rejected.";$assertions++
+    Write-AtomicJson $envelopePath $envelope;$config.predecessorResultSha256=Get-CertificationSha256 $envelopePath
 
     $minimalStagePath=Join-Path $tempRoot "minimal-stage.json";Write-AtomicJson $minimalStagePath ([ordered]@{schemaVersion=1;type="certification_stage_attestation";runId=$priorRunId;chainId=$chainId;phase="Waf";stage="500";chainRoot=$rootRef;applicationGitSha=$appSha;deployedImageDigest=$digest;controllerGitSha=$controllerSha;controllerHashes=$controllerHashes})
     $minimalStageRef=[ordered]@{path=$minimalStagePath;sha256=Get-CertificationSha256 $minimalStagePath}

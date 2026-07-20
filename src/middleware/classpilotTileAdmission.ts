@@ -230,9 +230,11 @@ export function releaseClassPilotTileAdmission(res: Response): void {
 
 export const classPilotTileAdmission: RequestHandler = async (req, res, next) => {
   const requestPath = req.path ?? "";
-  const routeFamily = requestPath.startsWith("/device/screenshot/")
+  const routeFamily = requestPath.startsWith("/device/screenshot/") ||
+    requestPath === "/tiles/screenshots"
     ? "screenshot"
-    : requestPath.startsWith("/heartbeats/")
+    : requestPath.startsWith("/heartbeats/") ||
+        requestPath === "/tiles/history"
       ? "history"
       : undefined;
   const controller = new AbortController();
@@ -256,7 +258,10 @@ export const classPilotTileAdmission: RequestHandler = async (req, res, next) =>
         recordHeartbeatHotPathCounter("tileAdmissionRejectedHistory");
       }
       res.setHeader("Retry-After", "1");
-      return res.status(503).json({ error: "ClassPilot tile service is busy; retry shortly" });
+      return res.status(503).json({
+        error: "ClassPilot tile service is busy; retry shortly",
+        code: error.code,
+      });
     }
     return next(error);
   }

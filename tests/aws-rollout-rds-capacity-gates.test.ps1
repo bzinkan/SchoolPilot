@@ -14,7 +14,7 @@ $parseErrors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($monitorPath, [ref]$tokens, [ref]$parseErrors)
 if ($parseErrors.Count -gt 0) { throw "Unable to parse rollout monitor." }
 foreach ($name in @(
-    "Get-SeriesSummary","Add-AcceptanceViolation","Assert-TelemetryCoverage",
+    "Get-SeriesSummary","Get-DiagnosticRdsCpuCoverageResult","Add-AcceptanceViolation","Assert-TelemetryCoverage",
     "Get-RdsCreditSlopeResult","Get-AcceptanceResult"
 )) {
     $definition = $ast.Find({
@@ -70,7 +70,7 @@ $thresholds = [pscustomobject]@{
 }
 $baseConfig = [pscustomobject]@{
     Thresholds=$thresholds;TelemetryExpectedSeconds=0;TelemetryMetricNames=@();Workload=[pscustomobject]@{Stage="800"}
-    ExpectedRdsInstanceClass="db.t4g.medium"
+    ExpectedRdsInstanceClass="db.t4g.medium";DiagnosticOnly=$false
 }
 
 $assertions = 0

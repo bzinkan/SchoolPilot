@@ -2,6 +2,7 @@ import crypto from "crypto";
 import { Router, type Request, type Response } from "express";
 import { eq, and } from "drizzle-orm";
 import { productLicenses } from "../../schema/core.js";
+import type { Heartbeat } from "../../schema/classpilot.js";
 import db from "../../db.js";
 import { authenticate } from "../../middleware/authenticate.js";
 import {
@@ -51,6 +52,9 @@ import {
   createEvidenceArtifact,
   createStudentTimelineEvent,
   endStudentSession,
+  getBatchTileAccessForStaff,
+  getHeartbeatTileHistoryBatch,
+  type ClassPilotHistoryTileAccess,
 } from "../../services/storage.js";
 import { sendSafetyAlertEmail } from "../../services/email.js";
 import {
@@ -70,6 +74,9 @@ import {
   getScreenshot,
   setFlightPathStatus,
   recordScreenshotUpload,
+  getScreenshots,
+  decodeScreenshotData,
+  type ScreenshotData,
 } from "../../realtime/ws-redis.js";
 import { classifyUrl } from "../../services/aiClassification.js";
 import { recordBrowserSafetyTimeline } from "./competitive.js";
@@ -99,6 +106,7 @@ import {
   invalidateHeartbeatTileCaches,
   patchHeartbeatTileCacheClassifications,
   readHeartbeatTileCache,
+  readHeartbeatTileCacheBatch,
   writeHeartbeatTileCache,
 } from "../../services/heartbeatTileCache.js";
 import {
@@ -315,7 +323,8 @@ async function withAuthorizedTileDevice<T>(
   accessMode: "live" | "history",
   operation: (
     device: { schoolId: string },
-    authorizedStudentIds: string[] | null
+    authorizedStudentIds: string[] | null,
+    access: ClassPilotHistoryTileAccess
   ) => Promise<T> | T
 ): Promise<{ status: "not-found" } | { status: "ok"; value: T }> {
   const schoolId = res.locals.schoolId as string | undefined;
@@ -353,8 +362,92 @@ async function withAuthorizedTileDevice<T>(
   if (!access) return { status: "not-found" as const };
   return {
     status: "ok" as const,
-    value: await operation(access.device, access.authorizedStudentIds),
+    value: await operation(access.device, access.authorizedStudentIds, access),
   };
+}
+
+function parseTileStudentIds(body: unknown):
+  | { ok: true; studentIds: string[] }
+  | { ok: false } {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return { ok: false };
+  }
+  const raw = (body as { studentIds?: unknown }).studentIds;
+  if (!Array.isArray(raw) || raw.length < 1 || raw.length > 50) {
+    return { ok: false };
+  }
+  const studentIds: string[] = [];
+  const seen = new Set<string>();
+  for (const value of raw) {
+    if (typeof value !== "string") return { ok: false };
+    const studentId = value.trim();
+    if (!studentId || studentId.length > 200) return { ok: false };
+    if (!seen.has(studentId)) {
+      seen.add(studentId);
+      studentIds.push(studentId);
+    }
+  }
+  return studentIds.length > 0 ? { ok: true, studentIds } : { ok: false };
+}
+
+function tileStaffScope(req: Request, res: Response) {
+  return {
+    schoolId: res.locals.schoolId as string,
+    staffId: req.authUser!.id,
+    role: res.locals.membershipRole as
+      | "admin"
+      | "school_admin"
+      | "teacher"
+      | "office_staff"
+      | "super_admin",
+    isSuperAdmin: req.authUser!.isSuperAdmin,
+  };
+}
+
+function safeTileHeartbeat(heartbeat: Heartbeat) {
+  return {
+    id: heartbeat.id,
+    studentId: heartbeat.studentId,
+    activeTabTitle: heartbeat.activeTabTitle,
+    activeTabUrl: heartbeat.activeTabUrl,
+    favicon: heartbeat.favicon,
+    screenLocked: heartbeat.screenLocked,
+    flightPathActive: heartbeat.flightPathActive,
+    activeFlightPathName: heartbeat.activeFlightPathName,
+    isSharing: heartbeat.isSharing,
+    cameraActive: heartbeat.cameraActive,
+    aiCategory: heartbeat.aiCategory,
+    safetyAlert: heartbeat.safetyAlert,
+    extensionVersion: heartbeat.extensionVersion,
+    chromeVersion: heartbeat.chromeVersion,
+    screenshotHealth: heartbeat.screenshotHealth,
+    timestamp: heartbeat.timestamp,
+  };
+}
+
+function publicScreenshotData(data: ScreenshotData) {
+  return {
+    screenshot: data.screenshot,
+    timestamp: data.timestamp,
+    ...(data.tabTitle !== undefined ? { tabTitle: data.tabTitle } : {}),
+    ...(data.tabUrl !== undefined ? { tabUrl: data.tabUrl } : {}),
+    ...(data.tabFavicon !== undefined ? { tabFavicon: data.tabFavicon } : {}),
+  };
+}
+
+function screenshotForAuthorizedStudent(
+  data: ScreenshotData | null,
+  access: { studentId: string; studentSessionId: string | null }
+) {
+  if (
+    !data ||
+    !access.studentSessionId ||
+    data.studentId !== access.studentId ||
+    data.studentSessionId !== access.studentSessionId
+  ) {
+    return null;
+  }
+  return publicScreenshotData(data);
 }
 
 function normalizeGradeLevel(value: unknown): string | null {
@@ -1910,6 +2003,8 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, deviceScreensh
     const { screenshot, tabTitle, tabUrl, tabFavicon } = req.body;
     const deviceId = res.locals.deviceId as string;
     const schoolId = res.locals.schoolId as string;
+    const studentId = res.locals.studentId as string;
+    const studentSessionId = res.locals.studentSessionId as string;
 
     if (!screenshot) {
       return res.status(400).json({ error: "screenshot data required" });
@@ -1921,6 +2016,8 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, deviceScreensh
       tabTitle,
       tabUrl,
       tabFavicon,
+      studentId,
+      studentSessionId,
     };
 
     // Try Redis first, fall back to in-memory
@@ -1947,6 +2044,174 @@ router.post("/device/screenshot", requireDeviceAuthWithoutTenant, deviceScreensh
   }
 });
 
+// POST /api/classpilot/tiles/screenshots - Get one authorized screenshot cohort
+router.post("/tiles/screenshots", ...tileReadAuth, async (req, res, next) => {
+  setClassPilotNoStore(res);
+  try {
+    const parsed = parseTileStudentIds(req.body);
+    if (!parsed.ok) {
+      releaseClassPilotTileAdmission(res);
+      return res.status(400).json({ error: "studentIds must contain 1 to 50 non-empty strings" });
+    }
+    recordHeartbeatHotPathCounter("tileBatchScreenshotRequests");
+    recordHeartbeatHotPathCounter("tileBatchScreenshotItems", parsed.studentIds.length);
+
+    const scope = tileStaffScope(req, res);
+    const authorizationStartedAt = Date.now();
+    const accessByStudent = await runWithTenantContext(
+      { schoolId: scope.schoolId },
+      () => getBatchTileAccessForStaff(scope, parsed.studentIds, "live")
+    );
+    recordHeartbeatHotPathTiming(
+      "tileBatchAuthorizationMs",
+      Date.now() - authorizationStartedAt
+    );
+    // The only database operation is complete. Release before Redis, fallback,
+    // or JSON work so one cohort occupies one admission permit briefly.
+    releaseClassPilotTileAdmission(res);
+
+    const accesses = parsed.studentIds
+      .map((studentId) => accessByStudent.get(studentId))
+      .filter((access): access is NonNullable<typeof access> => Boolean(access));
+    if (accesses.length === 0) {
+      return res.status(404).json({ error: "No accessible tiles" });
+    }
+    recordHeartbeatHotPathCounter("tileBatchAuthorizedItems", accesses.length);
+
+    const redisStartedAt = Date.now();
+    const screenshots = await getScreenshots(
+      accesses.map((access) => access.deviceId)
+    );
+    recordHeartbeatHotPathTiming(
+      "tileBatchScreenshotRedisMs",
+      Date.now() - redisStartedAt
+    );
+    const screenshotFallbackItems = screenshots.filter(
+      (screenshot) => screenshot === null
+    ).length;
+    if (screenshotFallbackItems > 0) {
+      recordHeartbeatHotPathCounter(
+        "tileBatchScreenshotFallbackItems",
+        screenshotFallbackItems
+      );
+    }
+    const memoryScreenshots = (globalThis as any).__screenshots as
+      | Map<string, unknown>
+      | undefined;
+
+    return res.json({
+      tiles: accesses.map((access, index) => ({
+        studentId: access.studentId,
+        screenshot: screenshotForAuthorizedStudent(
+          screenshots[index] ??
+            decodeScreenshotData(memoryScreenshots?.get(access.deviceId)),
+          access
+        ),
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/classpilot/tiles/history - Get one authorized history cohort
+router.post("/tiles/history", ...tileReadAuth, async (req, res, next) => {
+  setClassPilotNoStore(res);
+  try {
+    const parsed = parseTileStudentIds(req.body);
+    const rawLimit = (req.body as { limit?: unknown } | undefined)?.limit;
+    const limit = rawLimit === undefined ? 10 : rawLimit;
+    if (
+      !parsed.ok ||
+      typeof limit !== "number" ||
+      !Number.isSafeInteger(limit) ||
+      limit < 1 ||
+      limit > 10
+    ) {
+      releaseClassPilotTileAdmission(res);
+      return res.status(400).json({
+        error: "studentIds must contain 1 to 50 non-empty strings and limit must be an integer from 1 to 10",
+      });
+    }
+    recordHeartbeatHotPathCounter("tileBatchHistoryRequests");
+    recordHeartbeatHotPathCounter("tileBatchHistoryItems", parsed.studentIds.length);
+
+    const scope = tileStaffScope(req, res);
+    const authorizationStartedAt = Date.now();
+    const accessByStudent = await runWithTenantContext(
+      { schoolId: scope.schoolId },
+      () => getBatchTileAccessForStaff(scope, parsed.studentIds, "history")
+    );
+    recordHeartbeatHotPathTiming(
+      "tileBatchAuthorizationMs",
+      Date.now() - authorizationStartedAt
+    );
+
+    const accesses = parsed.studentIds
+      .map((studentId) => accessByStudent.get(studentId))
+      .filter((access): access is NonNullable<typeof access> => Boolean(access));
+    if (accesses.length === 0) {
+      releaseClassPilotTileAdmission(res);
+      return res.status(404).json({ error: "No accessible tiles" });
+    }
+    recordHeartbeatHotPathCounter("tileBatchAuthorizedItems", accesses.length);
+
+    const redisStartedAt = Date.now();
+    const cachedByStudent = await readHeartbeatTileCacheBatch(
+      scope.schoolId,
+      accesses,
+      limit
+    );
+    recordHeartbeatHotPathTiming(
+      "tileBatchHistoryRedisMs",
+      Date.now() - redisStartedAt
+    );
+
+    const fallbackAccesses = accesses.filter(
+      (access) => cachedByStudent.get(access.studentId)?.status !== "hit"
+    );
+    let fallbackByStudent = new Map<string, Heartbeat[]>();
+    if (fallbackAccesses.length > 0) {
+      recordHeartbeatHotPathCounter(
+        "tileBatchHistoryFallbackItems",
+        fallbackAccesses.length
+      );
+      const databaseStartedAt = Date.now();
+      fallbackByStudent = await runWithTenantContext(
+        { schoolId: scope.schoolId },
+        () => getHeartbeatTileHistoryBatch(
+          scope.schoolId,
+          fallbackAccesses,
+          limit
+        )
+      );
+      recordHeartbeatHotPathTiming(
+        "tileBatchHistoryDatabaseMs",
+        Date.now() - databaseStartedAt
+      );
+    }
+
+    // Cache misses may execute one batched SQL fallback, so retain the permit
+    // through that query and release it before response shaping/serialization.
+    releaseClassPilotTileAdmission(res);
+
+    return res.json({
+      tiles: accesses.map((access) => {
+        const cached = cachedByStudent.get(access.studentId);
+        const heartbeats = cached?.status === "hit"
+          ? cached.heartbeats
+          : fallbackByStudent.get(access.studentId) ?? [];
+        return {
+          studentId: access.studentId,
+          heartbeats: heartbeats.map(safeTileHeartbeat),
+        };
+      }),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // GET /api/classpilot/device/screenshot/:deviceId - Get screenshot
 router.get("/device/screenshot/:deviceId", ...tileReadAuth, async (req, res, next) => {
   try {
@@ -1956,7 +2221,11 @@ router.get("/device/screenshot/:deviceId", ...tileReadAuth, async (req, res, nex
       res,
       deviceId,
       "live",
-      (device) => device.schoolId
+      (_device, _authorizedStudentIds, access) => ({
+        schoolWide: access.schoolWide === true,
+        studentId: access.liveStudentId,
+        studentSessionId: access.liveStudentSessionId ?? null,
+      })
     );
     // The admission permit protects authentication and the bounded database
     // scope only; Redis retrieval and JSON serialization do not consume it.
@@ -1967,14 +2236,22 @@ router.get("/device/screenshot/:deviceId", ...tileReadAuth, async (req, res, nex
 
     let data = await getScreenshot(deviceId);
     if (!data) {
-      data = (globalThis as any).__screenshots?.get(deviceId) || null;
+      data = decodeScreenshotData(
+        (globalThis as any).__screenshots?.get(deviceId)
+      );
     }
 
-    if (!data) {
+    const authorizedScreenshot = authorization.value.schoolWide
+      ? (data ? publicScreenshotData(data) : null)
+      : screenshotForAuthorizedStudent(data, {
+          studentId: authorization.value.studentId ?? "",
+          studentSessionId: authorization.value.studentSessionId,
+        });
+    if (!authorizedScreenshot) {
       return res.status(404).json({ error: "No screenshot available" });
     }
 
-    return res.json(data);
+    return res.json(authorizedScreenshot);
   } catch (err) {
     next(err);
   }

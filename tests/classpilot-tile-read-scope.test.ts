@@ -57,6 +57,7 @@ const {
   classpilotSupervisionStudents,
   devices,
   groupStudents,
+  groupTeachers,
   groups,
   heartbeats,
   productLicenses,
@@ -82,6 +83,8 @@ const foreignDeviceId = `${tag}-b-device`;
 let schoolA: any;
 let schoolB: any;
 let teacher: any;
+let coTeacher: any;
+let superAdmin: any;
 let admin: any;
 let schoolAdmin: any;
 let officeStaff: any;
@@ -90,6 +93,9 @@ let server: Server;
 let baseUrl = "";
 let authorizedStudentIds: string[] = [];
 let otherStudentId = "";
+let activeGroupId = "";
+let activeTeachingSessionId = "";
+const activeStudentSessionIdByDevice = new Map<string, string>();
 
 function inSchool<T>(schoolId: string, fn: () => Promise<T>): Promise<T> {
   return runWithTenantContext({ schoolId }, fn);
@@ -103,7 +109,7 @@ function authHeaders(user: any, schoolId = schoolA.id): Record<string, string> {
   const token = signUserToken({
     userId: user.id,
     email: user.email,
-    isSuperAdmin: false,
+    isSuperAdmin: Boolean(user.isSuperAdmin),
   });
   return {
     authorization: `Bearer ${token}`,
@@ -130,6 +136,32 @@ async function requestJson(
     status: response.status,
     body: text ? JSON.parse(text) : null,
     rateLimit: response.headers.get("ratelimit-limit"),
+  };
+}
+
+async function postJson(
+  path: string,
+  body: unknown,
+  user: any,
+  schoolId = schoolA.id
+): Promise<{
+  status: number;
+  body: any;
+  cacheControl: string | null;
+}> {
+  const response = await fetch(`${baseUrl}${path}`, {
+    method: "POST",
+    headers: {
+      ...authHeaders(user, schoolId),
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  const text = await response.text();
+  return {
+    status: response.status,
+    body: text ? JSON.parse(text) : null,
+    cacheControl: response.headers.get("cache-control"),
   };
 }
 
@@ -161,11 +193,22 @@ before(async () => {
     planStatus: "active",
   } as any);
 
-  [teacher, admin, schoolAdmin, officeStaff, parent] = await Promise.all([
+  [teacher, coTeacher, superAdmin, admin, schoolAdmin, officeStaff, parent] = await Promise.all([
     createUser({
       email: `${tag}-teacher@${schoolADomain}`,
       firstName: "Synthetic",
       lastName: "Teacher",
+    } as any),
+    createUser({
+      email: `${tag}-co-teacher@${schoolADomain}`,
+      firstName: "Synthetic",
+      lastName: "Co Teacher",
+    } as any),
+    createUser({
+      email: `${tag}-super-admin@${schoolADomain}`,
+      firstName: "Synthetic",
+      lastName: "Super Admin",
+      isSuperAdmin: true,
     } as any),
     createUser({
       email: `${tag}-admin@${schoolADomain}`,
@@ -192,6 +235,7 @@ before(async () => {
   await inSchool(schoolA.id, async () => {
     for (const [user, role] of [
       [teacher, "teacher"],
+      [coTeacher, "teacher"],
       [admin, "admin"],
       [schoolAdmin, "school_admin"],
       [officeStaff, "office_staff"],
@@ -265,13 +309,19 @@ before(async () => {
       // the other student's heartbeat merely because the device id matches.
       { studentId: otherStudentId, deviceId: primaryDeviceIds[0]! },
     ]);
-    await db.insert(studentSessions).values(
+    const activeStudentSessions = await db.insert(studentSessions).values(
       primaryDeviceIds.map((deviceId, index) => ({
         studentId: authorizedStudentIds[index]!,
         deviceId,
         isActive: true,
       }))
-    );
+    ).returning({
+      id: studentSessions.id,
+      deviceId: studentSessions.deviceId,
+    });
+    for (const session of activeStudentSessions) {
+      activeStudentSessionIdByDevice.set(session.deviceId, session.id);
+    }
     await db.insert(heartbeats).values([
       ...primaryDeviceIds.map((deviceId, index) => ({
         deviceId,
@@ -302,19 +352,27 @@ before(async () => {
       })
       .returning({ id: groups.id });
     assert.ok(group?.id);
+    activeGroupId = group.id;
     await db.insert(groupStudents).values(
       authorizedStudentIds.map((studentId) => ({
         groupId: group.id,
         studentId,
       }))
     );
-    await db.insert(teachingSessions).values({
+    await db.insert(groupTeachers).values({
+      groupId: group.id,
+      teacherId: coTeacher.id,
+      role: "co-teacher",
+    });
+    const [teachingSession] = await db.insert(teachingSessions).values({
       schoolId: schoolA.id,
       groupId: group.id,
       teacherId: teacher.id,
       sessionMode: "live",
       endTime: null,
-    });
+    }).returning({ id: teachingSessions.id });
+    assert.ok(teachingSession?.id);
+    activeTeachingSessionId = teachingSession.id;
   });
   await inSchool(schoolB.id, async () => {
     await db.insert(devices).values({
@@ -333,10 +391,17 @@ before(async () => {
 
   const screenshots = new Map<string, unknown>();
   for (const deviceId of [...primaryDeviceIds, foreignDeviceId]) {
+    const studentIndex = primaryDeviceIds.indexOf(deviceId);
     screenshots.set(deviceId, {
       screenshot: `data:image/jpeg;base64,${Buffer.from(deviceId).toString("base64")}`,
       timestamp: Date.now(),
       tabTitle: "Synthetic tile",
+      ...(studentIndex >= 0
+        ? {
+            studentId: authorizedStudentIds[studentIndex],
+            studentSessionId: activeStudentSessionIdByDevice.get(deviceId),
+          }
+        : {}),
     });
   }
   (globalThis as any).__screenshots = screenshots;
@@ -380,6 +445,13 @@ after(async () => {
         )
       `);
       await db.execute(sql`
+        DELETE FROM group_teachers
+        WHERE group_id IN (
+          SELECT id FROM groups
+          WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${schoolNamePattern})
+        )
+      `);
+      await db.execute(sql`
         DELETE FROM groups
         WHERE school_id IN (SELECT id FROM schools WHERE name LIKE ${schoolNamePattern})
       `);
@@ -414,6 +486,295 @@ after(async () => {
 });
 
 describe("ClassPilot tile-read tenant scope", () => {
+  it("serves authorized student batches without revealing devices or denied ids", async () => {
+    const requested = [authorizedStudentIds[0]!, otherStudentId];
+    const screenshots = await postJson(
+      "/api/classpilot/tiles/screenshots",
+      { studentIds: requested },
+      teacher
+    );
+    assert.equal(screenshots.status, 200);
+    assert.equal(screenshots.cacheControl, "no-store");
+    assert.deepEqual(
+      screenshots.body.tiles.map((tile: { studentId: string }) => tile.studentId),
+      [authorizedStudentIds[0]]
+    );
+    assert.match(screenshots.body.tiles[0].screenshot.screenshot, /^data:image\/jpeg;base64,/);
+    assert.doesNotMatch(JSON.stringify(screenshots.body), /deviceId|device_id|denied/i);
+
+    const history = await postJson(
+      "/api/classpilot/tiles/history",
+      { studentIds: requested, limit: 10 },
+      teacher
+    );
+    assert.equal(history.status, 200);
+    assert.equal(history.cacheControl, "no-store");
+    assert.deepEqual(
+      history.body.tiles.map((tile: { studentId: string }) => tile.studentId),
+      [authorizedStudentIds[0]]
+    );
+    assert.ok(history.body.tiles[0].heartbeats.length >= 1);
+    assert.ok(history.body.tiles[0].heartbeats.every(
+      (heartbeat: { studentId: string }) => heartbeat.studentId === authorizedStudentIds[0]
+    ));
+    assert.doesNotMatch(JSON.stringify(history.body), /deviceId|device_id|denied/i);
+
+    const inaccessible = await postJson(
+      "/api/classpilot/tiles/history",
+      { studentIds: [otherStudentId] },
+      teacher
+    );
+    assert.equal(inaccessible.status, 404);
+    assert.deepEqual(inaccessible.body, { error: "No accessible tiles" });
+  });
+
+  it("fails closed without the selected tenant RLS context", async () => {
+    const options = {
+      schoolId: schoolA.id,
+      staffId: teacher.id,
+      role: "teacher" as const,
+      isSuperAdmin: false,
+    };
+    const withoutTenant = await storage.getBatchTileAccessForStaff(
+      options,
+      [authorizedStudentIds[0]],
+      "live"
+    );
+    assert.equal(withoutTenant.size, 0);
+    const wrongTenant = await inSchool(schoolB.id, () =>
+      storage.getBatchTileAccessForStaff(
+        options,
+        [authorizedStudentIds[0]],
+        "live"
+      )
+    );
+    assert.equal(wrongTenant.size, 0);
+    const selectedTenant = await inSchool(schoolA.id, () =>
+      storage.getBatchTileAccessForStaff(
+        options,
+        [authorizedStudentIds[0]],
+        "live"
+      )
+    );
+    assert.equal(selectedTenant.size, 1);
+  });
+
+  it("returns accessible empty tiles and validates bounded batch input", async () => {
+    const deviceId = primaryDeviceIds[2]!;
+    const studentId = authorizedStudentIds[2]!;
+    const screenshots = (globalThis as any).__screenshots as Map<string, unknown>;
+    const previousScreenshot = screenshots.get(deviceId);
+    screenshots.delete(deviceId);
+    try {
+      const response = await postJson(
+        "/api/classpilot/tiles/screenshots",
+        { studentIds: [studentId] },
+        teacher
+      );
+      assert.equal(response.status, 200);
+      assert.deepEqual(response.body, {
+        tiles: [{ studentId, screenshot: null }],
+      });
+    } finally {
+      screenshots.set(deviceId, previousScreenshot);
+    }
+
+    for (const body of [
+      { studentIds: [] },
+      { studentIds: "not-an-array" },
+      { studentIds: Array.from({ length: 51 }, (_, index) => `student-${index}`) },
+      { studentIds: [studentId], limit: 11 },
+    ]) {
+      const path = "limit" in body
+        ? "/api/classpilot/tiles/history"
+        : "/api/classpilot/tiles/screenshots";
+      const response = await postJson(path, body, teacher);
+      assert.equal(response.status, 400);
+      assert.equal(response.cacheControl, "no-store");
+    }
+  });
+
+  it("never serves a stale screenshot after a shared-device student switch", async () => {
+    const deviceId = primaryDeviceIds[0]!;
+    const studentId = authorizedStudentIds[0]!;
+    const screenshots = (globalThis as any).__screenshots as Map<string, unknown>;
+    const previousScreenshot = screenshots.get(deviceId);
+    try {
+      screenshots.set(deviceId, {
+        screenshot: "data:image/jpeg;base64,c3RhbGUtc3R1ZGVudA==",
+        timestamp: Date.now(),
+        studentId: otherStudentId,
+        studentSessionId: randomUUID(),
+      });
+
+      const switchedBatch = await postJson(
+        "/api/classpilot/tiles/screenshots",
+        { studentIds: [studentId] },
+        teacher
+      );
+      assert.equal(switchedBatch.status, 200);
+      assert.deepEqual(switchedBatch.body, {
+        tiles: [{ studentId, screenshot: null }],
+      });
+      const switchedLegacy = await requestJson(
+        `/api/classpilot/device/screenshot/${deviceId}`,
+        teacher
+      );
+      assert.equal(switchedLegacy.status, 404);
+      assert.match(switchedLegacy.body.error, /No screenshot available/i);
+
+      screenshots.set(deviceId, {
+        screenshot: "data:image/jpeg;base64,c3RhbGUtdHRs",
+        timestamp: Date.now() - 121_000,
+        studentId,
+        studentSessionId: activeStudentSessionIdByDevice.get(deviceId),
+      });
+      const expiredBatch = await postJson(
+        "/api/classpilot/tiles/screenshots",
+        { studentIds: [studentId] },
+        teacher
+      );
+      assert.equal(expiredBatch.status, 200);
+      assert.deepEqual(expiredBatch.body, {
+        tiles: [{ studentId, screenshot: null }],
+      });
+      assert.equal((await requestJson(
+        `/api/classpilot/device/screenshot/${deviceId}`,
+        teacher
+      )).status, 404);
+    } finally {
+      screenshots.set(deviceId, previousScreenshot);
+    }
+  });
+
+  it("keeps shared-device batch history isolated for school-wide staff", async () => {
+    const history = await postJson(
+      "/api/classpilot/tiles/history",
+      { studentIds: [authorizedStudentIds[0], otherStudentId], limit: 10 },
+      admin
+    );
+    assert.equal(history.status, 200);
+    assert.deepEqual(
+      history.body.tiles.map((tile: { studentId: string }) => tile.studentId),
+      [authorizedStudentIds[0], otherStudentId]
+    );
+    for (const tile of history.body.tiles as Array<{
+      studentId: string;
+      heartbeats: Array<{ studentId: string }>;
+    }>) {
+      assert.ok(tile.heartbeats.length >= 1);
+      assert.ok(tile.heartbeats.every((heartbeat) => heartbeat.studentId === tile.studentId));
+    }
+    assert.doesNotMatch(JSON.stringify(history.body), /deviceId|device_id/);
+  });
+
+  it("grants active co-teachers and denies ended or non-live class sessions", async () => {
+    const studentId = authorizedStudentIds[3]!;
+    const request = () => postJson(
+      "/api/classpilot/tiles/screenshots",
+      { studentIds: [studentId] },
+      coTeacher
+    );
+    assert.equal((await request()).status, 200);
+
+    await inSchool(schoolA.id, async () => {
+      await db
+        .update(teachingSessions)
+        .set({ endTime: new Date() })
+        .where(eq(teachingSessions.id, activeTeachingSessionId));
+    });
+    try {
+      assert.equal((await request()).status, 404);
+    } finally {
+      await inSchool(schoolA.id, async () => {
+        await db
+          .update(teachingSessions)
+          .set({ endTime: null })
+          .where(eq(teachingSessions.id, activeTeachingSessionId));
+      });
+    }
+
+    await inSchool(schoolA.id, async () => {
+      await db
+        .update(teachingSessions)
+        .set({ sessionMode: "scheduled_report" })
+        .where(eq(teachingSessions.id, activeTeachingSessionId));
+    });
+    try {
+      assert.equal((await request()).status, 404);
+    } finally {
+      await inSchool(schoolA.id, async () => {
+        await db
+          .update(teachingSessions)
+          .set({ sessionMode: "live" })
+          .where(eq(teachingSessions.id, activeTeachingSessionId));
+      });
+    }
+    assert.equal((await request()).status, 200);
+  });
+
+  it("applies roster and active-session grants and revocations on the next batch request", async () => {
+    const studentId = authorizedStudentIds[4]!;
+    const deviceId = primaryDeviceIds[4]!;
+    const screenshotRequest = () => postJson(
+      "/api/classpilot/tiles/screenshots",
+      { studentIds: [studentId] },
+      teacher
+    );
+    assert.equal((await screenshotRequest()).status, 200);
+
+    await inSchool(schoolA.id, async () => {
+      await db
+        .delete(groupStudents)
+        .where(and(
+          eq(groupStudents.groupId, activeGroupId),
+          eq(groupStudents.studentId, studentId)
+        ));
+    });
+    try {
+      assert.equal((await screenshotRequest()).status, 404);
+    } finally {
+      await inSchool(schoolA.id, async () => {
+        await db.insert(groupStudents).values({
+          groupId: activeGroupId,
+          studentId,
+        });
+      });
+    }
+    assert.equal((await screenshotRequest()).status, 200);
+
+    await inSchool(schoolA.id, async () => {
+      await db
+        .update(studentSessions)
+        .set({ isActive: false, endedAt: new Date() })
+        .where(and(
+          eq(studentSessions.studentId, studentId),
+          eq(studentSessions.deviceId, deviceId)
+        ));
+    });
+    try {
+      assert.equal((await screenshotRequest()).status, 404);
+      // Historical access follows student_devices and remains available after
+      // the live device session ends.
+      assert.equal((await postJson(
+        "/api/classpilot/tiles/history",
+        { studentIds: [studentId] },
+        teacher
+      )).status, 200);
+    } finally {
+      await inSchool(schoolA.id, async () => {
+        await db
+          .update(studentSessions)
+          .set({ isActive: true, endedAt: null })
+          .where(and(
+            eq(studentSessions.studentId, studentId),
+            eq(studentSessions.deviceId, deviceId)
+          ));
+      });
+    }
+    assert.equal((await screenshotRequest()).status, 200);
+  });
+
   it("defaults live tile history to ten rows while preserving explicit limits", async () => {
     const deviceId = primaryDeviceIds.at(-1)!;
     const studentId = authorizedStudentIds.at(-1)!;
@@ -462,10 +823,25 @@ describe("ClassPilot tile-read tenant scope", () => {
       assert.equal(response.rateLimit, "5000");
       assert.match(response.body.screenshot, /^data:image\/jpeg;base64,/);
     }
+    for (const allowed of [teacher, coTeacher, admin, schoolAdmin, superAdmin]) {
+      const response = await postJson(
+        "/api/classpilot/tiles/screenshots",
+        { studentIds: [authorizedStudentIds[0]] },
+        allowed
+      );
+      assert.equal(response.status, 200);
+    }
 
     const parentResponse = await requestJson(path, parent);
     assert.equal(parentResponse.status, 403);
     assert.match(parentResponse.body.error, /Insufficient permissions/i);
+    const parentBatchResponse = await postJson(
+      "/api/classpilot/tiles/screenshots",
+      { studentIds: [authorizedStudentIds[0]] },
+      parent
+    );
+    assert.equal(parentBatchResponse.status, 403);
+    assert.match(parentBatchResponse.body.error, /Insufficient permissions/i);
 
     const parentLegacyDeviceList = await requestJson(
       "/api/classpilot/devices",
@@ -479,6 +855,149 @@ describe("ClassPilot tile-read tenant scope", () => {
     const officeResponse = await requestJson(path, officeStaff);
     assert.equal(officeResponse.status, 404);
     assert.match(officeResponse.body.error, /Device not found/i);
+    const officeBatchResponse = await postJson(
+      "/api/classpilot/tiles/screenshots",
+      { studentIds: [authorizedStudentIds[0]] },
+      officeStaff
+    );
+    assert.equal(officeBatchResponse.status, 404);
+    assert.deepEqual(officeBatchResponse.body, { error: "No accessible tiles" });
+  });
+
+  it("preserves legacy school-wide screenshot detail for offline devices only", async () => {
+    const deviceId = primaryDeviceIds[5]!;
+    const studentId = authorizedStudentIds[5]!;
+    const screenshots = (globalThis as any).__screenshots as Map<string, unknown>;
+    const previousScreenshot = screenshots.get(deviceId);
+    screenshots.set(deviceId, {
+      screenshot: "data:image/jpeg;base64,b2ZmbGluZS1hZG1pbi1kZXRhaWw=",
+      timestamp: Date.now(),
+      tabTitle: "Offline administrator detail",
+    });
+    await inSchool(schoolA.id, async () => {
+      await db
+        .update(studentSessions)
+        .set({ isActive: false, endedAt: new Date() })
+        .where(eq(studentSessions.deviceId, deviceId));
+    });
+
+    try {
+      for (const schoolWideUser of [admin, schoolAdmin, superAdmin]) {
+        const legacy = await requestJson(
+          `/api/classpilot/device/screenshot/${deviceId}`,
+          schoolWideUser
+        );
+        assert.equal(legacy.status, 200);
+        assert.match(legacy.body.screenshot, /^data:image\/jpeg;base64,/);
+        assert.equal(legacy.body.tabTitle, "Offline administrator detail");
+        assert.doesNotMatch(JSON.stringify(legacy.body), /studentSessionId|deviceId/);
+
+        const batch = await postJson(
+          "/api/classpilot/tiles/screenshots",
+          { studentIds: [studentId] },
+          schoolWideUser
+        );
+        assert.equal(batch.status, 404);
+        assert.deepEqual(batch.body, { error: "No accessible tiles" });
+      }
+    } finally {
+      await inSchool(schoolA.id, async () => {
+        await db
+          .update(studentSessions)
+          .set({ isActive: true, endedAt: null })
+          .where(eq(studentSessions.deviceId, deviceId));
+      });
+      screenshots.set(deviceId, previousScreenshot);
+    }
+  });
+
+  it("keeps restricted legacy screenshot reads bound to an active student session", async () => {
+    const deviceId = primaryDeviceIds[6]!;
+    const studentId = authorizedStudentIds[6]!;
+    const screenshots = (globalThis as any).__screenshots as Map<string, unknown>;
+    const previousScreenshot = screenshots.get(deviceId);
+    screenshots.set(deviceId, {
+      screenshot: "data:image/jpeg;base64,b2ZmbGluZS1yZXN0cmljdGVk",
+      timestamp: Date.now(),
+      studentId,
+      studentSessionId: activeStudentSessionIdByDevice.get(deviceId),
+    });
+    await inSchool(schoolA.id, async () => {
+      await db
+        .update(studentSessions)
+        .set({ isActive: false, endedAt: new Date() })
+        .where(eq(studentSessions.deviceId, deviceId));
+    });
+
+    let contextId: string | undefined;
+    try {
+      // The roster still grants this teacher historical access, proving the
+      // live denial is caused by the missing active student session.
+      assert.equal((await requestJson(
+        `/api/classpilot/heartbeats/${deviceId}`,
+        teacher
+      )).status, 200);
+      assert.equal((await requestJson(
+        `/api/classpilot/device/screenshot/${deviceId}`,
+        teacher
+      )).status, 404);
+
+      contextId = await inSchool(schoolA.id, async () => {
+        const [context] = await db
+          .insert(classpilotSupervisionContexts)
+          .values({
+            schoolId: schoolA.id,
+            contextType: "office",
+            name: `${tag} offline isolation`,
+            status: "active",
+            assignedStaffId: officeStaff.id,
+            createdBy: admin.id,
+            endsAt: new Date(Date.now() + 60 * 60 * 1000),
+          })
+          .returning({ id: classpilotSupervisionContexts.id });
+        assert.ok(context?.id);
+        await db.insert(classpilotSupervisionStudents).values({
+          schoolId: schoolA.id,
+          contextId: context.id,
+          studentId,
+          source: "admin_reroute",
+          assignedBy: admin.id,
+        });
+        return context.id;
+      });
+
+      // Active supervision grants the office user history, but cannot turn an
+      // offline cached device screenshot into a live student tile.
+      assert.equal((await requestJson(
+        `/api/classpilot/heartbeats/${deviceId}`,
+        officeStaff
+      )).status, 200);
+      assert.equal((await requestJson(
+        `/api/classpilot/device/screenshot/${deviceId}`,
+        officeStaff
+      )).status, 404);
+      assert.equal((await postJson(
+        "/api/classpilot/tiles/screenshots",
+        { studentIds: [studentId] },
+        officeStaff
+      )).status, 404);
+    } finally {
+      await inSchool(schoolA.id, async () => {
+        if (contextId) {
+          await db
+            .delete(classpilotSupervisionStudents)
+            .where(eq(classpilotSupervisionStudents.contextId, contextId));
+          await db
+            .delete(classpilotSupervisionContexts)
+            .where(eq(classpilotSupervisionContexts.id, contextId));
+        }
+        await db
+          .update(studentSessions)
+          .set({ isActive: true, endedAt: null })
+          .where(eq(studentSessions.deviceId, deviceId));
+      });
+      screenshots.set(deviceId, previousScreenshot);
+    }
   });
 
   it("returns only same-school tile data and hides foreign devices", async () => {
@@ -573,6 +1092,11 @@ describe("ClassPilot tile-read tenant scope", () => {
       assert.equal(officeHistory.status, 200);
       assert.equal(officeHistory.body.heartbeats.length, 1);
       assert.equal(officeHistory.body.heartbeats[0].studentId, coveredStudentId);
+      assert.equal((await postJson(
+        "/api/classpilot/tiles/screenshots",
+        { studentIds: [coveredStudentId] },
+        officeStaff
+      )).status, 200);
 
       const originalTeacherLive = await requestJson(
         `/api/classpilot/device/screenshot/${coveredDeviceId}`,
@@ -587,6 +1111,11 @@ describe("ClassPilot tile-read tenant scope", () => {
       );
       assert.equal(originalTeacherHistory.status, 404);
       assert.match(originalTeacherHistory.body.error, /Device not found/i);
+      assert.equal((await postJson(
+        "/api/classpilot/tiles/screenshots",
+        { studentIds: [coveredStudentId] },
+        teacher
+      )).status, 404);
     } finally {
       await inSchool(schoolA.id, async () => {
         await db
@@ -597,11 +1126,27 @@ describe("ClassPilot tile-read tenant scope", () => {
           .where(eq(classpilotSupervisionContexts.id, context.id));
       });
     }
+    assert.equal((await postJson(
+      "/api/classpilot/tiles/screenshots",
+      { studentIds: [coveredStudentId] },
+      officeStaff
+    )).status, 404);
+    assert.equal((await postJson(
+      "/api/classpilot/tiles/screenshots",
+      { studentIds: [coveredStudentId] },
+      teacher
+    )).status, 200);
   });
 
   it("applies membership, role, school, and license changes on the next request", async () => {
     const path = `/api/classpilot/device/screenshot/${primaryDeviceIds[0]}`;
+    const batchRequest = () => postJson(
+      "/api/classpilot/tiles/screenshots",
+      { studentIds: [authorizedStudentIds[0]] },
+      teacher
+    );
     assert.equal((await requestJson(path, teacher)).status, 200);
+    assert.equal((await batchRequest()).status, 200);
 
     const updateMembership = (values: Record<string, unknown>) =>
       asSystem(async () => {
@@ -619,18 +1164,22 @@ describe("ClassPilot tile-read tenant scope", () => {
     await updateMembership({ status: "suspended" });
     try {
       assert.equal((await requestJson(path, teacher)).status, 403);
+      assert.equal((await batchRequest()).status, 403);
     } finally {
       await updateMembership({ status: "active" });
     }
     assert.equal((await requestJson(path, teacher)).status, 200);
+    assert.equal((await batchRequest()).status, 200);
 
     await updateMembership({ role: "parent" });
     try {
       assert.equal((await requestJson(path, teacher)).status, 403);
+      assert.equal((await batchRequest()).status, 403);
     } finally {
       await updateMembership({ role: "teacher" });
     }
     assert.equal((await requestJson(path, teacher)).status, 200);
+    assert.equal((await batchRequest()).status, 200);
 
     await asSystem(async () => {
       await db
@@ -640,6 +1189,7 @@ describe("ClassPilot tile-read tenant scope", () => {
     });
     try {
       assert.equal((await requestJson(path, teacher)).status, 403);
+      assert.equal((await batchRequest()).status, 403);
     } finally {
       await asSystem(async () => {
         await db
@@ -649,6 +1199,7 @@ describe("ClassPilot tile-read tenant scope", () => {
       });
     }
     assert.equal((await requestJson(path, teacher)).status, 200);
+    assert.equal((await batchRequest()).status, 200);
 
     await asSystem(async () => {
       await db
@@ -663,6 +1214,7 @@ describe("ClassPilot tile-read tenant scope", () => {
     });
     try {
       assert.equal((await requestJson(path, teacher)).status, 403);
+      assert.equal((await batchRequest()).status, 403);
     } finally {
       await asSystem(async () => {
         await db
@@ -677,6 +1229,7 @@ describe("ClassPilot tile-read tenant scope", () => {
       });
     }
     assert.equal((await requestJson(path, teacher)).status, 200);
+    assert.equal((await batchRequest()).status, 200);
   });
 
   it("serves a 40-request aligned burst through the 18-connection API pool", async () => {

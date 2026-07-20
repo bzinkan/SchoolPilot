@@ -17,6 +17,9 @@ const authorizationModule = await import(
 const tileCacheModule = await import(
   "../src/services/heartbeatTileCache.ts"
 );
+const screenshotModule = await import(
+  "../src/realtime/ws-redis.ts"
+);
 
 const {
   HEARTBEAT_CLASSIFICATION_BATCH_MAX_ROWS,
@@ -30,6 +33,7 @@ const {
   HEARTBEAT_TILE_CACHE_TTL_SECONDS,
   createHeartbeatTileCache,
 } = tileCacheModule;
+const { decodeScreenshotData } = screenshotModule;
 
 function classificationEntry(index: number, overrides: Record<string, unknown> = {}) {
   return {
@@ -66,6 +70,28 @@ function cachedHeartbeat(index: number, studentId = "student-a") {
     classificationPending: false,
   };
 }
+
+describe("screenshot authority binding", () => {
+  it("preserves current student/session bindings and rejects stale or corrupt data", () => {
+    const current = decodeScreenshotData({
+      screenshot: "data:image/jpeg;base64,Y3VycmVudA==",
+      timestamp: Date.now(),
+      studentId: "student-a",
+      studentSessionId: "session-a",
+    });
+    assert.equal(current?.studentId, "student-a");
+    assert.equal(current?.studentSessionId, "session-a");
+
+    assert.equal(decodeScreenshotData({
+      screenshot: "data:image/jpeg;base64,c3RhbGU=",
+      timestamp: Date.now() - 121_000,
+      studentId: "student-a",
+      studentSessionId: "session-a",
+    }), null);
+    assert.equal(decodeScreenshotData("{not-json"), null);
+    assert.equal(decodeScreenshotData({ timestamp: Date.now() }), null);
+  });
+});
 
 describe("heartbeat classification batching", () => {
   it("persists critical classifications immediately and bounds school batches to 100", async () => {
@@ -371,6 +397,64 @@ describe("aligned tile authorization coalescing", () => {
 });
 
 describe("authorized latest-history Redis cache", () => {
+  it("reads a student cohort in one Redis operation and filters shared devices per student", async () => {
+    const commands: string[][] = [];
+    const studentARows = Array.from({ length: 10 }, (_, index) =>
+      JSON.stringify(cachedHeartbeat(index, "student-a"))
+    );
+    const sharedRows = Array.from({ length: 20 }, (_, index) => {
+      const row = cachedHeartbeat(
+        index,
+        index % 2 === 0 ? "student-b" : "student-c"
+      );
+      row.deviceId = "device-shared";
+      return JSON.stringify(row);
+    });
+    const cache = createHeartbeatTileCache(async (args) => {
+      commands.push(args);
+      return [studentARows, sharedRows];
+    });
+
+    const results = await cache.readBatch(
+      "school-a",
+      [
+        { studentId: "student-a", deviceId: "device-a" },
+        { studentId: "student-b", deviceId: "device-shared" },
+      ],
+      10
+    );
+    assert.equal(commands.length, 1);
+    assert.equal(commands[0]?.[0], "EVAL");
+    assert.equal(commands[0]?.[2], "2");
+    const studentA = results.get("student-a");
+    const studentB = results.get("student-b");
+    assert.equal(studentA?.status, "hit");
+    assert.equal(studentB?.status, "hit");
+    if (studentA?.status === "hit") {
+      assert.ok(studentA.heartbeats.every((row) => row.studentId === "student-a"));
+    }
+    if (studentB?.status === "hit") {
+      assert.ok(studentB.heartbeats.every((row) => row.studentId === "student-b"));
+    }
+
+    let outageCommands = 0;
+    const unavailable = createHeartbeatTileCache(async () => {
+      outageCommands += 1;
+      throw new Error("synthetic batch Redis outage");
+    });
+    const outage = await unavailable.readBatch(
+      "school-a",
+      [
+        { studentId: "student-a", deviceId: "device-a" },
+        { studentId: "student-b", deviceId: "device-shared" },
+      ],
+      10
+    );
+    assert.equal(outageCommands, 1);
+    assert.equal(outage.get("student-a")?.status, "unavailable");
+    assert.equal(outage.get("student-b")?.status, "unavailable");
+  });
+
   it("writes a school/device-scoped bounded key with the 15-minute TTL", async () => {
     const commands: string[][] = [];
     const cache = createHeartbeatTileCache(async (args) => {

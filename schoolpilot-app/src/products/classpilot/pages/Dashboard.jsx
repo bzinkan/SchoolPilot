@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useState, useEffect, useMemo, useRef } from "react";
+import { useQuery, useQueries, useMutation } from "@tanstack/react-query";
 import { useNavigate } from 'react-router-dom';
 import { Monitor, Users, Activity, Settings as SettingsIcon, LogOut, Download, Calendar, Shield, AlertTriangle, UserCog, Plus, X, GraduationCap, WifiOff, Video, MonitorPlay, TabletSmartphone, Lock, Unlock, Layers, CheckSquare, XSquare, User, UserCheck, List, ShieldBan, Eye, EyeOff, Timer, Clock, BarChart3, Trash2, UsersRound, Filter, Hand, MessageSquareOff, MessageSquare, Send, ClipboardCheck, RefreshCw } from "lucide-react";
 import { Button } from '../../../components/ui/button';
@@ -31,6 +31,17 @@ import ClassPilotSidebar from '../components/ClassPilotSidebar';
 import { useAbsentStudents } from '../../../hooks/useAbsentStudents';
 import { AttendancePanel } from '../../../components/AttendancePanel';
 import { isUrlAllowed } from '../../../lib/classpilot-utils';
+import {
+  TILE_BATCH_QUERY_ROOTS,
+  buildTileStudentIds,
+  createTileBatchRequests,
+  fetchTileBatchWithRollbackFallback,
+  indexTileHistory,
+  indexTileScreenshots,
+} from '../lib/tileBatchPolling';
+
+const EMPTY_LIST = Object.freeze([]);
+const EMPTY_TILE_MAP = new Map();
 
 // Helper to normalize grade levels (strip "th", "rd", "st", "nd" suffixes)
 function normalizeGrade(grade) {
@@ -664,13 +675,9 @@ export default function Dashboard() {
               queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
             }
             if (message.type === 'screenshot-available') {
-              if (message.deviceId) {
-                queryClient.invalidateQueries({
-                  queryKey: ['/api/device/screenshot', message.deviceId],
-                  refetchType: 'all',
-                });
-              }
-              queryClient.invalidateQueries({ queryKey: ['/api/students-aggregated'] });
+              // Intentionally passive. Every Chromebook emits this event, and
+              // the parent tile query already polls the complete cohort every
+              // 30 seconds; invalidation would recreate a forty-event burst.
             }
             if (message.type === 'student-event') {
               if (message.eventType === 'blocked_domain') {
@@ -892,7 +899,6 @@ export default function Dashboard() {
         markLiveViewPending(deviceId, false);
         handleStopLiveView(deviceId);
         refreshTile(deviceId);
-        queryClient.invalidateQueries({ queryKey: ['/api/device/screenshot', deviceId], refetchType: 'all' });
         toast({
           title: "Live View Timed Out",
           description: "The request was sent, but no stream arrived. The managed session, extension policy, or network may be blocking live capture; showing the latest screenshot instead.",
@@ -925,6 +931,10 @@ export default function Dashboard() {
       liveViewTimers.current.delete(deviceId);
     }
     refreshTile(deviceId);
+    queryClient.invalidateQueries({
+      queryKey: [TILE_BATCH_QUERY_ROOTS.screenshots],
+      refetchType: 'all',
+    });
   };
 
   // Session-only filtered students (no search filter) - used for class commands
@@ -981,6 +991,72 @@ export default function Dashboard() {
     : studentView === "claimed"
       ? filteredClaimedStudents
       : filteredClassStudents;
+  const tileStudentIdsKey = JSON.stringify(buildTileStudentIds(
+    studentView === "available" ? EMPTY_LIST : filteredStudents
+  ));
+  const tileBatchRequests = useMemo(
+    () => createTileBatchRequests(JSON.parse(tileStudentIdsKey)),
+    [tileStudentIdsKey]
+  );
+  const legacyTileDeviceByStudent = new Map(
+    (studentView === "available" ? EMPTY_LIST : filteredStudents)
+      .filter((student) => student?.studentId && student?.primaryDeviceId)
+      .map((student) => [student.studentId, student.primaryDeviceId])
+  );
+  const [screenshotTileRequests, historyTileRequests] = useMemo(() => [
+    tileBatchRequests.filter((request) => request.kind === 'screenshots'),
+    tileBatchRequests.filter((request) => request.kind === 'history'),
+  ], [tileBatchRequests]);
+  const screenshotTileQueries = useQueries({
+    queries: screenshotTileRequests.map((request) => ({
+      queryKey: request.queryKey,
+      queryFn: () => fetchTileBatchWithRollbackFallback(
+        request,
+        legacyTileDeviceByStudent,
+        apiRequest
+      ),
+      select: indexTileScreenshots,
+      refetchInterval: request.refetchInterval,
+      refetchIntervalInBackground: false,
+      retry: false,
+      staleTime: 15000,
+      gcTime: 60000,
+    })),
+  });
+  const historyTileQueries = useQueries({
+    queries: historyTileRequests.map((request) => ({
+      queryKey: request.queryKey,
+      queryFn: () => fetchTileBatchWithRollbackFallback(
+        request,
+        legacyTileDeviceByStudent,
+        apiRequest
+      ),
+      select: indexTileHistory,
+      refetchInterval: request.refetchInterval,
+      refetchIntervalInBackground: false,
+      retry: false,
+      staleTime: 15000,
+      gcTime: 60000,
+    })),
+  });
+  const screenshotsByStudent = useMemo(() => {
+    if (screenshotTileQueries.length === 0) return EMPTY_TILE_MAP;
+    return new Map(screenshotTileQueries.flatMap((query) => [...(query.data || EMPTY_TILE_MAP)]));
+  }, [screenshotTileQueries]);
+  const historyByStudent = useMemo(() => {
+    if (historyTileQueries.length === 0) return EMPTY_TILE_MAP;
+    return new Map(historyTileQueries.flatMap((query) => [...(query.data || EMPTY_TILE_MAP)]));
+  }, [historyTileQueries]);
+  const failedScreenshotStudentIds = useMemo(() => new Set(
+    screenshotTileQueries.flatMap((query, index) => query.isError
+      ? screenshotTileRequests[index]?.body.studentIds || EMPTY_LIST
+      : EMPTY_LIST)
+  ), [screenshotTileQueries, screenshotTileRequests]);
+  const failedHistoryStudentIds = useMemo(() => new Set(
+    historyTileQueries.flatMap((query, index) => query.isError
+      ? historyTileRequests[index]?.body.studentIds || EMPTY_LIST
+      : EMPTY_LIST)
+  ), [historyTileQueries, historyTileRequests]);
   const controllableStudents = filteredStudents.filter(isStudentCommandable);
   const selectableStudents = studentView === "class" ? controllableStudents : filteredStudents;
 
@@ -1500,14 +1576,14 @@ export default function Dashboard() {
     onError: (error) => { toast({ variant: "destructive", title: "Error", description: error.message }); },
   });
 
-  const refreshScreenshotsForDevices = (targetDeviceIds) => {
-    const deviceIds = targetDeviceIds || students.filter(s => s.status === 'online' || s.status === 'idle').map(s => s.primaryDeviceId).filter(Boolean);
-    // Rapid background refetch bursts at 1s, 2s, 3s, 5s, 8s to feel immediate after toolbar actions
-    // Uses invalidateQueries (keeps old data visible) + refetchType 'all' to bypass staleTime
+  const refreshScreenshotsForDevices = () => {
+    // Keep action feedback responsive without restoring per-device fan-out.
+    // Each refresh is a single cohort request regardless of class size.
     for (const delay of [1000, 2000, 3000, 5000, 8000]) {
       setTimeout(() => {
-        deviceIds.forEach(deviceId => {
-          queryClient.invalidateQueries({ queryKey: ['/api/device/screenshot', deviceId], refetchType: 'all' });
+        queryClient.invalidateQueries({
+          queryKey: [TILE_BATCH_QUERY_ROOTS.screenshots],
+          refetchType: 'all',
         });
       }, delay);
     }
@@ -2695,6 +2771,9 @@ export default function Dashboard() {
                     supervisionLabel={coverageLabel || "In supervision"}
                     onReturnToClass={supervisedElsewhere && activeSession ? () => handleReturnToClass(student) : undefined}
                     returnToClassPending={returnToClassPending}
+                    recentHeartbeats={supervisedElsewhere || failedHistoryStudentIds.has(student.studentId) ? EMPTY_LIST : historyByStudent.get(student.studentId) || EMPTY_LIST}
+                    screenshotData={supervisedElsewhere || failedScreenshotStudentIds.has(student.studentId) ? null : screenshotsByStudent.get(student.studentId) || null}
+                    flightPaths={flightPaths}
                   />
                 </div>
               );

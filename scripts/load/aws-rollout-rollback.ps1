@@ -110,6 +110,33 @@ function Write-AtomicJson {
     } | Out-Null
 }
 
+function Stop-OwnedProcessAndWait {
+    param(
+        [Diagnostics.Process]$Process,
+        [ValidateRange(0, [int]::MaxValue)]
+        [int]$GraceMilliseconds = 0
+    )
+
+    if ($null -eq $Process) { return }
+    try {
+        $exited = $Process.HasExited
+        if (-not $exited -and $GraceMilliseconds -gt 0) {
+            $exited = $Process.WaitForExit($GraceMilliseconds)
+        }
+        if (-not $exited) {
+            try { $Process.Kill($true) }
+            catch [InvalidOperationException] { }
+        }
+        # WaitForExit(timeout) and Kill() can both return before Windows has
+        # released the owned heartbeat process's file handles. The parameterless
+        # wait is the ownership boundary: callers may remove evidence after it.
+        $Process.WaitForExit()
+    }
+    finally {
+        $Process.Dispose()
+    }
+}
+
 function Read-AtomicJson {
     param([string]$Path, [int]$Depth = 40)
     return Invoke-WithAtomicJsonMutex -Path $Path -Operation {
@@ -2143,7 +2170,7 @@ while (-not (Test-Path -LiteralPath $rollbackHeartbeatPath) -and -not $heartbeat
     Start-Sleep -Milliseconds 100
 }
 if (-not (Test-Path -LiteralPath $rollbackHeartbeatPath)) {
-    try { if (-not $heartbeatProcess.HasExited) { $heartbeatProcess.Kill($true) } } catch { }
+    Stop-OwnedProcessAndWait -Process $heartbeatProcess
     throw "Rollback heartbeat worker did not start before the approved mutation."
 }
 try {
@@ -2171,12 +2198,9 @@ catch {
     throw
 }
 finally {
-    try {
-        if ($null -ne $heartbeatProcess -and -not $heartbeatProcess.HasExited) {
-            $heartbeatProcess.WaitForExit(([int]$config.resolvedRollbackHeartbeatIntervalSeconds + 2) * 1000) | Out-Null
-        }
-    } catch { }
-    try { if ($null -ne $heartbeatProcess -and -not $heartbeatProcess.HasExited) { Stop-Process -Id $heartbeatProcess.Id -Force } } catch { }
+    Stop-OwnedProcessAndWait `
+        -Process $heartbeatProcess `
+        -GraceMilliseconds (([int]$config.resolvedRollbackHeartbeatIntervalSeconds + 2) * 1000)
 }
 
 [ordered]@{

@@ -259,6 +259,8 @@ describe("ClassPilot synthetic load fixture preparer", () => {
     const config = validateConfig(rawConfig());
     const blueprint = buildFixtureBlueprint(config);
     assert.equal(blueprint.teachers.length, 20);
+    assert.equal(blueprint.officeStaff.role, "office_staff");
+    assert.equal(blueprint.officeStaff.email, "operator+load-teacher-office@primary-load.example.org");
     assert.equal(blueprint.primaryStudents.length, 1000);
     assert.equal(blueprint.canaryStudents.length, 10);
     assert.equal(blueprint.classes.length, 20);
@@ -274,6 +276,10 @@ describe("ClassPilot synthetic load fixture preparer", () => {
     assert.equal(rosterEmails.length, 800);
     assert.equal(new Set(rosterEmails).size, 800);
     assert.ok(blueprint.classes.every((entry: any) => entry.studentEmails.length === 40));
+    assert.deepEqual(blueprint.classes[0].coTeacherEmails, [blueprint.teachers[19].email]);
+    assert.ok(blueprint.classes.slice(1).every((entry: any) => entry.coTeacherEmails.length === 0));
+    const officeCohortEmails = blueprint.primaryStudents.slice(800, 840).map((student: any) => student.email);
+    assert.ok(officeCohortEmails.every((email: string) => !rosterEmails.includes(email)));
     assert.deepEqual(buildDryRunSummary(config).expected.students, {
       primary: 1000,
       canary: 10,
@@ -910,6 +916,31 @@ describe("ClassPilot synthetic load fixture preparer", () => {
     const wrongTeacherMarker = structuredClone(state);
     wrongTeacherMarker.teachers[0].name = "Unmarked Teacher";
     assert.throws(() => validateStateContract(wrongTeacherMarker, config), /teacher identity/);
+    const planState = structuredClone(state);
+    planState.officeStaff = {
+      ...buildFixtureBlueprint(config).officeStaff,
+      userId: "office-user",
+      membershipId: "office-membership",
+    };
+    planState.planCohorts = {
+      schemaVersion: 1,
+      coTeacher: {
+        staffUserId: state.teachers[19].userId,
+        classId: state.teachers[0].classId,
+        studentIds: state.devices
+          .filter((device: any) => device.schoolKey === "primary" && device.classId === state.teachers[0].classId)
+          .map((device: any) => device.studentId),
+      },
+      officeStaff: {
+        staffUserId: "office-user",
+        contextId: "office-context",
+        studentIds: state.students.primary.slice(800, 840).map((student: any) => student.id),
+      },
+    };
+    assert.equal(validateStateContract(planState, config), planState);
+    const broadenedPlanState = structuredClone(planState);
+    broadenedPlanState.planCohorts.officeStaff.studentIds[0] = state.students.primary[0].id;
+    assert.throws(() => validateStateContract(broadenedPlanState, config), /authorization-plan cohort/);
     const plan = buildCleanupPlan(config, state, 1010);
     assert.equal(plan.mutationsPerformed, 0);
     assert.deepEqual(plan.planned, {
@@ -922,6 +953,8 @@ describe("ClassPilot synthetic load fixture preparer", () => {
       schoolSuspensions: 2,
       schoolSoftDeletes: 0,
       teacherMembershipDeletes: 20,
+      officeStaffMembershipDeletes: 0,
+      supervisionContextReleases: 0,
       studentDeletes: 1010,
       localCredentialArtifactsRevoked: 3,
     });
@@ -951,6 +984,7 @@ describe("ClassPilot synthetic load fixture preparer", () => {
       rosters: new Map<string, Set<string>>(),
       devices: { primary: new Map<string, any>(), canary: new Map<string, any>() },
       sessions: new Map<string, any>(),
+      contexts: new Map<string, any>(),
       enrollment: {
         primary: { key: ["enrollment", "primary", "1"].join("-"), generation: 1, autoEnrollStudents: false },
         canary: { key: ["enrollment", "canary", "1"].join("-"), generation: 1, autoEnrollStudents: false },
@@ -962,6 +996,7 @@ describe("ClassPilot synthetic load fixture preparer", () => {
       teacherCounter: 0,
       classCounter: 0,
       sessionCounter: 0,
+      contextCounter: 0,
       dropFirstTeacherResponse: true,
       dropFirstSignOutResponse: false,
       deletedSchools: new Set<string>(),
@@ -1132,20 +1167,24 @@ describe("ClassPilot synthetic load fixture preparer", () => {
         if (url.pathname === "/api/admin/users" && request.method === "GET") return send(200, { users: model.staff[schoolKey] });
         if (url.pathname === "/api/admin/users" && request.method === "POST") {
           const body = await readBody(request);
+          const isOfficeStaff = body.role === "office_staff";
+          const identityPrefix = isOfficeStaff ? "office" : "teacher";
+          const role = isOfficeStaff ? "office_staff" : "teacher";
+          const identityOrdinal = ++model.teacherCounter;
           const entry = {
-            membershipId: `teacher-membership-${++model.teacherCounter}`,
-            userId: `teacher-user-${model.teacherCounter}`,
-            role: "teacher",
-            user: { id: `teacher-user-${model.teacherCounter}`, email: body.email, displayName: body.name },
+            membershipId: `${identityPrefix}-membership-${identityOrdinal}`,
+            userId: `${identityPrefix}-user-${identityOrdinal}`,
+            role,
+            user: { id: `${identityPrefix}-user-${identityOrdinal}`, email: body.email, displayName: body.name },
           };
           model.staff[schoolKey].push(entry);
-          model.events.push(`teacher-created:${body.email}`);
-          if (model.dropFirstTeacherResponse) {
+          model.events.push(`${identityPrefix}-created:${body.email}`);
+          if (!isOfficeStaff && model.dropFirstTeacherResponse) {
             model.dropFirstTeacherResponse = false;
             request.socket.destroy();
             return;
           }
-          return send(201, { user: entry.user, membership: { id: entry.membershipId, role: "teacher" } });
+          return send(201, { user: entry.user, membership: { id: entry.membershipId, role } });
         }
         const adminUserMatch = /^\/api\/admin\/users\/([^/]+)(?:\/(password))?$/.exec(url.pathname);
         if (adminUserMatch) {
@@ -1187,7 +1226,15 @@ describe("ClassPilot synthetic load fixture preparer", () => {
         }
         if (url.pathname === "/api/classpilot/admin/classes" && request.method === "POST") {
           const body = await readBody(request);
-          const value = { id: `class-${++model.classCounter}`, schoolId, teacherId: body.primaryTeacherId, status: "active", scheduleEnabled: false, ...body };
+          const value = {
+            id: `class-${++model.classCounter}`,
+            schoolId,
+            teacherId: body.primaryTeacherId,
+            status: "active",
+            scheduleEnabled: false,
+            ...body,
+            coTeachers: (body.coTeacherIds || []).map((id: string) => ({ id })),
+          };
           model.classes.set(value.id, value);
           model.rosters.set(value.id, new Set());
           model.events.push(`class-created:${value.id}`);
@@ -1223,8 +1270,49 @@ describe("ClassPilot synthetic load fixture preparer", () => {
           const body = await readBody(request);
           const value = model.classes.get(classMatch[1]);
           if (!value) return send(404, { error: "missing" });
-          Object.assign(value, body, { teacherId: body.primaryTeacherId || value.teacherId });
+          Object.assign(value, body, {
+            teacherId: body.primaryTeacherId || value.teacherId,
+            coTeachers: (body.coTeacherIds || []).map((id: string) => ({ id })),
+          });
           return send(200, { class: value });
+        }
+        if (url.pathname === "/api/classpilot/coverage/contexts" && request.method === "GET") {
+          const contexts = [...model.contexts.values()].filter((context: any) =>
+            context.schoolId === schoolId && (url.searchParams.get("active") === "false" || context.status === "active")
+          );
+          return send(200, { contexts });
+        }
+        if (url.pathname === "/api/classpilot/coverage/contexts" && request.method === "POST") {
+          const body = await readBody(request);
+          const context = {
+            id: `context-${++model.contextCounter}`,
+            schoolId,
+            status: "active",
+            ...body,
+            studentIds: [...(body.studentIds || [])],
+          };
+          model.contexts.set(context.id, context);
+          return send(201, { context });
+        }
+        const contextStudentsMatch = /^\/api\/classpilot\/coverage\/contexts\/([^/]+)\/students$/.exec(url.pathname);
+        if (contextStudentsMatch && request.method === "GET") {
+          const context = model.contexts.get(contextStudentsMatch[1]);
+          if (!context) return send(404, { error: "missing" });
+          return send(200, { students: context.studentIds.map((studentId: string) => ({ studentId })) });
+        }
+        const contextReleaseMatch = /^\/api\/classpilot\/coverage\/contexts\/([^/]+)\/release$/.exec(url.pathname);
+        if (contextReleaseMatch && request.method === "POST") {
+          const context = model.contexts.get(contextReleaseMatch[1]);
+          if (!context) return send(404, { error: "missing" });
+          context.status = "released";
+          return send(200, { released: context.studentIds.map((studentId: string) => ({ studentId })) });
+        }
+        const contextMatch = /^\/api\/classpilot\/coverage\/contexts\/([^/]+)$/.exec(url.pathname);
+        if (contextMatch && request.method === "PATCH") {
+          const context = model.contexts.get(contextMatch[1]);
+          if (!context) return send(404, { error: "missing" });
+          Object.assign(context, await readBody(request));
+          return send(200, { context });
         }
         if (url.pathname === "/api/classpilot/enrollment-key" && request.method === "GET") {
           return send(200, { key: model.enrollment[schoolKey].key, autoEnrollStudents: model.enrollment[schoolKey].autoEnrollStudents });
@@ -1330,14 +1418,24 @@ describe("ClassPilot synthetic load fixture preparer", () => {
       const provisioned: any = await runPreparerCli(["provision", "--config", localConfigPath, "--output", output]);
       assert.equal(provisioned.students, 1010);
       assert.equal(provisioned.teachers, 20);
+      assert.equal(provisioned.officeStaff, 1);
       assert.equal(provisioned.classes, 20);
       assert.equal(provisioned.devicesRegistered, 1010);
+      assert.equal(provisioned.authorizationPlanCohortsReady, true);
+      assert.equal(provisioned.officeSupervisionStudents, 40);
+      assert.doesNotMatch(
+        JSON.stringify(provisioned),
+        /office-user-|office-membership-|context-|student-primary-/,
+      );
       assert.equal(model.students.primary.length, 1000);
       assert.equal(model.students.canary.length, 10);
       assert.equal(model.studentImportBatchSizes.length, 101);
       assert.ok(model.studentImportBatchSizes.every((size: number) => size === 10));
       assert.equal(model.staff.primary.filter((entry: any) => entry.role === "teacher").length, 20);
+      assert.equal(model.staff.primary.filter((entry: any) => entry.role === "office_staff").length, 1);
       assert.equal(model.classes.size, 20);
+      assert.deepEqual(model.classes.get("class-1").coTeachers, [{ id: model.staff.primary.find((entry: any) => entry.user.email.endsWith("-20@primary-load.example.org")).userId }]);
+      assert.equal([...model.contexts.values()].filter((entry: any) => entry.status === "active").length, 1);
       assert.equal([...model.sessions.values()].filter((entry: any) => !entry.endTime).length, 20);
       for (const filename of readdirSync(output)) {
         assert.doesNotMatch(readFileSync(join(output, filename), "utf8"), /full-lifecycle-bearer-secret-sentinel/);
@@ -1351,10 +1449,12 @@ describe("ClassPilot synthetic load fixture preparer", () => {
       assert.equal(rerun.devicesRegistered, 1010);
       assert.equal(model.students.primary.length + model.students.canary.length, 1010);
       assert.equal(model.staff.primary.filter((entry: any) => entry.role === "teacher").length, 20);
+      assert.equal(model.staff.primary.filter((entry: any) => entry.role === "office_staff").length, 1);
       assert.equal(model.classes.size, 20);
       assert.equal([...model.sessions.values()].filter((entry: any) => !entry.endTime).length, 20, "refresh rerun must end prior sessions before replacement");
       const ownership = JSON.parse(readFileSync(join(output, FILES.ownership), "utf8"));
       assert.equal(Object.keys(ownership.pendingCreateIntents.teachers).length, 0);
+      assert.equal(Object.keys(ownership.pendingCreateIntents.staff).length, 0);
 
       const auth = JSON.parse(readFileSync(join(output, FILES.auth), "utf8"));
       const swappedCookieAuth = structuredClone(auth);
@@ -1373,6 +1473,11 @@ describe("ClassPilot synthetic load fixture preparer", () => {
       assert.equal(verified.passed, true);
       assert.equal(verified.activeDeviceSessions, 1010);
       assert.equal(verified.activeSessions, 20);
+      assert.deepEqual(verified.authorizationPlanCohorts, { coTeacherStudents: 40, officeSupervisionStudents: 40 });
+      assert.doesNotMatch(
+        JSON.stringify(verified),
+        /office-user-|office-membership-|context-|student-primary-/,
+      );
 
       assert.equal(auth.schemaVersion, 2);
       assert.equal(auth.teacherAuth.length, 20);
@@ -1405,9 +1510,13 @@ describe("ClassPilot synthetic load fixture preparer", () => {
       assert.equal(deactivated.completed, true);
       assert.equal(deactivated.hold.retainedFixtureAdmins, 2);
       assert.equal(deactivated.hold.syntheticTeacherMembershipsRemoved, true);
+      assert.equal(deactivated.hold.syntheticOfficeStaffMembershipRemoved, true);
+      assert.equal(deactivated.hold.authorizationPlanSupervisionReleased, true);
       assert.equal(deactivated.hold.tenantPostconditions.activeTeachingSessions, 0);
       assert.equal(model.students.primary.length + model.students.canary.length, 0);
       assert.equal(model.staff.primary.filter((entry: any) => entry.role === "teacher").length, 0);
+      assert.equal(model.staff.primary.filter((entry: any) => entry.role === "office_staff").length, 0);
+      assert.equal([...model.contexts.values()].filter((entry: any) => entry.status === "active").length, 0);
       assert.equal(model.devices.primary.size + model.devices.canary.size, 0);
       assert.equal([...model.classes.values()].filter((entry: any) => entry.status === "active").length, 0);
       assert.equal([...model.sessions.values()].filter((entry: any) => !entry.endTime).length, 0);

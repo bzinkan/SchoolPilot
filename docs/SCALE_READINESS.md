@@ -61,8 +61,9 @@ npm run load:classpilot -- --validate-fixtures
 ```
 
 For a gate run, the manifest must contain unique, non-empty `deviceId` and
-`studentToken` values. Include optional `studentId` for per-student history path
-templates and `schoolId` for tenant-canary validation. Put ten second-school
+`studentToken` values. Launch/certification entries must also contain a unique,
+non-empty `studentId`; batch tile requests never expose or accept device IDs.
+Include `schoolId` for tenant-canary validation. Put ten second-school
 canary devices inside every tested manifest prefix; their `schoolId` must differ
 from `LOAD_TEACHER_SCHOOL_ID`. Never commit the manifest, session cookie, CSRF
 token, or JWT.
@@ -90,20 +91,20 @@ Production-like browser traffic must provide:
   acceptance evidence.
 - `LOAD_WAF_DEVICE_LIMIT=100000` and `LOAD_WAF_GENERAL_LIMIT=50000`, matching
   the deployed rate rules.
-- `LOAD_TEACHER_PATHS`/`LOAD_DASHBOARD_PATHS` for aggregated tiles and history;
-  the launch gate requires both a dashboard path and a history path containing
-  `{deviceId}` or `{studentId}`. Leave `LOAD_TEACHER_TEMPLATE_DEVICE_COUNT`
-  unset (or `0`) so every primary-school tile polls history, matching the real
-  dashboard, and keep `LOAD_TEACHER_TEMPLATE_INTERVAL_MS=30000`. A smaller
-  template-device count is allowed only for an explicit partial diagnostic.
-  Aggregate dashboard paths retain the 5-second `LOAD_TEACHER_INTERVAL_MS`
-  cadence. Do not put screenshot paths in these lists; the harness rejects them
-  so they cannot bypass the dedicated cold-cache warm-up.
-- `LOAD_SCREENSHOT_GET_PATH_TEMPLATE` with `{deviceId}` for 30-second teacher
-  screenshot polling. Leave `LOAD_SCREENSHOT_GET_WARMUP_MS=45000` (one initial
-  upload-stagger interval plus the 15-second request timeout) so a cold Redis
-  cache is populated before the first GET; the harness does not ignore a 404
-  after that warm-up.
+- `LOAD_TEACHER_PATHS=/api/students-aggregated` for the retained aggregate
+  dashboard sample at the 5-second `LOAD_TEACHER_INTERVAL_MS` cadence.
+- `LOAD_TILE_HISTORY_PATH=/api/classpilot/tiles/history` and
+  `LOAD_TILE_SCREENSHOTS_PATH=/api/classpilot/tiles/screenshots`. After the
+  45-second screenshot-cache warm-up, each teacher sends those two POSTs
+  together every 30 seconds with its 25- or 40-student cohort. Cookie-authenticated
+  POSTs carry that teacher's CSRF token. Legacy `{deviceId}`/`{studentId}`
+  template paths and `LOAD_SCREENSHOT_GET_PATH_TEMPLATE` are forbidden in a
+  launch run and remain available only for diagnostic detail/range traffic.
+- `LOAD_WORKLOAD_SCHEMA_VERSION=classpilot-tile-batch-v1`. Certification also
+  binds endpoint-shape SHA-256
+  `8e9f1942e4b3a27de7dd0571a9f60ffeb276c089e4baae96a885dba69e3233b2` in
+  `workload.endpointShapeSha256`; older per-device results cannot be a
+  predecessor.
 - `LOAD_COMMAND_ENDPOINT` and `LOAD_COMMAND_BODIES_FILE`, an ignored local JSON
   array containing 20 unique active `teachingSessionId` class command bodies.
   The harness issues one sequential sweep across all 20 classes, then cycles
@@ -121,7 +122,7 @@ Production-like browser traffic must provide:
 With enforced thresholds, `LOAD_GATE_PROFILE=launch` is the default and fails
 closed if any input above is absent. It also fixes the stage sizes, canary count,
 20-class shape, durations, traffic cadences, screenshot sizes, shared-IP WAF
-limits, and all-tile history polling to the contract below; environment
+limits, and two-request batch tile polling to the contract below; environment
 overrides cannot weaken those invariants. `LOAD_GATE_PROFILE=partial` is the
 explicit opt-out for an intentionally incomplete diagnostic baseline; it is
 not launch evidence.
@@ -179,14 +180,27 @@ The HTTP/WebSocket/WAF harness scope passes only when all of the following hold:
   for known foreign student/device identifiers even when the response has no
   `schoolId`. Each teacher's aggregated response must contain exactly that
   teacher's 40-student class roster—no duplicate, cross-class, or school-wide
-  same-tenant expansion—and history responses must match the requested device.
+  same-tenant expansion. Each tile batch returns exactly the requested
+  authorized student IDs, never a device ID; historical per-device probes must
+  still match their requested device.
 - Both actual rolling and projected device-ingest traffic stay below 100,000
   requests/5 minutes/IP, and other API traffic stays below 50,000; meeting a
   configured limit fails the gate before WAF blocking is considered acceptable.
-- HTTP 5xx and network error rates are each below 0.1%.
-- Heartbeat p95 ≤500 ms; screenshot POST/GET p95 ≤750 ms; every redacted
-  teacher endpoint class and command p95 ≤1 second. A fast aggregate cannot
-  hide one slow history endpoint.
+- HTTP 5xx and network error rates are each below 0.1%, with zero
+  admission-timeout 503 responses.
+- Heartbeat p95 ≤500 ms; screenshot ingest and screenshot-batch p95 ≤750 ms;
+  history-batch, every other redacted teacher endpoint class, and command p95
+  ≤1 second. A fast aggregate cannot hide one slow tile batch.
+- Each batch HTTP request is counted once for WAF, latency, network errors, and
+  response bytes. Each requested/returned student remains a logical tile
+  operation: Waf/800 therefore retains 800 screenshot and 800 history logical
+  operations per full polling interval. Screenshot retrieval success is
+  evaluated per student tile and must be at least 99%.
+- The terminal load summary and monitor result must bind the exact workload
+  schema/hash plus 20 cohorts, two requests per cohort per poll, the stage's
+  25- or 40-student cohort size, and logical history/screenshot counts equal to
+  batch requests multiplied by that size. Missing or inconsistent accounting
+  cannot seed the next certification stage.
 - 100% of devices receive WebSocket `auth-success`; unexpected closes remain
   below 0.1%; every forced reconnect completes within 30 seconds; before
   intentional shutdown every selected device and all 20 teacher sockets must

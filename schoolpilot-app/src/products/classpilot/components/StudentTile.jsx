@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import { Card } from "../../../components/ui/card";
 import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
@@ -8,6 +8,8 @@ import { Checkbox } from "../../../components/ui/checkbox";
 import { useToast } from "../../../hooks/use-toast";
 import { apiRequest, queryClient } from "../../../lib/queryClient";
 import VideoPortal from "./VideoPortal";
+
+const EMPTY_LIST = Object.freeze([]);
 
 function isBlockedDomain(url, blockedDomains) {
   if (!url || blockedDomains.length === 0) return false;
@@ -55,6 +57,9 @@ function StudentTile({
   supervisionLabel = "",
   onReturnToClass,
   returnToClassPending = false,
+  recentHeartbeats = EMPTY_LIST,
+  screenshotData = null,
+  flightPaths = EMPTY_LIST,
 }) {
   const [expanded, setExpanded] = useState(false);
   const { toast } = useToast();
@@ -132,41 +137,6 @@ function StudentTile({
 
     return () => window.clearTimeout(timeout);
   }, [expanded, liveStream]);
-
-  const { data: _settings } = useQuery({
-    queryKey: ['/api/settings'],
-    queryFn: () => apiRequest('GET', '/settings'),
-    select: (data) => data?.settings ?? data ?? null,
-  });
-
-  // Fetch recent browsing history for mini history icons
-  const { data: recentHeartbeats = [] } = useQuery({
-    queryKey: ['/api/heartbeats', student.primaryDeviceId],
-    queryFn: () => apiRequest('GET', `/heartbeats/${student.primaryDeviceId}`),
-    select: (data) => Array.isArray(data) ? data : data?.heartbeats ?? [],
-    enabled: !!student.primaryDeviceId && !controlDisabled,
-    refetchInterval: 30000, // Refresh every 30 seconds
-  });
-
-  // Fetch flight paths to check if current URL is blocked
-  const { data: flightPaths = [] } = useQuery({
-    queryKey: ['/api/flight-paths'],
-    queryFn: () => apiRequest('GET', '/flight-paths'),
-    select: (data) => Array.isArray(data) ? data : data?.flightPaths ?? [],
-  });
-
-  // Fetch screenshot thumbnail for this device (refreshes every 10 seconds)
-  // Includes tab metadata (title, url, favicon) from when the screenshot was captured
-  const { data: screenshotData } = useQuery({
-    queryKey: ['/api/device/screenshot', student.primaryDeviceId],
-    queryFn: () => apiRequest('GET', `/device/screenshot/${student.primaryDeviceId}`),
-    enabled: !!student.primaryDeviceId && student.status !== 'offline' && !liveStream && !controlDisabled,
-    refetchInterval: 30000, // Refresh every 30 seconds (reduces server load at scale)
-    refetchIntervalInBackground: false, // Don't refetch when browser tab is not focused
-    retry: false, // Don't retry on 404 (no screenshot available)
-    staleTime: 15000, // Consider data fresh for 15 seconds
-    gcTime: 60000, // Keep in cache for 60 seconds (formerly cacheTime)
-  });
 
   // Get unique recent domains (last 5)
   const recentDomains = recentHeartbeats
