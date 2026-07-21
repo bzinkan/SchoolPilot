@@ -685,9 +685,13 @@ Before certification, run one 30-minute diagnostic-only Waf/800 using the new
 batch workload. Every RDS CPU minute must be below 65%; HTTP 5xx and network
 errors must each remain below 0.1%; screenshot tile success must be at least
 99%; admission-timeout 503s must be zero; screenshot-batch p95 must be at most
-750 ms and history-batch p95 at most one second; and authorization SQL must no
-longer dominate Performance Insights. Diagnostic evidence cannot seed a
-certification chain.
+750 ms and history-batch p95 at most one second; PostgreSQL SQLSTATE `57014`
+must be absent from the exact production API log streams for the traffic
+interval; authorization SQL must no longer dominate Performance Insights; and
+the optimized history fallback must appear in the bounded token evidence; and
+`IO:DataFileRead` must remain below 50% of both every identified fallback
+token and their aggregate. Diagnostic evidence cannot seed a certification
+chain.
 
 Use `scripts/load/start-waf800-batch-diagnostic.ps1` for that one run. Its
 operator config is external and hash-bound and must declare
@@ -748,9 +752,26 @@ successful terminal result. It runs the normal AWS monitor with the diagnostic
 profile, which requires 30 of 30 contiguous one-minute RDS CPU points across
 the 30-minute traffic window and requires every point to remain strictly below
 65%; the generic 95% telemetry allowance does not apply to diagnostic RDS CPU.
-All normal traffic/latency/coverage gates remain intact. It also queries PI only
-with `db.sql_tokenized`, retains hashes/categories rather than SQL text, and
-fails if aggregate tile-authorization load reaches 50% of average DB load.
+All normal traffic/latency/coverage gates remain intact. After the exact traffic
+interval, the controller re-reads the bound revisioned API task definition,
+requires its one `api` container to use the reviewed production `awslogs`
+group/region/prefix, and runs a fully paginated `FilterLogEvents` query against
+only the derived API stream prefix for SQLSTATE `57014`. Any match is terminal;
+the result stores only the interval, count, and hashes of the log binding, never
+raw log messages, event IDs, stream IDs, or log-group names.
+
+The controller discovers SQL through `db.sql_tokenized`, retains
+hashes/categories rather than SQL text, and fails if aggregate
+tile-authorization load reaches 50% of average DB load. It recognizes the exact
+optimized cold-history fallback only when the tokenized SQL contains all three
+`requested_tiles`, `heartbeats`, and `lateral` markers. For every such top-25
+token it performs a token-filtered `db.wait_event` query, requires the filtered
+wait totals to cover the token's DB load within the fixed numeric tolerance,
+and requires `IO:DataFileRead` to be strictly below 50% both per token and in
+aggregate. If no optimized fallback appears in the top 25, the strict
+cold-cache diagnostic records that absence and fails closed because the
+fallback's own wait mix was not proven. A present token with missing, partial,
+malformed, or unpaginated wait evidence also fails closed.
 The terminal artifact is explicitly
 `diagnosticOnly=true`, `certificationEligible=false`,
 `supervisorSealed=false`, and `predecessor=null`. The certification supervisor

@@ -391,10 +391,7 @@ export function createHeartbeatTileCache(
       const decoded = rawRows.map((raw) =>
         decodeHeartbeat(raw, schoolId, entry.deviceId)
       );
-      if (
-        decoded.some((row) => row === undefined) ||
-        (decoded as HeartbeatTileCacheWrite[]).some((row) => row.classificationPending)
-      ) {
+      if (decoded.some((row) => row === undefined)) {
         results.set(entry.studentId, { status: "incomplete" });
         recordHeartbeatHotPathCounter("tileCacheErrors");
         recordHeartbeatHotPathCounter("tileCacheFallbacks");
@@ -402,15 +399,21 @@ export function createHeartbeatTileCache(
       }
       const allowed = (decoded as HeartbeatTileCacheWrite[])
         .filter((row) => row.studentId === entry.studentId);
-      if (allowed.length < boundedLimit) {
+      const selected = allowed.slice(0, boundedLimit);
+      if (selected.length < boundedLimit) {
         results.set(entry.studentId, { status: "authorization-filtered" });
+        recordHeartbeatHotPathCounter("tileCacheFallbacks");
+        continue;
+      }
+      if (selected.some((row) => row.classificationPending)) {
+        results.set(entry.studentId, { status: "incomplete" });
+        recordHeartbeatHotPathCounter("tileCacheErrors");
         recordHeartbeatHotPathCounter("tileCacheFallbacks");
         continue;
       }
       results.set(entry.studentId, {
         status: "hit",
-        heartbeats: allowed
-          .slice(0, boundedLimit)
+        heartbeats: selected
           .map(({ classificationPending: _classificationPending, ...heartbeat }) => heartbeat),
       });
       recordHeartbeatHotPathCounter("tileCacheHits");

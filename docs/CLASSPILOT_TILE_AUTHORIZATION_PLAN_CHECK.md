@@ -2,7 +2,9 @@
 
 The tile authorization release gate runs the exact SQL exported by
 `buildClassPilotTileAuthorizationQuery` against representative 40-student
-cohorts. It is read-only and changes neither schema nor data.
+cohorts. It also runs the production cold-history fallback exported by
+`buildHeartbeatTileHistoryBatchQuery` for the authorized `teacher.history`
+cohort. It is read-only and changes neither schema nor data.
 
 Build the release and run the gate with the same database environment used by
 the API:
@@ -25,14 +27,23 @@ Each measured query runs in a read-only transaction with `app.is_super=off`
 and `app.school_id` bound to the selected tenant. The command performs two
 unmeasured warmups and at least 20 measured
 `EXPLAIN (ANALYZE, BUFFERS, WAL, SETTINGS, FORMAT JSON)` samples. It fails
-closed unless every scenario has p95 at or below 50 ms, maximum at or below
-100 ms, zero temporary read/write blocks, and no `SubPlan` nodes. The fixed
-40-student cohort size and thresholds cannot be relaxed by command-line flags.
+closed unless every authorization scenario has p95 at or below 50 ms, maximum
+at or below 100 ms, zero temporary read/write blocks, and no `SubPlan` nodes.
+
+The history fallback uses the same two warmups and measured sample count. Each
+plan must return no more than 400 heartbeat rows and contain a per-pair `Limit`
+executed for all 40 requested pairs, backed by
+`heartbeats_school_device_student_timestamp_idx`. A `WindowAgg`, a sequential
+or parallel sequential scan of `heartbeats`, any `SubPlan`, temporary-file I/O,
+p95 above 50 ms, or maximum above 100 ms fails the gate. The fixed 40-student
+cohort, ten-row history limit, existing index identity, and thresholds cannot
+be relaxed by command-line flags.
 
 Output is a counts-only JSON record containing scenario labels, cohort/sample
-counts, timings, and plan violation counters. Tenant, staff, student, device,
-SQL, parameter, and raw-plan values are never emitted. Unexpected database
-errors are reduced to `database_operation_failed`.
+counts, timings, row bounds, indexed-limit status, and plan violation counters.
+Tenant, staff, student, device, SQL, parameter, and raw-plan values are never
+emitted. Unexpected database errors are reduced to
+`database_operation_failed`.
 
 For the authorized production batch-tile remediation, invoke the deployer's
 opt-in release gate:

@@ -35,6 +35,9 @@ $script:AuthSqlMarkers = @(
     "requested_students", "active_supervision", "active_staff_groups",
     "active_roster_students", "authorized_students", "resolved_students"
 )
+$script:HistoryFallbackSqlMarkers = @("requested_tiles", "heartbeats", "lateral")
+$script:HistoryIoDominanceThresholdPercent = 50.0
+$script:PerformanceInsightsCoverageTolerancePercent = 0.5
 
 function Get-Value {
     param($Object, [string]$Name, $Default = $null)
@@ -435,6 +438,43 @@ function Invoke-HarnessPreflight {
     }
 }
 
+function Resolve-ApiAwslogsBinding {
+    param($TaskDefinition, [string]$ExpectedTaskDefinitionArn, [string]$ExpectedRegion)
+    if ($null -eq $TaskDefinition -or [string]$TaskDefinition.taskDefinitionArn -cne $ExpectedTaskDefinitionArn) {
+        throw "The API awslogs binding did not come from the exact bound task definition."
+    }
+    $containers = @($TaskDefinition.containerDefinitions | Where-Object name -eq "api")
+    if ($containers.Count -ne 1) {
+        throw "The exact bound API task definition must contain one api container for log evidence."
+    }
+    $configuration = Get-Value $containers[0] "logConfiguration"
+    $options = Get-Value $configuration "options"
+    $logGroup = [string](Get-Value $options "awslogs-group" "")
+    $logRegion = [string](Get-Value $options "awslogs-region" "")
+    $logPrefix = [string](Get-Value $options "awslogs-stream-prefix" "")
+    if ([string](Get-Value $configuration "logDriver" "") -cne "awslogs" -or
+        $logGroup -cne "/ecs/schoolpilot-production-api" -or $logRegion -cne $ExpectedRegion -or
+        $logPrefix -cne "api" -or $logGroup -notmatch '^[A-Za-z0-9_.\-/#]+$' -or
+        $logPrefix -notmatch '^[A-Za-z0-9_.\-/#]+$') {
+        throw "The exact bound API task definition does not use the reviewed production awslogs binding."
+    }
+    return [pscustomobject]@{
+        TaskDefinitionArn=$ExpectedTaskDefinitionArn
+        LogDriver="awslogs"
+        LogGroup=$logGroup
+        LogRegion=$logRegion
+        LogPrefix=$logPrefix
+        ApiStreamPrefix="$logPrefix/api/"
+    }
+}
+
+function Get-BoundApiAwslogsBinding {
+    param($Config)
+    $response = Invoke-AwsJson @("ecs","describe-task-definition","--region",$script:ExpectedRegion,
+        "--task-definition",$Config.ApiTaskDefinitionArn)
+    return Resolve-ApiAwslogsBinding $response.taskDefinition $Config.ApiTaskDefinitionArn $script:ExpectedRegion
+}
+
 function Get-TaskDefinitionPosture {
     param([string]$Arn, [string]$ContainerName, [string]$ExpectedDigest, [string]$ExpectedCpu, [string]$ExpectedMemory)
     $response = Invoke-AwsJson @("ecs","describe-task-definition","--region",$script:ExpectedRegion,"--task-definition",$Arn)
@@ -448,7 +488,18 @@ function Get-TaskDefinitionPosture {
     if ($image -notmatch '@(sha256:[0-9a-f]{64})$' -or $Matches[1].ToLowerInvariant() -cne $ExpectedDigest) {
         throw "Task definition $Arn is not pinned to the bound deployed image digest."
     }
-    return [ordered]@{arn=$Arn;containerName=$ContainerName;cpu=[string]$definition.cpu;memory=[string]$definition.memory;imageDigest=$ExpectedDigest}
+    $logging = $null
+    if ($ContainerName -ceq "api") {
+        $binding = Resolve-ApiAwslogsBinding $definition $Arn $script:ExpectedRegion
+        $logging = [ordered]@{
+            driver=$binding.LogDriver;region=$binding.LogRegion
+            logGroupSha256=(Get-StringSha256 $binding.LogGroup)
+            streamPrefixSha256=(Get-StringSha256 $binding.ApiStreamPrefix)
+            rawIdentifiersPersisted=$false
+        }
+    }
+    return [ordered]@{arn=$Arn;containerName=$ContainerName;cpu=[string]$definition.cpu;memory=[string]$definition.memory;
+        imageDigest=$ExpectedDigest;logging=$logging}
 }
 
 function Get-ScalingSnapshot {
@@ -936,6 +987,100 @@ function Get-TrafficWindow {
     return [ordered]@{startUtc=$startedAt.ToString("o");endUtc=$startedAt.AddSeconds($actualSeconds).ToString("o");summary=$summary}
 }
 
+function Get-Postgres57014Evidence {
+    param($Config, [string]$StartUtc, [string]$EndUtc)
+    try {
+        $start = ([DateTimeOffset]$StartUtc).ToUniversalTime()
+        $end = ([DateTimeOffset]$EndUtc).ToUniversalTime()
+    }
+    catch { throw "The PostgreSQL timeout log query requires a valid UTC traffic interval." }
+    if ($end -le $start) { throw "The PostgreSQL timeout log query requires a positive traffic interval." }
+    $startMs = $start.ToUnixTimeMilliseconds()
+    $endMs = $end.ToUnixTimeMilliseconds()
+    $binding = Get-BoundApiAwslogsBinding $Config
+    $response = Invoke-AwsJson @("logs","filter-log-events","--region",$binding.LogRegion,
+        "--log-group-name",$binding.LogGroup,"--log-stream-name-prefix",$binding.ApiStreamPrefix,
+        "--start-time",[string]$startMs,"--end-time",[string]$endMs,"--filter-pattern",'"57014"')
+    if ($null -eq $response -or -not [string]::IsNullOrWhiteSpace([string](Get-Value $response "nextToken" ""))) {
+        throw "CloudWatch Logs did not return complete PostgreSQL timeout evidence for the traffic interval."
+    }
+    $events = @((Get-Value $response "events" @()))
+    foreach ($event in $events) {
+        $timestamp = [long](Get-Value $event "timestamp" -1)
+        $stream = [string](Get-Value $event "logStreamName" "")
+        $message = [string](Get-Value $event "message" "")
+        if ($timestamp -lt $startMs -or $timestamp -gt $endMs -or
+            -not $stream.StartsWith($binding.ApiStreamPrefix, [StringComparison]::Ordinal) -or
+            -not $message.Contains("57014", [StringComparison]::Ordinal)) {
+            throw "CloudWatch Logs returned malformed or out-of-scope PostgreSQL timeout evidence."
+        }
+    }
+    return [ordered]@{
+        diagnosticOnly=$true;sanitized=$true;source="cloudwatch_logs";sqlState="57014"
+        startUtc=$start.ToString("o");endUtc=$end.ToString("o");startTimeMs=$startMs;endTimeInclusiveMs=$endMs
+        exactTaskDefinitionBound=$true;logDriver=$binding.LogDriver;logRegion=$binding.LogRegion
+        logGroupSha256=(Get-StringSha256 $binding.LogGroup)
+        streamPrefixSha256=(Get-StringSha256 $binding.ApiStreamPrefix)
+        rawMessagesPersisted=$false;rawIdentifiersPersisted=$false;matchCount=$events.Count;passed=($events.Count -eq 0)
+    }
+}
+
+function Get-HistoryFallbackWaitEventEvidence {
+    param($Config, [string]$StartUtc, [string]$EndUtc, [string]$DbiResourceId,
+        [string]$TokenId, [string]$TokenSha256, [double]$TokenLoad)
+    if ([string]::IsNullOrWhiteSpace($TokenId) -or $TokenLoad -le 0) {
+        throw "History fallback wait-event evidence requires a nonzero bound SQL token."
+    }
+    $filter = ([ordered]@{"db.sql_tokenized.id"=$TokenId} | ConvertTo-Json -Compress)
+    $response = Invoke-AwsJson @("pi","describe-dimension-keys","--region",$Config.Resources.region,
+        "--service-type","RDS","--identifier",$DbiResourceId,"--start-time",$StartUtc,"--end-time",$EndUtc,
+        "--period-in-seconds","60","--metric","db.load.avg","--group-by","Group=db.wait_event,Limit=25",
+        "--filter",$filter)
+    if ($null -eq $response -or -not [string]::IsNullOrWhiteSpace([string](Get-Value $response "NextToken" ""))) {
+        throw "Performance Insights returned incomplete filtered wait-event pagination for history fallback SQL."
+    }
+    $keys = @((Get-Value $response "Keys" @()))
+    if ($keys.Count -lt 1) {
+        throw "Performance Insights returned no filtered wait-event evidence for a present history fallback token."
+    }
+    $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $waitLoad = 0.0
+    $dataFileReadLoad = 0.0
+    foreach ($key in $keys) {
+        $name = [string](Get-Value $key.Dimensions "db.wait_event.name" "")
+        $type = [string](Get-Value $key.Dimensions "db.wait_event.type" "")
+        $load = [double](Get-Value $key "Total" -1)
+        $identity = "$type`:$name"
+        if ([string]::IsNullOrWhiteSpace($name) -or [string]::IsNullOrWhiteSpace($type) -or $load -lt 0 -or
+            -not $seen.Add($identity)) {
+            throw "Performance Insights returned malformed filtered wait-event evidence for history fallback SQL."
+        }
+        $waitLoad += $load
+        if (($type -ieq "IO" -and $name -ieq "DataFileRead") -or $name -ieq "IO:DataFileRead") {
+            $dataFileReadLoad += $load
+        }
+    }
+    if ($waitLoad -le 0) {
+        throw "Performance Insights returned zero filtered wait-event load for a present history fallback token."
+    }
+    $allowedDifference = [math]::Max(0.000001,
+        $TokenLoad * ($script:PerformanceInsightsCoverageTolerancePercent / 100.0))
+    $complete = [math]::Abs($waitLoad - $TokenLoad) -le $allowedDifference
+    if (-not $complete) {
+        throw "Performance Insights filtered wait-event totals did not completely cover a history fallback token."
+    }
+    $coveragePercent = [math]::Round(($waitLoad / $TokenLoad) * 100.0, 3)
+    $sharePercent = [math]::Round(($dataFileReadLoad / $waitLoad) * 100.0, 3)
+    return [ordered]@{
+        tokenSha256=$TokenSha256;dbLoad=[math]::Round($TokenLoad,6);waitEventCount=$keys.Count
+        filteredWaitEventDbLoad=[math]::Round($waitLoad,6);coveragePercent=$coveragePercent
+        coverageTolerancePercent=$script:PerformanceInsightsCoverageTolerancePercent;complete=$complete
+        dataFileReadDbLoad=[math]::Round($dataFileReadLoad,6);dataFileReadSharePercent=$sharePercent
+        dominanceThresholdPercent=$script:HistoryIoDominanceThresholdPercent
+        passed=($sharePercent -lt $script:HistoryIoDominanceThresholdPercent)
+    }
+}
+
 function Get-PerformanceInsightsEvidence {
     param($Config, [string]$StartUtc, [string]$EndUtc, [string]$DbiResourceId)
     $r = $Config.Resources
@@ -946,40 +1091,79 @@ function Get-PerformanceInsightsEvidence {
     if ($points.Count -lt 1) { throw "Performance Insights returned no DB load datapoints for the traffic interval." }
     $averageDbLoad = [double](($points.Value | Measure-Object -Average).Average)
     $keys = Invoke-AwsJson @("pi","describe-dimension-keys","--region",$r.region,"--service-type","RDS",
-        "--identifier",$DbiResourceId,"--start-time",$StartUtc,"--end-time",$EndUtc,"--metric","db.load.avg",
-        "--group-by","Group=db.sql_tokenized,Limit=25")
+        "--identifier",$DbiResourceId,"--start-time",$StartUtc,"--end-time",$EndUtc,"--period-in-seconds","60",
+        "--metric","db.load.avg","--group-by","Group=db.sql_tokenized,Limit=25")
+    if ($null -eq $keys -or -not [string]::IsNullOrWhiteSpace([string](Get-Value $keys "NextToken" ""))) {
+        throw "Performance Insights returned incomplete top-token pagination for the diagnostic interval."
+    }
     $rank = 0
     $entries = @()
+    $historyTokens = @()
     $authLoad = 0.0
-    foreach ($key in @($keys.Keys | Sort-Object Total -Descending)) {
+    $authTokenCount = 0
+    foreach ($key in @((Get-Value $keys "Keys" @()) | Sort-Object Total -Descending)) {
         $rank++
         $statement = [string](Get-Value $key.Dimensions "db.sql_tokenized.statement" "")
         $tokenId = [string](Get-Value $key.Dimensions "db.sql_tokenized.id" "")
-        if ([string]::IsNullOrWhiteSpace($statement) -or [string]::IsNullOrWhiteSpace($tokenId)) {
-            throw "Performance Insights did not return the tokenized SQL dimension."
+        $load = [double](Get-Value $key "Total" -1)
+        if ([string]::IsNullOrWhiteSpace($statement) -or [string]::IsNullOrWhiteSpace($tokenId) -or $load -lt 0) {
+            throw "Performance Insights did not return the complete tokenized SQL dimension."
         }
         $lower = $statement.ToLowerInvariant()
         $isAuthorization = @($script:AuthSqlMarkers | Where-Object { $lower.Contains($_) }).Count -ge 2
-        $load = [double]$key.Total
-        if ($isAuthorization) { $authLoad += $load }
+        $isHistoryFallback = @($script:HistoryFallbackSqlMarkers | Where-Object { $lower.Contains($_) }).Count -eq
+            $script:HistoryFallbackSqlMarkers.Count
+        $tokenSha = Get-StableJsonSha256 ([ordered]@{id=$tokenId;statement=$statement})
+        if ($isAuthorization) { $authLoad += $load; $authTokenCount++ }
+        if ($isHistoryFallback) {
+            $historyTokens += [pscustomobject]@{Id=$tokenId;Sha256=$tokenSha;Load=$load}
+        }
         $entries += [ordered]@{
-            rank=$rank;tokenSha256=(Get-StableJsonSha256 ([ordered]@{id=$tokenId;statement=$statement}));
-            category=if($isAuthorization){"tile_authorization"}else{"other"};dbLoad=[math]::Round($load,6)
+            rank=$rank;tokenSha256=$tokenSha
+            category=if($isHistoryFallback){"history_fallback"}elseif($isAuthorization){"tile_authorization"}else{"other"}
+            dbLoad=[math]::Round($load,6)
         }
     }
     if ($averageDbLoad -le 0 -or $entries.Count -lt 1) {
         throw "Performance Insights evidence was incomplete for a nonzero diagnostic workload."
     }
     $authPercent = [math]::Round(($authLoad / $averageDbLoad) * 100.0, 3)
-    $passed = $authPercent -lt 50.0
+    $authPassed = $authPercent -lt 50.0
+    $historyEvidence = @()
+    foreach ($token in $historyTokens) {
+        $historyEvidence += Get-HistoryFallbackWaitEventEvidence $Config $StartUtc $EndUtc $DbiResourceId `
+            $token.Id $token.Sha256 $token.Load
+    }
+    $historyLoad = 0.0
+    foreach ($token in $historyTokens) { $historyLoad += [double]$token.Load }
+    $historyDataFileReadLoad = 0.0
+    foreach ($item in $historyEvidence) { $historyDataFileReadLoad += [double]$item.dataFileReadDbLoad }
+    $historyAbsent = $historyTokens.Count -eq 0
+    $historySharePercent = if ($historyAbsent) { 0.0 } else {
+        [math]::Round(($historyDataFileReadLoad / $historyLoad) * 100.0, 3)
+    }
+    # The strict cold-cache diagnostic must observe this exact query. Absence
+    # from the bounded PI token set cannot prove the fallback's own wait mix,
+    # so it fails closed instead of being treated as non-dominance evidence.
+    $historyComplete = -not $historyAbsent -and
+        @($historyEvidence | Where-Object complete -ne $true).Count -eq 0
+    $historyPerTokenPassed = -not $historyAbsent -and
+        @($historyEvidence | Where-Object passed -ne $true).Count -eq 0
+    $historyPassed = -not $historyAbsent -and $historyComplete -and $historyPerTokenPassed -and
+        $historySharePercent -lt $script:HistoryIoDominanceThresholdPercent
     return [ordered]@{
         diagnosticOnly=$true;sanitized=$true;tokenized=$true;rawSqlPersisted=$false;metric="db.load.avg"
         startUtc=$StartUtc;endUtc=$EndUtc;periodSeconds=60;dbLoadPointCount=$points.Count
         averageDbLoad=[math]::Round($averageDbLoad,6);topTokenCount=$entries.Count;tokens=$entries
-        tileAuthorization=[ordered]@{tokenCount=@($entries | Where-Object category -eq "tile_authorization").Count;
+        tileAuthorization=[ordered]@{tokenCount=$authTokenCount;
             dbLoad=[math]::Round($authLoad,6);sharePercent=$authPercent;dominanceThresholdPercent=50.0;
-            absentFromTopTokens=(@($entries | Where-Object category -eq "tile_authorization").Count -eq 0);passed=$passed}
-        passed=$passed
+            absentFromTopTokens=($authTokenCount -eq 0);passed=$authPassed}
+        historyFallback=[ordered]@{tokenCount=$historyTokens.Count;dbLoad=[math]::Round($historyLoad,6)
+            dataFileReadDbLoad=[math]::Round($historyDataFileReadLoad,6);dataFileReadSharePercent=$historySharePercent
+            dominanceThresholdPercent=$script:HistoryIoDominanceThresholdPercent;perToken=$historyEvidence
+            perTokenAllBelowThreshold=$historyPerTokenPassed;filteredWaitEventEvidenceRequired=$true
+            filteredWaitEventEvidenceComplete=$historyComplete;absentFromTopTokens=$historyAbsent;passed=$historyPassed}
+        passed=($authPassed -and $historyPassed)
     }
 }
 
@@ -1118,7 +1302,7 @@ $terminal = [ordered]@{
     workload=[ordered]@{stage="800";devices=810;durationSeconds=1800;screenshotBytes=40960;canaryDevices=10;
         workloadSchemaVersion=$script:WorkloadSchemaVersion;endpointShapeSha256=$script:EndpointShapeSha256};
     initialAwsPosture=$awsPosture;pinnedAwsPosture=$null;preTrafficAwsPosture=$null;postTrafficAwsPosture=$null;terminalAwsPosture=$null;
-    monitor=$null;performanceInsights=$null;scalingRestoration=$null
+    monitor=$null;postgresStatementTimeouts=$null;performanceInsights=$null;scalingRestoration=$null
 }
 $exitCode = 2
 try {
@@ -1234,9 +1418,16 @@ try {
         throw "Diagnostic monitor did not prove all 30 one-minute RDS CPU points below 65 percent."
     }
     $trafficWindow = Get-TrafficWindow $progressPath $summaryPath
+    $terminal.postgresStatementTimeouts = Get-Postgres57014Evidence $config $trafficWindow.startUtc $trafficWindow.endUtc
     $terminal.performanceInsights = Get-PerformanceInsightsEvidence $config $trafficWindow.startUtc $trafficWindow.endUtc $awsPosture.rds.dbiResourceId
-    if ($terminal.performanceInsights.passed -ne $true) {
+    if ($terminal.postgresStatementTimeouts.passed -ne $true) {
+        throw "PostgreSQL SQLSTATE 57014 occurred in the exact production API logs during diagnostic traffic."
+    }
+    if ($terminal.performanceInsights.tileAuthorization.passed -ne $true) {
         throw "Tile-authorization SQL still dominated Performance Insights DB load."
+    }
+    if ($terminal.performanceInsights.historyFallback.passed -ne $true) {
+        throw "History fallback IO:DataFileRead still dominated Performance Insights DB load."
     }
     $terminal.postTrafficAwsPosture = Get-AwsPosture $config
     $terminal.status = "completed"

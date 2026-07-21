@@ -66,6 +66,10 @@ function validReport() {
       tempReadBlocks: 0,
       tempWrittenBlocks: 0,
       subPlanNodes: 0,
+      windowAggNodes: 0,
+      heartbeatSequentialScanNodes: 0,
+      maxHeartbeatRows: 400,
+      perPairIndexLimit: true,
     },
     scenarios: labels.map((label, index) => ({
       label,
@@ -78,6 +82,22 @@ function validReport() {
       subPlanNodes: 0,
       passed: true,
     })),
+    historyFallback: {
+      label: "history_fallback",
+      cohortSize: 40,
+      historyLimit: 10,
+      samples: 20,
+      p95Ms: 18,
+      maxMs: 24,
+      tempReadBlocks: 0,
+      tempWrittenBlocks: 0,
+      subPlanNodes: 0,
+      windowAggNodes: 0,
+      heartbeatSequentialScanNodes: 0,
+      maxReturnedRows: 400,
+      perPairIndexLimit: true,
+      passed: true,
+    },
   };
 }
 
@@ -335,6 +355,9 @@ validate_classpilot_tile_auth_plan_gate_mode
       "office_staff.history",
     ]);
     assert.equal(output.precheck.invalidTeachingSessionSchools, 0);
+    assert.equal(output.historyFallback.label, "history_fallback");
+    assert.equal(output.historyFallback.perPairIndexLimit, true);
+    assert.equal(output.historyFallback.maxReturnedRows, 400);
   });
 
   it("rejects relaxed, failed, or identifier-bearing evidence without echoing it", () => {
@@ -347,6 +370,20 @@ validate_classpilot_tile_auth_plan_gate_mode
         scenarios: validReport().scenarios.map((scenario, index) =>
           index === 0 ? { ...scenario, p95Ms: 50.01 } : scenario
         ),
+      },
+      {
+        ...validReport(),
+        historyFallback: {
+          ...validReport().historyFallback,
+          perPairIndexLimit: false,
+        },
+      },
+      {
+        ...validReport(),
+        historyFallback: {
+          ...validReport().historyFallback,
+          maxReturnedRows: 401,
+        },
       },
     ];
     for (const report of cases) {

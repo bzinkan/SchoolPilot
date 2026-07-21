@@ -20,8 +20,8 @@ function usage(): string {
     "  --samples <20-100>  Measured warm-plan samples per scenario (default 20).",
     "  --help              Show help without connecting to PostgreSQL.",
     "",
-    "Runs six read-only, tenant-scoped authorization EXPLAIN checks for fixed",
-    "40-student cohorts. Output contains aggregate labels and timings only.",
+    "Runs six read-only, tenant-scoped authorization EXPLAIN checks plus the",
+    "exact 40-student history fallback. Output is aggregate-only evidence.",
   ].join("\n");
 }
 
@@ -92,6 +92,7 @@ export async function runClasspilotTilePlanCli(args: string[]): Promise<number> 
     const report = await runClasspilotTileAuthorizationPlanCheck({
       client,
       buildQuery: storageModule.buildClassPilotTileAuthorizationQuery,
+      buildHistoryQuery: storageModule.buildHeartbeatTileHistoryBatchQuery,
       samples: options.samples,
     });
     emit(report as unknown as Record<string, unknown>, report.status !== "passed");
