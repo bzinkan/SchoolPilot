@@ -441,6 +441,7 @@ function Get-CertificationControllerHashes {
         monitor = $monitorScript
         rollback = Join-Path $PSScriptRoot "aws-rollout-rollback.ps1"
         harness = $harnessScript
+        monotonicDeadline = Join-Path $PSScriptRoot "monotonic-deadline.mjs"
         preparer = Join-Path $PSScriptRoot "prepare-classpilot-load-test.mjs"
         savedPlanValidator = Join-Path $PSScriptRoot "validate-rollout-plan.ps1"
     }

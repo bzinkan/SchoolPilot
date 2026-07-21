@@ -2037,6 +2037,175 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
             return [pscustomobject]@{ process=$process; result=$result; lastEvidence=$lastEvidence }
         }
 
+        function New-StrictDurationSummary {
+            param(
+                [string]$RunId,
+                [double]$ActualTrafficSeconds,
+                [double]$ActualTrafficMilliseconds,
+                [bool]$CompletedConfiguredDuration,
+                [double]$PlannedTrafficSeconds = 1,
+                [string]$ShutdownReason = "duration",
+                [switch]$LegacyTiming,
+                $FatalGate = $null
+            )
+            $run = [ordered]@{
+                shutdownReason = $ShutdownReason
+                plannedTrafficSeconds = $PlannedTrafficSeconds
+                actualTrafficSeconds = $ActualTrafficSeconds
+                completedConfiguredDuration = $CompletedConfiguredDuration
+            }
+            if (-not $LegacyTiming) {
+                $run.durationClock = "monotonic-hrtime-v1"
+                $run.runtimeTargetTrafficSeconds = 1
+                $run.plannedTrafficMilliseconds = 1000
+                $run.actualTrafficMilliseconds = $ActualTrafficMilliseconds
+            }
+            return [ordered]@{
+                runId = $RunId
+                stage = "800"
+                devices = 810
+                declaredSecondSchoolCanaryDevices = 10
+                workloadSchemaVersion = "classpilot-tile-batch-v1"
+                workloadEndpointShapeSha256 = "8e9f1942e4b3a27de7dd0571a9f60ffeb276c089e4baae96a885dba69e3233b2"
+                run = $run
+                screenshotFixture = [ordered]@{decodedBytes=40960}
+                thresholds = [ordered]@{passed=($null -eq $FatalGate)}
+                fatalGate = $FatalGate
+                screenshotRetrieval = [ordered]@{attempts=800;successes=800;successPercent=100}
+                tileBatch = [ordered]@{
+                    configured=$true;teacherCohorts=20;studentsPerCohort=40;teacherTileAssignments=800
+                    requestsPerCohortPerPoll=2;logicalOperationsPerPoll=1600
+                    historyRequests=20;screenshotRequests=20;historyLogicalOperations=800;screenshotLogicalOperations=800
+                    networkRequests=40;logicalOperations=1600
+                }
+            }
+        }
+
+        function Invoke-StrictDurationSummaryCase {
+            param([string]$CaseId, $Summary, [double]$FinalWallClockOffsetSeconds = 0)
+            $caseProgress = Join-Path $childRoot "$CaseId-progress.jsonl"
+            $caseSummary = Join-Path $childRoot "$CaseId-summary.json"
+            Remove-Item -LiteralPath $caseProgress,$caseSummary -ErrorAction SilentlyContinue
+            $caseHarness = Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList @("-NoProfile","-Command","Start-Sleep -Seconds 60") -PassThru -NoNewWindow
+            try {
+                Start-Sleep -Milliseconds 200
+                $caseStartedAt = [DateTimeOffset]::UtcNow
+                $startEvent = @{schemaVersion=1;type="progress";event="start";runId=$CaseId;stage="800";timestamp=$caseStartedAt.ToString("o")}
+                [IO.File]::WriteAllText($caseProgress, ($startEvent|ConvertTo-Json -Compress -Depth 10)+[Environment]::NewLine, [Text.UTF8Encoding]::new($false))
+
+                $caseConfig = $limitConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+                $caseConfig.runId = $CaseId
+                $caseConfig.phase = "Waf"
+                $caseConfig.minimumWallClockSeconds = 0
+                $caseConfig.maxIterations = 10
+                $caseConfig | Add-Member -NotePropertyName loadProgressPath -NotePropertyValue $caseProgress -Force
+                $caseConfig | Add-Member -NotePropertyName loadSummaryPath -NotePropertyValue $caseSummary -Force
+                $caseConfig | Add-Member -NotePropertyName artifactsNotBeforeUtc -NotePropertyValue $caseStartedAt.AddSeconds(-1).ToString("o") -Force
+                $caseConfig | Add-Member -NotePropertyName harnessProcessId -NotePropertyValue $caseHarness.Id -Force
+                $caseConfig | Add-Member -NotePropertyName harnessProcessStartedAtUtc -NotePropertyValue ([DateTimeOffset]$caseHarness.StartTime).ToUniversalTime().ToString("o") -Force
+                $caseConfig | Add-Member -NotePropertyName harnessProcessPath -NotePropertyValue $caseHarness.Path -Force
+                $caseConfig | Add-Member -NotePropertyName requireLoadAcceptance -NotePropertyValue $true -Force
+                $caseConfig | Add-Member -NotePropertyName testTelemetryExpectedSeconds -NotePropertyValue 1 -Force
+                $caseConfig | Add-Member -NotePropertyName workload -NotePropertyValue @{
+                    stage="800";devices=810;durationSeconds=1;screenshotBytes=40960;canaryDevices=10
+                    workloadSchemaVersion="classpilot-tile-batch-v1"
+                    endpointShapeSha256="8e9f1942e4b3a27de7dd0571a9f60ffeb276c089e4baae96a885dba69e3233b2"
+                } -Force
+                $casePath = Join-Path $childRoot "$CaseId-monitor.json"
+                [IO.File]::WriteAllText($casePath, ($caseConfig|ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+                $process = Start-Process -FilePath (Get-Process -Id $PID).Path `
+                    -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$monitorScript,"-ConfigPath",$casePath,"-Mode","Monitor") `
+                    -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $childRoot "$CaseId.out") -RedirectStandardError (Join-Path $childRoot "$CaseId.err")
+                $evidencePath = Join-Path $childEvidence "$CaseId-aws-monitor.jsonl"
+                $startDeadline = [DateTimeOffset]::UtcNow.AddSeconds(15)
+                while (-not (Test-Path -LiteralPath $evidencePath) -and -not $process.HasExited -and [DateTimeOffset]::UtcNow -lt $startDeadline) { Start-Sleep -Milliseconds 100 }
+                $startError = Get-Content -LiteralPath (Join-Path $childRoot "$CaseId.err") -Raw -ErrorAction SilentlyContinue
+                Assert-Condition (Test-Path -LiteralPath $evidencePath) "$CaseId strict duration monitor did not start (stderr: $startError)."
+                [IO.File]::WriteAllText($caseSummary, ($Summary|ConvertTo-Json -Depth 15), [Text.UTF8Encoding]::new($false))
+                $finalEvent = @{schemaVersion=1;type="progress";event="final";runId=$CaseId;stage="800";timestamp=[DateTimeOffset]::UtcNow.AddSeconds($FinalWallClockOffsetSeconds).ToString("o")}
+                if ($null -ne $Summary.fatalGate) { $finalEvent.fatalGate = $Summary.fatalGate }
+                [IO.File]::AppendAllText($caseProgress, ($finalEvent|ConvertTo-Json -Compress -Depth 12)+[Environment]::NewLine, [Text.UTF8Encoding]::new($false))
+                Assert-Condition ($process.WaitForExit(30000)) "$CaseId strict duration monitor did not finish."
+                $result = Get-Content -LiteralPath (Join-Path $childEvidence "$CaseId-monitor-result.json") -Raw | ConvertFrom-Json -Depth 30
+                $lastEvidence = Get-Content -LiteralPath $evidencePath -Tail 1 -ErrorAction SilentlyContinue
+                return [pscustomobject]@{process=$process;result=$result;lastEvidence=$lastEvidence}
+            }
+            finally {
+                if ($null -ne $caseHarness -and -not $caseHarness.HasExited) { Stop-Process -Id $caseHarness.Id -Force }
+            }
+        }
+
+        $durationExactId = "duration-monotonic-exact"
+        $durationExact = Invoke-StrictDurationSummaryCase $durationExactId `
+            (New-StrictDurationSummary -RunId $durationExactId -ActualTrafficSeconds 1 -ActualTrafficMilliseconds 1000 -CompletedConfiguredDuration $true) -FinalWallClockOffsetSeconds -30
+        Assert-Condition ($durationExact.process.ExitCode -eq 0 -and $durationExact.result.status -eq "completed") `
+            "An exact monotonic millisecond duration must satisfy the reviewed tile-batch contract even when the final wall-clock label moves backward (actual: $($durationExact.result|ConvertTo-Json -Compress -Depth 30))."
+
+        $durationRoundedShortId = "duration-rounded-seconds-short-ms"
+        $durationRoundedShort = Invoke-StrictDurationSummaryCase $durationRoundedShortId `
+            (New-StrictDurationSummary -RunId $durationRoundedShortId -ActualTrafficSeconds 1 -ActualTrafficMilliseconds 999 -CompletedConfiguredDuration $true)
+        Assert-Condition ($durationRoundedShort.process.ExitCode -eq 2 -and
+            $durationRoundedShort.result.failures -contains "load_workload_contract_mismatch") `
+            "Rounded display seconds must not hide a raw monotonic duration below the configured target."
+
+        $durationActualMismatchId = "duration-actual-seconds-ms-mismatch"
+        $durationActualMismatch = Invoke-StrictDurationSummaryCase $durationActualMismatchId `
+            (New-StrictDurationSummary -RunId $durationActualMismatchId -ActualTrafficSeconds 1.001 -ActualTrafficMilliseconds 1000 -CompletedConfiguredDuration $true)
+        Assert-Condition ($durationActualMismatch.process.ExitCode -eq 2 -and
+            $durationActualMismatch.result.failures -contains "load_workload_contract_mismatch") `
+            "Displayed actual seconds must equal the three-decimal value derived from raw monotonic milliseconds."
+
+        $durationPlannedMismatchId = "duration-planned-seconds-ms-mismatch"
+        $durationPlannedMismatch = Invoke-StrictDurationSummaryCase $durationPlannedMismatchId `
+            (New-StrictDurationSummary -RunId $durationPlannedMismatchId -ActualTrafficSeconds 1 -ActualTrafficMilliseconds 1000 -CompletedConfiguredDuration $true -PlannedTrafficSeconds 1.001)
+        Assert-Condition ($durationPlannedMismatch.process.ExitCode -eq 2 -and
+            $durationPlannedMismatch.result.failures -contains "load_workload_contract_mismatch") `
+            "Displayed planned seconds must equal the value derived from planned monotonic milliseconds."
+
+        $durationFractionalMillisecondsId = "duration-fractional-actual-ms"
+        $fractionalMilliseconds = 1000.5
+        $durationFractionalMilliseconds = Invoke-StrictDurationSummaryCase $durationFractionalMillisecondsId `
+            (New-StrictDurationSummary -RunId $durationFractionalMillisecondsId -ActualTrafficSeconds ([math]::Round($fractionalMilliseconds / 1000, 3)) -ActualTrafficMilliseconds $fractionalMilliseconds -CompletedConfiguredDuration $true)
+        Assert-Condition ($durationFractionalMilliseconds.process.ExitCode -eq 2 -and
+            $durationFractionalMilliseconds.result.failures -contains "load_workload_contract_mismatch") `
+            "Raw actual traffic milliseconds must be an integer produced by the monotonic harness clock."
+
+        $durationShutdownMismatchId = "duration-nonduration-shutdown-completed"
+        $durationShutdownMismatch = Invoke-StrictDurationSummaryCase $durationShutdownMismatchId `
+            (New-StrictDurationSummary -RunId $durationShutdownMismatchId -ActualTrafficSeconds 1 -ActualTrafficMilliseconds 1000 -CompletedConfiguredDuration $true -ShutdownReason "SIGTERM")
+        Assert-Condition ($durationShutdownMismatch.process.ExitCode -eq 2 -and
+            $durationShutdownMismatch.result.failures -contains "load_workload_contract_mismatch") `
+            "completedConfiguredDuration=true must not make a non-duration shutdown certification-eligible."
+
+        $durationLegacyId = "duration-missing-monotonic-fields"
+        $durationLegacy = Invoke-StrictDurationSummaryCase $durationLegacyId `
+            (New-StrictDurationSummary -RunId $durationLegacyId -ActualTrafficSeconds 1 -ActualTrafficMilliseconds 1000 -CompletedConfiguredDuration $true -LegacyTiming)
+        Assert-Condition ($durationLegacy.process.ExitCode -eq 2 -and
+            $durationLegacy.result.failures -contains "load_workload_contract_mismatch") `
+            "A tile-batch diagnostic/certification summary missing the monotonic clock fields must fail closed."
+
+        $durationStringTimingId = "duration-string-encoded-timing"
+        $durationStringTimingSummary = New-StrictDurationSummary -RunId $durationStringTimingId `
+            -ActualTrafficSeconds 1 -ActualTrafficMilliseconds 1000 -CompletedConfiguredDuration $true
+        $durationStringTimingSummary.run.plannedTrafficSeconds = "1"
+        $durationStringTimingSummary.run.actualTrafficSeconds = "1"
+        $durationStringTimingSummary.run.runtimeTargetTrafficSeconds = "1"
+        $durationStringTimingSummary.run.plannedTrafficMilliseconds = "1000"
+        $durationStringTimingSummary.run.actualTrafficMilliseconds = "1000"
+        $durationStringTiming = Invoke-StrictDurationSummaryCase $durationStringTimingId $durationStringTimingSummary
+        Assert-Condition ($durationStringTiming.process.ExitCode -eq 2 -and
+            $durationStringTiming.result.failures -contains "load_workload_contract_mismatch") `
+            "String-encoded timing fields must not satisfy the strict JSON numeric timing contract."
+
+        $durationFatalId = "duration-monotonic-early-fatal"
+        $durationFatalGate = @{reasonCodes=@("tenant-isolation-probe-unavailable");observedAt=[DateTimeOffset]::UtcNow.ToString("o")}
+        $durationFatal = Invoke-StrictDurationSummaryCase $durationFatalId `
+            (New-StrictDurationSummary -RunId $durationFatalId -ActualTrafficSeconds 0.25 -ActualTrafficMilliseconds 250 -CompletedConfiguredDuration $false -ShutdownReason "fatal-tenant-isolation-probe-unavailable" -FatalGate $durationFatalGate)
+        Assert-Condition ($durationFatal.process.ExitCode -eq 2 -and
+            $durationFatal.result.failures -contains "load_workload_contract_mismatch" -and
+            $durationFatal.result.failures -contains "load:tenant-isolation-probe-unavailable") `
+            "An early fatal run must retain its fatal reason while remaining ineligible for duration acceptance."
+
         $sparseWafConfig = $limitConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
         $sparseWafConfig.runId = "sparse-waf-zero"
         $sparseWafConfig.minimumWallClockSeconds = 3
@@ -2523,7 +2692,11 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
               runId=$completedWaitRunId;stage="endurance";devices=810;declaredSecondSchoolCanaryDevices=10
               workloadSchemaVersion="classpilot-tile-batch-v1"
               workloadEndpointShapeSha256="8e9f1942e4b3a27de7dd0571a9f60ffeb276c089e4baae96a885dba69e3233b2"
-              run=@{plannedTrafficSeconds=1;actualTrafficSeconds=1;completedConfiguredDuration=$true}
+              run=@{
+                shutdownReason="duration";durationClock="monotonic-hrtime-v1";runtimeTargetTrafficSeconds=1
+                plannedTrafficMilliseconds=1000;actualTrafficMilliseconds=1000
+                plannedTrafficSeconds=1;actualTrafficSeconds=1;completedConfiguredDuration=$true
+              }
               screenshotFixture=@{decodedBytes=40960};thresholds=@{passed=$true};fatalGate=$null
               screenshotRetrieval=@{attempts=800;successes=800;successPercent=100}
               tileBatch=@{

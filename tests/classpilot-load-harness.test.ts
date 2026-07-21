@@ -5,7 +5,7 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
 import WebSocket, { WebSocketServer } from "ws";
 import {
@@ -13,6 +13,10 @@ import {
   observeCommandTargetStatuses,
   teacherSessionOwnerKey,
 } from "../scripts/load/command-status-observer.mjs";
+import {
+  createMonotonicDeadline,
+  millisecondsUntil,
+} from "../scripts/load/monotonic-deadline.mjs";
 
 const script = fileURLToPath(new URL("../scripts/load/classpilot-load-test.mjs", import.meta.url));
 const tileBatchEndpointShapeSha256 = "8e9f1942e4b3a27de7dd0571a9f60ffeb276c089e4baae96a885dba69e3233b2";
@@ -27,6 +31,7 @@ let tempDir = "";
 let manifestPath = "";
 let commandBodiesPath = "";
 let teacherAuthPath = "";
+let controlPreloadPath = "";
 
 function cleanEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   const env = { ...process.env };
@@ -49,15 +54,20 @@ function run(args: string[], env: NodeJS.ProcessEnv = cleanEnv()) {
   });
 }
 
-function runAsync(args: string[], env: NodeJS.ProcessEnv = cleanEnv(), timeoutMs = 10_000) {
-  return new Promise<{ status: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string }>((resolve, reject) => {
-    const child = spawn(process.execPath, [script, ...args], { env });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => { stdout += chunk; });
-    child.stderr.on("data", (chunk) => { stderr += chunk; });
+function startAsync(args: string[], env: NodeJS.ProcessEnv = cleanEnv(), timeoutMs = 10_000) {
+  const child = spawn(process.execPath, [script, ...args], { env });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => { stdout += chunk; });
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  const completed = new Promise<{
+    status: number | null;
+    signal: NodeJS.Signals | null;
+    stdout: string;
+    stderr: string;
+  }>((resolve, reject) => {
     const timer = setTimeout(() => {
       child.kill();
       reject(new Error(`load harness did not exit within ${timeoutMs}ms`));
@@ -71,6 +81,20 @@ function runAsync(args: string[], env: NodeJS.ProcessEnv = cleanEnv(), timeoutMs
       resolve({ status, signal, stdout, stderr });
     });
   });
+  return { child, completed };
+}
+
+function runAsync(args: string[], env: NodeJS.ProcessEnv = cleanEnv(), timeoutMs = 10_000) {
+  return startAsync(args, env, timeoutMs).completed;
+}
+
+async function waitUntil(predicate: () => boolean, timeoutMs: number, message: string) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(message);
 }
 
 function parseSummary(stdout: string) {
@@ -199,6 +223,76 @@ function createLaunchArtifacts(options: {
 }
 
 describe("ClassPilot load harness safety", () => {
+  it("rechecks a monotonic deadline and fires once only at or after the target", () => {
+    type Scheduled = { callback: () => void; delayMs: number; cancelled: boolean };
+    let nowNs = 0n;
+    const scheduled: Scheduled[] = [];
+    let reached = 0;
+    const deadline = createMonotonicDeadline({
+      deadlineNs: 1_000_000_000n,
+      nowNs: () => nowNs,
+      schedule: (callback, delayMs) => {
+        const timer = { callback, delayMs, cancelled: false };
+        scheduled.push(timer);
+        return timer;
+      },
+      cancel: (timer: Scheduled) => { timer.cancelled = true; },
+      onReached: () => { reached += 1; },
+    });
+
+    assert.equal(millisecondsUntil(1_000_000_000n, 999_250_000n), 1);
+    deadline.start();
+    const initialTimer = scheduled.shift();
+    assert.equal(initialTimer?.delayMs, 1000);
+
+    nowNs = 999_250_000n;
+    initialTimer?.callback();
+    assert.equal(reached, 0);
+    const rearmed = scheduled.shift();
+    assert.equal(rearmed?.delayMs, 1);
+
+    nowNs = 1_000_000_000n;
+    rearmed?.callback();
+    rearmed?.callback();
+    assert.equal(reached, 1);
+    assert.equal(deadline.active, false);
+  });
+
+  it("fires a late monotonic deadline once and cancellation suppresses callbacks", () => {
+    type Scheduled = { callback: () => void; delayMs: number; cancelled: boolean };
+    let nowNs = 0n;
+    const scheduled: Scheduled[] = [];
+    let reached = 0;
+    const create = () => createMonotonicDeadline({
+      deadlineNs: 1_000_000_000n,
+      nowNs: () => nowNs,
+      schedule: (callback, delayMs) => {
+        const timer = { callback, delayMs, cancelled: false };
+        scheduled.push(timer);
+        return timer;
+      },
+      cancel: (timer: Scheduled) => { timer.cancelled = true; },
+      onReached: () => { reached += 1; },
+    });
+
+    const late = create();
+    late.start();
+    const lateTimer = scheduled.shift();
+    nowNs = 1_005_000_000n;
+    lateTimer?.callback();
+    lateTimer?.callback();
+    assert.equal(reached, 1);
+
+    nowNs = 0n;
+    const cancelled = create();
+    cancelled.start();
+    const cancelledTimer = scheduled.shift();
+    cancelled.cancel();
+    assert.equal(cancelledTimer?.cancelled, true);
+    cancelledTimer?.callback();
+    assert.equal(reached, 1);
+  });
+
   it("records first command acknowledgement timing and rejects later status regression", () => {
     const entry = {
       requestStartedAt: 1_000,
@@ -265,6 +359,26 @@ describe("ClassPilot load harness safety", () => {
   });
   before(() => {
     tempDir = mkdtempSync(join(tmpdir(), "schoolpilot-load-test-"));
+    controlPreloadPath = join(tempDir, "clock-signal-control.mjs");
+    writeFileSync(controlPreloadPath, `
+import { existsSync } from "node:fs";
+
+const originalDateNow = Date.now.bind(Date);
+const rollbackMarker = process.env.LOAD_TEST_WALL_CLOCK_ROLLBACK_MARKER || "";
+const rollbackMs = Number(process.env.LOAD_TEST_WALL_CLOCK_ROLLBACK_MS || 0);
+Date.now = () => originalDateNow() - (
+  rollbackMarker && existsSync(rollbackMarker) ? rollbackMs : 0
+);
+
+const signalMarker = process.env.LOAD_TEST_SIGNAL_MARKER || "";
+if (signalMarker) {
+  const watcher = setInterval(() => {
+    if (!existsSync(signalMarker)) return;
+    clearInterval(watcher);
+    setTimeout(() => process.emit("SIGTERM"), 75);
+  }, 10);
+}
+`);
     manifestPath = join(tempDir, "devices.json");
     writeFileSync(manifestPath, JSON.stringify([{
       deviceId: "device-1",
@@ -470,6 +584,221 @@ describe("ClassPilot load harness safety", () => {
     assert.equal(summary.thresholds.enforced, false);
     assert.equal(summary.thresholds.passed, null);
     assert.equal(summary.externalAcceptance.passed, null);
+    assert.equal(summary.run.shutdownReason, "duration");
+    assert.equal(summary.run.durationClock, "monotonic-hrtime-v1");
+    assert.equal(summary.run.runtimeTargetTrafficSeconds, 1);
+    assert.equal(summary.run.plannedTrafficMilliseconds, 1000);
+    assert.ok(summary.run.actualTrafficMilliseconds >= 1000);
+    assert.equal(
+      summary.run.actualTrafficSeconds,
+      Number((summary.run.actualTrafficMilliseconds / 1000).toFixed(3))
+    );
+    assert.equal(summary.run.modeledTrafficSeconds, summary.run.actualTrafficSeconds);
+    assert.ok(summary.run.totalElapsedSeconds >= summary.run.actualTrafficSeconds);
+    assert.equal(summary.run.completedConfiguredDuration, true);
+  });
+
+  it("excludes command settle time from the completed traffic interval", () => {
+    const result = run([], cleanEnv({
+      LOAD_BASE_URL: "http://127.0.0.1:1",
+      LOAD_DEVICE_MANIFEST: manifestPath,
+      LOAD_DURATION_SECONDS: "1",
+      LOAD_COMMAND_SETTLE_MS: "250",
+      LOAD_REQUEST_TIMEOUT_MS: "100",
+      LOAD_SHUTDOWN_GRACE_MS: "100",
+    }));
+    assert.equal(result.status, 0, result.stderr);
+    const summary = parseSummary(result.stdout);
+    assert.equal(summary.run.shutdownReason, "duration");
+    assert.ok(summary.run.actualTrafficMilliseconds >= 1000);
+    assert.equal(summary.run.completedConfiguredDuration, true);
+    assert.ok(
+      summary.run.totalElapsedSeconds * 1000 - summary.run.actualTrafficMilliseconds >= 200,
+      JSON.stringify(summary.run)
+    );
+  });
+
+  it("uses monotonic evidence when the child process wall clock rolls backward", async () => {
+    const server = createServer((_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end("{}");
+    });
+    const webSockets = new WebSocketServer({ server, path: "/ws" });
+    webSockets.on("connection", (socket) => socket.once("message", (raw) => {
+      const auth = JSON.parse(raw.toString());
+      socket.send(JSON.stringify({ type: "auth-success", role: auth.role }));
+    }));
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address() as AddressInfo;
+    const markerPath = join(tempDir, "wall-clock-rollback.marker");
+    const summaryPath = join(tempDir, "wall-clock-rollback-summary.json");
+    const progressPath = join(tempDir, "wall-clock-rollback-progress.jsonl");
+    try {
+      const env = cleanEnv({
+        NODE_OPTIONS: `${process.env.NODE_OPTIONS || ""} --import=${pathToFileURL(controlPreloadPath).href}`.trim(),
+        LOAD_BASE_URL: `http://127.0.0.1:${address.port}`,
+        LOAD_DEVICE_MANIFEST: manifestPath,
+        LOAD_DURATION_SECONDS: "10",
+        LOAD_TEST_ACCELERATED_RUNTIME_MS: "2000",
+        LOAD_TEST_PROGRESS_INTERVAL_MS: "100",
+        LOAD_COMMAND_SETTLE_MS: "0",
+        LOAD_REQUEST_TIMEOUT_MS: "500",
+        LOAD_SHUTDOWN_GRACE_MS: "500",
+        LOAD_EXTERNAL_SUMMARY_PATH: summaryPath,
+        LOAD_EXTERNAL_PROGRESS_PATH: progressPath,
+        LOAD_TEST_WALL_CLOCK_ROLLBACK_MARKER: markerPath,
+        LOAD_TEST_WALL_CLOCK_ROLLBACK_MS: "500",
+      });
+      const { completed } = startAsync([], env, 6_000);
+      await waitUntil(() => {
+        try {
+          return existsSync(progressPath) && readJsonLines(progressPath).some((record) => record.event === "start");
+        } catch {
+          return false;
+        }
+      }, 2_000, "load harness did not publish its start progress event");
+      writeFileSync(markerPath, "rollback");
+
+      const result = await completed;
+      assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+      const summary = JSON.parse(readFileSync(summaryPath, "utf8"));
+      assert.equal(summary.run.shutdownReason, "duration");
+      assert.equal(summary.run.durationClock, "monotonic-hrtime-v1");
+      assert.equal(summary.run.runtimeTargetTrafficSeconds, 2);
+      assert.equal(summary.run.plannedTrafficMilliseconds, 10_000);
+      assert.ok(summary.run.actualTrafficMilliseconds >= 2_000, JSON.stringify(summary.run));
+      assert.equal(
+        summary.run.actualTrafficSeconds,
+        Number((summary.run.actualTrafficMilliseconds / 1000).toFixed(3))
+      );
+      assert.equal(summary.run.modeledTrafficSeconds, 10);
+      assert.equal(summary.run.completedConfiguredDuration, true);
+
+      const progress = readJsonLines(progressPath);
+      assert.ok(
+        progress.some((record, index) => index > 0 && Date.parse(record.timestamp) < Date.parse(progress[index - 1].timestamp)),
+        "test preload did not produce the expected wall-clock rollback"
+      );
+      for (let index = 1; index < progress.length; index += 1) {
+        assert.ok(progress[index].elapsedSeconds >= progress[index - 1].elapsedSeconds);
+        assert.ok(progress[index].deltaWindowSeconds >= 0);
+      }
+    } finally {
+      for (const client of webSockets.clients) client.terminate();
+      await new Promise<void>((resolve) => webSockets.close(() => resolve()));
+      server.closeAllConnections?.();
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
+  it("latches signal shutdown before the duration deadline without modeling completion", async () => {
+    const server = createServer((_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end("{}");
+    });
+    const webSockets = new WebSocketServer({ server, path: "/ws" });
+    webSockets.on("connection", (socket) => socket.once("message", (raw) => {
+      const auth = JSON.parse(raw.toString());
+      socket.send(JSON.stringify({ type: "auth-success", role: auth.role }));
+    }));
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address() as AddressInfo;
+    const markerPath = join(tempDir, "signal.marker");
+    const summaryPath = join(tempDir, "signal-summary.json");
+    const progressPath = join(tempDir, "signal-progress.jsonl");
+    try {
+      const env = cleanEnv({
+        NODE_OPTIONS: `${process.env.NODE_OPTIONS || ""} --import=${pathToFileURL(controlPreloadPath).href}`.trim(),
+        LOAD_BASE_URL: `http://127.0.0.1:${address.port}`,
+        LOAD_DEVICE_MANIFEST: manifestPath,
+        LOAD_DURATION_SECONDS: "30",
+        LOAD_TEST_ACCELERATED_RUNTIME_MS: "2000",
+        LOAD_COMMAND_SETTLE_MS: "0",
+        LOAD_REQUEST_TIMEOUT_MS: "500",
+        LOAD_SHUTDOWN_GRACE_MS: "500",
+        LOAD_EXTERNAL_SUMMARY_PATH: summaryPath,
+        LOAD_EXTERNAL_PROGRESS_PATH: progressPath,
+        LOAD_TEST_SIGNAL_MARKER: markerPath,
+      });
+      const { completed } = startAsync([], env, 6_000);
+      await waitUntil(() => {
+        try {
+          return existsSync(progressPath) && readJsonLines(progressPath).some((record) => record.event === "start");
+        } catch {
+          return false;
+        }
+      }, 2_000, "load harness did not publish its start progress event");
+      writeFileSync(markerPath, "signal");
+
+      const result = await completed;
+      assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}`);
+      const summary = JSON.parse(readFileSync(summaryPath, "utf8"));
+      assert.equal(summary.run.shutdownReason, "SIGTERM");
+      assert.ok(summary.run.actualTrafficMilliseconds < 2_000, JSON.stringify(summary.run));
+      assert.equal(summary.run.completedConfiguredDuration, false);
+      assert.equal(summary.run.modeledTrafficSeconds, summary.run.actualTrafficSeconds);
+      assert.equal(readJsonLines(progressPath).at(-1).event, "final");
+    } finally {
+      for (const client of webSockets.clients) client.terminate();
+      await new Promise<void>((resolve) => webSockets.close(() => resolve()));
+      server.closeAllConnections?.();
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
+  it("revalidates artifact lifetime after a delayed supervisor release before traffic", async () => {
+    const runId = "post-gate-artifact-expiry";
+    const authPath = join(tempDir, "post-gate-expiring-auth.private.json");
+    const readyPath = join(tempDir, "post-gate-ready.json");
+    const startPath = join(tempDir, "post-gate-start.json");
+    const progressPath = join(tempDir, "post-gate-progress.jsonl");
+    const expiresAt = new Date(Date.now() + 3_000).toISOString();
+    writeFileSync(authPath, JSON.stringify({
+      schemaVersion: 1,
+      expiresAt,
+      teacherAuth: [{
+        role: "teacher",
+        teacherCookie: "schoolpilot.sid=post-gate-expiring-cookie",
+        expiresAt,
+      }],
+    }));
+
+    const { completed } = startAsync([], cleanEnv({
+      LOAD_BASE_URL: "http://127.0.0.1:1",
+      LOAD_DEVICE_MANIFEST: manifestPath,
+      LOAD_DURATION_SECONDS: "1",
+      LOAD_COMMAND_SETTLE_MS: "0",
+      LOAD_SHUTDOWN_GRACE_MS: "100",
+      LOAD_TEACHER_AUTH_FILE: authPath,
+      LOAD_RUN_ID: runId,
+      LOAD_EXTERNAL_PROGRESS_PATH: progressPath,
+      LOAD_SUPERVISOR_READY_PATH: readyPath,
+      LOAD_SUPERVISOR_START_GATE_PATH: startPath,
+      LOAD_SUPERVISOR_START_GATE_TIMEOUT_MS: "5000",
+    }), 6_000);
+
+    await waitUntil(() => existsSync(readyPath), 2_000, "harness did not publish supervisor readiness");
+    const ready = JSON.parse(readFileSync(readyPath, "utf8"));
+    await new Promise((resolve) => setTimeout(resolve, 2_100));
+    writeFileSync(startPath, JSON.stringify({
+      schemaVersion: 1,
+      type: "load_supervisor_start",
+      runId,
+      harnessProcessId: ready.harnessProcessId,
+      monitorProcessId: process.pid,
+      releasedAt: new Date().toISOString(),
+    }));
+
+    const result = await completed;
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /expires before traffic can finish after supervisor release/);
+    assert.equal(existsSync(progressPath), false, "traffic progress must not open after failed revalidation");
   });
 
   it("atomically replaces an external summary and writes redacted JSONL progress", () => {
@@ -1064,6 +1393,13 @@ describe("ClassPilot load harness safety", () => {
       const summary = JSON.parse(readFileSync(summaryPath, "utf8"));
       assert.equal(summary.thresholds.passed, true, JSON.stringify(summary.thresholds.failures));
       assert.equal(summary.run.completedConfiguredDuration, true);
+      assert.equal(summary.run.durationClock, "monotonic-hrtime-v1");
+      assert.equal(summary.run.runtimeTargetTrafficSeconds, 15);
+      assert.equal(summary.run.plannedTrafficMilliseconds, 1_800_000);
+      assert.ok(summary.run.actualTrafficMilliseconds >= 15_000);
+      assert.equal(summary.run.plannedTrafficSeconds, 1800);
+      assert.equal(summary.run.modeledTrafficSeconds, 1800);
+      assert.ok(summary.run.totalElapsedSeconds >= summary.run.actualTrafficSeconds);
       assert.equal(summary.run.acceleratedLoopbackTest, true);
       assert.equal(summary.commands.deliveryWithin2sPercent, 100);
       assert.equal(summary.commands.completedAckWithin5sPercent, 100);
@@ -2399,7 +2735,10 @@ describe("ClassPilot load harness safety", () => {
         assert.notEqual(result.status, 0, result.stderr);
         const summary = JSON.parse(readFileSync(summaryPath, "utf8"));
         assert.equal(summary.run.shutdownReason, `fatal-valid-http-${status}`);
-        assert.ok(summary.run.actualTrafficSeconds < 30);
+        assert.equal(summary.run.durationClock, "monotonic-hrtime-v1");
+        assert.ok(summary.run.actualTrafficMilliseconds < 30_000);
+        assert.equal(summary.run.completedConfiguredDuration, false);
+        assert.equal(summary.run.modeledTrafficSeconds, summary.run.actualTrafficSeconds);
         assert.ok(summary.fatalGate.reasonCodes.includes(`valid-http-${status}`));
         assert.ok(Number(summary.statusCodes[String(status)] || 0) >= 1);
 
@@ -2469,6 +2808,8 @@ describe("ClassPilot load harness safety", () => {
       assert.notEqual(result.status, 0, result.stderr);
       const summary = JSON.parse(readFileSync(summaryPath, "utf8"));
       assert.equal(summary.run.shutdownReason, "fatal-cross-school-delivery");
+      assert.equal(summary.run.completedConfiguredDuration, false);
+      assert.equal(summary.run.modeledTrafficSeconds, summary.run.actualTrafficSeconds);
       assert.equal(summary.counters.crossSchoolCommandDeliveries, 1);
       assert.ok(summary.fatalGate.reasonCodes.includes("cross-school-delivery"));
       const progress = readJsonLines(progressPath);

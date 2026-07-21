@@ -1680,15 +1680,77 @@ function Get-ValidatedLoadSummaryTiming {
     $fixture = Get-OptionalValue $summary "screenshotFixture"
     $tileBatch = Get-OptionalValue $summary "tileBatch"
     $screenshotRetrieval = Get-OptionalValue $summary "screenshotRetrieval"
-    $actualTrafficSeconds = [double](Get-OptionalValue $summaryRun "actualTrafficSeconds" -1)
-    if ([double]::IsNaN($actualTrafficSeconds) -or [double]::IsInfinity($actualTrafficSeconds)) { return $null }
-    try { $finalProgressAtUtc = ([DateTimeOffset](Get-OptionalValue $Progress.event "timestamp" "")).ToUniversalTime() }
-    catch { return $null }
-    $trafficStoppedAtUtc = $script:TrafficStartedAtUtc.AddSeconds($actualTrafficSeconds)
     $requiresTileBatchContract = (
         [string]$Config.Workload.WorkloadSchemaVersion -ceq $script:RequiredWorkloadSchemaVersion -or
         [string]$Config.Workload.EndpointShapeSha256 -ceq $script:RequiredWorkloadEndpointShapeSha256
     )
+    # Every production diagnostic/certification result, plus test-mode paths
+    # that claim the reviewed launch schema, must bind duration acceptance to
+    # the harness monotonic clock. Rounded display seconds are not evidence
+    # that the configured duration actually completed.
+    $requiresMonotonicDurationContract = -not [bool](Get-OptionalValue $Config "TestMode" $false) -or $requiresTileBatchContract
+    $plannedTrafficSecondsRaw = Get-OptionalValue $summaryRun "plannedTrafficSeconds"
+    $actualTrafficSecondsRaw = Get-OptionalValue $summaryRun "actualTrafficSeconds"
+    $runtimeTargetTrafficSecondsRaw = Get-OptionalValue $summaryRun "runtimeTargetTrafficSeconds"
+    $plannedTrafficMillisecondsRaw = Get-OptionalValue $summaryRun "plannedTrafficMilliseconds"
+    $actualTrafficMillisecondsRaw = Get-OptionalValue $summaryRun "actualTrafficMilliseconds"
+    $jsonNumberTypeCodes = @(
+        [TypeCode]::Byte, [TypeCode]::SByte, [TypeCode]::Int16, [TypeCode]::UInt16,
+        [TypeCode]::Int32, [TypeCode]::UInt32, [TypeCode]::Int64, [TypeCode]::UInt64,
+        [TypeCode]::Single, [TypeCode]::Double, [TypeCode]::Decimal
+    )
+    $requiredNumericValues = @($plannedTrafficSecondsRaw, $actualTrafficSecondsRaw)
+    if ($requiresMonotonicDurationContract) {
+        $requiredNumericValues += @($runtimeTargetTrafficSecondsRaw, $plannedTrafficMillisecondsRaw, $actualTrafficMillisecondsRaw)
+    }
+    foreach ($timingValue in $requiredNumericValues) {
+        if ([Convert]::GetTypeCode($timingValue) -notin $jsonNumberTypeCodes) { return $null }
+    }
+    try {
+        $plannedTrafficSeconds = [double]$plannedTrafficSecondsRaw
+        $actualTrafficSeconds = [double]$actualTrafficSecondsRaw
+        $runtimeTargetTrafficSeconds = if ($requiresMonotonicDurationContract) { [double]$runtimeTargetTrafficSecondsRaw } else { -1.0 }
+        $plannedTrafficMilliseconds = if ($requiresMonotonicDurationContract) { [double]$plannedTrafficMillisecondsRaw } else { -1.0 }
+        $actualTrafficMilliseconds = if ($requiresMonotonicDurationContract) { [double]$actualTrafficMillisecondsRaw } else { -1.0 }
+    }
+    catch { return $null }
+    foreach ($timingValue in @($plannedTrafficSeconds, $actualTrafficSeconds)) {
+        if ([double]::IsNaN($timingValue) -or [double]::IsInfinity($timingValue) -or $timingValue -lt 0) { return $null }
+    }
+    try { $finalProgressAtUtc = ([DateTimeOffset](Get-OptionalValue $Progress.event "timestamp" "")).ToUniversalTime() }
+    catch { return $null }
+    $expectedTrafficMilliseconds = [double]$Config.Workload.DurationSeconds * 1000.0
+    $monotonicDurationContractValid = $true
+    if ($requiresMonotonicDurationContract) {
+        foreach ($timingValue in @($runtimeTargetTrafficSeconds, $plannedTrafficMilliseconds, $actualTrafficMilliseconds)) {
+            if ([double]::IsNaN($timingValue) -or [double]::IsInfinity($timingValue) -or $timingValue -lt 0) {
+                $monotonicDurationContractValid = $false
+            }
+        }
+        $expectedPlannedTrafficSeconds = $plannedTrafficMilliseconds / 1000.0
+        $expectedActualTrafficSeconds = [math]::Round($actualTrafficMilliseconds / 1000.0, 3)
+        $timingDisplayTolerance = 0.000000001
+        $monotonicDurationContractValid = $monotonicDurationContractValid -and
+            [string](Get-OptionalValue $summaryRun "shutdownReason" "") -ceq "duration" -and
+            [string](Get-OptionalValue $summaryRun "durationClock" "") -ceq "monotonic-hrtime-v1" -and
+            $runtimeTargetTrafficSeconds -eq [double]$Config.Workload.DurationSeconds -and
+            $plannedTrafficMilliseconds -eq $expectedTrafficMilliseconds -and
+            $actualTrafficMilliseconds -ge $expectedTrafficMilliseconds -and
+            $actualTrafficMilliseconds -eq [math]::Truncate($actualTrafficMilliseconds) -and
+            [math]::Abs($plannedTrafficSeconds - $expectedPlannedTrafficSeconds) -le $timingDisplayTolerance -and
+            [math]::Abs($actualTrafficSeconds - $expectedActualTrafficSeconds) -le $timingDisplayTolerance
+    }
+    else {
+        # Compatibility is deliberately limited to non-launch test fixtures.
+        # These paths predate the raw millisecond evidence and cannot seed a
+        # diagnostic or certification result.
+        $runtimeTargetTrafficSeconds = [double]$Config.Workload.DurationSeconds
+        $plannedTrafficMilliseconds = $plannedTrafficSeconds * 1000.0
+        $actualTrafficMilliseconds = $actualTrafficSeconds * 1000.0
+    }
+    if (-not $monotonicDurationContractValid) { return $null }
+    try { $trafficStoppedAtUtc = $script:TrafficStartedAtUtc.AddMilliseconds($actualTrafficMilliseconds) }
+    catch { return $null }
     $validatedTileBatch = $null
     $tileBatchValid = -not $requiresTileBatchContract
     if ($requiresTileBatchContract) {
@@ -1755,17 +1817,20 @@ function Get-ValidatedLoadSummaryTiming {
         [int](Get-OptionalValue $summary "devices" -1) -eq $Config.Workload.Devices -and
         [int](Get-OptionalValue $summary "declaredSecondSchoolCanaryDevices" -1) -eq $Config.Workload.CanaryDevices -and
         [int](Get-OptionalValue $fixture "decodedBytes" -1) -eq $Config.Workload.ScreenshotBytes -and
-        [double](Get-OptionalValue $summaryRun "plannedTrafficSeconds" -1) -eq $Config.Workload.DurationSeconds -and
+        $plannedTrafficSeconds -eq $Config.Workload.DurationSeconds -and
         $actualTrafficSeconds -ge $Config.Workload.DurationSeconds -and
         (Get-OptionalValue $summaryRun "completedConfiguredDuration" $false) -eq $true -and
+        $monotonicDurationContractValid -and
         $diagnosticContractValid -and
         $tileBatchValid -and
-        $finalProgressAtUtc -ge $script:TrafficStartedAtUtc -and
-        $finalProgressAtUtc -le [DateTimeOffset]::UtcNow.AddSeconds(5) -and
-        $trafficStoppedAtUtc -le $finalProgressAtUtc.AddSeconds(5)
+        $finalProgressAtUtc -le [DateTimeOffset]::UtcNow.AddSeconds(5)
     )
     if (-not $valid) { return $null }
     return [pscustomobject]@{
+        DurationClock = if ($requiresMonotonicDurationContract) { "monotonic-hrtime-v1" } else { "legacy-test-seconds" }
+        RuntimeTargetTrafficSeconds = $runtimeTargetTrafficSeconds
+        PlannedTrafficMilliseconds = $plannedTrafficMilliseconds
+        ActualTrafficMilliseconds = $actualTrafficMilliseconds
         ActualTrafficSeconds = $actualTrafficSeconds
         TrafficStoppedAtUtc = $trafficStoppedAtUtc
         FinalProgressAtUtc = $finalProgressAtUtc
