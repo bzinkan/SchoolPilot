@@ -30,6 +30,7 @@ $script:TrafficStartedAtUtc = $null
 $script:TrafficStoppedAtUtc = $null
 $script:RequiredWorkloadSchemaVersion = "classpilot-tile-batch-v1"
 $script:RequiredWorkloadEndpointShapeSha256 = "8e9f1942e4b3a27de7dd0571a9f60ffeb276c089e4baae96a885dba69e3233b2"
+$script:RequiredPollAccountingVersion = "staggered-deadline-v1"
 $normalizedConfigSha = $null
 if ($ExpectedConfigSha256) {
     $normalizedConfigSha = $ExpectedConfigSha256.ToLowerInvariant()
@@ -1768,10 +1769,70 @@ function Get-ValidatedLoadSummaryTiming {
         $logicalOperations = [int64](Get-OptionalValue $tileBatch "logicalOperations" -1)
         $screenshotAttempts = [int64](Get-OptionalValue $screenshotRetrieval "attempts" -1)
         $screenshotSuccesses = [int64](Get-OptionalValue $screenshotRetrieval "successes" -1)
+        $historyRequestsByCohort = @((Get-OptionalValue $tileBatch "historyRequestsByCohort" @()))
+        $screenshotRequestsByCohort = @((Get-OptionalValue $tileBatch "screenshotRequestsByCohort" @()))
+        $cohortArraysValid = $historyRequestsByCohort.Count -eq 20 -and $screenshotRequestsByCohort.Count -eq 20
+        $historyCounts = [Collections.Generic.List[int64]]::new()
+        $screenshotCounts = [Collections.Generic.List[int64]]::new()
+        if ($cohortArraysValid) {
+            for ($index = 0; $index -lt 20; $index++) {
+                $historyRaw = $historyRequestsByCohort[$index]
+                $screenshotRaw = $screenshotRequestsByCohort[$index]
+                if ([Convert]::GetTypeCode($historyRaw) -notin $jsonNumberTypeCodes -or
+                    [Convert]::GetTypeCode($screenshotRaw) -notin $jsonNumberTypeCodes) {
+                    $cohortArraysValid = $false
+                    break
+                }
+                try {
+                    $historyDouble = [double]$historyRaw
+                    $screenshotDouble = [double]$screenshotRaw
+                    if ([double]::IsNaN($historyDouble) -or [double]::IsInfinity($historyDouble) -or
+                        [double]::IsNaN($screenshotDouble) -or [double]::IsInfinity($screenshotDouble) -or
+                        $historyDouble -lt 1 -or $screenshotDouble -lt 1 -or
+                        $historyDouble -ne [math]::Truncate($historyDouble) -or
+                        $screenshotDouble -ne [math]::Truncate($screenshotDouble) -or
+                        $historyDouble -gt [int64]::MaxValue -or $screenshotDouble -gt [int64]::MaxValue) {
+                        $cohortArraysValid = $false
+                        break
+                    }
+                    $historyCount = [int64]$historyDouble
+                    $screenshotCount = [int64]$screenshotDouble
+                }
+                catch {
+                    $cohortArraysValid = $false
+                    break
+                }
+                if ($historyCount -ne $screenshotCount) {
+                    $cohortArraysValid = $false
+                    break
+                }
+                $historyCounts.Add($historyCount)
+                $screenshotCounts.Add($screenshotCount)
+            }
+        }
+        $minimumRounds = if ($cohortArraysValid) { [int64](($historyCounts | Measure-Object -Minimum).Minimum) } else { -1 }
+        $maximumRounds = if ($cohortArraysValid) { [int64](($historyCounts | Measure-Object -Maximum).Maximum) } else { -1 }
+        $partialFinalRoundCohorts = if ($cohortArraysValid) { @($historyCounts | Where-Object { $_ -gt $minimumRounds }).Count } else { -1 }
+        $prefixValid = $cohortArraysValid -and ($maximumRounds - $minimumRounds) -le 1
+        if ($prefixValid) {
+            for ($index = 0; $index -lt 20; $index++) {
+                $expectedCount = if ($index -lt $partialFinalRoundCohorts) { $maximumRounds } else { $minimumRounds }
+                if ($historyCounts[$index] -ne $expectedCount) {
+                    $prefixValid = $false
+                    break
+                }
+            }
+        }
+        $historyCohortSum = if ($cohortArraysValid) { [int64](($historyCounts | Measure-Object -Sum).Sum) } else { -1 }
+        $screenshotCohortSum = if ($cohortArraysValid) { [int64](($screenshotCounts | Measure-Object -Sum).Sum) } else { -1 }
+        $completeRoundsClaim = [int64](Get-OptionalValue $tileBatch "completeRoundsPerCohort" -1)
+        $maximumRoundsClaim = [int64](Get-OptionalValue $tileBatch "maximumRoundsPerCohort" -1)
+        $partialCohortsClaim = [int](Get-OptionalValue $tileBatch "partialFinalRoundCohorts" -1)
         $tileBatchValid = (
             [string](Get-OptionalValue $summary "workloadSchemaVersion" "") -ceq $script:RequiredWorkloadSchemaVersion -and
             [string](Get-OptionalValue $summary "workloadEndpointShapeSha256" "").ToLowerInvariant() -ceq $script:RequiredWorkloadEndpointShapeSha256 -and
             (Get-OptionalValue $tileBatch "configured" $false) -eq $true -and
+            [string](Get-OptionalValue $tileBatch "pollAccountingVersion" "") -ceq $script:RequiredPollAccountingVersion -and
             $teacherCohorts -eq 20 -and
             $studentsPerCohort -eq $expectedStudentsPerCohort -and
             $teacherTileAssignments -eq (20 * $expectedStudentsPerCohort) -and
@@ -1779,9 +1840,15 @@ function Get-ValidatedLoadSummaryTiming {
             $logicalOperationsPerPoll -eq (2 * $teacherTileAssignments) -and
             $historyRequests -gt 0 -and
             $historyRequests -eq $screenshotRequests -and
-            ($historyRequests % $teacherCohorts) -eq 0 -and
-            $historyLogicalOperations -eq ($historyRequests * $studentsPerCohort) -and
-            $screenshotLogicalOperations -eq ($screenshotRequests * $studentsPerCohort) -and
+            $cohortArraysValid -and
+            $prefixValid -and
+            $historyCohortSum -eq $historyRequests -and
+            $screenshotCohortSum -eq $screenshotRequests -and
+            $completeRoundsClaim -eq $minimumRounds -and
+            $maximumRoundsClaim -eq $maximumRounds -and
+            $partialCohortsClaim -eq $partialFinalRoundCohorts -and
+            $historyLogicalOperations -eq ($historyCohortSum * $studentsPerCohort) -and
+            $screenshotLogicalOperations -eq ($screenshotCohortSum * $studentsPerCohort) -and
             $networkRequests -eq ($historyRequests + $screenshotRequests) -and
             $logicalOperations -eq ($historyLogicalOperations + $screenshotLogicalOperations) -and
             $screenshotAttempts -eq $screenshotLogicalOperations -and
@@ -1795,7 +1862,12 @@ function Get-ValidatedLoadSummaryTiming {
                 teacherTileAssignments = $teacherTileAssignments
                 requestsPerCohortPerPoll = $requestsPerCohortPerPoll
                 logicalOperationsPerPoll = $logicalOperationsPerPoll
-                pollsPerCohort = [int64]($historyRequests / $teacherCohorts)
+                pollAccountingVersion = $script:RequiredPollAccountingVersion
+                historyRequestsByCohort = @($historyCounts)
+                screenshotRequestsByCohort = @($screenshotCounts)
+                completeRoundsPerCohort = $minimumRounds
+                maximumRoundsPerCohort = $maximumRounds
+                partialFinalRoundCohorts = $partialFinalRoundCohorts
                 historyRequests = $historyRequests
                 screenshotRequests = $screenshotRequests
                 historyLogicalOperations = $historyLogicalOperations
@@ -2552,6 +2624,7 @@ function Get-Sample {
         }
     }
     $loadCompleted = $false
+    $terminalEvidenceCommitted = $false
     if ($progress) {
         if ($progress.parseError) { $immediate.Add("load_progress_parse_error") }
         elseif (-not $progress.exists -and ([DateTimeOffset]::UtcNow - $script:StartedAt).TotalSeconds -gt [double]$t.progressStaleSeconds) {
@@ -2571,6 +2644,12 @@ function Get-Sample {
                 $immediate.Add("load_summary_invalid")
             }
             else {
+                $terminalEvidenceCommitted = (
+                    [string](Get-OptionalValue $progress.event "runId" "") -eq $Config.RunId -and
+                    [string](Get-OptionalValue $progress.event "stage" "") -eq $Config.Workload.Stage -and
+                    [string](Get-OptionalValue $progress.summary "runId" "") -eq $Config.RunId -and
+                    [string](Get-OptionalValue $progress.summary "stage" "") -eq $Config.Workload.Stage
+                )
                 $summary = $progress.summary
                 $contractValid = $null -ne $validatedLoadTiming
                 if (-not $contractValid) { $immediate.Add("load_workload_contract_mismatch") }
@@ -2582,12 +2661,12 @@ function Get-Sample {
                 if ($Config.RequireLoadAcceptance -and $summaryPassed -ne $true) { $immediate.Add("load_acceptance_failed") }
             }
         }
-        if ($progress.exists -and -not $loadCompleted -and $progress.staleSeconds -gt [double]$t.progressStaleSeconds) {
+        if ($progress.exists -and -not $loadCompleted -and -not $terminalEvidenceCommitted -and $progress.staleSeconds -gt [double]$t.progressStaleSeconds) {
             $immediate.Add("load_progress_stale")
         }
         $commitPending = $deferRefreshedCleanFinal -or $progress.summaryPending -or
             ($progress.incompleteTail -and $progress.staleSeconds -le [double]$t.summaryCommitGraceSeconds)
-        if (-not $loadCompleted -and -not $commitPending -and $harnessProcessLost) {
+        if (-not $terminalEvidenceCommitted -and -not $commitPending -and $harnessProcessLost) {
             $immediate.Add("load_generator_process_lost")
         }
     }
@@ -2666,6 +2745,7 @@ function Get-Sample {
         generatorPublicIp = $generatorIp
         supervisedHeartbeats = $supervisedHeartbeats
         loadCompleted = $loadCompleted
+        terminalEvidenceCommitted = $terminalEvidenceCommitted
         immediateFailures = @($immediate)
         consecutiveFailures = @($consecutive)
         triggered = ($immediate.Count + $consecutive.Count) -gt 0

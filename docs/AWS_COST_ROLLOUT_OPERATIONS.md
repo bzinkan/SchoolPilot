@@ -306,12 +306,15 @@ Every launch run includes ten second-school canaries first in the manifest,
 20 distinct teacher sessions, shared-IP traffic, authenticated WebSockets and
 ACKs, forced reconnects, dashboard reads, student-ID tile batches, and one-minute
 JSONL progress. Teacher WebSocket startups, dashboard polls, and isolation
-probes are staggered across their real polling intervals. After screenshot
-cache warm-up, each teacher issues exactly one `POST /api/classpilot/tiles/history`
-and one `POST /api/classpilot/tiles/screenshots` request for its 25- or
-40-student cohort. The two requests fire together, while the 20 independent
-cohorts are staggered across the 30-second tile polling interval. The harness
-still accounts for every returned/requested student as a logical history or
+probes are staggered across their real polling intervals. The screenshot GET
+and tile-batch warm-up is exactly 45 seconds: the unchanged 30-second initial
+screenshot-upload interval plus the unchanged 15-second request timeout. After
+that warm-up, each teacher issues exactly one
+`POST /api/classpilot/tiles/history` and one
+`POST /api/classpilot/tiles/screenshots` request for its 25- or 40-student
+cohort. The two requests fire together, while the 20 independent cohorts are
+staggered across the 30-second tile polling interval. The harness still
+accounts for every returned/requested student as a logical history or
 screenshot operation, counts screenshot success per tile, and counts response
 bytes once per HTTP response. The old per-device history/screenshot requests
 remain only as explicit foreign-canary isolation probes. Any valid redirect/4xx, known foreign tenant identifier, or
@@ -328,12 +331,26 @@ predecessor that lacks those bindings.
 The atomic load summary must repeat both bindings and prove exactly 20 tile
 cohorts, two requests per cohort per poll, 25 students per cohort for Waf/500
 or 40 for Waf/800, and history/screenshot logical counts equal to their batch
-request counts times the cohort size. The monitor copies that validated
-accounting into `workload.tileBatch` in its terminal result; the supervisor
-rejects a current or predecessor result when the accounting is missing or
-inconsistent. Any fresh-chain config generator must populate both workload
-fields shown below and verify the emitted monitor evidence before constructing
-the Waf/800 predecessor link.
+request counts times the cohort size. It must also bind
+`pollAccountingVersion="staggered-deadline-v1"` and carry exactly 20 sanitized
+history counts plus 20 matching screenshot counts in stagger order. Every
+complete 30-second wave contains all 20 paired cohort callbacks and therefore
+preserves all of that wave's logical history and screenshot operations. When
+the exact monotonic traffic deadline lands inside the stagger window, at most
+one final wave may be partial: its admitted callbacks form one leading prefix,
+all remaining cohorts have one fewer poll, and no cohort count differs by more
+than one. The per-cohort sums, derived complete/maximum round counts, partial
+prefix length, aggregate requests, logical operations, screenshot attempts,
+and screenshot successes must all reconcile. This deadline accounting changes
+neither traffic duration nor any workload, latency, error, or screenshot
+threshold.
+
+The monitor independently validates and copies that accounting into
+`workload.tileBatch` in its terminal result; the supervisor repeats the same
+validation and rejects a current or predecessor result when the version or
+accounting is missing or inconsistent. Any fresh-chain config generator must
+populate both workload fields shown below and verify the emitted monitor
+evidence before constructing the Waf/800 predecessor link.
 
 An isolation probe passes only on the reviewed `404`. A `2xx` response is a
 confirmed foreign-resource access failure and stops immediately. A timeout or

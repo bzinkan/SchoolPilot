@@ -9,6 +9,7 @@ $monitorPath = Join-Path $root "scripts/load/aws-rollout-monitor.ps1"
 $supervisorPath = Join-Path $root "scripts/load/start-aws-rollout-supervisor.ps1"
 $harnessPath = Join-Path $root "scripts/load/classpilot-load-test.mjs"
 $monotonicDeadlinePath = Join-Path $root "scripts/load/monotonic-deadline.mjs"
+$tilePollAccountingPath = Join-Path $root "scripts/load/tile-poll-accounting.mjs"
 $script:AssertionCount = 0
 
 function Assert-Condition {
@@ -77,8 +78,14 @@ foreach ($required in @(
     'DurationClock = "monotonic-hrtime-v1"','DiagnosticPlannedTrafficMilliseconds = 1800000L',
     'classpilot_heartbeat_hot_path_summary','tileBatchHistoryDatabaseMs','Get-HotPathFallbackEvidenceWindows',
     'observedTrafficWindow=$null','Collect-TerminalPostTrafficEvidence','strict_traffic_duration_not_completed',
+    'EvidenceCollectorVersion = "post-traffic-v2"','EvidenceAwsTimeoutSeconds = 60','EvidenceAwsMaximumAttempts = 4',
+    'PerformanceInsightsInitialDelayMinutes = 5','PerformanceInsightsStabilizationDeadlineMinutes = 15',
+    'HarnessTerminalCommitTimeoutSeconds = 45','Wait-HarnessTerminalEvidenceCommit','Resolve-DiagnosticTerminalExitCode',
+    'Get-ControllerCleanupDisposition','Stop-ControllerChildrenImmediately','immediate_harness_first','controller_operational_failure','controller_runtime_failure',
+    'db_load_series','full_interval_top_tokens','hot_path_log_windows','fallback_window_top_tokens','fallback_token_wait_events',
     'embeddedCanonicalization="powershell-convertto-json-depth-50-compress-utf8"',
-    'monotonicDeadline=(Get-FileHash -LiteralPath $script:MonotonicDeadlineScript'
+    'monotonicDeadline=(Get-FileHash -LiteralPath $script:MonotonicDeadlineScript',
+    'tilePollAccounting=(Get-FileHash -LiteralPath $script:TilePollAccountingScript'
 )) {
     Assert-Condition ($controller.Contains($required)) "Diagnostic controller is missing invariant: $required"
 }
@@ -114,13 +121,25 @@ Assert-Condition (-not $controller.Contains('Diagnostic harness failed before mo
 Assert-Condition (-not $controller.Contains('Diagnostic harness failed during the generator IP check.')) 'A nonzero harness exit during an IP refresh must not bypass monitor sealing.'
 $stopChildrenIndex = $controller.LastIndexOf('Stop-ProcessBounded $monitor')
 $finallyIndex = $controller.LastIndexOf('finally {', $stopChildrenIndex)
+$terminalCommitIndex = $controller.IndexOf('Wait-HarnessTerminalEvidenceCommit', $stopChildrenIndex)
 $attachMonitorIndex = $controller.IndexOf('Attach-TerminalMonitorEvidence $terminal', $stopChildrenIndex)
-$collectEvidenceIndex = $controller.IndexOf('Collect-TerminalPostTrafficEvidence $terminal', $attachMonitorIndex)
-$restoreScalingIndex = $controller.IndexOf('Restore-ScalingCapture $config $capture', $collectEvidenceIndex)
-Assert-Condition ($finallyIndex -ge 0 -and $stopChildrenIndex -gt $finallyIndex -and $attachMonitorIndex -gt $stopChildrenIndex -and
-    $collectEvidenceIndex -gt $attachMonitorIndex -and $restoreScalingIndex -gt $collectEvidenceIndex) 'The final path must stop children, attach the sealed monitor result, and collect post-traffic evidence before scaling restoration.'
+$collectImmediateIndex = $controller.IndexOf('-Phase Immediate', $attachMonitorIndex)
+$restoreScalingIndex = $controller.IndexOf('Restore-ScalingCapture $config $capture', $collectImmediateIndex)
+$collectDelayedIndex = $controller.IndexOf('-Phase Delayed', $restoreScalingIndex)
+Assert-Condition ($finallyIndex -ge 0 -and $stopChildrenIndex -gt $finallyIndex -and
+    $terminalCommitIndex -gt $stopChildrenIndex -and $attachMonitorIndex -gt $terminalCommitIndex -and
+    $collectImmediateIndex -gt $attachMonitorIndex -and $restoreScalingIndex -gt $collectImmediateIndex -and
+    $collectDelayedIndex -gt $restoreScalingIndex) 'The final path must stop children, attach the sealed monitor result, capture immediate posture, restore scaling, and only then wait for delayed PI evidence.'
+$immediateCleanupIndex = $controller.IndexOf('$cleanupDisposition.mode -ceq "immediate_harness_first"')
+$immediateStopCallIndex = $controller.IndexOf('Stop-ControllerChildrenImmediately $terminal $harness $monitor', $immediateCleanupIndex)
+$graceWaitIndex = $controller.IndexOf('Wait-HarnessTerminalEvidenceCommit', $immediateStopCallIndex)
+Assert-Condition ($immediateCleanupIndex -ge 0 -and $immediateStopCallIndex -gt $immediateCleanupIndex -and
+    $graceWaitIndex -gt $immediateStopCallIndex) 'A controller exception with both children live must use the harness-first immediate-stop path without entering commit grace first.'
 Assert-Condition ((Test-Path -LiteralPath $monotonicDeadlinePath -PathType Leaf) -and
     $controller.Contains('$script:MonotonicDeadlineScript = Join-Path $PSScriptRoot "monotonic-deadline.mjs"')) 'The controller must bind the exact monotonic deadline helper imported by the harness.'
+Assert-Condition ((Test-Path -LiteralPath $tilePollAccountingPath -PathType Leaf) -and
+    $controller.Contains('$script:TilePollAccountingScript = Join-Path $PSScriptRoot "tile-poll-accounting.mjs"')) 'The controller must bind the exact tile poll accounting helper imported by the harness.'
+Assert-Condition ($supervisor.Contains('tilePollAccounting = Join-Path $PSScriptRoot "tile-poll-accounting.mjs"')) 'Certification controller hashes must bind the tile poll accounting helper.'
 Assert-Condition ($controller.Contains('$healthyTargets = Get-HealthyTargetCount $Config')) "Read-only AWS posture validation must retain strict target-health enforcement."
 Assert-Condition ($controller.Contains('$output.Count -ne 1')) "Controller Git identity must require exactly one native-command output line."
 Assert-Condition (-not $controller.Contains('start-aws-rollout-supervisor.ps1')) "Diagnostic controller must never call the certification supervisor."
@@ -145,12 +164,62 @@ foreach ($name in @(
     'Wait-TargetHealthConvergence','Get-HealthyTargetCount','Restore-ScalingCapture',
     'Update-GeneratorPublicIpEvidence','Assert-HealthyMonitorHeartbeat','Resolve-ApiAwslogsBinding',
     'Get-BoundApiAwslogsBinding','Get-Postgres57014Evidence','Get-HistoryFallbackWaitEventEvidence',
+    'Test-EvidenceAwsRetryableFailure','Invoke-EvidenceAwsJsonPages','New-StagedEvidenceException','New-EvidenceEnvelope','Test-EvidenceSourceNotStarted',
+    'Get-EvidenceUtcNow','Wait-EvidenceDelay','Wait-HarnessTerminalEvidenceCommit','Resolve-DiagnosticTerminalExitCode',
+    'Get-ControllerFailureClassification','Test-HarnessTerminalEvidencePresent','Get-ControllerCleanupDisposition','Stop-ControllerChildrenImmediately',
     'Get-ObservedTrafficWindow','Get-TrafficWindow','Get-PerformanceInsightsTopTokens','Get-HotPathFallbackEvidenceWindows',
+    'Get-PerformanceInsightsMetricPoints','Get-StabilizedPerformanceInsightsEvidence',
     'Get-PerformanceInsightsEvidence','Add-TerminalFailure','Remove-TerminalFailure','Attach-TerminalMonitorEvidence',
     'Collect-TerminalPostTrafficEvidence','Set-TerminalEvidenceIntegrity'
 )) { Import-ScriptFunction $controllerAst $name }
 
 $script:RepositoryRoot = $root
+$orderedValueFixture = [ordered]@{falseValue=$false;zeroValue=0;emptyValue=@();nullValue=$null}
+Assert-Condition ((Get-Value $orderedValueFixture 'falseValue' $true) -eq $false) 'Get-Value must preserve false values from ordered dictionaries.'
+Assert-Condition ((Get-Value $orderedValueFixture 'zeroValue' 9) -eq 0) 'Get-Value must preserve zero values from ordered dictionaries.'
+Assert-Condition (@((Get-Value $orderedValueFixture 'emptyValue' @('fallback'))).Count -eq 0) 'Get-Value must preserve empty arrays from ordered dictionaries.'
+Assert-Condition ($null -eq (Get-Value $orderedValueFixture 'nullValue' 'fallback')) 'Get-Value must preserve explicit null values from ordered dictionaries.'
+$liveFailureCleanup = Get-ControllerCleanupDisposition $true $true $true $false $false
+Assert-Condition ($liveFailureCleanup.mode -ceq 'immediate_harness_first' -and
+    (@($liveFailureCleanup.stopOrder) -join ',') -ceq 'harness,monitor,restore') 'A controller exception with both children live and no terminal artifacts must stop harness, monitor, then restore without commit grace.'
+$deadMonitorLiveHarnessCleanup = Get-ControllerCleanupDisposition $true $true $false $false $true
+Assert-Condition ($deadMonitorLiveHarnessCleanup.mode -ceq 'immediate_harness_first' -and
+    (@($deadMonitorLiveHarnessCleanup.stopOrder) -join ',') -ceq 'harness,monitor,restore') 'A live harness with a dead monitor and no coherent terminal evidence must be stopped immediately without commit grace.'
+$deadHarnessCleanup = Get-ControllerCleanupDisposition $true $false $true $false $true
+Assert-Condition ($deadHarnessCleanup.mode -ceq 'commit_grace' -and
+    (@($deadHarnessCleanup.stopOrder) -join ',') -ceq 'monitor,harness,restore') 'A naturally terminal harness may use the bounded terminal-evidence commit grace.'
+$artifactCleanup = Get-ControllerCleanupDisposition $true $true $true $true $false
+Assert-Condition ($artifactCleanup.mode -ceq 'commit_grace') 'Already-present coherent terminal artifacts may use the bounded commit grace.'
+$script:controllerCleanupStopOrder = [Collections.Generic.List[string]]::new()
+function Stop-ProcessBounded { param($Process) $script:controllerCleanupStopOrder.Add([string]$Process) }
+try {
+    Stop-ControllerChildrenImmediately ([ordered]@{failures=@()}) 'harness-process' 'monitor-process'
+    Assert-Condition (($script:controllerCleanupStopOrder -join ',') -ceq 'harness-process,monitor-process') 'The immediate child cleanup implementation must stop the live harness before the live monitor.'
+}
+finally { Remove-Item -Path Function:Stop-ProcessBounded -Force }
+try { throw 'generator address changed: raw-operational-detail-must-not-persist' }
+catch { $operationalControllerFailure = Get-ControllerFailureClassification 'traffic_monitoring' $_ }
+$operationalFailureJson = $operationalControllerFailure | ConvertTo-Json -Compress
+Assert-Condition ($operationalControllerFailure.failureCode -ceq 'controller_operational_failure' -and
+    $operationalControllerFailure.failureStage -ceq 'traffic_monitoring' -and
+    [string]$operationalControllerFailure.messageSha256 -match '^[0-9a-f]{64}$' -and
+    $operationalControllerFailure.rawErrorPersisted -eq $false -and
+    -not $operationalFailureJson.Contains('raw-operational-detail')) 'Allowlisted external/orchestration failures must be sanitized operational failures, not controller runtime failures.'
+$programmingException = [Management.Automation.CommandNotFoundException]::new('missing framework command')
+$programmingRecord = [Management.Automation.ErrorRecord]::new($programmingException, 'CommandNotFoundException',
+    [Management.Automation.ErrorCategory]::ObjectNotFound, $null)
+$programmingControllerFailure = Get-ControllerFailureClassification 'traffic_monitoring' $programmingRecord
+Assert-Condition ($programmingControllerFailure.failureCode -ceq 'controller_runtime_failure' -and
+    $programmingControllerFailure.failureStage -ceq 'traffic_monitoring' -and
+    $programmingControllerFailure.rawErrorPersisted -eq $false) 'Genuine framework/programming faults must retain controller_runtime_failure classification.'
+Assert-Condition (Test-EvidenceAwsRetryableFailure 'ThrottlingException: rate exceeded') 'AWS evidence reads must retry allowlisted throttling failures.'
+Assert-Condition (Test-EvidenceAwsRetryableFailure 'connection reset by peer') 'AWS evidence reads must retry allowlisted transient connection failures.'
+Assert-Condition (Test-EvidenceAwsRetryableFailure '' $true) 'AWS evidence reads must retry a bounded process timeout.'
+Assert-Condition (-not (Test-EvidenceAwsRetryableFailure 'AccessDeniedException')) 'AWS evidence reads must not retry permission failures.'
+Assert-Condition (-not (Test-EvidenceAwsRetryableFailure 'ValidationException')) 'AWS evidence reads must not retry validation failures.'
+$exitPrecedenceTerminal = [ordered]@{failures=@('scaling_restoration_failed')}
+Assert-Condition ((Resolve-DiagnosticTerminalExitCode $exitPrecedenceTerminal ([ordered]@{attempted=$true;restored=$false}) $true 2) -eq 4) 'A failed attempted restoration must retain exit code 4 after acceptance adjudication.'
+Assert-Condition ((Resolve-DiagnosticTerminalExitCode ([ordered]@{failures=@()}) ([ordered]@{attempted=$true;restored=$true}) $true 2) -eq 0) 'A fully accepted run with verified restoration may resolve to exit code 0.'
 $expectedControllerShaOutput = @(& git -C $root rev-parse HEAD 2>$null)
 Assert-Condition ($LASTEXITCODE -eq 0 -and $expectedControllerShaOutput.Count -eq 1) 'The test fixture must resolve one current Git SHA.'
 $expectedControllerSha = [string]$expectedControllerShaOutput[0]
@@ -246,6 +315,14 @@ $script:AuthSqlMarkers = @(
 $script:HistoryFallbackSqlMarkers = @('requested_tiles','heartbeats','lateral')
 $script:HistoryIoDominanceThresholdPercent = 50.0
 $script:PerformanceInsightsCoverageTolerancePercent = 0.5
+$script:EvidenceCollectorVersion = 'post-traffic-v2'
+$script:EvidenceMaximumPages = 100
+$script:EvidenceMaximumRecords = 10000
+$script:PerformanceInsightsInitialDelayMinutes = 5
+$script:PerformanceInsightsStabilizationDeadlineMinutes = 15
+$script:PerformanceInsightsPollSeconds = 0
+$script:HarnessTerminalCommitTimeoutSeconds = 45
+$script:HarnessTerminalCommitPollMilliseconds = 250
 $script:WorkloadSchemaVersion = 'classpilot-tile-batch-v1'
 $script:EndpointShapeSha256 = '8e9f1942e4b3a27de7dd0571a9f60ffeb276c089e4baae96a885dba69e3233b2'
 $script:DurationClock = 'monotonic-hrtime-v1'
@@ -349,7 +426,10 @@ $script:diagnosticAwsCalls = [System.Collections.Generic.List[object]]::new()
 $script:diagnosticLogResponse = [pscustomobject]@{events=@();searchedLogStreams=@()}
 $script:diagnosticHotPathLogResponse = [pscustomobject]@{events=@();searchedLogStreams=@()}
 $script:diagnosticMetricResponse = [pscustomobject]@{
-    MetricList=@([pscustomobject]@{DataPoints=@([pscustomobject]@{Value=2.5},[pscustomobject]@{Value=2.5})})
+    MetricList=@([pscustomobject]@{Key='db.load.avg';DataPoints=@(
+        [pscustomobject]@{Timestamp='2026-07-20T12:00:00Z';Value=2.5},
+        [pscustomobject]@{Timestamp='2026-07-20T12:01:00Z';Value=2.5}
+    )})
 }
 $script:diagnosticTopKeys = @(
     [pscustomobject]@{Total=1.0;Dimensions=[pscustomobject]@{
@@ -372,6 +452,7 @@ $script:diagnosticWaitResponses = @{
 }
 $script:diagnosticWaitCallCount = 0
 $script:diagnosticTopTokenCalls = [System.Collections.Generic.List[object]]::new()
+$script:diagnosticPageQueue = $null
 function Get-TestArgumentValue {
     param([string[]]$Arguments,[string]$Name)
     $index = [Array]::IndexOf($Arguments,$Name)
@@ -382,6 +463,10 @@ function Invoke-AwsJson {
     param([string[]]$Arguments)
     $script:diagnosticAwsCalls.Add(@($Arguments))
     $operation = "$($Arguments[0]) $($Arguments[1])"
+    if ($operation -ceq 'logs filter-log-events' -and $null -ne $script:diagnosticPageQueue) {
+        if ($script:diagnosticPageQueue.Count -eq 0) { throw 'The diagnostic page queue was exhausted.' }
+        return $script:diagnosticPageQueue.Dequeue()
+    }
     switch ($operation) {
         'ecs describe-task-definition' {
             Assert-Condition ((Get-TestArgumentValue $Arguments '--task-definition') -ceq $apiTaskArn) 'The log query must re-read the exact bound API task definition.'
@@ -423,6 +508,22 @@ $noTimeouts = Get-Postgres57014Evidence $diagnosticConfig $trafficStart $traffic
 Assert-Condition ($noTimeouts.passed -and $noTimeouts.matchCount -eq 0 -and -not $noTimeouts.rawMessagesPersisted -and -not $noTimeouts.rawIdentifiersPersisted) 'Zero exact-interval API SQLSTATE 57014 events must pass with sanitized evidence.'
 $noTimeoutsJson = $noTimeouts | ConvertTo-Json -Depth 10 -Compress
 Assert-Condition (-not $noTimeoutsJson.Contains('/ecs/schoolpilot-production-api') -and -not $noTimeoutsJson.Contains('api/api/')) 'Timeout evidence must hash rather than persist CloudWatch identifiers.'
+$script:diagnosticPageQueue = [Collections.Generic.Queue[object]]::new()
+$script:diagnosticPageQueue.Enqueue([pscustomobject]@{events=@([pscustomobject]@{eventId='page-event-1';value=1});nextToken='page-2'})
+$script:diagnosticPageQueue.Enqueue([pscustomobject]@{events=@([pscustomobject]@{eventId='page-event-2';value=2})})
+$pagedEvidence = Invoke-EvidenceAwsJsonPages -Arguments @('logs','filter-log-events') -ItemsProperty 'events' -TokenProperty 'nextToken' -Identity {
+    param($event) return [string](Get-Value $event 'eventId' '')
+}
+Assert-Condition ($pagedEvidence.PageCount -eq 2 -and $pagedEvidence.RecordCount -eq 2) 'Evidence pagination must consume every explicit page exactly once.'
+$script:diagnosticPageQueue = [Collections.Generic.Queue[object]]::new()
+$script:diagnosticPageQueue.Enqueue([pscustomobject]@{events=@([pscustomobject]@{eventId='duplicate-event';value=1});nextToken='duplicate-page-2'})
+$script:diagnosticPageQueue.Enqueue([pscustomobject]@{events=@([pscustomobject]@{eventId='duplicate-event';value=2})})
+Assert-Throws {
+    Invoke-EvidenceAwsJsonPages -Arguments @('logs','filter-log-events') -ItemsProperty 'events' -TokenProperty 'nextToken' -Identity {
+        param($event) return [string](Get-Value $event 'eventId' '')
+    }
+} 'conflicting duplicate' 'Evidence pagination must reject conflicting duplicate records across pages.'
+$script:diagnosticPageQueue = $null
 $startMs = ([DateTimeOffset]$trafficStart).ToUnixTimeMilliseconds()
 $script:diagnosticLogResponse = [pscustomobject]@{events=@([pscustomobject]@{
     timestamp=$startMs + 1;logStreamName='api/api/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
@@ -436,7 +537,7 @@ Assert-Condition (-not $timeoutsJson.Contains('database@example.test') -and -not
 $script:diagnosticLogResponse.events[0].timestamp = $startMs - 1
 Assert-Throws { Get-Postgres57014Evidence $diagnosticConfig $trafficStart $trafficEnd } 'out-of-scope' 'CloudWatch events outside the exact traffic interval must be rejected.'
 $script:diagnosticLogResponse = [pscustomobject]@{events=@();nextToken='unconsumed-page'}
-Assert-Throws { Get-Postgres57014Evidence $diagnosticConfig $trafficStart $trafficEnd } 'complete PostgreSQL timeout evidence' 'An unconsumed CloudWatch pagination token must fail closed.'
+Assert-Throws { Get-Postgres57014Evidence $diagnosticConfig $trafficStart $trafficEnd } 'token cycle' 'A cyclic CloudWatch pagination token must fail closed.'
 $script:diagnosticLogResponse = [pscustomobject]@{events=@()}
 $hotPathMessage = [ordered]@{
     event='classpilot_heartbeat_hot_path_summary';intervalSeconds=60
@@ -490,9 +591,72 @@ Assert-Condition (-not $noFallbackWindow.passed -and -not $noFallbackWindow.hist
     $script:diagnosticWaitCallCount -eq 0) 'A run with no observed batch fallback/database-read window must fail closed without fabricating per-token wait evidence.'
 
 $script:diagnosticHotPathLogResponse = [pscustomobject]@{events=@();nextToken='unconsumed-hot-path-page'}
-Assert-Throws { Get-HotPathFallbackEvidenceWindows $diagnosticConfig $trafficStart $trafficEnd } 'complete hot-path summary evidence' 'Incomplete hot-path CloudWatch pagination must fail closed.'
+Assert-Throws { Get-HotPathFallbackEvidenceWindows $diagnosticConfig $trafficStart $trafficEnd } 'token cycle' 'Cyclic hot-path CloudWatch pagination must fail closed.'
 $script:diagnosticHotPathLogResponse = $validHotPathLogResponse
 
+$script:fakeEvidenceNow = ([DateTimeOffset]$trafficEnd).AddMinutes(4)
+$script:fakeEvidenceDelays = [Collections.Generic.List[int]]::new()
+$script:fakePiSnapshotCalls = 0
+$script:fakePiChanging = $false
+$script:fakePiAdvanceSeconds = 0
+$script:PerformanceInsightsPollSeconds = 60
+function Get-EvidenceUtcNow { return $script:fakeEvidenceNow }
+function Wait-EvidenceDelay {
+    param([int]$Seconds)
+    $script:fakeEvidenceDelays.Add($Seconds)
+    $script:fakeEvidenceNow = $script:fakeEvidenceNow.AddSeconds($Seconds)
+}
+function Get-PerformanceInsightsEvidence {
+    param($Config,[string]$StartUtc,[string]$EndUtc,[string]$DbiResourceId)
+    $script:fakePiSnapshotCalls++
+    if ($script:fakePiAdvanceSeconds -gt 0) { $script:fakeEvidenceNow = $script:fakeEvidenceNow.AddSeconds($script:fakePiAdvanceSeconds) }
+    return [ordered]@{diagnosticOnly=$true;sanitized=$true;passed=$true;
+        generation=if($script:fakePiChanging){$script:fakePiSnapshotCalls}else{1};
+        tileAuthorization=[ordered]@{passed=$true};historyFallback=[ordered]@{passed=$true}}
+}
+$fakeStabilizedPi = Get-StabilizedPerformanceInsightsEvidence $diagnosticConfig $trafficStart $trafficEnd 'db-resource-id'
+Assert-Condition ($fakeStabilizedPi.AttemptCount -eq 2 -and $script:fakePiSnapshotCalls -eq 2 -and
+    ($script:fakeEvidenceDelays -join ',') -ceq '60,60') "PI stabilization must use an injectable clock/sleeper, wait until traffic-end plus five minutes, and require two consecutive snapshots (attempts=$($fakeStabilizedPi.AttemptCount), calls=$script:fakePiSnapshotCalls, delays=$($script:fakeEvidenceDelays -join ','))."
+$script:fakeEvidenceNow = ([DateTimeOffset]$trafficEnd).AddMinutes(15)
+$script:fakePiSnapshotCalls = 0
+$script:fakePiChanging = $true
+$deadlineStartError = $null
+try { [void](Get-StabilizedPerformanceInsightsEvidence $diagnosticConfig $trafficStart $trafficEnd 'db-resource-id') }
+catch { $deadlineStartError = $_ }
+Assert-Condition ($null -ne $deadlineStartError -and
+    [int]$deadlineStartError.Exception.Data['attemptCount'] -eq 0 -and $script:fakePiSnapshotCalls -eq 0) 'PI stabilization must never start a snapshot at or after traffic-end plus fifteen minutes.'
+$script:fakeEvidenceNow = ([DateTimeOffset]$trafficEnd).AddMinutes(14).AddSeconds(30)
+$script:fakePiSnapshotCalls = 0
+$script:fakeEvidenceDelays.Clear()
+$unstableSnapshotError = $null
+try { [void](Get-StabilizedPerformanceInsightsEvidence $diagnosticConfig $trafficStart $trafficEnd 'db-resource-id') }
+catch { $unstableSnapshotError = $_ }
+Assert-Condition ($null -ne $unstableSnapshotError -and
+    [string]$unstableSnapshotError.Exception.Data['failureStage'] -ceq 'snapshot_stabilization' -and
+    $null -ne $unstableSnapshotError.Exception.Data['partialEvidence'].lastCompleteSnapshot -and
+    [string]$unstableSnapshotError.Exception.Data['partialEvidence'].lastCompleteCanonicalSha256 -match '^[0-9a-f]{64}$' -and
+    @($unstableSnapshotError.Exception.Data['completedStages']) -contains 'fallback_token_wait_events' -and
+    ($script:fakeEvidenceDelays -join ',') -ceq '30') 'A stabilization attempt crossing the deadline must stop before another snapshot while retaining the last sanitized complete snapshot and provenance.'
+$script:fakeEvidenceNow = ([DateTimeOffset]$trafficEnd).AddMinutes(14).AddSeconds(45)
+$script:fakePiSnapshotCalls = 0
+$script:fakePiChanging = $false
+$script:fakePiAdvanceSeconds = 30
+$lateSnapshotError = $null
+try { [void](Get-StabilizedPerformanceInsightsEvidence $diagnosticConfig $trafficStart $trafficEnd 'db-resource-id') }
+catch { $lateSnapshotError = $_ }
+Assert-Condition ($null -ne $lateSnapshotError -and $script:fakePiSnapshotCalls -eq 1 -and
+    [string]$lateSnapshotError.Exception.Data['failureStage'] -ceq 'snapshot_stabilization' -and
+    [int]$lateSnapshotError.Exception.Data['attemptCount'] -eq 1) 'A PI snapshot completing after the hard deadline must be rejected rather than accepted as stabilization evidence.'
+$script:fakePiAdvanceSeconds = 0
+foreach ($name in @('Get-EvidenceUtcNow','Wait-EvidenceDelay','Get-PerformanceInsightsEvidence')) { Import-ScriptFunction $controllerAst $name }
+$script:PerformanceInsightsPollSeconds = 0
+
+$script:preservationEvidenceNow = [DateTimeOffset]'2026-07-20T12:35:00Z'
+function Get-EvidenceUtcNow { return $script:preservationEvidenceNow }
+function Wait-EvidenceDelay {
+    param([int]$Seconds)
+    $script:preservationEvidenceNow = $script:preservationEvidenceNow.AddSeconds($Seconds)
+}
 $preservationDirectory = Join-Path ([IO.Path]::GetTempPath()) "schoolpilot-diagnostic-preservation-$([guid]::NewGuid().ToString('N'))"
 [void](New-Item -ItemType Directory -Path $preservationDirectory)
 $preservationProgressPath = Join-Path $preservationDirectory 'progress.jsonl'
@@ -518,6 +682,29 @@ try {
         [pscustomobject]@{Total=0.2;Dimensions=[pscustomobject]@{'db.wait_event.name'='DataFileRead';'db.wait_event.type'='IO'}},
         [pscustomobject]@{Total=0.8;Dimensions=[pscustomobject]@{'db.wait_event.name'='CPU';'db.wait_event.type'='CPU'}}
     )}
+    $raceProgressPath = Join-Path $preservationDirectory 'race-progress.jsonl'
+    $raceSummaryPath = Join-Path $preservationDirectory 'race-summary.json'
+    $raceStart = [ordered]@{schemaVersion=1;type='progress';event='start';runId='diagnostic-window-test';stage='800';
+        diagnosticOnly=$true;certificationEligible=$false;timestamp='2026-07-20T12:00:00Z';devices=810} | ConvertTo-Json -Compress
+    [IO.File]::WriteAllText($raceProgressPath, $raceStart + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
+    $raceTerminal = [ordered]@{failures=@();monitor=$null;observedTrafficWindow=$null;postgresStatementTimeouts=$null;
+        performanceInsights=$null;postTrafficAwsPosture=$null;evidenceIntegrity=$null}
+    Collect-TerminalPostTrafficEvidence $raceTerminal $preservationConfig $raceProgressPath $raceSummaryPath 'db-resource-id'
+    Assert-Condition ($null -eq $raceTerminal.observedTrafficWindow -and
+        $null -eq $raceTerminal.postgresStatementTimeouts -and $null -eq $raceTerminal.performanceInsights -and
+        $raceTerminal.postTrafficAwsPosture.state -ceq 'completed') 'An interim missing harness final/summary must leave observed, 57014, and PI sources not_started while collecting independent posture.'
+    Write-TestTrafficEvidence $raceProgressPath $raceSummaryPath 1799900 $false
+    Assert-Condition (Wait-HarnessTerminalEvidenceCommit $raceTerminal $preservationConfig $raceProgressPath $raceSummaryPath $null 0 0) 'The bounded commit phase must accept a later coherent rejected harness final exactly once.'
+    $script:preservationEvidenceNow = [DateTimeOffset]'2026-07-20T12:35:00Z'
+    Collect-TerminalPostTrafficEvidence $raceTerminal $preservationConfig $raceProgressPath $raceSummaryPath 'db-resource-id'
+    Assert-Condition ($raceTerminal.observedTrafficWindow.coherent -and
+        $raceTerminal.postgresStatementTimeouts.state -ceq 'completed' -and
+        $raceTerminal.performanceInsights.state -ceq 'completed' -and
+        @($raceTerminal.failures) -contains 'strict_traffic_duration_not_completed') 'A coherent rejected final arriving during commit grace must collect dependent evidence once without becoming accepted.'
+    $raceCallsAfterCommit = $script:diagnosticAwsCalls.Count
+    Collect-TerminalPostTrafficEvidence $raceTerminal $preservationConfig $raceProgressPath $raceSummaryPath 'db-resource-id'
+    Assert-Condition ($script:diagnosticAwsCalls.Count -eq $raceCallsAfterCommit) 'A committed rejected final must not collect settled dependent sources twice.'
+    $script:preservationEvidenceNow = [DateTimeOffset]'2026-07-20T12:35:00Z'
     Collect-TerminalPostTrafficEvidence $preservedTerminal $preservationConfig $preservationProgressPath $preservationSummaryPath 'db-resource-id'
     Assert-Condition ($preservedTerminal.observedTrafficWindow.coherent -and
         -not $preservedTerminal.observedTrafficWindow.strictlyComplete -and
@@ -541,6 +728,7 @@ try {
     $independentFailureTerminal = [ordered]@{failures=@();monitor=$null;observedTrafficWindow=$null;postgresStatementTimeouts=$null;
         performanceInsights=$null;postTrafficAwsPosture=$null;evidenceIntegrity=$null}
     $script:diagnosticLogResponse = [pscustomobject]@{events=@();nextToken='incomplete-timeout-page'}
+    $script:preservationEvidenceNow = [DateTimeOffset]'2026-07-20T12:35:00Z'
     Collect-TerminalPostTrafficEvidence $independentFailureTerminal $preservationConfig $preservationProgressPath $preservationSummaryPath 'db-resource-id'
     Assert-Condition ($independentFailureTerminal.postgresStatementTimeouts.collected -eq $false -and
         $independentFailureTerminal.postgresStatementTimeouts.rawErrorPersisted -eq $false -and
@@ -549,12 +737,53 @@ try {
         @($independentFailureTerminal.failures) -contains 'postgres_statement_timeout_evidence_unavailable') 'One evidence-source failure must be sanitized and must not suppress independent PI or posture collection.'
     $failureJson = $independentFailureTerminal | ConvertTo-Json -Depth 30 -Compress
     Assert-Condition (-not $failureJson.Contains('unconsumed') -and -not $failureJson.Contains('incomplete-timeout-page')) 'Terminal evidence failures must not persist raw provider details.'
+
+    $validMetricResponse = $script:diagnosticMetricResponse
+    $script:diagnosticLogResponse = [pscustomobject]@{events=@()}
+    $script:diagnosticMetricResponse = [pscustomobject]@{MetricList=@([pscustomobject]@{
+        Key='db.load.avg';DataPoints=@([pscustomobject]@{Value=2.5})
+    })}
+    $piFailureTerminal = [ordered]@{failures=@();monitor=$null;observedTrafficWindow=$null;postgresStatementTimeouts=$null;
+        performanceInsights=$null;postTrafficAwsPosture=$null;evidenceIntegrity=$null}
+    $script:preservationEvidenceNow = [DateTimeOffset]'2026-07-20T12:44:00Z'
+    Collect-TerminalPostTrafficEvidence $piFailureTerminal $preservationConfig $preservationProgressPath $preservationSummaryPath 'db-resource-id'
+    Assert-Condition ($piFailureTerminal.performanceInsights.state -ceq 'failed' -and
+        $piFailureTerminal.performanceInsights.collected -eq $false -and
+        $piFailureTerminal.performanceInsights.failureStage -ceq 'db_load_series' -and
+        $piFailureTerminal.performanceInsights.attemptCount -eq 1 -and
+        $piFailureTerminal.performanceInsights.rawErrorPersisted -eq $false -and
+        $piFailureTerminal.postgresStatementTimeouts.state -ceq 'completed' -and
+        $piFailureTerminal.postTrafficAwsPosture.state -ceq 'completed') 'A PI provider/shape failure must seal one sanitized staged envelope without suppressing SQL or posture evidence.'
+    $piFailureHash = Get-StableJsonSha256 $piFailureTerminal.performanceInsights
+    $awsCallsBeforeIdempotentFinalizer = $script:diagnosticAwsCalls.Count
+    Collect-TerminalPostTrafficEvidence $piFailureTerminal $preservationConfig $preservationProgressPath $preservationSummaryPath 'db-resource-id'
+    Assert-Condition ((Get-StableJsonSha256 $piFailureTerminal.performanceInsights) -ceq $piFailureHash -and
+        $script:diagnosticAwsCalls.Count -eq $awsCallsBeforeIdempotentFinalizer) 'A second finalizer pass must not retry or rewrite a settled failed evidence source.'
+
+    $script:diagnosticMetricResponse = $validMetricResponse
+    $script:diagnosticHotPathLogResponse = [pscustomobject]@{events=@([pscustomobject]@{
+        timestamp=$startMs + 60000;logStreamName='api/api/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';message='not-json'
+    })}
+    $partialFailureTerminal = [ordered]@{failures=@();monitor=$null;observedTrafficWindow=$null;postgresStatementTimeouts=$null;
+        performanceInsights=$null;postTrafficAwsPosture=$null;evidenceIntegrity=$null}
+    $script:preservationEvidenceNow = [DateTimeOffset]'2026-07-20T12:44:00Z'
+    Collect-TerminalPostTrafficEvidence $partialFailureTerminal $preservationConfig $preservationProgressPath $preservationSummaryPath 'db-resource-id'
+    Assert-Condition ($partialFailureTerminal.performanceInsights.failureStage -ceq 'hot_path_log_windows' -and
+        @($partialFailureTerminal.performanceInsights.completedStages) -contains 'db_load_series' -and
+        @($partialFailureTerminal.performanceInsights.completedStages) -contains 'full_interval_top_tokens' -and
+        $null -ne $partialFailureTerminal.performanceInsights.partial.dbLoadSeries -and
+        $null -ne $partialFailureTerminal.performanceInsights.partial.fullIntervalTopTokens) 'A later PI-stage failure must retain only sanitized completed-stage provenance and partial evidence.'
+    $partialFailureJson = $partialFailureTerminal.performanceInsights | ConvertTo-Json -Depth 30 -Compress
+    Assert-Condition (-not $partialFailureJson.Contains('auth-token-1') -and -not $partialFailureJson.Contains('requested_students') -and
+        -not $partialFailureJson.Contains('not-json')) 'Partial PI failure evidence must not persist raw SQL, provider payloads, or token identifiers.'
+    $script:diagnosticHotPathLogResponse = $validHotPathLogResponse
 }
 finally {
     $script:diagnosticLogResponse = [pscustomobject]@{events=@()}
     $script:diagnosticHotPathLogResponse = $validHotPathLogResponse
     Remove-Item -LiteralPath $preservationDirectory -Recurse -Force
 }
+foreach ($name in @('Get-EvidenceUtcNow','Wait-EvidenceDelay')) { Import-ScriptFunction $controllerAst $name }
 
 $script:diagnosticWaitResponses['history-token-1'] = [pscustomobject]@{Keys=@(
     [pscustomobject]@{Total=0.5;Dimensions=[pscustomobject]@{'db.wait_event.name'='IO:DataFileRead';'db.wait_event.type'='IO'}},
@@ -563,6 +792,13 @@ $script:diagnosticWaitResponses['history-token-1'] = [pscustomobject]@{Keys=@(
 $ioDominated = Get-PerformanceInsightsEvidence $diagnosticConfig $trafficStart $trafficEnd 'db-resource-id'
 Assert-Condition (-not $ioDominated.passed -and -not $ioDominated.historyFallback.passed -and
     $ioDominated.historyFallback.dataFileReadSharePercent -eq 50.0) 'A history token at the exclusive 50-percent IO boundary must fail.'
+$script:diagnosticWaitResponses['history-token-1'] = [pscustomobject]@{Keys=@(
+    [pscustomobject]@{Total=0.49999;Dimensions=[pscustomobject]@{'db.wait_event.name'='IO:DataFileRead';'db.wait_event.type'='IO'}},
+    [pscustomobject]@{Total=0.50001;Dimensions=[pscustomobject]@{'db.wait_event.name'='CPU';'db.wait_event.type'='CPU'}}
+)}
+$ioBelowBoundary = Get-PerformanceInsightsEvidence $diagnosticConfig $trafficStart $trafficEnd 'db-resource-id'
+Assert-Condition ($ioBelowBoundary.passed -and $ioBelowBoundary.historyFallback.passed -and
+    $ioBelowBoundary.historyFallback.dataFileReadSharePercent -eq 49.999) 'A complete history token at 49.999 percent IO must satisfy the exclusive threshold.'
 $script:diagnosticWaitResponses['history-token-1'] = [pscustomobject]@{Keys=@(
     [pscustomobject]@{Total=0.2;Dimensions=[pscustomobject]@{'db.wait_event.name'='DataFileRead';'db.wait_event.type'='IO'}},
     [pscustomobject]@{Total=0.6;Dimensions=[pscustomobject]@{'db.wait_event.name'='CPU';'db.wait_event.type'='CPU'}}

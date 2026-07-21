@@ -17,6 +17,7 @@ import {
   createMonotonicDeadline,
   millisecondsUntil,
 } from "../scripts/load/monotonic-deadline.mjs";
+import { buildStaggeredPollAccounting } from "../scripts/load/tile-poll-accounting.mjs";
 
 const script = fileURLToPath(new URL("../scripts/load/classpilot-load-test.mjs", import.meta.url));
 const tileBatchEndpointShapeSha256 = "8e9f1942e4b3a27de7dd0571a9f60ffeb276c089e4baae96a885dba69e3233b2";
@@ -32,6 +33,45 @@ let manifestPath = "";
 let commandBodiesPath = "";
 let teacherAuthPath = "";
 let controlPreloadPath = "";
+
+describe("staggered tile poll accounting", () => {
+  it("models the observed deadline-truncated final wave without identifiers", () => {
+    const counts = Array.from({ length: 20 }, (_value, index) => index < 10 ? 59 : 58);
+    const evidence = buildStaggeredPollAccounting(counts, [...counts], { expectedCohorts: 20 });
+    assert.deepEqual(evidence, {
+      pollAccountingVersion: "staggered-deadline-v1",
+      historyRequestsByCohort: counts,
+      screenshotRequestsByCohort: counts,
+      completeRoundsPerCohort: 58,
+      maximumRoundsPerCohort: 59,
+      partialFinalRoundCohorts: 10,
+    });
+    assert.equal(evidence.historyRequestsByCohort.reduce((total, count) => total + count, 0), 1_170);
+    assert.doesNotMatch(JSON.stringify(evidence), /studentId|deviceId|schoolId|actorId|teachingSessionId/);
+  });
+
+  it("models a complete balanced final wave and rejects unpaired counters", () => {
+    const counts = Array.from({ length: 20 }, () => 59);
+    assert.deepEqual(buildStaggeredPollAccounting(counts, [...counts], { expectedCohorts: 20 }), {
+      pollAccountingVersion: "staggered-deadline-v1",
+      historyRequestsByCohort: counts,
+      screenshotRequestsByCohort: counts,
+      completeRoundsPerCohort: 59,
+      maximumRoundsPerCohort: 59,
+      partialFinalRoundCohorts: 0,
+    });
+    const unpaired = [...counts];
+    unpaired[19] = 58;
+    assert.throws(() => buildStaggeredPollAccounting(counts, unpaired), /must remain paired/);
+    assert.throws(() => buildStaggeredPollAccounting(counts.slice(1), counts.slice(1), { expectedCohorts: 20 }), /exactly 20 cohorts/);
+    const skewed = [...counts];
+    skewed[19] = 57;
+    assert.throws(() => buildStaggeredPollAccounting(skewed, [...skewed]), /differ by at most one/);
+    const nonPrefix = [...counts];
+    nonPrefix[9] = 58;
+    assert.throws(() => buildStaggeredPollAccounting(nonPrefix, [...nonPrefix]), /leading stagger prefix/);
+  });
+});
 
 function cleanEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   const env = { ...process.env };
@@ -1424,6 +1464,7 @@ if (signalMarker) {
       assert.equal(summary.workloadSchemaVersion, "classpilot-tile-batch-v1");
       assert.equal(summary.workloadEndpointShapeSha256, tileBatchEndpointShapeSha256);
       assert.equal(summary.tileBatch.teacherCohorts, 20);
+      assert.equal(summary.tileBatch.pollAccountingVersion, "staggered-deadline-v1");
       assert.equal(summary.tileBatch.studentsPerCohort, 25);
       assert.equal(summary.tileBatch.teacherTileAssignments, 500);
       assert.equal(summary.tileBatch.requestsPerCohortPerPoll, 2);
@@ -1433,6 +1474,30 @@ if (signalMarker) {
       assert.equal(summary.tileBatch.networkRequests, summary.tileBatch.historyRequests + summary.tileBatch.screenshotRequests);
       assert.equal(summary.tileBatch.logicalOperations, summary.tileBatch.networkRequests * 25);
       assert.equal(summary.screenshotRetrieval.attempts, summary.tileBatch.screenshotLogicalOperations);
+      assert.equal(summary.tileBatch.historyRequestsByCohort.length, 20);
+      assert.deepEqual(summary.tileBatch.historyRequestsByCohort, summary.tileBatch.screenshotRequestsByCohort);
+      assert.equal(
+        summary.tileBatch.historyRequestsByCohort.reduce((total: number, count: number) => total + count, 0),
+        summary.tileBatch.historyRequests,
+      );
+      assert.equal(Math.min(...summary.tileBatch.historyRequestsByCohort), summary.tileBatch.completeRoundsPerCohort);
+      assert.equal(Math.max(...summary.tileBatch.historyRequestsByCohort), summary.tileBatch.maximumRoundsPerCohort);
+      assert.ok(summary.tileBatch.maximumRoundsPerCohort - summary.tileBatch.completeRoundsPerCohort <= 1);
+      assert.equal(
+        summary.tileBatch.historyRequestsByCohort.filter(
+          (count: number) => count > summary.tileBatch.completeRoundsPerCohort,
+        ).length,
+        summary.tileBatch.partialFinalRoundCohorts,
+      );
+      assert.deepEqual(
+        summary.tileBatch.historyRequestsByCohort,
+        summary.tileBatch.historyRequestsByCohort.map((_count: number, index: number) =>
+          index < summary.tileBatch.partialFinalRoundCohorts
+            ? summary.tileBatch.maximumRoundsPerCohort
+            : summary.tileBatch.completeRoundsPerCohort
+        ),
+      );
+      assert.doesNotMatch(JSON.stringify(summary.tileBatch), /studentId|deviceId|schoolId|actorId|teachingSessionId/);
       assert.equal(commandSequence, 20);
       assert.equal(receivedAcks, 500);
       assert.equal(completedAcks, 500);

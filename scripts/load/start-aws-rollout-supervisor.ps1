@@ -22,6 +22,7 @@ $script:GeneratorIpTestIndex = 0
 $script:RollbackWatchdogDiagnostic = "not_checked"
 $script:RequiredWorkloadSchemaVersion = "classpilot-tile-batch-v1"
 $script:RequiredWorkloadEndpointShapeSha256 = "8e9f1942e4b3a27de7dd0571a9f60ffeb276c089e4baae96a885dba69e3233b2"
+$script:RequiredPollAccountingVersion = "staggered-deadline-v1"
 
 function Resolve-ExternalPath {
     param([string]$Path, [string]$Name, [switch]$AllowMissing)
@@ -442,6 +443,7 @@ function Get-CertificationControllerHashes {
         rollback = Join-Path $PSScriptRoot "aws-rollout-rollback.ps1"
         harness = $harnessScript
         monotonicDeadline = Join-Path $PSScriptRoot "monotonic-deadline.mjs"
+        tilePollAccounting = Join-Path $PSScriptRoot "tile-poll-accounting.mjs"
         preparer = Join-Path $PSScriptRoot "prepare-classpilot-load-test.mjs"
         savedPlanValidator = Join-Path $PSScriptRoot "validate-rollout-plan.ps1"
     }
@@ -1535,12 +1537,55 @@ function Test-CertificationTerminalTileBatchContract {
         $logicalOperations = [int64](Get-CertificationValue $tileBatch "logicalOperations" -1)
         $screenshotAttempts = [int64](Get-CertificationValue $tileBatch "screenshotAttempts" -1)
         $screenshotSuccesses = [int64](Get-CertificationValue $tileBatch "screenshotSuccesses" -1)
+        $historyRequestsByCohort = @((Get-CertificationValue $tileBatch "historyRequestsByCohort" @()))
+        $screenshotRequestsByCohort = @((Get-CertificationValue $tileBatch "screenshotRequestsByCohort" @()))
+        if ($historyRequestsByCohort.Count -ne 20 -or $screenshotRequestsByCohort.Count -ne 20) { return $false }
+        $jsonNumberTypeCodes = @(
+            [TypeCode]::Byte, [TypeCode]::SByte, [TypeCode]::Int16, [TypeCode]::UInt16,
+            [TypeCode]::Int32, [TypeCode]::UInt32, [TypeCode]::Int64, [TypeCode]::UInt64,
+            [TypeCode]::Single, [TypeCode]::Double, [TypeCode]::Decimal
+        )
+        $historyCounts = [Collections.Generic.List[int64]]::new()
+        $screenshotCounts = [Collections.Generic.List[int64]]::new()
+        for ($index = 0; $index -lt 20; $index++) {
+            $historyRaw = $historyRequestsByCohort[$index]
+            $screenshotRaw = $screenshotRequestsByCohort[$index]
+            if ([Convert]::GetTypeCode($historyRaw) -notin $jsonNumberTypeCodes -or
+                [Convert]::GetTypeCode($screenshotRaw) -notin $jsonNumberTypeCodes) { return $false }
+            $historyDouble = [double]$historyRaw
+            $screenshotDouble = [double]$screenshotRaw
+            if ([double]::IsNaN($historyDouble) -or [double]::IsInfinity($historyDouble) -or
+                [double]::IsNaN($screenshotDouble) -or [double]::IsInfinity($screenshotDouble) -or
+                $historyDouble -lt 1 -or $screenshotDouble -lt 1 -or
+                $historyDouble -ne [math]::Truncate($historyDouble) -or
+                $screenshotDouble -ne [math]::Truncate($screenshotDouble) -or
+                $historyDouble -gt [int64]::MaxValue -or $screenshotDouble -gt [int64]::MaxValue) { return $false }
+            $historyCount = [int64]$historyDouble
+            $screenshotCount = [int64]$screenshotDouble
+            if ($historyCount -ne $screenshotCount) { return $false }
+            $historyCounts.Add($historyCount)
+            $screenshotCounts.Add($screenshotCount)
+        }
+        $minimumRounds = [int64](($historyCounts | Measure-Object -Minimum).Minimum)
+        $maximumRounds = [int64](($historyCounts | Measure-Object -Maximum).Maximum)
+        if (($maximumRounds - $minimumRounds) -gt 1) { return $false }
+        $partialFinalRoundCohorts = @($historyCounts | Where-Object { $_ -gt $minimumRounds }).Count
+        for ($index = 0; $index -lt 20; $index++) {
+            $expectedCount = if ($index -lt $partialFinalRoundCohorts) { $maximumRounds } else { $minimumRounds }
+            if ($historyCounts[$index] -ne $expectedCount) { return $false }
+        }
+        $historyCohortSum = [int64](($historyCounts | Measure-Object -Sum).Sum)
+        $screenshotCohortSum = [int64](($screenshotCounts | Measure-Object -Sum).Sum)
+        $completeRoundsClaim = [int64](Get-CertificationValue $tileBatch "completeRoundsPerCohort" -1)
+        $maximumRoundsClaim = [int64](Get-CertificationValue $tileBatch "maximumRoundsPerCohort" -1)
+        $partialCohortsClaim = [int](Get-CertificationValue $tileBatch "partialFinalRoundCohorts" -1)
     }
     catch { return $false }
     return (
         [string](Get-CertificationValue $Workload "stage" "") -ceq $ExpectedStage -and
         [string](Get-CertificationValue $Workload "workloadSchemaVersion" "") -ceq $ExpectedSchemaVersion -and
         [string](Get-CertificationValue $Workload "endpointShapeSha256" "") -ceq $ExpectedEndpointShapeSha256 -and
+        [string](Get-CertificationValue $tileBatch "pollAccountingVersion" "") -ceq $script:RequiredPollAccountingVersion -and
         $teacherCohorts -eq 20 -and
         $studentsPerCohort -eq $expectedStudentsPerCohort -and
         $teacherTileAssignments -eq (20 * $expectedStudentsPerCohort) -and
@@ -1548,9 +1593,13 @@ function Test-CertificationTerminalTileBatchContract {
         $logicalOperationsPerPoll -eq (2 * $teacherTileAssignments) -and
         $historyRequests -gt 0 -and
         $historyRequests -eq $screenshotRequests -and
-        ($historyRequests % $teacherCohorts) -eq 0 -and
-        $historyLogicalOperations -eq ($historyRequests * $studentsPerCohort) -and
-        $screenshotLogicalOperations -eq ($screenshotRequests * $studentsPerCohort) -and
+        $historyCohortSum -eq $historyRequests -and
+        $screenshotCohortSum -eq $screenshotRequests -and
+        $completeRoundsClaim -eq $minimumRounds -and
+        $maximumRoundsClaim -eq $maximumRounds -and
+        $partialCohortsClaim -eq $partialFinalRoundCohorts -and
+        $historyLogicalOperations -eq ($historyCohortSum * $studentsPerCohort) -and
+        $screenshotLogicalOperations -eq ($screenshotCohortSum * $studentsPerCohort) -and
         $networkRequests -eq ($historyRequests + $screenshotRequests) -and
         $logicalOperations -eq ($historyLogicalOperations + $screenshotLogicalOperations) -and
         $screenshotAttempts -eq $screenshotLogicalOperations -and

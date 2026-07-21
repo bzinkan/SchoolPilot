@@ -13,6 +13,10 @@ import {
   teacherSessionOwnerKey,
 } from "./command-status-observer.mjs";
 import { createMonotonicDeadline } from "./monotonic-deadline.mjs";
+import {
+  buildStaggeredPollAccounting,
+  TILE_BATCH_POLL_ACCOUNTING_VERSION,
+} from "./tile-poll-accounting.mjs";
 
 const JPEG_1X1 =
   "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAH/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAEFAqf/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAEDAQE/ASP/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAECAQE/ASP/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAY/ASP/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAE/ISP/2gAMAwEAAgADAAAAEP/EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQMBAT8QH//EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQIBAT8QH//EABQQAQAAAAAAAAAAAAAAAAAAABD/2gAIAQEAAT8QH//Z";
@@ -1282,6 +1286,8 @@ const counters = {
   screenshotGetSuccess: 0,
   tileBatchScreenshotRequests: 0,
   tileBatchHistoryRequests: 0,
+  tileBatchScreenshotRequestsByCohort: Array.from({ length: teacherAuthInputs.length }, () => 0),
+  tileBatchHistoryRequestsByCohort: Array.from({ length: teacherAuthInputs.length }, () => 0),
   tileScreenshotLogicalOperations: 0,
   tileHistoryLogicalOperations: 0,
   teacher: 0,
@@ -2385,15 +2391,20 @@ function startTileBatchPolling() {
         ? matchingDevices
         : matchingDevices.slice(0, teacherTemplateDeviceCount);
       const studentIds = [...new Set(selectedDevices.map((device) => device.studentId))];
-      if (studentIds.length > 0) cohorts.push({ auth, studentIds });
+      if (studentIds.length > 0) cohorts.push({ auth, cohortIndex: authIndex, studentIds });
     }
-    scheduleStaggered(cohorts, screenshotGetIntervalMs, ({ auth, studentIds }) => {
+    scheduleStaggered(cohorts, screenshotGetIntervalMs, ({ auth, cohortIndex, studentIds }) => {
       if (stoppingTraffic) return;
       const expectedStudentIds = new Set(studentIds);
 
       counters.teacher += 2;
       counters.tileBatchHistoryRequests += 1;
+      counters.tileBatchHistoryRequestsByCohort[cohortIndex] += 1;
+      counters.tileBatchScreenshotRequests += 1;
+      counters.tileBatchScreenshotRequestsByCohort[cohortIndex] += 1;
       counters.tileHistoryLogicalOperations += studentIds.length;
+      counters.tileScreenshotLogicalOperations += studentIds.length;
+      counters.screenshotGet += studentIds.length;
       void issue(tileHistoryPath, {
         ...teacherHttpAuth(auth),
         method: "POST",
@@ -2403,9 +2414,6 @@ function startTileBatchPolling() {
         expectedStudentIds,
       });
 
-      counters.tileBatchScreenshotRequests += 1;
-      counters.tileScreenshotLogicalOperations += studentIds.length;
-      counters.screenshotGet += studentIds.length;
       void issue(tileScreenshotsPath, {
         ...teacherHttpAuth(auth),
         method: "POST",
@@ -2900,6 +2908,17 @@ function summarize(shutdownReason) {
     ? activeTileCohortSizes[0]
     : null;
   const teacherTileAssignments = activeTileCohortSizes.reduce((total, count) => total + count, 0);
+  const activeHistoryRequestsByCohort = counters.tileBatchHistoryRequestsByCohort.filter(
+    (_count, index) => tileCohortSizes[index] > 0
+  );
+  const activeScreenshotRequestsByCohort = counters.tileBatchScreenshotRequestsByCohort.filter(
+    (_count, index) => tileCohortSizes[index] > 0
+  );
+  const pollAccounting = buildStaggeredPollAccounting(
+    activeHistoryRequestsByCohort,
+    activeScreenshotRequestsByCohort,
+    { expectedCohorts: isLaunchGate ? 20 : undefined },
+  );
 
   const summary = {
     runId,
@@ -2972,6 +2991,8 @@ function summarize(shutdownReason) {
     },
     tileBatch: {
       configured: tileBatchConfigured,
+      ...pollAccounting,
+      pollAccountingVersion: tileBatchConfigured ? TILE_BATCH_POLL_ACCOUNTING_VERSION : null,
       teacherCohorts: activeTileCohortSizes.length,
       studentsPerCohort: uniformTileCohortSize,
       teacherTileAssignments,

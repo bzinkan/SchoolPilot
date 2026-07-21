@@ -18,6 +18,7 @@ $ErrorActionPreference = "Stop"
 $script:RepositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\.."))
 $script:HarnessScript = Join-Path $PSScriptRoot "classpilot-load-test.mjs"
 $script:MonotonicDeadlineScript = Join-Path $PSScriptRoot "monotonic-deadline.mjs"
+$script:TilePollAccountingScript = Join-Path $PSScriptRoot "tile-poll-accounting.mjs"
 $script:MonitorScript = Join-Path $PSScriptRoot "aws-rollout-monitor.ps1"
 $script:WorkloadSchemaVersion = "classpilot-tile-batch-v1"
 $script:EndpointShapeSha256 = "8e9f1942e4b3a27de7dd0571a9f60ffeb276c089e4baae96a885dba69e3233b2"
@@ -44,12 +45,27 @@ $script:DiagnosticRuntimeTargetTrafficSeconds = 1800.0
 $script:DiagnosticPlannedTrafficMilliseconds = 1800000L
 $script:HotPathSummaryEvent = "classpilot_heartbeat_hot_path_summary"
 $script:HotPathSummaryIntervalSeconds = 60
+$script:EvidenceCollectorVersion = "post-traffic-v2"
+$script:EvidenceAwsTimeoutSeconds = 60
+$script:EvidenceAwsMaximumAttempts = 4
+$script:EvidenceAwsRetryDelaysSeconds = @(0, 1, 2, 4)
+$script:EvidenceMaximumPages = 100
+$script:EvidenceMaximumRecords = 10000
+$script:PerformanceInsightsInitialDelayMinutes = 5
+$script:PerformanceInsightsStabilizationDeadlineMinutes = 15
+$script:PerformanceInsightsPollSeconds = 60
+$script:HarnessTerminalCommitTimeoutSeconds = 45
+$script:HarnessTerminalCommitPollMilliseconds = 250
 
 function Get-Value {
     param($Object, [string]$Name, $Default = $null)
     if ($null -eq $Object) { return $Default }
+    if ($Object -is [Collections.IDictionary]) {
+        if ($Object.Contains($Name)) { return $Object[$Name] }
+        return $Default
+    }
     $property = $Object.PSObject.Properties[$Name]
-    if ($null -eq $property -or $null -eq $property.Value) { return $Default }
+    if ($null -eq $property) { return $Default }
     return $property.Value
 }
 
@@ -207,13 +223,274 @@ function Exit-DiagnosticRunLock {
     finally { $Lock.Dispose() }
 }
 
+function Test-EvidenceAwsRetryableFailure {
+    param([string]$StandardError, [bool]$TimedOut = $false)
+    if ($TimedOut) { return $true }
+    $lower = ([string]$StandardError).ToLowerInvariant()
+    return $lower -match 'throttl|rate exceeded|requestlimitexceeded|service unavailable|temporar|timeout|timed out|connection|internalerror|internal failure'
+}
+
 function Invoke-AwsJson {
     param([string[]]$Arguments)
-    $raw = & aws @Arguments --output json 2>&1
-    if ($LASTEXITCODE -ne 0) { throw "AWS CLI request failed for $($Arguments[0]) $($Arguments[1])." }
-    $text = ($raw | Out-String).Trim()
-    if (-not $text) { return $null }
-    return $text | ConvertFrom-Json -Depth 50
+    $operation = "$($Arguments[0]) $($Arguments[1])"
+    $aws = (Get-Command aws -ErrorAction Stop).Source
+    $lastFailure = $null
+    for ($attempt = 1; $attempt -le $script:EvidenceAwsMaximumAttempts; $attempt++) {
+        if ($script:EvidenceAwsRetryDelaysSeconds[$attempt - 1] -gt 0) {
+            Start-Sleep -Seconds $script:EvidenceAwsRetryDelaysSeconds[$attempt - 1]
+        }
+        $process = $null
+        try {
+            $startInfo = [Diagnostics.ProcessStartInfo]::new()
+            $startInfo.FileName = $aws
+            $startInfo.UseShellExecute = $false
+            $startInfo.CreateNoWindow = $true
+            foreach ($argument in @($Arguments) + @("--output", "json")) { [void]$startInfo.ArgumentList.Add($argument) }
+            $startInfo.RedirectStandardOutput = $true
+            $startInfo.RedirectStandardError = $true
+            $process = [Diagnostics.Process]::new()
+            $process.StartInfo = $startInfo
+            if (-not $process.Start()) { throw "AWS CLI process could not start." }
+            $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+            $stderrTask = $process.StandardError.ReadToEndAsync()
+            if (-not $process.WaitForExit($script:EvidenceAwsTimeoutSeconds * 1000)) {
+                try { $process.Kill($true) } catch { }
+                $lastFailure = "timeout"
+                if ($attempt -lt $script:EvidenceAwsMaximumAttempts) { continue }
+                throw "AWS CLI request timed out for $operation."
+            }
+            $stdout = $stdoutTask.GetAwaiter().GetResult()
+            $stderr = $stderrTask.GetAwaiter().GetResult()
+            if ($process.ExitCode -ne 0) {
+                $retryable = Test-EvidenceAwsRetryableFailure ([string]$stderr)
+                $lastFailure = if ($retryable) { "transient" } else { "non_retryable" }
+                if ($retryable -and $attempt -lt $script:EvidenceAwsMaximumAttempts) { continue }
+                throw "AWS CLI request failed for $operation ($lastFailure)."
+            }
+            $text = ([string]$stdout).Trim()
+            if (-not $text) { return $null }
+            try { return $text | ConvertFrom-Json -Depth 50 }
+            catch { throw "AWS CLI returned malformed JSON for $operation." }
+        }
+        finally {
+            if ($null -ne $process) { $process.Dispose() }
+        }
+    }
+    throw "AWS CLI request failed for $operation ($lastFailure)."
+}
+
+function Invoke-EvidenceAwsJsonPages {
+    param(
+        [string[]]$Arguments,
+        [string]$ItemsProperty,
+        [string]$TokenProperty,
+        [string]$TokenArgument = "--next-token",
+        [scriptblock]$Identity
+    )
+    $items = [Collections.Generic.List[object]]::new()
+    $seenTokens = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $seenItems = @{}
+    $token = $null
+    $pageCount = 0
+    do {
+        $pageCount++
+        if ($pageCount -gt $script:EvidenceMaximumPages) { throw "AWS evidence pagination exceeded the page limit." }
+        $pageArguments = @($Arguments) + @("--no-paginate")
+        if (-not [string]::IsNullOrWhiteSpace([string]$token)) { $pageArguments += @($TokenArgument, [string]$token) }
+        $page = Invoke-AwsJson $pageArguments
+        if ($null -eq $page) { throw "AWS evidence pagination returned an empty page." }
+        foreach ($item in @((Get-Value $page $ItemsProperty @()))) {
+            $identityValue = if ($null -ne $Identity) { [string](& $Identity $item) } else { Get-StableJsonSha256 $item }
+            if ([string]::IsNullOrWhiteSpace($identityValue)) { throw "AWS evidence pagination returned an item without an identity." }
+            $itemHash = Get-StableJsonSha256 $item
+            if ($seenItems.ContainsKey($identityValue)) {
+                if ([string]$seenItems[$identityValue] -cne $itemHash) { throw "AWS evidence pagination returned conflicting duplicate items." }
+                continue
+            }
+            $seenItems[$identityValue] = $itemHash
+            $items.Add($item)
+            if ($items.Count -gt $script:EvidenceMaximumRecords) { throw "AWS evidence pagination exceeded the record limit." }
+        }
+        $token = [string](Get-Value $page $TokenProperty "")
+        if (-not [string]::IsNullOrWhiteSpace($token) -and -not $seenTokens.Add($token)) {
+            throw "AWS evidence pagination returned a token cycle."
+        }
+    } while (-not [string]::IsNullOrWhiteSpace($token))
+    return [pscustomobject]@{Items=$items.ToArray();PageCount=$pageCount;RecordCount=$items.Count}
+}
+
+function New-StagedEvidenceException {
+    param(
+        [string]$Stage,
+        [Management.Automation.ErrorRecord]$ErrorRecord,
+        [string[]]$CompletedStages = @(),
+        $PartialEvidence = $null
+    )
+    $exception = [InvalidOperationException]::new($ErrorRecord.Exception.Message, $ErrorRecord.Exception)
+    $exception.Data["failureStage"] = $Stage
+    $exception.Data["completedStages"] = @($CompletedStages)
+    if ($null -ne $PartialEvidence) { $exception.Data["partialEvidence"] = $PartialEvidence }
+    return $exception
+}
+
+function New-EvidenceEnvelope {
+    param(
+        [bool]$Collected,
+        [bool]$Passed,
+        [int]$AttemptCount,
+        [string]$FailureCode,
+        [string]$FailureStage,
+        [string]$MessageSha256,
+        $Evidence,
+        [string[]]$CompletedStages = @(),
+        $PartialEvidence = $null
+    )
+    $envelope = [ordered]@{
+        evidenceCollectorVersion=$script:EvidenceCollectorVersion
+        state=if($Collected){"completed"}else{"failed"}
+        collected=$Collected;passed=$Passed;attemptCount=$AttemptCount
+        completedAtUtc=[DateTimeOffset]::UtcNow.ToString("o")
+        failureCode=if($Collected){$null}else{$FailureCode}
+        failureStage=if($Collected){$null}else{$FailureStage}
+        messageSha256=if($Collected){$null}else{$MessageSha256}
+        completedStages=@($CompletedStages)
+        partial=$PartialEvidence
+        rawErrorPersisted=$false
+    }
+    if ($null -ne $Evidence) {
+        if ($Evidence -is [Collections.IDictionary]) {
+            foreach ($key in $Evidence.Keys) {
+                if (-not $envelope.Contains($key)) { $envelope[$key] = $Evidence[$key] }
+            }
+        } else {
+            foreach ($property in $Evidence.PSObject.Properties) {
+                if (-not $envelope.Contains($property.Name)) { $envelope[$property.Name] = $property.Value }
+            }
+        }
+    }
+    return $envelope
+}
+
+function Get-EvidenceUtcNow { return [DateTimeOffset]::UtcNow }
+
+function Wait-EvidenceDelay {
+    param([int]$Seconds)
+    if ($Seconds -gt 0) { Start-Sleep -Seconds $Seconds }
+}
+
+function Test-EvidenceSourceNotStarted {
+    param($Evidence)
+    if ($null -eq $Evidence) { return $true }
+    return [string](Get-Value $Evidence "state" "not_started") -ceq "not_started"
+}
+
+function Wait-HarnessTerminalEvidenceCommit {
+    param(
+        $Terminal,
+        $Config,
+        [string]$ProgressPath,
+        [string]$SummaryPath,
+        $HarnessProcess,
+        [int]$TimeoutSeconds = $script:HarnessTerminalCommitTimeoutSeconds,
+        [int]$PollMilliseconds = $script:HarnessTerminalCommitPollMilliseconds
+    )
+    $stopwatch = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        try {
+            $observed = Get-ObservedTrafficWindow $Config $ProgressPath $SummaryPath
+            $Terminal.observedTrafficWindow = $observed.Evidence
+            if ($observed.Evidence.strictlyComplete -ne $true) {
+                Add-TerminalFailure $Terminal "strict_traffic_duration_not_completed"
+            }
+            return $true
+        }
+        catch {
+            # Progress JSONL and the atomic summary are committed by separate
+            # writes. Their interim absence/mismatch is not terminal evidence.
+        }
+        if ($stopwatch.Elapsed.TotalSeconds -ge $TimeoutSeconds) { break }
+        if ($null -ne $HarnessProcess) {
+            try { $HarnessProcess.Refresh() } catch { }
+        }
+        if ($PollMilliseconds -gt 0) { Start-Sleep -Milliseconds $PollMilliseconds }
+    } while ($true)
+    return $false
+}
+
+function Resolve-DiagnosticTerminalExitCode {
+    param($Terminal, $Restoration, [bool]$AcceptanceAdjudicated, [int]$CurrentExitCode)
+    if ((Get-Value $Restoration "attempted" $false) -eq $true -and
+        (Get-Value $Restoration "restored" $false) -ne $true) { return 4 }
+    if ($AcceptanceAdjudicated -and @($Terminal.failures).Count -eq 0) { return 0 }
+    if ($CurrentExitCode -eq 4) { return 4 }
+    return 2
+}
+
+function Get-ControllerFailureClassification {
+    param([string]$Stage, [Management.Automation.ErrorRecord]$ErrorRecord)
+    $allowedStages = @(
+        "capacity_pin","harness_launch","harness_ready","monitor_validation","monitor_launch",
+        "monitor_arming","traffic_release","traffic_monitoring","terminal_commit","immediate_evidence",
+        "scaling_restoration","delayed_evidence","acceptance_adjudication","terminal_posture"
+    )
+    $failureId = [string]$ErrorRecord.FullyQualifiedErrorId
+    $programmingFailure = $failureId -match 'CommandNotFound|PropertyNotFound|MethodNotFound|ParameterBinding|ParseException|TypeNotFound|VariableIsUndefined|NullArray' -or
+        $ErrorRecord.Exception -is [NullReferenceException] -or
+        $ErrorRecord.Exception -is [IndexOutOfRangeException] -or
+        $ErrorRecord.Exception -is [InvalidCastException]
+    $operational = $Stage -in $allowedStages -and -not $programmingFailure
+    return [ordered]@{
+        failureCode=if($operational){"controller_operational_failure"}else{"controller_runtime_failure"}
+        failureStage=if($Stage -in $allowedStages){$Stage}else{"controller_framework"}
+        messageSha256=(Get-StringSha256 $ErrorRecord.Exception.Message)
+        rawErrorPersisted=$false
+    }
+}
+
+function Test-ProcessLive {
+    param($Process)
+    if ($null -eq $Process) { return $false }
+    try { $Process.Refresh() } catch { return $false }
+    return -not $Process.HasExited
+}
+
+function Test-HarnessTerminalEvidencePresent {
+    param($Config, [string]$ProgressPath, [string]$SummaryPath)
+    if (-not (Test-Path -LiteralPath $ProgressPath -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $SummaryPath -PathType Leaf)) { return $false }
+    try {
+        $observed = Get-ObservedTrafficWindow $Config $ProgressPath $SummaryPath
+        return (Get-Value $observed.Evidence "coherent" $false) -eq $true
+    }
+    catch { return $false }
+}
+
+function Get-ControllerCleanupDisposition {
+    param(
+        [bool]$ControllerExceptionOccurred,
+        [bool]$HarnessLive,
+        [bool]$MonitorLive,
+        [bool]$TerminalEvidencePresent,
+        [bool]$NaturallyTerminalChild
+    )
+    if ($TerminalEvidencePresent -or (-not $HarnessLive -and $NaturallyTerminalChild)) {
+        return [ordered]@{mode="commit_grace";stopOrder=@("monitor","harness","restore")}
+    }
+    # If orchestration fails while both children are still live, the harness
+    # must be stopped before its monitor. No unmonitored traffic is permitted
+    # during the terminal-artifact commit grace period.
+    if ($ControllerExceptionOccurred -and $HarnessLive -and $MonitorLive) {
+        return [ordered]@{mode="immediate_harness_first";stopOrder=@("harness","monitor","restore")}
+    }
+    return [ordered]@{mode="immediate_harness_first";stopOrder=@("harness","monitor","restore")}
+}
+
+function Stop-ControllerChildrenImmediately {
+    param($Terminal, $Harness, $Monitor)
+    try { Stop-ProcessBounded $Harness }
+    catch { Add-TerminalFailure $Terminal "harness_process_stop_failed" }
+    try { Stop-ProcessBounded $Monitor }
+    catch { Add-TerminalFailure $Terminal "monitor_process_stop_failed" }
 }
 
 function Invoke-AwsCommand {
@@ -933,7 +1210,7 @@ function Restore-ScalingCapture {
         Start-Sleep -Seconds 5
     } while ([DateTimeOffset]::UtcNow -lt $deadline)
     if (-not $matched) { throw "Exact API scaling, schedule, policy, desired-count, or target-health restoration was not observed." }
-    return [ordered]@{restored=$true;restoredAtUtc=[DateTimeOffset]::UtcNow.ToString("o");services=$observedServices;
+    return [ordered]@{restored=$true;attempted=$true;restoredAtUtc=[DateTimeOffset]::UtcNow.ToString("o");services=$observedServices;
         healthyApiTargets=[int]$targetHealth.healthy;scaling=$observedScaling}
 }
 
@@ -1093,13 +1370,16 @@ function Get-Postgres57014Evidence {
     $startMs = $start.ToUnixTimeMilliseconds()
     $endMs = $end.ToUnixTimeMilliseconds()
     $binding = Get-BoundApiAwslogsBinding $Config
-    $response = Invoke-AwsJson @("logs","filter-log-events","--region",$binding.LogRegion,
+    $pages = Invoke-EvidenceAwsJsonPages -Arguments @("logs","filter-log-events","--region",$binding.LogRegion,
         "--log-group-name",$binding.LogGroup,"--log-stream-name-prefix",$binding.ApiStreamPrefix,
-        "--start-time",[string]$startMs,"--end-time",[string]$endMs,"--filter-pattern",'"57014"')
-    if ($null -eq $response -or -not [string]::IsNullOrWhiteSpace([string](Get-Value $response "nextToken" ""))) {
-        throw "CloudWatch Logs did not return complete PostgreSQL timeout evidence for the traffic interval."
-    }
-    $events = @((Get-Value $response "events" @()))
+        "--start-time",[string]$startMs,"--end-time",[string]$endMs,"--filter-pattern",'"57014"') `
+        -ItemsProperty "events" -TokenProperty "nextToken" -Identity {
+            param($event)
+            $eventId = [string](Get-Value $event "eventId" "")
+            if ($eventId) { return $eventId }
+            return Get-StableJsonSha256 ([ordered]@{timestamp=(Get-Value $event "timestamp");stream=(Get-Value $event "logStreamName");message=(Get-Value $event "message")})
+        }
+    $events = @($pages.Items)
     foreach ($event in $events) {
         $timestamp = [long](Get-Value $event "timestamp" -1)
         $stream = [string](Get-Value $event "logStreamName" "")
@@ -1116,7 +1396,8 @@ function Get-Postgres57014Evidence {
         exactTaskDefinitionBound=$true;logDriver=$binding.LogDriver;logRegion=$binding.LogRegion
         logGroupSha256=(Get-StringSha256 $binding.LogGroup)
         streamPrefixSha256=(Get-StringSha256 $binding.ApiStreamPrefix)
-        rawMessagesPersisted=$false;rawIdentifiersPersisted=$false;matchCount=$events.Count;passed=($events.Count -eq 0)
+        rawMessagesPersisted=$false;rawIdentifiersPersisted=$false;pageCount=$pages.PageCount
+        matchCount=$events.Count;passed=($events.Count -eq 0)
     }
 }
 
@@ -1127,14 +1408,14 @@ function Get-HistoryFallbackWaitEventEvidence {
         throw "History fallback wait-event evidence requires a nonzero bound SQL token."
     }
     $filter = ([ordered]@{"db.sql_tokenized.id"=$TokenId} | ConvertTo-Json -Compress)
-    $response = Invoke-AwsJson @("pi","describe-dimension-keys","--region",$Config.Resources.region,
+    $pages = Invoke-EvidenceAwsJsonPages -Arguments @("pi","describe-dimension-keys","--region",$Config.Resources.region,
         "--service-type","RDS","--identifier",$DbiResourceId,"--start-time",$StartUtc,"--end-time",$EndUtc,
         "--period-in-seconds","60","--metric","db.load.avg","--group-by","Group=db.wait_event,Limit=25",
-        "--filter",$filter)
-    if ($null -eq $response -or -not [string]::IsNullOrWhiteSpace([string](Get-Value $response "NextToken" ""))) {
-        throw "Performance Insights returned incomplete filtered wait-event pagination for history fallback SQL."
-    }
-    $keys = @((Get-Value $response "Keys" @()))
+        "--filter",$filter) -ItemsProperty "Keys" -TokenProperty "NextToken" -Identity {
+            param($key)
+            return "$([string](Get-Value $key.Dimensions 'db.wait_event.type' ''))`:$([string](Get-Value $key.Dimensions 'db.wait_event.name' ''))"
+        }
+    $keys = @($pages.Items)
     if ($keys.Count -lt 1) {
         throw "Performance Insights returned no filtered wait-event evidence for a present history fallback token."
     }
@@ -1167,7 +1448,7 @@ function Get-HistoryFallbackWaitEventEvidence {
     $coveragePercent = [math]::Round(($waitLoad / $TokenLoad) * 100.0, 3)
     $sharePercent = [math]::Round(($dataFileReadLoad / $waitLoad) * 100.0, 3)
     return [ordered]@{
-        tokenSha256=$TokenSha256;dbLoad=[math]::Round($TokenLoad,6);waitEventCount=$keys.Count
+        tokenSha256=$TokenSha256;dbLoad=[math]::Round($TokenLoad,6);waitEventCount=$keys.Count;pageCount=$pages.PageCount
         filteredWaitEventDbLoad=[math]::Round($waitLoad,6);coveragePercent=$coveragePercent
         coverageTolerancePercent=$script:PerformanceInsightsCoverageTolerancePercent;complete=$complete
         dataFileReadDbLoad=[math]::Round($dataFileReadLoad,6);dataFileReadSharePercent=$sharePercent
@@ -1178,16 +1459,17 @@ function Get-HistoryFallbackWaitEventEvidence {
 
 function Get-PerformanceInsightsTopTokens {
     param($Config, [string]$StartUtc, [string]$EndUtc, [string]$DbiResourceId)
-    $response = Invoke-AwsJson @("pi","describe-dimension-keys","--region",$Config.Resources.region,
+    $pages = Invoke-EvidenceAwsJsonPages -Arguments @("pi","describe-dimension-keys","--region",$Config.Resources.region,
         "--service-type","RDS","--identifier",$DbiResourceId,"--start-time",$StartUtc,"--end-time",$EndUtc,
-        "--period-in-seconds","60","--metric","db.load.avg","--group-by","Group=db.sql_tokenized,Limit=25")
-    if ($null -eq $response -or -not [string]::IsNullOrWhiteSpace([string](Get-Value $response "NextToken" ""))) {
-        throw "Performance Insights returned incomplete top-token pagination for a diagnostic evidence window."
-    }
+        "--period-in-seconds","60","--metric","db.load.avg","--group-by","Group=db.sql_tokenized,Limit=25") `
+        -ItemsProperty "Keys" -TokenProperty "NextToken" -Identity {
+            param($key)
+            return [string](Get-Value $key.Dimensions "db.sql_tokenized.id" "")
+        }
     $rank = 0
     $internal = @()
     $sanitized = @()
-    foreach ($key in @((Get-Value $response "Keys" @()) | Sort-Object Total -Descending)) {
+    foreach ($key in @($pages.Items | Sort-Object Total -Descending)) {
         $rank++
         $statement = [string](Get-Value $key.Dimensions "db.sql_tokenized.statement" "")
         $tokenId = [string](Get-Value $key.Dimensions "db.sql_tokenized.id" "")
@@ -1206,7 +1488,7 @@ function Get-PerformanceInsightsTopTokens {
             IsAuthorization=$isAuthorization;IsHistoryFallback=$isHistoryFallback}
         $sanitized += [ordered]@{rank=$rank;tokenSha256=$tokenSha;category=$category;dbLoad=[math]::Round($load,6)}
     }
-    return [pscustomobject]@{Internal=$internal;Sanitized=$sanitized}
+    return [pscustomobject]@{Internal=$internal;Sanitized=$sanitized;PageCount=$pages.PageCount}
 }
 
 function Get-HotPathFallbackEvidenceWindows {
@@ -1220,18 +1502,20 @@ function Get-HotPathFallbackEvidenceWindows {
     $startMs = $trafficStart.ToUnixTimeMilliseconds()
     $endMs = $trafficEnd.ToUnixTimeMilliseconds()
     $binding = Get-BoundApiAwslogsBinding $Config
-    $response = Invoke-AwsJson @("logs","filter-log-events","--region",$binding.LogRegion,
+    $pages = Invoke-EvidenceAwsJsonPages -Arguments @("logs","filter-log-events","--region",$binding.LogRegion,
         "--log-group-name",$binding.LogGroup,"--log-stream-name-prefix",$binding.ApiStreamPrefix,
         "--start-time",[string]$startMs,"--end-time",[string]$endMs,
-        "--filter-pattern",('"' + $script:HotPathSummaryEvent + '"'))
-    if ($null -eq $response -or -not [string]::IsNullOrWhiteSpace([string](Get-Value $response "nextToken" ""))) {
-        throw "CloudWatch Logs did not return complete hot-path summary evidence for the traffic interval."
-    }
+        "--filter-pattern",('"' + $script:HotPathSummaryEvent + '"')) -ItemsProperty "events" -TokenProperty "nextToken" -Identity {
+            param($event)
+            $eventId = [string](Get-Value $event "eventId" "")
+            if ($eventId) { return $eventId }
+            return Get-StableJsonSha256 ([ordered]@{timestamp=(Get-Value $event "timestamp");stream=(Get-Value $event "logStreamName");message=(Get-Value $event "message")})
+        }
     $windows = @()
     $fallbackItems = 0L
     $databaseReadCount = 0L
     $matchingSummaryCount = 0
-    foreach ($event in @((Get-Value $response "events" @()))) {
+    foreach ($event in @($pages.Items)) {
         $timestamp = [long](Get-Value $event "timestamp" -1)
         $stream = [string](Get-Value $event "logStreamName" "")
         $message = [string](Get-Value $event "message" "")
@@ -1297,7 +1581,7 @@ function Get-HotPathFallbackEvidenceWindows {
     }
     $evidence = [ordered]@{
         source="cloudwatch_logs";sourceEvent=$script:HotPathSummaryEvent
-        sourceIntervalSeconds=$script:HotPathSummaryIntervalSeconds;matchingSummaryCount=$matchingSummaryCount
+        sourceIntervalSeconds=$script:HotPathSummaryIntervalSeconds;pageCount=$pages.PageCount;matchingSummaryCount=$matchingSummaryCount
         fallbackPositiveSummaryCount=$windows.Count;fallbackItems=$fallbackItems;evidenceWindowCount=$windows.Count
         batchHistoryDatabaseReadCount=$databaseReadCount
         exactTaskDefinitionBound=$true;logDriver=$binding.LogDriver;logRegion=$binding.LogRegion
@@ -1308,16 +1592,69 @@ function Get-HotPathFallbackEvidenceWindows {
     return [pscustomobject]@{Windows=$windows;Evidence=$evidence}
 }
 
-function Get-PerformanceInsightsEvidence {
+function Get-PerformanceInsightsMetricPoints {
     param($Config, [string]$StartUtc, [string]$EndUtc, [string]$DbiResourceId)
-    $r = $Config.Resources
-    $metric = Invoke-AwsJson @("pi","get-resource-metrics","--region",$r.region,"--service-type","RDS",
+    $baseArguments = @("pi","get-resource-metrics","--region",$Config.Resources.region,"--service-type","RDS",
         "--identifier",$DbiResourceId,"--start-time",$StartUtc,"--end-time",$EndUtc,"--period-in-seconds","60",
         "--metric-queries","Metric=db.load.avg")
-    $points = @($metric.MetricList[0].DataPoints | Where-Object { $null -ne $_.Value })
-    if ($points.Count -lt 1) { throw "Performance Insights returned no DB load datapoints for the traffic interval." }
+    $seenTokens = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $seenPoints = @{}
+    $points = [Collections.Generic.List[object]]::new()
+    $token = $null
+    $pageCount = 0
+    do {
+        $pageCount++
+        if ($pageCount -gt $script:EvidenceMaximumPages) { throw "Performance Insights metric pagination exceeded the page limit." }
+        $arguments = @($baseArguments) + @("--no-paginate")
+        if (-not [string]::IsNullOrWhiteSpace([string]$token)) { $arguments += @("--next-token", [string]$token) }
+        $page = Invoke-AwsJson $arguments
+        $metrics = @((Get-Value $page "MetricList" @()))
+        $metricKey = if ($metrics.Count -eq 1) { Get-Value $metrics[0] "Key" $null } else { $null }
+        $metricName = if ($metricKey -is [string]) { [string]$metricKey } else { [string](Get-Value $metricKey "Metric" "") }
+        if ($metrics.Count -ne 1 -or $metricName -notmatch '^db\.load\.avg') {
+            throw "Performance Insights returned an unexpected DB load metric shape."
+        }
+        foreach ($point in @((Get-Value $metrics[0] "DataPoints" @()))) {
+            $timestamp = [string](Get-Value $point "Timestamp" "")
+            $value = Get-Value $point "Value" $null
+            if ([string]::IsNullOrWhiteSpace($timestamp) -or $null -eq $value) {
+                throw "Performance Insights returned a malformed DB load datapoint."
+            }
+            $hash = Get-StableJsonSha256 $point
+            if ($seenPoints.ContainsKey($timestamp)) {
+                if ([string]$seenPoints[$timestamp] -cne $hash) { throw "Performance Insights returned conflicting DB load datapoints." }
+                continue
+            }
+            $seenPoints[$timestamp] = $hash
+            $points.Add($point)
+            if ($points.Count -gt $script:EvidenceMaximumRecords) { throw "Performance Insights metric pagination exceeded the record limit." }
+        }
+        $token = [string](Get-Value $page "NextToken" "")
+        if (-not [string]::IsNullOrWhiteSpace($token) -and -not $seenTokens.Add($token)) {
+            throw "Performance Insights metric pagination returned a token cycle."
+        }
+    } while (-not [string]::IsNullOrWhiteSpace($token))
+    return [pscustomobject]@{Points=$points.ToArray();PageCount=$pageCount}
+}
+
+function Get-PerformanceInsightsEvidence {
+    param($Config, [string]$StartUtc, [string]$EndUtc, [string]$DbiResourceId)
+    $completedStages = [Collections.Generic.List[string]]::new()
+    $partialEvidence = [ordered]@{}
+    try { $metric = Get-PerformanceInsightsMetricPoints $Config $StartUtc $EndUtc $DbiResourceId }
+    catch { throw (New-StagedEvidenceException "db_load_series" $_ @($completedStages) $partialEvidence) }
+    $points = @($metric.Points | Where-Object { $null -ne (Get-Value $_ "Value" $null) })
+    if ($points.Count -lt 1) {
+        try { throw "Performance Insights returned no DB load datapoints for the traffic interval." }
+        catch { throw (New-StagedEvidenceException "db_load_series" $_ @($completedStages) $partialEvidence) }
+    }
     $averageDbLoad = [double](($points.Value | Measure-Object -Average).Average)
-    $topTokens = Get-PerformanceInsightsTopTokens $Config $StartUtc $EndUtc $DbiResourceId
+    $completedStages.Add("db_load_series")
+    $partialEvidence["dbLoadSeries"] = [ordered]@{
+        pointCount=$points.Count;pageCount=$metric.PageCount;averageDbLoad=[math]::Round($averageDbLoad,6)
+    }
+    try { $topTokens = Get-PerformanceInsightsTopTokens $Config $StartUtc $EndUtc $DbiResourceId }
+    catch { throw (New-StagedEvidenceException "full_interval_top_tokens" $_ @($completedStages) $partialEvidence) }
     $entries = @($topTokens.Sanitized)
     $authLoad = 0.0
     $authTokenCount = 0
@@ -1325,11 +1662,21 @@ function Get-PerformanceInsightsEvidence {
         if ($token.IsAuthorization) { $authLoad += [double]$token.Load; $authTokenCount++ }
     }
     if ($averageDbLoad -le 0 -or $entries.Count -lt 1) {
-        throw "Performance Insights evidence was incomplete for a nonzero diagnostic workload."
+        try { throw "Performance Insights evidence was incomplete for a nonzero diagnostic workload." }
+        catch { throw (New-StagedEvidenceException "full_interval_top_tokens" $_ @($completedStages) $partialEvidence) }
     }
     $authPercent = [math]::Round(($authLoad / $averageDbLoad) * 100.0, 3)
     $authPassed = $authPercent -lt 50.0
-    $hotPath = Get-HotPathFallbackEvidenceWindows $Config $StartUtc $EndUtc
+    $completedStages.Add("full_interval_top_tokens")
+    $partialEvidence["fullIntervalTopTokens"] = [ordered]@{
+        pageCount=$topTokens.PageCount;topTokenCount=$entries.Count;tokens=$entries
+        tileAuthorization=[ordered]@{tokenCount=$authTokenCount;dbLoad=[math]::Round($authLoad,6);
+            sharePercent=$authPercent;dominanceThresholdPercent=50.0;passed=$authPassed}
+    }
+    try { $hotPath = Get-HotPathFallbackEvidenceWindows $Config $StartUtc $EndUtc }
+    catch { throw (New-StagedEvidenceException "hot_path_log_windows" $_ @($completedStages) $partialEvidence) }
+    $completedStages.Add("hot_path_log_windows")
+    $partialEvidence["hotPathLogWindows"] = $hotPath.Evidence
     $historyEvidence = @()
     $evidenceWindows = @()
     $historyLoad = 0.0
@@ -1337,15 +1684,20 @@ function Get-PerformanceInsightsEvidence {
     $historyTokenCount = 0
     $missingHistoryTokenWindowCount = 0
     foreach ($window in @($hotPath.Windows)) {
-        $windowTokens = Get-PerformanceInsightsTopTokens $Config $window.StartUtc $window.EndUtc $DbiResourceId
+        try { $windowTokens = Get-PerformanceInsightsTopTokens $Config $window.StartUtc $window.EndUtc $DbiResourceId }
+        catch { throw (New-StagedEvidenceException "fallback_window_top_tokens" $_ @($completedStages) $partialEvidence) }
+        if (-not $completedStages.Contains("fallback_window_top_tokens")) { $completedStages.Add("fallback_window_top_tokens") }
         $historyTokens = @($windowTokens.Internal | Where-Object IsHistoryFallback -eq $true)
         if ($historyTokens.Count -eq 0) { $missingHistoryTokenWindowCount++ }
         $windowPerToken = @()
         $windowLoad = 0.0
         $windowDataFileReadLoad = 0.0
         foreach ($token in $historyTokens) {
-            $tokenEvidence = Get-HistoryFallbackWaitEventEvidence $Config $window.StartUtc $window.EndUtc $DbiResourceId `
-                $token.Id $token.Sha256 $token.Load
+            try {
+                $tokenEvidence = Get-HistoryFallbackWaitEventEvidence $Config $window.StartUtc $window.EndUtc $DbiResourceId `
+                    $token.Id $token.Sha256 $token.Load
+            }
+            catch { throw (New-StagedEvidenceException "fallback_token_wait_events" $_ @($completedStages) $partialEvidence) }
             $windowPerToken += $tokenEvidence
             $historyEvidence += $tokenEvidence
             $historyTokenCount++
@@ -1372,7 +1724,9 @@ function Get-PerformanceInsightsEvidence {
             perToken=$windowPerToken;filteredWaitEventEvidenceComplete=$windowComplete
             perTokenAllBelowThreshold=$windowPerTokenPassed;passed=$windowPassed
         }
+        $partialEvidence["fallbackWindows"] = @($evidenceWindows)
     }
+    if ($historyTokenCount -gt 0) { $completedStages.Add("fallback_token_wait_events") }
     $historyAbsent = $hotPath.Windows.Count -eq 0 -or $missingHistoryTokenWindowCount -gt 0 -or $historyTokenCount -eq 0
     $historySharePercent = if ($historyLoad -le 0) { 0.0 } else {
         [math]::Round(($historyDataFileReadLoad / $historyLoad) * 100.0, 3)
@@ -1385,7 +1739,7 @@ function Get-PerformanceInsightsEvidence {
         $historySharePercent -lt $script:HistoryIoDominanceThresholdPercent
     return [ordered]@{
         diagnosticOnly=$true;sanitized=$true;tokenized=$true;rawSqlPersisted=$false;metric="db.load.avg"
-        startUtc=$StartUtc;endUtc=$EndUtc;periodSeconds=60;dbLoadPointCount=$points.Count
+        startUtc=$StartUtc;endUtc=$EndUtc;periodSeconds=60;dbLoadPointCount=$points.Count;dbLoadPageCount=$metric.PageCount
         averageDbLoad=[math]::Round($averageDbLoad,6);topTokenCount=$entries.Count;tokens=$entries
         tileAuthorization=[ordered]@{tokenCount=$authTokenCount;
             dbLoad=[math]::Round($authLoad,6);sharePercent=$authPercent;dominanceThresholdPercent=50.0;
@@ -1399,6 +1753,109 @@ function Get-PerformanceInsightsEvidence {
             source=$hotPath.Evidence;passed=$historyPassed}
         passed=($authPassed -and $historyPassed)
     }
+}
+
+function Get-StabilizedPerformanceInsightsEvidence {
+    param($Config, [string]$StartUtc, [string]$EndUtc, [string]$DbiResourceId)
+    $trafficEnd = ([DateTimeOffset]$EndUtc).ToUniversalTime()
+    $notBefore = $trafficEnd.AddMinutes($script:PerformanceInsightsInitialDelayMinutes)
+    $deadline = $trafficEnd.AddMinutes($script:PerformanceInsightsStabilizationDeadlineMinutes)
+    $now = Get-EvidenceUtcNow
+    if ($now -ge $deadline) {
+        $expired = [InvalidOperationException]::new("Performance Insights stabilization began at or after its evidence deadline.")
+        $expired.Data["failureStage"] = "snapshot_stabilization"
+        $expired.Data["attemptCount"] = 0
+        $expired.Data["completedStages"] = @()
+        $expired.Data["partialEvidence"] = $null
+        throw $expired
+    }
+    if ($now -lt $notBefore) {
+        $waitSeconds = [int][math]::Ceiling(($notBefore - $now).TotalSeconds)
+        if ($waitSeconds -gt 0) { Wait-EvidenceDelay $waitSeconds }
+        $now = Get-EvidenceUtcNow
+        if ($now -ge $deadline) {
+            $expired = [InvalidOperationException]::new("Performance Insights stabilization reached its deadline before the first snapshot.")
+            $expired.Data["failureStage"] = "snapshot_stabilization"
+            $expired.Data["attemptCount"] = 0
+            $expired.Data["completedStages"] = @()
+            $expired.Data["partialEvidence"] = $null
+            throw $expired
+        }
+    }
+    $attemptCount = 0
+    $priorHash = $null
+    $lastError = $null
+    $lastCompleteSnapshot = $null
+    $lastCompleteHash = $null
+    $priorSnapshotCompletedAt = $null
+    $minimumPollSeconds = [math]::Max(60, [int]$script:PerformanceInsightsPollSeconds)
+    do {
+        $snapshotStartedAt = Get-EvidenceUtcNow
+        if ($snapshotStartedAt -ge $deadline) { break }
+        $attemptCount++
+        try {
+            $snapshot = Get-PerformanceInsightsEvidence $Config $StartUtc $EndUtc $DbiResourceId
+            $snapshotCompletedAt = Get-EvidenceUtcNow
+            if ($snapshotCompletedAt -gt $deadline) {
+                $late = [InvalidOperationException]::new("Performance Insights snapshot completed after its evidence deadline.")
+                $late.Data["failureStage"] = "snapshot_stabilization"
+                $late.Data["completedStages"] = @()
+                $late.Data["partialEvidence"] = $null
+                throw $late
+            }
+            $snapshotHash = Get-StableJsonSha256 $snapshot
+            $lastCompleteSnapshot = $snapshot
+            $lastCompleteHash = $snapshotHash
+            $separationSeconds = if ($null -eq $priorSnapshotCompletedAt) { 0.0 } else {
+                ($snapshotCompletedAt - $priorSnapshotCompletedAt).TotalSeconds
+            }
+            if (-not [string]::IsNullOrWhiteSpace([string]$priorHash) -and $priorHash -ceq $snapshotHash -and
+                $separationSeconds -ge 60.0) {
+                return [pscustomobject]@{Evidence=$snapshot;AttemptCount=$attemptCount;CanonicalSha256=$snapshotHash}
+            }
+            $priorHash = $snapshotHash
+            $priorSnapshotCompletedAt = $snapshotCompletedAt
+            $lastError = $null
+        }
+        catch {
+            $lastError = $_
+            $priorHash = $null
+            $priorSnapshotCompletedAt = $null
+        }
+        $now = Get-EvidenceUtcNow
+        if ($now -ge $deadline) { break }
+        $nextSnapshotAt = $now.AddSeconds($minimumPollSeconds)
+        if ($null -ne $priorSnapshotCompletedAt) {
+            $minimumSeparatedAt = $priorSnapshotCompletedAt.AddSeconds(60)
+            if ($minimumSeparatedAt -gt $nextSnapshotAt) { $nextSnapshotAt = $minimumSeparatedAt }
+        }
+        $wakeAt = if ($nextSnapshotAt -lt $deadline) { $nextSnapshotAt } else { $deadline }
+        $sleepSeconds = [int][math]::Ceiling(($wakeAt - $now).TotalSeconds)
+        if ($sleepSeconds -gt 0) { Wait-EvidenceDelay $sleepSeconds }
+    } while ($true)
+    if ($null -ne $lastError) {
+        $exception = [InvalidOperationException]::new("Performance Insights did not produce a complete stable snapshot.", $lastError.Exception)
+        $failureStage = [string]$lastError.Exception.Data["failureStage"]
+        if (-not [string]::IsNullOrWhiteSpace($failureStage)) { $exception.Data["failureStage"] = $failureStage }
+        if ($lastError.Exception.Data.Contains("completedStages")) {
+            $exception.Data["completedStages"] = @($lastError.Exception.Data["completedStages"])
+        }
+        if ($lastError.Exception.Data.Contains("partialEvidence")) {
+            $exception.Data["partialEvidence"] = $lastError.Exception.Data["partialEvidence"]
+        }
+        $exception.Data["attemptCount"] = $attemptCount
+        throw $exception
+    }
+    $unstable = [InvalidOperationException]::new("Performance Insights did not produce two consecutive identical snapshots.")
+    $unstable.Data["failureStage"] = "snapshot_stabilization"
+    $unstable.Data["attemptCount"] = $attemptCount
+    $unstable.Data["completedStages"] = @("db_load_series","full_interval_top_tokens","hot_path_log_windows",
+        "fallback_window_top_tokens","fallback_token_wait_events")
+    $unstable.Data["partialEvidence"] = [ordered]@{
+        lastCompleteSnapshot=$lastCompleteSnapshot;lastCompleteCanonicalSha256=$lastCompleteHash
+        stableConsecutiveSnapshotCount=1
+    }
+    throw $unstable
 }
 
 function Add-TerminalFailure {
@@ -1452,87 +1909,108 @@ function Attach-TerminalMonitorEvidence {
 }
 
 function Collect-TerminalPostTrafficEvidence {
-    param($Terminal, $Config, [string]$ProgressPath, [string]$SummaryPath, [string]$DbiResourceId)
+    param(
+        $Terminal,
+        $Config,
+        [string]$ProgressPath,
+        [string]$SummaryPath,
+        [string]$DbiResourceId,
+        [ValidateSet("Immediate", "Delayed", "All")]
+        [string]$Phase = "All"
+    )
     if ($null -eq $Terminal.observedTrafficWindow -or $Terminal.observedTrafficWindow.coherent -ne $true) {
         try {
             $observed = Get-ObservedTrafficWindow $Config $ProgressPath $SummaryPath
             $Terminal.observedTrafficWindow = $observed.Evidence
-            Remove-TerminalFailure $Terminal "observed_traffic_window_unavailable"
-            if ($observed.Evidence.strictlyComplete -eq $true) {
-                Remove-TerminalFailure $Terminal "strict_traffic_duration_not_completed"
-            } else {
+            if ($observed.Evidence.strictlyComplete -ne $true) {
                 Add-TerminalFailure $Terminal "strict_traffic_duration_not_completed"
             }
         }
         catch {
-            $Terminal.observedTrafficWindow = [ordered]@{
-                coherent=$false;strictlyComplete=$false;failureCode="observed_traffic_window_unavailable"
-                rawErrorPersisted=$false
-            }
-            Add-TerminalFailure $Terminal "observed_traffic_window_unavailable"
-            return
+            # The final JSONL record and atomic summary can race each other.
+            # Leave the window and all dependent sources unstarted until the
+            # bounded terminal commit phase settles the harness outcome.
         }
     }
-    $startUtc = [string]$Terminal.observedTrafficWindow.startUtc
-    $endUtc = [string]$Terminal.observedTrafficWindow.endUtc
-    if ($null -eq $Terminal.postgresStatementTimeouts -or
-        (Get-Value $Terminal.postgresStatementTimeouts "collected" $true) -ne $true) {
+    if ($Phase -in @("Immediate", "All") -and (Test-EvidenceSourceNotStarted $Terminal.postTrafficAwsPosture)) {
         try {
-            $Terminal.postgresStatementTimeouts = Get-Postgres57014Evidence $Config $startUtc $endUtc
-            Remove-TerminalFailure $Terminal "postgres_statement_timeout_evidence_unavailable"
+            $posture = Get-AwsPosture $Config
+            $Terminal.postTrafficAwsPosture = New-EvidenceEnvelope -Collected $true -Passed $true -AttemptCount 1 `
+                -FailureCode $null -FailureStage $null -MessageSha256 $null -Evidence $posture `
+                -CompletedStages @("post_traffic_aws_posture")
         }
         catch {
-            $Terminal.postgresStatementTimeouts = [ordered]@{
-                diagnosticOnly=$true;sanitized=$true;collected=$false;passed=$false
-                failureCode="postgres_statement_timeout_evidence_unavailable";rawErrorPersisted=$false
-            }
+            $Terminal.postTrafficAwsPosture = New-EvidenceEnvelope -Collected $false -Passed $false -AttemptCount 1 `
+                -FailureCode "post_traffic_aws_posture_unavailable" -FailureStage "post_traffic_aws_posture" `
+                -MessageSha256 (Get-StringSha256 $_.Exception.Message) -Evidence $null
+            Add-TerminalFailure $Terminal "post_traffic_aws_posture_unavailable"
+        }
+    }
+    if ($Phase -notin @("Delayed", "All")) { return }
+    $coherent = $null -ne $Terminal.observedTrafficWindow -and
+        (Get-Value $Terminal.observedTrafficWindow "coherent" $false) -eq $true
+    if (-not $coherent) {
+        return
+    }
+    $startUtc = [string](Get-Value $Terminal.observedTrafficWindow "startUtc" "")
+    $endUtc = [string](Get-Value $Terminal.observedTrafficWindow "endUtc" "")
+    if (Test-EvidenceSourceNotStarted $Terminal.postgresStatementTimeouts) {
+        try {
+            $timeoutEvidence = Get-Postgres57014Evidence $Config $startUtc $endUtc
+            $Terminal.postgresStatementTimeouts = New-EvidenceEnvelope -Collected $true `
+                -Passed ((Get-Value $timeoutEvidence "passed" $false) -eq $true) -AttemptCount 1 `
+                -FailureCode $null -FailureStage $null -MessageSha256 $null -Evidence $timeoutEvidence `
+                -CompletedStages @("postgres_57014_logs")
+        }
+        catch {
+            $Terminal.postgresStatementTimeouts = New-EvidenceEnvelope -Collected $false -Passed $false -AttemptCount 1 `
+                -FailureCode "postgres_statement_timeout_evidence_unavailable" -FailureStage "postgres_57014_logs" `
+                -MessageSha256 (Get-StringSha256 $_.Exception.Message) -Evidence $null
             Add-TerminalFailure $Terminal "postgres_statement_timeout_evidence_unavailable"
         }
     }
-    if ((Get-Value $Terminal.postgresStatementTimeouts "collected" $true) -eq $true) {
-        if ($Terminal.postgresStatementTimeouts.passed -eq $true) {
-            Remove-TerminalFailure $Terminal "postgres_statement_timeout_detected"
-        } else {
+    if ((Get-Value $Terminal.postgresStatementTimeouts "collected" $false) -eq $true) {
+        if ((Get-Value $Terminal.postgresStatementTimeouts "passed" $false) -ne $true) {
             Add-TerminalFailure $Terminal "postgres_statement_timeout_detected"
         }
     }
-    if ($null -eq $Terminal.performanceInsights -or
-        (Get-Value $Terminal.performanceInsights "collected" $true) -ne $true) {
+    if (Test-EvidenceSourceNotStarted $Terminal.performanceInsights) {
         try {
-            $Terminal.performanceInsights = Get-PerformanceInsightsEvidence $Config $startUtc $endUtc $DbiResourceId
-            Remove-TerminalFailure $Terminal "performance_insights_evidence_unavailable"
+            $stabilized = Get-StabilizedPerformanceInsightsEvidence $Config $startUtc $endUtc $DbiResourceId
+            $Terminal.performanceInsights = New-EvidenceEnvelope -Collected $true `
+                -Passed ((Get-Value $stabilized.Evidence "passed" $false) -eq $true) -AttemptCount $stabilized.AttemptCount `
+                -FailureCode $null -FailureStage $null -MessageSha256 $null -Evidence $stabilized.Evidence `
+                -CompletedStages @("db_load_series","full_interval_top_tokens","hot_path_log_windows",
+                    "fallback_window_top_tokens","fallback_token_wait_events","snapshot_stabilization")
+            $Terminal.performanceInsights["canonicalSha256"] = $stabilized.CanonicalSha256
         }
         catch {
-            $Terminal.performanceInsights = [ordered]@{
-                diagnosticOnly=$true;sanitized=$true;collected=$false;passed=$false
-                failureCode="performance_insights_evidence_unavailable";rawErrorPersisted=$false
-            }
+            $attemptCount = 1
+            if ($_.Exception.Data.Contains("attemptCount")) { $attemptCount = [int]$_.Exception.Data["attemptCount"] }
+            $stage = "snapshot_stabilization"
+            if ($_.Exception.Data.Contains("failureStage")) { $stage = [string]$_.Exception.Data["failureStage"] }
+            $completedStages = @()
+            if ($_.Exception.Data.Contains("completedStages")) { $completedStages = @($_.Exception.Data["completedStages"]) }
+            $partialEvidence = $null
+            if ($_.Exception.Data.Contains("partialEvidence")) { $partialEvidence = $_.Exception.Data["partialEvidence"] }
+            $allowedStages = @("db_load_series","full_interval_top_tokens","hot_path_log_windows",
+                "fallback_window_top_tokens","fallback_token_wait_events","snapshot_stabilization")
+            if ($stage -notin $allowedStages) { $stage = "snapshot_stabilization" }
+            $Terminal.performanceInsights = New-EvidenceEnvelope -Collected $false -Passed $false -AttemptCount $attemptCount `
+                -FailureCode "performance_insights_evidence_unavailable" -FailureStage $stage `
+                -MessageSha256 (Get-StringSha256 $_.Exception.Message) -Evidence $null `
+                -CompletedStages $completedStages -PartialEvidence $partialEvidence
             Add-TerminalFailure $Terminal "performance_insights_evidence_unavailable"
         }
     }
-    if ((Get-Value $Terminal.performanceInsights "collected" $true) -eq $true) {
-        if ($Terminal.performanceInsights.tileAuthorization.passed -eq $true) {
-            Remove-TerminalFailure $Terminal "tile_authorization_pi_dominance_failed"
-        } else {
+    if ((Get-Value $Terminal.performanceInsights "collected" $false) -eq $true) {
+        $tileAuthorization = Get-Value $Terminal.performanceInsights "tileAuthorization" $null
+        if ($null -eq $tileAuthorization -or (Get-Value $tileAuthorization "passed" $false) -ne $true) {
             Add-TerminalFailure $Terminal "tile_authorization_pi_dominance_failed"
         }
-        if ($Terminal.performanceInsights.historyFallback.passed -eq $true) {
-            Remove-TerminalFailure $Terminal "history_fallback_pi_evidence_failed"
-        } else {
+        $historyFallback = Get-Value $Terminal.performanceInsights "historyFallback" $null
+        if ($null -eq $historyFallback -or (Get-Value $historyFallback "passed" $false) -ne $true) {
             Add-TerminalFailure $Terminal "history_fallback_pi_evidence_failed"
-        }
-    }
-    if ($null -eq $Terminal.postTrafficAwsPosture -or
-        (Get-Value $Terminal.postTrafficAwsPosture "collected" $true) -ne $true) {
-        try {
-            $Terminal.postTrafficAwsPosture = Get-AwsPosture $Config
-            Remove-TerminalFailure $Terminal "post_traffic_aws_posture_unavailable"
-        }
-        catch {
-            $Terminal.postTrafficAwsPosture = [ordered]@{
-                collected=$false;passed=$false;failureCode="post_traffic_aws_posture_unavailable";rawErrorPersisted=$false
-            }
-            Add-TerminalFailure $Terminal "post_traffic_aws_posture_unavailable"
         }
     }
 }
@@ -1682,6 +2160,7 @@ try {
         monitor=(Get-FileHash -LiteralPath $script:MonitorScript -Algorithm SHA256).Hash.ToLowerInvariant()
         harness=(Get-FileHash -LiteralPath $script:HarnessScript -Algorithm SHA256).Hash.ToLowerInvariant()
         monotonicDeadline=(Get-FileHash -LiteralPath $script:MonotonicDeadlineScript -Algorithm SHA256).Hash.ToLowerInvariant()
+        tilePollAccounting=(Get-FileHash -LiteralPath $script:TilePollAccountingScript -Algorithm SHA256).Hash.ToLowerInvariant()
     }
     $capture = [ordered]@{schemaVersion=1;runId=$config.RunId;configSha256=$config.Sha256;capturedAtUtc=[DateTimeOffset]::UtcNow.ToString("o");
         mutationStarted=$false;original=$awsPosture}
@@ -1699,6 +2178,7 @@ $restoration = [ordered]@{restored=$false;attempted=$false}
 $terminal = [ordered]@{
     type="waf800_batch_diagnostic_terminal";schemaVersion=1;runId=$config.RunId;diagnosticOnly=$true;
     certificationEligible=$false;supervisorSealed=$false;predecessor=$null;status="failed";
+    evidenceCollectorVersion=$script:EvidenceCollectorVersion;
     timestamp=$null;failures=@();config=[ordered]@{path=$config.Path;sha256=$config.Sha256};
     deploymentIdentity=[ordered]@{applicationGitSha=$config.ApplicationGitSha;deployedImageDigest=$config.ImageDigest;
         apiTaskDefinitionArn=$config.ApiTaskDefinitionArn;workerTaskDefinitionArn=$config.WorkerTaskDefinitionArn};
@@ -1711,7 +2191,12 @@ $terminal = [ordered]@{
 }
 $exitCode = 2
 $acceptanceAdjudicated = $false
+$terminalCommitAttempted = $false
+$terminalCommitSucceeded = $false
+$controllerExceptionOccurred = $false
+$orchestrationStage = "capacity_pin"
 try {
+    $orchestrationStage = "capacity_pin"
     Set-SleepPrevention $true
     $sleepHeld = $true
     $capture.mutationStarted = $true
@@ -1734,10 +2219,12 @@ try {
         -FailureMessage "Generator public IPv4 changed from its bound config value."
     $lastGeneratorIpCheck = $launchedAt
     Write-AtomicJson $heartbeatPath ([ordered]@{runId=$config.RunId;status="starting";timestamp=$launchedAt.ToString("o")})
+    $orchestrationStage = "harness_launch"
     $node = (Get-Command node -ErrorAction Stop).Source
     $harness = Start-Process -FilePath $node -ArgumentList @($script:HarnessScript) -Environment `
         (Get-HarnessEnvironment $config $progressPath $summaryPath $readyPath $startGatePath) -PassThru -NoNewWindow `
         -RedirectStandardOutput $harnessStdout -RedirectStandardError $harnessStderr
+    $orchestrationStage = "harness_ready"
     $readyDeadline = [DateTimeOffset]::UtcNow.AddMinutes(3)
     while (-not (Test-Path -LiteralPath $readyPath) -and [DateTimeOffset]::UtcNow -lt $readyDeadline) {
         $harness.Refresh(); if ($harness.HasExited) { throw "Harness exited before reaching its start gate." }
@@ -1752,12 +2239,15 @@ try {
     Write-AtomicJson $monitorConfigPath $monitorConfig
     $monitorConfigSha = (Get-FileHash $monitorConfigPath -Algorithm SHA256).Hash.ToLowerInvariant()
     $pwsh = (Get-Process -Id $PID).Path
+    $orchestrationStage = "monitor_validation"
     & $pwsh -NoProfile -File $script:MonitorScript -ConfigPath $monitorConfigPath -ExpectedConfigSha256 $monitorConfigSha -Mode Validate | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Bound diagnostic monitor configuration failed validation." }
+    $orchestrationStage = "monitor_launch"
     $monitorStartedAt = [DateTimeOffset]::UtcNow
     $monitor = Start-Process -FilePath $pwsh -ArgumentList @("-NoProfile","-File",$script:MonitorScript,"-ConfigPath",$monitorConfigPath,
         "-ExpectedConfigSha256",$monitorConfigSha,"-Mode","Monitor") -PassThru -NoNewWindow `
         -RedirectStandardOutput $monitorStdout -RedirectStandardError $monitorStderr
+    $orchestrationStage = "monitor_arming"
     $monitorHeartbeatPath = Join-Path $config.EvidenceDirectory "$($config.RunId)-monitor-heartbeat.json"
     $armedDeadline = [DateTimeOffset]::UtcNow.AddMinutes(5)
     while (-not (Test-Path -LiteralPath $monitorHeartbeatPath) -and [DateTimeOffset]::UtcNow -lt $armedDeadline) {
@@ -1774,6 +2264,7 @@ try {
     # Re-read the complete immutable posture immediately before releasing
     # traffic. This closes the gap between the initial read-only validation and
     # the end of capacity/readiness convergence.
+    $orchestrationStage = "traffic_release"
     $terminal.preTrafficAwsPosture = Get-AwsPosture $config
     $lastGeneratorIpCheck = Update-GeneratorPublicIpEvidence -Config $config -Path $generatorIpPath `
         -FailureMessage "Generator public IPv4 changed during diagnostic startup."
@@ -1788,6 +2279,7 @@ try {
     $releasedAt = [DateTimeOffset]::UtcNow
     Write-AtomicJson $startGatePath ([ordered]@{schemaVersion=1;type="load_supervisor_start";runId=$config.RunId;
         harnessProcessId=$harness.Id;monitorProcessId=$monitor.Id;releasedAt=$releasedAt.ToString("o")})
+    $orchestrationStage = "traffic_monitoring"
     $deadline = $releasedAt.AddMinutes(50)
     while ([DateTimeOffset]::UtcNow -lt $deadline) {
         $monitor.Refresh(); $harness.Refresh()
@@ -1805,8 +2297,38 @@ try {
     }
     $monitor.Refresh()
     if (-not $monitor.HasExited) { throw "Diagnostic monitor exceeded its bounded 50-minute deadline." }
+    $orchestrationStage = "terminal_commit"
     $monitorResult = Attach-TerminalMonitorEvidence $terminal $config $monitorResultPath $monitor
-    Collect-TerminalPostTrafficEvidence $terminal $config $progressPath $summaryPath ([string]$awsPosture.rds.dbiResourceId)
+    $terminalCommitAttempted = $true
+    $terminalCommitSucceeded = Wait-HarnessTerminalEvidenceCommit $terminal $config $progressPath $summaryPath $harness
+    if (-not $terminalCommitSucceeded) {
+        Add-TerminalFailure $terminal "observed_traffic_window_unavailable"
+        Add-TerminalFailure $terminal "harness_terminal_evidence_unavailable"
+        Stop-ProcessBounded $harness
+    } else {
+        $harness.Refresh()
+        if (-not $harness.HasExited -and -not $harness.WaitForExit(15000)) { Stop-ProcessBounded $harness }
+    }
+    $orchestrationStage = "immediate_evidence"
+    Collect-TerminalPostTrafficEvidence $terminal $config $progressPath $summaryPath `
+        ([string]$awsPosture.rds.dbiResourceId) -Phase Immediate
+    $orchestrationStage = "scaling_restoration"
+    if ($capture.mutationStarted -eq $true -and (Get-Value $restoration "attempted" $false) -ne $true) {
+        $restoration.attempted = $true
+        try { $restoration = Restore-ScalingCapture $config $capture }
+        catch {
+            $restoration = [ordered]@{restored=$false;attempted=$true;timestamp=[DateTimeOffset]::UtcNow.ToString("o");
+                failureCode="scaling_restoration_failed";messageSha256=(Get-StringSha256 $_.Exception.Message);rawErrorPersisted=$false}
+            Add-TerminalFailure $terminal "scaling_restoration_failed"
+            $exitCode = 4
+        }
+        Write-AtomicJson $restorationPath $restoration
+        $terminal.scalingRestoration = $restoration
+    }
+    $orchestrationStage = "delayed_evidence"
+    Collect-TerminalPostTrafficEvidence $terminal $config $progressPath $summaryPath `
+        ([string]$awsPosture.rds.dbiResourceId) -Phase Delayed
+    $orchestrationStage = "acceptance_adjudication"
     $harness.Refresh()
     if (-not $harness.HasExited -or $harness.ExitCode -ne 0) {
         Add-TerminalFailure $terminal "diagnostic_harness_rejected"
@@ -1830,42 +2352,67 @@ try {
         }
     }
     $acceptanceAdjudicated = $true
-    if (@($terminal.failures).Count -eq 0) {
-        $terminal.status = "completed"
-        $exitCode = 0
-    } else {
-        $terminal.status = "failed"
-        $exitCode = 2
-    }
+    $exitCode = Resolve-DiagnosticTerminalExitCode $terminal $restoration $acceptanceAdjudicated $exitCode
+    $terminal.status = if ($exitCode -eq 0) { "completed" } else { "failed" }
 }
 catch {
+    $controllerExceptionOccurred = $true
     $terminal.status = "failed"
-    $terminal.controllerFailure = [ordered]@{
-        failureCode="controller_runtime_failure";messageSha256=(Get-StringSha256 $_.Exception.Message);rawErrorPersisted=$false
-    }
-    Add-TerminalFailure $terminal "controller_runtime_failure"
+    $terminal.controllerFailure = Get-ControllerFailureClassification $orchestrationStage $_
+    Add-TerminalFailure $terminal $terminal.controllerFailure.failureCode
     $exitCode = 2
 }
 finally {
     try {
-        try { Stop-ProcessBounded $monitor }
-        catch { Add-TerminalFailure $terminal "monitor_process_stop_failed" }
-        try { Stop-ProcessBounded $harness }
-        catch { Add-TerminalFailure $terminal "harness_process_stop_failed" }
+        $harnessLive = Test-ProcessLive $harness
+        $monitorLive = Test-ProcessLive $monitor
+        $terminalEvidencePresent = Test-HarnessTerminalEvidencePresent $config $progressPath $summaryPath
+        $naturallyTerminalChild = (($null -ne $harness -and -not $harnessLive) -or
+            ($null -ne $monitor -and -not $monitorLive))
+        $cleanupDisposition = Get-ControllerCleanupDisposition $controllerExceptionOccurred $harnessLive $monitorLive `
+            $terminalEvidencePresent $naturallyTerminalChild
+
+        if ($cleanupDisposition.mode -ceq "immediate_harness_first") {
+            # Safety ordering is intentional: stop the traffic source before
+            # its observer, then restore capacity below. Commit grace is not
+            # valid while both children were live without terminal evidence.
+            Stop-ControllerChildrenImmediately $terminal $harness $monitor
+            if (-not $terminalCommitAttempted) {
+                $terminalCommitAttempted = $true
+                $terminalCommitSucceeded = $false
+                Add-TerminalFailure $terminal "observed_traffic_window_unavailable"
+                Add-TerminalFailure $terminal "harness_terminal_evidence_unavailable"
+            }
+        }
+        else {
+            try { Stop-ProcessBounded $monitor }
+            catch { Add-TerminalFailure $terminal "monitor_process_stop_failed" }
+            if (-not $terminalCommitAttempted) {
+                $terminalCommitAttempted = $true
+                $terminalCommitSucceeded = Wait-HarnessTerminalEvidenceCommit $terminal $config $progressPath $summaryPath $harness
+                if (-not $terminalCommitSucceeded) {
+                    Add-TerminalFailure $terminal "observed_traffic_window_unavailable"
+                    Add-TerminalFailure $terminal "harness_terminal_evidence_unavailable"
+                }
+            }
+            try {
+                if ($terminalCommitSucceeded -and $null -ne $harness) {
+                    $harness.Refresh()
+                    if (-not $harness.HasExited -and -not $harness.WaitForExit(15000)) { Stop-ProcessBounded $harness }
+                } else { Stop-ProcessBounded $harness }
+            }
+            catch { Add-TerminalFailure $terminal "harness_process_stop_failed" }
+        }
         try { [void](Attach-TerminalMonitorEvidence $terminal $config $monitorResultPath $monitor) }
         catch { Add-TerminalFailure $terminal "monitor_terminal_evidence_attachment_failed" }
+        $orchestrationStage = "immediate_evidence"
         try {
-            Collect-TerminalPostTrafficEvidence $terminal $config $progressPath $summaryPath ([string]$awsPosture.rds.dbiResourceId)
+            Collect-TerminalPostTrafficEvidence $terminal $config $progressPath $summaryPath `
+                ([string]$awsPosture.rds.dbiResourceId) -Phase Immediate
         }
         catch { Add-TerminalFailure $terminal "post_traffic_evidence_collection_failed" }
-        if ($acceptanceAdjudicated -and @($terminal.failures).Count -eq 0) {
-            $terminal.status = "completed"
-            $exitCode = 0
-        } elseif (@($terminal.failures).Count -gt 0) {
-            $terminal.status = "failed"
-            if ($exitCode -eq 0) { $exitCode = 2 }
-        }
-        if ($capture.mutationStarted -eq $true) {
+        $orchestrationStage = "scaling_restoration"
+        if ($capture.mutationStarted -eq $true -and (Get-Value $restoration "attempted" $false) -ne $true) {
             $restoration.attempted = $true
             try {
                 $restoration = Restore-ScalingCapture $config $capture
@@ -1879,7 +2426,17 @@ finally {
             }
             Write-AtomicJson $restorationPath $restoration
         }
+        $terminal.scalingRestoration = $restoration
+        $orchestrationStage = "delayed_evidence"
+        try {
+            Collect-TerminalPostTrafficEvidence $terminal $config $progressPath $summaryPath `
+                ([string]$awsPosture.rds.dbiResourceId) -Phase Delayed
+        }
+        catch { Add-TerminalFailure $terminal "post_traffic_evidence_collection_failed" }
+        $exitCode = Resolve-DiagnosticTerminalExitCode $terminal $restoration $acceptanceAdjudicated $exitCode
+        $terminal.status = if ($exitCode -eq 0) { "completed" } else { "failed" }
         if ($capture.mutationStarted -eq $true) {
+            $orchestrationStage = "terminal_posture"
             try {
                 # Revalidate again after restoration, immediately before the
                 # terminal envelope is committed. A success result therefore
@@ -1895,7 +2452,6 @@ finally {
                 }
             }
         }
-        $terminal.scalingRestoration = $restoration
         try { Set-TerminalEvidenceIntegrity $terminal $restorationPath }
         catch {
             $terminal.evidenceIntegrity = [ordered]@{algorithm="sha256";collected=$false;
@@ -1904,6 +2460,8 @@ finally {
             $terminal.status = "failed"
             if ($exitCode -eq 0) { $exitCode = 2 }
         }
+        $exitCode = Resolve-DiagnosticTerminalExitCode $terminal $restoration $acceptanceAdjudicated $exitCode
+        $terminal.status = if ($exitCode -eq 0) { "completed" } else { "failed" }
         $terminal.timestamp = [DateTimeOffset]::UtcNow.ToString("o")
         Write-AtomicJson $resultPath $terminal
         Write-AtomicJson $heartbeatPath ([ordered]@{runId=$config.RunId;status=$terminal.status;timestamp=$terminal.timestamp;

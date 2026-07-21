@@ -4,6 +4,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $script:RequiredWorkloadSchemaVersion = "classpilot-tile-batch-v1"
 $script:RequiredWorkloadEndpointShapeSha256 = "8e9f1942e4b3a27de7dd0571a9f60ffeb276c089e4baae96a885dba69e3233b2"
+$script:RequiredPollAccountingVersion = "staggered-deadline-v1"
 
 function Assert-Condition {
     param([bool]$Condition, [string]$Message)
@@ -83,7 +84,7 @@ try {
                 shutdownReason="duration"
             }
             screenshotRetrieval=[pscustomobject]@{attempts=500;successes=500}
-            tileBatch=[pscustomobject]@{configured=$true;teacherCohorts=20;studentsPerCohort=25;teacherTileAssignments=500;requestsPerCohortPerPoll=2;logicalOperationsPerPoll=1000;historyRequests=20;screenshotRequests=20;historyLogicalOperations=500;screenshotLogicalOperations=500;networkRequests=40;logicalOperations=1000}
+            tileBatch=[pscustomobject]@{configured=$true;pollAccountingVersion=$script:RequiredPollAccountingVersion;teacherCohorts=20;studentsPerCohort=25;teacherTileAssignments=500;requestsPerCohortPerPoll=2;logicalOperationsPerPoll=1000;historyRequests=20;screenshotRequests=20;historyRequestsByCohort=@(1)*20;screenshotRequestsByCohort=@(1)*20;completeRoundsPerCohort=1;maximumRoundsPerCohort=1;partialFinalRoundCohorts=0;historyLogicalOperations=500;screenshotLogicalOperations=500;networkRequests=40;logicalOperations=1000}
         }
     }
     $validatedSummary = Get-ValidatedLoadSummaryTiming $summaryConfig $summaryProgress
@@ -100,6 +101,76 @@ try {
         "The monitor must reject a load summary that is not bound to the reviewed tile-batch schema."
     $assertions++
     $summaryProgress.summary.workloadSchemaVersion = $script:RequiredWorkloadSchemaVersion
+
+    $partialCounts = @(1..20 | ForEach-Object { if ($_ -le 10) { 59 } else { 58 } })
+    $summaryProgress.summary.tileBatch.historyRequestsByCohort = $partialCounts
+    $summaryProgress.summary.tileBatch.screenshotRequestsByCohort = @($partialCounts)
+    $summaryProgress.summary.tileBatch.completeRoundsPerCohort = 58
+    $summaryProgress.summary.tileBatch.maximumRoundsPerCohort = 59
+    $summaryProgress.summary.tileBatch.partialFinalRoundCohorts = 10
+    $summaryProgress.summary.tileBatch.historyRequests = 1170
+    $summaryProgress.summary.tileBatch.screenshotRequests = 1170
+    $summaryProgress.summary.tileBatch.historyLogicalOperations = 29250
+    $summaryProgress.summary.tileBatch.screenshotLogicalOperations = 29250
+    $summaryProgress.summary.tileBatch.networkRequests = 2340
+    $summaryProgress.summary.tileBatch.logicalOperations = 58500
+    $summaryProgress.summary.screenshotRetrieval.attempts = 29250
+    $summaryProgress.summary.screenshotRetrieval.successes = 29250
+    $partialSummary = Get-ValidatedLoadSummaryTiming $summaryConfig $summaryProgress
+    Assert-Condition ($null -ne $partialSummary -and $partialSummary.TileBatch.partialFinalRoundCohorts -eq 10 -and $partialSummary.TileBatch.historyRequests -eq 1170) `
+        "The monitor must accept the deadline-truncated leading cohort prefix without changing traffic shape."
+    $assertions++
+    $summaryProgress.summary.tileBatch.historyRequestsByCohort = @($partialCounts[0..8] + 58 + 59 + $partialCounts[11..19])
+    $summaryProgress.summary.tileBatch.screenshotRequestsByCohort = @($summaryProgress.summary.tileBatch.historyRequestsByCohort)
+    Assert-Condition ($null -eq (Get-ValidatedLoadSummaryTiming $summaryConfig $summaryProgress)) `
+        "The monitor must reject an extra poll outside the leading stagger prefix."
+    $assertions++
+    $summaryProgress.summary.tileBatch.historyRequestsByCohort = $partialCounts
+    $summaryProgress.summary.tileBatch.screenshotRequestsByCohort = @($partialCounts)
+    $summaryProgress.summary.tileBatch.pollAccountingVersion = "legacy-aggregate-v1"
+    Assert-Condition ($null -eq (Get-ValidatedLoadSummaryTiming $summaryConfig $summaryProgress)) `
+        "The monitor must reject historical tile evidence without the staggered deadline accounting version."
+    $assertions++
+    $summaryProgress.summary.tileBatch.pollAccountingVersion = $script:RequiredPollAccountingVersion
+    $summaryProgress.summary.tileBatch.historyRequestsByCohort = @($partialCounts[0..18])
+    Assert-Condition ($null -eq (Get-ValidatedLoadSummaryTiming $summaryConfig $summaryProgress)) `
+        "The monitor must reject malformed cohort array lengths."
+    $assertions++
+    $summaryProgress.summary.tileBatch.historyRequestsByCohort = @($partialCounts)
+    $negativeCounts = @($partialCounts); $negativeCounts[19] = -1
+    $summaryProgress.summary.tileBatch.historyRequestsByCohort = $negativeCounts
+    $summaryProgress.summary.tileBatch.screenshotRequestsByCohort = @($negativeCounts)
+    Assert-Condition ($null -eq (Get-ValidatedLoadSummaryTiming $summaryConfig $summaryProgress)) `
+        "The monitor must reject negative cohort counters."
+    $assertions++
+    $skewedCounts = @($partialCounts); $skewedCounts[19] = 57
+    $summaryProgress.summary.tileBatch.historyRequestsByCohort = $skewedCounts
+    $summaryProgress.summary.tileBatch.screenshotRequestsByCohort = @($skewedCounts)
+    Assert-Condition ($null -eq (Get-ValidatedLoadSummaryTiming $summaryConfig $summaryProgress)) `
+        "The monitor must reject cohort poll skew above one."
+    $assertions++
+    $summaryProgress.summary.tileBatch.historyRequestsByCohort = @($partialCounts)
+    $summaryProgress.summary.tileBatch.screenshotRequestsByCohort = @($partialCounts)
+    $summaryProgress.summary.tileBatch.partialFinalRoundCohorts = 9
+    Assert-Condition ($null -eq (Get-ValidatedLoadSummaryTiming $summaryConfig $summaryProgress)) `
+        "The monitor must recompute and reject mismatched derived poll fields."
+    $assertions++
+    $summaryProgress.summary.tileBatch.partialFinalRoundCohorts = 10
+    $summaryProgress.summary.tileBatch.historyRequests = 1169
+    Assert-Condition ($null -eq (Get-ValidatedLoadSummaryTiming $summaryConfig $summaryProgress)) `
+        "The monitor must reject aggregate request counters that disagree with cohort evidence."
+    $assertions++
+    $summaryProgress.summary.tileBatch.historyRequests = 1170
+    $summaryProgress.summary.tileBatch.screenshotRequestsByCohort = @($partialCounts); $summaryProgress.summary.tileBatch.screenshotRequestsByCohort[19] = 57
+    Assert-Condition ($null -eq (Get-ValidatedLoadSummaryTiming $summaryConfig $summaryProgress)) `
+        "The monitor must reject unpaired screenshot and history cohort counters."
+    $assertions++
+    $summaryProgress.summary.tileBatch.screenshotRequestsByCohort = @($partialCounts)
+    $summaryProgress.summary.workloadEndpointShapeSha256 = "0" * 64
+    Assert-Condition ($null -eq (Get-ValidatedLoadSummaryTiming $summaryConfig $summaryProgress)) `
+        "The monitor must reject a mismatched tile endpoint shape."
+    $assertions++
+    $summaryProgress.summary.workloadEndpointShapeSha256 = $script:RequiredWorkloadEndpointShapeSha256
 
     $orderedDictionary = [ordered]@{sha256="a"*64}
     Assert-Condition ((Get-CertificationValue $orderedDictionary "sha256" ("0"*64)) -eq ("a"*64)) `
@@ -121,7 +192,7 @@ try {
     $rollbackApiDigest="sha256:"+("6"*64);$rollbackWorkerDigest="sha256:"+("7"*64)
     $controllerHashes = [ordered]@{
         supervisor="a"*64;monitor="b"*64;rollback="c"*64;harness="d"*64
-        monotonicDeadline="e"*64;preparer="f"*64;savedPlanValidator="0"*64
+        monotonicDeadline="e"*64;tilePollAccounting="9"*64;preparer="f"*64;savedPlanValidator="0"*64
     }
     $chainId = "chain-one";$priorRunId="prior-waf-500"
     $activeApiArn="arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api:17"
@@ -317,7 +388,7 @@ try {
     $rootRef=[pscustomobject]@{path=$rootPath;sha256=Get-CertificationSha256 $rootPath}
     $stagePath=Join-Path $tempRoot "prior-stage.json";Write-AtomicJson $stagePath ([ordered]@{schemaVersion=1;type="certification_stage_attestation";runId=$priorRunId;chainId=$chainId;phase="Waf";stage="500";supervisionKind="Load";attestedAtUtc=[DateTimeOffset]::UtcNow.ToString("o");chainRoot=$rootRef;validationReceipt=$receiptBinding;predecessor=$null;applicationGitSha=$appSha;deployedImageDigest=$digest;workloadSchemaVersion=$script:RequiredWorkloadSchemaVersion;workloadEndpointShapeSha256=$script:RequiredWorkloadEndpointShapeSha256;controllerGitSha=$controllerSha;controllerHashes=$controllerHashes;operatorConfigSha256=$operatorHash;boundRuntimeConfigSha256=$runtimeHash;rollbackConfig=$boundRollback;taskDefinitions=$taskDefinitions;fixture=$fixture;generatorPublicIpv4="198.51.100.10";datastorePosture=$datastore;networkPosture=$network;alarms=$alarms;schedules=$schedules;rollbackIdentities=$rollbackIdentities;budgetAcknowledgement=$null;historicalEvidence=@{diagnosticOnly=$true;artifacts=@()}})
     $stageRef=[ordered]@{path=$stagePath;sha256=Get-CertificationSha256 $stagePath}
-    $monitorTileBatch=[ordered]@{teacherCohorts=20;studentsPerCohort=25;teacherTileAssignments=500;requestsPerCohortPerPoll=2;logicalOperationsPerPoll=1000;pollsPerCohort=1;historyRequests=20;screenshotRequests=20;historyLogicalOperations=500;screenshotLogicalOperations=500;networkRequests=40;logicalOperations=1000;screenshotAttempts=500;screenshotSuccesses=500}
+    $monitorTileBatch=[ordered]@{pollAccountingVersion=$script:RequiredPollAccountingVersion;teacherCohorts=20;studentsPerCohort=25;teacherTileAssignments=500;requestsPerCohortPerPoll=2;logicalOperationsPerPoll=1000;historyRequestsByCohort=@(1..20|ForEach-Object{if($_ -le 10){59}else{58}});screenshotRequestsByCohort=@(1..20|ForEach-Object{if($_ -le 10){59}else{58}});completeRoundsPerCohort=58;maximumRoundsPerCohort=59;partialFinalRoundCohorts=10;historyRequests=1170;screenshotRequests=1170;historyLogicalOperations=29250;screenshotLogicalOperations=29250;networkRequests=2340;logicalOperations=58500;screenshotAttempts=29250;screenshotSuccesses=29250}
     $monitorPath=Join-Path $tempRoot "prior-monitor.json";Write-AtomicJson $monitorPath ([ordered]@{runId=$priorRunId;phase="Waf";diagnosticOnly=$false;certificationEligible=$true;status="completed";postureAccepted=$true;workload=@{stage="500";workloadSchemaVersion=$script:RequiredWorkloadSchemaVersion;endpointShapeSha256=$script:RequiredWorkloadEndpointShapeSha256;tileBatch=$monitorTileBatch};acceptance=@{passed=$true}})
     $monitorRef=[ordered]@{path=$monitorPath;sha256=Get-CertificationSha256 $monitorPath;runId=$priorRunId;phase="Waf"}
     $producerRootRef=[ordered]@{path=$rootRef.path;sha256=$rootRef.sha256}
@@ -338,6 +409,14 @@ try {
     $contract.Raw|Add-Member -NotePropertyName chainRoot -NotePropertyValue $rootRef
     $config=[pscustomobject]@{phase="Waf";workload=[pscustomobject]@{stage="800";workloadSchemaVersion=$script:RequiredWorkloadSchemaVersion;endpointShapeSha256=$script:RequiredWorkloadEndpointShapeSha256};predecessorResultPath=$envelopePath;predecessorResultSha256=Get-CertificationSha256 $envelopePath}
     Assert-CertificationChainContinuity -Config $config -Contract $contract;$assertions++
+
+    $tamperedControllerEnvelope=$envelope|ConvertTo-Json -Depth 60|ConvertFrom-Json -Depth 60
+    $tamperedControllerEnvelope.controllerHashes.tilePollAccounting="8"*64
+    Write-AtomicJson $envelopePath $tamperedControllerEnvelope;$config.predecessorResultSha256=Get-CertificationSha256 $envelopePath
+    $tamperedControllerHashRejected=$false
+    try{Assert-CertificationChainContinuity -Config $config -Contract $contract}catch{$tamperedControllerHashRejected=$true}
+    Assert-Condition $tamperedControllerHashRejected "A re-sealed predecessor with a changed tile-poll-accounting helper hash must not seed certification.";$assertions++
+    Write-AtomicJson $envelopePath $envelope;$config.predecessorResultSha256=Get-CertificationSha256 $envelopePath
 
     $invalidLogicalMonitor=Get-Content -LiteralPath $monitorPath -Raw|ConvertFrom-Json -Depth 60
     $invalidLogicalMonitor.workload.tileBatch.historyLogicalOperations=499
@@ -470,6 +549,25 @@ try {
     try { Use-CertificationValidationReceipt -Contract $receiptContract -ReceiptPath $tamperReceiptPath -SealPath $tamperSealPath -ConsumedPath $tamperConsumedPath | Out-Null }
     catch { $semanticTamperRejected = $_.Exception.Message -match "stale, tampered" }
     Assert-Condition ($semanticTamperRejected -and -not (Test-Path $tamperConsumedPath)) "A re-sealed receipt with a changed application identity must fail before consumption."
+    $assertions++
+
+    $runId = "receipt-missing-tile-helper-hash"
+    $missingHelperReceiptPath = Join-Path $tempRoot "missing-helper-receipt.json"
+    $missingHelperSealPath = Join-Path $tempRoot "missing-helper-receipt-seal.json"
+    $missingHelperConsumedPath = "$missingHelperReceiptPath.consumed"
+    $preflight.observedAtUtc=[DateTimeOffset]::UtcNow.AddSeconds(-1).ToString("o")
+    New-CertificationValidationReceipt -Contract $receiptContract -Preflight $preflight -RollbackConfig $rollbackBinding -ReceiptPath $missingHelperReceiptPath -SealPath $missingHelperSealPath
+    $missingHelperReceipt = Get-Content -LiteralPath $missingHelperReceiptPath -Raw | ConvertFrom-Json -Depth 30
+    $missingHelperReceipt.controllerHashes.PSObject.Properties.Remove("tilePollAccounting")
+    Write-AtomicJson $missingHelperReceiptPath $missingHelperReceipt
+    Write-AtomicJson $missingHelperSealPath ([ordered]@{
+        schemaVersion=1;type="certification_validation_receipt_seal";runId=$runId
+        receiptSha256=Get-CertificationSha256 $missingHelperReceiptPath
+    })
+    $missingHelperHashRejected = $false
+    try { Use-CertificationValidationReceipt -Contract $receiptContract -ReceiptPath $missingHelperReceiptPath -SealPath $missingHelperSealPath -ConsumedPath $missingHelperConsumedPath | Out-Null }
+    catch { $missingHelperHashRejected = $true }
+    Assert-Condition ($missingHelperHashRejected -and -not (Test-Path $missingHelperConsumedPath)) "A re-sealed receipt missing the tile-poll-accounting helper hash must fail before consumption."
     $assertions++
 
     [IO.File]::WriteAllText($rollbackPath, '{"schemaVersion":2}', [Text.UTF8Encoding]::new($false))

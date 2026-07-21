@@ -2073,8 +2073,10 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
                 fatalGate = $FatalGate
                 screenshotRetrieval = [ordered]@{attempts=800;successes=800;successPercent=100}
                 tileBatch = [ordered]@{
-                    configured=$true;teacherCohorts=20;studentsPerCohort=40;teacherTileAssignments=800
+                    configured=$true;pollAccountingVersion="staggered-deadline-v1";teacherCohorts=20;studentsPerCohort=40;teacherTileAssignments=800
                     requestsPerCohortPerPoll=2;logicalOperationsPerPoll=1600
+                    historyRequestsByCohort=@(1)*20;screenshotRequestsByCohort=@(1)*20
+                    completeRoundsPerCohort=1;maximumRoundsPerCohort=1;partialFinalRoundCohorts=0
                     historyRequests=20;screenshotRequests=20;historyLogicalOperations=800;screenshotLogicalOperations=800
                     networkRequests=40;logicalOperations=1600
                 }
@@ -2082,7 +2084,7 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         }
 
         function Invoke-StrictDurationSummaryCase {
-            param([string]$CaseId, $Summary, [double]$FinalWallClockOffsetSeconds = 0)
+            param([string]$CaseId, $Summary, [double]$FinalWallClockOffsetSeconds = 0, [switch]$StopHarnessAfterFinal)
             $caseProgress = Join-Path $childRoot "$CaseId-progress.jsonl"
             $caseSummary = Join-Path $childRoot "$CaseId-summary.json"
             Remove-Item -LiteralPath $caseProgress,$caseSummary -ErrorAction SilentlyContinue
@@ -2125,6 +2127,10 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
                 $finalEvent = @{schemaVersion=1;type="progress";event="final";runId=$CaseId;stage="800";timestamp=[DateTimeOffset]::UtcNow.AddSeconds($FinalWallClockOffsetSeconds).ToString("o")}
                 if ($null -ne $Summary.fatalGate) { $finalEvent.fatalGate = $Summary.fatalGate }
                 [IO.File]::AppendAllText($caseProgress, ($finalEvent|ConvertTo-Json -Compress -Depth 12)+[Environment]::NewLine, [Text.UTF8Encoding]::new($false))
+                if ($StopHarnessAfterFinal -and -not $caseHarness.HasExited) {
+                    Stop-Process -Id $caseHarness.Id -Force
+                    $caseHarness.WaitForExit()
+                }
                 Assert-Condition ($process.WaitForExit(30000)) "$CaseId strict duration monitor did not finish."
                 $result = Get-Content -LiteralPath (Join-Path $childEvidence "$CaseId-monitor-result.json") -Raw | ConvertFrom-Json -Depth 30
                 $lastEvidence = Get-Content -LiteralPath $evidencePath -Tail 1 -ErrorAction SilentlyContinue
@@ -2147,6 +2153,17 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         Assert-Condition ($durationRoundedShort.process.ExitCode -eq 2 -and
             $durationRoundedShort.result.failures -contains "load_workload_contract_mismatch") `
             "Rounded display seconds must not hide a raw monotonic duration below the configured target."
+
+        $durationCommittedRejectId = "duration-committed-rejected-final"
+        $durationCommittedReject = Invoke-StrictDurationSummaryCase $durationCommittedRejectId `
+            (New-StrictDurationSummary -RunId $durationCommittedRejectId -ActualTrafficSeconds 1 -ActualTrafficMilliseconds 999 -CompletedConfiguredDuration $true) `
+            -StopHarnessAfterFinal
+        $durationCommittedRejectEvidence = $durationCommittedReject.lastEvidence | ConvertFrom-Json -Depth 30
+        Assert-Condition ($durationCommittedReject.process.ExitCode -eq 2 -and
+            $durationCommittedReject.result.failures -contains "load_workload_contract_mismatch" -and
+            $durationCommittedReject.result.failures -notcontains "load_generator_process_lost" -and
+            $durationCommittedRejectEvidence.terminalEvidenceCommitted -eq $true) `
+            "A coherent rejected final must preserve its contract failure without adding a derivative process-loss finding."
 
         $durationActualMismatchId = "duration-actual-seconds-ms-mismatch"
         $durationActualMismatch = Invoke-StrictDurationSummaryCase $durationActualMismatchId `
@@ -2700,8 +2717,10 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
               screenshotFixture=@{decodedBytes=40960};thresholds=@{passed=$true};fatalGate=$null
               screenshotRetrieval=@{attempts=800;successes=800;successPercent=100}
               tileBatch=@{
-                configured=$true;teacherCohorts=20;studentsPerCohort=40;teacherTileAssignments=800
+                configured=$true;pollAccountingVersion="staggered-deadline-v1";teacherCohorts=20;studentsPerCohort=40;teacherTileAssignments=800
                 requestsPerCohortPerPoll=2;logicalOperationsPerPoll=1600
+                historyRequestsByCohort=@(1)*20;screenshotRequestsByCohort=@(1)*20
+                completeRoundsPerCohort=1;maximumRoundsPerCohort=1;partialFinalRoundCohorts=0
                 historyRequests=20;screenshotRequests=20;historyLogicalOperations=800;screenshotLogicalOperations=800
                 networkRequests=40;logicalOperations=1600
               }
@@ -2775,6 +2794,7 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
             $completedWaitResult.workload.workloadSchemaVersion -eq "classpilot-tile-batch-v1" -and
             $completedWaitResult.workload.endpointShapeSha256 -eq "8e9f1942e4b3a27de7dd0571a9f60ffeb276c089e4baae96a885dba69e3233b2" -and
             $completedWaitResult.workload.tileBatch.teacherCohorts -eq 20 -and
+            $completedWaitResult.workload.tileBatch.pollAccountingVersion -eq "staggered-deadline-v1" -and
             $completedWaitResult.workload.tileBatch.studentsPerCohort -eq 40 -and
             $completedWaitResult.workload.tileBatch.requestsPerCohortPerPoll -eq 2 -and
             $completedWaitResult.workload.tileBatch.historyLogicalOperations -eq 800 -and

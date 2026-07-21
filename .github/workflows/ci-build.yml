@@ -249,6 +249,9 @@ jobs:
       - name: Waf/800 diagnostic-only contract tests
         run: pwsh -NoProfile -File tests/aws-rollout-diagnostic.test.ps1
 
+      - name: Waf certification-chain contract tests
+        run: pwsh -NoProfile -File tests/aws-rollout-certification-chain.test.ps1
+
   frontend:
     name: Frontend (Vite Build)
     runs-on: ubuntu-latest
