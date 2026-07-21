@@ -17,6 +17,7 @@ $ErrorActionPreference = "Stop"
 
 $script:RepositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\.."))
 $script:HarnessScript = Join-Path $PSScriptRoot "classpilot-load-test.mjs"
+$script:MonotonicDeadlineScript = Join-Path $PSScriptRoot "monotonic-deadline.mjs"
 $script:MonitorScript = Join-Path $PSScriptRoot "aws-rollout-monitor.ps1"
 $script:WorkloadSchemaVersion = "classpilot-tile-batch-v1"
 $script:EndpointShapeSha256 = "8e9f1942e4b3a27de7dd0571a9f60ffeb276c089e4baae96a885dba69e3233b2"
@@ -38,6 +39,11 @@ $script:AuthSqlMarkers = @(
 $script:HistoryFallbackSqlMarkers = @("requested_tiles", "heartbeats", "lateral")
 $script:HistoryIoDominanceThresholdPercent = 50.0
 $script:PerformanceInsightsCoverageTolerancePercent = 0.5
+$script:DurationClock = "monotonic-hrtime-v1"
+$script:DiagnosticRuntimeTargetTrafficSeconds = 1800.0
+$script:DiagnosticPlannedTrafficMilliseconds = 1800000L
+$script:HotPathSummaryEvent = "classpilot_heartbeat_hot_path_summary"
+$script:HotPathSummaryIntervalSeconds = 60
 
 function Get-Value {
     param($Object, [string]$Name, $Default = $null)
@@ -973,18 +979,107 @@ function Assert-HealthyMonitorHeartbeat {
     }
 }
 
+function Get-ObservedTrafficWindow {
+    param($Config, [string]$ProgressPath, [string]$SummaryPath)
+    if (-not (Test-Path -LiteralPath $ProgressPath -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $SummaryPath -PathType Leaf)) {
+        throw "Observed traffic-window evidence is incomplete."
+    }
+    try {
+        $records = @(Get-Content -LiteralPath $ProgressPath | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            ForEach-Object { $_ | ConvertFrom-Json -Depth 20 })
+        $summary = Read-AtomicJson $SummaryPath
+    }
+    catch { throw "Observed traffic-window evidence is malformed." }
+    $starts = @($records | Where-Object { [string]$_.event -eq "start" })
+    $finals = @($records | Where-Object { [string]$_.event -eq "final" })
+    if ($starts.Count -ne 1 -or $finals.Count -ne 1) {
+        throw "Observed traffic-window evidence must contain exactly one start and one final record."
+    }
+    $startRecord = $starts[0]
+    $finalRecord = $finals[0]
+    $expectedRunId = [string]$Config.RunId
+    foreach ($record in @($startRecord,$finalRecord)) {
+        if ([string]$record.runId -cne $expectedRunId -or [string]$record.stage -cne "800" -or
+            [int]$record.devices -ne 810 -or $record.diagnosticOnly -isnot [bool] -or
+            $record.diagnosticOnly -ne $true -or $record.certificationEligible -isnot [bool] -or
+            $record.certificationEligible -ne $false) {
+            throw "Observed traffic-window progress identity does not match the exact diagnostic run."
+        }
+    }
+    if ([string]$summary.runId -cne $expectedRunId -or [string]$summary.stage -cne "800" -or
+        [int]$summary.devices -ne 810 -or $summary.diagnosticOnly -isnot [bool] -or
+        $summary.diagnosticOnly -ne $true -or $summary.certificationEligible -isnot [bool] -or
+        $summary.certificationEligible -ne $false -or
+        [string]$summary.workloadSchemaVersion -cne $script:WorkloadSchemaVersion -or
+        [string]$summary.workloadEndpointShapeSha256 -cne $script:EndpointShapeSha256) {
+        throw "Observed traffic-window summary identity does not match the exact diagnostic workload."
+    }
+    $run = Get-Value $summary "run"
+    if ($null -eq $run -or [string](Get-Value $run "durationClock" "") -cne $script:DurationClock) {
+        throw "Observed traffic-window evidence is not bound to the reviewed monotonic clock."
+    }
+    $rawRuntimeTargetSeconds = Get-Value $run "runtimeTargetTrafficSeconds"
+    $rawPlannedMilliseconds = Get-Value $run "plannedTrafficMilliseconds"
+    $rawActualMilliseconds = Get-Value $run "actualTrafficMilliseconds"
+    $rawPlannedSeconds = Get-Value $run "plannedTrafficSeconds"
+    $rawActualSeconds = Get-Value $run "actualTrafficSeconds"
+    foreach ($rawTimingValue in @($rawRuntimeTargetSeconds,$rawPlannedMilliseconds,$rawActualMilliseconds,$rawPlannedSeconds,$rawActualSeconds)) {
+        if ($null -eq $rawTimingValue -or $rawTimingValue -isnot [ValueType] -or
+            $rawTimingValue -is [bool] -or $rawTimingValue -is [char]) {
+            throw "Observed traffic-window timing fields must be JSON numbers."
+        }
+    }
+    $runtimeTargetSeconds = [double]$rawRuntimeTargetSeconds
+    $plannedMilliseconds = [double]$rawPlannedMilliseconds
+    $actualMilliseconds = [double]$rawActualMilliseconds
+    $plannedSeconds = [double]$rawPlannedSeconds
+    $actualSeconds = [double]$rawActualSeconds
+    foreach ($timingValue in @($runtimeTargetSeconds,$plannedMilliseconds,$actualMilliseconds,$plannedSeconds,$actualSeconds)) {
+        if ([double]::IsNaN($timingValue) -or [double]::IsInfinity($timingValue)) {
+            throw "Observed traffic-window timing evidence is not finite."
+        }
+    }
+    if ($runtimeTargetSeconds -ne $script:DiagnosticRuntimeTargetTrafficSeconds -or
+        $plannedMilliseconds -ne [double]$script:DiagnosticPlannedTrafficMilliseconds -or
+        $plannedSeconds -ne $script:DiagnosticRuntimeTargetTrafficSeconds -or
+        $actualMilliseconds -le 0 -or $actualMilliseconds -ne [math]::Floor($actualMilliseconds) -or
+        [math]::Abs(($actualSeconds * 1000.0) - $actualMilliseconds) -gt 0.5) {
+        throw "Observed traffic-window timing evidence is incoherent."
+    }
+    try {
+        $startedAt = ([DateTimeOffset]$startRecord.timestamp).ToUniversalTime()
+        $finalAt = ([DateTimeOffset]$finalRecord.timestamp).ToUniversalTime()
+    }
+    catch { throw "Observed traffic-window progress timestamps are invalid." }
+    $endedAt = $startedAt.AddMilliseconds($actualMilliseconds)
+    # Progress wall-clock timestamps are labels only. Duration acceptance is
+    # derived exclusively from the raw monotonic elapsed milliseconds so an
+    # NTP/manual Date.now rollback cannot shorten or reject the run.
+    $strictlyComplete = [string](Get-Value $run "shutdownReason" "") -ceq "duration" -and
+        (Get-Value $run "completedConfiguredDuration" $null) -is [bool] -and
+        (Get-Value $run "completedConfiguredDuration" $false) -eq $true -and
+        $actualMilliseconds -ge [double]$script:DiagnosticPlannedTrafficMilliseconds -and
+        $actualSeconds -ge $script:DiagnosticRuntimeTargetTrafficSeconds
+    $evidence = [ordered]@{
+        coherent=$true;strictlyComplete=$strictlyComplete;startUtc=$startedAt.ToString("o");endUtc=$endedAt.ToString("o")
+        finalProgressUtc=$finalAt.ToString("o");durationClock=$script:DurationClock
+        runtimeTargetTrafficSeconds=$runtimeTargetSeconds
+        plannedTrafficMilliseconds=[long]$plannedMilliseconds;actualTrafficMilliseconds=[long]$actualMilliseconds
+        plannedTrafficSeconds=$plannedSeconds;actualTrafficSeconds=$actualSeconds
+        shutdownReason=[string](Get-Value $run "shutdownReason" "")
+        completedConfiguredDuration=((Get-Value $run "completedConfiguredDuration" $false) -eq $true)
+    }
+    return [pscustomobject]@{Evidence=$evidence;Summary=$summary}
+}
+
 function Get-TrafficWindow {
-    param([string]$ProgressPath, [string]$SummaryPath)
-    $records = @(Get-Content -LiteralPath $ProgressPath | ForEach-Object { $_ | ConvertFrom-Json -Depth 20 })
-    $start = @($records | Where-Object { [string]$_.event -eq "start" } | Select-Object -First 1)
-    if ($start.Count -ne 1) { throw "Progress evidence does not contain one traffic start event." }
-    $summary = Read-AtomicJson $SummaryPath
-    $startedAt = ([DateTimeOffset]$start[0].timestamp).ToUniversalTime()
-    $actualSeconds = [double]$summary.run.actualTrafficSeconds
-    if ($actualSeconds -lt 1800 -or $summary.diagnosticOnly -ne $true -or $summary.certificationEligible -ne $false) {
+    param($Config, [string]$ProgressPath, [string]$SummaryPath)
+    $observed = Get-ObservedTrafficWindow $Config $ProgressPath $SummaryPath
+    if ($observed.Evidence.strictlyComplete -ne $true) {
         throw "Load evidence is not an exact completed diagnostic-only traffic interval."
     }
-    return [ordered]@{startUtc=$startedAt.ToString("o");endUtc=$startedAt.AddSeconds($actualSeconds).ToString("o");summary=$summary}
+    return [ordered]@{startUtc=$observed.Evidence.startUtc;endUtc=$observed.Evidence.endUtc;summary=$observed.Summary}
 }
 
 function Get-Postgres57014Evidence {
@@ -1081,6 +1176,138 @@ function Get-HistoryFallbackWaitEventEvidence {
     }
 }
 
+function Get-PerformanceInsightsTopTokens {
+    param($Config, [string]$StartUtc, [string]$EndUtc, [string]$DbiResourceId)
+    $response = Invoke-AwsJson @("pi","describe-dimension-keys","--region",$Config.Resources.region,
+        "--service-type","RDS","--identifier",$DbiResourceId,"--start-time",$StartUtc,"--end-time",$EndUtc,
+        "--period-in-seconds","60","--metric","db.load.avg","--group-by","Group=db.sql_tokenized,Limit=25")
+    if ($null -eq $response -or -not [string]::IsNullOrWhiteSpace([string](Get-Value $response "NextToken" ""))) {
+        throw "Performance Insights returned incomplete top-token pagination for a diagnostic evidence window."
+    }
+    $rank = 0
+    $internal = @()
+    $sanitized = @()
+    foreach ($key in @((Get-Value $response "Keys" @()) | Sort-Object Total -Descending)) {
+        $rank++
+        $statement = [string](Get-Value $key.Dimensions "db.sql_tokenized.statement" "")
+        $tokenId = [string](Get-Value $key.Dimensions "db.sql_tokenized.id" "")
+        $load = [double](Get-Value $key "Total" -1)
+        if ([string]::IsNullOrWhiteSpace($statement) -or [string]::IsNullOrWhiteSpace($tokenId) -or
+            [double]::IsNaN($load) -or [double]::IsInfinity($load) -or $load -lt 0) {
+            throw "Performance Insights did not return the complete tokenized SQL dimension."
+        }
+        $lower = $statement.ToLowerInvariant()
+        $isAuthorization = @($script:AuthSqlMarkers | Where-Object { $lower.Contains($_) }).Count -ge 2
+        $isHistoryFallback = @($script:HistoryFallbackSqlMarkers | Where-Object { $lower.Contains($_) }).Count -eq
+            $script:HistoryFallbackSqlMarkers.Count
+        $tokenSha = Get-StableJsonSha256 ([ordered]@{id=$tokenId;statement=$statement})
+        $category = if($isHistoryFallback){"history_fallback"}elseif($isAuthorization){"tile_authorization"}else{"other"}
+        $internal += [pscustomobject]@{Id=$tokenId;Sha256=$tokenSha;Load=$load;
+            IsAuthorization=$isAuthorization;IsHistoryFallback=$isHistoryFallback}
+        $sanitized += [ordered]@{rank=$rank;tokenSha256=$tokenSha;category=$category;dbLoad=[math]::Round($load,6)}
+    }
+    return [pscustomobject]@{Internal=$internal;Sanitized=$sanitized}
+}
+
+function Get-HotPathFallbackEvidenceWindows {
+    param($Config, [string]$StartUtc, [string]$EndUtc)
+    try {
+        $trafficStart = ([DateTimeOffset]$StartUtc).ToUniversalTime()
+        $trafficEnd = ([DateTimeOffset]$EndUtc).ToUniversalTime()
+    }
+    catch { throw "Hot-path evidence requires a valid UTC traffic interval." }
+    if ($trafficEnd -le $trafficStart) { throw "Hot-path evidence requires a positive traffic interval." }
+    $startMs = $trafficStart.ToUnixTimeMilliseconds()
+    $endMs = $trafficEnd.ToUnixTimeMilliseconds()
+    $binding = Get-BoundApiAwslogsBinding $Config
+    $response = Invoke-AwsJson @("logs","filter-log-events","--region",$binding.LogRegion,
+        "--log-group-name",$binding.LogGroup,"--log-stream-name-prefix",$binding.ApiStreamPrefix,
+        "--start-time",[string]$startMs,"--end-time",[string]$endMs,
+        "--filter-pattern",('"' + $script:HotPathSummaryEvent + '"'))
+    if ($null -eq $response -or -not [string]::IsNullOrWhiteSpace([string](Get-Value $response "nextToken" ""))) {
+        throw "CloudWatch Logs did not return complete hot-path summary evidence for the traffic interval."
+    }
+    $windows = @()
+    $fallbackItems = 0L
+    $databaseReadCount = 0L
+    $matchingSummaryCount = 0
+    foreach ($event in @((Get-Value $response "events" @()))) {
+        $timestamp = [long](Get-Value $event "timestamp" -1)
+        $stream = [string](Get-Value $event "logStreamName" "")
+        $message = [string](Get-Value $event "message" "")
+        if ($timestamp -lt $startMs -or $timestamp -gt $endMs -or
+            -not $stream.StartsWith($binding.ApiStreamPrefix, [StringComparison]::Ordinal)) {
+            throw "CloudWatch Logs returned out-of-scope hot-path summary evidence."
+        }
+        try { $payload = $message | ConvertFrom-Json -Depth 20 }
+        catch { throw "CloudWatch Logs returned malformed hot-path summary evidence." }
+        if ([string](Get-Value $payload "event" "") -cne $script:HotPathSummaryEvent -or
+            [int](Get-Value $payload "intervalSeconds" -1) -ne $script:HotPathSummaryIntervalSeconds) {
+            throw "CloudWatch Logs returned an unreviewed hot-path summary schema."
+        }
+        $matchingSummaryCount++
+        $counters = Get-Value $payload "counters"
+        $rawFallbackItems = Get-Value $counters "tileBatchHistoryFallbackItems" 0
+        if ($rawFallbackItems -isnot [ValueType] -or $rawFallbackItems -is [bool] -or $rawFallbackItems -is [char]) {
+            throw "CloudWatch Logs returned malformed fallback counters."
+        }
+        try { $eventFallbackItems = [double]$rawFallbackItems }
+        catch { throw "CloudWatch Logs returned malformed fallback counters." }
+        if ([double]::IsNaN($eventFallbackItems) -or [double]::IsInfinity($eventFallbackItems) -or
+            $eventFallbackItems -lt 0 -or $eventFallbackItems -ne [math]::Floor($eventFallbackItems)) {
+            throw "CloudWatch Logs returned malformed fallback counters."
+        }
+        if ($eventFallbackItems -eq 0) { continue }
+        $timings = Get-Value $payload "timings"
+        $databaseTiming = Get-Value $timings "tileBatchHistoryDatabaseMs"
+        $rawDatabaseReadCount = Get-Value $databaseTiming "count" -1
+        $rawDatabaseTotalMs = Get-Value $databaseTiming "totalMs" -1
+        $rawDatabaseMaxMs = Get-Value $databaseTiming "maxMs" -1
+        foreach ($rawDatabaseTimingValue in @($rawDatabaseReadCount,$rawDatabaseTotalMs,$rawDatabaseMaxMs)) {
+            if ($rawDatabaseTimingValue -isnot [ValueType] -or $rawDatabaseTimingValue -is [bool] -or
+                $rawDatabaseTimingValue -is [char]) {
+                throw "CloudWatch Logs returned malformed batch history database timing evidence."
+            }
+        }
+        try {
+            $eventDatabaseReadCount = [double]$rawDatabaseReadCount
+            $eventDatabaseTotalMs = [double]$rawDatabaseTotalMs
+            $eventDatabaseMaxMs = [double]$rawDatabaseMaxMs
+        }
+        catch { throw "CloudWatch Logs returned malformed batch history database timing evidence." }
+        if ([double]::IsNaN($eventDatabaseReadCount) -or [double]::IsInfinity($eventDatabaseReadCount) -or
+            $eventDatabaseReadCount -le 0 -or $eventDatabaseReadCount -ne [math]::Floor($eventDatabaseReadCount) -or
+            [double]::IsNaN($eventDatabaseTotalMs) -or [double]::IsInfinity($eventDatabaseTotalMs) -or
+            [double]::IsNaN($eventDatabaseMaxMs) -or [double]::IsInfinity($eventDatabaseMaxMs) -or
+            $eventDatabaseTotalMs -lt 0 -or $eventDatabaseMaxMs -lt 0) {
+            throw "CloudWatch Logs returned malformed batch history database timing evidence."
+        }
+        $eventAt = [DateTimeOffset]::FromUnixTimeMilliseconds($timestamp)
+        $windowStart = $eventAt.AddSeconds(-$script:HotPathSummaryIntervalSeconds)
+        if ($windowStart -lt $trafficStart) { $windowStart = $trafficStart }
+        $windowEnd = if ($eventAt -gt $trafficEnd) { $trafficEnd } else { $eventAt }
+        if ($windowEnd -le $windowStart) { continue }
+        $fallbackItems += [long]$eventFallbackItems
+        $databaseReadCount += [long]$eventDatabaseReadCount
+        $windows += [pscustomobject]@{
+            StartUtc=$windowStart.ToString("o");EndUtc=$windowEnd.ToString("o")
+            ObservedSeconds=[math]::Round(($windowEnd - $windowStart).TotalSeconds,3)
+            FallbackItems=[long]$eventFallbackItems;DatabaseReadCount=[long]$eventDatabaseReadCount
+        }
+    }
+    $evidence = [ordered]@{
+        source="cloudwatch_logs";sourceEvent=$script:HotPathSummaryEvent
+        sourceIntervalSeconds=$script:HotPathSummaryIntervalSeconds;matchingSummaryCount=$matchingSummaryCount
+        fallbackPositiveSummaryCount=$windows.Count;fallbackItems=$fallbackItems;evidenceWindowCount=$windows.Count
+        batchHistoryDatabaseReadCount=$databaseReadCount
+        exactTaskDefinitionBound=$true;logDriver=$binding.LogDriver;logRegion=$binding.LogRegion
+        logGroupSha256=(Get-StringSha256 $binding.LogGroup)
+        streamPrefixSha256=(Get-StringSha256 $binding.ApiStreamPrefix)
+        rawMessagesPersisted=$false;rawIdentifiersPersisted=$false
+    }
+    return [pscustomobject]@{Windows=$windows;Evidence=$evidence}
+}
+
 function Get-PerformanceInsightsEvidence {
     param($Config, [string]$StartUtc, [string]$EndUtc, [string]$DbiResourceId)
     $r = $Config.Resources
@@ -1090,61 +1317,66 @@ function Get-PerformanceInsightsEvidence {
     $points = @($metric.MetricList[0].DataPoints | Where-Object { $null -ne $_.Value })
     if ($points.Count -lt 1) { throw "Performance Insights returned no DB load datapoints for the traffic interval." }
     $averageDbLoad = [double](($points.Value | Measure-Object -Average).Average)
-    $keys = Invoke-AwsJson @("pi","describe-dimension-keys","--region",$r.region,"--service-type","RDS",
-        "--identifier",$DbiResourceId,"--start-time",$StartUtc,"--end-time",$EndUtc,"--period-in-seconds","60",
-        "--metric","db.load.avg","--group-by","Group=db.sql_tokenized,Limit=25")
-    if ($null -eq $keys -or -not [string]::IsNullOrWhiteSpace([string](Get-Value $keys "NextToken" ""))) {
-        throw "Performance Insights returned incomplete top-token pagination for the diagnostic interval."
-    }
-    $rank = 0
-    $entries = @()
-    $historyTokens = @()
+    $topTokens = Get-PerformanceInsightsTopTokens $Config $StartUtc $EndUtc $DbiResourceId
+    $entries = @($topTokens.Sanitized)
     $authLoad = 0.0
     $authTokenCount = 0
-    foreach ($key in @((Get-Value $keys "Keys" @()) | Sort-Object Total -Descending)) {
-        $rank++
-        $statement = [string](Get-Value $key.Dimensions "db.sql_tokenized.statement" "")
-        $tokenId = [string](Get-Value $key.Dimensions "db.sql_tokenized.id" "")
-        $load = [double](Get-Value $key "Total" -1)
-        if ([string]::IsNullOrWhiteSpace($statement) -or [string]::IsNullOrWhiteSpace($tokenId) -or $load -lt 0) {
-            throw "Performance Insights did not return the complete tokenized SQL dimension."
-        }
-        $lower = $statement.ToLowerInvariant()
-        $isAuthorization = @($script:AuthSqlMarkers | Where-Object { $lower.Contains($_) }).Count -ge 2
-        $isHistoryFallback = @($script:HistoryFallbackSqlMarkers | Where-Object { $lower.Contains($_) }).Count -eq
-            $script:HistoryFallbackSqlMarkers.Count
-        $tokenSha = Get-StableJsonSha256 ([ordered]@{id=$tokenId;statement=$statement})
-        if ($isAuthorization) { $authLoad += $load; $authTokenCount++ }
-        if ($isHistoryFallback) {
-            $historyTokens += [pscustomobject]@{Id=$tokenId;Sha256=$tokenSha;Load=$load}
-        }
-        $entries += [ordered]@{
-            rank=$rank;tokenSha256=$tokenSha
-            category=if($isHistoryFallback){"history_fallback"}elseif($isAuthorization){"tile_authorization"}else{"other"}
-            dbLoad=[math]::Round($load,6)
-        }
+    foreach ($token in @($topTokens.Internal)) {
+        if ($token.IsAuthorization) { $authLoad += [double]$token.Load; $authTokenCount++ }
     }
     if ($averageDbLoad -le 0 -or $entries.Count -lt 1) {
         throw "Performance Insights evidence was incomplete for a nonzero diagnostic workload."
     }
     $authPercent = [math]::Round(($authLoad / $averageDbLoad) * 100.0, 3)
     $authPassed = $authPercent -lt 50.0
+    $hotPath = Get-HotPathFallbackEvidenceWindows $Config $StartUtc $EndUtc
     $historyEvidence = @()
-    foreach ($token in $historyTokens) {
-        $historyEvidence += Get-HistoryFallbackWaitEventEvidence $Config $StartUtc $EndUtc $DbiResourceId `
-            $token.Id $token.Sha256 $token.Load
-    }
+    $evidenceWindows = @()
     $historyLoad = 0.0
-    foreach ($token in $historyTokens) { $historyLoad += [double]$token.Load }
     $historyDataFileReadLoad = 0.0
-    foreach ($item in $historyEvidence) { $historyDataFileReadLoad += [double]$item.dataFileReadDbLoad }
-    $historyAbsent = $historyTokens.Count -eq 0
-    $historySharePercent = if ($historyAbsent) { 0.0 } else {
+    $historyTokenCount = 0
+    $missingHistoryTokenWindowCount = 0
+    foreach ($window in @($hotPath.Windows)) {
+        $windowTokens = Get-PerformanceInsightsTopTokens $Config $window.StartUtc $window.EndUtc $DbiResourceId
+        $historyTokens = @($windowTokens.Internal | Where-Object IsHistoryFallback -eq $true)
+        if ($historyTokens.Count -eq 0) { $missingHistoryTokenWindowCount++ }
+        $windowPerToken = @()
+        $windowLoad = 0.0
+        $windowDataFileReadLoad = 0.0
+        foreach ($token in $historyTokens) {
+            $tokenEvidence = Get-HistoryFallbackWaitEventEvidence $Config $window.StartUtc $window.EndUtc $DbiResourceId `
+                $token.Id $token.Sha256 $token.Load
+            $windowPerToken += $tokenEvidence
+            $historyEvidence += $tokenEvidence
+            $historyTokenCount++
+            $windowLoad += [double]$token.Load
+            $windowDataFileReadLoad += [double]$tokenEvidence.dataFileReadDbLoad
+        }
+        $historyLoad += $windowLoad
+        $historyDataFileReadLoad += $windowDataFileReadLoad
+        $windowComplete = $historyTokens.Count -gt 0 -and
+            @($windowPerToken | Where-Object complete -ne $true).Count -eq 0
+        $windowPerTokenPassed = $historyTokens.Count -gt 0 -and
+            @($windowPerToken | Where-Object passed -ne $true).Count -eq 0
+        $windowShare = if ($windowLoad -gt 0) {
+            [math]::Round(($windowDataFileReadLoad / $windowLoad) * 100.0,3)
+        } else { 0.0 }
+        $windowPassed = $windowComplete -and $windowPerTokenPassed -and
+            $windowShare -lt $script:HistoryIoDominanceThresholdPercent
+        $evidenceWindows += [ordered]@{
+            startUtc=$window.StartUtc;endUtc=$window.EndUtc;observedSeconds=$window.ObservedSeconds
+            fallbackItems=$window.FallbackItems;batchHistoryDatabaseReadCount=$window.DatabaseReadCount
+            topTokenCount=@($windowTokens.Sanitized).Count
+            tokenCount=$historyTokens.Count;dbLoad=[math]::Round($windowLoad,6)
+            dataFileReadDbLoad=[math]::Round($windowDataFileReadLoad,6);dataFileReadSharePercent=$windowShare
+            perToken=$windowPerToken;filteredWaitEventEvidenceComplete=$windowComplete
+            perTokenAllBelowThreshold=$windowPerTokenPassed;passed=$windowPassed
+        }
+    }
+    $historyAbsent = $hotPath.Windows.Count -eq 0 -or $missingHistoryTokenWindowCount -gt 0 -or $historyTokenCount -eq 0
+    $historySharePercent = if ($historyLoad -le 0) { 0.0 } else {
         [math]::Round(($historyDataFileReadLoad / $historyLoad) * 100.0, 3)
     }
-    # The strict cold-cache diagnostic must observe this exact query. Absence
-    # from the bounded PI token set cannot prove the fallback's own wait mix,
-    # so it fails closed instead of being treated as non-dominance evidence.
     $historyComplete = -not $historyAbsent -and
         @($historyEvidence | Where-Object complete -ne $true).Count -eq 0
     $historyPerTokenPassed = -not $historyAbsent -and
@@ -1158,12 +1390,178 @@ function Get-PerformanceInsightsEvidence {
         tileAuthorization=[ordered]@{tokenCount=$authTokenCount;
             dbLoad=[math]::Round($authLoad,6);sharePercent=$authPercent;dominanceThresholdPercent=50.0;
             absentFromTopTokens=($authTokenCount -eq 0);passed=$authPassed}
-        historyFallback=[ordered]@{tokenCount=$historyTokens.Count;dbLoad=[math]::Round($historyLoad,6)
+        historyFallback=[ordered]@{tokenCount=$historyTokenCount;dbLoad=[math]::Round($historyLoad,6)
             dataFileReadDbLoad=[math]::Round($historyDataFileReadLoad,6);dataFileReadSharePercent=$historySharePercent
             dominanceThresholdPercent=$script:HistoryIoDominanceThresholdPercent;perToken=$historyEvidence
             perTokenAllBelowThreshold=$historyPerTokenPassed;filteredWaitEventEvidenceRequired=$true
-            filteredWaitEventEvidenceComplete=$historyComplete;absentFromTopTokens=$historyAbsent;passed=$historyPassed}
+            filteredWaitEventEvidenceComplete=$historyComplete;absentFromTopTokens=$historyAbsent
+            missingHistoryTokenWindowCount=$missingHistoryTokenWindowCount;evidenceWindows=$evidenceWindows
+            source=$hotPath.Evidence;passed=$historyPassed}
         passed=($authPassed -and $historyPassed)
+    }
+}
+
+function Add-TerminalFailure {
+    param($Terminal, [string]$Failure)
+    if ([string]::IsNullOrWhiteSpace($Failure)) { return }
+    $existing = @($Terminal.failures)
+    if ($existing -notcontains $Failure) { $Terminal.failures = @($existing) + @($Failure) }
+}
+
+function Remove-TerminalFailure {
+    param($Terminal, [string]$Failure)
+    if ([string]::IsNullOrWhiteSpace($Failure)) { return }
+    $Terminal.failures = @($Terminal.failures | Where-Object { [string]$_ -cne $Failure })
+}
+
+function Attach-TerminalMonitorEvidence {
+    param($Terminal, $Config, [string]$MonitorResultPath, $MonitorProcess)
+    if (-not (Test-Path -LiteralPath $MonitorResultPath -PathType Leaf)) {
+        Add-TerminalFailure $Terminal "monitor_terminal_result_missing"
+        return $null
+    }
+    $sha256 = (Get-FileHash -LiteralPath $MonitorResultPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $priorSha256 = [string](Get-Value $Terminal.monitor "sha256" "")
+    if (-not [string]::IsNullOrWhiteSpace($priorSha256) -and $priorSha256 -cne $sha256) {
+        Add-TerminalFailure $Terminal "monitor_terminal_result_changed_after_attachment"
+    }
+    try { $result = Read-AtomicJson $MonitorResultPath }
+    catch {
+        $Terminal.monitor = [ordered]@{path=$MonitorResultPath;sha256=$sha256;result=$null;parseFailure=$true}
+        Add-TerminalFailure $Terminal "monitor_terminal_result_malformed"
+        return $null
+    }
+    $exitCode = $null
+    if ($null -ne $MonitorProcess) {
+        try {
+            $MonitorProcess.Refresh()
+            if ($MonitorProcess.HasExited) { $exitCode = [int]$MonitorProcess.ExitCode }
+        } catch { }
+    }
+    $Terminal.monitor = [ordered]@{path=$MonitorResultPath;sha256=$sha256;exitCode=$exitCode;result=$result}
+    Remove-TerminalFailure $Terminal "monitor_terminal_result_missing"
+    Remove-TerminalFailure $Terminal "monitor_terminal_result_malformed"
+    if ([string](Get-Value $result "runId" "") -cne [string]$Config.RunId -or
+        (Get-Value $result "diagnosticOnly" $false) -ne $true -or
+        (Get-Value $result "certificationEligible" $true) -ne $false) {
+        Add-TerminalFailure $Terminal "monitor_terminal_result_identity_mismatch"
+    } else {
+        Remove-TerminalFailure $Terminal "monitor_terminal_result_identity_mismatch"
+    }
+    return $result
+}
+
+function Collect-TerminalPostTrafficEvidence {
+    param($Terminal, $Config, [string]$ProgressPath, [string]$SummaryPath, [string]$DbiResourceId)
+    if ($null -eq $Terminal.observedTrafficWindow -or $Terminal.observedTrafficWindow.coherent -ne $true) {
+        try {
+            $observed = Get-ObservedTrafficWindow $Config $ProgressPath $SummaryPath
+            $Terminal.observedTrafficWindow = $observed.Evidence
+            Remove-TerminalFailure $Terminal "observed_traffic_window_unavailable"
+            if ($observed.Evidence.strictlyComplete -eq $true) {
+                Remove-TerminalFailure $Terminal "strict_traffic_duration_not_completed"
+            } else {
+                Add-TerminalFailure $Terminal "strict_traffic_duration_not_completed"
+            }
+        }
+        catch {
+            $Terminal.observedTrafficWindow = [ordered]@{
+                coherent=$false;strictlyComplete=$false;failureCode="observed_traffic_window_unavailable"
+                rawErrorPersisted=$false
+            }
+            Add-TerminalFailure $Terminal "observed_traffic_window_unavailable"
+            return
+        }
+    }
+    $startUtc = [string]$Terminal.observedTrafficWindow.startUtc
+    $endUtc = [string]$Terminal.observedTrafficWindow.endUtc
+    if ($null -eq $Terminal.postgresStatementTimeouts -or
+        (Get-Value $Terminal.postgresStatementTimeouts "collected" $true) -ne $true) {
+        try {
+            $Terminal.postgresStatementTimeouts = Get-Postgres57014Evidence $Config $startUtc $endUtc
+            Remove-TerminalFailure $Terminal "postgres_statement_timeout_evidence_unavailable"
+        }
+        catch {
+            $Terminal.postgresStatementTimeouts = [ordered]@{
+                diagnosticOnly=$true;sanitized=$true;collected=$false;passed=$false
+                failureCode="postgres_statement_timeout_evidence_unavailable";rawErrorPersisted=$false
+            }
+            Add-TerminalFailure $Terminal "postgres_statement_timeout_evidence_unavailable"
+        }
+    }
+    if ((Get-Value $Terminal.postgresStatementTimeouts "collected" $true) -eq $true) {
+        if ($Terminal.postgresStatementTimeouts.passed -eq $true) {
+            Remove-TerminalFailure $Terminal "postgres_statement_timeout_detected"
+        } else {
+            Add-TerminalFailure $Terminal "postgres_statement_timeout_detected"
+        }
+    }
+    if ($null -eq $Terminal.performanceInsights -or
+        (Get-Value $Terminal.performanceInsights "collected" $true) -ne $true) {
+        try {
+            $Terminal.performanceInsights = Get-PerformanceInsightsEvidence $Config $startUtc $endUtc $DbiResourceId
+            Remove-TerminalFailure $Terminal "performance_insights_evidence_unavailable"
+        }
+        catch {
+            $Terminal.performanceInsights = [ordered]@{
+                diagnosticOnly=$true;sanitized=$true;collected=$false;passed=$false
+                failureCode="performance_insights_evidence_unavailable";rawErrorPersisted=$false
+            }
+            Add-TerminalFailure $Terminal "performance_insights_evidence_unavailable"
+        }
+    }
+    if ((Get-Value $Terminal.performanceInsights "collected" $true) -eq $true) {
+        if ($Terminal.performanceInsights.tileAuthorization.passed -eq $true) {
+            Remove-TerminalFailure $Terminal "tile_authorization_pi_dominance_failed"
+        } else {
+            Add-TerminalFailure $Terminal "tile_authorization_pi_dominance_failed"
+        }
+        if ($Terminal.performanceInsights.historyFallback.passed -eq $true) {
+            Remove-TerminalFailure $Terminal "history_fallback_pi_evidence_failed"
+        } else {
+            Add-TerminalFailure $Terminal "history_fallback_pi_evidence_failed"
+        }
+    }
+    if ($null -eq $Terminal.postTrafficAwsPosture -or
+        (Get-Value $Terminal.postTrafficAwsPosture "collected" $true) -ne $true) {
+        try {
+            $Terminal.postTrafficAwsPosture = Get-AwsPosture $Config
+            Remove-TerminalFailure $Terminal "post_traffic_aws_posture_unavailable"
+        }
+        catch {
+            $Terminal.postTrafficAwsPosture = [ordered]@{
+                collected=$false;passed=$false;failureCode="post_traffic_aws_posture_unavailable";rawErrorPersisted=$false
+            }
+            Add-TerminalFailure $Terminal "post_traffic_aws_posture_unavailable"
+        }
+    }
+}
+
+function Set-TerminalEvidenceIntegrity {
+    param($Terminal, [string]$RestorationPath)
+    $embeddedHashes = [ordered]@{}
+    foreach ($binding in @(
+        [pscustomobject]@{Name="observedTrafficWindow";Value=$Terminal.observedTrafficWindow},
+        [pscustomobject]@{Name="postgresStatementTimeouts";Value=$Terminal.postgresStatementTimeouts},
+        [pscustomobject]@{Name="performanceInsights";Value=$Terminal.performanceInsights},
+        [pscustomobject]@{Name="postTrafficAwsPosture";Value=$Terminal.postTrafficAwsPosture}
+    )) {
+        if ($null -ne $binding.Value) {
+            $embeddedHashes[$binding.Name] = [ordered]@{storage="embedded";sha256=(Get-StableJsonSha256 $binding.Value)}
+        }
+    }
+    $restorationIntegrity = $null
+    if (Test-Path -LiteralPath $RestorationPath -PathType Leaf) {
+        $restorationIntegrity = [ordered]@{storage="file";path=$RestorationPath;
+            sha256=(Get-FileHash -LiteralPath $RestorationPath -Algorithm SHA256).Hash.ToLowerInvariant()}
+    }
+    $monitorIntegrity = if ($null -ne $Terminal.monitor -and
+        -not [string]::IsNullOrWhiteSpace([string]$Terminal.monitor.sha256)) {
+        [ordered]@{storage="file";path=$Terminal.monitor.path;sha256=$Terminal.monitor.sha256}
+    } else { $null }
+    $Terminal.evidenceIntegrity = [ordered]@{
+        algorithm="sha256";embeddedCanonicalization="powershell-convertto-json-depth-50-compress-utf8"
+        monitor=$monitorIntegrity;embeddedObjects=$embeddedHashes;scalingRestoration=$restorationIntegrity
     }
 }
 
@@ -1216,6 +1614,7 @@ $capturePath = Join-Path $config.EvidenceDirectory "$($config.RunId)-scaling-cap
 $restorationPath = Join-Path $config.EvidenceDirectory "$($config.RunId)-scaling-restoration.json"
 $resultPath = Join-Path $config.EvidenceDirectory "$($config.RunId)-diagnostic-result.json"
 $heartbeatPath = Join-Path $config.EvidenceDirectory "$($config.RunId)-coordinator-heartbeat.json"
+$monitorResultPath = Join-Path $config.EvidenceDirectory "$($config.RunId)-monitor-result.json"
 
 if ($Mode -eq "Validate") {
     $validationScratch = Get-ValidationScratchPaths $config
@@ -1250,15 +1649,19 @@ if ($Mode -eq "Restore") {
         $restoration = Restore-ScalingCapture $config $capture
         Write-AtomicJson $restorationPath $restoration
         if (-not (Test-Path -LiteralPath $resultPath)) {
+            $restorationSha256 = (Get-FileHash -LiteralPath $restorationPath -Algorithm SHA256).Hash.ToLowerInvariant()
             Write-AtomicJson $resultPath ([ordered]@{type="waf800_batch_diagnostic_terminal";schemaVersion=1;runId=$config.RunId;
                 diagnosticOnly=$true;certificationEligible=$false;supervisorSealed=$false;status="interrupted_restored";
-                timestamp=[DateTimeOffset]::UtcNow.ToString("o");scalingRestoration=$restoration})
+                timestamp=[DateTimeOffset]::UtcNow.ToString("o");scalingRestoration=$restoration;
+                evidenceIntegrity=[ordered]@{algorithm="sha256";scalingRestoration=[ordered]@{
+                    storage="file";path=$restorationPath;sha256=$restorationSha256}}})
         }
         $restoreExitCode = 0
     }
     catch {
         New-Item -ItemType Directory -Path $config.EvidenceDirectory -Force | Out-Null
-        Write-AtomicJson $restorationPath ([ordered]@{restored=$false;timestamp=[DateTimeOffset]::UtcNow.ToString("o");error=$_.Exception.Message})
+        Write-AtomicJson $restorationPath ([ordered]@{restored=$false;timestamp=[DateTimeOffset]::UtcNow.ToString("o");
+            failureCode="scaling_restoration_failed";messageSha256=(Get-StringSha256 $_.Exception.Message);rawErrorPersisted=$false})
     }
     finally { Exit-DiagnosticRunLock $runLock }
     exit $restoreExitCode
@@ -1278,6 +1681,7 @@ try {
         coordinator=(Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash.ToLowerInvariant()
         monitor=(Get-FileHash -LiteralPath $script:MonitorScript -Algorithm SHA256).Hash.ToLowerInvariant()
         harness=(Get-FileHash -LiteralPath $script:HarnessScript -Algorithm SHA256).Hash.ToLowerInvariant()
+        monotonicDeadline=(Get-FileHash -LiteralPath $script:MonotonicDeadlineScript -Algorithm SHA256).Hash.ToLowerInvariant()
     }
     $capture = [ordered]@{schemaVersion=1;runId=$config.RunId;configSha256=$config.Sha256;capturedAtUtc=[DateTimeOffset]::UtcNow.ToString("o");
         mutationStarted=$false;original=$awsPosture}
@@ -1302,9 +1706,11 @@ $terminal = [ordered]@{
     workload=[ordered]@{stage="800";devices=810;durationSeconds=1800;screenshotBytes=40960;canaryDevices=10;
         workloadSchemaVersion=$script:WorkloadSchemaVersion;endpointShapeSha256=$script:EndpointShapeSha256};
     initialAwsPosture=$awsPosture;pinnedAwsPosture=$null;preTrafficAwsPosture=$null;postTrafficAwsPosture=$null;terminalAwsPosture=$null;
-    monitor=$null;postgresStatementTimeouts=$null;performanceInsights=$null;scalingRestoration=$null
+    observedTrafficWindow=$null;monitor=$null;postgresStatementTimeouts=$null;performanceInsights=$null;scalingRestoration=$null;
+    evidenceIntegrity=$null;controllerFailure=$null
 }
 $exitCode = 2
+$acceptanceAdjudicated = $false
 try {
     Set-SleepPrevention $true
     $sleepHeld = $true
@@ -1321,7 +1727,7 @@ try {
     $monitorStdout = Join-Path $config.EvidenceDirectory "$($config.RunId)-monitor.stdout.log"
     $monitorStderr = Join-Path $config.EvidenceDirectory "$($config.RunId)-monitor.stderr.log"
     $monitorConfigPath = Join-Path $config.EvidenceDirectory "$($config.RunId)-monitor-config.json"
-    foreach ($path in @($generatorIpPath,$readyPath,$startGatePath,$harnessStdout,$harnessStderr,$monitorStdout,$monitorStderr,$monitorConfigPath)) {
+    foreach ($path in @($generatorIpPath,$readyPath,$startGatePath,$harnessStdout,$harnessStderr,$monitorStdout,$monitorStderr,$monitorConfigPath,$monitorResultPath)) {
         if (Test-Path -LiteralPath $path) { throw "Diagnostic child artifact already exists: $path" }
     }
     $launchedAt = Update-GeneratorPublicIpEvidence -Config $config -Path $generatorIpPath `
@@ -1388,70 +1794,87 @@ try {
         Write-AtomicJson $heartbeatPath ([ordered]@{runId=$config.RunId;status="running";timestamp=[DateTimeOffset]::UtcNow.ToString("o");
             harnessProcessId=$harness.Id;monitorProcessId=$monitor.Id;harnessExited=$harness.HasExited;monitorExited=$monitor.HasExited})
         if ($monitor.HasExited) { break }
-        if ($harness.HasExited -and $harness.ExitCode -ne 0) { throw "Diagnostic harness failed before monitor acceptance." }
         $now = [DateTimeOffset]::UtcNow
         if (($now - $lastGeneratorIpCheck).TotalSeconds -ge $script:GeneratorIpCheckSeconds) {
             $lastGeneratorIpCheck = Update-GeneratorPublicIpEvidence -Config $config -Path $generatorIpPath `
                 -FailureMessage "Generator public IPv4 changed during the diagnostic load run."
             $monitor.Refresh(); $harness.Refresh()
             if ($monitor.HasExited) { break }
-            if ($harness.HasExited -and $harness.ExitCode -ne 0) {
-                throw "Diagnostic harness failed during the generator IP check."
-            }
         }
         Start-Sleep -Seconds 30
     }
     $monitor.Refresh()
     if (-not $monitor.HasExited) { throw "Diagnostic monitor exceeded its bounded 50-minute deadline." }
-    $monitorResultPath = Join-Path $config.EvidenceDirectory "$($config.RunId)-monitor-result.json"
-    if (-not (Test-Path -LiteralPath $monitorResultPath)) { throw "Diagnostic monitor exited without a terminal result." }
-    $monitorResult = Read-AtomicJson $monitorResultPath
-    $terminal.monitor = [ordered]@{path=$monitorResultPath;sha256=(Get-FileHash $monitorResultPath -Algorithm SHA256).Hash.ToLowerInvariant();result=$monitorResult}
-    if ($monitor.ExitCode -ne 0 -or [string]$monitorResult.status -ne "completed" -or $monitorResult.diagnosticOnly -ne $true -or
-        $monitorResult.certificationEligible -ne $false -or $monitorResult.acceptance.passed -ne $true) {
-        throw "Diagnostic monitor did not accept the exact non-certifying run."
+    $monitorResult = Attach-TerminalMonitorEvidence $terminal $config $monitorResultPath $monitor
+    Collect-TerminalPostTrafficEvidence $terminal $config $progressPath $summaryPath ([string]$awsPosture.rds.dbiResourceId)
+    $harness.Refresh()
+    if (-not $harness.HasExited -or $harness.ExitCode -ne 0) {
+        Add-TerminalFailure $terminal "diagnostic_harness_rejected"
     }
-    $rdsCoverage = Get-Value $monitorResult.acceptance "diagnosticRdsCpuCoverage"
-    if ($null -eq $rdsCoverage -or $rdsCoverage.required -ne $true -or $rdsCoverage.fullCoverage -ne $true -or
-        $rdsCoverage.allPointsBelowMaximum -ne $true -or [int]$rdsCoverage.requiredPointCount -ne 30 -or
-        [int]$rdsCoverage.observedPointCount -lt 30) {
-        throw "Diagnostic monitor did not prove all 30 one-minute RDS CPU points below 65 percent."
+    $monitorAcceptance = Get-Value $monitorResult "acceptance"
+    if ($monitor.ExitCode -ne 0 -or $null -eq $monitorResult -or
+        [string](Get-Value $monitorResult "status" "") -ne "completed" -or
+        (Get-Value $monitorResult "diagnosticOnly" $false) -ne $true -or
+        (Get-Value $monitorResult "certificationEligible" $true) -ne $false -or
+        (Get-Value $monitorAcceptance "passed" $false) -ne $true) {
+        Add-TerminalFailure $terminal "diagnostic_monitor_rejected"
     }
-    $trafficWindow = Get-TrafficWindow $progressPath $summaryPath
-    $terminal.postgresStatementTimeouts = Get-Postgres57014Evidence $config $trafficWindow.startUtc $trafficWindow.endUtc
-    $terminal.performanceInsights = Get-PerformanceInsightsEvidence $config $trafficWindow.startUtc $trafficWindow.endUtc $awsPosture.rds.dbiResourceId
-    if ($terminal.postgresStatementTimeouts.passed -ne $true) {
-        throw "PostgreSQL SQLSTATE 57014 occurred in the exact production API logs during diagnostic traffic."
+    if ($null -ne $monitorResult) {
+        $rdsCoverage = Get-Value $monitorAcceptance "diagnosticRdsCpuCoverage"
+        if ($null -eq $rdsCoverage -or (Get-Value $rdsCoverage "required" $false) -ne $true -or
+            (Get-Value $rdsCoverage "fullCoverage" $false) -ne $true -or
+            (Get-Value $rdsCoverage "allPointsBelowMaximum" $false) -ne $true -or
+            [int](Get-Value $rdsCoverage "requiredPointCount" 0) -ne 30 -or
+            [int](Get-Value $rdsCoverage "observedPointCount" 0) -lt 30) {
+            Add-TerminalFailure $terminal "diagnostic_rds_cpu_30_of_30_gate_failed"
+        }
     }
-    if ($terminal.performanceInsights.tileAuthorization.passed -ne $true) {
-        throw "Tile-authorization SQL still dominated Performance Insights DB load."
+    $acceptanceAdjudicated = $true
+    if (@($terminal.failures).Count -eq 0) {
+        $terminal.status = "completed"
+        $exitCode = 0
+    } else {
+        $terminal.status = "failed"
+        $exitCode = 2
     }
-    if ($terminal.performanceInsights.historyFallback.passed -ne $true) {
-        throw "History fallback IO:DataFileRead still dominated Performance Insights DB load."
-    }
-    $terminal.postTrafficAwsPosture = Get-AwsPosture $config
-    $terminal.status = "completed"
-    $terminal.failures = @()
-    $exitCode = 0
 }
 catch {
     $terminal.status = "failed"
-    $terminal.failures = @($_.Exception.Message)
+    $terminal.controllerFailure = [ordered]@{
+        failureCode="controller_runtime_failure";messageSha256=(Get-StringSha256 $_.Exception.Message);rawErrorPersisted=$false
+    }
+    Add-TerminalFailure $terminal "controller_runtime_failure"
     $exitCode = 2
 }
 finally {
     try {
-        Stop-ProcessBounded $monitor
-        Stop-ProcessBounded $harness
+        try { Stop-ProcessBounded $monitor }
+        catch { Add-TerminalFailure $terminal "monitor_process_stop_failed" }
+        try { Stop-ProcessBounded $harness }
+        catch { Add-TerminalFailure $terminal "harness_process_stop_failed" }
+        try { [void](Attach-TerminalMonitorEvidence $terminal $config $monitorResultPath $monitor) }
+        catch { Add-TerminalFailure $terminal "monitor_terminal_evidence_attachment_failed" }
+        try {
+            Collect-TerminalPostTrafficEvidence $terminal $config $progressPath $summaryPath ([string]$awsPosture.rds.dbiResourceId)
+        }
+        catch { Add-TerminalFailure $terminal "post_traffic_evidence_collection_failed" }
+        if ($acceptanceAdjudicated -and @($terminal.failures).Count -eq 0) {
+            $terminal.status = "completed"
+            $exitCode = 0
+        } elseif (@($terminal.failures).Count -gt 0) {
+            $terminal.status = "failed"
+            if ($exitCode -eq 0) { $exitCode = 2 }
+        }
         if ($capture.mutationStarted -eq $true) {
             $restoration.attempted = $true
             try {
                 $restoration = Restore-ScalingCapture $config $capture
             }
             catch {
-                $restoration = [ordered]@{restored=$false;attempted=$true;timestamp=[DateTimeOffset]::UtcNow.ToString("o");error=$_.Exception.Message}
+                $restoration = [ordered]@{restored=$false;attempted=$true;timestamp=[DateTimeOffset]::UtcNow.ToString("o");
+                    failureCode="scaling_restoration_failed";messageSha256=(Get-StringSha256 $_.Exception.Message);rawErrorPersisted=$false}
                 $terminal.status = "failed"
-                $terminal.failures = @($terminal.failures) + @("scaling_restoration_failed")
+                Add-TerminalFailure $terminal "scaling_restoration_failed"
                 $exitCode = 4
             }
             Write-AtomicJson $restorationPath $restoration
@@ -1465,7 +1888,7 @@ finally {
                 $terminal.terminalAwsPosture = Get-AwsPosture $config
             }
             catch {
-                $terminal.failures = @($terminal.failures) + @("terminal_aws_posture_revalidation_failed: $($_.Exception.Message)")
+                Add-TerminalFailure $terminal "terminal_aws_posture_revalidation_failed"
                 if ($terminal.status -eq "completed") {
                     $terminal.status = "failed"
                     $exitCode = 2
@@ -1473,6 +1896,14 @@ finally {
             }
         }
         $terminal.scalingRestoration = $restoration
+        try { Set-TerminalEvidenceIntegrity $terminal $restorationPath }
+        catch {
+            $terminal.evidenceIntegrity = [ordered]@{algorithm="sha256";collected=$false;
+                failureCode="terminal_evidence_integrity_failed";rawErrorPersisted=$false}
+            Add-TerminalFailure $terminal "terminal_evidence_integrity_failed"
+            $terminal.status = "failed"
+            if ($exitCode -eq 0) { $exitCode = 2 }
+        }
         $terminal.timestamp = [DateTimeOffset]::UtcNow.ToString("o")
         Write-AtomicJson $resultPath $terminal
         Write-AtomicJson $heartbeatPath ([ordered]@{runId=$config.RunId;status=$terminal.status;timestamp=$terminal.timestamp;

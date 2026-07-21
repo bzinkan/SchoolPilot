@@ -12,6 +12,7 @@ import {
   observeCommandTargetStatuses,
   teacherSessionOwnerKey,
 } from "./command-status-observer.mjs";
+import { createMonotonicDeadline } from "./monotonic-deadline.mjs";
 
 const JPEG_1X1 =
   "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAH/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAEFAqf/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAEDAQE/ASP/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAECAQE/ASP/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAY/ASP/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAE/ISP/2gAMAwEAAgADAAAAEP/EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQMBAT8QH//EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQIBAT8QH//EABQQAQAAAAAAAAAAAAAAAAAAABD/2gAIAQEAAT8QH//Z";
@@ -25,6 +26,8 @@ const TILE_BATCH_ENDPOINT_SHAPE_SHA256 = createHash("sha256")
   .update(TILE_BATCH_ENDPOINT_SHAPE, "utf8")
   .digest("hex");
 const MAX_RESPONSE_CAPTURE_BYTES = 5 * 1024 * 1024;
+const NANOSECONDS_PER_MILLISECOND = 1_000_000n;
+const DURATION_CLOCK = "monotonic-hrtime-v1";
 const REPOSITORY_ROOT = fs.realpathSync(fileURLToPath(new URL("../../", import.meta.url)));
 // Low-level Node HTTP and ws clients do not add a User-Agent. Real managed
 // Chromebooks always send one, and AWSManagedRulesCommonRuleSet correctly
@@ -34,6 +37,26 @@ const LOAD_GATE_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36 SchoolPilot-ClassPilot-LoadGate/1.0";
 const ipv4HttpAgent = new http.Agent({ keepAlive: true, family: 4 });
 const ipv4HttpsAgent = new https.Agent({ keepAlive: true, family: 4 });
+
+function monotonicNowNs() {
+  return process.hrtime.bigint();
+}
+
+function monotonicNowMs() {
+  return Number(monotonicNowNs()) / Number(NANOSECONDS_PER_MILLISECOND);
+}
+
+function monotonicElapsedNs(startNs, endNs = monotonicNowNs()) {
+  return endNs >= startNs ? endNs - startNs : 0n;
+}
+
+function wholeMilliseconds(elapsedNs) {
+  return Number(elapsedNs / NANOSECONDS_PER_MILLISECOND);
+}
+
+function secondsFromMilliseconds(milliseconds) {
+  return Number((milliseconds / 1000).toFixed(3));
+}
 
 function ipv4Request(urlValue, { method, headers, body, signal }) {
   const url = new URL(urlValue);
@@ -275,7 +298,7 @@ class RollingWindowCounter {
     this.peak = 0;
   }
 
-  add(nowMs = Date.now()) {
+  add(nowMs = monotonicNowMs()) {
     const second = Math.floor(nowMs / 1000);
     if (this.lastSecond !== -1 && second - this.lastSecond >= this.windowSeconds) {
       this.counts.fill(0);
@@ -797,6 +820,37 @@ if (teacherAuthFileValue) {
     }, 0)];
   }
 }
+
+function revalidateArtifactLifetimeAtTrafficStart() {
+  const requiredUntil = Date.now() + durationMs + commandSettleMs + shutdownGraceMs;
+  for (const [index, device] of devices.entries()) {
+    const expiresAt = decodeJwtExpiry(device.studentToken);
+    if (expiresAt !== null && expiresAt <= requiredUntil) {
+      throw new Error(`LOAD_DEVICE_MANIFEST entry ${index + 1} expires before traffic can finish after supervisor release`);
+    }
+  }
+  for (const [index, auth] of teacherAuthInputs.entries()) {
+    if (auth.expiresAt !== null && auth.expiresAt <= requiredUntil) {
+      throw new Error(`Teacher auth entry ${index + 1} expires before traffic can finish after supervisor release`);
+    }
+    const jwtExpiry = auth.token ? decodeJwtExpiry(auth.token) : null;
+    if (jwtExpiry !== null && jwtExpiry <= requiredUntil) {
+      throw new Error(`Teacher auth entry ${index + 1} bearer token expires before traffic can finish after supervisor release`);
+    }
+  }
+  if (teacherAuthArtifactMeta) {
+    if (teacherAuthArtifactMeta.expiresAt !== null && teacherAuthArtifactMeta.expiresAt <= requiredUntil) {
+      throw new Error("Teacher auth artifact expires before traffic can finish after supervisor release");
+    }
+    if (
+      teacherAuthArtifactMeta.deviceManifestExpiresAt !== null &&
+      teacherAuthArtifactMeta.deviceManifestExpiresAt <= requiredUntil
+    ) {
+      throw new Error("Device manifest artifact expires before traffic can finish after supervisor release");
+    }
+  }
+}
+
 const hasTeacherHttpAuth = teacherAuthInputs.some((auth) => Boolean(auth.cookie || auth.token));
 const authSchoolIds = new Set(teacherAuthInputs.map((auth) => auth.schoolId).filter(Boolean));
 const teacherCommandOwnerKeys = new Set(
@@ -1165,17 +1219,18 @@ if (configuredRunId && (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(configuredRun
 const runId = configuredRunId || randomUUID();
 let stoppingTraffic = false;
 let shutdownPromise = null;
-let runStartedAt = Date.now();
-let trafficStoppedAt = 0;
+let runStartedAtMonoNs = monotonicNowNs();
+let trafficStoppedAtMonoNs = null;
 let activeCommandRequestStartedAt = 0;
 let commandRequestInFlight = false;
 let fatalGate = null;
 let nextRequestId = 1;
 let finalSocketGate = null;
 let progressDescriptor = null;
-let lastProgressAt = 0;
+let lastProgressAtMonoNs = null;
 let lastProgressCounters = null;
 let progressFinalized = !externalProgressPath;
+let durationDeadline = null;
 
 async function waitForSupervisorStartGate() {
   if (!supervisorStartGatePath) return;
@@ -1191,8 +1246,8 @@ async function waitForSupervisorStartGate() {
     trafficStarted: false,
   });
 
-  const deadline = Date.now() + supervisorStartGateTimeoutMs;
-  while (Date.now() < deadline) {
+  const deadlineNs = monotonicNowNs() + BigInt(supervisorStartGateTimeoutMs) * NANOSECONDS_PER_MILLISECOND;
+  while (monotonicNowNs() < deadlineNs) {
     if (fs.existsSync(supervisorStartGatePath)) {
       let release;
       try {
@@ -1287,8 +1342,9 @@ const counters = {
 };
 const statusCodes = Object.create(null);
 
-function progressRecord(event) {
-  const now = Date.now();
+function progressRecord(event, nowMonoNs = monotonicNowNs()) {
+  const nowWallMs = Date.now();
+  const previousProgressMonoNs = lastProgressAtMonoNs ?? runStartedAtMonoNs;
   const cumulativeCounters = {
     ...counters,
     status403: statusCodes[403] || 0,
@@ -1309,9 +1365,9 @@ function progressRecord(event) {
     stage,
     diagnosticOnly,
     certificationEligible: isLaunchGate && !diagnosticOnly,
-    timestamp: new Date(now).toISOString(),
-    elapsedSeconds: Number((Math.max(0, now - runStartedAt) / 1000).toFixed(1)),
-    deltaWindowSeconds: Number((Math.max(0, now - (lastProgressAt || runStartedAt)) / 1000).toFixed(1)),
+    timestamp: new Date(nowWallMs).toISOString(),
+    elapsedSeconds: Number((Number(monotonicElapsedNs(runStartedAtMonoNs, nowMonoNs)) / 1_000_000_000).toFixed(1)),
+    deltaWindowSeconds: Number((Number(monotonicElapsedNs(previousProgressMonoNs, nowMonoNs)) / 1_000_000_000).toFixed(1)),
     devices: devices.length,
     stoppingTraffic,
     cumulativeCounters,
@@ -1374,12 +1430,18 @@ function progressRecord(event) {
 
 function appendProgress(event) {
   if (progressDescriptor === null) return;
-  const record = progressRecord(event);
+  const nowMonoNs = monotonicNowNs();
+  const record = progressRecord(event, nowMonoNs);
   const line = `${JSON.stringify(record)}\n`;
   fs.writeSync(progressDescriptor, line, null, "utf8");
   fs.fsyncSync(progressDescriptor);
-  lastProgressAt = Date.parse(record.timestamp);
+  lastProgressAtMonoNs = nowMonoNs;
   lastProgressCounters = { ...record.cumulativeCounters };
+}
+
+function latchTrafficStop() {
+  stoppingTraffic = true;
+  trafficStoppedAtMonoNs ??= monotonicNowNs();
 }
 
 function triggerFatalGate(reason, details = {}, writeProgress = true) {
@@ -1393,8 +1455,7 @@ function triggerFatalGate(reason, details = {}, writeProgress = true) {
     ...details,
   };
   process.exitCode = 1;
-  stoppingTraffic = true;
-  trafficStoppedAt ||= Date.now();
+  latchTrafficStop();
   if (writeProgress) {
     try { appendProgress("fatal"); } catch { /* final summary still records the fatal gate */ }
   }
@@ -1566,7 +1627,7 @@ function observeHttp(record, status, error, responseBytes = 0) {
     }
     return;
   }
-  const latencyMs = Date.now() - record.startedAt;
+  const latencyMs = monotonicNowMs() - record.startedAt;
   const failed = Boolean(error) || status >= 400 || status === 0;
   histogram(record.kind).observe(latencyMs, failed);
   if (record.kind === "command") exactCommandLatency.observe(latencyMs, failed);
@@ -1707,7 +1768,7 @@ async function request(path, {
   expectedDeviceId = "",
   expectedStudentIds = null,
 }) {
-  const startedAt = Date.now();
+  const startedAt = monotonicNowMs();
   if (countWorkload) counters.httpTotal += 1;
   else counters.tenantIsolationProbeAttempts += 1;
   fiveMinuteRequests.add(startedAt);
@@ -1898,7 +1959,7 @@ function getCommandEntry(commandId) {
 }
 
 function observeServerCommandTargets(entry, targets) {
-  counters.commandServerStatusRegressions += observeCommandTargetStatuses(entry, targets);
+  counters.commandServerStatusRegressions += observeCommandTargetStatuses(entry, targets, monotonicNowMs());
 }
 
 function heartbeatBody(device) {
@@ -1953,7 +2014,7 @@ function sendCommandAck(state, commandId, status) {
       counters.commandCompletedAcksSent += 1;
       if (entry) {
         entry.completedAcksSent += 1;
-        if (entry.requestStartedAt && Date.now() - entry.requestStartedAt <= 5_000) {
+        if (entry.requestStartedAt && monotonicNowMs() - entry.requestStartedAt <= 5_000) {
           entry.completedAcksWithin5s += 1;
         }
       }
@@ -1980,7 +2041,7 @@ function handleDeviceMessage(state, raw, onAuthenticated) {
     authenticatedDeviceIds.add(state.device.deviceId);
     onAuthenticated();
     if (state.reconnectStartedAt) {
-      const elapsed = Date.now() - state.reconnectStartedAt;
+      const elapsed = monotonicNowMs() - state.reconnectStartedAt;
       reconnectLatency.observe(elapsed, elapsed > 30_000);
       counters.wsReconnectCompleted += 1;
       if (elapsed > 30_000) counters.wsReconnectLate += 1;
@@ -2028,7 +2089,7 @@ function handleDeviceMessage(state, raw, onAuthenticated) {
       return;
     }
     entry.messagesReceived += 1;
-    if (entry.requestStartedAt && Date.now() - entry.requestStartedAt <= 2_000) {
+    if (entry.requestStartedAt && monotonicNowMs() - entry.requestStartedAt <= 2_000) {
       entry.messagesWithin2s += 1;
     }
   }
@@ -2097,7 +2158,7 @@ function connectDevice(state) {
     if (stoppingTraffic || reason === "shutdown") return;
 
     if (!state.reconnectStartedAt) {
-      state.reconnectStartedAt = Date.now();
+      state.reconnectStartedAt = monotonicNowMs();
       counters.wsReconnectRequested += 1;
     }
     state.reconnectAttempt += 1;
@@ -2396,7 +2457,7 @@ function startCommandTraffic() {
   let nextBodyIndex = 0;
 
   const sendOne = async (body, classBodyIndex) => {
-    const requestStartedAt = Date.now();
+    const requestStartedAt = monotonicNowMs();
     activeCommandRequestStartedAt = requestStartedAt;
     counters.command += 1;
     try {
@@ -2556,7 +2617,7 @@ function scheduleForcedReconnect() {
           counters.forcedReconnectSkippedUnauthenticated += 1;
           return;
         }
-        const now = Date.now();
+        const now = monotonicNowMs();
         state.forcedReconnectStartedAt = now;
         if (!state.reconnectStartedAt) {
           state.reconnectStartedAt = now;
@@ -2600,16 +2661,18 @@ function captureFinalSocketGate() {
 }
 
 function summarize(shutdownReason) {
-  const elapsedMs = Math.max(1, Date.now() - runStartedAt);
-  const trafficElapsedMs = Math.max(1, (trafficStoppedAt || Date.now()) - runStartedAt);
-  const modeledTrafficElapsedMs = acceleratedRuntimeMs && shutdownReason === "duration"
+  const summarizedAtMonoNs = monotonicNowNs();
+  const stoppedAtMonoNs = trafficStoppedAtMonoNs ?? summarizedAtMonoNs;
+  const elapsedNs = monotonicElapsedNs(runStartedAtMonoNs, summarizedAtMonoNs);
+  const trafficElapsedNs = monotonicElapsedNs(runStartedAtMonoNs, stoppedAtMonoNs);
+  const elapsedMs = wholeMilliseconds(elapsedNs);
+  const trafficElapsedMs = wholeMilliseconds(trafficElapsedNs);
+  const requiredRuntimeNs = BigInt(runtimeDurationMs) * NANOSECONDS_PER_MILLISECOND;
+  const completedConfiguredDuration =
+    shutdownReason === "duration" && trafficElapsedNs >= requiredRuntimeNs;
+  const modeledTrafficElapsedMs = acceleratedRuntimeMs && completedConfiguredDuration
     ? durationMs
     : trafficElapsedMs;
-  const completedConfiguredDuration = shutdownReason === "duration" && (
-    acceleratedRuntimeMs
-      ? trafficElapsedMs + 50 >= runtimeDurationMs
-      : trafficElapsedMs >= durationMs
-  );
   const kinds = Object.fromEntries([...histograms.entries()].map(([kind, value]) => [kind, value.summary()]));
   const teacherEndpoints = Object.fromEntries(
     [...teacherEndpointHistograms.entries()].map(([endpoint, value]) => [endpoint, value.summary()])
@@ -2649,9 +2712,10 @@ function summarize(shutdownReason) {
     serverReceivedWithin2s: 0,
     serverCompletedWithin5s: 0,
   });
-  const projectedFiveMinuteRequests = Math.round((counters.httpTotal / modeledTrafficElapsedMs) * 300_000);
-  const projectedFiveMinuteDeviceRequests = Math.round((counters.wafDeviceIngestRequests / modeledTrafficElapsedMs) * 300_000);
-  const projectedFiveMinuteGeneralRequests = Math.round((counters.wafGeneralApiRequests / modeledTrafficElapsedMs) * 300_000);
+  const modeledTrafficDenominatorMs = Math.max(1, modeledTrafficElapsedMs);
+  const projectedFiveMinuteRequests = Math.round((counters.httpTotal / modeledTrafficDenominatorMs) * 300_000);
+  const projectedFiveMinuteDeviceRequests = Math.round((counters.wafDeviceIngestRequests / modeledTrafficDenominatorMs) * 300_000);
+  const projectedFiveMinuteGeneralRequests = Math.round((counters.wafGeneralApiRequests / modeledTrafficDenominatorMs) * 300_000);
   const failures = [];
   const fiveXxRate = ratio(counters.http5xx, counters.httpTotal);
   const networkErrorRate = ratio(counters.httpErrors, counters.httpTotal);
@@ -2672,7 +2736,10 @@ function summarize(shutdownReason) {
       failures.push(`run ended because of ${shutdownReason} before its configured duration completed`);
     }
     if (!completedConfiguredDuration) {
-      failures.push(`traffic ran for ${Math.round(trafficElapsedMs / 1000)}s of the configured ${Math.round(durationMs / 1000)}s`);
+      failures.push(
+        `traffic ran for ${secondsFromMilliseconds(trafficElapsedMs).toFixed(3)}s; ` +
+        `required execution window is ${secondsFromMilliseconds(runtimeDurationMs).toFixed(3)}s`
+      );
     }
     if (counters.http4xx > 0) failures.push(`valid traffic received ${counters.http4xx} HTTP 4xx responses`);
     if (counters.http3xx > 0) failures.push(`valid traffic received ${counters.http3xx} unexpected redirects`);
@@ -2846,10 +2913,14 @@ function summarize(shutdownReason) {
     declaredSecondSchoolCanaryDevices: canaryDevices,
     run: {
       shutdownReason,
-      plannedTrafficSeconds: Number((durationMs / 1000).toFixed(1)),
-      actualTrafficSeconds: Number((trafficElapsedMs / 1000).toFixed(1)),
-      modeledTrafficSeconds: Number((modeledTrafficElapsedMs / 1000).toFixed(1)),
-      totalElapsedSeconds: Number((elapsedMs / 1000).toFixed(1)),
+      durationClock: DURATION_CLOCK,
+      runtimeTargetTrafficSeconds: secondsFromMilliseconds(runtimeDurationMs),
+      plannedTrafficMilliseconds: durationMs,
+      actualTrafficMilliseconds: trafficElapsedMs,
+      plannedTrafficSeconds: secondsFromMilliseconds(durationMs),
+      actualTrafficSeconds: secondsFromMilliseconds(trafficElapsedMs),
+      modeledTrafficSeconds: secondsFromMilliseconds(modeledTrafficElapsedMs),
+      totalElapsedSeconds: secondsFromMilliseconds(elapsedMs),
       acceleratedLoopbackTest: Boolean(acceleratedRuntimeMs),
       testOnlyLatencyThresholdMultiplier: testLatencyThresholdMultiplier,
       completedConfiguredDuration,
@@ -2978,8 +3049,8 @@ function summarize(shutdownReason) {
 async function shutdown(reason) {
   if (shutdownPromise) return shutdownPromise;
   shutdownPromise = (async () => {
-    stoppingTraffic = true;
-    trafficStoppedAt ||= Date.now();
+    latchTrafficStop();
+    durationDeadline?.cancel();
     for (const timer of intervals) clearInterval(timer);
     intervals.clear();
 
@@ -3112,11 +3183,12 @@ if (validateConfigOnly) {
   // request until the bound AWS monitor has completed one healthy sample. The
   // supervisor releases this gate only after validating both process identities.
   await waitForSupervisorStartGate();
+  revalidateArtifactLifetimeAtTrafficStart();
   progressDescriptor = externalProgressPath
     ? fs.openSync(externalProgressPath, "a", 0o600)
     : null;
   console.log(`Starting ClassPilot load test: ${devices.length} devices, ${screenshotBytes}B screenshots, ${Math.round(durationMs / 1000)}s`);
-  runStartedAt = Date.now();
+  runStartedAtMonoNs = monotonicNowNs();
   appendProgressOrFail("start");
   if (!stoppingTraffic) {
     every(() => appendProgressOrFail("minute"), progressIntervalMs);
@@ -3128,7 +3200,14 @@ if (validateConfigOnly) {
     scheduleStaggered(teacherSocketStates, teacherIntervalMs, connectTeacherWebSocket);
     startCommandTraffic();
     scheduleForcedReconnect();
-    later(() => void shutdown("duration"), durationMs);
+    durationDeadline = createMonotonicDeadline({
+      deadlineNs: monotonicNowNs() + BigInt(runtimeDurationMs) * NANOSECONDS_PER_MILLISECOND,
+      nowNs: monotonicNowNs,
+      schedule: (callback, delayMs) => later(callback, delayMs, { scale: false }),
+      cancel: cancelLater,
+      onReached: () => void shutdown("duration"),
+    });
+    durationDeadline.start();
   }
 }
 

@@ -62,6 +62,7 @@ try {
     $summaryFinalAt = [DateTimeOffset]::UtcNow
     $script:TrafficStartedAtUtc = $summaryFinalAt.AddSeconds(-1800)
     $summaryConfig = [pscustomobject]@{
+        TestMode=$false
         RunId="summary-contract";Workload=[pscustomobject]@{
             Stage="500";Devices=510;CanaryDevices=10;ScreenshotBytes=40960;DurationSeconds=1800
             WorkloadSchemaVersion=$script:RequiredWorkloadSchemaVersion
@@ -75,7 +76,12 @@ try {
             workloadSchemaVersion=$script:RequiredWorkloadSchemaVersion
             workloadEndpointShapeSha256=$script:RequiredWorkloadEndpointShapeSha256
             screenshotFixture=[pscustomobject]@{decodedBytes=40960}
-            run=[pscustomobject]@{plannedTrafficSeconds=1800;actualTrafficSeconds=1800;completedConfiguredDuration=$true}
+            run=[pscustomobject]@{
+                durationClock="monotonic-hrtime-v1";runtimeTargetTrafficSeconds=1800
+                plannedTrafficMilliseconds=1800000;actualTrafficMilliseconds=1800000
+                plannedTrafficSeconds=1800;actualTrafficSeconds=1800;completedConfiguredDuration=$true
+                shutdownReason="duration"
+            }
             screenshotRetrieval=[pscustomobject]@{attempts=500;successes=500}
             tileBatch=[pscustomobject]@{configured=$true;teacherCohorts=20;studentsPerCohort=25;teacherTileAssignments=500;requestsPerCohortPerPoll=2;logicalOperationsPerPoll=1000;historyRequests=20;screenshotRequests=20;historyLogicalOperations=500;screenshotLogicalOperations=500;networkRequests=40;logicalOperations=1000}
         }
@@ -113,7 +119,10 @@ try {
     $appSha = "1" * 40;$rollbackApiSha="4"*40;$rollbackWorkerSha="5"*40
     $controllerSha = "2" * 40;$digest = "sha256:" + ("3" * 64)
     $rollbackApiDigest="sha256:"+("6"*64);$rollbackWorkerDigest="sha256:"+("7"*64)
-    $controllerHashes = [ordered]@{supervisor="a"*64;monitor="b"*64;rollback="c"*64;harness="d"*64;preparer="e"*64;savedPlanValidator="f"*64}
+    $controllerHashes = [ordered]@{
+        supervisor="a"*64;monitor="b"*64;rollback="c"*64;harness="d"*64
+        monotonicDeadline="e"*64;preparer="f"*64;savedPlanValidator="0"*64
+    }
     $chainId = "chain-one";$priorRunId="prior-waf-500"
     $activeApiArn="arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api:17"
     $activeWorkerArn="arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:37"

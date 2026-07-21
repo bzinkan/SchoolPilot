@@ -8,14 +8,18 @@ $controllerPath = Join-Path $root "scripts/load/start-waf800-batch-diagnostic.ps
 $monitorPath = Join-Path $root "scripts/load/aws-rollout-monitor.ps1"
 $supervisorPath = Join-Path $root "scripts/load/start-aws-rollout-supervisor.ps1"
 $harnessPath = Join-Path $root "scripts/load/classpilot-load-test.mjs"
+$monotonicDeadlinePath = Join-Path $root "scripts/load/monotonic-deadline.mjs"
+$script:AssertionCount = 0
 
 function Assert-Condition {
     param([bool]$Condition, [string]$Message)
+    $script:AssertionCount++
     if (-not $Condition) { throw $Message }
 }
 
 function Assert-Throws {
     param([scriptblock]$Operation, [string]$Pattern, [string]$Message)
+    $script:AssertionCount++
     $threw = $false
     try { & $Operation }
     catch {
@@ -69,7 +73,12 @@ foreach ($required in @(
     'Assert-HealthyMonitorHeartbeat','GeneratorIpCheckSeconds -ge $script:MonitorHeartbeatStaleSeconds',
     'LOAD_TILE_HISTORY_PATH="/api/classpilot/tiles/history"',
     'LOAD_TILE_SCREENSHOTS_PATH="/api/classpilot/tiles/screenshots"',
-    'LOAD_SCREENSHOT_GET_PATH_TEMPLATE=""'
+    'LOAD_SCREENSHOT_GET_PATH_TEMPLATE=""',
+    'DurationClock = "monotonic-hrtime-v1"','DiagnosticPlannedTrafficMilliseconds = 1800000L',
+    'classpilot_heartbeat_hot_path_summary','tileBatchHistoryDatabaseMs','Get-HotPathFallbackEvidenceWindows',
+    'observedTrafficWindow=$null','Collect-TerminalPostTrafficEvidence','strict_traffic_duration_not_completed',
+    'embeddedCanonicalization="powershell-convertto-json-depth-50-compress-utf8"',
+    'monotonicDeadline=(Get-FileHash -LiteralPath $script:MonotonicDeadlineScript'
 )) {
     Assert-Condition ($controller.Contains($required)) "Diagnostic controller is missing invariant: $required"
 }
@@ -100,6 +109,18 @@ Assert-Condition ($runtimeLoopIndex -ge 0 -and $runtimePreLookupExitIndex -gt $r
     $runtimeIpIndex -gt $runtimePreLookupExitIndex -and $runtimePostLookupRefreshIndex -gt $runtimeIpIndex -and
     $runtimePostLookupExitIndex -gt $runtimePostLookupRefreshIndex) "Runtime child liveness checks must surround each potentially blocking generator IP refresh."
 Assert-Condition ($controller.Contains('$terminal.terminalAwsPosture = Get-AwsPosture $config')) "Exact AWS posture must be revalidated at terminal success."
+Assert-Condition (-not $controller.Contains('error=$_.Exception.Message')) 'Diagnostic terminal/restoration evidence must never persist raw exception messages.'
+Assert-Condition (-not $controller.Contains('Diagnostic harness failed before monitor acceptance.')) 'A nonzero harness exit must not prevent the monitor from sealing terminal evidence.'
+Assert-Condition (-not $controller.Contains('Diagnostic harness failed during the generator IP check.')) 'A nonzero harness exit during an IP refresh must not bypass monitor sealing.'
+$stopChildrenIndex = $controller.LastIndexOf('Stop-ProcessBounded $monitor')
+$finallyIndex = $controller.LastIndexOf('finally {', $stopChildrenIndex)
+$attachMonitorIndex = $controller.IndexOf('Attach-TerminalMonitorEvidence $terminal', $stopChildrenIndex)
+$collectEvidenceIndex = $controller.IndexOf('Collect-TerminalPostTrafficEvidence $terminal', $attachMonitorIndex)
+$restoreScalingIndex = $controller.IndexOf('Restore-ScalingCapture $config $capture', $collectEvidenceIndex)
+Assert-Condition ($finallyIndex -ge 0 -and $stopChildrenIndex -gt $finallyIndex -and $attachMonitorIndex -gt $stopChildrenIndex -and
+    $collectEvidenceIndex -gt $attachMonitorIndex -and $restoreScalingIndex -gt $collectEvidenceIndex) 'The final path must stop children, attach the sealed monitor result, and collect post-traffic evidence before scaling restoration.'
+Assert-Condition ((Test-Path -LiteralPath $monotonicDeadlinePath -PathType Leaf) -and
+    $controller.Contains('$script:MonotonicDeadlineScript = Join-Path $PSScriptRoot "monotonic-deadline.mjs"')) 'The controller must bind the exact monotonic deadline helper imported by the harness.'
 Assert-Condition ($controller.Contains('$healthyTargets = Get-HealthyTargetCount $Config')) "Read-only AWS posture validation must retain strict target-health enforcement."
 Assert-Condition ($controller.Contains('$output.Count -ne 1')) "Controller Git identity must require exactly one native-command output line."
 Assert-Condition (-not $controller.Contains('start-aws-rollout-supervisor.ps1')) "Diagnostic controller must never call the certification supervisor."
@@ -124,7 +145,9 @@ foreach ($name in @(
     'Wait-TargetHealthConvergence','Get-HealthyTargetCount','Restore-ScalingCapture',
     'Update-GeneratorPublicIpEvidence','Assert-HealthyMonitorHeartbeat','Resolve-ApiAwslogsBinding',
     'Get-BoundApiAwslogsBinding','Get-Postgres57014Evidence','Get-HistoryFallbackWaitEventEvidence',
-    'Get-PerformanceInsightsEvidence'
+    'Get-ObservedTrafficWindow','Get-TrafficWindow','Get-PerformanceInsightsTopTokens','Get-HotPathFallbackEvidenceWindows',
+    'Get-PerformanceInsightsEvidence','Add-TerminalFailure','Remove-TerminalFailure','Attach-TerminalMonitorEvidence',
+    'Collect-TerminalPostTrafficEvidence','Set-TerminalEvidenceIntegrity'
 )) { Import-ScriptFunction $controllerAst $name }
 
 $script:RepositoryRoot = $root
@@ -223,6 +246,80 @@ $script:AuthSqlMarkers = @(
 $script:HistoryFallbackSqlMarkers = @('requested_tiles','heartbeats','lateral')
 $script:HistoryIoDominanceThresholdPercent = 50.0
 $script:PerformanceInsightsCoverageTolerancePercent = 0.5
+$script:WorkloadSchemaVersion = 'classpilot-tile-batch-v1'
+$script:EndpointShapeSha256 = '8e9f1942e4b3a27de7dd0571a9f60ffeb276c089e4baae96a885dba69e3233b2'
+$script:DurationClock = 'monotonic-hrtime-v1'
+$script:DiagnosticRuntimeTargetTrafficSeconds = 1800.0
+$script:DiagnosticPlannedTrafficMilliseconds = 1800000L
+$script:HotPathSummaryEvent = 'classpilot_heartbeat_hot_path_summary'
+$script:HotPathSummaryIntervalSeconds = 60
+
+function Read-AtomicJson {
+    param([string]$Path)
+    return Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -Depth 50
+}
+function Write-TestTrafficEvidence {
+    param(
+        [string]$ProgressPath,
+        [string]$SummaryPath,
+        [long]$ActualMilliseconds,
+        [bool]$CompletedConfiguredDuration,
+        [string]$DurationClock = 'monotonic-hrtime-v1',
+        [string]$FinalTimestamp = '2026-07-20T12:30:05Z'
+    )
+    $progress = @(
+        [ordered]@{schemaVersion=1;type='progress';event='start';runId='diagnostic-window-test';stage='800';
+            diagnosticOnly=$true;certificationEligible=$false;timestamp='2026-07-20T12:00:00Z';devices=810},
+        [ordered]@{schemaVersion=1;type='progress';event='final';runId='diagnostic-window-test';stage='800';
+            diagnosticOnly=$true;certificationEligible=$false;timestamp=$FinalTimestamp;devices=810}
+    ) | ForEach-Object { $_ | ConvertTo-Json -Depth 10 -Compress }
+    [IO.File]::WriteAllLines($ProgressPath, $progress, [Text.UTF8Encoding]::new($false))
+    $summary = [ordered]@{
+        runId='diagnostic-window-test';stage='800';diagnosticOnly=$true;certificationEligible=$false;devices=810
+        workloadSchemaVersion=$script:WorkloadSchemaVersion;workloadEndpointShapeSha256=$script:EndpointShapeSha256
+        run=[ordered]@{
+            shutdownReason='duration';durationClock=$DurationClock;runtimeTargetTrafficSeconds=1800
+            plannedTrafficMilliseconds=1800000;actualTrafficMilliseconds=$ActualMilliseconds
+            plannedTrafficSeconds=1800;actualTrafficSeconds=($ActualMilliseconds / 1000.0)
+            completedConfiguredDuration=$CompletedConfiguredDuration
+        }
+    }
+    [IO.File]::WriteAllText($SummaryPath, ($summary | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+}
+
+$trafficEvidenceDirectory = Join-Path ([IO.Path]::GetTempPath()) "schoolpilot-diagnostic-window-$([guid]::NewGuid().ToString('N'))"
+[void](New-Item -ItemType Directory -Path $trafficEvidenceDirectory)
+$trafficProgressPath = Join-Path $trafficEvidenceDirectory 'progress.jsonl'
+$trafficSummaryPath = Join-Path $trafficEvidenceDirectory 'summary.json'
+$trafficWindowConfig = [pscustomobject]@{RunId='diagnostic-window-test'}
+try {
+    Write-TestTrafficEvidence $trafficProgressPath $trafficSummaryPath 1799900 $false
+    $observedRejected = Get-ObservedTrafficWindow $trafficWindowConfig $trafficProgressPath $trafficSummaryPath
+    Assert-Condition ($observedRejected.Evidence.coherent -and -not $observedRejected.Evidence.strictlyComplete -and
+        $observedRejected.Evidence.actualTrafficMilliseconds -eq 1799900 -and
+        $observedRejected.Evidence.durationClock -ceq 'monotonic-hrtime-v1') 'A coherent 1799.9-second run must remain observable but strictly rejected.'
+    Assert-Throws { Get-TrafficWindow $trafficWindowConfig $trafficProgressPath $trafficSummaryPath } 'exact completed diagnostic-only' 'Strict traffic acceptance must reject a monotonic interval below 1,800,000 ms.'
+
+    Write-TestTrafficEvidence $trafficProgressPath $trafficSummaryPath 1800000 $true 'monotonic-hrtime-v1' '2026-07-20T11:55:00Z'
+    $strictWindow = Get-TrafficWindow $trafficWindowConfig $trafficProgressPath $trafficSummaryPath
+    Assert-Condition ([DateTimeOffset]$strictWindow.startUtc -eq [DateTimeOffset]'2026-07-20T12:00:00Z' -and
+        [DateTimeOffset]$strictWindow.endUtc -eq [DateTimeOffset]'2026-07-20T12:30:00Z') 'Strict duration must derive solely from monotonic milliseconds even if wall-clock labels roll backward.'
+
+    Write-TestTrafficEvidence $trafficProgressPath $trafficSummaryPath 2200000 $true 'monotonic-hrtime-v1' '2026-07-20T11:55:00Z'
+    $lateStrictWindow = Get-TrafficWindow $trafficWindowConfig $trafficProgressPath $trafficSummaryPath
+    Assert-Condition ([DateTimeOffset]$lateStrictWindow.endUtc -eq [DateTimeOffset]'2026-07-20T12:36:40Z') 'A late monotonic deadline callback must preserve its full coherent observed window and remain strict once the minimum duration is met.'
+
+    Write-TestTrafficEvidence $trafficProgressPath $trafficSummaryPath 1800000 $true 'wall-clock-v1'
+    Assert-Throws { Get-ObservedTrafficWindow $trafficWindowConfig $trafficProgressPath $trafficSummaryPath } 'reviewed monotonic clock' 'A missing or mismatched monotonic duration-clock identity must fail closed.'
+
+    Write-TestTrafficEvidence $trafficProgressPath $trafficSummaryPath 1800000 $true
+    $stringTimingSummary = Read-AtomicJson $trafficSummaryPath
+    $stringTimingSummary.run.actualTrafficMilliseconds = '1800000'
+    [IO.File]::WriteAllText($trafficSummaryPath, ($stringTimingSummary | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+    Assert-Throws { Get-ObservedTrafficWindow $trafficWindowConfig $trafficProgressPath $trafficSummaryPath } 'must be JSON numbers' 'Stringified monotonic timing fields must not satisfy strict duration evidence.'
+}
+finally { Remove-Item -LiteralPath $trafficEvidenceDirectory -Recurse -Force }
+
 $apiTaskArn = 'arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:99'
 $script:diagnosticTaskDefinition = [pscustomobject]@{
     taskDefinitionArn=$apiTaskArn
@@ -250,6 +347,7 @@ Assert-Throws { Resolve-ApiAwslogsBinding $script:diagnosticTaskDefinition ($api
 
 $script:diagnosticAwsCalls = [System.Collections.Generic.List[object]]::new()
 $script:diagnosticLogResponse = [pscustomobject]@{events=@();searchedLogStreams=@()}
+$script:diagnosticHotPathLogResponse = [pscustomobject]@{events=@();searchedLogStreams=@()}
 $script:diagnosticMetricResponse = [pscustomobject]@{
     MetricList=@([pscustomobject]@{DataPoints=@([pscustomobject]@{Value=2.5},[pscustomobject]@{Value=2.5})})
 }
@@ -273,6 +371,7 @@ $script:diagnosticWaitResponses = @{
     )}
 }
 $script:diagnosticWaitCallCount = 0
+$script:diagnosticTopTokenCalls = [System.Collections.Generic.List[object]]::new()
 function Get-TestArgumentValue {
     param([string[]]$Arguments,[string]$Name)
     $index = [Array]::IndexOf($Arguments,$Name)
@@ -289,15 +388,21 @@ function Invoke-AwsJson {
             return [pscustomobject]@{taskDefinition=$script:diagnosticTaskDefinition}
         }
         'logs filter-log-events' {
-            Assert-Condition ((Get-TestArgumentValue $Arguments '--log-group-name') -ceq '/ecs/schoolpilot-production-api') 'The timeout query must use the task-definition-derived log group.'
-            Assert-Condition ((Get-TestArgumentValue $Arguments '--log-stream-name-prefix') -ceq 'api/api/') 'The timeout query must use only exact API container streams.'
-            Assert-Condition ((Get-TestArgumentValue $Arguments '--filter-pattern') -ceq '"57014"') 'The timeout query must select SQLSTATE 57014 without persisting raw messages.'
-            return $script:diagnosticLogResponse
+            Assert-Condition ((Get-TestArgumentValue $Arguments '--log-group-name') -ceq '/ecs/schoolpilot-production-api') 'Log evidence must use the task-definition-derived log group.'
+            Assert-Condition ((Get-TestArgumentValue $Arguments '--log-stream-name-prefix') -ceq 'api/api/') 'Log evidence must use only exact API container streams.'
+            $filterPattern = Get-TestArgumentValue $Arguments '--filter-pattern'
+            if ($filterPattern -ceq '"57014"') { return $script:diagnosticLogResponse }
+            Assert-Condition ($filterPattern -ceq '"classpilot_heartbeat_hot_path_summary"') 'Fallback evidence must select only sanitized hot-path summary events.'
+            return $script:diagnosticHotPathLogResponse
         }
         'pi get-resource-metrics' { return $script:diagnosticMetricResponse }
         'pi describe-dimension-keys' {
             $groupBy = Get-TestArgumentValue $Arguments '--group-by'
             if ($groupBy -ceq 'Group=db.sql_tokenized,Limit=25') {
+                $script:diagnosticTopTokenCalls.Add([pscustomobject]@{
+                    StartUtc=Get-TestArgumentValue $Arguments '--start-time'
+                    EndUtc=Get-TestArgumentValue $Arguments '--end-time'
+                })
                 return [pscustomobject]@{Keys=$script:diagnosticTopKeys}
             }
             Assert-Condition ($groupBy -ceq 'Group=db.wait_event,Limit=25') 'Present history tokens must be resolved through filtered wait-event evidence.'
@@ -333,16 +438,123 @@ Assert-Throws { Get-Postgres57014Evidence $diagnosticConfig $trafficStart $traff
 $script:diagnosticLogResponse = [pscustomobject]@{events=@();nextToken='unconsumed-page'}
 Assert-Throws { Get-Postgres57014Evidence $diagnosticConfig $trafficStart $trafficEnd } 'complete PostgreSQL timeout evidence' 'An unconsumed CloudWatch pagination token must fail closed.'
 $script:diagnosticLogResponse = [pscustomobject]@{events=@()}
+$hotPathMessage = [ordered]@{
+    event='classpilot_heartbeat_hot_path_summary';intervalSeconds=60
+    counters=[ordered]@{tileBatchHistoryFallbackItems=40}
+    timings=[ordered]@{tileBatchHistoryDatabaseMs=[ordered]@{count=1;totalMs=12.5;maxMs=12.5}}
+} | ConvertTo-Json -Depth 10 -Compress
+$script:diagnosticHotPathLogResponse = [pscustomobject]@{events=@([pscustomobject]@{
+    timestamp=$startMs + 60000;logStreamName='api/api/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+    eventId='hot-path-raw-event-id';message=$hotPathMessage
+})}
 
 $script:diagnosticWaitCallCount = 0
+$script:diagnosticTopTokenCalls.Clear()
 $piEvidence = Get-PerformanceInsightsEvidence $diagnosticConfig $trafficStart $trafficEnd 'db-resource-id'
 Assert-Condition ($piEvidence.passed -and $piEvidence.tileAuthorization.passed) 'Existing aggregate tile-authorization non-dominance must remain enforced.'
 Assert-Condition ($piEvidence.historyFallback.tokenCount -eq 1 -and $piEvidence.historyFallback.filteredWaitEventEvidenceComplete -and
     $piEvidence.historyFallback.perTokenAllBelowThreshold -and $piEvidence.historyFallback.dataFileReadSharePercent -eq 20.0 -and
-    $script:diagnosticWaitCallCount -eq 1) 'A present optimized history token must have complete per-token and aggregate IO:DataFileRead evidence below 50 percent.'
+    $piEvidence.historyFallback.source.fallbackPositiveSummaryCount -eq 1 -and
+    $piEvidence.historyFallback.source.batchHistoryDatabaseReadCount -eq 1 -and
+    $piEvidence.historyFallback.evidenceWindows.Count -eq 1 -and
+    $script:diagnosticWaitCallCount -eq 1) 'A fallback-positive batch database-read window must have complete per-token and aggregate IO:DataFileRead evidence below 50 percent.'
+Assert-Condition ($script:diagnosticTopTokenCalls.Count -eq 2 -and
+    [DateTimeOffset]$script:diagnosticTopTokenCalls[1].StartUtc -eq [DateTimeOffset]'2026-07-20T12:00:00Z' -and
+    [DateTimeOffset]$script:diagnosticTopTokenCalls[1].EndUtc -eq [DateTimeOffset]'2026-07-20T12:01:00Z') 'A fallback-positive 60-second hot-path summary must drive an exact-window PI top-25 query.'
 $piEvidenceJson = $piEvidence | ConvertTo-Json -Depth 20 -Compress
 Assert-Condition (-not $piEvidenceJson.Contains('history-token-1') -and -not $piEvidenceJson.Contains('requested_tiles') -and
-    -not $piEvidenceJson.Contains('IO:DataFileRead')) 'Performance Insights evidence must retain hashes/categories rather than raw SQL, token ids, or wait-event names.'
+    -not $piEvidenceJson.Contains('IO:DataFileRead') -and -not $piEvidenceJson.Contains('hot-path-raw-event-id') -and
+    -not $piEvidenceJson.Contains('bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb') -and -not $piEvidenceJson.Contains('api/api/')) 'Performance Insights evidence must retain hashes/categories rather than raw SQL, token ids, log messages, stream ids, or wait-event names.'
+
+$validHotPathLogResponse = $script:diagnosticHotPathLogResponse
+$counterOnlyMessage = [ordered]@{
+    event='classpilot_heartbeat_hot_path_summary';intervalSeconds=60
+    counters=[ordered]@{tileBatchHistoryFallbackItems=40};timings=[ordered]@{}
+} | ConvertTo-Json -Depth 10 -Compress
+$script:diagnosticHotPathLogResponse = [pscustomobject]@{events=@([pscustomobject]@{
+    timestamp=$startMs + 60000;logStreamName='api/api/cccccccccccccccccccccccccccccccc';message=$counterOnlyMessage
+})}
+Assert-Throws { Get-HotPathFallbackEvidenceWindows $diagnosticConfig $trafficStart $trafficEnd } 'batch history database timing' 'A fallback counter without a same-summary batch database-read timing must fail closed.'
+
+$zeroFallbackMessage = [ordered]@{
+    event='classpilot_heartbeat_hot_path_summary';intervalSeconds=60
+    counters=[ordered]@{tileBatchHistoryFallbackItems=0};timings=[ordered]@{}
+} | ConvertTo-Json -Depth 10 -Compress
+$script:diagnosticHotPathLogResponse = [pscustomobject]@{events=@([pscustomobject]@{
+    timestamp=$startMs + 60000;logStreamName='api/api/dddddddddddddddddddddddddddddddd';message=$zeroFallbackMessage
+})}
+$script:diagnosticWaitCallCount = 0
+$noFallbackWindow = Get-PerformanceInsightsEvidence $diagnosticConfig $trafficStart $trafficEnd 'db-resource-id'
+Assert-Condition (-not $noFallbackWindow.passed -and -not $noFallbackWindow.historyFallback.passed -and
+    $noFallbackWindow.historyFallback.source.fallbackPositiveSummaryCount -eq 0 -and
+    $script:diagnosticWaitCallCount -eq 0) 'A run with no observed batch fallback/database-read window must fail closed without fabricating per-token wait evidence.'
+
+$script:diagnosticHotPathLogResponse = [pscustomobject]@{events=@();nextToken='unconsumed-hot-path-page'}
+Assert-Throws { Get-HotPathFallbackEvidenceWindows $diagnosticConfig $trafficStart $trafficEnd } 'complete hot-path summary evidence' 'Incomplete hot-path CloudWatch pagination must fail closed.'
+$script:diagnosticHotPathLogResponse = $validHotPathLogResponse
+
+$preservationDirectory = Join-Path ([IO.Path]::GetTempPath()) "schoolpilot-diagnostic-preservation-$([guid]::NewGuid().ToString('N'))"
+[void](New-Item -ItemType Directory -Path $preservationDirectory)
+$preservationProgressPath = Join-Path $preservationDirectory 'progress.jsonl'
+$preservationSummaryPath = Join-Path $preservationDirectory 'summary.json'
+$monitorResultTestPath = Join-Path $preservationDirectory 'monitor-result.json'
+$restorationIntegrityTestPath = Join-Path $preservationDirectory 'scaling-restoration.json'
+try {
+    Write-TestTrafficEvidence $preservationProgressPath $preservationSummaryPath 1799900 $false
+    $rejectedMonitorResult = [ordered]@{runId='diagnostic-window-test';status='failed';diagnosticOnly=$true;
+        certificationEligible=$false;acceptance=[ordered]@{passed=$false}}
+    [IO.File]::WriteAllText($monitorResultTestPath, ($rejectedMonitorResult | ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false))
+    $preservedTerminal = [ordered]@{failures=@();monitor=$null;observedTrafficWindow=$null;postgresStatementTimeouts=$null;
+        performanceInsights=$null;postTrafficAwsPosture=$null;evidenceIntegrity=$null}
+    $preservationConfig = [pscustomobject]@{RunId='diagnostic-window-test';ApiTaskDefinitionArn=$apiTaskArn;
+        Resources=[pscustomobject]@{region='us-east-1'}}
+    $attachedRejectedMonitor = Attach-TerminalMonitorEvidence $preservedTerminal $preservationConfig $monitorResultTestPath $null
+    Assert-Condition ($null -ne $attachedRejectedMonitor -and $preservedTerminal.monitor.result.status -eq 'failed' -and
+        [string]$preservedTerminal.monitor.sha256 -match '^[0-9a-f]{64}$') 'A rejected monitor result must still be attached and SHA-256 bound.'
+    function Get-AwsPosture { param($Config) return [ordered]@{collected=$true;wafMode='BLOCK';rdsClass='db.t4g.medium'} }
+    $script:diagnosticLogResponse = [pscustomobject]@{events=@()}
+    $script:diagnosticHotPathLogResponse = $validHotPathLogResponse
+    $script:diagnosticWaitResponses['history-token-1'] = [pscustomobject]@{Keys=@(
+        [pscustomobject]@{Total=0.2;Dimensions=[pscustomobject]@{'db.wait_event.name'='DataFileRead';'db.wait_event.type'='IO'}},
+        [pscustomobject]@{Total=0.8;Dimensions=[pscustomobject]@{'db.wait_event.name'='CPU';'db.wait_event.type'='CPU'}}
+    )}
+    Collect-TerminalPostTrafficEvidence $preservedTerminal $preservationConfig $preservationProgressPath $preservationSummaryPath 'db-resource-id'
+    Assert-Condition ($preservedTerminal.observedTrafficWindow.coherent -and
+        -not $preservedTerminal.observedTrafficWindow.strictlyComplete -and
+        $null -ne $preservedTerminal.postgresStatementTimeouts -and $null -ne $preservedTerminal.performanceInsights -and
+        $null -ne $preservedTerminal.postTrafficAwsPosture -and
+        @($preservedTerminal.failures) -contains 'strict_traffic_duration_not_completed' -and
+        @($preservedTerminal.failures) -notcontains 'performance_insights_evidence_unavailable') 'A coherent but strictly rejected run must still preserve timeout, PI, and post-traffic posture evidence.'
+    [IO.File]::WriteAllText($restorationIntegrityTestPath, '{"restored":true}', [Text.UTF8Encoding]::new($false))
+    Set-TerminalEvidenceIntegrity $preservedTerminal $restorationIntegrityTestPath
+    Assert-Condition ($preservedTerminal.evidenceIntegrity.algorithm -ceq 'sha256' -and
+        $preservedTerminal.evidenceIntegrity.monitor.path -ceq $monitorResultTestPath -and
+        $preservedTerminal.evidenceIntegrity.monitor.sha256 -ceq $preservedTerminal.monitor.sha256 -and
+        $preservedTerminal.evidenceIntegrity.embeddedObjects.performanceInsights.sha256 -ceq
+            (Get-StableJsonSha256 $preservedTerminal.performanceInsights) -and
+        $preservedTerminal.evidenceIntegrity.embeddedObjects.postTrafficAwsPosture.sha256 -ceq
+            (Get-StableJsonSha256 $preservedTerminal.postTrafficAwsPosture) -and
+        $preservedTerminal.evidenceIntegrity.scalingRestoration.path -ceq $restorationIntegrityTestPath -and
+        $preservedTerminal.evidenceIntegrity.scalingRestoration.sha256 -ceq
+            (Get-FileHash -LiteralPath $restorationIntegrityTestPath -Algorithm SHA256).Hash.ToLowerInvariant()) 'Terminal evidence integrity must bind the monitor/restoration files and stable hashes of each embedded evidence object.'
+
+    $independentFailureTerminal = [ordered]@{failures=@();monitor=$null;observedTrafficWindow=$null;postgresStatementTimeouts=$null;
+        performanceInsights=$null;postTrafficAwsPosture=$null;evidenceIntegrity=$null}
+    $script:diagnosticLogResponse = [pscustomobject]@{events=@();nextToken='incomplete-timeout-page'}
+    Collect-TerminalPostTrafficEvidence $independentFailureTerminal $preservationConfig $preservationProgressPath $preservationSummaryPath 'db-resource-id'
+    Assert-Condition ($independentFailureTerminal.postgresStatementTimeouts.collected -eq $false -and
+        $independentFailureTerminal.postgresStatementTimeouts.rawErrorPersisted -eq $false -and
+        $independentFailureTerminal.performanceInsights.passed -eq $true -and
+        $null -ne $independentFailureTerminal.postTrafficAwsPosture -and
+        @($independentFailureTerminal.failures) -contains 'postgres_statement_timeout_evidence_unavailable') 'One evidence-source failure must be sanitized and must not suppress independent PI or posture collection.'
+    $failureJson = $independentFailureTerminal | ConvertTo-Json -Depth 30 -Compress
+    Assert-Condition (-not $failureJson.Contains('unconsumed') -and -not $failureJson.Contains('incomplete-timeout-page')) 'Terminal evidence failures must not persist raw provider details.'
+}
+finally {
+    $script:diagnosticLogResponse = [pscustomobject]@{events=@()}
+    $script:diagnosticHotPathLogResponse = $validHotPathLogResponse
+    Remove-Item -LiteralPath $preservationDirectory -Recurse -Force
+}
 
 $script:diagnosticWaitResponses['history-token-1'] = [pscustomobject]@{Keys=@(
     [pscustomobject]@{Total=0.5;Dimensions=[pscustomobject]@{'db.wait_event.name'='IO:DataFileRead';'db.wait_event.type'='IO'}},
@@ -624,4 +836,4 @@ Set-TestRdsCpuSeries 30 65.0
 $breachedCpu = Get-DiagnosticRdsCpuCoverageResult $cpuConfig
 Assert-Condition (-not $breachedCpu.allPointsBelowMaximum) 'An RDS CPU minute at 65 percent must fail the exclusive threshold.'
 
-Write-Output "AWS Waf/800 diagnostic-only contract tests passed."
+Write-Output "AWS Waf/800 diagnostic-only contract tests passed ($script:AssertionCount assertions)."
