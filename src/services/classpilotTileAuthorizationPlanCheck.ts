@@ -6,6 +6,12 @@ export const CLASSPILOT_TILE_AUTHORIZATION_PLAN_WARMUPS = 2;
 export const CLASSPILOT_TILE_AUTHORIZATION_PLAN_COHORT_SIZE = 40;
 export const CLASSPILOT_TILE_AUTHORIZATION_PLAN_P95_MS = 50;
 export const CLASSPILOT_TILE_AUTHORIZATION_PLAN_MAX_MS = 100;
+export const CLASSPILOT_TILE_HISTORY_FALLBACK_LIMIT = 10;
+export const CLASSPILOT_TILE_HISTORY_FALLBACK_MAX_ROWS =
+  CLASSPILOT_TILE_AUTHORIZATION_PLAN_COHORT_SIZE *
+  CLASSPILOT_TILE_HISTORY_FALLBACK_LIMIT;
+export const CLASSPILOT_TILE_HISTORY_FALLBACK_INDEX =
+  "heartbeats_school_device_student_timestamp_idx";
 
 const MAX_SAMPLES = 100;
 const STATEMENT_TIMEOUT_MS = 5_000;
@@ -47,6 +53,19 @@ export type ClasspilotTileAuthorizationQueryBuilder = (
   studentIds: readonly string[]
 ) => SQL;
 
+export type ClasspilotTileHistoryFallbackAccess = {
+  studentId: string;
+  deviceId: string;
+  schoolId: string;
+  studentSessionId: string | null;
+};
+
+export type ClasspilotTileHistoryFallbackQueryBuilder = (
+  schoolId: string,
+  accesses: readonly ClasspilotTileHistoryFallbackAccess[],
+  limit: number
+) => SQL;
+
 type DiscoveredScenario = {
   label: ClasspilotTilePlanScenarioLabel;
   kind: ClasspilotTilePlanScenarioKind;
@@ -75,6 +94,31 @@ export type ClasspilotTilePlanScenarioSummary = {
   passed: boolean;
 };
 
+export type ClasspilotTileHistoryFallbackPlanEvidence =
+  ClasspilotTilePlanEvidence & {
+    windowAggNodes: number;
+    heartbeatSequentialScanNodes: number;
+    returnedRows: number;
+    perPairIndexLimit: boolean;
+  };
+
+export type ClasspilotTileHistoryFallbackPlanSummary = {
+  label: "history_fallback";
+  cohortSize: number;
+  historyLimit: number;
+  samples: number;
+  p95Ms: number;
+  maxMs: number;
+  tempReadBlocks: number;
+  tempWrittenBlocks: number;
+  subPlanNodes: number;
+  windowAggNodes: number;
+  heartbeatSequentialScanNodes: number;
+  maxReturnedRows: number;
+  perPairIndexLimit: boolean;
+  passed: boolean;
+};
+
 export type ClasspilotTileAuthorizationPlanReport = {
   status: "passed" | "failed";
   precheck: {
@@ -89,8 +133,13 @@ export type ClasspilotTileAuthorizationPlanReport = {
     tempReadBlocks: 0;
     tempWrittenBlocks: 0;
     subPlanNodes: 0;
+    windowAggNodes: 0;
+    heartbeatSequentialScanNodes: 0;
+    maxHeartbeatRows: number;
+    perPairIndexLimit: true;
   };
   scenarios: ClasspilotTilePlanScenarioSummary[];
+  historyFallback: ClasspilotTileHistoryFallbackPlanSummary;
 };
 
 export class ClasspilotTileAuthorizationPlanCheckError extends Error {
@@ -382,6 +431,56 @@ function numericField(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
+function requiredNonNegativeNumericField(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new ClasspilotTileAuthorizationPlanCheckError(
+      "invalid_explain_document"
+    );
+  }
+  return value;
+}
+
+function parseExplainDocument(raw: unknown): {
+  document: Record<string, unknown>;
+  plan: Record<string, unknown>;
+  executionMs: number;
+} {
+  let parsed = raw;
+  if (typeof raw === "string") {
+    try {
+      parsed = JSON.parse(raw) as unknown;
+    } catch {
+      throw new ClasspilotTileAuthorizationPlanCheckError(
+        "invalid_explain_document"
+      );
+    }
+  }
+  const document = Array.isArray(parsed) ? parsed[0] : undefined;
+  if (!document || typeof document !== "object") {
+    throw new ClasspilotTileAuthorizationPlanCheckError(
+      "invalid_explain_document"
+    );
+  }
+  const record = document as Record<string, unknown>;
+  const plan = record["Plan"];
+  if (!plan || typeof plan !== "object" || Array.isArray(plan)) {
+    throw new ClasspilotTileAuthorizationPlanCheckError(
+      "invalid_explain_document"
+    );
+  }
+  const executionMs = numericField(record["Execution Time"]);
+  if (executionMs <= 0) {
+    throw new ClasspilotTileAuthorizationPlanCheckError(
+      "invalid_explain_document"
+    );
+  }
+  return {
+    document: record,
+    plan: plan as Record<string, unknown>,
+    executionMs,
+  };
+}
+
 function traversePlan(value: unknown, evidence: ClasspilotTilePlanEvidence): void {
   if (Array.isArray(value)) {
     for (const child of value) traversePlan(child, evidence);
@@ -410,37 +509,105 @@ function traversePlan(value: unknown, evidence: ClasspilotTilePlanEvidence): voi
 export function inspectClasspilotTileExplainDocument(
   raw: unknown
 ): ClasspilotTilePlanEvidence {
-  let parsed = raw;
-  if (typeof raw === "string") {
-    try {
-      parsed = JSON.parse(raw) as unknown;
-    } catch {
-      throw new ClasspilotTileAuthorizationPlanCheckError(
-        "invalid_explain_document"
-      );
-    }
-  }
-  const document = Array.isArray(parsed) ? parsed[0] : undefined;
-  if (!document || typeof document !== "object") {
-    throw new ClasspilotTileAuthorizationPlanCheckError(
-      "invalid_explain_document"
-    );
-  }
-  const executionMs = numericField(
-    (document as Record<string, unknown>)["Execution Time"]
-  );
-  if (executionMs <= 0) {
-    throw new ClasspilotTileAuthorizationPlanCheckError(
-      "invalid_explain_document"
-    );
-  }
+  const parsed = parseExplainDocument(raw);
   const evidence: ClasspilotTilePlanEvidence = {
-    executionMs,
+    executionMs: parsed.executionMs,
     tempReadBlocks: 0,
     tempWrittenBlocks: 0,
     subPlanNodes: 0,
   };
-  traversePlan((document as Record<string, unknown>)["Plan"], evidence);
+  traversePlan(parsed.plan, evidence);
+  return evidence;
+}
+
+function subtreeUsesHeartbeatHistoryIndex(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.some((child) => subtreeUsesHeartbeatHistoryIndex(child));
+  }
+  if (!value || typeof value !== "object") return false;
+  const node = value as Record<string, unknown>;
+  const nodeType = node["Node Type"];
+  if (
+    (nodeType === "Index Scan" || nodeType === "Index Only Scan") &&
+    node["Relation Name"] === "heartbeats" &&
+    node["Index Name"] === CLASSPILOT_TILE_HISTORY_FALLBACK_INDEX
+  ) {
+    return true;
+  }
+  return Object.values(node).some((child) =>
+    subtreeUsesHeartbeatHistoryIndex(child)
+  );
+}
+
+function traverseHistoryFallbackPlan(
+  value: unknown,
+  evidence: ClasspilotTileHistoryFallbackPlanEvidence,
+  cohortSize: number,
+  historyLimit: number
+): void {
+  if (Array.isArray(value)) {
+    for (const child of value) {
+      traverseHistoryFallbackPlan(child, evidence, cohortSize, historyLimit);
+    }
+    return;
+  }
+  if (!value || typeof value !== "object") return;
+  const node = value as Record<string, unknown>;
+  const nodeType = node["Node Type"];
+  if (nodeType === "WindowAgg") evidence.windowAggNodes += 1;
+  if (
+    typeof nodeType === "string" &&
+    /Seq Scan$/.test(nodeType) &&
+    node["Relation Name"] === "heartbeats"
+  ) {
+    evidence.heartbeatSequentialScanNodes += 1;
+  }
+  if (
+    nodeType === "Limit" &&
+    requiredNonNegativeNumericField(node["Actual Loops"]) === cohortSize &&
+    requiredNonNegativeNumericField(node["Plan Rows"]) <= historyLimit &&
+    requiredNonNegativeNumericField(node["Actual Rows"]) <= historyLimit &&
+    subtreeUsesHeartbeatHistoryIndex(node)
+  ) {
+    evidence.perPairIndexLimit = true;
+  }
+  for (const child of Object.values(node)) {
+    traverseHistoryFallbackPlan(child, evidence, cohortSize, historyLimit);
+  }
+}
+
+export function inspectClasspilotTileHistoryFallbackExplainDocument(
+  raw: unknown,
+  cohortSize = CLASSPILOT_TILE_AUTHORIZATION_PLAN_COHORT_SIZE,
+  historyLimit = CLASSPILOT_TILE_HISTORY_FALLBACK_LIMIT
+): ClasspilotTileHistoryFallbackPlanEvidence {
+  if (
+    !Number.isInteger(cohortSize) ||
+    cohortSize < 1 ||
+    historyLimit !== CLASSPILOT_TILE_HISTORY_FALLBACK_LIMIT
+  ) {
+    throw new ClasspilotTileAuthorizationPlanCheckError(
+      "invalid_configuration"
+    );
+  }
+  const parsed = parseExplainDocument(raw);
+  const evidence: ClasspilotTileHistoryFallbackPlanEvidence = {
+    executionMs: parsed.executionMs,
+    tempReadBlocks: 0,
+    tempWrittenBlocks: 0,
+    subPlanNodes: 0,
+    windowAggNodes: 0,
+    heartbeatSequentialScanNodes: 0,
+    returnedRows: requiredNonNegativeNumericField(parsed.plan["Actual Rows"]),
+    perPairIndexLimit: false,
+  };
+  traversePlan(parsed.plan, evidence);
+  traverseHistoryFallbackPlan(
+    parsed.plan,
+    evidence,
+    cohortSize,
+    historyLimit
+  );
   return evidence;
 }
 
@@ -483,12 +650,87 @@ export function summarizeClasspilotTilePlanScenario(
   };
 }
 
+export function summarizeClasspilotTileHistoryFallbackPlan(
+  cohortSize: number,
+  historyLimit: number,
+  samples: readonly ClasspilotTileHistoryFallbackPlanEvidence[]
+): ClasspilotTileHistoryFallbackPlanSummary {
+  if (
+    cohortSize !== CLASSPILOT_TILE_AUTHORIZATION_PLAN_COHORT_SIZE ||
+    historyLimit !== CLASSPILOT_TILE_HISTORY_FALLBACK_LIMIT ||
+    samples.length < CLASSPILOT_TILE_AUTHORIZATION_PLAN_SAMPLES
+  ) {
+    throw new ClasspilotTileAuthorizationPlanCheckError(
+      "invalid_configuration"
+    );
+  }
+  const timings = samples
+    .map((sample) => sample.executionMs)
+    .sort((a, b) => a - b);
+  const p95Index = Math.max(0, Math.ceil(timings.length * 0.95) - 1);
+  const p95Ms = timings[p95Index] ?? Number.POSITIVE_INFINITY;
+  const maxMs = timings[timings.length - 1] ?? Number.POSITIVE_INFINITY;
+  const tempReadBlocks = Math.max(
+    ...samples.map((sample) => sample.tempReadBlocks)
+  );
+  const tempWrittenBlocks = Math.max(
+    ...samples.map((sample) => sample.tempWrittenBlocks)
+  );
+  const subPlanNodes = Math.max(
+    ...samples.map((sample) => sample.subPlanNodes)
+  );
+  const windowAggNodes = Math.max(
+    ...samples.map((sample) => sample.windowAggNodes)
+  );
+  const heartbeatSequentialScanNodes = Math.max(
+    ...samples.map((sample) => sample.heartbeatSequentialScanNodes)
+  );
+  const maxReturnedRows = Math.max(
+    ...samples.map((sample) => sample.returnedRows)
+  );
+  const perPairIndexLimit = samples.every(
+    (sample) => sample.perPairIndexLimit
+  );
+  return {
+    label: "history_fallback",
+    cohortSize,
+    historyLimit,
+    samples: samples.length,
+    p95Ms: roundMilliseconds(p95Ms),
+    maxMs: roundMilliseconds(maxMs),
+    tempReadBlocks,
+    tempWrittenBlocks,
+    subPlanNodes,
+    windowAggNodes,
+    heartbeatSequentialScanNodes,
+    maxReturnedRows,
+    perPairIndexLimit,
+    passed:
+      p95Ms <= CLASSPILOT_TILE_AUTHORIZATION_PLAN_P95_MS &&
+      maxMs <= CLASSPILOT_TILE_AUTHORIZATION_PLAN_MAX_MS &&
+      tempReadBlocks === 0 &&
+      tempWrittenBlocks === 0 &&
+      subPlanNodes === 0 &&
+      windowAggNodes === 0 &&
+      heartbeatSequentialScanNodes === 0 &&
+      Number.isInteger(maxReturnedRows) &&
+      maxReturnedRows >= 0 &&
+      maxReturnedRows <= CLASSPILOT_TILE_HISTORY_FALLBACK_MAX_ROWS &&
+      perPairIndexLimit,
+  };
+}
+
 function compileExplain(query: SQL): { text: string; params: unknown[] } {
   const compiled = new PgDialect().sqlToQuery(query);
   return {
     text: `EXPLAIN (ANALYZE, BUFFERS, WAL, SETTINGS, FORMAT JSON) ${compiled.sql}`,
     params: compiled.params,
   };
+}
+
+function compileQuery(query: SQL): { text: string; params: unknown[] } {
+  const compiled = new PgDialect().sqlToQuery(query);
+  return { text: compiled.sql, params: compiled.params };
 }
 
 async function measureScenario(
@@ -542,9 +784,114 @@ async function measureScenario(
   }
 }
 
+async function measureHistoryFallback(
+  client: ClasspilotTilePlanQueryClient,
+  buildAuthorizationQuery: ClasspilotTileAuthorizationQueryBuilder,
+  buildHistoryQuery: ClasspilotTileHistoryFallbackQueryBuilder,
+  scenario: DiscoveredScenario,
+  samples: number
+): Promise<ClasspilotTileHistoryFallbackPlanSummary> {
+  await beginReadOnly(client);
+  try {
+    await client.query("SELECT set_config('app.is_super', 'off', true)");
+    await client.query("SELECT set_config('app.school_id', $1, true)", [
+      scenario.schoolId,
+    ]);
+
+    const authorization = compileQuery(
+      buildAuthorizationQuery(
+        {
+          schoolId: scenario.schoolId,
+          staffId: scenario.staffId,
+          role: "teacher",
+        },
+        "history",
+        scenario.studentIds
+      )
+    );
+    const authorized = await client.query<{
+      student_id: unknown;
+      device_id: unknown;
+      school_id: unknown;
+    }>(authorization.text, authorization.params);
+    const accesses: ClasspilotTileHistoryFallbackAccess[] = [];
+    const seenStudents = new Set<string>();
+    for (const row of authorized.rows) {
+      if (
+        typeof row.student_id !== "string" ||
+        typeof row.device_id !== "string" ||
+        row.school_id !== scenario.schoolId ||
+        seenStudents.has(row.student_id)
+      ) {
+        throw new ClasspilotTileAuthorizationPlanCheckError(
+          "representative_scenario_missing",
+          [scenario.label]
+        );
+      }
+      seenStudents.add(row.student_id);
+      accesses.push({
+        studentId: row.student_id,
+        deviceId: row.device_id,
+        schoolId: scenario.schoolId,
+        studentSessionId: null,
+      });
+    }
+    if (
+      accesses.length !== CLASSPILOT_TILE_AUTHORIZATION_PLAN_COHORT_SIZE ||
+      accesses.some(
+        (access) => !scenario.studentIds.includes(access.studentId)
+      )
+    ) {
+      throw new ClasspilotTileAuthorizationPlanCheckError(
+        "representative_scenario_missing",
+        [scenario.label]
+      );
+    }
+
+    const explain = compileExplain(
+      buildHistoryQuery(
+        scenario.schoolId,
+        accesses,
+        CLASSPILOT_TILE_HISTORY_FALLBACK_LIMIT
+      )
+    );
+    for (
+      let warmup = 0;
+      warmup < CLASSPILOT_TILE_AUTHORIZATION_PLAN_WARMUPS;
+      warmup += 1
+    ) {
+      await client.query(explain.text, explain.params);
+    }
+    const evidence: ClasspilotTileHistoryFallbackPlanEvidence[] = [];
+    for (let sample = 0; sample < samples; sample += 1) {
+      const result = await client.query<Record<string, unknown>>(
+        explain.text,
+        explain.params
+      );
+      evidence.push(
+        inspectClasspilotTileHistoryFallbackExplainDocument(
+          result.rows[0]?.["QUERY PLAN"],
+          accesses.length,
+          CLASSPILOT_TILE_HISTORY_FALLBACK_LIMIT
+        )
+      );
+    }
+    await client.query("COMMIT");
+    return summarizeClasspilotTileHistoryFallbackPlan(
+      accesses.length,
+      CLASSPILOT_TILE_HISTORY_FALLBACK_LIMIT,
+      evidence
+    );
+  } catch (error) {
+    await rollbackQuietly(client);
+    throw error;
+  }
+}
+
 export async function runClasspilotTileAuthorizationPlanCheck(options: {
   client: ClasspilotTilePlanQueryClient;
   buildQuery: ClasspilotTileAuthorizationQueryBuilder;
+  buildHistoryQuery: ClasspilotTileHistoryFallbackQueryBuilder;
   samples?: number;
 }): Promise<ClasspilotTileAuthorizationPlanReport> {
   const samples = options.samples ?? CLASSPILOT_TILE_AUTHORIZATION_PLAN_SAMPLES;
@@ -572,8 +919,27 @@ export async function runClasspilotTileAuthorizationPlanCheck(options: {
       )
     );
   }
+  const historyScenario = discovery.scenarios.find(
+    (scenario) => scenario.label === "teacher.history"
+  );
+  if (!historyScenario) {
+    throw new ClasspilotTileAuthorizationPlanCheckError(
+      "representative_scenario_missing",
+      ["teacher.history"]
+    );
+  }
+  const historyFallback = await measureHistoryFallback(
+    options.client,
+    options.buildQuery,
+    options.buildHistoryQuery,
+    historyScenario,
+    samples
+  );
   return {
-    status: scenarios.every((scenario) => scenario.passed) ? "passed" : "failed",
+    status:
+      scenarios.every((scenario) => scenario.passed) && historyFallback.passed
+        ? "passed"
+        : "failed",
     precheck: {
       invalidTeachingSessionSchools:
         discovery.invalidTeachingSessionSchools,
@@ -587,7 +953,12 @@ export async function runClasspilotTileAuthorizationPlanCheck(options: {
       tempReadBlocks: 0,
       tempWrittenBlocks: 0,
       subPlanNodes: 0,
+      windowAggNodes: 0,
+      heartbeatSequentialScanNodes: 0,
+      maxHeartbeatRows: CLASSPILOT_TILE_HISTORY_FALLBACK_MAX_ROWS,
+      perPairIndexLimit: true,
     },
     scenarios,
+    historyFallback,
   };
 }

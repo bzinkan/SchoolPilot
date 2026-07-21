@@ -3665,6 +3665,53 @@ export async function getHeartbeatsByDevice(
 }
 
 /**
+ * Builds the exact cache-miss query shared by the production fallback and its
+ * guarded deployment plan check. Each requested student/device pair performs
+ * one bounded descending lookup so PostgreSQL can stop after the newest rows
+ * in heartbeats_school_device_student_timestamp_idx instead of ranking the
+ * retained heartbeat history for the whole cohort.
+ */
+export function buildHeartbeatTileHistoryBatchQuery(
+  schoolId: string,
+  accesses: readonly ClassPilotStudentTileAccess[],
+  limit: number
+): SQL {
+  if (accesses.length === 0) {
+    throw new Error(
+      "Heartbeat tile history query requires at least one authorized access"
+    );
+  }
+  const boundedLimit = Math.min(Math.max(Math.trunc(limit), 1), 10);
+  const requestedStudentIds = accesses.map((access) => access.studentId);
+  const requestedDeviceIds = accesses.map((access) => access.deviceId);
+
+  return sql`
+    WITH requested_tiles(student_id, device_id, ordinal) AS MATERIALIZED (
+      SELECT input.student_id, input.device_id, input.ordinality::bigint
+      FROM unnest(
+        ${sql.param(requestedStudentIds)}::text[],
+        ${sql.param(requestedDeviceIds)}::text[]
+      ) WITH ORDINALITY AS input(student_id, device_id, ordinality)
+    )
+    SELECT
+      requested.student_id AS tile_student_id,
+      requested.ordinal,
+      heartbeat.*
+    FROM requested_tiles AS requested
+    CROSS JOIN LATERAL (
+      SELECT heartbeat.*
+      FROM ${heartbeats} AS heartbeat
+      WHERE heartbeat.school_id = ${schoolId}
+        AND heartbeat.device_id = requested.device_id
+        AND heartbeat.student_id = requested.student_id
+      ORDER BY heartbeat.timestamp DESC
+      LIMIT ${boundedLimit}
+    ) AS heartbeat
+    ORDER BY requested.ordinal, heartbeat.timestamp DESC
+  `;
+}
+
+/**
  * Loads cache misses for an authorized student cohort in one statement. The
  * exact student/device pairs come from the immediately preceding authorization
  * query; matching both columns prevents history from another student on a
@@ -3676,55 +3723,9 @@ export async function getHeartbeatTileHistoryBatch(
   limit: number
 ): Promise<Map<string, Heartbeat[]>> {
   if (accesses.length === 0) return new Map();
-  const boundedLimit = Math.min(Math.max(Math.trunc(limit), 1), 10);
-  const requested = sql.join(
-    accesses.map((access, index) =>
-      sql`(${access.studentId}::text, ${access.deviceId}::text, ${index + 1}::bigint)`
-    ),
-    sql`, `
+  const result = await db.execute(
+    buildHeartbeatTileHistoryBatchQuery(schoolId, accesses, limit)
   );
-  const result = await db.execute(sql`
-    WITH requested_tiles(student_id, device_id, ordinal) AS MATERIALIZED (
-      VALUES ${requested}
-    ),
-    ranked_history AS (
-      SELECT
-        requested.student_id AS tile_student_id,
-        requested.ordinal,
-        heartbeat.id,
-        heartbeat.device_id,
-        heartbeat.student_id,
-        heartbeat.student_email,
-        heartbeat.school_id,
-        heartbeat.active_tab_title,
-        heartbeat.active_tab_url,
-        heartbeat.favicon,
-        heartbeat.screen_locked,
-        heartbeat.flight_path_active,
-        heartbeat.active_flight_path_name,
-        heartbeat.is_sharing,
-        heartbeat.camera_active,
-        heartbeat.ai_category,
-        heartbeat.safety_alert,
-        heartbeat.extension_version,
-        heartbeat.chrome_version,
-        heartbeat.screenshot_health,
-        heartbeat.timestamp,
-        row_number() OVER (
-          PARTITION BY requested.student_id
-          ORDER BY heartbeat.timestamp DESC
-        ) AS history_rank
-      FROM requested_tiles AS requested
-      INNER JOIN ${heartbeats} AS heartbeat
-        ON heartbeat.school_id = ${schoolId}
-       AND heartbeat.device_id = requested.device_id
-       AND heartbeat.student_id = requested.student_id
-    )
-    SELECT *
-    FROM ranked_history
-    WHERE history_rank <= ${boundedLimit}
-    ORDER BY ordinal, history_rank
-  `);
 
   const byStudent = new Map<string, Heartbeat[]>();
   for (const raw of result.rows as Record<string, unknown>[]) {

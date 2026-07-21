@@ -61,6 +61,10 @@ foreach ($required in @(
     'DynamicScalingInSuspended=$true','DynamicScalingOutSuspended=$true','ScheduledScalingSuspended=$true',
     'Restore-ScalingCapture','scaling_restoration_failed','scheduledActionsSha256','scalingPoliciesSha256',
     'Group=db.sql_tokenized,Limit=25','rawSqlPersisted=$false','dominanceThresholdPercent=50.0',
+    'HistoryFallbackSqlMarkers = @("requested_tiles", "heartbeats", "lateral")',
+    'Group=db.wait_event,Limit=25','db.sql_tokenized.id','IO:DataFileRead','historyFallback',
+    'filteredWaitEventEvidenceComplete','Get-Postgres57014Evidence','logs","filter-log-events',
+    'sqlState="57014"','rawMessagesPersisted=$false;rawIdentifiersPersisted=$false',
     'GeneratorIpCheckSeconds = 60','MonitorHeartbeatStaleSeconds = 150','Update-GeneratorPublicIpEvidence',
     'Assert-HealthyMonitorHeartbeat','GeneratorIpCheckSeconds -ge $script:MonitorHeartbeatStaleSeconds',
     'LOAD_TILE_HISTORY_PATH="/api/classpilot/tiles/history"',
@@ -118,7 +122,9 @@ foreach ($name in @(
     'Resolve-ExternalPath','Get-ValidationScratchPaths','Get-WafLabelMatch','Assert-WafDeviceIngestClassifierContract',
     'Assert-WafRateRuleContract','Assert-RedisReplicationIdentity','Assert-NoScheduledBoundaryOverlap','Get-TargetHealthSnapshot',
     'Wait-TargetHealthConvergence','Get-HealthyTargetCount','Restore-ScalingCapture',
-    'Update-GeneratorPublicIpEvidence','Assert-HealthyMonitorHeartbeat'
+    'Update-GeneratorPublicIpEvidence','Assert-HealthyMonitorHeartbeat','Resolve-ApiAwslogsBinding',
+    'Get-BoundApiAwslogsBinding','Get-Postgres57014Evidence','Get-HistoryFallbackWaitEventEvidence',
+    'Get-PerformanceInsightsEvidence'
 )) { Import-ScriptFunction $controllerAst $name }
 
 $script:RepositoryRoot = $root
@@ -208,6 +214,157 @@ try {
     Assert-Throws { Get-ControllerSha } 'full 40-character' 'Controller SHA resolution must reject malformed native output.'
 }
 finally { Remove-Item -Path Function:git -Force }
+
+$script:ExpectedRegion = 'us-east-1'
+$script:AuthSqlMarkers = @(
+    'requested_students','active_supervision','active_staff_groups',
+    'active_roster_students','authorized_students','resolved_students'
+)
+$script:HistoryFallbackSqlMarkers = @('requested_tiles','heartbeats','lateral')
+$script:HistoryIoDominanceThresholdPercent = 50.0
+$script:PerformanceInsightsCoverageTolerancePercent = 0.5
+$apiTaskArn = 'arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:99'
+$script:diagnosticTaskDefinition = [pscustomobject]@{
+    taskDefinitionArn=$apiTaskArn
+    containerDefinitions=@([pscustomobject]@{
+        name='api'
+        logConfiguration=[pscustomobject]@{
+            logDriver='awslogs'
+            options=[pscustomobject]@{
+                'awslogs-group'='/ecs/schoolpilot-production-api'
+                'awslogs-region'='us-east-1'
+                'awslogs-stream-prefix'='api'
+            }
+        }
+    })
+}
+$logBinding = Resolve-ApiAwslogsBinding $script:diagnosticTaskDefinition $apiTaskArn 'us-east-1'
+Assert-Condition ($logBinding.ApiStreamPrefix -ceq 'api/api/') 'API log evidence must derive the deterministic container stream prefix from the exact task definition.'
+$wrongLogGroupTask = $script:diagnosticTaskDefinition | ConvertTo-Json -Depth 10 | ConvertFrom-Json -Depth 10
+$wrongLogGroupTask.containerDefinitions[0].logConfiguration.options.'awslogs-group' = '/ecs/other'
+Assert-Throws { Resolve-ApiAwslogsBinding $wrongLogGroupTask $apiTaskArn 'us-east-1' } 'reviewed production awslogs binding' 'A different log group must fail the exact API log binding.'
+$wrongLogDriverTask = $script:diagnosticTaskDefinition | ConvertTo-Json -Depth 10 | ConvertFrom-Json -Depth 10
+$wrongLogDriverTask.containerDefinitions[0].logConfiguration.logDriver = 'splunk'
+Assert-Throws { Resolve-ApiAwslogsBinding $wrongLogDriverTask $apiTaskArn 'us-east-1' } 'reviewed production awslogs binding' 'A non-awslogs driver must fail the exact API log binding.'
+Assert-Throws { Resolve-ApiAwslogsBinding $script:diagnosticTaskDefinition ($apiTaskArn -replace ':99$',':98') 'us-east-1' } 'exact bound task definition' 'Log evidence must reject a task-definition identity mismatch.'
+
+$script:diagnosticAwsCalls = [System.Collections.Generic.List[object]]::new()
+$script:diagnosticLogResponse = [pscustomobject]@{events=@();searchedLogStreams=@()}
+$script:diagnosticMetricResponse = [pscustomobject]@{
+    MetricList=@([pscustomobject]@{DataPoints=@([pscustomobject]@{Value=2.5},[pscustomobject]@{Value=2.5})})
+}
+$script:diagnosticTopKeys = @(
+    [pscustomobject]@{Total=1.0;Dimensions=[pscustomobject]@{
+        'db.sql_tokenized.id'='history-token-1'
+        'db.sql_tokenized.statement'='WITH requested_tiles AS (VALUES (?)) SELECT * FROM requested_tiles CROSS JOIN LATERAL (SELECT * FROM heartbeats) h'
+    }},
+    [pscustomobject]@{Total=0.5;Dimensions=[pscustomobject]@{
+        'db.sql_tokenized.id'='auth-token-1'
+        'db.sql_tokenized.statement'='WITH requested_students AS (VALUES (?)), active_supervision AS (SELECT ?), authorized_students AS (SELECT ?) SELECT ?'
+    }},
+    [pscustomobject]@{Total=0.25;Dimensions=[pscustomobject]@{
+        'db.sql_tokenized.id'='other-token-1';'db.sql_tokenized.statement'='SELECT ?'
+    }}
+)
+$script:diagnosticWaitResponses = @{
+    'history-token-1'=[pscustomobject]@{Keys=@(
+        [pscustomobject]@{Total=0.2;Dimensions=[pscustomobject]@{'db.wait_event.name'='DataFileRead';'db.wait_event.type'='IO'}},
+        [pscustomobject]@{Total=0.8;Dimensions=[pscustomobject]@{'db.wait_event.name'='CPU';'db.wait_event.type'='CPU'}}
+    )}
+}
+$script:diagnosticWaitCallCount = 0
+function Get-TestArgumentValue {
+    param([string[]]$Arguments,[string]$Name)
+    $index = [Array]::IndexOf($Arguments,$Name)
+    if ($index -lt 0 -or $index + 1 -ge $Arguments.Count) { return $null }
+    return $Arguments[$index + 1]
+}
+function Invoke-AwsJson {
+    param([string[]]$Arguments)
+    $script:diagnosticAwsCalls.Add(@($Arguments))
+    $operation = "$($Arguments[0]) $($Arguments[1])"
+    switch ($operation) {
+        'ecs describe-task-definition' {
+            Assert-Condition ((Get-TestArgumentValue $Arguments '--task-definition') -ceq $apiTaskArn) 'The log query must re-read the exact bound API task definition.'
+            return [pscustomobject]@{taskDefinition=$script:diagnosticTaskDefinition}
+        }
+        'logs filter-log-events' {
+            Assert-Condition ((Get-TestArgumentValue $Arguments '--log-group-name') -ceq '/ecs/schoolpilot-production-api') 'The timeout query must use the task-definition-derived log group.'
+            Assert-Condition ((Get-TestArgumentValue $Arguments '--log-stream-name-prefix') -ceq 'api/api/') 'The timeout query must use only exact API container streams.'
+            Assert-Condition ((Get-TestArgumentValue $Arguments '--filter-pattern') -ceq '"57014"') 'The timeout query must select SQLSTATE 57014 without persisting raw messages.'
+            return $script:diagnosticLogResponse
+        }
+        'pi get-resource-metrics' { return $script:diagnosticMetricResponse }
+        'pi describe-dimension-keys' {
+            $groupBy = Get-TestArgumentValue $Arguments '--group-by'
+            if ($groupBy -ceq 'Group=db.sql_tokenized,Limit=25') {
+                return [pscustomobject]@{Keys=$script:diagnosticTopKeys}
+            }
+            Assert-Condition ($groupBy -ceq 'Group=db.wait_event,Limit=25') 'Present history tokens must be resolved through filtered wait-event evidence.'
+            $script:diagnosticWaitCallCount++
+            $filter = (Get-TestArgumentValue $Arguments '--filter') | ConvertFrom-Json
+            $tokenId = [string]$filter.'db.sql_tokenized.id'
+            if (-not $script:diagnosticWaitResponses.ContainsKey($tokenId)) { throw 'No test wait response for filtered token.' }
+            return $script:diagnosticWaitResponses[$tokenId]
+        }
+        default { throw "Unexpected diagnostic evidence test command: $operation" }
+    }
+}
+
+$diagnosticConfig = [pscustomobject]@{ApiTaskDefinitionArn=$apiTaskArn;Resources=[pscustomobject]@{region='us-east-1'}}
+$trafficStart = '2026-07-20T12:00:00.0000000+00:00'
+$trafficEnd = '2026-07-20T12:30:00.0000000+00:00'
+$noTimeouts = Get-Postgres57014Evidence $diagnosticConfig $trafficStart $trafficEnd
+Assert-Condition ($noTimeouts.passed -and $noTimeouts.matchCount -eq 0 -and -not $noTimeouts.rawMessagesPersisted -and -not $noTimeouts.rawIdentifiersPersisted) 'Zero exact-interval API SQLSTATE 57014 events must pass with sanitized evidence.'
+$noTimeoutsJson = $noTimeouts | ConvertTo-Json -Depth 10 -Compress
+Assert-Condition (-not $noTimeoutsJson.Contains('/ecs/schoolpilot-production-api') -and -not $noTimeoutsJson.Contains('api/api/')) 'Timeout evidence must hash rather than persist CloudWatch identifiers.'
+$startMs = ([DateTimeOffset]$trafficStart).ToUnixTimeMilliseconds()
+$script:diagnosticLogResponse = [pscustomobject]@{events=@([pscustomobject]@{
+    timestamp=$startMs + 1;logStreamName='api/api/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    eventId='raw-event-identifier';message='database@example.test cancel SQLSTATE 57014 raw-message'
+})}
+$timeouts = Get-Postgres57014Evidence $diagnosticConfig $trafficStart $trafficEnd
+Assert-Condition (-not $timeouts.passed -and $timeouts.matchCount -eq 1) 'Any API SQLSTATE 57014 event in the exact traffic interval must fail closed.'
+$timeoutsJson = $timeouts | ConvertTo-Json -Depth 10 -Compress
+Assert-Condition (-not $timeoutsJson.Contains('database@example.test') -and -not $timeoutsJson.Contains('raw-event-identifier') -and
+    -not $timeoutsJson.Contains('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')) 'Timeout evidence must never persist raw messages, event ids, or stream ids.'
+$script:diagnosticLogResponse.events[0].timestamp = $startMs - 1
+Assert-Throws { Get-Postgres57014Evidence $diagnosticConfig $trafficStart $trafficEnd } 'out-of-scope' 'CloudWatch events outside the exact traffic interval must be rejected.'
+$script:diagnosticLogResponse = [pscustomobject]@{events=@();nextToken='unconsumed-page'}
+Assert-Throws { Get-Postgres57014Evidence $diagnosticConfig $trafficStart $trafficEnd } 'complete PostgreSQL timeout evidence' 'An unconsumed CloudWatch pagination token must fail closed.'
+$script:diagnosticLogResponse = [pscustomobject]@{events=@()}
+
+$script:diagnosticWaitCallCount = 0
+$piEvidence = Get-PerformanceInsightsEvidence $diagnosticConfig $trafficStart $trafficEnd 'db-resource-id'
+Assert-Condition ($piEvidence.passed -and $piEvidence.tileAuthorization.passed) 'Existing aggregate tile-authorization non-dominance must remain enforced.'
+Assert-Condition ($piEvidence.historyFallback.tokenCount -eq 1 -and $piEvidence.historyFallback.filteredWaitEventEvidenceComplete -and
+    $piEvidence.historyFallback.perTokenAllBelowThreshold -and $piEvidence.historyFallback.dataFileReadSharePercent -eq 20.0 -and
+    $script:diagnosticWaitCallCount -eq 1) 'A present optimized history token must have complete per-token and aggregate IO:DataFileRead evidence below 50 percent.'
+$piEvidenceJson = $piEvidence | ConvertTo-Json -Depth 20 -Compress
+Assert-Condition (-not $piEvidenceJson.Contains('history-token-1') -and -not $piEvidenceJson.Contains('requested_tiles') -and
+    -not $piEvidenceJson.Contains('IO:DataFileRead')) 'Performance Insights evidence must retain hashes/categories rather than raw SQL, token ids, or wait-event names.'
+
+$script:diagnosticWaitResponses['history-token-1'] = [pscustomobject]@{Keys=@(
+    [pscustomobject]@{Total=0.5;Dimensions=[pscustomobject]@{'db.wait_event.name'='IO:DataFileRead';'db.wait_event.type'='IO'}},
+    [pscustomobject]@{Total=0.5;Dimensions=[pscustomobject]@{'db.wait_event.name'='CPU';'db.wait_event.type'='CPU'}}
+)}
+$ioDominated = Get-PerformanceInsightsEvidence $diagnosticConfig $trafficStart $trafficEnd 'db-resource-id'
+Assert-Condition (-not $ioDominated.passed -and -not $ioDominated.historyFallback.passed -and
+    $ioDominated.historyFallback.dataFileReadSharePercent -eq 50.0) 'A history token at the exclusive 50-percent IO boundary must fail.'
+$script:diagnosticWaitResponses['history-token-1'] = [pscustomobject]@{Keys=@(
+    [pscustomobject]@{Total=0.2;Dimensions=[pscustomobject]@{'db.wait_event.name'='DataFileRead';'db.wait_event.type'='IO'}},
+    [pscustomobject]@{Total=0.6;Dimensions=[pscustomobject]@{'db.wait_event.name'='CPU';'db.wait_event.type'='CPU'}}
+)}
+Assert-Throws { Get-PerformanceInsightsEvidence $diagnosticConfig $trafficStart $trafficEnd 'db-resource-id' } 'did not completely cover' 'A present history token with incomplete filtered wait-event load must fail closed.'
+
+$script:diagnosticTopKeys = @($script:diagnosticTopKeys | Where-Object { $_.Dimensions.'db.sql_tokenized.id' -ne 'history-token-1' })
+$script:diagnosticWaitCallCount = 0
+$historyAbsent = Get-PerformanceInsightsEvidence $diagnosticConfig $trafficStart $trafficEnd 'db-resource-id'
+Assert-Condition (-not $historyAbsent.passed -and -not $historyAbsent.historyFallback.passed -and
+    $historyAbsent.historyFallback.absentFromTopTokens -and
+    $historyAbsent.historyFallback.filteredWaitEventEvidenceRequired -and
+    -not $historyAbsent.historyFallback.filteredWaitEventEvidenceComplete -and
+    $script:diagnosticWaitCallCount -eq 0) 'The strict cold-cache diagnostic must fail closed when its history fallback token is absent from the bounded PI evidence.'
 
 $script:TargetHealthConvergenceTimeoutSeconds = 420
 $script:TargetHealthPollSeconds = 5

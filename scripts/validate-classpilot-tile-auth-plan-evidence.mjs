@@ -13,6 +13,7 @@ const EXPECTED_LABELS = [
 
 const TOP_LEVEL_KEYS = [
   "cohortSize",
+  "historyFallback",
   "precheck",
   "samples",
   "scenarios",
@@ -22,11 +23,15 @@ const TOP_LEVEL_KEYS = [
 ];
 const PRECHECK_KEYS = ["invalidTeachingSessionSchools"];
 const THRESHOLD_KEYS = [
+  "heartbeatSequentialScanNodes",
   "maxMs",
+  "maxHeartbeatRows",
   "p95Ms",
+  "perPairIndexLimit",
   "subPlanNodes",
   "tempReadBlocks",
   "tempWrittenBlocks",
+  "windowAggNodes",
 ];
 const SCENARIO_KEYS = [
   "cohortSize",
@@ -38,6 +43,22 @@ const SCENARIO_KEYS = [
   "subPlanNodes",
   "tempReadBlocks",
   "tempWrittenBlocks",
+];
+const HISTORY_FALLBACK_KEYS = [
+  "cohortSize",
+  "heartbeatSequentialScanNodes",
+  "historyLimit",
+  "label",
+  "maxMs",
+  "maxReturnedRows",
+  "p95Ms",
+  "passed",
+  "perPairIndexLimit",
+  "samples",
+  "subPlanNodes",
+  "tempReadBlocks",
+  "tempWrittenBlocks",
+  "windowAggNodes",
 ];
 
 function isRecord(value) {
@@ -94,7 +115,11 @@ export function validateClasspilotTileAuthorizationPlanEvidence(eventsDocument) 
       report.thresholds.p95Ms !== 50 || report.thresholds.maxMs !== 100 ||
       !requireZero(report.thresholds.tempReadBlocks) ||
       !requireZero(report.thresholds.tempWrittenBlocks) ||
-      !requireZero(report.thresholds.subPlanNodes)) {
+      !requireZero(report.thresholds.subPlanNodes) ||
+      !requireZero(report.thresholds.windowAggNodes) ||
+      !requireZero(report.thresholds.heartbeatSequentialScanNodes) ||
+      report.thresholds.maxHeartbeatRows !== 400 ||
+      report.thresholds.perPairIndexLimit !== true) {
     throw new Error("threshold_contract_invalid");
   }
   if (!Array.isArray(report.scenarios) || report.scenarios.length !== EXPECTED_LABELS.length) {
@@ -120,6 +145,26 @@ export function validateClasspilotTileAuthorizationPlanEvidence(eventsDocument) 
     throw new Error("scenario_labels_invalid");
   }
 
+  const historyFallback = report.historyFallback;
+  if (!hasExactKeys(historyFallback, HISTORY_FALLBACK_KEYS) ||
+      historyFallback.label !== "history_fallback" ||
+      historyFallback.cohortSize !== 40 || historyFallback.historyLimit !== 10 ||
+      historyFallback.samples !== 20 || historyFallback.passed !== true ||
+      !isFiniteNonNegativeNumber(historyFallback.p95Ms) || historyFallback.p95Ms > 50 ||
+      !isFiniteNonNegativeNumber(historyFallback.maxMs) || historyFallback.maxMs > 100 ||
+      historyFallback.maxMs < historyFallback.p95Ms ||
+      !requireZero(historyFallback.tempReadBlocks) ||
+      !requireZero(historyFallback.tempWrittenBlocks) ||
+      !requireZero(historyFallback.subPlanNodes) ||
+      !requireZero(historyFallback.windowAggNodes) ||
+      !requireZero(historyFallback.heartbeatSequentialScanNodes) ||
+      !isFiniteNonNegativeNumber(historyFallback.maxReturnedRows) ||
+      !Number.isInteger(historyFallback.maxReturnedRows) ||
+      historyFallback.maxReturnedRows > 400 ||
+      historyFallback.perPairIndexLimit !== true) {
+    throw new Error("history_fallback_contract_invalid");
+  }
+
   // Rebuild the record from the reviewed aggregate-only schema. This keeps
   // task/log metadata and any unexpected fields out of deploy output.
   return {
@@ -134,6 +179,10 @@ export function validateClasspilotTileAuthorizationPlanEvidence(eventsDocument) 
       tempReadBlocks: 0,
       tempWrittenBlocks: 0,
       subPlanNodes: 0,
+      windowAggNodes: 0,
+      heartbeatSequentialScanNodes: 0,
+      maxHeartbeatRows: 400,
+      perPairIndexLimit: true,
     },
     scenarios: EXPECTED_LABELS.map((label) => {
       const scenario = report.scenarios.find((candidate) => candidate.label === label);
@@ -149,6 +198,22 @@ export function validateClasspilotTileAuthorizationPlanEvidence(eventsDocument) 
         passed: true,
       };
     }),
+    historyFallback: {
+      label: "history_fallback",
+      cohortSize: 40,
+      historyLimit: 10,
+      samples: 20,
+      p95Ms: historyFallback.p95Ms,
+      maxMs: historyFallback.maxMs,
+      tempReadBlocks: 0,
+      tempWrittenBlocks: 0,
+      subPlanNodes: 0,
+      windowAggNodes: 0,
+      heartbeatSequentialScanNodes: 0,
+      maxReturnedRows: historyFallback.maxReturnedRows,
+      perPairIndexLimit: true,
+      passed: true,
+    },
   };
 }
 
