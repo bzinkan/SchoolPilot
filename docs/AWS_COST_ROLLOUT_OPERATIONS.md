@@ -696,7 +696,13 @@ precheck at zero and every unchanged plan threshold passing. The exact shared
 history-fallback builder is also compiled once for a tenant-scoped
 nonexecuting `EXPLAIN (VERBOSE, FORMAT TEXT)`. The resulting PostgreSQL signed
 query ID, compiled-SQL hash, parameter-signature hash, engine version, and
-schema hash are bound as `history-fallback-queryid-v1`. Effective PostgreSQL
+schema hash are bound as `history-fallback-queryid-v1`. The gate observes
+`compute_query_id` read-only and never changes that GUC, grants parameter
+privilege, or uses a privileged plan role. Only effective `on` or `auto` is
+eligible: the exact verbose probe must emit one nonzero signed query ID both
+before and after plan measurement, and both IDs and schema identities must
+match. `off`, `regress`, missing, malformed, zero, ambiguous, or unstable
+identity fails closed. Effective PostgreSQL
 `track_io_timing` must be `on`, and the compiled statement must contain all
 three PI discovery markers -- `requested_tiles`, `heartbeats`, and `lateral`
 -- within its first 500 characters. The gate rejects a query whose markers move
@@ -714,6 +720,13 @@ post-deployment identity drift rolls
 the API and worker back to their captured revisions. The pre-deployment probe
 runs before the autoscaling hold; the post-deployment probe runs under that
 hold after strict API/worker convergence and before exact scaling restoration.
+
+The failed pre-deployment artifacts at application SHA
+`ba416e4f46cc175af62863e3a06573ef5d23504e`, image digest
+`sha256:0c4653b244e8e7bc7a12ac7828b5e9421eacf376dc3d5ab7b7ac75413f844c5a`,
+and task definitions `schoolpilot-production-api:128` and
+`schoolpilot-production-api-emergency:28` are historical-only and ineligible
+for diagnostics or certification. That gate produced no query-identity receipt.
 
 Before certification, run one 30-minute diagnostic-only Waf/800 using the new
 batch workload. Every RDS CPU minute must be below 65%; HTTP 5xx and network

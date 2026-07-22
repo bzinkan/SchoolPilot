@@ -817,6 +817,17 @@ function requireMetadataString(value: unknown): string {
   return value;
 }
 
+async function requireHistoryFallbackQueryIdentifierEnabled(
+  client: ClasspilotTilePlanQueryClient
+): Promise<void> {
+  const result = await client.query<{ compute_query_id: unknown }>(
+    "SELECT current_setting('compute_query_id', true) AS compute_query_id"
+  );
+  if (result.rows.length !== 1) identityFailure();
+  const setting = result.rows[0]?.compute_query_id;
+  if (setting !== "on" && setting !== "auto") identityFailure();
+}
+
 async function readHistoryFallbackQueryIdentifier(
   client: ClasspilotTilePlanQueryClient,
   explain: CompiledSqlQuery
@@ -955,11 +966,11 @@ async function measureHistoryFallback(
     await client.query("SELECT set_config('app.school_id', $1, true)", [
       scenario.schoolId,
     ]);
-    // `auto` does not guarantee that EXPLAIN itself computes a query ID on a
-    // database where no query-ID consumer is active. This transaction-local
-    // override makes the non-executing identity probe deterministic without
-    // changing the instance setting or ordinary application sessions.
-    await client.query("SELECT set_config('compute_query_id', 'on', true)");
+    // This gate must run with the same effective query-ID posture as the
+    // restricted application role. Never mutate compute_query_id here: `auto`
+    // is eligible only when the two real VERBOSE EXPLAIN probes below produce
+    // the same nonzero identifier.
+    await requireHistoryFallbackQueryIdentifierEnabled(client);
 
     const authorization = compileQuery(
       buildAuthorizationQuery(

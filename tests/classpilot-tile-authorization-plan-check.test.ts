@@ -58,6 +58,217 @@ function historySample(overrides: Partial<{
   };
 }
 
+const PLAN_CONTROL_QUERIES = new Set([
+  "BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED READ ONLY",
+  "COMMIT",
+  "ROLLBACK",
+  "SELECT set_config('statement_timeout', $1, true)",
+  "SELECT set_config('lock_timeout', $1, true)",
+  "SELECT set_config('app.is_super', 'on', true)",
+  "SELECT set_config('app.is_super', 'off', true)",
+  "SELECT set_config('app.school_id', $1, true)",
+]);
+
+function createQueryIdGateHarness(options: {
+  settingRows?: Record<string, unknown>[];
+  identityExplainRows?: Record<string, unknown>[][];
+} = {}) {
+  const schoolId = "school-sensitive-fixture";
+  const studentIds = Array.from(
+    { length: 40 },
+    (_, index) => `student-sensitive-${index + 1}`
+  );
+  const deviceIds = studentIds.map(
+    (_, index) => `device-sensitive-${index + 1}`
+  );
+  const settingRows = options.settingRows ?? [{ compute_query_id: "auto" }];
+  const identityExplainRows = options.identityExplainRows ?? [
+    [
+      { "QUERY PLAN": "Result" },
+      { "QUERY PLAN": "Query Identifier: -9223372036854775808" },
+    ],
+    [
+      { "QUERY PLAN": "Result" },
+      { "QUERY PLAN": "Query Identifier: -9223372036854775808" },
+    ],
+  ];
+  let discoveryCalls = 0;
+  let settingCalls = 0;
+  let identityExplainCalls = 0;
+  let computeQueryIdMutationAttempts = 0;
+
+  const client = {
+    async query(text: string, values?: readonly unknown[]) {
+      if (text.includes("set_config('compute_query_id'")) {
+        computeQueryIdMutationAttempts += 1;
+        throw new Error("permission_denied");
+      }
+      if (PLAN_CONTROL_QUERIES.has(text)) return { rows: [] };
+      if (text.includes("count(*)::integer AS invalid_count")) {
+        return { rows: [{ invalid_count: 0 }] };
+      }
+      if (text.includes("array_agg(student_id ORDER BY student_rank)")) {
+        discoveryCalls += 1;
+        assert.deepEqual(values, [40]);
+        return {
+          rows: [
+            {
+              school_id: schoolId,
+              staff_id: `staff-sensitive-${discoveryCalls}`,
+              student_ids: studentIds,
+            },
+          ],
+        };
+      }
+      if (text === "SELECT 'authorization_history' AS marker") {
+        return {
+          rows: studentIds.map((studentId, index) => ({
+            school_id: schoolId,
+            student_id: studentId,
+            device_id: deviceIds[index],
+          })),
+        };
+      }
+      if (
+        text ===
+        "SELECT current_setting('compute_query_id', true) AS compute_query_id"
+      ) {
+        settingCalls += 1;
+        return { rows: settingRows };
+      }
+      if (
+        text.includes("heartbeats_column_signature") &&
+        text.includes("pg_get_indexdef")
+      ) {
+        return {
+          rows: [
+            {
+              engine_version: "16.4",
+              database_name: "schoolpilot",
+              schema_name: "public",
+              search_path: '"$user", public',
+              track_io_timing: "on",
+              heartbeats_relation_oid: "12345",
+              heartbeats_relation_name: "heartbeats",
+              heartbeats_column_signature: "1:id:text:true",
+              history_index_oid: "12346",
+              history_index_name:
+                "heartbeats_school_device_student_timestamp_idx",
+              history_index_definition:
+                "CREATE INDEX heartbeats_school_device_student_timestamp_idx ON public.heartbeats USING btree (school_id, device_id, student_id, timestamp DESC)",
+            },
+          ],
+        };
+      }
+      if (
+        text.startsWith("EXPLAIN (VERBOSE, FORMAT TEXT)") &&
+        text.includes("'history_fallback'")
+      ) {
+        const rows = identityExplainRows[identityExplainCalls] ?? [];
+        identityExplainCalls += 1;
+        return { rows };
+      }
+      if (
+        text.startsWith(
+          "EXPLAIN (ANALYZE, BUFFERS, WAL, SETTINGS, FORMAT JSON)"
+        ) &&
+        text.includes("'history_fallback'")
+      ) {
+        return {
+          rows: [
+            {
+              "QUERY PLAN": [
+                {
+                  Plan: {
+                    "Node Type": "Nested Loop",
+                    "Actual Rows": 400,
+                    "Actual Loops": 1,
+                    Plans: [
+                      {
+                        "Node Type": "Values Scan",
+                        "Actual Rows": 40,
+                        "Actual Loops": 1,
+                      },
+                      {
+                        "Node Type": "Limit",
+                        "Plan Rows": 10,
+                        "Actual Rows": 10,
+                        "Actual Loops": 40,
+                        Plans: [
+                          {
+                            "Node Type": "Index Scan",
+                            "Relation Name": "heartbeats",
+                            "Index Name":
+                              "heartbeats_school_device_student_timestamp_idx",
+                            "Actual Rows": 10,
+                            "Actual Loops": 40,
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                  "Execution Time": 10,
+                },
+              ],
+            },
+          ],
+        };
+      }
+      if (
+        text.startsWith(
+          "EXPLAIN (ANALYZE, BUFFERS, WAL, SETTINGS, FORMAT JSON)"
+        )
+      ) {
+        return {
+          rows: [
+            {
+              "QUERY PLAN": [
+                {
+                  Plan: { "Node Type": "Result" },
+                  "Execution Time": 10,
+                },
+              ],
+            },
+          ],
+        };
+      }
+      throw new Error("unexpected_plan_check_query");
+    },
+  };
+
+  return {
+    client,
+    buildQuery: (_options: unknown, accessMode: "live" | "history") =>
+      sql.raw(`SELECT 'authorization_${accessMode}' AS marker`),
+    buildHistoryQuery: (
+      historySchoolId: string,
+      accesses: readonly { studentId: string; deviceId: string }[],
+      limit: number
+    ) => sql`
+      SELECT 'history_fallback' AS marker
+      WHERE ${sql.param(accesses.map((access) => access.studentId))}::text[] IS NOT NULL
+        AND ${sql.param(accesses.map((access) => access.deviceId))}::text[] IS NOT NULL
+        AND ${historySchoolId}::text IS NOT NULL
+        AND ${limit}::integer > 0
+    `,
+    getSettingCalls: () => settingCalls,
+    getIdentityExplainCalls: () => identityExplainCalls,
+    getComputeQueryIdMutationAttempts: () =>
+      computeQueryIdMutationAttempts,
+  };
+}
+
+async function expectHistoryFallbackIdentityFailure(
+  promise: Promise<unknown>
+): Promise<void> {
+  await assert.rejects(
+    promise,
+    (error) =>
+      error instanceof ClasspilotTileAuthorizationPlanCheckError &&
+      error.failureCode === "history_fallback_query_identity_invalid"
+  );
+}
+
 describe("ClassPilot tile authorization plan checker", () => {
   it("requires explicit execution and at least twenty measured samples", () => {
     assert.deepEqual(parseClasspilotTilePlanCliArgs(["--execute"]), {
@@ -236,6 +447,82 @@ describe("ClassPilot tile authorization plan checker", () => {
     );
   });
 
+  it("accepts read-only auto and on query-ID modes without attempting a privileged mutation", async () => {
+    for (const setting of ["auto", "on"] as const) {
+      const harness = createQueryIdGateHarness({
+        settingRows: [{ compute_query_id: setting }],
+      });
+      const report = await runClasspilotTileAuthorizationPlanCheck({
+        client: harness.client,
+        buildQuery: harness.buildQuery,
+        buildHistoryQuery: harness.buildHistoryQuery,
+      });
+      assert.equal(report.status, "passed");
+      assert.equal(harness.getSettingCalls(), 1);
+      assert.equal(harness.getIdentityExplainCalls(), 2);
+      assert.equal(harness.getComputeQueryIdMutationAttempts(), 0);
+    }
+  });
+
+  it("fails closed for missing, malformed, off, or regress query-ID modes", async () => {
+    for (const settingRows of [
+      [] as Record<string, unknown>[],
+      [{}],
+      [{ compute_query_id: null }],
+      [{ compute_query_id: "off" }],
+      [{ compute_query_id: "regress" }],
+      [{ compute_query_id: "ON" }],
+    ]) {
+      const harness = createQueryIdGateHarness({ settingRows });
+      await expectHistoryFallbackIdentityFailure(
+        runClasspilotTileAuthorizationPlanCheck({
+          client: harness.client,
+          buildQuery: harness.buildQuery,
+          buildHistoryQuery: harness.buildHistoryQuery,
+        })
+      );
+      assert.equal(harness.getSettingCalls(), 1);
+      assert.equal(harness.getIdentityExplainCalls(), 0);
+      assert.equal(harness.getComputeQueryIdMutationAttempts(), 0);
+    }
+  });
+
+  it("fails closed when auto mode does not produce two identical nonzero query identifiers", async () => {
+    const cases: Record<string, unknown>[][][] = [
+      [
+        [{ "QUERY PLAN": "Result" }],
+        [{ "QUERY PLAN": "Query Identifier: -1" }],
+      ],
+      [
+        [{ "QUERY PLAN": "Query Identifier: 0" }],
+        [{ "QUERY PLAN": "Query Identifier: 0" }],
+      ],
+      [
+        [
+          { "QUERY PLAN": "Query Identifier: -1" },
+          { "QUERY PLAN": "Query Identifier: 1" },
+        ],
+        [{ "QUERY PLAN": "Query Identifier: -1" }],
+      ],
+      [
+        [{ "QUERY PLAN": "Query Identifier: -1" }],
+        [{ "QUERY PLAN": "Query Identifier: 1" }],
+      ],
+    ];
+
+    for (const identityExplainRows of cases) {
+      const harness = createQueryIdGateHarness({ identityExplainRows });
+      await expectHistoryFallbackIdentityFailure(
+        runClasspilotTileAuthorizationPlanCheck({
+          client: harness.client,
+          buildQuery: harness.buildQuery,
+          buildHistoryQuery: harness.buildHistoryQuery,
+        })
+      );
+      assert.equal(harness.getComputeQueryIdMutationAttempts(), 0);
+    }
+  });
+
   it("applies the fixed p95, maximum, temp-file, and SubPlan gates", () => {
     const passing = Array.from({ length: 20 }, (_, index) =>
       sample({ executionMs: index + 1 })
@@ -392,6 +679,7 @@ describe("ClassPilot tile authorization plan checker", () => {
     let historyExplainCalls = 0;
     let historyIdentityExplainCalls = 0;
     let historySchemaIdentityCalls = 0;
+    let computeQueryIdSettingCalls = 0;
     let historyBuilderCalls = 0;
     let capturedHistoryCohort:
       | {
@@ -429,6 +717,13 @@ describe("ClassPilot tile authorization plan checker", () => {
               device_id: deviceIds[index],
             })),
           };
+        }
+        if (
+          text ===
+          "SELECT current_setting('compute_query_id', true) AS compute_query_id"
+        ) {
+          computeQueryIdSettingCalls += 1;
+          return { rows: [{ compute_query_id: "auto" }] };
         }
         if (text.includes("heartbeats_column_signature") &&
             text.includes("pg_get_indexdef")) {
@@ -528,7 +823,20 @@ describe("ClassPilot tile authorization plan checker", () => {
             ],
           };
         }
-        return { rows: [] };
+        if (
+          text ===
+            "BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED READ ONLY" ||
+          text === "COMMIT" ||
+          text === "ROLLBACK" ||
+          text === "SELECT set_config('statement_timeout', $1, true)" ||
+          text === "SELECT set_config('lock_timeout', $1, true)" ||
+          text === "SELECT set_config('app.is_super', 'on', true)" ||
+          text === "SELECT set_config('app.is_super', 'off', true)" ||
+          text === "SELECT set_config('app.school_id', $1, true)"
+        ) {
+          return { rows: [] };
+        }
+        throw new Error("unexpected_plan_check_query");
       },
     };
 
@@ -560,6 +868,7 @@ describe("ClassPilot tile authorization plan checker", () => {
     assert.equal(historyExplainCalls, 22);
     assert.equal(historyIdentityExplainCalls, 2);
     assert.equal(historySchemaIdentityCalls, 2);
+    assert.equal(computeQueryIdSettingCalls, 1);
     assert.deepEqual(capturedHistoryCohort, {
       schoolId,
       studentIds,
@@ -638,7 +947,11 @@ describe("ClassPilot tile authorization plan checker", () => {
     assert.match(service, /set_config\('app\.is_super', 'on', true\)/);
     assert.match(service, /set_config\('app\.is_super', 'off', true\)/);
     assert.match(service, /set_config\('app\.school_id', \$1, true\)/);
-    assert.match(service, /set_config\('compute_query_id', 'on', true\)/);
+    assert.match(
+      service,
+      /current_setting\('compute_query_id', true\) AS compute_query_id/
+    );
+    assert.doesNotMatch(service, /set_config\('compute_query_id'/);
     assert.match(service, /current_setting\('track_io_timing'\)/);
     assert.match(service, /EXPLAIN \(ANALYZE, BUFFERS, WAL, SETTINGS, FORMAT JSON\)/);
     assert.match(service, /EXPLAIN \(VERBOSE, FORMAT TEXT\)/);
