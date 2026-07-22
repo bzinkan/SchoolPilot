@@ -23,6 +23,12 @@ $script:RollbackWatchdogDiagnostic = "not_checked"
 $script:RequiredWorkloadSchemaVersion = "classpilot-tile-batch-v1"
 $script:RequiredWorkloadEndpointShapeSha256 = "8e9f1942e4b3a27de7dd0571a9f60ffeb276c089e4baae96a885dba69e3233b2"
 $script:RequiredPollAccountingVersion = "staggered-deadline-v1"
+$script:RequiredHistoryFallbackQueryIdentityVersion = "history-fallback-queryid-v1"
+$script:RequiredHistoryFallbackPiEvidenceVersion = "queryid-sqlstats-v1"
+$script:RequiredHistoryFallbackPiLinkVersion = "history-fallback-pi-link-v2"
+$script:RequiredDatabaseInsightsLeaseVersion = "database-insights-monitoring-lease-v2"
+$script:RequiredDatabaseInsightsDurableRestoreGuardVersion = "aws-scheduler-ssm-recurring-restore-v1"
+$script:RequiredDatabaseInsightsDurableRestoreAutomationVersion = "ssm-rds-monitoring-restore-v1"
 
 function Resolve-ExternalPath {
     param([string]$Path, [string]$Name, [switch]$AllowMissing)
@@ -392,11 +398,11 @@ function Get-CertificationValue {
     param($Object, [string]$Name, $Default = $null)
     if ($null -eq $Object) { return $Default }
     if ($Object -is [System.Collections.IDictionary]) {
-        if (-not $Object.Contains($Name) -or $null -eq $Object[$Name]) { return $Default }
-        return $Object[$Name]
+        if ($Object.Contains($Name)) { return $Object[$Name] }
+        return $Default
     }
     $member = $Object.PSObject.Properties[$Name]
-    if ($null -eq $member -or $null -eq $member.Value) { return $Default }
+    if ($null -eq $member) { return $Default }
     return $member.Value
 }
 
@@ -410,6 +416,22 @@ function Get-CertificationTextSha256 {
     return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData(
         [Text.UTF8Encoding]::new($false).GetBytes($Text)
     )).ToLowerInvariant()
+}
+
+function Get-CertificationCanonicalSha256 {
+    param($Value)
+    return Get-CertificationTextSha256 ($Value | ConvertTo-Json -Depth 60 -Compress)
+}
+
+function Test-CertificationFiniteNonnegativeNumber {
+    param($Value)
+    if ($null -eq $Value -or $Value -is [bool] -or $Value -is [char] -or
+        $Value -isnot [ValueType]) {
+        return $false
+    }
+    try { $number = [double]$Value } catch { return $false }
+    return -not [double]::IsNaN($number) -and -not [double]::IsInfinity($number) -and
+        $number -ge 0
 }
 
 function Assert-CertificationSha256 {
@@ -436,6 +458,1471 @@ function Assert-CertificationEvidenceReference {
     return [ordered]@{ path = $path; sha256 = $actual }
 }
 
+function New-CertificationTerminalFailureException {
+    param([string]$FailureCode, [string]$FailureStage, [string]$Message)
+    $failure = [InvalidOperationException]::new($Message)
+    $failure.Data["failureCode"] = $FailureCode
+    $failure.Data["failureStage"] = $FailureStage
+    return $failure
+}
+
+function Assert-CertificationPrivateFileAcl {
+    param([string]$Path, [string]$Name)
+    if (-not $IsWindows) { throw "$Name requires Windows ACL enforcement." }
+    $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $acl = Get-Acl -LiteralPath $Path
+    if (-not $acl.AreAccessRulesProtected) { throw "$Name must disable inherited file access." }
+    foreach ($rule in @($acl.Access)) {
+        if ($rule.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and
+            $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -ne $currentSid) {
+            throw "$Name must be readable only by the current certification operator."
+        }
+    }
+}
+
+function Get-CertificationHistoryFallbackQueryIdentity {
+    param($Certification, [string]$ApplicationGitSha, [string]$DeployedImageDigest, [string]$ActiveApiArn, [string]$ActiveWorkerArn)
+    $piEvidenceVersion = [string](Get-RequiredProperty $Certification "historyFallbackPiEvidenceVersion")
+    if ($piEvidenceVersion -cne $script:RequiredHistoryFallbackPiEvidenceVersion) {
+        throw "Certification must bind the deterministic queryid SQL-statistics PI evidence version."
+    }
+    $reference = Assert-CertificationEvidenceReference `
+        (Get-RequiredProperty $Certification "historyFallbackQueryIdentity") `
+        "certification.historyFallbackQueryIdentity"
+    Assert-CertificationPrivateFileAcl $reference.path "certification.historyFallbackQueryIdentity"
+    try { $receipt = Get-Content -LiteralPath $reference.path -Raw | ConvertFrom-Json -Depth 30 }
+    catch { throw "The history fallback query-identity receipt must contain valid JSON." }
+
+    $version = [string](Get-CertificationValue $receipt "identityVersion" "")
+    $queryIdentifier = [string](Get-CertificationValue $receipt "queryIdentifier" "")
+    $queryIdentifierSha256 = Assert-CertificationSha256 `
+        ([string](Get-CertificationValue $receipt "queryIdentifierSha256" "")) `
+        "historyFallbackQueryIdentity.queryIdentifierSha256"
+    $compiledSqlSha256 = Assert-CertificationSha256 `
+        ([string](Get-CertificationValue $receipt "compiledSqlSha256" "")) `
+        "historyFallbackQueryIdentity.compiledSqlSha256"
+    $parameterTypeSignatureSha256 = Assert-CertificationSha256 `
+        ([string](Get-CertificationValue $receipt "parameterTypeSignatureSha256" "")) `
+        "historyFallbackQueryIdentity.parameterTypeSignatureSha256"
+    $schemaIdentitySha256 = Assert-CertificationSha256 `
+        ([string](Get-CertificationValue $receipt "schemaIdentitySha256" "")) `
+        "historyFallbackQueryIdentity.schemaIdentitySha256"
+    $expectedParameterSignatureSha256 = Get-CertificationTextSha256 `
+        '["$1:text[]:student_ids","$2:text[]:device_ids","$3:text:school_id","$4:bigint:history_limit"]'
+    $queryId = [Numerics.BigInteger]::Zero
+    if ([int](Get-CertificationValue $receipt "schemaVersion" 0) -ne 1 -or
+        [string](Get-CertificationValue $receipt "type" "") -cne "history_fallback_query_identity_receipt" -or
+        $version -cne $script:RequiredHistoryFallbackQueryIdentityVersion -or
+        $queryIdentifier -notmatch '^-?(?:[1-9][0-9]{0,18})$' -or
+        -not [Numerics.BigInteger]::TryParse($queryIdentifier, [ref]$queryId) -or
+        $queryId -eq [Numerics.BigInteger]::Zero -or
+        $queryId -lt [Numerics.BigInteger]::Parse("-9223372036854775808") -or
+        $queryId -gt [Numerics.BigInteger]::Parse("9223372036854775807") -or
+        $queryIdentifierSha256 -cne (Get-CertificationTextSha256 $queryIdentifier) -or
+        $parameterTypeSignatureSha256 -cne $expectedParameterSignatureSha256) {
+        throw "The history fallback query identifier must be one exact nonzero signed PostgreSQL 64-bit identifier with a matching hash."
+    }
+    $engineVersion = [string](Get-CertificationValue $receipt "engineVersion" "")
+    $databaseResourceId = [string](Get-CertificationValue $receipt "databaseResourceId" "")
+    if ($engineVersion -notmatch '^[0-9]+(?:\.[0-9]+){0,2}$' -or
+        $databaseResourceId -notmatch '^db-[A-Z0-9]{20,64}$' -or
+        (Get-CertificationValue $receipt "trackIoTiming" $false) -ne $true -or
+        [string](Get-CertificationValue $receipt "applicationGitSha" "") -cne $ApplicationGitSha -or
+        [string](Get-CertificationValue $receipt "deployedImageDigest" "") -cne $DeployedImageDigest -or
+        [string](Get-CertificationValue $receipt "activeApiTaskDefinitionArn" "") -cne $ActiveApiArn -or
+        [string](Get-CertificationValue $receipt "activeWorkerTaskDefinitionArn" "") -cne $ActiveWorkerArn) {
+        throw "The history fallback query-identity receipt is not bound to the exact database, release, and active task revisions."
+    }
+    return [pscustomobject]@{
+        Public = [ordered]@{
+            # The receipt is ACL-restricted because it contains the native
+            # signed query identifier.  Public attestations bind its content
+            # and location without publishing the private filesystem path.
+            receiptSha256 = $reference.sha256
+            receiptPathSha256 = Get-CertificationTextSha256 $reference.path
+            version = $version
+            queryIdentifierSha256 = $queryIdentifierSha256
+            compiledSqlSha256 = $compiledSqlSha256
+            parameterTypeSignatureSha256 = $parameterTypeSignatureSha256
+            engineVersion = $engineVersion
+            schemaIdentitySha256 = $schemaIdentitySha256
+            trackIoTiming = $true
+            databaseResourceIdSha256 = Get-CertificationTextSha256 $databaseResourceId
+            piEvidenceVersion = $piEvidenceVersion
+        }
+        Receipt = $reference
+        DatabaseResourceId = $databaseResourceId
+        EngineVersion = $engineVersion
+    }
+}
+
+function Get-CertificationDatabaseInsightsLease {
+    param($Config, $HistoryFallbackQueryIdentity, [string]$ExpectedRdsClass)
+    $leaseConfig = Get-RequiredProperty $Config "databaseInsightsLease"
+    if ([string](Get-RequiredProperty $leaseConfig "version") -cne $script:RequiredDatabaseInsightsLeaseVersion) {
+        throw "Certification must bind the reviewed Database Insights monitoring lease version."
+    }
+    $reference = Assert-CertificationEvidenceReference ([pscustomobject]@{
+        path = [string](Get-RequiredProperty $leaseConfig "receiptPath")
+        sha256 = [string](Get-RequiredProperty $leaseConfig "receiptSha256")
+    }) "databaseInsightsLease"
+    Assert-CertificationPrivateFileAcl $reference.path "databaseInsightsLease.receipt"
+    try { $receipt = Get-Content -LiteralPath $reference.path -Raw | ConvertFrom-Json -Depth 40 }
+    catch { throw "The Database Insights monitoring lease receipt must contain valid JSON." }
+
+    $capturedAt = [DateTimeOffset]::MinValue
+    $expiresAt = [DateTimeOffset]::MinValue
+    $deadline = [DateTimeOffset]::MinValue
+    $leaseId = [string](Get-CertificationValue $receipt "leaseId" "")
+    $initial = Get-CertificationValue $receipt "initialPosture"
+    $requested = Get-CertificationValue $receipt "requestedPosture"
+    $durableGuard = Get-CertificationValue $receipt "durableRestoreGuard"
+    if ($null -eq $durableGuard) {
+        throw "The Database Insights lease is not the exact certification-purpose Standard/7 to Advanced/465 lease for this database."
+    }
+    $parameterStatuses = @(
+        @(Get-CertificationValue $initial "parameterApplyStatuses" @()) |
+            ForEach-Object { [string]$_ }
+    )
+    $performanceInsightsKmsKeyId = [string](Get-CertificationValue $initial "performanceInsightsKmsKeyId" "")
+    $monitoringInterval = [int](Get-CertificationValue $initial "monitoringInterval" -1)
+    $monitoringRoleArn = [string](Get-CertificationValue $initial "monitoringRoleArn" "")
+    $enabledLogExports = @(
+        @(Get-CertificationValue $initial "enabledCloudwatchLogsExports" @()) |
+            ForEach-Object { [string]$_ } |
+            Sort-Object -Unique
+    )
+    $preservedMonitoringPosture = [ordered]@{
+        performanceInsightsKmsKeyId=$performanceInsightsKmsKeyId
+        monitoringInterval=$monitoringInterval
+        monitoringRoleArn=$monitoringRoleArn
+        enabledCloudwatchLogsExports=$enabledLogExports
+    }
+    $preservedMonitoringPostureSha256 = Get-CertificationTextSha256 `
+        ($preservedMonitoringPosture | ConvertTo-Json -Depth 10 -Compress)
+    if (-not [DateTimeOffset]::TryParse([string](Get-CertificationValue $receipt "capturedAtUtc" ""), [ref]$capturedAt) -or
+        -not [DateTimeOffset]::TryParse([string](Get-CertificationValue $receipt "expiresAtUtc" ""), [ref]$expiresAt) -or
+        -not [DateTimeOffset]::TryParse([string](Get-RequiredProperty $Config "deadlineUtc"), [ref]$deadline) -or
+        $expiresAt -le $capturedAt -or $expiresAt -gt $capturedAt.AddHours(12) -or
+        $expiresAt.ToUniversalTime() -le [DateTimeOffset]::UtcNow -or
+        $expiresAt.ToUniversalTime() -le $deadline.ToUniversalTime()) {
+        throw "The certification Database Insights lease must remain valid through the bound stage deadline."
+    }
+    $durableExpiresAt = $expiresAt.ToUniversalTime().ToString("o")
+    $durableDatabaseIdentitySha256 = Get-CertificationTextSha256 `
+        "135775632425|us-east-1|schoolpilot-production-db"
+    $durableScheduleName = "db-insights-restore-$($durableDatabaseIdentitySha256.Substring(0, 24))"
+    $durableLeaseIdSha256 = Get-CertificationTextSha256 $leaseId
+    $durableDescriptionBindingSha256 = Get-CertificationTextSha256 `
+        "135775632425|us-east-1|schoolpilot-production-db|$durableExpiresAt|$durableLeaseIdSha256"
+    $automationDocumentName = "schoolpilot-production-db-insights-restore-v1"
+    $automationDocumentVersion = "1"
+    $automationDocumentContentSha256 = Assert-CertificationSha256 `
+        ([string](Get-CertificationValue $durableGuard "automationDocumentContentSha256" "")) `
+        "databaseInsightsLease.durableRestoreGuard.automationDocumentContentSha256"
+    $automationDefinitionArn = `
+        'arn:aws:ssm:us-east-1:135775632425:automation-definition/schoolpilot-production-db-insights-restore-v1:1'
+    $automationRoleArn = `
+        "arn:aws:iam::135775632425:role/schoolpilot-production-db-insights-restore-automation"
+    $automationFailureRuleArn = `
+        "arn:aws:events:us-east-1:135775632425:rule/schoolpilot-production-db-insights-restore-failed"
+    $expectedLogExportsJson = @($enabledLogExports) | ConvertTo-Json -Compress -AsArray
+    $durableTargetInput = [ordered]@{
+        DocumentName = $automationDocumentName
+        DocumentVersion = $automationDocumentVersion
+        Parameters = [ordered]@{
+            AutomationAssumeRole = @($automationRoleArn)
+            DBInstanceIdentifier = @("schoolpilot-production-db")
+            ExpectedDBInstanceArn = @("arn:aws:rds:us-east-1:135775632425:db:schoolpilot-production-db")
+            ExpectedDatabaseResourceId = @([string]$initial.databaseResourceId)
+            ExpectedDBInstanceClass = @([string]$initial.instanceClass)
+            ExpectedEngineVersion = @([string]$initial.engineVersion)
+            ExpectedPerformanceInsightsKmsKeyId = @($performanceInsightsKmsKeyId)
+            ExpectedMonitoringInterval = @([string]$monitoringInterval)
+            ExpectedMonitoringRoleArn = @($monitoringRoleArn)
+            ExpectedLogExportsJson = @($expectedLogExportsJson)
+            FailureQueueUrl = @("https://sqs.us-east-1.amazonaws.com/135775632425/schoolpilot-production-db-insights-restore-dlq")
+            RestoreScheduleName = @($durableScheduleName)
+            RestoreScheduleGroupName = @("schoolpilot-production-db-insights-leases")
+            AutomationDocumentContentSha256 = @($automationDocumentContentSha256)
+            LeaseIdSha256 = @($durableLeaseIdSha256)
+            ExpiresAtUtc = @($durableExpiresAt)
+            RestoreMode = @("scheduled")
+        }
+    } | ConvertTo-Json -Depth 20 -Compress
+    $expectedDurableGuard = [ordered]@{
+        version=$script:RequiredDatabaseInsightsDurableRestoreGuardVersion
+        accountId="135775632425";region="us-east-1";dbInstanceIdentifier="schoolpilot-production-db"
+        dbInstanceArn="arn:aws:rds:us-east-1:135775632425:db:schoolpilot-production-db"
+        expiresAtUtc=$durableExpiresAt;scheduleName=$durableScheduleName
+        scheduleGroupName="schoolpilot-production-db-insights-leases"
+        scheduleArn="arn:aws:scheduler:us-east-1:135775632425:schedule/schoolpilot-production-db-insights-leases/$durableScheduleName"
+        scheduleExpression="rate(15 minutes)";scheduleStartAtUtc=$durableExpiresAt
+        scheduleExpressionTimezone="UTC";actionAfterCompletion="NONE";state="ENABLED"
+        description="SchoolPilot db-insights restore v2 lease=$durableLeaseIdSha256 binding=$durableDescriptionBindingSha256"
+        targetArn="arn:aws:scheduler:::aws-sdk:ssm:startAutomationExecution"
+        automationVersion=$script:RequiredDatabaseInsightsDurableRestoreAutomationVersion
+        automationDocumentName=$automationDocumentName
+        automationDocumentVersion=$automationDocumentVersion
+        automationDocumentContentSha256=$automationDocumentContentSha256
+        automationDefinitionArn=$automationDefinitionArn
+        automationRoleArn=$automationRoleArn
+        automationFailureRuleArn=$automationFailureRuleArn
+        targetRoleArn="arn:aws:iam::135775632425:role/schoolpilot-production-db-insights-restore"
+        deadLetterQueueArn="arn:aws:sqs:us-east-1:135775632425:schoolpilot-production-db-insights-restore-dlq"
+        targetInput=$durableTargetInput;maximumEventAgeInSeconds=60;maximumRetryAttempts=0
+    }
+    $expectedDurableGuardBindingSha256 = Get-CertificationTextSha256 `
+        ($expectedDurableGuard | ConvertTo-Json -Depth 20 -Compress)
+    $observedDurableExpiresAt = [DateTimeOffset]::MinValue
+    if (-not [DateTimeOffset]::TryParse(
+        [string](Get-CertificationValue $durableGuard "expiresAtUtc" ""),
+        [ref]$observedDurableExpiresAt
+    )) {
+        throw "The certification Database Insights durable restore guard has an invalid expiration."
+    }
+    $observedDurableGuard = [ordered]@{
+        version=[string](Get-CertificationValue $durableGuard "version" "")
+        accountId=[string](Get-CertificationValue $durableGuard "accountId" "")
+        region=[string](Get-CertificationValue $durableGuard "region" "")
+        dbInstanceIdentifier=[string](Get-CertificationValue $durableGuard "dbInstanceIdentifier" "")
+        dbInstanceArn=[string](Get-CertificationValue $durableGuard "dbInstanceArn" "")
+        expiresAtUtc=$observedDurableExpiresAt.ToUniversalTime().ToString("o")
+        scheduleName=[string](Get-CertificationValue $durableGuard "scheduleName" "")
+        scheduleGroupName=[string](Get-CertificationValue $durableGuard "scheduleGroupName" "")
+        scheduleArn=[string](Get-CertificationValue $durableGuard "scheduleArn" "")
+        scheduleExpression=[string](Get-CertificationValue $durableGuard "scheduleExpression" "")
+        scheduleStartAtUtc=(ConvertTo-CertificationUtcTimestamp `
+            (Get-CertificationValue $durableGuard "scheduleStartAtUtc" "") `
+            "databaseInsightsLease.durableRestoreGuard.scheduleStartAtUtc").ToString("o")
+        scheduleExpressionTimezone=[string](Get-CertificationValue $durableGuard "scheduleExpressionTimezone" "")
+        actionAfterCompletion=[string](Get-CertificationValue $durableGuard "actionAfterCompletion" "")
+        state=[string](Get-CertificationValue $durableGuard "state" "")
+        description=[string](Get-CertificationValue $durableGuard "description" "")
+        targetArn=[string](Get-CertificationValue $durableGuard "targetArn" "")
+        automationVersion=[string](Get-CertificationValue $durableGuard "automationVersion" "")
+        automationDocumentName=[string](Get-CertificationValue $durableGuard "automationDocumentName" "")
+        automationDocumentVersion=[string](Get-CertificationValue $durableGuard "automationDocumentVersion" "")
+        automationDocumentContentSha256=[string](Get-CertificationValue $durableGuard "automationDocumentContentSha256" "")
+        automationDefinitionArn=[string](Get-CertificationValue $durableGuard "automationDefinitionArn" "")
+        automationRoleArn=[string](Get-CertificationValue $durableGuard "automationRoleArn" "")
+        automationFailureRuleArn=[string](Get-CertificationValue $durableGuard "automationFailureRuleArn" "")
+        targetRoleArn=[string](Get-CertificationValue $durableGuard "targetRoleArn" "")
+        deadLetterQueueArn=[string](Get-CertificationValue $durableGuard "deadLetterQueueArn" "")
+        targetInput=[string](Get-CertificationValue $durableGuard "targetInput" "")
+        maximumEventAgeInSeconds=[int](Get-CertificationValue $durableGuard "maximumEventAgeInSeconds" 0)
+        maximumRetryAttempts=[int](Get-CertificationValue $durableGuard "maximumRetryAttempts" -1)
+    }
+    $observedDurableGuardBindingSha256 = Get-CertificationTextSha256 `
+        ($observedDurableGuard | ConvertTo-Json -Depth 20 -Compress)
+    if ([int](Get-CertificationValue $receipt "schemaVersion" 0) -ne 2 -or
+        [string](Get-CertificationValue $receipt "type" "") -cne "database_insights_monitoring_lease" -or
+        [string](Get-CertificationValue $receipt "leaseVersion" "") -cne $script:RequiredDatabaseInsightsLeaseVersion -or
+        $leaseId -notmatch '^[0-9a-f]{32}$' -or
+        [string](Get-CertificationValue $receipt "leasePurpose" "") -cne "certification" -or
+        [string](Get-CertificationValue $receipt "accountId" "") -cne "135775632425" -or
+        [string](Get-CertificationValue $receipt "region" "") -cne "us-east-1" -or
+        [string](Get-CertificationValue $receipt "dbInstanceIdentifier" "") -cne "schoolpilot-production-db" -or
+        [string](Get-CertificationValue $receipt "expectedRdsInstanceClass" "") -cne $ExpectedRdsClass -or
+        [string](Get-CertificationValue $initial "dbInstanceIdentifier" "") -cne "schoolpilot-production-db" -or
+        [string](Get-CertificationValue $initial "databaseResourceId" "") -cne [string]$HistoryFallbackQueryIdentity.DatabaseResourceId -or
+        [string](Get-CertificationValue $initial "status" "") -cne "available" -or
+        [string](Get-CertificationValue $initial "instanceClass" "") -cne $ExpectedRdsClass -or
+        [string](Get-CertificationValue $initial "engine" "") -cne "postgres" -or
+        [string](Get-CertificationValue $initial "engineVersion" "") -cne [string]$HistoryFallbackQueryIdentity.EngineVersion -or
+        [string](Get-CertificationValue $initial "databaseInsightsMode" "") -cne "standard" -or
+        (Get-CertificationValue $initial "performanceInsightsEnabled" $false) -ne $true -or
+        [int](Get-CertificationValue $initial "performanceInsightsRetentionPeriod" 0) -ne 7 -or
+        [string]::IsNullOrWhiteSpace($performanceInsightsKmsKeyId) -or
+        $monitoringInterval -lt 0 -or $monitoringInterval -gt 60 -or
+        ($monitoringInterval -gt 0 -and [string]::IsNullOrWhiteSpace($monitoringRoleArn)) -or
+        @($enabledLogExports | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count -gt 0 -or
+        (Get-CertificationValue $initial "pendingModifiedValuesAbsent" $false) -ne $true -or
+        [string](Get-CertificationValue $initial "dbInstanceArn" "") -notmatch '^arn:aws:rds:us-east-1:135775632425:db:schoolpilot-production-db$' -or
+        $parameterStatuses.Count -lt 1 -or @($parameterStatuses | Where-Object { $_ -cne "in-sync" }).Count -gt 0 -or
+        [string](Get-CertificationValue $requested "databaseInsightsMode" "") -cne "advanced" -or
+        (Get-CertificationValue $requested "performanceInsightsEnabled" $false) -ne $true -or
+        [int](Get-CertificationValue $requested "performanceInsightsRetentionPeriod" 0) -ne 465 -or
+        [string](Get-CertificationValue $requested "preservedMonitoringPostureSha256" "") -cne $preservedMonitoringPostureSha256 -or
+        [string](Get-CertificationValue $durableGuard "bindingSha256" "") -cne $expectedDurableGuardBindingSha256 -or
+        $observedDurableGuardBindingSha256 -cne $expectedDurableGuardBindingSha256) {
+        throw "The Database Insights lease is not the exact certification-purpose Standard/7 to Advanced/465 lease for this database."
+    }
+    return [pscustomobject]@{
+        Public = [ordered]@{
+            receipt = [ordered]@{
+                sha256=$reference.sha256
+                pathSha256=Get-CertificationTextSha256 $reference.path
+            }
+            version = $script:RequiredDatabaseInsightsLeaseVersion
+            leaseIdSha256 = Get-CertificationTextSha256 $leaseId
+            leasePurpose = "certification"
+            accountId = "135775632425"
+            region = "us-east-1"
+            dbInstanceIdentifier = "schoolpilot-production-db"
+            expectedRdsInstanceClass = $ExpectedRdsClass
+            databaseResourceIdSha256 = Get-CertificationTextSha256 ([string]$initial.databaseResourceId)
+            initialPosture = [ordered]@{
+                databaseInsightsMode = "standard"
+                performanceInsightsEnabled = $true
+                performanceInsightsRetentionPeriod = 7
+                performanceInsightsKmsKeyIdSha256 = Get-CertificationTextSha256 $performanceInsightsKmsKeyId
+                monitoringInterval = $monitoringInterval
+                monitoringRoleArnSha256 = if($monitoringRoleArn){Get-CertificationTextSha256 $monitoringRoleArn}else{$null}
+                enabledCloudwatchLogsExports = $enabledLogExports
+                preservedMonitoringPostureSha256 = $preservedMonitoringPostureSha256
+            }
+            requestedPosture = [ordered]@{
+                databaseInsightsMode = "advanced"
+                performanceInsightsEnabled = $true
+                performanceInsightsRetentionPeriod = 465
+                preservedMonitoringPostureSha256 = $preservedMonitoringPostureSha256
+            }
+            durableRestoreGuard = [ordered]@{
+                version=$script:RequiredDatabaseInsightsDurableRestoreGuardVersion
+                bindingSha256=$expectedDurableGuardBindingSha256
+                scheduleArnSha256=Get-CertificationTextSha256 ([string]$expectedDurableGuard.scheduleArn)
+                targetRoleArnSha256=Get-CertificationTextSha256 ([string]$expectedDurableGuard.targetRoleArn)
+                deadLetterQueueArnSha256=Get-CertificationTextSha256 ([string]$expectedDurableGuard.deadLetterQueueArn)
+                automationDocumentVersion=$automationDocumentVersion
+                automationDocumentContentSha256=$automationDocumentContentSha256
+                automationDefinitionArnSha256=Get-CertificationTextSha256 ([string]$expectedDurableGuard.automationDefinitionArn)
+                automationRoleArnSha256=Get-CertificationTextSha256 ([string]$expectedDurableGuard.automationRoleArn)
+                automationFailureRuleArnSha256=Get-CertificationTextSha256 ([string]$expectedDurableGuard.automationFailureRuleArn)
+            }
+        }
+        Receipt = $reference
+    }
+}
+
+function Assert-CertificationDatabaseInsightsLeaseCommandResult {
+    param($Result, $Contract, [ValidateSet("Validate", "Restore")][string]$Mode)
+    $lease = $Contract.DatabaseInsightsLease
+    $expectedState = if ($Mode -eq "Validate") { "active_validated" } else { "restored" }
+    $expectedReceiptPath = [IO.Path]::GetFullPath([string]$Contract.DatabaseInsightsLeaseReceipt.path)
+    $expectedStatusPath = [IO.Path]::GetFullPath("$expectedReceiptPath.status.json")
+    $expectedWatchdogPath = [IO.Path]::GetFullPath("$expectedReceiptPath.watchdog.json")
+    $durableGuard = $lease.durableRestoreGuard
+    $expectedDurableState = if ($Mode -eq "Validate") { "armed" } else { "removed" }
+    if ([string](Get-CertificationValue $Result "state" "") -cne $expectedState -or
+        [string](Get-CertificationValue $Result "receiptPathSha256" "") -cne (Get-CertificationTextSha256 $expectedReceiptPath) -or
+        [string](Get-CertificationValue $Result "receiptSha256" "") -cne [string]$lease.receipt.sha256 -or
+        [string](Get-CertificationValue $Result "statusPathSha256" "") -cne (Get-CertificationTextSha256 $expectedStatusPath) -or
+        [string](Get-CertificationValue $Result "watchdogPathSha256" "") -cne (Get-CertificationTextSha256 $expectedWatchdogPath) -or
+        [string](Get-CertificationValue $Result "durableRestoreGuardVersion" "") -cne [string]$durableGuard.version -or
+        [string](Get-CertificationValue $Result "durableRestoreGuardBindingSha256" "") -cne [string]$durableGuard.bindingSha256 -or
+        [string](Get-CertificationValue $Result "durableRestoreGuardState" "") -cne $expectedDurableState -or
+        (Get-CertificationValue $Result "rawPathsPersisted" $true) -ne $false) {
+        throw "The Database Insights lease helper returned an identity-mismatched result."
+    }
+    if ($Mode -eq "Validate") {
+        $watchdogHeartbeatSha256 = [string](Get-CertificationValue $Result "watchdogHeartbeatSha256" "")
+        [void](Assert-CertificationSha256 $watchdogHeartbeatSha256 "databaseInsightsLease.watchdogHeartbeatSha256")
+        if ([string](Get-CertificationValue $Result "watchdogState" "") -notmatch '^(armed|monitoring)$') {
+            throw "The Database Insights lease helper did not prove a live bounded watchdog."
+        }
+        if ([string](Get-CertificationValue $Result "durableRestoreScheduleArnSha256" "") -cne [string]$durableGuard.scheduleArnSha256 -or
+            [string](Get-CertificationValue $Result "durableRestoreTargetRoleArnSha256" "") -cne [string]$durableGuard.targetRoleArnSha256 -or
+            [string](Get-CertificationValue $Result "durableRestoreDeadLetterQueueArnSha256" "") -cne [string]$durableGuard.deadLetterQueueArnSha256 -or
+            [string](Get-CertificationValue $Result "durableRestoreAutomationDefinitionArnSha256" "") -cne [string]$durableGuard.automationDefinitionArnSha256 -or
+            [string](Get-CertificationValue $Result "durableRestoreAutomationRoleArnSha256" "") -cne [string]$durableGuard.automationRoleArnSha256 -or
+            [string](Get-CertificationValue $Result "durableRestoreAutomationFailureRuleArnSha256" "") -cne [string]$durableGuard.automationFailureRuleArnSha256 -or
+            [string](Get-CertificationValue $Result "durableRestoreAutomationDocumentVersion" "") -cne [string]$durableGuard.automationDocumentVersion -or
+            [string](Get-CertificationValue $Result "durableRestoreAutomationDocumentContentSha256" "") -cne [string]$durableGuard.automationDocumentContentSha256) {
+            throw "The Database Insights lease helper did not prove the exact AWS-native restore schedule, Automation, roles, failure rule, and DLQ."
+        }
+        return [ordered]@{
+            state = "active_validated"
+            leaseVersion = $lease.version
+            receiptSha256 = $lease.receipt.sha256
+            watchdogHeartbeatSha256 = $watchdogHeartbeatSha256
+            watchdogState = [string]$Result.watchdogState
+            durableRestoreGuardVersion = [string]$durableGuard.version
+            durableRestoreGuardBindingSha256 = [string]$durableGuard.bindingSha256
+            durableRestoreScheduleArnSha256 = [string]$durableGuard.scheduleArnSha256
+            durableRestoreTargetRoleArnSha256 = [string]$durableGuard.targetRoleArnSha256
+            durableRestoreDeadLetterQueueArnSha256 = [string]$durableGuard.deadLetterQueueArnSha256
+            durableRestoreAutomationDefinitionArnSha256 = [string]$durableGuard.automationDefinitionArnSha256
+            durableRestoreAutomationRoleArnSha256 = [string]$durableGuard.automationRoleArnSha256
+            durableRestoreAutomationFailureRuleArnSha256 = [string]$durableGuard.automationFailureRuleArnSha256
+            durableRestoreAutomationDocumentVersion = [string]$durableGuard.automationDocumentVersion
+            durableRestoreAutomationDocumentContentSha256 = [string]$durableGuard.automationDocumentContentSha256
+            durableRestoreGuardState = "armed"
+            validatedAtUtc = [DateTimeOffset]::UtcNow.ToString("o")
+            nonMutating = $true
+        }
+    }
+    $posture = Get-CertificationValue $Result "posture"
+    $parameterStatuses = @(
+        @(Get-CertificationValue $posture "parameterApplyStatuses" @()) |
+            ForEach-Object { [string]$_ }
+    )
+    $restoredLogExports = @(
+        @(Get-CertificationValue $posture "enabledCloudwatchLogsExports" @()) |
+            ForEach-Object { [string]$_ } |
+            Sort-Object -Unique
+    )
+    $restoredKmsHash = Get-CertificationTextSha256 ([string](Get-CertificationValue $posture "performanceInsightsKmsKeyId" ""))
+    $restoredRole = [string](Get-CertificationValue $posture "monitoringRoleArn" "")
+    $restoredRoleHash = if($restoredRole){Get-CertificationTextSha256 $restoredRole}else{$null}
+    if ([string](Get-CertificationValue $posture "dbInstanceIdentifier" "") -cne [string]$lease.dbInstanceIdentifier -or
+        (Get-CertificationTextSha256 ([string](Get-CertificationValue $posture "databaseResourceId" ""))) -cne [string]$lease.databaseResourceIdSha256 -or
+        [string](Get-CertificationValue $posture "status" "") -cne "available" -or
+        [string](Get-CertificationValue $posture "instanceClass" "") -cne [string]$lease.expectedRdsInstanceClass -or
+        [string](Get-CertificationValue $posture "engine" "") -cne "postgres" -or
+        [string](Get-CertificationValue $posture "engineVersion" "") -cne [string]$Contract.HistoryFallbackQueryIdentity.engineVersion -or
+        [string](Get-CertificationValue $posture "databaseInsightsMode" "") -cne "standard" -or
+        (Get-CertificationValue $posture "performanceInsightsEnabled" $false) -ne $true -or
+        [int](Get-CertificationValue $posture "performanceInsightsRetentionPeriod" 0) -ne 7 -or
+        $restoredKmsHash -cne [string]$lease.initialPosture.performanceInsightsKmsKeyIdSha256 -or
+        [int](Get-CertificationValue $posture "monitoringInterval" -1) -ne [int]$lease.initialPosture.monitoringInterval -or
+        [string]$restoredRoleHash -cne [string]$lease.initialPosture.monitoringRoleArnSha256 -or
+        (ConvertTo-CertificationComparableJson $restoredLogExports) -cne
+            (ConvertTo-CertificationComparableJson @($lease.initialPosture.enabledCloudwatchLogsExports)) -or
+        (Get-CertificationValue $posture "pendingModifiedValuesAbsent" $false) -ne $true -or
+        $parameterStatuses.Count -lt 1 -or @($parameterStatuses | Where-Object { $_ -cne "in-sync" }).Count -gt 0) {
+        throw "Database Insights restoration did not prove the exact healthy Standard/7 posture."
+    }
+    return [ordered]@{
+        state = "restored"
+        leaseVersion = $lease.version
+        receiptSha256 = $lease.receipt.sha256
+        durableRestoreGuardVersion = [string]$durableGuard.version
+        durableRestoreGuardBindingSha256 = [string]$durableGuard.bindingSha256
+        durableRestoreGuardState = "removed"
+        restoredAtUtc = [DateTimeOffset]::UtcNow.ToString("o")
+        observedPosture = [ordered]@{
+            dbInstanceIdentifier = [string]$posture.dbInstanceIdentifier
+            databaseResourceIdSha256 = Get-CertificationTextSha256 ([string]$posture.databaseResourceId)
+            status = "available"
+            instanceClass = [string]$posture.instanceClass
+            engine = "postgres"
+            engineVersion = [string]$posture.engineVersion
+            databaseInsightsMode = "standard"
+            performanceInsightsEnabled = $true
+            performanceInsightsRetentionPeriod = 7
+            performanceInsightsKmsKeyIdSha256 = $restoredKmsHash
+            monitoringInterval = [int]$posture.monitoringInterval
+            monitoringRoleArnSha256 = $restoredRoleHash
+            enabledCloudwatchLogsExports = $restoredLogExports
+            pendingModifiedValuesAbsent = $true
+            parameterApplyStatuses = $parameterStatuses
+        }
+    }
+}
+
+function Invoke-CertificationDatabaseInsightsLeaseCommand {
+    param($Config, $Contract, [ValidateSet("Validate", "Restore")][string]$Mode)
+    if ($null -eq $Contract) { return $null }
+    $lease = $Contract.DatabaseInsightsLease
+    $leaseScript = Join-Path $PSScriptRoot "database-insights-lease.ps1"
+    $output = & $pwsh -NoProfile -File $leaseScript `
+        -Mode $Mode `
+        -DbInstanceIdentifier ([string]$lease.dbInstanceIdentifier) `
+        -ReceiptPath ([string]$Contract.DatabaseInsightsLeaseReceipt.path) `
+        -ExpectedReceiptSha256 ([string]$lease.receipt.sha256) `
+        -Region ([string]$lease.region) `
+        -ExpectedAccountId ([string]$lease.accountId) `
+        -ExpectedRdsInstanceClass ([string]$lease.expectedRdsInstanceClass) `
+        -LeasePurpose certification `
+        -PollSeconds 15 `
+        -TimeoutSeconds 900 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        throw "The certification Database Insights lease $Mode operation failed; provider output was discarded."
+    }
+    try { $result = (($output | Out-String).Trim() | ConvertFrom-Json -Depth 40) }
+    catch { throw "The certification Database Insights lease helper returned malformed JSON." }
+    return Assert-CertificationDatabaseInsightsLeaseCommandResult $result $Contract $Mode
+}
+
+function Set-CertificationPrivateFileAcl {
+    param([string]$Path)
+    if (-not $IsWindows) { throw "Private certification evidence requires Windows ACL enforcement." }
+    $current = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $discarded = & icacls.exe $Path /inheritance:r /grant:r "$($current.Name):(F)" 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "Could not restrict private certification evidence to the current operator." }
+    Assert-CertificationPrivateFileAcl $Path "private certification evidence"
+}
+
+function Write-CertificationPrivateImmutableJson {
+    param([string]$Path, $Value)
+    if (Test-Path -LiteralPath $Path) {
+        throw "Private certification evidence already exists; use a fresh runId."
+    }
+    $temporary = "$Path.tmp.$([Guid]::NewGuid().ToString('N'))"
+    try {
+        [IO.File]::WriteAllText(
+            $temporary,
+            ($Value | ConvertTo-Json -Depth 60),
+            [Text.UTF8Encoding]::new($false)
+        )
+        Set-CertificationPrivateFileAcl $temporary
+        [IO.File]::Move($temporary,$Path)
+        Assert-CertificationPrivateFileAcl $Path "private certification evidence"
+    }
+    finally {
+        if (Test-Path -LiteralPath $temporary) {
+            Remove-Item -LiteralPath $temporary -Force
+        }
+    }
+}
+
+function Get-CertificationCoherentTrafficWindow {
+    param([string]$ProgressPath, [string]$SummaryPath, [string]$ExpectedRunId,
+        [string]$ExpectedStage, [int]$ExpectedDurationSeconds)
+    if (-not (Test-Path -LiteralPath $ProgressPath -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $SummaryPath -PathType Leaf)) {
+        throw "History-fallback PI evidence requires committed progress and summary artifacts."
+    }
+    $progressText = Get-Content -LiteralPath $ProgressPath -Raw
+    if (-not $progressText.EndsWith("`n", [StringComparison]::Ordinal)) {
+        throw "The load progress journal does not have a committed terminal newline."
+    }
+    $events = @()
+    foreach ($line in @($progressText -split "\r?\n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })) {
+        try { $events += ,($line | ConvertFrom-Json -Depth 40) }
+        catch { throw "The load progress journal contains malformed committed JSON." }
+    }
+    $starts = @($events | Where-Object {
+        [string](Get-CertificationValue $_ "type" "") -ceq "progress" -and
+        [string](Get-CertificationValue $_ "event" "") -ceq "start" -and
+        [string](Get-CertificationValue $_ "runId" "") -ceq $ExpectedRunId -and
+        [string](Get-CertificationValue $_ "stage" "") -ceq $ExpectedStage
+    })
+    $finals = @($events | Where-Object {
+        [string](Get-CertificationValue $_ "event" "") -ceq "final" -and
+        [string](Get-CertificationValue $_ "runId" "") -ceq $ExpectedRunId -and
+        [string](Get-CertificationValue $_ "stage" "") -ceq $ExpectedStage
+    })
+    if ($starts.Count -ne 1 -or $finals.Count -ne 1) {
+        throw "The load journal must contain exactly one bound start and one bound terminal record."
+    }
+    try {
+        $start = ([DateTimeOffset]([string](Get-CertificationValue $starts[0] "timestamp" ""))).ToUniversalTime()
+        $final = ([DateTimeOffset]([string](Get-CertificationValue $finals[0] "timestamp" ""))).ToUniversalTime()
+        $summary = Get-Content -LiteralPath $SummaryPath -Raw | ConvertFrom-Json -Depth 60
+    }
+    catch { throw "The committed load timing evidence is malformed." }
+    $run = Get-CertificationValue $summary "run"
+    $actualRaw = Get-CertificationValue $run "actualTrafficMilliseconds"
+    $plannedRaw = Get-CertificationValue $run "plannedTrafficMilliseconds"
+    $targetRaw = Get-CertificationValue $run "runtimeTargetTrafficSeconds"
+    $numericTypes = @(
+        [TypeCode]::Byte,[TypeCode]::SByte,[TypeCode]::Int16,[TypeCode]::UInt16,
+        [TypeCode]::Int32,[TypeCode]::UInt32,[TypeCode]::Int64,[TypeCode]::UInt64,
+        [TypeCode]::Single,[TypeCode]::Double,[TypeCode]::Decimal
+    )
+    if ([Convert]::GetTypeCode($actualRaw) -notin $numericTypes -or
+        [Convert]::GetTypeCode($plannedRaw) -notin $numericTypes -or
+        [Convert]::GetTypeCode($targetRaw) -notin $numericTypes) {
+        throw "The load summary timing fields must be JSON numbers."
+    }
+    $actualMs = [double]$actualRaw
+    $expectedMs = [double]$ExpectedDurationSeconds * 1000.0
+    if ([string](Get-CertificationValue $summary "runId" "") -cne $ExpectedRunId -or
+        [string](Get-CertificationValue $summary "stage" "") -cne $ExpectedStage -or
+        [string](Get-CertificationValue $run "durationClock" "") -cne "monotonic-hrtime-v1" -or
+        [string](Get-CertificationValue $run "shutdownReason" "") -cne "duration" -or
+        (Get-CertificationValue $run "completedConfiguredDuration" $false) -ne $true -or
+        [double]$targetRaw -ne [double]$ExpectedDurationSeconds -or
+        [double]$plannedRaw -ne $expectedMs -or
+        [double]::IsNaN($actualMs) -or [double]::IsInfinity($actualMs) -or
+        $actualMs -lt $expectedMs -or $actualMs -ne [math]::Truncate($actualMs)) {
+        throw "The load summary does not prove the exact completed monotonic traffic duration."
+    }
+    $end = $start.AddMilliseconds($actualMs)
+    # The terminal wall timestamp is identity/freshness metadata only.  It is
+    # deliberately not compared with the monotonic end: Date.now() may move
+    # backward while hrtime continues to prove the complete traffic interval.
+    if ($end -le $start -or ($end - $start).TotalHours -gt 2 -or
+        $final -gt [DateTimeOffset]::UtcNow.AddSeconds(5)) {
+        throw "The coherent traffic window is inconsistent with the committed timing evidence."
+    }
+    return [ordered]@{ coherent=$true;startUtc=$start.ToString("o");endUtc=$end.ToString("o") }
+}
+
+function Get-CertificationApiCloudWatchBinding {
+    param($Config, $Contract)
+    $region = [string]$Config.resources.region
+    $response = Invoke-CertificationAwsJson @(
+        "ecs","describe-task-definition","--region",$region,"--task-definition",$Contract.ActiveApiArn
+    )
+    $task = Get-CertificationValue $response "taskDefinition"
+    $containers = @((Get-CertificationValue $task "containerDefinitions" @()) | Where-Object {
+        [string](Get-CertificationValue $_ "name" "") -ceq "api"
+    })
+    if ([string](Get-CertificationValue $task "taskDefinitionArn" "") -cne $Contract.ActiveApiArn -or
+        $containers.Count -ne 1) {
+        throw "The active API logging identity could not be bound to one exact task revision."
+    }
+    $logConfiguration = Get-CertificationValue $containers[0] "logConfiguration"
+    $options = Get-CertificationValue $logConfiguration "options"
+    $driver = [string](Get-CertificationValue $logConfiguration "logDriver" "")
+    $logRegion = [string](Get-CertificationValue $options "awslogs-region" "")
+    $logGroup = [string](Get-CertificationValue $options "awslogs-group" "")
+    $streamPrefix = [string](Get-CertificationValue $options "awslogs-stream-prefix" "")
+    if ($driver -cne "awslogs" -or $logRegion -cne $region -or
+        $logGroup -notmatch '^[A-Za-z0-9_.\-/#]{1,512}$' -or
+        $streamPrefix -notmatch '^[A-Za-z0-9_.\-/#]{1,128}$') {
+        throw "The active API task revision has an unsupported CloudWatch log binding."
+    }
+    return [ordered]@{
+        logDriver=$driver;logRegion=$logRegion;logGroupName=$logGroup
+        awslogsStreamPrefix=$streamPrefix;apiLogStreamNamePrefix="$streamPrefix/api/"
+    }
+}
+
+function Assert-CertificationHistoryFallbackPiFinalizationRequest {
+    param($Reference, $Contract, $Config, [string]$ExpectedRunId, [string]$ExpectedStage)
+    $bound = Assert-CertificationEvidenceReference ([pscustomobject]@{
+        path=[string](Get-CertificationValue $Reference "path" "")
+        sha256=[string](Get-CertificationValue $Reference "sha256" "")
+    }) "historyFallbackPiFinalizationRequest"
+    Assert-CertificationPrivateFileAcl $bound.path "historyFallbackPiFinalizationRequest"
+    $rawText = Get-Content -LiteralPath $bound.path -Raw
+    if ($rawText -match '"queryIdentifier"\s*:') {
+        throw "The history-fallback PI request leaked the protected raw query identifier."
+    }
+    try { $request = $rawText | ConvertFrom-Json -Depth 60 -DateKind String }
+    catch { throw "The history-fallback PI request contains malformed JSON." }
+    $queryIdentity = $Contract.HistoryFallbackQueryIdentity
+    $requestIdentity = Get-CertificationValue $request "historyFallbackSqlIdentity"
+    $privateIdentity = Get-CertificationValue $request "historyFallbackQueryIdentity"
+    $tasks = Get-CertificationValue $request "taskDefinitions"
+    $runtimeBinding = Get-CertificationValue $request "ecsRuntimeBinding"
+    $rds = Get-CertificationValue $request "rds"
+    $fallback = Get-CertificationValue $request "applicationFallbackDatabaseReadEvidence"
+    $comparison = if ($IsWindows) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+    $privateIdentityPath = [IO.Path]::GetFullPath([string](Get-CertificationValue $privateIdentity "path" ""))
+    if ([int](Get-CertificationValue $request "schemaVersion" 0) -ne 1 -or
+        [string](Get-CertificationValue $request "type" "") -cne "history_fallback_pi_finalization_request" -or
+        [string](Get-CertificationValue $request "historyFallbackPiEvidenceVersion" "") -cne $script:RequiredHistoryFallbackPiEvidenceVersion -or
+        [string](Get-CertificationValue $request "evidenceCollectorVersion" "") -cne "post-traffic-v2" -or
+        [string](Get-CertificationValue $request "runId" "") -cne $ExpectedRunId -or
+        [string](Get-CertificationValue $request "chainId" "") -cne $Contract.ChainId -or
+        [string](Get-CertificationValue $request "phase" "") -cne "Waf" -or
+        [string](Get-CertificationValue $request "stage" "") -cne $ExpectedStage -or
+        [string](Get-CertificationValue $request "applicationGitSha" "") -cne $Contract.ApplicationGitSha -or
+        [string](Get-CertificationValue $request "deployedImageDigest" "") -cne $Contract.DeployedImageDigest -or
+        [string](Get-CertificationValue $tasks "api" "") -cne $Contract.ActiveApiArn -or
+        [string](Get-CertificationValue $tasks "worker" "") -cne $Contract.ActiveWorkerArn -or
+        [string](Get-CertificationValue $runtimeBinding "clusterName" "") -cne [string]$Config.resources.cluster -or
+        [string](Get-CertificationValue $runtimeBinding "apiServiceName" "") -cne [string]$Config.resources.apiService -or
+        [string](Get-CertificationValue $runtimeBinding "workerServiceName" "") -cne [string]$Config.resources.workerService -or
+        [string](Get-CertificationValue $rds "databaseResourceId" "") -cne $Contract.HistoryFallbackDatabaseResourceId -or
+        [string](Get-CertificationValue $rds "engineVersion" "") -cne $queryIdentity.engineVersion -or
+        [string](Get-CertificationValue $rds "expectedInstanceClass" "") -cne "db.t4g.medium" -or
+        [string](Get-CertificationValue $rds "region" "") -cne $Contract.DatabaseInsightsLease.region -or
+        [string](Get-CertificationValue $rds "accountId" "") -cne $Contract.DatabaseInsightsLease.accountId -or
+        [string](Get-CertificationValue $rds "dbInstanceIdentifier" "") -cne $Contract.DatabaseInsightsLease.dbInstanceIdentifier -or
+        -not [string]::Equals($privateIdentityPath,
+            [IO.Path]::GetFullPath([string]$Contract.HistoryFallbackQueryIdentityReceipt.path),$comparison) -or
+        [string](Get-CertificationValue $privateIdentity "sha256" "") -cne $Contract.HistoryFallbackQueryIdentityReceipt.sha256 -or
+        [string](Get-CertificationValue $requestIdentity "version" "") -cne $queryIdentity.version -or
+        [string](Get-CertificationValue $requestIdentity "queryIdentifierSha256" "") -cne $queryIdentity.queryIdentifierSha256 -or
+        [string](Get-CertificationValue $requestIdentity "compiledSqlSha256" "") -cne $queryIdentity.compiledSqlSha256 -or
+        [string](Get-CertificationValue $requestIdentity "parameterTypeSignatureSha256" "") -cne $queryIdentity.parameterTypeSignatureSha256 -or
+        [string](Get-CertificationValue $requestIdentity "schemaIdentitySha256" "") -cne $queryIdentity.schemaIdentitySha256 -or
+        (Get-CertificationValue $requestIdentity "trackIoTiming" $false) -ne $true -or
+        [string](Get-CertificationValue $fallback "sourceEvent" "") -cne "classpilot_heartbeat_hot_path_summary" -or
+        [string](Get-CertificationValue $fallback "historyFallbackSqlIdentityVersion" "") -cne $queryIdentity.version -or
+        [string](Get-CertificationValue $fallback "historyFallbackSqlIdentitySha256" "") -cne $queryIdentity.compiledSqlSha256) {
+        throw "The history-fallback PI request is not bound to the exact run, query, release, tasks, and database."
+    }
+    $window = Get-CertificationValue $request "trafficWindow"
+    try {
+        $start = ([DateTimeOffset]([string](Get-CertificationValue $window "startUtc" ""))).ToUniversalTime()
+        $end = ([DateTimeOffset]([string](Get-CertificationValue $window "endUtc" ""))).ToUniversalTime()
+    }
+    catch { throw "The history-fallback PI request traffic window is malformed." }
+    if ((Get-CertificationValue $window "coherent" $false) -ne $true -or $end -le $start -or
+        ($end-$start).TotalHours -gt 2) {
+        throw "The history-fallback PI request does not contain a coherent bounded traffic window."
+    }
+    $trafficWindowSha256 = Get-CertificationCanonicalSha256 ([ordered]@{
+        startUtc=$start.ToString("o");endUtc=$end.ToString("o");coherent=$true
+    })
+    return [pscustomobject]@{
+        Reference=$bound;Request=$request;TrafficWindowSha256=$trafficWindowSha256
+    }
+}
+
+function Assert-CertificationHistoryFallbackPiBucketCoverage {
+    param($Coverage, $EvidenceWindow, [object[]]$FallbackIntervals, [long]$ExpectedDatabaseReadCount)
+    try {
+        $rawEvidenceStart = [DateTimeOffset]([string](Get-CertificationValue $EvidenceWindow "startUtc" ""))
+        $rawEvidenceEnd = [DateTimeOffset]([string](Get-CertificationValue $EvidenceWindow "endUtc" ""))
+        $evidenceStart = $rawEvidenceStart.ToUniversalTime()
+        $evidenceEnd = $rawEvidenceEnd.ToUniversalTime()
+    }
+    catch { throw "The deterministic PI minute-bucket evidence window is malformed." }
+    $durationSeconds = ($evidenceEnd-$evidenceStart).TotalSeconds
+    if ($rawEvidenceStart.Offset -ne [TimeSpan]::Zero -or $rawEvidenceEnd.Offset -ne [TimeSpan]::Zero -or
+        $evidenceEnd -le $evidenceStart -or $durationSeconds -ne [math]::Floor($durationSeconds) -or
+        ([long]$durationSeconds % 60) -ne 0 -or
+        ($evidenceStart.Ticks % [TimeSpan]::TicksPerMinute) -ne 0 -or
+        ($evidenceEnd.Ticks % [TimeSpan]::TicksPerMinute) -ne 0 -or
+        [string](Get-CertificationValue $EvidenceWindow "alignment" "") -cne "utc-minute-interior-v1" -or
+        [string](Get-CertificationValue $EvidenceWindow "periodAlignment" "") -cne "START_TIME") {
+        throw "The deterministic PI minute-bucket evidence window is not exact and aligned."
+    }
+    $expectedBuckets = [Collections.Generic.List[string]]::new()
+    for ($cursor=$evidenceStart; $cursor -lt $evidenceEnd; $cursor=$cursor.AddSeconds(60)) {
+        $expectedBuckets.Add($cursor.ToString("o"))
+    }
+    if ($expectedBuckets.Count -lt 1) { throw "The deterministic PI minute lattice is empty." }
+
+    $ordinalSets = [ordered]@{}
+    foreach ($entry in @(
+        [pscustomobject]@{Name="observedBucketOrdinals";Key="observed"},
+        [pscustomobject]@{Name="positiveCallBucketOrdinals";Key="positive"},
+        [pscustomobject]@{Name="applicationActiveBucketOrdinals";Key="active"}
+    )) {
+        $values = @(Get-CertificationValue $Coverage $entry.Name @())
+        $list = [Collections.Generic.List[int]]::new()
+        $previous = -1
+        foreach ($value in $values) {
+            if (-not (Test-CertificationFiniteNonnegativeNumber $value) -or
+                [double]$value -ne [math]::Floor([double]$value) -or
+                [double]$value -ge $expectedBuckets.Count -or [int]$value -le $previous) {
+                throw "The deterministic PI minute-bucket ordinals are malformed or noncanonical."
+            }
+            $previous = [int]$value
+            $list.Add([int]$value)
+        }
+        $ordinalSets[$entry.Key] = $list
+    }
+    $observedSet = [Collections.Generic.HashSet[int]]::new([int[]]@($ordinalSets.observed))
+    $positiveSet = [Collections.Generic.HashSet[int]]::new([int[]]@($ordinalSets.positive))
+    foreach ($ordinal in $positiveSet) {
+        if (-not $observedSet.Contains($ordinal)) {
+            throw "Positive PI call buckets must be a subset of observed buckets."
+        }
+    }
+
+    $recomputedActiveSet = [Collections.Generic.HashSet[int]]::new()
+    $coveredApplicationWindows = 0
+    $positiveCallCoveredApplicationWindows = 0
+    $applicationReadCount = 0L
+    foreach ($interval in @($FallbackIntervals)) {
+        try {
+            $rawIntervalStart = [DateTimeOffset]([string](Get-CertificationValue $interval "startUtc" ""))
+            $rawIntervalEnd = [DateTimeOffset]([string](Get-CertificationValue $interval "endUtc" ""))
+            $intervalStart = $rawIntervalStart.ToUniversalTime()
+            $intervalEnd = $rawIntervalEnd.ToUniversalTime()
+            $intervalReads = [long](Get-CertificationValue $interval "databaseReadCount")
+        }
+        catch { throw "The application fallback minute-bucket evidence is malformed." }
+        if ($rawIntervalStart.Offset -ne [TimeSpan]::Zero -or $rawIntervalEnd.Offset -ne [TimeSpan]::Zero -or
+            $intervalStart -lt $evidenceStart -or $intervalEnd -gt $evidenceEnd -or
+            ($intervalEnd-$intervalStart).TotalMilliseconds -ne 60000.0 -or
+            ($intervalStart.Ticks % [TimeSpan]::TicksPerMinute) -ne 0 -or
+            ($intervalEnd.Ticks % [TimeSpan]::TicksPerMinute) -ne 0 -or $intervalReads -le 0) {
+            throw "The application fallback minute-bucket evidence is outside the exact evidence window."
+        }
+        $applicationReadCount += $intervalReads
+        $windowCovered = $false
+        $windowPositive = $false
+        for ($ordinal=0; $ordinal -lt $expectedBuckets.Count; $ordinal++) {
+            $bucketStart = [DateTimeOffset]$expectedBuckets[$ordinal]
+            $bucketEnd = $bucketStart.AddSeconds(60)
+            if ($bucketStart -lt $intervalEnd -and $bucketEnd -gt $intervalStart) {
+                [void]$recomputedActiveSet.Add($ordinal)
+                if ($observedSet.Contains($ordinal)) { $windowCovered = $true }
+                if ($positiveSet.Contains($ordinal)) { $windowPositive = $true }
+            }
+        }
+        if ($windowCovered) { $coveredApplicationWindows++ }
+        if ($windowPositive) { $positiveCallCoveredApplicationWindows++ }
+    }
+    if ($FallbackIntervals.Count -lt 1 -or $applicationReadCount -ne $ExpectedDatabaseReadCount) {
+        throw "Application fallback minute buckets do not reconcile to the exact database-read count."
+    }
+    $recomputedActiveOrdinals = @($recomputedActiveSet | Sort-Object)
+    if (@(Compare-Object @($ordinalSets.active) $recomputedActiveOrdinals -SyncWindow 0).Count -ne 0) {
+        throw "The claimed application-active PI minute buckets do not match the fallback intervals."
+    }
+    $missingMiddleCount = 0
+    if ($ordinalSets.observed.Count -gt 1) {
+        for ($ordinal=$ordinalSets.observed[0]; $ordinal -le $ordinalSets.observed[-1]; $ordinal++) {
+            if (-not $observedSet.Contains($ordinal)) { $missingMiddleCount++ }
+        }
+    }
+    $unobservedActiveCount = @($recomputedActiveOrdinals | Where-Object { -not $observedSet.Contains($_) }).Count
+    $zeroCallActiveCount = @($recomputedActiveOrdinals | Where-Object {
+        $observedSet.Contains($_) -and -not $positiveSet.Contains($_)
+    }).Count
+    $expectedBucketTexts = @($expectedBuckets)
+    $observedBucketTexts = @($ordinalSets.observed | ForEach-Object { $expectedBuckets[$_] })
+    $positiveBucketTexts = @($ordinalSets.positive | ForEach-Object { $expectedBuckets[$_] })
+    $activeBucketTexts = @($recomputedActiveOrdinals | ForEach-Object { $expectedBuckets[$_] })
+    if ([string](Get-CertificationValue $Coverage "coverageContractVersion" "") -cne "queryid-minute-sparse-v1" -or
+        [int](Get-CertificationValue $Coverage "periodSeconds" 0) -ne 60 -or
+        [int](Get-CertificationValue $Coverage "expectedBucketCount" -1) -ne $expectedBuckets.Count -or
+        [int](Get-CertificationValue $Coverage "observedBucketCount" -1) -ne $ordinalSets.observed.Count -or
+        [int](Get-CertificationValue $Coverage "positiveCallBucketCount" -1) -ne $ordinalSets.positive.Count -or
+        [int](Get-CertificationValue $Coverage "omittedSparseBucketCount" -1) -ne ($expectedBuckets.Count-$ordinalSets.observed.Count) -or
+        [int](Get-CertificationValue $Coverage "missingMiddleBucketCount" -1) -ne $missingMiddleCount -or
+        [int](Get-CertificationValue $Coverage "applicationFallbackWindowCount" -1) -ne $FallbackIntervals.Count -or
+        [int](Get-CertificationValue $Coverage "coveredApplicationFallbackWindowCount" -1) -ne $coveredApplicationWindows -or
+        [int](Get-CertificationValue $Coverage "positiveCallCoveredApplicationFallbackWindowCount" -1) -ne $positiveCallCoveredApplicationWindows -or
+        [int](Get-CertificationValue $Coverage "applicationActiveBucketCount" -1) -ne $recomputedActiveSet.Count -or
+        [int](Get-CertificationValue $Coverage "unobservedApplicationActiveBucketCount" -1) -ne $unobservedActiveCount -or
+        [int](Get-CertificationValue $Coverage "zeroCallApplicationActiveBucketCount" -1) -ne $zeroCallActiveCount -or
+        $missingMiddleCount -ne 0 -or $unobservedActiveCount -ne 0 -or $zeroCallActiveCount -ne 0 -or
+        $coveredApplicationWindows -ne $FallbackIntervals.Count -or
+        $positiveCallCoveredApplicationWindows -ne $FallbackIntervals.Count -or
+        (Get-CertificationValue $Coverage "positiveCallCoveragePassed" $false) -ne $true -or
+        (Get-CertificationValue $Coverage "sparseBucketsPermittedOnlyWithoutApplicationActivity" $false) -ne $true -or
+        (Get-CertificationValue $Coverage "complete" $false) -ne $true -or
+        [string](Get-CertificationValue $Coverage "expectedBucketSetSha256" "") -cne
+            (Get-CertificationCanonicalSha256 ([ordered]@{buckets=$expectedBucketTexts})) -or
+        [string](Get-CertificationValue $Coverage "observedBucketSetSha256" "") -cne
+            (Get-CertificationCanonicalSha256 ([ordered]@{buckets=$observedBucketTexts})) -or
+        [string](Get-CertificationValue $Coverage "positiveCallBucketSetSha256" "") -cne
+            (Get-CertificationCanonicalSha256 ([ordered]@{buckets=$positiveBucketTexts})) -or
+        [string](Get-CertificationValue $Coverage "applicationActiveBucketSetSha256" "") -cne
+            (Get-CertificationCanonicalSha256 ([ordered]@{buckets=$activeBucketTexts}))) {
+        throw "The deterministic PI sparse-minute coverage and positive-call reconciliation is incomplete."
+    }
+}
+
+function Assert-CertificationHistoryFallbackPiGateEvidence {
+    param($Evidence, $Receipt, $RequestValidation, $Contract)
+    $queryIdentity = $Contract.HistoryFallbackQueryIdentity
+    $hotPath = Get-CertificationValue $Evidence "hotPathLogEvidence"
+    $sql = Get-CertificationValue $Evidence "sqlStatistics"
+    $sampled = Get-CertificationValue $Evidence "sampledLoad"
+    $expectedDatabaseHash = Get-CertificationTextSha256 $Contract.HistoryFallbackDatabaseResourceId
+    $expectedApiTaskHash = Get-CertificationTextSha256 $Contract.ActiveApiArn
+    if ($null -eq $Evidence -or $null -eq $hotPath -or $null -eq $sql -or $null -eq $sampled -or
+        [string](Get-CertificationValue $Evidence "historyFallbackPiEvidenceVersion" "") -cne $script:RequiredHistoryFallbackPiEvidenceVersion -or
+        [string](Get-CertificationValue $Evidence "evidenceCollectorVersion" "") -cne "post-traffic-v2" -or
+        (Get-CertificationValue $Evidence "sanitized" $false) -ne $true -or
+        (Get-CertificationValue $Evidence "rawSqlPersisted" $true) -ne $false -or
+        (Get-CertificationValue $Evidence "rawIdentifiersPersisted" $true) -ne $false -or
+        [string](Get-CertificationValue $Evidence "queryIdentifierSha256" "") -cne $queryIdentity.queryIdentifierSha256 -or
+        [string](Get-CertificationValue $Evidence "compiledSqlSha256" "") -cne $queryIdentity.compiledSqlSha256 -or
+        [string](Get-CertificationValue $Evidence "parameterTypeSignatureSha256" "") -cne $queryIdentity.parameterTypeSignatureSha256 -or
+        [string](Get-CertificationValue $Evidence "schemaIdentitySha256" "") -cne $queryIdentity.schemaIdentitySha256 -or
+        [string](Get-CertificationValue $Evidence "apiRuntimeTaskDefinitionSha256" "") -cne $expectedApiTaskHash -or
+        (Get-CertificationValue $Evidence "trackIoTiming" $false) -ne $true -or
+        [string](Get-CertificationValue $Evidence "releaseIdentitySha256" "") -cne [string]$Receipt.releaseIdentitySha256 -or
+        [string](Get-CertificationValue $Evidence "trafficWindowSha256" "") -cne $RequestValidation.TrafficWindowSha256 -or
+        (Get-CertificationValue $Evidence "passed" $false) -ne $true) {
+        throw "The deterministic PI snapshot identity and traffic-window binding is incomplete."
+    }
+    $hotPathHash = [string](Get-CertificationValue $Evidence "hotPathLogEvidenceSha256" "")
+    $fallbackPositive = Get-CertificationValue $hotPath "fallbackPositiveSummaryCount"
+    $databaseReads = Get-CertificationValue $hotPath "derivedDatabaseReadCount"
+    $fallbackItems = Get-CertificationValue $hotPath "fallbackItems"
+    $fallbackIntervals = @(Get-CertificationValue $hotPath "fallbackPositiveIntervals" @())
+    $fallbackIntervalsValid = $true
+    $intervalFallbackItems = 0L
+    $intervalDatabaseReads = 0L
+    try {
+        $evidenceStart = ([DateTimeOffset]([string](Get-CertificationValue $hotPath "evidenceStartUtc" ""))).ToUniversalTime()
+        $evidenceEnd = ([DateTimeOffset]([string](Get-CertificationValue $hotPath "evidenceEndUtc" ""))).ToUniversalTime()
+        if ($evidenceEnd -le $evidenceStart) { $fallbackIntervalsValid = $false }
+        foreach ($interval in $fallbackIntervals) {
+            $rawStart = [DateTimeOffset]([string](Get-CertificationValue $interval "startUtc" ""))
+            $rawEnd = [DateTimeOffset]([string](Get-CertificationValue $interval "endUtc" ""))
+            $duration = Get-CertificationValue $interval "durationMilliseconds"
+            $intervalItems = Get-CertificationValue $interval "fallbackItems"
+            $intervalReads = Get-CertificationValue $interval "databaseReadCount"
+            $start = $rawStart.ToUniversalTime()
+            $end = $rawEnd.ToUniversalTime()
+            if ($rawStart.Offset -ne [TimeSpan]::Zero -or $rawEnd.Offset -ne [TimeSpan]::Zero -or
+                -not (Test-CertificationFiniteNonnegativeNumber $duration) -or [double]$duration -ne 60000.0 -or
+                ($end-$start).TotalMilliseconds -ne 60000.0 -or
+                ($start.Ticks % [TimeSpan]::TicksPerMinute) -ne 0 -or
+                ($end.Ticks % [TimeSpan]::TicksPerMinute) -ne 0 -or
+                $start -lt $evidenceStart -or $end -gt $evidenceEnd -or
+                -not (Test-CertificationFiniteNonnegativeNumber $intervalItems) -or
+                [double]$intervalItems -lt 1 -or [double]$intervalItems -ne [math]::Floor([double]$intervalItems) -or
+                -not (Test-CertificationFiniteNonnegativeNumber $intervalReads) -or
+                [double]$intervalReads -lt 1 -or [double]$intervalReads -ne [math]::Floor([double]$intervalReads)) {
+                $fallbackIntervalsValid = $false
+            }
+            $intervalFallbackItems += [long]$intervalItems
+            $intervalDatabaseReads += [long]$intervalReads
+        }
+    }
+    catch { $fallbackIntervalsValid = $false }
+    if ($hotPathHash -notmatch '^[0-9a-f]{64}$' -or
+        $hotPathHash -cne (Get-CertificationCanonicalSha256 $hotPath) -or
+        (Get-CertificationValue $hotPath "passed" $false) -ne $true -or
+        -not (Test-CertificationFiniteNonnegativeNumber $fallbackPositive) -or
+        [double]$fallbackPositive -lt 1 -or [double]$fallbackPositive -ne [math]::Floor([double]$fallbackPositive) -or
+        -not (Test-CertificationFiniteNonnegativeNumber $databaseReads) -or
+        [double]$databaseReads -lt 1 -or [double]$databaseReads -ne [math]::Floor([double]$databaseReads) -or
+        -not (Test-CertificationFiniteNonnegativeNumber $fallbackItems) -or
+        [double]$fallbackItems -lt 1 -or [double]$fallbackItems -ne [math]::Floor([double]$fallbackItems) -or
+        -not $fallbackIntervalsValid -or $fallbackIntervals.Count -ne [int]([double]$fallbackPositive) -or
+        $intervalFallbackItems -ne [long]([double]$fallbackItems) -or
+        $intervalDatabaseReads -ne [long]([double]$databaseReads) -or
+        [string](Get-CertificationValue $hotPath "historyFallbackSqlIdentityVersion" "") -cne $queryIdentity.version -or
+        [string](Get-CertificationValue $hotPath "historyFallbackSqlIdentitySha256" "") -cne $queryIdentity.compiledSqlSha256 -or
+        (Get-CertificationValue $hotPath "rawMessagesPersisted" $true) -ne $false -or
+        (Get-CertificationValue $hotPath "rawIdentifiersPersisted" $true) -ne $false -or
+        @(Get-CertificationValue $hotPath "failureReasons" @()).Count -ne 0) {
+        throw "The deterministic PI receipt does not prove a sanitized fallback-positive application interval."
+    }
+    $evidenceWindow = Get-CertificationValue $Evidence "evidenceWindow"
+    try {
+        $windowStart = ([DateTimeOffset]([string](Get-CertificationValue $evidenceWindow "startUtc" ""))).ToUniversalTime()
+        $windowEnd = ([DateTimeOffset]([string](Get-CertificationValue $evidenceWindow "endUtc" ""))).ToUniversalTime()
+    }
+    catch { throw "The deterministic PI evidence window is malformed." }
+    if ($windowStart -ne $evidenceStart -or $windowEnd -ne $evidenceEnd) {
+        throw "The deterministic PI evidence window does not match the fallback log window."
+    }
+    Assert-CertificationHistoryFallbackPiBucketCoverage `
+        -Coverage (Get-CertificationValue $sql "bucketCoverage") `
+        -EvidenceWindow $evidenceWindow -FallbackIntervals $fallbackIntervals `
+        -ExpectedDatabaseReadCount ([long]$databaseReads)
+    $integratedCalls = Get-CertificationValue $sql "integratedCalls"
+    $applicationReads = Get-CertificationValue $sql "applicationDatabaseReadCount"
+    $totalTime = Get-CertificationValue $sql "totalTimePerSecondSum"
+    $blockReadTime = Get-CertificationValue $sql "blockReadTimePerSecondSum"
+    $blockShare = Get-CertificationValue $sql "blockReadTimeSharePercent"
+    $sharedBlocks = Get-CertificationValue $sql "sharedBlocksReadPerSecondSum"
+    $tempRead = Get-CertificationValue $sql "tempBlocksReadPerSecondSum"
+    $tempWritten = Get-CertificationValue $sql "tempBlocksWrittenPerSecondSum"
+    $metricCounts = Get-CertificationValue $sql "metricPointCounts"
+    $completeMetricCoverage = $true
+    $firstMetricCount = $null
+    foreach ($name in @("calls","totalTime","blockReadTime","sharedBlocksRead","tempBlocksRead","tempBlocksWritten")) {
+        $count = Get-CertificationValue $metricCounts $name
+        if (-not (Test-CertificationFiniteNonnegativeNumber $count) -or [double]$count -lt 1 -or
+            [double]$count -ne [math]::Floor([double]$count)) { $completeMetricCoverage = $false }
+        elseif ($null -eq $firstMetricCount) { $firstMetricCount = [double]$count }
+        elseif ([double]$count -ne $firstMetricCount) { $completeMetricCoverage = $false }
+    }
+    $recomputedBlockShare = if ((Test-CertificationFiniteNonnegativeNumber $totalTime) -and
+        [double]$totalTime -gt 0 -and (Test-CertificationFiniteNonnegativeNumber $blockReadTime)) {
+        [math]::Round(([double]$blockReadTime / [double]$totalTime) * 100.0,6)
+    } else { $null }
+    if ([int](Get-CertificationValue $sql "identityCount" 0) -ne 1 -or
+        (Get-CertificationValue $sql "exactQueryIdentifierMatched" $false) -ne $true -or
+        (Get-CertificationValue $sql "statementMarkersMatched" $false) -ne $true -or
+        [string](Get-CertificationValue $sql "queryIdentifierSha256" "") -cne $queryIdentity.queryIdentifierSha256 -or
+        [string](Get-CertificationValue $sql "compiledSqlSha256" "") -cne $queryIdentity.compiledSqlSha256 -or
+        [string](Get-CertificationValue $sql "parameterTypeSignatureSha256" "") -cne $queryIdentity.parameterTypeSignatureSha256 -or
+        [string](Get-CertificationValue $sql "schemaIdentitySha256" "") -cne $queryIdentity.schemaIdentitySha256 -or
+        [string](Get-CertificationValue $sql "releaseIdentitySha256" "") -cne [string]$Receipt.releaseIdentitySha256 -or
+        [string](Get-CertificationValue $sql "databaseResourceIdSha256" "") -cne $expectedDatabaseHash -or
+        [string](Get-CertificationValue $sql "tokenSha256" "") -notmatch '^[0-9a-f]{64}$' -or
+        [string](Get-CertificationValue $sql "statementSha256" "") -notmatch '^[0-9a-f]{64}$' -or
+        [int](Get-CertificationValue $sql "periodSeconds" 0) -ne 60 -or
+        -not (Test-CertificationFiniteNonnegativeNumber (Get-CertificationValue $sql "pageCount")) -or
+        [double](Get-CertificationValue $sql "pageCount") -lt 1 -or
+        [double](Get-CertificationValue $sql "pageCount") -ne
+            [math]::Floor([double](Get-CertificationValue $sql "pageCount")) -or
+        (Get-CertificationValue $sql "positiveCallsObserved" $false) -ne $true -or
+        -not (Test-CertificationFiniteNonnegativeNumber $integratedCalls) -or [double]$integratedCalls -le 0 -or
+        -not (Test-CertificationFiniteNonnegativeNumber $applicationReads) -or
+        [double]$applicationReads -ne [double]$databaseReads -or
+        [double]$applicationReads -ne [math]::Floor([double]$applicationReads) -or
+        [double]$integratedCalls -lt [double]$applicationReads -or
+        (Get-CertificationValue $sql "callsCoverApplicationReads" $false) -ne $true -or
+        -not (Test-CertificationFiniteNonnegativeNumber $totalTime) -or [double]$totalTime -le 0 -or
+        -not (Test-CertificationFiniteNonnegativeNumber $blockReadTime) -or
+        -not (Test-CertificationFiniteNonnegativeNumber $blockShare) -or [double]$blockShare -ge 50.0 -or
+        $null -eq $recomputedBlockShare -or
+        [math]::Abs([double]$blockShare - [double]$recomputedBlockShare) -gt 0.000001 -or
+        -not (Test-CertificationFiniteNonnegativeNumber $sharedBlocks) -or
+        -not (Test-CertificationFiniteNonnegativeNumber $tempRead) -or [double]$tempRead -ne 0.0 -or
+        -not (Test-CertificationFiniteNonnegativeNumber $tempWritten) -or [double]$tempWritten -ne 0.0 -or
+        (Get-CertificationValue $sql "temporaryIoAbsent" $false) -ne $true -or
+        [double](Get-CertificationValue $sql "dominanceThresholdPercent" -1) -ne 50.0 -or
+        -not $completeMetricCoverage -or @(Get-CertificationValue $sql "failureReasons" @()).Count -ne 0 -or
+        (Get-CertificationValue $sql "passed" $false) -ne $true) {
+        throw "The deterministic PI SQL-statistics call and I/O gates are incomplete or rejected."
+    }
+    $sampledStatus = [string](Get-CertificationValue $sampled "status" "")
+    $sampledLoad = Get-CertificationValue $sampled "sampledDbLoad"
+    if ($sampledStatus -ceq "not_applicable_zero_sampled_load") {
+        $ratioProperty = $sampled.PSObject.Properties["dataFileReadSharePercent"]
+        if (-not (Test-CertificationFiniteNonnegativeNumber $sampledLoad) -or [double]$sampledLoad -ne 0.0 -or
+            [int](Get-CertificationValue $sampled "tokenCount" -1) -notin @(0,1) -or
+            -not (Test-CertificationFiniteNonnegativeNumber (Get-CertificationValue $sampled "pageCount")) -or
+            [double](Get-CertificationValue $sampled "pageCount") -lt 1 -or
+            [double](Get-CertificationValue $sampled "pageCount") -ne
+                [math]::Floor([double](Get-CertificationValue $sampled "pageCount")) -or
+            ([int](Get-CertificationValue $sampled "tokenCount" 0) -eq 1 -and
+                [string](Get-CertificationValue $sampled "tokenSha256" "") -cne
+                    [string](Get-CertificationValue $sql "tokenSha256" "")) -or
+            (Get-CertificationValue $sampled "filteredWaitEventEvidenceRequired" $true) -ne $false -or
+            (Get-CertificationValue $sampled "filteredWaitEventEvidenceComplete" $false) -ne $true -or
+            $null -eq $ratioProperty -or $null -ne $ratioProperty.Value) {
+            throw "Zero sampled load was not represented with the required not-applicable evidence."
+        }
+    }
+    elseif ($sampledStatus -ceq "sampled_load_wait_events_required") {
+        $dataFileShare = Get-CertificationValue $sampled "dataFileReadSharePercent"
+        $waitLoad = Get-CertificationValue $sampled "filteredWaitEventDbLoad"
+        $dataFileLoad = Get-CertificationValue $sampled "dataFileReadDbLoad"
+        $coverage = Get-CertificationValue $sampled "coveragePercent"
+        $coverageTolerance = Get-CertificationValue $sampled "coverageTolerancePercent"
+        $recomputedDataFileShare = if ((Test-CertificationFiniteNonnegativeNumber $waitLoad) -and
+            [double]$waitLoad -gt 0 -and (Test-CertificationFiniteNonnegativeNumber $dataFileLoad)) {
+            [math]::Round(([double]$dataFileLoad / [double]$waitLoad) * 100.0,6)
+        } else { $null }
+        $recomputedCoverage = if ((Test-CertificationFiniteNonnegativeNumber $sampledLoad) -and
+            [double]$sampledLoad -gt 0 -and (Test-CertificationFiniteNonnegativeNumber $waitLoad)) {
+            [math]::Round(([double]$waitLoad / [double]$sampledLoad) * 100.0,6)
+        } else { $null }
+        if (-not (Test-CertificationFiniteNonnegativeNumber $sampledLoad) -or [double]$sampledLoad -le 0 -or
+            [int](Get-CertificationValue $sampled "tokenCount" 0) -ne 1 -or
+            [string](Get-CertificationValue $sampled "tokenSha256" "") -cne [string](Get-CertificationValue $sql "tokenSha256" "") -or
+            -not (Test-CertificationFiniteNonnegativeNumber (Get-CertificationValue $sampled "pageCount")) -or
+            [double](Get-CertificationValue $sampled "pageCount") -lt 1 -or
+            -not (Test-CertificationFiniteNonnegativeNumber (Get-CertificationValue $sampled "waitPageCount")) -or
+            [double](Get-CertificationValue $sampled "waitPageCount") -lt 1 -or
+            -not (Test-CertificationFiniteNonnegativeNumber (Get-CertificationValue $sampled "waitEventCount")) -or
+            [double](Get-CertificationValue $sampled "waitEventCount") -lt 1 -or
+            (Get-CertificationValue $sampled "filteredWaitEventEvidenceRequired" $false) -ne $true -or
+            (Get-CertificationValue $sampled "filteredWaitEventEvidenceComplete" $false) -ne $true -or
+            -not (Test-CertificationFiniteNonnegativeNumber $waitLoad) -or [double]$waitLoad -le 0 -or
+            -not (Test-CertificationFiniteNonnegativeNumber $dataFileLoad) -or [double]$dataFileLoad -gt [double]$waitLoad -or
+            -not (Test-CertificationFiniteNonnegativeNumber $dataFileShare) -or [double]$dataFileShare -ge 50.0 -or
+            $null -eq $recomputedDataFileShare -or
+            [math]::Abs([double]$dataFileShare - [double]$recomputedDataFileShare) -gt 0.000001 -or
+            -not (Test-CertificationFiniteNonnegativeNumber $coverage) -or $null -eq $recomputedCoverage -or
+            [math]::Abs([double]$coverage - [double]$recomputedCoverage) -gt 0.000001 -or
+            -not (Test-CertificationFiniteNonnegativeNumber $coverageTolerance) -or
+            [double]$coverageTolerance -ne 0.5 -or
+            [math]::Abs([double]$waitLoad - [double]$sampledLoad) -gt
+                [math]::Max(0.000001,[double]$sampledLoad * 0.005)) {
+            throw "Positive sampled load does not have complete sub-50-percent wait-event evidence."
+        }
+    }
+    else { throw "The deterministic PI sampled-load status is unsupported." }
+    if ([double](Get-CertificationValue $sampled "dominanceThresholdPercent" -1) -ne 50.0 -or
+        @(Get-CertificationValue $sampled "failureReasons" @()).Count -ne 0 -or
+        (Get-CertificationValue $sampled "passed" $false) -ne $true) {
+        throw "The deterministic PI sampled-load gate did not pass."
+    }
+}
+
+function Assert-CertificationHistoryFallbackPiReceipt {
+    param($Reference, $RequestValidation, $Contract, [string]$ExpectedRunId,
+        [string]$ExpectedStage)
+    $bound = Assert-CertificationEvidenceReference ([pscustomobject]@{
+        path=[string](Get-CertificationValue $Reference "path" "")
+        sha256=[string](Get-CertificationValue $Reference "sha256" "")
+    }) "historyFallbackPiEvidenceReceipt"
+    Assert-CertificationPrivateFileAcl $bound.path "historyFallbackPiEvidenceReceipt"
+    $rawReceipt = Get-Content -LiteralPath $bound.path -Raw
+    if ($rawReceipt -match '"queryIdentifier"\s*:') {
+        throw "The history-fallback PI receipt leaked the protected raw query identifier."
+    }
+    try { $receipt = $rawReceipt | ConvertFrom-Json -Depth 60 -DateKind String }
+    catch { throw "The history-fallback PI evidence receipt contains malformed JSON." }
+    $expectedReleaseHash = Get-CertificationCanonicalSha256 ([ordered]@{
+        applicationGitSha=$Contract.ApplicationGitSha;deployedImageDigest=$Contract.DeployedImageDigest
+        apiTaskDefinitionArn=$Contract.ActiveApiArn;workerTaskDefinitionArn=$Contract.ActiveWorkerArn
+    })
+    $queryIdentity = $Contract.HistoryFallbackQueryIdentity
+    $evidence = Get-CertificationValue $receipt "evidence"
+    $attemptCount = Get-CertificationValue $receipt "attemptCount"
+    $completedAt = [DateTimeOffset]::MinValue
+    if ([int](Get-CertificationValue $receipt "schemaVersion" 0) -ne 1 -or
+        [string](Get-CertificationValue $receipt "type" "") -cne "history_fallback_pi_evidence_receipt" -or
+        [string](Get-CertificationValue $receipt "historyFallbackPiEvidenceVersion" "") -cne $script:RequiredHistoryFallbackPiEvidenceVersion -or
+        [string](Get-CertificationValue $receipt "evidenceCollectorVersion" "") -cne "post-traffic-v2" -or
+        [string](Get-CertificationValue $receipt "runId" "") -cne $ExpectedRunId -or
+        [string](Get-CertificationValue $receipt "chainId" "") -cne $Contract.ChainId -or
+        [string](Get-CertificationValue $receipt "phase" "") -cne "Waf" -or
+        [string](Get-CertificationValue $receipt "stage" "") -cne $ExpectedStage -or
+        [string](Get-CertificationValue $receipt "requestSha256" "") -cne $RequestValidation.Reference.sha256 -or
+        [string](Get-CertificationValue $receipt "queryIdentityReceiptSha256" "") -cne $Contract.HistoryFallbackQueryIdentityReceipt.sha256 -or
+        [string](Get-CertificationValue $receipt "queryIdentifierSha256" "") -cne $queryIdentity.queryIdentifierSha256 -or
+        [string](Get-CertificationValue $receipt "compiledSqlSha256" "") -cne $queryIdentity.compiledSqlSha256 -or
+        [string](Get-CertificationValue $receipt "parameterTypeSignatureSha256" "") -cne $queryIdentity.parameterTypeSignatureSha256 -or
+        [string](Get-CertificationValue $receipt "schemaIdentitySha256" "") -cne $queryIdentity.schemaIdentitySha256 -or
+        [string](Get-CertificationValue $receipt "apiRuntimeTaskDefinitionSha256" "") -cne
+            (Get-CertificationTextSha256 $Contract.ActiveApiArn) -or
+        (Get-CertificationValue $receipt "trackIoTiming" $false) -ne $true -or
+        [string](Get-CertificationValue $receipt "releaseIdentitySha256" "") -cne $expectedReleaseHash -or
+        [string](Get-CertificationValue $receipt "databaseResourceIdSha256" "") -cne
+            (Get-CertificationTextSha256 $Contract.HistoryFallbackDatabaseResourceId) -or
+        [string](Get-CertificationValue $receipt "state" "") -cne "completed" -or
+        (Get-CertificationValue $receipt "collected" $false) -ne $true -or
+        (Get-CertificationValue $receipt "passed" $false) -ne $true -or
+        (Get-CertificationValue $receipt "rawSqlPersisted" $true) -ne $false -or
+        (Get-CertificationValue $receipt "rawIdentifiersPersisted" $true) -ne $false -or
+        (Get-CertificationValue $receipt "rawErrorPersisted" $true) -ne $false -or
+        -not (Test-CertificationFiniteNonnegativeNumber $attemptCount) -or [double]$attemptCount -lt 1 -or
+        [double]$attemptCount -ne [math]::Floor([double]$attemptCount) -or
+        -not [DateTimeOffset]::TryParse([string](Get-CertificationValue $receipt "completedAtUtc" ""),[ref]$completedAt) -or
+        $completedAt.ToUniversalTime() -gt [DateTimeOffset]::UtcNow.AddSeconds(5) -or
+        [string](Get-CertificationValue $receipt "stableSnapshotSha256" "") -notmatch '^[0-9a-f]{64}$' -or
+        [string](Get-CertificationValue $receipt "stableSnapshotSha256" "") -cne
+            (Get-CertificationCanonicalSha256 $evidence)) {
+        throw "The history-fallback PI receipt is not accepted evidence for this exact run, query, release, request, and database."
+    }
+    Assert-CertificationHistoryFallbackPiGateEvidence -Evidence $evidence -Receipt $receipt `
+        -RequestValidation $RequestValidation -Contract $Contract
+    return [pscustomobject]@{
+        Reference=$bound;Receipt=$receipt;ReleaseIdentitySha256=$expectedReleaseHash
+    }
+}
+
+function Assert-CertificationHistoryFallbackPiEvidence {
+    param($Reference, [string]$ExpectedPath, $RequestValidation, $Contract,
+        [string]$ExpectedRunId, [string]$ExpectedStage)
+    if ($null -eq $Reference) { throw "The history-fallback PI finalizer did not return a receipt reference." }
+    $path = [IO.Path]::GetFullPath([string](Get-CertificationValue $Reference "path" ""))
+    if (-not [string]::Equals($path,[IO.Path]::GetFullPath($ExpectedPath),[StringComparison]::OrdinalIgnoreCase)) {
+        throw "The history-fallback PI finalizer returned an unexpected receipt path."
+    }
+    $accepted = Assert-CertificationHistoryFallbackPiReceipt -Reference ([ordered]@{
+        path=$path;sha256=[string](Get-CertificationValue $Reference "sha256" "")
+    }) -RequestValidation $RequestValidation -Contract $Contract -ExpectedRunId $ExpectedRunId `
+        -ExpectedStage $ExpectedStage
+    $receipt = $accepted.Receipt
+    $queryIdentity = $Contract.HistoryFallbackQueryIdentity
+    if ([string](Get-CertificationValue $Reference "historyFallbackPiEvidenceVersion" "") -cne $script:RequiredHistoryFallbackPiEvidenceVersion -or
+        (Get-CertificationValue $Reference "collected" $false) -ne $true -or
+        (Get-CertificationValue $Reference "passed" $false) -ne $true -or
+        [string](Get-CertificationValue $Reference "queryIdentifierSha256" "") -cne $queryIdentity.queryIdentifierSha256 -or
+        [string](Get-CertificationValue $Reference "releaseIdentitySha256" "") -cne $accepted.ReleaseIdentitySha256) {
+        throw "The history-fallback PI receipt reference is inconsistent with its private receipt."
+    }
+    return [pscustomobject]@{
+        PrivateReference=$accepted.Reference
+        RequestReference=$RequestValidation.Reference
+        Public=[ordered]@{
+            schemaVersion=1;type="history_fallback_pi_evidence_binding"
+            historyFallbackPiEvidenceVersion=$script:RequiredHistoryFallbackPiEvidenceVersion
+            evidenceCollectorVersion="post-traffic-v2";receiptSha256=$accepted.Reference.sha256
+            receiptPathSha256=Get-CertificationTextSha256 $accepted.Reference.path
+            requestSha256=$RequestValidation.Reference.sha256
+            requestPathSha256=Get-CertificationTextSha256 $RequestValidation.Reference.path
+            trafficWindowSha256=$RequestValidation.TrafficWindowSha256
+            queryIdentifierSha256=$queryIdentity.queryIdentifierSha256
+            compiledSqlSha256=$queryIdentity.compiledSqlSha256
+            parameterTypeSignatureSha256=$queryIdentity.parameterTypeSignatureSha256
+            schemaIdentitySha256=$queryIdentity.schemaIdentitySha256
+            apiRuntimeTaskDefinitionSha256=Get-CertificationTextSha256 $Contract.ActiveApiArn
+            trackIoTiming=$true
+            databaseResourceIdSha256=Get-CertificationTextSha256 $Contract.HistoryFallbackDatabaseResourceId
+            releaseIdentitySha256=$accepted.ReleaseIdentitySha256
+            stableSnapshotSha256=[string]$receipt.stableSnapshotSha256
+            collected=$true;passed=$true
+        }
+    }
+}
+
+function New-CertificationHistoryFallbackPiRejectedBundle {
+    param([string]$ExpectedPath, $RequestValidation, $Contract, [string]$DiscardedMessage)
+    $privateReference = $null
+    $observedSha = $null
+    if (Test-Path -LiteralPath $ExpectedPath -PathType Leaf) {
+        # A malformed or insecure receipt is still represented by a sanitized
+        # public failure binding.  Only expose the private reference to the
+        # local exception path when its operator-only ACL is itself valid.
+        try {
+            Assert-CertificationPrivateFileAcl $ExpectedPath "rejected historyFallbackPiEvidenceReceipt"
+            $observedSha = Get-CertificationSha256 $ExpectedPath
+            $privateReference = [ordered]@{path=[IO.Path]::GetFullPath($ExpectedPath);sha256=$observedSha}
+        }
+        catch {
+            try { $observedSha = Get-CertificationSha256 $ExpectedPath } catch { $observedSha = $null }
+        }
+    }
+    $releaseHash = Get-CertificationCanonicalSha256 ([ordered]@{
+        applicationGitSha=$Contract.ApplicationGitSha;deployedImageDigest=$Contract.DeployedImageDigest
+        apiTaskDefinitionArn=$Contract.ActiveApiArn;workerTaskDefinitionArn=$Contract.ActiveWorkerArn
+    })
+    return [pscustomobject]@{
+        PrivateReference=$privateReference;RequestReference=$RequestValidation.Reference
+        Public=[ordered]@{
+            schemaVersion=1;type="history_fallback_pi_evidence_binding"
+            historyFallbackPiEvidenceVersion=$script:RequiredHistoryFallbackPiEvidenceVersion
+            evidenceCollectorVersion="post-traffic-v2";receiptSha256=$observedSha
+            receiptPathSha256=Get-CertificationTextSha256 ([IO.Path]::GetFullPath($ExpectedPath))
+            requestSha256=$RequestValidation.Reference.sha256
+            requestPathSha256=Get-CertificationTextSha256 $RequestValidation.Reference.path
+            trafficWindowSha256=$RequestValidation.TrafficWindowSha256
+            queryIdentifierSha256=$Contract.HistoryFallbackQueryIdentity.queryIdentifierSha256
+            compiledSqlSha256=$Contract.HistoryFallbackQueryIdentity.compiledSqlSha256
+            parameterTypeSignatureSha256=$Contract.HistoryFallbackQueryIdentity.parameterTypeSignatureSha256
+            schemaIdentitySha256=$Contract.HistoryFallbackQueryIdentity.schemaIdentitySha256
+            apiRuntimeTaskDefinitionSha256=Get-CertificationTextSha256 $Contract.ActiveApiArn
+            trackIoTiming=$true
+            databaseResourceIdSha256=Get-CertificationTextSha256 $Contract.HistoryFallbackDatabaseResourceId
+            releaseIdentitySha256=$releaseHash;stableSnapshotSha256=$null
+            collected=$false;passed=$false;failureCode="history_fallback_pi_receipt_rejected"
+            failureStage="receipt_validation"
+            discardedMessageSha256=Get-CertificationTextSha256 $DiscardedMessage
+            rawErrorPersisted=$false
+        }
+    }
+}
+
+function Get-CertificationHistoryFallbackPiFailureBinding {
+    param($Reference, [string]$ExpectedPath, $RequestValidation, $Contract,
+        [string]$ExpectedRunId, [string]$ExpectedStage)
+    if ($null -eq $Reference) { throw "The failed PI finalizer did not return a receipt reference." }
+    $path = [IO.Path]::GetFullPath([string](Get-CertificationValue $Reference "path" ""))
+    if (-not [string]::Equals($path,[IO.Path]::GetFullPath($ExpectedPath),[StringComparison]::OrdinalIgnoreCase) -or
+        -not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw "The failed PI finalizer returned an unexpected receipt path."
+    }
+    Assert-CertificationPrivateFileAcl $path "failed historyFallbackPiEvidenceReceipt"
+    $sha = Assert-CertificationSha256 ([string](Get-CertificationValue $Reference "sha256" "")) `
+        "failed historyFallbackPiEvidence.sha256"
+    if ((Get-CertificationSha256 $path) -cne $sha) { throw "The failed PI receipt changed after collection." }
+    $rawReceipt = Get-Content -LiteralPath $path -Raw
+    if ($rawReceipt -match '"queryIdentifier"\s*:') { throw "The failed PI receipt leaked a raw query identifier." }
+    try { $receipt = $rawReceipt | ConvertFrom-Json -Depth 60 -DateKind String }
+    catch { throw "The failed PI receipt contains malformed JSON." }
+    $queryIdentity = $Contract.HistoryFallbackQueryIdentity
+    $expectedReleaseHash = Get-CertificationCanonicalSha256 ([ordered]@{
+        applicationGitSha=$Contract.ApplicationGitSha;deployedImageDigest=$Contract.DeployedImageDigest
+        apiTaskDefinitionArn=$Contract.ActiveApiArn;workerTaskDefinitionArn=$Contract.ActiveWorkerArn
+    })
+    $state = [string](Get-CertificationValue $receipt "state" "")
+    $collected = Get-CertificationValue $receipt "collected" $false
+    $failureCode = [string](Get-CertificationValue $receipt "failureCode" "")
+    $failureStage = [string](Get-CertificationValue $receipt "failureStage" "")
+    $allowedCollectorStages = @("aws_preflight","hot_path_log_windows","fallback_sql_stats",
+        "fallback_sampled_load","snapshot_stabilization","aws_request","aws_response",
+        "snapshot_collection","collector_runtime")
+    $gateFailure = $state -ceq "completed" -and $collected -eq $true -and
+        $failureCode -ceq "history_fallback_pi_gate_failed" -and $failureStage -ceq "history_fallback_gate"
+    $collectorFailure = $state -ceq "failed" -and $collected -eq $false -and
+        $failureCode -ceq "performance_insights_evidence_unavailable" -and $failureStage -in $allowedCollectorStages
+    $runtimeFailure = $state -ceq "failed" -and $collected -eq $false -and
+        $failureCode -ceq "controller_runtime_failure" -and $failureStage -ceq "collector_runtime"
+    $attemptCount = Get-CertificationValue $receipt "attemptCount"
+    $discarded = Get-CertificationValue $receipt "discardedMessageSha256"
+    $completedAt = [DateTimeOffset]::MinValue
+    if ([int](Get-CertificationValue $receipt "schemaVersion" 0) -ne 1 -or
+        [string](Get-CertificationValue $receipt "type" "") -cne "history_fallback_pi_evidence_receipt" -or
+        [string](Get-CertificationValue $receipt "historyFallbackPiEvidenceVersion" "") -cne $script:RequiredHistoryFallbackPiEvidenceVersion -or
+        [string](Get-CertificationValue $receipt "evidenceCollectorVersion" "") -cne "post-traffic-v2" -or
+        [string](Get-CertificationValue $receipt "runId" "") -cne $ExpectedRunId -or
+        [string](Get-CertificationValue $receipt "chainId" "") -cne $Contract.ChainId -or
+        [string](Get-CertificationValue $receipt "phase" "") -cne "Waf" -or
+        [string](Get-CertificationValue $receipt "stage" "") -cne $ExpectedStage -or
+        [string](Get-CertificationValue $receipt "requestSha256" "") -cne $RequestValidation.Reference.sha256 -or
+        [string](Get-CertificationValue $receipt "queryIdentityReceiptSha256" "") -cne $Contract.HistoryFallbackQueryIdentityReceipt.sha256 -or
+        [string](Get-CertificationValue $receipt "queryIdentifierSha256" "") -cne $queryIdentity.queryIdentifierSha256 -or
+        [string](Get-CertificationValue $receipt "compiledSqlSha256" "") -cne $queryIdentity.compiledSqlSha256 -or
+        [string](Get-CertificationValue $receipt "parameterTypeSignatureSha256" "") -cne $queryIdentity.parameterTypeSignatureSha256 -or
+        [string](Get-CertificationValue $receipt "schemaIdentitySha256" "") -cne $queryIdentity.schemaIdentitySha256 -or
+        [string](Get-CertificationValue $receipt "apiRuntimeTaskDefinitionSha256" "") -cne
+            (Get-CertificationTextSha256 $Contract.ActiveApiArn) -or
+        (Get-CertificationValue $receipt "trackIoTiming" $false) -ne $true -or
+        [string](Get-CertificationValue $receipt "releaseIdentitySha256" "") -cne $expectedReleaseHash -or
+        [string](Get-CertificationValue $receipt "databaseResourceIdSha256" "") -cne
+            (Get-CertificationTextSha256 $Contract.HistoryFallbackDatabaseResourceId) -or
+        (Get-CertificationValue $receipt "rawSqlPersisted" $true) -ne $false -or
+        (Get-CertificationValue $receipt "rawIdentifiersPersisted" $true) -ne $false -or
+        (Get-CertificationValue $receipt "rawErrorPersisted" $true) -ne $false -or
+        (Get-CertificationValue $receipt "passed" $true) -ne $false -or
+        -not (Test-CertificationFiniteNonnegativeNumber $attemptCount) -or
+        [double]$attemptCount -lt 1 -or
+        [double]$attemptCount -ne [math]::Floor([double]$attemptCount) -or
+        -not [DateTimeOffset]::TryParse([string](Get-CertificationValue $receipt "completedAtUtc" ""),[ref]$completedAt) -or
+        $completedAt.ToUniversalTime() -gt [DateTimeOffset]::UtcNow.AddSeconds(5) -or
+        (-not $gateFailure -and -not $collectorFailure -and -not $runtimeFailure) -or
+        (($collectorFailure -or $runtimeFailure) -and [string]$discarded -notmatch '^[0-9a-f]{64}$') -or
+        ($gateFailure -and ([string](Get-CertificationValue $receipt "stableSnapshotSha256" "") -notmatch '^[0-9a-f]{64}$' -or
+            [string](Get-CertificationValue $receipt "stableSnapshotSha256" "") -cne
+                (Get-CertificationCanonicalSha256 (Get-CertificationValue $receipt "evidence"))))) {
+        throw "The failed PI receipt does not have one allowlisted, identity-bound terminal shape."
+    }
+    return [pscustomobject]@{
+        PrivateReference=[ordered]@{path=$path;sha256=$sha}
+        RequestReference=$RequestValidation.Reference
+        Public=[ordered]@{
+            schemaVersion=1;type="history_fallback_pi_evidence_binding"
+            historyFallbackPiEvidenceVersion=$script:RequiredHistoryFallbackPiEvidenceVersion
+            evidenceCollectorVersion="post-traffic-v2";receiptSha256=$sha
+            receiptPathSha256=Get-CertificationTextSha256 $path
+            requestSha256=$RequestValidation.Reference.sha256
+            requestPathSha256=Get-CertificationTextSha256 $RequestValidation.Reference.path
+            trafficWindowSha256=$RequestValidation.TrafficWindowSha256
+            queryIdentifierSha256=$queryIdentity.queryIdentifierSha256
+            compiledSqlSha256=$queryIdentity.compiledSqlSha256
+            parameterTypeSignatureSha256=$queryIdentity.parameterTypeSignatureSha256
+            schemaIdentitySha256=$queryIdentity.schemaIdentitySha256
+            apiRuntimeTaskDefinitionSha256=Get-CertificationTextSha256 $Contract.ActiveApiArn
+            trackIoTiming=$true
+            databaseResourceIdSha256=Get-CertificationTextSha256 $Contract.HistoryFallbackDatabaseResourceId
+            releaseIdentitySha256=$expectedReleaseHash
+            stableSnapshotSha256=Get-CertificationValue $receipt "stableSnapshotSha256"
+            collected=[bool]$collected;passed=$false;failureCode=$failureCode;failureStage=$failureStage
+            discardedMessageSha256=$discarded;rawErrorPersisted=$false
+        }
+    }
+}
+
+function Invoke-CertificationHistoryFallbackPiFinalizer {
+    param($Config, $Contract, [string]$ProgressPath, [string]$SummaryPath,
+        [string]$RequestPath, [string]$ReceiptPath)
+    $stage = [string]$Config.workload.stage
+    $trafficWindow = Get-CertificationCoherentTrafficWindow -ProgressPath $ProgressPath `
+        -SummaryPath $SummaryPath -ExpectedRunId $runId -ExpectedStage $stage `
+        -ExpectedDurationSeconds ([int]$Config.workload.durationSeconds)
+    $logBinding = Get-CertificationApiCloudWatchBinding -Config $Config -Contract $Contract
+    $request = [ordered]@{
+        schemaVersion=1;type="history_fallback_pi_finalization_request"
+        historyFallbackPiEvidenceVersion=$script:RequiredHistoryFallbackPiEvidenceVersion
+        evidenceCollectorVersion="post-traffic-v2";runId=$runId;chainId=$Contract.ChainId
+        phase="Waf";stage=$stage;applicationGitSha=$Contract.ApplicationGitSha
+        deployedImageDigest=$Contract.DeployedImageDigest
+        taskDefinitions=[ordered]@{api=$Contract.ActiveApiArn;worker=$Contract.ActiveWorkerArn}
+        ecsRuntimeBinding=[ordered]@{
+            clusterName=[string]$Config.resources.cluster
+            apiServiceName=[string]$Config.resources.apiService
+            workerServiceName=[string]$Config.resources.workerService
+        }
+        rds=[ordered]@{
+            region=[string]$Config.resources.region;accountId=[string]$Contract.DatabaseInsightsLease.accountId
+            dbInstanceIdentifier=[string]$Contract.DatabaseInsightsLease.dbInstanceIdentifier
+            databaseResourceId=$Contract.HistoryFallbackDatabaseResourceId
+            engineVersion=$Contract.HistoryFallbackQueryIdentity.engineVersion
+            expectedInstanceClass=[string]$Config.resources.expectedRdsInstanceClass
+        }
+        trafficWindow=$trafficWindow;apiCloudWatchBinding=$logBinding
+        historyFallbackQueryIdentity=$Contract.HistoryFallbackQueryIdentityReceipt
+        historyFallbackSqlIdentity=[ordered]@{
+            version=$Contract.HistoryFallbackQueryIdentity.version
+            queryIdentifierSha256=$Contract.HistoryFallbackQueryIdentity.queryIdentifierSha256
+            compiledSqlSha256=$Contract.HistoryFallbackQueryIdentity.compiledSqlSha256
+            parameterTypeSignatureSha256=$Contract.HistoryFallbackQueryIdentity.parameterTypeSignatureSha256
+            schemaIdentitySha256=$Contract.HistoryFallbackQueryIdentity.schemaIdentitySha256
+            trackIoTiming=$true
+        }
+        applicationFallbackDatabaseReadEvidence=[ordered]@{
+            sourceEvent="classpilot_heartbeat_hot_path_summary"
+            historyFallbackSqlIdentityVersion=$Contract.HistoryFallbackQueryIdentity.version
+            historyFallbackSqlIdentitySha256=$Contract.HistoryFallbackQueryIdentity.compiledSqlSha256
+        }
+    }
+    Write-CertificationPrivateImmutableJson -Path $RequestPath -Value $request
+    $requestSha = Get-CertificationSha256 $RequestPath
+    $requestValidation = Assert-CertificationHistoryFallbackPiFinalizationRequest -Reference ([ordered]@{
+        path=[IO.Path]::GetFullPath($RequestPath);sha256=$requestSha
+    }) -Contract $Contract -Config $Config -ExpectedRunId $runId -ExpectedStage $stage
+    $finalizer = Join-Path $PSScriptRoot "finalize-history-fallback-pi-evidence.ps1"
+    $null = & $pwsh -NoProfile -File $finalizer -Mode Validate -RequestPath $RequestPath `
+        -ExpectedRequestSha256 $requestSha -OutputPath $ReceiptPath 2>$null
+    if ($LASTEXITCODE -ne 0) { throw "The history-fallback PI finalization request failed validation." }
+    $rawReference = & $pwsh -NoProfile -File $finalizer -Mode Collect -RequestPath $RequestPath `
+        -ExpectedRequestSha256 $requestSha -OutputPath $ReceiptPath 2>$null
+    $exitCode = $LASTEXITCODE
+    $reference = $null
+    try { $reference = (($rawReference | Out-String).Trim() | ConvertFrom-Json -Depth 30) }
+    catch {
+        if ($exitCode -eq 0) { throw "The history-fallback PI finalizer returned malformed evidence." }
+    }
+    if ($exitCode -ne 0) {
+        try {
+            $failureBinding = Get-CertificationHistoryFallbackPiFailureBinding -Reference $reference `
+                -ExpectedPath $ReceiptPath -RequestValidation $requestValidation -Contract $Contract `
+                -ExpectedRunId $runId -ExpectedStage $stage
+        }
+        catch {
+            $failureBinding = New-CertificationHistoryFallbackPiRejectedBundle `
+                -ExpectedPath $ReceiptPath -RequestValidation $requestValidation -Contract $Contract `
+                -DiscardedMessage $_.Exception.Message
+        }
+        $failure = [InvalidOperationException]::new(
+            "The deterministic history-fallback PI evidence gate did not pass."
+        )
+        $failure.Data["historyFallbackPiEvidence"] = $failureBinding.Public
+        $failure.Data["historyFallbackPiFinalizationRequest"] = $failureBinding.RequestReference
+        if ($null -ne $failureBinding.PrivateReference) {
+            $failure.Data["historyFallbackPiEvidenceReceipt"] = $failureBinding.PrivateReference
+        }
+        throw $failure
+    }
+    try {
+        return Assert-CertificationHistoryFallbackPiEvidence -Reference $reference -ExpectedPath $ReceiptPath `
+            -RequestValidation $requestValidation -Contract $Contract -ExpectedRunId $runId `
+            -ExpectedStage $stage
+    }
+    catch {
+        $rejected = New-CertificationHistoryFallbackPiRejectedBundle -ExpectedPath $ReceiptPath `
+            -RequestValidation $requestValidation -Contract $Contract -DiscardedMessage $_.Exception.Message
+        $failure = [InvalidOperationException]::new(
+            "The deterministic history-fallback PI receipt failed supervisor validation."
+        )
+        $failure.Data["historyFallbackPiEvidence"] = $rejected.Public
+        $failure.Data["historyFallbackPiFinalizationRequest"] = $rejected.RequestReference
+        if ($null -ne $rejected.PrivateReference) {
+            $failure.Data["historyFallbackPiEvidenceReceipt"] = $rejected.PrivateReference
+        }
+        throw $failure
+    }
+}
+
+function Assert-CertificationPredecessorHistoryFallbackPiEvidence {
+    param($Config, $Envelope, $Contract)
+    $binding = Get-CertificationValue $Envelope "historyFallbackPiEvidence"
+    $predecessorRunId = [string](Get-CertificationValue $Envelope "runId" "")
+    $requestReference = Get-RequiredProperty $Config "predecessorHistoryFallbackPiRequest"
+    $receiptConfigReference = Get-RequiredProperty $Config "predecessorHistoryFallbackPiEvidence"
+    $requestValidation = Assert-CertificationHistoryFallbackPiFinalizationRequest `
+        -Reference $requestReference `
+        -Contract $Contract -Config $Config -ExpectedRunId $predecessorRunId -ExpectedStage "500"
+    $receiptReference = Assert-CertificationEvidenceReference `
+        ([pscustomobject]@{
+            path=[string](Get-CertificationValue $receiptConfigReference "path" "")
+            sha256=[string](Get-CertificationValue $receiptConfigReference "sha256" "")
+        }) `
+        "predecessor.historyFallbackPiEvidenceReceipt"
+    $expectedReleaseHash = Get-CertificationCanonicalSha256 ([ordered]@{
+        applicationGitSha=$Contract.ApplicationGitSha;deployedImageDigest=$Contract.DeployedImageDigest
+        apiTaskDefinitionArn=$Contract.ActiveApiArn;workerTaskDefinitionArn=$Contract.ActiveWorkerArn
+    })
+    $receiptSha = Assert-CertificationSha256 ([string](Get-CertificationValue $binding "receiptSha256" "")) `
+        "predecessor.historyFallbackPiEvidence.receiptSha256"
+    if ([string](Get-CertificationValue $binding "type" "") -cne "history_fallback_pi_evidence_binding" -or
+        [string](Get-CertificationValue $binding "historyFallbackPiEvidenceVersion" "") -cne $script:RequiredHistoryFallbackPiEvidenceVersion -or
+        [string](Get-CertificationValue $binding "evidenceCollectorVersion" "") -cne "post-traffic-v2" -or
+        [string](Get-CertificationValue $binding "receiptPathSha256" "") -cne (Get-CertificationTextSha256 $receiptReference.path) -or
+        [string](Get-CertificationValue $binding "requestSha256" "") -cne $requestValidation.Reference.sha256 -or
+        [string](Get-CertificationValue $binding "requestPathSha256" "") -cne (Get-CertificationTextSha256 $requestValidation.Reference.path) -or
+        [string](Get-CertificationValue $binding "trafficWindowSha256" "") -cne $requestValidation.TrafficWindowSha256 -or
+        [string](Get-CertificationValue $binding "queryIdentifierSha256" "") -cne $Contract.HistoryFallbackQueryIdentity.queryIdentifierSha256 -or
+        [string](Get-CertificationValue $binding "compiledSqlSha256" "") -cne $Contract.HistoryFallbackQueryIdentity.compiledSqlSha256 -or
+        [string](Get-CertificationValue $binding "parameterTypeSignatureSha256" "") -cne $Contract.HistoryFallbackQueryIdentity.parameterTypeSignatureSha256 -or
+        [string](Get-CertificationValue $binding "schemaIdentitySha256" "") -cne $Contract.HistoryFallbackQueryIdentity.schemaIdentitySha256 -or
+        [string](Get-CertificationValue $binding "apiRuntimeTaskDefinitionSha256" "") -cne
+            (Get-CertificationTextSha256 $Contract.ActiveApiArn) -or
+        (Get-CertificationValue $binding "trackIoTiming" $false) -ne $true -or
+        [string](Get-CertificationValue $binding "databaseResourceIdSha256" "") -cne
+            (Get-CertificationTextSha256 $Contract.HistoryFallbackDatabaseResourceId) -or
+        [string](Get-CertificationValue $binding "releaseIdentitySha256" "") -cne $expectedReleaseHash -or
+        [string](Get-CertificationValue $binding "stableSnapshotSha256" "") -notmatch '^[0-9a-f]{64}$' -or
+        (Get-CertificationValue $binding "collected" $false) -ne $true -or
+        (Get-CertificationValue $binding "passed" $false) -ne $true -or
+        $receiptReference.sha256 -cne $receiptSha) {
+        throw "The predecessor does not bind an accepted deterministic history-fallback PI receipt."
+    }
+    $accepted = Assert-CertificationHistoryFallbackPiReceipt -Reference $receiptReference `
+        -RequestValidation $requestValidation -Contract $Contract -ExpectedRunId $predecessorRunId `
+        -ExpectedStage "500"
+    if ([string]$accepted.Receipt.stableSnapshotSha256 -cne
+        [string](Get-CertificationValue $binding "stableSnapshotSha256" "")) {
+        throw "The predecessor PI snapshot hash differs from its supervisor binding."
+    }
+    return [pscustomobject]@{
+        Receipt=$accepted.Reference;Request=$requestValidation.Reference
+        ReceiptPathSha256=Get-CertificationTextSha256 $receiptReference.path
+        RequestPathSha256=Get-CertificationTextSha256 $requestValidation.Reference.path
+        TrafficWindowSha256=$requestValidation.TrafficWindowSha256
+    }
+}
+
 function Get-CertificationControllerHashes {
     $paths = [ordered]@{
         supervisor = $PSCommandPath
@@ -446,6 +1933,9 @@ function Get-CertificationControllerHashes {
         tilePollAccounting = Join-Path $PSScriptRoot "tile-poll-accounting.mjs"
         preparer = Join-Path $PSScriptRoot "prepare-classpilot-load-test.mjs"
         savedPlanValidator = Join-Path $PSScriptRoot "validate-rollout-plan.ps1"
+        databaseInsightsLease = Join-Path $PSScriptRoot "database-insights-lease.ps1"
+        historyFallbackPiFinalizer = Join-Path $PSScriptRoot "finalize-history-fallback-pi-evidence.ps1"
+        historyFallbackPiFinalizerModule = Join-Path $PSScriptRoot "history-fallback-pi-finalizer.psm1"
     }
     $hashes = [ordered]@{}
     foreach ($name in $paths.Keys) {
@@ -854,8 +2344,12 @@ function Get-CertificationContract {
             throw "Certification task identities must be full revisioned ECS task-definition ARNs."
         }
     }
-    Assert-CertificationProductionRollbackTaskIdentities $rollbackApiArn $rollbackWorkerArn $TestMode
     $expectedRdsClass = [string](Get-RequiredProperty $Config.resources "expectedRdsInstanceClass")
+    $historyFallbackQueryIdentityReceipt = Get-CertificationHistoryFallbackQueryIdentity `
+        $certification $appSha $imageDigest $activeApiArn $activeWorkerArn
+    $databaseInsightsLease = Get-CertificationDatabaseInsightsLease `
+        $Config $historyFallbackQueryIdentityReceipt $expectedRdsClass
+    Assert-CertificationProductionRollbackTaskIdentities $rollbackApiArn $rollbackWorkerArn $TestMode
     $capacityTrack = if ($expectedRdsClass -eq "db.t4g.xlarge") { "rds-resized" } elseif ($expectedRdsClass -eq "db.t4g.medium") { "baseline" } else { throw "Unsupported expected RDS class." }
     $budgetAcknowledgement = $null
     if ($capacityTrack -eq "rds-resized") {
@@ -919,6 +2413,12 @@ function Get-CertificationContract {
         BudgetAcknowledgement = $budgetAcknowledgement
         WorkloadSchemaVersion = $workloadSchemaVersion
         WorkloadEndpointShapeSha256 = $workloadEndpointShapeSha256
+        HistoryFallbackQueryIdentity = $historyFallbackQueryIdentityReceipt.Public
+        HistoryFallbackQueryIdentityReceipt = $historyFallbackQueryIdentityReceipt.Receipt
+        HistoryFallbackDatabaseResourceId = $historyFallbackQueryIdentityReceipt.DatabaseResourceId
+        HistoryFallbackPiEvidenceVersion = $script:RequiredHistoryFallbackPiEvidenceVersion
+        DatabaseInsightsLease = $databaseInsightsLease.Public
+        DatabaseInsightsLeaseReceipt = $databaseInsightsLease.Receipt
         ControllerHashes = Get-CertificationControllerHashes
     }
 }
@@ -928,6 +2428,60 @@ function Invoke-CertificationAwsJson {
     $raw = & aws @Arguments --output json 2>&1
     if ($LASTEXITCODE -ne 0) { throw "Certification AWS preflight failed for $($Arguments[0]) $($Arguments[1])." }
     return (($raw | Out-String).Trim() | ConvertFrom-Json -Depth 60)
+}
+
+function Get-CertificationTrackIoTimingPreflight {
+    param($DbInstance, [string]$Region)
+    $groups = @((Get-RequiredProperty $DbInstance "DBParameterGroups"))
+    if ($groups.Count -ne 1 -or
+        [string](Get-RequiredProperty $groups[0] "ParameterApplyStatus") -cne "in-sync") {
+        throw "Certification preflight requires one exact in-sync database parameter group."
+    }
+    $groupName = [string](Get-RequiredProperty $groups[0] "DBParameterGroupName")
+    if ($groupName -notmatch '^[A-Za-z0-9][A-Za-z0-9.-]{0,254}$') {
+        throw "Certification preflight returned a malformed database parameter-group identity."
+    }
+    $parameters = [System.Collections.Generic.List[object]]::new()
+    $seenMarkers = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $marker = $null
+    $pageCount = 0
+    do {
+        $arguments = @(
+            "rds","describe-db-parameters","--region",$Region,
+            "--db-parameter-group-name",$groupName,
+            "--filters","Name=parameter-name,Values=track_io_timing"
+        )
+        if ($marker) { $arguments += @("--marker",$marker) }
+        $page = Invoke-CertificationAwsJson $arguments
+        $pageCount++
+        if ($pageCount -gt 100) { throw "Certification track_io_timing preflight exceeded the bounded pagination limit." }
+        foreach ($parameter in @((Get-CertificationValue $page "Parameters" @()))) {
+            $parameters.Add($parameter)
+        }
+        $next = [string](Get-CertificationValue $page "Marker" "")
+        if ($next) {
+            if (-not $seenMarkers.Add($next)) {
+                throw "Certification track_io_timing preflight detected a pagination cycle."
+            }
+            $marker = $next
+        }
+        else { $marker = $null }
+    } while ($marker)
+    if ($parameters.Count -ne 1 -or
+        [string](Get-RequiredProperty $parameters[0] "ParameterName") -cne "track_io_timing") {
+        throw "Certification preflight did not resolve one exact track_io_timing parameter."
+    }
+    $value = ([string](Get-RequiredProperty $parameters[0] "ParameterValue")).Trim().ToLowerInvariant()
+    if ($value -notin @("1","on","true")) {
+        throw "Certification traffic requires effective track_io_timing=true."
+    }
+    return [ordered]@{
+        enabled=$true
+        evidenceVersion="rds-parameter-track-io-timing-v1"
+        parameterGroupSha256=Get-CertificationTextSha256 $groupName
+        pageCount=$pageCount
+        rawIdentifiersPersisted=$false
+    }
 }
 
 function Get-CertificationExpectedRdsPosture {
@@ -1144,9 +2698,16 @@ function Get-CertificationTaskPreflight {
     $rdsResponse = Invoke-CertificationAwsJson @("rds","describe-db-instances","--region",$region,"--db-instance-identifier",([string]$Config.resources.rdsInstanceId))
     $db = @($rdsResponse.DBInstances)[0]
     if ([string]$db.DBInstanceStatus -ne "available" -or [string]$db.DBInstanceClass -ne [string]$Config.resources.expectedRdsInstanceClass -or
-        $db.PubliclyAccessible -ne $false -or @($db.PendingModifiedValues.PSObject.Properties).Count -gt 0) {
-        throw "Certification preflight rejected the exact RDS class, availability, private posture, or pending modifications."
+        $db.PubliclyAccessible -ne $false -or @($db.PendingModifiedValues.PSObject.Properties).Count -gt 0 -or
+        [string]$db.DbiResourceId -cne [string]$Contract.HistoryFallbackDatabaseResourceId -or
+        [string]$db.EngineVersion -cne [string]$Contract.HistoryFallbackQueryIdentity.engineVersion -or
+        [string]$db.DatabaseInsightsMode -cne "advanced" -or $db.PerformanceInsightsEnabled -ne $true -or
+        [int]$db.PerformanceInsightsRetentionPeriod -ne 465 -or
+        @($db.DBParameterGroups).Count -ne 1 -or
+        @($db.DBParameterGroups | Where-Object { [string]$_.ParameterApplyStatus -cne "in-sync" }).Count -gt 0) {
+        throw "Certification preflight rejected the exact RDS identity, class, healthy Advanced/465 monitoring lease, private posture, or pending modifications."
     }
+    $trackIoTimingEvidence = Get-CertificationTrackIoTimingPreflight -DbInstance $db -Region $region
     $observedRdsPosture = [ordered]@{
         engine=[string]$db.Engine;engineVersion=[string]$db.EngineVersion
         allocatedStorageGiB=[int]$db.AllocatedStorage;maxAllocatedStorageGiB=[int]$db.MaxAllocatedStorage
@@ -1172,7 +2733,7 @@ function Get-CertificationTaskPreflight {
         observedAtUtc=[DateTimeOffset]::UtcNow.ToString("o");taskDefinitions=$definitions
         posture=[ordered]@{
             services=$servicePosture
-            rds=[ordered]@{arn=[string]$db.DBInstanceArn;class=[string]$db.DBInstanceClass;exactPosture=$observedRdsPosture;expectedExactPosture=$expectedRdsPosture}
+            rds=[ordered]@{arn=[string]$db.DBInstanceArn;class=[string]$db.DBInstanceClass;databaseResourceIdSha256=Get-CertificationTextSha256 ([string]$db.DbiResourceId);databaseInsightsMode=[string]$db.DatabaseInsightsMode;performanceInsightsRetentionPeriod=[int]$db.PerformanceInsightsRetentionPeriod;trackIoTiming=$trackIoTimingEvidence;exactPosture=$observedRdsPosture;expectedExactPosture=$expectedRdsPosture}
             redis=[ordered]@{arn=[string]$redis.ARN;nodeType=[string]$redis.CacheNodeType;status=[string]$redis.Status}
             alarms=$alarms;schedules=$schedules;loadStability=$loadStabilityPosture
         }
@@ -1355,6 +2916,9 @@ function New-CertificationValidationReceipt {
         nonce=[Guid]::NewGuid().ToString("N");configSha256=Get-CertificationConfigHash
         controllerGitSha=$Contract.ControllerGitSha;controllerHashes=$Contract.ControllerHashes
         applicationGitSha=$Contract.ApplicationGitSha;deployedImageDigest=$Contract.DeployedImageDigest
+        historyFallbackQueryIdentity=$Contract.HistoryFallbackQueryIdentity
+        historyFallbackPiEvidenceVersion=$Contract.HistoryFallbackPiEvidenceVersion
+        databaseInsightsLease=$Contract.DatabaseInsightsLease
         preflight=$Preflight;rollbackConfig=$RollbackConfig
     }
     Write-AtomicJson -Path $ReceiptPath -Value $receipt
@@ -1381,6 +2945,10 @@ function Use-CertificationValidationReceipt {
         $lifetime = Assert-CertificationReceiptLifetime $receipt ([DateTimeOffset]::UtcNow) -RequireUnexpired
         [void](Assert-CertificationPreflightContract $receipt.preflight $Contract $lifetime.issuedAtUtc "validationReceipt.preflight")
         $receiptRollback = Assert-CertificationEvidenceReference $receipt.rollbackConfig "validationReceipt.rollbackConfig"
+        if ((ConvertTo-CertificationComparableJson $receipt.databaseInsightsLease) -cne
+            (ConvertTo-CertificationComparableJson $Contract.DatabaseInsightsLease)) {
+            throw "Validation receipt is bound to a different Database Insights monitoring lease."
+        }
         if ([int]$receipt.schemaVersion -ne 1 -or [string]$receipt.type -ne "certification_validation_receipt" -or
             [string]$receipt.runId -ne $runId -or [string]$receipt.chainId -ne $Contract.ChainId -or
             [string]$receipt.nonce -notmatch '^[0-9a-f]{32}$' -or
@@ -1388,6 +2956,9 @@ function Use-CertificationValidationReceipt {
             [string]$receipt.controllerGitSha -ne $Contract.ControllerGitSha -or
             [string]$receipt.applicationGitSha -ne $Contract.ApplicationGitSha -or
             [string]$receipt.deployedImageDigest -ne $Contract.DeployedImageDigest -or
+            [string]$receipt.historyFallbackPiEvidenceVersion -cne $Contract.HistoryFallbackPiEvidenceVersion -or
+            (ConvertTo-CertificationComparableJson $receipt.historyFallbackQueryIdentity) -cne
+                (ConvertTo-CertificationComparableJson $Contract.HistoryFallbackQueryIdentity) -or
             (ConvertTo-CertificationComparableJson $receipt.controllerHashes) -cne
                 (ConvertTo-CertificationComparableJson $Contract.ControllerHashes) -or
             [int]$seal.schemaVersion -ne 1 -or [string]$seal.type -ne "certification_validation_receipt_seal" -or
@@ -1413,6 +2984,8 @@ function Get-CertificationChainRootBinding {
             schemaVersion=1;type="certification_chain_root";runId=$runId;chainId=$Contract.ChainId;phase=[string]$config.phase;stage=[string]$config.workload.stage;supervisionKind=$SupervisionKind;createdAtUtc=[DateTimeOffset]::UtcNow.ToString("o")
             capacityTrack=$Contract.CapacityTrack;applicationGitSha=$Contract.ApplicationGitSha;deployedImageDigest=$Contract.DeployedImageDigest
             workloadSchemaVersion=$Contract.WorkloadSchemaVersion;workloadEndpointShapeSha256=$Contract.WorkloadEndpointShapeSha256
+            historyFallbackQueryIdentity=$Contract.HistoryFallbackQueryIdentity;historyFallbackPiEvidenceVersion=$Contract.HistoryFallbackPiEvidenceVersion
+            databaseInsightsLease=$Contract.DatabaseInsightsLease
             controllerGitSha=$Contract.ControllerGitSha;controllerHashes=$Contract.ControllerHashes
             operatorConfigSha256=Get-CertificationConfigHash;boundRuntimeConfigSha256=$boundRuntimeConfigSha256;rollbackConfig=$boundRollbackConfigBinding;validationReceipt=$Receipt
             taskDefinitions=$Preflight.taskDefinitions;fixture=$Contract.Fixture;schemaCompatibility=$Contract.SchemaCompatibility;budgetAcknowledgement=$Contract.BudgetAcknowledgement
@@ -1430,7 +3003,12 @@ function Get-CertificationChainRootBinding {
     if ([string]$rootJson.type -ne "certification_chain_root" -or [string]$rootJson.chainId -ne $Contract.ChainId -or
         [string]$rootJson.capacityTrack -ne $Contract.CapacityTrack -or
         [string]$rootJson.workloadSchemaVersion -cne $Contract.WorkloadSchemaVersion -or
-        [string]$rootJson.workloadEndpointShapeSha256 -cne $Contract.WorkloadEndpointShapeSha256) {
+        [string]$rootJson.workloadEndpointShapeSha256 -cne $Contract.WorkloadEndpointShapeSha256 -or
+        [string]$rootJson.historyFallbackPiEvidenceVersion -cne $Contract.HistoryFallbackPiEvidenceVersion -or
+        (ConvertTo-CertificationComparableJson $rootJson.historyFallbackQueryIdentity) -cne
+            (ConvertTo-CertificationComparableJson $Contract.HistoryFallbackQueryIdentity) -or
+        (ConvertTo-CertificationComparableJson $rootJson.databaseInsightsLease) -cne
+            (ConvertTo-CertificationComparableJson $Contract.DatabaseInsightsLease)) {
         throw "Configured chain root does not match this stage and capacity track."
     }
     return [ordered]@{path=$binding.path;sha256=$binding.sha256;created=$false}
@@ -1451,6 +3029,11 @@ function Assert-CertificationConsumedReceiptAttestation {
     if([int]$receipt.schemaVersion -ne 1 -or [string]$receipt.type -ne "certification_validation_receipt" -or
         [string]$receipt.runId -ne [string]$Attestation.runId -or [string]$receipt.chainId -ne $Contract.ChainId -or
         [string]$receipt.applicationGitSha -ne $Contract.ApplicationGitSha -or [string]$receipt.deployedImageDigest -ne $Contract.DeployedImageDigest -or
+        [string]$receipt.historyFallbackPiEvidenceVersion -cne $Contract.HistoryFallbackPiEvidenceVersion -or
+        (ConvertTo-CertificationComparableJson $receipt.historyFallbackQueryIdentity) -cne
+            (ConvertTo-CertificationComparableJson $Contract.HistoryFallbackQueryIdentity) -or
+        (ConvertTo-CertificationComparableJson $receipt.databaseInsightsLease) -cne
+            (ConvertTo-CertificationComparableJson $Contract.DatabaseInsightsLease) -or
         [string]$receipt.controllerGitSha -ne $Contract.ControllerGitSha -or
         (ConvertTo-CertificationComparableJson $receipt.controllerHashes) -cne (ConvertTo-CertificationComparableJson $Contract.ControllerHashes) -or
         [string]$receipt.configSha256 -ne [string]$Attestation.operatorConfigSha256 -or
@@ -1467,6 +3050,13 @@ function Assert-CertificationAttestedStageEvidence {
     param($Attestation, $ReceiptEvidence, $Contract, [string]$Name, [bool]$RequireGeneratorIp)
     [void](Assert-CertificationSha256 ([string]$Attestation.operatorConfigSha256) "$Name.operatorConfigSha256")
     [void](Assert-CertificationSha256 ([string]$Attestation.boundRuntimeConfigSha256) "$Name.boundRuntimeConfigSha256")
+    if ([string]$Attestation.historyFallbackPiEvidenceVersion -cne $Contract.HistoryFallbackPiEvidenceVersion -or
+        (ConvertTo-CertificationComparableJson $Attestation.historyFallbackQueryIdentity) -cne
+            (ConvertTo-CertificationComparableJson $Contract.HistoryFallbackQueryIdentity) -or
+        (ConvertTo-CertificationComparableJson $Attestation.databaseInsightsLease) -cne
+            (ConvertTo-CertificationComparableJson $Contract.DatabaseInsightsLease)) {
+        throw "$Name does not bind the exact deterministic history-fallback identity, PI evidence version, and monitoring lease."
+    }
     Assert-CertificationTaskDefinitionAttestations $Attestation.taskDefinitions $Contract "$Name.taskDefinitions"
     if((ConvertTo-CertificationComparableJson $Attestation.taskDefinitions) -cne (ConvertTo-CertificationComparableJson $ReceiptEvidence.preflight.taskDefinitions)){
         throw "$Name task-definition attestations differ from the consumed validation receipt."
@@ -1628,6 +3218,11 @@ function Assert-CertificationChainContinuity {
         [string]$root.deployedImageDigest -ne $Contract.DeployedImageDigest -or [string]$root.controllerGitSha -ne $Contract.ControllerGitSha -or
         [string]$root.workloadSchemaVersion -cne $Contract.WorkloadSchemaVersion -or
         [string]$root.workloadEndpointShapeSha256 -cne $Contract.WorkloadEndpointShapeSha256 -or
+        [string]$root.historyFallbackPiEvidenceVersion -cne $Contract.HistoryFallbackPiEvidenceVersion -or
+        (ConvertTo-CertificationComparableJson $root.historyFallbackQueryIdentity) -cne
+            (ConvertTo-CertificationComparableJson $Contract.HistoryFallbackQueryIdentity) -or
+        (ConvertTo-CertificationComparableJson $root.databaseInsightsLease) -cne
+            (ConvertTo-CertificationComparableJson $Contract.DatabaseInsightsLease) -or
         (ConvertTo-CertificationComparableJson $root.controllerHashes) -cne (ConvertTo-CertificationComparableJson $Contract.ControllerHashes)) {
         throw "Certification chain root identity/controller continuity failed."
     }
@@ -1639,24 +3234,47 @@ function Assert-CertificationChainContinuity {
     $predecessorSha = Assert-CertificationSha256 ([string](Get-RequiredProperty $Config "predecessorResultSha256")) "predecessorResultSha256"
     if ((Get-CertificationSha256 $predecessorPath) -ne $predecessorSha) { throw "Predecessor supervisor result was tampered with." }
     $envelope = Get-Content -LiteralPath $predecessorPath -Raw | ConvertFrom-Json -Depth 60
-    if ([int]$envelope.schemaVersion -ne 2 -or [string]$envelope.type -ne "certification_supervisor_terminal" -or
+    $predecessorLeaseRestoration = Get-CertificationValue $envelope "databaseInsightsRestoration"
+    if ([int]$envelope.schemaVersion -ne 3 -or [string]$envelope.type -ne "certification_supervisor_terminal" -or
+        [string](Get-CertificationValue $envelope "linkVersion" "") -cne $script:RequiredHistoryFallbackPiLinkVersion -or
         $envelope.supervisorSealed -ne $true -or [string]$envelope.status -ne "completed" -or
         [string]$envelope.chainId -ne $Contract.ChainId -or
         [string]$envelope.applicationGitSha -ne $Contract.ApplicationGitSha -or
         [string]$envelope.deployedImageDigest -ne $Contract.DeployedImageDigest -or
         [string]$envelope.workloadSchemaVersion -cne $Contract.WorkloadSchemaVersion -or
         [string]$envelope.workloadEndpointShapeSha256 -cne $Contract.WorkloadEndpointShapeSha256 -or
+        [string]$envelope.historyFallbackPiEvidenceVersion -cne $Contract.HistoryFallbackPiEvidenceVersion -or
+        (ConvertTo-CertificationComparableJson $envelope.historyFallbackQueryIdentity) -cne
+            (ConvertTo-CertificationComparableJson $Contract.HistoryFallbackQueryIdentity) -or
+        (ConvertTo-CertificationComparableJson $envelope.databaseInsightsLease) -cne
+            (ConvertTo-CertificationComparableJson $Contract.DatabaseInsightsLease) -or
+        [string](Get-CertificationValue $predecessorLeaseRestoration "state" "") -cne "retained_for_waf800" -or
+        (Get-CertificationValue $predecessorLeaseRestoration "required" $true) -ne $false -or
+        [string](Get-CertificationValue $predecessorLeaseRestoration "receiptSha256" "") -cne
+            [string]$Contract.DatabaseInsightsLease.receipt.sha256 -or
         [string]$envelope.controllerGitSha -ne $Contract.ControllerGitSha -or
         (ConvertTo-CertificationComparableJson $envelope.controllerHashes) -cne (ConvertTo-CertificationComparableJson $Contract.ControllerHashes) -or
-        [string]$envelope.supervisionKind -notin @("Load","MonitorOnly")) {
+        [string]$envelope.supervisionKind -cne "Load") {
         throw "Predecessor is not a supervisor-sealed accepted terminal result."
     }
+    $predecessorPiReceipt = Assert-CertificationPredecessorHistoryFallbackPiEvidence `
+        -Config $Config -Envelope $envelope -Contract $Contract
     $envelopeRoot = Assert-CertificationEvidenceReference $envelope.chainRoot "predecessor.chainRoot"
     $envelopeStage = Assert-CertificationEvidenceReference $envelope.stageAttestation "predecessor.stageAttestation"
     $terminal = Assert-CertificationEvidenceReference $envelope.terminalMonitorResult "predecessor.terminalMonitorResult"
     if ($envelopeRoot.sha256 -ne $rootBinding.sha256) { throw "Predecessor belongs to a different chain root." }
     $priorPredecessorSha = [string](Get-CertificationValue $envelope "predecessorSupervisorResultSha256" "")
-    $linkInput = (@($rootBinding.sha256,$(if($priorPredecessorSha){$priorPredecessorSha}else{"0"*64}),$envelopeStage.sha256,$terminal.sha256) -join "`n")
+    $linkInput = (@(
+        $rootBinding.sha256,
+        $(if($priorPredecessorSha){$priorPredecessorSha}else{"0"*64}),
+        $envelopeStage.sha256,
+        $terminal.sha256,
+        $predecessorPiReceipt.Receipt.sha256,
+        $predecessorPiReceipt.ReceiptPathSha256,
+        $predecessorPiReceipt.Request.sha256,
+        $predecessorPiReceipt.RequestPathSha256,
+        $predecessorPiReceipt.TrafficWindowSha256
+    ) -join "`n")
     if ([string]$envelope.linkSha256 -ne (Get-CertificationTextSha256 $linkInput)) { throw "Predecessor supervisor link seal is invalid." }
     $attestation = Get-Content -LiteralPath $envelopeStage.path -Raw | ConvertFrom-Json -Depth 60
     $monitor = Get-Content -LiteralPath $terminal.path -Raw | ConvertFrom-Json -Depth 60
@@ -1669,6 +3287,11 @@ function Assert-CertificationChainContinuity {
         [string]$attestation.deployedImageDigest -ne $Contract.DeployedImageDigest -or
         [string]$attestation.workloadSchemaVersion -cne $Contract.WorkloadSchemaVersion -or
         [string]$attestation.workloadEndpointShapeSha256 -cne $Contract.WorkloadEndpointShapeSha256 -or
+        [string]$attestation.historyFallbackPiEvidenceVersion -cne $Contract.HistoryFallbackPiEvidenceVersion -or
+        (ConvertTo-CertificationComparableJson $attestation.historyFallbackQueryIdentity) -cne
+            (ConvertTo-CertificationComparableJson $Contract.HistoryFallbackQueryIdentity) -or
+        (ConvertTo-CertificationComparableJson $attestation.databaseInsightsLease) -cne
+            (ConvertTo-CertificationComparableJson $Contract.DatabaseInsightsLease) -or
         [string]$attestation.controllerGitSha -ne $Contract.ControllerGitSha -or
         (ConvertTo-CertificationComparableJson $attestation.controllerHashes) -cne (ConvertTo-CertificationComparableJson $Contract.ControllerHashes)) {
         throw "Predecessor stage attestation identity/root/controller continuity failed."
@@ -1690,7 +3313,7 @@ function Assert-CertificationChainContinuity {
             [string]$attestation.supervisionKind -ne "Load" -or [string]$root.runId -ne [string]$envelope.runId){
             throw "The first accepted predecessor must be the exact fresh Waf/500 chain-root stage."
         }
-        foreach($field in @("workloadSchemaVersion","workloadEndpointShapeSha256","operatorConfigSha256","boundRuntimeConfigSha256","rollbackConfig","validationReceipt","taskDefinitions","fixture","generatorPublicIpv4","datastorePosture","networkPosture","alarms","schedules","rollbackIdentities")){
+        foreach($field in @("workloadSchemaVersion","workloadEndpointShapeSha256","historyFallbackQueryIdentity","historyFallbackPiEvidenceVersion","databaseInsightsLease","operatorConfigSha256","boundRuntimeConfigSha256","rollbackConfig","validationReceipt","taskDefinitions","fixture","generatorPublicIpv4","datastorePosture","networkPosture","alarms","schedules","rollbackIdentities")){
             if((ConvertTo-CertificationComparableJson (Get-CertificationValue $root $field)) -cne
                 (ConvertTo-CertificationComparableJson (Get-CertificationValue $attestation $field))){
                 throw "Waf/500 chain root field '$field' differs from its supervisor-sealed stage attestation."
@@ -1725,6 +3348,8 @@ function Write-CertificationStageAttestation {
         predecessor=if(Get-CertificationValue $config "predecessorResultPath"){@{path=[string]$config.predecessorResultPath;sha256=[string]$config.predecessorResultSha256}}else{$null}
         applicationGitSha=$Contract.ApplicationGitSha;deployedImageDigest=$Contract.DeployedImageDigest
         workloadSchemaVersion=$Contract.WorkloadSchemaVersion;workloadEndpointShapeSha256=$Contract.WorkloadEndpointShapeSha256
+        historyFallbackQueryIdentity=$Contract.HistoryFallbackQueryIdentity;historyFallbackPiEvidenceVersion=$Contract.HistoryFallbackPiEvidenceVersion
+        databaseInsightsLease=$Contract.DatabaseInsightsLease
         controllerGitSha=$Contract.ControllerGitSha;controllerHashes=$Contract.ControllerHashes
         operatorConfigSha256=Get-CertificationConfigHash;boundRuntimeConfigSha256=$boundRuntimeConfigSha256;rollbackConfig=$boundRollbackConfigBinding
         taskDefinitions=$Preflight.taskDefinitions;fixture=$Contract.Fixture;generatorPublicIpv4=$GeneratorIp
@@ -1863,6 +3488,20 @@ foreach ($testHook in @("testRuntimeHarnessScriptPath", "testRuntimeMonitorScrip
     }
 }
 
+$diagnosticOnlyValue = Get-CertificationValue $config "diagnosticOnly" $false
+$automaticRollbackValue = Get-CertificationValue $config "automaticRollback" $false
+if ($diagnosticOnlyValue -isnot [bool]) { throw "diagnosticOnly must be a JSON boolean." }
+if ($automaticRollbackValue -isnot [bool]) { throw "automaticRollback must be a JSON boolean." }
+# Preserve the production rollback lock before recovering the private
+# certification lease binding. Diagnostic-only supervision deliberately owns
+# no application rollback authority, while every other production supervisor
+# must still fail on this static contract even when another certification
+# field is also malformed or absent. Test-only hook validation remains ahead
+# of this check so a forbidden hook cannot be masked by another invalid field.
+if (-not $testMode -and -not [bool]$diagnosticOnlyValue -and -not [bool]$automaticRollbackValue) {
+    throw "The static AWS monitor/rollback configuration failed validation."
+}
+
 $certificationContract = $null
 
 $node = if ($SupervisionKind -eq "Load") { Get-Command node -ErrorAction Stop } else { $null }
@@ -1895,6 +3534,8 @@ $validationReceiptSealPath = Join-Path $evidenceDirectory "$runId-validation-rec
 $consumedValidationReceiptPath = "$validationReceiptPath.consumed"
 $chainRootOutputPath = Join-Path $evidenceDirectory "$runId-chain-root.json"
 $stageAttestationPath = Join-Path $evidenceDirectory "$runId-stage-attestation.json"
+$historyFallbackPiRequestPath = Join-Path $evidenceDirectory "$runId-history-fallback-pi-request.private.json"
+$historyFallbackPiReceiptPath = Join-Path $evidenceDirectory "$runId-history-fallback-pi-evidence.private.json"
 
 if ($SupervisionKind -eq "Load") {
     $generatedArtifactPaths = @(
@@ -1904,7 +3545,8 @@ if ($SupervisionKind -eq "Load") {
         $awsMonitorEvidencePath, $monitorHeartbeatPath, $monitorResultPath,
         $rollbackEvidencePath, $rollbackStatePath, $rollbackHeartbeatPath,
         $validationReceiptPath, $validationReceiptSealPath, $consumedValidationReceiptPath,
-        $chainRootOutputPath, $stageAttestationPath
+        $chainRootOutputPath, $stageAttestationPath,
+        $historyFallbackPiRequestPath, $historyFallbackPiReceiptPath
     ) | Where-Object { $_ }
     foreach ($loadArtifact in @(
         [pscustomobject]@{ Name = "loadProgressPath"; Path = $progressPath },
@@ -1925,77 +3567,113 @@ if ($SupervisionKind -eq "Load") {
     mode = $Mode
     supervisionKind = $SupervisionKind
     nodePath = if ($null -eq $node) { $null } else { $node.Source }
-    evidenceDirectory = $evidenceDirectory
+    evidenceDirectoryPathSha256 = Get-CertificationTextSha256 $evidenceDirectory
+    rawEvidenceDirectoryPersisted = $false
 } | ConvertTo-Json
 if ($Mode -eq "Validate") {
-    Invoke-StaticMonitorValidation -Config $config -EvidenceDirectory $evidenceDirectory -PwshPath $pwsh
-    $certificationContract = Get-CertificationContract -Config $config -TestMode $testMode -BindHarnessArtifacts:($SupervisionKind -eq "Load")
-    Assert-CertificationChainContinuity -Config $config -Contract $certificationContract
-    $validationRollbackBinding = Assert-CertificationRollbackConfigBinding -Config $config -Contract $certificationContract
-    if ($SupervisionKind -eq "Load") {
-        Invoke-HarnessConfigurationPreflight -Config $config -NodePath $node.Source -HarnessPath $runtimeHarnessScript
-        $validationIp = Resolve-GeneratorPublicIp -Config $config
-        if ($validationIp -ne $expectedGeneratorPublicIp) { throw "Generator public IPv4 does not match expectedGeneratorPublicIp." }
+    $certificationContract = $null
+    try {
+        # Recover the private lease binding first so every later validation
+        # failure can restore Advanced/465 immediately instead of relying only
+        # on the detached expiry watchdog.
+        $certificationContract = Get-CertificationContract -Config $config -TestMode $testMode -BindHarnessArtifacts:($SupervisionKind -eq "Load")
+        Invoke-StaticMonitorValidation -Config $config -EvidenceDirectory $evidenceDirectory -PwshPath $pwsh
+        # Mode=Validate remains non-mutating on success. Its lease validation
+        # proves both Advanced/465 and a fresh bound watchdog heartbeat.
+        [void](Invoke-CertificationDatabaseInsightsLeaseCommand -Config $config -Contract $certificationContract -Mode Validate)
+        Assert-CertificationChainContinuity -Config $config -Contract $certificationContract
+        $validationRollbackBinding = Assert-CertificationRollbackConfigBinding -Config $config -Contract $certificationContract
+        if ($SupervisionKind -eq "Load") {
+            Invoke-HarnessConfigurationPreflight -Config $config -NodePath $node.Source -HarnessPath $runtimeHarnessScript
+            $validationIp = Resolve-GeneratorPublicIp -Config $config
+            if ($validationIp -ne $expectedGeneratorPublicIp) { throw "Generator public IPv4 does not match expectedGeneratorPublicIp." }
+        }
+        $validationPreflight = Get-CertificationTaskPreflight -Config $config -Contract $certificationContract
+        New-CertificationValidationReceipt -Contract $certificationContract -Preflight $validationPreflight -RollbackConfig $validationRollbackBinding `
+            -ReceiptPath $validationReceiptPath -SealPath $validationReceiptSealPath
     }
-    $validationPreflight = Get-CertificationTaskPreflight -Config $config -Contract $certificationContract
-    New-CertificationValidationReceipt -Contract $certificationContract -Preflight $validationPreflight -RollbackConfig $validationRollbackBinding `
-        -ReceiptPath $validationReceiptPath -SealPath $validationReceiptSealPath
+    catch {
+        $validationFailure = $_
+        if ($null -ne $certificationContract) {
+            try {
+                [void](Invoke-CertificationDatabaseInsightsLeaseCommand -Config $config -Contract $certificationContract -Mode Restore)
+            }
+            catch {
+                throw "Certification validation failed and exact Database Insights restoration also failed; progression is blocked."
+            }
+        }
+        throw $validationFailure
+    }
     exit 0
 }
-
-
-# Validate the complete monitor and every reachable rollback before sleep is
-# disabled and, critically, before any load traffic process is started.
-Invoke-StaticMonitorValidation -Config $config -EvidenceDirectory $evidenceDirectory -PwshPath $pwsh
-if ($SupervisionKind -eq "Load") {
-    Invoke-HarnessConfigurationPreflight -Config $config -NodePath $node.Source -HarnessPath $runtimeHarnessScript
-}
-$certificationContract = Get-CertificationContract -Config $config -TestMode $testMode -BindHarnessArtifacts:($SupervisionKind -eq "Load")
-Assert-CertificationChainContinuity -Config $config -Contract $certificationContract
-$runRollbackBinding = Assert-CertificationRollbackConfigBinding -Config $config -Contract $certificationContract
-$initialGeneratorPublicIp = if ($SupervisionKind -eq "Load") { Resolve-GeneratorPublicIp -Config $config } else { $null }
-if ($SupervisionKind -eq "Load" -and $initialGeneratorPublicIp -ne $expectedGeneratorPublicIp) {
-    throw "Generator public IPv4 does not match expectedGeneratorPublicIp before traffic."
-}
-
-if ($SupervisionKind -eq "Load") {
-    foreach ($path in @($progressPath, $summaryPath)) {
-        if (Test-Path -LiteralPath $path) { throw "Long-run artifacts must not preexist: $path" }
-    }
-}
-New-Item -ItemType Directory -Path $evidenceDirectory -Force | Out-Null
-$supervisorArtifacts = @($heartbeatPath, $supervisorResultPath, $boundConfigPath, $boundRollbackConfigPath, $monitorStdout, $monitorStderr)
-if ($SupervisionKind -eq "Load") {
-    $supervisorArtifacts += @(
-        $harnessStdout, $harnessStderr, $generatorIpEvidencePath,
-        $harnessReadyPath, $harnessStartGatePath
-    )
-}
-foreach ($path in $supervisorArtifacts) {
-    if (Test-Path -LiteralPath $path) { throw "Supervisor artifact already exists: $path" }
-}
-
-$validationReceiptBinding = Use-CertificationValidationReceipt -Contract $certificationContract `
-    -ReceiptPath $validationReceiptPath -SealPath $validationReceiptSealPath -ConsumedPath $consumedValidationReceiptPath
-$boundRollbackConfigBinding = $null
-if ($null -ne $certificationContract) {
-    Assert-CertificationOperatorConfigUnchanged
-    if ($runRollbackBinding.sha256 -ne $validationReceiptBinding.rollbackConfig.sha256) {
-        throw "Executable rollback config differs from the one-use validation receipt."
-    }
-    $boundRollbackConfigBinding = Copy-CertificationFileIfHashMatches `
-        -Source $runRollbackBinding.path -Destination $boundRollbackConfigPath -ExpectedSha256 $runRollbackBinding.sha256
-    $config.rollbackConfigPath = $boundRollbackConfigPath
-    $config | Add-Member -NotePropertyName expectedRollbackConfigSha256 -NotePropertyValue $boundRollbackConfigBinding.sha256 -Force
-}
-$chainRootBinding = $null
-$stageAttestationBinding = $null
-$boundRuntimeConfigSha256 = $null
 
 $harness = $null
 $monitor = $null
 $sleepPreventionEnabled = $false
+$certificationLeaseValidation = $null
+$certificationLeaseRestoration = $null
+$certificationLeaseRestoreAttempted = $false
+$boundRollbackConfigBinding = $null
+$chainRootBinding = $null
+$stageAttestationBinding = $null
+$historyFallbackPiEvidence = $null
+$historyFallbackPiPrivateReference = $null
+$historyFallbackPiRequestReference = $null
+$historyFallbackPiFinalizationAttempted = $false
+$boundRuntimeConfigSha256 = $null
 try {
+    # Validate the complete monitor and every reachable rollback before sleep
+    # is disabled and, critically, before any load traffic process is started.
+    # Once the immutable certification contract has been recovered, all run
+    # failures are inside this try so the bounded monitoring lease can be
+    # restored fail-closed.
+    $certificationContract = Get-CertificationContract -Config $config -TestMode $testMode -BindHarnessArtifacts:($SupervisionKind -eq "Load")
+    Invoke-StaticMonitorValidation -Config $config -EvidenceDirectory $evidenceDirectory -PwshPath $pwsh
+    if ($SupervisionKind -eq "Load") {
+        Invoke-HarnessConfigurationPreflight -Config $config -NodePath $node.Source -HarnessPath $runtimeHarnessScript
+    }
+    $certificationLeaseValidation = Invoke-CertificationDatabaseInsightsLeaseCommand `
+        -Config $config -Contract $certificationContract -Mode Validate
+    Assert-CertificationChainContinuity -Config $config -Contract $certificationContract
+    $runRollbackBinding = Assert-CertificationRollbackConfigBinding -Config $config -Contract $certificationContract
+    $initialGeneratorPublicIp = if ($SupervisionKind -eq "Load") { Resolve-GeneratorPublicIp -Config $config } else { $null }
+    if ($SupervisionKind -eq "Load" -and $initialGeneratorPublicIp -ne $expectedGeneratorPublicIp) {
+        throw "Generator public IPv4 does not match expectedGeneratorPublicIp before traffic."
+    }
+
+    if ($SupervisionKind -eq "Load") {
+        foreach ($path in @($progressPath, $summaryPath)) {
+            if (Test-Path -LiteralPath $path) { throw "Long-run artifacts must not preexist: $path" }
+        }
+    }
+    New-Item -ItemType Directory -Path $evidenceDirectory -Force | Out-Null
+    $supervisorArtifacts = @($heartbeatPath, $supervisorResultPath, $boundConfigPath, $boundRollbackConfigPath, $monitorStdout, $monitorStderr)
+    if ($null -ne $certificationContract) {
+        $supervisorArtifacts += @($historyFallbackPiRequestPath,$historyFallbackPiReceiptPath)
+    }
+    if ($SupervisionKind -eq "Load") {
+        $supervisorArtifacts += @(
+            $harnessStdout, $harnessStderr, $generatorIpEvidencePath,
+            $harnessReadyPath, $harnessStartGatePath
+        )
+    }
+    foreach ($path in $supervisorArtifacts) {
+        if (Test-Path -LiteralPath $path) { throw "Supervisor artifact already exists: $path" }
+    }
+
+    $validationReceiptBinding = Use-CertificationValidationReceipt -Contract $certificationContract `
+        -ReceiptPath $validationReceiptPath -SealPath $validationReceiptSealPath -ConsumedPath $consumedValidationReceiptPath
+    if ($null -ne $certificationContract) {
+        Assert-CertificationOperatorConfigUnchanged
+        if ($runRollbackBinding.sha256 -ne $validationReceiptBinding.rollbackConfig.sha256) {
+            throw "Executable rollback config differs from the one-use validation receipt."
+        }
+        $boundRollbackConfigBinding = Copy-CertificationFileIfHashMatches `
+            -Source $runRollbackBinding.path -Destination $boundRollbackConfigPath -ExpectedSha256 $runRollbackBinding.sha256
+        $config.rollbackConfigPath = $boundRollbackConfigPath
+        $config | Add-Member -NotePropertyName expectedRollbackConfigSha256 -NotePropertyValue $boundRollbackConfigBinding.sha256 -Force
+    }
+
     Set-SleepPrevention -Enabled $true
     $sleepPreventionEnabled = $true
     $launchedAt = [DateTimeOffset]::UtcNow
@@ -2131,6 +3809,8 @@ try {
             # Re-read every hashed fixture/schema input and re-observe all four
             # active/rollback task identities immediately before traffic.
             $certificationContract = Get-CertificationContract -Config $config -TestMode $testMode -BindHarnessArtifacts:($SupervisionKind -eq "Load")
+            $certificationLeaseValidation = Invoke-CertificationDatabaseInsightsLeaseCommand `
+                -Config $config -Contract $certificationContract -Mode Validate
             Assert-CertificationOperatorConfigUnchanged
             $preTrafficRollbackBinding = Assert-CertificationRollbackConfigBinding -Config $config -Contract $certificationContract
             if ($preTrafficRollbackBinding.sha256 -ne $boundRollbackConfigBinding.sha256) { throw "Bound rollback config changed before traffic." }
@@ -2207,16 +3887,26 @@ try {
         $monitor.Refresh()
     }
     $monitor.WaitForExit()
-    if ($monitor.ExitCode -ne 0) { throw "The AWS monitor exited with code $($monitor.ExitCode)." }
+    if ($monitor.ExitCode -ne 0) {
+        throw (New-CertificationTerminalFailureException "monitor_rejected" "monitor_terminal" `
+            "The AWS monitor exited with code $($monitor.ExitCode).")
+    }
     if ($SupervisionKind -eq "Load") {
         $harness.Refresh()
         if (-not $harness.HasExited) { $harness.WaitForExit(30000) | Out-Null }
         $harness.Refresh()
-        if (-not $harness.HasExited) { throw "The load harness did not exit after monitor acceptance." }
-        if ($harness.ExitCode -ne 0) { throw "The load harness exited with code $($harness.ExitCode)." }
+        if (-not $harness.HasExited) {
+            throw (New-CertificationTerminalFailureException "harness_terminal_missing" "harness_terminal" `
+                "The load harness did not exit after monitor acceptance.")
+        }
+        if ($harness.ExitCode -ne 0) {
+            throw (New-CertificationTerminalFailureException "harness_rejected" "harness_terminal" `
+                "The load harness exited with code $($harness.ExitCode).")
+        }
     }
     if (-not (Test-Path -LiteralPath $monitorResultPath -PathType Leaf)) {
-        throw "The monitor exited successfully without a terminal monitor result."
+        throw (New-CertificationTerminalFailureException "monitor_terminal_missing" "monitor_terminal" `
+            "The monitor exited successfully without a terminal monitor result.")
     }
     $terminalMonitor = Get-Content -LiteralPath $monitorResultPath -Raw | ConvertFrom-Json -Depth 60
     if ([string]$terminalMonitor.runId -ne $runId -or [string]$terminalMonitor.phase -ne [string]$config.phase -or
@@ -2224,15 +3914,100 @@ try {
         $terminalMonitor.acceptance.passed -ne $true -or
         (Get-CertificationValue $terminalMonitor "diagnosticOnly" $false) -ne $false -or
         (Get-CertificationValue $terminalMonitor "certificationEligible" $true) -ne $true) {
-        throw "The monitor terminal result is not accepted evidence for this exact supervised stage."
+        throw (New-CertificationTerminalFailureException "monitor_gate_rejected" "monitor_terminal" `
+            "The monitor terminal result is not accepted evidence for this exact supervised stage.")
     }
     if ($null -ne $certificationContract -and -not (Test-CertificationTerminalTileBatchContract `
         $terminalMonitor.workload ([string]$config.workload.stage) `
         $certificationContract.WorkloadSchemaVersion $certificationContract.WorkloadEndpointShapeSha256)) {
-        throw "The monitor terminal result does not prove the exact reviewed tile-batch workload contract."
+        throw (New-CertificationTerminalFailureException "workload_contract_rejected" "workload_terminal" `
+            "The monitor terminal result does not prove the exact reviewed tile-batch workload contract.")
     }
     if ($null -ne $certificationContract -and ($null -eq $chainRootBinding -or $null -eq $stageAttestationBinding)) {
-        throw "Certification stage/root attestations were not sealed before traffic."
+        throw (New-CertificationTerminalFailureException "certification_attestation_missing" "certification_binding" `
+            "Certification stage/root attestations were not sealed before traffic.")
+    }
+    if ($null -ne $certificationContract) {
+        $acceptedStage = [string](Get-CertificationValue (Get-CertificationValue $config "workload") "stage" "")
+        # SQL-statistics publication trails traffic.  Finalize the deterministic
+        # query-id evidence while the bounded Advanced/465 lease is still
+        # active, after the monitor has already sealed workload/posture and
+        # restoration evidence.  No workload is kept alive for this wait.
+        if ([string]$config.phase -eq "Waf" -and $acceptedStage -in @("500","800")) {
+            if ($SupervisionKind -ne "Load") {
+                throw "Waf/500 and Waf/800 deterministic PI evidence requires supervised load traffic."
+            }
+            $historyFallbackPiFinalizationAttempted = $true
+            try {
+                $piFinalization = Invoke-CertificationHistoryFallbackPiFinalizer `
+                    -Config $config -Contract $certificationContract -ProgressPath $progressPath `
+                    -SummaryPath $summaryPath -RequestPath $historyFallbackPiRequestPath `
+                    -ReceiptPath $historyFallbackPiReceiptPath
+            }
+            catch {
+                if ($_.Exception.Data.Contains("historyFallbackPiEvidence")) {
+                    $historyFallbackPiEvidence = $_.Exception.Data["historyFallbackPiEvidence"]
+                }
+                if ($_.Exception.Data.Contains("historyFallbackPiEvidenceReceipt")) {
+                    $historyFallbackPiPrivateReference = $_.Exception.Data["historyFallbackPiEvidenceReceipt"]
+                }
+                if ($_.Exception.Data.Contains("historyFallbackPiFinalizationRequest")) {
+                    $historyFallbackPiRequestReference = $_.Exception.Data["historyFallbackPiFinalizationRequest"]
+                }
+                throw
+            }
+            $historyFallbackPiEvidence = $piFinalization.Public
+            $historyFallbackPiPrivateReference = $piFinalization.PrivateReference
+            $historyFallbackPiRequestReference = $piFinalization.RequestReference
+        }
+        if ([string]$config.phase -eq "Waf" -and $acceptedStage -eq "500") {
+            # The certification lease spans the accepted Waf/500 -> Waf/800
+            # chain. It is intentionally retained only after a sealed Waf/500
+            # success; predecessor validation requires this exact state.
+            $certificationLeaseRestoration = [ordered]@{
+                required = $false
+                state = "retained_for_waf800"
+                leaseVersion = $certificationContract.DatabaseInsightsLease.version
+                receiptSha256 = $certificationContract.DatabaseInsightsLease.receipt.sha256
+                durableRestoreGuardVersion = $certificationContract.DatabaseInsightsLease.durableRestoreGuard.version
+                durableRestoreGuardBindingSha256 = $certificationContract.DatabaseInsightsLease.durableRestoreGuard.bindingSha256
+                durableRestoreGuardState = "armed"
+                retainedAtUtc = [DateTimeOffset]::UtcNow.ToString("o")
+            }
+        }
+        else {
+            $certificationLeaseRestoreAttempted = $true
+            try {
+                $restoredLease = Invoke-CertificationDatabaseInsightsLeaseCommand `
+                    -Config $config -Contract $certificationContract -Mode Restore
+                $certificationLeaseRestoration = [ordered]@{
+                    required = $true
+                    state = $restoredLease.state
+                    leaseVersion = $restoredLease.leaseVersion
+                    receiptSha256 = $restoredLease.receiptSha256
+                    durableRestoreGuardVersion = $restoredLease.durableRestoreGuardVersion
+                    durableRestoreGuardBindingSha256 = $restoredLease.durableRestoreGuardBindingSha256
+                    durableRestoreGuardState = $restoredLease.durableRestoreGuardState
+                    restoredAtUtc = $restoredLease.restoredAtUtc
+                    observedPosture = $restoredLease.observedPosture
+                }
+            }
+            catch {
+                $certificationLeaseRestoration = [ordered]@{
+                    required = $true
+                    state = "restore_failed"
+                    leaseVersion = $certificationContract.DatabaseInsightsLease.version
+                    receiptSha256 = $certificationContract.DatabaseInsightsLease.receipt.sha256
+                    durableRestoreGuardVersion = $certificationContract.DatabaseInsightsLease.durableRestoreGuard.version
+                    durableRestoreGuardBindingSha256 = $certificationContract.DatabaseInsightsLease.durableRestoreGuard.bindingSha256
+                    durableRestoreGuardState = "restore_failed"
+                    completedAtUtc = [DateTimeOffset]::UtcNow.ToString("o")
+                    discardedMessageSha256 = Get-CertificationTextSha256 $_.Exception.Message
+                    rawErrorPersisted = $false
+                }
+                throw
+            }
+        }
     }
     $monitorResultSha256 = Get-CertificationSha256 $monitorResultPath
     $predecessorSha = [string](Get-CertificationValue $config "predecessorResultSha256" "")
@@ -2240,10 +4015,15 @@ try {
         [string](Get-CertificationValue $chainRootBinding "sha256" ("0"*64)),
         $(if ($predecessorSha) { $predecessorSha } else { "0"*64 }),
         [string](Get-CertificationValue $stageAttestationBinding "sha256" ("0"*64)),
-        $monitorResultSha256
+        $monitorResultSha256,
+        [string](Get-CertificationValue $historyFallbackPiEvidence "receiptSha256" ("0"*64)),
+        [string](Get-CertificationValue $historyFallbackPiEvidence "receiptPathSha256" ("0"*64)),
+        [string](Get-CertificationValue $historyFallbackPiEvidence "requestSha256" ("0"*64)),
+        [string](Get-CertificationValue $historyFallbackPiEvidence "requestPathSha256" ("0"*64)),
+        [string](Get-CertificationValue $historyFallbackPiEvidence "trafficWindowSha256" ("0"*64))
     ) -join "`n")
     Write-AtomicJson -Path $supervisorResultPath -Value ([ordered]@{
-        schemaVersion = 2; type = "certification_supervisor_terminal"; supervisorSealed = $null -ne $certificationContract
+        schemaVersion = 3; type = "certification_supervisor_terminal"; linkVersion = $script:RequiredHistoryFallbackPiLinkVersion; supervisorSealed = $null -ne $certificationContract
         runId = $runId; phase = [string]$config.phase
         stage = if ($null -eq (Get-CertificationValue $config "workload")) { $null } else { [string]$config.workload.stage }
         chainId = if ($null -eq $certificationContract) { $null } else { $certificationContract.ChainId }
@@ -2251,6 +4031,12 @@ try {
         deployedImageDigest = if ($null -eq $certificationContract) { $null } else { $certificationContract.DeployedImageDigest }
         workloadSchemaVersion = if ($null -eq $certificationContract) { $null } else { $certificationContract.WorkloadSchemaVersion }
         workloadEndpointShapeSha256 = if ($null -eq $certificationContract) { $null } else { $certificationContract.WorkloadEndpointShapeSha256 }
+        historyFallbackQueryIdentity = if ($null -eq $certificationContract) { $null } else { $certificationContract.HistoryFallbackQueryIdentity }
+        historyFallbackPiEvidenceVersion = if ($null -eq $certificationContract) { $null } else { $certificationContract.HistoryFallbackPiEvidenceVersion }
+        historyFallbackPiEvidence = $historyFallbackPiEvidence
+        databaseInsightsLease = if ($null -eq $certificationContract) { $null } else { $certificationContract.DatabaseInsightsLease }
+        databaseInsightsLeaseValidation = $certificationLeaseValidation
+        databaseInsightsRestoration = $certificationLeaseRestoration
         controllerGitSha = if ($null -eq $certificationContract) { $null } else { $certificationContract.ControllerGitSha }
         controllerHashes = if ($null -eq $certificationContract) { $null } else { $certificationContract.ControllerHashes }
         operatorConfigSha256 = if ($null -eq $certificationContract) { $null } else { Get-CertificationConfigHash }
@@ -2265,16 +4051,211 @@ try {
     })
 }
 catch {
+    $runFailure = $_.Exception
     Stop-BoundProcess -Process $harness
     Stop-BoundProcess -Process $monitor
+    $terminalMonitorFailureBinding = $null
+    $terminalMonitorForFailure = $null
+    if (Test-Path -LiteralPath $monitorResultPath -PathType Leaf) {
+        try {
+            $terminalMonitorForFailure = Get-Content -LiteralPath $monitorResultPath -Raw | ConvertFrom-Json -Depth 60
+            if ([string](Get-CertificationValue $terminalMonitorForFailure "runId" "") -cne $runId -or
+                [string](Get-CertificationValue $terminalMonitorForFailure "phase" "") -cne [string]$config.phase -or
+                [string](Get-CertificationValue $terminalMonitorForFailure "status" "") -notin @("completed","failed")) {
+                throw "The terminal monitor result was not identity-bound to this run."
+            }
+            $monitorFailures = @(Get-CertificationValue $terminalMonitorForFailure "failures" @())
+            $rollback = Get-CertificationValue $terminalMonitorForFailure "rollback"
+            $terminalMonitorFailureBinding = [ordered]@{
+                pathSha256=Get-CertificationTextSha256 ([IO.Path]::GetFullPath($monitorResultPath))
+                sha256=Get-CertificationSha256 $monitorResultPath
+                runId=$runId;phase=[string]$config.phase
+                status=[string](Get-CertificationValue $terminalMonitorForFailure "status" "")
+                failureCount=$monitorFailures.Count
+                failuresSha256=Get-CertificationCanonicalSha256 @($monitorFailures)
+                rollbackAttempted=[bool](Get-CertificationValue $rollback "attempted" $false)
+                rollbackExitCode=Get-CertificationValue $rollback "exitCode"
+                rawPathsPersisted=$false
+            }
+        }
+        catch {
+            $terminalBindingFailureMessage = $_.Exception.Message
+            $observedTerminalSha = $null
+            try { $observedTerminalSha = Get-CertificationSha256 $monitorResultPath } catch { }
+            $terminalMonitorForFailure = $null
+            $terminalMonitorFailureBinding = [ordered]@{
+                pathSha256=Get-CertificationTextSha256 ([IO.Path]::GetFullPath($monitorResultPath))
+                sha256=$observedTerminalSha
+                runId=$runId;phase=[string]$config.phase;status="rejected"
+                discardedMessageSha256=Get-CertificationTextSha256 $terminalBindingFailureMessage
+                rawPathsPersisted=$false
+            }
+        }
+    }
+    $piFinalizationFailureSha256 = $null
+    $stageForFailure = if ($null -eq (Get-CertificationValue $config "workload")) { "" } else {
+        [string](Get-CertificationValue $config.workload "stage" "")
+    }
+    $eligibleForPostFailurePi = (
+        $null -ne $certificationContract -and $SupervisionKind -eq "Load" -and
+        [string]$config.phase -ceq "Waf" -and $stageForFailure -in @("500","800") -and
+        $null -ne $terminalMonitorForFailure -and
+        (Test-Path -LiteralPath $progressPath -PathType Leaf) -and
+        (Test-Path -LiteralPath $summaryPath -PathType Leaf)
+    )
+    if ($eligibleForPostFailurePi -and -not $historyFallbackPiFinalizationAttempted) {
+        # A rejected harness or monitor does not erase a coherent terminal
+        # traffic window.  Wait until the monitor/rollback terminal is sealed,
+        # then collect the independent SQL-statistics evidence while the
+        # bounded Advanced lease remains active.  The original failure remains
+        # primary regardless of the PI outcome.
+        $historyFallbackPiFinalizationAttempted = $true
+        try {
+            $piFinalization = Invoke-CertificationHistoryFallbackPiFinalizer `
+                -Config $config -Contract $certificationContract -ProgressPath $progressPath `
+                -SummaryPath $summaryPath -RequestPath $historyFallbackPiRequestPath `
+                -ReceiptPath $historyFallbackPiReceiptPath
+            $historyFallbackPiEvidence = $piFinalization.Public
+            $historyFallbackPiPrivateReference = $piFinalization.PrivateReference
+            $historyFallbackPiRequestReference = $piFinalization.RequestReference
+        }
+        catch {
+            $piFinalizationFailureSha256 = Get-CertificationTextSha256 $_.Exception.Message
+            if ($_.Exception.Data.Contains("historyFallbackPiEvidence")) {
+                $historyFallbackPiEvidence = $_.Exception.Data["historyFallbackPiEvidence"]
+            }
+            if ($_.Exception.Data.Contains("historyFallbackPiEvidenceReceipt")) {
+                $historyFallbackPiPrivateReference = $_.Exception.Data["historyFallbackPiEvidenceReceipt"]
+            }
+            if ($_.Exception.Data.Contains("historyFallbackPiFinalizationRequest")) {
+                $historyFallbackPiRequestReference = $_.Exception.Data["historyFallbackPiFinalizationRequest"]
+            }
+        }
+    }
+    if ($null -ne $certificationContract -and -not $certificationLeaseRestoreAttempted) {
+        $certificationLeaseRestoreAttempted = $true
+        try {
+            $restoredLease = Invoke-CertificationDatabaseInsightsLeaseCommand `
+                -Config $config -Contract $certificationContract -Mode Restore
+            $certificationLeaseRestoration = [ordered]@{
+                required = $true
+                state = $restoredLease.state
+                leaseVersion = $restoredLease.leaseVersion
+                receiptSha256 = $restoredLease.receiptSha256
+                durableRestoreGuardVersion = $restoredLease.durableRestoreGuardVersion
+                durableRestoreGuardBindingSha256 = $restoredLease.durableRestoreGuardBindingSha256
+                durableRestoreGuardState = $restoredLease.durableRestoreGuardState
+                restoredAtUtc = $restoredLease.restoredAtUtc
+                observedPosture = $restoredLease.observedPosture
+            }
+        }
+        catch {
+            $certificationLeaseRestoration = [ordered]@{
+                required = $true
+                state = "restore_failed"
+                leaseVersion = $certificationContract.DatabaseInsightsLease.version
+                receiptSha256 = $certificationContract.DatabaseInsightsLease.receipt.sha256
+                durableRestoreGuardVersion = $certificationContract.DatabaseInsightsLease.durableRestoreGuard.version
+                durableRestoreGuardBindingSha256 = $certificationContract.DatabaseInsightsLease.durableRestoreGuard.bindingSha256
+                durableRestoreGuardState = "restore_failed"
+                completedAtUtc = [DateTimeOffset]::UtcNow.ToString("o")
+                discardedMessageSha256 = Get-CertificationTextSha256 $_.Exception.Message
+                rawErrorPersisted = $false
+            }
+        }
+    }
+    elseif ($null -ne $certificationContract -and $certificationLeaseRestoreAttempted -and $null -eq $certificationLeaseRestoration) {
+        $certificationLeaseRestoration = [ordered]@{
+            required = $true
+            state = "restore_failed"
+            leaseVersion = $certificationContract.DatabaseInsightsLease.version
+            receiptSha256 = $certificationContract.DatabaseInsightsLease.receipt.sha256
+            durableRestoreGuardVersion = $certificationContract.DatabaseInsightsLease.durableRestoreGuard.version
+            durableRestoreGuardBindingSha256 = $certificationContract.DatabaseInsightsLease.durableRestoreGuard.bindingSha256
+            durableRestoreGuardState = "restore_failed"
+            completedAtUtc = [DateTimeOffset]::UtcNow.ToString("o")
+            rawErrorPersisted = $false
+        }
+    }
     $termination = if ($SupervisionKind -eq "Load") { "Traffic was terminated" } else { "Monitor-only supervision was terminated" }
-    $message = "Run $runId became invalid because $($_.Exception.Message). $termination; no infrastructure mutation was attempted by the supervisor."
+    $restorationMessage = if ($null -eq $certificationContract) {
+        "No certification monitoring lease was bound."
+    }
+    elseif ([string](Get-CertificationValue $certificationLeaseRestoration "state" "") -eq "restored") {
+        "The bounded Database Insights lease was restored to its exact Standard/7 posture."
+    }
+    else {
+        "Exact Database Insights lease restoration failed or could not be proven; progression is blocked."
+    }
+    $failureCode = if ($runFailure.Data.Contains("failureCode")) {
+        [string]$runFailure.Data["failureCode"]
+    }
+    elseif ($null -ne $historyFallbackPiEvidence -and
+        (Get-CertificationValue $historyFallbackPiEvidence "passed" $false) -ne $true) {
+        "history_fallback_pi_evidence_rejected"
+    }
+    else { "certification_supervision_failed" }
+    $failureStage = if ($runFailure.Data.Contains("failureStage")) {
+        [string]$runFailure.Data["failureStage"]
+    }
+    elseif ($failureCode -eq "history_fallback_pi_evidence_rejected") {
+        [string](Get-CertificationValue $historyFallbackPiEvidence "failureStage" "history_fallback_gate")
+    }
+    else { "supervisor" }
+    $discardedFailureMessageSha256 = Get-CertificationTextSha256 $runFailure.Message
+    $settledFindings = [System.Collections.Generic.List[object]]::new()
+    $settledFindings.Add([ordered]@{
+        kind="primary_failure";failureCode=$failureCode;failureStage=$failureStage
+        discardedMessageSha256=$discardedFailureMessageSha256;rawErrorPersisted=$false
+    })
+    if ($null -ne $historyFallbackPiEvidence) {
+        $piPassed = (Get-CertificationValue $historyFallbackPiEvidence "passed" $false) -eq $true
+        $settledFindings.Add([ordered]@{
+            kind="history_fallback_pi_evidence"
+            failureCode=if($piPassed){$null}else{[string](Get-CertificationValue $historyFallbackPiEvidence "failureCode" "history_fallback_pi_evidence_rejected")}
+            failureStage=if($piPassed){$null}else{[string](Get-CertificationValue $historyFallbackPiEvidence "failureStage" "history_fallback_gate")}
+            collected=(Get-CertificationValue $historyFallbackPiEvidence "collected" $false)
+            passed=$piPassed
+            receiptSha256=Get-CertificationValue $historyFallbackPiEvidence "receiptSha256"
+            requestSha256=Get-CertificationValue $historyFallbackPiEvidence "requestSha256"
+            rawErrorPersisted=$false
+        })
+    }
+    elseif ($historyFallbackPiFinalizationAttempted) {
+        $settledFindings.Add([ordered]@{
+            kind="history_fallback_pi_evidence";failureCode="performance_insights_evidence_unavailable"
+            failureStage="coherent_window_or_request_validation";collected=$false;passed=$false
+            discardedMessageSha256=$piFinalizationFailureSha256;rawErrorPersisted=$false
+        })
+    }
+    if ($null -ne $certificationContract -and
+        [string](Get-CertificationValue $certificationLeaseRestoration "state" "") -ne "restored") {
+        $settledFindings.Add([ordered]@{
+            kind="database_insights_restoration";failureCode="database_insights_restoration_failed"
+            failureStage="database_insights_restoration";collected=$false;passed=$false;rawErrorPersisted=$false
+        })
+    }
+    $message = "Run $runId became invalid ($failureCode/$failureStage; discarded-message SHA-256 $discardedFailureMessageSha256). $termination. $restorationMessage No other infrastructure mutation was attempted by the supervisor."
     Send-SupervisorNotification -Config $config -Message $message
     Write-AtomicJson -Path $supervisorResultPath -Value ([ordered]@{
-        schemaVersion=2;type="certification_supervisor_terminal";supervisorSealed=$false
-        runId = $runId; phase=[string]$config.phase; status = "failed"; timestamp = [DateTimeOffset]::UtcNow.ToString("o"); error = $_.Exception.Message
+        schemaVersion=3;type="certification_supervisor_terminal";linkVersion=$script:RequiredHistoryFallbackPiLinkVersion;supervisorSealed=$false
+        runId = $runId; phase=[string]$config.phase; status = "failed"; timestamp = [DateTimeOffset]::UtcNow.ToString("o")
+        failureCode=$failureCode;failureStage=$failureStage
+        discardedMessageSha256=$discardedFailureMessageSha256;rawErrorPersisted=$false
+        settledFindings=@($settledFindings)
+        terminalMonitorResult=$terminalMonitorFailureBinding
+        historyFallbackQueryIdentity = if ($null -eq $certificationContract) { $null } else { $certificationContract.HistoryFallbackQueryIdentity }
+        historyFallbackPiEvidenceVersion = if ($null -eq $certificationContract) { $null } else { $certificationContract.HistoryFallbackPiEvidenceVersion }
+        historyFallbackPiEvidence = $historyFallbackPiEvidence
+        databaseInsightsLease = if ($null -eq $certificationContract) { $null } else { $certificationContract.DatabaseInsightsLease }
+        databaseInsightsLeaseValidation = $certificationLeaseValidation
+        databaseInsightsRestoration = $certificationLeaseRestoration
     })
-    throw
+    if ($null -ne $certificationContract -and
+        [string](Get-CertificationValue $certificationLeaseRestoration "state" "") -ne "restored") {
+        throw "Certification failed and exact Database Insights Standard/7 restoration was not proven; progression is blocked."
+    }
+    throw $runFailure
 }
 finally {
     Stop-BoundProcess -Process $harness

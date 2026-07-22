@@ -20,6 +20,9 @@ $script:HarnessScript = Join-Path $PSScriptRoot "classpilot-load-test.mjs"
 $script:MonotonicDeadlineScript = Join-Path $PSScriptRoot "monotonic-deadline.mjs"
 $script:TilePollAccountingScript = Join-Path $PSScriptRoot "tile-poll-accounting.mjs"
 $script:MonitorScript = Join-Path $PSScriptRoot "aws-rollout-monitor.ps1"
+$script:DatabaseInsightsLeaseScript = Join-Path $PSScriptRoot "database-insights-lease.ps1"
+$script:DatabaseInsightsLeaseVersion = "database-insights-monitoring-lease-v2"
+$script:DatabaseInsightsDurableRestoreGuardVersion = "aws-scheduler-ssm-recurring-restore-v1"
 $script:WorkloadSchemaVersion = "classpilot-tile-batch-v1"
 $script:EndpointShapeSha256 = "8e9f1942e4b3a27de7dd0571a9f60ffeb276c089e4baae96a885dba69e3233b2"
 $script:ExpectedAccountId = "135775632425"
@@ -40,6 +43,18 @@ $script:AuthSqlMarkers = @(
 $script:HistoryFallbackSqlMarkers = @("requested_tiles", "heartbeats", "lateral")
 $script:HistoryIoDominanceThresholdPercent = 50.0
 $script:PerformanceInsightsCoverageTolerancePercent = 0.5
+$script:HistoryFallbackSqlIdentityVersion = "history-fallback-queryid-v1"
+$script:HistoryFallbackPiEvidenceVersion = "queryid-sqlstats-v1"
+$script:HistoryFallbackParameterTypeSignatureJson = '["$1:text[]:student_ids","$2:text[]:device_ids","$3:text:school_id","$4:bigint:history_limit"]'
+$script:HistoryFallbackSqlStatsPeriodSeconds = 60
+$script:HistoryFallbackSqlStatsMetrics = [ordered]@{
+    calls="db.sql_tokenized.stats.calls_per_sec.avg"
+    totalTime="db.sql_tokenized.stats.total_time_per_sec.avg"
+    blockReadTime="db.sql_tokenized.stats.blk_read_time_per_sec.avg"
+    sharedBlocksRead="db.sql_tokenized.stats.shared_blks_read_per_sec.avg"
+    tempBlocksRead="db.sql_tokenized.stats.temp_blks_read_per_sec.avg"
+    tempBlocksWritten="db.sql_tokenized.stats.temp_blks_written_per_sec.avg"
+}
 $script:DurationClock = "monotonic-hrtime-v1"
 $script:DiagnosticRuntimeTargetTrafficSeconds = 1800.0
 $script:DiagnosticPlannedTrafficMilliseconds = 1800000L
@@ -54,6 +69,15 @@ $script:EvidenceMaximumRecords = 10000
 $script:PerformanceInsightsInitialDelayMinutes = 5
 $script:PerformanceInsightsStabilizationDeadlineMinutes = 15
 $script:PerformanceInsightsPollSeconds = 60
+$script:DatabaseInsightsLeaseMaximumAcquisitionAgeSeconds = 900
+$script:DatabaseInsightsLeaseRestoreTimeoutSeconds = 900
+$script:DatabaseInsightsLeaseSafetyMarginSeconds = 300
+$script:DatabaseInsightsLeaseRequiredRemainingSeconds = [int](
+    $script:DiagnosticPlannedTrafficMilliseconds / 1000L +
+    ($script:PerformanceInsightsStabilizationDeadlineMinutes * 60) +
+    $script:DatabaseInsightsLeaseRestoreTimeoutSeconds +
+    $script:DatabaseInsightsLeaseSafetyMarginSeconds
+)
 $script:HarnessTerminalCommitTimeoutSeconds = 45
 $script:HarnessTerminalCommitPollMilliseconds = 250
 
@@ -93,6 +117,52 @@ function Assert-Sha256 {
     $pattern = if ($ImageDigest) { '^sha256:[0-9a-f]{64}$' } else { '^[0-9a-f]{64}$' }
     if ($normalized -notmatch $pattern) { throw "$Name must be an exact lowercase SHA-256 value." }
     return $normalized
+}
+
+function Assert-HistoryFallbackSqlIdentity {
+    param($Identity)
+    if ($null -eq $Identity) { throw "Diagnostic config requires 'historyFallbackSqlIdentity'." }
+    $version = [string](Get-RequiredValue $Identity "identityVersion")
+    if ($version -cne $script:HistoryFallbackSqlIdentityVersion) {
+        throw "historyFallbackSqlIdentity.identityVersion must bind the reviewed query-ID identity schema."
+    }
+    $queryIdentifier = ([string](Get-RequiredValue $Identity "queryIdentifier")).Trim()
+    $parsedIdentifier = 0L
+    if (-not [long]::TryParse($queryIdentifier, [Globalization.NumberStyles]::AllowLeadingSign,
+            [Globalization.CultureInfo]::InvariantCulture, [ref]$parsedIdentifier) -or
+        $parsedIdentifier -eq 0 -or
+        $queryIdentifier -cne $parsedIdentifier.ToString([Globalization.CultureInfo]::InvariantCulture)) {
+        throw "historyFallbackSqlIdentity.queryIdentifier must be one canonical nonzero signed 64-bit decimal string."
+    }
+    $queryIdentifierSha256 = Assert-Sha256 ([string](Get-RequiredValue $Identity "queryIdentifierSha256")) `
+        "historyFallbackSqlIdentity.queryIdentifierSha256"
+    if ((Get-StringSha256 $queryIdentifier) -cne $queryIdentifierSha256) {
+        throw "historyFallbackSqlIdentity query identifier hash validation failed."
+    }
+    $compiledSqlSha256 = Assert-Sha256 ([string](Get-RequiredValue $Identity "compiledSqlSha256")) `
+        "historyFallbackSqlIdentity.compiledSqlSha256"
+    $parameterTypeSignatureSha256 = Assert-Sha256 `
+        ([string](Get-RequiredValue $Identity "parameterTypeSignatureSha256")) `
+        "historyFallbackSqlIdentity.parameterTypeSignatureSha256"
+    $databaseResourceId = [string](Get-RequiredValue $Identity "databaseResourceId")
+    if ($databaseResourceId -notmatch '^db-[A-Z0-9]{20,64}$') {
+        throw "historyFallbackSqlIdentity.databaseResourceId must be an exact RDS DBI resource identifier."
+    }
+    $engineVersion = [string](Get-RequiredValue $Identity "engineVersion")
+    if ($engineVersion -notmatch '^[0-9]+(?:\.[0-9]+){0,2}$') {
+        throw "historyFallbackSqlIdentity.engineVersion must be a bounded PostgreSQL version."
+    }
+    $schemaIdentitySha256 = Assert-Sha256 ([string](Get-RequiredValue $Identity "schemaIdentitySha256")) `
+        "historyFallbackSqlIdentity.schemaIdentitySha256"
+    if ((Get-Value $Identity "trackIoTiming" $false) -ne $true) {
+        throw "historyFallbackSqlIdentity must bind track_io_timing=true."
+    }
+    return [pscustomobject]@{
+        Version=$version;QueryIdentifier=$queryIdentifier;QueryIdentifierSha256=$queryIdentifierSha256
+        CompiledSqlSha256=$compiledSqlSha256;ParameterTypeSignatureSha256=$parameterTypeSignatureSha256
+        DatabaseResourceId=$databaseResourceId;EngineVersion=$engineVersion;SchemaIdentitySha256=$schemaIdentitySha256
+        TrackIoTiming=$true
+    }
 }
 
 function Assert-GitSha {
@@ -279,13 +349,109 @@ function Invoke-AwsJson {
     throw "AWS CLI request failed for $operation ($lastFailure)."
 }
 
+function Test-DiagnosticEmptyObject {
+    param($Value)
+    if ($null -eq $Value) { return $true }
+    if ($Value -is [Collections.IDictionary]) { return $Value.Count -eq 0 }
+    return @($Value.PSObject.Properties).Count -eq 0
+}
+
+function ConvertTo-ExactUtcDateTimeOffset {
+    param($Value, [string]$Name)
+    if ($Value -is [DateTimeOffset]) {
+        $parsed = [DateTimeOffset]$Value
+    }
+    elseif ($Value -is [DateTime]) {
+        $dateTime = [DateTime]$Value
+        if ($dateTime.Kind -ne [DateTimeKind]::Utc) { throw "$Name must be an exact UTC timestamp." }
+        $parsed = [DateTimeOffset]::new($dateTime)
+    }
+    elseif ($Value -is [string]) {
+        $parsed = [DateTimeOffset]::MinValue
+        if (-not [DateTimeOffset]::TryParse([string]$Value, [Globalization.CultureInfo]::InvariantCulture,
+                [Globalization.DateTimeStyles]::RoundtripKind, [ref]$parsed)) {
+            throw "$Name must be a valid UTC timestamp."
+        }
+    }
+    else { throw "$Name must be a valid UTC timestamp." }
+    if ($parsed.Offset -ne [TimeSpan]::Zero) { throw "$Name must be an exact UTC timestamp." }
+    return $parsed.ToUniversalTime()
+}
+
+function Get-PerformanceInsightsEvidenceWindow {
+    param([string]$StartUtc, [string]$EndUtc)
+    try {
+        $coherentStart = ([DateTimeOffset]$StartUtc).ToUniversalTime()
+        $coherentEnd = ([DateTimeOffset]$EndUtc).ToUniversalTime()
+    }
+    catch { throw "Performance Insights evidence requires a valid coherent UTC traffic window." }
+    if ($coherentEnd -le $coherentStart) {
+        throw "Performance Insights evidence requires a positive coherent traffic window."
+    }
+    $startFloor = [DateTimeOffset]::new($coherentStart.Year, $coherentStart.Month, $coherentStart.Day,
+        $coherentStart.Hour, $coherentStart.Minute, 0, [TimeSpan]::Zero)
+    $alignedStart = if ($coherentStart -gt $startFloor) { $startFloor.AddMinutes(1) } else { $startFloor }
+    $alignedEnd = [DateTimeOffset]::new($coherentEnd.Year, $coherentEnd.Month, $coherentEnd.Day,
+        $coherentEnd.Hour, $coherentEnd.Minute, 0, [TimeSpan]::Zero)
+    if ($alignedEnd -le $alignedStart) {
+        throw "The coherent traffic window does not contain a positive complete-minute Performance Insights evidence subwindow."
+    }
+    $coherentCanonical = [ordered]@{
+        startUtc=$coherentStart.ToString("o");endUtc=$coherentEnd.ToString("o")
+    }
+    $alignedCanonical = [ordered]@{
+        startUtc=$alignedStart.ToString("o");endUtc=$alignedEnd.ToString("o")
+    }
+    $coherentSeconds = ($coherentEnd - $coherentStart).TotalSeconds
+    $alignedSeconds = ($alignedEnd - $alignedStart).TotalSeconds
+    return [pscustomobject]@{
+        CoherentStart=$coherentStart;CoherentEnd=$coherentEnd
+        AlignedStart=$alignedStart;AlignedEnd=$alignedEnd
+        Evidence=[ordered]@{
+            alignment="utc-complete-minute-v1"
+            coherentWindowSha256=(Get-StableJsonSha256 $coherentCanonical)
+            alignedEvidenceWindowSha256=(Get-StableJsonSha256 $alignedCanonical)
+            coherentDurationSeconds=[math]::Round($coherentSeconds,3)
+            alignedDurationSeconds=[math]::Round($alignedSeconds,3)
+            completeMinuteCount=[int]($alignedSeconds / 60.0)
+            alignedCoveragePercent=[math]::Round(($alignedSeconds / $coherentSeconds) * 100.0,6)
+        }
+    }
+}
+
+function Assert-PerformanceInsightsResponseScope {
+    param(
+        $Response,
+        [string]$ExpectedAlignedStartUtc,
+        [string]$ExpectedAlignedEndUtc,
+        [string]$ExpectedIdentifier = ""
+    )
+    if ($null -eq $Response) { throw "Performance Insights returned an empty response page." }
+    try {
+        $actualStart = ConvertTo-ExactUtcDateTimeOffset (Get-RequiredValue $Response "AlignedStartTime") "AlignedStartTime"
+        $actualEnd = ConvertTo-ExactUtcDateTimeOffset (Get-RequiredValue $Response "AlignedEndTime") "AlignedEndTime"
+        $expectedStart = ConvertTo-ExactUtcDateTimeOffset $ExpectedAlignedStartUtc "ExpectedAlignedStartTime"
+        $expectedEnd = ConvertTo-ExactUtcDateTimeOffset $ExpectedAlignedEndUtc "ExpectedAlignedEndTime"
+    }
+    catch { throw "Performance Insights returned malformed aligned response bounds." }
+    if ($actualStart -ne $expectedStart -or $actualEnd -ne $expectedEnd) {
+        throw "Performance Insights returned response bounds outside the exact aligned evidence subwindow."
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedIdentifier) -and
+        [string](Get-RequiredValue $Response "Identifier") -cne $ExpectedIdentifier) {
+        throw "Performance Insights returned a response for a different database resource identity."
+    }
+}
+
 function Invoke-EvidenceAwsJsonPages {
     param(
         [string[]]$Arguments,
         [string]$ItemsProperty,
         [string]$TokenProperty,
         [string]$TokenArgument = "--next-token",
-        [scriptblock]$Identity
+        [scriptblock]$Identity,
+        [string]$ExpectedAlignedStartUtc = "",
+        [string]$ExpectedAlignedEndUtc = ""
     )
     $items = [Collections.Generic.List[object]]::new()
     $seenTokens = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
@@ -299,6 +465,14 @@ function Invoke-EvidenceAwsJsonPages {
         if (-not [string]::IsNullOrWhiteSpace([string]$token)) { $pageArguments += @($TokenArgument, [string]$token) }
         $page = Invoke-AwsJson $pageArguments
         if ($null -eq $page) { throw "AWS evidence pagination returned an empty page." }
+        if (-not [string]::IsNullOrWhiteSpace($ExpectedAlignedStartUtc) -or
+            -not [string]::IsNullOrWhiteSpace($ExpectedAlignedEndUtc)) {
+            if ([string]::IsNullOrWhiteSpace($ExpectedAlignedStartUtc) -or
+                [string]::IsNullOrWhiteSpace($ExpectedAlignedEndUtc)) {
+                throw "Performance Insights pagination requires both aligned response bounds."
+            }
+            Assert-PerformanceInsightsResponseScope $page $ExpectedAlignedStartUtc $ExpectedAlignedEndUtc
+        }
         foreach ($item in @((Get-Value $page $ItemsProperty @()))) {
             $identityValue = if ($null -ne $Identity) { [string](& $Identity $item) } else { Get-StableJsonSha256 $item }
             if ([string]::IsNullOrWhiteSpace($identityValue)) { throw "AWS evidence pagination returned an item without an identity." }
@@ -418,9 +592,11 @@ function Wait-HarnessTerminalEvidenceCommit {
 }
 
 function Resolve-DiagnosticTerminalExitCode {
-    param($Terminal, $Restoration, [bool]$AcceptanceAdjudicated, [int]$CurrentExitCode)
+    param($Terminal, $Restoration, $DatabaseInsightsRestoration, [bool]$AcceptanceAdjudicated, [int]$CurrentExitCode)
     if ((Get-Value $Restoration "attempted" $false) -eq $true -and
         (Get-Value $Restoration "restored" $false) -ne $true) { return 4 }
+    if ((Get-Value $DatabaseInsightsRestoration "attempted" $false) -eq $true -and
+        (Get-Value $DatabaseInsightsRestoration "restored" $false) -ne $true) { return 4 }
     if ($AcceptanceAdjudicated -and @($Terminal.failures).Count -eq 0) { return 0 }
     if ($CurrentExitCode -eq 4) { return 4 }
     return 2
@@ -431,7 +607,7 @@ function Get-ControllerFailureClassification {
     $allowedStages = @(
         "capacity_pin","harness_launch","harness_ready","monitor_validation","monitor_launch",
         "monitor_arming","traffic_release","traffic_monitoring","terminal_commit","immediate_evidence",
-        "scaling_restoration","delayed_evidence","acceptance_adjudication","terminal_posture"
+        "scaling_restoration","delayed_evidence","database_insights_restoration","acceptance_adjudication","terminal_posture"
     )
     $failureId = [string]$ErrorRecord.FullyQualifiedErrorId
     $programmingFailure = $failureId -match 'CommandNotFound|PropertyNotFound|MethodNotFound|ParameterBinding|ParseException|TypeNotFound|VariableIsUndefined|NullArray' -or
@@ -584,6 +760,15 @@ function Read-DiagnosticConfiguration {
         throw "Monitor resource task-definition bindings must match deploymentIdentity."
     }
 
+    if ($null -ne (Get-Value $raw "historyFallbackSqlIdentity" $null)) {
+        throw "Raw historyFallbackSqlIdentity content is forbidden in diagnostic configuration; bind the private receipt reference."
+    }
+    $historyFallbackPiEvidenceVersion = [string](Get-RequiredValue $raw "historyFallbackPiEvidenceVersion")
+    $historyFallbackSqlIdentity = Read-HistoryFallbackQueryIdentityReceipt `
+        (Get-RequiredValue $raw "historyFallbackQueryIdentity") `
+        $applicationSha $digest $apiArn $workerArn $historyFallbackPiEvidenceVersion
+    $databaseInsightsLease = Assert-DatabaseInsightsLeaseBinding (Get-RequiredValue $raw "databaseInsightsLease")
+
     $artifacts = @((Get-RequiredValue $raw "harnessArtifacts"))
     $expectedKinds = @("command-bodies", "device-manifest", "teacher-auth")
     $bindings = @()
@@ -614,6 +799,360 @@ function Read-DiagnosticConfiguration {
         BaseUrl=$baseUrl; Workload=$workload; Resources=$resources; ExpectedGeneratorPublicIp=$expectedGeneratorIp
         ApplicationGitSha=$applicationSha; ControllerGitSha=$controllerSha; ImageDigest=$digest
         ApiTaskDefinitionArn=$apiArn; WorkerTaskDefinitionArn=$workerArn; HarnessArtifacts=$bindings
+        HistoryFallbackSqlIdentity=$historyFallbackSqlIdentity;DatabaseInsightsLease=$databaseInsightsLease
+    }
+}
+
+function Restore-TerminalDatabaseInsightsLease {
+    param($Terminal, $Config, $CurrentRestoration)
+    if ((Get-Value $CurrentRestoration "attempted" $false) -eq $true) { return $CurrentRestoration }
+    try {
+        $leaseEvidence = Invoke-DatabaseInsightsLeaseController -Config $Config -LeaseMode Restore
+        $restoration = [ordered]@{
+            attempted=$true;restored=$true;completedAtUtc=[DateTimeOffset]::UtcNow.ToString("o")
+            failureCode=$null;failureStage=$null;lease=$leaseEvidence;rawErrorPersisted=$false
+        }
+        $Terminal.databaseInsightsLease.restoration = $restoration
+        return $restoration
+    }
+    catch {
+        $restoration = [ordered]@{
+            attempted=$true;restored=$false;completedAtUtc=[DateTimeOffset]::UtcNow.ToString("o")
+            failureCode="database_insights_lease_restoration_failed";failureStage="database_insights_restoration"
+            messageSha256=(Get-StringSha256 $_.Exception.Message);rawErrorPersisted=$false
+        }
+        $Terminal.databaseInsightsLease.restoration = $restoration
+        Add-TerminalFailure $Terminal "database_insights_lease_restoration_failed"
+        return $restoration
+    }
+}
+
+function Assert-DiagnosticPrivateFileAcl {
+    param([string]$Path, [string]$Name)
+    if (-not $IsWindows) { throw "$Name requires Windows ACL enforcement." }
+    $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $acl = Get-Acl -LiteralPath $Path
+    if (-not $acl.AreAccessRulesProtected) { throw "$Name must disable inherited file access." }
+    foreach ($rule in @($acl.Access)) {
+        if ($rule.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and
+            $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -ne $currentSid) {
+            throw "$Name must be readable only by the current diagnostic operator."
+        }
+    }
+}
+
+function Read-HistoryFallbackQueryIdentityReceipt {
+    param(
+        $Reference,
+        [string]$ApplicationGitSha,
+        [string]$DeployedImageDigest,
+        [string]$ActiveApiTaskDefinitionArn,
+        [string]$ActiveWorkerTaskDefinitionArn,
+        [string]$PiEvidenceVersion
+    )
+    if ($null -eq $Reference) { throw "Diagnostic config requires 'historyFallbackQueryIdentity'." }
+    if ($PiEvidenceVersion -cne $script:HistoryFallbackPiEvidenceVersion) {
+        throw "historyFallbackPiEvidenceVersion must bind deterministic query-ID SQL statistics."
+    }
+    $path = Resolve-ExternalPath ([string](Get-RequiredValue $Reference "path")) `
+        "historyFallbackQueryIdentity.path"
+    $expectedSha256 = Assert-Sha256 ([string](Get-RequiredValue $Reference "sha256")) `
+        "historyFallbackQueryIdentity.sha256"
+    $actualSha256 = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actualSha256 -cne $expectedSha256) {
+        throw "The history fallback query-identity receipt changed after its hash was recorded."
+    }
+    Assert-DiagnosticPrivateFileAcl $path "historyFallbackQueryIdentity"
+    try { $receipt = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json -Depth 30 }
+    catch { throw "The history fallback query-identity receipt must contain valid JSON." }
+    if ([int](Get-Value $receipt "schemaVersion" 0) -ne 1 -or
+        [string](Get-Value $receipt "type" "") -cne "history_fallback_query_identity_receipt") {
+        throw "The history fallback query-identity receipt has an unsupported schema."
+    }
+    $identity = Assert-HistoryFallbackSqlIdentity $receipt
+    $expectedParameterSignatureSha256 = Get-StringSha256 $script:HistoryFallbackParameterTypeSignatureJson
+    if ($identity.ParameterTypeSignatureSha256 -cne $expectedParameterSignatureSha256 -or
+        [string](Get-Value $receipt "applicationGitSha" "") -cne $ApplicationGitSha -or
+        [string](Get-Value $receipt "deployedImageDigest" "") -cne $DeployedImageDigest -or
+        [string](Get-Value $receipt "activeApiTaskDefinitionArn" "") -cne $ActiveApiTaskDefinitionArn -or
+        [string](Get-Value $receipt "activeWorkerTaskDefinitionArn" "") -cne $ActiveWorkerTaskDefinitionArn) {
+        throw "The history fallback query-identity receipt is not bound to the exact release and active task revisions."
+    }
+    $identity | Add-Member -NotePropertyName Receipt -NotePropertyValue ([pscustomobject]@{
+        Path=$path;Sha256=$actualSha256
+    }) -Force
+    $identity | Add-Member -NotePropertyName PiEvidenceVersion -NotePropertyValue $PiEvidenceVersion -Force
+    return $identity
+}
+
+function Assert-DatabaseInsightsLeaseBinding {
+    param($Binding)
+    if ($null -eq $Binding) { throw "Diagnostic config requires 'databaseInsightsLease'." }
+    $version = [string](Get-RequiredValue $Binding "version")
+    if ($version -cne $script:DatabaseInsightsLeaseVersion) {
+        throw "databaseInsightsLease.version must bind the reviewed monitoring-lease schema."
+    }
+    $receiptPath = Resolve-ExternalPath ([string](Get-RequiredValue $Binding "receiptPath")) `
+        "databaseInsightsLease.receiptPath"
+    $receiptSha256 = Assert-Sha256 ([string](Get-RequiredValue $Binding "receiptSha256")) `
+        "databaseInsightsLease.receiptSha256"
+    if ((Get-FileHash -LiteralPath $receiptPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $receiptSha256) {
+        throw "The Database Insights lease receipt hash does not match its config binding."
+    }
+    try { $receipt = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json -Depth 40 }
+    catch { throw "The Database Insights lease receipt is malformed." }
+    $durableGuard = Get-Value $receipt "durableRestoreGuard" $null
+    if ([string](Get-Value $durableGuard "version" "") -cne $script:DatabaseInsightsDurableRestoreGuardVersion) {
+        throw "The Database Insights lease receipt does not bind the reviewed AWS-native durable restore guard."
+    }
+    $durableGuardBindingSha256 = Assert-Sha256 `
+        ([string](Get-Value $durableGuard "bindingSha256" "")) `
+        "databaseInsightsLease.durableRestoreGuard.bindingSha256"
+    $durableScheduleArnSha256 = Get-StringSha256 ([string](Get-RequiredValue $durableGuard "scheduleArn"))
+    $durableTargetRoleArnSha256 = Get-StringSha256 ([string](Get-RequiredValue $durableGuard "targetRoleArn"))
+    $durableDeadLetterQueueArnSha256 = Get-StringSha256 ([string](Get-RequiredValue $durableGuard "deadLetterQueueArn"))
+    $durableAutomationDefinitionArnSha256 = Get-StringSha256 `
+        ([string](Get-RequiredValue $durableGuard "automationDefinitionArn"))
+    $durableAutomationRoleArnSha256 = Get-StringSha256 `
+        ([string](Get-RequiredValue $durableGuard "automationRoleArn"))
+    $durableAutomationFailureRuleArnSha256 = Get-StringSha256 `
+        ([string](Get-RequiredValue $durableGuard "automationFailureRuleArn"))
+    $durableAutomationDocumentVersion = [string](Get-RequiredValue $durableGuard "automationDocumentVersion")
+    if ($durableAutomationDocumentVersion -cne "1") {
+        throw "The Database Insights lease does not pin the reviewed numeric Automation document version."
+    }
+    $durableAutomationDocumentContentSha256 = Assert-Sha256 `
+        ([string](Get-RequiredValue $durableGuard "automationDocumentContentSha256")) `
+        "databaseInsightsLease.durableRestoreGuard.automationDocumentContentSha256"
+    $statusPath = "$receiptPath.status.json"
+    if (-not (Test-Path -LiteralPath $statusPath -PathType Leaf)) {
+        throw "The Database Insights lease status journal is missing."
+    }
+    $watchdogPath = "$receiptPath.watchdog.json"
+    if (-not (Test-Path -LiteralPath $watchdogPath -PathType Leaf)) {
+        throw "The bounded Database Insights lease watchdog heartbeat is missing."
+    }
+    return [pscustomobject]@{
+        Version=$version;ReceiptPath=$receiptPath;ReceiptSha256=$receiptSha256
+        StatusPath=$statusPath;WatchdogPath=$watchdogPath
+        DurableRestoreGuardVersion=$script:DatabaseInsightsDurableRestoreGuardVersion
+        DurableRestoreGuardBindingSha256=$durableGuardBindingSha256
+        DurableRestoreScheduleArnSha256=$durableScheduleArnSha256
+        DurableRestoreTargetRoleArnSha256=$durableTargetRoleArnSha256
+        DurableRestoreDeadLetterQueueArnSha256=$durableDeadLetterQueueArnSha256
+        DurableRestoreAutomationDefinitionArnSha256=$durableAutomationDefinitionArnSha256
+        DurableRestoreAutomationRoleArnSha256=$durableAutomationRoleArnSha256
+        DurableRestoreAutomationFailureRuleArnSha256=$durableAutomationFailureRuleArnSha256
+        DurableRestoreAutomationDocumentVersion=$durableAutomationDocumentVersion
+        DurableRestoreAutomationDocumentContentSha256=$durableAutomationDocumentContentSha256
+    }
+}
+
+function Get-DatabaseInsightsLeaseTimingEvidence {
+    param(
+        $Config,
+        [string]$ValidatedExpiresAtUtc,
+        [DateTimeOffset]$Now = [DateTimeOffset]::UtcNow
+    )
+    $receiptPath = [string]$Config.DatabaseInsightsLease.ReceiptPath
+    if ((Get-FileHash -LiteralPath $receiptPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne
+        [string]$Config.DatabaseInsightsLease.ReceiptSha256) {
+        throw "The Database Insights lease receipt changed during timing validation."
+    }
+    Assert-DiagnosticPrivateFileAcl $receiptPath "databaseInsightsLease.receipt"
+    $receiptDocument = $null
+    try {
+        $receiptDocument = [Text.Json.JsonDocument]::Parse((Get-Content -LiteralPath $receiptPath -Raw))
+        $capturedAtText = $receiptDocument.RootElement.GetProperty("capturedAtUtc").GetString()
+        $receiptExpiresAtText = $receiptDocument.RootElement.GetProperty("expiresAtUtc").GetString()
+    }
+    catch { throw "The Database Insights lease receipt must contain valid JSON string timing evidence." }
+    finally { if ($null -ne $receiptDocument) { $receiptDocument.Dispose() } }
+    try {
+        $capturedAt = ConvertTo-ExactUtcDateTimeOffset $capturedAtText `
+            "databaseInsightsLease.capturedAtUtc"
+        $receiptExpiresAt = ConvertTo-ExactUtcDateTimeOffset $receiptExpiresAtText `
+            "databaseInsightsLease.expiresAtUtc"
+        $validatedExpiresAt = ConvertTo-ExactUtcDateTimeOffset $ValidatedExpiresAtUtc `
+            "validated databaseInsightsLease.expiresAtUtc"
+    }
+    catch { throw "The Database Insights lease receipt has invalid UTC timing evidence." }
+    $nowUtc = $Now.ToUniversalTime()
+    if ($capturedAt -gt $nowUtc -or $receiptExpiresAt -ne $validatedExpiresAt) {
+        throw "The Database Insights lease timing identity is inconsistent."
+    }
+    $acquisitionAgeSeconds = ($nowUtc - $capturedAt).TotalSeconds
+    $remainingSeconds = ($receiptExpiresAt - $nowUtc).TotalSeconds
+    if ($acquisitionAgeSeconds -gt $script:DatabaseInsightsLeaseMaximumAcquisitionAgeSeconds) {
+        throw "The Database Insights lease is too old to authorize a fresh diagnostic traffic release."
+    }
+    if ($remainingSeconds -le $script:DatabaseInsightsLeaseRequiredRemainingSeconds) {
+        throw "The Database Insights lease does not extend beyond traffic, PI publication, restoration, and safety headroom."
+    }
+    return [ordered]@{
+        timingContractVersion="diagnostic-pi-lease-headroom-v1"
+        maximumAcquisitionAgeSeconds=$script:DatabaseInsightsLeaseMaximumAcquisitionAgeSeconds
+        acquisitionAgeSeconds=[math]::Round($acquisitionAgeSeconds,3)
+        requiredRemainingSeconds=$script:DatabaseInsightsLeaseRequiredRemainingSeconds
+        remainingSeconds=[math]::Round($remainingSeconds,3)
+        trafficDurationSeconds=[int]($script:DiagnosticPlannedTrafficMilliseconds / 1000L)
+        publicationDeadlineSeconds=$script:PerformanceInsightsStabilizationDeadlineMinutes * 60
+        restorationTimeoutSeconds=$script:DatabaseInsightsLeaseRestoreTimeoutSeconds
+        safetyMarginSeconds=$script:DatabaseInsightsLeaseSafetyMarginSeconds
+        expiresAtUtc=$receiptExpiresAt.ToString("o")
+        receiptSha256=[string]$Config.DatabaseInsightsLease.ReceiptSha256
+        rawPathsPersisted=$false
+    }
+}
+
+function Invoke-DatabaseInsightsLeaseController {
+    param(
+        $Config,
+        [ValidateSet("Validate", "Restore")]
+        [string]$LeaseMode
+    )
+    if (-not (Test-Path -LiteralPath $script:DatabaseInsightsLeaseScript -PathType Leaf)) {
+        throw "The reviewed Database Insights lease controller is missing."
+    }
+    if ((Get-FileHash -LiteralPath $Config.DatabaseInsightsLease.ReceiptPath -Algorithm SHA256).Hash.ToLowerInvariant() `
+        -cne $Config.DatabaseInsightsLease.ReceiptSha256) {
+        throw "The Database Insights lease receipt changed after diagnostic configuration validation."
+    }
+    $pwsh = (Get-Process -Id $PID).Path
+    $output = @(& $pwsh -NoProfile -File $script:DatabaseInsightsLeaseScript `
+        -Mode $LeaseMode `
+        -DbInstanceIdentifier ([string]$Config.Resources.rdsInstanceId) `
+        -ReceiptPath $Config.DatabaseInsightsLease.ReceiptPath `
+        -ExpectedReceiptSha256 $Config.DatabaseInsightsLease.ReceiptSha256 `
+        -Region ([string]$Config.Resources.region) `
+        -ExpectedAccountId $script:ExpectedAccountId `
+        -ExpectedRdsInstanceClass "db.t4g.medium" `
+        -LeasePurpose "diagnostic" `
+        -MaximumLeaseMinutes 90 2>&1)
+    $leaseExitCode = $LASTEXITCODE
+    if ($leaseExitCode -ne 0) {
+        throw "Database Insights lease $LeaseMode failed; provider output was discarded."
+    }
+    try { $result = (($output -join "`n") | ConvertFrom-Json -Depth 40) }
+    catch { throw "Database Insights lease $LeaseMode returned malformed JSON." }
+    $expectedState = if ($LeaseMode -ceq "Validate") { "active_validated" } else { "restored" }
+    $expectedDurableState = if ($LeaseMode -ceq "Validate") { "armed" } else { "removed" }
+    if ([string](Get-Value $result "state" "") -cne $expectedState -or
+        [string](Get-Value $result "receiptSha256" "").ToLowerInvariant() -cne $Config.DatabaseInsightsLease.ReceiptSha256 -or
+        [string](Get-Value $result "receiptPathSha256" "") -cne (Get-StringSha256 $Config.DatabaseInsightsLease.ReceiptPath) -or
+        [string](Get-Value $result "statusPathSha256" "") -cne (Get-StringSha256 $Config.DatabaseInsightsLease.StatusPath) -or
+        [string](Get-Value $result "watchdogPathSha256" "") -cne (Get-StringSha256 $Config.DatabaseInsightsLease.WatchdogPath) -or
+        [string](Get-Value $result "durableRestoreGuardVersion" "") -cne $Config.DatabaseInsightsLease.DurableRestoreGuardVersion -or
+        [string](Get-Value $result "durableRestoreGuardBindingSha256" "") -cne $Config.DatabaseInsightsLease.DurableRestoreGuardBindingSha256 -or
+        [string](Get-Value $result "durableRestoreGuardState" "") -cne $expectedDurableState -or
+        (Get-Value $result "rawPathsPersisted" $true) -ne $false) {
+        throw "Database Insights lease $LeaseMode did not return the exact bound receipt, journal, and state."
+    }
+    if (-not (Test-Path -LiteralPath $Config.DatabaseInsightsLease.StatusPath -PathType Leaf)) {
+        throw "Database Insights lease $LeaseMode did not seal its status journal."
+    }
+    $leaseExpiresAt = [DateTimeOffset]::MinValue
+    if ($LeaseMode -ceq "Validate" -and
+        (-not [DateTimeOffset]::TryParse([string](Get-Value $result "expiresAtUtc" ""), [ref]$leaseExpiresAt) -or
+        $leaseExpiresAt -le [DateTimeOffset]::UtcNow)) {
+        throw "Database Insights lease validation did not return a live bounded expiration."
+    }
+    $timing = if ($LeaseMode -ceq "Validate") {
+        Get-DatabaseInsightsLeaseTimingEvidence $Config $leaseExpiresAt.ToUniversalTime().ToString("o")
+    } else { $null }
+    $posture = Get-Value $result "posture" $null
+    $restoredKmsKeyId = if($null -eq $posture){""}else{[string](Get-Value $posture "performanceInsightsKmsKeyId" "")}
+    $restoredMonitoringInterval = if($null -eq $posture){-1}else{[int](Get-Value $posture "monitoringInterval" -1)}
+    $restoredMonitoringRoleArn = if($null -eq $posture){""}else{[string](Get-Value $posture "monitoringRoleArn" "")}
+    $restoredLogExports = if($null -eq $posture){@()}else{@(
+        @(Get-Value $posture "enabledCloudwatchLogsExports" @()) |
+            ForEach-Object { [string]$_ } | Sort-Object -Unique
+    )}
+    if ($LeaseMode -ceq "Restore" -and ($null -eq $posture -or
+        [string](Get-Value $posture "databaseInsightsMode" "") -cne "standard" -or
+        (Get-Value $posture "performanceInsightsEnabled" $false) -ne $true -or
+        [int](Get-Value $posture "performanceInsightsRetentionPeriod" 0) -ne 7 -or
+        [string]::IsNullOrWhiteSpace($restoredKmsKeyId) -or
+        $restoredMonitoringInterval -lt 0 -or $restoredMonitoringInterval -gt 60 -or
+        ($restoredMonitoringInterval -gt 0 -and [string]::IsNullOrWhiteSpace($restoredMonitoringRoleArn)) -or
+        @($restoredLogExports | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count -gt 0 -or
+        [string](Get-Value $posture "databaseResourceId" "") -cne $Config.HistoryFallbackSqlIdentity.DatabaseResourceId -or
+        [string](Get-Value $posture "engineVersion" "") -cne $Config.HistoryFallbackSqlIdentity.EngineVersion)) {
+        throw "Database Insights lease restoration did not prove the exact Standard/7 identity posture."
+    }
+    $durableScheduleArnSha256 = if($LeaseMode -ceq "Validate"){
+        Assert-Sha256 ([string](Get-Value $result "durableRestoreScheduleArnSha256" "")) `
+            "databaseInsightsLease.durableRestoreScheduleArnSha256"
+    }else{$null}
+    $durableTargetRoleArnSha256 = if($LeaseMode -ceq "Validate"){
+        Assert-Sha256 ([string](Get-Value $result "durableRestoreTargetRoleArnSha256" "")) `
+            "databaseInsightsLease.durableRestoreTargetRoleArnSha256"
+    }else{$null}
+    $durableDeadLetterQueueArnSha256 = if($LeaseMode -ceq "Validate"){
+        Assert-Sha256 ([string](Get-Value $result "durableRestoreDeadLetterQueueArnSha256" "")) `
+            "databaseInsightsLease.durableRestoreDeadLetterQueueArnSha256"
+    }else{$null}
+    $durableAutomationDefinitionArnSha256 = if($LeaseMode -ceq "Validate"){
+        Assert-Sha256 ([string](Get-Value $result "durableRestoreAutomationDefinitionArnSha256" "")) `
+            "databaseInsightsLease.durableRestoreAutomationDefinitionArnSha256"
+    }else{$null}
+    $durableAutomationRoleArnSha256 = if($LeaseMode -ceq "Validate"){
+        Assert-Sha256 ([string](Get-Value $result "durableRestoreAutomationRoleArnSha256" "")) `
+            "databaseInsightsLease.durableRestoreAutomationRoleArnSha256"
+    }else{$null}
+    $durableAutomationFailureRuleArnSha256 = if($LeaseMode -ceq "Validate"){
+        Assert-Sha256 ([string](Get-Value $result "durableRestoreAutomationFailureRuleArnSha256" "")) `
+            "databaseInsightsLease.durableRestoreAutomationFailureRuleArnSha256"
+    }else{$null}
+    $durableAutomationDocumentVersion = if($LeaseMode -ceq "Validate"){
+        [string](Get-Value $result "durableRestoreAutomationDocumentVersion" "")
+    }else{$null}
+    $durableAutomationDocumentContentSha256 = if($LeaseMode -ceq "Validate"){
+        Assert-Sha256 ([string](Get-Value $result "durableRestoreAutomationDocumentContentSha256" "")) `
+            "databaseInsightsLease.durableRestoreAutomationDocumentContentSha256"
+    }else{$null}
+    if ($LeaseMode -ceq "Validate" -and (
+        $durableScheduleArnSha256 -cne $Config.DatabaseInsightsLease.DurableRestoreScheduleArnSha256 -or
+        $durableTargetRoleArnSha256 -cne $Config.DatabaseInsightsLease.DurableRestoreTargetRoleArnSha256 -or
+        $durableDeadLetterQueueArnSha256 -cne $Config.DatabaseInsightsLease.DurableRestoreDeadLetterQueueArnSha256 -or
+        $durableAutomationDefinitionArnSha256 -cne $Config.DatabaseInsightsLease.DurableRestoreAutomationDefinitionArnSha256 -or
+        $durableAutomationRoleArnSha256 -cne $Config.DatabaseInsightsLease.DurableRestoreAutomationRoleArnSha256 -or
+        $durableAutomationFailureRuleArnSha256 -cne $Config.DatabaseInsightsLease.DurableRestoreAutomationFailureRuleArnSha256 -or
+        $durableAutomationDocumentVersion -cne $Config.DatabaseInsightsLease.DurableRestoreAutomationDocumentVersion -or
+        $durableAutomationDocumentContentSha256 -cne $Config.DatabaseInsightsLease.DurableRestoreAutomationDocumentContentSha256)) {
+        throw "Database Insights lease validation did not prove the receipt-bound durable schedule, Automation, roles, failure rule, and DLQ."
+    }
+    return [ordered]@{
+        leaseVersion=$script:DatabaseInsightsLeaseVersion;state=$expectedState
+        receiptSha256=$Config.DatabaseInsightsLease.ReceiptSha256
+        receiptPathSha256=(Get-StringSha256 $Config.DatabaseInsightsLease.ReceiptPath)
+        statusPathSha256=(Get-StringSha256 $Config.DatabaseInsightsLease.StatusPath)
+        watchdogPathSha256=(Get-StringSha256 $Config.DatabaseInsightsLease.WatchdogPath)
+        watchdogHeartbeatSha256=if($LeaseMode -ceq "Validate"){[string](Get-Value $result "watchdogHeartbeatSha256" "")}else{$null}
+        durableRestoreGuardVersion=$Config.DatabaseInsightsLease.DurableRestoreGuardVersion
+        durableRestoreGuardBindingSha256=$Config.DatabaseInsightsLease.DurableRestoreGuardBindingSha256
+        durableRestoreScheduleArnSha256=if($LeaseMode -ceq "Validate"){$Config.DatabaseInsightsLease.DurableRestoreScheduleArnSha256}else{$null}
+        durableRestoreTargetRoleArnSha256=if($LeaseMode -ceq "Validate"){$Config.DatabaseInsightsLease.DurableRestoreTargetRoleArnSha256}else{$null}
+        durableRestoreDeadLetterQueueArnSha256=if($LeaseMode -ceq "Validate"){$Config.DatabaseInsightsLease.DurableRestoreDeadLetterQueueArnSha256}else{$null}
+        durableRestoreAutomationDefinitionArnSha256=if($LeaseMode -ceq "Validate"){$Config.DatabaseInsightsLease.DurableRestoreAutomationDefinitionArnSha256}else{$null}
+        durableRestoreAutomationRoleArnSha256=if($LeaseMode -ceq "Validate"){$Config.DatabaseInsightsLease.DurableRestoreAutomationRoleArnSha256}else{$null}
+        durableRestoreAutomationFailureRuleArnSha256=if($LeaseMode -ceq "Validate"){$Config.DatabaseInsightsLease.DurableRestoreAutomationFailureRuleArnSha256}else{$null}
+        durableRestoreAutomationDocumentVersion=if($LeaseMode -ceq "Validate"){$Config.DatabaseInsightsLease.DurableRestoreAutomationDocumentVersion}else{$null}
+        durableRestoreAutomationDocumentContentSha256=if($LeaseMode -ceq "Validate"){$Config.DatabaseInsightsLease.DurableRestoreAutomationDocumentContentSha256}else{$null}
+        durableRestoreGuardState=$expectedDurableState
+        statusSha256=(Get-FileHash -LiteralPath $Config.DatabaseInsightsLease.StatusPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        expiresAtUtc=if($LeaseMode -ceq "Validate"){$leaseExpiresAt.ToUniversalTime().ToString("o")}else{$null}
+        timing=if($LeaseMode -ceq "Validate"){$timing}else{$null}
+        posture=if($LeaseMode -ceq "Restore"){
+            [ordered]@{databaseInsightsMode="standard";performanceInsightsEnabled=$true;
+                performanceInsightsRetentionPeriod=7;databaseResourceIdSha256=(Get-StringSha256 ([string]$posture.databaseResourceId));
+                performanceInsightsKmsKeyIdSha256=(Get-StringSha256 $restoredKmsKeyId);
+                monitoringInterval=$restoredMonitoringInterval;
+                monitoringRoleArnSha256=if($restoredMonitoringRoleArn){Get-StringSha256 $restoredMonitoringRoleArn}else{$null};
+                enabledCloudwatchLogsExports=$restoredLogExports;
+                engineVersion=[string]$posture.engineVersion;instanceClass=[string]$posture.instanceClass;status=[string]$posture.status}
+        }else{$null}
+        rawPathsPersisted=$false;rawProviderOutputPersisted=$false
     }
 }
 
@@ -1045,8 +1584,46 @@ function Assert-RedisReplicationIdentity {
         clusterStatus="available";clusterNodeType=$ExpectedNodeType;clusterReplicationGroupId=[string]$Resources.redisReplicationGroupId}
 }
 
+function Get-DiagnosticTrackIoTimingPosture {
+    param($Instance, $Config)
+    $groups = @((Get-Value $Instance "DBParameterGroups" @()))
+    if ($groups.Count -ne 1 -or
+        [string](Get-RequiredValue $groups[0] "ParameterApplyStatus") -cne "in-sync") {
+        throw "RDS must use one in-sync database parameter group for track_io_timing evidence."
+    }
+    $groupName = [string](Get-RequiredValue $groups[0] "DBParameterGroupName")
+    if ($groupName -notmatch '^[A-Za-z0-9][A-Za-z0-9.-]{0,254}$') {
+        throw "RDS returned a malformed database parameter-group identity."
+    }
+    $pages = Invoke-EvidenceAwsJsonPages -Arguments @(
+        "rds", "describe-db-parameters", "--region", $Config.Resources.region,
+        "--db-parameter-group-name", $groupName,
+        "--filters", "Name=parameter-name,Values=track_io_timing"
+    ) -ItemsProperty "Parameters" -TokenProperty "Marker" -TokenArgument "--marker" -Identity {
+        param($parameter)
+        return [string](Get-Value $parameter "ParameterName" "")
+    }
+    $parameters = @($pages.Items)
+    if ($parameters.Count -ne 1 -or
+        [string](Get-RequiredValue $parameters[0] "ParameterName") -cne "track_io_timing") {
+        throw "RDS did not return one exact track_io_timing parameter."
+    }
+    $value = ([string](Get-RequiredValue $parameters[0] "ParameterValue")).Trim().ToLowerInvariant()
+    if ($value -notin @("1", "on", "true")) {
+        throw "RDS effective track_io_timing must be enabled."
+    }
+    return [ordered]@{
+        enabled=$true;parameterGroupSha256=(Get-StringSha256 $groupName)
+        pageCount=$pages.PageCount;rawIdentifiersPersisted=$false
+    }
+}
+
 function Get-AwsPosture {
-    param($Config)
+    param(
+        $Config,
+        [ValidateSet("advanced", "standard")]
+        [string]$ExpectedDatabaseInsightsMode = "advanced"
+    )
     $r = $Config.Resources
     $caller = Invoke-AwsJson @("sts","get-caller-identity","--region",$r.region)
     if ([string]$caller.Account -ne $script:ExpectedAccountId) { throw "AWS CLI is not authenticated to the reviewed production account." }
@@ -1058,11 +1635,21 @@ function Get-AwsPosture {
 
     $rdsResponse = Invoke-AwsJson @("rds","describe-db-instances","--region",$r.region,"--db-instance-identifier",$r.rdsInstanceId)
     $rds = @($rdsResponse.DBInstances)
-    if ($rds.Count -ne 1 -or [string]$rds[0].DBInstanceClass -ne "db.t4g.medium" -or
+    if ($rds.Count -ne 1) { throw "The production RDS instance was not uniquely resolved." }
+    $pendingRebootParameterGroups = @((Get-Value $rds[0] "DBParameterGroups" @()) |
+        Where-Object { [string](Get-Value $_ "ParameterApplyStatus" "") -ceq "pending-reboot" })
+    $expectedPerformanceInsightsRetention = if ($ExpectedDatabaseInsightsMode -ceq "advanced") { 465 } else { 7 }
+    if ([string]$rds[0].DBInstanceClass -ne "db.t4g.medium" -or
         [string]$rds[0].DBInstanceStatus -ne "available" -or $rds[0].PubliclyAccessible -ne $false -or
-        $rds[0].PerformanceInsightsEnabled -ne $true) {
-        throw "RDS must be available, private, PI-enabled db.t4g.medium."
+        $rds[0].PerformanceInsightsEnabled -ne $true -or
+        [string](Get-Value $rds[0] "DatabaseInsightsMode" "") -cne $ExpectedDatabaseInsightsMode -or
+        [int](Get-Value $rds[0] "PerformanceInsightsRetentionPeriod" 0) -ne $expectedPerformanceInsightsRetention -or
+        [string](Get-Value $rds[0] "DbiResourceId" "") -cne $Config.HistoryFallbackSqlIdentity.DatabaseResourceId -or
+        [string](Get-Value $rds[0] "EngineVersion" "") -cne $Config.HistoryFallbackSqlIdentity.EngineVersion -or
+        $pendingRebootParameterGroups.Count -ne 0) {
+        throw "RDS must be available, private, reboot-free, $ExpectedDatabaseInsightsMode-Insights-enabled db.t4g.medium with the bound history SQL identity."
     }
+    $trackIoTiming = Get-DiagnosticTrackIoTimingPosture $rds[0] $Config
     $redisResponse = Invoke-AwsJson @("elasticache","describe-replication-groups","--region",$r.region,
         "--replication-group-id",$r.redisReplicationGroupId)
     $redis = @($redisResponse.ReplicationGroups)
@@ -1105,7 +1692,10 @@ function Get-AwsPosture {
         services=$services;taskDefinitions=[ordered]@{api=$apiTask;worker=$workerTask};healthyApiTargets=$healthyTargets
         rds=[ordered]@{instanceClass=[string]$rds[0].DBInstanceClass;status=[string]$rds[0].DBInstanceStatus;
             publiclyAccessible=[bool]$rds[0].PubliclyAccessible;performanceInsightsEnabled=[bool]$rds[0].PerformanceInsightsEnabled;
-            dbiResourceId=[string]$rds[0].DbiResourceId}
+            databaseInsightsMode=[string]$rds[0].DatabaseInsightsMode
+            performanceInsightsRetentionPeriod=[int]$rds[0].PerformanceInsightsRetentionPeriod
+            pendingReboot=$false;trackIoTiming=$trackIoTiming
+            dbiResourceIdSha256=(Get-StringSha256 ([string]$rds[0].DbiResourceId))}
         redis=$redisIdentity
         nat=[ordered]@{availableCount=2};waf=[ordered]@{scope="CLOUDFRONT";webAclName=[string]$r.wafWebAclName;
             webAclId=[string]$waf.WebACL.Id;webAclArn=$webAclArn;distributionId=[string]$r.cloudFrontDistributionId;
@@ -1403,21 +1993,33 @@ function Get-Postgres57014Evidence {
 
 function Get-HistoryFallbackWaitEventEvidence {
     param($Config, [string]$StartUtc, [string]$EndUtc, [string]$DbiResourceId,
-        [string]$TokenId, [string]$TokenSha256, [double]$TokenLoad)
-    if ([string]::IsNullOrWhiteSpace($TokenId) -or $TokenLoad -le 0) {
-        throw "History fallback wait-event evidence requires a nonzero bound SQL token."
+        [string]$QueryIdentifier, [string]$TokenId, [string]$TokenSha256, [double]$TokenLoad)
+    if ($QueryIdentifier -notmatch '^-?(?:[1-9][0-9]{0,18})$' -or
+        [string]::IsNullOrWhiteSpace($TokenId) -or $TokenLoad -le 0) {
+        throw "History fallback wait-event evidence requires a nonzero bound native query identifier and SQL token."
     }
-    $filter = ([ordered]@{"db.sql_tokenized.id"=$TokenId} | ConvertTo-Json -Compress)
+    $filter = ([ordered]@{
+        "db.sql_tokenized.db_id"=$QueryIdentifier
+        "db.sql_tokenized.id"=$TokenId
+    } | ConvertTo-Json -Compress)
     $pages = Invoke-EvidenceAwsJsonPages -Arguments @("pi","describe-dimension-keys","--region",$Config.Resources.region,
         "--service-type","RDS","--identifier",$DbiResourceId,"--start-time",$StartUtc,"--end-time",$EndUtc,
         "--period-in-seconds","60","--metric","db.load.avg","--group-by","Group=db.wait_event,Limit=25",
-        "--filter",$filter) -ItemsProperty "Keys" -TokenProperty "NextToken" -Identity {
+        "--filter",$filter) -ItemsProperty "Keys" -TokenProperty "NextToken" `
+        -ExpectedAlignedStartUtc $StartUtc -ExpectedAlignedEndUtc $EndUtc -Identity {
             param($key)
             return "$([string](Get-Value $key.Dimensions 'db.wait_event.type' ''))`:$([string](Get-Value $key.Dimensions 'db.wait_event.name' ''))"
         }
     $keys = @($pages.Items)
     if ($keys.Count -lt 1) {
-        throw "Performance Insights returned no filtered wait-event evidence for a present history fallback token."
+        return [ordered]@{
+            tokenSha256=$TokenSha256;dbLoad=[math]::Round($TokenLoad,6);waitEventCount=0;pageCount=$pages.PageCount
+            filteredWaitEventDbLoad=0.0;coveragePercent=0.0
+            coverageTolerancePercent=$script:PerformanceInsightsCoverageTolerancePercent;complete=$false
+            dataFileReadDbLoad=0.0;dataFileReadSharePercent=$null
+            dominanceThresholdPercent=$script:HistoryIoDominanceThresholdPercent
+            failureReasons=@("missing_wait_event_coverage");passed=$false
+        }
     }
     $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $waitLoad = 0.0
@@ -1425,9 +2027,16 @@ function Get-HistoryFallbackWaitEventEvidence {
     foreach ($key in $keys) {
         $name = [string](Get-Value $key.Dimensions "db.wait_event.name" "")
         $type = [string](Get-Value $key.Dimensions "db.wait_event.type" "")
-        $load = [double](Get-Value $key "Total" -1)
+        $rawLoad = Get-Value $key "Total" $null
+        if ($null -eq $rawLoad -or $rawLoad -isnot [ValueType] -or $rawLoad -is [bool] -or
+            $rawLoad -is [char]) {
+            throw "Performance Insights returned malformed filtered wait-event evidence for history fallback SQL."
+        }
+        try { $load = [double]$rawLoad }
+        catch { throw "Performance Insights returned malformed filtered wait-event evidence for history fallback SQL." }
         $identity = "$type`:$name"
-        if ([string]::IsNullOrWhiteSpace($name) -or [string]::IsNullOrWhiteSpace($type) -or $load -lt 0 -or
+        if ([string]::IsNullOrWhiteSpace($name) -or [string]::IsNullOrWhiteSpace($type) -or
+            [double]::IsNaN($load) -or [double]::IsInfinity($load) -or $load -lt 0 -or
             -not $seen.Add($identity)) {
             throw "Performance Insights returned malformed filtered wait-event evidence for history fallback SQL."
         }
@@ -1436,24 +2045,24 @@ function Get-HistoryFallbackWaitEventEvidence {
             $dataFileReadLoad += $load
         }
     }
-    if ($waitLoad -le 0) {
-        throw "Performance Insights returned zero filtered wait-event load for a present history fallback token."
-    }
     $allowedDifference = [math]::Max(0.000001,
         $TokenLoad * ($script:PerformanceInsightsCoverageTolerancePercent / 100.0))
     $complete = [math]::Abs($waitLoad - $TokenLoad) -le $allowedDifference
-    if (-not $complete) {
-        throw "Performance Insights filtered wait-event totals did not completely cover a history fallback token."
-    }
     $coveragePercent = [math]::Round(($waitLoad / $TokenLoad) * 100.0, 3)
-    $sharePercent = [math]::Round(($dataFileReadLoad / $waitLoad) * 100.0, 3)
+    $rawSharePercent = if($waitLoad -gt 0){($dataFileReadLoad / $waitLoad) * 100.0}else{$null}
+    $sharePercent = if($waitLoad -gt 0){[math]::Round($rawSharePercent, 6)}else{$null}
+    $failureReasons = @()
+    if (-not $complete) { $failureReasons += "incomplete_wait_event_coverage" }
+    if ($waitLoad -gt 0 -and $rawSharePercent -ge $script:HistoryIoDominanceThresholdPercent) {
+        $failureReasons += "sampled_data_file_read_dominant"
+    }
     return [ordered]@{
         tokenSha256=$TokenSha256;dbLoad=[math]::Round($TokenLoad,6);waitEventCount=$keys.Count;pageCount=$pages.PageCount
         filteredWaitEventDbLoad=[math]::Round($waitLoad,6);coveragePercent=$coveragePercent
         coverageTolerancePercent=$script:PerformanceInsightsCoverageTolerancePercent;complete=$complete
         dataFileReadDbLoad=[math]::Round($dataFileReadLoad,6);dataFileReadSharePercent=$sharePercent
         dominanceThresholdPercent=$script:HistoryIoDominanceThresholdPercent
-        passed=($sharePercent -lt $script:HistoryIoDominanceThresholdPercent)
+        failureReasons=@($failureReasons);passed=($failureReasons.Count -eq 0)
     }
 }
 
@@ -1462,7 +2071,8 @@ function Get-PerformanceInsightsTopTokens {
     $pages = Invoke-EvidenceAwsJsonPages -Arguments @("pi","describe-dimension-keys","--region",$Config.Resources.region,
         "--service-type","RDS","--identifier",$DbiResourceId,"--start-time",$StartUtc,"--end-time",$EndUtc,
         "--period-in-seconds","60","--metric","db.load.avg","--group-by","Group=db.sql_tokenized,Limit=25") `
-        -ItemsProperty "Keys" -TokenProperty "NextToken" -Identity {
+        -ItemsProperty "Keys" -TokenProperty "NextToken" -ExpectedAlignedStartUtc $StartUtc `
+        -ExpectedAlignedEndUtc $EndUtc -Identity {
             param($key)
             return [string](Get-Value $key.Dimensions "db.sql_tokenized.id" "")
         }
@@ -1480,25 +2090,513 @@ function Get-PerformanceInsightsTopTokens {
         }
         $lower = $statement.ToLowerInvariant()
         $isAuthorization = @($script:AuthSqlMarkers | Where-Object { $lower.Contains($_) }).Count -ge 2
-        $isHistoryFallback = @($script:HistoryFallbackSqlMarkers | Where-Object { $lower.Contains($_) }).Count -eq
-            $script:HistoryFallbackSqlMarkers.Count
         $tokenSha = Get-StableJsonSha256 ([ordered]@{id=$tokenId;statement=$statement})
-        $category = if($isHistoryFallback){"history_fallback"}elseif($isAuthorization){"tile_authorization"}else{"other"}
+        $category = if($isAuthorization){"tile_authorization"}else{"other"}
         $internal += [pscustomobject]@{Id=$tokenId;Sha256=$tokenSha;Load=$load;
-            IsAuthorization=$isAuthorization;IsHistoryFallback=$isHistoryFallback}
+            IsAuthorization=$isAuthorization}
         $sanitized += [ordered]@{rank=$rank;tokenSha256=$tokenSha;category=$category;dbLoad=[math]::Round($load,6)}
     }
     return [pscustomobject]@{Internal=$internal;Sanitized=$sanitized;PageCount=$pages.PageCount}
 }
 
-function Get-HotPathFallbackEvidenceWindows {
-    param($Config, [string]$StartUtc, [string]$EndUtc)
+function New-DiagnosticHistoryFallbackSqlStatsGateResult {
+    param($Config, [string[]]$FailureReasons, [int]$IdentityCount, [long]$ExpectedDatabaseReadCount)
+    $identity = $Config.HistoryFallbackSqlIdentity
+    return [pscustomobject]@{
+        CanSample=$false;TokenId=$null;TokenSha256=$null;Statement=$null
+        Evidence=[ordered]@{
+            historyFallbackPiEvidenceVersion=$script:HistoryFallbackPiEvidenceVersion
+            queryIdentifierSha256=$identity.QueryIdentifierSha256
+            compiledSqlSha256=$identity.CompiledSqlSha256
+            parameterTypeSignatureSha256=$identity.ParameterTypeSignatureSha256
+            schemaIdentitySha256=$identity.SchemaIdentitySha256
+            identityCount=$IdentityCount;exactQueryIdentifierMatched=$false;statementMarkersMatched=$false
+            positiveCallsObserved=$false;positiveTotalTimeObserved=$false;integratedCalls=0.0
+            applicationDatabaseReadCount=$ExpectedDatabaseReadCount;callsCoverApplicationReads=$false
+            temporaryIoAbsent=$false;blockReadTimeSharePercent=$null
+            dominanceThresholdPercent=$script:HistoryIoDominanceThresholdPercent
+            failureReasons=@($FailureReasons);passed=$false
+        }
+    }
+}
+
+function Get-DiagnosticHistoryFallbackSqlStatsBucketCoverage {
+    param(
+        [string]$StartUtc,
+        [string]$EndUtc,
+        $CallMetricPoints,
+        [object[]]$ApplicationFallbackWindows,
+        [long]$ExpectedDatabaseReadCount
+    )
+    $start = ConvertTo-ExactUtcDateTimeOffset $StartUtc "SQL-statistics bucket start"
+    $end = ConvertTo-ExactUtcDateTimeOffset $EndUtc "SQL-statistics bucket end"
+    $expectedBuckets = [Collections.Generic.List[string]]::new()
+    for ($cursor = $start; $cursor -lt $end; $cursor = $cursor.AddSeconds($script:HistoryFallbackSqlStatsPeriodSeconds)) {
+        $expectedBuckets.Add($cursor.ToString("o"))
+    }
+    if ($expectedBuckets.Count -lt 1) { throw "SQL statistics require at least one expected minute bucket." }
+    $expectedSet = [Collections.Generic.HashSet[string]]::new($expectedBuckets, [StringComparer]::Ordinal)
+    $observedBuckets = @($CallMetricPoints.Keys | Sort-Object)
+    foreach ($timestamp in $observedBuckets) {
+        if (-not $expectedSet.Contains([string]$timestamp)) {
+            throw "SQL statistics returned a datapoint outside the expected minute-bucket lattice."
+        }
+    }
+    $observedSet = [Collections.Generic.HashSet[string]]::new([string[]]$observedBuckets, [StringComparer]::Ordinal)
+    $positiveObservedSet = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($timestamp in $observedBuckets) {
+        if ([double]$CallMetricPoints[$timestamp].Value -gt 0.0) { [void]$positiveObservedSet.Add([string]$timestamp) }
+    }
+    $missingMiddle = [Collections.Generic.List[string]]::new()
+    if ($observedBuckets.Count -gt 1) {
+        $firstIndex = $expectedBuckets.IndexOf([string]$observedBuckets[0])
+        $lastIndex = $expectedBuckets.IndexOf([string]$observedBuckets[-1])
+        for ($index = $firstIndex; $index -le $lastIndex; $index++) {
+            if (-not $observedSet.Contains($expectedBuckets[$index])) { $missingMiddle.Add($expectedBuckets[$index]) }
+        }
+    }
+    $applicationActiveBuckets = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $coveredApplicationWindows = 0
+    $positiveCallCoveredApplicationWindows = 0
+    $applicationReadCount = 0L
+    foreach ($window in @($ApplicationFallbackWindows)) {
+        try {
+            $windowStart = ConvertTo-ExactUtcDateTimeOffset (Get-RequiredValue $window "StartUtc") "fallback window start"
+            $windowEnd = ConvertTo-ExactUtcDateTimeOffset (Get-RequiredValue $window "EndUtc") "fallback window end"
+            $windowReads = [long](Get-RequiredValue $window "DatabaseReadCount")
+        }
+        catch { throw "Application fallback bucket evidence was malformed." }
+        if ($windowStart -lt $start -or $windowEnd -gt $end -or $windowEnd -le $windowStart -or $windowReads -le 0) {
+            throw "Application fallback bucket evidence was outside the exact SQL-statistics window."
+        }
+        $applicationReadCount += $windowReads
+        $windowCovered = $false
+        $windowPositiveCallCovered = $false
+        foreach ($bucketText in $expectedBuckets) {
+            $bucketStart = [DateTimeOffset]$bucketText
+            $bucketEnd = $bucketStart.AddSeconds($script:HistoryFallbackSqlStatsPeriodSeconds)
+            if ($bucketStart -lt $windowEnd -and $bucketEnd -gt $windowStart) {
+                [void]$applicationActiveBuckets.Add($bucketText)
+                if ($observedSet.Contains($bucketText)) { $windowCovered = $true }
+                if ($positiveObservedSet.Contains($bucketText)) { $windowPositiveCallCovered = $true }
+            }
+        }
+        if ($windowCovered) { $coveredApplicationWindows++ }
+        if ($windowPositiveCallCovered) { $positiveCallCoveredApplicationWindows++ }
+    }
+    if ($applicationReadCount -ne $ExpectedDatabaseReadCount -or $ApplicationFallbackWindows.Count -lt 1) {
+        throw "Application fallback bucket evidence did not reconcile to the bound database-read count."
+    }
+    $unobservedActiveBuckets = @($applicationActiveBuckets | Where-Object { -not $observedSet.Contains($_) } | Sort-Object)
+    $zeroCallApplicationActiveBuckets = @($applicationActiveBuckets | Where-Object {
+        $observedSet.Contains($_) -and -not $positiveObservedSet.Contains($_)
+    } | Sort-Object)
+    if ($missingMiddle.Count -gt 0 -or $unobservedActiveBuckets.Count -gt 0 -or
+        $coveredApplicationWindows -ne $ApplicationFallbackWindows.Count) {
+        throw "SQL statistics contained missing-middle or application-active sparse minute buckets."
+    }
+    $omittedBuckets = @($expectedBuckets | Where-Object { -not $observedSet.Contains($_) })
+    return [ordered]@{
+        coverageContractVersion="queryid-minute-sparse-v1";periodSeconds=$script:HistoryFallbackSqlStatsPeriodSeconds
+        expectedBucketCount=$expectedBuckets.Count;observedBucketCount=$observedBuckets.Count
+        positiveCallBucketCount=$positiveObservedSet.Count;omittedSparseBucketCount=$omittedBuckets.Count
+        missingMiddleBucketCount=$missingMiddle.Count
+        applicationFallbackWindowCount=$ApplicationFallbackWindows.Count
+        coveredApplicationFallbackWindowCount=$coveredApplicationWindows
+        positiveCallCoveredApplicationFallbackWindowCount=$positiveCallCoveredApplicationWindows
+        applicationActiveBucketCount=$applicationActiveBuckets.Count
+        unobservedApplicationActiveBucketCount=$unobservedActiveBuckets.Count
+        zeroCallApplicationActiveBucketCount=$zeroCallApplicationActiveBuckets.Count
+        positiveCallCoveragePassed=($positiveCallCoveredApplicationWindows -eq $ApplicationFallbackWindows.Count -and
+            $zeroCallApplicationActiveBuckets.Count -eq 0)
+        expectedBucketSetSha256=(Get-StableJsonSha256 ([ordered]@{buckets=@($expectedBuckets)}))
+        observedBucketSetSha256=(Get-StableJsonSha256 ([ordered]@{buckets=@($observedBuckets)}))
+        positiveCallBucketSetSha256=(Get-StableJsonSha256 ([ordered]@{buckets=@($positiveObservedSet | Sort-Object)}))
+        applicationActiveBucketSetSha256=(Get-StableJsonSha256 ([ordered]@{buckets=@($applicationActiveBuckets | Sort-Object)}))
+        sparseBucketsPermittedOnlyWithoutApplicationActivity=$true;complete=$true
+    }
+}
+
+function Get-HistoryFallbackSqlStatsEvidence {
+    param(
+        $Config,
+        [string]$StartUtc,
+        [string]$EndUtc,
+        [string]$DbiResourceId,
+        [long]$ExpectedDatabaseReadCount,
+        [object[]]$ApplicationFallbackWindows = @()
+    )
+    $identity = $Config.HistoryFallbackSqlIdentity
+    if ($null -eq $identity -or [string]$identity.DatabaseResourceId -cne $DbiResourceId) {
+        throw "History fallback SQL statistics require the exact bound DBI resource identity."
+    }
+    if ($ExpectedDatabaseReadCount -le 0) {
+        throw "History fallback SQL statistics require a positive application database-read count."
+    }
     try {
         $trafficStart = ([DateTimeOffset]$StartUtc).ToUniversalTime()
         $trafficEnd = ([DateTimeOffset]$EndUtc).ToUniversalTime()
     }
-    catch { throw "Hot-path evidence requires a valid UTC traffic interval." }
-    if ($trafficEnd -le $trafficStart) { throw "Hot-path evidence requires a positive traffic interval." }
+    catch { throw "History fallback SQL statistics require a valid UTC traffic interval." }
+    if ($trafficEnd -le $trafficStart) { throw "History fallback SQL statistics require a positive traffic interval." }
+
+    $dimensions = @("db.sql_tokenized.db_id", "db.sql_tokenized.id", "db.sql_tokenized.statement")
+    $queries = @($script:HistoryFallbackSqlStatsMetrics.GetEnumerator() | ForEach-Object {
+        [ordered]@{
+            Metric=[string]$_.Value
+            GroupBy=[ordered]@{Group="db.sql_tokenized";Dimensions=$dimensions;Limit=25}
+            Filter=[ordered]@{"db.sql_tokenized.db_id"=[string]$identity.QueryIdentifier}
+        }
+    })
+    $queryJson = $queries | ConvertTo-Json -Depth 10 -Compress
+    $baseArguments = @("pi","get-resource-metrics","--region",$Config.Resources.region,"--service-type","RDS",
+        "--identifier",$DbiResourceId,"--start-time",$StartUtc,"--end-time",$EndUtc,
+        "--period-in-seconds",[string]$script:HistoryFallbackSqlStatsPeriodSeconds,
+        "--period-alignment","START_TIME","--metric-queries",$queryJson)
+    $expectedMetricNames = @($script:HistoryFallbackSqlStatsMetrics.Values)
+    $metricPoints = @{}
+    $ungroupedTotalSeriesHashes = @{}
+    $repeatedUngroupedTotalSeriesCount = 0
+    foreach ($metricName in $expectedMetricNames) {
+        $metricPoints[$metricName] = @{}
+    }
+    $seenTokens = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $identityKeys = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $identityRecords = @{}
+    $dimensionedSeries = [Collections.Generic.List[object]]::new()
+    $pageToken = $null
+    $pageCount = 0
+    $recordCount = 0
+    do {
+        $pageCount++
+        if ($pageCount -gt $script:EvidenceMaximumPages) {
+            throw "History fallback SQL-statistics pagination exceeded the page limit."
+        }
+        $arguments = @($baseArguments) + @("--no-paginate")
+        if (-not [string]::IsNullOrWhiteSpace([string]$pageToken)) {
+            $arguments += @("--next-token", [string]$pageToken)
+        }
+        $page = Invoke-AwsJson $arguments
+        if ($null -eq $page) { throw "History fallback SQL-statistics pagination returned an empty page." }
+        Assert-PerformanceInsightsResponseScope $page $StartUtc $EndUtc $DbiResourceId
+        foreach ($metricResult in @((Get-Value $page "MetricList" @()))) {
+            $key = Get-Value $metricResult "Key" $null
+            if ($null -eq $key -or $key -is [string]) {
+                throw "History fallback SQL statistics returned an ungrouped metric."
+            }
+            $metricName = [string](Get-Value $key "Metric" "")
+            if ($metricName -notin $expectedMetricNames) {
+                throw "History fallback SQL statistics returned an unreviewed metric."
+            }
+            $returnedDimensions = Get-Value $key "Dimensions" $null
+            # GetResourceMetrics returns a dimensionless aggregate alongside
+            # GroupBy results. It cannot prove native/token identity and must
+            # never enter call/I/O totals. Deduplicate identical repeats and
+            # fail on conflicting totals across explicit service pages.
+            if (Test-DiagnosticEmptyObject $returnedDimensions) {
+                $totalHash = Get-StableJsonSha256 $metricResult
+                if ($ungroupedTotalSeriesHashes.ContainsKey($metricName)) {
+                    if ([string]$ungroupedTotalSeriesHashes[$metricName] -cne $totalHash) {
+                        throw "History fallback SQL statistics returned conflicting duplicate ungrouped total series."
+                    }
+                    $repeatedUngroupedTotalSeriesCount++
+                }
+                else { $ungroupedTotalSeriesHashes[$metricName] = $totalHash }
+                continue
+            }
+            $dbId = [string](Get-Value $returnedDimensions "db.sql_tokenized.db_id" "")
+            $returnedTokenId = [string](Get-Value $returnedDimensions "db.sql_tokenized.id" "")
+            $returnedStatement = [string](Get-Value $returnedDimensions "db.sql_tokenized.statement" "")
+            $statementSha256 = Get-StringSha256 $returnedStatement
+            $identityKey = "$dbId|$returnedTokenId|$statementSha256"
+            [void]$identityKeys.Add($identityKey)
+            if (-not $identityRecords.ContainsKey($identityKey)) {
+                $identityRecords[$identityKey] = [pscustomobject]@{DbId=$dbId;TokenId=$returnedTokenId;Statement=$returnedStatement}
+            }
+            $dimensionedSeries.Add([pscustomobject]@{MetricName=$metricName;Dimensions=$returnedDimensions;
+                DataPoints=@((Get-Value $metricResult "DataPoints" @()))})
+        }
+        $pageToken = [string](Get-Value $page "NextToken" "")
+        if (-not [string]::IsNullOrWhiteSpace($pageToken) -and -not $seenTokens.Add($pageToken)) {
+            throw "History fallback SQL-statistics pagination returned a token cycle."
+        }
+    } while (-not [string]::IsNullOrWhiteSpace($pageToken))
+
+    if ($identityRecords.Count -eq 0) {
+        return New-DiagnosticHistoryFallbackSqlStatsGateResult $Config @("missing_query_identity") 0 $ExpectedDatabaseReadCount
+    }
+    if ($identityRecords.Count -ne 1) {
+        return New-DiagnosticHistoryFallbackSqlStatsGateResult $Config @("ambiguous_query_identity") `
+            $identityRecords.Count $ExpectedDatabaseReadCount
+    }
+    $identityRecord = @($identityRecords.Values)[0]
+    $tokenId = [string]$identityRecord.TokenId
+    $statement = [string]$identityRecord.Statement
+    $lowerStatement = $statement.ToLowerInvariant()
+    if ([string]$identityRecord.DbId -cne [string]$identity.QueryIdentifier) {
+        return New-DiagnosticHistoryFallbackSqlStatsGateResult $Config @("native_query_identifier_mismatch") 1 `
+            $ExpectedDatabaseReadCount
+    }
+    if ([string]::IsNullOrWhiteSpace($tokenId) -or [string]::IsNullOrWhiteSpace($statement) -or
+        @($script:HistoryFallbackSqlMarkers | Where-Object { $lowerStatement.Contains($_) }).Count -ne
+            $script:HistoryFallbackSqlMarkers.Count) {
+        return New-DiagnosticHistoryFallbackSqlStatsGateResult $Config @("statement_marker_mismatch") 1 `
+            $ExpectedDatabaseReadCount
+    }
+    $metricIdentitySeen = @{}
+    foreach ($metricName in $expectedMetricNames) { $metricIdentitySeen[$metricName] = $false }
+    foreach ($series in $dimensionedSeries) {
+        $returnedDimensions = $series.Dimensions
+        if ([string](Get-Value $returnedDimensions "db.sql_tokenized.db_id" "") -cne [string]$identityRecord.DbId -or
+            [string](Get-Value $returnedDimensions "db.sql_tokenized.id" "") -cne $tokenId -or
+            [string](Get-Value $returnedDimensions "db.sql_tokenized.statement" "") -cne $statement) {
+            throw "History fallback SQL statistics metric identity changed within a snapshot."
+        }
+        $metricName = [string]$series.MetricName
+        $metricIdentitySeen[$metricName] = $true
+        foreach ($point in @($series.DataPoints)) {
+                $rawTimestamp = Get-Value $point "Timestamp" $null
+                $rawValue = Get-Value $point "Value" $null
+                if ($null -eq $rawTimestamp -or $null -eq $rawValue -or
+                    $rawValue -isnot [ValueType] -or $rawValue -is [bool] -or $rawValue -is [char]) {
+                    throw "History fallback SQL statistics returned a malformed datapoint."
+                }
+                try {
+                    $timestamp = ConvertTo-ExactUtcDateTimeOffset $rawTimestamp "history fallback SQL-statistics timestamp"
+                    $value = [double]$rawValue
+                }
+                catch { throw "History fallback SQL statistics returned a malformed datapoint." }
+                if ($timestamp -lt $trafficStart -or $timestamp -ge $trafficEnd -or
+                    [double]::IsNaN($value) -or [double]::IsInfinity($value) -or $value -lt 0) {
+                    throw "History fallback SQL statistics returned an out-of-scope or non-finite datapoint."
+                }
+                $canonicalTimestamp = $timestamp.ToString("o")
+                $pointHash = Get-StableJsonSha256 ([ordered]@{timestamp=$canonicalTimestamp;value=$value})
+                if ($metricPoints[$metricName].ContainsKey($canonicalTimestamp)) {
+                    if ([string]$metricPoints[$metricName][$canonicalTimestamp].Hash -cne $pointHash) {
+                        throw "History fallback SQL statistics returned conflicting duplicate datapoints."
+                    }
+                    continue
+                }
+                $metricPoints[$metricName][$canonicalTimestamp] = [pscustomobject]@{Value=$value;Hash=$pointHash}
+                $recordCount++
+                if ($recordCount -gt $script:EvidenceMaximumRecords) {
+                    throw "History fallback SQL-statistics pagination exceeded the record limit."
+                }
+            }
+        }
+
+    foreach ($metricName in $expectedMetricNames) {
+        if ($metricIdentitySeen[$metricName] -ne $true -or $metricPoints[$metricName].Count -lt 1) {
+            throw "History fallback SQL statistics did not return complete call and I/O metrics."
+        }
+    }
+    $referenceMetricName = [string]$script:HistoryFallbackSqlStatsMetrics.calls
+    $referenceTimestamps = @($metricPoints[$referenceMetricName].Keys | Sort-Object)
+    foreach ($metricName in $expectedMetricNames) {
+        $metricTimestamps = @($metricPoints[$metricName].Keys | Sort-Object)
+        if (@(Compare-Object $referenceTimestamps $metricTimestamps -SyncWindow 0).Count -ne 0) {
+            throw "History fallback SQL statistics did not return identical timestamp coverage for every metric."
+        }
+    }
+    $bucketCoverage = Get-DiagnosticHistoryFallbackSqlStatsBucketCoverage $StartUtc $EndUtc `
+        $metricPoints[[string]$script:HistoryFallbackSqlStatsMetrics.calls] @($ApplicationFallbackWindows) `
+        $ExpectedDatabaseReadCount
+    $totals = @{}
+    $pointCounts = [ordered]@{}
+    foreach ($entry in $script:HistoryFallbackSqlStatsMetrics.GetEnumerator()) {
+        $metricName = [string]$entry.Value
+        $metricSum = [double](($metricPoints[$metricName].Values.Value | Measure-Object -Sum).Sum)
+        if ([double]::IsNaN($metricSum) -or [double]::IsInfinity($metricSum) -or $metricSum -lt 0) {
+            throw "History fallback SQL statistics returned a malformed aggregate."
+        }
+        $totals[[string]$entry.Key] = $metricSum
+        $pointCounts[[string]$entry.Key] = $metricPoints[$metricName].Count
+    }
+    $integratedCalls = $totals.calls * $script:HistoryFallbackSqlStatsPeriodSeconds
+    if ([double]::IsNaN($integratedCalls) -or [double]::IsInfinity($integratedCalls) -or $integratedCalls -lt 0) {
+        throw "History fallback SQL statistics returned a malformed integrated call count."
+    }
+    $positiveCallsObserved = $totals.calls -gt 0
+    $positiveTotalTimeObserved = $totals.totalTime -gt 0
+    $rawBlockReadTimeSharePercent = if($positiveTotalTimeObserved){
+        ($totals.blockReadTime / $totals.totalTime) * 100.0
+    }else{$null}
+    $blockReadTimeSharePercent = if($positiveTotalTimeObserved){[math]::Round($rawBlockReadTimeSharePercent, 6)}else{$null}
+    $callsCoverApplicationReads = $positiveCallsObserved -and $integratedCalls -ge [double]$ExpectedDatabaseReadCount
+    $temporaryIoAbsent = $totals.tempBlocksRead -eq 0.0 -and $totals.tempBlocksWritten -eq 0.0
+    $failureReasons = @()
+    if (-not $positiveCallsObserved) { $failureReasons += "missing_positive_calls" }
+    if (-not $positiveTotalTimeObserved) { $failureReasons += "missing_positive_total_time" }
+    if (-not $callsCoverApplicationReads) { $failureReasons += "pi_call_undercount" }
+    if ((Get-Value $bucketCoverage "positiveCallCoveragePassed" $false) -ne $true) {
+        $failureReasons += "application_active_bucket_without_positive_calls"
+    }
+    if (-not $temporaryIoAbsent) { $failureReasons += "temporary_io_observed" }
+    if ($positiveTotalTimeObserved -and
+        $rawBlockReadTimeSharePercent -ge $script:HistoryIoDominanceThresholdPercent) {
+        $failureReasons += "block_read_time_dominant"
+    }
+    $passed = $failureReasons.Count -eq 0
+    $tokenSha256 = Get-StableJsonSha256 ([ordered]@{
+        queryIdentifierSha256=$identity.QueryIdentifierSha256;supportId=$tokenId;statement=$statement
+    })
+    return [pscustomobject]@{
+        CanSample=$true;TokenId=$tokenId;TokenSha256=$tokenSha256;Statement=$statement
+        Evidence=[ordered]@{
+            historyFallbackPiEvidenceVersion=$script:HistoryFallbackPiEvidenceVersion
+            queryIdentifierSha256=$identity.QueryIdentifierSha256
+            compiledSqlSha256=$identity.CompiledSqlSha256
+            parameterTypeSignatureSha256=$identity.ParameterTypeSignatureSha256
+            schemaIdentitySha256=$identity.SchemaIdentitySha256
+            trackIoTiming=$identity.TrackIoTiming
+            releaseIdentitySha256=(Get-StableJsonSha256 ([ordered]@{
+                applicationGitSha=$Config.ApplicationGitSha;deployedImageDigest=$Config.ImageDigest
+                apiTaskDefinitionArn=$Config.ApiTaskDefinitionArn;workerTaskDefinitionArn=$Config.WorkerTaskDefinitionArn
+            }))
+            databaseResourceIdSha256=(Get-StringSha256 $identity.DatabaseResourceId)
+            engineVersion=$identity.EngineVersion;tokenSha256=$tokenSha256
+            statementSha256=(Get-StringSha256 $statement);exactQueryIdentifierMatched=$true
+            statementMarkersMatched=$true
+            periodSeconds=$script:HistoryFallbackSqlStatsPeriodSeconds;pageCount=$pageCount
+            ignoredUngroupedTotalSeriesCount=$ungroupedTotalSeriesHashes.Count
+            repeatedUngroupedTotalSeriesCount=$repeatedUngroupedTotalSeriesCount
+            metricPointCounts=$pointCounts;bucketCoverage=$bucketCoverage
+            positiveCallsObserved=$positiveCallsObserved;positiveTotalTimeObserved=$positiveTotalTimeObserved
+            integratedCalls=[math]::Round($integratedCalls,3)
+            applicationDatabaseReadCount=$ExpectedDatabaseReadCount
+            callsCoverApplicationReads=$callsCoverApplicationReads
+            totalTimePerSecondSum=[math]::Round($totals.totalTime,6)
+            blockReadTimePerSecondSum=[math]::Round($totals.blockReadTime,6)
+            blockReadTimeSharePercent=$blockReadTimeSharePercent
+            sharedBlocksReadPerSecondSum=[math]::Round($totals.sharedBlocksRead,6)
+            tempBlocksReadPerSecondSum=[math]::Round($totals.tempBlocksRead,6)
+            tempBlocksWrittenPerSecondSum=[math]::Round($totals.tempBlocksWritten,6)
+            temporaryIoAbsent=$temporaryIoAbsent
+            dominanceThresholdPercent=$script:HistoryIoDominanceThresholdPercent
+            failureReasons=@($failureReasons);passed=$passed
+        }
+    }
+}
+
+function Get-HistoryFallbackSampledLoadEvidence {
+    param($Config, [string]$StartUtc, [string]$EndUtc, [string]$DbiResourceId,
+        [string]$ExpectedTokenId, [string]$ExpectedTokenSha256)
+    $identity = $Config.HistoryFallbackSqlIdentity
+    if ($null -eq $identity -or [string]$identity.DatabaseResourceId -cne $DbiResourceId) {
+        throw "History fallback sampled-load evidence requires the exact bound DBI resource identity."
+    }
+    $filter = ([ordered]@{"db.sql_tokenized.db_id"=[string]$identity.QueryIdentifier} | ConvertTo-Json -Compress)
+    $pages = Invoke-EvidenceAwsJsonPages -Arguments @("pi","describe-dimension-keys","--region",$Config.Resources.region,
+        "--service-type","RDS","--identifier",$DbiResourceId,"--start-time",$StartUtc,"--end-time",$EndUtc,
+        "--period-in-seconds","60","--metric","db.load.avg",
+        "--group-by","Group=db.sql_tokenized,Dimensions=[db.sql_tokenized.db_id,db.sql_tokenized.id,db.sql_tokenized.statement],Limit=25",
+        "--filter",$filter) -ItemsProperty "Keys" -TokenProperty "NextToken" `
+        -ExpectedAlignedStartUtc $StartUtc -ExpectedAlignedEndUtc $EndUtc -Identity {
+            param($key)
+            $dimensions = Get-Value $key "Dimensions" $null
+            return "$([string](Get-Value $dimensions 'db.sql_tokenized.db_id' ''))|$([string](Get-Value $dimensions 'db.sql_tokenized.id' ''))"
+        }
+    $keys = @($pages.Items)
+    if ($keys.Count -eq 0) {
+        return [ordered]@{
+            status="not_applicable_zero_sampled_load";sampledDbLoad=0.0;tokenCount=0;pageCount=$pages.PageCount
+            filteredWaitEventEvidenceRequired=$false;filteredWaitEventEvidenceComplete=$true
+            dataFileReadSharePercent=$null;dominanceThresholdPercent=$script:HistoryIoDominanceThresholdPercent
+            failureReasons=@();passed=$true
+        }
+    }
+    if ($keys.Count -ne 1) {
+        return [ordered]@{
+            status="ambiguous_sampled_identity";sampledDbLoad=$null;tokenCount=$keys.Count;pageCount=$pages.PageCount
+            filteredWaitEventEvidenceRequired=$false;filteredWaitEventEvidenceComplete=$false
+            dataFileReadSharePercent=$null;dominanceThresholdPercent=$script:HistoryIoDominanceThresholdPercent
+            failureReasons=@("ambiguous_sampled_identity");passed=$false
+        }
+    }
+    $key = $keys[0]
+    $dimensions = Get-Value $key "Dimensions" $null
+    $dbId = [string](Get-Value $dimensions "db.sql_tokenized.db_id" "")
+    $tokenId = [string](Get-Value $dimensions "db.sql_tokenized.id" "")
+    $statement = [string](Get-Value $dimensions "db.sql_tokenized.statement" "")
+    $rawLoad = Get-Value $key "Total" $null
+    if ($null -eq $rawLoad -or $rawLoad -isnot [ValueType] -or $rawLoad -is [bool] -or $rawLoad -is [char]) {
+        throw "History fallback sampled-load evidence returned a malformed load value."
+    }
+    try { $load = [double]$rawLoad }
+    catch { throw "History fallback sampled-load evidence returned a malformed load value." }
+    if ([double]::IsNaN($load) -or [double]::IsInfinity($load) -or $load -lt 0) {
+        throw "History fallback sampled-load evidence returned a malformed load value."
+    }
+    if ($dbId -cne [string]$identity.QueryIdentifier -or $tokenId -cne $ExpectedTokenId -or
+        [string]::IsNullOrWhiteSpace($statement)) {
+        return [ordered]@{
+            status="sampled_identity_mismatch";sampledDbLoad=[math]::Round($load,6)
+            tokenCount=1;pageCount=$pages.PageCount;filteredWaitEventEvidenceRequired=($load -gt 0)
+            filteredWaitEventEvidenceComplete=$false;dataFileReadSharePercent=$null
+            dominanceThresholdPercent=$script:HistoryIoDominanceThresholdPercent
+            failureReasons=@("sampled_identity_mismatch");passed=$false
+        }
+    }
+    $lowerStatement = $statement.ToLowerInvariant()
+    if (@($script:HistoryFallbackSqlMarkers | Where-Object { $lowerStatement.Contains($_) }).Count -ne
+        $script:HistoryFallbackSqlMarkers.Count) {
+        return [ordered]@{
+            status="sampled_identity_mismatch";sampledDbLoad=[math]::Round($load,6);tokenCount=1;pageCount=$pages.PageCount
+            filteredWaitEventEvidenceRequired=($load -gt 0);filteredWaitEventEvidenceComplete=$false
+            dataFileReadSharePercent=$null;dominanceThresholdPercent=$script:HistoryIoDominanceThresholdPercent
+            failureReasons=@("sampled_identity_mismatch");passed=$false
+        }
+    }
+    $tokenSha256 = Get-StableJsonSha256 ([ordered]@{
+        queryIdentifierSha256=$identity.QueryIdentifierSha256;supportId=$tokenId;statement=$statement
+    })
+    if ($tokenSha256 -cne $ExpectedTokenSha256) {
+        return [ordered]@{
+            status="sampled_identity_mismatch";sampledDbLoad=[math]::Round($load,6);tokenCount=1;pageCount=$pages.PageCount
+            filteredWaitEventEvidenceRequired=($load -gt 0);filteredWaitEventEvidenceComplete=$false
+            dataFileReadSharePercent=$null;dominanceThresholdPercent=$script:HistoryIoDominanceThresholdPercent
+            failureReasons=@("sampled_identity_mismatch");passed=$false
+        }
+    }
+    if ($load -eq 0.0) {
+        return [ordered]@{
+            status="not_applicable_zero_sampled_load";sampledDbLoad=0.0;tokenCount=1;pageCount=$pages.PageCount
+            tokenSha256=$tokenSha256;filteredWaitEventEvidenceRequired=$false
+            filteredWaitEventEvidenceComplete=$true;dataFileReadSharePercent=$null
+            dominanceThresholdPercent=$script:HistoryIoDominanceThresholdPercent;failureReasons=@();passed=$true
+        }
+    }
+    try {
+        $waitEvidence = Get-HistoryFallbackWaitEventEvidence $Config $StartUtc $EndUtc $DbiResourceId `
+            ([string]$identity.QueryIdentifier) $tokenId $tokenSha256 $load
+    }
+    catch {
+        $waitFailure = [InvalidOperationException]::new($_.Exception.Message, $_.Exception)
+        $waitFailure.Data["historyFallbackFailureStage"] = "fallback_token_wait_events"
+        throw $waitFailure
+    }
+    return [ordered]@{
+        status="sampled_load_wait_events_required";sampledDbLoad=[math]::Round($load,6);tokenCount=1
+        pageCount=$pages.PageCount;tokenSha256=$tokenSha256;filteredWaitEventEvidenceRequired=$true
+        filteredWaitEventEvidenceComplete=((Get-Value $waitEvidence "complete" $false) -eq $true)
+        dataFileReadSharePercent=$waitEvidence.dataFileReadSharePercent
+        dominanceThresholdPercent=$script:HistoryIoDominanceThresholdPercent
+        waitEvents=$waitEvidence
+        failureReasons=if((Get-Value $waitEvidence "passed" $false) -eq $true){@()}else{
+            @("sampled_wait_gate_failed") + @((Get-Value $waitEvidence "failureReasons" @()))
+        }
+        passed=((Get-Value $waitEvidence "passed" $false) -eq $true)
+    }
+}
+
+function Get-HotPathFallbackEvidenceWindows {
+    param($Config, [string]$StartUtc, [string]$EndUtc)
+    $piWindow = Get-PerformanceInsightsEvidenceWindow $StartUtc $EndUtc
+    $trafficStart = $piWindow.CoherentStart
+    $trafficEnd = $piWindow.CoherentEnd
+    $evidenceStart = $piWindow.AlignedStart
+    $evidenceEnd = $piWindow.AlignedEnd
     $startMs = $trafficStart.ToUnixTimeMilliseconds()
     $endMs = $trafficEnd.ToUnixTimeMilliseconds()
     $binding = Get-BoundApiAwslogsBinding $Config
@@ -1515,6 +2613,7 @@ function Get-HotPathFallbackEvidenceWindows {
     $fallbackItems = 0L
     $databaseReadCount = 0L
     $matchingSummaryCount = 0
+    $excludedEdgeSummaryCount = 0
     foreach ($event in @($pages.Items)) {
         $timestamp = [long](Get-Value $event "timestamp" -1)
         $stream = [string](Get-Value $event "logStreamName" "")
@@ -1542,6 +2641,30 @@ function Get-HotPathFallbackEvidenceWindows {
             throw "CloudWatch Logs returned malformed fallback counters."
         }
         if ($eventFallbackItems -eq 0) { continue }
+        if ([string](Get-Value $payload "historyFallbackSqlIdentityVersion" "") -cne
+                [string]$Config.HistoryFallbackSqlIdentity.Version -or
+            [string](Get-Value $payload "historyFallbackSqlIdentitySha256" "").ToLowerInvariant() -cne
+                [string]$Config.HistoryFallbackSqlIdentity.CompiledSqlSha256 -or
+            [string](Get-Value $payload "apiRuntimeTaskDefinitionSha256" "").ToLowerInvariant() -cne
+                (Get-StringSha256 ([string]$Config.ApiTaskDefinitionArn))) {
+            throw "CloudWatch Logs fallback evidence did not bind the reviewed SQL and API runtime identities."
+        }
+        try {
+            $intervalStart = ConvertTo-ExactUtcDateTimeOffset (Get-Value $payload "intervalStartedAtUtc" $null) "intervalStartedAtUtc"
+            $intervalEnd = ConvertTo-ExactUtcDateTimeOffset (Get-Value $payload "intervalEndedAtUtc" $null) "intervalEndedAtUtc"
+        }
+        catch { throw "CloudWatch Logs fallback evidence did not contain valid UTC interval bounds." }
+        if ($intervalEnd -le $intervalStart -or
+            [math]::Abs(($intervalEnd - $intervalStart).TotalSeconds - $script:HotPathSummaryIntervalSeconds) -gt 0.000001 -or
+            ($intervalStart.UtcDateTime.Ticks % [TimeSpan]::TicksPerMinute) -ne 0 -or
+            ($intervalEnd.UtcDateTime.Ticks % [TimeSpan]::TicksPerMinute) -ne 0) {
+            throw "CloudWatch Logs fallback evidence did not contain one complete UTC summary interval."
+        }
+        $intervalStart = $intervalStart.ToUniversalTime()
+        $intervalEnd = $intervalEnd.ToUniversalTime()
+        if ($intervalEnd -le $trafficStart -or $intervalStart -ge $trafficEnd) {
+            throw "CloudWatch Logs fallback evidence contained a summary interval outside the coherent traffic window."
+        }
         $timings = Get-Value $payload "timings"
         $databaseTiming = Get-Value $timings "tileBatchHistoryDatabaseMs"
         $rawDatabaseReadCount = Get-Value $databaseTiming "count" -1
@@ -1566,16 +2689,15 @@ function Get-HotPathFallbackEvidenceWindows {
             $eventDatabaseTotalMs -lt 0 -or $eventDatabaseMaxMs -lt 0) {
             throw "CloudWatch Logs returned malformed batch history database timing evidence."
         }
-        $eventAt = [DateTimeOffset]::FromUnixTimeMilliseconds($timestamp)
-        $windowStart = $eventAt.AddSeconds(-$script:HotPathSummaryIntervalSeconds)
-        if ($windowStart -lt $trafficStart) { $windowStart = $trafficStart }
-        $windowEnd = if ($eventAt -gt $trafficEnd) { $trafficEnd } else { $eventAt }
-        if ($windowEnd -le $windowStart) { continue }
+        if ($intervalStart -lt $evidenceStart -or $intervalEnd -gt $evidenceEnd) {
+            $excludedEdgeSummaryCount++
+            continue
+        }
         $fallbackItems += [long]$eventFallbackItems
         $databaseReadCount += [long]$eventDatabaseReadCount
         $windows += [pscustomobject]@{
-            StartUtc=$windowStart.ToString("o");EndUtc=$windowEnd.ToString("o")
-            ObservedSeconds=[math]::Round(($windowEnd - $windowStart).TotalSeconds,3)
+            StartUtc=$intervalStart.ToString("o");EndUtc=$intervalEnd.ToString("o")
+            ObservedSeconds=[math]::Round(($intervalEnd - $intervalStart).TotalSeconds,3)
             FallbackItems=[long]$eventFallbackItems;DatabaseReadCount=[long]$eventDatabaseReadCount
         }
     }
@@ -1584,6 +2706,15 @@ function Get-HotPathFallbackEvidenceWindows {
         sourceIntervalSeconds=$script:HotPathSummaryIntervalSeconds;pageCount=$pages.PageCount;matchingSummaryCount=$matchingSummaryCount
         fallbackPositiveSummaryCount=$windows.Count;fallbackItems=$fallbackItems;evidenceWindowCount=$windows.Count
         batchHistoryDatabaseReadCount=$databaseReadCount
+        excludedEdgeSummaryCount=$excludedEdgeSummaryCount
+        coherentWindowSha256=$piWindow.Evidence.coherentWindowSha256
+        alignedEvidenceWindowSha256=$piWindow.Evidence.alignedEvidenceWindowSha256
+        alignedDurationSeconds=$piWindow.Evidence.alignedDurationSeconds
+        completeMinuteCount=$piWindow.Evidence.completeMinuteCount
+        alignedCoveragePercent=$piWindow.Evidence.alignedCoveragePercent
+        historyFallbackSqlIdentityVersion=$Config.HistoryFallbackSqlIdentity.Version
+        historyFallbackSqlIdentitySha256=$Config.HistoryFallbackSqlIdentity.CompiledSqlSha256
+        apiRuntimeTaskDefinitionSha256=(Get-StringSha256 ([string]$Config.ApiTaskDefinitionArn))
         exactTaskDefinitionBound=$true;logDriver=$binding.LogDriver;logRegion=$binding.LogRegion
         logGroupSha256=(Get-StringSha256 $binding.LogGroup)
         streamPrefixSha256=(Get-StringSha256 $binding.ApiStreamPrefix)
@@ -1596,7 +2727,7 @@ function Get-PerformanceInsightsMetricPoints {
     param($Config, [string]$StartUtc, [string]$EndUtc, [string]$DbiResourceId)
     $baseArguments = @("pi","get-resource-metrics","--region",$Config.Resources.region,"--service-type","RDS",
         "--identifier",$DbiResourceId,"--start-time",$StartUtc,"--end-time",$EndUtc,"--period-in-seconds","60",
-        "--metric-queries","Metric=db.load.avg")
+        "--period-alignment","START_TIME","--metric-queries","Metric=db.load.avg")
     $seenTokens = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $seenPoints = @{}
     $points = [Collections.Generic.List[object]]::new()
@@ -1608,6 +2739,7 @@ function Get-PerformanceInsightsMetricPoints {
         $arguments = @($baseArguments) + @("--no-paginate")
         if (-not [string]::IsNullOrWhiteSpace([string]$token)) { $arguments += @("--next-token", [string]$token) }
         $page = Invoke-AwsJson $arguments
+        Assert-PerformanceInsightsResponseScope $page $StartUtc $EndUtc $DbiResourceId
         $metrics = @((Get-Value $page "MetricList" @()))
         $metricKey = if ($metrics.Count -eq 1) { Get-Value $metrics[0] "Key" $null } else { $null }
         $metricName = if ($metricKey -is [string]) { [string]$metricKey } else { [string](Get-Value $metricKey "Metric" "") }
@@ -1615,18 +2747,31 @@ function Get-PerformanceInsightsMetricPoints {
             throw "Performance Insights returned an unexpected DB load metric shape."
         }
         foreach ($point in @((Get-Value $metrics[0] "DataPoints" @()))) {
-            $timestamp = [string](Get-Value $point "Timestamp" "")
-            $value = Get-Value $point "Value" $null
-            if ([string]::IsNullOrWhiteSpace($timestamp) -or $null -eq $value) {
+            $rawTimestamp = Get-Value $point "Timestamp" $null
+            $rawValue = Get-Value $point "Value" $null
+            if ($null -eq $rawTimestamp -or $null -eq $rawValue -or
+                $rawValue -isnot [ValueType] -or $rawValue -is [bool] -or $rawValue -is [char]) {
                 throw "Performance Insights returned a malformed DB load datapoint."
             }
-            $hash = Get-StableJsonSha256 $point
-            if ($seenPoints.ContainsKey($timestamp)) {
-                if ([string]$seenPoints[$timestamp] -cne $hash) { throw "Performance Insights returned conflicting DB load datapoints." }
+            try {
+                $timestamp = ConvertTo-ExactUtcDateTimeOffset $rawTimestamp "DB load timestamp"
+                $value = [double]$rawValue
+                $scopeStart = ConvertTo-ExactUtcDateTimeOffset $StartUtc "DB load scope start"
+                $scopeEnd = ConvertTo-ExactUtcDateTimeOffset $EndUtc "DB load scope end"
+            }
+            catch { throw "Performance Insights returned a malformed DB load datapoint." }
+            if ($timestamp -lt $scopeStart -or $timestamp -ge $scopeEnd -or
+                [double]::IsNaN($value) -or [double]::IsInfinity($value) -or $value -lt 0) {
+                throw "Performance Insights returned an out-of-scope or non-finite DB load datapoint."
+            }
+            $canonicalTimestamp = $timestamp.ToString("o")
+            $hash = Get-StableJsonSha256 ([ordered]@{timestamp=$canonicalTimestamp;value=$value})
+            if ($seenPoints.ContainsKey($canonicalTimestamp)) {
+                if ([string]$seenPoints[$canonicalTimestamp] -cne $hash) { throw "Performance Insights returned conflicting DB load datapoints." }
                 continue
             }
-            $seenPoints[$timestamp] = $hash
-            $points.Add($point)
+            $seenPoints[$canonicalTimestamp] = $hash
+            $points.Add([pscustomobject]@{Timestamp=$canonicalTimestamp;Value=$value})
             if ($points.Count -gt $script:EvidenceMaximumRecords) { throw "Performance Insights metric pagination exceeded the record limit." }
         }
         $token = [string](Get-Value $page "NextToken" "")
@@ -1641,7 +2786,12 @@ function Get-PerformanceInsightsEvidence {
     param($Config, [string]$StartUtc, [string]$EndUtc, [string]$DbiResourceId)
     $completedStages = [Collections.Generic.List[string]]::new()
     $partialEvidence = [ordered]@{}
-    try { $metric = Get-PerformanceInsightsMetricPoints $Config $StartUtc $EndUtc $DbiResourceId }
+    try { $piWindow = Get-PerformanceInsightsEvidenceWindow $StartUtc $EndUtc }
+    catch { throw (New-StagedEvidenceException "db_load_series" $_ @($completedStages) $partialEvidence) }
+    $alignedStartUtc = $piWindow.AlignedStart.ToString("o")
+    $alignedEndUtc = $piWindow.AlignedEnd.ToString("o")
+    $partialEvidence["evidenceWindow"] = $piWindow.Evidence
+    try { $metric = Get-PerformanceInsightsMetricPoints $Config $alignedStartUtc $alignedEndUtc $DbiResourceId }
     catch { throw (New-StagedEvidenceException "db_load_series" $_ @($completedStages) $partialEvidence) }
     $points = @($metric.Points | Where-Object { $null -ne (Get-Value $_ "Value" $null) })
     if ($points.Count -lt 1) {
@@ -1653,7 +2803,7 @@ function Get-PerformanceInsightsEvidence {
     $partialEvidence["dbLoadSeries"] = [ordered]@{
         pointCount=$points.Count;pageCount=$metric.PageCount;averageDbLoad=[math]::Round($averageDbLoad,6)
     }
-    try { $topTokens = Get-PerformanceInsightsTopTokens $Config $StartUtc $EndUtc $DbiResourceId }
+    try { $topTokens = Get-PerformanceInsightsTopTokens $Config $alignedStartUtc $alignedEndUtc $DbiResourceId }
     catch { throw (New-StagedEvidenceException "full_interval_top_tokens" $_ @($completedStages) $partialEvidence) }
     $entries = @($topTokens.Sanitized)
     $authLoad = 0.0
@@ -1665,8 +2815,9 @@ function Get-PerformanceInsightsEvidence {
         try { throw "Performance Insights evidence was incomplete for a nonzero diagnostic workload." }
         catch { throw (New-StagedEvidenceException "full_interval_top_tokens" $_ @($completedStages) $partialEvidence) }
     }
-    $authPercent = [math]::Round(($authLoad / $averageDbLoad) * 100.0, 3)
-    $authPassed = $authPercent -lt 50.0
+    $rawAuthPercent = ($authLoad / $averageDbLoad) * 100.0
+    $authPercent = [math]::Round($rawAuthPercent, 6)
+    $authPassed = $rawAuthPercent -lt 50.0
     $completedStages.Add("full_interval_top_tokens")
     $partialEvidence["fullIntervalTopTokens"] = [ordered]@{
         pageCount=$topTokens.PageCount;topTokenCount=$entries.Count;tokens=$entries
@@ -1677,80 +2828,70 @@ function Get-PerformanceInsightsEvidence {
     catch { throw (New-StagedEvidenceException "hot_path_log_windows" $_ @($completedStages) $partialEvidence) }
     $completedStages.Add("hot_path_log_windows")
     $partialEvidence["hotPathLogWindows"] = $hotPath.Evidence
-    $historyEvidence = @()
-    $evidenceWindows = @()
-    $historyLoad = 0.0
-    $historyDataFileReadLoad = 0.0
-    $historyTokenCount = 0
-    $missingHistoryTokenWindowCount = 0
-    foreach ($window in @($hotPath.Windows)) {
-        try { $windowTokens = Get-PerformanceInsightsTopTokens $Config $window.StartUtc $window.EndUtc $DbiResourceId }
-        catch { throw (New-StagedEvidenceException "fallback_window_top_tokens" $_ @($completedStages) $partialEvidence) }
-        if (-not $completedStages.Contains("fallback_window_top_tokens")) { $completedStages.Add("fallback_window_top_tokens") }
-        $historyTokens = @($windowTokens.Internal | Where-Object IsHistoryFallback -eq $true)
-        if ($historyTokens.Count -eq 0) { $missingHistoryTokenWindowCount++ }
-        $windowPerToken = @()
-        $windowLoad = 0.0
-        $windowDataFileReadLoad = 0.0
-        foreach ($token in $historyTokens) {
-            try {
-                $tokenEvidence = Get-HistoryFallbackWaitEventEvidence $Config $window.StartUtc $window.EndUtc $DbiResourceId `
-                    $token.Id $token.Sha256 $token.Load
+    if ($hotPath.Windows.Count -lt 1 -or [long]$hotPath.Evidence.batchHistoryDatabaseReadCount -le 0) {
+        $historyFallback = [ordered]@{
+            historyFallbackPiEvidenceVersion=$script:HistoryFallbackPiEvidenceVersion
+            queryIdentifierSha256=$Config.HistoryFallbackSqlIdentity.QueryIdentifierSha256
+            source=$hotPath.Evidence;sqlStatistics=$null;sampledLoad=$null;passed=$false
+        }
+        return [ordered]@{
+            diagnosticOnly=$true;sanitized=$true;tokenized=$true;rawSqlPersisted=$false;rawIdentifiersPersisted=$false
+            metric="db.load.avg";startUtc=$alignedStartUtc;endUtc=$alignedEndUtc;periodSeconds=60;evidenceWindow=$piWindow.Evidence
+            dbLoadPointCount=$points.Count;dbLoadPageCount=$metric.PageCount;averageDbLoad=[math]::Round($averageDbLoad,6)
+            topTokenCount=$entries.Count;tokens=$entries
+            tileAuthorization=[ordered]@{tokenCount=$authTokenCount;dbLoad=[math]::Round($authLoad,6);
+                sharePercent=$authPercent;dominanceThresholdPercent=50.0;absentFromTopTokens=($authTokenCount -eq 0);passed=$authPassed}
+            historyFallback=$historyFallback;passed=$false
+        }
+    }
+    try {
+        $sqlStats = Get-HistoryFallbackSqlStatsEvidence $Config $alignedStartUtc $alignedEndUtc $DbiResourceId `
+            ([long]$hotPath.Evidence.batchHistoryDatabaseReadCount) @($hotPath.Windows)
+    }
+    catch { throw (New-StagedEvidenceException "fallback_window_top_tokens" $_ @($completedStages) $partialEvidence) }
+    $partialEvidence["fallbackSqlStatistics"] = $sqlStats.Evidence
+    if ((Get-Value $sqlStats "CanSample" $false) -eq $true) {
+        try {
+            $sampledLoad = Get-HistoryFallbackSampledLoadEvidence $Config $alignedStartUtc $alignedEndUtc $DbiResourceId `
+                $sqlStats.TokenId $sqlStats.TokenSha256
+        }
+        catch {
+            $sampledLoadStage = if ($_.Exception.Data.Contains("historyFallbackFailureStage")) {
+                [string]$_.Exception.Data["historyFallbackFailureStage"]
+            } else { "fallback_window_top_tokens" }
+            if ($sampledLoadStage -ceq "fallback_token_wait_events") {
+                $completedStages.Add("fallback_window_top_tokens")
             }
-            catch { throw (New-StagedEvidenceException "fallback_token_wait_events" $_ @($completedStages) $partialEvidence) }
-            $windowPerToken += $tokenEvidence
-            $historyEvidence += $tokenEvidence
-            $historyTokenCount++
-            $windowLoad += [double]$token.Load
-            $windowDataFileReadLoad += [double]$tokenEvidence.dataFileReadDbLoad
+            throw (New-StagedEvidenceException $sampledLoadStage $_ @($completedStages) $partialEvidence)
         }
-        $historyLoad += $windowLoad
-        $historyDataFileReadLoad += $windowDataFileReadLoad
-        $windowComplete = $historyTokens.Count -gt 0 -and
-            @($windowPerToken | Where-Object complete -ne $true).Count -eq 0
-        $windowPerTokenPassed = $historyTokens.Count -gt 0 -and
-            @($windowPerToken | Where-Object passed -ne $true).Count -eq 0
-        $windowShare = if ($windowLoad -gt 0) {
-            [math]::Round(($windowDataFileReadLoad / $windowLoad) * 100.0,3)
-        } else { 0.0 }
-        $windowPassed = $windowComplete -and $windowPerTokenPassed -and
-            $windowShare -lt $script:HistoryIoDominanceThresholdPercent
-        $evidenceWindows += [ordered]@{
-            startUtc=$window.StartUtc;endUtc=$window.EndUtc;observedSeconds=$window.ObservedSeconds
-            fallbackItems=$window.FallbackItems;batchHistoryDatabaseReadCount=$window.DatabaseReadCount
-            topTokenCount=@($windowTokens.Sanitized).Count
-            tokenCount=$historyTokens.Count;dbLoad=[math]::Round($windowLoad,6)
-            dataFileReadDbLoad=[math]::Round($windowDataFileReadLoad,6);dataFileReadSharePercent=$windowShare
-            perToken=$windowPerToken;filteredWaitEventEvidenceComplete=$windowComplete
-            perTokenAllBelowThreshold=$windowPerTokenPassed;passed=$windowPassed
+    } else {
+        $sampledLoad = [ordered]@{
+            status="not_evaluated_identity_gate_failed";sampledDbLoad=$null;tokenCount=0
+            filteredWaitEventEvidenceRequired=$false;filteredWaitEventEvidenceComplete=$false
+            dataFileReadSharePercent=$null;dominanceThresholdPercent=$script:HistoryIoDominanceThresholdPercent
+            failureReasons=@("sql_identity_gate_failed");passed=$false
         }
-        $partialEvidence["fallbackWindows"] = @($evidenceWindows)
     }
-    if ($historyTokenCount -gt 0) { $completedStages.Add("fallback_token_wait_events") }
-    $historyAbsent = $hotPath.Windows.Count -eq 0 -or $missingHistoryTokenWindowCount -gt 0 -or $historyTokenCount -eq 0
-    $historySharePercent = if ($historyLoad -le 0) { 0.0 } else {
-        [math]::Round(($historyDataFileReadLoad / $historyLoad) * 100.0, 3)
+    $completedStages.Add("fallback_window_top_tokens")
+    if ((Get-Value $sampledLoad "filteredWaitEventEvidenceRequired" $false) -eq $true) {
+        $completedStages.Add("fallback_token_wait_events")
     }
-    $historyComplete = -not $historyAbsent -and
-        @($historyEvidence | Where-Object complete -ne $true).Count -eq 0
-    $historyPerTokenPassed = -not $historyAbsent -and
-        @($historyEvidence | Where-Object passed -ne $true).Count -eq 0
-    $historyPassed = -not $historyAbsent -and $historyComplete -and $historyPerTokenPassed -and
-        $historySharePercent -lt $script:HistoryIoDominanceThresholdPercent
+    $historyPassed = (Get-Value $sqlStats.Evidence "passed" $false) -eq $true -and
+        (Get-Value $sampledLoad "passed" $false) -eq $true
     return [ordered]@{
-        diagnosticOnly=$true;sanitized=$true;tokenized=$true;rawSqlPersisted=$false;metric="db.load.avg"
-        startUtc=$StartUtc;endUtc=$EndUtc;periodSeconds=60;dbLoadPointCount=$points.Count;dbLoadPageCount=$metric.PageCount
+        diagnosticOnly=$true;sanitized=$true;tokenized=$true;rawSqlPersisted=$false;rawIdentifiersPersisted=$false;metric="db.load.avg"
+        startUtc=$alignedStartUtc;endUtc=$alignedEndUtc;periodSeconds=60;evidenceWindow=$piWindow.Evidence
+        dbLoadPointCount=$points.Count;dbLoadPageCount=$metric.PageCount
         averageDbLoad=[math]::Round($averageDbLoad,6);topTokenCount=$entries.Count;tokens=$entries
         tileAuthorization=[ordered]@{tokenCount=$authTokenCount;
             dbLoad=[math]::Round($authLoad,6);sharePercent=$authPercent;dominanceThresholdPercent=50.0;
             absentFromTopTokens=($authTokenCount -eq 0);passed=$authPassed}
-        historyFallback=[ordered]@{tokenCount=$historyTokenCount;dbLoad=[math]::Round($historyLoad,6)
-            dataFileReadDbLoad=[math]::Round($historyDataFileReadLoad,6);dataFileReadSharePercent=$historySharePercent
-            dominanceThresholdPercent=$script:HistoryIoDominanceThresholdPercent;perToken=$historyEvidence
-            perTokenAllBelowThreshold=$historyPerTokenPassed;filteredWaitEventEvidenceRequired=$true
-            filteredWaitEventEvidenceComplete=$historyComplete;absentFromTopTokens=$historyAbsent
-            missingHistoryTokenWindowCount=$missingHistoryTokenWindowCount;evidenceWindows=$evidenceWindows
-            source=$hotPath.Evidence;passed=$historyPassed}
+        historyFallback=[ordered]@{
+            historyFallbackPiEvidenceVersion=$script:HistoryFallbackPiEvidenceVersion
+            queryIdentifierSha256=$Config.HistoryFallbackSqlIdentity.QueryIdentifierSha256
+            compiledSqlSha256=$Config.HistoryFallbackSqlIdentity.CompiledSqlSha256
+            sqlStatistics=$sqlStats.Evidence;sampledLoad=$sampledLoad;source=$hotPath.Evidence;passed=$historyPassed
+        }
         passed=($authPassed -and $historyPassed)
     }
 }
@@ -1849,8 +2990,13 @@ function Get-StabilizedPerformanceInsightsEvidence {
     $unstable = [InvalidOperationException]::new("Performance Insights did not produce two consecutive identical snapshots.")
     $unstable.Data["failureStage"] = "snapshot_stabilization"
     $unstable.Data["attemptCount"] = $attemptCount
-    $unstable.Data["completedStages"] = @("db_load_series","full_interval_top_tokens","hot_path_log_windows",
-        "fallback_window_top_tokens","fallback_token_wait_events")
+    $unstableCompletedStages = @("db_load_series","full_interval_top_tokens","hot_path_log_windows",
+        "fallback_window_top_tokens")
+    $lastSampledLoad = Get-Value (Get-Value $lastCompleteSnapshot "historyFallback" $null) "sampledLoad" $null
+    if ((Get-Value $lastSampledLoad "filteredWaitEventEvidenceRequired" $false) -eq $true) {
+        $unstableCompletedStages += "fallback_token_wait_events"
+    }
+    $unstable.Data["completedStages"] = $unstableCompletedStages
     $unstable.Data["partialEvidence"] = [ordered]@{
         lastCompleteSnapshot=$lastCompleteSnapshot;lastCompleteCanonicalSha256=$lastCompleteHash
         stableConsecutiveSnapshotCount=1
@@ -1977,11 +3123,17 @@ function Collect-TerminalPostTrafficEvidence {
     if (Test-EvidenceSourceNotStarted $Terminal.performanceInsights) {
         try {
             $stabilized = Get-StabilizedPerformanceInsightsEvidence $Config $startUtc $endUtc $DbiResourceId
+            $performanceInsightsCompletedStages = @("db_load_series","full_interval_top_tokens","hot_path_log_windows",
+                "fallback_window_top_tokens")
+            $stabilizedSampledLoad = Get-Value (Get-Value $stabilized.Evidence "historyFallback" $null) "sampledLoad" $null
+            if ((Get-Value $stabilizedSampledLoad "filteredWaitEventEvidenceRequired" $false) -eq $true) {
+                $performanceInsightsCompletedStages += "fallback_token_wait_events"
+            }
+            $performanceInsightsCompletedStages += "snapshot_stabilization"
             $Terminal.performanceInsights = New-EvidenceEnvelope -Collected $true `
                 -Passed ((Get-Value $stabilized.Evidence "passed" $false) -eq $true) -AttemptCount $stabilized.AttemptCount `
                 -FailureCode $null -FailureStage $null -MessageSha256 $null -Evidence $stabilized.Evidence `
-                -CompletedStages @("db_load_series","full_interval_top_tokens","hot_path_log_windows",
-                    "fallback_window_top_tokens","fallback_token_wait_events","snapshot_stabilization")
+                -CompletedStages $performanceInsightsCompletedStages
             $Terminal.performanceInsights["canonicalSha256"] = $stabilized.CanonicalSha256
         }
         catch {
@@ -2022,7 +3174,9 @@ function Set-TerminalEvidenceIntegrity {
         [pscustomobject]@{Name="observedTrafficWindow";Value=$Terminal.observedTrafficWindow},
         [pscustomobject]@{Name="postgresStatementTimeouts";Value=$Terminal.postgresStatementTimeouts},
         [pscustomobject]@{Name="performanceInsights";Value=$Terminal.performanceInsights},
-        [pscustomobject]@{Name="postTrafficAwsPosture";Value=$Terminal.postTrafficAwsPosture}
+        [pscustomobject]@{Name="postTrafficAwsPosture";Value=$Terminal.postTrafficAwsPosture},
+        [pscustomobject]@{Name="historyFallbackQueryIdentity";Value=(Get-Value $Terminal "historyFallbackQueryIdentity")},
+        [pscustomobject]@{Name="databaseInsightsLease";Value=(Get-Value $Terminal "databaseInsightsLease")}
     )) {
         if ($null -ne $binding.Value) {
             $embeddedHashes[$binding.Name] = [ordered]@{storage="embedded";sha256=(Get-StableJsonSha256 $binding.Value)}
@@ -2086,60 +3240,101 @@ namespace SchoolPilot { public static class DiagnosticPowerState {
 }
 
 $config = Read-DiagnosticConfiguration
-$progressPath = Join-Path $config.EvidenceDirectory "$($config.RunId)-load-progress.jsonl"
-$summaryPath = Join-Path $config.EvidenceDirectory "$($config.RunId)-load-summary.json"
-$capturePath = Join-Path $config.EvidenceDirectory "$($config.RunId)-scaling-capture.json"
-$restorationPath = Join-Path $config.EvidenceDirectory "$($config.RunId)-scaling-restoration.json"
-$resultPath = Join-Path $config.EvidenceDirectory "$($config.RunId)-diagnostic-result.json"
-$heartbeatPath = Join-Path $config.EvidenceDirectory "$($config.RunId)-coordinator-heartbeat.json"
-$monitorResultPath = Join-Path $config.EvidenceDirectory "$($config.RunId)-monitor-result.json"
+$databaseInsightsLeaseValidation = $null
 
 if ($Mode -eq "Validate") {
-    $validationScratch = Get-ValidationScratchPaths $config
     try {
-        $preflightReceipt = Invoke-HarnessPreflight -Config $config -ProgressPath $validationScratch.ProgressPath `
-            -SummaryPath $validationScratch.SummaryPath -PersistReceipt:$false
-    }
-    finally {
-        foreach ($scratchPath in @($validationScratch.ProgressPath, $validationScratch.SummaryPath)) {
-            if (Test-Path -LiteralPath $scratchPath) { Remove-Item -LiteralPath $scratchPath -Force -ErrorAction SilentlyContinue }
+        $validationScratch = Get-ValidationScratchPaths $config
+        try {
+            $preflightReceipt = Invoke-HarnessPreflight -Config $config -ProgressPath $validationScratch.ProgressPath `
+                -SummaryPath $validationScratch.SummaryPath -PersistReceipt:$false
         }
+        finally {
+            foreach ($scratchPath in @($validationScratch.ProgressPath, $validationScratch.SummaryPath)) {
+                if (Test-Path -LiteralPath $scratchPath) { Remove-Item -LiteralPath $scratchPath -Force -ErrorAction SilentlyContinue }
+            }
+        }
+        # Acquisition is performed by the external guarded preparation step.
+        # Successful validation is AWS-read-only and retains the exact active
+        # lease for Run. Any failed validation restores the captured posture.
+        $databaseInsightsLeaseValidation = Invoke-DatabaseInsightsLeaseController -Config $config -LeaseMode Validate
+        $awsPosture = Get-AwsPosture $config
+        [ordered]@{valid=$true;diagnosticOnly=$true;certificationEligible=$false;nonMutating=$true;runId=$config.RunId;
+            workload=[ordered]@{stage="800";devices=810;durationSeconds=1800;screenshotBytes=40960;canaryDevices=10;
+                workloadSchemaVersion=$script:WorkloadSchemaVersion;endpointShapeSha256=$script:EndpointShapeSha256};
+            deploymentIdentity=[ordered]@{applicationGitSha=$config.ApplicationGitSha;deployedImageDigest=$config.ImageDigest;
+                apiTaskDefinitionArn=$config.ApiTaskDefinitionArn;workerTaskDefinitionArn=$config.WorkerTaskDefinitionArn};
+            harnessPreflight=$preflightReceipt;databaseInsightsLease=$databaseInsightsLeaseValidation;awsPosture=$awsPosture} | ConvertTo-Json -Depth 40
+        exit 0
     }
-    $awsPosture = Get-AwsPosture $config
-    [ordered]@{valid=$true;diagnosticOnly=$true;certificationEligible=$false;nonMutating=$true;runId=$config.RunId;
-        workload=[ordered]@{stage="800";devices=810;durationSeconds=1800;screenshotBytes=40960;canaryDevices=10;
-            workloadSchemaVersion=$script:WorkloadSchemaVersion;endpointShapeSha256=$script:EndpointShapeSha256};
-        deploymentIdentity=[ordered]@{applicationGitSha=$config.ApplicationGitSha;deployedImageDigest=$config.ImageDigest;
-            apiTaskDefinitionArn=$config.ApiTaskDefinitionArn;workerTaskDefinitionArn=$config.WorkerTaskDefinitionArn};
-        harnessPreflight=$preflightReceipt;awsPosture=$awsPosture} | ConvertTo-Json -Depth 40
-    exit 0
+    catch {
+        $validationError = $_
+        try { [void](Invoke-DatabaseInsightsLeaseController -Config $config -LeaseMode Restore) }
+        catch { throw "Diagnostic validation failed and exact Database Insights restoration also failed; progression is blocked." }
+        throw $validationError
+    }
 }
 
-$runLock = Enter-DiagnosticRunLock $config
+$runLock = $null
+try {
+    $progressPath = Join-Path $config.EvidenceDirectory "$($config.RunId)-load-progress.jsonl"
+    $summaryPath = Join-Path $config.EvidenceDirectory "$($config.RunId)-load-summary.json"
+    $capturePath = Join-Path $config.EvidenceDirectory "$($config.RunId)-scaling-capture.json"
+    $restorationPath = Join-Path $config.EvidenceDirectory "$($config.RunId)-scaling-restoration.json"
+    $resultPath = Join-Path $config.EvidenceDirectory "$($config.RunId)-diagnostic-result.json"
+    $heartbeatPath = Join-Path $config.EvidenceDirectory "$($config.RunId)-coordinator-heartbeat.json"
+    $monitorResultPath = Join-Path $config.EvidenceDirectory "$($config.RunId)-monitor-result.json"
+    $runLock = Enter-DiagnosticRunLock $config
+}
+catch {
+    $pathOrLockError = $_
+    if ($Mode -eq "Run") {
+        try { [void](Invoke-DatabaseInsightsLeaseController -Config $config -LeaseMode Restore) }
+        catch { throw "Diagnostic initialization failed before lease validation and exact Database Insights restoration also failed; progression is blocked." }
+    }
+    throw $pathOrLockError
+}
 if ($Mode -eq "Restore") {
     $restoreExitCode = 4
+    New-Item -ItemType Directory -Path $config.EvidenceDirectory -Force | Out-Null
+    $restoration = $null
+    $databaseInsightsRestoration = $null
     try {
-        if (-not (Test-Path -LiteralPath $capturePath)) { throw "No durable scaling capture exists for this run." }
-        $capture = Read-AtomicJson $capturePath
-        if ([string]$capture.runId -ne $config.RunId -or [string]$capture.configSha256 -cne $config.Sha256 -or $capture.mutationStarted -ne $true) {
-            throw "The durable scaling capture does not authorize restoration for this exact config/run."
+        try {
+            if (-not (Test-Path -LiteralPath $capturePath)) { throw "No durable scaling capture exists for this run." }
+            $capture = Read-AtomicJson $capturePath
+            if ([string]$capture.runId -ne $config.RunId -or [string]$capture.configSha256 -cne $config.Sha256 -or $capture.mutationStarted -ne $true) {
+                throw "The durable scaling capture does not authorize restoration for this exact config/run."
+            }
+            $restoration = Restore-ScalingCapture $config $capture
         }
-        $restoration = Restore-ScalingCapture $config $capture
+        catch {
+            $restoration = [ordered]@{restored=$false;attempted=$true;timestamp=[DateTimeOffset]::UtcNow.ToString("o");
+                failureCode="scaling_restoration_failed";messageSha256=(Get-StringSha256 $_.Exception.Message);rawErrorPersisted=$false}
+        }
+        try {
+            $lease = Invoke-DatabaseInsightsLeaseController -Config $config -LeaseMode Restore
+            $databaseInsightsRestoration = [ordered]@{attempted=$true;restored=$true;
+                completedAtUtc=[DateTimeOffset]::UtcNow.ToString("o");lease=$lease;rawErrorPersisted=$false}
+        }
+        catch {
+            $databaseInsightsRestoration = [ordered]@{attempted=$true;restored=$false;
+                completedAtUtc=[DateTimeOffset]::UtcNow.ToString("o");failureCode="database_insights_lease_restoration_failed";
+                messageSha256=(Get-StringSha256 $_.Exception.Message);rawErrorPersisted=$false}
+        }
         Write-AtomicJson $restorationPath $restoration
         if (-not (Test-Path -LiteralPath $resultPath)) {
             $restorationSha256 = (Get-FileHash -LiteralPath $restorationPath -Algorithm SHA256).Hash.ToLowerInvariant()
             Write-AtomicJson $resultPath ([ordered]@{type="waf800_batch_diagnostic_terminal";schemaVersion=1;runId=$config.RunId;
-                diagnosticOnly=$true;certificationEligible=$false;supervisorSealed=$false;status="interrupted_restored";
+                diagnosticOnly=$true;certificationEligible=$false;supervisorSealed=$false;
+                status=if($restoration.restored -eq $true -and $databaseInsightsRestoration.restored -eq $true){"interrupted_restored"}else{"restoration_failed"};
                 timestamp=[DateTimeOffset]::UtcNow.ToString("o");scalingRestoration=$restoration;
+                databaseInsightsLease=[ordered]@{version=$config.DatabaseInsightsLease.Version;
+                    receiptSha256=$config.DatabaseInsightsLease.ReceiptSha256;restoration=$databaseInsightsRestoration};
                 evidenceIntegrity=[ordered]@{algorithm="sha256";scalingRestoration=[ordered]@{
                     storage="file";path=$restorationPath;sha256=$restorationSha256}}})
         }
-        $restoreExitCode = 0
-    }
-    catch {
-        New-Item -ItemType Directory -Path $config.EvidenceDirectory -Force | Out-Null
-        Write-AtomicJson $restorationPath ([ordered]@{restored=$false;timestamp=[DateTimeOffset]::UtcNow.ToString("o");
-            failureCode="scaling_restoration_failed";messageSha256=(Get-StringSha256 $_.Exception.Message);rawErrorPersisted=$false})
+        if ($restoration.restored -eq $true -and $databaseInsightsRestoration.restored -eq $true) { $restoreExitCode = 0 }
     }
     finally { Exit-DiagnosticRunLock $runLock }
     exit $restoreExitCode
@@ -2153,6 +3348,7 @@ try {
         if (Test-Path -LiteralPath $path) { throw "Diagnostic run artifact already exists: $path" }
     }
     $preflightReceipt = Invoke-HarnessPreflight $config $progressPath $summaryPath -PersistReceipt
+    $databaseInsightsLeaseValidation = Invoke-DatabaseInsightsLeaseController -Config $config -LeaseMode Validate
     $awsPosture = Get-AwsPosture $config
     Assert-NoScheduledBoundaryOverlap
     $controllerHashes = [ordered]@{
@@ -2161,30 +3357,52 @@ try {
         harness=(Get-FileHash -LiteralPath $script:HarnessScript -Algorithm SHA256).Hash.ToLowerInvariant()
         monotonicDeadline=(Get-FileHash -LiteralPath $script:MonotonicDeadlineScript -Algorithm SHA256).Hash.ToLowerInvariant()
         tilePollAccounting=(Get-FileHash -LiteralPath $script:TilePollAccountingScript -Algorithm SHA256).Hash.ToLowerInvariant()
+        databaseInsightsLease=(Get-FileHash -LiteralPath $script:DatabaseInsightsLeaseScript -Algorithm SHA256).Hash.ToLowerInvariant()
     }
     $capture = [ordered]@{schemaVersion=1;runId=$config.RunId;configSha256=$config.Sha256;capturedAtUtc=[DateTimeOffset]::UtcNow.ToString("o");
         mutationStarted=$false;original=$awsPosture}
     Write-AtomicJson $capturePath $capture
 }
 catch {
+    $initializationError = $_
+    $databaseInsightsInitializationRestoreFailed = $false
+    try { [void](Invoke-DatabaseInsightsLeaseController -Config $config -LeaseMode Restore) }
+    catch { $databaseInsightsInitializationRestoreFailed = $true }
     Exit-DiagnosticRunLock $runLock
-    throw
+    if ($databaseInsightsInitializationRestoreFailed) {
+        throw "Diagnostic initialization failed and exact Database Insights restoration also failed; progression is blocked."
+    }
+    throw $initializationError
 }
 
 $harness = $null
 $monitor = $null
 $sleepHeld = $false
 $restoration = [ordered]@{restored=$false;attempted=$false}
+$databaseInsightsRestoration = [ordered]@{restored=$false;attempted=$false}
 $terminal = [ordered]@{
     type="waf800_batch_diagnostic_terminal";schemaVersion=1;runId=$config.RunId;diagnosticOnly=$true;
     certificationEligible=$false;supervisorSealed=$false;predecessor=$null;status="failed";
     evidenceCollectorVersion=$script:EvidenceCollectorVersion;
-    timestamp=$null;failures=@();config=[ordered]@{path=$config.Path;sha256=$config.Sha256};
+    timestamp=$null;failures=@();config=[ordered]@{pathSha256=(Get-StringSha256 $config.Path);sha256=$config.Sha256;
+        rawPathPersisted=$false};
     deploymentIdentity=[ordered]@{applicationGitSha=$config.ApplicationGitSha;deployedImageDigest=$config.ImageDigest;
         apiTaskDefinitionArn=$config.ApiTaskDefinitionArn;workerTaskDefinitionArn=$config.WorkerTaskDefinitionArn};
     controller=[ordered]@{gitSha=$config.ControllerGitSha;hashes=$controllerHashes};harnessArtifacts=$config.HarnessArtifacts;
     workload=[ordered]@{stage="800";devices=810;durationSeconds=1800;screenshotBytes=40960;canaryDevices=10;
         workloadSchemaVersion=$script:WorkloadSchemaVersion;endpointShapeSha256=$script:EndpointShapeSha256};
+    historyFallbackQueryIdentity=[ordered]@{receiptSha256=$config.HistoryFallbackSqlIdentity.Receipt.Sha256;
+        version=$config.HistoryFallbackSqlIdentity.Version;
+        queryIdentifierSha256=$config.HistoryFallbackSqlIdentity.QueryIdentifierSha256;
+        compiledSqlSha256=$config.HistoryFallbackSqlIdentity.CompiledSqlSha256;
+        parameterTypeSignatureSha256=$config.HistoryFallbackSqlIdentity.ParameterTypeSignatureSha256;
+        engineVersion=$config.HistoryFallbackSqlIdentity.EngineVersion;
+        schemaIdentitySha256=$config.HistoryFallbackSqlIdentity.SchemaIdentitySha256;
+        trackIoTiming=$config.HistoryFallbackSqlIdentity.TrackIoTiming;
+        apiRuntimeTaskDefinitionSha256=(Get-StringSha256 $config.ApiTaskDefinitionArn);
+        piEvidenceVersion=$config.HistoryFallbackSqlIdentity.PiEvidenceVersion};
+    databaseInsightsLease=[ordered]@{version=$config.DatabaseInsightsLease.Version;
+        receiptSha256=$config.DatabaseInsightsLease.ReceiptSha256;validation=$databaseInsightsLeaseValidation;restoration=$null};
     initialAwsPosture=$awsPosture;pinnedAwsPosture=$null;preTrafficAwsPosture=$null;postTrafficAwsPosture=$null;terminalAwsPosture=$null;
     observedTrafficWindow=$null;monitor=$null;postgresStatementTimeouts=$null;performanceInsights=$null;scalingRestoration=$null;
     evidenceIntegrity=$null;controllerFailure=$null
@@ -2276,6 +3494,17 @@ try {
     $monitorHeartbeat = Read-AtomicJson $monitorHeartbeatPath
     Assert-HealthyMonitorHeartbeat -Heartbeat $monitorHeartbeat -ExpectedRunId $config.RunId -ExpectedPhase "Waf" `
         -MonitorStartedAt $monitorStartedAt -Now ([DateTimeOffset]::UtcNow)
+    # Revalidate the bounded Advanced-mode lease at the last safe point. Its
+    # immutable capture must still be fresh and its expiration must extend
+    # past 30 minutes of traffic, the +15 minute PI publication deadline, a
+    # full restoration timeout, and the fixed safety margin.
+    $databaseInsightsLeaseValidation = Invoke-DatabaseInsightsLeaseController -Config $config -LeaseMode Validate
+    $terminal.databaseInsightsLease.validation = $databaseInsightsLeaseValidation
+    $monitor.Refresh(); $harness.Refresh()
+    if ($monitor.HasExited -or $harness.HasExited) { throw "Diagnostic child exited during final lease validation." }
+    $monitorHeartbeat = Read-AtomicJson $monitorHeartbeatPath
+    Assert-HealthyMonitorHeartbeat -Heartbeat $monitorHeartbeat -ExpectedRunId $config.RunId -ExpectedPhase "Waf" `
+        -MonitorStartedAt $monitorStartedAt -Now ([DateTimeOffset]::UtcNow)
     $releasedAt = [DateTimeOffset]::UtcNow
     Write-AtomicJson $startGatePath ([ordered]@{schemaVersion=1;type="load_supervisor_start";runId=$config.RunId;
         harnessProcessId=$harness.Id;monitorProcessId=$monitor.Id;releasedAt=$releasedAt.ToString("o")})
@@ -2311,7 +3540,7 @@ try {
     }
     $orchestrationStage = "immediate_evidence"
     Collect-TerminalPostTrafficEvidence $terminal $config $progressPath $summaryPath `
-        ([string]$awsPosture.rds.dbiResourceId) -Phase Immediate
+        ([string]$config.HistoryFallbackSqlIdentity.DatabaseResourceId) -Phase Immediate
     $orchestrationStage = "scaling_restoration"
     if ($capture.mutationStarted -eq $true -and (Get-Value $restoration "attempted" $false) -ne $true) {
         $restoration.attempted = $true
@@ -2327,7 +3556,12 @@ try {
     }
     $orchestrationStage = "delayed_evidence"
     Collect-TerminalPostTrafficEvidence $terminal $config $progressPath $summaryPath `
-        ([string]$awsPosture.rds.dbiResourceId) -Phase Delayed
+        ([string]$config.HistoryFallbackSqlIdentity.DatabaseResourceId) -Phase Delayed
+    # Keep Advanced mode only through publication-delayed PI sealing. Restore
+    # the immutable lease's exact Standard/7 posture before adjudication.
+    $orchestrationStage = "database_insights_restoration"
+    $databaseInsightsRestoration = Restore-TerminalDatabaseInsightsLease $terminal $config $databaseInsightsRestoration
+    if ($databaseInsightsRestoration.restored -ne $true) { $exitCode = 4 }
     $orchestrationStage = "acceptance_adjudication"
     $harness.Refresh()
     if (-not $harness.HasExited -or $harness.ExitCode -ne 0) {
@@ -2352,7 +3586,7 @@ try {
         }
     }
     $acceptanceAdjudicated = $true
-    $exitCode = Resolve-DiagnosticTerminalExitCode $terminal $restoration $acceptanceAdjudicated $exitCode
+    $exitCode = Resolve-DiagnosticTerminalExitCode $terminal $restoration $databaseInsightsRestoration $acceptanceAdjudicated $exitCode
     $terminal.status = if ($exitCode -eq 0) { "completed" } else { "failed" }
 }
 catch {
@@ -2408,7 +3642,7 @@ finally {
         $orchestrationStage = "immediate_evidence"
         try {
             Collect-TerminalPostTrafficEvidence $terminal $config $progressPath $summaryPath `
-                ([string]$awsPosture.rds.dbiResourceId) -Phase Immediate
+                ([string]$config.HistoryFallbackSqlIdentity.DatabaseResourceId) -Phase Immediate
         }
         catch { Add-TerminalFailure $terminal "post_traffic_evidence_collection_failed" }
         $orchestrationStage = "scaling_restoration"
@@ -2430,10 +3664,13 @@ finally {
         $orchestrationStage = "delayed_evidence"
         try {
             Collect-TerminalPostTrafficEvidence $terminal $config $progressPath $summaryPath `
-                ([string]$awsPosture.rds.dbiResourceId) -Phase Delayed
+                ([string]$config.HistoryFallbackSqlIdentity.DatabaseResourceId) -Phase Delayed
         }
         catch { Add-TerminalFailure $terminal "post_traffic_evidence_collection_failed" }
-        $exitCode = Resolve-DiagnosticTerminalExitCode $terminal $restoration $acceptanceAdjudicated $exitCode
+        $orchestrationStage = "database_insights_restoration"
+        $databaseInsightsRestoration = Restore-TerminalDatabaseInsightsLease $terminal $config $databaseInsightsRestoration
+        if ($databaseInsightsRestoration.restored -ne $true) { $exitCode = 4 }
+        $exitCode = Resolve-DiagnosticTerminalExitCode $terminal $restoration $databaseInsightsRestoration $acceptanceAdjudicated $exitCode
         $terminal.status = if ($exitCode -eq 0) { "completed" } else { "failed" }
         if ($capture.mutationStarted -eq $true) {
             $orchestrationStage = "terminal_posture"
@@ -2442,7 +3679,7 @@ finally {
                 # terminal envelope is committed. A success result therefore
                 # binds the live WAF association/rules and Redis membership at
                 # the actual terminal boundary, not merely after traffic.
-                $terminal.terminalAwsPosture = Get-AwsPosture $config
+                $terminal.terminalAwsPosture = Get-AwsPosture $config -ExpectedDatabaseInsightsMode "standard"
             }
             catch {
                 Add-TerminalFailure $terminal "terminal_aws_posture_revalidation_failed"
@@ -2460,12 +3697,13 @@ finally {
             $terminal.status = "failed"
             if ($exitCode -eq 0) { $exitCode = 2 }
         }
-        $exitCode = Resolve-DiagnosticTerminalExitCode $terminal $restoration $acceptanceAdjudicated $exitCode
+        $exitCode = Resolve-DiagnosticTerminalExitCode $terminal $restoration $databaseInsightsRestoration $acceptanceAdjudicated $exitCode
         $terminal.status = if ($exitCode -eq 0) { "completed" } else { "failed" }
         $terminal.timestamp = [DateTimeOffset]::UtcNow.ToString("o")
         Write-AtomicJson $resultPath $terminal
         Write-AtomicJson $heartbeatPath ([ordered]@{runId=$config.RunId;status=$terminal.status;timestamp=$terminal.timestamp;
-            diagnosticOnly=$true;certificationEligible=$false;scalingRestored=$restoration.restored})
+            diagnosticOnly=$true;certificationEligible=$false;scalingRestored=$restoration.restored;
+            databaseInsightsRestored=$databaseInsightsRestoration.restored})
     }
     finally {
         if ($sleepHeld) { try { Set-SleepPrevention $false } catch { } }

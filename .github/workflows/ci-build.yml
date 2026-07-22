@@ -252,6 +252,21 @@ jobs:
       - name: Waf certification-chain contract tests
         run: pwsh -NoProfile -File tests/aws-rollout-certification-chain.test.ps1
 
+      - name: Waf certification preflight contract tests
+        run: pwsh -NoProfile -File tests/aws-rollout-certification-preflight.test.ps1
+
+      - name: Database Insights monitoring lease tests
+        run: pwsh -NoProfile -File tests/database-insights-lease.test.ps1
+
+      - name: Waf certification query-identity tests
+        run: pwsh -NoProfile -File tests/aws-rollout-certification-query-identity.test.ps1
+
+      - name: Waf certification Database Insights lease binding tests
+        run: pwsh -NoProfile -File tests/aws-rollout-certification-database-insights-lease.test.ps1
+
+      - name: Waf certification deterministic PI finalizer tests
+        run: pwsh -NoProfile -File tests/aws-rollout-certification-pi-finalizer.test.ps1
+
   frontend:
     name: Frontend (Vite Build)
     runs-on: ubuntu-latest

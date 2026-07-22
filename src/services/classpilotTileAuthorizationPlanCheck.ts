@@ -1,5 +1,17 @@
 import type { SQL } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
+import {
+  ClasspilotHistoryFallbackSqlIdentityError,
+  CLASSPILOT_HISTORY_FALLBACK_QUERY_IDENTITY_VERSION,
+  createClasspilotHistoryFallbackQueryIdentifierSha256,
+  createClasspilotHistoryFallbackSchemaIdentitySha256,
+  createClasspilotHistoryFallbackSqlShapeIdentity,
+  parseClasspilotHistoryFallbackQueryIdentifier,
+  requireStableClasspilotHistoryFallbackSchemaIdentity,
+  requireStableClasspilotHistoryFallbackQueryIdentifier,
+  type ClasspilotHistoryFallbackSchemaMetadata,
+  type ClasspilotHistoryFallbackSqlShapeIdentity,
+} from "./classpilotHistoryFallbackSqlIdentity.js";
 
 export const CLASSPILOT_TILE_AUTHORIZATION_PLAN_SAMPLES = 20;
 export const CLASSPILOT_TILE_AUTHORIZATION_PLAN_WARMUPS = 2;
@@ -119,6 +131,17 @@ export type ClasspilotTileHistoryFallbackPlanSummary = {
   passed: boolean;
 };
 
+export type ClasspilotTileHistoryFallbackSqlIdentity = {
+  version: typeof CLASSPILOT_HISTORY_FALLBACK_QUERY_IDENTITY_VERSION;
+  queryIdentifier: string;
+  queryIdentifierSha256: string;
+  compiledSqlSha256: string;
+  parameterTypeSignatureSha256: string;
+  engineVersion: string;
+  schemaIdentitySha256: string;
+  trackIoTiming: true;
+};
+
 export type ClasspilotTileAuthorizationPlanReport = {
   status: "passed" | "failed";
   precheck: {
@@ -140,6 +163,7 @@ export type ClasspilotTileAuthorizationPlanReport = {
   };
   scenarios: ClasspilotTilePlanScenarioSummary[];
   historyFallback: ClasspilotTileHistoryFallbackPlanSummary;
+  historyFallbackSqlIdentity: ClasspilotTileHistoryFallbackSqlIdentity;
 };
 
 export class ClasspilotTileAuthorizationPlanCheckError extends Error {
@@ -148,7 +172,8 @@ export class ClasspilotTileAuthorizationPlanCheckError extends Error {
       | "invalid_configuration"
       | "teaching_session_school_integrity_failed"
       | "representative_scenario_missing"
-      | "invalid_explain_document",
+      | "invalid_explain_document"
+      | "history_fallback_query_identity_invalid",
     readonly labels: ClasspilotTilePlanScenarioLabel[] = [],
     readonly invalidCount = 0
   ) {
@@ -177,6 +202,42 @@ const TEACHING_SESSION_SCHOOL_PRECHECK_SQL = `
   WHERE session.school_id IS NULL
      OR class_group.id IS NULL
      OR session.school_id IS DISTINCT FROM class_group.school_id
+`;
+
+const HISTORY_FALLBACK_SCHEMA_IDENTITY_SQL = `
+  WITH resolved AS (
+    SELECT
+      to_regclass('heartbeats') AS heartbeats_relation,
+      to_regclass('heartbeats_school_device_student_timestamp_idx') AS history_index
+  )
+  SELECT
+    current_setting('server_version') AS engine_version,
+    current_database() AS database_name,
+    current_schema() AS schema_name,
+    current_setting('search_path') AS search_path,
+    current_setting('track_io_timing') AS track_io_timing,
+    resolved.heartbeats_relation::oid::text AS heartbeats_relation_oid,
+    resolved.heartbeats_relation::text AS heartbeats_relation_name,
+    (
+      SELECT string_agg(
+        concat_ws(
+          ':',
+          attribute.attnum::text,
+          attribute.attname,
+          format_type(attribute.atttypid, attribute.atttypmod),
+          attribute.attnotnull::text
+        ),
+        E'\\n' ORDER BY attribute.attnum
+      )
+      FROM pg_attribute AS attribute
+      WHERE attribute.attrelid = resolved.heartbeats_relation::oid
+        AND attribute.attnum > 0
+        AND attribute.attisdropped = false
+    ) AS heartbeats_column_signature,
+    resolved.history_index::oid::text AS history_index_oid,
+    resolved.history_index::text AS history_index_name,
+    pg_get_indexdef(resolved.history_index::oid) AS history_index_definition
+  FROM resolved
 `;
 
 function modeJoin(mode: ClasspilotTilePlanMode): string {
@@ -720,17 +781,111 @@ export function summarizeClasspilotTileHistoryFallbackPlan(
   };
 }
 
-function compileExplain(query: SQL): { text: string; params: unknown[] } {
-  const compiled = new PgDialect().sqlToQuery(query);
+type CompiledSqlQuery = { text: string; params: unknown[] };
+
+function compileExplainFromQuery(compiled: CompiledSqlQuery): CompiledSqlQuery {
   return {
-    text: `EXPLAIN (ANALYZE, BUFFERS, WAL, SETTINGS, FORMAT JSON) ${compiled.sql}`,
+    text: `EXPLAIN (ANALYZE, BUFFERS, WAL, SETTINGS, FORMAT JSON) ${compiled.text}`,
     params: compiled.params,
   };
 }
 
-function compileQuery(query: SQL): { text: string; params: unknown[] } {
+function compileExplain(query: SQL): CompiledSqlQuery {
+  return compileExplainFromQuery(compileQuery(query));
+}
+
+function compileQuery(query: SQL): CompiledSqlQuery {
   const compiled = new PgDialect().sqlToQuery(query);
   return { text: compiled.sql, params: compiled.params };
+}
+
+function compileIdentityExplain(compiled: CompiledSqlQuery): CompiledSqlQuery {
+  return {
+    text: `EXPLAIN (VERBOSE, FORMAT TEXT) ${compiled.text}`,
+    params: compiled.params,
+  };
+}
+
+function identityFailure(): never {
+  throw new ClasspilotTileAuthorizationPlanCheckError(
+    "history_fallback_query_identity_invalid"
+  );
+}
+
+function requireMetadataString(value: unknown): string {
+  if (typeof value !== "string") identityFailure();
+  return value;
+}
+
+async function readHistoryFallbackQueryIdentifier(
+  client: ClasspilotTilePlanQueryClient,
+  explain: CompiledSqlQuery
+): Promise<string> {
+  try {
+    const result = await client.query<Record<string, unknown>>(
+      explain.text,
+      explain.params
+    );
+    return parseClasspilotHistoryFallbackQueryIdentifier(result.rows);
+  } catch (error) {
+    if (error instanceof ClasspilotHistoryFallbackSqlIdentityError) {
+      identityFailure();
+    }
+    throw error;
+  }
+}
+
+async function readHistoryFallbackSchemaIdentity(
+  client: ClasspilotTilePlanQueryClient
+): Promise<{
+  engineVersion: string;
+  schemaIdentitySha256: string;
+  trackIoTiming: true;
+}> {
+  const result = await client.query<Record<string, unknown>>(
+    HISTORY_FALLBACK_SCHEMA_IDENTITY_SQL
+  );
+  if (result.rows.length !== 1) identityFailure();
+  const row = result.rows[0];
+  if (!row) identityFailure();
+  try {
+    if (row.track_io_timing !== "on") identityFailure();
+    const metadata: ClasspilotHistoryFallbackSchemaMetadata = {
+      trackIoTiming: true,
+      engineVersion: requireMetadataString(row.engine_version),
+      databaseName: requireMetadataString(row.database_name),
+      schemaName: requireMetadataString(row.schema_name),
+      searchPath: requireMetadataString(row.search_path),
+      heartbeatsRelationOid: requireMetadataString(
+        row.heartbeats_relation_oid
+      ),
+      heartbeatsRelationName: requireMetadataString(
+        row.heartbeats_relation_name
+      ),
+      heartbeatsColumnSignature: requireMetadataString(
+        row.heartbeats_column_signature
+      ),
+      historyIndexOid: requireMetadataString(row.history_index_oid),
+      historyIndexName: requireMetadataString(row.history_index_name),
+      historyIndexDefinition: requireMetadataString(
+        row.history_index_definition
+      ),
+    };
+    return {
+      engineVersion: metadata.engineVersion,
+      schemaIdentitySha256:
+        createClasspilotHistoryFallbackSchemaIdentitySha256(metadata),
+      trackIoTiming: true,
+    };
+  } catch (error) {
+    if (
+      error instanceof ClasspilotHistoryFallbackSqlIdentityError ||
+      error instanceof ClasspilotTileAuthorizationPlanCheckError
+    ) {
+      identityFailure();
+    }
+    throw error;
+  }
 }
 
 async function measureScenario(
@@ -790,13 +945,21 @@ async function measureHistoryFallback(
   buildHistoryQuery: ClasspilotTileHistoryFallbackQueryBuilder,
   scenario: DiscoveredScenario,
   samples: number
-): Promise<ClasspilotTileHistoryFallbackPlanSummary> {
+): Promise<{
+  summary: ClasspilotTileHistoryFallbackPlanSummary;
+  sqlIdentity: ClasspilotTileHistoryFallbackSqlIdentity;
+}> {
   await beginReadOnly(client);
   try {
     await client.query("SELECT set_config('app.is_super', 'off', true)");
     await client.query("SELECT set_config('app.school_id', $1, true)", [
       scenario.schoolId,
     ]);
+    // `auto` does not guarantee that EXPLAIN itself computes a query ID on a
+    // database where no query-ID consumer is active. This transaction-local
+    // override makes the non-executing identity probe deterministic without
+    // changing the instance setting or ordinary application sessions.
+    await client.query("SELECT set_config('compute_query_id', 'on', true)");
 
     const authorization = compileQuery(
       buildAuthorizationQuery(
@@ -848,13 +1011,32 @@ async function measureHistoryFallback(
       );
     }
 
-    const explain = compileExplain(
+    const compiledHistoryQuery = compileQuery(
       buildHistoryQuery(
         scenario.schoolId,
         accesses,
         CLASSPILOT_TILE_HISTORY_FALLBACK_LIMIT
       )
     );
+    let sqlShapeIdentity: ClasspilotHistoryFallbackSqlShapeIdentity;
+    try {
+      sqlShapeIdentity = createClasspilotHistoryFallbackSqlShapeIdentity(
+        compiledHistoryQuery.text,
+        compiledHistoryQuery.params
+      );
+    } catch (error) {
+      if (error instanceof ClasspilotHistoryFallbackSqlIdentityError) {
+        identityFailure();
+      }
+      throw error;
+    }
+    const schemaIdentityBefore = await readHistoryFallbackSchemaIdentity(client);
+    const identityExplain = compileIdentityExplain(compiledHistoryQuery);
+    const queryIdentifierBefore = await readHistoryFallbackQueryIdentifier(
+      client,
+      identityExplain
+    );
+    const explain = compileExplainFromQuery(compiledHistoryQuery);
     for (
       let warmup = 0;
       warmup < CLASSPILOT_TILE_AUTHORIZATION_PLAN_WARMUPS;
@@ -876,12 +1058,52 @@ async function measureHistoryFallback(
         )
       );
     }
-    await client.query("COMMIT");
-    return summarizeClasspilotTileHistoryFallbackPlan(
-      accesses.length,
-      CLASSPILOT_TILE_HISTORY_FALLBACK_LIMIT,
-      evidence
+    const queryIdentifierAfter = await readHistoryFallbackQueryIdentifier(
+      client,
+      identityExplain
     );
+    try {
+      requireStableClasspilotHistoryFallbackQueryIdentifier(
+        queryIdentifierBefore,
+        queryIdentifierAfter
+      );
+    } catch (error) {
+      if (error instanceof ClasspilotHistoryFallbackSqlIdentityError) {
+        identityFailure();
+      }
+      throw error;
+    }
+    const schemaIdentityAfter = await readHistoryFallbackSchemaIdentity(client);
+    try {
+      requireStableClasspilotHistoryFallbackSchemaIdentity(
+        schemaIdentityBefore,
+        schemaIdentityAfter
+      );
+    } catch (error) {
+      if (error instanceof ClasspilotHistoryFallbackSqlIdentityError) {
+        identityFailure();
+      }
+      throw error;
+    }
+    await client.query("COMMIT");
+    return {
+      summary: summarizeClasspilotTileHistoryFallbackPlan(
+        accesses.length,
+        CLASSPILOT_TILE_HISTORY_FALLBACK_LIMIT,
+        evidence
+      ),
+      sqlIdentity: {
+        ...sqlShapeIdentity,
+        queryIdentifier: queryIdentifierBefore,
+        queryIdentifierSha256:
+          createClasspilotHistoryFallbackQueryIdentifierSha256(
+            queryIdentifierBefore
+          ),
+        engineVersion: schemaIdentityBefore.engineVersion,
+        schemaIdentitySha256: schemaIdentityBefore.schemaIdentitySha256,
+        trackIoTiming: true,
+      },
+    };
   } catch (error) {
     await rollbackQuietly(client);
     throw error;
@@ -928,13 +1150,14 @@ export async function runClasspilotTileAuthorizationPlanCheck(options: {
       ["teacher.history"]
     );
   }
-  const historyFallback = await measureHistoryFallback(
+  const historyFallbackMeasurement = await measureHistoryFallback(
     options.client,
     options.buildQuery,
     options.buildHistoryQuery,
     historyScenario,
     samples
   );
+  const historyFallback = historyFallbackMeasurement.summary;
   return {
     status:
       scenarios.every((scenario) => scenario.passed) && historyFallback.passed
@@ -960,5 +1183,6 @@ export async function runClasspilotTileAuthorizationPlanCheck(options: {
     },
     scenarios,
     historyFallback,
+    historyFallbackSqlIdentity: historyFallbackMeasurement.sqlIdentity,
   };
 }

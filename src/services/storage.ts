@@ -1,5 +1,5 @@
 import { eq, and, desc, asc, gt, ilike, or, isNull, isNotNull, inArray, getTableColumns, sql, ne, type SQL, type SQLWrapper } from "drizzle-orm";
-import type { PgUpdateSetSource } from "drizzle-orm/pg-core";
+import { PgDialect, type PgUpdateSetSource } from "drizzle-orm/pg-core";
 import db from "../db.js";
 import { getTenantStore, rlsGucEnabled } from "../db/tenantContext.js";
 import { runWithTenantContext } from "../middleware/tenantContext.js";
@@ -9,6 +9,11 @@ import {
   registerCacheInvalidationHandler,
 } from "../realtime/cacheInvalidation.js";
 import { createLocalDateFormatter } from "../util/schoolTime.js";
+import {
+  assertClasspilotHistoryFallbackPiStatementDiscoverable,
+  createClasspilotHistoryFallbackSqlShapeIdentity,
+  type ClasspilotHistoryFallbackSqlShapeIdentity,
+} from "./classpilotHistoryFallbackSqlIdentity.js";
 import {
   users,
   schools,
@@ -3709,6 +3714,35 @@ export function buildHeartbeatTileHistoryBatchQuery(
     ) AS heartbeat
     ORDER BY requested.ordinal, heartbeat.timestamp DESC
   `;
+}
+
+const HEARTBEAT_TILE_HISTORY_BATCH_SQL_SHAPE_IDENTITY = (() => {
+  const query = buildHeartbeatTileHistoryBatchQuery(
+    "history-fallback-identity-school",
+    [{
+      studentId: "history-fallback-identity-student",
+      deviceId: "history-fallback-identity-device",
+      schoolId: "history-fallback-identity-school",
+      studentSessionId: null,
+    }],
+    10
+  );
+  const compiled = new PgDialect().sqlToQuery(query);
+  assertClasspilotHistoryFallbackPiStatementDiscoverable(compiled.sql);
+  return createClasspilotHistoryFallbackSqlShapeIdentity(
+    compiled.sql,
+    compiled.params
+  );
+})();
+
+/**
+ * Returns the identifier-safe portion of the exact production fallback SQL
+ * identity. Runtime summaries expose only these hashes; the database-derived
+ * query identifier remains confined to the guarded private receipt.
+ */
+export function getHeartbeatTileHistoryBatchSqlShapeIdentity():
+  ClasspilotHistoryFallbackSqlShapeIdentity {
+  return { ...HEARTBEAT_TILE_HISTORY_BATCH_SQL_SHAPE_IDENTITY };
 }
 
 /**

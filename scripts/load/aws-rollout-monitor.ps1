@@ -196,8 +196,12 @@ function Test-ValidIpv4Literal {
 function Get-OptionalValue {
     param($Object, [string]$Property, $Default = $null)
     if ($null -eq $Object) { return $Default }
+    if ($Object -is [Collections.IDictionary]) {
+        if ($Object.Contains($Property)) { return $Object[$Property] }
+        return $Default
+    }
     $member = $Object.PSObject.Properties[$Property]
-    if ($null -eq $member -or $null -eq $member.Value) { return $Default }
+    if ($null -eq $member) { return $Default }
     return $member.Value
 }
 
@@ -232,10 +236,24 @@ function Get-VerifiedPredecessorEvidence {
     $monitorResultPath = $predecessorPath
     $monitorResultSha256 = $expectedHash
     if ($RequireSupervisorSeal) {
-        if ([int](Get-OptionalValue $predecessorEnvelope "schemaVersion" 0) -ne 2 -or
+        $predecessorPi = Get-OptionalValue $predecessorEnvelope "historyFallbackPiEvidence"
+        if ([int](Get-OptionalValue $predecessorEnvelope "schemaVersion" 0) -ne 3 -or
             [string](Get-OptionalValue $predecessorEnvelope "type" "") -ne "certification_supervisor_terminal" -or
+            [string](Get-OptionalValue $predecessorEnvelope "linkVersion" "") -cne "history-fallback-pi-link-v2" -or
             (Get-OptionalValue $predecessorEnvelope "supervisorSealed" $false) -ne $true -or
-            [string](Get-OptionalValue $predecessorEnvelope "status" "") -ne "completed") {
+            [string](Get-OptionalValue $predecessorEnvelope "status" "") -ne "completed" -or
+            [string](Get-OptionalValue $predecessorPi "type" "") -cne "history_fallback_pi_evidence_binding" -or
+            [string](Get-OptionalValue $predecessorPi "historyFallbackPiEvidenceVersion" "") -cne "queryid-sqlstats-v1" -or
+            [string](Get-OptionalValue $predecessorPi "evidenceCollectorVersion" "") -cne "post-traffic-v2" -or
+            (Get-OptionalValue $predecessorPi "collected" $false) -ne $true -or
+            (Get-OptionalValue $predecessorPi "passed" $false) -ne $true -or
+            [string](Get-OptionalValue $predecessorPi "receiptSha256" "") -notmatch '^[0-9a-f]{64}$' -or
+            [string](Get-OptionalValue $predecessorPi "receiptPathSha256" "") -notmatch '^[0-9a-f]{64}$' -or
+            [string](Get-OptionalValue $predecessorPi "requestSha256" "") -notmatch '^[0-9a-f]{64}$' -or
+            [string](Get-OptionalValue $predecessorPi "requestPathSha256" "") -notmatch '^[0-9a-f]{64}$' -or
+            [string](Get-OptionalValue $predecessorPi "trafficWindowSha256" "") -notmatch '^[0-9a-f]{64}$' -or
+            [string](Get-OptionalValue $predecessorPi "apiRuntimeTaskDefinitionSha256" "") -notmatch '^[0-9a-f]{64}$' -or
+            (Get-OptionalValue $predecessorPi "trackIoTiming" $false) -ne $true) {
             throw "predecessorResultPath must be a supervisor-sealed terminal result; raw monitor results and historical evidence cannot seed the chain."
         }
         $terminal = Get-OptionalValue $predecessorEnvelope "terminalMonitorResult"

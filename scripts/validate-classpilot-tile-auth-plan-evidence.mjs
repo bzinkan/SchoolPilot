@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
 
 const EXPECTED_LABELS = [
@@ -14,6 +15,7 @@ const EXPECTED_LABELS = [
 const TOP_LEVEL_KEYS = [
   "cohortSize",
   "historyFallback",
+  "historyFallbackSqlIdentity",
   "precheck",
   "samples",
   "scenarios",
@@ -60,6 +62,21 @@ const HISTORY_FALLBACK_KEYS = [
   "tempWrittenBlocks",
   "windowAggNodes",
 ];
+const HISTORY_FALLBACK_SQL_IDENTITY_KEYS = [
+  "compiledSqlSha256",
+  "engineVersion",
+  "parameterTypeSignatureSha256",
+  "queryIdentifier",
+  "queryIdentifierSha256",
+  "schemaIdentitySha256",
+  "trackIoTiming",
+  "version",
+];
+const HISTORY_FALLBACK_QUERY_IDENTITY_VERSION = "history-fallback-queryid-v1";
+const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+const SIGNED_BIGINT_PATTERN = /^-?(?:0|[1-9]\d*)$/;
+const SIGNED_BIGINT_MIN = -(1n << 63n);
+const SIGNED_BIGINT_MAX = (1n << 63n) - 1n;
 
 function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -76,6 +93,26 @@ function isFiniteNonNegativeNumber(value) {
 
 function requireZero(value) {
   return value === 0;
+}
+
+function sha256(value) {
+  return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+function isValidSignedNonzeroBigint(value) {
+  if (typeof value !== "string" || !SIGNED_BIGINT_PATTERN.test(value)) return false;
+  try {
+    const parsed = BigInt(value);
+    return parsed !== 0n && parsed >= SIGNED_BIGINT_MIN &&
+      parsed <= SIGNED_BIGINT_MAX && parsed.toString(10) === value;
+  } catch {
+    return false;
+  }
+}
+
+function isSafeEngineVersion(value) {
+  return typeof value === "string" && value.length > 0 && value.length <= 128 &&
+    !/[\u0000-\u001f\u007f]/.test(value);
 }
 
 function parseReportCandidates(eventsDocument) {
@@ -165,6 +202,26 @@ export function validateClasspilotTileAuthorizationPlanEvidence(eventsDocument) 
     throw new Error("history_fallback_contract_invalid");
   }
 
+  const historyFallbackSqlIdentity = report.historyFallbackSqlIdentity;
+  if (!hasExactKeys(
+        historyFallbackSqlIdentity,
+        HISTORY_FALLBACK_SQL_IDENTITY_KEYS
+      ) ||
+      historyFallbackSqlIdentity.version !== HISTORY_FALLBACK_QUERY_IDENTITY_VERSION ||
+      !isValidSignedNonzeroBigint(historyFallbackSqlIdentity.queryIdentifier) ||
+      !SHA256_PATTERN.test(historyFallbackSqlIdentity.queryIdentifierSha256) ||
+      historyFallbackSqlIdentity.queryIdentifierSha256 !==
+        sha256(historyFallbackSqlIdentity.queryIdentifier) ||
+      !SHA256_PATTERN.test(historyFallbackSqlIdentity.compiledSqlSha256) ||
+      !SHA256_PATTERN.test(
+        historyFallbackSqlIdentity.parameterTypeSignatureSha256
+      ) ||
+      !isSafeEngineVersion(historyFallbackSqlIdentity.engineVersion) ||
+      !SHA256_PATTERN.test(historyFallbackSqlIdentity.schemaIdentitySha256) ||
+      historyFallbackSqlIdentity.trackIoTiming !== true) {
+    throw new Error("history_fallback_sql_identity_invalid");
+  }
+
   // Rebuild the record from the reviewed aggregate-only schema. This keeps
   // task/log metadata and any unexpected fields out of deploy output.
   return {
@@ -214,6 +271,35 @@ export function validateClasspilotTileAuthorizationPlanEvidence(eventsDocument) 
       perPairIndexLimit: true,
       passed: true,
     },
+    historyFallbackSqlIdentity: {
+      version: HISTORY_FALLBACK_QUERY_IDENTITY_VERSION,
+      queryIdentifierSha256:
+        historyFallbackSqlIdentity.queryIdentifierSha256,
+      compiledSqlSha256: historyFallbackSqlIdentity.compiledSqlSha256,
+      parameterTypeSignatureSha256:
+        historyFallbackSqlIdentity.parameterTypeSignatureSha256,
+      engineVersion: historyFallbackSqlIdentity.engineVersion,
+      schemaIdentitySha256: historyFallbackSqlIdentity.schemaIdentitySha256,
+      trackIoTiming: true,
+    },
+  };
+}
+
+export function extractClasspilotTileAuthorizationPlanIdentity(eventsDocument) {
+  const report = parseReportCandidates(eventsDocument);
+  // Full validation is intentionally mandatory before releasing the raw query
+  // identifier to the access-controlled receipt writer.
+  validateClasspilotTileAuthorizationPlanEvidence(eventsDocument);
+  const identity = report.historyFallbackSqlIdentity;
+  return {
+    version: identity.version,
+    queryIdentifier: identity.queryIdentifier,
+    queryIdentifierSha256: identity.queryIdentifierSha256,
+    compiledSqlSha256: identity.compiledSqlSha256,
+    parameterTypeSignatureSha256: identity.parameterTypeSignatureSha256,
+    engineVersion: identity.engineVersion,
+    schemaIdentitySha256: identity.schemaIdentitySha256,
+    trackIoTiming: identity.trackIoTiming,
   };
 }
 
