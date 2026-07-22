@@ -37,9 +37,25 @@ $historyIdentity = [ordered]@{DatabaseResourceId=$databaseResourceId;EngineVersi
 
 function Set-TestPrivateAcl {
     param([string]$Path)
-    $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-    $discarded = & icacls.exe $Path /inheritance:r /grant:r "$identity`:(F)" 2>&1
-    if ($LASTEXITCODE -ne 0) { throw "Could not apply test ACL." }
+    $current = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $item = Get-Item -LiteralPath $Path
+    $security = [IO.FileSystemAclExtensions]::GetAccessControl(
+        $item, [Security.AccessControl.AccessControlSections]::Access
+    )
+    $security.SetAccessRuleProtection($true, $false)
+    foreach ($existingRule in @($security.GetAccessRules(
+            $true, $true, [Security.Principal.SecurityIdentifier]
+        ))) {
+        [void]$security.RemoveAccessRuleSpecific($existingRule)
+    }
+    $security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+        $current.User,
+        [Security.AccessControl.FileSystemRights]::FullControl,
+        [Security.AccessControl.InheritanceFlags]::None,
+        [Security.AccessControl.PropagationFlags]::None,
+        [Security.AccessControl.AccessControlType]::Allow
+    ))
+    [IO.FileSystemAclExtensions]::SetAccessControl($item, $security)
 }
 
 function Write-TestLeaseReceipt {

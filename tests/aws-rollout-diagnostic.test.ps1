@@ -444,10 +444,82 @@ Assert-Throws { Assert-HistoryFallbackSqlIdentity ([ordered]@{
 
 function Set-TestDiagnosticPrivateAcl {
     param([string]$Path)
-    $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-    $discarded = & icacls.exe $Path /inheritance:r /grant:r "$identity`:(F)" 2>&1
-    if ($LASTEXITCODE -ne 0) { throw 'Could not apply private test ACL.' }
+    $current = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $item = Get-Item -LiteralPath $Path
+    $security = [IO.FileSystemAclExtensions]::GetAccessControl(
+        $item, [Security.AccessControl.AccessControlSections]::Access
+    )
+    $security.SetAccessRuleProtection($true, $false)
+    foreach ($existingRule in @($security.GetAccessRules(
+            $true, $true, [Security.Principal.SecurityIdentifier]
+        ))) {
+        [void]$security.RemoveAccessRuleSpecific($existingRule)
+    }
+    $security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+        $current.User,
+        [Security.AccessControl.FileSystemRights]::FullControl,
+        [Security.AccessControl.InheritanceFlags]::None,
+        [Security.AccessControl.PropagationFlags]::None,
+        [Security.AccessControl.AccessControlType]::Allow
+    ))
+    [IO.FileSystemAclExtensions]::SetAccessControl($item, $security)
 }
+
+function Set-TestDiagnosticMalformedPrivateAcl {
+    param(
+        [string]$Path,
+        [Security.AccessControl.AccessControlType]$AccessType,
+        [Security.AccessControl.FileSystemRights]$Rights,
+        [switch]$Empty
+    )
+    $current = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $item = Get-Item -LiteralPath $Path
+    $security = [IO.FileSystemAclExtensions]::GetAccessControl(
+        $item, [Security.AccessControl.AccessControlSections]::Access
+    )
+    $security.SetAccessRuleProtection($true, $false)
+    foreach ($existingRule in @($security.GetAccessRules(
+            $true, $true, [Security.Principal.SecurityIdentifier]
+        ))) {
+        [void]$security.RemoveAccessRuleSpecific($existingRule)
+    }
+    if (-not $Empty) {
+        $security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+            $current.User,
+            $Rights,
+            [Security.AccessControl.InheritanceFlags]::None,
+            [Security.AccessControl.PropagationFlags]::None,
+            $AccessType
+        ))
+    }
+    [IO.FileSystemAclExtensions]::SetAccessControl($item, $security)
+}
+
+foreach ($malformedAcl in @(
+    [ordered]@{name='empty DACL';empty=$true;type=[Security.AccessControl.AccessControlType]::Allow;rights=[Security.AccessControl.FileSystemRights]::FullControl},
+    [ordered]@{name='insufficient rights';empty=$false;type=[Security.AccessControl.AccessControlType]::Allow;rights=[Security.AccessControl.FileSystemRights]::ReadData},
+    [ordered]@{name='deny-only DACL';empty=$false;type=[Security.AccessControl.AccessControlType]::Deny;rights=[Security.AccessControl.FileSystemRights]::FullControl}
+)) {
+    $malformedAclPath = Join-Path ([IO.Path]::GetTempPath()) `
+        "schoolpilot-diagnostic-malformed-private-acl-$([Guid]::NewGuid().ToString('N')).json"
+    try {
+        [IO.File]::WriteAllText($malformedAclPath, '{}', [Text.UTF8Encoding]::new($false))
+        Set-TestDiagnosticMalformedPrivateAcl -Path $malformedAclPath -AccessType $malformedAcl.type `
+            -Rights $malformedAcl.rights -Empty:([bool]$malformedAcl.empty)
+        $malformedRejected = $false
+        try { Assert-DiagnosticPrivateFileAcl $malformedAclPath 'malformed private receipt' }
+        catch { $malformedRejected = $true }
+        Assert-Condition $malformedRejected `
+            "The diagnostic private receipt validator must reject a $($malformedAcl.name)."
+    }
+    finally {
+        if (Test-Path -LiteralPath $malformedAclPath) {
+            Set-TestDiagnosticPrivateAcl $malformedAclPath
+            Remove-Item -LiteralPath $malformedAclPath -Force
+        }
+    }
+}
+
 $queryIdentityReceiptDirectory = Join-Path ([IO.Path]::GetTempPath()) "schoolpilot-diagnostic-query-identity-$([guid]::NewGuid().ToString('N'))"
 [void](New-Item -ItemType Directory -Path $queryIdentityReceiptDirectory)
 $queryIdentityReceiptPath = Join-Path $queryIdentityReceiptDirectory 'identity.json'

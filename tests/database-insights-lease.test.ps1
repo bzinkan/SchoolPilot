@@ -487,6 +487,51 @@ $tempRoot = Join-Path ([IO.Path]::GetTempPath()) "schoolpilot-db-insights-lease-
 [void][IO.Directory]::CreateDirectory($tempRoot)
 $assertions = 0
 try {
+    foreach ($malformedAcl in @(
+        [ordered]@{name='empty DACL';empty=$true;type=[Security.AccessControl.AccessControlType]::Allow;rights=[Security.AccessControl.FileSystemRights]::FullControl},
+        [ordered]@{name='insufficient rights';empty=$false;type=[Security.AccessControl.AccessControlType]::Allow;rights=[Security.AccessControl.FileSystemRights]::ReadData},
+        [ordered]@{name='deny-only DACL';empty=$false;type=[Security.AccessControl.AccessControlType]::Deny;rights=[Security.AccessControl.FileSystemRights]::FullControl}
+    )) {
+        $malformedAclPath = Join-Path $tempRoot `
+            "malformed-private-acl-$([Guid]::NewGuid().ToString('N')).json"
+        try {
+            [IO.File]::WriteAllText($malformedAclPath, '{}', [Text.UTF8Encoding]::new($false))
+            $current = [Security.Principal.WindowsIdentity]::GetCurrent()
+            $item = Get-Item -LiteralPath $malformedAclPath
+            $security = [IO.FileSystemAclExtensions]::GetAccessControl(
+                $item, [Security.AccessControl.AccessControlSections]::Access
+            )
+            $security.SetAccessRuleProtection($true, $false)
+            foreach ($existingRule in @($security.GetAccessRules(
+                    $true, $true, [Security.Principal.SecurityIdentifier]
+                ))) {
+                [void]$security.RemoveAccessRuleSpecific($existingRule)
+            }
+            if (-not [bool]$malformedAcl.empty) {
+                $security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+                    $current.User,
+                    $malformedAcl.rights,
+                    [Security.AccessControl.InheritanceFlags]::None,
+                    [Security.AccessControl.PropagationFlags]::None,
+                    $malformedAcl.type
+                ))
+            }
+            [IO.FileSystemAclExtensions]::SetAccessControl($item, $security)
+            $malformedRejected = $false
+            try { Assert-DatabaseInsightsPrivateAcl -Path $malformedAclPath }
+            catch { $malformedRejected = $true }
+            Assert-Condition $malformedRejected `
+                "The Database Insights private ACL validator must reject a $($malformedAcl.name)."
+            $assertions++
+        }
+        finally {
+            if (Test-Path -LiteralPath $malformedAclPath) {
+                Set-DatabaseInsightsPrivateAcl -Path $malformedAclPath
+                Remove-Item -LiteralPath $malformedAclPath -Force
+            }
+        }
+    }
+
     $receiptPath = Join-Path $tempRoot "diagnostic-lease.json"
     $acquired = Invoke-DatabaseInsightsLease "Acquire" "schoolpilot-production-db" $receiptPath "" "us-east-1" `
         "135775632425" "db.t4g.medium" "diagnostic" 90 1 60

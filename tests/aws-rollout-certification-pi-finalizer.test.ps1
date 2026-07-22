@@ -17,15 +17,100 @@ function Get-TestSha256 {
 
 function Set-TestPrivateAcl {
     param([string]$Path)
-    $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-    $discarded = & icacls.exe $Path /inheritance:r /grant:r "$identity`:(F)" 2>&1
-    if ($LASTEXITCODE -ne 0) { throw "Could not apply the test private ACL." }
+    $current = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $item = Get-Item -LiteralPath $Path
+    $security = [IO.FileSystemAclExtensions]::GetAccessControl(
+        $item, [Security.AccessControl.AccessControlSections]::Access
+    )
+    $security.SetAccessRuleProtection($true, $false)
+    foreach ($existingRule in @($security.GetAccessRules(
+            $true, $true, [Security.Principal.SecurityIdentifier]
+        ))) {
+        [void]$security.RemoveAccessRuleSpecific($existingRule)
+    }
+    $security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+        $current.User,
+        [Security.AccessControl.FileSystemRights]::FullControl,
+        [Security.AccessControl.InheritanceFlags]::None,
+        [Security.AccessControl.PropagationFlags]::None,
+        [Security.AccessControl.AccessControlType]::Allow
+    ))
+    [IO.FileSystemAclExtensions]::SetAccessControl($item, $security)
+}
+
+function Add-TestExtraneousAllowAcl {
+    param([string]$Path, [switch]$Inheritable)
+    $item = Get-Item -LiteralPath $Path
+    $security = [IO.FileSystemAclExtensions]::GetAccessControl(
+        $item, [Security.AccessControl.AccessControlSections]::Access
+    )
+    $inheritance = if ($Inheritable) {
+        [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor `
+            [Security.AccessControl.InheritanceFlags]::ObjectInherit
+    }
+    else { [Security.AccessControl.InheritanceFlags]::None }
+    $security.SetAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+        [Security.Principal.SecurityIdentifier]::new('S-1-5-32-545'),
+        [Security.AccessControl.FileSystemRights]::ReadAndExecute,
+        $inheritance,
+        [Security.AccessControl.PropagationFlags]::None,
+        [Security.AccessControl.AccessControlType]::Allow
+    ))
+    [IO.FileSystemAclExtensions]::SetAccessControl($item, $security)
+}
+
+function Set-TestMalformedPrivateAcl {
+    param(
+        [string]$Path,
+        [Security.AccessControl.AccessControlType]$AccessType,
+        [Security.AccessControl.FileSystemRights]$Rights,
+        [switch]$Empty
+    )
+    $current = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $item = Get-Item -LiteralPath $Path
+    $security = [IO.FileSystemAclExtensions]::GetAccessControl(
+        $item, [Security.AccessControl.AccessControlSections]::Access
+    )
+    $security.SetAccessRuleProtection($true, $false)
+    foreach ($existingRule in @($security.GetAccessRules(
+            $true, $true, [Security.Principal.SecurityIdentifier]
+        ))) {
+        [void]$security.RemoveAccessRuleSpecific($existingRule)
+    }
+    if (-not $Empty) {
+        $security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+            $current.User,
+            $Rights,
+            [Security.AccessControl.InheritanceFlags]::None,
+            [Security.AccessControl.PropagationFlags]::None,
+            $AccessType
+        ))
+    }
+    [IO.FileSystemAclExtensions]::SetAccessControl($item, $security)
 }
 
 $modulePath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\scripts\load\history-fallback-pi-finalizer.psm1"))
 $wrapperPath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\scripts\load\finalize-history-fallback-pi-evidence.ps1"))
 $diagnosticCollectorPath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\scripts\load\start-waf800-batch-diagnostic.ps1"))
 Import-Module $modulePath -Force
+
+$aclRegressionPath = Join-Path ([IO.Path]::GetTempPath()) "schoolpilot-pi-acl-$([Guid]::NewGuid().ToString('N')).json"
+try {
+    [IO.File]::WriteAllText($aclRegressionPath, '{}', [Text.UTF8Encoding]::new($false))
+    Add-TestExtraneousAllowAcl $aclRegressionPath
+    $module = Get-Module history-fallback-pi-finalizer
+    & $module { param($Path) Set-HfPrivateAcl $Path } $aclRegressionPath
+    $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $acl = Get-Acl -LiteralPath $aclRegressionPath
+    $allowSids = @($acl.Access | Where-Object AccessControlType -eq Allow | ForEach-Object {
+        $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
+    })
+    Assert-Condition ($acl.AreAccessRulesProtected -and $allowSids.Count -eq 1 -and
+        $allowSids[0] -ceq $currentSid) 'The PI receipt ACL setter must remove every pre-existing explicit allow ACE.'
+}
+finally {
+    if (Test-Path -LiteralPath $aclRegressionPath) { Remove-Item -LiteralPath $aclRegressionPath -Force }
+}
 
 $statement = "WITH requested_tiles AS MATERIALIZED (SELECT 1) SELECT * FROM requested_tiles CROSS JOIN LATERAL (SELECT * FROM heartbeats LIMIT 10) h"
 $queryIdentifier = "-9223372036854775808"
@@ -75,6 +160,34 @@ function New-TestMetricList {
 }
 
 $assertions = 0
+
+foreach ($malformedAcl in @(
+    [ordered]@{name='empty DACL';empty=$true;type=[Security.AccessControl.AccessControlType]::Allow;rights=[Security.AccessControl.FileSystemRights]::FullControl},
+    [ordered]@{name='insufficient rights';empty=$false;type=[Security.AccessControl.AccessControlType]::Allow;rights=[Security.AccessControl.FileSystemRights]::ReadData},
+    [ordered]@{name='deny-only DACL';empty=$false;type=[Security.AccessControl.AccessControlType]::Deny;rights=[Security.AccessControl.FileSystemRights]::FullControl}
+)) {
+    $malformedAclPath = Join-Path ([IO.Path]::GetTempPath()) `
+        "schoolpilot-pi-malformed-private-acl-$([Guid]::NewGuid().ToString('N')).json"
+    try {
+        [IO.File]::WriteAllText($malformedAclPath, '{}', [Text.UTF8Encoding]::new($false))
+        Set-TestMalformedPrivateAcl -Path $malformedAclPath -AccessType $malformedAcl.type `
+            -Rights $malformedAcl.rights -Empty:([bool]$malformedAcl.empty)
+        $malformedRejected = & $module {
+            param($Path)
+            try { Assert-HfPrivateAcl $Path 'malformed private receipt'; return $false }
+            catch { return $true }
+        } $malformedAclPath
+        Assert-Condition $malformedRejected `
+            "The PI private receipt validator must reject a $($malformedAcl.name)."
+        $assertions++
+    }
+    finally {
+        if (Test-Path -LiteralPath $malformedAclPath) {
+            Set-TestPrivateAcl $malformedAclPath
+            Remove-Item -LiteralPath $malformedAclPath -Force
+        }
+    }
+}
 
 $acceptedStats = Resolve-HistoryFallbackPiSqlStatistics -Config $config -MetricList (New-TestMetricList)
 Assert-Condition ($acceptedStats.Evidence.passed -eq $true -and
@@ -580,7 +693,16 @@ try {
     $assertions++
 
     $immutablePath = Join-Path $tempRoot "immutable-receipt.json"
+    Add-TestExtraneousAllowAcl $tempRoot -Inheritable
     & $module { param($Path) Write-HfPrivateImmutableJson $Path ([ordered]@{schemaVersion=1;passed=$true}) } $immutablePath
+    $immutableAcl = Get-Acl -LiteralPath $immutablePath
+    $immutableAllowSids = @($immutableAcl.Access | Where-Object AccessControlType -eq Allow | ForEach-Object {
+        $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
+    })
+    Assert-Condition ($immutableAcl.AreAccessRulesProtected -and $immutableAllowSids.Count -eq 1 -and
+        $immutableAllowSids[0] -ceq [Security.Principal.WindowsIdentity]::GetCurrent().User.Value) `
+        "A PI finalization receipt must remain current-operator-only beneath a permissive parent."
+    $assertions++
     $immutableRejected = & $module {
         param($Path)
         try { Write-HfPrivateImmutableJson $Path ([ordered]@{schemaVersion=1;passed=$false}); return $false }
@@ -596,6 +718,20 @@ finally {
 $moduleSource = Get-Content -LiteralPath $modulePath -Raw
 $wrapperSource = Get-Content -LiteralPath $wrapperPath -Raw
 $diagnosticCollectorSource = Get-Content -LiteralPath $diagnosticCollectorPath -Raw
+$privateWriterStart = $moduleSource.IndexOf('function Write-HfPrivateImmutableJson', [StringComparison]::Ordinal)
+$privateWriterEnd = $moduleSource.IndexOf('function Assert-HfPrivateReference', $privateWriterStart, [StringComparison]::Ordinal)
+Assert-Condition ($privateWriterStart -ge 0 -and $privateWriterEnd -gt $privateWriterStart) `
+    'The PI finalizer must retain its private immutable writer.'
+$assertions++
+$privateWriterSource = $moduleSource.Substring($privateWriterStart, $privateWriterEnd - $privateWriterStart)
+$stagingAclIndex = $privateWriterSource.IndexOf('Set-HfPrivateAcl $stagingDirectory', [StringComparison]::Ordinal)
+$emptyFileIndex = $privateWriterSource.IndexOf('[IO.File]::Open(', [StringComparison]::Ordinal)
+$fileAclIndex = $privateWriterSource.IndexOf('Set-HfPrivateAcl $temporary', [StringComparison]::Ordinal)
+$sensitiveWriteIndex = $privateWriterSource.IndexOf('[IO.File]::WriteAllText', [StringComparison]::Ordinal)
+Assert-Condition ($stagingAclIndex -ge 0 -and $emptyFileIndex -gt $stagingAclIndex -and
+    $fileAclIndex -gt $emptyFileIndex -and $sensitiveWriteIndex -gt $fileAclIndex) `
+    'The PI receipt writer must protect an empty staging directory and file before writing evidence.'
+$assertions++
 foreach ($requiredToken in @(
     'db.sql_tokenized.db_id','db.sql_tokenized.stats.calls_per_sec.avg',
     'db.sql_tokenized.stats.total_time_per_sec.avg','db.sql_tokenized.stats.blk_read_time_per_sec.avg',

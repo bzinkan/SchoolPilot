@@ -223,6 +223,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.14.3
@@ -242,6 +246,9 @@ jobs:
 
       - name: State backup and recovery tests
         run: pwsh -NoProfile -File tests/terraform-state-backup.test.ps1
+
+      - name: Private load-artifact Windows ACL tests
+        run: node --test tests/private-load-artifact-acl.test.mjs
 
       - name: Rollout monitor and rollback tests
         run: pwsh -NoProfile -File tests/aws-rollout-automation.test.ps1

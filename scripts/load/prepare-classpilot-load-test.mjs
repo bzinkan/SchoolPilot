@@ -169,18 +169,82 @@ export function assertExternalPaths(
   };
 }
 
-function currentWindowsIdentity() {
-  const result = spawnSync("whoami", [], { encoding: "utf8", windowsHide: true });
-  if (result.status !== 0 || !result.stdout.trim()) throw new SafeError("Could not determine the Windows identity for output ACLs");
-  return result.stdout.trim();
+const RESTRICT_WINDOWS_ACL_SCRIPT = String.raw`
+$ErrorActionPreference = "Stop"
+$targetPath = [IO.Path]::GetFullPath([string]$env:SCHOOLPILOT_PRIVATE_ACL_TARGET)
+$expectedDirectory = [bool]::Parse([string]$env:SCHOOLPILOT_PRIVATE_ACL_DIRECTORY)
+$item = Get-Item -LiteralPath $targetPath
+if ([bool]$item.PSIsContainer -ne $expectedDirectory) {
+  throw "Private ACL target type mismatch."
 }
+
+$currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+$security = [IO.FileSystemAclExtensions]::GetAccessControl(
+  $item,
+  [Security.AccessControl.AccessControlSections]::Access
+)
+$security.SetAccessRuleProtection($true, $false)
+foreach ($existingRule in @($security.GetAccessRules(
+  $true,
+  $true,
+  [Security.Principal.SecurityIdentifier]
+))) {
+  [void]$security.RemoveAccessRuleSpecific($existingRule)
+}
+
+$inheritance = if ($expectedDirectory) {
+  [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
+    [Security.AccessControl.InheritanceFlags]::ObjectInherit
+} else {
+  [Security.AccessControl.InheritanceFlags]::None
+}
+$security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+  $currentSid,
+  [Security.AccessControl.FileSystemRights]::FullControl,
+  $inheritance,
+  [Security.AccessControl.PropagationFlags]::None,
+  [Security.AccessControl.AccessControlType]::Allow
+))
+[IO.FileSystemAclExtensions]::SetAccessControl($item, $security)
+
+$verified = [IO.FileSystemAclExtensions]::GetAccessControl(
+  $item,
+  [Security.AccessControl.AccessControlSections]::Access
+)
+$verifiedRules = @($verified.GetAccessRules(
+  $true,
+  $true,
+  [Security.Principal.SecurityIdentifier]
+))
+$fullControl = [Security.AccessControl.FileSystemRights]::FullControl
+if (-not $verified.AreAccessRulesProtected -or
+    $verifiedRules.Count -ne 1 -or
+    $verifiedRules[0].IsInherited -or
+    $verifiedRules[0].AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or
+    $verifiedRules[0].IdentityReference.Value -cne $currentSid.Value -or
+    (($verifiedRules[0].FileSystemRights -band $fullControl) -ne $fullControl) -or
+    $verifiedRules[0].InheritanceFlags -ne $inheritance -or
+    $verifiedRules[0].PropagationFlags -ne [Security.AccessControl.PropagationFlags]::None) {
+  throw "Private ACL postcondition failed."
+}
+`;
 
 function restrictAcl(target, directory) {
   if (process.platform === "win32") {
-    const grant = `${currentWindowsIdentity()}:${directory ? "(OI)(CI)F" : "F"}`;
-    const result = spawnSync("icacls", [target, "/inheritance:r", "/grant:r", grant], {
+    const result = spawnSync("pwsh.exe", [
+      "-NoLogo",
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      RESTRICT_WINDOWS_ACL_SCRIPT,
+    ], {
       encoding: "utf8",
       windowsHide: true,
+      env: {
+        ...process.env,
+        SCHOOLPILOT_PRIVATE_ACL_TARGET: target,
+        SCHOOLPILOT_PRIVATE_ACL_DIRECTORY: String(directory),
+      },
     });
     if (result.status !== 0) throw new SafeError("Could not apply a private Windows ACL to an output artifact");
     return;

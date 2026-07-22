@@ -135,15 +135,31 @@ function Assert-DatabaseInsightsPrivateAcl {
     param([string]$Path)
     if (-not $IsWindows) { throw "Database Insights lease receipts require Windows ACL support." }
     $current = [Security.Principal.WindowsIdentity]::GetCurrent()
-    $verified = Get-Acl -LiteralPath $Path
+    $isDirectory = Test-Path -LiteralPath $Path -PathType Container
+    $item = Get-Item -LiteralPath $Path
+    $verified = [IO.FileSystemAclExtensions]::GetAccessControl(
+        $item, [Security.AccessControl.AccessControlSections]::Access
+    )
     if (-not $verified.AreAccessRulesProtected) {
         throw "Could not enforce a protected private ACL on the Database Insights lease artifact."
     }
-    foreach ($rule in @($verified.Access)) {
-        if ($rule.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and
-            $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -ne $current.User.Value) {
-            throw "Database Insights lease artifacts must be readable only by the current operator."
-        }
+    $expectedInheritance = if ($isDirectory) {
+        [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor `
+            [Security.AccessControl.InheritanceFlags]::ObjectInherit
+    }
+    else { [Security.AccessControl.InheritanceFlags]::None }
+    $rules = @($verified.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+    if ($rules.Count -ne 1) {
+        throw "Database Insights lease artifacts must be readable only by the current operator."
+    }
+    $rule = $rules[0]
+    if ($rule.IsInherited -or
+        $rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or
+        $rule.IdentityReference.Value -cne $current.User.Value -or
+        $rule.FileSystemRights -ne [Security.AccessControl.FileSystemRights]::FullControl -or
+        $rule.InheritanceFlags -ne $expectedInheritance -or
+        $rule.PropagationFlags -ne [Security.AccessControl.PropagationFlags]::None) {
+        throw "Database Insights lease artifacts must have one exact current-operator FullControl rule."
     }
 }
 

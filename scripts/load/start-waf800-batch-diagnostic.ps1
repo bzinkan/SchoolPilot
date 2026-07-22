@@ -831,13 +831,21 @@ function Assert-DiagnosticPrivateFileAcl {
     param([string]$Path, [string]$Name)
     if (-not $IsWindows) { throw "$Name requires Windows ACL enforcement." }
     $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-    $acl = Get-Acl -LiteralPath $Path
+    $item = Get-Item -LiteralPath $Path
+    $acl = [IO.FileSystemAclExtensions]::GetAccessControl(
+        $item, [Security.AccessControl.AccessControlSections]::Access
+    )
     if (-not $acl.AreAccessRulesProtected) { throw "$Name must disable inherited file access." }
-    foreach ($rule in @($acl.Access)) {
-        if ($rule.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and
-            $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -ne $currentSid) {
-            throw "$Name must be readable only by the current diagnostic operator."
-        }
+    $rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+    if ($rules.Count -ne 1) { throw "$Name must be readable only by the current diagnostic operator." }
+    $rule = $rules[0]
+    if ($rule.IsInherited -or
+        $rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or
+        $rule.IdentityReference.Value -cne $currentSid -or
+        $rule.FileSystemRights -ne [Security.AccessControl.FileSystemRights]::FullControl -or
+        $rule.InheritanceFlags -ne [Security.AccessControl.InheritanceFlags]::None -or
+        $rule.PropagationFlags -ne [Security.AccessControl.PropagationFlags]::None) {
+        throw "$Name must have one exact current-operator FullControl rule."
     }
 }
 

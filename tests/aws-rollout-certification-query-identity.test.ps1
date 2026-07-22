@@ -17,7 +17,9 @@ if ($parseErrors.Count -gt 0) { throw "Unable to parse the rollout supervisor." 
 foreach ($name in @(
     "Resolve-ExternalPath", "Get-RequiredProperty", "Get-CertificationValue", "Get-CertificationSha256",
     "Get-CertificationTextSha256", "Assert-CertificationSha256", "Assert-CertificationEvidenceReference",
-    "Assert-CertificationPrivateFileAcl", "Get-CertificationHistoryFallbackQueryIdentity"
+    "Assert-CertificationPrivateFileAcl", "Set-CertificationPrivateFileAcl",
+    "Write-CertificationPrivateImmutableJson",
+    "Get-CertificationHistoryFallbackQueryIdentity"
 )) {
     $definition = $ast.Find({
         param($node)
@@ -38,9 +40,83 @@ $parameterSignatureSha = Get-CertificationTextSha256 `
 
 function Set-TestPrivateAcl {
     param([string]$Path)
-    $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-    $discarded = & icacls.exe $Path /inheritance:r /grant:r "$identity`:(F)" 2>&1
-    if ($LASTEXITCODE -ne 0) { throw "Could not apply test ACL." }
+    $current = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $item = Get-Item -LiteralPath $Path
+    $security = [IO.FileSystemAclExtensions]::GetAccessControl(
+        $item, [Security.AccessControl.AccessControlSections]::Access
+    )
+    $security.SetAccessRuleProtection($true, $false)
+    foreach ($existingRule in @($security.GetAccessRules(
+            $true, $true, [Security.Principal.SecurityIdentifier]
+        ))) {
+        [void]$security.RemoveAccessRuleSpecific($existingRule)
+    }
+    $security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+        $current.User,
+        [Security.AccessControl.FileSystemRights]::FullControl,
+        [Security.AccessControl.InheritanceFlags]::None,
+        [Security.AccessControl.PropagationFlags]::None,
+        [Security.AccessControl.AccessControlType]::Allow
+    ))
+    [IO.FileSystemAclExtensions]::SetAccessControl($item, $security)
+}
+
+function Set-TestMalformedPrivateAcl {
+    param(
+        [string]$Path,
+        [Security.AccessControl.AccessControlType]$AccessType,
+        [Security.AccessControl.FileSystemRights]$Rights,
+        [switch]$Empty
+    )
+    $current = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $item = Get-Item -LiteralPath $Path
+    $security = [IO.FileSystemAclExtensions]::GetAccessControl(
+        $item, [Security.AccessControl.AccessControlSections]::Access
+    )
+    $security.SetAccessRuleProtection($true, $false)
+    foreach ($existingRule in @($security.GetAccessRules(
+            $true, $true, [Security.Principal.SecurityIdentifier]
+        ))) {
+        [void]$security.RemoveAccessRuleSpecific($existingRule)
+    }
+    if (-not $Empty) {
+        $security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+            $current.User,
+            $Rights,
+            [Security.AccessControl.InheritanceFlags]::None,
+            [Security.AccessControl.PropagationFlags]::None,
+            $AccessType
+        ))
+    }
+    [IO.FileSystemAclExtensions]::SetAccessControl($item, $security)
+}
+
+$aclRegressionPath = Join-Path ([IO.Path]::GetTempPath()) "schoolpilot-certification-acl-$([Guid]::NewGuid().ToString('N')).json"
+try {
+    [IO.File]::WriteAllText($aclRegressionPath, '{}', [Text.UTF8Encoding]::new($false))
+    $aclItem = Get-Item -LiteralPath $aclRegressionPath
+    $seedAcl = [IO.FileSystemAclExtensions]::GetAccessControl(
+        $aclItem, [Security.AccessControl.AccessControlSections]::Access
+    )
+    $seedAcl.SetAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+        [Security.Principal.SecurityIdentifier]::new('S-1-5-32-545'),
+        [Security.AccessControl.FileSystemRights]::ReadData,
+        [Security.AccessControl.InheritanceFlags]::None,
+        [Security.AccessControl.PropagationFlags]::None,
+        [Security.AccessControl.AccessControlType]::Allow
+    ))
+    [IO.FileSystemAclExtensions]::SetAccessControl($aclItem, $seedAcl)
+    Set-CertificationPrivateFileAcl $aclRegressionPath
+    $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $acl = Get-Acl -LiteralPath $aclRegressionPath
+    $allowSids = @($acl.Access | Where-Object AccessControlType -eq Allow | ForEach-Object {
+        $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
+    })
+    Assert-Condition ($acl.AreAccessRulesProtected -and $allowSids.Count -eq 1 -and
+        $allowSids[0] -ceq $currentSid) 'The certification ACL setter must remove every pre-existing explicit allow ACE.'
+}
+finally {
+    if (Test-Path -LiteralPath $aclRegressionPath) { Remove-Item -LiteralPath $aclRegressionPath -Force }
 }
 
 function Write-TestReceipt {
@@ -71,6 +147,75 @@ $tempRoot = Join-Path ([IO.Path]::GetTempPath()) "schoolpilot-cert-queryid-$([Gu
 [void][IO.Directory]::CreateDirectory($tempRoot)
 $assertions = 0
 try {
+    $tempRootItem = Get-Item -LiteralPath $tempRoot
+    $tempRootAcl = [IO.FileSystemAclExtensions]::GetAccessControl(
+        $tempRootItem, [Security.AccessControl.AccessControlSections]::Access
+    )
+    $tempRootAcl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+        [Security.Principal.SecurityIdentifier]::new('S-1-5-32-545'),
+        [Security.AccessControl.FileSystemRights]::ReadAndExecute,
+        [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor `
+            [Security.AccessControl.InheritanceFlags]::ObjectInherit,
+        [Security.AccessControl.PropagationFlags]::None,
+        [Security.AccessControl.AccessControlType]::Allow
+    ))
+    [IO.FileSystemAclExtensions]::SetAccessControl($tempRootItem, $tempRootAcl)
+    $privateWriterPath = Join-Path $tempRoot 'private-writer.json'
+    Write-CertificationPrivateImmutableJson $privateWriterPath ([ordered]@{schemaVersion=1;private=$true})
+    $privateWriterAcl = [IO.FileSystemAclExtensions]::GetAccessControl(
+        (Get-Item -LiteralPath $privateWriterPath), [Security.AccessControl.AccessControlSections]::Access
+    )
+    $privateWriterRules = @($privateWriterAcl.GetAccessRules(
+        $true, $true, [Security.Principal.SecurityIdentifier]
+    ))
+    Assert-Condition ($privateWriterAcl.AreAccessRulesProtected -and $privateWriterRules.Count -eq 1 -and
+        $privateWriterRules[0].IdentityReference.Value -ceq [Security.Principal.WindowsIdentity]::GetCurrent().User.Value -and
+        $privateWriterRules[0].FileSystemRights -eq [Security.AccessControl.FileSystemRights]::FullControl -and
+        @(Get-ChildItem -LiteralPath $tempRoot -Directory -Filter '*.private.*').Count -eq 0) `
+        'The certification private writer must remove inherited access and clean its staging directory.'
+    $assertions++
+
+    $privateWriterDefinition = $ast.Find({
+        param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Write-CertificationPrivateImmutableJson'
+    }, $true)
+    $privateWriterSource = $privateWriterDefinition.Extent.Text
+    $stagingAclIndex = $privateWriterSource.IndexOf('Set-CertificationPrivateFileAcl $stagingDirectory', [StringComparison]::Ordinal)
+    $emptyFileIndex = $privateWriterSource.IndexOf('[IO.File]::Open(', [StringComparison]::Ordinal)
+    $fileAclIndex = $privateWriterSource.IndexOf('Set-CertificationPrivateFileAcl $temporary', [StringComparison]::Ordinal)
+    $sensitiveWriteIndex = $privateWriterSource.IndexOf('[IO.File]::WriteAllText(', [StringComparison]::Ordinal)
+    Assert-Condition ($stagingAclIndex -ge 0 -and $emptyFileIndex -gt $stagingAclIndex -and
+        $fileAclIndex -gt $emptyFileIndex -and $sensitiveWriteIndex -gt $fileAclIndex) `
+        'The certification writer must protect an empty staging directory and file before writing evidence.'
+    $assertions++
+
+    foreach ($malformedAcl in @(
+        [ordered]@{name='empty DACL';empty=$true;type=[Security.AccessControl.AccessControlType]::Allow;rights=[Security.AccessControl.FileSystemRights]::FullControl},
+        [ordered]@{name='insufficient rights';empty=$false;type=[Security.AccessControl.AccessControlType]::Allow;rights=[Security.AccessControl.FileSystemRights]::ReadData},
+        [ordered]@{name='deny-only DACL';empty=$false;type=[Security.AccessControl.AccessControlType]::Deny;rights=[Security.AccessControl.FileSystemRights]::FullControl}
+    )) {
+        $malformedAclPath = Join-Path $tempRoot `
+            "malformed-private-acl-$([Guid]::NewGuid().ToString('N')).json"
+        try {
+            [IO.File]::WriteAllText($malformedAclPath, '{}', [Text.UTF8Encoding]::new($false))
+            Set-TestMalformedPrivateAcl -Path $malformedAclPath -AccessType $malformedAcl.type `
+                -Rights $malformedAcl.rights -Empty:([bool]$malformedAcl.empty)
+            $malformedRejected = $false
+            try { Assert-CertificationPrivateFileAcl $malformedAclPath 'malformed private receipt' }
+            catch { $malformedRejected = $true }
+            Assert-Condition $malformedRejected `
+                "The private receipt validator must reject a $($malformedAcl.name)."
+            $assertions++
+        }
+        finally {
+            if (Test-Path -LiteralPath $malformedAclPath) {
+                Set-TestPrivateAcl $malformedAclPath
+                Remove-Item -LiteralPath $malformedAclPath -Force
+            }
+        }
+    }
+
     foreach ($queryIdentifier in @("9223372036854775807", "-9223372036854775808")) {
         $path = Join-Path $tempRoot "query-$([Guid]::NewGuid().ToString('N')).json"
         Write-TestReceipt $path $queryIdentifier

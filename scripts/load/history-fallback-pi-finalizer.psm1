@@ -158,22 +158,46 @@ function Assert-HfPrivateAcl {
     param([string]$Path, [string]$Name)
     if (-not $IsWindows) { throw "$Name requires Windows ACL enforcement." }
     $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-    $acl = Get-Acl -LiteralPath $Path
+    $item = Get-Item -LiteralPath $Path
+    $acl = [IO.FileSystemAclExtensions]::GetAccessControl(
+        $item, [Security.AccessControl.AccessControlSections]::Access
+    )
     if (-not $acl.AreAccessRulesProtected) { throw "$Name must disable inherited file access." }
-    foreach ($rule in @($acl.Access)) {
-        if ($rule.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and
-            $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -ne $currentSid) {
-            throw "$Name must be readable only by the current certification operator."
-        }
+    $rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+    if ($rules.Count -ne 1) { throw "$Name must be readable only by the current certification operator." }
+    $rule = $rules[0]
+    if ($rule.IsInherited -or
+        $rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or
+        $rule.IdentityReference.Value -cne $currentSid -or
+        $rule.FileSystemRights -ne [Security.AccessControl.FileSystemRights]::FullControl -or
+        $rule.InheritanceFlags -ne [Security.AccessControl.InheritanceFlags]::None -or
+        $rule.PropagationFlags -ne [Security.AccessControl.PropagationFlags]::None) {
+        throw "$Name must have one exact current-operator FullControl rule."
     }
 }
 
 function Set-HfPrivateAcl {
     param([string]$Path)
     if (-not $IsWindows) { throw "History fallback PI receipts require Windows ACL enforcement." }
-    $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-    $discarded = & icacls.exe $Path /inheritance:r /grant:r "$identity`:(F)" 2>&1
-    if ($LASTEXITCODE -ne 0) { throw "Could not apply the private history fallback PI receipt ACL." }
+    $current = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $item = Get-Item -LiteralPath $Path
+    $security = [IO.FileSystemAclExtensions]::GetAccessControl(
+        $item, [Security.AccessControl.AccessControlSections]::Access
+    )
+    $security.SetAccessRuleProtection($true, $false)
+    foreach ($existingRule in @($security.GetAccessRules(
+            $true, $true, [Security.Principal.SecurityIdentifier]
+        ))) {
+        [void]$security.RemoveAccessRuleSpecific($existingRule)
+    }
+    $security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+        $current.User,
+        [Security.AccessControl.FileSystemRights]::FullControl,
+        [Security.AccessControl.InheritanceFlags]::None,
+        [Security.AccessControl.PropagationFlags]::None,
+        [Security.AccessControl.AccessControlType]::Allow
+    ))
+    [IO.FileSystemAclExtensions]::SetAccessControl($item, $security)
     Assert-HfPrivateAcl $Path "historyFallbackPiEvidenceReceipt"
 }
 
@@ -182,15 +206,29 @@ function Write-HfPrivateImmutableJson {
     if (Test-Path -LiteralPath $Path) {
         throw "The immutable history fallback PI evidence receipt already exists; use a fresh path."
     }
-    $temporary = "$Path.tmp.$([Guid]::NewGuid().ToString('N'))"
+    $parent = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($Path))
+    $stagingDirectory = Join-Path $parent `
+        ".$([IO.Path]::GetFileName($Path)).private.$([Guid]::NewGuid().ToString('N'))"
+    $temporary = Join-Path $stagingDirectory "payload.json"
     try {
-        [IO.File]::WriteAllText($temporary, ($Value | ConvertTo-Json -Depth 60), [Text.UTF8Encoding]::new($false))
+        # Protect an empty staging directory and file before materializing any
+        # private evidence beneath a potentially permissive caller-owned parent.
+        [void](New-Item -ItemType Directory -Path $stagingDirectory)
+        Set-HfPrivateAcl $stagingDirectory
+        $empty = [IO.File]::Open(
+            $temporary, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None
+        )
+        $empty.Dispose()
         Set-HfPrivateAcl $temporary
+        [IO.File]::WriteAllText($temporary, ($Value | ConvertTo-Json -Depth 60), [Text.UTF8Encoding]::new($false))
         [IO.File]::Move($temporary, $Path)
         Assert-HfPrivateAcl $Path "historyFallbackPiEvidenceReceipt"
     }
     finally {
         if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force }
+        if (Test-Path -LiteralPath $stagingDirectory -PathType Container) {
+            Remove-Item -LiteralPath $stagingDirectory -Force
+        }
     }
 }
 
