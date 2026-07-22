@@ -883,6 +883,27 @@ That proof must end with the exact guard removed, no active matching Automation,
 an empty DLQ, and the alarm healthy. Remediation approval does not authorize a
 new diagnostic or certification workload.
 
+The subsequent no-traffic proof under release
+`e12f833628200af2a9f1487f5e140744a2ecf547` is also historical-only for
+readiness. The application remained healthy and recovery restored the exact
+Standard/seven-day posture, but the ordinary manual restore wrapper decoded
+the nested Scheduler target without `ConvertFrom-Json -DateKind String`.
+On an Eastern-time operator host that changed an immutable `+00:00`
+`ExpiresAtUtc` member to `-04:00`, so the SSM guard correctly rejected the
+drifted invocation. Do not reuse the release-bound smoke receipt, image
+digest, query receipt, task revisions, or
+`medium-pi-restore-e12f833-20260722T151353Z` readiness packet.
+
+All PowerShell JSON ingress under `scripts/load` must preserve date-shaped
+scalars as strings and run on PowerShell 7.5 or newer. The AST conformance test
+must reject every `ConvertFrom-Json` command that lacks the literal
+`-DateKind String` argument or lives in a file with an older runtime floor.
+SSM restore parameters must already be nonempty strings; casting a decoded
+`DateTime` back to text is not acceptable. A new release must complete one
+fresh no-traffic Standard/7 -> Advanced/465 -> Standard/7 proof through the
+ordinary receipt-bound wrapper before any fixture preparation or workload is
+separately approved.
+
 The acquisition preflight reads the live Scheduler group, numeric SSM document
 and content hash, both role trusts and complete permission sets, SQS encryption
 and empty-queue posture, EventBridge failure rule, and CloudWatch alarm. It

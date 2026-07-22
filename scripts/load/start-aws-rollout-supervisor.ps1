@@ -151,7 +151,7 @@ function Read-AtomicJson {
             finally { $reader.Dispose() }
         }
         finally { $stream.Dispose() }
-        return $text | ConvertFrom-Json -Depth $Depth
+        return $text | ConvertFrom-Json -DateKind String -Depth $Depth
     }
 }
 
@@ -253,7 +253,7 @@ function Invoke-StaticMonitorValidation {
     New-Item -ItemType Directory -Path $EvidenceDirectory -Force | Out-Null
     $staticPath = Join-Path $EvidenceDirectory "$runId-static-monitor-config.json"
     if (Test-Path -LiteralPath $staticPath) { throw "Static validation artifact already exists: $staticPath" }
-    $staticConfig = ($Config | ConvertTo-Json -Depth 40 | ConvertFrom-Json -Depth 40)
+    $staticConfig = ($Config | ConvertTo-Json -Depth 40 | ConvertFrom-Json -DateKind String -Depth 40)
     if ($SupervisionKind -eq "Load") {
         $self = Get-Process -Id $PID
         $staticConfig | Add-Member -NotePropertyName artifactsNotBeforeUtc -NotePropertyValue ([DateTimeOffset]::UtcNow.ToString("o")) -Force
@@ -302,7 +302,7 @@ function Invoke-HarnessConfigurationPreflight {
     # The production harness emits its preflight contract as pretty-printed
     # JSON. PowerShell returns each stdout line as a separate array element, so
     # parse the complete document instead of only its closing line.
-    try { $result = (($raw -join [Environment]::NewLine).Trim() | ConvertFrom-Json -Depth 20 -NoEnumerate) }
+    try { $result = (($raw -join [Environment]::NewLine).Trim() | ConvertFrom-Json -DateKind String -Depth 20 -NoEnumerate) }
     catch { throw "The load harness --validate-config preflight did not return valid JSON." }
     if ($result -is [Array] -or $result -isnot [pscustomobject]) {
         throw "The load harness --validate-config preflight must return exactly one JSON object."
@@ -597,7 +597,7 @@ function Get-CertificationHistoryFallbackQueryIdentity {
         (Get-RequiredProperty $Certification "historyFallbackQueryIdentity") `
         "certification.historyFallbackQueryIdentity"
     Assert-CertificationPrivateFileAcl $reference.path "certification.historyFallbackQueryIdentity"
-    try { $receipt = Get-Content -LiteralPath $reference.path -Raw | ConvertFrom-Json -Depth 30 }
+    try { $receipt = Get-Content -LiteralPath $reference.path -Raw | ConvertFrom-Json -DateKind String -Depth 30 }
     catch { throw "The history fallback query-identity receipt must contain valid JSON." }
 
     $version = [string](Get-CertificationValue $receipt "identityVersion" "")
@@ -674,7 +674,7 @@ function Get-CertificationDatabaseInsightsLease {
         sha256 = [string](Get-RequiredProperty $leaseConfig "receiptSha256")
     }) "databaseInsightsLease"
     Assert-CertificationPrivateFileAcl $reference.path "databaseInsightsLease.receipt"
-    try { $receipt = Get-Content -LiteralPath $reference.path -Raw | ConvertFrom-Json -Depth 40 }
+    try { $receipt = Get-Content -LiteralPath $reference.path -Raw | ConvertFrom-Json -DateKind String -Depth 40 }
     catch { throw "The Database Insights monitoring lease receipt must contain valid JSON." }
 
     $capturedAt = [DateTimeOffset]::MinValue
@@ -1024,7 +1024,7 @@ function Invoke-CertificationDatabaseInsightsLeaseCommand {
     if ($LASTEXITCODE -ne 0) {
         throw "The certification Database Insights lease $Mode operation failed; provider output was discarded."
     }
-    try { $result = (($output | Out-String).Trim() | ConvertFrom-Json -Depth 40) }
+    try { $result = (($output | Out-String).Trim() | ConvertFrom-Json -DateKind String -Depth 40) }
     catch { throw "The certification Database Insights lease helper returned malformed JSON." }
     return Assert-CertificationDatabaseInsightsLeaseCommandResult $result $Contract $Mode
 }
@@ -1104,7 +1104,7 @@ function Get-CertificationCoherentTrafficWindow {
     }
     $events = @()
     foreach ($line in @($progressText -split "\r?\n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })) {
-        try { $events += ,($line | ConvertFrom-Json -Depth 40) }
+        try { $events += ,($line | ConvertFrom-Json -DateKind String -Depth 40) }
         catch { throw "The load progress journal contains malformed committed JSON." }
     }
     $starts = @($events | Where-Object {
@@ -1124,7 +1124,7 @@ function Get-CertificationCoherentTrafficWindow {
     try {
         $start = ([DateTimeOffset]([string](Get-CertificationValue $starts[0] "timestamp" ""))).ToUniversalTime()
         $final = ([DateTimeOffset]([string](Get-CertificationValue $finals[0] "timestamp" ""))).ToUniversalTime()
-        $summary = Get-Content -LiteralPath $SummaryPath -Raw | ConvertFrom-Json -Depth 60
+        $summary = Get-Content -LiteralPath $SummaryPath -Raw | ConvertFrom-Json -DateKind String -Depth 60
     }
     catch { throw "The committed load timing evidence is malformed." }
     $run = Get-CertificationValue $summary "run"
@@ -1943,7 +1943,7 @@ function Invoke-CertificationHistoryFallbackPiFinalizer {
         -ExpectedRequestSha256 $requestSha -OutputPath $ReceiptPath 2>$null
     $exitCode = $LASTEXITCODE
     $reference = $null
-    try { $reference = (($rawReference | Out-String).Trim() | ConvertFrom-Json -Depth 30) }
+    try { $reference = (($rawReference | Out-String).Trim() | ConvertFrom-Json -DateKind String -Depth 30) }
     catch {
         if ($exitCode -eq 0) { throw "The history-fallback PI finalizer returned malformed evidence." }
     }
@@ -2195,11 +2195,11 @@ function Assert-CertificationHarnessArtifactContract {
     param($ArtifactBindings, [string]$Name)
     $byKind = @{}
     foreach ($binding in @($ArtifactBindings)) { $byKind[[string]$binding.kind] = $binding }
-    try { $devices = @(Get-Content -LiteralPath $byKind["device-manifest"].path -Raw | ConvertFrom-Json -Depth 30) }
+    try { $devices = @(Get-Content -LiteralPath $byKind["device-manifest"].path -Raw | ConvertFrom-Json -DateKind String -Depth 30) }
     catch { throw "$Name device manifest must contain valid JSON." }
-    try { $auth = Get-Content -LiteralPath $byKind["teacher-auth"].path -Raw | ConvertFrom-Json -Depth 40 }
+    try { $auth = Get-Content -LiteralPath $byKind["teacher-auth"].path -Raw | ConvertFrom-Json -DateKind String -Depth 40 }
     catch { throw "$Name teacher-auth artifact must contain valid JSON." }
-    try { $commands = @(Get-Content -LiteralPath $byKind["command-bodies"].path -Raw | ConvertFrom-Json -Depth 30) }
+    try { $commands = @(Get-Content -LiteralPath $byKind["command-bodies"].path -Raw | ConvertFrom-Json -DateKind String -Depth 30) }
     catch { throw "$Name command-bodies artifact must contain valid JSON." }
 
     $primarySchoolId = [string](Get-CertificationValue $auth "schoolId" "")
@@ -2362,9 +2362,9 @@ function Get-CertificationContract {
     if ($BindHarnessArtifacts) {
         Assert-CertificationHarnessArtifactEnvironment $artifactReferences
     }
-    try { $stateJson = Get-Content -LiteralPath $state.path -Raw | ConvertFrom-Json -Depth 30 }
+    try { $stateJson = Get-Content -LiteralPath $state.path -Raw | ConvertFrom-Json -DateKind String -Depth 30 }
     catch { throw "fixture.state must contain valid JSON." }
-    try { $verificationJson = Get-Content -LiteralPath $verification.path -Raw | ConvertFrom-Json -Depth 30 }
+    try { $verificationJson = Get-Content -LiteralPath $verification.path -Raw | ConvertFrom-Json -DateKind String -Depth 30 }
     catch { throw "fixture.verification must contain valid JSON." }
     Assert-CertificationFixtureVerificationContract $verificationJson
     $expectedTimezone = [string](Get-RequiredProperty $fixture "expectedTimezone")
@@ -2395,7 +2395,7 @@ function Get-CertificationContract {
 
     $schemaCompatibility = Assert-CertificationEvidenceReference `
         (Get-RequiredProperty $certification "rollbackSchemaCompatibilityEvidence") "rollbackSchemaCompatibilityEvidence"
-    try { $compatibilityJson = Get-Content -LiteralPath $schemaCompatibility.path -Raw | ConvertFrom-Json -Depth 20 }
+    try { $compatibilityJson = Get-Content -LiteralPath $schemaCompatibility.path -Raw | ConvertFrom-Json -DateKind String -Depth 20 }
     catch { throw "Rollback schema compatibility evidence must contain valid JSON." }
     $rollbackApiSha = Assert-CertificationGitSha ([string](Get-RequiredProperty $certification "rollbackApiGitSha")) "rollbackApiGitSha"
     $rollbackWorkerSha = Assert-CertificationGitSha ([string](Get-RequiredProperty $certification "rollbackWorkerGitSha")) "rollbackWorkerGitSha"
@@ -2434,7 +2434,7 @@ function Get-CertificationContract {
         if (Test-Path -LiteralPath $predecessorPath -PathType Leaf) {
             $prohibitedHashes += Get-CertificationSha256 $predecessorPath
             try {
-                $predecessorEnvelope = Get-Content -LiteralPath $predecessorPath -Raw | ConvertFrom-Json -Depth 60
+                $predecessorEnvelope = Get-Content -LiteralPath $predecessorPath -Raw | ConvertFrom-Json -DateKind String -Depth 60
                 foreach ($name in @("chainRoot","stageAttestation","terminalMonitorResult")) {
                     $nested = Get-CertificationValue $predecessorEnvelope $name
                     if ($null -ne $nested) {
@@ -2479,7 +2479,7 @@ function Get-CertificationContract {
     if ($capacityTrack -eq "rds-resized") {
         $budgetAcknowledgement = Assert-CertificationEvidenceReference `
             (Get-RequiredProperty $certification "budgetAcknowledgement") "certification.budgetAcknowledgement"
-        try { $budgetJson = Get-Content -LiteralPath $budgetAcknowledgement.path -Raw | ConvertFrom-Json -Depth 30 }
+        try { $budgetJson = Get-Content -LiteralPath $budgetAcknowledgement.path -Raw | ConvertFrom-Json -DateKind String -Depth 30 }
         catch { throw "Certification budget acknowledgement must contain valid JSON." }
         $budgetAcknowledgedAt = Assert-CertificationFreshTimestamp `
             ([string]$budgetJson.acknowledgedAtUtc) "Budget acknowledgement acknowledgedAtUtc"
@@ -2499,9 +2499,9 @@ function Get-CertificationContract {
         $priceBinding = Assert-CertificationEvidenceReference $budgetJson.awsPriceEvidence "budgetAcknowledgement.awsPriceEvidence"
         $projectionBinding = Assert-CertificationEvidenceReference $budgetJson.costExplorerProjectionEvidence "budgetAcknowledgement.costExplorerProjectionEvidence"
         $snapshotBinding = Assert-CertificationEvidenceReference $budgetJson.manualSnapshotEvidence "budgetAcknowledgement.manualSnapshotEvidence"
-        try { $priceJson=Get-Content -LiteralPath $priceBinding.path -Raw|ConvertFrom-Json -Depth 30 } catch { throw "AWS price evidence must be valid JSON." }
-        try { $projectionJson=Get-Content -LiteralPath $projectionBinding.path -Raw|ConvertFrom-Json -Depth 30 } catch { throw "Cost Explorer projection evidence must be valid JSON." }
-        try { $snapshotJson=Get-Content -LiteralPath $snapshotBinding.path -Raw|ConvertFrom-Json -Depth 30 } catch { throw "Manual RDS snapshot evidence must be valid JSON." }
+        try { $priceJson=Get-Content -LiteralPath $priceBinding.path -Raw|ConvertFrom-Json -DateKind String -Depth 30 } catch { throw "AWS price evidence must be valid JSON." }
+        try { $projectionJson=Get-Content -LiteralPath $projectionBinding.path -Raw|ConvertFrom-Json -DateKind String -Depth 30 } catch { throw "Cost Explorer projection evidence must be valid JSON." }
+        try { $snapshotJson=Get-Content -LiteralPath $snapshotBinding.path -Raw|ConvertFrom-Json -DateKind String -Depth 30 } catch { throw "Manual RDS snapshot evidence must be valid JSON." }
         [void](Assert-CertificationFreshTimestamp $priceJson.observedAtUtc "AWS price evidence observedAtUtc")
         [void](Assert-CertificationFreshTimestamp $projectionJson.generatedAtUtc "Cost Explorer projection generatedAtUtc")
         $snapshotObservedAt=Assert-CertificationFreshTimestamp $snapshotJson.observedAtUtc "Manual RDS snapshot evidence observedAtUtc"
@@ -2551,7 +2551,7 @@ function Invoke-CertificationAwsJson {
     param([string[]]$Arguments)
     $raw = & aws @Arguments --output json 2>&1
     if ($LASTEXITCODE -ne 0) { throw "Certification AWS preflight failed for $($Arguments[0]) $($Arguments[1])." }
-    return (($raw | Out-String).Trim() | ConvertFrom-Json -Depth 60)
+    return (($raw | Out-String).Trim() | ConvertFrom-Json -DateKind String -Depth 60)
 }
 
 function Get-CertificationTrackIoTimingPreflight {
@@ -2878,7 +2878,7 @@ function Assert-CertificationRollbackConfigBinding {
     param($Config, $Contract)
     if ($null -eq $Contract) { return }
     $rollbackPath = Resolve-ExternalPath -Path ([string](Get-RequiredProperty $Config "rollbackConfigPath")) -Name "rollbackConfigPath"
-    try { $rollback = Get-Content -LiteralPath $rollbackPath -Raw | ConvertFrom-Json -Depth 40 }
+    try { $rollback = Get-Content -LiteralPath $rollbackPath -Raw | ConvertFrom-Json -DateKind String -Depth 40 }
     catch { throw "Certification rollbackConfigPath must contain valid JSON." }
     if ([string](Get-CertificationValue $rollback "previousApiTaskDefinition" "") -ne $Contract.RollbackApiArn -or
         [string](Get-CertificationValue $rollback "previousWorkerTaskDefinition" "") -ne $Contract.RollbackWorkerArn) {
@@ -3008,8 +3008,8 @@ function Assert-CertificationFixtureAttestation {
     $verificationBinding=Assert-CertificationEvidenceReference (Get-RequiredProperty $Fixture "verification") "$Name.verification"
     $artifacts=@(Get-CertificationHarnessArtifactBindings (Get-RequiredProperty $Fixture "artifacts") "$Name.artifacts")
     Assert-CertificationHarnessArtifactContract $artifacts "$Name.artifacts"
-    try{$state=Get-Content -LiteralPath $stateBinding.path -Raw|ConvertFrom-Json -Depth 60}catch{throw "$Name.state must contain valid JSON."}
-    try{$verification=Get-Content -LiteralPath $verificationBinding.path -Raw|ConvertFrom-Json -Depth 60}catch{throw "$Name.verification must contain valid JSON."}
+    try{$state=Get-Content -LiteralPath $stateBinding.path -Raw|ConvertFrom-Json -DateKind String -Depth 60}catch{throw "$Name.state must contain valid JSON."}
+    try{$verification=Get-Content -LiteralPath $verificationBinding.path -Raw|ConvertFrom-Json -DateKind String -Depth 60}catch{throw "$Name.verification must contain valid JSON."}
     Assert-CertificationFixtureVerificationContract $verification
     $fixtureId=[string](Get-RequiredProperty $Fixture "fixtureId")
     if([int]$state.schemaVersion -ne 1 -or [int]$verification.schemaVersion -ne 1 -or
@@ -3064,8 +3064,8 @@ function Use-CertificationValidationReceipt {
         if (-not (Test-Path -LiteralPath $ReceiptPath -PathType Leaf) -or -not (Test-Path -LiteralPath $SealPath -PathType Leaf)) {
             throw "Run requires the fresh one-use receipt produced by Mode Validate."
         }
-        $receipt = Get-Content -LiteralPath $ReceiptPath -Raw | ConvertFrom-Json -Depth 60
-        $seal = Get-Content -LiteralPath $SealPath -Raw | ConvertFrom-Json -Depth 20
+        $receipt = Get-Content -LiteralPath $ReceiptPath -Raw | ConvertFrom-Json -DateKind String -Depth 60
+        $seal = Get-Content -LiteralPath $SealPath -Raw | ConvertFrom-Json -DateKind String -Depth 20
         $lifetime = Assert-CertificationReceiptLifetime $receipt ([DateTimeOffset]::UtcNow) -RequireUnexpired
         [void](Assert-CertificationPreflightContract $receipt.preflight $Contract $lifetime.issuedAtUtc "validationReceipt.preflight")
         $receiptRollback = Assert-CertificationEvidenceReference $receipt.rollbackConfig "validationReceipt.rollbackConfig"
@@ -3123,7 +3123,7 @@ function Get-CertificationChainRootBinding {
     }
     $rootReference = Get-RequiredProperty $Contract.Raw "chainRoot"
     $binding = Assert-CertificationEvidenceReference $rootReference "certification.chainRoot"
-    $rootJson = Get-Content -LiteralPath $binding.path -Raw | ConvertFrom-Json -Depth 60
+    $rootJson = Get-Content -LiteralPath $binding.path -Raw | ConvertFrom-Json -DateKind String -Depth 60
     if ([string]$rootJson.type -ne "certification_chain_root" -or [string]$rootJson.chainId -ne $Contract.ChainId -or
         [string]$rootJson.capacityTrack -ne $Contract.CapacityTrack -or
         [string]$rootJson.workloadSchemaVersion -cne $Contract.WorkloadSchemaVersion -or
@@ -3144,7 +3144,7 @@ function Assert-CertificationConsumedReceiptAttestation {
     if(-not $receiptBinding.path.EndsWith(".consumed",[StringComparison]::Ordinal)){
         throw "$Name validation receipt must reference the atomically consumed .consumed artifact."
     }
-    try{$receipt=Get-Content -LiteralPath $receiptBinding.path -Raw|ConvertFrom-Json -Depth 60}catch{throw "$Name validation receipt must contain valid JSON."}
+    try{$receipt=Get-Content -LiteralPath $receiptBinding.path -Raw|ConvertFrom-Json -DateKind String -Depth 60}catch{throw "$Name validation receipt must contain valid JSON."}
     $lifetime=Assert-CertificationReceiptLifetime $receipt $AttestedAt
     [void](Assert-CertificationPreflightContract $receipt.preflight $Contract $lifetime.issuedAtUtc "$Name.validationReceipt.preflight")
     $receiptRollback=Assert-CertificationEvidenceReference $receipt.rollbackConfig "$Name.validationReceipt.rollbackConfig"
@@ -3334,7 +3334,7 @@ function Assert-CertificationChainContinuity {
         return
     }
     $rootBinding = Assert-CertificationEvidenceReference (Get-RequiredProperty $Contract.Raw "chainRoot") "certification.chainRoot"
-    $root = Get-Content -LiteralPath $rootBinding.path -Raw | ConvertFrom-Json -Depth 60
+    $root = Get-Content -LiteralPath $rootBinding.path -Raw | ConvertFrom-Json -DateKind String -Depth 60
     if ([int]$root.schemaVersion -ne 1 -or [string]$root.type -ne "certification_chain_root" -or
         [string]$root.chainId -ne $Contract.ChainId -or [string]$root.runId -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$' -or
         [string]$root.phase -ne "Waf" -or [string]$root.stage -ne "500" -or [string]$root.supervisionKind -ne "Load" -or
@@ -3357,7 +3357,7 @@ function Assert-CertificationChainContinuity {
     $predecessorPath = Resolve-ExternalPath -Path ([string](Get-RequiredProperty $Config "predecessorResultPath")) -Name "predecessorResultPath"
     $predecessorSha = Assert-CertificationSha256 ([string](Get-RequiredProperty $Config "predecessorResultSha256")) "predecessorResultSha256"
     if ((Get-CertificationSha256 $predecessorPath) -ne $predecessorSha) { throw "Predecessor supervisor result was tampered with." }
-    $envelope = Get-Content -LiteralPath $predecessorPath -Raw | ConvertFrom-Json -Depth 60
+    $envelope = Get-Content -LiteralPath $predecessorPath -Raw | ConvertFrom-Json -DateKind String -Depth 60
     $predecessorLeaseRestoration = Get-CertificationValue $envelope "databaseInsightsRestoration"
     if ([int]$envelope.schemaVersion -ne 3 -or [string]$envelope.type -ne "certification_supervisor_terminal" -or
         [string](Get-CertificationValue $envelope "linkVersion" "") -cne $script:RequiredHistoryFallbackPiLinkVersion -or
@@ -3400,8 +3400,8 @@ function Assert-CertificationChainContinuity {
         $predecessorPiReceipt.TrafficWindowSha256
     ) -join "`n")
     if ([string]$envelope.linkSha256 -ne (Get-CertificationTextSha256 $linkInput)) { throw "Predecessor supervisor link seal is invalid." }
-    $attestation = Get-Content -LiteralPath $envelopeStage.path -Raw | ConvertFrom-Json -Depth 60
-    $monitor = Get-Content -LiteralPath $terminal.path -Raw | ConvertFrom-Json -Depth 60
+    $attestation = Get-Content -LiteralPath $envelopeStage.path -Raw | ConvertFrom-Json -DateKind String -Depth 60
+    $monitor = Get-Content -LiteralPath $terminal.path -Raw | ConvertFrom-Json -DateKind String -Depth 60
     if ([int]$attestation.schemaVersion -ne 1 -or [string]$attestation.type -ne "certification_stage_attestation" -or [string]$attestation.runId -ne [string]$envelope.runId -or
         [string]$attestation.chainId -ne $Contract.ChainId -or [string]$attestation.phase -ne [string]$envelope.phase -or
         [string](Get-CertificationValue $attestation "stage" "") -ne [string](Get-CertificationValue $envelope "stage" "") -or
@@ -3498,7 +3498,7 @@ function Assert-CertificationActualWaf800Window {
 }
 
 $resolvedConfigPath = Resolve-ExternalPath -Path $ConfigPath -Name "ConfigPath"
-try { $config = Get-Content -LiteralPath $resolvedConfigPath -Raw | ConvertFrom-Json -Depth 40 }
+try { $config = Get-Content -LiteralPath $resolvedConfigPath -Raw | ConvertFrom-Json -DateKind String -Depth 40 }
 catch { throw "ConfigPath must contain valid JSON." }
 $script:OperatorConfigSha256 = Get-CertificationSha256 $resolvedConfigPath
 $runId = [string](Get-RequiredProperty $config "runId")
@@ -4032,7 +4032,7 @@ try {
         throw (New-CertificationTerminalFailureException "monitor_terminal_missing" "monitor_terminal" `
             "The monitor exited successfully without a terminal monitor result.")
     }
-    $terminalMonitor = Get-Content -LiteralPath $monitorResultPath -Raw | ConvertFrom-Json -Depth 60
+    $terminalMonitor = Get-Content -LiteralPath $monitorResultPath -Raw | ConvertFrom-Json -DateKind String -Depth 60
     if ([string]$terminalMonitor.runId -ne $runId -or [string]$terminalMonitor.phase -ne [string]$config.phase -or
         [string]$terminalMonitor.status -ne "completed" -or $terminalMonitor.postureAccepted -ne $true -or
         $terminalMonitor.acceptance.passed -ne $true -or
@@ -4182,7 +4182,7 @@ catch {
     $terminalMonitorForFailure = $null
     if (Test-Path -LiteralPath $monitorResultPath -PathType Leaf) {
         try {
-            $terminalMonitorForFailure = Get-Content -LiteralPath $monitorResultPath -Raw | ConvertFrom-Json -Depth 60
+            $terminalMonitorForFailure = Get-Content -LiteralPath $monitorResultPath -Raw | ConvertFrom-Json -DateKind String -Depth 60
             if ([string](Get-CertificationValue $terminalMonitorForFailure "runId" "") -cne $runId -or
                 [string](Get-CertificationValue $terminalMonitorForFailure "phase" "") -cne [string]$config.phase -or
                 [string](Get-CertificationValue $terminalMonitorForFailure "status" "") -notin @("completed","failed")) {

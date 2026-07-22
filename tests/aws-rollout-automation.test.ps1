@@ -1,3 +1,5 @@
+#requires -Version 7.5
+
 [CmdletBinding()]
 param([switch]$AtomicJsonRaceOnly)
 
@@ -144,6 +146,76 @@ Assert-Condition ($rollbackScriptSource -match '(?m)^\s*Application\s*=\s*3600\s
 Assert-Condition ($rollbackScriptSource -notmatch 'services-stable') "Rollback automation must not use the fixed AWS ECS services-stable waiter."
 Assert-Condition ($rollbackScriptSource -match 'singleton-one-replacement-slot') "Singleton API rollback must declare its bounded availability-preserving replacement mode."
 Assert-Condition ((Get-Content -LiteralPath $albModule -Raw) -match '(?m)^\s*deregistration_delay\s*=\s*300\s*$') "The API target group must explicitly declare the current 300-second drain."
+
+$monitorTokens = $null
+$monitorParseErrors = $null
+$monitorAst = [Management.Automation.Language.Parser]::ParseFile(
+    $monitorScript, [ref]$monitorTokens, [ref]$monitorParseErrors
+)
+Assert-Condition ($monitorParseErrors.Count -eq 0) "The rollout monitor must parse before JSON-boundary regressions."
+foreach ($functionName in @("Get-AtomicJsonMutexName", "Invoke-WithAtomicJsonMutex", "Read-AtomicJson")) {
+    $definition = $monitorAst.Find({
+        param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $functionName
+    }, $true)
+    Assert-Condition ($null -ne $definition) "The rollout monitor must define $functionName."
+    Invoke-Expression $definition.Extent.Text
+}
+$monitorJsonBoundaryPath = Join-Path ([IO.Path]::GetTempPath()) "schoolpilot-monitor-datekind-$([Guid]::NewGuid().ToString('N')).json"
+try {
+    [IO.File]::WriteAllText($monitorJsonBoundaryPath,
+        '{"timestamp":"2026-07-22T15:58:03.1234567Z","nested":{"expiresAtUtc":"2026-07-22T15:58:03.7654321+00:00","operatorOffset":"2026-07-22T11:58:03.1111111-04:00"}}',
+        [Text.UTF8Encoding]::new($false))
+    $monitorJsonBoundary = Read-AtomicJson -Path $monitorJsonBoundaryPath -Depth 10
+    Assert-Condition ($monitorJsonBoundary.timestamp -is [string] -and
+        $monitorJsonBoundary.nested.expiresAtUtc -is [string] -and
+        $monitorJsonBoundary.nested.operatorOffset -is [string] -and
+        $monitorJsonBoundary.timestamp -ceq '2026-07-22T15:58:03.1234567Z' -and
+        $monitorJsonBoundary.nested.expiresAtUtc -ceq '2026-07-22T15:58:03.7654321+00:00' -and
+        $monitorJsonBoundary.nested.operatorOffset -ceq '2026-07-22T11:58:03.1111111-04:00') `
+        "The rollout monitor atomic JSON boundary must preserve timestamp types, offsets, and seven-digit precision."
+}
+finally {
+    Remove-Item -LiteralPath $monitorJsonBoundaryPath -Force -ErrorAction SilentlyContinue
+}
+
+$rollbackTokens = $null
+$rollbackParseErrors = $null
+$rollbackAst = [Management.Automation.Language.Parser]::ParseFile(
+    $rollbackScript, [ref]$rollbackTokens, [ref]$rollbackParseErrors
+)
+Assert-Condition ($rollbackParseErrors.Count -eq 0) "The rollback controller must parse before JSON-clone regressions."
+foreach ($functionName in @("ConvertTo-CanonicalValue", "Get-TaskCloneContractJson")) {
+    $definition = $rollbackAst.Find({
+        param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $functionName
+    }, $true)
+    Assert-Condition ($null -ne $definition) "The rollback controller must define $functionName."
+    Invoke-Expression $definition.Extent.Text
+}
+$rollbackCloneSource = [pscustomobject]@{
+    taskRoleArn = "arn:aws:iam::135775632425:role/task"
+    executionRoleArn = "arn:aws:iam::135775632425:role/execution"
+    networkMode = "awsvpc"
+    containerDefinitions = @([pscustomobject]@{
+        name = "api"
+        memory = 2048
+        image = "example.invalid/api@sha256:$('a' * 64)"
+        environment = @(
+            [pscustomobject]@{name="LEASE_EXPIRES_AT";value="2026-07-22T15:58:03.7654321+00:00"},
+            [pscustomobject]@{name="OPERATOR_OFFSET";value="2026-07-22T11:58:03.1111111-04:00"}
+        )
+    })
+}
+$rollbackCloneContract = Get-TaskCloneContractJson -TaskDefinition $rollbackCloneSource -ApiContainerName "api" |
+    ConvertFrom-Json -DateKind String -Depth 30
+$rollbackCloneEnvironment = @($rollbackCloneContract.containerDefinitions[0].environment)
+Assert-Condition ($rollbackCloneEnvironment[0].value -is [string] -and
+    $rollbackCloneEnvironment[1].value -is [string] -and
+    $rollbackCloneEnvironment[0].value -ceq '2026-07-22T15:58:03.7654321+00:00' -and
+    $rollbackCloneEnvironment[1].value -ceq '2026-07-22T11:58:03.1111111-04:00') `
+    "Rollback task-definition deep cloning must not coerce or rewrite timestamp-shaped environment values."
+
 $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("schoolpilot-rollout-test-" + [Guid]::NewGuid().ToString("N"))
 $evidenceDirectory = Join-Path $tempRoot "evidence"
 $global:SchoolPilotTestAwsCalls = [System.Collections.Generic.List[string]]::new()

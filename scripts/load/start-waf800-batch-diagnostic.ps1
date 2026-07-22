@@ -255,7 +255,7 @@ function Read-AtomicJson {
             finally { $reader.Dispose() }
         }
         finally { $stream.Dispose() }
-        return $text | ConvertFrom-Json -Depth 50
+        return $text | ConvertFrom-Json -DateKind String -Depth 50
     }
 }
 
@@ -705,7 +705,7 @@ function Read-DiagnosticConfiguration {
     $expectedHash = Assert-Sha256 $ExpectedConfigSha256 "ExpectedConfigSha256"
     $actualHash = (Get-FileHash -LiteralPath $configPath -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($actualHash -cne $expectedHash) { throw "Bound diagnostic config SHA-256 validation failed." }
-    try { $raw = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json -Depth 50 }
+    try { $raw = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json -DateKind String -Depth 50 }
     catch { throw "ConfigPath must contain valid JSON." }
     if ([int](Get-Value $raw "schemaVersion" 0) -ne 1 -or (Get-Value $raw "diagnosticOnly" $false) -ne $true) {
         throw "The diagnostic config must declare schemaVersion=1 and diagnosticOnly=true."
@@ -885,7 +885,7 @@ function Read-HistoryFallbackQueryIdentityReceipt {
         throw "The history fallback query-identity receipt changed after its hash was recorded."
     }
     Assert-DiagnosticPrivateFileAcl $path "historyFallbackQueryIdentity"
-    try { $receipt = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json -Depth 30 }
+    try { $receipt = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json -DateKind String -Depth 30 }
     catch { throw "The history fallback query-identity receipt must contain valid JSON." }
     if ([int](Get-Value $receipt "schemaVersion" 0) -ne 1 -or
         [string](Get-Value $receipt "type" "") -cne "history_fallback_query_identity_receipt") {
@@ -921,7 +921,7 @@ function Assert-DatabaseInsightsLeaseBinding {
     if ((Get-FileHash -LiteralPath $receiptPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $receiptSha256) {
         throw "The Database Insights lease receipt hash does not match its config binding."
     }
-    try { $receipt = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json -Depth 40 }
+    try { $receipt = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json -DateKind String -Depth 40 }
     catch { throw "The Database Insights lease receipt is malformed." }
     $durableGuard = Get-Value $receipt "durableRestoreGuard" $null
     if ([int](Get-Value $receipt "schemaVersion" 0) -ne 3 -or
@@ -1060,7 +1060,7 @@ function Invoke-DatabaseInsightsLeaseController {
     if ($leaseExitCode -ne 0) {
         throw "Database Insights lease $LeaseMode failed; provider output was discarded."
     }
-    try { $result = (($output -join "`n") | ConvertFrom-Json -Depth 40) }
+    try { $result = (($output -join "`n") | ConvertFrom-Json -DateKind String -Depth 40) }
     catch { throw "Database Insights lease $LeaseMode returned malformed JSON." }
     $expectedState = if ($LeaseMode -ceq "Validate") { "active_validated" } else { "restored" }
     $expectedDurableState = if ($LeaseMode -ceq "Validate") { "armed" } else { "removed" }
@@ -1269,7 +1269,7 @@ function Invoke-HarnessPreflight {
         [IO.File]::WriteAllText($stdout, $stdoutText, [Text.UTF8Encoding]::new($false))
         [IO.File]::WriteAllText($stderr, $stderrText, [Text.UTF8Encoding]::new($false))
     }
-    try { $receipt = $stdoutText | ConvertFrom-Json -Depth 30 }
+    try { $receipt = $stdoutText | ConvertFrom-Json -DateKind String -Depth 30 }
     catch { throw "The diagnostic harness preflight receipt was invalid." }
     if ($receipt.ok -ne $true -or $receipt.trafficStarted -ne $false -or $receipt.diagnosticOnly -ne $true -or
         $receipt.certificationEligible -ne $false -or [int]$receipt.launchContract.totalSockets -ne 810 -or
@@ -1881,7 +1881,7 @@ function Get-ObservedTrafficWindow {
     }
     try {
         $records = @(Get-Content -LiteralPath $ProgressPath | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
-            ForEach-Object { $_ | ConvertFrom-Json -Depth 20 })
+            ForEach-Object { $_ | ConvertFrom-Json -DateKind String -Depth 20 })
         $summary = Read-AtomicJson $SummaryPath
     }
     catch { throw "Observed traffic-window evidence is malformed." }
@@ -2649,7 +2649,7 @@ function Get-HotPathFallbackEvidenceWindows {
             -not $stream.StartsWith($binding.ApiStreamPrefix, [StringComparison]::Ordinal)) {
             throw "CloudWatch Logs returned out-of-scope hot-path summary evidence."
         }
-        try { $payload = $message | ConvertFrom-Json -Depth 20 }
+        try { $payload = $message | ConvertFrom-Json -DateKind String -Depth 20 }
         catch { throw "CloudWatch Logs returned malformed hot-path summary evidence." }
         if ([string](Get-Value $payload "event" "") -cne $script:HotPathSummaryEvent -or
             [int](Get-Value $payload "intervalSeconds" -1) -ne $script:HotPathSummaryIntervalSeconds) {
@@ -3227,7 +3227,7 @@ function Set-TerminalEvidenceIntegrity {
 function New-MonitorConfiguration {
     param($Config, [string]$ProgressPath, [string]$SummaryPath, [string]$GeneratorIpPath,
         [string]$CoordinatorHeartbeatPath, $Harness, [DateTimeOffset]$LaunchedAt)
-    $resources = $Config.Resources | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30
+    $resources = $Config.Resources | ConvertTo-Json -Depth 30 | ConvertFrom-Json -DateKind String -Depth 30
     return [ordered]@{
         schemaVersion=1;runId=$Config.RunId;phase="Waf";diagnosticOnly=$true;evidenceDirectory=$Config.EvidenceDirectory
         loadProgressPath=$ProgressPath;loadSummaryPath=$SummaryPath;expectedGeneratorPublicIp=$Config.ExpectedGeneratorPublicIp

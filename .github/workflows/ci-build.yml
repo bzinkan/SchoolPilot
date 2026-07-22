@@ -232,6 +232,25 @@ jobs:
           terraform_version: 1.14.3
           terraform_wrapper: false
 
+      - name: Configure non-UTC rollout test timezone
+        shell: pwsh
+        run: |
+          Set-TimeZone -Id "Eastern Standard Time"
+          $zone = [TimeZoneInfo]::Local
+          $offset = $zone.GetUtcOffset([DateTimeOffset]::Now)
+          if ($zone.Id -ne "Eastern Standard Time" -or $offset -eq [TimeSpan]::Zero) {
+            throw "Rollout tests require Eastern Standard Time with a nonzero UTC offset."
+          }
+          Write-Output "Rollout test timezone: $($zone.Id), UTC offset: $offset"
+
+      - name: PowerShell JSON date-kind conformance
+        shell: pwsh
+        run: |
+          if ($PSVersionTable.PSVersion -lt [Version]"7.5") {
+            throw "PowerShell 7.5 or newer is required; found $($PSVersionTable.PSVersion)."
+          }
+          pwsh -NoProfile -File tests/powershell-json-datekind-conformance.test.ps1
+
       - name: Terraform formatting
         run: terraform fmt -check -recursive infra
 
@@ -252,6 +271,15 @@ jobs:
 
       - name: Rollout monitor and rollback tests
         run: pwsh -NoProfile -File tests/aws-rollout-automation.test.ps1
+
+      - name: Rollout plan-validator tests
+        run: pwsh -NoProfile -File tests/aws-rollout-plan-validator.test.ps1
+
+      - name: Rollout classification tests
+        run: pwsh -NoProfile -File tests/aws-rollout-classification.test.ps1
+
+      - name: RDS capacity-gate tests
+        run: pwsh -NoProfile -File tests/aws-rollout-rds-capacity-gates.test.ps1
 
       - name: Waf/800 diagnostic-only contract tests
         run: pwsh -NoProfile -File tests/aws-rollout-diagnostic.test.ps1

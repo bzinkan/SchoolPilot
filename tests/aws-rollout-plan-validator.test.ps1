@@ -1,3 +1,5 @@
+#requires -Version 7.5
+
 [CmdletBinding()]
 param()
 
@@ -60,6 +62,30 @@ try {
     $badPublicRejected=$false
     try { & $validator -Phase PublicEcs -PlanPath $badPublic -PlanSha256 (Get-Sha $badPublic) -PublicSubnetEvidencePath $subnetEvidencePath -PublicSubnetEvidenceSha256 (Get-Sha $subnetEvidencePath)|Out-Null } catch { $badPublicRejected=$_.Exception.Message -match "unreviewed fields" }
     Assert-Condition $badPublicRejected "PublicEcs must reject desired-count drift hidden inside the right action/address count."
+
+    $timestampLikeBefore=[pscustomobject]@{
+        name="service";cluster="cluster";desired_count=1
+        task_definition="2026-07-22T15:58:03+00:00"
+        network_configuration=@([pscustomobject]@{assign_public_ip=$false;security_groups=@("sg-1");subnets=@("subnet-11","subnet-22")})
+    }
+    $timestampLikeAfter=[pscustomobject]@{
+        name="service";cluster="cluster";desired_count=1
+        task_definition="2026-07-22T15:58:03.0000000+00:00"
+        network_configuration=@([pscustomobject]@{assign_public_ip=$true;security_groups=@("sg-1");subnets=@("subnet-a1","subnet-b2")})
+    }
+    $timestampLikePlan=Register-Plan "public-timestamp-string-drift" @(
+        (New-Change "module.ecs.aws_ecs_service.api" @("update") $timestampLikeBefore $timestampLikeAfter),
+        (New-Change "module.ecs.aws_ecs_service.worker" @("update") $serviceBase $servicePublic),
+        (New-Change "module.alb.aws_lb.main" @("no-op") ([pscustomobject]@{subnets=@("subnet-a1","subnet-b2")}) ([pscustomobject]@{subnets=@("subnet-a1","subnet-b2")}))
+    )
+    $timestampLikeDriftRejected=$false
+    try {
+        & $validator -Phase PublicEcs -PlanPath $timestampLikePlan -PlanSha256 (Get-Sha $timestampLikePlan) `
+            -PublicSubnetEvidencePath $subnetEvidencePath -PublicSubnetEvidenceSha256 (Get-Sha $subnetEvidencePath) | Out-Null
+    }
+    catch { $timestampLikeDriftRejected=$_.Exception.Message -match "unreviewed fields" }
+    Assert-Condition $timestampLikeDriftRejected `
+        "Terraform JSON ingestion must preserve lexically distinct timestamp-shaped strings instead of normalizing them into an equal DateTime value."
 
     $natAddresses=@(
         "module.vpc.aws_eip.nat[0]","module.vpc.aws_eip.nat[1]",

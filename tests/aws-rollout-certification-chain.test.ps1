@@ -1,4 +1,4 @@
-#requires -Version 7.0
+#requires -Version 7.5
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -968,6 +968,24 @@ try {
     $assertions++
 
     $failedRunObservedNow = [DateTimeOffset]::Parse("2026-07-18T03:40:20.3511840Z")
+    $stringPreservedFixture = '{"verifiedAt":"2026-07-18T03:40:04.6012345Z","state":{"generatedAt":"2026-07-11T21:37:04.7291234+00:00","refreshedAt":"2026-07-18T03:39:11.5407654+00:00"},"operatorOffset":"2026-07-17T23:40:04.6012345-04:00"}' |
+        ConvertFrom-Json -DateKind String -Depth 10
+    Assert-Condition ($stringPreservedFixture.verifiedAt -is [string] -and
+        $stringPreservedFixture.state.generatedAt -is [string] -and
+        $stringPreservedFixture.state.refreshedAt -is [string] -and
+        $stringPreservedFixture.operatorOffset -is [string] -and
+        $stringPreservedFixture.verifiedAt -ceq '2026-07-18T03:40:04.6012345Z' -and
+        $stringPreservedFixture.state.generatedAt -ceq '2026-07-11T21:37:04.7291234+00:00' -and
+        $stringPreservedFixture.state.refreshedAt -ceq '2026-07-18T03:39:11.5407654+00:00' -and
+        $stringPreservedFixture.operatorOffset -ceq '2026-07-17T23:40:04.6012345-04:00') `
+        "Certification JSON ingress must preserve timestamp strings, explicit offsets, and seven-digit fractional precision."
+    $assertions++
+    $stringPreservedVerifiedAt = Assert-CertificationFixtureVerificationTimestamp `
+        $stringPreservedFixture.verifiedAt 60 $failedRunObservedNow "Fixture verification verifiedAt"
+    Assert-Condition ($stringPreservedVerifiedAt.ToString('o') -ceq '2026-07-18T03:40:04.6012345+00:00') `
+        "Certification must parse a preserved UTC timestamp explicitly without losing fractional precision."
+    $assertions++
+
     $convertedVerification = '{"verifiedAt":"2026-07-18T03:40:04.601Z"}' | ConvertFrom-Json
     Assert-Condition ($convertedVerification.verifiedAt -is [DateTime]) `
         "The regression must exercise PowerShell ConvertFrom-Json automatic DateTime conversion."

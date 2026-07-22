@@ -1,4 +1,4 @@
-#requires -Version 7.0
+#requires -Version 7.5
 
 [CmdletBinding()]
 param(
@@ -228,7 +228,7 @@ function Invoke-DatabaseInsightsAwsJson {
         $output = $stdoutTask.GetAwaiter().GetResult()
         [void]$stderrTask.GetAwaiter().GetResult()
         if ($process.ExitCode -ne 0) { throw "$operation failed; provider output was discarded." }
-        try { return ($output | ConvertFrom-Json -Depth 60) }
+        try { return ($output | ConvertFrom-Json -DateKind String -Depth 60) }
         catch { throw "AWS returned malformed JSON for the Database Insights lease request." }
     }
     finally { $process.Dispose() }
@@ -417,7 +417,7 @@ function Assert-DatabaseInsightsPreservedMonitoringPostureEnvelope {
     }
     finally { $document.Dispose() }
 
-    try { $parsed = $Json | ConvertFrom-Json -Depth 10 -AsHashtable }
+    try { $parsed = $Json | ConvertFrom-Json -DateKind String -Depth 10 -AsHashtable }
     catch { throw "The preserved RDS monitoring posture envelope is malformed." }
     $canonicalPosture = Get-DatabaseInsightsPreservedMonitoringPosture $parsed
     $canonicalJson = ConvertTo-Json -InputObject $canonicalPosture -Depth 10 -Compress
@@ -601,7 +601,7 @@ function Get-DatabaseInsightsDurableRestoreGuardBinding {
             "--document-version", $automationDocumentVersion, "--document-format", "JSON"
         )
         $automationDocumentContent = [string](Get-DatabaseInsightsValue $documentResponse "Content" "")
-        try { [void]($automationDocumentContent | ConvertFrom-Json -Depth 60) }
+        try { [void]($automationDocumentContent | ConvertFrom-Json -DateKind String -Depth 60) }
         catch { throw "The durable Database Insights restoration Automation document content is malformed." }
         if ([string](Get-DatabaseInsightsValue $documentResponse "Name" "") -cne $automationDocumentName -or
             [string](Get-DatabaseInsightsValue $documentResponse "DocumentVersion" "") -cne $automationDocumentVersion -or
@@ -999,7 +999,7 @@ function Assert-DatabaseInsightsDurableRestoreInfrastructure {
         "ssm", "get-document", "--region", $region, "--name", $automationDocumentName,
         "--document-version", [string]$Binding.automationDocumentVersion, "--document-format", "JSON"
     )
-    try { $document = [string](Get-DatabaseInsightsValue $documentResponse "Content" "") | ConvertFrom-Json -Depth 60 }
+    try { $document = [string](Get-DatabaseInsightsValue $documentResponse "Content" "") | ConvertFrom-Json -DateKind String -Depth 60 }
     catch { throw "The durable Database Insights restoration Automation document content is malformed." }
     $expectedRestoreScriptPath = Join-Path $script:DatabaseInsightsRepositoryRoot `
         "infra/modules/database-insights-lease-watchdog/restore_exact_monitoring_posture.py"
@@ -1193,7 +1193,7 @@ function Assert-DatabaseInsightsDurableRestoreInfrastructure {
     $ruleResponse = Invoke-DatabaseInsightsAwsJson @(
         "events", "describe-rule", "--region", $region, "--name", $expectedAutomationFailureRuleName
     )
-    try { $rulePattern = [string](Get-DatabaseInsightsValue $ruleResponse "EventPattern" "") | ConvertFrom-Json -Depth 20 }
+    try { $rulePattern = [string](Get-DatabaseInsightsValue $ruleResponse "EventPattern" "") | ConvertFrom-Json -DateKind String -Depth 20 }
     catch { throw "The durable Database Insights restoration failure rule pattern is malformed." }
     $ruleDetail = Get-DatabaseInsightsValue $rulePattern "detail"
     if ([string](Get-DatabaseInsightsValue $ruleResponse "Arn" "") -cne $automationFailureRuleArn -or
@@ -1249,7 +1249,7 @@ function Assert-DatabaseInsightsDurableRestoreInfrastructure {
         [int](Get-DatabaseInsightsValue $queueAttributes "ApproximateNumberOfMessagesDelayed" -1) -ne 0) {
         throw "The durable Database Insights restore DLQ is unencrypted, nonempty, short-retained, or identity-drifted."
     }
-    try { $queuePolicy = [string](Get-DatabaseInsightsValue $queueAttributes "Policy" "") | ConvertFrom-Json -Depth 30 }
+    try { $queuePolicy = [string](Get-DatabaseInsightsValue $queueAttributes "Policy" "") | ConvertFrom-Json -DateKind String -Depth 30 }
     catch { throw "The durable Database Insights restore DLQ policy is malformed." }
     $queueStatements = @(Get-DatabaseInsightsValue $queuePolicy "Statement" @())
     $tlsStatements = @($queueStatements | Where-Object {
@@ -1450,7 +1450,11 @@ function Get-DatabaseInsightsActiveRestoreAutomations {
 
 function Read-DatabaseInsightsBoundRestoreTargetInput {
     param($Binding)
-    try { $targetInput = [string]$Binding.targetInput | ConvertFrom-Json -Depth 30 -AsHashtable }
+    $targetInputText = Get-DatabaseInsightsValue $Binding "targetInput" $null
+    if ($targetInputText -isnot [string] -or [string]::IsNullOrWhiteSpace($targetInputText)) {
+        throw "The bound durable restore Automation target input is malformed."
+    }
+    try { $targetInput = $targetInputText | ConvertFrom-Json -DateKind String -Depth 30 -AsHashtable }
     catch { throw "The bound durable restore Automation target input is malformed." }
     if (-not (Test-DatabaseInsightsExactStrings (Get-DatabaseInsightsObjectPropertyNames $targetInput) `
             @("DocumentName", "DocumentVersion", "Parameters")) -or
@@ -1469,24 +1473,47 @@ function Read-DatabaseInsightsBoundRestoreTargetInput {
         "RestoreScheduleGroupName", "AutomationDocumentContentSha256", "LeaseIdSha256",
         "ExpiresAtUtc", "RestoreMode"
     )
-    if ($null -eq $parameters -or
+    if ($parameters -isnot [Collections.IDictionary] -or
         -not (Test-DatabaseInsightsExactStrings `
             (Get-DatabaseInsightsObjectPropertyNames $parameters) $expectedParameterNames)) {
         throw "The bound durable restore Automation target parameter contract is malformed."
     }
     foreach ($parameterName in $expectedParameterNames) {
-        $values = @(Get-DatabaseInsightsValue $parameters $parameterName @())
-        if ($values.Count -ne 1 -or [string]::IsNullOrWhiteSpace([string]$values[0])) {
+        $values = $parameters[$parameterName]
+        if ($values -isnot [Array] -or $values.Count -ne 1 -or
+            $values[0] -isnot [string] -or [string]::IsNullOrWhiteSpace($values[0])) {
             throw "The bound durable restore Automation target has a missing, empty, or ambiguous parameter."
         }
     }
-    if ([string]@($parameters.PreservedMonitoringPostureEncodingVersion)[0] -cne `
+    if ([string]$parameters["PreservedMonitoringPostureEncodingVersion"][0] -cne `
             $script:DatabaseInsightsPreservedMonitoringPostureEncodingVersion) {
         throw "The bound durable restore Automation target has an unsupported posture encoding."
     }
     [void](Assert-DatabaseInsightsPreservedMonitoringPostureEnvelope `
-        ([string]@($parameters.ExpectedPreservedMonitoringPostureJson)[0]) `
-        ([string]@($parameters.ExpectedPreservedMonitoringPostureSha256)[0]))
+        ([string]$parameters["ExpectedPreservedMonitoringPostureJson"][0]) `
+        ([string]$parameters["ExpectedPreservedMonitoringPostureSha256"][0]))
+
+    $bindingExpiration = Get-DatabaseInsightsValue $Binding "expiresAtUtc" $null
+    $bindingScheduleStart = Get-DatabaseInsightsValue $Binding "scheduleStartAtUtc" $null
+    $parsedExpiration = [DateTimeOffset]::MinValue
+    if ($bindingExpiration -isnot [string] -or $bindingScheduleStart -isnot [string] -or
+        -not [DateTimeOffset]::TryParseExact(
+            $bindingExpiration, "o", [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::None, [ref]$parsedExpiration
+        ) -or $parsedExpiration.Offset -ne [TimeSpan]::Zero -or
+        $parsedExpiration.ToString("o", [Globalization.CultureInfo]::InvariantCulture) -cne $bindingExpiration -or
+        $bindingScheduleStart -cne $bindingExpiration -or
+        [string]$parameters["ExpiresAtUtc"][0] -cne $bindingExpiration) {
+        throw "The bound durable restore Automation target expiration is not the immutable canonical UTC value."
+    }
+
+    $observedBindingSha256 = Get-DatabaseInsightsValue $Binding "bindingSha256" $null
+    if ($observedBindingSha256 -isnot [string] -or
+        (Assert-DatabaseInsightsSha256 $observedBindingSha256 `
+            "The durable Database Insights restore guard binding hash") -cne
+        (Get-DatabaseInsightsDurableRestoreGuardBindingSha256 $Binding)) {
+        throw "The bound durable restore Automation target does not match its immutable binding hash."
+    }
     return $targetInput
 }
 
@@ -1519,19 +1546,47 @@ function Start-DatabaseInsightsBoundRestoreAutomation {
     param($Binding)
     $targetInput = Read-DatabaseInsightsBoundRestoreTargetInput $Binding
     $parameters = Get-DatabaseInsightsValue $targetInput "Parameters"
-    $restoreMode = @(Get-DatabaseInsightsValue $parameters "RestoreMode" @())
-    if ($null -eq $parameters -or $restoreMode.Count -ne 1 -or [string]$restoreMode[0] -cne "scheduled") {
+    $restoreMode = $parameters["RestoreMode"]
+    if ($parameters -isnot [Collections.IDictionary] -or $restoreMode -isnot [Array] -or
+        $restoreMode.Count -ne 1 -or $restoreMode[0] -isnot [string] -or
+        [string]$restoreMode[0] -cne "scheduled") {
         throw "The bound durable restore Automation target omitted its scheduled generation mode."
     }
     $manualParameters = [ordered]@{}
     foreach ($parameterName in @(Get-DatabaseInsightsObjectPropertyNames $parameters)) {
-        $values = @(Get-DatabaseInsightsValue $parameters $parameterName @())
-        if ($values.Count -ne 1 -or [string]::IsNullOrWhiteSpace([string]$values[0])) {
+        $values = $parameters[$parameterName]
+        if ($values -isnot [Array] -or $values.Count -ne 1 -or
+            $values[0] -isnot [string] -or [string]::IsNullOrWhiteSpace($values[0])) {
             throw "The bound durable restore Automation target has a missing, empty, or ambiguous parameter."
         }
-        $manualParameters[$parameterName] = @([string]$values[0])
+        $manualParameters[$parameterName] = @($values[0])
     }
     $manualParameters["RestoreMode"] = @("manual")
+
+    if (-not (Test-DatabaseInsightsExactStrings `
+            (Get-DatabaseInsightsObjectPropertyNames $manualParameters) `
+            (Get-DatabaseInsightsObjectPropertyNames $parameters))) {
+        throw "The manual durable restore Automation parameter contract drifted from its scheduled binding."
+    }
+    foreach ($parameterName in @(Get-DatabaseInsightsObjectPropertyNames $parameters)) {
+        $scheduledValues = $parameters[$parameterName]
+        $manualValues = $manualParameters[$parameterName]
+        if ($manualValues -isnot [Array] -or $manualValues.Count -ne 1 -or
+            $manualValues[0] -isnot [string] -or
+            ($parameterName -ceq "RestoreMode" -and
+                ($scheduledValues[0] -cne "scheduled" -or $manualValues[0] -cne "manual")) -or
+            ($parameterName -cne "RestoreMode" -and
+                $manualValues[0] -cne $scheduledValues[0])) {
+            throw "The manual durable restore Automation parameters drifted from the scheduled target."
+        }
+    }
+    $observedBindingSha256 = Get-DatabaseInsightsValue $Binding "bindingSha256" $null
+    if ($observedBindingSha256 -isnot [string] -or
+        (Assert-DatabaseInsightsSha256 $observedBindingSha256 `
+            "The durable Database Insights restore guard binding hash") -cne
+        (Get-DatabaseInsightsDurableRestoreGuardBindingSha256 $Binding)) {
+        throw "The manual durable restore Automation parameters do not match the immutable binding hash."
+    }
     $response = Invoke-DatabaseInsightsAwsJson @(
         "ssm", "start-automation-execution", "--region", [string]$Binding.region,
         "--document-name", [string]$Binding.automationDocumentName,
@@ -1760,7 +1815,7 @@ function Read-DatabaseInsightsLeaseReceipt {
     $expected = Assert-DatabaseInsightsSha256 $ExpectedSha256 "ExpectedReceiptSha256"
     if ((Get-DatabaseInsightsFileSha256 $Path) -cne $expected) { throw "The Database Insights lease receipt was changed after capture." }
     Assert-DatabaseInsightsPrivateAcl -Path $Path
-    try { $receipt = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -Depth 40 }
+    try { $receipt = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -DateKind String -Depth 40 }
     catch { throw "The Database Insights lease receipt is malformed." }
     if ([int](Get-DatabaseInsightsValue $receipt "schemaVersion" 0) -ne 3 -or
         [string](Get-DatabaseInsightsValue $receipt "type" "") -cne "database_insights_monitoring_lease" -or
@@ -1794,7 +1849,7 @@ function Read-DatabaseInsightsLeaseStatus {
         throw "The Database Insights lease status journal is missing."
     }
     Assert-DatabaseInsightsPrivateAcl -Path $StatusPath
-    try { $status = Get-Content -LiteralPath $StatusPath -Raw | ConvertFrom-Json -Depth 40 }
+    try { $status = Get-Content -LiteralPath $StatusPath -Raw | ConvertFrom-Json -DateKind String -Depth 40 }
     catch { throw "The Database Insights lease status journal is malformed." }
     if ([int](Get-DatabaseInsightsValue $status "schemaVersion" 0) -ne 1 -or
         [string](Get-DatabaseInsightsValue $status "type" "") -cne "database_insights_monitoring_lease_status" -or
@@ -1873,7 +1928,7 @@ function Read-DatabaseInsightsWatchdogHeartbeat {
         throw "The bounded Database Insights lease watchdog heartbeat is missing."
     }
     Assert-DatabaseInsightsPrivateAcl -Path $WatchdogPath
-    try { $heartbeat = Get-Content -LiteralPath $WatchdogPath -Raw | ConvertFrom-Json -Depth 20 }
+    try { $heartbeat = Get-Content -LiteralPath $WatchdogPath -Raw | ConvertFrom-Json -DateKind String -Depth 20 }
     catch { throw "The bounded Database Insights lease watchdog heartbeat is malformed." }
     $observedAt = [DateTimeOffset]::MinValue
     $heartbeatExpiresAt = [DateTimeOffset]::MinValue

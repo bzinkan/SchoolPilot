@@ -1,4 +1,4 @@
-#requires -Version 7.0
+#requires -Version 7.5
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -447,6 +447,26 @@ Assert-Condition ($decodedPiAwsJson.AlignedStartTime -is [string] -and
     'AWS evidence JSON decoding must preserve response bounds and nested PI datapoint timestamps as strings.'
 Assert-PerformanceInsightsResponseScope $decodedPiAwsJson '2026-07-20T12:01:00Z' '2026-07-20T12:30:00Z' 'db-AAAAAAAAAAAAAAAAAAAA'
 Assert-Condition $true 'String-preserved +00:00 PI response bounds must pass strict UTC scope validation.'
+$timestampFidelityAwsJson = @'
+{
+  "CreatedAt": "2026-07-22T15:58:03.1234567Z",
+  "Nested": {
+    "ExpiresAtUtc": "2026-07-22T15:58:03.7654321+00:00",
+    "OperatorOffsetTimestamp": "2026-07-22T11:58:03.1111111-04:00"
+  },
+  "Items": [{ "Timestamp": "2026-07-22T15:58:03.2222222+00:00" }]
+}
+'@
+$decodedTimestampFidelity = ConvertFrom-EvidenceAwsJson $timestampFidelityAwsJson
+Assert-Condition ($decodedTimestampFidelity.CreatedAt -is [string] -and
+    $decodedTimestampFidelity.Nested.ExpiresAtUtc -is [string] -and
+    $decodedTimestampFidelity.Nested.OperatorOffsetTimestamp -is [string] -and
+    $decodedTimestampFidelity.Items[0].Timestamp -is [string] -and
+    $decodedTimestampFidelity.CreatedAt -ceq '2026-07-22T15:58:03.1234567Z' -and
+    $decodedTimestampFidelity.Nested.ExpiresAtUtc -ceq '2026-07-22T15:58:03.7654321+00:00' -and
+    $decodedTimestampFidelity.Nested.OperatorOffsetTimestamp -ceq '2026-07-22T11:58:03.1111111-04:00' -and
+    $decodedTimestampFidelity.Items[0].Timestamp -ceq '2026-07-22T15:58:03.2222222+00:00') `
+    'AWS evidence JSON decoding must preserve timestamp types, offsets, and seven-digit fractional precision at every nesting level.'
 Assert-Throws { ConvertFrom-EvidenceAwsJson '{"AlignedStartTime":' } 'AWS evidence JSON is malformed' `
     'Malformed provider JSON must fail with a sanitized decoder error.'
 Assert-Throws { ConvertFrom-EvidenceAwsJson ' ' } 'AWS evidence JSON is malformed' `

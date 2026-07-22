@@ -1,4 +1,4 @@
-#requires -Version 7.0
+#requires -Version 7.5
 
 [CmdletBinding()]
 param(
@@ -65,7 +65,7 @@ function Invoke-TerraformPlanJson {
     param([string]$Path)
     $raw = & terraform show -json $Path 2>&1
     if ($LASTEXITCODE -ne 0) { throw "terraform show -json failed for the saved $Phase plan." }
-    try { return (($raw | Out-String).Trim() | ConvertFrom-Json -Depth 60) }
+    try { return (($raw | Out-String).Trim() | ConvertFrom-Json -DateKind String -Depth 60) }
     catch { throw "terraform show -json did not return valid plan JSON." }
 }
 
@@ -155,7 +155,7 @@ function Assert-PublicSubnetEvidence {
     param([string]$Path, [string]$Sha256)
     $resolved = Resolve-ExternalFile -Path $Path -Name "PublicSubnetEvidencePath"
     [void](Assert-FileDigest $resolved $Sha256 "Public ECS subnet evidence")
-    try { $evidence = Get-Content -LiteralPath $resolved -Raw | ConvertFrom-Json -Depth 30 }
+    try { $evidence = Get-Content -LiteralPath $resolved -Raw | ConvertFrom-Json -DateKind String -Depth 30 }
     catch { throw "Public ECS subnet evidence must contain valid JSON." }
     [void](Assert-FreshEvidenceTimestamp ([string]$evidence.observedAtUtc) "Public ECS subnet evidence observedAtUtc")
     $subnets = @($evidence.subnets)
@@ -175,7 +175,7 @@ function Assert-RdsBudgetAcknowledgement {
     param([string]$Path, [string]$Sha256, [string]$ResizePlanSha256)
     $resolved = Resolve-ExternalFile -Path $Path -Name "BudgetAcknowledgementPath"
     [void](Assert-FileDigest -Path $resolved -Expected $Sha256 -Name "Budget acknowledgement")
-    try { $ack = Get-Content -LiteralPath $resolved -Raw | ConvertFrom-Json -Depth 30 }
+    try { $ack = Get-Content -LiteralPath $resolved -Raw | ConvertFrom-Json -DateKind String -Depth 30 }
     catch { throw "Budget acknowledgement must contain valid JSON." }
     if ([int]$ack.schemaVersion -ne 1 -or [string]$ack.type -ne "rds_resize_budget_acknowledgement" -or
         $ack.approved -ne $true -or [string]::IsNullOrWhiteSpace([string]$ack.approver) -or
@@ -193,11 +193,11 @@ function Assert-RdsBudgetAcknowledgement {
     $price = Assert-HashedEvidenceReference -Reference $ack.awsPriceEvidence -Name "AWS price evidence"
     $projection = Assert-HashedEvidenceReference -Reference $ack.costExplorerProjectionEvidence -Name "Cost Explorer projection evidence"
     $snapshot = Assert-HashedEvidenceReference -Reference $ack.manualSnapshotEvidence -Name "Manual RDS snapshot evidence"
-    try { $priceJson = Get-Content -LiteralPath $price.path -Raw | ConvertFrom-Json -Depth 30 }
+    try { $priceJson = Get-Content -LiteralPath $price.path -Raw | ConvertFrom-Json -DateKind String -Depth 30 }
     catch { throw "AWS price evidence must contain valid JSON." }
-    try { $projectionJson = Get-Content -LiteralPath $projection.path -Raw | ConvertFrom-Json -Depth 30 }
+    try { $projectionJson = Get-Content -LiteralPath $projection.path -Raw | ConvertFrom-Json -DateKind String -Depth 30 }
     catch { throw "Cost Explorer projection evidence must contain valid JSON." }
-    try { $snapshotJson = Get-Content -LiteralPath $snapshot.path -Raw | ConvertFrom-Json -Depth 30 }
+    try { $snapshotJson = Get-Content -LiteralPath $snapshot.path -Raw | ConvertFrom-Json -DateKind String -Depth 30 }
     catch { throw "Manual RDS snapshot evidence must contain valid JSON." }
     [void](Assert-FreshEvidenceTimestamp ([string]$priceJson.observedAtUtc) "AWS price evidence observedAtUtc")
     [void](Assert-FreshEvidenceTimestamp ([string]$projectionJson.generatedAtUtc) "Cost Explorer projection generatedAtUtc")

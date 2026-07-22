@@ -1,4 +1,4 @@
-#requires -Version 7.0
+#requires -Version 7.5
 
 [CmdletBinding()]
 param(
@@ -229,7 +229,7 @@ function Get-VerifiedPredecessorEvidence {
         (Get-FileHash -LiteralPath $predecessorPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expectedHash) {
         throw "predecessorResultPath does not match predecessorResultSha256."
     }
-    try { $predecessorEnvelope = Get-Content -LiteralPath $predecessorPath -Raw | ConvertFrom-Json -Depth 40 }
+    try { $predecessorEnvelope = Get-Content -LiteralPath $predecessorPath -Raw | ConvertFrom-Json -DateKind String -Depth 40 }
     catch { throw "predecessorResultPath must contain valid supervisor terminal JSON." }
 
     $predecessor = $predecessorEnvelope
@@ -263,7 +263,7 @@ function Get-VerifiedPredecessorEvidence {
             (Get-FileHash -LiteralPath $monitorResultPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne $monitorResultSha256) {
             throw "The supervisor-sealed terminal monitor result is missing or has been tampered with."
         }
-        try { $predecessor = Get-Content -LiteralPath $monitorResultPath -Raw | ConvertFrom-Json -Depth 40 }
+        try { $predecessor = Get-Content -LiteralPath $monitorResultPath -Raw | ConvertFrom-Json -DateKind String -Depth 40 }
         catch { throw "The supervisor-sealed terminal monitor result is invalid JSON." }
         if ([string](Get-OptionalValue $terminal "runId" "") -ne [string](Get-OptionalValue $predecessor "runId" "") -or
             [string](Get-OptionalValue $predecessorEnvelope "runId" "") -ne [string](Get-OptionalValue $predecessor "runId" "") -or
@@ -278,7 +278,7 @@ function Get-VerifiedPredecessorEvidence {
         if ((Get-FileHash -LiteralPath $monitorResultPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne $monitorResultSha256) {
             throw "The test supervisor terminal envelope does not match its monitor result."
         }
-        $predecessor = Get-Content -LiteralPath $monitorResultPath -Raw | ConvertFrom-Json -Depth 40
+        $predecessor = Get-Content -LiteralPath $monitorResultPath -Raw | ConvertFrom-Json -DateKind String -Depth 40
     }
     $predecessorWorkload = Get-OptionalValue $predecessor "workload"
     $actualStage = [string](Get-OptionalValue $predecessorWorkload "stage" "")
@@ -315,7 +315,7 @@ function Get-VerifiedPredecessorEvidence {
 
 function Read-Configuration {
     $path = Assert-ExternalPath -Path $ConfigPath -Name "ConfigPath"
-    try { $config = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json -Depth 30 }
+    try { $config = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json -DateKind String -Depth 30 }
     catch { throw "ConfigPath must contain valid JSON." }
     if ([int]$config.schemaVersion -ne 1) { throw "Monitor config schemaVersion must be 1." }
 
@@ -831,7 +831,7 @@ function Invoke-AwsJson {
     if ($LASTEXITCODE -ne 0) { throw "AWS CLI request failed for $($Arguments[0]) $($Arguments[1])." }
     $text = ($raw | Out-String).Trim()
     if (-not $text) { return $null }
-    return $text | ConvertFrom-Json -Depth 40
+    return $text | ConvertFrom-Json -DateKind String -Depth 40
 }
 
 function Get-WafDeviceLabelMatch {
@@ -1619,7 +1619,7 @@ function Get-LoadProgress {
     }
     if ($null -eq $script:TrafficStartedAtUtc) {
         foreach ($candidateLine in $completeLines) {
-            try { $candidate = $candidateLine | ConvertFrom-Json -Depth 30 }
+            try { $candidate = $candidateLine | ConvertFrom-Json -DateKind String -Depth 30 }
             catch { continue }
             if ([string](Get-OptionalValue $candidate "type" "") -ne "progress" -or
                 [string](Get-OptionalValue $candidate "event" "") -ne "start" -or
@@ -1638,7 +1638,7 @@ function Get-LoadProgress {
         }
     }
     $line = [string]$completeLines[-1]
-    try { $event = $line | ConvertFrom-Json -Depth 30 }
+    try { $event = $line | ConvertFrom-Json -DateKind String -Depth 30 }
     catch {
         return [ordered]@{ exists = $true; staleSeconds = $stale; parseError = $true; incompleteTail = -not $hasTerminatedTail; summaryPending = $false; event = $null; summary = $null }
     }
@@ -1649,7 +1649,7 @@ function Get-LoadProgress {
             $summaryPending = $stale -le [double]$Config.Thresholds.summaryCommitGraceSeconds
             return [ordered]@{ exists = $true; staleSeconds = $stale; parseError = -not $summaryPending; incompleteTail = -not $hasTerminatedTail; summaryPending = $summaryPending; event = $event; summary = $null }
         }
-        try { $summary = Get-Content -LiteralPath $Config.LoadSummaryPath -Raw | ConvertFrom-Json -Depth 40 }
+        try { $summary = Get-Content -LiteralPath $Config.LoadSummaryPath -Raw | ConvertFrom-Json -DateKind String -Depth 40 }
         catch {
             $summaryItem = Get-Item -LiteralPath $Config.LoadSummaryPath
             $summaryAge = [math]::Max(0, ([DateTimeOffset]::UtcNow - [DateTimeOffset]$summaryItem.LastWriteTimeUtc).TotalSeconds)
@@ -2876,7 +2876,7 @@ function Read-AtomicJson {
             finally { $reader.Dispose() }
         }
         finally { $stream.Dispose() }
-        return $text | ConvertFrom-Json -Depth $Depth
+        return $text | ConvertFrom-Json -DateKind String -Depth $Depth
     }
 }
 
@@ -3015,7 +3015,7 @@ function Resolve-ApprovedRollback {
 function Assert-RollbackPreflight {
     param($Config)
     if (-not $Config.AutomaticRollback) { return }
-    try { $rollback = Get-Content -LiteralPath $Config.RollbackConfigPath -Raw | ConvertFrom-Json -Depth 40 }
+    try { $rollback = Get-Content -LiteralPath $Config.RollbackConfigPath -Raw | ConvertFrom-Json -DateKind String -Depth 40 }
     catch { throw "rollbackConfigPath must contain valid JSON." }
     $rollbackTestMode = Get-OptionalValue $rollback "testMode" $false
     if ($rollbackTestMode -isnot [bool] -or [bool]$rollbackTestMode -ne $Config.TestMode) {
@@ -3095,7 +3095,7 @@ if ($config.LoadProgressPath) {
     if ($null -eq (Get-BoundHarnessProcess -Config $config)) { throw "The configured load generator process binding is not live." }
     if (Test-Path -LiteralPath $config.LoadProgressPath) {
         $firstLine = Get-Content -LiteralPath $config.LoadProgressPath -TotalCount 1
-        try { $firstEvent = $firstLine | ConvertFrom-Json -Depth 20 }
+        try { $firstEvent = $firstLine | ConvertFrom-Json -DateKind String -Depth 20 }
         catch { throw "The initial load progress record is invalid JSON." }
         if ([string](Get-OptionalValue $firstEvent "runId" "") -ne $config.RunId -or
             [string](Get-OptionalValue $firstEvent "stage" "") -ne $config.Workload.Stage -or

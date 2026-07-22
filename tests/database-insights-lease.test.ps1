@@ -1,4 +1,4 @@
-#requires -Version 7.0
+#requires -Version 7.5
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -101,6 +101,7 @@ $script:ModifyCalls = [Collections.Generic.List[string]]::new()
 $script:OperationCalls = [Collections.Generic.List[string]]::new()
 $script:MockSchedule = $null
 $script:MockBoundExecution = $null
+$script:LastManualRestoreParameters = $null
 
 function Start-Sleep {
     param([int]$Seconds)
@@ -317,7 +318,9 @@ function Invoke-DatabaseInsightsAwsJson {
     if ($service -eq "ssm" -and $operation -eq "start-automation-execution") {
         $script:OperationCalls.Add("ssm/start")
         if ($script:FailRestore) { throw "simulated manual Automation start failure with raw detail" }
-        $parameters = $Arguments[[Array]::IndexOf($Arguments,"--parameters") + 1] | ConvertFrom-Json -Depth 30
+        $parameters = $Arguments[[Array]::IndexOf($Arguments,"--parameters") + 1] |
+            ConvertFrom-Json -DateKind String -Depth 30
+        $script:LastManualRestoreParameters = $parameters
         foreach ($parameter in $parameters.PSObject.Properties) {
             if (@($parameter.Value).Count -ne 1 -or
                 [string]::IsNullOrWhiteSpace([string]@($parameter.Value)[0])) {
@@ -590,8 +593,10 @@ try {
         -not $acquiredJson.Contains(":sqs:")
     ) "Public lease evidence must prove the durable guard using hashes without exposing raw AWS identities."
     $assertions++
-    $privateAcquiredReceipt = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json -Depth 40
-    $privateTargetInput = [string]$privateAcquiredReceipt.durableRestoreGuard.targetInput | ConvertFrom-Json -Depth 30
+    $privateAcquiredReceipt = Get-Content -LiteralPath $receiptPath -Raw |
+        ConvertFrom-Json -DateKind String -Depth 40
+    $privateTargetInput = [string]$privateAcquiredReceipt.durableRestoreGuard.targetInput |
+        ConvertFrom-Json -DateKind String -Depth 30
     Assert-Condition ($privateAcquiredReceipt.schemaVersion -eq 3 -and
         $privateAcquiredReceipt.leaseVersion -ceq "database-insights-monitoring-lease-v3" -and
         $privateAcquiredReceipt.durableRestoreGuard.version -ceq `
@@ -759,8 +764,9 @@ try {
     $assertions++
 
     foreach ($badValues in @(@(), @(""), @($expectedPreservedMonitoringPostureJson, $expectedPreservedMonitoringPostureJson))) {
-        $badBinding = $privateAcquiredReceipt.durableRestoreGuard | ConvertTo-Json -Depth 40 | ConvertFrom-Json -Depth 40
-        $badTarget = [string]$badBinding.targetInput | ConvertFrom-Json -Depth 30
+        $badBinding = $privateAcquiredReceipt.durableRestoreGuard | ConvertTo-Json -Depth 40 |
+            ConvertFrom-Json -DateKind String -Depth 40
+        $badTarget = [string]$badBinding.targetInput | ConvertFrom-Json -DateKind String -Depth 30
         $badTarget.Parameters.ExpectedPreservedMonitoringPostureJson = $badValues
         $badBinding.targetInput = $badTarget | ConvertTo-Json -Depth 30 -Compress
         $badParameterRejected = $false
@@ -770,6 +776,50 @@ try {
             "Every SSM target parameter must contain exactly one nonempty string."
         $assertions++
     }
+    foreach ($malformedValue in @(
+        [ordered]@{Name="scalar";Value=$expectedPreservedMonitoringPostureJson},
+        [ordered]@{Name="non-string";Value=@(123)}
+    )) {
+        $malformedValueBinding = $privateAcquiredReceipt.durableRestoreGuard | ConvertTo-Json -Depth 40 |
+            ConvertFrom-Json -DateKind String -Depth 40
+        $malformedValueTarget = [string]$malformedValueBinding.targetInput |
+            ConvertFrom-Json -DateKind String -Depth 30
+        $malformedValueTarget.Parameters.ExpectedPreservedMonitoringPostureJson = $malformedValue.Value
+        $malformedValueBinding.targetInput = $malformedValueTarget | ConvertTo-Json -Depth 30 -Compress
+        $malformedValueRejected = $false
+        try { [void](Read-DatabaseInsightsBoundRestoreTargetInput $malformedValueBinding) }
+        catch { $malformedValueRejected = $_.Exception.Message -match 'missing, empty, or ambiguous' }
+        Assert-Condition $malformedValueRejected `
+            "The bound restore decoder must reject a $($malformedValue.Name) SSM String parameter."
+        $assertions++
+    }
+
+    $offsetDriftBinding = $privateAcquiredReceipt.durableRestoreGuard | ConvertTo-Json -Depth 40 |
+        ConvertFrom-Json -DateKind String -Depth 40
+    $offsetDriftTarget = [string]$offsetDriftBinding.targetInput |
+        ConvertFrom-Json -DateKind String -Depth 30
+    $offsetDriftTarget.Parameters.ExpiresAtUtc[0] =
+        ([string]$offsetDriftTarget.Parameters.ExpiresAtUtc[0]).Replace('+00:00', 'Z')
+    $offsetDriftBinding.targetInput = $offsetDriftTarget | ConvertTo-Json -Depth 30 -Compress
+    $offsetDriftRejected = $false
+    try { [void](Read-DatabaseInsightsBoundRestoreTargetInput $offsetDriftBinding) }
+    catch { $offsetDriftRejected = $_.Exception.Message -match 'immutable canonical UTC value' }
+    Assert-Condition $offsetDriftRejected `
+        "The bound restore decoder must reject lexical UTC-offset drift even when the instant is unchanged."
+    $assertions++
+
+    $hashDriftBinding = $privateAcquiredReceipt.durableRestoreGuard | ConvertTo-Json -Depth 40 |
+        ConvertFrom-Json -DateKind String -Depth 40
+    $hashDriftTarget = [string]$hashDriftBinding.targetInput |
+        ConvertFrom-Json -DateKind String -Depth 30
+    $hashDriftTarget.Parameters.ExpectedDBInstanceClass[0] = 'db.t4g.large'
+    $hashDriftBinding.targetInput = $hashDriftTarget | ConvertTo-Json -Depth 30 -Compress
+    $hashDriftRejected = $false
+    try { [void](Read-DatabaseInsightsBoundRestoreTargetInput $hashDriftBinding) }
+    catch { $hashDriftRejected = $_.Exception.Message -match 'immutable binding hash' }
+    Assert-Condition $hashDriftRejected `
+        "The bound restore decoder must recompute and reject a drifted immutable binding hash."
+    $assertions++
     $reviewedAutomation = Get-TestRestoreAutomationDocument
     Assert-Condition (@($reviewedAutomation.mainSteps).Count -eq 4 -and
         $reviewedAutomation.mainSteps[0].name -ceq "RestoreExactPosture" -and
@@ -1074,6 +1124,45 @@ try {
         "us-east-1" "135775632425" "db.t4g.medium" "diagnostic" 90 1 60)
     Assert-Condition ($script:ModifyCalls.Count -eq $modifyCountAfterRestore) `
         "Repeated or concurrent restoration must be idempotent and avoid another RDS mutation."
+    $assertions++
+
+    $fixedUtcExpirationText = '2026-07-22T15:58:03.0000000+00:00'
+    $fixedUtcExpiration = [DateTimeOffset]::ParseExact(
+        $fixedUtcExpirationText, 'o', [Globalization.CultureInfo]::InvariantCulture
+    )
+    $fixedBinding = Get-DatabaseInsightsDurableRestoreGuardBinding `
+        $privateAcquiredReceipt.initialPosture $privateAcquiredReceipt.accountId `
+        $privateAcquiredReceipt.region $privateAcquiredReceipt.dbInstanceIdentifier `
+        ([Guid]::NewGuid().ToString('N')) $fixedUtcExpiration `
+        ([string]$privateAcquiredReceipt.durableRestoreGuard.automationDocumentContentSha256)
+    $fixedScheduledTarget = Read-DatabaseInsightsBoundRestoreTargetInput $fixedBinding
+    $script:LastManualRestoreParameters = $null
+    [void](Start-DatabaseInsightsBoundRestoreAutomation $fixedBinding)
+    $manualMatchesScheduled = $null -ne $script:LastManualRestoreParameters
+    foreach ($parameterName in @(Get-DatabaseInsightsObjectPropertyNames $fixedScheduledTarget.Parameters)) {
+        $scheduledValue = [string]$fixedScheduledTarget.Parameters[$parameterName][0]
+        $manualValue = [string]$script:LastManualRestoreParameters.$parameterName[0]
+        if (($parameterName -ceq 'RestoreMode' -and
+                ($scheduledValue -cne 'scheduled' -or $manualValue -cne 'manual')) -or
+            ($parameterName -cne 'RestoreMode' -and $manualValue -cne $scheduledValue)) {
+            $manualMatchesScheduled = $false
+        }
+    }
+    $easternTimeZone = try { [TimeZoneInfo]::FindSystemTimeZoneById('Eastern Standard Time') }
+        catch { [TimeZoneInfo]::FindSystemTimeZoneById('America/New_York') }
+    $easternExpirationText = [TimeZoneInfo]::ConvertTime($fixedUtcExpiration, $easternTimeZone).ToString('o')
+    $manualParametersJson = $script:LastManualRestoreParameters | ConvertTo-Json -Depth 30 -Compress
+    Assert-Condition (
+        [string]$fixedBinding.expiresAtUtc -ceq $fixedUtcExpirationText -and
+        $fixedBinding.expiresAtUtc -is [string] -and
+        $fixedScheduledTarget.Parameters.ExpiresAtUtc[0] -is [string] -and
+        [string]$fixedScheduledTarget.Parameters.ExpiresAtUtc[0] -ceq $fixedUtcExpirationText -and
+        $script:LastManualRestoreParameters.ExpiresAtUtc[0] -is [string] -and
+        [string]$script:LastManualRestoreParameters.ExpiresAtUtc[0] -ceq $fixedUtcExpirationText -and
+        $easternExpirationText.EndsWith('-04:00', [StringComparison]::Ordinal) -and
+        -not $manualParametersJson.Contains('-04:00') -and
+        $manualMatchesScheduled
+    ) "Manual restoration must preserve the exact +00:00 expiration and differ from the scheduled target only by RestoreMode under Eastern time."
     $assertions++
 
     $newGenerationExpirationRaw = [DateTimeOffset]::UtcNow.AddMinutes(30).UtcDateTime.Ticks
