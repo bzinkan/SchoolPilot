@@ -1,4 +1,4 @@
-#requires -Version 7.0
+#requires -Version 7.5
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -112,6 +112,29 @@ Assert-Condition ($decodedPiAwsJson.AlignedStartTime -is [string] -and
     $decodedPiAwsJson.AlignedEndTime -is [string] -and
     $decodedPiAwsJson.MetricList[0].DataPoints[0].Timestamp -is [string]) `
     'The certification PI AWS decoder must preserve response bounds and nested SQL-statistics timestamps as strings.'
+$timestampFidelityAwsJson = @'
+{
+  "CreatedAt": "2026-07-22T15:58:03.1234567Z",
+  "Nested": {
+    "ExpiresAtUtc": "2026-07-22T15:58:03.7654321+00:00",
+    "OperatorOffsetTimestamp": "2026-07-22T11:58:03.1111111-04:00"
+  },
+  "Items": [{ "Timestamp": "2026-07-22T15:58:03.2222222+00:00" }]
+}
+'@
+$decodedTimestampFidelity = & (Get-Module history-fallback-pi-finalizer) {
+    param($Json)
+    ConvertFrom-HfAwsJson $Json
+} $timestampFidelityAwsJson
+Assert-Condition ($decodedTimestampFidelity.CreatedAt -is [string] -and
+    $decodedTimestampFidelity.Nested.ExpiresAtUtc -is [string] -and
+    $decodedTimestampFidelity.Nested.OperatorOffsetTimestamp -is [string] -and
+    $decodedTimestampFidelity.Items[0].Timestamp -is [string] -and
+    $decodedTimestampFidelity.CreatedAt -ceq '2026-07-22T15:58:03.1234567Z' -and
+    $decodedTimestampFidelity.Nested.ExpiresAtUtc -ceq '2026-07-22T15:58:03.7654321+00:00' -and
+    $decodedTimestampFidelity.Nested.OperatorOffsetTimestamp -ceq '2026-07-22T11:58:03.1111111-04:00' -and
+    $decodedTimestampFidelity.Items[0].Timestamp -ceq '2026-07-22T15:58:03.2222222+00:00') `
+    'The certification PI decoder must preserve timestamp types, offsets, and seven-digit fractional precision at every nesting level.'
 Assert-Condition ((Get-Content -LiteralPath $modulePath -Raw).StartsWith('#requires -Version 7.5')) `
     'The certification PI finalizer must require PowerShell 7.5 before using date-preserving JSON decoding.'
 Assert-Condition ((Get-Content -LiteralPath $wrapperPath -Raw).StartsWith('#requires -Version 7.5')) `

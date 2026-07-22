@@ -1,4 +1,4 @@
-#requires -Version 7.0
+#requires -Version 7.5
 
 [CmdletBinding()]
 param(
@@ -148,7 +148,7 @@ function Read-AtomicJson {
             finally { $reader.Dispose() }
         }
         finally { $stream.Dispose() }
-        return $text | ConvertFrom-Json -Depth $Depth
+        return $text | ConvertFrom-Json -DateKind String -Depth $Depth
     }
 }
 
@@ -298,7 +298,7 @@ if ($Mode -eq "Heartbeat") {
 
 function Read-Config {
     $path = Get-ExternalPath -Path $ConfigPath -Name "ConfigPath"
-    try { $config = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json -Depth 40 }
+    try { $config = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json -DateKind String -Depth 40 }
     catch { throw "ConfigPath must contain valid JSON." }
     if ([int]$config.schemaVersion -ne 1) { throw "Rollback config schemaVersion must be 1." }
     $testModeProperty = $config.PSObject.Properties["testMode"]
@@ -403,7 +403,7 @@ function Read-Config {
                 throw "Production NAT rollback requires the exact infra/terraform.tfstate path."
             }
             $stateLineage = Get-RequiredString $config "terraformStateLineage"
-            try { $localState = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json -Depth 20 }
+            try { $localState = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json -DateKind String -Depth 20 }
             catch { throw "terraformStatePath must contain valid Terraform state JSON." }
             if ([string]$localState.lineage -ne $stateLineage) { throw "terraformStateLineage does not match the local state." }
             $gitSha = (@(& git -C $script:RepositoryRoot rev-parse --verify HEAD 2>$null) | Select-Object -First 1).Trim().ToLowerInvariant()
@@ -514,7 +514,7 @@ function Invoke-AwsJson {
     if ($LASTEXITCODE -ne 0) { throw "AWS CLI rollback verification failed for $($Arguments[0]) $($Arguments[1])." }
     $text = ($raw | Out-String).Trim()
     if (-not $text) { return $null }
-    return $text | ConvertFrom-Json -Depth 60
+    return $text | ConvertFrom-Json -DateKind String -Depth 60
 }
 
 function Assert-NatRollbackPlanContract {
@@ -533,7 +533,7 @@ function Assert-NatRollbackPlanContract {
             -ForwardPlanPath $ForwardPlanPath -ForwardPlanSha256 $ForwardPlanSha256 | Out-String).Trim()
     }
     catch { throw "The trusted NatRollback saved-plan validator rejected the reviewed plans: $($_.Exception.Message)" }
-    try { $result = $raw | ConvertFrom-Json -Depth 80 }
+    try { $result = $raw | ConvertFrom-Json -DateKind String -Depth 80 }
     catch { throw "The trusted NatRollback saved-plan validator did not return valid JSON." }
     $expectedPlanPath = [IO.Path]::GetFullPath($PlanPath)
     $expectedForwardPath = [IO.Path]::GetFullPath($ForwardPlanPath)
@@ -592,7 +592,7 @@ function Get-TaskCloneContractJson {
     }
     $containers = @()
     foreach ($container in @($TaskDefinition.containerDefinitions)) {
-        $copy = $container | ConvertTo-Json -Depth 60 | ConvertFrom-Json -Depth 60
+        $copy = $container | ConvertTo-Json -Depth 60 | ConvertFrom-Json -DateKind String -Depth 60
         if ([string]$copy.name -eq $ApiContainerName) { $copy.PSObject.Properties.Remove("memory") }
         $containers += $copy
     }
@@ -1840,7 +1840,7 @@ function Set-WafRateRulesToCount {
     Assert-RollbackDeadline -Step "read-reviewed-waf"
     $get = & aws wafv2 get-web-acl --region $Config.region --scope $Config.wafScope --name $Config.wafName --id $Config.wafId --output json
     if ($LASTEXITCODE -ne 0) { throw "Unable to read the current WAF before rollback." }
-    $response = $get | ConvertFrom-Json -Depth 60
+    $response = $get | ConvertFrom-Json -DateKind String -Depth 60
     $expectedRules = @{
         DeviceIngestRateLimit = [ordered]@{ limit = 100000; metric = [string]$Config.wafDeviceMetricName }
         ApiRateLimit = [ordered]@{ limit = 50000; metric = [string]$Config.wafApiMetricName }
@@ -1983,7 +1983,7 @@ function Assert-NatAndRoutesRestored {
 
 function Assert-TerraformStateLineage {
     param($Config)
-    try { $local = Get-Content -LiteralPath $Config.resolvedTerraformStatePath -Raw | ConvertFrom-Json -Depth 20 }
+    try { $local = Get-Content -LiteralPath $Config.resolvedTerraformStatePath -Raw | ConvertFrom-Json -DateKind String -Depth 20 }
     catch { throw "Unable to parse the exact Terraform state during NAT rollback." }
     if ([string]$local.lineage -ne [string]$Config.resolvedTerraformStateLineage) {
         throw "The exact Terraform state lineage changed; NAT rollback refused."
@@ -1994,7 +1994,7 @@ function Assert-TerraformStateLineage {
     if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($pulledRaw)) {
         throw "terraform state pull failed during lineage verification."
     }
-    try { $pulled = $pulledRaw | ConvertFrom-Json -Depth 20 }
+    try { $pulled = $pulledRaw | ConvertFrom-Json -DateKind String -Depth 20 }
     catch { throw "terraform state pull did not return valid state JSON." }
     if ([string]$pulled.lineage -ne [string]$Config.resolvedTerraformStateLineage) {
         throw "Pulled Terraform state lineage does not match the reviewed rollback plan."
@@ -2063,7 +2063,7 @@ function Restore-NatThenPrivateEcs {
         Assert-RollbackDeadline -Step "wait-recreated-nat-available"
         $raw = & aws ec2 describe-nat-gateways --region $Config.region --filter "Name=vpc-id,Values=$($Config.vpcId)" "Name=state,Values=available" --output json
         if ($LASTEXITCODE -ne 0) { throw "Unable to verify recreated NAT gateways." }
-        $available = @(($raw | ConvertFrom-Json).NatGateways).Count
+        $available = @(($raw | ConvertFrom-Json -DateKind String).NatGateways).Count
         if ($available -ge [int]$Config.expectedNatGatewayCount) { break }
         Start-Sleep -Seconds 15
     } while ([DateTimeOffset]::UtcNow -lt $deadline)
