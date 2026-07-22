@@ -4069,7 +4069,10 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
     $global:SchoolPilotTestServiceState.worker.deploymentConfiguration = $capturedWorkerDeploymentJson | ConvertFrom-Json -Depth 20
     $deadlineConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
     $deadlineConfig.runId = "connection-safe-deadline-expiry"
-    $deadlineConfig | Add-Member -NotePropertyName rollbackMaximumSeconds -NotePropertyValue ([pscustomobject]@{ Application = 2 }) -Force
+    # The rollback budget starts before the child heartbeat is ready. Leave enough
+    # room for cold Windows process startup so this case deterministically expires
+    # in the forced API-convergence loop that its evidence assertions exercise.
+    $deadlineConfig | Add-Member -NotePropertyName rollbackMaximumSeconds -NotePropertyValue ([pscustomobject]@{ Application = 20 }) -Force
     [IO.File]::WriteAllText($rollbackConfigPath, ($deadlineConfig | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
     $global:SchoolPilotTestServiceState.api.taskDefinition = "api-current"
     $global:SchoolPilotTestServiceState.worker.taskDefinition = "worker-current"
