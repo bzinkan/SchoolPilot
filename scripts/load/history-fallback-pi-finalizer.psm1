@@ -1,4 +1,4 @@
-#requires -Version 7.0
+#requires -Version 7.5
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -512,6 +512,19 @@ function Get-HfCollectorFailureClassification {
     }
 }
 
+function ConvertFrom-HfAwsJson {
+    param([Parameter(Mandatory=$true)][AllowEmptyString()][string]$Json)
+    if ([string]::IsNullOrWhiteSpace($Json)) {
+        throw "AWS evidence JSON is malformed."
+    }
+    try {
+        return $Json | ConvertFrom-Json -Depth 60 -DateKind String -ErrorAction Stop
+    }
+    catch {
+        throw "AWS evidence JSON is malformed."
+    }
+}
+
 function Invoke-HfAwsJson {
     param([string[]]$Arguments)
     $operation = if ($Arguments.Count -ge 2) { "$($Arguments[0]) $($Arguments[1])" } else { "AWS request" }
@@ -550,7 +563,7 @@ function Invoke-HfAwsJson {
             }
             $text = ([string]$stdout).Trim()
             if (-not $text) { return $null }
-            try { return $text | ConvertFrom-Json -Depth 60 -DateKind String }
+            try { return ConvertFrom-HfAwsJson $text }
             catch { throw (New-HfCollectorException "AWS evidence request returned malformed JSON for $operation." "aws_response") }
         }
         finally {

@@ -1,4 +1,4 @@
-#requires -Version 7.0
+#requires -Version 7.5
 
 [CmdletBinding()]
 param(
@@ -26,9 +26,10 @@ $script:RequiredPollAccountingVersion = "staggered-deadline-v1"
 $script:RequiredHistoryFallbackQueryIdentityVersion = "history-fallback-queryid-v1"
 $script:RequiredHistoryFallbackPiEvidenceVersion = "queryid-sqlstats-v1"
 $script:RequiredHistoryFallbackPiLinkVersion = "history-fallback-pi-link-v2"
-$script:RequiredDatabaseInsightsLeaseVersion = "database-insights-monitoring-lease-v2"
-$script:RequiredDatabaseInsightsDurableRestoreGuardVersion = "aws-scheduler-ssm-recurring-restore-v1"
-$script:RequiredDatabaseInsightsDurableRestoreAutomationVersion = "ssm-rds-monitoring-restore-v1"
+$script:RequiredDatabaseInsightsLeaseVersion = "database-insights-monitoring-lease-v3"
+$script:RequiredDatabaseInsightsDurableRestoreGuardVersion = "aws-scheduler-ssm-recurring-restore-v2"
+$script:RequiredDatabaseInsightsDurableRestoreAutomationVersion = "ssm-rds-monitoring-restore-v2"
+$script:RequiredPreservedMonitoringPostureEncodingVersion = "rds-preserved-monitoring-posture-json-v1"
 
 function Resolve-ExternalPath {
     param([string]$Path, [string]$Name, [switch]$AllowMissing)
@@ -423,6 +424,104 @@ function Get-CertificationCanonicalSha256 {
     return Get-CertificationTextSha256 ($Value | ConvertTo-Json -Depth 60 -Compress)
 }
 
+function Test-CertificationIntegerValue {
+    param($Value)
+    return $Value -is [sbyte] -or $Value -is [byte] -or
+        $Value -is [int16] -or $Value -is [uint16] -or
+        $Value -is [int32] -or $Value -is [uint32] -or
+        $Value -is [int64] -or $Value -is [uint64]
+}
+
+function Get-CertificationPreservedMonitoringPostureBinding {
+    param($InitialPosture)
+
+    $kmsKeyIdValue = $null
+    $monitoringIntervalValue = $null
+    $monitoringRoleValue = $null
+    $rawLogExportsValue = $null
+    if ($InitialPosture -is [Collections.IDictionary]) {
+        if ($InitialPosture.Contains("performanceInsightsKmsKeyId")) {
+            $kmsKeyIdValue = $InitialPosture["performanceInsightsKmsKeyId"]
+        }
+        if ($InitialPosture.Contains("monitoringInterval")) {
+            $monitoringIntervalValue = $InitialPosture["monitoringInterval"]
+        }
+        if ($InitialPosture.Contains("monitoringRoleArn")) {
+            $monitoringRoleValue = $InitialPosture["monitoringRoleArn"]
+        }
+        if ($InitialPosture.Contains("enabledCloudwatchLogsExports")) {
+            $rawLogExportsValue = $InitialPosture["enabledCloudwatchLogsExports"]
+        }
+    }
+    elseif ($null -ne $InitialPosture) {
+        $property = $InitialPosture.PSObject.Properties["performanceInsightsKmsKeyId"]
+        if ($null -ne $property) { $kmsKeyIdValue = $property.Value }
+        $property = $InitialPosture.PSObject.Properties["monitoringInterval"]
+        if ($null -ne $property) { $monitoringIntervalValue = $property.Value }
+        $property = $InitialPosture.PSObject.Properties["monitoringRoleArn"]
+        if ($null -ne $property) { $monitoringRoleValue = $property.Value }
+        $property = $InitialPosture.PSObject.Properties["enabledCloudwatchLogsExports"]
+        if ($null -ne $property) { $rawLogExportsValue = $property.Value }
+    }
+    if ($kmsKeyIdValue -isnot [string] -or
+        [string]::IsNullOrWhiteSpace($kmsKeyIdValue) -or
+        $kmsKeyIdValue -cne $kmsKeyIdValue.Trim() -or
+        -not (Test-CertificationIntegerValue $monitoringIntervalValue) -or
+        ($null -ne $monitoringRoleValue -and $monitoringRoleValue -isnot [string]) -or
+        $rawLogExportsValue -isnot [Array] -or
+        @($rawLogExportsValue | Where-Object { $_ -isnot [string] }).Count -gt 0) {
+        throw "The certification Database Insights preserved monitoring posture is incomplete."
+    }
+    $kmsKeyId = [string]$kmsKeyIdValue
+    $monitoringInterval = [int]$monitoringIntervalValue
+    if ($monitoringInterval -notin @(0, 1, 5, 10, 15, 30, 60)) {
+        throw "The certification Database Insights preserved monitoring interval is invalid."
+    }
+
+    $monitoringRoleArn = if ($null -eq $monitoringRoleValue) { "" } else { [string]$monitoringRoleValue }
+    if ($monitoringInterval -eq 0) {
+        if (-not [string]::IsNullOrWhiteSpace($monitoringRoleArn)) {
+            throw "The certification Database Insights disabled monitoring posture must not bind a role."
+        }
+        $canonicalMonitoringRole = $null
+    }
+    else {
+        if ($monitoringRoleArn -notmatch '^arn:aws:iam::135775632425:role/[A-Za-z0-9+=,.@_/-]{1,512}$') {
+            throw "The certification Database Insights monitoring role ARN is invalid."
+        }
+        $canonicalMonitoringRole = $monitoringRoleArn
+    }
+
+    $logExports = @($rawLogExportsValue)
+    if (@($logExports | Where-Object {
+        [string]::IsNullOrWhiteSpace($_) -or $_ -cnotin @("iam-db-auth-error", "postgresql", "upgrade")
+    }).Count -gt 0) {
+        throw "The certification Database Insights log-export posture is invalid."
+    }
+    $canonicalLogExports = @($logExports | Sort-Object -Unique)
+    $rawExportsJson = ConvertTo-Json -InputObject @($logExports) -Compress
+    $canonicalExportsJson = ConvertTo-Json -InputObject @($canonicalLogExports) -Compress
+    if ($rawExportsJson -cne $canonicalExportsJson) {
+        throw "The certification Database Insights log-export posture must be sorted and unique."
+    }
+
+    $envelope = [ordered]@{
+        version = $script:RequiredPreservedMonitoringPostureEncodingVersion
+        performanceInsightsKmsKeyId = $kmsKeyId
+        monitoringInterval = $monitoringInterval
+        monitoringRoleArn = $canonicalMonitoringRole
+        enabledCloudwatchLogsExports = @($canonicalLogExports)
+    }
+    $json = ConvertTo-Json -InputObject $envelope -Depth 10 -Compress
+    return [pscustomobject]@{
+        Envelope = $envelope
+        Json = $json
+        Sha256 = Get-CertificationTextSha256 $json
+        MonitoringRoleArn = $monitoringRoleArn
+        LogExports = @($canonicalLogExports)
+    }
+}
+
 function Test-CertificationFiniteNonnegativeNumber {
     param($Value)
     if ($null -eq $Value -or $Value -is [bool] -or $Value -is [char] -or
@@ -592,22 +691,12 @@ function Get-CertificationDatabaseInsightsLease {
         @(Get-CertificationValue $initial "parameterApplyStatuses" @()) |
             ForEach-Object { [string]$_ }
     )
-    $performanceInsightsKmsKeyId = [string](Get-CertificationValue $initial "performanceInsightsKmsKeyId" "")
-    $monitoringInterval = [int](Get-CertificationValue $initial "monitoringInterval" -1)
-    $monitoringRoleArn = [string](Get-CertificationValue $initial "monitoringRoleArn" "")
-    $enabledLogExports = @(
-        @(Get-CertificationValue $initial "enabledCloudwatchLogsExports" @()) |
-            ForEach-Object { [string]$_ } |
-            Sort-Object -Unique
-    )
-    $preservedMonitoringPosture = [ordered]@{
-        performanceInsightsKmsKeyId=$performanceInsightsKmsKeyId
-        monitoringInterval=$monitoringInterval
-        monitoringRoleArn=$monitoringRoleArn
-        enabledCloudwatchLogsExports=$enabledLogExports
-    }
-    $preservedMonitoringPostureSha256 = Get-CertificationTextSha256 `
-        ($preservedMonitoringPosture | ConvertTo-Json -Depth 10 -Compress)
+    $preservedMonitoringPosture = Get-CertificationPreservedMonitoringPostureBinding $initial
+    $performanceInsightsKmsKeyId = [string]$preservedMonitoringPosture.Envelope.performanceInsightsKmsKeyId
+    $monitoringInterval = [int]$preservedMonitoringPosture.Envelope.monitoringInterval
+    $monitoringRoleArn = [string]$preservedMonitoringPosture.MonitoringRoleArn
+    $enabledLogExports = @($preservedMonitoringPosture.LogExports)
+    $preservedMonitoringPostureSha256 = [string]$preservedMonitoringPosture.Sha256
     if (-not [DateTimeOffset]::TryParse([string](Get-CertificationValue $receipt "capturedAtUtc" ""), [ref]$capturedAt) -or
         -not [DateTimeOffset]::TryParse([string](Get-CertificationValue $receipt "expiresAtUtc" ""), [ref]$expiresAt) -or
         -not [DateTimeOffset]::TryParse([string](Get-RequiredProperty $Config "deadlineUtc"), [ref]$deadline) -or
@@ -623,18 +712,17 @@ function Get-CertificationDatabaseInsightsLease {
     $durableLeaseIdSha256 = Get-CertificationTextSha256 $leaseId
     $durableDescriptionBindingSha256 = Get-CertificationTextSha256 `
         "135775632425|us-east-1|schoolpilot-production-db|$durableExpiresAt|$durableLeaseIdSha256"
-    $automationDocumentName = "schoolpilot-production-db-insights-restore-v1"
+    $automationDocumentName = "schoolpilot-production-db-insights-restore-v2"
     $automationDocumentVersion = "1"
     $automationDocumentContentSha256 = Assert-CertificationSha256 `
         ([string](Get-CertificationValue $durableGuard "automationDocumentContentSha256" "")) `
         "databaseInsightsLease.durableRestoreGuard.automationDocumentContentSha256"
     $automationDefinitionArn = `
-        'arn:aws:ssm:us-east-1:135775632425:automation-definition/schoolpilot-production-db-insights-restore-v1:1'
+        'arn:aws:ssm:us-east-1:135775632425:automation-definition/schoolpilot-production-db-insights-restore-v2:1'
     $automationRoleArn = `
         "arn:aws:iam::135775632425:role/schoolpilot-production-db-insights-restore-automation"
     $automationFailureRuleArn = `
         "arn:aws:events:us-east-1:135775632425:rule/schoolpilot-production-db-insights-restore-failed"
-    $expectedLogExportsJson = @($enabledLogExports) | ConvertTo-Json -Compress -AsArray
     $durableTargetInput = [ordered]@{
         DocumentName = $automationDocumentName
         DocumentVersion = $automationDocumentVersion
@@ -645,10 +733,9 @@ function Get-CertificationDatabaseInsightsLease {
             ExpectedDatabaseResourceId = @([string]$initial.databaseResourceId)
             ExpectedDBInstanceClass = @([string]$initial.instanceClass)
             ExpectedEngineVersion = @([string]$initial.engineVersion)
-            ExpectedPerformanceInsightsKmsKeyId = @($performanceInsightsKmsKeyId)
-            ExpectedMonitoringInterval = @([string]$monitoringInterval)
-            ExpectedMonitoringRoleArn = @($monitoringRoleArn)
-            ExpectedLogExportsJson = @($expectedLogExportsJson)
+            PreservedMonitoringPostureEncodingVersion = @($script:RequiredPreservedMonitoringPostureEncodingVersion)
+            ExpectedPreservedMonitoringPostureJson = @([string]$preservedMonitoringPosture.Json)
+            ExpectedPreservedMonitoringPostureSha256 = @($preservedMonitoringPostureSha256)
             FailureQueueUrl = @("https://sqs.us-east-1.amazonaws.com/135775632425/schoolpilot-production-db-insights-restore-dlq")
             RestoreScheduleName = @($durableScheduleName)
             RestoreScheduleGroupName = @("schoolpilot-production-db-insights-leases")
@@ -667,7 +754,7 @@ function Get-CertificationDatabaseInsightsLease {
         scheduleArn="arn:aws:scheduler:us-east-1:135775632425:schedule/schoolpilot-production-db-insights-leases/$durableScheduleName"
         scheduleExpression="rate(15 minutes)";scheduleStartAtUtc=$durableExpiresAt
         scheduleExpressionTimezone="UTC";actionAfterCompletion="NONE";state="ENABLED"
-        description="SchoolPilot db-insights restore v2 lease=$durableLeaseIdSha256 binding=$durableDescriptionBindingSha256"
+        description="SchoolPilot db-insights restore v3 lease=$durableLeaseIdSha256 binding=$durableDescriptionBindingSha256"
         targetArn="arn:aws:scheduler:::aws-sdk:ssm:startAutomationExecution"
         automationVersion=$script:RequiredDatabaseInsightsDurableRestoreAutomationVersion
         automationDocumentName=$automationDocumentName
@@ -723,7 +810,7 @@ function Get-CertificationDatabaseInsightsLease {
     }
     $observedDurableGuardBindingSha256 = Get-CertificationTextSha256 `
         ($observedDurableGuard | ConvertTo-Json -Depth 20 -Compress)
-    if ([int](Get-CertificationValue $receipt "schemaVersion" 0) -ne 2 -or
+    if ([int](Get-CertificationValue $receipt "schemaVersion" 0) -ne 3 -or
         [string](Get-CertificationValue $receipt "type" "") -cne "database_insights_monitoring_lease" -or
         [string](Get-CertificationValue $receipt "leaseVersion" "") -cne $script:RequiredDatabaseInsightsLeaseVersion -or
         $leaseId -notmatch '^[0-9a-f]{32}$' -or
@@ -742,9 +829,6 @@ function Get-CertificationDatabaseInsightsLease {
         (Get-CertificationValue $initial "performanceInsightsEnabled" $false) -ne $true -or
         [int](Get-CertificationValue $initial "performanceInsightsRetentionPeriod" 0) -ne 7 -or
         [string]::IsNullOrWhiteSpace($performanceInsightsKmsKeyId) -or
-        $monitoringInterval -lt 0 -or $monitoringInterval -gt 60 -or
-        ($monitoringInterval -gt 0 -and [string]::IsNullOrWhiteSpace($monitoringRoleArn)) -or
-        @($enabledLogExports | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count -gt 0 -or
         (Get-CertificationValue $initial "pendingModifiedValuesAbsent" $false) -ne $true -or
         [string](Get-CertificationValue $initial "dbInstanceArn" "") -notmatch '^arn:aws:rds:us-east-1:135775632425:db:schoolpilot-production-db$' -or
         $parameterStatuses.Count -lt 1 -or @($parameterStatuses | Where-Object { $_ -cne "in-sync" }).Count -gt 0 -or
@@ -778,12 +862,14 @@ function Get-CertificationDatabaseInsightsLease {
                 monitoringInterval = $monitoringInterval
                 monitoringRoleArnSha256 = if($monitoringRoleArn){Get-CertificationTextSha256 $monitoringRoleArn}else{$null}
                 enabledCloudwatchLogsExports = $enabledLogExports
+                preservedMonitoringPostureEncodingVersion = $script:RequiredPreservedMonitoringPostureEncodingVersion
                 preservedMonitoringPostureSha256 = $preservedMonitoringPostureSha256
             }
             requestedPosture = [ordered]@{
                 databaseInsightsMode = "advanced"
                 performanceInsightsEnabled = $true
                 performanceInsightsRetentionPeriod = 465
+                preservedMonitoringPostureEncodingVersion = $script:RequiredPreservedMonitoringPostureEncodingVersion
                 preservedMonitoringPostureSha256 = $preservedMonitoringPostureSha256
             }
             durableRestoreGuard = [ordered]@{

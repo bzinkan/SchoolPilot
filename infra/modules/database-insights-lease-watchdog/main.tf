@@ -2,7 +2,7 @@ locals {
   schedule_group_name             = "${var.name_prefix}-db-insights-leases"
   restore_role_name               = "${var.name_prefix}-db-insights-restore"
   automation_role_name            = "${var.name_prefix}-db-insights-restore-automation"
-  automation_document_name        = "${var.name_prefix}-db-insights-restore-v1"
+  automation_document_name        = "${var.name_prefix}-db-insights-restore-v2"
   automation_failure_rule_name    = "${var.name_prefix}-db-insights-restore-failed"
   restore_dlq_name                = "${var.name_prefix}-db-insights-restore-dlq"
   db_instance_identifier          = element(reverse(split(":", var.db_instance_arn)), 0)
@@ -10,6 +10,8 @@ locals {
   restore_schedule_arn            = "arn:aws:scheduler:${var.aws_region}:${var.aws_account_id}:schedule/${local.schedule_group_name}/${local.restore_schedule_name}"
   automation_definition_arn       = "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:automation-definition/${local.automation_document_name}:1"
   automation_execution_source_arn = "arn:aws:ssm:${var.aws_region}:${var.aws_account_id}:automation-execution/*"
+  automation_contract_version     = "ssm-rds-monitoring-restore-v2"
+  posture_encoding_version        = "rds-preserved-monitoring-posture-json-v1"
   alarm_actions                   = compact([var.alerts_sns_topic_arn])
 
   automation_restore_script = file("${path.module}/restore_exact_monitoring_posture.py")
@@ -28,13 +30,21 @@ locals {
         type          = "String"
         allowedValues = [var.db_instance_arn]
       }
-      ExpectedDatabaseResourceId          = { type = "String" }
-      ExpectedDBInstanceClass             = { type = "String", allowedValues = [var.expected_db_instance_class] }
-      ExpectedEngineVersion               = { type = "String" }
-      ExpectedPerformanceInsightsKmsKeyId = { type = "String" }
-      ExpectedMonitoringInterval          = { type = "String" }
-      ExpectedMonitoringRoleArn           = { type = "String" }
-      ExpectedLogExportsJson              = { type = "String" }
+      ExpectedDatabaseResourceId = { type = "String" }
+      ExpectedDBInstanceClass    = { type = "String", allowedValues = [var.expected_db_instance_class] }
+      ExpectedEngineVersion      = { type = "String" }
+      PreservedMonitoringPostureEncodingVersion = {
+        type          = "String"
+        allowedValues = [local.posture_encoding_version]
+      }
+      ExpectedPreservedMonitoringPostureJson = {
+        type           = "String"
+        allowedPattern = "^\\{.+\\}$"
+      }
+      ExpectedPreservedMonitoringPostureSha256 = {
+        type           = "String"
+        allowedPattern = "^[0-9a-f]{64}$"
+      }
       RestoreScheduleName = {
         type          = "String"
         allowedValues = [local.restore_schedule_name]
@@ -73,24 +83,24 @@ locals {
           Handler = "handler"
           Script  = local.automation_restore_script
           InputPayload = {
-            dbInstanceIdentifier                = "{{ DBInstanceIdentifier }}"
-            expectedDbInstanceArn               = "{{ ExpectedDBInstanceArn }}"
-            expectedDatabaseResourceId          = "{{ ExpectedDatabaseResourceId }}"
-            expectedDbInstanceClass             = "{{ ExpectedDBInstanceClass }}"
-            expectedEngineVersion               = "{{ ExpectedEngineVersion }}"
-            expectedPerformanceInsightsKmsKeyId = "{{ ExpectedPerformanceInsightsKmsKeyId }}"
-            expectedMonitoringInterval          = "{{ ExpectedMonitoringInterval }}"
-            expectedMonitoringRoleArn           = "{{ ExpectedMonitoringRoleArn }}"
-            expectedLogExportsJson              = "{{ ExpectedLogExportsJson }}"
-            restoreScheduleName                 = "{{ RestoreScheduleName }}"
-            restoreScheduleGroupName            = "{{ RestoreScheduleGroupName }}"
-            automationDocumentName              = local.automation_document_name
-            automationDocumentVersion           = "1"
-            automationDocumentContentSha256     = "{{ AutomationDocumentContentSha256 }}"
-            leaseIdSha256                       = "{{ LeaseIdSha256 }}"
-            expiresAtUtc                        = "{{ ExpiresAtUtc }}"
-            restoreMode                         = "{{ RestoreMode }}"
-            maximumEventAgeInSeconds            = 60
+            dbInstanceIdentifier                      = "{{ DBInstanceIdentifier }}"
+            expectedDbInstanceArn                     = "{{ ExpectedDBInstanceArn }}"
+            expectedDatabaseResourceId                = "{{ ExpectedDatabaseResourceId }}"
+            expectedDbInstanceClass                   = "{{ ExpectedDBInstanceClass }}"
+            expectedEngineVersion                     = "{{ ExpectedEngineVersion }}"
+            preservedMonitoringPostureEncodingVersion = "{{ PreservedMonitoringPostureEncodingVersion }}"
+            expectedPreservedMonitoringPostureJson    = "{{ ExpectedPreservedMonitoringPostureJson }}"
+            expectedPreservedMonitoringPostureSha256  = "{{ ExpectedPreservedMonitoringPostureSha256 }}"
+            restoreScheduleName                       = "{{ RestoreScheduleName }}"
+            restoreScheduleGroupName                  = "{{ RestoreScheduleGroupName }}"
+            automationContractVersion                 = local.automation_contract_version
+            automationDocumentName                    = local.automation_document_name
+            automationDocumentVersion                 = "1"
+            automationDocumentContentSha256           = "{{ AutomationDocumentContentSha256 }}"
+            leaseIdSha256                             = "{{ LeaseIdSha256 }}"
+            expiresAtUtc                              = "{{ ExpiresAtUtc }}"
+            restoreMode                               = "{{ RestoreMode }}"
+            maximumEventAgeInSeconds                  = 60
           }
         }
       },

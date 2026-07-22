@@ -1,5 +1,6 @@
 import hashlib
 import json
+import re
 import time
 from datetime import datetime, timezone
 
@@ -36,6 +37,26 @@ _TRANSIENT_EXCEPTIONS = (
 )
 _CLIENT_CONFIG = Config(connect_timeout=10, read_timeout=20, retries={"max_attempts": 0})
 _SCHEDULE_TARGET_ARN = "arn:aws:scheduler:::aws-sdk:ssm:startAutomationExecution"
+_AUTOMATION_CONTRACT_VERSION = "ssm-rds-monitoring-restore-v2"
+_PRESERVED_POSTURE_ENCODING_VERSION = "rds-preserved-monitoring-posture-json-v1"
+_PRESERVED_POSTURE_FIELDS = (
+    "version",
+    "performanceInsightsKmsKeyId",
+    "monitoringInterval",
+    "monitoringRoleArn",
+    "enabledCloudwatchLogsExports",
+)
+_SUPPORTED_MONITORING_INTERVALS = {0, 1, 5, 10, 15, 30, 60}
+_SUPPORTED_POSTGRES_LOG_EXPORTS = {
+    "iam-db-auth-error",
+    "postgresql",
+    "upgrade",
+}
+_LOWERCASE_SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_IAM_ROLE_ARN = re.compile(
+    r"^arn:(aws|aws-us-gov|aws-cn):iam::([0-9]{12}):role/"
+    r"[A-Za-z0-9+=,.@_/-]{1,512}$"
+)
 
 
 def _call(operation, **kwargs):
@@ -55,6 +76,118 @@ def _call(operation, **kwargs):
         if attempt == len(_RETRY_DELAYS_SECONDS) - 1:
             raise last_error
     raise RuntimeError("bounded AWS retry loop exited unexpectedly")
+
+
+def _decode_json_without_duplicate_keys(value):
+    def reject_duplicates(pairs):
+        result = {}
+        for key, item in pairs:
+            if key in result:
+                raise ValueError("duplicate JSON property")
+            result[key] = item
+        return result
+
+    return json.loads(value, object_pairs_hook=reject_duplicates)
+
+
+def _canonical_preserved_posture_json(posture):
+    canonical = {
+        "version": posture["version"],
+        "performanceInsightsKmsKeyId": posture[
+            "performanceInsightsKmsKeyId"
+        ],
+        "monitoringInterval": posture["monitoringInterval"],
+        "monitoringRoleArn": posture["monitoringRoleArn"],
+        "enabledCloudwatchLogsExports": posture[
+            "enabledCloudwatchLogsExports"
+        ],
+    }
+    return json.dumps(canonical, separators=(",", ":"), ensure_ascii=False)
+
+
+def _parse_preserved_monitoring_posture(events):
+    encoding = events.get("preservedMonitoringPostureEncodingVersion")
+    if encoding != _PRESERVED_POSTURE_ENCODING_VERSION:
+        raise RuntimeError("preserved monitoring posture encoding version drifted")
+
+    raw = events.get("expectedPreservedMonitoringPostureJson")
+    expected_sha256 = events.get("expectedPreservedMonitoringPostureSha256")
+    if not isinstance(raw, str) or not raw:
+        raise RuntimeError("preserved monitoring posture JSON was not bound")
+    if not isinstance(expected_sha256, str) or not _LOWERCASE_SHA256.fullmatch(
+        expected_sha256
+    ):
+        raise RuntimeError("preserved monitoring posture hash was malformed")
+    actual_sha256 = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    if actual_sha256 != expected_sha256:
+        raise RuntimeError("preserved monitoring posture hash did not match")
+
+    try:
+        posture = _decode_json_without_duplicate_keys(raw)
+    except (TypeError, ValueError, json.JSONDecodeError) as error:
+        raise RuntimeError("preserved monitoring posture JSON was malformed") from error
+    if not isinstance(posture, dict) or tuple(posture) != _PRESERVED_POSTURE_FIELDS:
+        raise RuntimeError("preserved monitoring posture fields were not canonical")
+    if posture.get("version") != _PRESERVED_POSTURE_ENCODING_VERSION:
+        raise RuntimeError("preserved monitoring posture body version drifted")
+
+    kms_key_id = posture.get("performanceInsightsKmsKeyId")
+    if (
+        not isinstance(kms_key_id, str)
+        or not kms_key_id.strip()
+        or kms_key_id != kms_key_id.strip()
+    ):
+        raise RuntimeError("preserved monitoring posture KMS identity was invalid")
+
+    monitoring_interval = posture.get("monitoringInterval")
+    if (
+        isinstance(monitoring_interval, bool)
+        or not isinstance(monitoring_interval, int)
+        or monitoring_interval not in _SUPPORTED_MONITORING_INTERVALS
+    ):
+        raise RuntimeError("preserved monitoring interval was invalid")
+
+    arn_parts = str(events.get("expectedDbInstanceArn", "")).split(":")
+    if (
+        len(arn_parts) != 7
+        or arn_parts[0] != "arn"
+        or arn_parts[2] != "rds"
+        or arn_parts[5] != "db"
+        or not arn_parts[4].isdigit()
+        or len(arn_parts[4]) != 12
+    ):
+        raise RuntimeError("bound database ARN is malformed")
+    monitoring_role_arn = posture.get("monitoringRoleArn")
+    if monitoring_interval == 0:
+        if monitoring_role_arn is not None:
+            raise RuntimeError(
+                "disabled enhanced monitoring must encode an explicit null role"
+            )
+    else:
+        if not isinstance(monitoring_role_arn, str):
+            raise RuntimeError("enabled enhanced monitoring role was invalid")
+        role_match = _IAM_ROLE_ARN.fullmatch(monitoring_role_arn)
+        if (
+            role_match is None
+            or role_match.group(1) != arn_parts[1]
+            or role_match.group(2) != arn_parts[4]
+        ):
+            raise RuntimeError("enabled enhanced monitoring role was invalid")
+
+    exports = posture.get("enabledCloudwatchLogsExports")
+    if not isinstance(exports, list) or any(
+        not isinstance(value, str)
+        or not value
+        or value not in _SUPPORTED_POSTGRES_LOG_EXPORTS
+        for value in exports
+    ):
+        raise RuntimeError("preserved PostgreSQL log exports were invalid")
+    if exports != sorted(set(exports)):
+        raise RuntimeError("preserved PostgreSQL log exports were not canonical")
+
+    if raw != _canonical_preserved_posture_json(posture):
+        raise RuntimeError("preserved monitoring posture JSON was not canonical")
+    return posture
 
 
 def _describe_exact_database(rds, events):
@@ -78,19 +211,22 @@ def _describe_exact_database(rds, events):
     return db
 
 
-def _is_exact_posture(db, events, expected_exports):
+def _is_exact_posture(db, events, expected_posture):
     parameter_groups = db.get("DBParameterGroups", [])
+    expected_role_arn = expected_posture["monitoringRoleArn"]
+    observed_role_arn = db.get("MonitoringRoleArn") or None
     return (
         db.get("DBInstanceStatus") == "available"
         and db.get("DatabaseInsightsMode") == "standard"
         and db.get("PerformanceInsightsEnabled") is True
         and db.get("PerformanceInsightsRetentionPeriod") == 7
         and db.get("PerformanceInsightsKMSKeyId", "")
-        == events["expectedPerformanceInsightsKmsKeyId"]
+        == expected_posture["performanceInsightsKmsKeyId"]
         and db.get("MonitoringInterval", 0)
-        == int(events["expectedMonitoringInterval"])
-        and db.get("MonitoringRoleArn", "") == events["expectedMonitoringRoleArn"]
-        and sorted(db.get("EnabledCloudwatchLogsExports", [])) == expected_exports
+        == expected_posture["monitoringInterval"]
+        and observed_role_arn == expected_role_arn
+        and sorted(db.get("EnabledCloudwatchLogsExports", []))
+        == expected_posture["enabledCloudwatchLogsExports"]
         and db.get("PendingModifiedValues", {}) == {}
         and len(parameter_groups) > 0
         and all(
@@ -111,6 +247,7 @@ def _parse_schedule_time(value):
 
 
 def _expected_schedule(events):
+    _parse_preserved_monitoring_posture(events)
     arn_parts = events["expectedDbInstanceArn"].split(":")
     if len(arn_parts) != 7 or arn_parts[2] != "rds" or arn_parts[5] != "db":
         raise RuntimeError("bound database ARN is malformed")
@@ -121,6 +258,12 @@ def _expected_schedule(events):
     if not group_name.endswith(suffix):
         raise RuntimeError("bound restore schedule group is malformed")
     name_prefix = group_name[: -len(suffix)]
+    if (
+        events.get("automationDocumentName")
+        != f"{name_prefix}-db-insights-restore-v2"
+        or events.get("automationDocumentVersion") != "1"
+    ):
+        raise RuntimeError("restore automation document binding drifted")
     role_arn = f"arn:aws:iam::{account_id}:role/{name_prefix}-db-insights-restore"
     automation_role_arn = (
         f"arn:aws:iam::{account_id}:role/{name_prefix}-db-insights-restore-automation"
@@ -143,7 +286,7 @@ def _expected_schedule(events):
     )
     description_binding = hashlib.sha256(binding_material.encode("utf-8")).hexdigest()
     description = (
-        "SchoolPilot db-insights restore v2 "
+        "SchoolPilot db-insights restore v3 "
         f"lease={events['leaseIdSha256']} binding={description_binding}"
     )
     parameters = {
@@ -153,12 +296,15 @@ def _expected_schedule(events):
         "ExpectedDatabaseResourceId": [events["expectedDatabaseResourceId"]],
         "ExpectedDBInstanceClass": [events["expectedDbInstanceClass"]],
         "ExpectedEngineVersion": [events["expectedEngineVersion"]],
-        "ExpectedPerformanceInsightsKmsKeyId": [
-            events["expectedPerformanceInsightsKmsKeyId"]
+        "PreservedMonitoringPostureEncodingVersion": [
+            events["preservedMonitoringPostureEncodingVersion"]
         ],
-        "ExpectedMonitoringInterval": [events["expectedMonitoringInterval"]],
-        "ExpectedMonitoringRoleArn": [events["expectedMonitoringRoleArn"]],
-        "ExpectedLogExportsJson": [events["expectedLogExportsJson"]],
+        "ExpectedPreservedMonitoringPostureJson": [
+            events["expectedPreservedMonitoringPostureJson"]
+        ],
+        "ExpectedPreservedMonitoringPostureSha256": [
+            events["expectedPreservedMonitoringPostureSha256"]
+        ],
         "FailureQueueUrl": [queue_url],
         "RestoreScheduleName": [events["restoreScheduleName"]],
         "RestoreScheduleGroupName": [group_name],
@@ -208,8 +354,10 @@ def _read_guard(scheduler, events):
     expected = _expected_schedule(events)
     target = schedule.get("Target", {})
     try:
-        target_input = json.loads(target.get("Input", "{}"))
-        expected_target_input = json.loads(expected["target"]["Input"])
+        target_input = _decode_json_without_duplicate_keys(target.get("Input", "{}"))
+        expected_target_input = _decode_json_without_duplicate_keys(
+            expected["target"]["Input"]
+        )
     except (TypeError, ValueError):
         return "superseded", schedule
     state = schedule.get("State")
@@ -254,7 +402,7 @@ def _read_guard(scheduler, events):
     return ("exact", schedule) if exact else ("superseded", schedule)
 
 
-def _disable_exact_guard(rds, scheduler, events, expected_exports):
+def _disable_exact_guard(rds, scheduler, events, expected_posture):
     expected = _expected_schedule(events)
     try:
         _call(
@@ -295,7 +443,7 @@ def _disable_exact_guard(rds, scheduler, events, expected_exports):
             raise RuntimeError("restore guard generation drifted during disable")
         if guard_state == "absent":
             db = _describe_exact_database(rds, events)
-            if not _is_exact_posture(db, events, expected_exports):
+            if not _is_exact_posture(db, events, expected_posture):
                 raise RuntimeError(
                     "restore guard disappeared before exact Standard/7 convergence"
                 )
@@ -307,7 +455,7 @@ def _disable_exact_guard(rds, scheduler, events, expected_exports):
     raise RuntimeError("exact restore schedule did not converge to disabled")
 
 
-def _delete_exact_guard(rds, scheduler, events, expected_exports):
+def _delete_exact_guard(rds, scheduler, events, expected_posture):
     reconciliation_attempts = max(
         2, (int(events["maximumEventAgeInSeconds"]) // 5) + 1
     )
@@ -336,7 +484,7 @@ def _delete_exact_guard(rds, scheduler, events, expected_exports):
             raise RuntimeError("restore guard generation drifted during deletion")
         if guard_state == "absent":
             db = _describe_exact_database(rds, events)
-            if not _is_exact_posture(db, events, expected_exports):
+            if not _is_exact_posture(db, events, expected_posture):
                 raise RuntimeError(
                     "restore guard disappeared before exact Standard/7 convergence"
                 )
@@ -348,13 +496,13 @@ def _delete_exact_guard(rds, scheduler, events, expected_exports):
     raise RuntimeError("exact restore schedule remained after bounded deletion")
 
 
-def _restore_exact_posture(rds, scheduler, events, expected_exports, restore_mode):
+def _restore_exact_posture(rds, scheduler, events, expected_posture, restore_mode):
     deadline = time.monotonic() + 480
     modification_requested = False
     retry_after_concurrent_modification = False
     while True:
         db = _describe_exact_database(rds, events)
-        if _is_exact_posture(db, events, expected_exports):
+        if _is_exact_posture(db, events, expected_posture):
             return db
         if time.monotonic() >= deadline:
             raise RuntimeError("exact Standard/7 monitoring posture did not converge")
@@ -395,7 +543,7 @@ def _restore_exact_posture(rds, scheduler, events, expected_exports, restore_mod
                 # identical restore may now be in flight; bounded polling must
                 # still prove exact Standard/7 before this execution succeeds.
                 db = _describe_exact_database(rds, events)
-                if _is_exact_posture(db, events, expected_exports):
+                if _is_exact_posture(db, events, expected_posture):
                     return db
                 modification_requested = db.get("DBInstanceStatus") != "available"
                 retry_after_concurrent_modification = modification_requested
@@ -403,26 +551,28 @@ def _restore_exact_posture(rds, scheduler, events, expected_exports, restore_mod
 
 
 def handler(events, context):
+    if events.get("automationContractVersion") != _AUTOMATION_CONTRACT_VERSION:
+        raise RuntimeError("restore automation contract version drifted")
     restore_mode = events.get("restoreMode")
     if restore_mode not in ("scheduled", "manual"):
         raise RuntimeError("restore mode was not explicitly bound")
     if int(events.get("maximumEventAgeInSeconds", -1)) != 60:
         raise RuntimeError("restore delivery-grace binding drifted")
 
+    expected_posture = _parse_preserved_monitoring_posture(events)
     rds = boto3.client("rds", config=_CLIENT_CONFIG)
     scheduler = boto3.client("scheduler", config=_CLIENT_CONFIG)
-    expected_exports = sorted(json.loads(events["expectedLogExportsJson"]))
     guard_state, schedule = _read_guard(scheduler, events)
     if guard_state == "absent":
         db = _describe_exact_database(rds, events)
-        if not _is_exact_posture(db, events, expected_exports):
+        if not _is_exact_posture(db, events, expected_posture):
             raise RuntimeError("restore guard disappeared before exact Standard/7 convergence")
         return {"verified": True, "guardAlreadyRemoved": True, "restoreMode": restore_mode}
     if guard_state != "exact":
         raise RuntimeError("restore guard generation was replaced or drifted")
 
     db = _restore_exact_posture(
-        rds, scheduler, events, expected_exports, restore_mode
+        rds, scheduler, events, expected_posture, restore_mode
     )
     result = {
         "verified": True,
@@ -444,13 +594,13 @@ def handler(events, context):
         raise RuntimeError("restore guard generation drifted after posture convergence")
     if guard_state == "absent":
         db = _describe_exact_database(rds, events)
-        if not _is_exact_posture(db, events, expected_exports):
+        if not _is_exact_posture(db, events, expected_posture):
             raise RuntimeError("restore guard disappeared after posture convergence")
         result["guardRemoved"] = True
         return result
     if schedule.get("State") == "ENABLED":
         schedule = _disable_exact_guard(
-            rds, scheduler, events, expected_exports
+            rds, scheduler, events, expected_posture
         )
     elif schedule.get("State") != "DISABLED":
         raise RuntimeError("manual restore guard has an unsupported state")
@@ -460,7 +610,7 @@ def handler(events, context):
     # as the distributed barrier until the complete delivery-age window drains.
     time.sleep(int(events["maximumEventAgeInSeconds"]) + 5)
     db = _describe_exact_database(rds, events)
-    if not _is_exact_posture(db, events, expected_exports):
+    if not _is_exact_posture(db, events, expected_posture):
         raise RuntimeError("exact Standard/7 posture drifted during delivery grace")
 
     guard_state, schedule = _read_guard(scheduler, events)
@@ -469,10 +619,10 @@ def handler(events, context):
     if guard_state == "exact":
         if schedule.get("State") != "DISABLED":
             raise RuntimeError("exact restore schedule was re-enabled during disarm")
-        _delete_exact_guard(rds, scheduler, events, expected_exports)
+        _delete_exact_guard(rds, scheduler, events, expected_posture)
 
     db = _describe_exact_database(rds, events)
-    if not _is_exact_posture(db, events, expected_exports):
+    if not _is_exact_posture(db, events, expected_posture):
         raise RuntimeError("exact Standard/7 posture drifted after guard removal")
     result["guardRemoved"] = True
     return result

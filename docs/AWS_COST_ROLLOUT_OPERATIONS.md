@@ -8,9 +8,10 @@ deployment checks, snapshots, and cost checks must also pass.
 ## Non-negotiable boundaries
 
 - Use one Terraform operator and the local backend through launch.
-- Run the state-backup tool from PowerShell 7 or newer (`pwsh`), not Windows
-  PowerShell 5.1 (`powershell.exe`). The script enforces this before any
-  filesystem or cryptographic operation.
+- Run rollout, diagnostic, certification, PI-finalization, and credential
+  operations from PowerShell 7.5 or newer (`pwsh`), not Windows PowerShell 5.1
+  (`powershell.exe`). Date-preserving AWS evidence decoding requires 7.5. The
+  scripts enforce their runtime floors before operational work.
 - Use the committed AWS provider `5.100.0` lock file. Never run
   `terraform init -upgrade` during this rollout.
 - Deploy only the backend from a clean merged `main`. While the launch-safe
@@ -60,12 +61,12 @@ rollback configuration.
 
 ## State backup and saved-plan gate
 
-Enter the commands in this section inside a PowerShell 7+ (`pwsh`) session.
+Enter the commands in this section inside a PowerShell 7.5+ (`pwsh`) session.
 Confirm the host before handling the recovery credential:
 
 ```powershell
-if ($PSVersionTable.PSVersion.Major -lt 7) {
-  throw "PowerShell 7 or newer is required; reopen this runbook in pwsh."
+if ($PSVersionTable.PSVersion -lt [version]"7.5") {
+  throw "PowerShell 7.5 or newer is required; reopen this runbook in a current pwsh."
 }
 ```
 
@@ -802,10 +803,15 @@ exact RDS monitoring posture and enable Advanced mode with Performance Insights
 retention 465. The lease must observe the same private, available
 `db.t4g.medium`, its bound DBI resource ID, no pending reboot, and the reviewed
 PI metrics. It changes no database class, storage, parameter group, workload,
-or threshold. `database-insights-monitoring-lease-v2` also captures and verifies
+or threshold. `database-insights-monitoring-lease-v3` also captures and verifies
 the exact Performance Insights KMS key, Enhanced Monitoring interval and role,
-and sorted CloudWatch database-log exports. Its public binding contains only
-hashes for private paths, KMS identities, and IAM role ARNs.
+and sorted CloudWatch database-log exports. Its schema-3 private receipt binds a
+canonical `rds-preserved-monitoring-posture-json-v1` envelope and its SHA-256.
+An absent Enhanced Monitoring role is represented by JSON `null` only when the
+interval is zero, and no database-log exports is represented by the literal JSON
+array `[]`; neither condition is encoded as an empty SSM parameter. Its public
+binding contains only hashes for private paths, KMS identities, and IAM role
+ARNs.
 
 Before acquiring a lease, apply the reviewed
 `database-insights-lease-watchdog` Terraform resources. This medium-only module
@@ -823,15 +829,23 @@ age, and zero same-invocation Scheduler retries. Each recurrence is the next
 bounded restore attempt; the guard never disappears merely because Scheduler
 successfully launched one attempt. Its universal target is
 `ssm:StartAutomationExecution` for
-`schoolpilot-production-db-insights-restore-v1` at the literal numeric document
+`schoolpilot-production-db-insights-restore-v2` at the literal numeric document
 version `1`, never `$DEFAULT`. Acquisition rejects an existing fixed-name guard
-or a still-active prior Automation generation before creating a new receipt.
+or a still-active Automation generation for any
+`schoolpilot-production-db-insights-restore-v*` document before creating a new
+receipt.
 
 The immutable private receipt binds
-`aws-scheduler-ssm-recurring-restore-v1`, the exact account, region, DB ARN and
+`aws-scheduler-ssm-recurring-restore-v2`, the exact account, region, DB ARN and
 DBI resource identity, expiration, lease-generation hash, schedule expression
 and target, numeric Automation version and content SHA-256, initial monitoring
 posture, execution roles, encrypted DLQ, failure rule, and retry policy. The
+SSM target carries exactly one nonempty value for every parameter. Its preserved
+monitoring posture is independently decoded, structurally validated, and hashed
+by the lease controller, certification supervisor, and Automation runtime; no
+consumer trusts a serialized Scheduler target without rebuilding it. Lease-v2,
+guard-v1, and restore-document-v1 receipts are historical-only and are never
+translated into this contract. The
 numeric version and content hash are independently re-read from SSM during
 acquisition and validation; disarm requires the exact bound schedule target to
 still carry them. Ordinary logs and sealed evidence retain only the immutable
@@ -855,6 +869,19 @@ Scheduler delivery-age window, reverifies posture, and idempotently deletes
 only that generation. The EventBridge rule and DLQ report terminal Automation
 failures only. Neither a successful Scheduler delivery nor an EventBridge
 status is accepted as convergence evidence.
+
+The rejected diagnostic
+`diagnostic-waf800-medium-queryid-20260722T074700Z-4454554b6e70-r1` and its
+fixture, lease, controller, and evidence artifacts are historical-only. Its
+otherwise healthy workload does not overcome the client-side PI timestamp
+decode failure or malformed empty restoration parameters, and it cannot be
+patched, rebound, replayed, or used as a certification predecessor. Before any
+new fixture preparation or workload approval, the corrected release must prove
+the v3/v2 contract with one bounded no-traffic Standard/7 -> Advanced/465 ->
+Standard/7 lease round trip against the live absent-role/empty-export posture.
+That proof must end with the exact guard removed, no active matching Automation,
+an empty DLQ, and the alarm healthy. Remediation approval does not authorize a
+new diagnostic or certification workload.
 
 The acquisition preflight reads the live Scheduler group, numeric SSM document
 and content hash, both role trusts and complete permission sets, SQS encryption

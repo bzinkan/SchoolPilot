@@ -1,4 +1,4 @@
-#requires -Version 7.0
+#requires -Version 7.5
 
 [CmdletBinding()]
 param(
@@ -21,8 +21,9 @@ $script:MonotonicDeadlineScript = Join-Path $PSScriptRoot "monotonic-deadline.mj
 $script:TilePollAccountingScript = Join-Path $PSScriptRoot "tile-poll-accounting.mjs"
 $script:MonitorScript = Join-Path $PSScriptRoot "aws-rollout-monitor.ps1"
 $script:DatabaseInsightsLeaseScript = Join-Path $PSScriptRoot "database-insights-lease.ps1"
-$script:DatabaseInsightsLeaseVersion = "database-insights-monitoring-lease-v2"
-$script:DatabaseInsightsDurableRestoreGuardVersion = "aws-scheduler-ssm-recurring-restore-v1"
+$script:DatabaseInsightsLeaseVersion = "database-insights-monitoring-lease-v3"
+$script:DatabaseInsightsDurableRestoreGuardVersion = "aws-scheduler-ssm-recurring-restore-v2"
+$script:DatabaseInsightsDurableRestoreAutomationVersion = "ssm-rds-monitoring-restore-v2"
 $script:WorkloadSchemaVersion = "classpilot-tile-batch-v1"
 $script:EndpointShapeSha256 = "8e9f1942e4b3a27de7dd0571a9f60ffeb276c089e4baae96a885dba69e3233b2"
 $script:ExpectedAccountId = "135775632425"
@@ -300,6 +301,19 @@ function Test-EvidenceAwsRetryableFailure {
     return $lower -match 'throttl|rate exceeded|requestlimitexceeded|service unavailable|temporar|timeout|timed out|connection|internalerror|internal failure'
 }
 
+function ConvertFrom-EvidenceAwsJson {
+    param([Parameter(Mandatory=$true)][AllowEmptyString()][string]$Json)
+    if ([string]::IsNullOrWhiteSpace($Json)) {
+        throw "AWS evidence JSON is malformed."
+    }
+    try {
+        return $Json | ConvertFrom-Json -Depth 50 -DateKind String -ErrorAction Stop
+    }
+    catch {
+        throw "AWS evidence JSON is malformed."
+    }
+}
+
 function Invoke-AwsJson {
     param([string[]]$Arguments)
     $operation = "$($Arguments[0]) $($Arguments[1])"
@@ -339,7 +353,7 @@ function Invoke-AwsJson {
             }
             $text = ([string]$stdout).Trim()
             if (-not $text) { return $null }
-            try { return $text | ConvertFrom-Json -Depth 50 }
+            try { return ConvertFrom-EvidenceAwsJson $text }
             catch { throw "AWS CLI returned malformed JSON for $operation." }
         }
         finally {
@@ -910,7 +924,12 @@ function Assert-DatabaseInsightsLeaseBinding {
     try { $receipt = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json -Depth 40 }
     catch { throw "The Database Insights lease receipt is malformed." }
     $durableGuard = Get-Value $receipt "durableRestoreGuard" $null
-    if ([string](Get-Value $durableGuard "version" "") -cne $script:DatabaseInsightsDurableRestoreGuardVersion) {
+    if ([int](Get-Value $receipt "schemaVersion" 0) -ne 3 -or
+        [string](Get-Value $receipt "type" "") -cne "database_insights_monitoring_lease" -or
+        [string](Get-Value $receipt "leaseVersion" "") -cne $script:DatabaseInsightsLeaseVersion -or
+        [string](Get-Value $durableGuard "version" "") -cne $script:DatabaseInsightsDurableRestoreGuardVersion -or
+        [string](Get-Value $durableGuard "automationVersion" "") -cne $script:DatabaseInsightsDurableRestoreAutomationVersion -or
+        [string](Get-Value $durableGuard "automationDocumentName" "") -cne "schoolpilot-production-db-insights-restore-v2") {
         throw "The Database Insights lease receipt does not bind the reviewed AWS-native durable restore guard."
     }
     $durableGuardBindingSha256 = Assert-Sha256 `

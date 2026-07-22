@@ -16,7 +16,8 @@ $ast = [Management.Automation.Language.Parser]::ParseFile($supervisorPath, [ref]
 if ($parseErrors.Count -gt 0) { throw "Unable to parse the rollout supervisor." }
 foreach ($name in @(
     "Resolve-ExternalPath", "Get-RequiredProperty", "Get-CertificationValue", "Get-CertificationSha256",
-    "Get-CertificationTextSha256", "ConvertTo-CertificationComparableJson", "Assert-CertificationSha256", "Assert-CertificationEvidenceReference",
+    "Get-CertificationTextSha256", "ConvertTo-CertificationComparableJson", "Test-CertificationIntegerValue", "Get-CertificationPreservedMonitoringPostureBinding",
+    "Assert-CertificationSha256", "Assert-CertificationEvidenceReference",
     "Assert-CertificationPrivateFileAcl", "ConvertTo-CertificationUtcTimestamp", "Get-CertificationDatabaseInsightsLease",
     "Assert-CertificationDatabaseInsightsLeaseCommandResult"
 )) {
@@ -28,9 +29,10 @@ foreach ($name in @(
     Invoke-Expression $definition.Extent.Text
 }
 
-$script:RequiredDatabaseInsightsLeaseVersion = "database-insights-monitoring-lease-v2"
-$script:RequiredDatabaseInsightsDurableRestoreGuardVersion = "aws-scheduler-ssm-recurring-restore-v1"
-$script:RequiredDatabaseInsightsDurableRestoreAutomationVersion = "ssm-rds-monitoring-restore-v1"
+$script:RequiredDatabaseInsightsLeaseVersion = "database-insights-monitoring-lease-v3"
+$script:RequiredDatabaseInsightsDurableRestoreGuardVersion = "aws-scheduler-ssm-recurring-restore-v2"
+$script:RequiredDatabaseInsightsDurableRestoreAutomationVersion = "ssm-rds-monitoring-restore-v2"
+$script:RequiredPreservedMonitoringPostureEncodingVersion = "rds-preserved-monitoring-posture-json-v1"
 $databaseResourceId = "db-JX7VX4P2ZHF5JXA6N5EREVL54I"
 $leaseId = "0123456789abcdef0123456789abcdef"
 $historyIdentity = [ordered]@{DatabaseResourceId=$databaseResourceId;EngineVersion="16.4"}
@@ -59,15 +61,25 @@ function Set-TestPrivateAcl {
 }
 
 function Write-TestLeaseReceipt {
-    param([string]$Path)
-    $preservedMonitoringPosture = [ordered]@{
-        performanceInsightsKmsKeyId="arn:aws:kms:us-east-1:135775632425:key/00000000-0000-0000-0000-000000000001"
-        monitoringInterval=60
-        monitoringRoleArn="arn:aws:iam::135775632425:role/rds-monitoring-role"
-        enabledCloudwatchLogsExports=@("postgresql","upgrade")
+    param([string]$Path, [switch]$UseProductionEmptyPosture)
+    $initialMonitoringPosture = if ($UseProductionEmptyPosture) {
+        [ordered]@{
+            performanceInsightsKmsKeyId="arn:aws:kms:us-east-1:135775632425:key/00000000-0000-0000-0000-000000000001"
+            monitoringInterval=0
+            monitoringRoleArn=""
+            enabledCloudwatchLogsExports=@()
+        }
     }
-    $preservedMonitoringPostureSha256 = Get-CertificationTextSha256 `
-        ($preservedMonitoringPosture | ConvertTo-Json -Depth 10 -Compress)
+    else {
+        [ordered]@{
+            performanceInsightsKmsKeyId="arn:aws:kms:us-east-1:135775632425:key/00000000-0000-0000-0000-000000000001"
+            monitoringInterval=60
+            monitoringRoleArn="arn:aws:iam::135775632425:role/rds-monitoring-role"
+            enabledCloudwatchLogsExports=@("postgresql","upgrade")
+        }
+    }
+    $preservedMonitoringPosture = Get-CertificationPreservedMonitoringPostureBinding $initialMonitoringPosture
+    $preservedMonitoringPostureSha256 = $preservedMonitoringPosture.Sha256
     $expirationRawTicks = [DateTimeOffset]::UtcNow.AddHours(6).UtcDateTime.Ticks
     $expiration = [DateTimeOffset]::new([DateTime]::new(
         $expirationRawTicks - ($expirationRawTicks % [TimeSpan]::TicksPerSecond), [DateTimeKind]::Utc
@@ -78,7 +90,7 @@ function Write-TestLeaseReceipt {
     $descriptionBindingSha256 = Get-CertificationTextSha256 `
         "135775632425|us-east-1|schoolpilot-production-db|$($expiration.ToString('o'))|$leaseIdSha256"
     $automationDocumentContentSha256 = "b" * 64
-    $automationDocumentName = "schoolpilot-production-db-insights-restore-v1"
+    $automationDocumentName = "schoolpilot-production-db-insights-restore-v2"
     $automationDocumentVersion = "1"
     $automationRoleArn = "arn:aws:iam::135775632425:role/schoolpilot-production-db-insights-restore-automation"
     $targetInput = [ordered]@{
@@ -91,11 +103,9 @@ function Write-TestLeaseReceipt {
             ExpectedDatabaseResourceId = @($databaseResourceId)
             ExpectedDBInstanceClass = @("db.t4g.medium")
             ExpectedEngineVersion = @("16.4")
-            ExpectedPerformanceInsightsKmsKeyId = @($preservedMonitoringPosture.performanceInsightsKmsKeyId)
-            ExpectedMonitoringInterval = @("60")
-            ExpectedMonitoringRoleArn = @($preservedMonitoringPosture.monitoringRoleArn)
-            ExpectedLogExportsJson = @((@($preservedMonitoringPosture.enabledCloudwatchLogsExports) |
-                ConvertTo-Json -Compress -AsArray))
+            PreservedMonitoringPostureEncodingVersion = @($script:RequiredPreservedMonitoringPostureEncodingVersion)
+            ExpectedPreservedMonitoringPostureJson = @($preservedMonitoringPosture.Json)
+            ExpectedPreservedMonitoringPostureSha256 = @($preservedMonitoringPostureSha256)
             FailureQueueUrl = @("https://sqs.us-east-1.amazonaws.com/135775632425/schoolpilot-production-db-insights-restore-dlq")
             RestoreScheduleName = @($scheduleName)
             RestoreScheduleGroupName = @("schoolpilot-production-db-insights-leases")
@@ -114,13 +124,13 @@ function Write-TestLeaseReceipt {
         scheduleArn="arn:aws:scheduler:us-east-1:135775632425:schedule/schoolpilot-production-db-insights-leases/$scheduleName"
         scheduleExpression="rate(15 minutes)";scheduleStartAtUtc=$expiration.ToString("o")
         scheduleExpressionTimezone="UTC";actionAfterCompletion="NONE";state="ENABLED"
-        description="SchoolPilot db-insights restore v2 lease=$leaseIdSha256 binding=$descriptionBindingSha256"
+        description="SchoolPilot db-insights restore v3 lease=$leaseIdSha256 binding=$descriptionBindingSha256"
         targetArn="arn:aws:scheduler:::aws-sdk:ssm:startAutomationExecution"
         automationVersion=$script:RequiredDatabaseInsightsDurableRestoreAutomationVersion
         automationDocumentName=$automationDocumentName
         automationDocumentVersion=$automationDocumentVersion
         automationDocumentContentSha256=$automationDocumentContentSha256
-        automationDefinitionArn="arn:aws:ssm:us-east-1:135775632425:automation-definition/schoolpilot-production-db-insights-restore-v1:1"
+        automationDefinitionArn="arn:aws:ssm:us-east-1:135775632425:automation-definition/schoolpilot-production-db-insights-restore-v2:1"
         automationRoleArn=$automationRoleArn
         automationFailureRuleArn="arn:aws:events:us-east-1:135775632425:rule/schoolpilot-production-db-insights-restore-failed"
         targetRoleArn="arn:aws:iam::135775632425:role/schoolpilot-production-db-insights-restore"
@@ -130,7 +140,7 @@ function Write-TestLeaseReceipt {
     }
     $durableGuard["bindingSha256"] = Get-CertificationTextSha256 ($durableGuard | ConvertTo-Json -Depth 20 -Compress)
     $receipt = [ordered]@{
-        schemaVersion=2;type="database_insights_monitoring_lease"
+        schemaVersion=3;type="database_insights_monitoring_lease"
         leaseVersion=$script:RequiredDatabaseInsightsLeaseVersion;leaseId=$leaseId;leasePurpose="certification"
         capturedAtUtc=[DateTimeOffset]::UtcNow.AddMinutes(-5).ToString("o")
         expiresAtUtc=$expiration.ToString("o")
@@ -142,10 +152,10 @@ function Write-TestLeaseReceipt {
             databaseResourceId=$databaseResourceId;status="available";instanceClass="db.t4g.medium"
             engine="postgres";engineVersion="16.4";databaseInsightsMode="standard"
             performanceInsightsEnabled=$true;performanceInsightsRetentionPeriod=7
-            performanceInsightsKmsKeyId=$preservedMonitoringPosture.performanceInsightsKmsKeyId
-            monitoringInterval=$preservedMonitoringPosture.monitoringInterval
-            monitoringRoleArn=$preservedMonitoringPosture.monitoringRoleArn
-            enabledCloudwatchLogsExports=$preservedMonitoringPosture.enabledCloudwatchLogsExports
+            performanceInsightsKmsKeyId=$initialMonitoringPosture.performanceInsightsKmsKeyId
+            monitoringInterval=$initialMonitoringPosture.monitoringInterval
+            monitoringRoleArn=$initialMonitoringPosture.monitoringRoleArn
+            enabledCloudwatchLogsExports=$initialMonitoringPosture.enabledCloudwatchLogsExports
             pendingModifiedValuesAbsent=$true;parameterApplyStatuses=@("in-sync")
         }
         requestedPosture=[ordered]@{
@@ -202,6 +212,53 @@ try {
         $binding.leaseIdSha256 -eq (Get-CertificationTextSha256 $leaseId)) `
         "Sealed certification evidence must expose only lease, path, database, KMS, and role identity hashes."
     $assertions++
+
+    $emptyPostureReceiptPath = Join-Path $tempRoot "certification-empty-posture-lease.json"
+    Write-TestLeaseReceipt $emptyPostureReceiptPath -UseProductionEmptyPosture
+    $emptyPostureBundle = Get-CertificationDatabaseInsightsLease `
+        (Get-TestConfig $emptyPostureReceiptPath (Get-CertificationSha256 $emptyPostureReceiptPath)) `
+        $historyIdentity "db.t4g.medium"
+    Assert-Condition ($emptyPostureBundle.Public.initialPosture.monitoringInterval -eq 0 -and
+        $null -eq $emptyPostureBundle.Public.initialPosture.monitoringRoleArnSha256 -and
+        @($emptyPostureBundle.Public.initialPosture.enabledCloudwatchLogsExports).Count -eq 0 -and
+        $emptyPostureBundle.Public.initialPosture.preservedMonitoringPostureEncodingVersion -ceq
+            'rds-preserved-monitoring-posture-json-v1') `
+        "Certification must independently rebuild the canonical absent-role and empty-export posture."
+    $assertions++
+
+    foreach ($malformedPosture in @(
+        [ordered]@{Name="numeric KMS identity";Posture=[ordered]@{
+            performanceInsightsKmsKeyId=123;monitoringInterval=0;monitoringRoleArn=$null
+            enabledCloudwatchLogsExports=@()
+        }},
+        [ordered]@{Name="fractional monitoring interval";Posture=[ordered]@{
+            performanceInsightsKmsKeyId="kms-key";monitoringInterval=0.5;monitoringRoleArn=$null
+            enabledCloudwatchLogsExports=@()
+        }},
+        [ordered]@{Name="boolean monitoring interval";Posture=[ordered]@{
+            performanceInsightsKmsKeyId="kms-key";monitoringInterval=$false;monitoringRoleArn=$null
+            enabledCloudwatchLogsExports=@()
+        }},
+        [ordered]@{Name="numeric monitoring role";Posture=[ordered]@{
+            performanceInsightsKmsKeyId="kms-key";monitoringInterval=60;monitoringRoleArn=123
+            enabledCloudwatchLogsExports=@()
+        }},
+        [ordered]@{Name="scalar log export";Posture=[ordered]@{
+            performanceInsightsKmsKeyId="kms-key";monitoringInterval=0;monitoringRoleArn=$null
+            enabledCloudwatchLogsExports="postgresql"
+        }},
+        [ordered]@{Name="non-string log export";Posture=[ordered]@{
+            performanceInsightsKmsKeyId="kms-key";monitoringInterval=0;monitoringRoleArn=$null
+            enabledCloudwatchLogsExports=@(123)
+        }}
+    )) {
+        $malformedPostureRejected = $false
+        try { [void](Get-CertificationPreservedMonitoringPostureBinding $malformedPosture.Posture) }
+        catch { $malformedPostureRejected = $_.Exception.Message -match 'incomplete' }
+        Assert-Condition $malformedPostureRejected `
+            "The supervisor must reject a $($malformedPosture.Name) before rebuilding the restore contract."
+        $assertions++
+    }
 
     $commandContract = [pscustomobject]@{
         DatabaseInsightsLease = $binding
@@ -397,10 +454,26 @@ try {
     Write-TestLeaseReceipt $receiptPath
     $historicalVersionRejected = $false
     $oldConfig = Get-TestConfig $receiptPath (Get-CertificationSha256 $receiptPath)
-    $oldConfig.databaseInsightsLease.version = "database-insights-monitoring-lease-v1"
+    $oldConfig.databaseInsightsLease.version = "database-insights-monitoring-lease-v2"
     try { Get-CertificationDatabaseInsightsLease $oldConfig $historyIdentity "db.t4g.medium" | Out-Null }
     catch { $historicalVersionRejected = $_.Exception.Message -match "reviewed Database Insights" }
     Assert-Condition $historicalVersionRejected "Historical lease schemas must not enter a fresh certification chain."
+    $assertions++
+
+    Write-TestLeaseReceipt $receiptPath
+    $historicalReceipt = Get-Content $receiptPath -Raw | ConvertFrom-Json -Depth 30
+    $historicalReceipt.schemaVersion = 2
+    $historicalReceipt.leaseVersion = "database-insights-monitoring-lease-v2"
+    Save-TestLeaseReceipt $receiptPath $historicalReceipt
+    $historicalReceiptRejected = $false
+    try {
+        Get-CertificationDatabaseInsightsLease `
+            (Get-TestConfig $receiptPath (Get-CertificationSha256 $receiptPath)) `
+            $historyIdentity "db.t4g.medium" | Out-Null
+    }
+    catch { $historicalReceiptRejected = $_.Exception.Message -match "certification-purpose" }
+    Assert-Condition $historicalReceiptRejected `
+        "A schema-2 lease-v2 receipt must remain historical-only even when rebound into a fresh config."
     $assertions++
 }
 finally {

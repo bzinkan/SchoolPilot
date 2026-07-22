@@ -80,7 +80,7 @@ run "durable_restore_is_exact_encrypted_and_alerted" {
       one([
         for statement in jsondecode(aws_iam_role_policy.restore.policy).Statement : statement
         if statement.Sid == "StartExactRestoreAutomation"
-      ]).Resource == "arn:aws:ssm:us-east-1:135775632425:automation-definition/schoolpilot-production-db-insights-restore-v1:1" &&
+      ]).Resource == "arn:aws:ssm:us-east-1:135775632425:automation-definition/schoolpilot-production-db-insights-restore-v2:1" &&
       one([
         for statement in jsondecode(aws_iam_role_policy.restore.policy).Statement : statement
         if statement.Sid == "PassExactRestoreAutomationRole"
@@ -197,6 +197,7 @@ run "durable_restore_is_exact_encrypted_and_alerted" {
   assert {
     condition = (
       aws_ssm_document.restore.document_type == "Automation" &&
+      aws_ssm_document.restore.name == "schoolpilot-production-db-insights-restore-v2" &&
       jsondecode(aws_ssm_document.restore.content).schemaVersion == "0.3" &&
       length(jsondecode(aws_ssm_document.restore.content).mainSteps) == 4 &&
       jsondecode(aws_ssm_document.restore.content).mainSteps[0].name == "RestoreExactPosture" &&
@@ -204,8 +205,35 @@ run "durable_restore_is_exact_encrypted_and_alerted" {
       jsondecode(aws_ssm_document.restore.content).mainSteps[0].timeoutSeconds == 600 &&
       jsondecode(aws_ssm_document.restore.content).mainSteps[0].onFailure == "step:PublishRestoreFailure" &&
       jsondecode(aws_ssm_document.restore.content).mainSteps[0].nextStep == "FinishRestoreSuccess" &&
+      jsondecode(aws_ssm_document.restore.content).mainSteps[0].inputs.InputPayload.automationContractVersion == "ssm-rds-monitoring-restore-v2" &&
       jsondecode(aws_ssm_document.restore.content).mainSteps[0].inputs.InputPayload.automationDocumentVersion == "1" &&
       jsondecode(aws_ssm_document.restore.content).mainSteps[0].inputs.InputPayload.restoreMode == "{{ RestoreMode }}" &&
+      jsondecode(aws_ssm_document.restore.content).mainSteps[0].inputs.InputPayload.preservedMonitoringPostureEncodingVersion == "{{ PreservedMonitoringPostureEncodingVersion }}" &&
+      jsondecode(aws_ssm_document.restore.content).mainSteps[0].inputs.InputPayload.expectedPreservedMonitoringPostureJson == "{{ ExpectedPreservedMonitoringPostureJson }}" &&
+      jsondecode(aws_ssm_document.restore.content).mainSteps[0].inputs.InputPayload.expectedPreservedMonitoringPostureSha256 == "{{ ExpectedPreservedMonitoringPostureSha256 }}" &&
+      toset(keys(jsondecode(aws_ssm_document.restore.content).parameters)) == toset([
+        "AutomationAssumeRole",
+        "AutomationDocumentContentSha256",
+        "DBInstanceIdentifier",
+        "ExpectedDBInstanceArn",
+        "ExpectedDBInstanceClass",
+        "ExpectedDatabaseResourceId",
+        "ExpectedEngineVersion",
+        "ExpectedPreservedMonitoringPostureJson",
+        "ExpectedPreservedMonitoringPostureSha256",
+        "ExpiresAtUtc",
+        "FailureQueueUrl",
+        "LeaseIdSha256",
+        "PreservedMonitoringPostureEncodingVersion",
+        "RestoreMode",
+        "RestoreScheduleGroupName",
+        "RestoreScheduleName",
+      ]) &&
+      jsondecode(aws_ssm_document.restore.content).parameters.PreservedMonitoringPostureEncodingVersion.allowedValues[0] == "rds-preserved-monitoring-posture-json-v1" &&
+      !contains(keys(jsondecode(aws_ssm_document.restore.content).parameters), "ExpectedPerformanceInsightsKmsKeyId") &&
+      !contains(keys(jsondecode(aws_ssm_document.restore.content).parameters), "ExpectedMonitoringInterval") &&
+      !contains(keys(jsondecode(aws_ssm_document.restore.content).parameters), "ExpectedMonitoringRoleArn") &&
+      !contains(keys(jsondecode(aws_ssm_document.restore.content).parameters), "ExpectedLogExportsJson") &&
       toset(jsondecode(aws_ssm_document.restore.content).parameters.RestoreMode.allowedValues) == toset(["manual", "scheduled"]) &&
       strcontains(jsondecode(aws_ssm_document.restore.content).mainSteps[0].inputs.Script, "PendingModifiedValues") &&
       strcontains(jsondecode(aws_ssm_document.restore.content).mainSteps[0].inputs.Script, "time.monotonic()") &&
@@ -224,7 +252,7 @@ run "durable_restore_is_exact_encrypted_and_alerted" {
 
   assert {
     condition = (
-      jsondecode(aws_cloudwatch_event_rule.automation_failure.event_pattern).detail.Definition[0] == "schoolpilot-production-db-insights-restore-v1" &&
+      jsondecode(aws_cloudwatch_event_rule.automation_failure.event_pattern).detail.Definition[0] == "schoolpilot-production-db-insights-restore-v2" &&
       toset(jsondecode(aws_cloudwatch_event_rule.automation_failure.event_pattern).detail.Status) == toset(["Failed", "TimedOut", "Canceled"])
     )
     error_message = "The secondary EventBridge failure route must match only the exact Automation and canonical terminal failure statuses."

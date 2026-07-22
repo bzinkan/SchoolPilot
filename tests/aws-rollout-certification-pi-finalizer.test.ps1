@@ -94,6 +94,29 @@ $wrapperPath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\scripts\load\
 $diagnosticCollectorPath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\scripts\load\start-waf800-batch-diagnostic.ps1"))
 Import-Module $modulePath -Force
 
+$realisticPiAwsJson = @'
+{
+  "AlignedStartTime": "2026-07-22T01:15:00+00:00",
+  "AlignedEndTime": "2026-07-22T02:45:00+00:00",
+  "MetricList": [{
+    "Key": { "Metric": "db.sql_tokenized.stats.calls_per_sec.avg" },
+    "DataPoints": [{ "Timestamp": "2026-07-22T01:16:00+00:00", "Value": 2.0 }]
+  }]
+}
+'@
+$decodedPiAwsJson = & (Get-Module history-fallback-pi-finalizer) {
+    param($Json)
+    ConvertFrom-HfAwsJson $Json
+} $realisticPiAwsJson
+Assert-Condition ($decodedPiAwsJson.AlignedStartTime -is [string] -and
+    $decodedPiAwsJson.AlignedEndTime -is [string] -and
+    $decodedPiAwsJson.MetricList[0].DataPoints[0].Timestamp -is [string]) `
+    'The certification PI AWS decoder must preserve response bounds and nested SQL-statistics timestamps as strings.'
+Assert-Condition ((Get-Content -LiteralPath $modulePath -Raw).StartsWith('#requires -Version 7.5')) `
+    'The certification PI finalizer must require PowerShell 7.5 before using date-preserving JSON decoding.'
+Assert-Condition ((Get-Content -LiteralPath $wrapperPath -Raw).StartsWith('#requires -Version 7.5')) `
+    'The certification PI finalizer wrapper must advertise the same PowerShell 7.5 runtime floor as its module.'
+
 $aclRegressionPath = Join-Path ([IO.Path]::GetTempPath()) "schoolpilot-pi-acl-$([Guid]::NewGuid().ToString('N')).json"
 try {
     [IO.File]::WriteAllText($aclRegressionPath, '{}', [Text.UTF8Encoding]::new($false))
