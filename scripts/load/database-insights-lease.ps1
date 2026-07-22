@@ -33,15 +33,17 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$script:DatabaseInsightsLeaseVersion = "database-insights-monitoring-lease-v2"
+$script:DatabaseInsightsLeaseVersion = "database-insights-monitoring-lease-v3"
 $script:DatabaseInsightsAdvancedRetentionDays = 465
 $script:DatabaseInsightsStandardRetentionDays = 7
 $script:DatabaseInsightsRepositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\.."))
 $script:DatabaseInsightsAwsProcessTimeoutMilliseconds = 60000
 $script:DatabaseInsightsWatchdogPollSeconds = 30
 $script:DatabaseInsightsWatchdogHeartbeatStaleSeconds = 90
-$script:DatabaseInsightsDurableRestoreGuardVersion = "aws-scheduler-ssm-recurring-restore-v1"
-$script:DatabaseInsightsDurableRestoreAutomationVersion = "ssm-rds-monitoring-restore-v1"
+$script:DatabaseInsightsDurableRestoreGuardVersion = "aws-scheduler-ssm-recurring-restore-v2"
+$script:DatabaseInsightsDurableRestoreAutomationVersion = "ssm-rds-monitoring-restore-v2"
+$script:DatabaseInsightsPreservedMonitoringPostureEncodingVersion = "rds-preserved-monitoring-posture-json-v1"
+$script:DatabaseInsightsSupportedCloudWatchLogExports = @("iam-db-auth-error", "postgresql", "upgrade")
 $script:DatabaseInsightsDurableRestoreTargetArn = "arn:aws:scheduler:::aws-sdk:ssm:startAutomationExecution"
 $script:DatabaseInsightsDurableRestoreMaximumEventAgeSeconds = 60
 $script:DatabaseInsightsDurableRestoreMaximumRetryAttempts = 0
@@ -239,6 +241,14 @@ function Test-DatabaseInsightsEmptyObject {
     return @($Value.PSObject.Properties).Count -eq 0
 }
 
+function Test-DatabaseInsightsIntegerValue {
+    param($Value)
+    return $Value -is [sbyte] -or $Value -is [byte] -or
+        $Value -is [int16] -or $Value -is [uint16] -or
+        $Value -is [int32] -or $Value -is [uint32] -or
+        $Value -is [int64] -or $Value -is [uint64]
+}
+
 function Get-DatabaseInsightsCallerAccount {
     $identity = Invoke-DatabaseInsightsAwsJson @("sts", "get-caller-identity")
     $account = [string](Get-DatabaseInsightsValue $identity "Account" "")
@@ -287,34 +297,158 @@ function Get-DatabaseInsightsPosture {
 
 function Get-DatabaseInsightsPreservedMonitoringPosture {
     param($Posture)
+    $kmsKeyIdValue = $null
+    $monitoringIntervalValue = $null
+    $monitoringRoleValue = $null
+    $rawLogExportsValue = $null
+    if ($Posture -is [Collections.IDictionary]) {
+        if ($Posture.Contains("performanceInsightsKmsKeyId")) {
+            $kmsKeyIdValue = $Posture["performanceInsightsKmsKeyId"]
+        }
+        if ($Posture.Contains("monitoringInterval")) {
+            $monitoringIntervalValue = $Posture["monitoringInterval"]
+        }
+        if ($Posture.Contains("monitoringRoleArn")) {
+            $monitoringRoleValue = $Posture["monitoringRoleArn"]
+        }
+        if ($Posture.Contains("enabledCloudwatchLogsExports")) {
+            $rawLogExportsValue = $Posture["enabledCloudwatchLogsExports"]
+        }
+    }
+    elseif ($null -ne $Posture) {
+        $property = $Posture.PSObject.Properties["performanceInsightsKmsKeyId"]
+        if ($null -ne $property) { $kmsKeyIdValue = $property.Value }
+        $property = $Posture.PSObject.Properties["monitoringInterval"]
+        if ($null -ne $property) { $monitoringIntervalValue = $property.Value }
+        $property = $Posture.PSObject.Properties["monitoringRoleArn"]
+        if ($null -ne $property) { $monitoringRoleValue = $property.Value }
+        $property = $Posture.PSObject.Properties["enabledCloudwatchLogsExports"]
+        if ($null -ne $property) { $rawLogExportsValue = $property.Value }
+    }
+    if ($kmsKeyIdValue -isnot [string] -or
+        [string]::IsNullOrWhiteSpace($kmsKeyIdValue) -or
+        $kmsKeyIdValue -cne $kmsKeyIdValue.Trim() -or
+        -not (Test-DatabaseInsightsIntegerValue $monitoringIntervalValue) -or
+        ($null -ne $monitoringRoleValue -and $monitoringRoleValue -isnot [string]) -or
+        $rawLogExportsValue -isnot [Array] -or
+        @($rawLogExportsValue | Where-Object { $_ -isnot [string] }).Count -gt 0) {
+        throw "The captured RDS monitoring posture has an unsupported value type."
+    }
+    $monitoringInterval = [int]$monitoringIntervalValue
+    $monitoringRoleArnText = if ($null -eq $monitoringRoleValue) { "" } else { [string]$monitoringRoleValue }
+    $monitoringRoleArn = if ($monitoringInterval -eq 0 -and
+        [string]::IsNullOrWhiteSpace($monitoringRoleArnText)) { $null } else { $monitoringRoleArnText }
+    $logExports = @(
+        @($rawLogExportsValue) |
+            Sort-Object -Unique
+    )
+    if (@(0, 1, 5, 10, 15, 30, 60) -cnotcontains $monitoringInterval -or
+        ($monitoringInterval -eq 0 -and $null -ne $monitoringRoleArn) -or
+        ($monitoringInterval -gt 0 -and ($null -eq $monitoringRoleArn -or
+            [string]$monitoringRoleArn -notmatch '^arn:aws(?:-[a-z]+)?:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]{1,512}$')) -or
+        @($logExports | Where-Object {
+            [string]::IsNullOrWhiteSpace([string]$_) -or
+            $script:DatabaseInsightsSupportedCloudWatchLogExports -cnotcontains [string]$_
+        }).Count -gt 0) {
+        throw "The captured RDS monitoring posture is incomplete."
+    }
     return [ordered]@{
-        performanceInsightsKmsKeyId = [string](Get-DatabaseInsightsValue $Posture "performanceInsightsKmsKeyId" "")
-        monitoringInterval = [int](Get-DatabaseInsightsValue $Posture "monitoringInterval" -1)
-        monitoringRoleArn = [string](Get-DatabaseInsightsValue $Posture "monitoringRoleArn" "")
-        enabledCloudwatchLogsExports = @(
-            @(Get-DatabaseInsightsValue $Posture "enabledCloudwatchLogsExports" @()) |
-                ForEach-Object { [string]$_ } |
-                Sort-Object -Unique
+        version = $script:DatabaseInsightsPreservedMonitoringPostureEncodingVersion
+        performanceInsightsKmsKeyId = [string]$kmsKeyIdValue
+        monitoringInterval = $monitoringInterval
+        monitoringRoleArn = $monitoringRoleArn
+        enabledCloudwatchLogsExports = $logExports
+    }
+}
+
+function Get-DatabaseInsightsPreservedMonitoringPostureJson {
+    param($Posture)
+    $preserved = Get-DatabaseInsightsPreservedMonitoringPosture $Posture
+    return ConvertTo-Json -InputObject $preserved -Depth 10 -Compress
+}
+
+function Assert-DatabaseInsightsPreservedMonitoringPostureEnvelope {
+    param(
+        [string]$Json,
+        [string]$ExpectedSha256 = ""
+    )
+    if ([string]::IsNullOrWhiteSpace($Json)) {
+        throw "The preserved RDS monitoring posture envelope is missing."
+    }
+    $document = $null
+    try { $document = [Text.Json.JsonDocument]::Parse($Json) }
+    catch { throw "The preserved RDS monitoring posture envelope is malformed." }
+    try {
+        if ($document.RootElement.ValueKind -ne [Text.Json.JsonValueKind]::Object) {
+            throw "The preserved RDS monitoring posture envelope must be one JSON object."
+        }
+        $expectedNames = @(
+            "version", "performanceInsightsKmsKeyId", "monitoringInterval",
+            "monitoringRoleArn", "enabledCloudwatchLogsExports"
         )
+        $seenNames = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        $propertyNames = [Collections.Generic.List[string]]::new()
+        foreach ($property in $document.RootElement.EnumerateObject()) {
+            if (-not $seenNames.Add([string]$property.Name)) {
+                throw "The preserved RDS monitoring posture envelope contains a duplicate key."
+            }
+            $propertyNames.Add([string]$property.Name)
+        }
+        if (-not (Test-DatabaseInsightsExactStrings $propertyNames.ToArray() $expectedNames)) {
+            throw "The preserved RDS monitoring posture envelope has an unsupported key set."
+        }
+        $versionProperty = $document.RootElement.GetProperty("version")
+        $kmsProperty = $document.RootElement.GetProperty("performanceInsightsKmsKeyId")
+        $intervalProperty = $document.RootElement.GetProperty("monitoringInterval")
+        $roleProperty = $document.RootElement.GetProperty("monitoringRoleArn")
+        $exportsProperty = $document.RootElement.GetProperty("enabledCloudwatchLogsExports")
+        if ($versionProperty.ValueKind -ne [Text.Json.JsonValueKind]::String -or
+            $kmsProperty.ValueKind -ne [Text.Json.JsonValueKind]::String -or
+            $intervalProperty.ValueKind -ne [Text.Json.JsonValueKind]::Number -or
+            $roleProperty.ValueKind -notin @([Text.Json.JsonValueKind]::Null, [Text.Json.JsonValueKind]::String) -or
+            $exportsProperty.ValueKind -ne [Text.Json.JsonValueKind]::Array) {
+            throw "The preserved RDS monitoring posture envelope has an unsupported value type."
+        }
+        foreach ($export in $exportsProperty.EnumerateArray()) {
+            if ($export.ValueKind -ne [Text.Json.JsonValueKind]::String) {
+                throw "The preserved RDS monitoring posture envelope contains a non-string log export."
+            }
+        }
+    }
+    finally { $document.Dispose() }
+
+    try { $parsed = $Json | ConvertFrom-Json -Depth 10 -AsHashtable }
+    catch { throw "The preserved RDS monitoring posture envelope is malformed." }
+    $canonicalPosture = Get-DatabaseInsightsPreservedMonitoringPosture $parsed
+    $canonicalJson = ConvertTo-Json -InputObject $canonicalPosture -Depth 10 -Compress
+    if ([string](Get-DatabaseInsightsValue $parsed "version" "") -cne
+            $script:DatabaseInsightsPreservedMonitoringPostureEncodingVersion -or
+        $canonicalJson -cne $Json) {
+        throw "The preserved RDS monitoring posture envelope is not canonical."
+    }
+    $sha256 = Get-DatabaseInsightsTextSha256 $canonicalJson
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedSha256) -and
+        $sha256 -cne (Assert-DatabaseInsightsSha256 $ExpectedSha256 `
+            "The preserved RDS monitoring posture envelope hash")) {
+        throw "The preserved RDS monitoring posture envelope hash does not match its canonical content."
+    }
+    return [ordered]@{
+        version = $script:DatabaseInsightsPreservedMonitoringPostureEncodingVersion
+        json = $canonicalJson
+        sha256 = $sha256
+        posture = $canonicalPosture
     }
 }
 
 function Get-DatabaseInsightsPreservedMonitoringPostureSha256 {
     param($Posture)
-    $preserved = Get-DatabaseInsightsPreservedMonitoringPosture $Posture
-    return Get-DatabaseInsightsTextSha256 ($preserved | ConvertTo-Json -Depth 10 -Compress)
+    return Get-DatabaseInsightsTextSha256 (Get-DatabaseInsightsPreservedMonitoringPostureJson $Posture)
 }
 
 function Assert-DatabaseInsightsPreservedMonitoringPosture {
     param($Posture, $IdentityPosture)
     $observed = Get-DatabaseInsightsPreservedMonitoringPosture $Posture
     $expected = Get-DatabaseInsightsPreservedMonitoringPosture $IdentityPosture
-    if ([string]::IsNullOrWhiteSpace([string]$expected.performanceInsightsKmsKeyId) -or
-        [int]$expected.monitoringInterval -lt 0 -or [int]$expected.monitoringInterval -gt 60 -or
-        ([int]$expected.monitoringInterval -gt 0 -and [string]::IsNullOrWhiteSpace([string]$expected.monitoringRoleArn)) -or
-        @($expected.enabledCloudwatchLogsExports | Where-Object { [string]::IsNullOrWhiteSpace([string]$_) }).Count -gt 0) {
-        throw "The captured RDS monitoring posture is incomplete."
-    }
     if ((Get-DatabaseInsightsPreservedMonitoringPostureSha256 $observed) -cne
         (Get-DatabaseInsightsPreservedMonitoringPostureSha256 $expected)) {
         throw "RDS Performance Insights encryption, Enhanced Monitoring, or log-export posture changed during the lease."
@@ -449,7 +583,7 @@ function Get-DatabaseInsightsDurableRestoreGuardBinding {
     }
     $scheduleGroupName = "$namePrefix-db-insights-leases"
     $roleArn = "arn:aws:iam::$AccountId`:role/$namePrefix-db-insights-restore"
-    $automationDocumentName = "$namePrefix-db-insights-restore-v1"
+    $automationDocumentName = "$namePrefix-db-insights-restore-v2"
     $automationDocumentVersion = $script:DatabaseInsightsDurableRestoreDocumentVersion
     $automationDefinitionArn = "arn:aws:ssm:$Region`:$AccountId`:automation-definition/$automationDocumentName`:$automationDocumentVersion"
     $automationRoleArn = "arn:aws:iam::$AccountId`:role/$namePrefix-db-insights-restore-automation"
@@ -483,10 +617,16 @@ function Get-DatabaseInsightsDurableRestoreGuardBinding {
             $AutomationDocumentContentSha256 `
             "The durable Database Insights restoration Automation document content hash"
     }
-    $expectedLogExportsJson = @(
-        @(Get-DatabaseInsightsValue $InitialPosture "enabledCloudwatchLogsExports" @()) |
-            ForEach-Object { [string]$_ } | Sort-Object -Unique
-    ) | ConvertTo-Json -Compress -AsArray
+    $preservedMonitoringPostureJson = Get-DatabaseInsightsPreservedMonitoringPostureJson $InitialPosture
+    $preservedMonitoringPostureSha256 = Get-DatabaseInsightsTextSha256 $preservedMonitoringPostureJson
+    $preservedMonitoringPostureEnvelope = Assert-DatabaseInsightsPreservedMonitoringPostureEnvelope `
+        $preservedMonitoringPostureJson $preservedMonitoringPostureSha256
+    if ([int]$preservedMonitoringPostureEnvelope.posture.monitoringInterval -gt 0 -and
+        [string]$preservedMonitoringPostureEnvelope.posture.monitoringRoleArn -notmatch `
+            ('^arn:aws:iam::' + [Text.RegularExpressions.Regex]::Escape($AccountId) +
+                ':role/[A-Za-z0-9+=,.@_/-]{1,512}$')) {
+        throw "The captured RDS Enhanced Monitoring role is outside the bound AWS account."
+    }
     $targetInput = [ordered]@{
         DocumentName = $automationDocumentName
         DocumentVersion = $automationDocumentVersion
@@ -497,10 +637,9 @@ function Get-DatabaseInsightsDurableRestoreGuardBinding {
             ExpectedDatabaseResourceId = @([string](Get-DatabaseInsightsValue $InitialPosture "databaseResourceId" ""))
             ExpectedDBInstanceClass = @([string](Get-DatabaseInsightsValue $InitialPosture "instanceClass" ""))
             ExpectedEngineVersion = @([string](Get-DatabaseInsightsValue $InitialPosture "engineVersion" ""))
-            ExpectedPerformanceInsightsKmsKeyId = @([string](Get-DatabaseInsightsValue $InitialPosture "performanceInsightsKmsKeyId" ""))
-            ExpectedMonitoringInterval = @([string](Get-DatabaseInsightsValue $InitialPosture "monitoringInterval" ""))
-            ExpectedMonitoringRoleArn = @([string](Get-DatabaseInsightsValue $InitialPosture "monitoringRoleArn" ""))
-            ExpectedLogExportsJson = @($expectedLogExportsJson)
+            PreservedMonitoringPostureEncodingVersion = @($script:DatabaseInsightsPreservedMonitoringPostureEncodingVersion)
+            ExpectedPreservedMonitoringPostureJson = @($preservedMonitoringPostureJson)
+            ExpectedPreservedMonitoringPostureSha256 = @($preservedMonitoringPostureSha256)
             FailureQueueUrl = @("https://sqs.$Region.amazonaws.com/$AccountId/$namePrefix-db-insights-restore-dlq")
             RestoreScheduleName = @($scheduleName)
             RestoreScheduleGroupName = @($scheduleGroupName)
@@ -512,7 +651,7 @@ function Get-DatabaseInsightsDurableRestoreGuardBinding {
     } | ConvertTo-Json -Depth 20 -Compress
     $descriptionBindingSha256 = Get-DatabaseInsightsTextSha256 `
         "$AccountId|$Region|$DbInstanceIdentifier|$($expiration.ToString('o'))|$leaseIdSha256"
-    $description = "SchoolPilot db-insights restore v2 lease=$leaseIdSha256 binding=$descriptionBindingSha256"
+    $description = "SchoolPilot db-insights restore v3 lease=$leaseIdSha256 binding=$descriptionBindingSha256"
     $binding = [ordered]@{
         version = $script:DatabaseInsightsDurableRestoreGuardVersion
         accountId = $AccountId
@@ -641,7 +780,7 @@ function Assert-DatabaseInsightsDurableRestoreInfrastructure {
         $queueName -notmatch '^[A-Za-z0-9_-]{1,80}$' -or
         $namePrefix -notmatch '^[a-z][a-z0-9-]{0,54}$' -or
         [string]$Binding.automationVersion -cne $script:DatabaseInsightsDurableRestoreAutomationVersion -or
-        $automationDocumentName -cne "$namePrefix-db-insights-restore-v1" -or
+        $automationDocumentName -cne "$namePrefix-db-insights-restore-v2" -or
         [string]$Binding.automationDocumentVersion -cne $script:DatabaseInsightsDurableRestoreDocumentVersion -or
         [string]$Binding.automationDocumentContentSha256 -notmatch '^[0-9a-f]{64}$' -or
         $automationDefinitionArn -cne "arn:aws:ssm:$region`:$accountId`:automation-definition/$automationDocumentName`:$($script:DatabaseInsightsDurableRestoreDocumentVersion)" -or
@@ -884,15 +1023,14 @@ function Assert-DatabaseInsightsDurableRestoreInfrastructure {
         (Get-DatabaseInsightsObjectPropertyNames $parameters) @(
             "AutomationAssumeRole", "DBInstanceIdentifier", "ExpectedDBInstanceArn",
             "ExpectedDatabaseResourceId", "ExpectedDBInstanceClass", "ExpectedEngineVersion",
-            "ExpectedPerformanceInsightsKmsKeyId", "ExpectedMonitoringInterval",
-            "ExpectedMonitoringRoleArn", "ExpectedLogExportsJson", "RestoreScheduleName",
+            "PreservedMonitoringPostureEncodingVersion", "ExpectedPreservedMonitoringPostureJson",
+            "ExpectedPreservedMonitoringPostureSha256", "RestoreScheduleName",
             "RestoreScheduleGroupName", "FailureQueueUrl", "AutomationDocumentContentSha256",
             "LeaseIdSha256", "ExpiresAtUtc", "RestoreMode"
         )
     foreach ($parameterName in @(
         "AutomationAssumeRole", "ExpectedDatabaseResourceId", "ExpectedEngineVersion",
-        "ExpectedPerformanceInsightsKmsKeyId", "ExpectedMonitoringInterval",
-        "ExpectedMonitoringRoleArn", "ExpectedLogExportsJson", "ExpiresAtUtc"
+        "ExpiresAtUtc"
     )) {
         $parameter = Get-DatabaseInsightsValue $parameters $parameterName
         if (-not (Test-DatabaseInsightsExactStrings `
@@ -901,6 +1039,13 @@ function Assert-DatabaseInsightsDurableRestoreInfrastructure {
             $parameterSchemaIsExact = $false
         }
     }
+    $postureJsonParameter = Get-DatabaseInsightsValue $parameters "ExpectedPreservedMonitoringPostureJson"
+    if (-not (Test-DatabaseInsightsExactStrings `
+            (Get-DatabaseInsightsObjectPropertyNames $postureJsonParameter) @("allowedPattern", "type")) -or
+        [string](Get-DatabaseInsightsValue $postureJsonParameter "type" "") -cne "String" -or
+        [string](Get-DatabaseInsightsValue $postureJsonParameter "allowedPattern" "") -cne '^\{.+\}$') {
+        $parameterSchemaIsExact = $false
+    }
     foreach ($allowedParameter in @(
         [ordered]@{Name="DBInstanceIdentifier";Value=[string]$Binding.dbInstanceIdentifier},
         [ordered]@{Name="ExpectedDBInstanceArn";Value=[string]$Binding.dbInstanceArn},
@@ -908,6 +1053,7 @@ function Assert-DatabaseInsightsDurableRestoreInfrastructure {
         [ordered]@{Name="RestoreScheduleName";Value=[string]$Binding.scheduleName},
         [ordered]@{Name="RestoreScheduleGroupName";Value=[string]$Binding.scheduleGroupName},
         [ordered]@{Name="FailureQueueUrl";Value="https://sqs.$region.amazonaws.com/$accountId/$queueName"}
+        [ordered]@{Name="PreservedMonitoringPostureEncodingVersion";Value=$script:DatabaseInsightsPreservedMonitoringPostureEncodingVersion}
     )) {
         $parameter = Get-DatabaseInsightsValue $parameters $allowedParameter.Name
         if (-not (Test-DatabaseInsightsExactStrings `
@@ -918,7 +1064,9 @@ function Assert-DatabaseInsightsDurableRestoreInfrastructure {
             $parameterSchemaIsExact = $false
         }
     }
-    foreach ($hashParameterName in @("AutomationDocumentContentSha256", "LeaseIdSha256")) {
+    foreach ($hashParameterName in @(
+        "AutomationDocumentContentSha256", "ExpectedPreservedMonitoringPostureSha256", "LeaseIdSha256"
+    )) {
         $parameter = Get-DatabaseInsightsValue $parameters $hashParameterName
         if (-not (Test-DatabaseInsightsExactStrings `
                 (Get-DatabaseInsightsObjectPropertyNames $parameter) @("allowedPattern", "type")) -or
@@ -967,22 +1115,27 @@ function Assert-DatabaseInsightsDurableRestoreInfrastructure {
             ([string](Get-DatabaseInsightsValue $restoreInputs "Script" ""))) -cne $expectedRestoreScriptSha256 -or
         -not (Test-DatabaseInsightsExactStrings (Get-DatabaseInsightsObjectPropertyNames $restorePayload) @(
             "dbInstanceIdentifier", "expectedDbInstanceArn", "expectedDatabaseResourceId",
-            "expectedDbInstanceClass", "expectedEngineVersion", "expectedPerformanceInsightsKmsKeyId",
-            "expectedMonitoringInterval", "expectedMonitoringRoleArn", "expectedLogExportsJson",
+            "expectedDbInstanceClass", "expectedEngineVersion", "preservedMonitoringPostureEncodingVersion",
+            "expectedPreservedMonitoringPostureJson", "expectedPreservedMonitoringPostureSha256",
             "restoreScheduleName", "restoreScheduleGroupName", "automationDocumentName",
-            "automationDocumentVersion", "automationDocumentContentSha256", "leaseIdSha256", "expiresAtUtc",
+            "automationContractVersion", "automationDocumentVersion", "automationDocumentContentSha256",
+            "leaseIdSha256", "expiresAtUtc",
             "restoreMode", "maximumEventAgeInSeconds")) -or
         [string](Get-DatabaseInsightsValue $restorePayload "dbInstanceIdentifier" "") -cne "{{ DBInstanceIdentifier }}" -or
         [string](Get-DatabaseInsightsValue $restorePayload "expectedDbInstanceArn" "") -cne "{{ ExpectedDBInstanceArn }}" -or
         [string](Get-DatabaseInsightsValue $restorePayload "expectedDatabaseResourceId" "") -cne "{{ ExpectedDatabaseResourceId }}" -or
         [string](Get-DatabaseInsightsValue $restorePayload "expectedDbInstanceClass" "") -cne "{{ ExpectedDBInstanceClass }}" -or
         [string](Get-DatabaseInsightsValue $restorePayload "expectedEngineVersion" "") -cne "{{ ExpectedEngineVersion }}" -or
-        [string](Get-DatabaseInsightsValue $restorePayload "expectedPerformanceInsightsKmsKeyId" "") -cne "{{ ExpectedPerformanceInsightsKmsKeyId }}" -or
-        [string](Get-DatabaseInsightsValue $restorePayload "expectedMonitoringInterval" "") -cne "{{ ExpectedMonitoringInterval }}" -or
-        [string](Get-DatabaseInsightsValue $restorePayload "expectedMonitoringRoleArn" "") -cne "{{ ExpectedMonitoringRoleArn }}" -or
-        [string](Get-DatabaseInsightsValue $restorePayload "expectedLogExportsJson" "") -cne "{{ ExpectedLogExportsJson }}" -or
+        [string](Get-DatabaseInsightsValue $restorePayload "preservedMonitoringPostureEncodingVersion" "") -cne `
+            "{{ PreservedMonitoringPostureEncodingVersion }}" -or
+        [string](Get-DatabaseInsightsValue $restorePayload "expectedPreservedMonitoringPostureJson" "") -cne `
+            "{{ ExpectedPreservedMonitoringPostureJson }}" -or
+        [string](Get-DatabaseInsightsValue $restorePayload "expectedPreservedMonitoringPostureSha256" "") -cne `
+            "{{ ExpectedPreservedMonitoringPostureSha256 }}" -or
         [string](Get-DatabaseInsightsValue $restorePayload "restoreScheduleName" "") -cne "{{ RestoreScheduleName }}" -or
         [string](Get-DatabaseInsightsValue $restorePayload "restoreScheduleGroupName" "") -cne "{{ RestoreScheduleGroupName }}" -or
+        [string](Get-DatabaseInsightsValue $restorePayload "automationContractVersion" "") -cne `
+            $script:DatabaseInsightsDurableRestoreAutomationVersion -or
         [string](Get-DatabaseInsightsValue $restorePayload "automationDocumentName" "") -cne $automationDocumentName -or
         [string](Get-DatabaseInsightsValue $restorePayload "automationDocumentVersion" "") -cne `
             [string]$Binding.automationDocumentVersion -or
@@ -1217,9 +1370,18 @@ function Get-DatabaseInsightsDurableRestoreSchedule {
 
 function Get-DatabaseInsightsActiveRestoreAutomations {
     param($Binding)
-    $filters = @(
-        [ordered]@{Key="DocumentNamePrefix";Values=@([string]$Binding.automationDocumentName)}
-    ) | ConvertTo-Json -Depth 5 -Compress
+    $automationDocumentName = [string](Get-DatabaseInsightsValue $Binding "automationDocumentName" "")
+    $documentNameMatch = [Text.RegularExpressions.Regex]::Match(
+        $automationDocumentName, '^(?<prefix>[a-z][a-z0-9-]{0,120}-db-insights-restore-v)[1-9][0-9]*$'
+    )
+    if (-not $documentNameMatch.Success) {
+        throw "The durable Database Insights Automation execution lookup has an invalid document family."
+    }
+    $automationDocumentPrefix = [string]$documentNameMatch.Groups["prefix"].Value
+    [object[]]$automationFilters = @(
+        [ordered]@{Key="DocumentNamePrefix";Values=@($automationDocumentPrefix)}
+    )
+    $filters = ConvertTo-Json -InputObject $automationFilters -Depth 5 -Compress
     $activeStatuses = @(
         "Pending", "InProgress", "Waiting", "PendingApproval", "Approved", "Scheduled",
         "RunbookInProgress", "PendingChangeCalendarOverride", "ChangeCalendarOverrideApproved",
@@ -1257,9 +1419,10 @@ function Get-DatabaseInsightsActiveRestoreAutomations {
                 -not $seenExecutionIds.Add($executionId)) {
                 throw "The durable Database Insights Automation execution lookup returned a missing or duplicate identity."
             }
-            if ([string](Get-DatabaseInsightsValue $execution "DocumentName" "") -cne `
-                    [string]$Binding.automationDocumentName) {
-                continue
+            $executionDocumentName = [string](Get-DatabaseInsightsValue $execution "DocumentName" "")
+            if ($executionDocumentName -notmatch `
+                    ('^' + [Text.RegularExpressions.Regex]::Escape($automationDocumentPrefix) + '[1-9][0-9]*$')) {
+                throw "The durable Database Insights Automation execution lookup returned an invalid document family member."
             }
             $documentVersion = [string](Get-DatabaseInsightsValue $execution "DocumentVersion" "")
             if ($documentVersion -notmatch '^[1-9][0-9]*$') {
@@ -1283,6 +1446,48 @@ function Get-DatabaseInsightsActiveRestoreAutomations {
         }
     }
     throw "The durable Database Insights Automation execution lookup exceeded its bounded page limit."
+}
+
+function Read-DatabaseInsightsBoundRestoreTargetInput {
+    param($Binding)
+    try { $targetInput = [string]$Binding.targetInput | ConvertFrom-Json -Depth 30 -AsHashtable }
+    catch { throw "The bound durable restore Automation target input is malformed." }
+    if (-not (Test-DatabaseInsightsExactStrings (Get-DatabaseInsightsObjectPropertyNames $targetInput) `
+            @("DocumentName", "DocumentVersion", "Parameters")) -or
+        [string](Get-DatabaseInsightsValue $targetInput "DocumentName" "") -cne `
+            [string]$Binding.automationDocumentName -or
+        [string](Get-DatabaseInsightsValue $targetInput "DocumentVersion" "") -cne `
+            [string]$Binding.automationDocumentVersion) {
+        throw "The bound durable restore Automation target identity is malformed."
+    }
+    $parameters = Get-DatabaseInsightsValue $targetInput "Parameters"
+    $expectedParameterNames = @(
+        "AutomationAssumeRole", "DBInstanceIdentifier", "ExpectedDBInstanceArn",
+        "ExpectedDatabaseResourceId", "ExpectedDBInstanceClass", "ExpectedEngineVersion",
+        "PreservedMonitoringPostureEncodingVersion", "ExpectedPreservedMonitoringPostureJson",
+        "ExpectedPreservedMonitoringPostureSha256", "FailureQueueUrl", "RestoreScheduleName",
+        "RestoreScheduleGroupName", "AutomationDocumentContentSha256", "LeaseIdSha256",
+        "ExpiresAtUtc", "RestoreMode"
+    )
+    if ($null -eq $parameters -or
+        -not (Test-DatabaseInsightsExactStrings `
+            (Get-DatabaseInsightsObjectPropertyNames $parameters) $expectedParameterNames)) {
+        throw "The bound durable restore Automation target parameter contract is malformed."
+    }
+    foreach ($parameterName in $expectedParameterNames) {
+        $values = @(Get-DatabaseInsightsValue $parameters $parameterName @())
+        if ($values.Count -ne 1 -or [string]::IsNullOrWhiteSpace([string]$values[0])) {
+            throw "The bound durable restore Automation target has a missing, empty, or ambiguous parameter."
+        }
+    }
+    if ([string]@($parameters.PreservedMonitoringPostureEncodingVersion)[0] -cne `
+            $script:DatabaseInsightsPreservedMonitoringPostureEncodingVersion) {
+        throw "The bound durable restore Automation target has an unsupported posture encoding."
+    }
+    [void](Assert-DatabaseInsightsPreservedMonitoringPostureEnvelope `
+        ([string]@($parameters.ExpectedPreservedMonitoringPostureJson)[0]) `
+        ([string]@($parameters.ExpectedPreservedMonitoringPostureSha256)[0]))
+    return $targetInput
 }
 
 function Wait-DatabaseInsightsRestoreAutomationsQuiescent {
@@ -1312,16 +1517,7 @@ function Wait-DatabaseInsightsRestoreAutomationsQuiescent {
 
 function Start-DatabaseInsightsBoundRestoreAutomation {
     param($Binding)
-    try { $targetInput = [string]$Binding.targetInput | ConvertFrom-Json -Depth 30 -AsHashtable }
-    catch { throw "The bound durable restore Automation target input is malformed." }
-    if (-not (Test-DatabaseInsightsExactStrings (Get-DatabaseInsightsObjectPropertyNames $targetInput) `
-            @("DocumentName", "DocumentVersion", "Parameters")) -or
-        [string](Get-DatabaseInsightsValue $targetInput "DocumentName" "") -cne `
-            [string]$Binding.automationDocumentName -or
-        [string](Get-DatabaseInsightsValue $targetInput "DocumentVersion" "") -cne `
-            [string]$Binding.automationDocumentVersion) {
-        throw "The bound durable restore Automation target identity is malformed."
-    }
+    $targetInput = Read-DatabaseInsightsBoundRestoreTargetInput $Binding
     $parameters = Get-DatabaseInsightsValue $targetInput "Parameters"
     $restoreMode = @(Get-DatabaseInsightsValue $parameters "RestoreMode" @())
     if ($null -eq $parameters -or $restoreMode.Count -ne 1 -or [string]$restoreMode[0] -cne "scheduled") {
@@ -1330,8 +1526,8 @@ function Start-DatabaseInsightsBoundRestoreAutomation {
     $manualParameters = [ordered]@{}
     foreach ($parameterName in @(Get-DatabaseInsightsObjectPropertyNames $parameters)) {
         $values = @(Get-DatabaseInsightsValue $parameters $parameterName @())
-        if ($values.Count -ne 1) {
-            throw "The bound durable restore Automation target has an ambiguous parameter."
+        if ($values.Count -ne 1 -or [string]::IsNullOrWhiteSpace([string]$values[0])) {
+            throw "The bound durable restore Automation target has a missing, empty, or ambiguous parameter."
         }
         $manualParameters[$parameterName] = @([string]$values[0])
     }
@@ -1406,6 +1602,7 @@ function Wait-DatabaseInsightsBoundRestoreAutomation {
 function Assert-DatabaseInsightsDurableRestoreSchedule {
     param($Schedule, $Binding, [ValidateSet("ENABLED", "DISABLED")][string]$ExpectedState = "ENABLED")
     if ($null -eq $Schedule) { throw "The durable Database Insights restore schedule is missing." }
+    [void](Read-DatabaseInsightsBoundRestoreTargetInput $Binding)
     $flexible = Get-DatabaseInsightsValue $Schedule "FlexibleTimeWindow"
     $target = Get-DatabaseInsightsValue $Schedule "Target"
     $deadLetter = Get-DatabaseInsightsValue $target "DeadLetterConfig"
@@ -1459,6 +1656,7 @@ function Assert-DatabaseInsightsDurableRestoreSchedule {
 
 function New-DatabaseInsightsDurableRestoreSchedule {
     param($Binding)
+    [void](Read-DatabaseInsightsBoundRestoreTargetInput $Binding)
     [void](Assert-DatabaseInsightsDurableRestoreInfrastructure $Binding)
     if ($null -ne (Get-DatabaseInsightsDurableRestoreSchedule $Binding)) {
         throw "A durable Database Insights restore generation already exists for this database."
@@ -1564,7 +1762,7 @@ function Read-DatabaseInsightsLeaseReceipt {
     Assert-DatabaseInsightsPrivateAcl -Path $Path
     try { $receipt = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -Depth 40 }
     catch { throw "The Database Insights lease receipt is malformed." }
-    if ([int](Get-DatabaseInsightsValue $receipt "schemaVersion" 0) -ne 2 -or
+    if ([int](Get-DatabaseInsightsValue $receipt "schemaVersion" 0) -ne 3 -or
         [string](Get-DatabaseInsightsValue $receipt "type" "") -cne "database_insights_monitoring_lease" -or
         [string](Get-DatabaseInsightsValue $receipt "leaseVersion" "") -cne $script:DatabaseInsightsLeaseVersion -or
         [string](Get-DatabaseInsightsValue $receipt "leaseId" "") -notmatch '^[0-9a-f]{32}$') {
@@ -1797,6 +1995,11 @@ function Start-DatabaseInsightsLeaseWatchdog {
 
 function Assert-DatabaseInsightsReceiptBinding {
     param($Receipt, [string]$Region, [string]$ExpectedAccountId, [string]$ExpectedIdentifier, [string]$ExpectedClass, [string]$ExpectedLeasePurpose)
+    if ([int](Get-DatabaseInsightsValue $Receipt "schemaVersion" 0) -ne 3 -or
+        [string](Get-DatabaseInsightsValue $Receipt "type" "") -cne "database_insights_monitoring_lease" -or
+        [string](Get-DatabaseInsightsValue $Receipt "leaseVersion" "") -cne $script:DatabaseInsightsLeaseVersion) {
+        throw "The Database Insights lease receipt has an unsupported identity."
+    }
     $capturedAt = [DateTimeOffset]::MinValue
     $expiresAt = [DateTimeOffset]::MinValue
     if (-not [DateTimeOffset]::TryParse([string]$Receipt.capturedAtUtc, [ref]$capturedAt) -or
@@ -2064,7 +2267,7 @@ function Invoke-DatabaseInsightsLease {
         $durableRestoreGuard = Get-DatabaseInsightsDurableRestoreGuardBinding `
             $initial $ExpectedAccountId $Region $DbInstanceIdentifier $leaseId $expiresAt
         $receipt = [ordered]@{
-            schemaVersion = 2
+            schemaVersion = 3
             type = "database_insights_monitoring_lease"
             leaseVersion = $script:DatabaseInsightsLeaseVersion
             leaseId = $leaseId

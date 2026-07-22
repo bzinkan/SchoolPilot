@@ -18,7 +18,9 @@ $functionNames = @(
     "Assert-DatabaseInsightsSha256", "Resolve-DatabaseInsightsReceiptPath", "Set-DatabaseInsightsPrivateAcl", "Assert-DatabaseInsightsPrivateAcl",
     "Write-DatabaseInsightsPrivateJson", "Test-DatabaseInsightsEmptyObject", "Get-DatabaseInsightsCallerAccount",
     "Get-DatabaseInsightsPosture", "Assert-DatabaseInsightsPosture", "Set-DatabaseInsightsPosture",
-    "Get-DatabaseInsightsPreservedMonitoringPosture", "Get-DatabaseInsightsPreservedMonitoringPostureSha256",
+    "Test-DatabaseInsightsIntegerValue", "Get-DatabaseInsightsPreservedMonitoringPosture", "Get-DatabaseInsightsPreservedMonitoringPostureJson",
+    "Assert-DatabaseInsightsPreservedMonitoringPostureEnvelope",
+    "Get-DatabaseInsightsPreservedMonitoringPostureSha256",
     "Assert-DatabaseInsightsPreservedMonitoringPosture", "Assert-DatabaseInsightsLeaseIdentity",
     "Wait-DatabaseInsightsPosture", "Get-DatabaseInsightsDurableRestoreGuardBinding",
     "Get-DatabaseInsightsDurableRestoreGuardBindingSha256",
@@ -26,6 +28,7 @@ $functionNames = @(
     "Get-DatabaseInsightsNormalizedScriptSha256",
     "Assert-DatabaseInsightsDurableRestoreInfrastructure",
     "Get-DatabaseInsightsDurableRestoreSchedule", "Get-DatabaseInsightsActiveRestoreAutomations",
+    "Read-DatabaseInsightsBoundRestoreTargetInput",
     "Wait-DatabaseInsightsRestoreAutomationsQuiescent", "Start-DatabaseInsightsBoundRestoreAutomation",
     "Wait-DatabaseInsightsBoundRestoreAutomation", "Assert-DatabaseInsightsDurableRestoreSchedule",
     "New-DatabaseInsightsDurableRestoreSchedule", "Disable-DatabaseInsightsDurableRestoreSchedule",
@@ -47,13 +50,15 @@ foreach ($name in $functionNames) {
     Invoke-Expression $definition.Extent.Text
 }
 
-$script:DatabaseInsightsLeaseVersion = "database-insights-monitoring-lease-v2"
+$script:DatabaseInsightsLeaseVersion = "database-insights-monitoring-lease-v3"
 $script:DatabaseInsightsAdvancedRetentionDays = 465
 $script:DatabaseInsightsStandardRetentionDays = 7
 $script:DatabaseInsightsWatchdogHeartbeatStaleSeconds = 90
 $script:DatabaseInsightsWatchdogPollSeconds = 30
-$script:DatabaseInsightsDurableRestoreGuardVersion = "aws-scheduler-ssm-recurring-restore-v1"
-$script:DatabaseInsightsDurableRestoreAutomationVersion = "ssm-rds-monitoring-restore-v1"
+$script:DatabaseInsightsDurableRestoreGuardVersion = "aws-scheduler-ssm-recurring-restore-v2"
+$script:DatabaseInsightsDurableRestoreAutomationVersion = "ssm-rds-monitoring-restore-v2"
+$script:DatabaseInsightsPreservedMonitoringPostureEncodingVersion = "rds-preserved-monitoring-posture-json-v1"
+$script:DatabaseInsightsSupportedCloudWatchLogExports = @("iam-db-auth-error", "postgresql", "upgrade")
 $script:DatabaseInsightsDurableRestoreTargetArn = "arn:aws:scheduler:::aws-sdk:ssm:startAutomationExecution"
 $script:DatabaseInsightsDurableRestoreMaximumEventAgeSeconds = 60
 $script:DatabaseInsightsDurableRestoreMaximumRetryAttempts = 0
@@ -69,9 +74,9 @@ $script:MockStatus = "available"
 $script:MockPending = $false
 $script:MockParameterStatus = "in-sync"
 $script:MockPerformanceInsightsKmsKeyId = "arn:aws:kms:us-east-1:135775632425:key/00000000-0000-0000-0000-000000000001"
-$script:MockMonitoringInterval = 60
-$script:MockMonitoringRoleArn = "arn:aws:iam::135775632425:role/rds-monitoring-role"
-$script:MockLogExports = @("postgresql","upgrade")
+$script:MockMonitoringInterval = 0
+$script:MockMonitoringRoleArn = ""
+$script:MockLogExports = @()
 $script:FailAdvanced = $false
 $script:FailRestore = $false
 $script:FailScheduleCreate = $false
@@ -117,10 +122,9 @@ function Get-TestRestoreAutomationDocument {
             ExpectedDatabaseResourceId=[ordered]@{type="String"}
             ExpectedDBInstanceClass=[ordered]@{type="String";allowedValues=@("db.t4g.medium")}
             ExpectedEngineVersion=[ordered]@{type="String"}
-            ExpectedPerformanceInsightsKmsKeyId=[ordered]@{type="String"}
-            ExpectedMonitoringInterval=[ordered]@{type="String"}
-            ExpectedMonitoringRoleArn=[ordered]@{type="String"}
-            ExpectedLogExportsJson=[ordered]@{type="String"}
+            PreservedMonitoringPostureEncodingVersion=[ordered]@{type="String";allowedValues=@("rds-preserved-monitoring-posture-json-v1")}
+            ExpectedPreservedMonitoringPostureJson=[ordered]@{type="String";allowedPattern='^\{.+\}$'}
+            ExpectedPreservedMonitoringPostureSha256=[ordered]@{type="String";allowedPattern='^[0-9a-f]{64}$'}
             RestoreScheduleName=[ordered]@{type="String";allowedValues=@("db-insights-restore-e29866227184b29a3b050565")}
             RestoreScheduleGroupName=[ordered]@{type="String";allowedValues=@("schoolpilot-production-db-insights-leases")}
             FailureQueueUrl=[ordered]@{type="String";allowedValues=@("https://sqs.us-east-1.amazonaws.com/135775632425/schoolpilot-production-db-insights-restore-dlq")}
@@ -139,13 +143,13 @@ function Get-TestRestoreAutomationDocument {
                     expectedDatabaseResourceId="{{ ExpectedDatabaseResourceId }}"
                     expectedDbInstanceClass="{{ ExpectedDBInstanceClass }}"
                     expectedEngineVersion="{{ ExpectedEngineVersion }}"
-                    expectedPerformanceInsightsKmsKeyId="{{ ExpectedPerformanceInsightsKmsKeyId }}"
-                    expectedMonitoringInterval="{{ ExpectedMonitoringInterval }}"
-                    expectedMonitoringRoleArn="{{ ExpectedMonitoringRoleArn }}"
-                    expectedLogExportsJson="{{ ExpectedLogExportsJson }}"
+                    preservedMonitoringPostureEncodingVersion="{{ PreservedMonitoringPostureEncodingVersion }}"
+                    expectedPreservedMonitoringPostureJson="{{ ExpectedPreservedMonitoringPostureJson }}"
+                    expectedPreservedMonitoringPostureSha256="{{ ExpectedPreservedMonitoringPostureSha256 }}"
                     restoreScheduleName="{{ RestoreScheduleName }}"
                     restoreScheduleGroupName="{{ RestoreScheduleGroupName }}"
-                    automationDocumentName="schoolpilot-production-db-insights-restore-v1"
+                    automationContractVersion="ssm-rds-monitoring-restore-v2"
+                    automationDocumentName="schoolpilot-production-db-insights-restore-v2"
                     automationDocumentVersion="1"
                     automationDocumentContentSha256="{{ AutomationDocumentContentSha256 }}"
                     leaseIdSha256="{{ LeaseIdSha256 }}";expiresAtUtc="{{ ExpiresAtUtc }}"
@@ -287,7 +291,7 @@ function Invoke-DatabaseInsightsAwsJson {
             @("ssm:StartAutomationExecution", "ssm:DeleteDocument")
         } else { "ssm:StartAutomationExecution" }
         $startStatement = [pscustomobject]@{Sid="StartExactRestoreAutomation";Effect="Allow";Action=$startAction;
-            Resource='arn:aws:ssm:us-east-1:135775632425:automation-definition/schoolpilot-production-db-insights-restore-v1:1'}
+            Resource='arn:aws:ssm:us-east-1:135775632425:automation-definition/schoolpilot-production-db-insights-restore-v2:1'}
         if ($script:FailRestoreIamStatementExtra) {
             $startStatement | Add-Member -NotePropertyName Condition -NotePropertyValue ([pscustomobject]@{
                 StringEquals=[pscustomobject]@{"aws:RequestedRegion"="us-east-1"}
@@ -306,7 +310,7 @@ function Invoke-DatabaseInsightsAwsJson {
     }
     if ($service -eq "ssm" -and $operation -eq "get-document") {
         $document = Get-TestRestoreAutomationDocument
-        return [pscustomobject]@{Name="schoolpilot-production-db-insights-restore-v1";DocumentVersion="1";
+        return [pscustomobject]@{Name="schoolpilot-production-db-insights-restore-v2";DocumentVersion="1";
             DocumentType="Automation";DocumentFormat="JSON";Status="Active";
             Content=($document | ConvertTo-Json -Depth 50 -Compress)}
     }
@@ -314,6 +318,12 @@ function Invoke-DatabaseInsightsAwsJson {
         $script:OperationCalls.Add("ssm/start")
         if ($script:FailRestore) { throw "simulated manual Automation start failure with raw detail" }
         $parameters = $Arguments[[Array]::IndexOf($Arguments,"--parameters") + 1] | ConvertFrom-Json -Depth 30
+        foreach ($parameter in $parameters.PSObject.Properties) {
+            if (@($parameter.Value).Count -ne 1 -or
+                [string]::IsNullOrWhiteSpace([string]@($parameter.Value)[0])) {
+                throw "AWS SSM rejects missing, empty, or multi-valued String parameters"
+            }
+        }
         if (@($parameters.RestoreMode).Count -ne 1 -or [string]$parameters.RestoreMode[0] -cne "manual") {
             throw "manual restore mode was not bound"
         }
@@ -337,7 +347,7 @@ function Invoke-DatabaseInsightsAwsJson {
         }
         $script:MockBoundExecution = [pscustomobject]@{
             AutomationExecutionId=$executionId
-            DocumentName="schoolpilot-production-db-insights-restore-v1"
+            DocumentName="schoolpilot-production-db-insights-restore-v2"
             DocumentVersion="1"
             AutomationExecutionStatus=$status
         }
@@ -348,6 +358,12 @@ function Invoke-DatabaseInsightsAwsJson {
         return [pscustomobject]@{AutomationExecution=$script:MockBoundExecution}
     }
     if ($service -eq "ssm" -and $operation -eq "describe-automation-executions") {
+        $filters = $Arguments[[Array]::IndexOf($Arguments, "--filters") + 1] | ConvertFrom-Json -Depth 10
+        if (@($filters).Count -ne 1 -or [string]$filters[0].Key -cne "DocumentNamePrefix" -or
+            @($filters[0].Values).Count -ne 1 -or
+            [string]$filters[0].Values[0] -cne "schoolpilot-production-db-insights-restore-v") {
+            throw "restore Automation fencing did not span every versioned document"
+        }
         $nextTokenIndex = [Array]::IndexOf($Arguments, "--next-token")
         $nextToken = if ($nextTokenIndex -ge 0) { [string]$Arguments[$nextTokenIndex + 1] } else { "" }
         $script:AutomationDescribeCalls.Add($nextToken)
@@ -364,7 +380,7 @@ function Invoke-DatabaseInsightsAwsJson {
     }
     if ($service -eq "events" -and $operation -eq "describe-rule") {
         $pattern = [ordered]@{source=@("aws.ssm");"detail-type"=@("EC2 Automation Execution Status-change Notification");
-            detail=[ordered]@{Definition=@("schoolpilot-production-db-insights-restore-v1");Status=@("Failed","TimedOut","Canceled")}}
+            detail=[ordered]@{Definition=@("schoolpilot-production-db-insights-restore-v2");Status=@("Failed","TimedOut","Canceled")}}
         if ($script:FailRestoreEventPatternExtra) { $pattern["resources"] = @("*") }
         return [pscustomobject]@{Arn="arn:aws:events:us-east-1:135775632425:rule/schoolpilot-production-db-insights-restore-failed";
             Name="schoolpilot-production-db-insights-restore-failed";State="ENABLED";
@@ -557,7 +573,7 @@ try {
     $assertions++
     $acquiredJson = $acquired | ConvertTo-Json -Depth 20 -Compress
     Assert-Condition (
-        [string]$acquired.durableRestoreGuardVersion -eq "aws-scheduler-ssm-recurring-restore-v1" -and
+        [string]$acquired.durableRestoreGuardVersion -eq "aws-scheduler-ssm-recurring-restore-v2" -and
         [string]$acquired.durableRestoreGuardBindingSha256 -match '^[0-9a-f]{64}$' -and
         [string]$acquired.durableRestoreScheduleArnSha256 -match '^[0-9a-f]{64}$' -and
         [string]$acquired.durableRestoreTargetRoleArnSha256 -match '^[0-9a-f]{64}$' -and
@@ -576,23 +592,184 @@ try {
     $assertions++
     $privateAcquiredReceipt = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json -Depth 40
     $privateTargetInput = [string]$privateAcquiredReceipt.durableRestoreGuard.targetInput | ConvertFrom-Json -Depth 30
+    Assert-Condition ($privateAcquiredReceipt.schemaVersion -eq 3 -and
+        $privateAcquiredReceipt.leaseVersion -ceq "database-insights-monitoring-lease-v3" -and
+        $privateAcquiredReceipt.durableRestoreGuard.version -ceq `
+            "aws-scheduler-ssm-recurring-restore-v2" -and
+        $privateAcquiredReceipt.durableRestoreGuard.automationVersion -ceq `
+            "ssm-rds-monitoring-restore-v2") `
+        "Acquire must seal only the receipt-schema-3 lease-v3 / guard-v2 / Automation-v2 contract."
+    $assertions++
+    $expectedPreservedMonitoringPostureJson = [ordered]@{
+        version = "rds-preserved-monitoring-posture-json-v1"
+        performanceInsightsKmsKeyId = $script:MockPerformanceInsightsKmsKeyId
+        monitoringInterval = 0
+        monitoringRoleArn = $null
+        enabledCloudwatchLogsExports = @()
+    } | ConvertTo-Json -Depth 10 -Compress
+    $expectedPreservedMonitoringPostureSha256 = Get-DatabaseInsightsTextSha256 `
+        $expectedPreservedMonitoringPostureJson
+    $emptyOrAmbiguousTargetParameters = @(
+        $privateTargetInput.Parameters.PSObject.Properties | Where-Object {
+            @($_.Value).Count -ne 1 -or [string]::IsNullOrWhiteSpace([string]@($_.Value)[0])
+        }
+    )
     Assert-Condition ($privateAcquiredReceipt.durableRestoreGuard.targetArn -ceq 'arn:aws:scheduler:::aws-sdk:ssm:startAutomationExecution' -and
         $privateAcquiredReceipt.durableRestoreGuard.scheduleExpression -ceq 'rate(15 minutes)' -and
         $privateAcquiredReceipt.durableRestoreGuard.actionAfterCompletion -ceq 'NONE' -and
         $privateAcquiredReceipt.durableRestoreGuard.maximumEventAgeInSeconds -eq 60 -and
         $privateAcquiredReceipt.durableRestoreGuard.maximumRetryAttempts -eq 0 -and
-        $privateTargetInput.DocumentName -ceq 'schoolpilot-production-db-insights-restore-v1' -and
+        $privateTargetInput.DocumentName -ceq 'schoolpilot-production-db-insights-restore-v2' -and
         $privateTargetInput.DocumentVersion -ceq '1' -and
         @($privateTargetInput.Parameters.DBInstanceIdentifier).Count -eq 1 -and
         $privateTargetInput.Parameters.DBInstanceIdentifier[0] -ceq 'schoolpilot-production-db' -and
         $privateTargetInput.Parameters.ExpectedDBInstanceClass[0] -ceq 'db.t4g.medium' -and
         $privateTargetInput.Parameters.RestoreMode[0] -ceq 'scheduled' -and
+        @($privateTargetInput.Parameters.PreservedMonitoringPostureEncodingVersion).Count -eq 1 -and
+        $privateTargetInput.Parameters.PreservedMonitoringPostureEncodingVersion[0] -ceq `
+            'rds-preserved-monitoring-posture-json-v1' -and
+        @($privateTargetInput.Parameters.ExpectedPreservedMonitoringPostureJson).Count -eq 1 -and
+        $privateTargetInput.Parameters.ExpectedPreservedMonitoringPostureJson[0] -ceq `
+            $expectedPreservedMonitoringPostureJson -and
+        @($privateTargetInput.Parameters.ExpectedPreservedMonitoringPostureSha256).Count -eq 1 -and
+        $privateTargetInput.Parameters.ExpectedPreservedMonitoringPostureSha256[0] -ceq `
+            $expectedPreservedMonitoringPostureSha256 -and
+        $emptyOrAmbiguousTargetParameters.Count -eq 0 -and
+        -not $privateTargetInput.Parameters.PSObject.Properties['ExpectedMonitoringRoleArn'] -and
+        -not $privateTargetInput.Parameters.PSObject.Properties['ExpectedLogExportsJson'] -and
         $privateTargetInput.Parameters.AutomationAssumeRole[0] -ceq
             'arn:aws:iam::135775632425:role/schoolpilot-production-db-insights-restore-automation' -and
         $privateTargetInput.Parameters.AutomationDocumentContentSha256[0] -ceq
             $privateAcquiredReceipt.durableRestoreGuard.automationDocumentContentSha256) `
         "The recurring Scheduler target must launch the exact versioned SSM restoration verifier with its content hash."
     $assertions++
+    $preservedEnvelope = Assert-DatabaseInsightsPreservedMonitoringPostureEnvelope `
+        $privateTargetInput.Parameters.ExpectedPreservedMonitoringPostureJson[0] `
+        $privateTargetInput.Parameters.ExpectedPreservedMonitoringPostureSha256[0]
+    Assert-Condition ($preservedEnvelope.posture.monitoringInterval -eq 0 -and
+        $null -eq $preservedEnvelope.posture.monitoringRoleArn -and
+        @($preservedEnvelope.posture.enabledCloudwatchLogsExports).Count -eq 0) `
+        "Standard/7 must encode absent Enhanced Monitoring role as explicit null and empty log exports as []."
+    $assertions++
+    $enabledPosture = [ordered]@{
+        performanceInsightsKmsKeyId = $script:MockPerformanceInsightsKmsKeyId
+        monitoringInterval = 60
+        monitoringRoleArn = "arn:aws:iam::135775632425:role/rds-monitoring-role"
+        enabledCloudwatchLogsExports = @("upgrade", "postgresql", "upgrade")
+    }
+    $enabledEnvelopeJson = Get-DatabaseInsightsPreservedMonitoringPostureJson $enabledPosture
+    $enabledEnvelope = Assert-DatabaseInsightsPreservedMonitoringPostureEnvelope `
+        $enabledEnvelopeJson (Get-DatabaseInsightsTextSha256 $enabledEnvelopeJson)
+    Assert-Condition ($enabledEnvelope.posture.monitoringInterval -eq 60 -and
+        $enabledEnvelope.posture.monitoringRoleArn -ceq "arn:aws:iam::135775632425:role/rds-monitoring-role" -and
+        (@($enabledEnvelope.posture.enabledCloudwatchLogsExports) | ConvertTo-Json -Compress) -ceq `
+            '["postgresql","upgrade"]') `
+        "Enabled Enhanced Monitoring and multiple log exports must round-trip through one canonical envelope."
+    $assertions++
+    foreach ($malformedPosture in @(
+        [ordered]@{Name="numeric KMS identity";Posture=[ordered]@{
+            performanceInsightsKmsKeyId=123;monitoringInterval=0;monitoringRoleArn=$null
+            enabledCloudwatchLogsExports=@()
+        }},
+        [ordered]@{Name="fractional monitoring interval";Posture=[ordered]@{
+            performanceInsightsKmsKeyId=$script:MockPerformanceInsightsKmsKeyId;monitoringInterval=0.5
+            monitoringRoleArn=$null;enabledCloudwatchLogsExports=@()
+        }},
+        [ordered]@{Name="boolean monitoring interval";Posture=[ordered]@{
+            performanceInsightsKmsKeyId=$script:MockPerformanceInsightsKmsKeyId;monitoringInterval=$false
+            monitoringRoleArn=$null;enabledCloudwatchLogsExports=@()
+        }},
+        [ordered]@{Name="numeric monitoring role";Posture=[ordered]@{
+            performanceInsightsKmsKeyId=$script:MockPerformanceInsightsKmsKeyId;monitoringInterval=60
+            monitoringRoleArn=123;enabledCloudwatchLogsExports=@()
+        }},
+        [ordered]@{Name="scalar log export";Posture=[ordered]@{
+            performanceInsightsKmsKeyId=$script:MockPerformanceInsightsKmsKeyId;monitoringInterval=0
+            monitoringRoleArn=$null;enabledCloudwatchLogsExports="postgresql"
+        }},
+        [ordered]@{Name="non-string log export";Posture=[ordered]@{
+            performanceInsightsKmsKeyId=$script:MockPerformanceInsightsKmsKeyId;monitoringInterval=0
+            monitoringRoleArn=$null;enabledCloudwatchLogsExports=@(123)
+        }}
+    )) {
+        $malformedPostureRejected = $false
+        try { [void](Get-DatabaseInsightsPreservedMonitoringPosture $malformedPosture.Posture) }
+        catch { $malformedPostureRejected = $_.Exception.Message -match 'unsupported value type' }
+        Assert-Condition $malformedPostureRejected `
+            "The primary lease boundary must reject a $($malformedPosture.Name) before canonicalization."
+        $assertions++
+    }
+    $enabledInitialPosture = $privateAcquiredReceipt.initialPosture | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+    $enabledInitialPosture.monitoringInterval = 60
+    $enabledInitialPosture.monitoringRoleArn = "arn:aws:iam::135775632425:role/rds-monitoring-role"
+    $enabledInitialPosture.enabledCloudwatchLogsExports = @("upgrade", "postgresql")
+    $enabledBinding = Get-DatabaseInsightsDurableRestoreGuardBinding `
+        $enabledInitialPosture "135775632425" "us-east-1" "schoolpilot-production-db" `
+        ([Guid]::NewGuid().ToString("N")) ([DateTimeOffset]::Parse($privateAcquiredReceipt.expiresAtUtc)) `
+        ([string]$privateAcquiredReceipt.durableRestoreGuard.automationDocumentContentSha256)
+    $enabledTarget = Read-DatabaseInsightsBoundRestoreTargetInput $enabledBinding
+    $enabledTargetEnvelope = Assert-DatabaseInsightsPreservedMonitoringPostureEnvelope `
+        ([string]$enabledTarget.Parameters.ExpectedPreservedMonitoringPostureJson[0]) `
+        ([string]$enabledTarget.Parameters.ExpectedPreservedMonitoringPostureSha256[0])
+    Assert-Condition ($enabledTargetEnvelope.posture.monitoringInterval -eq 60 -and
+        $enabledTargetEnvelope.posture.monitoringRoleArn -ceq `
+            "arn:aws:iam::135775632425:role/rds-monitoring-role" -and
+        @($enabledTargetEnvelope.posture.enabledCloudwatchLogsExports).Count -eq 2) `
+        "An enabled monitoring posture must remain a one-value, canonical SSM restore contract."
+    $assertions++
+
+    $foreignRolePosture = $enabledInitialPosture | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+    $foreignRolePosture.monitoringRoleArn = "arn:aws:iam::000000000000:role/rds-monitoring-role"
+    $foreignRoleRejected = $false
+    try { [void](Get-DatabaseInsightsDurableRestoreGuardBinding `
+        $foreignRolePosture "135775632425" "us-east-1" "schoolpilot-production-db" `
+        ([Guid]::NewGuid().ToString("N")) ([DateTimeOffset]::Parse($privateAcquiredReceipt.expiresAtUtc)) `
+        ([string]$privateAcquiredReceipt.durableRestoreGuard.automationDocumentContentSha256)) }
+    catch { $foreignRoleRejected = $_.Exception.Message -match 'outside the bound AWS account' }
+    Assert-Condition $foreignRoleRejected `
+        "An enabled monitoring role must remain in the same partition and account as the bound database."
+    $assertions++
+
+    $malformedEnvelopes = @(
+        [ordered]@{Name="missing key";Json=$expectedPreservedMonitoringPostureJson.Replace(',"monitoringRoleArn":null', '')},
+        [ordered]@{Name="extra key";Json=$expectedPreservedMonitoringPostureJson.TrimEnd('}') + ',"extra":true}'},
+        [ordered]@{Name="duplicate key";Json=$expectedPreservedMonitoringPostureJson.Replace(
+            '{"version":', '{"version":"rds-preserved-monitoring-posture-json-v1","version":')},
+        [ordered]@{Name="role with disabled monitoring";Json=$expectedPreservedMonitoringPostureJson.Replace(
+            '"monitoringRoleArn":null', '"monitoringRoleArn":"arn:aws:iam::135775632425:role/rds-monitoring-role"')},
+        [ordered]@{Name="duplicate exports";Json=$enabledEnvelopeJson.Replace(
+            '["postgresql","upgrade"]', '["postgresql","postgresql","upgrade"]')},
+        [ordered]@{Name="unsupported export";Json=$expectedPreservedMonitoringPostureJson.Replace(
+            '"enabledCloudwatchLogsExports":[]', '"enabledCloudwatchLogsExports":["audit"]')}
+    )
+    foreach ($malformedEnvelope in $malformedEnvelopes) {
+        $malformedEnvelopeRejected = $false
+        try { [void](Assert-DatabaseInsightsPreservedMonitoringPostureEnvelope $malformedEnvelope.Json) }
+        catch { $malformedEnvelopeRejected = $true }
+        Assert-Condition $malformedEnvelopeRejected `
+            "The canonical posture decoder must reject a $($malformedEnvelope.Name)."
+        $assertions++
+    }
+    $tamperedEnvelopeHashRejected = $false
+    try { [void](Assert-DatabaseInsightsPreservedMonitoringPostureEnvelope `
+        $expectedPreservedMonitoringPostureJson ('0' * 64)) }
+    catch { $tamperedEnvelopeHashRejected = $_.Exception.Message -match 'hash' }
+    Assert-Condition $tamperedEnvelopeHashRejected `
+        "The canonical posture decoder must reject a JSON/hash mismatch."
+    $assertions++
+
+    foreach ($badValues in @(@(), @(""), @($expectedPreservedMonitoringPostureJson, $expectedPreservedMonitoringPostureJson))) {
+        $badBinding = $privateAcquiredReceipt.durableRestoreGuard | ConvertTo-Json -Depth 40 | ConvertFrom-Json -Depth 40
+        $badTarget = [string]$badBinding.targetInput | ConvertFrom-Json -Depth 30
+        $badTarget.Parameters.ExpectedPreservedMonitoringPostureJson = $badValues
+        $badBinding.targetInput = $badTarget | ConvertTo-Json -Depth 30 -Compress
+        $badParameterRejected = $false
+        try { [void](Read-DatabaseInsightsBoundRestoreTargetInput $badBinding) }
+        catch { $badParameterRejected = $_.Exception.Message -match 'missing, empty, or ambiguous' }
+        Assert-Condition $badParameterRejected `
+            "Every SSM target parameter must contain exactly one nonempty string."
+        $assertions++
+    }
     $reviewedAutomation = Get-TestRestoreAutomationDocument
     Assert-Condition (@($reviewedAutomation.mainSteps).Count -eq 4 -and
         $reviewedAutomation.mainSteps[0].name -ceq "RestoreExactPosture" -and
@@ -610,7 +787,7 @@ try {
         1..50 | ForEach-Object {
             [pscustomobject]@{
                 AutomationExecutionId=("{0:x8}-0000-0000-0000-000000000000" -f $_)
-                DocumentName='schoolpilot-production-db-insights-restore-v1'
+                DocumentName='schoolpilot-production-db-insights-restore-v2'
                 DocumentVersion='1'
                 AutomationExecutionStatus='Success'
             }
@@ -618,17 +795,17 @@ try {
     )
     $laterTerminalAutomation = [pscustomobject]@{
         AutomationExecutionId='00000033-0000-0000-0000-000000000000'
-        DocumentName='schoolpilot-production-db-insights-restore-v1';DocumentVersion='1'
+        DocumentName='schoolpilot-production-db-insights-restore-v2';DocumentVersion='1'
         AutomationExecutionStatus='Failed'
     }
     $otherGenerationActiveAutomation = [pscustomobject]@{
         AutomationExecutionId='00000034-0000-0000-0000-000000000000'
-        DocumentName='schoolpilot-production-db-insights-restore-v1';DocumentVersion='2'
+        DocumentName='schoolpilot-production-db-insights-restore-v1';DocumentVersion='1'
         AutomationExecutionStatus='InProgress'
     }
     $laterActiveAutomation = [pscustomobject]@{
         AutomationExecutionId='00000035-0000-0000-0000-000000000000'
-        DocumentName='schoolpilot-production-db-insights-restore-v1';DocumentVersion='1'
+        DocumentName='schoolpilot-production-db-insights-restore-v2';DocumentVersion='1'
         AutomationExecutionStatus='InProgress'
     }
     $script:MockAutomationExecutionPages = @(
@@ -644,18 +821,33 @@ try {
         @($activeAfterLongHistory.AutomationExecutionId) -contains $otherGenerationActiveAutomation.AutomationExecutionId -and
         @($activeAfterLongHistory.AutomationExecutionId) -contains $laterActiveAutomation.AutomationExecutionId -and
         $script:AutomationDescribeCalls.Count -eq $describeCallsBeforePagination + 2) `
-        "Quiescence must inspect every explicit page after more than 50 terminal runs and block on all later-page active generations of the exact restoration document."
+        "Quiescence must inspect every explicit page and block on active executions across legacy and current versioned restore documents."
+    $assertions++
+
+    $script:MockAutomationExecutionPages = @(
+        [pscustomobject]@{AutomationExecutionMetadataList=@([pscustomobject]@{
+            AutomationExecutionId='00000039-0000-0000-0000-000000000000'
+            DocumentName='schoolpilot-production-db-insights-restore-v2-copy';DocumentVersion='1'
+            AutomationExecutionStatus='InProgress'
+        })}
+    )
+    $invalidFamilyMemberRejected = $false
+    try { [void](Get-DatabaseInsightsActiveRestoreAutomations `
+        $privateAcquiredReceipt.durableRestoreGuard) }
+    catch { $invalidFamilyMemberRejected = $_.Exception.Message -match 'invalid document family member' }
+    Assert-Condition $invalidFamilyMemberRejected `
+        "The all-version restore barrier must fail closed on malformed document-family members."
     $assertions++
 
     $script:MockAutomationExecutionPages = @(
         [pscustomobject]@{AutomationExecutionMetadataList=@([pscustomobject]@{
             AutomationExecutionId='00000040-0000-0000-0000-000000000000';
-            DocumentName='schoolpilot-production-db-insights-restore-v1';DocumentVersion='1';
+            DocumentName='schoolpilot-production-db-insights-restore-v2';DocumentVersion='1';
             AutomationExecutionStatus='Success'
         });NextToken='page-1'},
         [pscustomobject]@{AutomationExecutionMetadataList=@([pscustomobject]@{
             AutomationExecutionId='00000041-0000-0000-0000-000000000000';
-            DocumentName='schoolpilot-production-db-insights-restore-v1';DocumentVersion='1';
+            DocumentName='schoolpilot-production-db-insights-restore-v2';DocumentVersion='1';
             AutomationExecutionStatus='Success'
         });NextToken='page-1'}
     )
@@ -668,7 +860,7 @@ try {
 
     $duplicateAutomation = [pscustomobject]@{
         AutomationExecutionId='00000050-0000-0000-0000-000000000000'
-        DocumentName='schoolpilot-production-db-insights-restore-v1';DocumentVersion='1'
+        DocumentName='schoolpilot-production-db-insights-restore-v2';DocumentVersion='1'
         AutomationExecutionStatus='Success'
     }
     $script:MockAutomationExecutionPages = @(
@@ -706,7 +898,7 @@ try {
     Assert-Condition ($validated.state -eq "active_validated" -and $script:ModifyCalls.Count -eq 1) `
         "Validate must prove the active lease without another RDS mutation."
     $assertions++
-    Assert-Condition ($validated.durableRestoreGuardVersion -eq "aws-scheduler-ssm-recurring-restore-v1" -and
+    Assert-Condition ($validated.durableRestoreGuardVersion -eq "aws-scheduler-ssm-recurring-restore-v2" -and
         $validated.durableRestoreGuardBindingSha256 -eq $acquired.durableRestoreGuardBindingSha256 -and
         $validated.durableRestoreAutomationDefinitionArnSha256 -eq $acquired.durableRestoreAutomationDefinitionArnSha256 -and
         $validated.durableRestoreAutomationRoleArnSha256 -eq $acquired.durableRestoreAutomationRoleArnSha256 -and
@@ -745,7 +937,19 @@ try {
     }
     catch { $legacyUnsafeRejected = $_.Exception.Message -match "durable restore guard binding" }
     Assert-Condition $legacyUnsafeRejected `
-        "Historical lease-v2 receipts without the AWS-native durable guard must be ineligible."
+        "Receipts missing the AWS-native durable guard must be ineligible."
+    $assertions++
+    $legacyV2Receipt = $receiptForDurableGuard | ConvertTo-Json -Depth 40 | ConvertFrom-Json -Depth 40
+    $legacyV2Receipt.schemaVersion = 2
+    $legacyV2Receipt.leaseVersion = "database-insights-monitoring-lease-v2"
+    $legacyV2Path = Join-Path $tempRoot "historical-lease-v2.json"
+    Write-DatabaseInsightsPrivateJson $legacyV2Path $legacyV2Receipt
+    $legacyV2Rejected = $false
+    try { [void](Read-DatabaseInsightsLeaseReceipt $legacyV2Path `
+        (Get-DatabaseInsightsFileSha256 $legacyV2Path)) }
+    catch { $legacyV2Rejected = $_.Exception.Message -match 'unsupported identity' }
+    Assert-Condition $legacyV2Rejected `
+        "Historical receipt-schema-2 / lease-v2 artifacts must be rejected without translation."
     $assertions++
     $originalDurableRole = $script:MockSchedule.Target.RoleArn
     $script:MockSchedule.Target.RoleArn = "arn:aws:iam::135775632425:role/unexpected-restore-role"
@@ -809,6 +1013,7 @@ try {
     $assertions++
     $receiptForWatchdog = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json -Depth 40
     Write-DatabaseInsightsWatchdogHeartbeat $watchdogPath $receiptForWatchdog $acquired.receiptSha256 "monitoring"
+    $script:MockMonitoringInterval = 60
     $script:MockMonitoringRoleArn = "arn:aws:iam::135775632425:role/unexpected-rds-monitoring-role"
     $monitoringDriftRejected = $false
     try {
@@ -819,7 +1024,8 @@ try {
     Assert-Condition $monitoringDriftRejected `
         "Validate must reject PI KMS, Enhanced Monitoring, or CloudWatch log-export drift."
     $assertions++
-    $script:MockMonitoringRoleArn = "arn:aws:iam::135775632425:role/rds-monitoring-role"
+    $script:MockMonitoringInterval = 0
+    $script:MockMonitoringRoleArn = ""
     $wrongPurposeRejected = $false
     try {
         Invoke-DatabaseInsightsLease "Validate" "schoolpilot-production-db" $receiptPath $acquired.receiptSha256 `

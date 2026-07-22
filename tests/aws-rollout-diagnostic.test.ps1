@@ -53,6 +53,9 @@ $monitor = Get-Content -LiteralPath $monitorPath -Raw
 $supervisor = Get-Content -LiteralPath $supervisorPath -Raw
 $harness = Get-Content -LiteralPath $harnessPath -Raw
 
+Assert-Condition ($controller.StartsWith('#requires -Version 7.5')) 'The diagnostic controller must require PowerShell 7.5 before using ConvertFrom-Json -DateKind String.'
+Assert-Condition ($supervisor.StartsWith('#requires -Version 7.5')) 'The certification supervisor must require PowerShell 7.5 before decoding date-preserving evidence JSON.'
+
 foreach ($required in @(
     'diagnosticOnly=$true','certificationEligible=$false','supervisorSealed=$false','predecessor=$null',
     'stage="800";devices=810;durationSeconds=1800','screenshotBytes=40960;canaryDevices=10',
@@ -69,7 +72,8 @@ foreach ($required in @(
     'Group=db.sql_tokenized,Limit=25','rawSqlPersisted=$false','dominanceThresholdPercent=50.0',
     'HistoryFallbackSqlMarkers = @("requested_tiles", "heartbeats", "lateral")',
     'history-fallback-queryid-v1','queryid-sqlstats-v1','historyFallbackQueryIdentity','historyFallbackPiEvidenceVersion','db.sql_tokenized.db_id',
-    'database-insights-monitoring-lease-v2','Invoke-DatabaseInsightsLeaseController','database_insights_lease_restoration_failed',
+    'database-insights-monitoring-lease-v3','aws-scheduler-ssm-recurring-restore-v2','ssm-rds-monitoring-restore-v2',
+    'Invoke-DatabaseInsightsLeaseController','database_insights_lease_restoration_failed',
     'db.sql_tokenized.stats.calls_per_sec.avg','db.sql_tokenized.stats.total_time_per_sec.avg',
     'db.sql_tokenized.stats.blk_read_time_per_sec.avg','db.sql_tokenized.stats.temp_blks_read_per_sec.avg',
     'Group=db.wait_event,Limit=25','db.sql_tokenized.id','IO:DataFileRead','historyFallback',
@@ -197,7 +201,7 @@ foreach ($name in @(
     'Wait-TargetHealthConvergence','Get-HealthyTargetCount','Restore-ScalingCapture',
     'Update-GeneratorPublicIpEvidence','Assert-HealthyMonitorHeartbeat','Resolve-ApiAwslogsBinding',
     'Get-BoundApiAwslogsBinding','Get-Postgres57014Evidence','Get-HistoryFallbackWaitEventEvidence',
-    'Test-EvidenceAwsRetryableFailure','ConvertTo-ExactUtcDateTimeOffset','Get-PerformanceInsightsEvidenceWindow','Assert-PerformanceInsightsResponseScope',
+    'Test-EvidenceAwsRetryableFailure','ConvertFrom-EvidenceAwsJson','ConvertTo-ExactUtcDateTimeOffset','Get-PerformanceInsightsEvidenceWindow','Assert-PerformanceInsightsResponseScope',
     'Invoke-EvidenceAwsJsonPages','New-StagedEvidenceException','New-EvidenceEnvelope','Test-EvidenceSourceNotStarted',
     'Get-EvidenceUtcNow','Wait-EvidenceDelay','Wait-HarnessTerminalEvidenceCommit','Resolve-DiagnosticTerminalExitCode',
     'Get-ControllerFailureClassification','Test-HarnessTerminalEvidencePresent','Get-ControllerCleanupDisposition','Stop-ControllerChildrenImmediately',
@@ -374,8 +378,9 @@ $script:PerformanceInsightsCoverageTolerancePercent = 0.5
 $script:HistoryFallbackSqlIdentityVersion = 'history-fallback-queryid-v1'
 $script:HistoryFallbackPiEvidenceVersion = 'queryid-sqlstats-v1'
 $script:HistoryFallbackParameterTypeSignatureJson = '["$1:text[]:student_ids","$2:text[]:device_ids","$3:text:school_id","$4:bigint:history_limit"]'
-$script:DatabaseInsightsLeaseVersion = 'database-insights-monitoring-lease-v2'
-$script:DatabaseInsightsDurableRestoreGuardVersion = 'aws-scheduler-ssm-recurring-restore-v1'
+$script:DatabaseInsightsLeaseVersion = 'database-insights-monitoring-lease-v3'
+$script:DatabaseInsightsDurableRestoreGuardVersion = 'aws-scheduler-ssm-recurring-restore-v2'
+$script:DatabaseInsightsDurableRestoreAutomationVersion = 'ssm-rds-monitoring-restore-v2'
 $script:DatabaseInsightsLeaseScript = $databaseInsightsLeasePath
 $script:HistoryFallbackSqlStatsPeriodSeconds = 60
 $script:HistoryFallbackSqlStatsMetrics = [ordered]@{
@@ -418,6 +423,40 @@ Assert-PerformanceInsightsResponseScope $validPiScopeResponse '2026-07-20T12:01:
 Assert-Condition $true 'Exact aligned PI response bounds and database identity must validate.'
 Assert-Throws { Assert-PerformanceInsightsResponseScope $validPiScopeResponse '2026-07-20T12:01:00Z' '2026-07-20T12:29:00Z' 'db-AAAAAAAAAAAAAAAAAAAA' } 'outside the exact aligned' 'A PI response with different aligned bounds must fail closed.'
 Assert-Throws { Assert-PerformanceInsightsResponseScope $validPiScopeResponse '2026-07-20T12:01:00Z' '2026-07-20T12:30:00Z' 'db-BBBBBBBBBBBBBBBBBBBB' } 'different database' 'A GetResourceMetrics response for another DBI resource must fail closed.'
+$realisticPiAwsJson = @'
+{
+  "AlignedStartTime": "2026-07-20T12:01:00+00:00",
+  "AlignedEndTime": "2026-07-20T12:30:00+00:00",
+  "Identifier": "db-AAAAAAAAAAAAAAAAAAAA",
+  "MetricList": [
+    {
+      "Key": { "Metric": "db.load.avg" },
+      "DataPoints": [
+        { "Timestamp": "2026-07-20T12:01:00+00:00", "Value": 2.5 },
+        { "Timestamp": "2026-07-20T12:02:00+00:00", "Value": 2.75 }
+      ]
+    }
+  ]
+}
+'@
+$decodedPiAwsJson = ConvertFrom-EvidenceAwsJson $realisticPiAwsJson
+Assert-Condition ($decodedPiAwsJson.AlignedStartTime -is [string] -and
+    $decodedPiAwsJson.AlignedEndTime -is [string] -and
+    $decodedPiAwsJson.MetricList[0].DataPoints[0].Timestamp -is [string] -and
+    $decodedPiAwsJson.MetricList[0].DataPoints[1].Timestamp -is [string]) `
+    'AWS evidence JSON decoding must preserve response bounds and nested PI datapoint timestamps as strings.'
+Assert-PerformanceInsightsResponseScope $decodedPiAwsJson '2026-07-20T12:01:00Z' '2026-07-20T12:30:00Z' 'db-AAAAAAAAAAAAAAAAAAAA'
+Assert-Condition $true 'String-preserved +00:00 PI response bounds must pass strict UTC scope validation.'
+Assert-Throws { ConvertFrom-EvidenceAwsJson '{"AlignedStartTime":' } 'AWS evidence JSON is malformed' `
+    'Malformed provider JSON must fail with a sanitized decoder error.'
+Assert-Throws { ConvertFrom-EvidenceAwsJson ' ' } 'AWS evidence JSON is malformed' `
+    'An empty provider payload must fail with the same sanitized decoder error.'
+$nonUtcPiAwsJson = ConvertFrom-EvidenceAwsJson ($realisticPiAwsJson.Replace('2026-07-20T12:01:00+00:00', '2026-07-20T08:01:00-04:00'))
+Assert-Throws { Assert-PerformanceInsightsResponseScope $nonUtcPiAwsJson '2026-07-20T12:01:00Z' '2026-07-20T12:30:00Z' 'db-AAAAAAAAAAAAAAAAAAAA' } `
+    'malformed aligned response bounds' 'A provider timestamp with a nonzero offset must remain rejected by strict UTC validation.'
+$localPiDateTime = [DateTime]::SpecifyKind([DateTime]'2026-07-20T12:01:00', [DateTimeKind]::Local)
+Assert-Throws { ConvertTo-ExactUtcDateTimeOffset $localPiDateTime 'local provider timestamp' } `
+    'exact UTC timestamp' 'A local DateTime object must remain rejected instead of being normalized to UTC.'
 
 $historyQueryIdentifier = '-9223372036854775808'
 $historyCompiledSqlSha256 = ('ab' * 32)
@@ -561,15 +600,18 @@ try {
     $leaseScheduleArn = 'arn:aws:scheduler:us-east-1:135775632425:schedule/schoolpilot-production-db-insights-leases/db-insights-restore-0123456789abcdef01234567'
     $leaseRoleArn = 'arn:aws:iam::135775632425:role/schoolpilot-production-db-insights-restore'
     $leaseDlqArn = 'arn:aws:sqs:us-east-1:135775632425:schoolpilot-production-db-insights-restore-dlq'
-    $leaseAutomationDefinitionArn = 'arn:aws:ssm:us-east-1:135775632425:automation-definition/schoolpilot-production-db-insights-restore-v1:1'
+    $leaseAutomationDefinitionArn = 'arn:aws:ssm:us-east-1:135775632425:automation-definition/schoolpilot-production-db-insights-restore-v2:1'
     $leaseAutomationRoleArn = 'arn:aws:iam::135775632425:role/schoolpilot-production-db-insights-restore-automation'
     $leaseAutomationFailureRuleArn = 'arn:aws:events:us-east-1:135775632425:rule/schoolpilot-production-db-insights-restore-failed'
     $leaseAutomationDocumentContentSha256 = '8' * 64
-    [IO.File]::WriteAllText($leaseBindingReceiptPath, ([ordered]@{immutable=$true;durableRestoreGuard=[ordered]@{
-        version='aws-scheduler-ssm-recurring-restore-v1';bindingSha256=('9' * 64)
+    [IO.File]::WriteAllText($leaseBindingReceiptPath, ([ordered]@{
+        schemaVersion=3;type='database_insights_monitoring_lease';leaseVersion='database-insights-monitoring-lease-v3';immutable=$true
+        durableRestoreGuard=[ordered]@{
+        version='aws-scheduler-ssm-recurring-restore-v2';bindingSha256=('9' * 64)
         scheduleArn=$leaseScheduleArn;targetRoleArn=$leaseRoleArn;deadLetterQueueArn=$leaseDlqArn
         automationDefinitionArn=$leaseAutomationDefinitionArn;automationRoleArn=$leaseAutomationRoleArn
-        automationFailureRuleArn=$leaseAutomationFailureRuleArn;automationDocumentVersion='1'
+        automationFailureRuleArn=$leaseAutomationFailureRuleArn;automationVersion='ssm-rds-monitoring-restore-v2'
+        automationDocumentName='schoolpilot-production-db-insights-restore-v2';automationDocumentVersion='1'
         automationDocumentContentSha256=$leaseAutomationDocumentContentSha256
     }} | ConvertTo-Json -Depth 5 -Compress), [Text.UTF8Encoding]::new($false))
     [IO.File]::WriteAllText($leaseBindingStatusPath, '{"state":"active"}', [Text.UTF8Encoding]::new($false))
@@ -735,8 +777,8 @@ $script:diagnosticMetricResponse = [pscustomobject]@{
     AlignedStartTime='2026-07-20T12:00:00Z';AlignedEndTime='2026-07-20T12:30:00Z'
     Identifier=$historyDbiResourceId
     MetricList=@([pscustomobject]@{Key='db.load.avg';DataPoints=@(
-        [pscustomobject]@{Timestamp='2026-07-20T12:00:00Z';Value=2.5},
-        [pscustomobject]@{Timestamp='2026-07-20T12:01:00Z';Value=2.5}
+        [pscustomobject]@{Timestamp='2026-07-20T12:00:00+00:00';Value=2.5},
+        [pscustomobject]@{Timestamp='2026-07-20T12:01:00+00:00';Value=2.5}
     )})
 }
 $script:diagnosticHistoryStatement = 'WITH requested_tiles AS (VALUES (?)) SELECT * FROM requested_tiles CROSS JOIN LATERAL (SELECT * FROM heartbeats) h'
@@ -750,7 +792,7 @@ $script:diagnosticSqlStatsTempBlocksWrittenRate = 0.0
 $script:diagnosticSqlStatsTimestampOverrides = @{}
 $script:diagnosticSqlStatsUngroupedTotalsMode = 'none'
 $script:diagnosticSqlStatsIdentityMode = 'valid'
-$script:diagnosticSqlStatsTimestamps = @('2026-07-20T12:00:00Z')
+$script:diagnosticSqlStatsTimestamps = @('2026-07-20T12:00:00+00:00')
 $script:diagnosticSampledLoad = 1.0
 $script:diagnosticSampledIdentityMode = 'valid'
 $script:diagnosticTrackIoTimingValue = 'on'
@@ -840,6 +882,10 @@ function Get-TestArgumentValue {
     if ($index -lt 0 -or $index + 1 -ge $Arguments.Count) { return $null }
     return $Arguments[$index + 1]
 }
+function ConvertTo-TestEvidenceAwsResponse {
+    param($Value)
+    return ConvertFrom-EvidenceAwsJson ($Value | ConvertTo-Json -Depth 50 -Compress)
+}
 function Invoke-AwsJson {
     param([string[]]$Arguments)
     $script:diagnosticAwsCalls.Add(@($Arguments))
@@ -868,7 +914,7 @@ function Invoke-AwsJson {
                 $script:diagnosticMetricResponse.AlignedStartTime = Get-TestArgumentValue $Arguments '--start-time'
                 $script:diagnosticMetricResponse.AlignedEndTime = Get-TestArgumentValue $Arguments '--end-time'
                 $script:diagnosticMetricResponse.Identifier = Get-TestArgumentValue $Arguments '--identifier'
-                return $script:diagnosticMetricResponse
+                return ConvertTo-TestEvidenceAwsResponse $script:diagnosticMetricResponse
             }
             $script:diagnosticSqlStatsCallCount++
             $parsedQueries = @($metricQueries | ConvertFrom-Json -Depth 20)
@@ -880,7 +926,7 @@ function Invoke-AwsJson {
             $statsResponse.AlignedStartTime = Get-TestArgumentValue $Arguments '--start-time'
             $statsResponse.AlignedEndTime = Get-TestArgumentValue $Arguments '--end-time'
             $statsResponse.Identifier = Get-TestArgumentValue $Arguments '--identifier'
-            return $statsResponse
+            return ConvertTo-TestEvidenceAwsResponse $statsResponse
         }
         'rds describe-db-parameters' {
             Assert-Condition ('--no-paginate' -in $Arguments) 'The track_io_timing parameter read must disable implicit AWS CLI pagination.'
@@ -896,8 +942,8 @@ function Invoke-AwsJson {
                     StartUtc=Get-TestArgumentValue $Arguments '--start-time'
                     EndUtc=Get-TestArgumentValue $Arguments '--end-time'
                 })
-                return [pscustomobject]@{AlignedStartTime=(Get-TestArgumentValue $Arguments '--start-time');
-                    AlignedEndTime=(Get-TestArgumentValue $Arguments '--end-time');Keys=$script:diagnosticTopKeys}
+                return ConvertTo-TestEvidenceAwsResponse ([pscustomobject]@{AlignedStartTime=(Get-TestArgumentValue $Arguments '--start-time');
+                    AlignedEndTime=(Get-TestArgumentValue $Arguments '--end-time');Keys=$script:diagnosticTopKeys})
             }
             if ($groupBy -ceq 'Group=db.sql_tokenized,Dimensions=[db.sql_tokenized.db_id,db.sql_tokenized.id,db.sql_tokenized.statement],Limit=25') {
                 $script:diagnosticSampledLoadCallCount++
@@ -905,20 +951,23 @@ function Invoke-AwsJson {
                 Assert-Condition ([string]$filter.'db.sql_tokenized.db_id' -ceq $historyQueryIdentifier) 'Sampled fallback load must be filtered by the exact native query identifier.'
                 $sampledDbId = if($script:diagnosticSampledIdentityMode -ceq 'native_mismatch'){'9223372036854775807'}else{$historyQueryIdentifier}
                 $sampledStatement = if($script:diagnosticSampledIdentityMode -ceq 'marker_mismatch'){'SELECT 1'}else{$script:diagnosticHistoryStatement}
-                $keys = if ($null -eq $script:diagnosticSampledLoad) { @() } else { @([pscustomobject]@{
-                    Total=[double]$script:diagnosticSampledLoad;Dimensions=[pscustomobject]@{
-                        'db.sql_tokenized.db_id'=$sampledDbId
-                        'db.sql_tokenized.id'=$script:diagnosticHistoryTokenId
-                        'db.sql_tokenized.statement'=$sampledStatement
-                    }
-                }) }
+                $keys = @()
+                if ($null -ne $script:diagnosticSampledLoad) {
+                    $keys = @([pscustomobject]@{
+                        Total=[double]$script:diagnosticSampledLoad;Dimensions=[pscustomobject]@{
+                            'db.sql_tokenized.db_id'=$sampledDbId
+                            'db.sql_tokenized.id'=$script:diagnosticHistoryTokenId
+                            'db.sql_tokenized.statement'=$sampledStatement
+                        }
+                    })
+                }
                 if ($script:diagnosticSampledIdentityMode -ceq 'ambiguous' -and $keys.Count -eq 1) {
                     $extra = $keys[0] | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
                     $extra.Dimensions.'db.sql_tokenized.id' = 'history-token-2'
                     $keys += $extra
                 }
-                return [pscustomobject]@{AlignedStartTime=(Get-TestArgumentValue $Arguments '--start-time');
-                    AlignedEndTime=(Get-TestArgumentValue $Arguments '--end-time');Keys=$keys}
+                return ConvertTo-TestEvidenceAwsResponse ([pscustomobject]@{AlignedStartTime=(Get-TestArgumentValue $Arguments '--start-time');
+                    AlignedEndTime=(Get-TestArgumentValue $Arguments '--end-time');Keys=$keys})
             }
             Assert-Condition ($groupBy -ceq 'Group=db.wait_event,Limit=25') 'Present history tokens must be resolved through filtered wait-event evidence.'
             $script:diagnosticWaitCallCount++
@@ -928,8 +977,8 @@ function Invoke-AwsJson {
             $waitIdentity = "$dbId|$tokenId"
             if (-not $script:diagnosticWaitResponses.ContainsKey($waitIdentity)) { throw 'No test wait response for the exact native/tokenized SQL identity.' }
             $waitResponse = $script:diagnosticWaitResponses[$waitIdentity]
-            return [pscustomobject]@{AlignedStartTime=(Get-TestArgumentValue $Arguments '--start-time');
-                AlignedEndTime=(Get-TestArgumentValue $Arguments '--end-time');Keys=@($waitResponse.Keys)}
+            return ConvertTo-TestEvidenceAwsResponse ([pscustomobject]@{AlignedStartTime=(Get-TestArgumentValue $Arguments '--start-time');
+                AlignedEndTime=(Get-TestArgumentValue $Arguments '--end-time');Keys=@($waitResponse.Keys)})
         }
         default { throw "Unexpected diagnostic evidence test command: $operation" }
     }
@@ -1035,6 +1084,22 @@ Assert-Condition ([string]$piEvidence.evidenceWindow.coherentWindowSha256 -match
     $piEvidence.evidenceWindow.alignedCoveragePercent -eq 100.0 -and
     $piEvidence.historyFallback.source.coherentWindowSha256 -ceq $piEvidence.evidenceWindow.coherentWindowSha256 -and
     $piEvidence.historyFallback.source.alignedEvidenceWindowSha256 -ceq $piEvidence.evidenceWindow.alignedEvidenceWindowSha256) 'Sealed PI and hot-path evidence must bind the same coherent and aligned subwindow hashes and coverage.'
+$validDecodedMetricResponse = ConvertTo-TestEvidenceAwsResponse $script:diagnosticMetricResponse
+$script:diagnosticMetricResponse.MetricList[0].DataPoints[0].Timestamp = '2026-07-20T08:00:00-04:00'
+Assert-Throws { Get-PerformanceInsightsMetricPoints $diagnosticConfig $trafficStart $trafficEnd $historyDbiResourceId } `
+    'malformed DB load datapoint' 'A nested PI metric timestamp with a nonzero offset must fail strict UTC validation.'
+$script:diagnosticMetricResponse = ConvertTo-TestEvidenceAwsResponse $validDecodedMetricResponse
+$script:diagnosticMetricResponse.MetricList[0].DataPoints[0].Timestamp = $trafficEnd
+Assert-Throws { Get-PerformanceInsightsMetricPoints $diagnosticConfig $trafficStart $trafficEnd $historyDbiResourceId } `
+    'out-of-scope' 'A nested PI metric timestamp at the exclusive interval end must fail closed.'
+$script:diagnosticMetricResponse = ConvertTo-TestEvidenceAwsResponse $validDecodedMetricResponse
+$script:diagnosticMetricResponse.MetricList[0].DataPoints = @(
+    [pscustomobject]@{Timestamp='2026-07-20T12:00:00+00:00';Value=2.5},
+    [pscustomobject]@{Timestamp='2026-07-20T12:00:00+00:00';Value=3.5}
+)
+Assert-Throws { Get-PerformanceInsightsMetricPoints $diagnosticConfig $trafficStart $trafficEnd $historyDbiResourceId } `
+    'conflicting DB load datapoints' 'Conflicting nested PI datapoints at one UTC instant must fail closed.'
+$script:diagnosticMetricResponse = ConvertTo-TestEvidenceAwsResponse $validDecodedMetricResponse
 $script:diagnosticSqlStatsCallsRate = (0.9995 / 60.0)
 $strictCallUndercount = Get-HistoryFallbackSqlStatsEvidence $diagnosticConfig $trafficStart $trafficEnd $historyDbiResourceId 1 $testFallbackWindows
 Assert-Condition (-not $strictCallUndercount.Evidence.callsCoverApplicationReads -and -not $strictCallUndercount.Evidence.passed) 'Integrated PI calls below the exact aligned application read count must fail without tolerance.'
