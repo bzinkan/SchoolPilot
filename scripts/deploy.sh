@@ -11,7 +11,7 @@
 #                                       # Backend only; activate the newly registered 512/2048 API revision
 #   ./scripts/deploy.sh production --backend --activate-emergency \
 #     --classpilot-tile-auth-plan-gate
-#                                       # Run the fixed ClassPilot authorization plan gate against that exact revision before migration/rollout
+#                                       # Run the fixed ClassPilot plan/identity gate before and after rollout; post-deploy drift rolls back
 #   ./scripts/deploy.sh production --backend --same-image-networking-stage PublicEcs \
 #     --expected-app-sha <40-hex-sha> --expected-image-digest sha256:<64-hex> \
 #     --expected-api-task-definition <full-arn> --expected-worker-task-definition <full-arn> \
@@ -123,6 +123,13 @@ PRODUCTION_SCALING_PRIOR_IN=""
 PRODUCTION_SCALING_PRIOR_OUT=""
 PRODUCTION_SCALING_PRIOR_SCHEDULED=""
 PRODUCTION_PREFLIGHT_API_TASK_DEFINITION=""
+PRODUCTION_PREFLIGHT_WORKER_TASK_DEFINITION=""
+PRODUCTION_ROLLBACK_API_TASK_DEFINITION=""
+PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION=""
+TILE_AUTH_PLAN_PRE_IDENTITY_SHA256=""
+TILE_AUTH_PLAN_PRE_QUERY_IDENTIFIER_SHA256=""
+TILE_AUTH_PLAN_IDENTITY_RECEIPT_PATH_SHA256=""
+TILE_AUTH_PLAN_IDENTITY_RECEIPT_SHA256=""
 
 # Colors (works in most terminals)
 RED='\033[0;31m'
@@ -317,6 +324,7 @@ validate_production_service_snapshot() {
   local worker_seen=0
   local api_desired=""
   local api_task_definition=""
+  local worker_task_definition=""
 
   if [[ -n "$expected_api_ref" || -n "$expected_worker_ref" ]]; then
     if [[ -z "$expected_api_ref" || -z "$expected_worker_ref" ]] ||
@@ -373,6 +381,7 @@ validate_production_service_snapshot() {
         ;;
       "$WORKER_SERVICE")
         worker_seen=$((worker_seen + 1))
+        worker_task_definition="$normalized_service_task_definition"
         if [[ -n "$expected_worker" && "$normalized_service_task_definition" != "$expected_worker" ]]; then
           error "Production scheduler worker completed an unexpected task definition (${normalized_service_task_definition}; expected ${expected_worker}); refusing the backend deployment."
           return 1
@@ -396,6 +405,7 @@ validate_production_service_snapshot() {
 
   PRODUCTION_PREFLIGHT_API_DESIRED="$api_desired"
   PRODUCTION_PREFLIGHT_API_TASK_DEFINITION="$api_task_definition"
+  PRODUCTION_PREFLIGHT_WORKER_TASK_DEFINITION="$worker_task_definition"
 }
 
 production_backend_capacity_preflight() {
@@ -672,6 +682,13 @@ acquire_production_scaling_hold() {
     error "Production ECS capacity changed after the initial preflight; refusing the migration and service rollout."
     return 1
   fi
+  if [[ -z "$PRODUCTION_ROLLBACK_API_TASK_DEFINITION" ||
+        -z "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION" ||
+        "$PRODUCTION_PREFLIGHT_API_TASK_DEFINITION" != "$PRODUCTION_ROLLBACK_API_TASK_DEFINITION" ||
+        "$PRODUCTION_PREFLIGHT_WORKER_TASK_DEFINITION" != "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION" ]]; then
+    error "Production ECS task revisions changed after the immutable rollback identities were captured; refusing the migration and service rollout."
+    return 1
+  fi
 }
 
 restore_production_scaling_hold() {
@@ -700,6 +717,56 @@ restore_production_scaling_hold() {
   PRODUCTION_SCALING_PRIOR_OUT=""
   PRODUCTION_SCALING_PRIOR_SCHEDULED=""
   success "Production API autoscaling suspended state restored"
+}
+
+rollback_classpilot_tile_auth_deployment() {
+  local failed=false
+  if [[ -z "$PRODUCTION_ROLLBACK_API_TASK_DEFINITION" ||
+        -z "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION" ]]; then
+    error "The pre-deployment API/worker revisions are unavailable; automatic rollback cannot be proven."
+    failed=true
+  else
+    warn "Rolling the API and scheduler worker back to their exact pre-deployment revisions..."
+    if ! aws ecs update-service \
+      --cluster "$CLUSTER" \
+      --service "$SERVICE" \
+      --task-definition "$PRODUCTION_ROLLBACK_API_TASK_DEFINITION" \
+      --output json \
+      --region "$REGION" \
+      --no-cli-pager > /dev/null; then
+      error "The API rollback request failed."
+      failed=true
+    fi
+    if ! aws ecs update-service \
+      --cluster "$CLUSTER" \
+      --service "$WORKER_SERVICE" \
+      --task-definition "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION" \
+      --output json \
+      --region "$REGION" \
+      --no-cli-pager > /dev/null; then
+      error "The scheduler-worker rollback request failed."
+      failed=true
+    fi
+    if ! aws ecs wait services-stable \
+      --cluster "$CLUSTER" \
+      --services "$SERVICE" "$WORKER_SERVICE" \
+      --region "$REGION"; then
+      error "The API/worker rollback did not reach the standard ECS stable state."
+      failed=true
+    elif ! wait_for_production_backend_strict_stability \
+      "$PRODUCTION_ROLLBACK_API_TASK_DEFINITION" "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION"; then
+      error "The API/worker rollback did not reach exact strict convergence."
+      failed=true
+    else
+      success "API and scheduler worker restored to the exact pre-deployment revisions"
+    fi
+  fi
+
+  if ! restore_production_scaling_hold; then
+    error "Autoscaling restoration failed after the guarded identity rollback."
+    failed=true
+  fi
+  [[ "$failed" == false ]]
 }
 
 TEMP_FILES=(
@@ -920,9 +987,145 @@ validate_classpilot_tile_auth_plan_gate_mode() {
   fi
 }
 
+classpilot_tile_auth_plan_identity_binding() {
+  local sanitized_report="$1"
+  SANITIZED_TILE_AUTH_PLAN_REPORT="$sanitized_report" node <<'NODE'
+const crypto = require("crypto");
+const report = JSON.parse(process.env.SANITIZED_TILE_AUTH_PLAN_REPORT || "null");
+const identity = report?.historyFallbackSqlIdentity;
+const exactKeys = [
+  "compiledSqlSha256",
+  "engineVersion",
+  "parameterTypeSignatureSha256",
+  "queryIdentifierSha256",
+  "schemaIdentitySha256",
+  "trackIoTiming",
+  "version",
+];
+if (!identity || identity.trackIoTiming !== true ||
+    JSON.stringify(Object.keys(identity).sort()) !== JSON.stringify(exactKeys)) {
+  process.exit(1);
+}
+const canonical = JSON.stringify(Object.fromEntries(exactKeys.map((key) => [key, identity[key]])));
+const binding = crypto.createHash("sha256").update(canonical, "utf8").digest("hex");
+process.stdout.write(`${binding}\t${identity.queryIdentifierSha256}`);
+NODE
+}
+
+production_database_identity() {
+  local posture_json
+  if ! posture_json=$(aws rds describe-db-instances \
+    --db-instance-identifier "${NAME}-db" \
+    --query 'DBInstances[0].{identifier:DBInstanceIdentifier,resourceId:DbiResourceId,engine:Engine,engineVersion:EngineVersion,instanceClass:DBInstanceClass,status:DBInstanceStatus,pending:PendingModifiedValues,parameterGroups:DBParameterGroups}' \
+    --output json \
+    --region "$REGION" \
+    --no-cli-pager); then
+    return 1
+  fi
+  PRODUCTION_DATABASE_POSTURE_JSON="$posture_json" EXPECTED_DATABASE_IDENTIFIER="${NAME}-db" node <<'NODE'
+const posture = JSON.parse(process.env.PRODUCTION_DATABASE_POSTURE_JSON || "null");
+const parameters = Array.isArray(posture?.parameterGroups) ? posture.parameterGroups : [];
+if (!posture || posture.identifier !== process.env.EXPECTED_DATABASE_IDENTIFIER ||
+    !/^db-[A-Z0-9]{8,64}$/.test(posture.resourceId || "") ||
+    posture.engine !== "postgres" ||
+    typeof posture.engineVersion !== "string" || !/^\d+(?:\.\d+){0,3}$/.test(posture.engineVersion) ||
+    posture.instanceClass !== "db.t4g.medium" || posture.status !== "available" ||
+    !posture.pending || Object.keys(posture.pending).length !== 0 ||
+    parameters.length === 0 || parameters.some((entry) => entry?.ParameterApplyStatus !== "in-sync")) {
+  process.exit(1);
+}
+process.stdout.write(`${posture.resourceId}\t${posture.engineVersion}`);
+NODE
+}
+
+write_classpilot_history_fallback_identity_receipt() {
+  local events_json="$1"
+  local expected_query_identifier_sha256="$2"
+  local database_binding database_resource_id engine_version extra
+  if [[ -z "${LOCALAPPDATA:-}" ]]; then
+    error "LOCALAPPDATA is required for the ACL-restricted history fallback identity receipt."
+    return 1
+  fi
+  if ! database_binding=$(production_database_identity); then
+    error "Production RDS identity/posture is not exactly available db.t4g.medium with in-sync parameters."
+    return 1
+  fi
+  IFS=$'\t' read -r database_resource_id engine_version extra <<< "$database_binding"
+  if [[ -z "$database_resource_id" || -z "$engine_version" || -n "$extra" ]]; then
+    error "Production RDS identity was malformed or ambiguous."
+    return 1
+  fi
+
+  local api_task_definition_arn="$API_ROLLOUT_TASK_DEF"
+  local worker_task_definition_arn="arn:aws:ecs:${REGION}:${ACCOUNT_ID}:task-definition/${WORKER_SERVICE}:${WORKER_NEW_REV}"
+  local output_directory="${LOCALAPPDATA}/SchoolPilot/load-gates/pi-identities/${LOCAL_SHA}"
+  local receipt_summary receipt_binding receipt_path receipt_path_sha receipt_sha receipt_query_sha receipt_identity_sha
+  if ! receipt_summary=$(printf '%s' "$events_json" | node \
+    "$SCRIPT_DIR/write-classpilot-history-fallback-identity-receipt.mjs" \
+    --output "$output_directory" \
+    --application-sha "$LOCAL_SHA" \
+    --image-digest "$DIGEST" \
+    --api-task-definition-arn "$api_task_definition_arn" \
+    --worker-task-definition-arn "$worker_task_definition_arn" \
+    --database-resource-id "$database_resource_id" \
+    --engine-version "$engine_version" \
+    --expected-query-identifier-sha256 "$expected_query_identifier_sha256" 2>/dev/null); then
+    error "The ACL-restricted history fallback identity receipt could not be sealed."
+    return 1
+  fi
+  if ! receipt_binding=$(HISTORY_FALLBACK_RECEIPT_SUMMARY="$receipt_summary" node <<'NODE'
+const summary = JSON.parse(process.env.HISTORY_FALLBACK_RECEIPT_SUMMARY || "null");
+const hash = /^[a-f0-9]{64}$/;
+if (summary?.schemaVersion !== 1 || summary?.identityVersion !== "history-fallback-queryid-v1" ||
+    typeof summary.path !== "string" || summary.path.length === 0 ||
+    !hash.test(summary.sha256 || "") || !hash.test(summary.queryIdentifierSha256 || "") ||
+    !hash.test(summary.compiledSqlSha256 || "") || !hash.test(summary.parameterTypeSignatureSha256 || "") ||
+    !hash.test(summary.schemaIdentitySha256 || "") || summary.trackIoTiming !== true) process.exit(1);
+const identity = {
+  compiledSqlSha256: summary.compiledSqlSha256,
+  engineVersion: summary.engineVersion,
+  parameterTypeSignatureSha256: summary.parameterTypeSignatureSha256,
+  queryIdentifierSha256: summary.queryIdentifierSha256,
+  schemaIdentitySha256: summary.schemaIdentitySha256,
+  trackIoTiming: true,
+  version: summary.identityVersion,
+};
+const identitySha = require("crypto").createHash("sha256")
+  .update(JSON.stringify(identity), "utf8").digest("hex");
+const pathSha = require("crypto").createHash("sha256")
+  .update(summary.path, "utf8").digest("hex");
+process.stdout.write(`${summary.path}\t${pathSha}\t${summary.sha256}\t${summary.queryIdentifierSha256}\t${identitySha}`);
+NODE
+  ); then
+    error "The sealed history fallback identity receipt summary was malformed."
+    return 1
+  fi
+  IFS=$'\t' read -r receipt_path receipt_path_sha receipt_sha receipt_query_sha receipt_identity_sha extra <<< "$receipt_binding"
+  if [[ -z "$receipt_path" || ! "$receipt_path_sha" =~ ^[a-f0-9]{64}$ ||
+        -z "$receipt_sha" || -n "$extra" ||
+        "$receipt_query_sha" != "$expected_query_identifier_sha256" ||
+        "$receipt_identity_sha" != "$TILE_AUTH_PLAN_PRE_IDENTITY_SHA256" ]]; then
+    error "The sealed history fallback identity receipt does not match the pre-deployment identity."
+    return 1
+  fi
+  TILE_AUTH_PLAN_IDENTITY_RECEIPT_PATH_SHA256="$receipt_path_sha"
+  TILE_AUTH_PLAN_IDENTITY_RECEIPT_SHA256="$receipt_sha"
+  success "History fallback query identity receipt sealed (receiptSha256=${receipt_sha}, queryIdentifierSha256=${receipt_query_sha})"
+}
+
 run_classpilot_tile_auth_plan_gate() {
   if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE" != true ]]; then
     return 0
+  fi
+
+  local phase="${1:-predeploy}"
+  local failure_suffix="No migration or service rollout was attempted."
+  if [[ "$phase" != "predeploy" && "$phase" != "postdeploy" ]]; then
+    error "The ClassPilot tile authorization plan gate phase is invalid."
+    return 1
+  fi
+  if [[ "$phase" == "postdeploy" ]]; then
+    failure_suffix="The new service revisions must be rolled back."
   fi
 
   classpilot_tile_auth_plan_window_preflight
@@ -933,13 +1136,13 @@ run_classpilot_tile_auth_plan_gate() {
     return 1
   fi
 
-  local started_by="sp-tile-plan-${IMAGE_TAG}"
+  local started_by="sp-tile-${phase}-${IMAGE_TAG}"
   if [[ ! "$started_by" =~ ^[A-Za-z0-9_-]{1,36}$ ]]; then
     error "The release image tag cannot be bound safely to the ClassPilot tile authorization plan task."
     return 1
   fi
 
-  info "Running the fixed ClassPilot tile authorization plan gate against ${API_ROLLOUT_TASK_DEF} before migration or service rollout..."
+  info "Running the fixed ClassPilot tile authorization plan gate (${phase}) against ${API_ROLLOUT_TASK_DEF}..."
   if ! aws ecs run-task \
     --cluster "$CLUSTER" \
     --launch-type FARGATE \
@@ -951,7 +1154,7 @@ run_classpilot_tile_auth_plan_gate() {
     --output json \
     --region "$REGION" \
     --no-cli-pager > .tile-auth-plan-task.json; then
-    error "The ClassPilot tile authorization plan task could not be started. No migration or service rollout was attempted."
+    error "The ClassPilot tile authorization plan task could not be started. ${failure_suffix}"
     return 1
   fi
 
@@ -972,7 +1175,7 @@ if (failures.length !== 0 || tasks.length !== 1 ||
 process.stdout.write(task.taskArn);
 NODE
   ); then
-    error "ECS did not return exactly one ClassPilot tile authorization plan task bound to the expected revision. No migration or service rollout was attempted."
+    error "ECS did not return exactly one ClassPilot tile authorization plan task bound to the expected revision. ${failure_suffix}"
     return 1
   fi
 
@@ -981,13 +1184,13 @@ NODE
   local wait_result=$?
   set -e
   if [[ "$wait_result" -eq 124 ]]; then
-    error "The ClassPilot tile authorization plan task exceeded its 900-second controller deadline and was stopped. No migration or service rollout was attempted."
+    error "The ClassPilot tile authorization plan task exceeded its 900-second controller deadline and was stopped. ${failure_suffix}"
     return 1
   elif [[ "$wait_result" -eq 125 ]]; then
-    error "The ClassPilot tile authorization plan task did not report STOPPED within the bounded stop-observation window. No migration or service rollout was attempted."
+    error "The ClassPilot tile authorization plan task did not report STOPPED within the bounded stop-observation window. ${failure_suffix}"
     return 1
   elif [[ "$wait_result" -ne 0 ]]; then
-    error "ClassPilot tile authorization plan task observation failed. No migration or service rollout was attempted."
+    error "ClassPilot tile authorization plan task observation failed. ${failure_suffix}"
     return 1
   fi
 
@@ -998,7 +1201,7 @@ NODE
     --output json \
     --region "$REGION" \
     --no-cli-pager > .tile-auth-plan-result.json; then
-    error "The terminal ClassPilot tile authorization plan task could not be described. No migration or service rollout was attempted."
+    error "The terminal ClassPilot tile authorization plan task could not be described. ${failure_suffix}"
     return 1
   fi
 
@@ -1009,7 +1212,7 @@ NODE
     --output json \
     --region "$REGION" \
     --no-cli-pager); then
-    error "The ClassPilot tile authorization plan task log binding could not be resolved. No migration or service rollout was attempted."
+    error "The ClassPilot tile authorization plan task log binding could not be resolved. ${failure_suffix}"
     return 1
   fi
   if ! log_binding=$(TILE_AUTH_PLAN_RESULT_PATH=".tile-auth-plan-result.json" \
@@ -1020,13 +1223,13 @@ NODE
     EXPECTED_ACCOUNT_ID="$ACCOUNT_ID" \
     node "$SCRIPT_DIR/resolve-classpilot-tile-auth-plan-log-binding.mjs" 2>/dev/null
   ); then
-    error "The ClassPilot tile authorization plan task or its exact awslogs binding is invalid. No migration or service rollout was attempted."
+    error "The ClassPilot tile authorization plan task or its exact awslogs binding is invalid. ${failure_suffix}"
     return 1
   fi
   IFS=$'\t' read -r log_group log_region log_prefix log_stream extra <<< "$log_binding"
   if [[ -z "$log_group" || "$log_region" != "$REGION" || -z "$log_prefix" || -n "$extra" ||
         -z "$log_stream" || "$log_stream" != "${log_prefix}/api/"* ]]; then
-    error "The ClassPilot tile authorization plan log stream does not match the exact API task definition. No migration or service rollout was attempted."
+    error "The ClassPilot tile authorization plan log stream does not match the exact API task definition. ${failure_suffix}"
     return 1
   fi
 
@@ -1052,11 +1255,41 @@ NODE
     sleep "$TILE_AUTH_PLAN_LOG_POLL_SECONDS"
   done
   if [[ -z "$sanitized_report" ]]; then
-    error "No valid sanitized ClassPilot tile authorization plan evidence appeared within the bounded CloudWatch window. No migration or service rollout was attempted."
+    error "No valid sanitized ClassPilot tile authorization plan evidence appeared within the bounded CloudWatch window. ${failure_suffix}"
     return 1
   fi
 
-  success "ClassPilot tile authorization plan gate passed (logGroup=${log_group}, logStream=${log_stream})"
+  local identity_binding identity_sha256 query_identifier_sha256 extra
+  if ! identity_binding=$(classpilot_tile_auth_plan_identity_binding "$sanitized_report"); then
+    error "The sanitized ClassPilot history fallback SQL identity could not be canonicalized. ${failure_suffix}"
+    return 1
+  fi
+  IFS=$'\t' read -r identity_sha256 query_identifier_sha256 extra <<< "$identity_binding"
+  if [[ ! "$identity_sha256" =~ ^[a-f0-9]{64}$ ||
+        ! "$query_identifier_sha256" =~ ^[a-f0-9]{64}$ || -n "$extra" ]]; then
+    error "The sanitized ClassPilot history fallback SQL identity was malformed. ${failure_suffix}"
+    return 1
+  fi
+
+  if [[ "$phase" == "predeploy" ]]; then
+    TILE_AUTH_PLAN_PRE_IDENTITY_SHA256="$identity_sha256"
+    TILE_AUTH_PLAN_PRE_QUERY_IDENTIFIER_SHA256="$query_identifier_sha256"
+  else
+    if [[ -z "$TILE_AUTH_PLAN_PRE_IDENTITY_SHA256" ||
+          -z "$TILE_AUTH_PLAN_PRE_QUERY_IDENTIFIER_SHA256" ||
+          "$identity_sha256" != "$TILE_AUTH_PLAN_PRE_IDENTITY_SHA256" ||
+          "$query_identifier_sha256" != "$TILE_AUTH_PLAN_PRE_QUERY_IDENTIFIER_SHA256" ]]; then
+      error "The post-deployment history fallback SQL identity differs from the pre-deployment plan gate. ${failure_suffix}"
+      return 1
+    fi
+    if ! write_classpilot_history_fallback_identity_receipt \
+      "$events_json" "$query_identifier_sha256"; then
+      error "The post-deployment history fallback SQL identity could not be bound to an immutable private receipt. ${failure_suffix}"
+      return 1
+    fi
+  fi
+
+  success "ClassPilot tile authorization plan gate passed (phase=${phase}, identitySha256=${identity_sha256}, queryIdentifierSha256=${query_identifier_sha256}, logGroup=${log_group}, logStream=${log_stream})"
   printf '%s\n' "$sanitized_report"
 }
 
@@ -2169,6 +2402,14 @@ fi
 # fails closed if ECS cannot provide one unambiguous two-service snapshot.
 production_backend_deploy_window_preflight
 production_backend_capacity_preflight
+if [[ "$ENV" == "production" && "$DEPLOY_BACKEND" == true ]]; then
+  # These are recovery identities, not observational scratch state.  The
+  # strict-stability validator intentionally refreshes PRODUCTION_PREFLIGHT_*
+  # while a rollout converges, so rollback must never read those mutable
+  # variables after either service has been changed.
+  PRODUCTION_ROLLBACK_API_TASK_DEFINITION="$PRODUCTION_PREFLIGHT_API_TASK_DEFINITION"
+  PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION="$PRODUCTION_PREFLIGHT_WORKER_TASK_DEFINITION"
+fi
 launch_safe_active_api_preflight
 
 # ============================================================================
@@ -2413,7 +2654,7 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
   # the service VPC before the autoscaling hold, migration, or service update.
   # It cannot seed certification; it only proves the reviewed authorization
   # SQL plans and teaching-session school integrity for this release.
-  run_classpilot_tile_auth_plan_gate
+  run_classpilot_tile_auth_plan_gate predeploy
 
   # Acquire the hold only after the slow image and task-definition work, then
   # keep it through the one-off migration and both ECS service deployments.
@@ -2489,6 +2730,11 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
   # Step 6: Point the API service at the new revision
   production_backend_deploy_window_preflight "before service rollout"
   production_backend_capacity_preflight "after migration under the autoscaling hold"
+  if [[ "$PRODUCTION_PREFLIGHT_API_TASK_DEFINITION" != "$PRODUCTION_ROLLBACK_API_TASK_DEFINITION" ||
+        "$PRODUCTION_PREFLIGHT_WORKER_TASK_DEFINITION" != "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION" ]]; then
+    error "Production ECS task revisions changed after the immutable rollback identities were captured; refusing the service rollout."
+    exit 1
+  fi
   launch_safe_active_api_preflight
   info "Updating ECS API service to ${API_ROLLOUT_TASK_DEF}..."
   aws ecs update-service \
@@ -2609,12 +2855,27 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
     "$API_ROLLOUT_TASK_DEF" \
     "${WORKER_SERVICE}:${WORKER_NEW_REV}"
 
+  # Re-run the exact non-executing identity gate from the now-active API
+  # revision after migrations and strict convergence. Any query-id/schema drift
+  # fails closed, restores both services, and blocks test preparation.
+  if ! run_classpilot_tile_auth_plan_gate postdeploy; then
+    error "The post-deployment ClassPilot SQL identity gate failed; rolling back this release."
+    if ! rollback_classpilot_tile_auth_deployment; then
+      error "The guarded rollback or restoration could not be proven. Manual recovery is required immediately."
+    fi
+    exit 1
+  fi
+
   if ! restore_production_scaling_hold; then
     error "Backend deployment stabilized, but autoscaling restoration failed; failing the deploy and retrying restoration from the EXIT trap."
     exit 1
   fi
 
-  success "Backend deploy complete!"
+  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE" == true ]]; then
+    success "Backend deploy complete (historyFallbackIdentityReceiptPathSha256=${TILE_AUTH_PLAN_IDENTITY_RECEIPT_PATH_SHA256}, receiptSha256=${TILE_AUTH_PLAN_IDENTITY_RECEIPT_SHA256})"
+  else
+    success "Backend deploy complete!"
+  fi
 fi
 
 # ============================================================================

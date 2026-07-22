@@ -692,11 +692,28 @@ For this one remediation, deploy the backend with the release-bound plan gate:
 The gate uses the freshly registered digest-pinned emergency revision and the
 service network configuration. It must produce the fixed six-scenario,
 40-student, 20-sample sanitized aggregate with the teaching-session school
-precheck at zero and every unchanged plan threshold passing. It runs before
-the autoscaling hold, migration, or service update and cannot start during the
-actual 01:15-02:15 America/New_York purge/rollup window. There is no bypass or
-sample/cohort/threshold override. A failed, timed-out, malformed, or missing
-report stops the deploy without changing either ECS service.
+precheck at zero and every unchanged plan threshold passing. The exact shared
+history-fallback builder is also compiled once for a tenant-scoped
+nonexecuting `EXPLAIN (VERBOSE, FORMAT TEXT)`. The resulting PostgreSQL signed
+query ID, compiled-SQL hash, parameter-signature hash, engine version, and
+schema hash are bound as `history-fallback-queryid-v1`. Effective PostgreSQL
+`track_io_timing` must be `on`, and the compiled statement must contain all
+three PI discovery markers -- `requested_tiles`, `heartbeats`, and `lateral`
+-- within its first 500 characters. The gate rejects a query whose markers move
+outside that exact prefix even if its result or plan is otherwise equivalent.
+Only hashes may appear in sanitized deploy output. The raw decimal query ID is
+copied from the restricted task log into an ACL-restricted release receipt
+which also binds the exact DBI resource ID, PostgreSQL engine/schema identity,
+release SHA, image digest, and revisioned API and worker task definitions. The
+same gate runs again from the active post-migration revision and must reproduce
+the exact identity before the release is eligible for load testing. Neither
+probe can start during the actual 01:15-02:15 America/New_York purge/rollup
+window. There is no bypass or sample/cohort/threshold override. A failed,
+timed-out, malformed, missing, or identity-drifted report stops the deploy;
+post-deployment identity drift rolls
+the API and worker back to their captured revisions. The pre-deployment probe
+runs before the autoscaling hold; the post-deployment probe runs under that
+hold after strict API/worker convergence and before exact scaling restoration.
 
 Before certification, run one 30-minute diagnostic-only Waf/800 using the new
 batch workload. Every RDS CPU minute must be below 65%; HTTP 5xx and network
@@ -706,17 +723,22 @@ errors must each remain below 0.1%; screenshot tile success must be at least
 must be absent from the exact production API log streams for the traffic
 interval; authorization SQL must no longer dominate Performance Insights; and
 the optimized history fallback must appear in the bounded token evidence; and
-`IO:DataFileRead` must remain below 50% of both every identified fallback
-token and their aggregate. Diagnostic evidence cannot seed a certification
-chain.
+`IO:DataFileRead` must remain strictly below 50% whenever the fallback has
+sampled AAS. Independently, its Advanced Database Insights SQL statistics must
+prove positive calls, zero temporary blocks, and aggregate block-read time
+strictly below 50% of total SQL time. Diagnostic evidence cannot seed a
+certification chain.
 
 Use `scripts/load/start-waf800-batch-diagnostic.ps1` for that one run. Its
 operator config is external and hash-bound and must declare
 `diagnosticOnly=true`, the exact 810/1800/40960/10 workload, the batch schema
 and endpoint-shape hash above, the new release SHA/digest/revisioned API and
-worker task definitions, three role-tagged private harness artifacts with
-SHA-256 bindings, the expected generator IPv4, and the same exact `resources`
-posture used by the Waf monitor. Add `resources.accountId=135775632425` and put
+worker task definitions, the ACL-restricted `historyFallbackQueryIdentity`
+receipt reference and its SHA-256,
+`historyFallbackPiEvidenceVersion="queryid-sqlstats-v1"`, three role-tagged
+private harness artifacts with SHA-256 bindings, the expected generator IPv4,
+and the same exact `resources` posture used by the Waf monitor. Add
+`resources.accountId=135775632425` and put
 the existing SNS topic ARN at `resources.notificationTopicArn`. Bind the exact
 production CloudFront distribution at `resources.cloudFrontDistributionId`;
 the controller proves that distribution still serves the `school-pilot.net`
@@ -724,6 +746,18 @@ alias and is associated with the bound global WebACL. Bind the classifier
 metric at `resources.wafDeviceClassifierMetricName=schoolpilot-production-device-ingest-classifier`.
 Do not add a
 `certification` or `predecessorResultPath` property.
+
+The controller rehashes that private receipt and requires its application SHA,
+image digest, API task revision, worker task revision, DBI resource identity,
+compiled-SQL hash, parameter-signature hash, schema hash, engine version, and
+`track_io_timing=true` assertion to match the live diagnostic contract. The PI
+request and sealed result must carry the same receipt hash, query-ID hash,
+release-identity hash, DBI-resource hash, SQL/schema hashes, and API runtime
+task-definition hash. Certification repeats these bindings at the chain root,
+stage attestation, PI request/result, and supervisor envelope, and Waf/800 must
+inherit them unchanged from its sole sealed Waf/500 predecessor. Raw query IDs,
+SQL text, DB resource IDs, and private paths remain restricted; ordinary logs
+and PI evidence contain only their hashes and sanitized measurements.
 
 ```powershell
 $config = "$env:LOCALAPPDATA\SchoolPilot\load-gates\diagnostic-waf800-batch.json"
@@ -749,6 +783,112 @@ CloudFront scope, and distribution/WebACL association. Redis validation proves
 that `redisCacheClusterId` is an available `cache.t4g.small` member of the exact
 bound replication group, with the group and cluster independently reporting
 the same node type and identity.
+
+Before `Validate`, use `scripts/load/database-insights-lease.ps1` to capture the
+exact RDS monitoring posture and enable Advanced mode with Performance Insights
+retention 465. The lease must observe the same private, available
+`db.t4g.medium`, its bound DBI resource ID, no pending reboot, and the reviewed
+PI metrics. It changes no database class, storage, parameter group, workload,
+or threshold. `database-insights-monitoring-lease-v2` also captures and verifies
+the exact Performance Insights KMS key, Enhanced Monitoring interval and role,
+and sorted CloudWatch database-log exports. Its public binding contains only
+hashes for private paths, KMS identities, and IAM role ARNs.
+
+Before acquiring a lease, apply the reviewed
+`database-insights-lease-watchdog` Terraform resources. This medium-only module
+is instantiated in production and nowhere else; non-production outputs remain
+null. It provisions the deterministic Scheduler group, least-privilege
+Scheduler launcher and SSM Automation roles, the exact Automation document,
+an encrypted 14-day SQS dead-letter queue, an Automation-failure EventBridge
+rule, and a queue-depth alarm wired to the existing operational SNS topic.
+
+Acquisition creates and independently verifies one fixed-name, per-database
+recurring Scheduler guard **before** the first RDS mutation. Its start date is
+the immutable lease expiration, its expression is `rate(15 minutes)`, and it
+has no end date. It uses `ActionAfterCompletion=NONE`, a 60-second maximum event
+age, and zero same-invocation Scheduler retries. Each recurrence is the next
+bounded restore attempt; the guard never disappears merely because Scheduler
+successfully launched one attempt. Its universal target is
+`ssm:StartAutomationExecution` for
+`schoolpilot-production-db-insights-restore-v1` at the literal numeric document
+version `1`, never `$DEFAULT`. Acquisition rejects an existing fixed-name guard
+or a still-active prior Automation generation before creating a new receipt.
+
+The immutable private receipt binds
+`aws-scheduler-ssm-recurring-restore-v1`, the exact account, region, DB ARN and
+DBI resource identity, expiration, lease-generation hash, schedule expression
+and target, numeric Automation version and content SHA-256, initial monitoring
+posture, execution roles, encrypted DLQ, failure rule, and retry policy. The
+numeric version and content hash are independently re-read from SSM during
+acquisition and validation; disarm requires the exact bound schedule target to
+still carry them. Ordinary logs and sealed evidence retain only the immutable
+binding, schedule, document, role, rule, and DLQ hashes. The fixed schedule name
+remains the cross-host lease lock.
+
+Every scheduled SSM invocation first proves that the exact ENABLED guard and
+lease generation still match its immutable input. A receipt-bound manual
+invocation may also resume the same exact guard in DISABLED state, but a
+missing guard is accepted only after independently proving exact Standard/7;
+any mismatched generation fails the Automation and reaches the alarmed failure
+path. Each invocation has at most 600 seconds to
+restore and verify the exact database identity and captured Standard/seven-day
+posture: `db.t4g.medium`, PostgreSQL engine/version and DBI resource ID,
+Performance Insights enabled with the captured KMS key, Enhanced Monitoring
+interval/role, sorted database-log exports, no pending modifications, and
+in-sync parameter groups. Scheduled invocations retain the recurring guard.
+The manual mode first converges and verifies Standard/7 while the guard remains
+ENABLED and retryable, then disables the exact generation, drains the complete
+Scheduler delivery-age window, reverifies posture, and idempotently deletes
+only that generation. The EventBridge rule and DLQ report terminal Automation
+failures only. Neither a successful Scheduler delivery nor an EventBridge
+status is accepted as convergence evidence.
+
+The acquisition preflight reads the live Scheduler group, numeric SSM document
+and content hash, both role trusts and complete permission sets, SQS encryption
+and empty-queue posture, EventBridge failure rule, and CloudWatch alarm. It
+requires no unreviewed attached policies, the exact inline permissions, an
+empty SQS-managed-encryption DLQ, and the alarm to target only the existing
+operational SNS topic. Any absent, partially applied, paginated, or drifted
+resource fails closed before schedule creation and before Advanced mode. The
+same infrastructure and live ENABLED-guard checks run again after Advanced
+convergence and during lease validation.
+
+Acquisition also retains the detached local hash-bound watchdog and does not
+return success until its ACL-restricted heartbeat is fresh. Loss or reboot of
+the operator host leaves the recurring AWS-native guard armed. `Validate`
+requires both a fresh local heartbeat and the exact live ENABLED schedule.
+Manual, controller, and local-watchdog restores use a local mutex keyed by
+account/region/database, supplemented across hosts by the active execution of
+the pinned manual SSM document. Acquisition explicitly drains every active
+numeric version of that fixed-name document before creating a new guard. The
+local process performs no RDS or Scheduler restoration mutation: it starts the
+receipt-bound manual Automation, waits for that exact execution and all
+matching versions to become terminal, then independently requires Standard/7
+and an absent schedule. A partial restore, disable, delivery drain, reverify,
+or deletion failure is terminal and leaves the fixed-name guard resource as a
+fail-closed lock against another lease. Each AWS
+CLI process is bounded to 60 seconds. Keep the lease active through the
+publication-delayed evidence seal, then restore and disarm it on every terminal
+outcome. A restore, schedule, Automation, DLQ, alarm, or disarm failure blocks
+progression. Historical receipts lacking this recurring guard are ineligible
+even if they carry the v2 lease label.
+
+Use a fresh 90-minute diagnostic lease. Certification uses a distinct bounded
+480-minute lease spanning Waf/500 through the final Waf/800 evidence seal; do
+not reuse a diagnostic receipt or extend an existing receipt. For example:
+
+```powershell
+pwsh -NoProfile -File scripts/load/database-insights-lease.ps1 `
+  -Mode Acquire -DbInstanceIdentifier schoolpilot-production-db `
+  -ReceiptPath C:\absolute\private\fresh-certification-lease.json `
+  -LeasePurpose certification -MaximumLeaseMinutes 480
+```
+
+The returned contract includes only the receipt/status/watchdog path hashes,
+receipt hash, local-watchdog heartbeat hash/state, immutable recurring-guard
+binding hash, schedule/document/role/rule/DLQ hashes and state, and expiration.
+Store the private receipt path, numeric document binding, and raw AWS schedule
+input only in the ACL-restricted diagnostic or certification config/receipt.
 
 `Run` takes a run-wide OS mutex keyed by evidence directory and run ID before
 checking or creating artifacts, preventing two same-run controllers from
@@ -777,18 +917,31 @@ only the derived API stream prefix for SQLSTATE `57014`. Any match is terminal;
 the result stores only the interval, count, and hashes of the log binding, never
 raw log messages, event IDs, stream IDs, or log-group names.
 
-The controller discovers SQL through `db.sql_tokenized`, retains
-hashes/categories rather than SQL text, and fails if aggregate
-tile-authorization load reaches 50% of average DB load. It recognizes the exact
-optimized cold-history fallback only when the tokenized SQL contains all three
-`requested_tiles`, `heartbeats`, and `lateral` markers. For every such top-25
-token it performs a token-filtered `db.wait_event` query, requires the filtered
-wait totals to cover the token's DB load within the fixed numeric tolerance,
-and requires `IO:DataFileRead` to be strictly below 50% both per token and in
-aggregate. If no optimized fallback appears in the top 25, the strict
-cold-cache diagnostic records that absence and fails closed because the
-fallback's own wait mix was not proven. A present token with missing, partial,
-malformed, or unpaginated wait evidence also fails closed.
+The controller retains hashes/categories rather than SQL text and fails if
+aggregate tile-authorization load reaches 50% of average DB load. Fallback
+identity does not use top-load discovery: it filters Advanced PI
+`GetResourceMetrics` by the receipt's exact PostgreSQL
+`db.sql_tokenized.db_id` and uses
+`db.sql_tokenized.stats.calls_per_sec.avg` as the primary metric. Exactly one
+support token must match the bound native ID plus the `requested_tiles`,
+`heartbeats`, and `lateral` structure. Each fallback-positive application
+summary must represent one complete UTC-minute-aligned 60-second interval and
+must carry the compiled-SQL identity hash plus the SHA-256 of the exact API
+task-definition ARN resolved by that running ECS task as
+`apiRuntimeTaskDefinitionSha256`. The controller rejects edge fragments or
+summaries from another revision. PI call statistics must be positive in every
+such fallback-active minute, and their integrated calls must cover the
+application's bound fallback database-read count. Total time,
+block-read time, shared-block reads, and temporary-block metrics must be
+complete and stable; temporary reads/writes must be zero; and block-read time
+divided by total SQL time must be strictly below 50%. If filtered AAS is
+positive, the existing token-filtered `db.wait_event` coverage and strict
+`IO:DataFileRead < 50%` gate also remain mandatory. If AAS is exactly zero for
+the millisecond query, record `not_applicable_zero_sampled_load`, require no
+sampled-wait ratio, and still require positive per-minute call coverage plus the
+strict call-time block-read ratio. Never fabricate a zero wait ratio. Missing,
+ambiguous, drifted, unstable, malformed, or unpaginated evidence fails closed
+under `queryid-sqlstats-v1`.
 The terminal artifact is explicitly
 `diagnosticOnly=true`, `certificationEligible=false`,
 `supervisorSealed=false`, and `predecessor=null`. The certification supervisor

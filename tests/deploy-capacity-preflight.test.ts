@@ -209,6 +209,16 @@ function registerCommands(commands: string[]): string[] {
   return commands.filter((line) => line.includes("application-autoscaling register-scalable-target"));
 }
 
+const captureDefaultRollbackRevisions = `
+PRODUCTION_ROLLBACK_API_TASK_DEFINITION="schoolpilot-production-api:101"
+PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION="schoolpilot-production-scheduler-worker:21"
+`;
+
+const captureObservedRollbackRevisions = `
+PRODUCTION_ROLLBACK_API_TASK_DEFINITION="$PRODUCTION_PREFLIGHT_API_TASK_DEFINITION"
+PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION="$PRODUCTION_PREFLIGHT_WORKER_TASK_DEFINITION"
+`;
+
 describe("production backend deployment capacity guard", () => {
   it("binds the reviewed 2048 MiB rollout to the freshly registered emergency revision", () => {
     assert.match(deploySource, /--activate-emergency\) ACTIVATE_EMERGENCY=true/);
@@ -482,6 +492,7 @@ restore_production_scaling_hold
   it("dynamically tolerates transient rollout metadata lag until both services are strictly complete", () => {
     const result = runLibrary(`
 trap deploy_exit_cleanup EXIT
+${captureDefaultRollbackRevisions}
 acquire_production_scaling_hold
 wait_for_production_backend_strict_stability schoolpilot-production-api:101 schoolpilot-production-scheduler-worker:21 3 0
 restore_production_scaling_hold
@@ -518,6 +529,7 @@ restore_production_scaling_hold
   it("fails closed on a permanent strict-stability timeout and restores the autoscaling hold", () => {
     const result = runLibrary(`
 trap deploy_exit_cleanup EXIT
+${captureDefaultRollbackRevisions}
 acquire_production_scaling_hold
 wait_for_production_backend_strict_stability schoolpilot-production-api:101 schoolpilot-production-scheduler-worker:21 3 0
 `, {
@@ -549,6 +561,7 @@ wait_for_production_backend_strict_stability schoolpilot-production-api:101 scho
   it("rejects a circuit-breaker rollback to old stable revisions and restores autoscaling", () => {
     const result = runLibrary(`
 trap deploy_exit_cleanup EXIT
+${captureDefaultRollbackRevisions}
 acquire_production_scaling_hold
 wait_for_production_backend_strict_stability schoolpilot-production-api:102 schoolpilot-production-scheduler-worker:22 3 0
 `, {
@@ -576,6 +589,7 @@ wait_for_production_backend_strict_stability schoolpilot-production-api:102 scho
   it("distinguishes repeated describe failures and restores autoscaling", () => {
     const result = runLibrary(`
 trap deploy_exit_cleanup EXIT
+${captureDefaultRollbackRevisions}
 acquire_production_scaling_hold
 wait_for_production_backend_strict_stability schoolpilot-production-api:101 schoolpilot-production-scheduler-worker:21 3 0
 `, {
@@ -599,6 +613,7 @@ wait_for_production_backend_strict_stability schoolpilot-production-api:101 scho
     const result = runLibrary(`
 trap deploy_exit_cleanup EXIT
 production_backend_capacity_preflight
+${captureObservedRollbackRevisions}
 acquire_production_scaling_hold
 restore_production_scaling_hold
 `, {
@@ -635,6 +650,7 @@ restore_production_scaling_hold
       const scheduled = priorScheduled ? "True" : "False";
       const result = runLibrary(`
 trap deploy_exit_cleanup EXIT
+${captureDefaultRollbackRevisions}
 acquire_production_scaling_hold
 restore_production_scaling_hold
 `, {
@@ -664,6 +680,7 @@ restore_production_scaling_hold
     const result = runLibrary(`
 trap deploy_exit_cleanup EXIT
 production_backend_capacity_preflight
+${captureObservedRollbackRevisions}
 acquire_production_scaling_hold
 `, {
       serviceSnapshots: [stableServices({ apiDesired: "2" }), stableServices({ apiDesired: "3" })],
@@ -681,6 +698,7 @@ acquire_production_scaling_hold
     const result = runLibrary(`
 trap deploy_exit_cleanup EXIT
 production_backend_capacity_preflight
+${captureObservedRollbackRevisions}
 acquire_production_scaling_hold
 false
 `, {
@@ -699,6 +717,7 @@ false
     const result = runLibrary(`
 trap deploy_exit_cleanup EXIT
 production_backend_capacity_preflight
+${captureObservedRollbackRevisions}
 acquire_production_scaling_hold
 restore_production_scaling_hold
 `, {
@@ -719,6 +738,7 @@ restore_production_scaling_hold
     const result = runLibrary(`
 trap deploy_exit_cleanup EXIT
 production_backend_capacity_preflight
+${captureObservedRollbackRevisions}
 acquire_production_scaling_hold
 false
 `, {
@@ -731,6 +751,33 @@ false
     assert.match(result.stderr, /EXIT recovery could not restore production API autoscaling/);
     assert.match(result.stderr, /Manual recovery is required immediately/);
     assert.equal(registerCommands(result.commands).length, 2);
+  });
+
+  it("rejects worker revision drift after immutable rollback capture and restores autoscaling", () => {
+    const result = runLibrary(`
+trap deploy_exit_cleanup EXIT
+production_backend_capacity_preflight
+${captureObservedRollbackRevisions}
+acquire_production_scaling_hold
+`, {
+      serviceSnapshots: [
+        stableServices(),
+        stableServices({
+          workerTaskDefinition: "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:22",
+        }),
+      ],
+      scalingSnapshots: ["False\tTrue\tFalse", "True\tTrue\tFalse", "False\tTrue\tFalse"],
+    });
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /task revisions changed after the immutable rollback identities were captured/);
+    assert.match(result.stderr, /attempting recovery/);
+    const registrations = registerCommands(result.commands);
+    assert.equal(registrations.length, 2);
+    assert.match(
+      registrations.at(-1)!,
+      /DynamicScalingInSuspended=false,DynamicScalingOutSuspended=true,ScheduledScalingSuspended=false/
+    );
   });
 
   it("fails closed when the autoscaling target state is absent or ambiguous", () => {

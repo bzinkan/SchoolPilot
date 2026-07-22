@@ -5,6 +5,8 @@ $ErrorActionPreference = "Stop"
 $script:RequiredWorkloadSchemaVersion = "classpilot-tile-batch-v1"
 $script:RequiredWorkloadEndpointShapeSha256 = "8e9f1942e4b3a27de7dd0571a9f60ffeb276c089e4baae96a885dba69e3233b2"
 $script:RequiredPollAccountingVersion = "staggered-deadline-v1"
+$script:RequiredHistoryFallbackPiEvidenceVersion = "queryid-sqlstats-v1"
+$script:RequiredHistoryFallbackPiLinkVersion = "history-fallback-pi-link-v2"
 
 function Assert-Condition {
     param([bool]$Condition, [string]$Message)
@@ -21,13 +23,21 @@ if ($parseErrors.Count -gt 0) { throw "Unable to parse rollout supervisor." }
 $functionNames = @(
     "Resolve-ExternalPath","Get-RequiredProperty","Get-AtomicJsonMutexName","Invoke-WithAtomicJsonMutex",
     "Write-AtomicJson","ConvertTo-CertificationComparableJson","Get-CertificationValue","Get-CertificationSha256",
-    "Get-CertificationTextSha256","Assert-CertificationSha256","Assert-CertificationEvidenceReference",
+    "Get-CertificationTextSha256","Get-CertificationCanonicalSha256","Test-CertificationFiniteNonnegativeNumber",
+    "New-CertificationTerminalFailureException",
+    "Assert-CertificationSha256","Assert-CertificationEvidenceReference",
+    "Assert-CertificationPrivateFileAcl","Set-CertificationPrivateFileAcl",
     "Get-CertificationConfigHash","New-CertificationValidationReceipt","Use-CertificationValidationReceipt",
     "Assert-CertificationReceiptLifetime","Assert-CertificationTaskDefinitionAttestations","Assert-CertificationPreflightContract",
     "Assert-CertificationFixtureVerificationContract","Get-CertificationHarnessArtifactBindings","Assert-CertificationHarnessArtifactContract",
     "Assert-CertificationHarnessArtifactEnvironment","Assert-CertificationFixtureAttestation",
     "Assert-CertificationConsumedReceiptAttestation","Assert-CertificationAttestedStageEvidence",
     "Test-CertificationTerminalTileBatchContract",
+    "Assert-CertificationHistoryFallbackPiFinalizationRequest","Assert-CertificationHistoryFallbackPiBucketCoverage","Assert-CertificationHistoryFallbackPiGateEvidence",
+    "Assert-CertificationHistoryFallbackPiReceipt","Assert-CertificationHistoryFallbackPiEvidence",
+    "New-CertificationHistoryFallbackPiRejectedBundle","Get-CertificationHistoryFallbackPiFailureBinding",
+    "Assert-CertificationPredecessorHistoryFallbackPiEvidence",
+    "Get-CertificationCoherentTrafficWindow",
     "Assert-CertificationChainContinuity","Test-CertificationIntervalIncludesLocalTime",
     "ConvertTo-CertificationUtcTimestamp",
     "Assert-CertificationFixtureVerificationTimestamp","Assert-CertificationProductionRollbackTaskIdentities",
@@ -56,10 +66,93 @@ foreach ($name in @("Get-OptionalValue","Get-ValidatedLoadSummaryTiming")) {
     Invoke-Expression $definition.Extent.Text
 }
 
+function New-TestCertificationPiBucketCoverage {
+    param(
+        [DateTimeOffset]$Start,
+        [int[]]$ObservedOrdinals,
+        [int[]]$PositiveOrdinals,
+        [int[]]$ApplicationActiveOrdinals = @(1,2),
+        [int]$BucketCount = 30
+    )
+    $observed=@($ObservedOrdinals|Sort-Object -Unique)
+    $positive=@($PositiveOrdinals|Sort-Object -Unique)
+    $active=@($ApplicationActiveOrdinals|Sort-Object -Unique)
+    $expectedTexts=@(0..($BucketCount-1)|ForEach-Object{$Start.AddMinutes($_).ToString("o")})
+    $observedTexts=@($observed|ForEach-Object{$expectedTexts[$_]})
+    $positiveTexts=@($positive|ForEach-Object{$expectedTexts[$_]})
+    $activeTexts=@($active|ForEach-Object{$expectedTexts[$_]})
+    $missingMiddle=0
+    if($observed.Count -gt 1){foreach($ordinal in $observed[0]..$observed[-1]){if($ordinal -notin $observed){$missingMiddle++}}}
+    $unobservedActive=@($active|Where-Object{$_ -notin $observed})
+    $zeroActive=@($active|Where-Object{$_ -in $observed -and $_ -notin $positive})
+    $coveredWindows=@($active|Where-Object{$_ -in $observed}).Count
+    $positiveWindows=@($active|Where-Object{$_ -in $positive}).Count
+    return [ordered]@{
+        coverageContractVersion="queryid-minute-sparse-v1";periodSeconds=60
+        expectedBucketCount=$BucketCount;observedBucketCount=$observed.Count
+        positiveCallBucketCount=$positive.Count;omittedSparseBucketCount=$BucketCount-$observed.Count
+        missingMiddleBucketCount=$missingMiddle;applicationFallbackWindowCount=$active.Count
+        coveredApplicationFallbackWindowCount=$coveredWindows
+        positiveCallCoveredApplicationFallbackWindowCount=$positiveWindows
+        applicationActiveBucketCount=$active.Count;unobservedApplicationActiveBucketCount=$unobservedActive.Count
+        zeroCallApplicationActiveBucketCount=$zeroActive.Count
+        positiveCallCoveragePassed=($positiveWindows -eq $active.Count -and $zeroActive.Count -eq 0)
+        expectedBucketSetSha256=Get-CertificationCanonicalSha256 ([ordered]@{buckets=$expectedTexts})
+        observedBucketSetSha256=Get-CertificationCanonicalSha256 ([ordered]@{buckets=$observedTexts})
+        positiveCallBucketSetSha256=Get-CertificationCanonicalSha256 ([ordered]@{buckets=$positiveTexts})
+        applicationActiveBucketSetSha256=Get-CertificationCanonicalSha256 ([ordered]@{buckets=$activeTexts})
+        observedBucketOrdinals=$observed;positiveCallBucketOrdinals=$positive;applicationActiveBucketOrdinals=$active
+        sparseBucketsPermittedOnlyWithoutApplicationActivity=$true;complete=$true
+    }
+}
+
 $tempRoot = Join-Path ([IO.Path]::GetTempPath()) "schoolpilot-cert-chain-$([Guid]::NewGuid().ToString('N'))"
 [void][IO.Directory]::CreateDirectory($tempRoot)
 $assertions = 0
 try {
+    $typedFailure=New-CertificationTerminalFailureException "harness_rejected" "harness_terminal" "private detail"
+    Assert-Condition ([string]$typedFailure.Data["failureCode"] -ceq "harness_rejected" -and
+        [string]$typedFailure.Data["failureStage"] -ceq "harness_terminal") `
+        "Typed terminal failures must preserve the original workload or monitor rejection code and stage.";$assertions++
+
+    $supervisorSource=Get-Content -LiteralPath $supervisorPath -Raw
+    $monitorWaitIndex=$supervisorSource.IndexOf('$monitor.WaitForExit()',[StringComparison]::Ordinal)
+    $monitorRejectIndex=$supervisorSource.IndexOf('New-CertificationTerminalFailureException "monitor_rejected"',[StringComparison]::Ordinal)
+    $postFailurePiIndex=$supervisorSource.IndexOf('$eligibleForPostFailurePi',[StringComparison]::Ordinal)
+    $postFailureFinalizeIndex=$supervisorSource.IndexOf('Invoke-CertificationHistoryFallbackPiFinalizer',$postFailurePiIndex,[StringComparison]::Ordinal)
+    $postFailureLeaseRestoreIndex=$supervisorSource.IndexOf('Invoke-CertificationDatabaseInsightsLeaseCommand',$postFailureFinalizeIndex,[StringComparison]::Ordinal)
+    $primaryFailureSelectionIndex=$supervisorSource.IndexOf('$failureCode = if ($runFailure.Data.Contains("failureCode"))',$postFailureLeaseRestoreIndex,[StringComparison]::Ordinal)
+    $settledFindingsIndex=$supervisorSource.IndexOf('settledFindings=@($settledFindings)',$primaryFailureSelectionIndex,[StringComparison]::Ordinal)
+    Assert-Condition ($monitorWaitIndex -ge 0 -and $monitorWaitIndex -lt $monitorRejectIndex -and
+        $monitorRejectIndex -lt $postFailurePiIndex -and $postFailurePiIndex -lt $postFailureFinalizeIndex -and
+        $postFailureFinalizeIndex -lt $postFailureLeaseRestoreIndex -and
+        $postFailureLeaseRestoreIndex -lt $primaryFailureSelectionIndex -and
+        $primaryFailureSelectionIndex -lt $settledFindingsIndex) `
+        "A terminal monitor rejection must be observed first, then independently finalize PI, restore the DB Insights lease, preserve the primary failure, and append settled findings.";$assertions++
+    $postFailureSection=$supervisorSource.Substring($postFailurePiIndex,$settledFindingsIndex-$postFailurePiIndex)
+    Assert-Condition (-not $postFailureSection.Contains('register-scalable-target') -and
+        -not $postFailureSection.Contains('update-service') -and
+        $postFailureSection.Contains('terminalMonitorForFailure') -and
+        $supervisorSource.Contains('rollbackAttempted=[bool](Get-CertificationValue $rollback "attempted" $false)')) `
+        "Post-failure PI sealing must rely on bound monitor/rollback terminal evidence and must not invent a scaling mutation in the supervisor.";$assertions++
+    Assert-Condition ($supervisorSource.Contains('evidenceDirectoryPathSha256 = Get-CertificationTextSha256 $evidenceDirectory') -and
+        -not $supervisorSource.Contains('evidenceDirectory = $evidenceDirectory')) `
+        "Normal certification validation output must emit only the evidence-directory path hash.";$assertions++
+
+    $windowProgressPath=Join-Path $tempRoot "window-progress.jsonl"
+    $windowSummaryPath=Join-Path $tempRoot "window-summary.json"
+    $windowStart=[DateTimeOffset]::UtcNow.AddHours(-1)
+    $windowLines=@(
+        ([ordered]@{type="progress";event="start";runId="window-run";stage="500";timestamp=$windowStart.ToString("o")}|ConvertTo-Json -Compress),
+        ([ordered]@{type="progress";event="final";runId="window-run";stage="500";timestamp=$windowStart.AddMinutes(-5).ToString("o")}|ConvertTo-Json -Compress)
+    ) -join "`n"
+    [IO.File]::WriteAllText($windowProgressPath,"$windowLines`n",[Text.UTF8Encoding]::new($false))
+    Write-AtomicJson $windowSummaryPath ([ordered]@{runId="window-run";stage="500";run=[ordered]@{durationClock="monotonic-hrtime-v1";runtimeTargetTrafficSeconds=1800;plannedTrafficMilliseconds=1800000;actualTrafficMilliseconds=1800000;completedConfiguredDuration=$true;shutdownReason="duration"}})
+    $coherentWindow=Get-CertificationCoherentTrafficWindow $windowProgressPath $windowSummaryPath "window-run" "500" 1800
+    Assert-Condition (([DateTimeOffset]$coherentWindow.endUtc - ([DateTimeOffset]$coherentWindow.startUtc).AddMilliseconds(1800000)).Duration().TotalMilliseconds -lt 1) `
+        "The PI coherent window must use monotonic elapsed milliseconds even when the final wall clock moves backward."
+    $assertions++
+
     $summaryFinalAt = [DateTimeOffset]::UtcNow
     $script:TrafficStartedAtUtc = $summaryFinalAt.AddSeconds(-1800)
     $summaryConfig = [pscustomobject]@{
@@ -176,6 +269,10 @@ try {
     Assert-Condition ((Get-CertificationValue $orderedDictionary "sha256" ("0"*64)) -eq ("a"*64)) `
         "Certification lookup must read OrderedDictionary keys."
     $assertions++
+    $explicitNullCertification = [ordered]@{diagnosticOnly=$null}
+    Assert-Condition ($null -eq (Get-CertificationValue $explicitNullCertification "diagnosticOnly" $false)) `
+        "Certification lookup must preserve an explicit null so the certification boolean boundary rejects it."
+    $assertions++
 
     $resolvedConfigPath = Join-Path $tempRoot "current-config.json"
     [IO.File]::WriteAllText($resolvedConfigPath, '{"schemaVersion":1}', [Text.UTF8Encoding]::new($false))
@@ -192,7 +289,7 @@ try {
     $rollbackApiDigest="sha256:"+("6"*64);$rollbackWorkerDigest="sha256:"+("7"*64)
     $controllerHashes = [ordered]@{
         supervisor="a"*64;monitor="b"*64;rollback="c"*64;harness="d"*64
-        monotonicDeadline="e"*64;tilePollAccounting="9"*64;preparer="f"*64;savedPlanValidator="0"*64
+        monotonicDeadline="e"*64;tilePollAccounting="9"*64;preparer="f"*64;savedPlanValidator="0"*64;databaseInsightsLease="8"*64
     }
     $chainId = "chain-one";$priorRunId="prior-waf-500"
     $activeApiArn="arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api:17"
@@ -360,16 +457,19 @@ try {
         [ordered]@{name="api";taskDefinitionArn=$activeApiArn;desired=6;running=6;pending=0;subnets=@("subnet-a1","subnet-a2");assignPublicIp="DISABLED"},
         [ordered]@{name="worker";taskDefinitionArn=$activeWorkerArn;desired=1;running=1;pending=0;subnets=@("subnet-a1","subnet-a2");assignPublicIp="DISABLED"}
     )
-    $rds=[ordered]@{arn="arn:aws:rds:us-east-1:135775632425:db:schoolpilot-production-db";class="db.t4g.medium";exactPosture=@{engine="postgres";storageEncrypted=$true;publiclyAccessible=$false};expectedExactPosture=$null}
+    $rds=[ordered]@{arn="arn:aws:rds:us-east-1:135775632425:db:schoolpilot-production-db";class="db.t4g.medium";databaseResourceIdSha256=Get-CertificationTextSha256 "db-JX7VX4P2ZHF5JXA6N5EREVL54I";databaseInsightsMode="advanced";performanceInsightsRetentionPeriod=465;exactPosture=@{engine="postgres";storageEncrypted=$true;publiclyAccessible=$false};expectedExactPosture=$null}
     $redis=[ordered]@{arn="arn:aws:elasticache:us-east-1:135775632425:replicationgroup:schoolpilot";nodeType="cache.t4g.small";status="available"}
     $alarms=@([ordered]@{name="api-alarm";state="OK";actionsEnabled=$true});$schedules=@([ordered]@{name="night";schedule="cron(0 1 * * ? *)";timezone="America/New_York";minCapacity=6;maxCapacity=8})
     $loadStability=[ordered]@{api=@{desired=6;running=6;pending=0;taskDefinitionArn=$activeApiArn};worker=@{desired=1;running=1;pending=0;taskDefinitionArn=$activeWorkerArn};healthyTargetCount=6;targetPort=443;apiTaskPrivateIpv4=@("10.0.0.1","10.0.0.2","10.0.0.3","10.0.0.4","10.0.0.5","10.0.0.6");tasks=@{api=@();worker=@()};scalableTarget=@{minCapacity=6;maxCapacity=8}}
     $preflight=[ordered]@{observedAtUtc=[DateTimeOffset]::UtcNow.AddSeconds(-1).ToString("o");taskDefinitions=$taskDefinitions;posture=[ordered]@{services=$services;rds=$rds;redis=$redis;alarms=$alarms;schedules=$schedules;loadStability=$loadStability}}
+    $historyIdentity=[ordered]@{receiptSha256=$schemaBinding.sha256;receiptPathSha256=Get-CertificationTextSha256 $schemaBinding.path;version="history-fallback-queryid-v1";queryIdentifierSha256="1"*64;compiledSqlSha256="2"*64;parameterTypeSignatureSha256="3"*64;engineVersion="16.4";schemaIdentitySha256="4"*64;trackIoTiming=$true;databaseResourceIdSha256="6"*64;piEvidenceVersion="queryid-sqlstats-v1"}
+    $databaseInsightsLease=[ordered]@{receipt=[ordered]@{sha256=$schemaBinding.sha256;pathSha256=Get-CertificationTextSha256 $schemaBinding.path};version="database-insights-monitoring-lease-v2";leaseIdSha256="5"*64;leasePurpose="certification";accountId="135775632425";region="us-east-1";dbInstanceIdentifier="schoolpilot-production-db";expectedRdsInstanceClass="db.t4g.medium";databaseResourceIdSha256="6"*64;initialPosture=[ordered]@{databaseInsightsMode="standard";performanceInsightsEnabled=$true;performanceInsightsRetentionPeriod=7};requestedPosture=[ordered]@{databaseInsightsMode="advanced";performanceInsightsEnabled=$true;performanceInsightsRetentionPeriod=465}}
     $contract = [pscustomobject]@{
         ChainId=$chainId;CapacityTrack="baseline";ApplicationGitSha=$appSha;DeployedImageDigest=$digest;ControllerGitSha=$controllerSha;ControllerHashes=$controllerHashes
         ActiveApiArn=$activeApiArn;ActiveWorkerArn=$activeWorkerArn;RollbackApiArn=$rollbackApiArn;RollbackWorkerArn=$rollbackWorkerArn
         RollbackApiGitSha=$rollbackApiSha;RollbackWorkerGitSha=$rollbackWorkerSha;RollbackApiImageDigest=$rollbackApiDigest;RollbackWorkerImageDigest=$rollbackWorkerDigest;SchemaCompatibility=$schemaBinding
         WorkloadSchemaVersion=$script:RequiredWorkloadSchemaVersion;WorkloadEndpointShapeSha256=$script:RequiredWorkloadEndpointShapeSha256
+        HistoryFallbackQueryIdentity=$historyIdentity;HistoryFallbackQueryIdentityReceipt=$schemaBinding;HistoryFallbackDatabaseResourceId="db-JX7VX4P2ZHF5JXA6N5EREVL54I";HistoryFallbackPiEvidenceVersion="queryid-sqlstats-v1";DatabaseInsightsLease=$databaseInsightsLease
         Raw=[pscustomobject]@{alarmNames=@("api-alarm");scheduleNames=@("night")}
     }
     $rollbackPath = Join-Path $tempRoot "rollback.json";[IO.File]::WriteAllText($rollbackPath,'{"schemaVersion":1}',[Text.UTF8Encoding]::new($false))
@@ -384,31 +484,306 @@ try {
     $network=[ordered]@{expectedNatGatewayCount=2;expectedEcsAssignPublicIp=$false;ecsTaskSubnetIds=@("subnet-a1","subnet-a2");observedServices=$services}
     $rollbackIdentities=[ordered]@{api=$rollbackApiArn;worker=$rollbackWorkerArn;schemaCompatibility=$schemaBinding}
 
-    $rootPath=Join-Path $tempRoot "root.json";Write-AtomicJson $rootPath ([ordered]@{schemaVersion=1;type="certification_chain_root";runId=$priorRunId;chainId=$chainId;phase="Waf";stage="500";supervisionKind="Load";createdAtUtc=[DateTimeOffset]::UtcNow.ToString("o");capacityTrack="baseline";applicationGitSha=$appSha;deployedImageDigest=$digest;workloadSchemaVersion=$script:RequiredWorkloadSchemaVersion;workloadEndpointShapeSha256=$script:RequiredWorkloadEndpointShapeSha256;controllerGitSha=$controllerSha;controllerHashes=$controllerHashes;operatorConfigSha256=$operatorHash;boundRuntimeConfigSha256=$runtimeHash;rollbackConfig=$boundRollback;validationReceipt=$receiptBinding;taskDefinitions=$taskDefinitions;fixture=$fixture;schemaCompatibility=$schemaBinding;budgetAcknowledgement=$null;generatorPublicIpv4="198.51.100.10";historicalEvidenceDiagnosticOnly=@();datastorePosture=$datastore;networkPosture=$network;alarms=$alarms;schedules=$schedules;rollbackIdentities=$rollbackIdentities})
+    $rootPath=Join-Path $tempRoot "root.json";Write-AtomicJson $rootPath ([ordered]@{schemaVersion=1;type="certification_chain_root";runId=$priorRunId;chainId=$chainId;phase="Waf";stage="500";supervisionKind="Load";createdAtUtc=[DateTimeOffset]::UtcNow.ToString("o");capacityTrack="baseline";applicationGitSha=$appSha;deployedImageDigest=$digest;workloadSchemaVersion=$script:RequiredWorkloadSchemaVersion;workloadEndpointShapeSha256=$script:RequiredWorkloadEndpointShapeSha256;historyFallbackQueryIdentity=$historyIdentity;historyFallbackPiEvidenceVersion="queryid-sqlstats-v1";databaseInsightsLease=$databaseInsightsLease;controllerGitSha=$controllerSha;controllerHashes=$controllerHashes;operatorConfigSha256=$operatorHash;boundRuntimeConfigSha256=$runtimeHash;rollbackConfig=$boundRollback;validationReceipt=$receiptBinding;taskDefinitions=$taskDefinitions;fixture=$fixture;schemaCompatibility=$schemaBinding;budgetAcknowledgement=$null;generatorPublicIpv4="198.51.100.10";historicalEvidenceDiagnosticOnly=@();datastorePosture=$datastore;networkPosture=$network;alarms=$alarms;schedules=$schedules;rollbackIdentities=$rollbackIdentities})
     $rootRef=[pscustomobject]@{path=$rootPath;sha256=Get-CertificationSha256 $rootPath}
-    $stagePath=Join-Path $tempRoot "prior-stage.json";Write-AtomicJson $stagePath ([ordered]@{schemaVersion=1;type="certification_stage_attestation";runId=$priorRunId;chainId=$chainId;phase="Waf";stage="500";supervisionKind="Load";attestedAtUtc=[DateTimeOffset]::UtcNow.ToString("o");chainRoot=$rootRef;validationReceipt=$receiptBinding;predecessor=$null;applicationGitSha=$appSha;deployedImageDigest=$digest;workloadSchemaVersion=$script:RequiredWorkloadSchemaVersion;workloadEndpointShapeSha256=$script:RequiredWorkloadEndpointShapeSha256;controllerGitSha=$controllerSha;controllerHashes=$controllerHashes;operatorConfigSha256=$operatorHash;boundRuntimeConfigSha256=$runtimeHash;rollbackConfig=$boundRollback;taskDefinitions=$taskDefinitions;fixture=$fixture;generatorPublicIpv4="198.51.100.10";datastorePosture=$datastore;networkPosture=$network;alarms=$alarms;schedules=$schedules;rollbackIdentities=$rollbackIdentities;budgetAcknowledgement=$null;historicalEvidence=@{diagnosticOnly=$true;artifacts=@()}})
+    $stagePath=Join-Path $tempRoot "prior-stage.json";Write-AtomicJson $stagePath ([ordered]@{schemaVersion=1;type="certification_stage_attestation";runId=$priorRunId;chainId=$chainId;phase="Waf";stage="500";supervisionKind="Load";attestedAtUtc=[DateTimeOffset]::UtcNow.ToString("o");chainRoot=$rootRef;validationReceipt=$receiptBinding;predecessor=$null;applicationGitSha=$appSha;deployedImageDigest=$digest;workloadSchemaVersion=$script:RequiredWorkloadSchemaVersion;workloadEndpointShapeSha256=$script:RequiredWorkloadEndpointShapeSha256;historyFallbackQueryIdentity=$historyIdentity;historyFallbackPiEvidenceVersion="queryid-sqlstats-v1";databaseInsightsLease=$databaseInsightsLease;controllerGitSha=$controllerSha;controllerHashes=$controllerHashes;operatorConfigSha256=$operatorHash;boundRuntimeConfigSha256=$runtimeHash;rollbackConfig=$boundRollback;taskDefinitions=$taskDefinitions;fixture=$fixture;generatorPublicIpv4="198.51.100.10";datastorePosture=$datastore;networkPosture=$network;alarms=$alarms;schedules=$schedules;rollbackIdentities=$rollbackIdentities;budgetAcknowledgement=$null;historicalEvidence=@{diagnosticOnly=$true;artifacts=@()}})
     $stageRef=[ordered]@{path=$stagePath;sha256=Get-CertificationSha256 $stagePath}
     $monitorTileBatch=[ordered]@{pollAccountingVersion=$script:RequiredPollAccountingVersion;teacherCohorts=20;studentsPerCohort=25;teacherTileAssignments=500;requestsPerCohortPerPoll=2;logicalOperationsPerPoll=1000;historyRequestsByCohort=@(1..20|ForEach-Object{if($_ -le 10){59}else{58}});screenshotRequestsByCohort=@(1..20|ForEach-Object{if($_ -le 10){59}else{58}});completeRoundsPerCohort=58;maximumRoundsPerCohort=59;partialFinalRoundCohorts=10;historyRequests=1170;screenshotRequests=1170;historyLogicalOperations=29250;screenshotLogicalOperations=29250;networkRequests=2340;logicalOperations=58500;screenshotAttempts=29250;screenshotSuccesses=29250}
     $monitorPath=Join-Path $tempRoot "prior-monitor.json";Write-AtomicJson $monitorPath ([ordered]@{runId=$priorRunId;phase="Waf";diagnosticOnly=$false;certificationEligible=$true;status="completed";postureAccepted=$true;workload=@{stage="500";workloadSchemaVersion=$script:RequiredWorkloadSchemaVersion;endpointShapeSha256=$script:RequiredWorkloadEndpointShapeSha256;tileBatch=$monitorTileBatch};acceptance=@{passed=$true}})
     $monitorRef=[ordered]@{path=$monitorPath;sha256=Get-CertificationSha256 $monitorPath;runId=$priorRunId;phase="Waf"}
+    $piReleaseHash=Get-CertificationCanonicalSha256 ([ordered]@{applicationGitSha=$appSha;deployedImageDigest=$digest;apiTaskDefinitionArn=$activeApiArn;workerTaskDefinitionArn=$activeWorkerArn})
+    $piNow=[DateTimeOffset]::UtcNow
+    $piWindowStart=[DateTimeOffset]::new($piNow.Year,$piNow.Month,$piNow.Day,$piNow.Hour,$piNow.Minute,0,[TimeSpan]::Zero).AddMinutes(-35)
+    $piWindowEnd=$piWindowStart.AddMinutes(30)
+    $piRequestPath=Join-Path $tempRoot "$priorRunId-history-fallback-pi-request.private.json"
+    $piRequest=[ordered]@{
+        schemaVersion=1;type="history_fallback_pi_finalization_request";historyFallbackPiEvidenceVersion="queryid-sqlstats-v1";evidenceCollectorVersion="post-traffic-v2"
+        runId=$priorRunId;chainId=$chainId;phase="Waf";stage="500";applicationGitSha=$appSha;deployedImageDigest=$digest
+        taskDefinitions=[ordered]@{api=$activeApiArn;worker=$activeWorkerArn}
+        ecsRuntimeBinding=[ordered]@{clusterName="schoolpilot-production-cluster";apiServiceName="schoolpilot-production-api";workerServiceName="schoolpilot-production-scheduler-worker"}
+        rds=[ordered]@{region="us-east-1";accountId="135775632425";dbInstanceIdentifier="schoolpilot-production-db";databaseResourceId="db-JX7VX4P2ZHF5JXA6N5EREVL54I";engineVersion="16.4";expectedInstanceClass="db.t4g.medium"}
+        trafficWindow=[ordered]@{coherent=$true;startUtc=$piWindowStart.ToString("o");endUtc=$piWindowEnd.ToString("o")}
+        apiCloudWatchBinding=[ordered]@{logDriver="awslogs";logRegion="us-east-1";logGroupName="/ecs/schoolpilot-production-api";awslogsStreamPrefix="ecs";apiLogStreamNamePrefix="ecs/api/"}
+        historyFallbackQueryIdentity=$schemaBinding
+        historyFallbackSqlIdentity=[ordered]@{version=$historyIdentity.version;queryIdentifierSha256=$historyIdentity.queryIdentifierSha256;compiledSqlSha256=$historyIdentity.compiledSqlSha256;parameterTypeSignatureSha256=$historyIdentity.parameterTypeSignatureSha256;schemaIdentitySha256=$historyIdentity.schemaIdentitySha256;trackIoTiming=$true}
+        applicationFallbackDatabaseReadEvidence=[ordered]@{sourceEvent="classpilot_heartbeat_hot_path_summary";historyFallbackSqlIdentityVersion=$historyIdentity.version;historyFallbackSqlIdentitySha256=$historyIdentity.compiledSqlSha256}
+    }
+    Write-AtomicJson $piRequestPath $piRequest;Set-CertificationPrivateFileAcl $piRequestPath
+    $piRequestRef=[ordered]@{path=$piRequestPath;sha256=Get-CertificationSha256 $piRequestPath}
+    $piTrafficWindowHash=Get-CertificationCanonicalSha256 ([ordered]@{startUtc=$piWindowStart.ToUniversalTime().ToString("o");endUtc=$piWindowEnd.ToUniversalTime().ToString("o");coherent=$true})
+    $hotPathEvidence=[ordered]@{
+        source="cloudwatch_logs";sourceEvent="classpilot_heartbeat_hot_path_summary";sourceIntervalSeconds=60;pageCount=1
+        matchingSummaryCount=30;fallbackPositiveSummaryCount=2;boundaryExcludedFallbackPositiveSummaryCount=0
+        fallbackItems=80;derivedDatabaseReadCount=2;evidenceStartUtc=$piWindowStart.ToString("o");evidenceEndUtc=$piWindowEnd.ToString("o")
+        fallbackPositiveIntervals=@(
+            [ordered]@{startUtc=$piWindowStart.AddMinutes(1).ToString("o");endUtc=$piWindowStart.AddMinutes(2).ToString("o");durationMilliseconds=60000;fallbackItems=40;databaseReadCount=1},
+            [ordered]@{startUtc=$piWindowStart.AddMinutes(2).ToString("o");endUtc=$piWindowStart.AddMinutes(3).ToString("o");durationMilliseconds=60000;fallbackItems=40;databaseReadCount=1}
+        )
+        historyFallbackSqlIdentityVersion=$historyIdentity.version;historyFallbackSqlIdentitySha256=$historyIdentity.compiledSqlSha256
+        exactTaskDefinitionBound=$true;logDriver="awslogs";logRegion="us-east-1";logGroupSha256="7"*64;streamPrefixSha256="8"*64
+        rawMessagesPersisted=$false;rawIdentifiersPersisted=$false;failureReasons=@();passed=$true
+    }
+    $piBucketCoverage=New-TestCertificationPiBucketCoverage $piWindowStart @(0..29) @(1,2)
+    $sqlEvidence=[ordered]@{
+        historyFallbackPiEvidenceVersion="queryid-sqlstats-v1";identityCount=1
+        queryIdentifierSha256=$historyIdentity.queryIdentifierSha256;compiledSqlSha256=$historyIdentity.compiledSqlSha256
+        parameterTypeSignatureSha256=$historyIdentity.parameterTypeSignatureSha256;schemaIdentitySha256=$historyIdentity.schemaIdentitySha256
+        releaseIdentitySha256=$piReleaseHash;databaseResourceIdSha256=Get-CertificationTextSha256 "db-JX7VX4P2ZHF5JXA6N5EREVL54I"
+        tokenSha256="9"*64;statementSha256="a"*64;exactQueryIdentifierMatched=$true;statementMarkersMatched=$true
+        periodSeconds=60;pageCount=1;metricPointCounts=[ordered]@{calls=30;totalTime=30;blockReadTime=30;sharedBlocksRead=30;tempBlocksRead=30;tempBlocksWritten=30};bucketCoverage=$piBucketCoverage
+        positiveCallsObserved=$true;integratedCalls=2.0;applicationDatabaseReadCount=2;callsCoverApplicationReads=$true
+        totalTimePerSecondSum=0.1;blockReadTimePerSecondSum=0.049999;blockReadTimeSharePercent=49.999
+        sharedBlocksReadPerSecondSum=1.0;tempBlocksReadPerSecondSum=0.0;tempBlocksWrittenPerSecondSum=0.0
+        temporaryIoAbsent=$true;dominanceThresholdPercent=50.0;failureReasons=@();passed=$true
+    }
+    $sampledEvidence=[ordered]@{status="not_applicable_zero_sampled_load";sampledDbLoad=0.0;tokenCount=0;pageCount=1;filteredWaitEventEvidenceRequired=$false;filteredWaitEventEvidenceComplete=$true;dataFileReadSharePercent=$null;dominanceThresholdPercent=50.0;failureReasons=@();passed=$true}
+    $piEvidence=[ordered]@{
+        historyFallbackPiEvidenceVersion="queryid-sqlstats-v1";evidenceCollectorVersion="post-traffic-v2";sanitized=$true;rawSqlPersisted=$false;rawIdentifiersPersisted=$false
+        queryIdentifierSha256=$historyIdentity.queryIdentifierSha256;compiledSqlSha256=$historyIdentity.compiledSqlSha256
+        parameterTypeSignatureSha256=$historyIdentity.parameterTypeSignatureSha256;schemaIdentitySha256=$historyIdentity.schemaIdentitySha256
+        apiRuntimeTaskDefinitionSha256=Get-CertificationTextSha256 $activeApiArn;trackIoTiming=$true
+        releaseIdentitySha256=$piReleaseHash;trafficWindowSha256=$piTrafficWindowHash
+        evidenceWindow=[ordered]@{alignment="utc-minute-interior-v1";periodAlignment="START_TIME";startUtc=$piWindowStart.ToString("o");endUtc=$piWindowEnd.ToString("o");coherentCoveragePercent=100.0}
+        hotPathLogEvidenceSha256=Get-CertificationCanonicalSha256 $hotPathEvidence;hotPathLogEvidence=$hotPathEvidence
+        sqlStatistics=$sqlEvidence;sampledLoad=$sampledEvidence;passed=$true
+    }
+    $piStableHash=Get-CertificationCanonicalSha256 $piEvidence
+    $piReceiptPath=Join-Path $tempRoot "$priorRunId-history-fallback-pi-evidence.private.json"
+    Write-AtomicJson $piReceiptPath ([ordered]@{schemaVersion=1;type="history_fallback_pi_evidence_receipt";historyFallbackPiEvidenceVersion="queryid-sqlstats-v1";evidenceCollectorVersion="post-traffic-v2";runId=$priorRunId;chainId=$chainId;phase="Waf";stage="500";requestSha256=$piRequestRef.sha256;queryIdentityReceiptSha256=$schemaBinding.sha256;queryIdentifierSha256=$historyIdentity.queryIdentifierSha256;compiledSqlSha256=$historyIdentity.compiledSqlSha256;parameterTypeSignatureSha256=$historyIdentity.parameterTypeSignatureSha256;schemaIdentitySha256=$historyIdentity.schemaIdentitySha256;apiRuntimeTaskDefinitionSha256=Get-CertificationTextSha256 $activeApiArn;trackIoTiming=$true;releaseIdentitySha256=$piReleaseHash;databaseResourceIdSha256=Get-CertificationTextSha256 "db-JX7VX4P2ZHF5JXA6N5EREVL54I";rawSqlPersisted=$false;rawIdentifiersPersisted=$false;rawErrorPersisted=$false;state="completed";collected=$true;passed=$true;attemptCount=2;completedAtUtc=[DateTimeOffset]::UtcNow.ToString("o");failureCode=$null;failureStage=$null;discardedMessageSha256=$null;stableSnapshotSha256=$piStableHash;evidence=$piEvidence;partial=$null})
+    Set-CertificationPrivateFileAcl $piReceiptPath
+    $piReceiptRef=[ordered]@{path=$piReceiptPath;sha256=Get-CertificationSha256 $piReceiptPath}
+    $piBinding=[ordered]@{schemaVersion=1;type="history_fallback_pi_evidence_binding";historyFallbackPiEvidenceVersion="queryid-sqlstats-v1";evidenceCollectorVersion="post-traffic-v2";receiptSha256=$piReceiptRef.sha256;receiptPathSha256=Get-CertificationTextSha256 $piReceiptPath;requestSha256=$piRequestRef.sha256;requestPathSha256=Get-CertificationTextSha256 $piRequestPath;trafficWindowSha256=$piTrafficWindowHash;queryIdentifierSha256=$historyIdentity.queryIdentifierSha256;compiledSqlSha256=$historyIdentity.compiledSqlSha256;parameterTypeSignatureSha256=$historyIdentity.parameterTypeSignatureSha256;schemaIdentitySha256=$historyIdentity.schemaIdentitySha256;apiRuntimeTaskDefinitionSha256=Get-CertificationTextSha256 $activeApiArn;trackIoTiming=$true;databaseResourceIdSha256=Get-CertificationTextSha256 "db-JX7VX4P2ZHF5JXA6N5EREVL54I";releaseIdentitySha256=$piReleaseHash;stableSnapshotSha256=$piStableHash;collected=$true;passed=$true}
     $producerRootRef=[ordered]@{path=$rootRef.path;sha256=$rootRef.sha256}
     $producerPredecessorSha=""
     $linkInput=(@(
         [string](Get-CertificationValue $producerRootRef "sha256" ("0"*64)),
         $(if($producerPredecessorSha){$producerPredecessorSha}else{"0"*64}),
         [string](Get-CertificationValue $stageRef "sha256" ("0"*64)),
-        [string]$monitorRef.sha256
+        [string]$monitorRef.sha256,
+        [string]$piBinding.receiptSha256,
+        [string]$piBinding.receiptPathSha256,
+        [string]$piBinding.requestSha256,
+        [string]$piBinding.requestPathSha256,
+        [string]$piBinding.trafficWindowSha256
     )-join "`n")
-    $consumerLinkInput=@($rootRef.sha256,("0"*64),$stageRef.sha256,$monitorRef.sha256)-join "`n"
+    $consumerLinkInput=@($rootRef.sha256,("0"*64),$stageRef.sha256,$monitorRef.sha256,$piBinding.receiptSha256,$piBinding.receiptPathSha256,$piBinding.requestSha256,$piBinding.requestPathSha256,$piBinding.trafficWindowSha256)-join "`n"
     Assert-Condition ((Get-CertificationTextSha256 $linkInput) -eq (Get-CertificationTextSha256 $consumerLinkInput)) `
         "A producer link built from ordered bindings must match consumer recomputation."
     $assertions++
     $envelopePath=Join-Path $tempRoot "prior-supervisor.json"
-    $envelope=[ordered]@{schemaVersion=2;type="certification_supervisor_terminal";supervisorSealed=$true;status="completed";runId=$priorRunId;phase="Waf";stage="500";chainId=$chainId;applicationGitSha=$appSha;deployedImageDigest=$digest;workloadSchemaVersion=$script:RequiredWorkloadSchemaVersion;workloadEndpointShapeSha256=$script:RequiredWorkloadEndpointShapeSha256;controllerGitSha=$controllerSha;controllerHashes=$controllerHashes;operatorConfigSha256=$operatorHash;boundRuntimeConfigSha256=$runtimeHash;rollbackConfig=$boundRollback;supervisionKind="Load";chainRoot=$rootRef;stageAttestation=$stageRef;terminalMonitorResult=$monitorRef;predecessorSupervisorResultSha256=$null;linkSha256=Get-CertificationTextSha256 $linkInput}
+    $envelope=[ordered]@{schemaVersion=3;type="certification_supervisor_terminal";linkVersion=$script:RequiredHistoryFallbackPiLinkVersion;supervisorSealed=$true;status="completed";runId=$priorRunId;phase="Waf";stage="500";chainId=$chainId;applicationGitSha=$appSha;deployedImageDigest=$digest;workloadSchemaVersion=$script:RequiredWorkloadSchemaVersion;workloadEndpointShapeSha256=$script:RequiredWorkloadEndpointShapeSha256;historyFallbackQueryIdentity=$historyIdentity;historyFallbackPiEvidenceVersion="queryid-sqlstats-v1";historyFallbackPiEvidence=$piBinding;databaseInsightsLease=$databaseInsightsLease;databaseInsightsRestoration=[ordered]@{required=$false;state="retained_for_waf800";leaseVersion="database-insights-monitoring-lease-v2";receiptSha256=$databaseInsightsLease.receipt.sha256;retainedAtUtc=[DateTimeOffset]::UtcNow.ToString("o")};controllerGitSha=$controllerSha;controllerHashes=$controllerHashes;operatorConfigSha256=$operatorHash;boundRuntimeConfigSha256=$runtimeHash;rollbackConfig=$boundRollback;supervisionKind="Load";chainRoot=$rootRef;stageAttestation=$stageRef;terminalMonitorResult=$monitorRef;predecessorSupervisorResultSha256=$null;linkSha256=Get-CertificationTextSha256 $linkInput}
     Write-AtomicJson $envelopePath $envelope
     $contract.Raw|Add-Member -NotePropertyName chainRoot -NotePropertyValue $rootRef
-    $config=[pscustomobject]@{phase="Waf";workload=[pscustomobject]@{stage="800";workloadSchemaVersion=$script:RequiredWorkloadSchemaVersion;endpointShapeSha256=$script:RequiredWorkloadEndpointShapeSha256};predecessorResultPath=$envelopePath;predecessorResultSha256=Get-CertificationSha256 $envelopePath}
+    $config=[pscustomobject]@{phase="Waf";resources=[pscustomobject]@{cluster="schoolpilot-production-cluster";apiService="schoolpilot-production-api";workerService="schoolpilot-production-scheduler-worker"};workload=[pscustomobject]@{stage="800";workloadSchemaVersion=$script:RequiredWorkloadSchemaVersion;endpointShapeSha256=$script:RequiredWorkloadEndpointShapeSha256};predecessorResultPath=$envelopePath;predecessorResultSha256=Get-CertificationSha256 $envelopePath;predecessorHistoryFallbackPiEvidence=$piReceiptRef;predecessorHistoryFallbackPiRequest=$piRequestRef}
+    $serializedEnvelope=$envelope|ConvertTo-Json -Depth 60 -Compress
+    Assert-Condition (-not $serializedEnvelope.Contains($piReceiptPath) -and -not $serializedEnvelope.Contains($piRequestPath)) `
+        "The sealed supervisor envelope must publish only receipt/request hashes, never private evidence paths.";$assertions++
     Assert-CertificationChainContinuity -Config $config -Contract $contract;$assertions++
+
+    $acceptedRequestValidation=Assert-CertificationHistoryFallbackPiFinalizationRequest -Reference $piRequestRef -Contract $contract -Config $config -ExpectedRunId $priorRunId -ExpectedStage "500"
+    $originalPiReceiptText=Get-Content -LiteralPath $piReceiptPath -Raw
+    $collectorFailureReceipt=$originalPiReceiptText|ConvertFrom-Json -Depth 60
+    $collectorFailureReceipt.state="failed";$collectorFailureReceipt.collected=$false;$collectorFailureReceipt.passed=$false
+    $collectorFailureReceipt.attemptCount=4;$collectorFailureReceipt.failureCode="performance_insights_evidence_unavailable"
+    $collectorFailureReceipt.failureStage="fallback_sql_stats";$collectorFailureReceipt.discardedMessageSha256="f"*64
+    $collectorFailureReceipt.stableSnapshotSha256=$null;$collectorFailureReceipt.evidence=$null
+    Write-AtomicJson $piReceiptPath $collectorFailureReceipt;Set-CertificationPrivateFileAcl $piReceiptPath
+    $collectorFailureRef=[ordered]@{path=$piReceiptPath;sha256=Get-CertificationSha256 $piReceiptPath}
+    $collectorFailureBundle=Get-CertificationHistoryFallbackPiFailureBinding -Reference $collectorFailureRef -ExpectedPath $piReceiptPath -RequestValidation $acceptedRequestValidation -Contract $contract -ExpectedRunId $priorRunId -ExpectedStage "500"
+    $collectorFailurePublicJson=$collectorFailureBundle.Public|ConvertTo-Json -Depth 30 -Compress
+    Assert-Condition ($collectorFailureBundle.Public.passed -eq $false -and
+        $collectorFailureBundle.Public.failureCode -ceq "performance_insights_evidence_unavailable" -and
+        $collectorFailureBundle.Public.requestSha256 -ceq $piRequestRef.sha256 -and
+        $collectorFailureBundle.Public.requestPathSha256 -ceq (Get-CertificationTextSha256 $piRequestPath) -and
+        -not $collectorFailurePublicJson.Contains($piReceiptPath) -and -not $collectorFailurePublicJson.Contains($piRequestPath)) `
+        "An allowlisted failed PI receipt must preserve a sanitized request/receipt-bound public failure binding.";$assertions++
+
+    Write-AtomicJson $piReceiptPath ([ordered]@{malformed=$true});Set-CertificationPrivateFileAcl $piReceiptPath
+    $rejectedBundle=New-CertificationHistoryFallbackPiRejectedBundle -ExpectedPath $piReceiptPath -RequestValidation $acceptedRequestValidation -Contract $contract -DiscardedMessage "private parse detail"
+    Assert-Condition ($rejectedBundle.Public.failureCode -ceq "history_fallback_pi_receipt_rejected" -and
+        $rejectedBundle.Public.failureStage -ceq "receipt_validation" -and
+        $rejectedBundle.Public.discardedMessageSha256 -ceq (Get-CertificationTextSha256 "private parse detail") -and
+        $rejectedBundle.Public.rawErrorPersisted -eq $false -and $rejectedBundle.Public.passed -eq $false) `
+        "A locally rejected PI receipt must still seal one allowlisted sanitized failure binding.";$assertions++
+    [IO.File]::WriteAllText($piReceiptPath,$originalPiReceiptText,[Text.UTF8Encoding]::new($false));Set-CertificationPrivateFileAcl $piReceiptPath
+
+    $relocatedDirectory=Join-Path $tempRoot "relocated-envelope";[void][IO.Directory]::CreateDirectory($relocatedDirectory)
+    $relocatedEnvelopePath=Join-Path $relocatedDirectory "copied-supervisor-result.json"
+    [IO.File]::Copy($envelopePath,$relocatedEnvelopePath)
+    $config.predecessorResultPath=$relocatedEnvelopePath;$config.predecessorResultSha256=Get-CertificationSha256 $relocatedEnvelopePath
+    Assert-CertificationChainContinuity -Config $config -Contract $contract
+    Assert-Condition $true "An explicitly referenced private request/receipt must remain verifiable when the terminal envelope is relocated.";$assertions++
+    $config.predecessorResultPath=$envelopePath;$config.predecessorResultSha256=Get-CertificationSha256 $envelopePath
+
+    foreach($missingReference in @("predecessorHistoryFallbackPiEvidence","predecessorHistoryFallbackPiRequest")){
+        $missingReferenceConfig=$config|ConvertTo-Json -Depth 60|ConvertFrom-Json -Depth 60
+        $missingReferenceConfig.PSObject.Properties.Remove($missingReference)
+        $missingReferenceRejected=$false
+        try{Assert-CertificationChainContinuity -Config $missingReferenceConfig -Contract $contract}catch{$missingReferenceRejected=$true}
+        Assert-Condition $missingReferenceRejected "Waf/800 must reject a predecessor without exact private $missingReference continuity.";$assertions++
+    }
+
+    $originalPiRequestText=Get-Content -LiteralPath $piRequestPath -Raw
+    foreach($requestMutation in @("runtime_service_mismatch","track_io_timing_missing")){
+        $mutatedRequest=$originalPiRequestText|ConvertFrom-Json -Depth 60
+        if($requestMutation -ceq "runtime_service_mismatch"){
+            $mutatedRequest.ecsRuntimeBinding.apiServiceName="schoolpilot-production-api-other"
+        }else{
+            $mutatedRequest.historyFallbackSqlIdentity.trackIoTiming=$false
+        }
+        Write-AtomicJson $piRequestPath $mutatedRequest;Set-CertificationPrivateFileAcl $piRequestPath
+        $mutatedRequestConfig=$config|ConvertTo-Json -Depth 60|ConvertFrom-Json -Depth 60
+        $mutatedRequestConfig.predecessorHistoryFallbackPiRequest.sha256=Get-CertificationSha256 $piRequestPath
+        $mutatedRequestRejected=$false
+        try{Assert-CertificationChainContinuity -Config $mutatedRequestConfig -Contract $contract}catch{$mutatedRequestRejected=$true}
+        Assert-Condition $mutatedRequestRejected "A PI request with $requestMutation must not seed Waf/800.";$assertions++
+        [IO.File]::WriteAllText($piRequestPath,$originalPiRequestText,[Text.UTF8Encoding]::new($false));Set-CertificationPrivateFileAcl $piRequestPath
+    }
+    $wrongStageRequest=$originalPiRequestText|ConvertFrom-Json -Depth 60;$wrongStageRequest.stage="800"
+    Write-AtomicJson $piRequestPath $wrongStageRequest;Set-CertificationPrivateFileAcl $piRequestPath
+    $wrongRequestSha=Get-CertificationSha256 $piRequestPath
+    $wrongRequestConfig=$config|ConvertTo-Json -Depth 60|ConvertFrom-Json -Depth 60
+    $wrongRequestConfig.predecessorHistoryFallbackPiRequest.sha256=$wrongRequestSha
+    $wrongStageRequestRejected=$false
+    try{Assert-CertificationChainContinuity -Config $wrongRequestConfig -Contract $contract}catch{$wrongStageRequestRejected=$true}
+    Assert-Condition $wrongStageRequestRejected "A re-sealed private PI request for the wrong stage must not seed Waf/800.";$assertions++
+    [IO.File]::WriteAllText($piRequestPath,$originalPiRequestText,[Text.UTF8Encoding]::new($false));Set-CertificationPrivateFileAcl $piRequestPath
+
+    $shallowPiReceipt=$originalPiReceiptText|ConvertFrom-Json -Depth 60
+    $shallowPiReceipt.evidence=[pscustomobject]@{passed=$true}
+    $shallowPiReceipt.stableSnapshotSha256=Get-CertificationCanonicalSha256 $shallowPiReceipt.evidence
+    Write-AtomicJson $piReceiptPath $shallowPiReceipt;Set-CertificationPrivateFileAcl $piReceiptPath
+    $shallowPiReceiptSha=Get-CertificationSha256 $piReceiptPath
+    $shallowPiEnvelope=$envelope|ConvertTo-Json -Depth 60|ConvertFrom-Json -Depth 60
+    $shallowPiEnvelope.historyFallbackPiEvidence.receiptSha256=$shallowPiReceiptSha
+    $shallowPiEnvelope.historyFallbackPiEvidence.stableSnapshotSha256=$shallowPiReceipt.stableSnapshotSha256
+    $shallowPiEnvelope.linkSha256=Get-CertificationTextSha256 (@($rootRef.sha256,("0"*64),$stageRef.sha256,$monitorRef.sha256,$shallowPiReceiptSha,$piBinding.receiptPathSha256,$piBinding.requestSha256,$piBinding.requestPathSha256,$piBinding.trafficWindowSha256)-join "`n")
+    Write-AtomicJson $envelopePath $shallowPiEnvelope;$config.predecessorResultSha256=Get-CertificationSha256 $envelopePath
+    $shallowPiConfig=$config|ConvertTo-Json -Depth 60|ConvertFrom-Json -Depth 60
+    $shallowPiConfig.predecessorHistoryFallbackPiEvidence.sha256=$shallowPiReceiptSha
+    $shallowPiRejected=$false
+    try{Assert-CertificationChainContinuity -Config $shallowPiConfig -Contract $contract}catch{$shallowPiRejected=$true}
+    Assert-Condition $shallowPiRejected "A re-sealed receipt with only evidence.passed must fail deep deterministic PI validation.";$assertions++
+    [IO.File]::WriteAllText($piReceiptPath,$originalPiReceiptText,[Text.UTF8Encoding]::new($false));Set-CertificationPrivateFileAcl $piReceiptPath
+    Write-AtomicJson $envelopePath $envelope;$config.predecessorResultSha256=Get-CertificationSha256 $envelopePath
+
+    foreach($intervalCase in @(
+        [ordered]@{name="claimed 59,999-millisecond interval";kind="duration"},
+        [ordered]@{name="59,999-millisecond explicit interval bounds";kind="bounds"},
+        [ordered]@{name="exact but non-UTC-minute-aligned interval bounds";kind="unaligned"},
+        [ordered]@{name="fallback interval aggregate disagreement";kind="aggregate"}
+    )){
+        $intervalReceipt=$originalPiReceiptText|ConvertFrom-Json -Depth 60
+        switch($intervalCase.kind){
+            "duration"{$intervalReceipt.evidence.hotPathLogEvidence.fallbackPositiveIntervals[0].durationMilliseconds=59999}
+            "bounds"{$intervalReceipt.evidence.hotPathLogEvidence.fallbackPositiveIntervals[0].endUtc=$piWindowStart.AddMinutes(1).AddMilliseconds(59999).ToString("o")}
+            "unaligned"{
+                $intervalReceipt.evidence.hotPathLogEvidence.fallbackPositiveIntervals[0].startUtc=$piWindowStart.AddMinutes(1).AddMilliseconds(1).ToString("o")
+                $intervalReceipt.evidence.hotPathLogEvidence.fallbackPositiveIntervals[0].endUtc=$piWindowStart.AddMinutes(2).AddMilliseconds(1).ToString("o")
+            }
+            "aggregate"{$intervalReceipt.evidence.hotPathLogEvidence.fallbackItems=79}
+        }
+        $intervalReceipt.evidence.hotPathLogEvidenceSha256=Get-CertificationCanonicalSha256 $intervalReceipt.evidence.hotPathLogEvidence
+        $intervalReceipt.stableSnapshotSha256=Get-CertificationCanonicalSha256 $intervalReceipt.evidence
+        Write-AtomicJson $piReceiptPath $intervalReceipt;Set-CertificationPrivateFileAcl $piReceiptPath
+        $intervalReceiptSha=Get-CertificationSha256 $piReceiptPath
+        $intervalEnvelope=$envelope|ConvertTo-Json -Depth 60|ConvertFrom-Json -Depth 60
+        $intervalEnvelope.historyFallbackPiEvidence.receiptSha256=$intervalReceiptSha
+        $intervalEnvelope.historyFallbackPiEvidence.stableSnapshotSha256=$intervalReceipt.stableSnapshotSha256
+        $intervalEnvelope.linkSha256=Get-CertificationTextSha256 (@($rootRef.sha256,("0"*64),$stageRef.sha256,$monitorRef.sha256,$intervalReceiptSha,$piBinding.receiptPathSha256,$piBinding.requestSha256,$piBinding.requestPathSha256,$piBinding.trafficWindowSha256)-join "`n")
+        Write-AtomicJson $envelopePath $intervalEnvelope
+        $intervalConfig=$config|ConvertTo-Json -Depth 60|ConvertFrom-Json -Depth 60
+        $intervalConfig.predecessorResultSha256=Get-CertificationSha256 $envelopePath
+        $intervalConfig.predecessorHistoryFallbackPiEvidence.sha256=$intervalReceiptSha
+        $intervalRejected=$false
+        try{Assert-CertificationChainContinuity -Config $intervalConfig -Contract $contract}catch{$intervalRejected=$true}
+        Assert-Condition $intervalRejected "A $($intervalCase.name) must fail supervisor deep PI validation.";$assertions++
+    }
+    [IO.File]::WriteAllText($piReceiptPath,$originalPiReceiptText,[Text.UTF8Encoding]::new($false));Set-CertificationPrivateFileAcl $piReceiptPath
+    Write-AtomicJson $envelopePath $envelope;$config.predecessorResultSha256=Get-CertificationSha256 $envelopePath
+
+    foreach($coverageCase in @(
+        [ordered]@{name="missing application-active PI minute";coverage=New-TestCertificationPiBucketCoverage $piWindowStart @(2..29) @(2)},
+        [ordered]@{name="zero-call application-active PI minute";coverage=New-TestCertificationPiBucketCoverage $piWindowStart @(0..29) @(2)}
+    )){
+        $coverageReceipt=$originalPiReceiptText|ConvertFrom-Json -Depth 60
+        $coverageReceipt.evidence.sqlStatistics.bucketCoverage=$coverageCase.coverage
+        $coverageReceipt.stableSnapshotSha256=Get-CertificationCanonicalSha256 $coverageReceipt.evidence
+        Write-AtomicJson $piReceiptPath $coverageReceipt;Set-CertificationPrivateFileAcl $piReceiptPath
+        $coverageReceiptSha=Get-CertificationSha256 $piReceiptPath
+        $coverageEnvelope=$envelope|ConvertTo-Json -Depth 60|ConvertFrom-Json -Depth 60
+        $coverageEnvelope.historyFallbackPiEvidence.receiptSha256=$coverageReceiptSha
+        $coverageEnvelope.historyFallbackPiEvidence.stableSnapshotSha256=$coverageReceipt.stableSnapshotSha256
+        $coverageEnvelope.linkSha256=Get-CertificationTextSha256 (@($rootRef.sha256,("0"*64),$stageRef.sha256,$monitorRef.sha256,$coverageReceiptSha,$piBinding.receiptPathSha256,$piBinding.requestSha256,$piBinding.requestPathSha256,$piBinding.trafficWindowSha256)-join "`n")
+        Write-AtomicJson $envelopePath $coverageEnvelope
+        $coverageConfig=$config|ConvertTo-Json -Depth 60|ConvertFrom-Json -Depth 60
+        $coverageConfig.predecessorResultSha256=Get-CertificationSha256 $envelopePath
+        $coverageConfig.predecessorHistoryFallbackPiEvidence.sha256=$coverageReceiptSha
+        $coverageRejected=$false
+        try{Assert-CertificationChainContinuity -Config $coverageConfig -Contract $contract}catch{$coverageRejected=$true}
+        Assert-Condition $coverageRejected "A $($coverageCase.name) must fail independent supervisor deep validation.";$assertions++
+    }
+    [IO.File]::WriteAllText($piReceiptPath,$originalPiReceiptText,[Text.UTF8Encoding]::new($false));Set-CertificationPrivateFileAcl $piReceiptPath
+    Write-AtomicJson $envelopePath $envelope;$config.predecessorResultSha256=Get-CertificationSha256 $envelopePath
+
+    foreach($metricCase in @(
+        [ordered]@{name="exact 50.000-percent block-read share";blockRead=0.05;claimedShare=50.0},
+        [ordered]@{name="re-sealed inconsistent block-read ratio";blockRead=0.08;claimedShare=49.0}
+    )){
+        $metricReceipt=$originalPiReceiptText|ConvertFrom-Json -Depth 60
+        $metricReceipt.evidence.sqlStatistics.blockReadTimePerSecondSum=$metricCase.blockRead
+        $metricReceipt.evidence.sqlStatistics.blockReadTimeSharePercent=$metricCase.claimedShare
+        $metricReceipt.stableSnapshotSha256=Get-CertificationCanonicalSha256 $metricReceipt.evidence
+        Write-AtomicJson $piReceiptPath $metricReceipt;Set-CertificationPrivateFileAcl $piReceiptPath
+        $metricReceiptSha=Get-CertificationSha256 $piReceiptPath
+        $metricEnvelope=$envelope|ConvertTo-Json -Depth 60|ConvertFrom-Json -Depth 60
+        $metricEnvelope.historyFallbackPiEvidence.receiptSha256=$metricReceiptSha
+        $metricEnvelope.historyFallbackPiEvidence.stableSnapshotSha256=$metricReceipt.stableSnapshotSha256
+        $metricEnvelope.linkSha256=Get-CertificationTextSha256 (@($rootRef.sha256,("0"*64),$stageRef.sha256,$monitorRef.sha256,$metricReceiptSha,$piBinding.receiptPathSha256,$piBinding.requestSha256,$piBinding.requestPathSha256,$piBinding.trafficWindowSha256)-join "`n")
+        Write-AtomicJson $envelopePath $metricEnvelope
+        $metricConfig=$config|ConvertTo-Json -Depth 60|ConvertFrom-Json -Depth 60
+        $metricConfig.predecessorResultSha256=Get-CertificationSha256 $envelopePath
+        $metricConfig.predecessorHistoryFallbackPiEvidence.sha256=$metricReceiptSha
+        $metricRejected=$false
+        try{Assert-CertificationChainContinuity -Config $metricConfig -Contract $contract}catch{$metricRejected=$true}
+        Assert-Condition $metricRejected "A $($metricCase.name) receipt must fail deep deterministic PI validation.";$assertions++
+    }
+    [IO.File]::WriteAllText($piReceiptPath,$originalPiReceiptText,[Text.UTF8Encoding]::new($false));Set-CertificationPrivateFileAcl $piReceiptPath
+    Write-AtomicJson $envelopePath $envelope;$config.predecessorResultSha256=Get-CertificationSha256 $envelopePath
+
+    $missingPiEnvelope=$envelope|ConvertTo-Json -Depth 60|ConvertFrom-Json -Depth 60
+    $missingPiEnvelope.PSObject.Properties.Remove("historyFallbackPiEvidence")
+    Write-AtomicJson $envelopePath $missingPiEnvelope;$config.predecessorResultSha256=Get-CertificationSha256 $envelopePath
+    $missingPiRejected=$false
+    try{Assert-CertificationChainContinuity -Config $config -Contract $contract}catch{$missingPiRejected=$true}
+    Assert-Condition $missingPiRejected "Historical supervisor evidence without queryid SQL-statistics PI evidence must not seed Waf/800.";$assertions++
+
+    $rejectedPiEnvelope=$envelope|ConvertTo-Json -Depth 60|ConvertFrom-Json -Depth 60
+    $rejectedPiEnvelope.historyFallbackPiEvidence.passed=$false
+    Write-AtomicJson $envelopePath $rejectedPiEnvelope;$config.predecessorResultSha256=Get-CertificationSha256 $envelopePath
+    $rejectedPiRejected=$false
+    try{Assert-CertificationChainContinuity -Config $config -Contract $contract}catch{$rejectedPiRejected=$true}
+    Assert-Condition $rejectedPiRejected "A failed PI gate must not seed Waf/800 even when the envelope is rehashed.";$assertions++
+
+    $legacyLinkEnvelope=$envelope|ConvertTo-Json -Depth 60|ConvertFrom-Json -Depth 60
+    $legacyLinkEnvelope.schemaVersion=2
+    $legacyLinkEnvelope.PSObject.Properties.Remove("linkVersion")
+    $legacyLinkEnvelope.linkSha256=Get-CertificationTextSha256 (@($rootRef.sha256,("0"*64),$stageRef.sha256,$monitorRef.sha256)-join "`n")
+    Write-AtomicJson $envelopePath $legacyLinkEnvelope;$config.predecessorResultSha256=Get-CertificationSha256 $envelopePath
+    $legacyLinkRejected=$false
+    try{Assert-CertificationChainContinuity -Config $config -Contract $contract}catch{$legacyLinkRejected=$true}
+    Assert-Condition $legacyLinkRejected "The historical four-part supervisor link must not seed the deterministic PI chain.";$assertions++
+
+    $tamperedPiReceipt=$originalPiReceiptText|ConvertFrom-Json -Depth 60
+    $tamperedPiReceipt.evidence.passed=$false
+    Write-AtomicJson $piReceiptPath $tamperedPiReceipt
+    Set-CertificationPrivateFileAcl $piReceiptPath
+    Write-AtomicJson $envelopePath $envelope;$config.predecessorResultSha256=Get-CertificationSha256 $envelopePath
+    $tamperedPiRejected=$false
+    try{Assert-CertificationChainContinuity -Config $config -Contract $contract}catch{$tamperedPiRejected=$true}
+    Assert-Condition $tamperedPiRejected "A changed private PI receipt must invalidate its supervisor-sealed hash binding.";$assertions++
+    [IO.File]::WriteAllText($piReceiptPath,$originalPiReceiptText,[Text.UTF8Encoding]::new($false));Set-CertificationPrivateFileAcl $piReceiptPath
+    Write-AtomicJson $envelopePath $envelope;$config.predecessorResultSha256=Get-CertificationSha256 $envelopePath
 
     $tamperedControllerEnvelope=$envelope|ConvertTo-Json -Depth 60|ConvertFrom-Json -Depth 60
     $tamperedControllerEnvelope.controllerHashes.tilePollAccounting="8"*64
@@ -424,7 +799,7 @@ try {
     $invalidLogicalMonitorRef=[ordered]@{path=$monitorPath;sha256=Get-CertificationSha256 $monitorPath;runId=$priorRunId;phase="Waf"}
     $invalidLogicalEnvelope=$envelope|ConvertTo-Json -Depth 60|ConvertFrom-Json -Depth 60
     $invalidLogicalEnvelope.terminalMonitorResult=$invalidLogicalMonitorRef
-    $invalidLogicalEnvelope.linkSha256=Get-CertificationTextSha256 (@($rootRef.sha256,("0"*64),$stageRef.sha256,$invalidLogicalMonitorRef.sha256)-join "`n")
+    $invalidLogicalEnvelope.linkSha256=Get-CertificationTextSha256 (@($rootRef.sha256,("0"*64),$stageRef.sha256,$invalidLogicalMonitorRef.sha256,$piBinding.receiptSha256,$piBinding.receiptPathSha256,$piBinding.requestSha256,$piBinding.requestPathSha256,$piBinding.trafficWindowSha256)-join "`n")
     Write-AtomicJson $envelopePath $invalidLogicalEnvelope;$config.predecessorResultSha256=Get-CertificationSha256 $envelopePath
     $invalidLogicalRejected=$false
     try{Assert-CertificationChainContinuity -Config $config -Contract $contract}catch{$invalidLogicalRejected=$_.Exception.Message -match "terminal monitor result"}
@@ -432,7 +807,7 @@ try {
     Write-AtomicJson $monitorPath ([ordered]@{runId=$priorRunId;phase="Waf";diagnosticOnly=$false;certificationEligible=$true;status="completed";postureAccepted=$true;workload=@{stage="500";workloadSchemaVersion=$script:RequiredWorkloadSchemaVersion;endpointShapeSha256=$script:RequiredWorkloadEndpointShapeSha256;tileBatch=$monitorTileBatch};acceptance=@{passed=$true}})
     $monitorRef=[ordered]@{path=$monitorPath;sha256=Get-CertificationSha256 $monitorPath;runId=$priorRunId;phase="Waf"}
     $envelope.terminalMonitorResult=$monitorRef
-    $envelope.linkSha256=Get-CertificationTextSha256 (@($rootRef.sha256,("0"*64),$stageRef.sha256,$monitorRef.sha256)-join "`n")
+    $envelope.linkSha256=Get-CertificationTextSha256 (@($rootRef.sha256,("0"*64),$stageRef.sha256,$monitorRef.sha256,$piBinding.receiptSha256,$piBinding.receiptPathSha256,$piBinding.requestSha256,$piBinding.requestPathSha256,$piBinding.trafficWindowSha256)-join "`n")
     Write-AtomicJson $envelopePath $envelope;$config.predecessorResultSha256=Get-CertificationSha256 $envelopePath
 
     $legacyPerDeviceEnvelope=$envelope|ConvertTo-Json -Depth 60|ConvertFrom-Json -Depth 60
@@ -446,7 +821,7 @@ try {
 
     $minimalStagePath=Join-Path $tempRoot "minimal-stage.json";Write-AtomicJson $minimalStagePath ([ordered]@{schemaVersion=1;type="certification_stage_attestation";runId=$priorRunId;chainId=$chainId;phase="Waf";stage="500";chainRoot=$rootRef;applicationGitSha=$appSha;deployedImageDigest=$digest;controllerGitSha=$controllerSha;controllerHashes=$controllerHashes})
     $minimalStageRef=[ordered]@{path=$minimalStagePath;sha256=Get-CertificationSha256 $minimalStagePath}
-    $minimalEnvelope=$envelope|ConvertTo-Json -Depth 60|ConvertFrom-Json -Depth 60;$minimalEnvelope.stageAttestation=$minimalStageRef;$minimalEnvelope.linkSha256=Get-CertificationTextSha256 (@($rootRef.sha256,("0"*64),$minimalStageRef.sha256,$monitorRef.sha256)-join "`n")
+    $minimalEnvelope=$envelope|ConvertTo-Json -Depth 60|ConvertFrom-Json -Depth 60;$minimalEnvelope.stageAttestation=$minimalStageRef;$minimalEnvelope.linkSha256=Get-CertificationTextSha256 (@($rootRef.sha256,("0"*64),$minimalStageRef.sha256,$monitorRef.sha256,$piBinding.receiptSha256,$piBinding.receiptPathSha256,$piBinding.requestSha256,$piBinding.requestPathSha256,$piBinding.trafficWindowSha256)-join "`n")
     Write-AtomicJson $envelopePath $minimalEnvelope;$config.predecessorResultSha256=Get-CertificationSha256 $envelopePath
     $minimalRejected=$false;try{Assert-CertificationChainContinuity -Config $config -Contract $contract}catch{$minimalRejected=$true}
     Assert-Condition $minimalRejected "A re-hashed hand-authored minimal predecessor envelope must not bypass Validate-to-Run custody.";$assertions++

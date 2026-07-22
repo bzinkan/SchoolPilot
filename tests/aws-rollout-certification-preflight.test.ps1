@@ -14,9 +14,11 @@ $parseErrors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($supervisorPath, [ref]$tokens, [ref]$parseErrors)
 if ($parseErrors.Count -gt 0) { throw "Unable to parse rollout supervisor." }
 foreach ($name in @(
+    "Get-RequiredProperty",
     "Get-CertificationValue",
     "Get-CertificationTextSha256",
     "Get-CertificationExpectedRdsPosture",
+    "Get-CertificationTrackIoTimingPreflight",
     "Get-CertificationTaskPreflight"
 )) {
     $definition = $ast.Find({
@@ -36,6 +38,11 @@ $script:ConflictingEcrMediaType = $false
 $script:WrongEcrDigest = $false
 $script:BlankEcrMediaType = $false
 $script:EcrManifestFailure = $false
+$script:DatabaseInsightsMode = "advanced"
+$script:PerformanceInsightsRetentionPeriod = 465
+$script:DbiResourceId = "db-JX7VX4P2ZHF5JXA6N5EREVL54I"
+$script:DatabaseParameterApplyStatus = "in-sync"
+$script:TrackIoTimingValue = "on"
 $apiArn = "arn:aws:ecs:us-east-1:123456789012:task-definition/api:17"
 $workerArn = "arn:aws:ecs:us-east-1:123456789012:task-definition/worker:37"
 $rollbackApiArn = "arn:aws:ecs:us-east-1:123456789012:task-definition/api-emergency:13"
@@ -141,8 +148,15 @@ function Invoke-CertificationAwsJson {
             DBInstanceStatus="available";DBInstanceClass="db.t4g.medium";PubliclyAccessible=$false;PendingModifiedValues=[pscustomobject]@{}
             DBInstanceArn="arn:rds:db";Engine="postgres";EngineVersion="16.4";AllocatedStorage=100;MaxAllocatedStorage=1000
             StorageType="gp3";StorageEncrypted=$true;MultiAZ=$false;PerformanceInsightsEnabled=$true
+            DbiResourceId=$script:DbiResourceId;DatabaseInsightsMode=$script:DatabaseInsightsMode;PerformanceInsightsRetentionPeriod=$script:PerformanceInsightsRetentionPeriod
+            DBParameterGroups=@([pscustomobject]@{DBParameterGroupName="schoolpilot-production-postgres16";ParameterApplyStatus=$script:DatabaseParameterApplyStatus})
             DBSubnetGroup=[pscustomobject]@{DBSubnetGroupName="schoolpilot-production-db-subnets"}
             VpcSecurityGroups=@([pscustomobject]@{VpcSecurityGroupId="sg-1234abcd"})
+        })}
+    }
+    if ($service -eq "rds" -and $operation -eq "describe-db-parameters") {
+        return [pscustomobject]@{Parameters=@([pscustomobject]@{
+            ParameterName="track_io_timing";ParameterValue=$script:TrackIoTimingValue
         })}
     }
     if ($service -eq "elasticache" -and $operation -eq "describe-replication-groups") {
@@ -157,6 +171,8 @@ $contract = [pscustomobject]@{
     ActiveApiArn=$apiArn;ActiveWorkerArn=$workerArn;RollbackApiArn=$rollbackApiArn;RollbackWorkerArn=$rollbackWorkerArn
     DeployedImageDigest=$activeDigest;RollbackApiImageDigest=$rollbackApiDigest;RollbackWorkerImageDigest=$rollbackWorkerDigest
     ApplicationGitSha=("1"*40);RollbackApiGitSha=("2"*40);RollbackWorkerGitSha=("3"*40)
+    HistoryFallbackQueryIdentity=[ordered]@{databaseResourceIdSha256="6"*64;engineVersion="16.4"}
+    HistoryFallbackDatabaseResourceId="db-JX7VX4P2ZHF5JXA6N5EREVL54I"
     Raw=[pscustomobject]@{alarmNames=@("alarm-a","alarm-b");scheduleNames=@("school-open","school-close")}
 }
 $config = [pscustomobject]@{
@@ -171,8 +187,51 @@ $assertions = 0
 $valid = Get-CertificationTaskPreflight -Config $config -Contract $contract
 Assert-Condition ($valid.posture.loadStability.healthyTargetCount -eq 6 -and
     @($valid.posture.loadStability.tasks.api).Count -eq 6 -and
-    @($valid.posture.loadStability.tasks.worker).Count -eq 1) "The night preflight must attest exact capacity, targets, and task revisions."
+    @($valid.posture.loadStability.tasks.worker).Count -eq 1 -and
+    $valid.posture.rds.trackIoTiming.enabled -eq $true -and
+    $valid.posture.rds.trackIoTiming.evidenceVersion -ceq "rds-parameter-track-io-timing-v1") `
+    "The night preflight must attest exact capacity, targets, task revisions, and effective track_io_timing."
 $assertions++
+
+$script:TrackIoTimingValue = "off"
+$trackIoTimingRejected = $false
+try { Get-CertificationTaskPreflight -Config $config -Contract $contract | Out-Null }
+catch { $trackIoTimingRejected = $_.Exception.Message -match "track_io_timing=true" }
+Assert-Condition $trackIoTimingRejected "Certification preflight must reject traffic unless effective track_io_timing is true."
+$assertions++
+$script:TrackIoTimingValue = "on"
+
+$script:DatabaseInsightsMode = "standard"
+$standardModeRejected = $false
+try { Get-CertificationTaskPreflight -Config $config -Contract $contract | Out-Null }
+catch { $standardModeRejected = $_.Exception.Message -match "Advanced/465 monitoring lease" }
+Assert-Condition $standardModeRejected "Certification preflight must require the active Advanced monitoring lease."
+$assertions++
+$script:DatabaseInsightsMode = "advanced"
+
+$script:PerformanceInsightsRetentionPeriod = 7
+$shortRetentionRejected = $false
+try { Get-CertificationTaskPreflight -Config $config -Contract $contract | Out-Null }
+catch { $shortRetentionRejected = $_.Exception.Message -match "Advanced/465 monitoring lease" }
+Assert-Condition $shortRetentionRejected "Certification preflight must reject Advanced mode without 465-day retention."
+$assertions++
+$script:PerformanceInsightsRetentionPeriod = 465
+
+$script:DbiResourceId = "db-AAAAAAAAAAAAAAAAAAAAAAAA"
+$wrongResourceRejected = $false
+try { Get-CertificationTaskPreflight -Config $config -Contract $contract | Out-Null }
+catch { $wrongResourceRejected = $_.Exception.Message -match "exact RDS identity" }
+Assert-Condition $wrongResourceRejected "Certification preflight must reject a different native RDS resource identity."
+$assertions++
+$script:DbiResourceId = "db-JX7VX4P2ZHF5JXA6N5EREVL54I"
+
+$script:DatabaseParameterApplyStatus = "pending-reboot"
+$pendingRebootRejected = $false
+try { Get-CertificationTaskPreflight -Config $config -Contract $contract | Out-Null }
+catch { $pendingRebootRejected = $_.Exception.Message -match "Advanced/465 monitoring lease" }
+Assert-Condition $pendingRebootRejected "Certification preflight must reject a pending-reboot RDS posture."
+$assertions++
+$script:DatabaseParameterApplyStatus = "in-sync"
 
 $script:DuplicateEcrManifestRows = $true
 $duplicateManifestResult = Get-CertificationTaskPreflight -Config $config -Contract $contract

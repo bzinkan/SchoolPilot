@@ -10,6 +10,7 @@ $supervisorPath = Join-Path $root "scripts/load/start-aws-rollout-supervisor.ps1
 $harnessPath = Join-Path $root "scripts/load/classpilot-load-test.mjs"
 $monotonicDeadlinePath = Join-Path $root "scripts/load/monotonic-deadline.mjs"
 $tilePollAccountingPath = Join-Path $root "scripts/load/tile-poll-accounting.mjs"
+$databaseInsightsLeasePath = Join-Path $root "scripts/load/database-insights-lease.ps1"
 $script:AssertionCount = 0
 
 function Assert-Condition {
@@ -41,7 +42,7 @@ function Import-ScriptFunction {
     Set-Item -Path "Function:script:$Name" -Value ([scriptblock]::Create($body))
 }
 
-foreach ($path in @($controllerPath,$monitorPath,$supervisorPath)) {
+foreach ($path in @($controllerPath,$monitorPath,$supervisorPath,$databaseInsightsLeasePath)) {
     $errors = $null
     [void][Management.Automation.Language.Parser]::ParseFile($path, [ref]$null, [ref]$errors)
     Assert-Condition ($errors.Count -eq 0) "$path has PowerShell parse errors: $($errors -join '; ')"
@@ -67,6 +68,10 @@ foreach ($required in @(
     'Restore-ScalingCapture','scaling_restoration_failed','scheduledActionsSha256','scalingPoliciesSha256',
     'Group=db.sql_tokenized,Limit=25','rawSqlPersisted=$false','dominanceThresholdPercent=50.0',
     'HistoryFallbackSqlMarkers = @("requested_tiles", "heartbeats", "lateral")',
+    'history-fallback-queryid-v1','queryid-sqlstats-v1','historyFallbackQueryIdentity','historyFallbackPiEvidenceVersion','db.sql_tokenized.db_id',
+    'database-insights-monitoring-lease-v2','Invoke-DatabaseInsightsLeaseController','database_insights_lease_restoration_failed',
+    'db.sql_tokenized.stats.calls_per_sec.avg','db.sql_tokenized.stats.total_time_per_sec.avg',
+    'db.sql_tokenized.stats.blk_read_time_per_sec.avg','db.sql_tokenized.stats.temp_blks_read_per_sec.avg',
     'Group=db.wait_event,Limit=25','db.sql_tokenized.id','IO:DataFileRead','historyFallback',
     'filteredWaitEventEvidenceComplete','Get-Postgres57014Evidence','logs","filter-log-events',
     'sqlState="57014"','rawMessagesPersisted=$false;rawIdentifiersPersisted=$false',
@@ -80,12 +85,15 @@ foreach ($required in @(
     'observedTrafficWindow=$null','Collect-TerminalPostTrafficEvidence','strict_traffic_duration_not_completed',
     'EvidenceCollectorVersion = "post-traffic-v2"','EvidenceAwsTimeoutSeconds = 60','EvidenceAwsMaximumAttempts = 4',
     'PerformanceInsightsInitialDelayMinutes = 5','PerformanceInsightsStabilizationDeadlineMinutes = 15',
+    'DatabaseInsightsLeaseMaximumAcquisitionAgeSeconds = 900','DatabaseInsightsLeaseRequiredRemainingSeconds',
+    'diagnostic-pi-lease-headroom-v1','queryid-minute-sparse-v1',
     'HarnessTerminalCommitTimeoutSeconds = 45','Wait-HarnessTerminalEvidenceCommit','Resolve-DiagnosticTerminalExitCode',
     'Get-ControllerCleanupDisposition','Stop-ControllerChildrenImmediately','immediate_harness_first','controller_operational_failure','controller_runtime_failure',
     'db_load_series','full_interval_top_tokens','hot_path_log_windows','fallback_window_top_tokens','fallback_token_wait_events',
     'embeddedCanonicalization="powershell-convertto-json-depth-50-compress-utf8"',
     'monotonicDeadline=(Get-FileHash -LiteralPath $script:MonotonicDeadlineScript',
-    'tilePollAccounting=(Get-FileHash -LiteralPath $script:TilePollAccountingScript'
+    'tilePollAccounting=(Get-FileHash -LiteralPath $script:TilePollAccountingScript',
+    'databaseInsightsLease=(Get-FileHash -LiteralPath $script:DatabaseInsightsLeaseScript'
 )) {
     Assert-Condition ($controller.Contains($required)) "Diagnostic controller is missing invariant: $required"
 }
@@ -103,10 +111,13 @@ $preTrafficPostureIndex = $controller.IndexOf('$terminal.preTrafficAwsPosture = 
 $preReleaseIpIndex = $controller.IndexOf('$lastGeneratorIpCheck = Update-GeneratorPublicIpEvidence', $preTrafficPostureIndex)
 $preReleaseLivenessIndex = $controller.IndexOf('$monitor.Refresh(); $harness.Refresh()', $preReleaseIpIndex)
 $preReleaseHeartbeatIndex = $controller.IndexOf('Assert-HealthyMonitorHeartbeat -Heartbeat $monitorHeartbeat', $preReleaseLivenessIndex)
-$startGateIndex = $controller.IndexOf('Write-AtomicJson $startGatePath', $preReleaseHeartbeatIndex)
+$preReleaseLeaseIndex = $controller.IndexOf('$databaseInsightsLeaseValidation = Invoke-DatabaseInsightsLeaseController -Config $config -LeaseMode Validate', $preReleaseHeartbeatIndex)
+$postLeaseHeartbeatIndex = $controller.IndexOf('Assert-HealthyMonitorHeartbeat -Heartbeat $monitorHeartbeat', $preReleaseLeaseIndex)
+$startGateIndex = $controller.IndexOf('Write-AtomicJson $startGatePath', $postLeaseHeartbeatIndex)
 Assert-Condition ($preTrafficPostureIndex -ge 0 -and $preReleaseIpIndex -gt $preTrafficPostureIndex -and
     $preReleaseLivenessIndex -gt $preReleaseIpIndex -and $preReleaseHeartbeatIndex -gt $preReleaseLivenessIndex -and
-    $startGateIndex -gt $preReleaseHeartbeatIndex) "Pre-release IP refresh, child liveness, and fresh monitor heartbeat validation must precede the start gate."
+    $preReleaseLeaseIndex -gt $preReleaseHeartbeatIndex -and $postLeaseHeartbeatIndex -gt $preReleaseLeaseIndex -and
+    $startGateIndex -gt $postLeaseHeartbeatIndex) "Pre-release IP refresh, child liveness, lease headroom, and fresh monitor heartbeat validation must precede the start gate."
 $runtimeLoopIndex = $controller.IndexOf('while ([DateTimeOffset]::UtcNow -lt $deadline)', $startGateIndex)
 $runtimePreLookupExitIndex = $controller.IndexOf('if ($monitor.HasExited) { break }', $runtimeLoopIndex)
 $runtimeIpIndex = $controller.IndexOf('if (($now - $lastGeneratorIpCheck).TotalSeconds -ge $script:GeneratorIpCheckSeconds)', $runtimePreLookupExitIndex)
@@ -140,6 +151,25 @@ Assert-Condition ((Test-Path -LiteralPath $monotonicDeadlinePath -PathType Leaf)
 Assert-Condition ((Test-Path -LiteralPath $tilePollAccountingPath -PathType Leaf) -and
     $controller.Contains('$script:TilePollAccountingScript = Join-Path $PSScriptRoot "tile-poll-accounting.mjs"')) 'The controller must bind the exact tile poll accounting helper imported by the harness.'
 Assert-Condition ($supervisor.Contains('tilePollAccounting = Join-Path $PSScriptRoot "tile-poll-accounting.mjs"')) 'Certification controller hashes must bind the tile poll accounting helper.'
+Assert-Condition ($supervisor.Contains('databaseInsightsLease = Join-Path $PSScriptRoot "database-insights-lease.ps1"')) 'Certification controller hashes must bind the Database Insights lease helper.'
+Assert-Condition ((Test-Path -LiteralPath $databaseInsightsLeasePath -PathType Leaf) -and
+    $controller.Contains('$script:DatabaseInsightsLeaseScript = Join-Path $PSScriptRoot "database-insights-lease.ps1"')) 'The diagnostic controller must bind the reviewed Database Insights lease helper.'
+Assert-Condition ($controller.Contains('(Get-RequiredValue $raw "historyFallbackQueryIdentity")') -and
+    $controller.Contains('Raw historyFallbackSqlIdentity content is forbidden')) 'Diagnostic configuration must reference the private query-identity receipt and reject an inline raw identifier.'
+Assert-Condition (-not $controller.Contains('queryIdentifier=$config.HistoryFallbackSqlIdentity.QueryIdentifier;')) 'Terminal diagnostic evidence must never serialize the raw PostgreSQL query identifier.'
+Assert-Condition ($controller.Contains('config=[ordered]@{pathSha256=(Get-StringSha256 $config.Path)') -and
+    -not $controller.Contains('config=[ordered]@{path=$config.Path')) 'Terminal diagnostic evidence must hash the private config path instead of persisting it.'
+Assert-Condition ($controller.Contains('historyFallbackQueryIdentity=[ordered]@{receiptSha256=$config.HistoryFallbackSqlIdentity.Receipt.Sha256') -and
+    -not $controller.Contains('historyFallbackQueryIdentity=[ordered]@{receipt=[ordered]@{path=')) 'Terminal identity evidence must retain only the protected receipt hash, never its private filesystem path.'
+Assert-Condition ($controller.Contains('dbiResourceIdSha256=(Get-StringSha256') -and
+    -not $controller.Contains('pendingReboot=$false;dbiResourceId=[string]')) 'Diagnostic posture artifacts must hash the DBI resource identity rather than sealing a raw PI identifier.'
+Assert-Condition ($controller.Contains('Diagnostic validation failed and exact Database Insights restoration also failed') -and
+    $controller.Contains('Diagnostic initialization failed and exact Database Insights restoration also failed')) 'Validate and early Run initialization failures must fail closed if the pre-acquired Database Insights lease cannot be exactly restored.'
+$lastDelayedCollectionIndex = $controller.LastIndexOf('-Phase Delayed')
+$leaseRestoreAfterDelayedIndex = $controller.IndexOf('Restore-TerminalDatabaseInsightsLease $terminal $config $databaseInsightsRestoration', $lastDelayedCollectionIndex)
+$standardTerminalPostureIndex = $controller.IndexOf('Get-AwsPosture $config -ExpectedDatabaseInsightsMode "standard"', $leaseRestoreAfterDelayedIndex)
+Assert-Condition ($lastDelayedCollectionIndex -ge 0 -and $leaseRestoreAfterDelayedIndex -gt $lastDelayedCollectionIndex -and
+    $standardTerminalPostureIndex -gt $leaseRestoreAfterDelayedIndex) 'Delayed PI evidence must seal before the bounded lease restores Standard/7 and terminal posture validates it.'
 Assert-Condition ($controller.Contains('$healthyTargets = Get-HealthyTargetCount $Config')) "Read-only AWS posture validation must retain strict target-health enforcement."
 Assert-Condition ($controller.Contains('$output.Count -ne 1')) "Controller Git identity must require exactly one native-command output line."
 Assert-Condition (-not $controller.Contains('start-aws-rollout-supervisor.ps1')) "Diagnostic controller must never call the certification supervisor."
@@ -158,16 +188,23 @@ Assert-Condition ($harness.Contains('diagnosticOnly ? 30 * 60')) "Only explicit 
 $tokens = $null; $parseErrors = $null
 $controllerAst = [Management.Automation.Language.Parser]::ParseFile($controllerPath, [ref]$tokens, [ref]$parseErrors)
 foreach ($name in @(
-    'Get-Value','Assert-GitSha','Get-ControllerSha','Get-StableJsonSha256','Get-StringSha256','Get-DiagnosticRunMutexName','Enter-DiagnosticRunLock','Exit-DiagnosticRunLock',
-    'Resolve-ExternalPath','Get-ValidationScratchPaths','Get-WafLabelMatch','Assert-WafDeviceIngestClassifierContract',
-    'Assert-WafRateRuleContract','Assert-RedisReplicationIdentity','Assert-NoScheduledBoundaryOverlap','Get-TargetHealthSnapshot',
+    'Get-Value','Get-RequiredValue','Assert-Sha256','Assert-HistoryFallbackSqlIdentity','Assert-GitSha','Get-ControllerSha','Get-StableJsonSha256','Get-StringSha256','Test-DiagnosticEmptyObject','Get-DiagnosticRunMutexName','Enter-DiagnosticRunLock','Exit-DiagnosticRunLock',
+    'Resolve-ExternalPath','Assert-DiagnosticPrivateFileAcl','Read-HistoryFallbackQueryIdentityReceipt',
+    'Assert-DatabaseInsightsLeaseBinding','Get-DatabaseInsightsLeaseTimingEvidence',
+    'Invoke-DatabaseInsightsLeaseController','Restore-TerminalDatabaseInsightsLease',
+    'Get-ValidationScratchPaths','Get-WafLabelMatch','Assert-WafDeviceIngestClassifierContract',
+    'Assert-WafRateRuleContract','Assert-RedisReplicationIdentity','Get-DiagnosticTrackIoTimingPosture','Assert-NoScheduledBoundaryOverlap','Get-TargetHealthSnapshot',
     'Wait-TargetHealthConvergence','Get-HealthyTargetCount','Restore-ScalingCapture',
     'Update-GeneratorPublicIpEvidence','Assert-HealthyMonitorHeartbeat','Resolve-ApiAwslogsBinding',
     'Get-BoundApiAwslogsBinding','Get-Postgres57014Evidence','Get-HistoryFallbackWaitEventEvidence',
-    'Test-EvidenceAwsRetryableFailure','Invoke-EvidenceAwsJsonPages','New-StagedEvidenceException','New-EvidenceEnvelope','Test-EvidenceSourceNotStarted',
+    'Test-EvidenceAwsRetryableFailure','ConvertTo-ExactUtcDateTimeOffset','Get-PerformanceInsightsEvidenceWindow','Assert-PerformanceInsightsResponseScope',
+    'Invoke-EvidenceAwsJsonPages','New-StagedEvidenceException','New-EvidenceEnvelope','Test-EvidenceSourceNotStarted',
     'Get-EvidenceUtcNow','Wait-EvidenceDelay','Wait-HarnessTerminalEvidenceCommit','Resolve-DiagnosticTerminalExitCode',
     'Get-ControllerFailureClassification','Test-HarnessTerminalEvidencePresent','Get-ControllerCleanupDisposition','Stop-ControllerChildrenImmediately',
-    'Get-ObservedTrafficWindow','Get-TrafficWindow','Get-PerformanceInsightsTopTokens','Get-HotPathFallbackEvidenceWindows',
+    'Get-ObservedTrafficWindow','Get-TrafficWindow','Get-PerformanceInsightsTopTokens',
+    'New-DiagnosticHistoryFallbackSqlStatsGateResult','Get-DiagnosticHistoryFallbackSqlStatsBucketCoverage',
+    'Get-HistoryFallbackSqlStatsEvidence',
+    'Get-HistoryFallbackSampledLoadEvidence','Get-HotPathFallbackEvidenceWindows',
     'Get-PerformanceInsightsMetricPoints','Get-StabilizedPerformanceInsightsEvidence',
     'Get-PerformanceInsightsEvidence','Add-TerminalFailure','Remove-TerminalFailure','Attach-TerminalMonitorEvidence',
     'Collect-TerminalPostTrafficEvidence','Set-TerminalEvidenceIntegrity'
@@ -218,8 +255,27 @@ Assert-Condition (Test-EvidenceAwsRetryableFailure '' $true) 'AWS evidence reads
 Assert-Condition (-not (Test-EvidenceAwsRetryableFailure 'AccessDeniedException')) 'AWS evidence reads must not retry permission failures.'
 Assert-Condition (-not (Test-EvidenceAwsRetryableFailure 'ValidationException')) 'AWS evidence reads must not retry validation failures.'
 $exitPrecedenceTerminal = [ordered]@{failures=@('scaling_restoration_failed')}
-Assert-Condition ((Resolve-DiagnosticTerminalExitCode $exitPrecedenceTerminal ([ordered]@{attempted=$true;restored=$false}) $true 2) -eq 4) 'A failed attempted restoration must retain exit code 4 after acceptance adjudication.'
-Assert-Condition ((Resolve-DiagnosticTerminalExitCode ([ordered]@{failures=@()}) ([ordered]@{attempted=$true;restored=$true}) $true 2) -eq 0) 'A fully accepted run with verified restoration may resolve to exit code 0.'
+$restoredDatabaseInsightsLease = [ordered]@{attempted=$true;restored=$true}
+Assert-Condition ((Resolve-DiagnosticTerminalExitCode $exitPrecedenceTerminal ([ordered]@{attempted=$true;restored=$false}) $restoredDatabaseInsightsLease $true 2) -eq 4) 'A failed attempted scaling restoration must retain exit code 4 after acceptance adjudication.'
+Assert-Condition ((Resolve-DiagnosticTerminalExitCode ([ordered]@{failures=@('database_insights_lease_restoration_failed')}) ([ordered]@{attempted=$true;restored=$true}) ([ordered]@{attempted=$true;restored=$false}) $true 2) -eq 4) 'A failed attempted Database Insights restoration must retain exit code 4 after acceptance adjudication.'
+Assert-Condition ((Resolve-DiagnosticTerminalExitCode ([ordered]@{failures=@()}) ([ordered]@{attempted=$true;restored=$true}) $restoredDatabaseInsightsLease $true 2) -eq 0) 'A fully accepted run with both verified restorations may resolve to exit code 0.'
+$leaseRestorationTerminal = [ordered]@{failures=@();databaseInsightsLease=[ordered]@{restoration=$null}}
+function Invoke-DatabaseInsightsLeaseController {
+    param($Config, [string]$LeaseMode)
+    return [ordered]@{state='restored';receiptSha256=('aa' * 32);rawPathsPersisted=$false}
+}
+$successfulLeaseRestoration = Restore-TerminalDatabaseInsightsLease $leaseRestorationTerminal ([pscustomobject]@{}) ([ordered]@{attempted=$false;restored=$false})
+Assert-Condition ($successfulLeaseRestoration.attempted -and $successfulLeaseRestoration.restored -and
+    $leaseRestorationTerminal.databaseInsightsLease.restoration.lease.state -ceq 'restored') 'The terminal finalizer must seal a successful exact Database Insights restoration.'
+function Invoke-DatabaseInsightsLeaseController { throw 'raw lease restoration provider failure' }
+$failedLeaseTerminal = [ordered]@{failures=@();databaseInsightsLease=[ordered]@{restoration=$null}}
+$failedLeaseRestoration = Restore-TerminalDatabaseInsightsLease $failedLeaseTerminal ([pscustomobject]@{}) ([ordered]@{attempted=$false;restored=$false})
+$failedLeaseJson = $failedLeaseRestoration | ConvertTo-Json -Compress
+Assert-Condition ($failedLeaseRestoration.attempted -and -not $failedLeaseRestoration.restored -and
+    $failedLeaseRestoration.failureCode -ceq 'database_insights_lease_restoration_failed' -and
+    @($failedLeaseTerminal.failures) -contains 'database_insights_lease_restoration_failed' -and
+    -not $failedLeaseJson.Contains('raw lease restoration provider failure')) 'Database Insights restoration failure must fail closed with only a discarded-message hash.'
+Import-ScriptFunction $controllerAst 'Invoke-DatabaseInsightsLeaseController'
 $expectedControllerShaOutput = @(& git -C $root rev-parse HEAD 2>$null)
 Assert-Condition ($LASTEXITCODE -eq 0 -and $expectedControllerShaOutput.Count -eq 1) 'The test fixture must resolve one current Git SHA.'
 $expectedControllerSha = [string]$expectedControllerShaOutput[0]
@@ -315,12 +371,31 @@ $script:AuthSqlMarkers = @(
 $script:HistoryFallbackSqlMarkers = @('requested_tiles','heartbeats','lateral')
 $script:HistoryIoDominanceThresholdPercent = 50.0
 $script:PerformanceInsightsCoverageTolerancePercent = 0.5
+$script:HistoryFallbackSqlIdentityVersion = 'history-fallback-queryid-v1'
+$script:HistoryFallbackPiEvidenceVersion = 'queryid-sqlstats-v1'
+$script:HistoryFallbackParameterTypeSignatureJson = '["$1:text[]:student_ids","$2:text[]:device_ids","$3:text:school_id","$4:bigint:history_limit"]'
+$script:DatabaseInsightsLeaseVersion = 'database-insights-monitoring-lease-v2'
+$script:DatabaseInsightsDurableRestoreGuardVersion = 'aws-scheduler-ssm-recurring-restore-v1'
+$script:DatabaseInsightsLeaseScript = $databaseInsightsLeasePath
+$script:HistoryFallbackSqlStatsPeriodSeconds = 60
+$script:HistoryFallbackSqlStatsMetrics = [ordered]@{
+    calls='db.sql_tokenized.stats.calls_per_sec.avg'
+    totalTime='db.sql_tokenized.stats.total_time_per_sec.avg'
+    blockReadTime='db.sql_tokenized.stats.blk_read_time_per_sec.avg'
+    sharedBlocksRead='db.sql_tokenized.stats.shared_blks_read_per_sec.avg'
+    tempBlocksRead='db.sql_tokenized.stats.temp_blks_read_per_sec.avg'
+    tempBlocksWritten='db.sql_tokenized.stats.temp_blks_written_per_sec.avg'
+}
 $script:EvidenceCollectorVersion = 'post-traffic-v2'
 $script:EvidenceMaximumPages = 100
 $script:EvidenceMaximumRecords = 10000
 $script:PerformanceInsightsInitialDelayMinutes = 5
 $script:PerformanceInsightsStabilizationDeadlineMinutes = 15
 $script:PerformanceInsightsPollSeconds = 0
+$script:DatabaseInsightsLeaseMaximumAcquisitionAgeSeconds = 900
+$script:DatabaseInsightsLeaseRestoreTimeoutSeconds = 900
+$script:DatabaseInsightsLeaseSafetyMarginSeconds = 300
+$script:DatabaseInsightsLeaseRequiredRemainingSeconds = 3900
 $script:HarnessTerminalCommitTimeoutSeconds = 45
 $script:HarnessTerminalCommitPollMilliseconds = 250
 $script:WorkloadSchemaVersion = 'classpilot-tile-batch-v1'
@@ -330,6 +405,236 @@ $script:DiagnosticRuntimeTargetTrafficSeconds = 1800.0
 $script:DiagnosticPlannedTrafficMilliseconds = 1800000L
 $script:HotPathSummaryEvent = 'classpilot_heartbeat_hot_path_summary'
 $script:HotPathSummaryIntervalSeconds = 60
+
+$fractionalPiWindow = Get-PerformanceInsightsEvidenceWindow '2026-07-20T12:00:00.001Z' '2026-07-20T12:30:59.999Z'
+Assert-Condition ($fractionalPiWindow.AlignedStart.ToString('o') -ceq '2026-07-20T12:01:00.0000000+00:00' -and
+    $fractionalPiWindow.AlignedEnd.ToString('o') -ceq '2026-07-20T12:30:00.0000000+00:00' -and
+    $fractionalPiWindow.Evidence.completeMinuteCount -eq 29 -and
+    [string]$fractionalPiWindow.Evidence.coherentWindowSha256 -match '^[0-9a-f]{64}$' -and
+    [string]$fractionalPiWindow.Evidence.alignedEvidenceWindowSha256 -match '^[0-9a-f]{64}$') 'PI evidence must use the positive complete-minute interior of the coherent traffic window and hash both scopes.'
+Assert-Throws { Get-PerformanceInsightsEvidenceWindow '2026-07-20T12:00:30Z' '2026-07-20T12:01:00Z' } 'positive complete-minute' 'A coherent window without a positive aligned interior must fail closed.'
+$validPiScopeResponse = [pscustomobject]@{AlignedStartTime='2026-07-20T12:01:00Z';AlignedEndTime='2026-07-20T12:30:00Z';Identifier='db-AAAAAAAAAAAAAAAAAAAA'}
+Assert-PerformanceInsightsResponseScope $validPiScopeResponse '2026-07-20T12:01:00Z' '2026-07-20T12:30:00Z' 'db-AAAAAAAAAAAAAAAAAAAA'
+Assert-Condition $true 'Exact aligned PI response bounds and database identity must validate.'
+Assert-Throws { Assert-PerformanceInsightsResponseScope $validPiScopeResponse '2026-07-20T12:01:00Z' '2026-07-20T12:29:00Z' 'db-AAAAAAAAAAAAAAAAAAAA' } 'outside the exact aligned' 'A PI response with different aligned bounds must fail closed.'
+Assert-Throws { Assert-PerformanceInsightsResponseScope $validPiScopeResponse '2026-07-20T12:01:00Z' '2026-07-20T12:30:00Z' 'db-BBBBBBBBBBBBBBBBBBBB' } 'different database' 'A GetResourceMetrics response for another DBI resource must fail closed.'
+
+$historyQueryIdentifier = '-9223372036854775808'
+$historyCompiledSqlSha256 = ('ab' * 32)
+$historyFallbackSqlIdentity = Assert-HistoryFallbackSqlIdentity ([ordered]@{
+    identityVersion='history-fallback-queryid-v1';queryIdentifier=$historyQueryIdentifier
+    queryIdentifierSha256=(Get-StringSha256 $historyQueryIdentifier)
+    compiledSqlSha256=$historyCompiledSqlSha256;parameterTypeSignatureSha256=('cd' * 32)
+    databaseResourceId='db-AAAAAAAAAAAAAAAAAAAA';engineVersion='16.4';schemaIdentitySha256=('ef' * 32);trackIoTiming=$true
+})
+$historyDbiResourceId = $historyFallbackSqlIdentity.DatabaseResourceId
+Assert-Condition ($historyFallbackSqlIdentity.QueryIdentifier -ceq $historyQueryIdentifier -and
+    $historyFallbackSqlIdentity.QueryIdentifierSha256 -ceq (Get-StringSha256 $historyQueryIdentifier)) 'A signed 64-bit query identifier must retain exact decimal precision and hash binding.'
+Assert-Throws { Assert-HistoryFallbackSqlIdentity ([ordered]@{
+    identityVersion='history-fallback-queryid-v1';queryIdentifier='01';queryIdentifierSha256=('00' * 32)
+    compiledSqlSha256=('ab' * 32);parameterTypeSignatureSha256=('cd' * 32)
+    databaseResourceId='db-AAAAAAAAAAAAAAAAAAAA';engineVersion='16.4';schemaIdentitySha256=('ef' * 32);trackIoTiming=$true
+}) } 'canonical nonzero signed' 'A noncanonical query identifier must fail closed.'
+Assert-Throws { Assert-HistoryFallbackSqlIdentity ([ordered]@{
+    identityVersion='history-fallback-queryid-v1';queryIdentifier=$historyQueryIdentifier
+    queryIdentifierSha256=(Get-StringSha256 $historyQueryIdentifier)
+    compiledSqlSha256=('ab' * 32);parameterTypeSignatureSha256=('cd' * 32)
+    databaseResourceId='db-AAAAAAAAAAAAAAAAAAAA';engineVersion='16.4';schemaIdentitySha256=('ef' * 32);trackIoTiming=$false
+}) } 'track_io_timing=true' 'A fallback identity without effective PostgreSQL I/O timing must fail closed.'
+
+function Set-TestDiagnosticPrivateAcl {
+    param([string]$Path)
+    $current = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $item = Get-Item -LiteralPath $Path
+    $security = [IO.FileSystemAclExtensions]::GetAccessControl(
+        $item, [Security.AccessControl.AccessControlSections]::Access
+    )
+    $security.SetAccessRuleProtection($true, $false)
+    foreach ($existingRule in @($security.GetAccessRules(
+            $true, $true, [Security.Principal.SecurityIdentifier]
+        ))) {
+        [void]$security.RemoveAccessRuleSpecific($existingRule)
+    }
+    $security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+        $current.User,
+        [Security.AccessControl.FileSystemRights]::FullControl,
+        [Security.AccessControl.InheritanceFlags]::None,
+        [Security.AccessControl.PropagationFlags]::None,
+        [Security.AccessControl.AccessControlType]::Allow
+    ))
+    [IO.FileSystemAclExtensions]::SetAccessControl($item, $security)
+}
+
+function Set-TestDiagnosticMalformedPrivateAcl {
+    param(
+        [string]$Path,
+        [Security.AccessControl.AccessControlType]$AccessType,
+        [Security.AccessControl.FileSystemRights]$Rights,
+        [switch]$Empty
+    )
+    $current = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $item = Get-Item -LiteralPath $Path
+    $security = [IO.FileSystemAclExtensions]::GetAccessControl(
+        $item, [Security.AccessControl.AccessControlSections]::Access
+    )
+    $security.SetAccessRuleProtection($true, $false)
+    foreach ($existingRule in @($security.GetAccessRules(
+            $true, $true, [Security.Principal.SecurityIdentifier]
+        ))) {
+        [void]$security.RemoveAccessRuleSpecific($existingRule)
+    }
+    if (-not $Empty) {
+        $security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+            $current.User,
+            $Rights,
+            [Security.AccessControl.InheritanceFlags]::None,
+            [Security.AccessControl.PropagationFlags]::None,
+            $AccessType
+        ))
+    }
+    [IO.FileSystemAclExtensions]::SetAccessControl($item, $security)
+}
+
+foreach ($malformedAcl in @(
+    [ordered]@{name='empty DACL';empty=$true;type=[Security.AccessControl.AccessControlType]::Allow;rights=[Security.AccessControl.FileSystemRights]::FullControl},
+    [ordered]@{name='insufficient rights';empty=$false;type=[Security.AccessControl.AccessControlType]::Allow;rights=[Security.AccessControl.FileSystemRights]::ReadData},
+    [ordered]@{name='deny-only DACL';empty=$false;type=[Security.AccessControl.AccessControlType]::Deny;rights=[Security.AccessControl.FileSystemRights]::FullControl}
+)) {
+    $malformedAclPath = Join-Path ([IO.Path]::GetTempPath()) `
+        "schoolpilot-diagnostic-malformed-private-acl-$([Guid]::NewGuid().ToString('N')).json"
+    try {
+        [IO.File]::WriteAllText($malformedAclPath, '{}', [Text.UTF8Encoding]::new($false))
+        Set-TestDiagnosticMalformedPrivateAcl -Path $malformedAclPath -AccessType $malformedAcl.type `
+            -Rights $malformedAcl.rights -Empty:([bool]$malformedAcl.empty)
+        $malformedRejected = $false
+        try { Assert-DiagnosticPrivateFileAcl $malformedAclPath 'malformed private receipt' }
+        catch { $malformedRejected = $true }
+        Assert-Condition $malformedRejected `
+            "The diagnostic private receipt validator must reject a $($malformedAcl.name)."
+    }
+    finally {
+        if (Test-Path -LiteralPath $malformedAclPath) {
+            Set-TestDiagnosticPrivateAcl $malformedAclPath
+            Remove-Item -LiteralPath $malformedAclPath -Force
+        }
+    }
+}
+
+$queryIdentityReceiptDirectory = Join-Path ([IO.Path]::GetTempPath()) "schoolpilot-diagnostic-query-identity-$([guid]::NewGuid().ToString('N'))"
+[void](New-Item -ItemType Directory -Path $queryIdentityReceiptDirectory)
+$queryIdentityReceiptPath = Join-Path $queryIdentityReceiptDirectory 'identity.json'
+$queryIdentityAppSha = '1' * 40
+$queryIdentityDigest = 'sha256:' + ('2' * 64)
+$queryIdentityApiArn = 'arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:27'
+$queryIdentityWorkerArn = 'arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:45'
+try {
+    $queryIdentityReceipt = [ordered]@{
+        schemaVersion=1;type='history_fallback_query_identity_receipt';identityVersion='history-fallback-queryid-v1'
+        queryIdentifier=$historyQueryIdentifier;queryIdentifierSha256=(Get-StringSha256 $historyQueryIdentifier)
+        compiledSqlSha256=$historyCompiledSqlSha256
+        parameterTypeSignatureSha256=(Get-StringSha256 '["$1:text[]:student_ids","$2:text[]:device_ids","$3:text:school_id","$4:bigint:history_limit"]')
+        databaseResourceId='db-AAAAAAAAAAAAAAAAAAAA';engineVersion='16.4';schemaIdentitySha256=('ef' * 32);trackIoTiming=$true
+        applicationGitSha=$queryIdentityAppSha;deployedImageDigest=$queryIdentityDigest
+        activeApiTaskDefinitionArn=$queryIdentityApiArn;activeWorkerTaskDefinitionArn=$queryIdentityWorkerArn
+    }
+    [IO.File]::WriteAllText($queryIdentityReceiptPath, ($queryIdentityReceipt | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+    Set-TestDiagnosticPrivateAcl $queryIdentityReceiptPath
+    $queryIdentityReceiptSha = (Get-FileHash -LiteralPath $queryIdentityReceiptPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $privateIdentity = Read-HistoryFallbackQueryIdentityReceipt ([ordered]@{path=$queryIdentityReceiptPath;sha256=$queryIdentityReceiptSha}) `
+        $queryIdentityAppSha $queryIdentityDigest $queryIdentityApiArn $queryIdentityWorkerArn 'queryid-sqlstats-v1'
+    Assert-Condition ($privateIdentity.QueryIdentifier -ceq $historyQueryIdentifier -and
+        $privateIdentity.Receipt.Path -ceq [IO.Path]::GetFullPath($queryIdentityReceiptPath) -and
+        $privateIdentity.Receipt.Sha256 -ceq $queryIdentityReceiptSha -and
+        $privateIdentity.PiEvidenceVersion -ceq 'queryid-sqlstats-v1') 'The diagnostic must read the exact signed query ID privately from an ACL/hash-bound receipt.'
+    Assert-Throws { Read-HistoryFallbackQueryIdentityReceipt ([ordered]@{path=$queryIdentityReceiptPath;sha256=$queryIdentityReceiptSha}) `
+        ('9' * 40) $queryIdentityDigest $queryIdentityApiArn $queryIdentityWorkerArn 'queryid-sqlstats-v1' } `
+        'exact release and active task revisions' 'A private identity receipt for another release must fail diagnostic binding.'
+}
+finally { Remove-Item -LiteralPath $queryIdentityReceiptDirectory -Recurse -Force }
+
+$leaseBindingDirectory = Join-Path ([IO.Path]::GetTempPath()) "schoolpilot-diagnostic-lease-binding-$([guid]::NewGuid().ToString('N'))"
+[void](New-Item -ItemType Directory -Path $leaseBindingDirectory)
+$leaseBindingReceiptPath = Join-Path $leaseBindingDirectory 'lease.json'
+$leaseBindingStatusPath = "$leaseBindingReceiptPath.status.json"
+$leaseBindingWatchdogPath = "$leaseBindingReceiptPath.watchdog.json"
+try {
+    $leaseScheduleArn = 'arn:aws:scheduler:us-east-1:135775632425:schedule/schoolpilot-production-db-insights-leases/db-insights-restore-0123456789abcdef01234567'
+    $leaseRoleArn = 'arn:aws:iam::135775632425:role/schoolpilot-production-db-insights-restore'
+    $leaseDlqArn = 'arn:aws:sqs:us-east-1:135775632425:schoolpilot-production-db-insights-restore-dlq'
+    $leaseAutomationDefinitionArn = 'arn:aws:ssm:us-east-1:135775632425:automation-definition/schoolpilot-production-db-insights-restore-v1:1'
+    $leaseAutomationRoleArn = 'arn:aws:iam::135775632425:role/schoolpilot-production-db-insights-restore-automation'
+    $leaseAutomationFailureRuleArn = 'arn:aws:events:us-east-1:135775632425:rule/schoolpilot-production-db-insights-restore-failed'
+    $leaseAutomationDocumentContentSha256 = '8' * 64
+    [IO.File]::WriteAllText($leaseBindingReceiptPath, ([ordered]@{immutable=$true;durableRestoreGuard=[ordered]@{
+        version='aws-scheduler-ssm-recurring-restore-v1';bindingSha256=('9' * 64)
+        scheduleArn=$leaseScheduleArn;targetRoleArn=$leaseRoleArn;deadLetterQueueArn=$leaseDlqArn
+        automationDefinitionArn=$leaseAutomationDefinitionArn;automationRoleArn=$leaseAutomationRoleArn
+        automationFailureRuleArn=$leaseAutomationFailureRuleArn;automationDocumentVersion='1'
+        automationDocumentContentSha256=$leaseAutomationDocumentContentSha256
+    }} | ConvertTo-Json -Depth 5 -Compress), [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText($leaseBindingStatusPath, '{"state":"active"}', [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText($leaseBindingWatchdogPath, '{"state":"monitoring"}', [Text.UTF8Encoding]::new($false))
+    $leaseBindingReceiptSha = (Get-FileHash -LiteralPath $leaseBindingReceiptPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $leaseBinding = Assert-DatabaseInsightsLeaseBinding ([ordered]@{version=$script:DatabaseInsightsLeaseVersion;
+        receiptPath=$leaseBindingReceiptPath;receiptSha256=$leaseBindingReceiptSha})
+    Assert-Condition ($leaseBinding.ReceiptPath -ceq [IO.Path]::GetFullPath($leaseBindingReceiptPath) -and
+        $leaseBinding.ReceiptSha256 -ceq $leaseBindingReceiptSha -and
+        $leaseBinding.StatusPath -ceq [IO.Path]::GetFullPath($leaseBindingStatusPath) -and
+        $leaseBinding.WatchdogPath -ceq [IO.Path]::GetFullPath($leaseBindingWatchdogPath) -and
+        $leaseBinding.DurableRestoreScheduleArnSha256 -ceq (Get-StringSha256 $leaseScheduleArn) -and
+        $leaseBinding.DurableRestoreTargetRoleArnSha256 -ceq (Get-StringSha256 $leaseRoleArn) -and
+        $leaseBinding.DurableRestoreDeadLetterQueueArnSha256 -ceq (Get-StringSha256 $leaseDlqArn) -and
+        $leaseBinding.DurableRestoreAutomationDefinitionArnSha256 -ceq (Get-StringSha256 $leaseAutomationDefinitionArn) -and
+        $leaseBinding.DurableRestoreAutomationRoleArnSha256 -ceq (Get-StringSha256 $leaseAutomationRoleArn) -and
+        $leaseBinding.DurableRestoreAutomationFailureRuleArnSha256 -ceq (Get-StringSha256 $leaseAutomationFailureRuleArn) -and
+        $leaseBinding.DurableRestoreAutomationDocumentVersion -ceq '1' -and
+        $leaseBinding.DurableRestoreAutomationDocumentContentSha256 -ceq $leaseAutomationDocumentContentSha256) 'The diagnostic lease binding must preserve the exact external immutable receipt and hash its private recurring schedule, Automation, roles, failure rule, and DLQ identities.'
+    [IO.File]::AppendAllText($leaseBindingReceiptPath, 'tamper', [Text.UTF8Encoding]::new($false))
+    Assert-Throws { Assert-DatabaseInsightsLeaseBinding ([ordered]@{version=$script:DatabaseInsightsLeaseVersion;
+        receiptPath=$leaseBindingReceiptPath;receiptSha256=$leaseBindingReceiptSha}) } 'hash does not match' 'A changed Database Insights receipt must fail config validation.'
+}
+finally { Remove-Item -LiteralPath $leaseBindingDirectory -Recurse -Force }
+
+$leaseTimingDirectory = Join-Path ([IO.Path]::GetTempPath()) "schoolpilot-diagnostic-lease-timing-$([guid]::NewGuid().ToString('N'))"
+[void](New-Item -ItemType Directory -Path $leaseTimingDirectory)
+$leaseTimingReceiptPath = Join-Path $leaseTimingDirectory 'lease.json'
+$leaseTimingNow = [DateTimeOffset]'2026-07-20T12:00:00Z'
+try {
+    function Write-TestLeaseTimingReceipt {
+        param([DateTimeOffset]$CapturedAt, [DateTimeOffset]$ExpiresAt)
+        [IO.File]::WriteAllText($leaseTimingReceiptPath, ([ordered]@{
+            capturedAtUtc=$CapturedAt.ToString('o');expiresAtUtc=$ExpiresAt.ToString('o')
+        } | ConvertTo-Json -Compress), [Text.UTF8Encoding]::new($false))
+        Set-TestDiagnosticPrivateAcl $leaseTimingReceiptPath
+        return (Get-FileHash -LiteralPath $leaseTimingReceiptPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+    $leaseTimingSha = Write-TestLeaseTimingReceipt ($leaseTimingNow.AddMinutes(-5)) ($leaseTimingNow.AddSeconds(3901))
+    $leaseTimingConfig = [pscustomobject]@{DatabaseInsightsLease=[pscustomobject]@{
+        ReceiptPath=$leaseTimingReceiptPath;ReceiptSha256=$leaseTimingSha
+    }}
+    $leaseTiming = Get-DatabaseInsightsLeaseTimingEvidence $leaseTimingConfig `
+        ($leaseTimingNow.AddSeconds(3901).ToString('o')) $leaseTimingNow
+    Assert-Condition ($leaseTiming.timingContractVersion -ceq 'diagnostic-pi-lease-headroom-v1' -and
+        $leaseTiming.requiredRemainingSeconds -eq 3900 -and $leaseTiming.remainingSeconds -eq 3901 -and
+        $leaseTiming.acquisitionAgeSeconds -eq 300 -and -not $leaseTiming.rawPathsPersisted) `
+        'Lease timing must prove traffic, +15-minute publication, full restore timeout, and fixed safety headroom without exposing paths.'
+
+    $leaseTimingSha = Write-TestLeaseTimingReceipt ($leaseTimingNow.AddSeconds(-901)) ($leaseTimingNow.AddMinutes(90))
+    $leaseTimingConfig.DatabaseInsightsLease.ReceiptSha256 = $leaseTimingSha
+    Assert-Throws { Get-DatabaseInsightsLeaseTimingEvidence $leaseTimingConfig `
+        ($leaseTimingNow.AddMinutes(90).ToString('o')) $leaseTimingNow } 'too old' `
+        'A lease captured more than fifteen minutes before validation must not authorize fresh traffic.'
+
+    $leaseTimingSha = Write-TestLeaseTimingReceipt ($leaseTimingNow.AddMinutes(-1)) ($leaseTimingNow.AddSeconds(3900))
+    $leaseTimingConfig.DatabaseInsightsLease.ReceiptSha256 = $leaseTimingSha
+    Assert-Throws { Get-DatabaseInsightsLeaseTimingEvidence $leaseTimingConfig `
+        ($leaseTimingNow.AddSeconds(3900).ToString('o')) $leaseTimingNow } 'does not extend beyond' `
+        'A lease expiring exactly at the required traffic/publication/restore boundary must fail; headroom is exclusive.'
+}
+finally {
+    Remove-Item -Path Function:Write-TestLeaseTimingReceipt -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $leaseTimingDirectory -Recurse -Force
+}
 
 function Read-AtomicJson {
     param([string]$Path)
@@ -398,6 +703,7 @@ try {
 finally { Remove-Item -LiteralPath $trafficEvidenceDirectory -Recurse -Force }
 
 $apiTaskArn = 'arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:99'
+$apiRuntimeTaskDefinitionSha256 = Get-StringSha256 $apiTaskArn
 $script:diagnosticTaskDefinition = [pscustomobject]@{
     taskDefinitionArn=$apiTaskArn
     containerDefinitions=@([pscustomobject]@{
@@ -426,15 +732,84 @@ $script:diagnosticAwsCalls = [System.Collections.Generic.List[object]]::new()
 $script:diagnosticLogResponse = [pscustomobject]@{events=@();searchedLogStreams=@()}
 $script:diagnosticHotPathLogResponse = [pscustomobject]@{events=@();searchedLogStreams=@()}
 $script:diagnosticMetricResponse = [pscustomobject]@{
+    AlignedStartTime='2026-07-20T12:00:00Z';AlignedEndTime='2026-07-20T12:30:00Z'
+    Identifier=$historyDbiResourceId
     MetricList=@([pscustomobject]@{Key='db.load.avg';DataPoints=@(
         [pscustomobject]@{Timestamp='2026-07-20T12:00:00Z';Value=2.5},
         [pscustomobject]@{Timestamp='2026-07-20T12:01:00Z';Value=2.5}
     )})
 }
+$script:diagnosticHistoryStatement = 'WITH requested_tiles AS (VALUES (?)) SELECT * FROM requested_tiles CROSS JOIN LATERAL (SELECT * FROM heartbeats) h'
+$script:diagnosticHistoryTokenId = 'history-token-1'
+$script:diagnosticSqlStatsCallsRate = (1.0 / 60.0)
+$script:diagnosticSqlStatsTotalTimeRate = 1.0
+$script:diagnosticSqlStatsBlockReadTimeRate = 0.2
+$script:diagnosticSqlStatsSharedBlocksReadRate = 2.0
+$script:diagnosticSqlStatsTempBlocksReadRate = 0.0
+$script:diagnosticSqlStatsTempBlocksWrittenRate = 0.0
+$script:diagnosticSqlStatsTimestampOverrides = @{}
+$script:diagnosticSqlStatsUngroupedTotalsMode = 'none'
+$script:diagnosticSqlStatsIdentityMode = 'valid'
+$script:diagnosticSqlStatsTimestamps = @('2026-07-20T12:00:00Z')
+$script:diagnosticSampledLoad = 1.0
+$script:diagnosticSampledIdentityMode = 'valid'
+$script:diagnosticTrackIoTimingValue = 'on'
+function New-DiagnosticSqlStatsResponse {
+    $values = @{
+        'db.sql_tokenized.stats.calls_per_sec.avg'=$script:diagnosticSqlStatsCallsRate
+        'db.sql_tokenized.stats.total_time_per_sec.avg'=$script:diagnosticSqlStatsTotalTimeRate
+        'db.sql_tokenized.stats.blk_read_time_per_sec.avg'=$script:diagnosticSqlStatsBlockReadTimeRate
+        'db.sql_tokenized.stats.shared_blks_read_per_sec.avg'=$script:diagnosticSqlStatsSharedBlocksReadRate
+        'db.sql_tokenized.stats.temp_blks_read_per_sec.avg'=$script:diagnosticSqlStatsTempBlocksReadRate
+        'db.sql_tokenized.stats.temp_blks_written_per_sec.avg'=$script:diagnosticSqlStatsTempBlocksWrittenRate
+    }
+    $returnedDbId = if($script:diagnosticSqlStatsIdentityMode -ceq 'native_mismatch'){'9223372036854775807'}else{$historyQueryIdentifier}
+    $returnedStatement = if($script:diagnosticSqlStatsIdentityMode -ceq 'marker_mismatch'){'SELECT 1'}else{$script:diagnosticHistoryStatement}
+    $grouped = @($values.GetEnumerator() | ForEach-Object {
+        $metricEntry = $_
+        [pscustomobject]@{
+            Key=[pscustomobject]@{Metric=[string]$metricEntry.Key;Dimensions=[pscustomobject]@{
+                'db.sql_tokenized.db_id'=$returnedDbId
+                'db.sql_tokenized.id'=$script:diagnosticHistoryTokenId
+                'db.sql_tokenized.statement'=$returnedStatement
+            }}
+            DataPoints=@($script:diagnosticSqlStatsTimestamps | ForEach-Object {
+                [pscustomobject]@{Timestamp=if($script:diagnosticSqlStatsTimestampOverrides.ContainsKey([string]$metricEntry.Key)){
+                        [string]$script:diagnosticSqlStatsTimestampOverrides[[string]$metricEntry.Key]
+                    }else{[string]$_};Value=[double]$metricEntry.Value}
+            })
+        }
+    })
+    if ($script:diagnosticSqlStatsIdentityMode -ceq 'missing') { $grouped = @() }
+    if ($script:diagnosticSqlStatsIdentityMode -ceq 'ambiguous' -and $grouped.Count -gt 0) {
+        $ambiguous = $grouped[0] | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+        $ambiguous.Key.Dimensions.'db.sql_tokenized.id' = 'history-token-2'
+        $grouped += $ambiguous
+    }
+    $totals = @()
+    if ($script:diagnosticSqlStatsUngroupedTotalsMode -cne 'none') {
+        $totals = @($grouped | ForEach-Object {
+            [pscustomobject]@{Key=[pscustomobject]@{Metric=$_.Key.Metric};DataPoints=$_.DataPoints}
+        })
+        if ($script:diagnosticSqlStatsUngroupedTotalsMode -in @('repeated','conflicting')) {
+            $value = if ($script:diagnosticSqlStatsUngroupedTotalsMode -ceq 'conflicting') { 999.0 } else {
+                [double]$totals[0].DataPoints[0].Value
+            }
+            $totals += [pscustomobject]@{Key=[pscustomobject]@{Metric=$totals[0].Key.Metric};DataPoints=@(
+                [pscustomobject]@{Timestamp=$totals[0].DataPoints[0].Timestamp;Value=$value}
+            )}
+        }
+    }
+    return [pscustomobject]@{
+        AlignedStartTime='2026-07-20T12:00:00Z';AlignedEndTime='2026-07-20T12:30:00Z'
+        Identifier=$historyDbiResourceId
+        MetricList=@($totals) + @($grouped)
+    }
+}
 $script:diagnosticTopKeys = @(
     [pscustomobject]@{Total=1.0;Dimensions=[pscustomobject]@{
         'db.sql_tokenized.id'='history-token-1'
-        'db.sql_tokenized.statement'='WITH requested_tiles AS (VALUES (?)) SELECT * FROM requested_tiles CROSS JOIN LATERAL (SELECT * FROM heartbeats) h'
+        'db.sql_tokenized.statement'=$script:diagnosticHistoryStatement
     }},
     [pscustomobject]@{Total=0.5;Dimensions=[pscustomobject]@{
         'db.sql_tokenized.id'='auth-token-1'
@@ -444,14 +819,20 @@ $script:diagnosticTopKeys = @(
         'db.sql_tokenized.id'='other-token-1';'db.sql_tokenized.statement'='SELECT ?'
     }}
 )
+$historyWaitKey = "$historyQueryIdentifier|history-token-1"
 $script:diagnosticWaitResponses = @{
-    'history-token-1'=[pscustomobject]@{Keys=@(
+    $historyWaitKey=[pscustomobject]@{Keys=@(
         [pscustomobject]@{Total=0.2;Dimensions=[pscustomobject]@{'db.wait_event.name'='DataFileRead';'db.wait_event.type'='IO'}},
         [pscustomobject]@{Total=0.8;Dimensions=[pscustomobject]@{'db.wait_event.name'='CPU';'db.wait_event.type'='CPU'}}
+    )}
+    '9223372036854775807|history-token-1'=[pscustomobject]@{Keys=@(
+        [pscustomobject]@{Total=1.0;Dimensions=[pscustomobject]@{'db.wait_event.name'='DataFileRead';'db.wait_event.type'='IO'}}
     )}
 }
 $script:diagnosticWaitCallCount = 0
 $script:diagnosticTopTokenCalls = [System.Collections.Generic.List[object]]::new()
+$script:diagnosticSqlStatsCallCount = 0
+$script:diagnosticSampledLoadCallCount = 0
 $script:diagnosticPageQueue = $null
 function Get-TestArgumentValue {
     param([string[]]$Arguments,[string]$Name)
@@ -480,7 +861,34 @@ function Invoke-AwsJson {
             Assert-Condition ($filterPattern -ceq '"classpilot_heartbeat_hot_path_summary"') 'Fallback evidence must select only sanitized hot-path summary events.'
             return $script:diagnosticHotPathLogResponse
         }
-        'pi get-resource-metrics' { return $script:diagnosticMetricResponse }
+        'pi get-resource-metrics' {
+            Assert-Condition ((Get-TestArgumentValue $Arguments '--period-alignment') -ceq 'START_TIME') 'Every PI metric query must use START_TIME period alignment.'
+            $metricQueries = Get-TestArgumentValue $Arguments '--metric-queries'
+            if ($metricQueries -ceq 'Metric=db.load.avg') {
+                $script:diagnosticMetricResponse.AlignedStartTime = Get-TestArgumentValue $Arguments '--start-time'
+                $script:diagnosticMetricResponse.AlignedEndTime = Get-TestArgumentValue $Arguments '--end-time'
+                $script:diagnosticMetricResponse.Identifier = Get-TestArgumentValue $Arguments '--identifier'
+                return $script:diagnosticMetricResponse
+            }
+            $script:diagnosticSqlStatsCallCount++
+            $parsedQueries = @($metricQueries | ConvertFrom-Json -Depth 20)
+            Assert-Condition ($parsedQueries.Count -eq 6) 'The fallback SQL-statistics query must request every reviewed call and I/O metric together.'
+            foreach ($query in $parsedQueries) {
+                Assert-Condition ([string]$query.Filter.'db.sql_tokenized.db_id' -ceq $historyQueryIdentifier) 'Every SQL-statistics metric must filter by the exact native PostgreSQL query identifier.'
+            }
+            $statsResponse = New-DiagnosticSqlStatsResponse
+            $statsResponse.AlignedStartTime = Get-TestArgumentValue $Arguments '--start-time'
+            $statsResponse.AlignedEndTime = Get-TestArgumentValue $Arguments '--end-time'
+            $statsResponse.Identifier = Get-TestArgumentValue $Arguments '--identifier'
+            return $statsResponse
+        }
+        'rds describe-db-parameters' {
+            Assert-Condition ('--no-paginate' -in $Arguments) 'The track_io_timing parameter read must disable implicit AWS CLI pagination.'
+            Assert-Condition ((Get-TestArgumentValue $Arguments '--filters') -ceq 'Name=parameter-name,Values=track_io_timing') 'The RDS parameter read must filter to track_io_timing.'
+            return [pscustomobject]@{Parameters=@([pscustomobject]@{
+                ParameterName='track_io_timing';ParameterValue=$script:diagnosticTrackIoTimingValue
+            })}
+        }
         'pi describe-dimension-keys' {
             $groupBy = Get-TestArgumentValue $Arguments '--group-by'
             if ($groupBy -ceq 'Group=db.sql_tokenized,Limit=25') {
@@ -488,20 +896,59 @@ function Invoke-AwsJson {
                     StartUtc=Get-TestArgumentValue $Arguments '--start-time'
                     EndUtc=Get-TestArgumentValue $Arguments '--end-time'
                 })
-                return [pscustomobject]@{Keys=$script:diagnosticTopKeys}
+                return [pscustomobject]@{AlignedStartTime=(Get-TestArgumentValue $Arguments '--start-time');
+                    AlignedEndTime=(Get-TestArgumentValue $Arguments '--end-time');Keys=$script:diagnosticTopKeys}
+            }
+            if ($groupBy -ceq 'Group=db.sql_tokenized,Dimensions=[db.sql_tokenized.db_id,db.sql_tokenized.id,db.sql_tokenized.statement],Limit=25') {
+                $script:diagnosticSampledLoadCallCount++
+                $filter = (Get-TestArgumentValue $Arguments '--filter') | ConvertFrom-Json
+                Assert-Condition ([string]$filter.'db.sql_tokenized.db_id' -ceq $historyQueryIdentifier) 'Sampled fallback load must be filtered by the exact native query identifier.'
+                $sampledDbId = if($script:diagnosticSampledIdentityMode -ceq 'native_mismatch'){'9223372036854775807'}else{$historyQueryIdentifier}
+                $sampledStatement = if($script:diagnosticSampledIdentityMode -ceq 'marker_mismatch'){'SELECT 1'}else{$script:diagnosticHistoryStatement}
+                $keys = if ($null -eq $script:diagnosticSampledLoad) { @() } else { @([pscustomobject]@{
+                    Total=[double]$script:diagnosticSampledLoad;Dimensions=[pscustomobject]@{
+                        'db.sql_tokenized.db_id'=$sampledDbId
+                        'db.sql_tokenized.id'=$script:diagnosticHistoryTokenId
+                        'db.sql_tokenized.statement'=$sampledStatement
+                    }
+                }) }
+                if ($script:diagnosticSampledIdentityMode -ceq 'ambiguous' -and $keys.Count -eq 1) {
+                    $extra = $keys[0] | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+                    $extra.Dimensions.'db.sql_tokenized.id' = 'history-token-2'
+                    $keys += $extra
+                }
+                return [pscustomobject]@{AlignedStartTime=(Get-TestArgumentValue $Arguments '--start-time');
+                    AlignedEndTime=(Get-TestArgumentValue $Arguments '--end-time');Keys=$keys}
             }
             Assert-Condition ($groupBy -ceq 'Group=db.wait_event,Limit=25') 'Present history tokens must be resolved through filtered wait-event evidence.'
             $script:diagnosticWaitCallCount++
             $filter = (Get-TestArgumentValue $Arguments '--filter') | ConvertFrom-Json
+            $dbId = [string]$filter.'db.sql_tokenized.db_id'
             $tokenId = [string]$filter.'db.sql_tokenized.id'
-            if (-not $script:diagnosticWaitResponses.ContainsKey($tokenId)) { throw 'No test wait response for filtered token.' }
-            return $script:diagnosticWaitResponses[$tokenId]
+            $waitIdentity = "$dbId|$tokenId"
+            if (-not $script:diagnosticWaitResponses.ContainsKey($waitIdentity)) { throw 'No test wait response for the exact native/tokenized SQL identity.' }
+            $waitResponse = $script:diagnosticWaitResponses[$waitIdentity]
+            return [pscustomobject]@{AlignedStartTime=(Get-TestArgumentValue $Arguments '--start-time');
+                AlignedEndTime=(Get-TestArgumentValue $Arguments '--end-time');Keys=@($waitResponse.Keys)}
         }
         default { throw "Unexpected diagnostic evidence test command: $operation" }
     }
 }
 
-$diagnosticConfig = [pscustomobject]@{ApiTaskDefinitionArn=$apiTaskArn;Resources=[pscustomobject]@{region='us-east-1'}}
+$diagnosticConfig = [pscustomobject]@{ApplicationGitSha=('1' * 40);ImageDigest=('sha256:' + ('2' * 64));
+    ApiTaskDefinitionArn=$apiTaskArn;WorkerTaskDefinitionArn='arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:99';
+    Resources=[pscustomobject]@{region='us-east-1'};HistoryFallbackSqlIdentity=$historyFallbackSqlIdentity}
+$trackIoInstance = [pscustomobject]@{DBParameterGroups=@([pscustomobject]@{
+    DBParameterGroupName='schoolpilot-production-postgres16';ParameterApplyStatus='in-sync'
+})}
+$trackIoPosture = Get-DiagnosticTrackIoTimingPosture $trackIoInstance $diagnosticConfig
+Assert-Condition ($trackIoPosture.enabled -eq $true -and $trackIoPosture.pageCount -eq 1 -and
+    [string]$trackIoPosture.parameterGroupSha256 -match '^[0-9a-f]{64}$') `
+    'Diagnostic preflight must independently verify effective track_io_timing from the active in-sync RDS parameter group.'
+$script:diagnosticTrackIoTimingValue = 'off'
+Assert-Throws { Get-DiagnosticTrackIoTimingPosture $trackIoInstance $diagnosticConfig } `
+    'must be enabled' 'A disabled effective RDS track_io_timing value must fail diagnostic preflight closed.'
+$script:diagnosticTrackIoTimingValue = 'on'
 $trafficStart = '2026-07-20T12:00:00.0000000+00:00'
 $trafficEnd = '2026-07-20T12:30:00.0000000+00:00'
 $noTimeouts = Get-Postgres57014Evidence $diagnosticConfig $trafficStart $trafficEnd
@@ -541,6 +988,10 @@ Assert-Throws { Get-Postgres57014Evidence $diagnosticConfig $trafficStart $traff
 $script:diagnosticLogResponse = [pscustomobject]@{events=@()}
 $hotPathMessage = [ordered]@{
     event='classpilot_heartbeat_hot_path_summary';intervalSeconds=60
+    intervalStartedAtUtc='2026-07-20T12:00:00Z';intervalEndedAtUtc='2026-07-20T12:01:00Z'
+    historyFallbackSqlIdentityVersion='history-fallback-queryid-v1'
+    historyFallbackSqlIdentitySha256=$historyCompiledSqlSha256
+    apiRuntimeTaskDefinitionSha256=$apiRuntimeTaskDefinitionSha256
     counters=[ordered]@{tileBatchHistoryFallbackItems=40}
     timings=[ordered]@{tileBatchHistoryDatabaseMs=[ordered]@{count=1;totalMs=12.5;maxMs=12.5}}
 } | ConvertTo-Json -Depth 10 -Compress
@@ -548,28 +999,222 @@ $script:diagnosticHotPathLogResponse = [pscustomobject]@{events=@([pscustomobjec
     timestamp=$startMs + 60000;logStreamName='api/api/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
     eventId='hot-path-raw-event-id';message=$hotPathMessage
 })}
+$testFallbackWindows = @([pscustomobject]@{
+    StartUtc='2026-07-20T12:00:00Z';EndUtc='2026-07-20T12:01:00Z';DatabaseReadCount=1
+})
 
 $script:diagnosticWaitCallCount = 0
 $script:diagnosticTopTokenCalls.Clear()
-$piEvidence = Get-PerformanceInsightsEvidence $diagnosticConfig $trafficStart $trafficEnd 'db-resource-id'
+$script:diagnosticSqlStatsCallCount = 0
+$script:diagnosticSampledLoadCallCount = 0
+$piEvidence = Get-PerformanceInsightsEvidence $diagnosticConfig $trafficStart $trafficEnd $historyDbiResourceId
 Assert-Condition ($piEvidence.passed -and $piEvidence.tileAuthorization.passed) 'Existing aggregate tile-authorization non-dominance must remain enforced.'
-Assert-Condition ($piEvidence.historyFallback.tokenCount -eq 1 -and $piEvidence.historyFallback.filteredWaitEventEvidenceComplete -and
-    $piEvidence.historyFallback.perTokenAllBelowThreshold -and $piEvidence.historyFallback.dataFileReadSharePercent -eq 20.0 -and
+Assert-Condition ($piEvidence.historyFallback.historyFallbackPiEvidenceVersion -ceq 'queryid-sqlstats-v1' -and
+    $piEvidence.historyFallback.sqlStatistics.integratedCalls -ge 1 -and
+    $piEvidence.historyFallback.sqlStatistics.callsCoverApplicationReads -and
+    $piEvidence.historyFallback.sqlStatistics.blockReadTimeSharePercent -eq 20.0 -and
+    [string]$piEvidence.historyFallback.sqlStatistics.releaseIdentitySha256 -match '^[0-9a-f]{64}$' -and
+    $piEvidence.historyFallback.sampledLoad.filteredWaitEventEvidenceComplete -and
+    $piEvidence.historyFallback.sampledLoad.dataFileReadSharePercent -eq 20.0 -and
     $piEvidence.historyFallback.source.fallbackPositiveSummaryCount -eq 1 -and
     $piEvidence.historyFallback.source.batchHistoryDatabaseReadCount -eq 1 -and
-    $piEvidence.historyFallback.evidenceWindows.Count -eq 1 -and
-    $script:diagnosticWaitCallCount -eq 1) 'A fallback-positive batch database-read window must have complete per-token and aggregate IO:DataFileRead evidence below 50 percent.'
-Assert-Condition ($script:diagnosticTopTokenCalls.Count -eq 2 -and
-    [DateTimeOffset]$script:diagnosticTopTokenCalls[1].StartUtc -eq [DateTimeOffset]'2026-07-20T12:00:00Z' -and
-    [DateTimeOffset]$script:diagnosticTopTokenCalls[1].EndUtc -eq [DateTimeOffset]'2026-07-20T12:01:00Z') 'A fallback-positive 60-second hot-path summary must drive an exact-window PI top-25 query.'
+    $script:diagnosticWaitCallCount -eq 1 -and $script:diagnosticSqlStatsCallCount -eq 1 -and
+    $script:diagnosticSampledLoadCallCount -eq 1) 'A fallback-positive batch database-read window must have deterministic query-ID-bound call statistics and sampled-wait evidence below 50 percent.'
+Assert-Condition ($piEvidence.historyFallback.sqlStatistics.bucketCoverage.coverageContractVersion -ceq 'queryid-minute-sparse-v1' -and
+    $piEvidence.historyFallback.sqlStatistics.bucketCoverage.expectedBucketCount -eq 30 -and
+    $piEvidence.historyFallback.sqlStatistics.bucketCoverage.observedBucketCount -eq 1 -and
+    $piEvidence.historyFallback.sqlStatistics.bucketCoverage.omittedSparseBucketCount -eq 29 -and
+    $piEvidence.historyFallback.sqlStatistics.bucketCoverage.applicationActiveBucketCount -eq 1 -and
+    $piEvidence.historyFallback.sqlStatistics.bucketCoverage.unobservedApplicationActiveBucketCount -eq 0 -and
+    $piEvidence.historyFallback.sqlStatistics.bucketCoverage.missingMiddleBucketCount -eq 0 -and
+    [string]$piEvidence.historyFallback.sqlStatistics.bucketCoverage.expectedBucketSetSha256 -match '^[0-9a-f]{64}$' -and
+    [string]$piEvidence.historyFallback.sqlStatistics.bucketCoverage.observedBucketSetSha256 -match '^[0-9a-f]{64}$') `
+    'SQL-statistics evidence must explicitly seal the expected/observed minute lattice and allow only inactive leading/trailing sparse buckets.'
+Assert-Condition ([string]$piEvidence.evidenceWindow.coherentWindowSha256 -match '^[0-9a-f]{64}$' -and
+    [string]$piEvidence.evidenceWindow.alignedEvidenceWindowSha256 -match '^[0-9a-f]{64}$' -and
+    $piEvidence.evidenceWindow.alignedCoveragePercent -eq 100.0 -and
+    $piEvidence.historyFallback.source.coherentWindowSha256 -ceq $piEvidence.evidenceWindow.coherentWindowSha256 -and
+    $piEvidence.historyFallback.source.alignedEvidenceWindowSha256 -ceq $piEvidence.evidenceWindow.alignedEvidenceWindowSha256) 'Sealed PI and hot-path evidence must bind the same coherent and aligned subwindow hashes and coverage.'
+$script:diagnosticSqlStatsCallsRate = (0.9995 / 60.0)
+$strictCallUndercount = Get-HistoryFallbackSqlStatsEvidence $diagnosticConfig $trafficStart $trafficEnd $historyDbiResourceId 1 $testFallbackWindows
+Assert-Condition (-not $strictCallUndercount.Evidence.callsCoverApplicationReads -and -not $strictCallUndercount.Evidence.passed) 'Integrated PI calls below the exact aligned application read count must fail without tolerance.'
+$script:diagnosticSqlStatsCallsRate = (1.0 / 60.0)
+$script:diagnosticSqlStatsUngroupedTotalsMode = 'single'
+$withDimensionlessTotals = Get-HistoryFallbackSqlStatsEvidence $diagnosticConfig $trafficStart $trafficEnd $historyDbiResourceId 1 $testFallbackWindows
+Assert-Condition ($withDimensionlessTotals.Evidence.passed -and
+    $withDimensionlessTotals.Evidence.ignoredUngroupedTotalSeriesCount -eq 6) `
+    'AWS dimensionless GetResourceMetrics totals must be ignored by the diagnostic SQL-statistics gate.'
+$script:diagnosticSqlStatsUngroupedTotalsMode = 'repeated'
+$withRepeatedDimensionlessTotal = Get-HistoryFallbackSqlStatsEvidence $diagnosticConfig $trafficStart $trafficEnd $historyDbiResourceId 1 $testFallbackWindows
+Assert-Condition ($withRepeatedDimensionlessTotal.Evidence.passed -and
+    $withRepeatedDimensionlessTotal.Evidence.repeatedUngroupedTotalSeriesCount -eq 1) `
+    'Identical repeated dimensionless totals must be deduplicated in the diagnostic collector.'
+$script:diagnosticSqlStatsUngroupedTotalsMode = 'conflicting'
+Assert-Throws {
+    Get-HistoryFallbackSqlStatsEvidence $diagnosticConfig $trafficStart $trafficEnd $historyDbiResourceId 1 $testFallbackWindows
+} 'conflicting duplicate ungrouped total' 'Conflicting repeated dimensionless totals must fail the diagnostic collector closed.'
+$script:diagnosticSqlStatsUngroupedTotalsMode = 'none'
+Assert-Condition ($script:diagnosticTopTokenCalls.Count -eq 1) 'Top-25 token discovery must remain only for aggregate authorization evidence, never fallback identity discovery.'
+
+$script:diagnosticSqlStatsIdentityMode = 'missing'
+$missingIdentitySnapshot = Get-PerformanceInsightsEvidence $diagnosticConfig $trafficStart $trafficEnd $historyDbiResourceId
+$missingIdentityEnvelope = New-EvidenceEnvelope -Collected $true -Passed $missingIdentitySnapshot.passed -AttemptCount 2 `
+    -FailureCode $null -FailureStage $null -MessageSha256 $null -Evidence $missingIdentitySnapshot
+Assert-Condition ($missingIdentityEnvelope.collected -and -not $missingIdentityEnvelope.passed -and
+    $missingIdentityEnvelope.state -ceq 'completed' -and $null -eq $missingIdentityEnvelope.failureCode -and
+    @($missingIdentityEnvelope.historyFallback.sqlStatistics.failureReasons) -contains 'missing_query_identity' -and
+    $missingIdentityEnvelope.historyFallback.sampledLoad.status -ceq 'not_evaluated_identity_gate_failed') `
+    'A stable missing query token must seal as a collected deterministic gate failure, not PI evidence unavailability.'
+
+$script:diagnosticSqlStatsIdentityMode = 'ambiguous'
+$ambiguousIdentity = Get-HistoryFallbackSqlStatsEvidence $diagnosticConfig $trafficStart $trafficEnd `
+    $historyDbiResourceId 1 $testFallbackWindows
+Assert-Condition (-not $ambiguousIdentity.Evidence.passed -and
+    @($ambiguousIdentity.Evidence.failureReasons) -contains 'ambiguous_query_identity') `
+    'Multiple query-ID-filtered token identities must produce a deterministic ambiguous-identity gate failure.'
+
+$script:diagnosticSqlStatsIdentityMode = 'native_mismatch'
+$driftedIdentity = Get-HistoryFallbackSqlStatsEvidence $diagnosticConfig $trafficStart $trafficEnd `
+    $historyDbiResourceId 1 $testFallbackWindows
+Assert-Condition (-not $driftedIdentity.Evidence.passed -and
+    @($driftedIdentity.Evidence.failureReasons) -contains 'native_query_identifier_mismatch') `
+    'A stable native PostgreSQL query-ID drift must produce a collected gate failure.'
+
+$script:diagnosticSqlStatsIdentityMode = 'marker_mismatch'
+$markerDrift = Get-HistoryFallbackSqlStatsEvidence $diagnosticConfig $trafficStart $trafficEnd `
+    $historyDbiResourceId 1 $testFallbackWindows
+Assert-Condition (-not $markerDrift.Evidence.passed -and
+    @($markerDrift.Evidence.failureReasons) -contains 'statement_marker_mismatch') `
+    'A stable tokenized statement-shape drift must produce a collected gate failure.'
+
+$script:diagnosticSqlStatsIdentityMode = 'valid'
+$script:diagnosticSqlStatsCallsRate = 0.0
+$script:diagnosticSampledLoad = $null
+$missingCalls = Get-PerformanceInsightsEvidence $diagnosticConfig $trafficStart $trafficEnd $historyDbiResourceId
+Assert-Condition (-not $missingCalls.passed -and
+    @($missingCalls.historyFallback.sqlStatistics.failureReasons) -contains 'missing_positive_calls' -and
+    @($missingCalls.historyFallback.sqlStatistics.failureReasons) -contains 'pi_call_undercount' -and
+    @($missingCalls.historyFallback.sqlStatistics.failureReasons) -contains 'application_active_bucket_without_positive_calls' -and
+    -not $missingCalls.historyFallback.sqlStatistics.bucketCoverage.positiveCallCoveragePassed -and
+    $missingCalls.historyFallback.sqlStatistics.bucketCoverage.zeroCallApplicationActiveBucketCount -eq 1) `
+    'Stable zero SQL-call statistics must be a deterministic collected per-application-bucket gate failure.'
+$script:diagnosticSqlStatsCallsRate = (1.0 / 60.0)
+$script:diagnosticSampledLoad = 1.0
+
+$script:diagnosticSampledIdentityMode = 'native_mismatch'
+$sampledIdentityDrift = Get-PerformanceInsightsEvidence $diagnosticConfig $trafficStart $trafficEnd $historyDbiResourceId
+Assert-Condition (-not $sampledIdentityDrift.passed -and
+    $sampledIdentityDrift.historyFallback.sampledLoad.status -ceq 'sampled_identity_mismatch' -and
+    @($sampledIdentityDrift.historyFallback.sampledLoad.failureReasons) -contains 'sampled_identity_mismatch') `
+    'Stable sampled-load identity drift must seal as a deterministic gate failure.'
+$script:diagnosticSampledIdentityMode = 'valid'
+
+$script:diagnosticSqlStatsTimestamps = @('2026-07-20T12:00:00Z','2026-07-20T12:02:00Z')
+$twoFallbackWindows = @(
+    [pscustomobject]@{StartUtc='2026-07-20T12:00:00Z';EndUtc='2026-07-20T12:01:00Z';DatabaseReadCount=1},
+    [pscustomobject]@{StartUtc='2026-07-20T12:02:00Z';EndUtc='2026-07-20T12:03:00Z';DatabaseReadCount=1}
+)
+Assert-Throws { Get-HistoryFallbackSqlStatsEvidence $diagnosticConfig $trafficStart $trafficEnd `
+    $historyDbiResourceId 2 $twoFallbackWindows } 'missing-middle' `
+    'A missing interior SQL-statistics minute must fail closed even when aggregate calls could cover application reads.'
+$script:diagnosticSqlStatsTimestamps = @('2026-07-20T12:00:00Z')
+$uncoveredFallbackWindow = @([pscustomobject]@{
+    StartUtc='2026-07-20T12:01:00Z';EndUtc='2026-07-20T12:02:00Z';DatabaseReadCount=1
+})
+Assert-Throws { Get-HistoryFallbackSqlStatsEvidence $diagnosticConfig $trafficStart $trafficEnd `
+    $historyDbiResourceId 1 $uncoveredFallbackWindow } 'application-active sparse' `
+    'A sparse PI bucket overlapping a fallback-positive application interval must fail closed.'
+$script:diagnosticSqlStatsTimestamps = @('2026-07-20T12:00:00Z')
+
+Assert-Condition (@($piEvidence.tokens | Where-Object category -eq 'history_fallback').Count -eq 0 -and
+    @($piEvidence.tokens | Where-Object category -eq 'tile_authorization').Count -eq 1) 'Full-interval top tokens must classify only authorization SQL; fallback identity and markers belong exclusively to query-ID-filtered evidence.'
 $piEvidenceJson = $piEvidence | ConvertTo-Json -Depth 20 -Compress
 Assert-Condition (-not $piEvidenceJson.Contains('history-token-1') -and -not $piEvidenceJson.Contains('requested_tiles') -and
+    -not $piEvidenceJson.Contains($historyQueryIdentifier) -and
+    -not $piEvidenceJson.Contains($historyDbiResourceId) -and
     -not $piEvidenceJson.Contains('IO:DataFileRead') -and -not $piEvidenceJson.Contains('hot-path-raw-event-id') -and
     -not $piEvidenceJson.Contains('bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb') -and -not $piEvidenceJson.Contains('api/api/')) 'Performance Insights evidence must retain hashes/categories rather than raw SQL, token ids, log messages, stream ids, or wait-event names.'
+$script:diagnosticTopKeys[1].Total = 1.25
+$authorizationBoundary = Get-PerformanceInsightsEvidence $diagnosticConfig $trafficStart $trafficEnd $historyDbiResourceId
+Assert-Condition (-not $authorizationBoundary.passed -and -not $authorizationBoundary.tileAuthorization.passed -and
+    $authorizationBoundary.tileAuthorization.sharePercent -eq 50.0) 'Authorization PI share at exactly 50 percent must fail the exclusive threshold.'
+$script:diagnosticTopKeys[1].Total = 1.249975
+$authorizationBelowBoundary = Get-PerformanceInsightsEvidence $diagnosticConfig $trafficStart $trafficEnd $historyDbiResourceId
+Assert-Condition ($authorizationBelowBoundary.passed -and $authorizationBelowBoundary.tileAuthorization.passed -and
+    $authorizationBelowBoundary.tileAuthorization.sharePercent -eq 49.999) 'Authorization PI share at 49.999 percent must satisfy the exclusive threshold without rounded-boundary drift.'
+$script:diagnosticTopKeys[1].Total = 0.5
 
 $validHotPathLogResponse = $script:diagnosticHotPathLogResponse
+$wrongRuntimePayload = $hotPathMessage | ConvertFrom-Json -Depth 20
+$wrongRuntimePayload.apiRuntimeTaskDefinitionSha256 = ('0' * 64)
+$script:diagnosticHotPathLogResponse = [pscustomobject]@{events=@([pscustomobject]@{
+    timestamp=$startMs + 60000;logStreamName='api/api/runtime-mismatch'
+    eventId='runtime-mismatch';message=($wrongRuntimePayload | ConvertTo-Json -Depth 20 -Compress)
+})}
+Assert-Throws { Get-HotPathFallbackEvidenceWindows $diagnosticConfig $trafficStart $trafficEnd } `
+    'API runtime identities' 'Every diagnostic fallback-positive interval must bind the exact emitting API revision hash.'
+$script:diagnosticHotPathLogResponse = $validHotPathLogResponse
+$edgeHotPathMessage = [ordered]@{
+    event='classpilot_heartbeat_hot_path_summary';intervalSeconds=60
+    intervalStartedAtUtc='2026-07-20T12:00:00Z';intervalEndedAtUtc='2026-07-20T12:01:00Z'
+    historyFallbackSqlIdentityVersion='history-fallback-queryid-v1';historyFallbackSqlIdentitySha256=$historyCompiledSqlSha256
+    apiRuntimeTaskDefinitionSha256=$apiRuntimeTaskDefinitionSha256
+    counters=[ordered]@{tileBatchHistoryFallbackItems=400}
+    timings=[ordered]@{tileBatchHistoryDatabaseMs=[ordered]@{count=10;totalMs=30;maxMs=5}}
+} | ConvertTo-Json -Depth 10 -Compress
+$interiorHotPathMessage = [ordered]@{
+    event='classpilot_heartbeat_hot_path_summary';intervalSeconds=60
+    intervalStartedAtUtc='2026-07-20T12:01:00Z';intervalEndedAtUtc='2026-07-20T12:02:00Z'
+    historyFallbackSqlIdentityVersion='history-fallback-queryid-v1';historyFallbackSqlIdentitySha256=$historyCompiledSqlSha256
+    apiRuntimeTaskDefinitionSha256=$apiRuntimeTaskDefinitionSha256
+    counters=[ordered]@{tileBatchHistoryFallbackItems=40}
+    timings=[ordered]@{tileBatchHistoryDatabaseMs=[ordered]@{count=1;totalMs=3;maxMs=3}}
+} | ConvertTo-Json -Depth 10 -Compress
+$fractionalTrafficStart = '2026-07-20T12:00:30Z'
+$fractionalTrafficEnd = '2026-07-20T12:30:45Z'
+$fractionalStartMs = ([DateTimeOffset]$fractionalTrafficStart).ToUnixTimeMilliseconds()
+$script:diagnosticHotPathLogResponse = [pscustomobject]@{events=@(
+    [pscustomobject]@{timestamp=$fractionalStartMs + 31000;logStreamName='api/api/edge';message=$edgeHotPathMessage},
+    [pscustomobject]@{timestamp=$fractionalStartMs + 91000;logStreamName='api/api/interior';message=$interiorHotPathMessage}
+)}
+$alignedHotPath = Get-HotPathFallbackEvidenceWindows $diagnosticConfig $fractionalTrafficStart $fractionalTrafficEnd
+Assert-Condition ($alignedHotPath.Evidence.excludedEdgeSummaryCount -eq 1 -and
+    $alignedHotPath.Evidence.fallbackPositiveSummaryCount -eq 1 -and
+    $alignedHotPath.Evidence.batchHistoryDatabaseReadCount -eq 1 -and
+    $alignedHotPath.Windows[0].ObservedSeconds -eq 60.0 -and
+    $alignedHotPath.Windows[0].StartUtc -ceq '2026-07-20T12:01:00.0000000+00:00') 'Fallback counts must exclude natural edge summaries and use only complete payload-declared intervals wholly inside the aligned PI subwindow.'
+$script:diagnosticHotPathLogResponse = $validHotPathLogResponse
+$missingIntervalMessage = [ordered]@{
+    event='classpilot_heartbeat_hot_path_summary';intervalSeconds=60
+    historyFallbackSqlIdentityVersion='history-fallback-queryid-v1';historyFallbackSqlIdentitySha256=$historyCompiledSqlSha256
+    apiRuntimeTaskDefinitionSha256=$apiRuntimeTaskDefinitionSha256
+    counters=[ordered]@{tileBatchHistoryFallbackItems=40}
+    timings=[ordered]@{tileBatchHistoryDatabaseMs=[ordered]@{count=1;totalMs=3;maxMs=3}}
+} | ConvertTo-Json -Depth 10 -Compress
+$script:diagnosticHotPathLogResponse = [pscustomobject]@{events=@([pscustomobject]@{
+    timestamp=$startMs + 60000;logStreamName='api/api/missing-interval';message=$missingIntervalMessage
+})}
+Assert-Throws { Get-HotPathFallbackEvidenceWindows $diagnosticConfig $trafficStart $trafficEnd } 'valid UTC interval bounds' 'Every fallback-positive hot-path summary must declare its exact UTC interval.'
+$script:diagnosticHotPathLogResponse = $validHotPathLogResponse
+$unalignedIntervalMessage = [ordered]@{
+    event='classpilot_heartbeat_hot_path_summary';intervalSeconds=60
+    intervalStartedAtUtc='2026-07-20T12:00:00.001Z';intervalEndedAtUtc='2026-07-20T12:01:00.001Z'
+    historyFallbackSqlIdentityVersion='history-fallback-queryid-v1';historyFallbackSqlIdentitySha256=$historyCompiledSqlSha256
+    apiRuntimeTaskDefinitionSha256=$apiRuntimeTaskDefinitionSha256
+    counters=[ordered]@{tileBatchHistoryFallbackItems=40}
+    timings=[ordered]@{tileBatchHistoryDatabaseMs=[ordered]@{count=1;totalMs=3;maxMs=3}}
+} | ConvertTo-Json -Depth 10 -Compress
+$script:diagnosticHotPathLogResponse = [pscustomobject]@{events=@([pscustomobject]@{
+    timestamp=$startMs + 60000;logStreamName='api/api/unaligned-interval';message=$unalignedIntervalMessage
+})}
+Assert-Throws { Get-HotPathFallbackEvidenceWindows $diagnosticConfig $trafficStart $trafficEnd } 'complete UTC summary interval' 'Fallback-positive intervals must align exactly to the UTC-minute PI lattice.'
+$script:diagnosticHotPathLogResponse = $validHotPathLogResponse
 $counterOnlyMessage = [ordered]@{
     event='classpilot_heartbeat_hot_path_summary';intervalSeconds=60
+    intervalStartedAtUtc='2026-07-20T12:00:00Z';intervalEndedAtUtc='2026-07-20T12:01:00Z'
+    historyFallbackSqlIdentityVersion='history-fallback-queryid-v1'
+    historyFallbackSqlIdentitySha256=$historyCompiledSqlSha256
+    apiRuntimeTaskDefinitionSha256=$apiRuntimeTaskDefinitionSha256
     counters=[ordered]@{tileBatchHistoryFallbackItems=40};timings=[ordered]@{}
 } | ConvertTo-Json -Depth 10 -Compress
 $script:diagnosticHotPathLogResponse = [pscustomobject]@{events=@([pscustomobject]@{
@@ -585,7 +1230,7 @@ $script:diagnosticHotPathLogResponse = [pscustomobject]@{events=@([pscustomobjec
     timestamp=$startMs + 60000;logStreamName='api/api/dddddddddddddddddddddddddddddddd';message=$zeroFallbackMessage
 })}
 $script:diagnosticWaitCallCount = 0
-$noFallbackWindow = Get-PerformanceInsightsEvidence $diagnosticConfig $trafficStart $trafficEnd 'db-resource-id'
+$noFallbackWindow = Get-PerformanceInsightsEvidence $diagnosticConfig $trafficStart $trafficEnd $historyDbiResourceId
 Assert-Condition (-not $noFallbackWindow.passed -and -not $noFallbackWindow.historyFallback.passed -and
     $noFallbackWindow.historyFallback.source.fallbackPositiveSummaryCount -eq 0 -and
     $script:diagnosticWaitCallCount -eq 0) 'A run with no observed batch fallback/database-read window must fail closed without fabricating per-token wait evidence.'
@@ -599,6 +1244,7 @@ $script:fakeEvidenceDelays = [Collections.Generic.List[int]]::new()
 $script:fakePiSnapshotCalls = 0
 $script:fakePiChanging = $false
 $script:fakePiAdvanceSeconds = 0
+$script:fakePiPassed = $true
 $script:PerformanceInsightsPollSeconds = 60
 function Get-EvidenceUtcNow { return $script:fakeEvidenceNow }
 function Wait-EvidenceDelay {
@@ -610,18 +1256,27 @@ function Get-PerformanceInsightsEvidence {
     param($Config,[string]$StartUtc,[string]$EndUtc,[string]$DbiResourceId)
     $script:fakePiSnapshotCalls++
     if ($script:fakePiAdvanceSeconds -gt 0) { $script:fakeEvidenceNow = $script:fakeEvidenceNow.AddSeconds($script:fakePiAdvanceSeconds) }
-    return [ordered]@{diagnosticOnly=$true;sanitized=$true;passed=$true;
+    return [ordered]@{diagnosticOnly=$true;sanitized=$true;passed=$script:fakePiPassed;
         generation=if($script:fakePiChanging){$script:fakePiSnapshotCalls}else{1};
-        tileAuthorization=[ordered]@{passed=$true};historyFallback=[ordered]@{passed=$true}}
+        tileAuthorization=[ordered]@{passed=$true};historyFallback=[ordered]@{passed=$script:fakePiPassed}}
 }
-$fakeStabilizedPi = Get-StabilizedPerformanceInsightsEvidence $diagnosticConfig $trafficStart $trafficEnd 'db-resource-id'
+$fakeStabilizedPi = Get-StabilizedPerformanceInsightsEvidence $diagnosticConfig $trafficStart $trafficEnd $historyDbiResourceId
 Assert-Condition ($fakeStabilizedPi.AttemptCount -eq 2 -and $script:fakePiSnapshotCalls -eq 2 -and
     ($script:fakeEvidenceDelays -join ',') -ceq '60,60') "PI stabilization must use an injectable clock/sleeper, wait until traffic-end plus five minutes, and require two consecutive snapshots (attempts=$($fakeStabilizedPi.AttemptCount), calls=$script:fakePiSnapshotCalls, delays=$($script:fakeEvidenceDelays -join ','))."
+$script:fakeEvidenceNow = ([DateTimeOffset]$trafficEnd).AddMinutes(4)
+$script:fakeEvidenceDelays.Clear()
+$script:fakePiSnapshotCalls = 0
+$script:fakePiPassed = $false
+$stableGateFailure = Get-StabilizedPerformanceInsightsEvidence $diagnosticConfig $trafficStart $trafficEnd $historyDbiResourceId
+Assert-Condition ($stableGateFailure.AttemptCount -eq 2 -and -not $stableGateFailure.Evidence.passed -and
+    -not $stableGateFailure.Evidence.historyFallback.passed) `
+    'Two identical complete PI snapshots may stabilize an evidence-based gate failure without becoming evidence-unavailable.'
+$script:fakePiPassed = $true
 $script:fakeEvidenceNow = ([DateTimeOffset]$trafficEnd).AddMinutes(15)
 $script:fakePiSnapshotCalls = 0
 $script:fakePiChanging = $true
 $deadlineStartError = $null
-try { [void](Get-StabilizedPerformanceInsightsEvidence $diagnosticConfig $trafficStart $trafficEnd 'db-resource-id') }
+try { [void](Get-StabilizedPerformanceInsightsEvidence $diagnosticConfig $trafficStart $trafficEnd $historyDbiResourceId) }
 catch { $deadlineStartError = $_ }
 Assert-Condition ($null -ne $deadlineStartError -and
     [int]$deadlineStartError.Exception.Data['attemptCount'] -eq 0 -and $script:fakePiSnapshotCalls -eq 0) 'PI stabilization must never start a snapshot at or after traffic-end plus fifteen minutes.'
@@ -629,20 +1284,22 @@ $script:fakeEvidenceNow = ([DateTimeOffset]$trafficEnd).AddMinutes(14).AddSecond
 $script:fakePiSnapshotCalls = 0
 $script:fakeEvidenceDelays.Clear()
 $unstableSnapshotError = $null
-try { [void](Get-StabilizedPerformanceInsightsEvidence $diagnosticConfig $trafficStart $trafficEnd 'db-resource-id') }
+try { [void](Get-StabilizedPerformanceInsightsEvidence $diagnosticConfig $trafficStart $trafficEnd $historyDbiResourceId) }
 catch { $unstableSnapshotError = $_ }
 Assert-Condition ($null -ne $unstableSnapshotError -and
     [string]$unstableSnapshotError.Exception.Data['failureStage'] -ceq 'snapshot_stabilization' -and
     $null -ne $unstableSnapshotError.Exception.Data['partialEvidence'].lastCompleteSnapshot -and
     [string]$unstableSnapshotError.Exception.Data['partialEvidence'].lastCompleteCanonicalSha256 -match '^[0-9a-f]{64}$' -and
-    @($unstableSnapshotError.Exception.Data['completedStages']) -contains 'fallback_token_wait_events' -and
+    @($unstableSnapshotError.Exception.Data['completedStages']) -contains 'fallback_window_top_tokens' -and
+    @($unstableSnapshotError.Exception.Data['completedStages']) -notcontains 'fallback_sql_stats' -and
+    @($unstableSnapshotError.Exception.Data['completedStages']) -notcontains 'fallback_sampled_load' -and
     ($script:fakeEvidenceDelays -join ',') -ceq '30') 'A stabilization attempt crossing the deadline must stop before another snapshot while retaining the last sanitized complete snapshot and provenance.'
 $script:fakeEvidenceNow = ([DateTimeOffset]$trafficEnd).AddMinutes(14).AddSeconds(45)
 $script:fakePiSnapshotCalls = 0
 $script:fakePiChanging = $false
 $script:fakePiAdvanceSeconds = 30
 $lateSnapshotError = $null
-try { [void](Get-StabilizedPerformanceInsightsEvidence $diagnosticConfig $trafficStart $trafficEnd 'db-resource-id') }
+try { [void](Get-StabilizedPerformanceInsightsEvidence $diagnosticConfig $trafficStart $trafficEnd $historyDbiResourceId) }
 catch { $lateSnapshotError = $_ }
 Assert-Condition ($null -ne $lateSnapshotError -and $script:fakePiSnapshotCalls -eq 1 -and
     [string]$lateSnapshotError.Exception.Data['failureStage'] -ceq 'snapshot_stabilization' -and
@@ -670,15 +1327,17 @@ try {
     [IO.File]::WriteAllText($monitorResultTestPath, ($rejectedMonitorResult | ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false))
     $preservedTerminal = [ordered]@{failures=@();monitor=$null;observedTrafficWindow=$null;postgresStatementTimeouts=$null;
         performanceInsights=$null;postTrafficAwsPosture=$null;evidenceIntegrity=$null}
-    $preservationConfig = [pscustomobject]@{RunId='diagnostic-window-test';ApiTaskDefinitionArn=$apiTaskArn;
-        Resources=[pscustomobject]@{region='us-east-1'}}
+    $preservationConfig = [pscustomobject]@{RunId='diagnostic-window-test';ApplicationGitSha=$diagnosticConfig.ApplicationGitSha;
+        ImageDigest=$diagnosticConfig.ImageDigest;ApiTaskDefinitionArn=$apiTaskArn;
+        WorkerTaskDefinitionArn=$diagnosticConfig.WorkerTaskDefinitionArn;
+        Resources=[pscustomobject]@{region='us-east-1'};HistoryFallbackSqlIdentity=$historyFallbackSqlIdentity}
     $attachedRejectedMonitor = Attach-TerminalMonitorEvidence $preservedTerminal $preservationConfig $monitorResultTestPath $null
     Assert-Condition ($null -ne $attachedRejectedMonitor -and $preservedTerminal.monitor.result.status -eq 'failed' -and
         [string]$preservedTerminal.monitor.sha256 -match '^[0-9a-f]{64}$') 'A rejected monitor result must still be attached and SHA-256 bound.'
     function Get-AwsPosture { param($Config) return [ordered]@{collected=$true;wafMode='BLOCK';rdsClass='db.t4g.medium'} }
     $script:diagnosticLogResponse = [pscustomobject]@{events=@()}
     $script:diagnosticHotPathLogResponse = $validHotPathLogResponse
-    $script:diagnosticWaitResponses['history-token-1'] = [pscustomobject]@{Keys=@(
+    $script:diagnosticWaitResponses[$historyWaitKey] = [pscustomobject]@{Keys=@(
         [pscustomobject]@{Total=0.2;Dimensions=[pscustomobject]@{'db.wait_event.name'='DataFileRead';'db.wait_event.type'='IO'}},
         [pscustomobject]@{Total=0.8;Dimensions=[pscustomobject]@{'db.wait_event.name'='CPU';'db.wait_event.type'='CPU'}}
     )}
@@ -689,23 +1348,23 @@ try {
     [IO.File]::WriteAllText($raceProgressPath, $raceStart + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))
     $raceTerminal = [ordered]@{failures=@();monitor=$null;observedTrafficWindow=$null;postgresStatementTimeouts=$null;
         performanceInsights=$null;postTrafficAwsPosture=$null;evidenceIntegrity=$null}
-    Collect-TerminalPostTrafficEvidence $raceTerminal $preservationConfig $raceProgressPath $raceSummaryPath 'db-resource-id'
+    Collect-TerminalPostTrafficEvidence $raceTerminal $preservationConfig $raceProgressPath $raceSummaryPath $historyDbiResourceId
     Assert-Condition ($null -eq $raceTerminal.observedTrafficWindow -and
         $null -eq $raceTerminal.postgresStatementTimeouts -and $null -eq $raceTerminal.performanceInsights -and
         $raceTerminal.postTrafficAwsPosture.state -ceq 'completed') 'An interim missing harness final/summary must leave observed, 57014, and PI sources not_started while collecting independent posture.'
     Write-TestTrafficEvidence $raceProgressPath $raceSummaryPath 1799900 $false
     Assert-Condition (Wait-HarnessTerminalEvidenceCommit $raceTerminal $preservationConfig $raceProgressPath $raceSummaryPath $null 0 0) 'The bounded commit phase must accept a later coherent rejected harness final exactly once.'
     $script:preservationEvidenceNow = [DateTimeOffset]'2026-07-20T12:35:00Z'
-    Collect-TerminalPostTrafficEvidence $raceTerminal $preservationConfig $raceProgressPath $raceSummaryPath 'db-resource-id'
+    Collect-TerminalPostTrafficEvidence $raceTerminal $preservationConfig $raceProgressPath $raceSummaryPath $historyDbiResourceId
     Assert-Condition ($raceTerminal.observedTrafficWindow.coherent -and
         $raceTerminal.postgresStatementTimeouts.state -ceq 'completed' -and
         $raceTerminal.performanceInsights.state -ceq 'completed' -and
         @($raceTerminal.failures) -contains 'strict_traffic_duration_not_completed') 'A coherent rejected final arriving during commit grace must collect dependent evidence once without becoming accepted.'
     $raceCallsAfterCommit = $script:diagnosticAwsCalls.Count
-    Collect-TerminalPostTrafficEvidence $raceTerminal $preservationConfig $raceProgressPath $raceSummaryPath 'db-resource-id'
+    Collect-TerminalPostTrafficEvidence $raceTerminal $preservationConfig $raceProgressPath $raceSummaryPath $historyDbiResourceId
     Assert-Condition ($script:diagnosticAwsCalls.Count -eq $raceCallsAfterCommit) 'A committed rejected final must not collect settled dependent sources twice.'
     $script:preservationEvidenceNow = [DateTimeOffset]'2026-07-20T12:35:00Z'
-    Collect-TerminalPostTrafficEvidence $preservedTerminal $preservationConfig $preservationProgressPath $preservationSummaryPath 'db-resource-id'
+    Collect-TerminalPostTrafficEvidence $preservedTerminal $preservationConfig $preservationProgressPath $preservationSummaryPath $historyDbiResourceId
     Assert-Condition ($preservedTerminal.observedTrafficWindow.coherent -and
         -not $preservedTerminal.observedTrafficWindow.strictlyComplete -and
         $null -ne $preservedTerminal.postgresStatementTimeouts -and $null -ne $preservedTerminal.performanceInsights -and
@@ -729,7 +1388,7 @@ try {
         performanceInsights=$null;postTrafficAwsPosture=$null;evidenceIntegrity=$null}
     $script:diagnosticLogResponse = [pscustomobject]@{events=@();nextToken='incomplete-timeout-page'}
     $script:preservationEvidenceNow = [DateTimeOffset]'2026-07-20T12:35:00Z'
-    Collect-TerminalPostTrafficEvidence $independentFailureTerminal $preservationConfig $preservationProgressPath $preservationSummaryPath 'db-resource-id'
+    Collect-TerminalPostTrafficEvidence $independentFailureTerminal $preservationConfig $preservationProgressPath $preservationSummaryPath $historyDbiResourceId
     Assert-Condition ($independentFailureTerminal.postgresStatementTimeouts.collected -eq $false -and
         $independentFailureTerminal.postgresStatementTimeouts.rawErrorPersisted -eq $false -and
         $independentFailureTerminal.performanceInsights.passed -eq $true -and
@@ -746,7 +1405,7 @@ try {
     $piFailureTerminal = [ordered]@{failures=@();monitor=$null;observedTrafficWindow=$null;postgresStatementTimeouts=$null;
         performanceInsights=$null;postTrafficAwsPosture=$null;evidenceIntegrity=$null}
     $script:preservationEvidenceNow = [DateTimeOffset]'2026-07-20T12:44:00Z'
-    Collect-TerminalPostTrafficEvidence $piFailureTerminal $preservationConfig $preservationProgressPath $preservationSummaryPath 'db-resource-id'
+    Collect-TerminalPostTrafficEvidence $piFailureTerminal $preservationConfig $preservationProgressPath $preservationSummaryPath $historyDbiResourceId
     Assert-Condition ($piFailureTerminal.performanceInsights.state -ceq 'failed' -and
         $piFailureTerminal.performanceInsights.collected -eq $false -and
         $piFailureTerminal.performanceInsights.failureStage -ceq 'db_load_series' -and
@@ -756,7 +1415,7 @@ try {
         $piFailureTerminal.postTrafficAwsPosture.state -ceq 'completed') 'A PI provider/shape failure must seal one sanitized staged envelope without suppressing SQL or posture evidence.'
     $piFailureHash = Get-StableJsonSha256 $piFailureTerminal.performanceInsights
     $awsCallsBeforeIdempotentFinalizer = $script:diagnosticAwsCalls.Count
-    Collect-TerminalPostTrafficEvidence $piFailureTerminal $preservationConfig $preservationProgressPath $preservationSummaryPath 'db-resource-id'
+    Collect-TerminalPostTrafficEvidence $piFailureTerminal $preservationConfig $preservationProgressPath $preservationSummaryPath $historyDbiResourceId
     Assert-Condition ((Get-StableJsonSha256 $piFailureTerminal.performanceInsights) -ceq $piFailureHash -and
         $script:diagnosticAwsCalls.Count -eq $awsCallsBeforeIdempotentFinalizer) 'A second finalizer pass must not retry or rewrite a settled failed evidence source.'
 
@@ -767,7 +1426,7 @@ try {
     $partialFailureTerminal = [ordered]@{failures=@();monitor=$null;observedTrafficWindow=$null;postgresStatementTimeouts=$null;
         performanceInsights=$null;postTrafficAwsPosture=$null;evidenceIntegrity=$null}
     $script:preservationEvidenceNow = [DateTimeOffset]'2026-07-20T12:44:00Z'
-    Collect-TerminalPostTrafficEvidence $partialFailureTerminal $preservationConfig $preservationProgressPath $preservationSummaryPath 'db-resource-id'
+    Collect-TerminalPostTrafficEvidence $partialFailureTerminal $preservationConfig $preservationProgressPath $preservationSummaryPath $historyDbiResourceId
     Assert-Condition ($partialFailureTerminal.performanceInsights.failureStage -ceq 'hot_path_log_windows' -and
         @($partialFailureTerminal.performanceInsights.completedStages) -contains 'db_load_series' -and
         @($partialFailureTerminal.performanceInsights.completedStages) -contains 'full_interval_top_tokens' -and
@@ -785,34 +1444,86 @@ finally {
 }
 foreach ($name in @('Get-EvidenceUtcNow','Wait-EvidenceDelay')) { Import-ScriptFunction $controllerAst $name }
 
-$script:diagnosticWaitResponses['history-token-1'] = [pscustomobject]@{Keys=@(
+$script:diagnosticWaitResponses[$historyWaitKey] = [pscustomobject]@{Keys=@(
     [pscustomobject]@{Total=0.5;Dimensions=[pscustomobject]@{'db.wait_event.name'='IO:DataFileRead';'db.wait_event.type'='IO'}},
     [pscustomobject]@{Total=0.5;Dimensions=[pscustomobject]@{'db.wait_event.name'='CPU';'db.wait_event.type'='CPU'}}
 )}
-$ioDominated = Get-PerformanceInsightsEvidence $diagnosticConfig $trafficStart $trafficEnd 'db-resource-id'
+$ioDominated = Get-PerformanceInsightsEvidence $diagnosticConfig $trafficStart $trafficEnd $historyDbiResourceId
 Assert-Condition (-not $ioDominated.passed -and -not $ioDominated.historyFallback.passed -and
-    $ioDominated.historyFallback.dataFileReadSharePercent -eq 50.0) 'A history token at the exclusive 50-percent IO boundary must fail.'
-$script:diagnosticWaitResponses['history-token-1'] = [pscustomobject]@{Keys=@(
+    $ioDominated.historyFallback.sampledLoad.dataFileReadSharePercent -eq 50.0) 'Sampled wait evidence at the exclusive 50-percent IO boundary must fail.'
+$script:diagnosticWaitResponses[$historyWaitKey] = [pscustomobject]@{Keys=@(
     [pscustomobject]@{Total=0.49999;Dimensions=[pscustomobject]@{'db.wait_event.name'='IO:DataFileRead';'db.wait_event.type'='IO'}},
     [pscustomobject]@{Total=0.50001;Dimensions=[pscustomobject]@{'db.wait_event.name'='CPU';'db.wait_event.type'='CPU'}}
 )}
-$ioBelowBoundary = Get-PerformanceInsightsEvidence $diagnosticConfig $trafficStart $trafficEnd 'db-resource-id'
+$ioBelowBoundary = Get-PerformanceInsightsEvidence $diagnosticConfig $trafficStart $trafficEnd $historyDbiResourceId
 Assert-Condition ($ioBelowBoundary.passed -and $ioBelowBoundary.historyFallback.passed -and
-    $ioBelowBoundary.historyFallback.dataFileReadSharePercent -eq 49.999) 'A complete history token at 49.999 percent IO must satisfy the exclusive threshold.'
-$script:diagnosticWaitResponses['history-token-1'] = [pscustomobject]@{Keys=@(
+    $ioBelowBoundary.historyFallback.sampledLoad.dataFileReadSharePercent -eq 49.999) 'Complete sampled wait evidence at 49.999 percent IO must satisfy the exclusive threshold.'
+$script:diagnosticWaitResponses[$historyWaitKey] = [pscustomobject]@{Keys=@(
     [pscustomobject]@{Total=0.2;Dimensions=[pscustomobject]@{'db.wait_event.name'='DataFileRead';'db.wait_event.type'='IO'}},
     [pscustomobject]@{Total=0.6;Dimensions=[pscustomobject]@{'db.wait_event.name'='CPU';'db.wait_event.type'='CPU'}}
 )}
-Assert-Throws { Get-PerformanceInsightsEvidence $diagnosticConfig $trafficStart $trafficEnd 'db-resource-id' } 'did not completely cover' 'A present history token with incomplete filtered wait-event load must fail closed.'
+$incompleteWaitCoverage = Get-PerformanceInsightsEvidence $diagnosticConfig $trafficStart $trafficEnd $historyDbiResourceId
+Assert-Condition (-not $incompleteWaitCoverage.passed -and
+    -not $incompleteWaitCoverage.historyFallback.sampledLoad.filteredWaitEventEvidenceComplete -and
+    @($incompleteWaitCoverage.historyFallback.sampledLoad.failureReasons) -contains 'incomplete_wait_event_coverage') `
+    'Stable incomplete filtered wait-event coverage must seal as a collected gate failure rather than PI unavailability.'
 
-$script:diagnosticTopKeys = @($script:diagnosticTopKeys | Where-Object { $_.Dimensions.'db.sql_tokenized.id' -ne 'history-token-1' })
+$script:diagnosticWaitResponses[$historyWaitKey] = [pscustomobject]@{Keys=@()}
+$missingWaitCoverage = Get-PerformanceInsightsEvidence $diagnosticConfig $trafficStart $trafficEnd $historyDbiResourceId
+Assert-Condition (-not $missingWaitCoverage.passed -and
+    @($missingWaitCoverage.historyFallback.sampledLoad.failureReasons) -contains 'missing_wait_event_coverage') `
+    'Stable missing filtered wait-event coverage for positive sampled load must seal as a collected gate failure.'
+
+$script:diagnosticWaitResponses[$historyWaitKey] = [pscustomobject]@{Keys=@(
+    [pscustomobject]@{Total=0.2;Dimensions=[pscustomobject]@{'db.wait_event.name'='DataFileRead';'db.wait_event.type'='IO'}},
+    [pscustomobject]@{Total=0.8;Dimensions=[pscustomobject]@{'db.wait_event.name'='CPU';'db.wait_event.type'='CPU'}}
+)}
 $script:diagnosticWaitCallCount = 0
-$historyAbsent = Get-PerformanceInsightsEvidence $diagnosticConfig $trafficStart $trafficEnd 'db-resource-id'
-Assert-Condition (-not $historyAbsent.passed -and -not $historyAbsent.historyFallback.passed -and
-    $historyAbsent.historyFallback.absentFromTopTokens -and
-    $historyAbsent.historyFallback.filteredWaitEventEvidenceRequired -and
-    -not $historyAbsent.historyFallback.filteredWaitEventEvidenceComplete -and
-    $script:diagnosticWaitCallCount -eq 0) 'The strict cold-cache diagnostic must fail closed when its history fallback token is absent from the bounded PI evidence.'
+$script:diagnosticSampledLoad = $null
+$zeroSampledLoad = Get-PerformanceInsightsEvidence $diagnosticConfig $trafficStart $trafficEnd $historyDbiResourceId
+Assert-Condition ($zeroSampledLoad.passed -and $zeroSampledLoad.historyFallback.passed -and
+    $zeroSampledLoad.historyFallback.sampledLoad.status -ceq 'not_applicable_zero_sampled_load' -and
+    -not $zeroSampledLoad.historyFallback.sampledLoad.filteredWaitEventEvidenceRequired -and
+    $zeroSampledLoad.historyFallback.sampledLoad.filteredWaitEventEvidenceComplete -and
+    $script:diagnosticWaitCallCount -eq 0) 'A query-ID-bound fast fallback with positive call statistics and zero sampled AAS must pass without fabricating wait-event evidence.'
+$script:diagnosticSampledLoad = 1.0
+
+$script:diagnosticSqlStatsBlockReadTimeRate = 0.5
+$callTimeBoundary = Get-PerformanceInsightsEvidence $diagnosticConfig $trafficStart $trafficEnd $historyDbiResourceId
+Assert-Condition (-not $callTimeBoundary.passed -and
+    $callTimeBoundary.historyFallback.sqlStatistics.blockReadTimeSharePercent -eq 50.0) 'Call-time block-read evidence at exactly 50 percent must fail.'
+$script:diagnosticSqlStatsBlockReadTimeRate = 0.49999
+$callTimeBelowBoundary = Get-PerformanceInsightsEvidence $diagnosticConfig $trafficStart $trafficEnd $historyDbiResourceId
+Assert-Condition ($callTimeBelowBoundary.passed -and
+    $callTimeBelowBoundary.historyFallback.sqlStatistics.blockReadTimeSharePercent -eq 49.999) 'Call-time block-read evidence at 49.999 percent must pass.'
+$script:diagnosticSqlStatsTempBlocksReadRate = 0.01
+$temporaryIo = Get-PerformanceInsightsEvidence $diagnosticConfig $trafficStart $trafficEnd $historyDbiResourceId
+Assert-Condition (-not $temporaryIo.passed -and -not $temporaryIo.historyFallback.sqlStatistics.temporaryIoAbsent) 'Any temporary-block I/O must fail the fallback SQL-statistics gate.'
+$script:diagnosticSqlStatsTempBlocksReadRate = 0.0
+$script:diagnosticSqlStatsTimestampOverrides['db.sql_tokenized.stats.temp_blks_written_per_sec.avg'] = '2026-07-20T12:01:00Z'
+Assert-Throws { Get-PerformanceInsightsEvidence $diagnosticConfig $trafficStart $trafficEnd $historyDbiResourceId } `
+    'identical timestamp coverage' 'Missing or shifted SQL-statistics metric coverage must fail closed.'
+$script:diagnosticSqlStatsTimestampOverrides.Clear()
+$metricNamesForExclusiveEnd = @(
+    'db.sql_tokenized.stats.calls_per_sec.avg',
+    'db.sql_tokenized.stats.total_time_per_sec.avg',
+    'db.sql_tokenized.stats.blk_read_time_per_sec.avg',
+    'db.sql_tokenized.stats.shared_blks_read_per_sec.avg',
+    'db.sql_tokenized.stats.temp_blks_read_per_sec.avg',
+    'db.sql_tokenized.stats.temp_blks_written_per_sec.avg'
+)
+foreach ($metricName in $metricNamesForExclusiveEnd) {
+    $script:diagnosticSqlStatsTimestampOverrides[$metricName] = $trafficEnd
+}
+Assert-Throws {
+    Get-HistoryFallbackSqlStatsEvidence $diagnosticConfig $trafficStart $trafficEnd $historyDbiResourceId 1 $testFallbackWindows
+} 'out-of-scope' 'PI EndTime is exclusive; a diagnostic SQL-statistics point exactly at EndTime must fail closed.'
+$script:diagnosticSqlStatsTimestampOverrides.Clear()
+$script:diagnosticSqlStatsBlockReadTimeRate = 0.2
+$script:diagnosticSqlStatsCallsRate = (0.5 / 60.0)
+$undercountedCalls = Get-PerformanceInsightsEvidence $diagnosticConfig $trafficStart $trafficEnd $historyDbiResourceId
+Assert-Condition (-not $undercountedCalls.passed -and -not $undercountedCalls.historyFallback.sqlStatistics.callsCoverApplicationReads) 'PI call statistics below the application fallback database-read count must fail closed.'
+$script:diagnosticSqlStatsCallsRate = (1.0 / 60.0)
 
 $script:TargetHealthConvergenceTimeoutSeconds = 420
 $script:TargetHealthPollSeconds = 5
@@ -1005,6 +1716,9 @@ foreach ($name in @(
     'Get-OptionalValue','Get-WafDeviceLabelMatch','Assert-DiagnosticWafDeviceIngestClassifierContract',
     'Assert-DiagnosticWafRateRuleContract','Get-RedisState','Get-SeriesSummary','Get-DiagnosticRdsCpuCoverageResult'
 )) { Import-ScriptFunction $monitorAst $name }
+$monitorExplicitNull = [ordered]@{diagnosticOnly=$null}
+Assert-Condition ($null -eq (Get-OptionalValue $monitorExplicitNull 'diagnosticOnly' $false)) `
+    'Monitor value lookup must preserve an explicit null so the diagnosticOnly boolean gate rejects it.'
 $monitorWafResources = [pscustomobject]@{
     wafDeviceClassifierMetricName='classifier-metric';wafDeviceRuleMetricName='device-metric';wafApiRuleMetricName='api-metric'
 }

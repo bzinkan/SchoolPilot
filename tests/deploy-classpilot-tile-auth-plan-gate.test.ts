@@ -1,5 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -54,6 +55,7 @@ function validReport() {
     "office_staff.live",
     "office_staff.history",
   ];
+  const queryIdentifier = "-9223372036854775808";
   return {
     status: "passed",
     precheck: { invalidTeachingSessionSchools: 0 },
@@ -97,6 +99,18 @@ function validReport() {
       maxReturnedRows: 400,
       perPairIndexLimit: true,
       passed: true,
+    },
+    historyFallbackSqlIdentity: {
+      version: "history-fallback-queryid-v1",
+      queryIdentifier,
+      queryIdentifierSha256: createHash("sha256")
+        .update(queryIdentifier, "utf8")
+        .digest("hex"),
+      compiledSqlSha256: "a".repeat(64),
+      parameterTypeSignatureSha256: "b".repeat(64),
+      engineVersion: "16.4",
+      schemaIdentitySha256: "c".repeat(64),
+      trackIoTiming: true,
     },
   };
 }
@@ -268,6 +282,101 @@ validate_classpilot_tile_auth_plan_gate_mode
     );
   });
 
+  it("rechecks the exact active revision after convergence and rolls back on drift", () => {
+    const postGate = deploySource.indexOf(
+      "run_classpilot_tile_auth_plan_gate postdeploy"
+    );
+    const strict = deploySource.lastIndexOf(
+      "wait_for_production_backend_strict_stability",
+      postGate
+    );
+    const restore = deploySource.indexOf(
+      "restore_production_scaling_hold",
+      postGate
+    );
+    assert.ok(strict > 0 && strict < postGate && postGate < restore);
+    assert.match(
+      deploySource,
+      /if ! run_classpilot_tile_auth_plan_gate postdeploy; then[\s\S]*rollback_classpilot_tile_auth_deployment/
+    );
+    assert.match(
+      deploySource,
+      /rollback_classpilot_tile_auth_deployment\(\)[\s\S]*--task-definition "\$PRODUCTION_ROLLBACK_API_TASK_DEFINITION"[\s\S]*--task-definition "\$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION"[\s\S]*wait_for_production_backend_strict_stability/
+    );
+  });
+
+  it("keeps rollback identities immutable when strict convergence refreshes preflight state", () => {
+    const result = runDeployHelper(`
+ENV=production
+DEPLOY_BACKEND=true
+PRODUCTION_SCALING_HOLD_ACTIVE=false
+CLUSTER=schoolpilot-production-cluster
+SERVICE=schoolpilot-production-api
+WORKER_SERVICE=schoolpilot-production-scheduler-worker
+REGION=us-east-1
+PRODUCTION_ROLLBACK_API_TASK_DEFINITION=schoolpilot-production-api-emergency:18
+PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION=schoolpilot-production-scheduler-worker:27
+# Reproduce the mutation performed by validate_production_service_snapshot
+# after the new revisions reach strict convergence.
+PRODUCTION_PREFLIGHT_API_TASK_DEFINITION=schoolpilot-production-api-emergency:19
+PRODUCTION_PREFLIGHT_WORKER_TASK_DEFINITION=schoolpilot-production-scheduler-worker:28
+capture_path="$(mktemp)"
+aws() { printf '%s\\n' "$*" >> "$capture_path"; }
+wait_for_production_backend_strict_stability() {
+  printf 'strict %s %s\\n' "$1" "$2" >> "$capture_path"
+  return 0
+}
+rollback_classpilot_tile_auth_deployment
+cat "$capture_path"
+rm -f "$capture_path"
+`);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(
+      result.stdout,
+      /update-service --cluster schoolpilot-production-cluster --service schoolpilot-production-api --task-definition schoolpilot-production-api-emergency:18/
+    );
+    assert.match(
+      result.stdout,
+      /update-service --cluster schoolpilot-production-cluster --service schoolpilot-production-scheduler-worker --task-definition schoolpilot-production-scheduler-worker:27/
+    );
+    assert.match(
+      result.stdout,
+      /strict schoolpilot-production-api-emergency:18 schoolpilot-production-scheduler-worker:27/
+    );
+    assert.doesNotMatch(result.stdout, /task-definition schoolpilot-production-scheduler-worker:28/);
+  });
+
+  it("seals the raw query identifier only through the private receipt writer", () => {
+    assert.match(
+      deploySource,
+      /write-classpilot-history-fallback-identity-receipt\.mjs/
+    );
+    assert.match(
+      deploySource,
+      /TILE_AUTH_PLAN_PRE_IDENTITY_SHA256[\s\S]*TILE_AUTH_PLAN_PRE_QUERY_IDENTIFIER_SHA256/
+    );
+    assert.match(
+      deploySource,
+      /historyFallbackIdentityReceiptPathSha256=\$\{TILE_AUTH_PLAN_IDENTITY_RECEIPT_PATH_SHA256\}/
+    );
+    assert.match(
+      deploySource,
+      /const pathSha = require\("crypto"\)\.createHash\("sha256"\)[\s\S]*\.update\(summary\.path, "utf8"\)/
+    );
+    assert.doesNotMatch(
+      deploySource,
+      /historyFallbackIdentityReceipt=\$\{TILE_AUTH_PLAN_IDENTITY_RECEIPT_PATH\}/
+    );
+    assert.doesNotMatch(
+      deploySource,
+      /success .*TILE_AUTH_PLAN_IDENTITY_RECEIPT_PATH\}/
+    );
+    assert.doesNotMatch(
+      deploySource,
+      /success .*queryIdentifier=\$\{?/
+    );
+  });
+
   it("derives the exact awslogs stream when ECS omits logStreamName", () => {
     for (const taskResult of [validTaskResult(), validTaskResult(null)]) {
       const result = runLogBindingResolver(taskResult);
@@ -358,6 +467,20 @@ validate_classpilot_tile_auth_plan_gate_mode
     assert.equal(output.historyFallback.label, "history_fallback");
     assert.equal(output.historyFallback.perPairIndexLimit, true);
     assert.equal(output.historyFallback.maxReturnedRows, 400);
+    assert.deepEqual(output.historyFallbackSqlIdentity, {
+      version: "history-fallback-queryid-v1",
+      queryIdentifierSha256:
+        validReport().historyFallbackSqlIdentity.queryIdentifierSha256,
+      compiledSqlSha256: "a".repeat(64),
+      parameterTypeSignatureSha256: "b".repeat(64),
+      engineVersion: "16.4",
+      schemaIdentitySha256: "c".repeat(64),
+      trackIoTiming: true,
+    });
+    assert.equal(
+      result.stdout.includes(validReport().historyFallbackSqlIdentity.queryIdentifier),
+      false
+    );
   });
 
   it("rejects relaxed, failed, or identifier-bearing evidence without echoing it", () => {

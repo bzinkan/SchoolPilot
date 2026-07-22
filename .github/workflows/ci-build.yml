@@ -223,6 +223,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.14.3
@@ -243,6 +247,9 @@ jobs:
       - name: State backup and recovery tests
         run: pwsh -NoProfile -File tests/terraform-state-backup.test.ps1
 
+      - name: Private load-artifact Windows ACL tests
+        run: node --test tests/private-load-artifact-acl.test.mjs
+
       - name: Rollout monitor and rollback tests
         run: pwsh -NoProfile -File tests/aws-rollout-automation.test.ps1
 
@@ -251,6 +258,21 @@ jobs:
 
       - name: Waf certification-chain contract tests
         run: pwsh -NoProfile -File tests/aws-rollout-certification-chain.test.ps1
+
+      - name: Waf certification preflight contract tests
+        run: pwsh -NoProfile -File tests/aws-rollout-certification-preflight.test.ps1
+
+      - name: Database Insights monitoring lease tests
+        run: pwsh -NoProfile -File tests/database-insights-lease.test.ps1
+
+      - name: Waf certification query-identity tests
+        run: pwsh -NoProfile -File tests/aws-rollout-certification-query-identity.test.ps1
+
+      - name: Waf certification Database Insights lease binding tests
+        run: pwsh -NoProfile -File tests/aws-rollout-certification-database-insights-lease.test.ps1
+
+      - name: Waf certification deterministic PI finalizer tests
+        run: pwsh -NoProfile -File tests/aws-rollout-certification-pi-finalizer.test.ps1
 
   frontend:
     name: Frontend (Vite Build)

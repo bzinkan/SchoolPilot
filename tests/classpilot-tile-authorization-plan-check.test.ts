@@ -4,6 +4,17 @@ import { readFileSync } from "node:fs";
 import { sql } from "drizzle-orm";
 import { parseClasspilotTilePlanCliArgs } from "../src/cli/checkClasspilotTileAuthorizationPlans.ts";
 import {
+  assertClasspilotHistoryFallbackPiStatementDiscoverable,
+  CLASSPILOT_HISTORY_FALLBACK_PI_STATEMENT_PREVIEW_CHARACTERS,
+  CLASSPILOT_HISTORY_FALLBACK_QUERY_IDENTITY_VERSION,
+  createClasspilotHistoryFallbackQueryIdentifierSha256,
+  createClasspilotHistoryFallbackSchemaIdentitySha256,
+  createClasspilotHistoryFallbackSqlShapeIdentity,
+  parseClasspilotHistoryFallbackQueryIdentifier,
+  requireStableClasspilotHistoryFallbackQueryIdentifier,
+  requireStableClasspilotHistoryFallbackSchemaIdentity,
+} from "../src/services/classpilotHistoryFallbackSqlIdentity.ts";
+import {
   ClasspilotTileAuthorizationPlanCheckError,
   inspectClasspilotTileExplainDocument,
   inspectClasspilotTileHistoryFallbackExplainDocument,
@@ -115,6 +126,114 @@ describe("ClassPilot tile authorization plan checker", () => {
       },
     ]);
     assert.equal(materializedCte.subPlanNodes, 0);
+  });
+
+  it("binds the exact SQL shape and parses signed PostgreSQL query identifiers without number coercion", () => {
+    const params = [["student"], ["device"], "school", 10] as const;
+    const shape = createClasspilotHistoryFallbackSqlShapeIdentity(
+      "SELECT $1::text[], $2::text[], $3::text, $4::integer",
+      params
+    );
+    assert.equal(
+      shape.version,
+      CLASSPILOT_HISTORY_FALLBACK_QUERY_IDENTITY_VERSION
+    );
+    assert.match(shape.compiledSqlSha256, /^[a-f0-9]{64}$/);
+    assert.match(shape.parameterTypeSignatureSha256, /^[a-f0-9]{64}$/);
+
+    assert.doesNotThrow(() =>
+      assertClasspilotHistoryFallbackPiStatementDiscoverable(
+        "WITH requested_tiles AS (SELECT 1) SELECT * FROM requested_tiles " +
+          "CROSS JOIN LATERAL (SELECT * FROM heartbeats LIMIT 10) AS heartbeat"
+      )
+    );
+    assert.throws(
+      () =>
+        assertClasspilotHistoryFallbackPiStatementDiscoverable(
+          `${" ".repeat(
+            CLASSPILOT_HISTORY_FALLBACK_PI_STATEMENT_PREVIEW_CHARACTERS
+          )} requested_tiles heartbeats lateral`
+        ),
+      /history_fallback_query_identity_invalid/
+    );
+
+    for (const identifier of [
+      "1",
+      "9223372036854775807",
+      "-9223372036854775808",
+    ]) {
+      assert.equal(
+        parseClasspilotHistoryFallbackQueryIdentifier([
+          { "QUERY PLAN": "Nested Loop" },
+          { "QUERY PLAN": `Query Identifier: ${identifier}` },
+        ]),
+        identifier
+      );
+      assert.match(
+        createClasspilotHistoryFallbackQueryIdentifierSha256(identifier),
+        /^[a-f0-9]{64}$/
+      );
+    }
+
+    for (const rows of [
+      [] as Record<string, unknown>[],
+      [{ "QUERY PLAN": "Query Identifier: 0" }],
+      [{ "QUERY PLAN": "Query Identifier: 01" }],
+      [{ "QUERY PLAN": "Query Identifier: +1" }],
+      [{ "QUERY PLAN": "Query Identifier: 9223372036854775808" }],
+      [
+        { "QUERY PLAN": "Query Identifier: 1" },
+        { "QUERY PLAN": "Query Identifier: 1" },
+      ],
+    ]) {
+      assert.throws(
+        () => parseClasspilotHistoryFallbackQueryIdentifier(rows),
+        /history_fallback_query_identity_invalid/
+      );
+    }
+    assert.throws(
+      () =>
+        createClasspilotHistoryFallbackSqlShapeIdentity("SELECT $1", [
+          ["student"],
+        ]),
+      /history_fallback_query_identity_invalid/
+    );
+    assert.equal(
+      requireStableClasspilotHistoryFallbackQueryIdentifier("-1", "-1"),
+      "-1"
+    );
+    assert.throws(
+      () => requireStableClasspilotHistoryFallbackQueryIdentifier("-1", "1"),
+      /history_fallback_query_identity_invalid/
+    );
+    const stableSchema = {
+      engineVersion: "16.4",
+      schemaIdentitySha256: "a".repeat(64),
+      trackIoTiming: true as const,
+    };
+    assert.deepEqual(
+      requireStableClasspilotHistoryFallbackSchemaIdentity(
+        stableSchema,
+        stableSchema
+      ),
+      stableSchema
+    );
+    assert.throws(
+      () =>
+        requireStableClasspilotHistoryFallbackSchemaIdentity(stableSchema, {
+          ...stableSchema,
+          schemaIdentitySha256: "b".repeat(64),
+        }),
+      /history_fallback_query_identity_invalid/
+    );
+    assert.throws(
+      () =>
+        requireStableClasspilotHistoryFallbackSchemaIdentity(stableSchema, {
+          ...stableSchema,
+          trackIoTiming: false,
+        } as never),
+      /history_fallback_query_identity_invalid/
+    );
   });
 
   it("applies the fixed p95, maximum, temp-file, and SubPlan gates", () => {
@@ -271,6 +390,8 @@ describe("ClassPilot tile authorization plan checker", () => {
     let discoveryCalls = 0;
     let authorizationResultCalls = 0;
     let historyExplainCalls = 0;
+    let historyIdentityExplainCalls = 0;
+    let historySchemaIdentityCalls = 0;
     let historyBuilderCalls = 0;
     let capturedHistoryCohort:
       | {
@@ -307,6 +428,39 @@ describe("ClassPilot tile authorization plan checker", () => {
               student_id: studentId,
               device_id: deviceIds[index],
             })),
+          };
+        }
+        if (text.includes("heartbeats_column_signature") &&
+            text.includes("pg_get_indexdef")) {
+          historySchemaIdentityCalls += 1;
+          return {
+            rows: [{
+              engine_version: "16.4",
+              database_name: "schoolpilot",
+              schema_name: "public",
+              search_path: '"$user", public',
+              track_io_timing: "on",
+              heartbeats_relation_oid: "12345",
+              heartbeats_relation_name: "heartbeats",
+              heartbeats_column_signature: "1:id:text:true",
+              history_index_oid: "12346",
+              history_index_name:
+                "heartbeats_school_device_student_timestamp_idx",
+              history_index_definition:
+                "CREATE INDEX heartbeats_school_device_student_timestamp_idx ON public.heartbeats USING btree (school_id, device_id, student_id, timestamp DESC)",
+            }],
+          };
+        }
+        if (
+          text.startsWith("EXPLAIN (VERBOSE, FORMAT TEXT)") &&
+          text.includes("'history_fallback'")
+        ) {
+          historyIdentityExplainCalls += 1;
+          return {
+            rows: [
+              { "QUERY PLAN": "Result" },
+              { "QUERY PLAN": "Query Identifier: -9223372036854775808" },
+            ],
           };
         }
         if (
@@ -390,7 +544,13 @@ describe("ClassPilot tile authorization plan checker", () => {
           deviceIds: accesses.map((access) => access.deviceId),
           limit,
         };
-        return sql.raw("SELECT 'history_fallback' AS marker");
+        return sql`
+          SELECT 'history_fallback' AS marker
+          WHERE ${sql.param(accesses.map((access) => access.studentId))}::text[] IS NOT NULL
+            AND ${sql.param(accesses.map((access) => access.deviceId))}::text[] IS NOT NULL
+            AND ${historySchoolId}::text IS NOT NULL
+            AND ${limit}::integer > 0
+        `;
       },
     });
 
@@ -398,6 +558,8 @@ describe("ClassPilot tile authorization plan checker", () => {
     assert.equal(authorizationResultCalls, 1);
     assert.equal(historyBuilderCalls, 1);
     assert.equal(historyExplainCalls, 22);
+    assert.equal(historyIdentityExplainCalls, 2);
+    assert.equal(historySchemaIdentityCalls, 2);
     assert.deepEqual(capturedHistoryCohort, {
       schoolId,
       studentIds,
@@ -420,6 +582,44 @@ describe("ClassPilot tile authorization plan checker", () => {
     assert.equal(report.historyFallback.samples, 20);
     assert.equal(report.historyFallback.maxReturnedRows, 400);
     assert.equal(report.historyFallback.perPairIndexLimit, true);
+    assert.deepEqual(report.historyFallbackSqlIdentity, {
+      version: "history-fallback-queryid-v1",
+      queryIdentifier: "-9223372036854775808",
+      queryIdentifierSha256:
+        createClasspilotHistoryFallbackQueryIdentifierSha256(
+          "-9223372036854775808"
+        ),
+      compiledSqlSha256:
+        report.historyFallbackSqlIdentity.compiledSqlSha256,
+      parameterTypeSignatureSha256:
+        report.historyFallbackSqlIdentity.parameterTypeSignatureSha256,
+      engineVersion: "16.4",
+      schemaIdentitySha256:
+        createClasspilotHistoryFallbackSchemaIdentitySha256({
+          trackIoTiming: true,
+          engineVersion: "16.4",
+          databaseName: "schoolpilot",
+          schemaName: "public",
+          searchPath: '"$user", public',
+          heartbeatsRelationOid: "12345",
+          heartbeatsRelationName: "heartbeats",
+          heartbeatsColumnSignature: "1:id:text:true",
+          historyIndexOid: "12346",
+          historyIndexName:
+            "heartbeats_school_device_student_timestamp_idx",
+          historyIndexDefinition:
+            "CREATE INDEX heartbeats_school_device_student_timestamp_idx ON public.heartbeats USING btree (school_id, device_id, student_id, timestamp DESC)",
+        }),
+      trackIoTiming: true,
+    });
+    assert.match(
+      report.historyFallbackSqlIdentity.compiledSqlSha256,
+      /^[a-f0-9]{64}$/
+    );
+    assert.match(
+      report.historyFallbackSqlIdentity.parameterTypeSignatureSha256,
+      /^[a-f0-9]{64}$/
+    );
     const serializedReport = JSON.stringify(report);
     assert.doesNotMatch(serializedReport, /sensitive/);
     assert.doesNotMatch(serializedReport, /school_id|student_id|device_id/);
@@ -438,7 +638,10 @@ describe("ClassPilot tile authorization plan checker", () => {
     assert.match(service, /set_config\('app\.is_super', 'on', true\)/);
     assert.match(service, /set_config\('app\.is_super', 'off', true\)/);
     assert.match(service, /set_config\('app\.school_id', \$1, true\)/);
+    assert.match(service, /set_config\('compute_query_id', 'on', true\)/);
+    assert.match(service, /current_setting\('track_io_timing'\)/);
     assert.match(service, /EXPLAIN \(ANALYZE, BUFFERS, WAL, SETTINGS, FORMAT JSON\)/);
+    assert.match(service, /EXPLAIN \(VERBOSE, FORMAT TEXT\)/);
     assert.match(service, /heartbeats_school_device_student_timestamp_idx/);
     assert.match(service, /nodeType === "Limit"/);
     assert.match(service, /nodeType === "WindowAgg"/);

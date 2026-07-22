@@ -54,6 +54,7 @@ import {
   endStudentSession,
   getBatchTileAccessForStaff,
   getHeartbeatTileHistoryBatch,
+  getHeartbeatTileHistoryBatchSqlShapeIdentity,
   type ClassPilotHistoryTileAccess,
 } from "../../services/storage.js";
 import { sendSafetyAlertEmail } from "../../services/email.js";
@@ -114,9 +115,15 @@ import {
   trackHeartbeatClassificationProducer,
 } from "../../services/heartbeatClassificationBatcher.js";
 import {
+  bindHeartbeatHotPathHistoryFallbackSqlIdentity,
   recordHeartbeatHotPathCounter,
+  recordHeartbeatTileHistoryFallbackDatabaseRead,
   recordHeartbeatHotPathTiming,
 } from "../../services/heartbeatHotPathMetrics.js";
+
+bindHeartbeatHotPathHistoryFallbackSqlIdentity(
+  getHeartbeatTileHistoryBatchSqlShapeIdentity()
+);
 
 const router = Router();
 
@@ -2172,10 +2179,6 @@ router.post("/tiles/history", ...tileReadAuth, async (req, res, next) => {
     );
     let fallbackByStudent = new Map<string, Heartbeat[]>();
     if (fallbackAccesses.length > 0) {
-      recordHeartbeatHotPathCounter(
-        "tileBatchHistoryFallbackItems",
-        fallbackAccesses.length
-      );
       const databaseStartedAt = Date.now();
       fallbackByStudent = await runWithTenantContext(
         { schoolId: scope.schoolId },
@@ -2185,8 +2188,8 @@ router.post("/tiles/history", ...tileReadAuth, async (req, res, next) => {
           limit
         )
       );
-      recordHeartbeatHotPathTiming(
-        "tileBatchHistoryDatabaseMs",
+      recordHeartbeatTileHistoryFallbackDatabaseRead(
+        fallbackAccesses.length,
         Date.now() - databaseStartedAt
       );
     }

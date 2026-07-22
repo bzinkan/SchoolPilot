@@ -13,6 +13,8 @@ import { pool, prewarmMainPool, sessionPool } from "./db.js";
 import { schedulerLockPool, schedulerPool } from "./services/schedulerDb.js";
 import { migrationsOnStartup, migrationsOnly, schedulerEnabled } from "./config/runtime.js";
 import { ensureHeartbeatHistoryIndexOnline } from "./db/heartbeatHistoryIndex.js";
+import { resolveEcsApiRuntimeIdentity } from "./services/ecsRuntimeIdentity.js";
+import { bindHeartbeatHotPathApiRuntimeTaskDefinitionSha256 } from "./services/heartbeatHotPathMetrics.js";
 
 // Initialize Sentry as early as possible. No-op unless SENTRY_DSN is set
 // (gated off until the DPA is signed + subprocessors list updated).
@@ -1830,6 +1832,16 @@ export async function runStartupMigrations(): Promise<void> {
 }
 
 async function startServer(): Promise<void> {
+  // Bind the revision that will emit hot-path evidence before this process can
+  // accept traffic. The raw task-definition ARN remains process-local; only
+  // its SHA-256 is emitted in sanitized aggregate summaries.
+  const ecsRuntimeIdentity = await resolveEcsApiRuntimeIdentity();
+  if (ecsRuntimeIdentity) {
+    bindHeartbeatHotPathApiRuntimeTaskDefinitionSha256(
+      ecsRuntimeIdentity.taskDefinitionSha256
+    );
+  }
+
   if (migrationsOnStartup()) {
     await runStartupMigrations();
   } else {
