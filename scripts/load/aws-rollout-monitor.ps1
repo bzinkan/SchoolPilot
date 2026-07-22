@@ -528,6 +528,15 @@ function Read-Configuration {
     }
     $maxIterations = [int](Get-OptionalValue $config "maxIterations" 0)
     if ($maxIterations -lt 0) { throw "maxIterations must be zero or positive." }
+    $testMinimumIterationsBeforeAcceptance = 1
+    if ($null -ne $config.PSObject.Properties["testMinimumIterationsBeforeAcceptance"]) {
+        if (-not $testMode) { throw "testMinimumIterationsBeforeAcceptance is test-only." }
+        $testMinimumIterationsBeforeAcceptance = Get-RequiredInteger $config `
+            "testMinimumIterationsBeforeAcceptance" 1 1000
+        if ($maxIterations -gt 0 -and $testMinimumIterationsBeforeAcceptance -gt $maxIterations) {
+            throw "testMinimumIterationsBeforeAcceptance cannot exceed maxIterations."
+        }
+    }
     $minuteTicks = [TimeSpan]::TicksPerMinute
     $runtimeSeriesNotBeforeUtc = [DateTimeOffset]::new(
         $script:StartedAt.Ticks - ($script:StartedAt.Ticks % $minuteTicks),
@@ -783,6 +792,7 @@ function Read-Configuration {
         ExpectedRollbackConfigSha256 = if ($expectedRollbackConfigSha256) { $expectedRollbackConfigSha256 } else { $null }
         PollSeconds = $pollSeconds
         MaxIterations = $maxIterations
+        TestMinimumIterationsBeforeAcceptance = $testMinimumIterationsBeforeAcceptance
         MinimumWallClockSeconds = $minimumWallClockSeconds
         TelemetryExpectedSeconds = $telemetryExpectedSeconds
         TelemetryMetricNames = $telemetryMetricNames
@@ -3221,10 +3231,12 @@ try {
 
         $elapsedSeconds = $monotonicClock.Elapsed.TotalSeconds
         $durationSatisfied = $elapsedSeconds -ge $config.MinimumWallClockSeconds
+        $testIterationMinimumSatisfied = $iteration -ge $config.TestMinimumIterationsBeforeAcceptance
         $loadSatisfied = if ($config.LoadProgressPath) { [bool]$sample.loadCompleted } else { $true }
         $route53Satisfied = $config.Phase -ne "Route53" -or $script:Route53AlarmOkPeriods -ge 3
         $automatedSnapshotSatisfied = $config.Phase -ne "Final" -or [bool]$sample.automatedRedisSnapshot.accepted
-        if ($durationSatisfied -and $loadSatisfied -and $route53Satisfied -and $automatedSnapshotSatisfied) {
+        if ($durationSatisfied -and $testIterationMinimumSatisfied -and $loadSatisfied -and
+            $route53Satisfied -and $automatedSnapshotSatisfied) {
             $acceptance = Get-AcceptanceResult -Config $config
             if (-not $acceptance.passed) {
                 Stop-Harness -Config $config

@@ -2557,6 +2557,7 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         $fiveMinuteConfig.runId = "five-minute-telemetry-complete"
         $fiveMinuteConfig.minimumWallClockSeconds = 2
         $fiveMinuteConfig.maxIterations = 5
+        $fiveMinuteConfig | Add-Member -NotePropertyName testMinimumIterationsBeforeAcceptance -NotePropertyValue 2 -Force
         $fiveMinuteConfig | Add-Member -NotePropertyName testTelemetryExpectedSeconds -NotePropertyValue 600 -Force
         $fiveMinuteConfig | Add-Member -NotePropertyName testTelemetryMetricNames -NotePropertyValue @("rds_cpu_credit","rds_surplus_charged","redis_cpu_credit") -Force
         $env:SCHOOLPILOT_TEST_METRIC_STEP_FILE = Join-Path $childRoot "five-minute-complete-counter.txt"
