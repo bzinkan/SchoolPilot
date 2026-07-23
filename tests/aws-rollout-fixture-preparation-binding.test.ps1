@@ -66,8 +66,10 @@ function Set-ExactPrivateAcl {
     $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User
     $security = [IO.FileSystemAclExtensions]::GetAccessControl(
         $item,
-        [Security.AccessControl.AccessControlSections]::Access
+        ([Security.AccessControl.AccessControlSections]::Access -bor
+            [Security.AccessControl.AccessControlSections]::Owner)
     )
+    $security.SetOwner($sid)
     $security.SetAccessRuleProtection($true, $false)
     foreach ($existing in @($security.GetAccessRules(
         $true,
