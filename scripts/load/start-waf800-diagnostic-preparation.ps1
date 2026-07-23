@@ -735,8 +735,14 @@ function Set-PrivateAcl {
     $isDirectory = $item.PSIsContainer
     $current = [Security.Principal.WindowsIdentity]::GetCurrent()
     $security = [IO.FileSystemAclExtensions]::GetAccessControl(
-        $item, [Security.AccessControl.AccessControlSections]::Access
+        $item, ([Security.AccessControl.AccessControlSections]::Access -bor
+            [Security.AccessControl.AccessControlSections]::Owner)
     )
+    # Elevated Windows hosts can assign newly created files/directories to the
+    # BUILTIN\Administrators group even though the creating operator is the
+    # only principal admitted by the protected DACL.  Make ownership explicit
+    # before validating the exact current-operator-only ACL contract.
+    $security.SetOwner($current.User)
     $security.SetAccessRuleProtection($true, $false)
     foreach ($existing in @($security.GetAccessRules(
                 $true, $true, [Security.Principal.SecurityIdentifier]
