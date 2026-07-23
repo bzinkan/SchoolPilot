@@ -62,6 +62,14 @@ $script:DiagnosticPlannedTrafficMilliseconds = 1800000L
 $script:HotPathSummaryEvent = "classpilot_heartbeat_hot_path_summary"
 $script:HotPathSummaryIntervalSeconds = 60
 $script:EvidenceCollectorVersion = "post-traffic-v2"
+$script:FixturePreparationReceiptVersion = "fixture-preparation-receipt-v1"
+$script:DiagnosticPrepManifestVersion = "waf800-diagnostic-prep-manifest-v1"
+$script:DiagnosticPrepJournalVersion = "diagnostic-prep-journal-v1"
+$script:DiagnosticPrepSupervisorTicketVersion = "diagnostic-prep-supervisor-ticket-v2"
+$script:DiagnosticPrepSupervisorResultVersion = "diagnostic-prep-supervisor-v1"
+$script:DiagnosticPrepSupervisorRunLockVersion = "diagnostic-prep-supervisor-run-lock-v1"
+$script:DiagnosticPrepRecoveryAdmissionVersion = "diagnostic-prep-publication-recovery-admission-v1"
+$script:DiagnosticPrepRecoveryReceiptVersion = "fixture-publication-recovery-v1"
 $script:EvidenceAwsTimeoutSeconds = 60
 $script:EvidenceAwsMaximumAttempts = 4
 $script:EvidenceAwsRetryDelaysSeconds = @(0, 1, 2, 4)
@@ -700,6 +708,1745 @@ function Get-ControllerSha {
     return Assert-GitSha ([string]$output[0]) "controller Git SHA"
 }
 
+function Get-DiagnosticCanonicalSha256 {
+    param($Value)
+    return Get-StringSha256 (ConvertTo-Json -InputObject $Value -Depth 60 -Compress)
+}
+
+function Get-DiagnosticPrepJournalRecordHash {
+    param($Record)
+    $canonical = [ordered]@{}
+    foreach ($name in @(
+        "schemaVersion", "type", "version", "sequence", "runId", "manifestSha256",
+        "timestampUtc", "stage", "status", "process", "exitCode", "artifactHashes",
+        "previousRecordHash", "failureCode", "failureStage"
+    )) {
+        $canonical[$name] = Get-Value $Record $name $null
+    }
+    return Get-DiagnosticCanonicalSha256 $canonical
+}
+
+function Assert-DiagnosticExactKeys {
+    param($Value, [string[]]$Required, [string]$Name)
+    if ($null -eq $Value) { throw "$Name is missing." }
+    $actual = if ($Value -is [Collections.IDictionary]) {
+        @($Value.Keys | ForEach-Object { [string]$_ })
+    } else {
+        @($Value.PSObject.Properties | ForEach-Object { [string]$_.Name })
+    }
+    $expectedKeys = @($Required | Sort-Object)
+    $actualKeys = @($actual | Sort-Object)
+    if ($expectedKeys.Count -ne $actualKeys.Count -or
+        @($expectedKeys | Where-Object { $_ -cnotin $actualKeys }).Count -ne 0 -or
+        @($actualKeys | Where-Object { $_ -cnotin $expectedKeys }).Count -ne 0) {
+        throw "$Name fields are invalid (expected=$($expectedKeys -join ','), actual=$($actualKeys -join ','))."
+    }
+}
+
+function Assert-DiagnosticPrepJournalTimestampSequence {
+    param([object[]]$Records)
+    $previousTimestamp = $null
+    foreach ($record in $Records) {
+        $timestampText = [string](Get-RequiredValue $record "timestampUtc")
+        $parsedTimestamp = [DateTimeOffset]::MinValue
+        if ($timestampText -cnotmatch '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{7}\+00:00$' -or
+            -not [DateTimeOffset]::TryParseExact(
+                $timestampText, "o", [Globalization.CultureInfo]::InvariantCulture,
+                [Globalization.DateTimeStyles]::None, [ref]$parsedTimestamp
+            ) -or
+            $parsedTimestamp.Offset -ne [TimeSpan]::Zero -or
+            $parsedTimestamp.ToString("o", [Globalization.CultureInfo]::InvariantCulture) -cne
+                $timestampText) {
+            throw "Fixture preparation journal timestamp must be an exact round-tripping +00:00 UTC string."
+        }
+        if ($null -ne $previousTimestamp -and $parsedTimestamp -lt $previousTimestamp) {
+            throw "Fixture preparation journal timestamps must be non-regressing."
+        }
+        $previousTimestamp = $parsedTimestamp
+    }
+}
+
+function Assert-DiagnosticFixturePreparationReceiptShape {
+    param($Receipt)
+    Assert-DiagnosticExactKeys $Receipt @(
+        "schemaVersion","type","version","status","runId","diagnosticOnly",
+        "diagnosticEligible","certificationEligible","sealedAtUtc","manifest","release",
+        "controllerArtifacts","supervisorAdmission","fixture","execution","freshness",
+        "verification","credentials","snapshot","recovery","journal","secretsPrinted",
+        "trafficStarted","leaseAcquired"
+    ) "Fixture preparation receipt"
+    Assert-DiagnosticExactKeys (Get-RequiredValue $Receipt "manifest") @(
+        "path","sha256"
+    ) "Fixture preparation receipt manifest"
+    Assert-DiagnosticExactKeys (Get-RequiredValue $Receipt "release") @(
+        "applicationGitSha","controllerGitSha","deployedImageDigest",
+        "apiTaskDefinitionArn","workerTaskDefinitionArn"
+    ) "Fixture preparation receipt release"
+    foreach ($artifact in @((Get-RequiredValue $Receipt "controllerArtifacts"))) {
+        Assert-DiagnosticExactKeys $artifact @("kind","path","sha256") `
+            "Fixture preparation receipt controller artifact"
+    }
+    $supervisorAdmission = Get-RequiredValue $Receipt "supervisorAdmission"
+    Assert-DiagnosticExactKeys $supervisorAdmission @(
+        "type","version","sha256","nonceSha256","supervisor",
+        "supervisorLockPathSha256","originalTicketSha256","workerOwnership"
+    ) "Fixture preparation receipt supervisor admission"
+    Assert-DiagnosticExactKeys (Get-RequiredValue $supervisorAdmission "supervisor") @(
+        "pid","startedAtUtc","path"
+    ) "Fixture preparation receipt supervisor identity"
+    $receiptWorkerOwnership = Get-RequiredValue $supervisorAdmission "workerOwnership"
+    Assert-DiagnosticExactKeys $receiptWorkerOwnership @(
+        "path","sha256","version","jobPolicy","descendantPolicy"
+    ) "Fixture preparation receipt worker ownership"
+    if ([string](Get-Value $receiptWorkerOwnership "version" "") -cne
+            "diagnostic-prep-worker-job-v1" -or
+        [string](Get-Value $receiptWorkerOwnership "jobPolicy" "") -cne
+            "kill-on-supervisor-close-v1" -or
+        [string](Get-Value $receiptWorkerOwnership "descendantPolicy" "") -cne
+            "no-breakaway-v1") {
+        throw "Fixture preparation receipt worker ownership policy is invalid."
+    }
+    $fixture = Get-RequiredValue $Receipt "fixture"
+    Assert-DiagnosticExactKeys $fixture @(
+        "fixtureId","provider","sourceRoot","fixtureCli","config"
+    ) "Fixture preparation receipt fixture"
+    foreach ($referenceName in @("fixtureCli","config")) {
+        Assert-DiagnosticExactKeys (Get-RequiredValue $fixture $referenceName) @(
+            "path","sha256"
+        ) "Fixture preparation receipt $referenceName"
+    }
+    $execution = Get-RequiredValue $Receipt "execution"
+    Assert-DiagnosticExactKeys $execution @(
+        "runStartedAtUtc","runDirectory","refreshCompletedAtUtc","verificationCompletedAtUtc",
+        "refreshExitCode","verificationExitCode","refreshStdoutSha256","refreshStderrSha256",
+        "verifyStdoutSha256","verifyStderrSha256","workerProcess"
+    ) "Fixture preparation receipt execution"
+    Assert-DiagnosticExactKeys (Get-RequiredValue $execution "workerProcess") @(
+        "pid","startedAtUtc","path","kind"
+    ) "Fixture preparation receipt worker process"
+    Assert-DiagnosticExactKeys (Get-RequiredValue $Receipt "freshness") @(
+        "refreshedAtUtc","verifiedAtUtc","checkedAtUtc",
+        "requiredVerificationMaximumAgeMinutes","requiredArtifactValiditySeconds",
+        "expiresAtUtc","deviceManifestExpiresAtUtc"
+    ) "Fixture preparation receipt freshness"
+    $verification = Get-RequiredValue $Receipt "verification"
+    Assert-DiagnosticExactKeys $verification @(
+        "artifactSha256","counts","gates","countsAndGatesSha256"
+    ) "Fixture preparation receipt verification"
+    $counts = Get-RequiredValue $verification "counts"
+    Assert-DiagnosticExactKeys $counts @(
+        "schools","teachers","officeStaff","students","classes","classRosterStudents",
+        "devices","activeDeviceSessions","activeSessions","commandBodies",
+        "authorizationPlanCohorts","liveAuth"
+    ) "Fixture preparation receipt verification counts"
+    Assert-DiagnosticExactKeys (Get-RequiredValue $counts "authorizationPlanCohorts") @(
+        "coTeacherStudents","officeSupervisionStudents"
+    ) "Fixture preparation receipt authorization-plan counts"
+    Assert-DiagnosticExactKeys (Get-RequiredValue $counts "liveAuth") @(
+        "commandAdministrators","teachers"
+    ) "Fixture preparation receipt live-authorization counts"
+    Assert-DiagnosticExactKeys (Get-RequiredValue $verification "gates") @(
+        "autoEnrollDisabled","trackingDisabled","schedulesDisabled","exactSchoolTimezones",
+        "classRostersExactAndDisjoint","authorizationPlanCohortsExact",
+        "authorizationPlanOfficeStudentsOutsideTeacherRosters","allDeviceTokensLive",
+        "allStaffAuthArtifactsLive"
+    ) "Fixture preparation receipt verification gates"
+    Assert-DiagnosticExactKeys (Get-RequiredValue $Receipt "credentials") @(
+        "expiresAtUtc","deviceManifestExpiresAtUtc","requiredValiditySeconds"
+    ) "Fixture preparation receipt credentials"
+    $snapshot = Get-RequiredValue $Receipt "snapshot"
+    Assert-DiagnosticExactKeys $snapshot @(
+        "root","contract","artifactSetSha256","artifacts"
+    ) "Fixture preparation receipt snapshot"
+    foreach ($artifact in @((Get-RequiredValue $snapshot "artifacts"))) {
+        Assert-DiagnosticExactKeys $artifact @(
+            "name","sourcePath","targetPath","sha256","size","lastWriteTimeUtc"
+        ) "Fixture preparation receipt snapshot artifact"
+    }
+    Assert-DiagnosticExactKeys (Get-RequiredValue $Receipt "recovery") @(
+        "allowedAttempts","nonce"
+    ) "Fixture preparation receipt recovery"
+    Assert-DiagnosticExactKeys (Get-RequiredValue $Receipt "journal") @(
+        "path","sourceSealedRecordHash"
+    ) "Fixture preparation receipt journal"
+}
+
+function Assert-DiagnosticPrepJournalNestedShape {
+    param($Record, [string]$ResultKind)
+    Assert-DiagnosticExactKeys (Get-RequiredValue $Record "process") @(
+        "pid","startedAtUtc","path","kind"
+    ) "Fixture preparation journal process"
+    $stage = [string](Get-RequiredValue $Record "stage")
+    $status = [string](Get-RequiredValue $Record "status")
+    $requiredArtifactKeys = switch ($stage) {
+        "preflight_accepted" {
+            @("manifestSha256","fixtureWorkerSha256","supervisorAdmissionSha256",
+                "supervisorAdmissionNonceSha256"); break
+        }
+        { $_ -in @("refresh_admitted","verify_admitted") } {
+            @("fixtureCliSha256","fixtureCliGitObjectIdSha256","fixtureWorkerSha256",
+                "supervisorAdmissionSha256"); break
+        }
+        { $_ -in @("refresh_child_started","verify_child_started") } {
+            @("fixtureCliSha256","fixtureWorkerSha256","supervisorAdmissionSha256"); break
+        }
+        { $_ -in @("refresh_completed","verify_completed") } {
+            @("stdoutSha256","stderrSha256"); break
+        }
+        "freshness_accepted" { @("fixtureIdSha256"); break }
+        "source_hashes_sealed" { @("snapshotArtifactSetSha256"); break }
+        "fixture_receipt_sealed" {
+            @("fixturePreparationReceiptSha256","snapshotArtifactSetSha256",
+                "verificationCountsAndGatesSha256","supervisorAdmissionSha256"); break
+        }
+        "publication_started" {
+            @("fixturePreparationReceiptSha256","snapshotArtifactSetSha256"); break
+        }
+        "publication_completed" {
+            @("fixturePreparationReceiptSha256","snapshotArtifactSetSha256",
+                "verificationCountsAndGatesSha256"); break
+        }
+        { $_ -in @("publication_recovery_started","publication_recovery_completed") } {
+            @("publicationRecoveryReceiptSha256","snapshotArtifactSetSha256"); break
+        }
+        "terminal_commit" {
+            if ($status -ceq "failed") { @() }
+            elseif ($ResultKind -ceq "recovery") {
+                @("fixturePreparationReceiptSha256","publicationRecoveryReceiptSha256",
+                    "snapshotArtifactSetSha256","verificationCountsAndGatesSha256",
+                    "supervisorAdmissionSha256")
+            }
+            else {
+                @("fixturePreparationReceiptSha256","snapshotArtifactSetSha256",
+                    "verificationCountsAndGatesSha256","supervisorAdmissionSha256")
+            }
+            break
+        }
+        default { throw "Fixture preparation journal stage has no exact nested schema." }
+    }
+    Assert-DiagnosticExactKeys (Get-RequiredValue $Record "artifactHashes") `
+        @($requiredArtifactKeys) "Fixture preparation journal artifact hashes"
+}
+
+function Assert-DiagnosticInitialPreparationHasNoRecoveryProvenance {
+    param(
+        [string]$ResultKind,
+        $Binding,
+        $SupervisorResult,
+        [string]$ManifestRecoveryReceiptPath
+    )
+    if ($ResultKind -cne "initial") { return }
+    foreach ($field in @(
+            "publicationRecoveryAdmissionPath","publicationRecoveryAdmissionSha256",
+            "publicationRecoveryReceiptPath","publicationRecoveryReceiptSha256",
+            "publicationRecoveryWorkerOwnershipPath",
+            "publicationRecoveryWorkerOwnershipSha256"
+        )) {
+        if ($null -ne (Get-Value $Binding $field $null)) {
+            throw "Initial fixture preparation must not bind recovery provenance."
+        }
+    }
+    foreach ($field in @(
+            "recoveryAdmission","publicationRecoveryReceipt","recovery","originalExecution"
+        )) {
+        if ($null -ne (Get-Value $SupervisorResult $field $null)) {
+            throw "Initial fixture preparation result must not contain recovery provenance."
+        }
+    }
+    if (Test-Path -LiteralPath $ManifestRecoveryReceiptPath) {
+        throw "Initial fixture preparation is ineligible while a publication-recovery receipt exists."
+    }
+}
+
+function Test-DiagnosticPathsOverlap {
+    param([string]$Left, [string]$Right)
+    $leftPath = [IO.Path]::GetFullPath($Left).TrimEnd('\', '/')
+    $rightPath = [IO.Path]::GetFullPath($Right).TrimEnd('\', '/')
+    $comparison = if ($IsWindows) {
+        [StringComparison]::OrdinalIgnoreCase
+    } else { [StringComparison]::Ordinal }
+    $separator = [IO.Path]::DirectorySeparatorChar
+    return [string]::Equals($leftPath, $rightPath, $comparison) -or
+        $leftPath.StartsWith($rightPath + $separator, $comparison) -or
+        $rightPath.StartsWith($leftPath + $separator, $comparison)
+}
+
+function Read-DiagnosticAtomicBindingEnvelope {
+    param(
+        [string]$ResolvedConfigPath,
+        [string]$ConfigSha256,
+        [string]$RunId,
+        [string]$EvidenceDirectory
+    )
+    $bindingRoot = [IO.Path]::GetDirectoryName($ResolvedConfigPath)
+    $configName = "$RunId.config.json"
+    $hashName = "$RunId.config.sha256.txt"
+    $receiptName = "$RunId.binding-receipt.json"
+    $expectedConfigPath = [IO.Path]::GetFullPath((Join-Path $bindingRoot $configName))
+    $hashPath = [IO.Path]::GetFullPath((Join-Path $bindingRoot $hashName))
+    $receiptPath = [IO.Path]::GetFullPath((Join-Path $bindingRoot $receiptName))
+    if (-not [string]::Equals(
+            $ResolvedConfigPath, $expectedConfigPath, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "ConfigPath must be the exact config artifact in its atomic diagnostic binding directory."
+    }
+    Assert-DiagnosticPrivateDirectoryAcl $bindingRoot "Diagnostic binding root"
+    $items = @(Get-ChildItem -LiteralPath $bindingRoot -Force)
+    $expectedNames = @($configName, $hashName, $receiptName) | Sort-Object
+    if ($items.Count -ne 3 -or
+        @($items | Where-Object {
+            $_.PSIsContainer -or
+            (($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0)
+        }).Count -ne 0 -or
+        @(Compare-Object $expectedNames @($items.Name | Sort-Object)).Count -ne 0) {
+        throw "The atomic diagnostic binding directory must contain exactly its config, SHA file, and binding receipt."
+    }
+    foreach ($path in @($ResolvedConfigPath, $hashPath, $receiptPath)) {
+        Assert-DiagnosticPrivateFileAcl $path "Diagnostic binding artifact"
+    }
+    $expectedHashText = $ConfigSha256 + [Environment]::NewLine
+    if ([IO.File]::ReadAllText($hashPath, [Text.UTF8Encoding]::new($false)) -cne $expectedHashText) {
+        throw "The atomic diagnostic binding SHA file does not exactly bind ConfigPath."
+    }
+    try {
+        $receipt = Get-Content -LiteralPath $receiptPath -Raw |
+            ConvertFrom-Json -DateKind String -Depth 60
+    }
+    catch { throw "The atomic diagnostic binding receipt is malformed." }
+    Assert-DiagnosticExactKeys $receipt @(
+        "schemaVersion","type","bindingVersion","diagnosticOnly","diagnosticEligible",
+        "certificationEligible","trafficStarted","boundAtUtc","runId","configPath",
+        "configSha256","evidenceDirectory","manifest","release","controllerHashes",
+        "fixturePreparation","historyFallbackQueryIdentity","databaseInsightsLease",
+        "expectedGeneratorPublicIpSha256","rawSqlPersisted","rawIdentifiersPersisted",
+        "remainingAction"
+    ) "Diagnostic binding receipt"
+    $boundAtUtc = [DateTimeOffset]::MinValue
+    if ([int](Get-Value $receipt "schemaVersion" 0) -ne 3 -or
+        [string](Get-Value $receipt "type" "") -cne "waf800_batch_diagnostic_binding_receipt" -or
+        [string](Get-Value $receipt "bindingVersion" "") -cne "fixture-preparation-binding-v1" -or
+        (Get-Value $receipt "diagnosticOnly" $false) -ne $true -or
+        (Get-Value $receipt "diagnosticEligible" $false) -ne $true -or
+        (Get-Value $receipt "certificationEligible" $true) -ne $false -or
+        (Get-Value $receipt "trafficStarted" $true) -ne $false -or
+        [string](Get-Value $receipt "runId" "") -cne $RunId -or
+        -not [string]::Equals(
+            [IO.Path]::GetFullPath([string](Get-Value $receipt "configPath" "")),
+            $ResolvedConfigPath, [StringComparison]::OrdinalIgnoreCase) -or
+        [string](Get-Value $receipt "configSha256" "") -cne $ConfigSha256 -or
+        -not [string]::Equals(
+            [IO.Path]::GetFullPath([string](Get-Value $receipt "evidenceDirectory" "")),
+            $EvidenceDirectory, [StringComparison]::OrdinalIgnoreCase) -or
+        (Get-Value $receipt "rawSqlPersisted" $true) -ne $false -or
+        (Get-Value $receipt "rawIdentifiersPersisted" $true) -ne $false -or
+        [string](Get-Value $receipt "remainingAction" "") -cne
+            "Run controller Mode=Validate, then exactly one Mode=Run only if validation succeeds." -or
+        -not [DateTimeOffset]::TryParseExact(
+            [string](Get-Value $receipt "boundAtUtc" ""), "o",
+            [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::None, [ref]$boundAtUtc
+        ) -or $boundAtUtc.Offset -ne [TimeSpan]::Zero) {
+        throw "The atomic diagnostic binding receipt identity is invalid."
+    }
+    return [pscustomobject]@{
+        Root=$bindingRoot;HashPath=$hashPath;ReceiptPath=$receiptPath
+        ReceiptSha256=(Get-FileHash -LiteralPath $receiptPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        Receipt=$receipt
+    }
+}
+
+function Assert-DiagnosticAtomicBindingCrossReferences {
+    param(
+        $Envelope,
+        $RawConfig,
+        $FixturePreparation,
+        [string]$ApplicationGitSha,
+        [string]$ControllerGitSha,
+        [string]$DeployedImageDigest,
+        [string]$ApiTaskDefinitionArn,
+        [string]$WorkerTaskDefinitionArn,
+        $HistoryFallbackSqlIdentity,
+        $DatabaseInsightsLease,
+        [string]$ExpectedGeneratorPublicIp
+    )
+    $receipt = $Envelope.Receipt
+    $manifestRef = Get-RequiredValue $receipt "manifest"
+    Assert-DiagnosticExactKeys $manifestRef @("path","sha256") "Diagnostic binding manifest reference"
+    if (-not [string]::Equals(
+            [IO.Path]::GetFullPath([string](Get-Value $manifestRef "path" "")),
+            $FixturePreparation.ManifestPath, [StringComparison]::OrdinalIgnoreCase) -or
+        [string](Get-Value $manifestRef "sha256" "") -cne $FixturePreparation.ManifestSha256) {
+        throw "The atomic diagnostic binding receipt manifest drifted from fixture preparation."
+    }
+    $release = Get-RequiredValue $receipt "release"
+    Assert-DiagnosticExactKeys $release @(
+        "applicationGitSha","controllerGitSha","deployedImageDigest",
+        "apiTaskDefinitionArn","workerTaskDefinitionArn"
+    ) "Diagnostic binding release"
+    if ([string](Get-Value $release "applicationGitSha" "") -cne $ApplicationGitSha -or
+        [string](Get-Value $release "controllerGitSha" "") -cne $ControllerGitSha -or
+        [string](Get-Value $release "deployedImageDigest" "") -cne $DeployedImageDigest -or
+        [string](Get-Value $release "apiTaskDefinitionArn" "") -cne $ApiTaskDefinitionArn -or
+        [string](Get-Value $release "workerTaskDefinitionArn" "") -cne $WorkerTaskDefinitionArn) {
+        throw "The atomic diagnostic binding receipt release drifted from the config."
+    }
+    if ((Get-DiagnosticCanonicalSha256 (Get-RequiredValue $receipt "controllerHashes")) -cne
+            (Get-DiagnosticCanonicalSha256 $FixturePreparation.ControllerHashes) -or
+        (Get-DiagnosticCanonicalSha256 (Get-RequiredValue $receipt "fixturePreparation")) -cne
+            (Get-DiagnosticCanonicalSha256 (Get-RequiredValue $RawConfig "fixturePreparation"))) {
+        throw "The atomic diagnostic binding receipt controller or fixture-preparation binding drifted."
+    }
+    $queryReceipt = Get-RequiredValue $receipt "historyFallbackQueryIdentity"
+    Assert-DiagnosticExactKeys $queryReceipt @(
+        "version","receiptSha256","queryIdentifierSha256","rawIdentifierPersisted"
+    ) "Diagnostic binding history-fallback identity"
+    if ([string](Get-Value $queryReceipt "version" "") -cne $HistoryFallbackSqlIdentity.Version -or
+        [string](Get-Value $queryReceipt "receiptSha256" "") -cne
+            $HistoryFallbackSqlIdentity.Receipt.Sha256 -or
+        [string](Get-Value $queryReceipt "queryIdentifierSha256" "") -cne
+            $HistoryFallbackSqlIdentity.QueryIdentifierSha256 -or
+        (Get-Value $queryReceipt "rawIdentifierPersisted" $true) -ne $false) {
+        throw "The atomic diagnostic binding receipt query identity drifted from the config."
+    }
+    $leaseReceipt = Get-RequiredValue $receipt "databaseInsightsLease"
+    Assert-DiagnosticExactKeys $leaseReceipt @(
+        "version","receiptSha256","leasePurpose","rawLeaseIdPersisted"
+    ) "Diagnostic binding Database Insights lease"
+    if ([string](Get-Value $leaseReceipt "version" "") -cne $DatabaseInsightsLease.Version -or
+        [string](Get-Value $leaseReceipt "receiptSha256" "") -cne $DatabaseInsightsLease.ReceiptSha256 -or
+        [string](Get-Value $leaseReceipt "leasePurpose" "") -cne "diagnostic" -or
+        (Get-Value $leaseReceipt "rawLeaseIdPersisted" $true) -ne $false -or
+        [string](Get-Value $receipt "expectedGeneratorPublicIpSha256" "") -cne
+            (Get-StringSha256 $ExpectedGeneratorPublicIp)) {
+        throw "The atomic diagnostic binding receipt lease or generator identity drifted from the config."
+    }
+}
+
+function Assert-DiagnosticMutablePathTopology {
+    param(
+        [string]$EvidenceDirectory,
+        [string]$BindingRoot,
+        $FixturePreparation,
+        $DatabaseInsightsLease
+    )
+    $protectedRoots = @(
+        $FixturePreparation.SourceRoot,
+        $FixturePreparation.SnapshotRoot,
+        $FixturePreparation.RunRoot,
+        $BindingRoot
+    )
+    $mutablePaths = @(
+        $EvidenceDirectory,
+        $DatabaseInsightsLease.ReceiptPath,
+        $DatabaseInsightsLease.StatusPath,
+        $DatabaseInsightsLease.WatchdogPath,
+        $FixturePreparation.ManifestLeaseReceiptPath,
+        $FixturePreparation.ManifestStartGatePath,
+        $FixturePreparation.ManifestTrafficMarkerPath
+    )
+    foreach ($mutablePath in $mutablePaths) {
+        if ([string]::IsNullOrWhiteSpace([string]$mutablePath)) {
+            throw "A mutable diagnostic output or control path is missing."
+        }
+        foreach ($protectedRoot in $protectedRoots) {
+            if (Test-DiagnosticPathsOverlap ([string]$mutablePath) ([string]$protectedRoot)) {
+                throw "Mutable diagnostic output, evidence, and control paths must not overlap sealed preparation or binding roots."
+            }
+        }
+    }
+}
+
+function Get-DiagnosticSnapshotArtifactSetSha256 {
+    param($Artifacts)
+    $json = @($Artifacts | Sort-Object { [string]$_.name }) |
+        ConvertTo-Json -Depth 20 -Compress -AsArray
+    return Get-StringSha256 $json
+}
+
+function Test-DiagnosticBoundProcessPresent {
+    param($Identity, [string]$Name)
+    $pidValue = [int](Get-RequiredValue $Identity "pid")
+    if ($pidValue -le 0) { throw "$Name process PID is malformed." }
+    try { $process = [Diagnostics.Process]::GetProcessById($pidValue) }
+    catch [ArgumentException] { return $false }
+    catch { throw "$Name process cannot be inspected safely." }
+    try {
+        $started = ([DateTimeOffset]$process.StartTime).ToUniversalTime().ToString("o")
+        $path = [IO.Path]::GetFullPath($process.Path)
+        return $started -ceq [string](Get-RequiredValue $Identity "startedAtUtc") -and
+            [string]::Equals($path, [IO.Path]::GetFullPath([string](Get-RequiredValue $Identity "path")),
+                [StringComparison]::OrdinalIgnoreCase)
+    }
+    catch { throw "$Name process identity cannot be inspected safely." }
+    finally { $process.Dispose() }
+}
+
+function Test-DiagnosticProcessObservationEqual {
+    param($Left, $Right)
+    if ($null -eq $Left -or $null -eq $Right) { return $false }
+    return [int](Get-Value $Left "pid" 0) -eq [int](Get-Value $Right "pid" 0) -and
+        [string](Get-Value $Left "startedAtUtc" "") -ceq [string](Get-Value $Right "startedAtUtc" "") -and
+        [string]::Equals(
+            [string](Get-Value $Left "path" ""), [string](Get-Value $Right "path" ""),
+            [StringComparison]::OrdinalIgnoreCase
+        ) -and
+        [string](Get-Value $Left "completedAtUtc" "") -ceq [string](Get-Value $Right "completedAtUtc" "") -and
+        (Get-Value $Left "exitCode" $null) -eq (Get-Value $Right "exitCode" $null) -and
+        [bool](Get-Value $Left "timedOut" $false) -eq [bool](Get-Value $Right "timedOut" $false) -and
+        [bool](Get-Value $Left "exitPersistedBeforeResultParsing" $false) -eq
+            [bool](Get-Value $Right "exitPersistedBeforeResultParsing" $false)
+}
+
+function Test-DiagnosticProcessIdentityEqual {
+    param($Left, $Right)
+    if ($null -eq $Left -or $null -eq $Right) { return $false }
+    return [int](Get-Value $Left "pid" 0) -eq [int](Get-Value $Right "pid" 0) -and
+        [string](Get-Value $Left "startedAtUtc" "") -ceq [string](Get-Value $Right "startedAtUtc" "") -and
+        [string]::Equals(
+            [string](Get-Value $Left "path" ""), [string](Get-Value $Right "path" ""),
+            [StringComparison]::OrdinalIgnoreCase
+        )
+}
+
+function Assert-DiagnosticFixtureWorkerProvenance {
+    param(
+        [object[]]$Records, $ReceiptWorker, $OriginalWorker, $RecoveryWorker,
+        [string]$ResultKind, [string]$Provider
+    )
+    if (-not (Test-DiagnosticProcessIdentityEqual $ReceiptWorker $OriginalWorker)) {
+        throw "The supervisor observation is not bound to the receipt worker process."
+    }
+    $refreshChild = $null; $verifyChild = $null; $harmlessChild = $null
+    foreach ($record in $Records) {
+        $stage = [string](Get-RequiredValue $record "stage")
+        $process = Get-RequiredValue $record "process"
+        $expected = $null
+        switch -Regex ($stage) {
+            '^(preflight_accepted|freshness_accepted|source_hashes_sealed|fixture_receipt_sealed|publication_started|publication_completed|harmless_output_started|harmless_output_completed)$' {
+                $expected = $OriginalWorker; break
+            }
+            '^(refresh_admitted|verify_admitted)$' { $expected = $OriginalWorker; break }
+            '^(refresh_child_started|refresh_completed)$' {
+                if ($Provider -cne 'production') { $expected = $OriginalWorker; break }
+                if ($null -eq $refreshChild) { $refreshChild = $process }
+                $expected = $refreshChild; break
+            }
+            '^(verify_child_started|verify_completed)$' {
+                if ($Provider -cne 'production') { $expected = $OriginalWorker; break }
+                if ($null -eq $verifyChild) { $verifyChild = $process }
+                $expected = $verifyChild; break
+            }
+            '^(harmless_delay_started|harmless_delay_completed)$' {
+                if ($Provider -cne 'offline-fake') { throw "Harmless child evidence is forbidden for production preparation." }
+                if ($null -eq $harmlessChild) { $harmlessChild = $process }
+                $expected = $harmlessChild; break
+            }
+            '^(publication_recovery_started|publication_recovery_completed)$' {
+                if ($ResultKind -cne 'recovery') { throw "Unexpected publication recovery process evidence." }
+                $expected = $RecoveryWorker; break
+            }
+            '^terminal_commit$' {
+                $expected = if ($ResultKind -ceq 'recovery' -and
+                    [string](Get-Value $record "status" "") -ceq 'completed') {
+                    $RecoveryWorker
+                } else { $OriginalWorker }
+                break
+            }
+            default { throw "Fixture preparation journal contains an unclassified process-bearing stage." }
+        }
+        if (-not (Test-DiagnosticProcessIdentityEqual $process $expected)) {
+            throw "Fixture preparation journal process provenance drifted from its classified owner."
+        }
+    }
+}
+
+function Assert-DiagnosticWorkerOwnership {
+    param(
+        $Reference, $ExpectedSupervisor, $ExpectedWorker,
+        [string]$ExpectedAdmissionSha256, [string]$ExpectedPath,
+        [string]$RunId, [string]$ManifestSha256
+    )
+    $path = Resolve-ExternalPath ([string](Get-RequiredValue $Reference "path")) `
+        "fixturePreparation worker ownership"
+    $sha256 = Assert-Sha256 ([string](Get-RequiredValue $Reference "sha256")) `
+        "fixturePreparation worker ownership sha256"
+    if (-not [string]::Equals($path, [IO.Path]::GetFullPath($ExpectedPath),
+            [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Fixture preparation worker ownership path drifted."
+    }
+    Assert-DiagnosticPrivateFileAcl $path "fixturePreparation worker ownership"
+    if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $sha256) {
+        throw "Fixture preparation worker ownership proof changed after binding."
+    }
+    try { $proof = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json -DateKind String -Depth 30 }
+    catch { throw "Fixture preparation worker ownership proof is malformed." }
+    $expectedKeys = @(
+        "schemaVersion","type","version","runId","createdAtUtc","manifestSha256",
+        "supervisorAdmissionSha256","supervisor","worker","jobPolicy","descendantPolicy"
+    )
+    if (@(Compare-Object ($expectedKeys | Sort-Object) `
+            (@($proof.PSObject.Properties.Name) | Sort-Object)).Count -ne 0) {
+        throw "Fixture preparation worker ownership fields are invalid."
+    }
+    $createdAt = [DateTimeOffset]::MinValue
+    if ([int](Get-Value $proof "schemaVersion" 0) -ne 1 -or
+        [string](Get-Value $proof "type" "") -cne "diagnostic_prep_worker_ownership" -or
+        [string](Get-Value $proof "version" "") -cne "diagnostic-prep-worker-job-v1" -or
+        [string](Get-Value $proof "runId" "") -cne $RunId -or
+        [string](Get-Value $proof "manifestSha256" "") -cne $ManifestSha256 -or
+        [string](Get-Value $proof "supervisorAdmissionSha256" "") -cne $ExpectedAdmissionSha256 -or
+        [string](Get-Value $proof "jobPolicy" "") -cne "kill-on-supervisor-close-v1" -or
+        [string](Get-Value $proof "descendantPolicy" "") -cne "no-breakaway-v1" -or
+        -not [DateTimeOffset]::TryParseExact(
+            [string](Get-Value $proof "createdAtUtc" ""), "o",
+            [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None,
+            [ref]$createdAt
+        ) -or $createdAt.Offset -ne [TimeSpan]::Zero -or
+        -not (Test-DiagnosticProcessIdentityEqual (Get-RequiredValue $proof "supervisor") $ExpectedSupervisor) -or
+        -not (Test-DiagnosticProcessIdentityEqual (Get-RequiredValue $proof "worker") $ExpectedWorker)) {
+        throw "Fixture preparation worker ownership proof is not bound to the exact supervised process tree."
+    }
+    return [ordered]@{path=$path;sha256=$sha256}
+}
+
+function Assert-DiagnosticPrepMutexFree {
+    param([string]$MutexName, [string]$Name)
+    $mutex = [Threading.Mutex]::new($false, $MutexName)
+    $acquired = $false
+    try {
+        try { $acquired = $mutex.WaitOne(0) }
+        catch [Threading.AbandonedMutexException] { $acquired = $true }
+        if (-not $acquired) { throw "$Name mutex remains owned." }
+    }
+    finally {
+        if ($acquired) { $mutex.ReleaseMutex() }
+        $mutex.Dispose()
+    }
+}
+
+function Assert-DiagnosticPrepFileLockFree {
+    param([string]$Path, [string]$ExpectedSha256)
+    Assert-DiagnosticPrivateFileAcl $Path "fixturePreparation supervisor lock"
+    if ((Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $ExpectedSha256) {
+        throw "Fixture preparation supervisor lock changed after binding."
+    }
+    $stream = $null
+    try {
+        $stream = [IO.FileStream]::new($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read,
+            [IO.FileShare]::None, 4096, [IO.FileOptions]::WriteThrough)
+    }
+    catch { throw "Fixture preparation supervisor lock remains owned by another session." }
+    finally { if ($null -ne $stream) { $stream.Dispose() } }
+}
+
+function Assert-DiagnosticPrepJournalStateMachine {
+    param([object[]]$Records, [string]$ResultKind, [string]$Provider)
+    $pairs = @($Records | ForEach-Object {
+        ([string](Get-Value $_ "stage" "")) + "|" + ([string](Get-Value $_ "status" ""))
+    })
+    if ($Provider -notin @("production","offline-fake")) {
+        throw "Fixture preparation journal provider is unsupported."
+    }
+    $core = [Collections.Generic.List[string]]::new()
+    $core.Add("preflight_accepted|completed")
+    $core.Add("refresh_admitted|running")
+    if ($Provider -ceq "production") { $core.Add("refresh_child_started|running") }
+    $core.Add("refresh_completed|completed")
+    $core.Add("verify_admitted|running")
+    if ($Provider -ceq "production") { $core.Add("verify_child_started|running") }
+    foreach ($signature in @(
+        "verify_completed|completed","freshness_accepted|completed",
+        "source_hashes_sealed|completed","fixture_receipt_sealed|completed"
+    )) { $core.Add($signature) }
+    if ($pairs.Count -lt $core.Count -or
+        (ConvertTo-Json -Compress -InputObject @($pairs[0..($core.Count - 1)])) -cne
+            (ConvertTo-Json -Compress -InputObject @($core))) {
+        throw "Fixture preparation journal violates the exact ordered state machine."
+    }
+    $suffix = if ($pairs.Count -eq $core.Count) { @() } else { @($pairs[$core.Count..($pairs.Count - 1)]) }
+    $allowedSignatures = if ($ResultKind -ceq "initial") {
+        @("publication_started|running;publication_completed|completed;terminal_commit|completed")
+    } else {
+        @(
+            "publication_recovery_started|running;publication_recovery_completed|completed;terminal_commit|completed",
+            "publication_started|running;publication_recovery_started|running;publication_recovery_completed|completed;terminal_commit|completed",
+            "publication_started|running;terminal_commit|failed;publication_recovery_started|running;publication_recovery_completed|completed;terminal_commit|completed",
+            "publication_started|running;publication_completed|completed;publication_recovery_started|running;publication_recovery_completed|completed;terminal_commit|completed",
+            "publication_started|running;publication_completed|completed;terminal_commit|failed;publication_recovery_started|running;publication_recovery_completed|completed;terminal_commit|completed"
+        )
+    }
+    if (($suffix -join ';') -cnotin $allowedSignatures -or
+        [int](Get-Value $Records[-1] "exitCode" -1) -ne 0) {
+        throw "Fixture preparation journal does not prove the exact initial or single recovery branch."
+    }
+}
+
+function Assert-DiagnosticFixtureChildEvidence {
+    param([object[]]$Records, $Manifest, $Receipt, [string]$WorkerSha256, [string]$TicketSha256)
+    $fixture = Get-RequiredValue $Manifest "fixture"
+    $provider = [string](Get-RequiredValue $fixture "provider")
+    $allChildren = @($Records | Where-Object {
+        [string](Get-Value $_ "stage" "") -in @("refresh_child_started","verify_child_started")
+    })
+    if ($provider -ceq "offline-fake") {
+        if ($allChildren.Count -ne 0) { throw "Offline fixture preparation cannot bind production child evidence." }
+        return
+    }
+    if ($provider -cne "production") { throw "Fixture preparation child provider is unsupported." }
+    $fixtureCliSha256 = Assert-Sha256 `
+        ([string](Get-RequiredValue (Get-RequiredValue $fixture "fixtureCli") "sha256")) `
+        "fixture CLI sha256"
+    $execution = Get-RequiredValue $Receipt "execution"
+    $workerProcess = Get-RequiredValue $execution "workerProcess"
+    $emptySha256 = Get-StringSha256 ""
+    foreach ($command in @("refresh","verify")) {
+        $admitted = @($Records | Where-Object {
+            [string](Get-Value $_ "stage" "") -ceq "${command}_admitted" -and
+            [string](Get-Value $_ "status" "") -ceq "running"
+        })
+        $started = @($Records | Where-Object {
+            [string](Get-Value $_ "stage" "") -ceq "${command}_child_started" -and
+            [string](Get-Value $_ "status" "") -ceq "running"
+        })
+        $completed = @($Records | Where-Object {
+            [string](Get-Value $_ "stage" "") -ceq "${command}_completed" -and
+            [string](Get-Value $_ "status" "") -ceq "completed"
+        })
+        if ($admitted.Count -ne 1 -or $started.Count -ne 1 -or $completed.Count -ne 1 -or
+            [int](Get-Value $admitted[0] "sequence" 0) -ge [int](Get-Value $started[0] "sequence" 0) -or
+            [int](Get-Value $started[0] "sequence" 0) -ge [int](Get-Value $completed[0] "sequence" 0) -or
+            [int](Get-Value $completed[0] "exitCode" -1) -ne 0) {
+            throw "Production fixture child lifecycle is incomplete or out of order."
+        }
+        $admittedProcess = Get-RequiredValue $admitted[0] "process"
+        $childProcess = Get-RequiredValue $started[0] "process"
+        $completedProcess = Get-RequiredValue $completed[0] "process"
+        $admittedHashes = Get-RequiredValue $admitted[0] "artifactHashes"
+        $childHashes = Get-RequiredValue $started[0] "artifactHashes"
+        $completedHashes = Get-RequiredValue $completed[0] "artifactHashes"
+        $stdoutField = if ($command -ceq "refresh") { "refreshStdoutSha256" } else { "verifyStdoutSha256" }
+        $stderrField = if ($command -ceq "refresh") { "refreshStderrSha256" } else { "verifyStderrSha256" }
+        $expectedStdout = Assert-Sha256 ([string](Get-RequiredValue $execution $stdoutField)) `
+            "receipt.execution.$stdoutField"
+        $expectedStderr = Assert-Sha256 ([string](Get-RequiredValue $execution $stderrField)) `
+            "receipt.execution.$stderrField"
+        $childStartedAt = [DateTimeOffset]::MinValue
+        if ([int](Get-Value $admittedProcess "pid" 0) -ne [int](Get-Value $workerProcess "pid" 0) -or
+            [string](Get-Value $admittedProcess "startedAtUtc" "") -cne
+                [string](Get-Value $workerProcess "startedAtUtc" "") -or
+            -not [string]::Equals(
+                [string](Get-Value $admittedProcess "path" ""), [string](Get-Value $workerProcess "path" ""),
+                [StringComparison]::OrdinalIgnoreCase) -or
+            [string](Get-Value $admittedProcess "kind" "") -cne "fixture-worker" -or
+            [string](Get-Value $admittedHashes "fixtureCliSha256" "") -cne $fixtureCliSha256 -or
+            [string](Get-Value $admittedHashes "fixtureWorkerSha256" "") -cne $WorkerSha256 -or
+            [string](Get-Value $admittedHashes "supervisorAdmissionSha256" "") -cne $TicketSha256 -or
+            [int](Get-Value $childProcess "pid" 0) -le 0 -or
+            [int](Get-Value $childProcess "pid" 0) -eq [int](Get-Value $workerProcess "pid" 0) -or
+            [int](Get-Value $childProcess "pid" 0) -ne [int](Get-Value $completedProcess "pid" 0) -or
+            [string](Get-Value $childProcess "startedAtUtc" "") -cne
+                [string](Get-Value $completedProcess "startedAtUtc" "") -or
+            -not [string]::Equals(
+                [string](Get-Value $childProcess "path" ""), [string](Get-Value $completedProcess "path" ""),
+                [StringComparison]::OrdinalIgnoreCase) -or
+            [string](Get-Value $childProcess "kind" "") -cne "fixture-$command" -or
+            [string](Get-Value $completedProcess "kind" "") -cne "fixture-$command" -or
+            -not [IO.Path]::IsPathRooted([string](Get-Value $childProcess "path" "")) -or
+            -not [DateTimeOffset]::TryParseExact(
+                [string](Get-Value $childProcess "startedAtUtc" ""), "o",
+                [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None,
+                [ref]$childStartedAt
+            ) -or $childStartedAt.Offset -ne [TimeSpan]::Zero -or
+            [string](Get-Value $childHashes "fixtureCliSha256" "") -cne $fixtureCliSha256 -or
+            [string](Get-Value $childHashes "fixtureWorkerSha256" "") -cne $WorkerSha256 -or
+            [string](Get-Value $childHashes "supervisorAdmissionSha256" "") -cne $TicketSha256 -or
+            [string](Get-Value $completedHashes "stdoutSha256" "") -cne $expectedStdout -or
+            [string](Get-Value $completedHashes "stderrSha256" "") -cne $expectedStderr -or
+            $expectedStderr -cne $emptySha256) {
+            throw "Production fixture child process or output evidence is invalid."
+        }
+    }
+}
+
+function Assert-DiagnosticFixturePreparationBinding {
+    param(
+        $Binding,
+        [string]$ExpectedRunId,
+        [string]$ApplicationGitSha,
+        [string]$ControllerGitSha,
+        [string]$DeployedImageDigest,
+        [string]$ApiTaskDefinitionArn,
+        [string]$WorkerTaskDefinitionArn
+    )
+    if ($null -eq $Binding) { throw "Diagnostic config requires 'fixturePreparation'." }
+    Assert-DiagnosticExactKeys $Binding @(
+        "version","diagnosticEligible","receiptPath","receiptSha256","journalPath",
+        "journalSha256","journalTerminalHash","manifestPath","manifestSha256",
+        "snapshotRoot","snapshotArtifactSetSha256","supervisorTicketPath",
+        "supervisorTicketSha256","supervisorLaunchAdmissionPath",
+        "supervisorLaunchAdmissionSha256","supervisorResultPath","supervisorResultSha256",
+        "supervisorResultKind","supervisorRunLockPath","supervisorRunLockSha256",
+        "publicationRecoveryAdmissionPath","publicationRecoveryAdmissionSha256",
+        "publicationRecoveryReceiptPath","publicationRecoveryReceiptSha256",
+        "workerOwnershipPath","workerOwnershipSha256",
+        "publicationRecoveryWorkerOwnershipPath","publicationRecoveryWorkerOwnershipSha256",
+        "verificationCountsAndGatesSha256","artifacts"
+    ) "fixturePreparation"
+    if ([string](Get-RequiredValue $Binding "version") -cne $script:FixturePreparationReceiptVersion -or
+        (Get-Value $Binding "diagnosticEligible" $false) -ne $true) {
+        throw "fixturePreparation must bind an eligible repository-owned preparation receipt."
+    }
+
+    $receiptPath = Resolve-ExternalPath ([string](Get-RequiredValue $Binding "receiptPath")) `
+        "fixturePreparation.receiptPath"
+    $receiptSha256 = Assert-Sha256 ([string](Get-RequiredValue $Binding "receiptSha256")) `
+        "fixturePreparation.receiptSha256"
+    $journalPath = Resolve-ExternalPath ([string](Get-RequiredValue $Binding "journalPath")) `
+        "fixturePreparation.journalPath"
+    $journalSha256 = Assert-Sha256 ([string](Get-RequiredValue $Binding "journalSha256")) `
+        "fixturePreparation.journalSha256"
+    $journalTerminalHash = Assert-Sha256 ([string](Get-RequiredValue $Binding "journalTerminalHash")) `
+        "fixturePreparation.journalTerminalHash"
+    $manifestPath = Resolve-ExternalPath ([string](Get-RequiredValue $Binding "manifestPath")) `
+        "fixturePreparation.manifestPath"
+    $manifestSha256 = Assert-Sha256 ([string](Get-RequiredValue $Binding "manifestSha256")) `
+        "fixturePreparation.manifestSha256"
+    $snapshotRoot = Resolve-ExternalPath ([string](Get-RequiredValue $Binding "snapshotRoot")) `
+        "fixturePreparation.snapshotRoot" -AllowMissing
+    $snapshotArtifactSetSha256 = Assert-Sha256 `
+        ([string](Get-RequiredValue $Binding "snapshotArtifactSetSha256")) `
+        "fixturePreparation.snapshotArtifactSetSha256"
+    $supervisorTicketPath = Resolve-ExternalPath `
+        ([string](Get-RequiredValue $Binding "supervisorTicketPath")) "fixturePreparation.supervisorTicketPath"
+    $supervisorTicketSha256 = Assert-Sha256 `
+        ([string](Get-RequiredValue $Binding "supervisorTicketSha256")) "fixturePreparation.supervisorTicketSha256"
+    $supervisorLaunchAdmissionPath = Resolve-ExternalPath `
+        ([string](Get-RequiredValue $Binding "supervisorLaunchAdmissionPath")) `
+        "fixturePreparation.supervisorLaunchAdmissionPath"
+    $supervisorLaunchAdmissionSha256 = Assert-Sha256 `
+        ([string](Get-RequiredValue $Binding "supervisorLaunchAdmissionSha256")) `
+        "fixturePreparation.supervisorLaunchAdmissionSha256"
+    $supervisorResultPath = Resolve-ExternalPath `
+        ([string](Get-RequiredValue $Binding "supervisorResultPath")) "fixturePreparation.supervisorResultPath"
+    $supervisorResultSha256 = Assert-Sha256 `
+        ([string](Get-RequiredValue $Binding "supervisorResultSha256")) "fixturePreparation.supervisorResultSha256"
+    $supervisorResultKind = [string](Get-RequiredValue $Binding "supervisorResultKind")
+    $supervisorRunLockPath = Resolve-ExternalPath `
+        ([string](Get-RequiredValue $Binding "supervisorRunLockPath")) "fixturePreparation.supervisorRunLockPath"
+    $supervisorRunLockSha256 = Assert-Sha256 `
+        ([string](Get-RequiredValue $Binding "supervisorRunLockSha256")) "fixturePreparation.supervisorRunLockSha256"
+
+    foreach ($privatePath in @(
+            $receiptPath, $journalPath, $manifestPath, $supervisorTicketPath,
+            $supervisorLaunchAdmissionPath,
+            $supervisorResultPath, $supervisorRunLockPath
+        )) {
+        Assert-DiagnosticPrivateFileAcl $privatePath "fixturePreparation"
+    }
+    if ((Get-FileHash -LiteralPath $receiptPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $receiptSha256 -or
+        (Get-FileHash -LiteralPath $journalPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $journalSha256 -or
+        (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $manifestSha256 -or
+        (Get-FileHash -LiteralPath $supervisorTicketPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $supervisorTicketSha256 -or
+        (Get-FileHash -LiteralPath $supervisorLaunchAdmissionPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne
+            $supervisorLaunchAdmissionSha256 -or
+        (Get-FileHash -LiteralPath $supervisorResultPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $supervisorResultSha256) {
+        throw "Fixture preparation receipt, journal, manifest, ticket, or result changed after binding."
+    }
+    try {
+        $receipt = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json -DateKind String -Depth 60
+        $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json -DateKind String -Depth 60
+    }
+    catch { throw "Fixture preparation receipt and manifest must contain valid JSON." }
+    [void](Assert-DiagnosticFixturePreparationReceiptShape $receipt)
+
+    if ([int](Get-Value $manifest "schemaVersion" 0) -ne 1 -or
+        [string](Get-Value $manifest "type" "") -cne "waf800_diagnostic_prep_manifest" -or
+        [string](Get-Value $manifest "version" "") -cne $script:DiagnosticPrepManifestVersion -or
+        [string](Get-Value $manifest "runId" "") -cne $ExpectedRunId -or
+        (Get-Value $manifest "diagnosticOnly" $false) -ne $true -or
+        (Get-Value $manifest "diagnosticEligible" $false) -ne $true -or
+        (Get-Value $manifest "certificationEligible" $true) -ne $false) {
+        throw "Fixture preparation manifest is historical, a rehearsal, or otherwise ineligible."
+    }
+    $oneAttemptPolicy = Get-RequiredValue $manifest "oneAttemptPolicy"
+    foreach ($field in @(
+        "refreshAttempts", "verificationAttempts", "initialPublicationAttempts", "publicationRecoveryAttempts"
+    )) {
+        if ([int](Get-Value $oneAttemptPolicy $field 0) -ne 1) {
+            throw "Fixture preparation manifest violates the exact one-attempt policy."
+        }
+    }
+    $manifestPaths = Get-RequiredValue $manifest "paths"
+    $manifestFixture = Get-RequiredValue $manifest "fixture"
+    $manifestRunRoot = [IO.Path]::GetFullPath(
+        [string](Get-RequiredValue $manifestPaths "runDirectoryRoot")
+    )
+    $manifestSourceRoot = [IO.Path]::GetFullPath(
+        [string](Get-RequiredValue $manifestFixture "sourceRoot")
+    )
+    $manifestRequiredFiles = @((Get-RequiredValue $manifestFixture "requiredPrivateFiles") |
+        ForEach-Object { [string]$_ } | Sort-Object)
+    $requiredPrivateFiles = @(
+        "fixture-state.private.json", "load-auth.private.json", "load-command-bodies.private.json",
+        "load-devices.private.json", "verification.private.json"
+    )
+    if ([IO.Path]::GetFullPath([string](Get-RequiredValue $manifestPaths "fixturePreparationReceiptPath")) -cne
+            $receiptPath -or
+        [IO.Path]::GetFullPath([string](Get-RequiredValue $manifestPaths "journalPath")) -cne $journalPath -or
+        [IO.Path]::GetFullPath([string](Get-RequiredValue $manifestPaths "snapshotRoot")) -cne $snapshotRoot -or
+        [string](Get-Value $manifestFixture "provider" "") -cne "production" -or
+        @(Compare-Object $requiredPrivateFiles $manifestRequiredFiles).Count -ne 0) {
+        throw "Fixture preparation manifest paths or production fixture contract drifted from the binding."
+    }
+    Assert-DiagnosticPrivateDirectoryAcl $manifestSourceRoot "fixturePreparation source root"
+    Assert-DiagnosticPrivateDirectoryAcl $manifestRunRoot "fixturePreparation run root"
+    $manifestRelease = Get-RequiredValue $manifest "release"
+    if ([string](Get-Value $manifestRelease "applicationGitSha" "") -cne $ApplicationGitSha -or
+        [string](Get-Value $manifestRelease "controllerGitSha" "") -cne $ControllerGitSha -or
+        [string](Get-Value $manifestRelease "deployedImageDigest" "") -cne $DeployedImageDigest -or
+        [string](Get-Value $manifestRelease "apiTaskDefinitionArn" "") -cne $ApiTaskDefinitionArn -or
+        [string](Get-Value $manifestRelease "workerTaskDefinitionArn" "") -cne $WorkerTaskDefinitionArn) {
+        throw "Fixture preparation manifest release identity drifted from the diagnostic config."
+    }
+
+    $receiptManifest = Get-RequiredValue $receipt "manifest"
+    $receiptRelease = Get-RequiredValue $receipt "release"
+    $receiptSnapshot = Get-RequiredValue $receipt "snapshot"
+    $receiptJournal = Get-RequiredValue $receipt "journal"
+    if ([int](Get-Value $receipt "schemaVersion" 0) -ne 1 -or
+        [string](Get-Value $receipt "type" "") -cne "fixture_preparation_receipt" -or
+        [string](Get-Value $receipt "version" "") -cne $script:FixturePreparationReceiptVersion -or
+        [string](Get-Value $receipt "status" "") -cne "sources_sealed" -or
+        [string](Get-Value $receipt "runId" "") -cne $ExpectedRunId -or
+        (Get-Value $receipt "diagnosticOnly" $false) -ne $true -or
+        (Get-Value $receipt "diagnosticEligible" $false) -ne $true -or
+        (Get-Value $receipt "certificationEligible" $true) -ne $false -or
+        [string](Get-Value $receiptManifest "path" "") -cne $manifestPath -or
+        [string](Get-Value $receiptManifest "sha256" "") -cne $manifestSha256 -or
+        [string](Get-Value $receiptJournal "path" "") -cne $journalPath -or
+        [string](Get-Value $receiptRelease "applicationGitSha" "") -cne $ApplicationGitSha -or
+        [string](Get-Value $receiptRelease "controllerGitSha" "") -cne $ControllerGitSha -or
+        [string](Get-Value $receiptRelease "deployedImageDigest" "") -cne $DeployedImageDigest -or
+        [string](Get-Value $receiptRelease "apiTaskDefinitionArn" "") -cne $ApiTaskDefinitionArn -or
+        [string](Get-Value $receiptRelease "workerTaskDefinitionArn" "") -cne $WorkerTaskDefinitionArn -or
+        [string](Get-Value $receiptSnapshot "root" "") -cne $snapshotRoot) {
+        throw "Fixture preparation receipt is incomplete, reconstructed, or release-drifted."
+    }
+    $manifestRepositoryRoot = [IO.Path]::GetFullPath([string](Get-RequiredValue $manifest "repositoryRoot"))
+    if (-not [string]::Equals($manifestRepositoryRoot, $script:RepositoryRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Fixture preparation manifest repository identity drifted."
+    }
+    $manifestControllers = @((Get-RequiredValue $manifest "controllerArtifacts"))
+    $receiptControllers = @((Get-RequiredValue $receipt "controllerArtifacts"))
+    if ($manifestControllers.Count -lt 1 -or
+        (ConvertTo-Json -InputObject $manifestControllers -Depth 30 -Compress) -cne
+            (ConvertTo-Json -InputObject $receiptControllers -Depth 30 -Compress)) {
+        throw "Fixture preparation controller identities do not match the manifest."
+    }
+    $seenControllerKinds = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $boundControllers = @{}
+    $controllerHashes = [ordered]@{}
+    foreach ($artifact in $manifestControllers) {
+        Assert-DiagnosticExactKeys $artifact @("kind","path","sha256") `
+            "Fixture preparation controller artifact"
+        $kind = [string](Get-RequiredValue $artifact "kind")
+        $relativePath = [string](Get-RequiredValue $artifact "path")
+        $expectedControllerHash = Assert-Sha256 ([string](Get-RequiredValue $artifact "sha256")) `
+            "fixturePreparation controller $kind sha256"
+        if (-not $seenControllerKinds.Add($kind)) {
+            throw "Fixture preparation controller identities must be unique."
+        }
+        $controllerPath = if ([IO.Path]::IsPathRooted($relativePath)) {
+            [IO.Path]::GetFullPath($relativePath)
+        } else { [IO.Path]::GetFullPath((Join-Path $script:RepositoryRoot $relativePath)) }
+        $repositoryPrefix = $script:RepositoryRoot.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+        if (-not $controllerPath.StartsWith($repositoryPrefix, [StringComparison]::OrdinalIgnoreCase) -or
+            -not (Test-Path -LiteralPath $controllerPath -PathType Leaf) -or
+            (Get-FileHash -LiteralPath $controllerPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $expectedControllerHash) {
+            throw "Fixture preparation controller '$kind' drifted after preparation."
+        }
+        $boundControllers[$kind] = [ordered]@{ path = $controllerPath; sha256 = $expectedControllerHash }
+        $controllerHashes[$kind] = $expectedControllerHash
+    }
+    foreach ($requiredKind in @(
+        "prep-supervisor", "fixture-worker", "diagnostic-binder", "coordinator", "monitor", "harness",
+        "monotonic-deadline", "tile-poll-accounting", "database-insights-lease"
+    )) {
+        if (-not $seenControllerKinds.Contains($requiredKind)) {
+            throw "Fixture preparation controller '$requiredKind' is required."
+        }
+    }
+    try {
+        $supervisorTicket = Get-Content -LiteralPath $supervisorTicketPath -Raw |
+            ConvertFrom-Json -DateKind String -Depth 60
+        $supervisorResult = Get-Content -LiteralPath $supervisorResultPath -Raw |
+            ConvertFrom-Json -DateKind String -Depth 60
+    }
+    catch { throw "Fixture preparation supervisor evidence must contain valid JSON." }
+    $manifestRecoveryReceiptPath = [IO.Path]::GetFullPath(
+        [string](Get-RequiredValue $manifestPaths "publicationRecoveryReceiptPath")
+    )
+    [void](Assert-DiagnosticInitialPreparationHasNoRecoveryProvenance `
+        $supervisorResultKind $Binding $supervisorResult $manifestRecoveryReceiptPath)
+    $ticketControl = Get-RequiredValue $supervisorTicket "control"
+    $ticketSupervisor = Get-RequiredValue $supervisorTicket "supervisor"
+    $ticketWorker = Get-RequiredValue $supervisorTicket "worker"
+    $ticketSupervisorScript = Get-RequiredValue $supervisorTicket "supervisorScript"
+    $ticketLaunchAdmission = Get-RequiredValue $supervisorTicket "launchAdmission"
+    $resultTicket = Get-RequiredValue $supervisorResult "ticket"
+    $resultJournal = Get-RequiredValue $supervisorResult "journal"
+    $resultReceipt = Get-RequiredValue $supervisorResult "fixturePreparationReceipt"
+    $resultRunLock = Get-RequiredValue $supervisorResult "supervisorRunLock"
+    $expectedTicketWorker = $boundControllers["fixture-worker"]
+    $expectedTicketSupervisor = $boundControllers["prep-supervisor"]
+    Assert-DiagnosticExactKeys $supervisorTicket @(
+        "schemaVersion","type","version","runId","createdAtUtc","diagnosticOnly",
+        "diagnosticEligible","certificationEligible","manifest","worker","supervisorScript",
+        "launchAdmission","supervisor","launchNonceSha256","timeoutSeconds","control"
+    ) "Fixture preparation supervisor ticket"
+    Assert-DiagnosticExactKeys (Get-RequiredValue $supervisorTicket "manifest") `
+        @("path","sha256") "Fixture preparation ticket manifest reference"
+    Assert-DiagnosticExactKeys $ticketWorker @("path","sha256") `
+        "Fixture preparation ticket worker reference"
+    Assert-DiagnosticExactKeys $ticketSupervisorScript @("path","sha256") `
+        "Fixture preparation ticket supervisor script reference"
+    Assert-DiagnosticExactKeys $ticketLaunchAdmission @("path","sha256") `
+        "Fixture preparation ticket launch admission reference"
+    Assert-DiagnosticExactKeys $ticketSupervisor @("pid","startedAtUtc","path") `
+        "Fixture preparation ticket supervisor"
+    $ticketControlKeys = @(
+        "statePath","resultPath","journalPath","workerStdoutPath","workerStderrPath",
+        "supervisorStdoutPath","supervisorStderrPath","runMutexName",
+        "supervisorMutexName","supervisorLockPath"
+    )
+    Assert-DiagnosticExactKeys $ticketControl $ticketControlKeys "Fixture preparation ticket control"
+    $ticketCreatedAtUtc = [DateTimeOffset]::MinValue
+    if ([int](Get-Value $supervisorTicket "schemaVersion" 0) -ne 1 -or
+        [string](Get-Value $supervisorTicket "type" "") -cne "diagnostic_prep_supervisor_ticket" -or
+        [string](Get-Value $supervisorTicket "version" "") -cne $script:DiagnosticPrepSupervisorTicketVersion -or
+        [string](Get-Value $supervisorTicket "runId" "") -cne $ExpectedRunId -or
+        (Get-Value $supervisorTicket "diagnosticOnly" $false) -ne $true -or
+        (Get-Value $supervisorTicket "diagnosticEligible" $false) -ne $true -or
+        (Get-Value $supervisorTicket "certificationEligible" $true) -ne $false -or
+        [string](Get-Value (Get-RequiredValue $supervisorTicket "manifest") "path" "") -cne $manifestPath -or
+        [string](Get-Value (Get-RequiredValue $supervisorTicket "manifest") "sha256" "") -cne $manifestSha256 -or
+        [IO.Path]::GetFullPath([string](Get-Value $ticketWorker "path" "")) -cne $expectedTicketWorker.path -or
+        [string](Get-Value $ticketWorker "sha256" "") -cne $expectedTicketWorker.sha256 -or
+        [IO.Path]::GetFullPath([string](Get-Value $ticketSupervisorScript "path" "")) -cne $expectedTicketSupervisor.path -or
+        [string](Get-Value $ticketSupervisorScript "sha256" "") -cne $expectedTicketSupervisor.sha256 -or
+        [string](Get-Value $ticketLaunchAdmission "path" "") -cne $supervisorLaunchAdmissionPath -or
+        [string](Get-Value $ticketLaunchAdmission "sha256" "") -cne $supervisorLaunchAdmissionSha256 -or
+        [string](Get-Value $supervisorTicket "launchNonceSha256" "") -cnotmatch '^[0-9a-f]{64}$' -or
+        [int](Get-Value $supervisorTicket "timeoutSeconds" 0) -lt 1 -or
+        [int](Get-Value $supervisorTicket "timeoutSeconds" 0) -gt 2100 -or
+        [string](Get-Value $ticketControl "journalPath" "") -cne $journalPath -or
+        [string](Get-Value $ticketControl "statePath" "") -cne
+            [IO.Path]::GetFullPath([string](Get-RequiredValue $manifestPaths "supervisorStatePath")) -or
+        [string](Get-Value $ticketControl "resultPath" "") -cne
+            [IO.Path]::GetFullPath((Join-Path $manifestRunRoot "supervisor-result.private.json")) -or
+        [string](Get-Value $ticketControl "workerStdoutPath" "") -cne
+            [IO.Path]::GetFullPath((Join-Path $manifestRunRoot "fixture-worker.stdout.log")) -or
+        [string](Get-Value $ticketControl "workerStderrPath" "") -cne
+            [IO.Path]::GetFullPath((Join-Path $manifestRunRoot "fixture-worker.stderr.log")) -or
+        [string](Get-Value $ticketControl "supervisorStdoutPath" "") -cne
+            [IO.Path]::GetFullPath((Join-Path $manifestRunRoot "supervisor.stdout.log")) -or
+        [string](Get-Value $ticketControl "supervisorStderrPath" "") -cne
+            [IO.Path]::GetFullPath((Join-Path $manifestRunRoot "supervisor.stderr.log")) -or
+        [string](Get-Value $ticketControl "runMutexName" "") -cne
+            "Local\SchoolPilot.Waf800DiagnosticPreparation.$((Get-StringSha256 $ExpectedRunId).Substring(0, 32))" -or
+        [string](Get-Value $ticketControl "supervisorMutexName" "") -cne
+            "Local\SchoolPilot.Waf800DiagnosticPreparationSupervisor.$((Get-StringSha256 $ExpectedRunId).Substring(0, 32))" -or
+        [string](Get-Value $ticketControl "supervisorLockPath" "") -cne $supervisorRunLockPath -or
+        [string](Get-Value $resultRunLock "path" "") -cne $supervisorRunLockPath -or
+        [string](Get-Value $resultRunLock "sha256" "") -cne $supervisorRunLockSha256 -or
+        -not [DateTimeOffset]::TryParseExact(
+            [string](Get-Value $supervisorTicket "createdAtUtc" ""), "o",
+            [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::None, [ref]$ticketCreatedAtUtc
+        ) -or $ticketCreatedAtUtc.Offset -ne [TimeSpan]::Zero) {
+        throw "Fixture preparation supervisor ticket or persistent lock binding changed."
+    }
+    try {
+        $supervisorLaunchAdmission = Get-Content -LiteralPath $supervisorLaunchAdmissionPath -Raw |
+            ConvertFrom-Json -DateKind String -Depth 40
+    }
+    catch { throw "Fixture preparation launch admission is malformed." }
+    Assert-DiagnosticExactKeys $supervisorLaunchAdmission @(
+        "schemaVersion","type","version","runId","createdAtUtc","manifest","worker",
+        "supervisorScript","launchNonceSha256","timeoutSeconds","control"
+    ) "Fixture preparation launch admission"
+    $launchManifest = Get-RequiredValue $supervisorLaunchAdmission "manifest"
+    $launchWorker = Get-RequiredValue $supervisorLaunchAdmission "worker"
+    $launchSupervisorScript = Get-RequiredValue $supervisorLaunchAdmission "supervisorScript"
+    $launchControl = Get-RequiredValue $supervisorLaunchAdmission "control"
+    Assert-DiagnosticExactKeys $launchManifest @("path","sha256") `
+        "Fixture preparation launch manifest reference"
+    Assert-DiagnosticExactKeys $launchWorker @("path","sha256") `
+        "Fixture preparation launch worker reference"
+    Assert-DiagnosticExactKeys $launchSupervisorScript @("path","sha256") `
+        "Fixture preparation launch supervisor script reference"
+    $launchControlKeys = @("ticketPath") + $ticketControlKeys
+    Assert-DiagnosticExactKeys $launchControl $launchControlKeys `
+        "Fixture preparation launch admission control"
+    $launchCreatedAtUtc = [DateTimeOffset]::MinValue
+    if ([int](Get-Value $supervisorLaunchAdmission "schemaVersion" 0) -ne 1 -or
+        [string](Get-Value $supervisorLaunchAdmission "type" "") -cne
+            "diagnostic_prep_supervisor_launch_admission" -or
+        [string](Get-Value $supervisorLaunchAdmission "version" "") -cne
+            "diagnostic-prep-supervisor-launch-admission-v1" -or
+        [string](Get-Value $supervisorLaunchAdmission "runId" "") -cne $ExpectedRunId -or
+        [string](Get-Value $launchManifest "path" "") -cne $manifestPath -or
+        [string](Get-Value $launchManifest "sha256" "") -cne $manifestSha256 -or
+        [IO.Path]::GetFullPath([string](Get-Value $launchWorker "path" "")) -cne
+            $expectedTicketWorker.path -or
+        [string](Get-Value $launchWorker "sha256" "") -cne $expectedTicketWorker.sha256 -or
+        [IO.Path]::GetFullPath([string](Get-Value $launchSupervisorScript "path" "")) -cne
+            $expectedTicketSupervisor.path -or
+        [string](Get-Value $launchSupervisorScript "sha256" "") -cne
+            $expectedTicketSupervisor.sha256 -or
+        [string](Get-Value $supervisorLaunchAdmission "launchNonceSha256" "") -cne
+            [string](Get-Value $supervisorTicket "launchNonceSha256" "") -or
+        [int](Get-Value $supervisorLaunchAdmission "timeoutSeconds" 0) -ne
+            [int](Get-Value $supervisorTicket "timeoutSeconds" 0) -or
+        [string](Get-Value $launchControl "ticketPath" "") -cne $supervisorTicketPath -or
+        [string](Get-Value $launchControl "statePath" "") -cne
+            [string](Get-Value $ticketControl "statePath" "") -or
+        [string](Get-Value $launchControl "resultPath" "") -cne
+            [string](Get-Value $ticketControl "resultPath" "") -or
+        [string](Get-Value $launchControl "journalPath" "") -cne $journalPath -or
+        [string](Get-Value $launchControl "workerStdoutPath" "") -cne
+            [string](Get-Value $ticketControl "workerStdoutPath" "") -or
+        [string](Get-Value $launchControl "workerStderrPath" "") -cne
+            [string](Get-Value $ticketControl "workerStderrPath" "") -or
+        [string](Get-Value $launchControl "supervisorStdoutPath" "") -cne
+            [string](Get-Value $ticketControl "supervisorStdoutPath" "") -or
+        [string](Get-Value $launchControl "supervisorStderrPath" "") -cne
+            [string](Get-Value $ticketControl "supervisorStderrPath" "") -or
+        [string](Get-Value $launchControl "runMutexName" "") -cne
+            [string](Get-Value $ticketControl "runMutexName" "") -or
+        [string](Get-Value $launchControl "supervisorMutexName" "") -cne
+            [string](Get-Value $ticketControl "supervisorMutexName" "") -or
+        [string](Get-Value $launchControl "supervisorLockPath" "") -cne $supervisorRunLockPath -or
+        -not [DateTimeOffset]::TryParseExact(
+            [string](Get-Value $supervisorLaunchAdmission "createdAtUtc" ""), "o",
+            [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::None, [ref]$launchCreatedAtUtc
+        ) -or $launchCreatedAtUtc.Offset -ne [TimeSpan]::Zero -or
+        $ticketCreatedAtUtc -lt $launchCreatedAtUtc -or
+        ($ticketCreatedAtUtc - $launchCreatedAtUtc).TotalMinutes -gt 5) {
+        throw "Fixture preparation launch admission identity is invalid."
+    }
+    if ([int](Get-Value $supervisorResult "schemaVersion" 0) -ne 1 -or
+        [string](Get-Value $supervisorResult "type" "") -cne "waf800_diagnostic_prep_supervisor_result" -or
+        [string](Get-Value $supervisorResult "version" "") -cne $script:DiagnosticPrepSupervisorResultVersion -or
+        [string](Get-Value $supervisorResult "runId" "") -cne $ExpectedRunId -or
+        [string](Get-Value $supervisorResult "status" "") -cne "completed" -or
+        (Get-Value $supervisorResult "terminalEvidenceCommitted" $false) -ne $true -or
+        (Get-Value $supervisorResult "trafficStarted" $true) -ne $false -or
+        (Get-Value $supervisorResult "leaseAcquired" $true) -ne $false -or
+        (Get-Value $supervisorResult "rawErrorPersisted" $true) -ne $false -or
+        [string](Get-Value $resultTicket "path" "") -cne $supervisorTicketPath -or
+        [string](Get-Value $resultTicket "sha256" "") -cne $supervisorTicketSha256 -or
+        [string](Get-Value $resultJournal "path" "") -cne $journalPath -or
+        [string](Get-Value $resultJournal "sha256" "") -cne $journalSha256 -or
+        (Get-Value $resultJournal "terminalCommitted" $false) -ne $true -or
+        [string](Get-Value $resultReceipt "path" "") -cne $receiptPath -or
+        [string](Get-Value $resultReceipt "sha256" "") -cne $receiptSha256 -or
+        $supervisorResultKind -notin @("initial","recovery")) {
+        throw "Fixture preparation supervisor result is not a coherent completed no-traffic result."
+    }
+    $expectedResultPath = if ($supervisorResultKind -ceq "initial") {
+        [IO.Path]::GetFullPath([string](Get-RequiredValue $ticketControl "resultPath"))
+    } else {
+        [IO.Path]::GetFullPath((Join-Path $manifestRunRoot "publication-recovery-result.private.json"))
+    }
+    $terminalWorker = if ($supervisorResultKind -ceq "initial") {
+        Get-RequiredValue $supervisorResult "worker"
+    } else {
+        Get-RequiredValue (Get-RequiredValue $supervisorResult "recovery") "worker"
+    }
+    $receiptWorkerProcess = Get-RequiredValue (Get-RequiredValue $receipt "execution") "workerProcess"
+    $originalTerminalWorker = if ($supervisorResultKind -ceq "initial") {
+        $terminalWorker
+    } else {
+        Get-RequiredValue (Get-RequiredValue $supervisorResult "originalExecution") "worker"
+    }
+    if (-not (Test-DiagnosticProcessIdentityEqual $receiptWorkerProcess $originalTerminalWorker)) {
+        throw "Fixture preparation receipt worker is not the exact supervisor-owned original worker."
+    }
+    $terminalSupervisor = Get-RequiredValue $supervisorResult "supervisor"
+    $originalOwnershipResultReference = if ($supervisorResultKind -ceq "initial") {
+        Get-RequiredValue $supervisorResult "workerOwnership"
+    } else {
+        Get-RequiredValue (Get-RequiredValue $supervisorResult "originalExecution") "workerOwnership"
+    }
+    $originalOwnershipBindingReference = [ordered]@{
+        path = [string](Get-RequiredValue $Binding "workerOwnershipPath")
+        sha256 = [string](Get-RequiredValue $Binding "workerOwnershipSha256")
+    }
+    $receiptOwnershipReference = Get-RequiredValue `
+        (Get-RequiredValue $receipt "supervisorAdmission") "workerOwnership"
+    if ([string](Get-RequiredValue $originalOwnershipResultReference "path") -cne
+            [string]$originalOwnershipBindingReference.path -or
+        [string](Get-RequiredValue $originalOwnershipResultReference "sha256") -cne
+            [string]$originalOwnershipBindingReference.sha256 -or
+        [string](Get-RequiredValue $receiptOwnershipReference "path") -cne
+            [string]$originalOwnershipBindingReference.path -or
+        [string](Get-RequiredValue $receiptOwnershipReference "sha256") -cne
+            [string]$originalOwnershipBindingReference.sha256) {
+        throw "Fixture preparation ownership references drifted across receipt, result, and binding."
+    }
+    [void](Assert-DiagnosticWorkerOwnership $originalOwnershipBindingReference `
+        $ticketSupervisor $originalTerminalWorker $supervisorTicketSha256 `
+        (Join-Path $manifestRunRoot "worker-ownership.private.json") $ExpectedRunId $manifestSha256)
+    if ($supervisorResultKind -ceq "initial" -and
+        ([int](Get-Value $terminalSupervisor "pid" 0) -ne [int](Get-Value $ticketSupervisor "pid" 0) -or
+         [string](Get-Value $terminalSupervisor "startedAtUtc" "") -cne
+            [string](Get-Value $ticketSupervisor "startedAtUtc" "") -or
+         -not [string]::Equals(
+            [string](Get-Value $terminalSupervisor "path" ""),
+            [string](Get-Value $ticketSupervisor "path" ""),
+            [StringComparison]::OrdinalIgnoreCase))) {
+        throw "Initial fixture preparation supervisor identity drifted from its immutable ticket."
+    }
+    if ($supervisorResultPath -cne $expectedResultPath -or
+        [int](Get-Value $terminalWorker "exitCode" -1) -ne 0 -or
+        (Get-Value $terminalWorker "timedOut" $true) -ne $false -or
+        (Get-Value $terminalWorker "exitPersistedBeforeResultParsing" $false) -ne $true -or
+        (Test-DiagnosticBoundProcessPresent $ticketSupervisor "fixture preparation supervisor") -or
+        (Test-DiagnosticBoundProcessPresent $terminalSupervisor "terminal fixture preparation supervisor") -or
+        (Test-DiagnosticBoundProcessPresent $terminalWorker "fixture preparation worker")) {
+        throw "Fixture preparation process termination evidence is incomplete or still active."
+    }
+    try {
+        $supervisorRunLock = Get-Content -LiteralPath $supervisorRunLockPath -Raw |
+            ConvertFrom-Json -DateKind String -Depth 30
+    }
+    catch { throw "Fixture preparation supervisor run lock is malformed." }
+    $expectedSupervisorRunLock = [ordered]@{
+        schemaVersion=1;type="diagnostic_prep_supervisor_run_lock"
+        version=$script:DiagnosticPrepSupervisorRunLockVersion;runId=$ExpectedRunId
+        manifest=[ordered]@{path=$manifestPath;sha256=$manifestSha256}
+        ticket=[ordered]@{path=$supervisorTicketPath;sha256=$supervisorTicketSha256}
+        supervisorMutexName=[string](Get-RequiredValue $ticketControl "supervisorMutexName")
+        workerMutexName=[string](Get-RequiredValue $ticketControl "runMutexName")
+    }
+    if (($supervisorRunLock | ConvertTo-Json -Compress -Depth 20) -cne
+        ($expectedSupervisorRunLock | ConvertTo-Json -Compress -Depth 20)) {
+        throw "Fixture preparation supervisor run lock provenance is invalid."
+    }
+    Assert-DiagnosticPrepFileLockFree $supervisorRunLockPath $supervisorRunLockSha256
+    Assert-DiagnosticPrepMutexFree ([string](Get-RequiredValue $ticketControl "supervisorMutexName")) `
+        "fixture preparation supervisor"
+    Assert-DiagnosticPrepMutexFree ([string](Get-RequiredValue $ticketControl "runMutexName")) `
+        "fixture preparation worker"
+    $publicationRecoveryAdmissionSha256 = $null
+    $publicationRecoveryReceiptSha256 = $null
+    if ($supervisorResultKind -ceq "recovery") {
+        $admissionRef = Get-RequiredValue $supervisorResult "recoveryAdmission"
+        $admissionPath = Resolve-ExternalPath `
+            ([string](Get-RequiredValue $Binding "publicationRecoveryAdmissionPath")) `
+            "fixturePreparation.publicationRecoveryAdmissionPath"
+        $publicationRecoveryAdmissionSha256 = Assert-Sha256 `
+            ([string](Get-RequiredValue $Binding "publicationRecoveryAdmissionSha256")) `
+            "fixturePreparation.publicationRecoveryAdmissionSha256"
+        Assert-DiagnosticPrivateFileAcl $admissionPath "fixturePreparation recovery admission"
+        if ([string](Get-Value $admissionRef "path" "") -cne $admissionPath -or
+            [string](Get-Value $admissionRef "sha256" "") -cne $publicationRecoveryAdmissionSha256 -or
+            (Get-FileHash -LiteralPath $admissionPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne
+                $publicationRecoveryAdmissionSha256) {
+            throw "Fixture preparation recovery admission changed after binding."
+        }
+        $admission = Get-Content -LiteralPath $admissionPath -Raw | ConvertFrom-Json -DateKind String -Depth 60
+        $recoveryOwnershipResultReference = Get-RequiredValue `
+            (Get-RequiredValue $supervisorResult "recovery") "workerOwnership"
+        $recoveryOwnershipBindingReference = [ordered]@{
+            path = [string](Get-RequiredValue $Binding "publicationRecoveryWorkerOwnershipPath")
+            sha256 = [string](Get-RequiredValue $Binding "publicationRecoveryWorkerOwnershipSha256")
+        }
+        if ([string](Get-RequiredValue $recoveryOwnershipResultReference "path") -cne
+                [string]$recoveryOwnershipBindingReference.path -or
+            [string](Get-RequiredValue $recoveryOwnershipResultReference "sha256") -cne
+                [string]$recoveryOwnershipBindingReference.sha256) {
+            throw "Publication recovery ownership reference drifted from the supervisor result."
+        }
+        [void](Assert-DiagnosticWorkerOwnership $recoveryOwnershipBindingReference `
+            $terminalSupervisor $terminalWorker $publicationRecoveryAdmissionSha256 `
+            (Join-Path $manifestRunRoot "publication-recovery-worker-ownership.private.json") `
+            $ExpectedRunId $manifestSha256)
+        $admissionOriginal = Get-RequiredValue $admission "originalExecution"
+        $resultOriginal = Get-RequiredValue $supervisorResult "originalExecution"
+        $resultOriginalState = Get-RequiredValue $resultOriginal "state"
+        $initialSupervisorResultPath = [IO.Path]::GetFullPath([string](Get-RequiredValue $ticketControl "resultPath"))
+        $originalResultEvidencePath = Resolve-ExternalPath `
+            ([string](Get-RequiredValue $admissionOriginal "resultPath")) `
+            "fixturePreparation recovery original result"
+        $originalResultEvidenceSha256 = Assert-Sha256 `
+            ([string](Get-RequiredValue $admissionOriginal "resultSha256")) `
+            "fixturePreparation recovery original result sha256"
+        $originalStateEvidencePath = Resolve-ExternalPath `
+            ([string](Get-RequiredValue $admissionOriginal "statePath")) `
+            "fixturePreparation recovery original state"
+        $originalStateEvidenceSha256 = Assert-Sha256 `
+            ([string](Get-RequiredValue $admissionOriginal "stateSha256")) `
+            "fixturePreparation recovery original state sha256"
+        foreach ($originalEvidencePath in @($originalResultEvidencePath,$originalStateEvidencePath)) {
+            Assert-DiagnosticPrivateFileAcl $originalEvidencePath "fixturePreparation original recovery evidence"
+        }
+        if ((Get-FileHash -LiteralPath $originalResultEvidencePath -Algorithm SHA256).Hash.ToLowerInvariant() -cne
+                $originalResultEvidenceSha256 -or
+            (Get-FileHash -LiteralPath $originalStateEvidencePath -Algorithm SHA256).Hash.ToLowerInvariant() -cne
+                $originalStateEvidenceSha256) {
+            throw "Fixture preparation original recovery evidence changed after admission."
+        }
+        try {
+            $originalResultEvidence = Get-Content -LiteralPath $originalResultEvidencePath -Raw |
+                ConvertFrom-Json -DateKind String -Depth 60
+            $originalStateEvidence = Get-Content -LiteralPath $originalStateEvidencePath -Raw |
+                ConvertFrom-Json -DateKind String -Depth 60
+        }
+        catch { throw "Fixture preparation original recovery evidence is malformed." }
+        $admissionSupervisor = Get-RequiredValue $admission "supervisor"
+        $admissionManifest = Get-RequiredValue $admission "manifest"
+        $admissionWorker = Get-RequiredValue $admission "worker"
+        $admissionSupervisorScript = Get-RequiredValue $admission "supervisorScript"
+        $admissionControl = Get-RequiredValue $admission "control"
+        $originalResultSupervisor = Get-RequiredValue $originalResultEvidence "supervisor"
+        $originalStateSupervisor = Get-RequiredValue $originalStateEvidence "supervisor"
+        $resultOriginalWorker = Get-RequiredValue $resultOriginal "worker"
+        $originalResultWorker = Get-RequiredValue $originalResultEvidence "worker"
+        $originalStateWorker = Get-RequiredValue $originalStateEvidence "worker"
+        $resultOriginalOwnership = Get-RequiredValue $resultOriginal "workerOwnership"
+        $originalResultOwnership = Get-RequiredValue $originalResultEvidence "workerOwnership"
+        $originalStateOwnership = Get-RequiredValue $originalStateEvidence "workerOwnership"
+        if ([int](Get-Value $admission "schemaVersion" 0) -ne 1 -or
+            [string](Get-Value $admission "type" "") -cne "diagnostic_prep_publication_recovery_admission" -or
+            [string](Get-Value $admission "version" "") -cne $script:DiagnosticPrepRecoveryAdmissionVersion -or
+            [string](Get-Value $admission "mode" "") -cne "ResumePublication" -or
+            [string](Get-Value $admission "runId" "") -cne $ExpectedRunId -or
+            [string](Get-Value $admissionManifest "path" "") -cne $manifestPath -or
+            [string](Get-Value $admissionManifest "sha256" "") -cne $manifestSha256 -or
+            [IO.Path]::GetFullPath([string](Get-Value $admissionWorker "path" "")) -cne
+                $expectedTicketWorker.path -or
+            [string](Get-Value $admissionWorker "sha256" "") -cne $expectedTicketWorker.sha256 -or
+            [IO.Path]::GetFullPath([string](Get-Value $admissionSupervisorScript "path" "")) -cne
+                $expectedTicketSupervisor.path -or
+            [string](Get-Value $admissionSupervisorScript "sha256" "") -cne
+                $expectedTicketSupervisor.sha256 -or
+            [string](Get-Value $admission "recoveryNonceSha256" "") -cnotmatch '^[0-9a-f]{64}$' -or
+            [IO.Path]::GetFullPath([string](Get-Value $admissionControl "statePath" "")) -cne
+                [IO.Path]::GetFullPath([string](Get-RequiredValue $manifestPaths "supervisorStatePath")) -or
+            [IO.Path]::GetFullPath([string](Get-Value $admissionControl "recoveryResultPath" "")) -cne
+                [IO.Path]::GetFullPath((Join-Path $manifestRunRoot "publication-recovery-result.private.json")) -or
+            [IO.Path]::GetFullPath([string](Get-Value $admissionControl "recoveryStdoutPath" "")) -cne
+                [IO.Path]::GetFullPath((Join-Path $manifestRunRoot "publication-recovery.stdout.log")) -or
+            [IO.Path]::GetFullPath([string](Get-Value $admissionControl "recoveryStderrPath" "")) -cne
+                [IO.Path]::GetFullPath((Join-Path $manifestRunRoot "publication-recovery.stderr.log")) -or
+            [string](Get-Value $admissionControl "runMutexName" "") -cne
+                [string](Get-RequiredValue $ticketControl "runMutexName") -or
+            [string](Get-Value $admissionControl "supervisorMutexName" "") -cne
+                [string](Get-RequiredValue $ticketControl "supervisorMutexName") -or
+            [IO.Path]::GetFullPath([string](Get-Value $admissionControl "supervisorLockPath" "")) -cne
+                $supervisorRunLockPath -or
+            [string](Get-Value (Get-RequiredValue $admission "originalTicket") "path" "") -cne
+                $supervisorTicketPath -or
+            [string](Get-Value (Get-RequiredValue $admission "originalTicket") "sha256" "") -cne
+                $supervisorTicketSha256 -or
+            [int](Get-Value $admissionSupervisor "pid" 0) -ne [int](Get-Value $terminalSupervisor "pid" 0) -or
+            [string](Get-Value $admissionSupervisor "startedAtUtc" "") -cne
+                [string](Get-Value $terminalSupervisor "startedAtUtc" "") -or
+            -not [string]::Equals(
+                [string](Get-Value $admissionSupervisor "path" ""),
+                [string](Get-Value $terminalSupervisor "path" ""),
+                [StringComparison]::OrdinalIgnoreCase) -or
+            $originalResultEvidencePath -cne $initialSupervisorResultPath -or
+            $originalStateEvidencePath -cne
+                [IO.Path]::GetFullPath((Join-Path $manifestRunRoot "original-supervisor-state.private.json")) -or
+            [string](Get-Value $resultOriginal "resultPath" "") -cne $originalResultEvidencePath -or
+            [string](Get-Value $resultOriginal "resultSha256" "") -cne $originalResultEvidenceSha256 -or
+            [string](Get-Value $resultOriginalState "path" "") -cne $originalStateEvidencePath -or
+            [string](Get-Value $resultOriginalState "sha256" "") -cne $originalStateEvidenceSha256 -or
+            [string](Get-Value $admissionOriginal "fixturePreparationReceiptPath" "") -cne $receiptPath -or
+            [string](Get-Value $admissionOriginal "fixturePreparationReceiptSha256" "") -cne $receiptSha256 -or
+            [int](Get-Value $originalResultEvidence "schemaVersion" 0) -ne 1 -or
+            [string](Get-Value $originalResultEvidence "type" "") -cne
+                "waf800_diagnostic_prep_supervisor_result" -or
+            [string](Get-Value $originalResultEvidence "version" "") -cne
+                $script:DiagnosticPrepSupervisorResultVersion -or
+            [string](Get-Value $originalResultEvidence "runId" "") -cne $ExpectedRunId -or
+            [string](Get-Value $originalResultEvidence "status" "") -notin @("failed","timed_out","interrupted") -or
+            (Get-Value $originalResultEvidence "terminalEvidenceCommitted" $false) -ne $true -or
+            (Get-Value $originalResultEvidence "trafficStarted" $true) -ne $false -or
+            (Get-Value $originalResultEvidence "leaseAcquired" $true) -ne $false -or
+            (Get-Value $originalResultEvidence "rawErrorPersisted" $true) -ne $false -or
+            [string](Get-Value (Get-RequiredValue $originalResultEvidence "ticket") "sha256" "") -cne
+                $supervisorTicketSha256 -or
+            [int](Get-Value $originalResultSupervisor "pid" 0) -ne [int](Get-Value $ticketSupervisor "pid" 0) -or
+            [string](Get-Value $originalResultSupervisor "startedAtUtc" "") -cne
+                [string](Get-Value $ticketSupervisor "startedAtUtc" "") -or
+            -not [string]::Equals(
+                [string](Get-Value $originalResultSupervisor "path" ""),
+                [string](Get-Value $ticketSupervisor "path" ""),
+                [StringComparison]::OrdinalIgnoreCase) -or
+            [int](Get-Value $originalStateEvidence "schemaVersion" 0) -ne 1 -or
+            [string](Get-Value $originalStateEvidence "type" "") -cne
+                "waf800_diagnostic_prep_supervisor_state" -or
+            [string](Get-Value $originalStateEvidence "runId" "") -cne $ExpectedRunId -or
+            [string](Get-Value $originalStateEvidence "status" "") -cne
+                [string](Get-Value $originalResultEvidence "status" "") -or
+            [string](Get-Value $originalStateEvidence "resultPath" "") -cne $initialSupervisorResultPath -or
+            [int](Get-Value $originalStateSupervisor "pid" 0) -ne [int](Get-Value $ticketSupervisor "pid" 0) -or
+            [string](Get-Value $originalStateSupervisor "startedAtUtc" "") -cne
+                [string](Get-Value $ticketSupervisor "startedAtUtc" "") -or
+            -not [string]::Equals(
+                [string](Get-Value $originalStateSupervisor "path" ""),
+                [string](Get-Value $ticketSupervisor "path" ""),
+                [StringComparison]::OrdinalIgnoreCase) -or
+            -not (Test-DiagnosticProcessObservationEqual $resultOriginalWorker $originalResultWorker) -or
+            -not (Test-DiagnosticProcessObservationEqual $resultOriginalWorker $originalStateWorker) -or
+            [string](Get-Value $resultOriginalOwnership "path" "") -cne
+                [string]$originalOwnershipBindingReference.path -or
+            [string](Get-Value $resultOriginalOwnership "sha256" "") -cne
+                [string]$originalOwnershipBindingReference.sha256 -or
+            [string](Get-Value $originalResultOwnership "path" "") -cne
+                [string]$originalOwnershipBindingReference.path -or
+            [string](Get-Value $originalResultOwnership "sha256" "") -cne
+                [string]$originalOwnershipBindingReference.sha256 -or
+            [string](Get-Value $originalStateOwnership "path" "") -cne
+                [string]$originalOwnershipBindingReference.path -or
+            [string](Get-Value $originalStateOwnership "sha256" "") -cne
+                [string]$originalOwnershipBindingReference.sha256) {
+            throw "Fixture preparation recovery admission identity is invalid."
+        }
+        $recoveryReceiptRef = Get-RequiredValue $supervisorResult "publicationRecoveryReceipt"
+        $recoveryReceiptPath = Resolve-ExternalPath `
+            ([string](Get-RequiredValue $Binding "publicationRecoveryReceiptPath")) `
+            "fixturePreparation.publicationRecoveryReceiptPath"
+        $publicationRecoveryReceiptSha256 = Assert-Sha256 `
+            ([string](Get-RequiredValue $Binding "publicationRecoveryReceiptSha256")) `
+            "fixturePreparation.publicationRecoveryReceiptSha256"
+        Assert-DiagnosticPrivateFileAcl $recoveryReceiptPath "fixturePreparation recovery receipt"
+        if ([IO.Path]::GetFullPath([string](Get-RequiredValue $manifestPaths `
+                "publicationRecoveryReceiptPath")) -cne $recoveryReceiptPath -or
+            [string](Get-Value $recoveryReceiptRef "path" "") -cne $recoveryReceiptPath -or
+            [string](Get-Value $recoveryReceiptRef "sha256" "") -cne
+                $publicationRecoveryReceiptSha256 -or
+            (Get-FileHash -LiteralPath $recoveryReceiptPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne
+                $publicationRecoveryReceiptSha256) {
+            throw "Fixture preparation recovery receipt changed after binding."
+        }
+        try {
+            $recoveryReceipt = Get-Content -LiteralPath $recoveryReceiptPath -Raw |
+                ConvertFrom-Json -DateKind String -Depth 40
+        }
+        catch { throw "Fixture preparation recovery receipt is malformed." }
+        $requiredRecoveryReceiptFields = @(
+            "schemaVersion","type","version","status","runId","manifestSha256",
+            "fixturePreparationReceiptSha256","recoveryNonceSha256",
+            "supervisorAdmissionSha256","supervisorAdmissionNonceSha256",
+            "originalSupervisorTicketSha256","admittedAtUtc"
+        )
+        if (@(Compare-Object ($requiredRecoveryReceiptFields | Sort-Object) `
+                (@($recoveryReceipt.PSObject.Properties.Name) | Sort-Object)).Count -ne 0) {
+            throw "Fixture preparation recovery receipt fields are invalid."
+        }
+        $sealedRecoveryNonceSha256 = Get-StringSha256 `
+            ([string](Get-RequiredValue (Get-RequiredValue $receipt "recovery") "nonce"))
+        $recoveryAdmittedAtUtc = [string](Get-RequiredValue $recoveryReceipt "admittedAtUtc")
+        $parsedRecoveryAdmittedAtUtc = [DateTimeOffset]::MinValue
+        if ([int](Get-Value $recoveryReceipt "schemaVersion" 0) -ne 1 -or
+            [string](Get-Value $recoveryReceipt "type" "") -cne
+                "fixture_publication_recovery_receipt" -or
+            [string](Get-Value $recoveryReceipt "version" "") -cne
+                $script:DiagnosticPrepRecoveryReceiptVersion -or
+            [string](Get-Value $recoveryReceipt "status" "") -cne "admitted" -or
+            [string](Get-Value $recoveryReceipt "runId" "") -cne $ExpectedRunId -or
+            [string](Get-Value $recoveryReceipt "manifestSha256" "") -cne $manifestSha256 -or
+            [string](Get-Value $recoveryReceipt "fixturePreparationReceiptSha256" "") -cne
+                $receiptSha256 -or
+            [string](Get-Value $recoveryReceipt "recoveryNonceSha256" "") -cne
+                $sealedRecoveryNonceSha256 -or
+            [string](Get-Value $recoveryReceipt "supervisorAdmissionSha256" "") -cne
+                $publicationRecoveryAdmissionSha256 -or
+            [string](Get-Value $recoveryReceipt "supervisorAdmissionNonceSha256" "") -cne
+                [string](Get-RequiredValue $admission "recoveryNonceSha256") -or
+            [string](Get-Value $recoveryReceipt "originalSupervisorTicketSha256" "") -cne
+                $supervisorTicketSha256 -or
+            -not [DateTimeOffset]::TryParseExact(
+                $recoveryAdmittedAtUtc, "o", [Globalization.CultureInfo]::InvariantCulture,
+                [Globalization.DateTimeStyles]::None, [ref]$parsedRecoveryAdmittedAtUtc
+            ) -or $parsedRecoveryAdmittedAtUtc.Offset -ne [TimeSpan]::Zero) {
+            throw "Fixture preparation recovery receipt identity is invalid."
+        }
+    }
+    else {
+        if ($null -ne (Get-Value $Binding "publicationRecoveryWorkerOwnershipPath" $null) -or
+            $null -ne (Get-Value $Binding "publicationRecoveryWorkerOwnershipSha256" $null)) {
+            throw "Initial fixture preparation must not bind recovery worker ownership."
+        }
+    }
+    $execution = Get-RequiredValue $receipt "execution"
+    if ([int](Get-Value $execution "refreshExitCode" -1) -ne 0 -or
+        [int](Get-Value $execution "verificationExitCode" -1) -ne 0) {
+        throw "Fixture preparation receipt does not prove successful refresh and verification processes."
+    }
+
+    $journalBytes = [IO.File]::ReadAllBytes($journalPath)
+    if ($journalBytes.Length -eq 0 -or $journalBytes[-1] -ne 0x0a) {
+        throw "Fixture preparation journal ends with an uncommitted partial record."
+    }
+    $records = @()
+    try {
+        $records = @(Get-Content -LiteralPath $journalPath | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            ForEach-Object { $_ | ConvertFrom-Json -DateKind String -Depth 60 })
+    }
+    catch { throw "Fixture preparation journal must be complete JSONL." }
+    if ($records.Count -lt 2) { throw "Fixture preparation journal is incomplete." }
+    [void](Assert-DiagnosticPrepJournalTimestampSequence $records)
+    $previousHash = $null
+    $requiredJournalRecordKeys = @(
+        "schemaVersion","type","version","sequence","runId","manifestSha256",
+        "timestampUtc","stage","status","process","exitCode","artifactHashes",
+        "previousRecordHash","failureCode","failureStage","recordHash"
+    )
+    for ($index = 0; $index -lt $records.Count; $index++) {
+        $record = $records[$index]
+        Assert-DiagnosticExactKeys $record $requiredJournalRecordKeys `
+            "Fixture preparation journal record"
+        [void](Assert-DiagnosticPrepJournalNestedShape $record $supervisorResultKind)
+        $recordPreviousHash = Get-Value $record "previousRecordHash" $null
+        $previousHashMatches = if ($null -eq $previousHash) {
+            $null -eq $recordPreviousHash
+        } else { [string]$recordPreviousHash -ceq $previousHash }
+        if ([int](Get-Value $record "schemaVersion" 0) -ne 1 -or
+            [string](Get-Value $record "type" "") -cne "diagnostic_prep_journal_record" -or
+            [string](Get-Value $record "version" "") -cne $script:DiagnosticPrepJournalVersion -or
+            [int](Get-Value $record "sequence" 0) -ne ($index + 1) -or
+            [string](Get-Value $record "runId" "") -cne $ExpectedRunId -or
+            [string](Get-Value $record "manifestSha256" "") -cne $manifestSha256 -or
+            -not $previousHashMatches) {
+            throw "Fixture preparation journal chain is invalid."
+        }
+        $recordHash = Assert-Sha256 ([string](Get-RequiredValue $record "recordHash")) `
+            "fixturePreparation journal recordHash"
+        if ((Get-DiagnosticPrepJournalRecordHash $record) -cne $recordHash) {
+            throw "Fixture preparation journal record hash validation failed."
+        }
+        $previousHash = $recordHash
+    }
+    [void](Assert-DiagnosticPrepJournalStateMachine $records $supervisorResultKind `
+        ([string](Get-RequiredValue $manifestFixture "provider")))
+    [void](Assert-DiagnosticFixtureChildEvidence $records $manifest $receipt `
+        ([string]$expectedTicketWorker.sha256) $supervisorTicketSha256)
+    [void](Assert-DiagnosticFixtureWorkerProvenance $records $receiptWorkerProcess `
+        $originalTerminalWorker $terminalWorker $supervisorResultKind `
+        ([string](Get-RequiredValue $manifestFixture "provider")))
+    $terminal = $records[-1]
+    $terminalArtifactHashes = Get-RequiredValue $terminal "artifactHashes"
+    $expectedTerminalAdmissionSha256 = if ($supervisorResultKind -ceq "initial") {
+        $supervisorTicketSha256
+    } else { $publicationRecoveryAdmissionSha256 }
+    if ($previousHash -cne $journalTerminalHash -or
+        [string](Get-Value $resultJournal "terminalHash" "") -cne $journalTerminalHash -or
+        [string](Get-Value $terminal "stage" "") -cne "terminal_commit" -or
+        [string](Get-Value $terminal "status" "") -cne "completed" -or
+        [string](Get-Value $terminalArtifactHashes "fixturePreparationReceiptSha256" "") -cne $receiptSha256 -or
+        [string](Get-Value $terminalArtifactHashes "snapshotArtifactSetSha256" "") -cne $snapshotArtifactSetSha256 -or
+        [string](Get-Value $terminalArtifactHashes "supervisorAdmissionSha256" "") -cne
+            $expectedTerminalAdmissionSha256) {
+        throw "Fixture preparation journal does not end in the exact completed publication commit."
+    }
+    $sourceSealRecords = @($records | Where-Object {
+        [string](Get-Value $_ "stage" "") -ceq "source_hashes_sealed" -and
+        [string](Get-Value $_ "status" "") -ceq "completed"
+    })
+    $receiptSealRecords = @($records | Where-Object {
+        [string](Get-Value $_ "stage" "") -ceq "fixture_receipt_sealed" -and
+        [string](Get-Value $_ "status" "") -ceq "completed"
+    })
+    foreach ($stageContract in @(
+        @("preflight_accepted","completed"), @("refresh_admitted","running"),
+        @("refresh_completed","completed"), @("verify_admitted","running"),
+        @("verify_completed","completed"), @("freshness_accepted","completed")
+    )) {
+        $stageRecords = @($records | Where-Object {
+            [string](Get-Value $_ "stage" "") -ceq $stageContract[0] -and
+            [string](Get-Value $_ "status" "") -ceq $stageContract[1]
+        })
+        if ($stageRecords.Count -ne 1 -or
+            ($stageContract[0] -in @("refresh_completed","verify_completed") -and
+                [int](Get-Value $stageRecords[0] "exitCode" -1) -ne 0)) {
+            throw "Fixture preparation journal violates the exact one-attempt stage contract."
+        }
+    }
+    if ($sourceSealRecords.Count -ne 1 -or $receiptSealRecords.Count -ne 1 -or
+        [string](Get-Value $receiptJournal "sourceSealedRecordHash" "") -cne
+            [string](Get-RequiredValue $sourceSealRecords[0] "recordHash")) {
+        throw "Fixture preparation receipt does not bind the unique sealed source record."
+    }
+    $receiptSealHashes = Get-RequiredValue $receiptSealRecords[0] "artifactHashes"
+    if ([string](Get-Value $receiptSealHashes "fixturePreparationReceiptSha256" "") -cne
+            $receiptSha256 -or
+        [string](Get-Value $receiptSealHashes "snapshotArtifactSetSha256" "") -cne
+            $snapshotArtifactSetSha256) {
+        throw "Fixture preparation journal does not bind the immutable receipt before publication."
+    }
+    if ($supervisorResultKind -ceq "recovery") {
+        $recoveryStartedRecords = @($records | Where-Object {
+            [string](Get-Value $_ "stage" "") -ceq "publication_recovery_started" -and
+            [string](Get-Value $_ "status" "") -ceq "running"
+        })
+        $recoveryCompletedRecords = @($records | Where-Object {
+            [string](Get-Value $_ "stage" "") -ceq "publication_recovery_completed" -and
+            [string](Get-Value $_ "status" "") -ceq "completed"
+        })
+        if ($recoveryStartedRecords.Count -ne 1 -or $recoveryCompletedRecords.Count -ne 1 -or
+            [string](Get-Value (Get-RequiredValue $recoveryStartedRecords[0] "artifactHashes") `
+                "publicationRecoveryReceiptSha256" "") -cne $publicationRecoveryReceiptSha256 -or
+            [string](Get-Value (Get-RequiredValue $recoveryCompletedRecords[0] "artifactHashes") `
+                "publicationRecoveryReceiptSha256" "") -cne $publicationRecoveryReceiptSha256 -or
+            [string](Get-Value $terminalArtifactHashes "publicationRecoveryReceiptSha256" "") -cne
+                $publicationRecoveryReceiptSha256) {
+            throw "Fixture preparation journal does not bind the exact one-use recovery receipt."
+        }
+    } elseif ($null -ne (Get-Value $terminalArtifactHashes "publicationRecoveryReceiptSha256" $null) -or
+        $null -ne (Get-Value $Binding "publicationRecoveryReceiptSha256" $null) -or
+        $null -ne (Get-Value $Binding "publicationRecoveryReceiptPath" $null)) {
+        throw "An initial fixture preparation must not bind publication-recovery evidence."
+    }
+
+    $expectedNames = @(
+        "fixture-state.private.json", "load-auth.private.json", "load-command-bodies.private.json",
+        "load-devices.private.json", "verification.private.json"
+    )
+    Assert-DiagnosticPrivateDirectoryAcl $snapshotRoot "fixturePreparation snapshot root"
+    $snapshotEntries = @(Get-ChildItem -LiteralPath $snapshotRoot -Force)
+    if ($snapshotEntries.Count -ne 5 -or
+        @($snapshotEntries | Where-Object { $_.PSIsContainer }).Count -ne 0 -or
+        @(Compare-Object $expectedNames @($snapshotEntries.Name | Sort-Object)).Count -ne 0) {
+        throw "Fixture preparation snapshot root must contain exactly the five sealed artifacts."
+    }
+    $receiptArtifacts = @((Get-RequiredValue $receiptSnapshot "artifacts"))
+    $bindingArtifacts = @((Get-RequiredValue $Binding "artifacts"))
+    if ($receiptArtifacts.Count -ne 5 -or $bindingArtifacts.Count -ne 5 -or
+        @(Compare-Object $expectedNames @($receiptArtifacts.name | ForEach-Object { [string]$_ } | Sort-Object)).Count -ne 0 -or
+        @(Compare-Object $expectedNames @($bindingArtifacts.name | ForEach-Object { [string]$_ } | Sort-Object)).Count -ne 0) {
+        throw "Fixture preparation must bind exactly the five private snapshot artifacts."
+    }
+    foreach ($receiptArtifact in $receiptArtifacts) {
+        Assert-DiagnosticExactKeys $receiptArtifact @(
+            "name","sourcePath","targetPath","sha256","size","lastWriteTimeUtc"
+        ) "Fixture preparation receipt snapshot artifact"
+    }
+    foreach ($bindingArtifact in $bindingArtifacts) {
+        Assert-DiagnosticExactKeys $bindingArtifact @(
+            "name","path","sha256","size","lastWriteTimeUtc"
+        ) "Fixture preparation binding snapshot artifact"
+    }
+    $validatedArtifacts = @()
+    $artifactSetInput = @()
+    foreach ($name in $expectedNames) {
+        $receiptArtifact = @($receiptArtifacts | Where-Object { [string]$_.name -ceq $name })
+        $boundArtifact = @($bindingArtifacts | Where-Object { [string]$_.name -ceq $name })
+        if ($receiptArtifact.Count -ne 1 -or $boundArtifact.Count -ne 1) {
+            throw "Fixture preparation artifact '$name' is ambiguous."
+        }
+        $targetPath = Resolve-ExternalPath ([string](Get-RequiredValue $receiptArtifact[0] "targetPath")) `
+            "fixturePreparation artifact $name"
+        $expectedPath = [IO.Path]::GetFullPath((Join-Path $snapshotRoot $name))
+        $sha256 = Assert-Sha256 ([string](Get-RequiredValue $receiptArtifact[0] "sha256")) `
+            "fixturePreparation artifact $name sha256"
+        $size = [long](Get-RequiredValue $receiptArtifact[0] "size")
+        $lastWriteTimeUtc = [string](Get-RequiredValue $receiptArtifact[0] "lastWriteTimeUtc")
+        if ($targetPath -cne $expectedPath -or
+            [string](Get-Value $boundArtifact[0] "path" "") -cne $targetPath -or
+            [string](Get-Value $boundArtifact[0] "sha256" "") -cne $sha256 -or
+            [long](Get-Value $boundArtifact[0] "size" -1) -ne $size -or
+            [string](Get-Value $boundArtifact[0] "lastWriteTimeUtc" "") -cne $lastWriteTimeUtc -or
+            (Get-Item -LiteralPath $targetPath).Length -ne $size -or
+            (Get-FileHash -LiteralPath $targetPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $sha256) {
+            throw "Fixture preparation snapshot artifact '$name' drifted from its sealed receipt."
+        }
+        Assert-DiagnosticPrivateFileAcl $targetPath "fixturePreparation artifact $name"
+        $validatedArtifacts += [pscustomobject]@{name=$name;path=$targetPath;sha256=$sha256;size=$size;lastWriteTimeUtc=$lastWriteTimeUtc}
+        $artifactSetInput += [ordered]@{name=$name;sha256=$sha256;size=$size;lastWriteTimeUtc=$lastWriteTimeUtc}
+    }
+    $computedArtifactSetSha256 = Get-DiagnosticSnapshotArtifactSetSha256 $artifactSetInput
+    if ($computedArtifactSetSha256 -cne $snapshotArtifactSetSha256 -or
+        [string](Get-Value $receiptSnapshot "artifactSetSha256" "") -cne $snapshotArtifactSetSha256) {
+        throw "Fixture preparation snapshot artifact-set hash validation failed."
+    }
+    $verificationPrepared = @($validatedArtifacts | Where-Object { $_.name -ceq "verification.private.json" })
+    if ($verificationPrepared.Count -ne 1) { throw "Fixture preparation verification artifact is missing." }
+    $sealedVerification = Get-Content -LiteralPath $verificationPrepared[0].path -Raw |
+        ConvertFrom-Json -DateKind String -Depth 40
+    $verificationCounts = $sealedVerification.counts
+    $verificationGates = $sealedVerification.gates
+    $sanitizedCounts = [ordered]@{
+        schools=[int]$verificationCounts.schools;teachers=[int]$verificationCounts.teachers
+        officeStaff=[int]$verificationCounts.officeStaff;students=[int]$verificationCounts.students
+        classes=[int]$verificationCounts.classes;classRosterStudents=[int]$verificationCounts.classRosterStudents
+        devices=[int]$verificationCounts.devices;activeDeviceSessions=[int]$verificationCounts.activeDeviceSessions
+        activeSessions=[int]$verificationCounts.activeSessions;commandBodies=[int]$verificationCounts.commandBodies
+        authorizationPlanCohorts=[ordered]@{
+            coTeacherStudents=[int]$verificationCounts.authorizationPlanCohorts.coTeacherStudents
+            officeSupervisionStudents=[int]$verificationCounts.authorizationPlanCohorts.officeSupervisionStudents
+        }
+        liveAuth=[ordered]@{
+            commandAdministrators=[int]$verificationCounts.liveAuth.commandAdministrators
+            teachers=[int]$verificationCounts.liveAuth.teachers
+        }
+    }
+    $sanitizedGates = [ordered]@{}
+    foreach ($gateName in @(
+        "autoEnrollDisabled","trackingDisabled","schedulesDisabled","exactSchoolTimezones",
+        "classRostersExactAndDisjoint","authorizationPlanCohortsExact",
+        "authorizationPlanOfficeStudentsOutsideTeacherRosters","allDeviceTokensLive","allStaffAuthArtifactsLive"
+    )) { $sanitizedGates[$gateName] = [bool](Get-Value $verificationGates $gateName $false) }
+    $verificationCountsAndGatesSha256 = Get-DiagnosticCanonicalSha256 ([ordered]@{
+        counts=$sanitizedCounts;gates=$sanitizedGates
+    })
+    $receiptVerification = Get-RequiredValue $receipt "verification"
+    $receiptAdmission = Get-RequiredValue $receipt "supervisorAdmission"
+    if ([string](Get-RequiredValue $Binding "verificationCountsAndGatesSha256") -cne
+            $verificationCountsAndGatesSha256 -or
+        [string](Get-Value $receiptVerification "artifactSha256" "") -cne $verificationPrepared[0].sha256 -or
+        [string](Get-Value $receiptVerification "countsAndGatesSha256" "") -cne
+            $verificationCountsAndGatesSha256 -or
+        [string](Get-Value $terminalArtifactHashes "verificationCountsAndGatesSha256" "") -cne
+            $verificationCountsAndGatesSha256 -or
+        [string](Get-Value $supervisorResult "verificationCountsAndGatesSha256" "") -cne
+            $verificationCountsAndGatesSha256 -or
+        [string](Get-Value $receiptAdmission "type" "") -cne "diagnostic_prep_supervisor_ticket" -or
+        [string](Get-Value $receiptAdmission "sha256" "") -cne $supervisorTicketSha256 -or
+        $null -ne (Get-Value $receiptAdmission "originalTicketSha256" $null)) {
+        throw "Fixture preparation verification counts/gates evidence drifted from its sealed artifact."
+    }
+    return [pscustomobject]@{
+        Version=$script:FixturePreparationReceiptVersion;ReceiptPath=$receiptPath;ReceiptSha256=$receiptSha256
+        JournalPath=$journalPath;JournalSha256=$journalSha256;JournalTerminalHash=$journalTerminalHash;ManifestPath=$manifestPath
+        ManifestSha256=$manifestSha256;SnapshotRoot=$snapshotRoot
+        SourceRoot=$manifestSourceRoot;RunRoot=$manifestRunRoot
+        ManifestLeaseReceiptPath=[IO.Path]::GetFullPath(
+            [string](Get-RequiredValue $manifestPaths "leaseReceiptPath")
+        )
+        ManifestStartGatePath=[IO.Path]::GetFullPath(
+            [string](Get-RequiredValue $manifestPaths "startGatePath")
+        )
+        ManifestTrafficMarkerPath=[IO.Path]::GetFullPath(
+            [string](Get-RequiredValue $manifestPaths "trafficMarkerPath")
+        )
+        SnapshotArtifactSetSha256=$snapshotArtifactSetSha256
+        ControllerHashes=$controllerHashes
+        SupervisorTicketPath=$supervisorTicketPath;SupervisorTicketSha256=$supervisorTicketSha256
+        SupervisorResultPath=$supervisorResultPath;SupervisorResultSha256=$supervisorResultSha256
+        SupervisorResultKind=$supervisorResultKind;SupervisorRunLockSha256=$supervisorRunLockSha256
+        PublicationRecoveryAdmissionSha256=$publicationRecoveryAdmissionSha256
+        PublicationRecoveryReceiptSha256=$publicationRecoveryReceiptSha256
+        VerificationCountsAndGatesSha256=$verificationCountsAndGatesSha256
+        Artifacts=@($validatedArtifacts)
+    }
+}
+
 function Read-DiagnosticConfiguration {
     $configPath = Resolve-ExternalPath $ConfigPath "ConfigPath"
     $expectedHash = Assert-Sha256 $ExpectedConfigSha256 "ExpectedConfigSha256"
@@ -707,14 +2454,25 @@ function Read-DiagnosticConfiguration {
     if ($actualHash -cne $expectedHash) { throw "Bound diagnostic config SHA-256 validation failed." }
     try { $raw = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json -DateKind String -Depth 50 }
     catch { throw "ConfigPath must contain valid JSON." }
-    if ([int](Get-Value $raw "schemaVersion" 0) -ne 1 -or (Get-Value $raw "diagnosticOnly" $false) -ne $true) {
-        throw "The diagnostic config must declare schemaVersion=1 and diagnosticOnly=true."
+    Assert-DiagnosticExactKeys $raw @(
+        "schemaVersion","diagnosticOnly","diagnosticEligible","runId","evidenceDirectory",
+        "baseUrl","workload","deploymentIdentity","resources",
+        "historyFallbackPiEvidenceVersion","historyFallbackQueryIdentity",
+        "databaseInsightsLease","fixturePreparation","harnessArtifacts",
+        "expectedGeneratorPublicIp"
+    ) "Diagnostic config"
+    if ([int](Get-Value $raw "schemaVersion" 0) -ne 1 -or
+        (Get-Value $raw "diagnosticOnly" $false) -ne $true -or
+        (Get-Value $raw "diagnosticEligible" $false) -ne $true) {
+        throw "The diagnostic config must declare schemaVersion=1, diagnosticOnly=true, and diagnosticEligible=true."
     }
     if ((Get-Value $raw "certification") -or (Get-Value $raw "predecessorResultPath")) {
         throw "Diagnostic-only configuration cannot contain certification or predecessor fields."
     }
     $runId = Assert-SafeIdentifier ([string](Get-RequiredValue $raw "runId")) "runId"
     $evidenceDirectory = Resolve-ExternalPath ([string](Get-RequiredValue $raw "evidenceDirectory")) "evidenceDirectory" -AllowMissing
+    $atomicBinding = Read-DiagnosticAtomicBindingEnvelope `
+        $configPath $actualHash $runId $evidenceDirectory
     $baseUrl = ([string](Get-RequiredValue $raw "baseUrl")).TrimEnd('/')
     if ($baseUrl -cne "https://school-pilot.net") { throw "Production diagnostics must target https://school-pilot.net through CloudFront." }
 
@@ -782,6 +2540,8 @@ function Read-DiagnosticConfiguration {
         (Get-RequiredValue $raw "historyFallbackQueryIdentity") `
         $applicationSha $digest $apiArn $workerArn $historyFallbackPiEvidenceVersion
     $databaseInsightsLease = Assert-DatabaseInsightsLeaseBinding (Get-RequiredValue $raw "databaseInsightsLease")
+    $fixturePreparation = Assert-DiagnosticFixturePreparationBinding `
+        (Get-RequiredValue $raw "fixturePreparation") $runId $applicationSha $controllerSha $digest $apiArn $workerArn
 
     $artifacts = @((Get-RequiredValue $raw "harnessArtifacts"))
     $expectedKinds = @("command-bodies", "device-manifest", "teacher-auth")
@@ -796,6 +2556,15 @@ function Read-DiagnosticConfiguration {
         if ((Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant() -cne $sha) {
             throw "The $kind harness artifact hash does not match its binding."
         }
+        $preparedName = switch ($kind) {
+            "device-manifest" { "load-devices.private.json" }
+            "teacher-auth" { "load-auth.private.json" }
+            "command-bodies" { "load-command-bodies.private.json" }
+        }
+        $prepared = @($fixturePreparation.Artifacts | Where-Object { $_.name -ceq $preparedName })
+        if ($prepared.Count -ne 1 -or $prepared[0].path -cne $path -or $prepared[0].sha256 -cne $sha) {
+            throw "The $kind harness artifact is not the exact repository-prepared snapshot artifact."
+        }
         $bindings += [pscustomobject]@{ kind=$kind; path=$path; sha256=$sha }
     }
     if ($bindings.Count -ne 3 -or @(Compare-Object $expectedKinds @($bindings.kind | Sort-Object)).Count -ne 0) {
@@ -808,12 +2577,21 @@ function Read-DiagnosticConfiguration {
         $address.AddressFamily -ne [Net.Sockets.AddressFamily]::InterNetwork) {
         throw "expectedGeneratorPublicIp must be an IPv4 literal."
     }
+    Assert-DiagnosticAtomicBindingCrossReferences `
+        $atomicBinding $raw $fixturePreparation `
+        $applicationSha $controllerSha $digest $apiArn $workerArn `
+        $historyFallbackSqlIdentity $databaseInsightsLease $expectedGeneratorIp
+    Assert-DiagnosticMutablePathTopology `
+        $evidenceDirectory $atomicBinding.Root $fixturePreparation $databaseInsightsLease
     return [pscustomobject]@{
         Raw=$raw; Path=$configPath; Sha256=$actualHash; RunId=$runId; EvidenceDirectory=$evidenceDirectory
+        BindingRoot=$atomicBinding.Root;BindingReceiptPath=$atomicBinding.ReceiptPath
+        BindingReceiptSha256=$atomicBinding.ReceiptSha256
         BaseUrl=$baseUrl; Workload=$workload; Resources=$resources; ExpectedGeneratorPublicIp=$expectedGeneratorIp
         ApplicationGitSha=$applicationSha; ControllerGitSha=$controllerSha; ImageDigest=$digest
         ApiTaskDefinitionArn=$apiArn; WorkerTaskDefinitionArn=$workerArn; HarnessArtifacts=$bindings
         HistoryFallbackSqlIdentity=$historyFallbackSqlIdentity;DatabaseInsightsLease=$databaseInsightsLease
+        FixturePreparation=$fixturePreparation
     }
 }
 
@@ -845,10 +2623,15 @@ function Assert-DiagnosticPrivateFileAcl {
     param([string]$Path, [string]$Name)
     if (-not $IsWindows) { throw "$Name requires Windows ACL enforcement." }
     $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-    $item = Get-Item -LiteralPath $Path
+    $absolute = Resolve-ExternalPath $Path $Name
+    $item = Get-Item -LiteralPath $absolute -Force
     $acl = [IO.FileSystemAclExtensions]::GetAccessControl(
-        $item, [Security.AccessControl.AccessControlSections]::Access
+        $item, ([Security.AccessControl.AccessControlSections]::Access -bor
+            [Security.AccessControl.AccessControlSections]::Owner)
     )
+    if ($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $currentSid) {
+        throw "$Name must be owned by the current diagnostic operator."
+    }
     if (-not $acl.AreAccessRulesProtected) { throw "$Name must disable inherited file access." }
     $rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
     if ($rules.Count -ne 1) { throw "$Name must be readable only by the current diagnostic operator." }
@@ -860,6 +2643,50 @@ function Assert-DiagnosticPrivateFileAcl {
         $rule.InheritanceFlags -ne [Security.AccessControl.InheritanceFlags]::None -or
         $rule.PropagationFlags -ne [Security.AccessControl.PropagationFlags]::None) {
         throw "$Name must have one exact current-operator FullControl rule."
+    }
+}
+
+function Assert-DiagnosticPrivateDirectoryAcl {
+    param([string]$Path, [string]$Name)
+    if (-not $IsWindows) { throw "$Name requires Windows ACL enforcement." }
+    $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $absolute = [IO.Path]::GetFullPath($Path)
+    $cursor = $absolute
+    while ($cursor) {
+        if (Test-Path -LiteralPath $cursor) {
+            $candidate = Get-Item -LiteralPath $cursor -Force
+            if (($candidate.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "$Name must not traverse a reparse point."
+            }
+        }
+        $parent = [IO.Directory]::GetParent($cursor)
+        if ($null -eq $parent) { break }
+        $cursor = $parent.FullName
+    }
+    $item = Get-Item -LiteralPath $absolute -Force
+    if (-not $item.PSIsContainer) { throw "$Name must be a directory." }
+    $acl = [IO.FileSystemAclExtensions]::GetAccessControl(
+        $item, ([Security.AccessControl.AccessControlSections]::Access -bor
+            [Security.AccessControl.AccessControlSections]::Owner)
+    )
+    if ($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $currentSid) {
+        throw "$Name must be owned by the current diagnostic operator."
+    }
+    $rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+    $expectedInheritance = [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
+        [Security.AccessControl.InheritanceFlags]::ObjectInherit
+    if (-not $acl.AreAccessRulesProtected -or $rules.Count -ne 1) {
+        throw "$Name must be accessible only by the current diagnostic operator."
+    }
+    $rule = $rules[0]
+    if ($rule.IsInherited -or
+        $rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or
+        $rule.IdentityReference.Value -cne $currentSid -or
+        (($rule.FileSystemRights -band [Security.AccessControl.FileSystemRights]::FullControl) -ne
+            [Security.AccessControl.FileSystemRights]::FullControl) -or
+        $rule.InheritanceFlags -ne $expectedInheritance -or
+        $rule.PropagationFlags -ne [Security.AccessControl.PropagationFlags]::None) {
+        throw "$Name must have one exact inheritable current-operator FullControl rule."
     }
 }
 
@@ -3412,10 +5239,24 @@ $terminal = [ordered]@{
     certificationEligible=$false;supervisorSealed=$false;predecessor=$null;status="failed";
     evidenceCollectorVersion=$script:EvidenceCollectorVersion;
     timestamp=$null;failures=@();config=[ordered]@{pathSha256=(Get-StringSha256 $config.Path);sha256=$config.Sha256;
-        rawPathPersisted=$false};
+        bindingReceiptSha256=$config.BindingReceiptSha256;rawPathPersisted=$false};
     deploymentIdentity=[ordered]@{applicationGitSha=$config.ApplicationGitSha;deployedImageDigest=$config.ImageDigest;
         apiTaskDefinitionArn=$config.ApiTaskDefinitionArn;workerTaskDefinitionArn=$config.WorkerTaskDefinitionArn};
     controller=[ordered]@{gitSha=$config.ControllerGitSha;hashes=$controllerHashes};harnessArtifacts=$config.HarnessArtifacts;
+    fixturePreparation=[ordered]@{version=$config.FixturePreparation.Version;
+        receiptSha256=$config.FixturePreparation.ReceiptSha256;
+        manifestSha256=$config.FixturePreparation.ManifestSha256;
+        journalSha256=$config.FixturePreparation.JournalSha256;
+        journalTerminalHash=$config.FixturePreparation.JournalTerminalHash;
+        snapshotArtifactSetSha256=$config.FixturePreparation.SnapshotArtifactSetSha256;
+        supervisorTicketSha256=$config.FixturePreparation.SupervisorTicketSha256;
+        supervisorResultSha256=$config.FixturePreparation.SupervisorResultSha256;
+        supervisorResultKind=$config.FixturePreparation.SupervisorResultKind;
+        supervisorRunLockSha256=$config.FixturePreparation.SupervisorRunLockSha256;
+        publicationRecoveryAdmissionSha256=$config.FixturePreparation.PublicationRecoveryAdmissionSha256;
+        publicationRecoveryReceiptSha256=$config.FixturePreparation.PublicationRecoveryReceiptSha256;
+        verificationCountsAndGatesSha256=$config.FixturePreparation.VerificationCountsAndGatesSha256;
+        diagnosticEligible=$true};
     workload=[ordered]@{stage="800";devices=810;durationSeconds=1800;screenshotBytes=40960;canaryDevices=10;
         workloadSchemaVersion=$script:WorkloadSchemaVersion;endpointShapeSha256=$script:EndpointShapeSha256};
     historyFallbackQueryIdentity=[ordered]@{receiptSha256=$config.HistoryFallbackSqlIdentity.Receipt.Sha256;

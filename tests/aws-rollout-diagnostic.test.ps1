@@ -91,6 +91,11 @@ foreach ($required in @(
     'PerformanceInsightsInitialDelayMinutes = 5','PerformanceInsightsStabilizationDeadlineMinutes = 15',
     'DatabaseInsightsLeaseMaximumAcquisitionAgeSeconds = 900','DatabaseInsightsLeaseRequiredRemainingSeconds',
     'diagnostic-pi-lease-headroom-v1','queryid-minute-sparse-v1',
+    'fixture-preparation-receipt-v1','waf800-diagnostic-prep-manifest-v1','diagnostic-prep-journal-v1',
+    'Read-DiagnosticAtomicBindingEnvelope','Assert-DiagnosticAtomicBindingCrossReferences',
+    'Assert-DiagnosticMutablePathTopology','journalSha256=$config.FixturePreparation.JournalSha256',
+    'Fixture preparation launch admission control','launchNonceSha256',
+    'Fixture preparation journal record',
     'HarnessTerminalCommitTimeoutSeconds = 45','Wait-HarnessTerminalEvidenceCommit','Resolve-DiagnosticTerminalExitCode',
     'Get-ControllerCleanupDisposition','Stop-ControllerChildrenImmediately','immediate_harness_first','controller_operational_failure','controller_runtime_failure',
     'db_load_series','full_interval_top_tokens','hot_path_log_windows','fallback_window_top_tokens','fallback_token_wait_events',
@@ -193,7 +198,16 @@ $tokens = $null; $parseErrors = $null
 $controllerAst = [Management.Automation.Language.Parser]::ParseFile($controllerPath, [ref]$tokens, [ref]$parseErrors)
 foreach ($name in @(
     'Get-Value','Get-RequiredValue','Assert-Sha256','Assert-HistoryFallbackSqlIdentity','Assert-GitSha','Get-ControllerSha','Get-StableJsonSha256','Get-StringSha256','Test-DiagnosticEmptyObject','Get-DiagnosticRunMutexName','Enter-DiagnosticRunLock','Exit-DiagnosticRunLock',
-    'Resolve-ExternalPath','Assert-DiagnosticPrivateFileAcl','Read-HistoryFallbackQueryIdentityReceipt',
+    'Resolve-ExternalPath','Assert-DiagnosticPrivateFileAcl','Assert-DiagnosticPrivateDirectoryAcl',
+    'Get-DiagnosticCanonicalSha256',
+    'Assert-DiagnosticExactKeys','Test-DiagnosticPathsOverlap',
+    'Assert-DiagnosticPrepJournalTimestampSequence',
+    'Assert-DiagnosticFixturePreparationReceiptShape',
+    'Assert-DiagnosticPrepJournalNestedShape',
+    'Assert-DiagnosticInitialPreparationHasNoRecoveryProvenance',
+    'Read-DiagnosticAtomicBindingEnvelope','Assert-DiagnosticAtomicBindingCrossReferences',
+    'Assert-DiagnosticMutablePathTopology','Read-HistoryFallbackQueryIdentityReceipt',
+    'Assert-DiagnosticFixturePreparationBinding',
     'Assert-DatabaseInsightsLeaseBinding','Get-DatabaseInsightsLeaseTimingEvidence',
     'Invoke-DatabaseInsightsLeaseController','Restore-TerminalDatabaseInsightsLease',
     'Get-ValidationScratchPaths','Get-WafLabelMatch','Assert-WafDeviceIngestClassifierContract',
@@ -215,6 +229,205 @@ foreach ($name in @(
 )) { Import-ScriptFunction $controllerAst $name }
 
 $script:RepositoryRoot = $root
+$script:FixturePreparationReceiptVersion = 'fixture-preparation-receipt-v1'
+$script:DiagnosticPrepManifestVersion = 'waf800-diagnostic-prep-manifest-v1'
+$script:DiagnosticPrepJournalVersion = 'diagnostic-prep-journal-v1'
+
+function New-TestDiagnosticPreparationReceiptShape {
+    $counts = [ordered]@{
+        schools=2;teachers=20;officeStaff=1;students=1010;classes=20
+        classRosterStudents=800;devices=1010;activeDeviceSessions=1010
+        activeSessions=20;commandBodies=20
+        authorizationPlanCohorts=[ordered]@{
+            coTeacherStudents=40;officeSupervisionStudents=40
+        }
+        liveAuth=[ordered]@{commandAdministrators=1;teachers=20}
+    }
+    $gates = [ordered]@{
+        autoEnrollDisabled=$true;trackingDisabled=$true;schedulesDisabled=$true
+        exactSchoolTimezones=$true;classRostersExactAndDisjoint=$true
+        authorizationPlanCohortsExact=$true
+        authorizationPlanOfficeStudentsOutsideTeacherRosters=$true
+        allDeviceTokensLive=$true;allStaffAuthArtifactsLive=$true
+    }
+    return [ordered]@{
+        schemaVersion=1;type='fixture_preparation_receipt'
+        version='fixture-preparation-receipt-v1';status='sources_sealed'
+        runId='diagnostic-prep-contract-test';diagnosticOnly=$true
+        diagnosticEligible=$true;certificationEligible=$false
+        sealedAtUtc='2026-07-23T04:00:00.0000000+00:00'
+        manifest=[ordered]@{path='C:\private\manifest.json';sha256='1' * 64}
+        release=[ordered]@{
+            applicationGitSha='1' * 40;controllerGitSha='2' * 40
+            deployedImageDigest='sha256:' + ('3' * 64)
+            apiTaskDefinitionArn='arn:aws:ecs:us-east-1:135775632425:task-definition/api:1'
+            workerTaskDefinitionArn='arn:aws:ecs:us-east-1:135775632425:task-definition/worker:1'
+        }
+        controllerArtifacts=@([ordered]@{kind='coordinator';path='scripts/load/coordinator.ps1';sha256='4' * 64})
+        supervisorAdmission=[ordered]@{
+            type='diagnostic_prep_supervisor_ticket';version='diagnostic-prep-supervisor-ticket-v2'
+            sha256='5' * 64;nonceSha256='6' * 64
+            supervisor=[ordered]@{pid=101;startedAtUtc='2026-07-23T04:00:00.0000000+00:00';path='C:\pwsh.exe'}
+            supervisorLockPathSha256='7' * 64;originalTicketSha256=$null
+            workerOwnership=[ordered]@{
+                path='C:\private\ownership.json';sha256='8' * 64
+                version='diagnostic-prep-worker-job-v1'
+                jobPolicy='kill-on-supervisor-close-v1'
+                descendantPolicy='no-breakaway-v1'
+            }
+        }
+        fixture=[ordered]@{
+            fixtureId='fixture';provider='production';sourceRoot='C:\private\source'
+            fixtureCli=[ordered]@{path='scripts/load/fixture.mjs';sha256='9' * 64}
+            config=[ordered]@{path='C:\private\fixture.json';sha256='a' * 64}
+        }
+        execution=[ordered]@{
+            runStartedAtUtc='2026-07-23T04:00:00.0000000+00:00'
+            runDirectory='C:\private\run';refreshCompletedAtUtc='2026-07-23T04:01:00.0000000+00:00'
+            verificationCompletedAtUtc='2026-07-23T04:02:00.0000000+00:00'
+            refreshExitCode=0;verificationExitCode=0
+            refreshStdoutSha256='b' * 64;refreshStderrSha256='c' * 64
+            verifyStdoutSha256='d' * 64;verifyStderrSha256='e' * 64
+            workerProcess=[ordered]@{
+                pid=102;startedAtUtc='2026-07-23T04:00:00.0000000+00:00'
+                path='C:\pwsh.exe';kind='fixture-worker'
+            }
+        }
+        freshness=[ordered]@{
+            refreshedAtUtc='2026-07-23T04:01:00.0000000+00:00'
+            verifiedAtUtc='2026-07-23T04:02:00.0000000+00:00'
+            checkedAtUtc='2026-07-23T04:02:01.0000000+00:00'
+            requiredVerificationMaximumAgeMinutes=20;requiredArtifactValiditySeconds=7200
+            expiresAtUtc='2026-07-23T06:30:00.0000000+00:00'
+            deviceManifestExpiresAtUtc='2026-07-23T06:30:00.0000000+00:00'
+        }
+        verification=[ordered]@{
+            artifactSha256='f' * 64;counts=$counts;gates=$gates;countsAndGatesSha256='0' * 64
+        }
+        credentials=[ordered]@{
+            expiresAtUtc='2026-07-23T06:30:00.0000000+00:00'
+            deviceManifestExpiresAtUtc='2026-07-23T06:30:00.0000000+00:00'
+            requiredValiditySeconds=7200
+        }
+        snapshot=[ordered]@{
+            root='C:\private\snapshot';contract='unique-root-no-overwrite-atomic-five-file-v1'
+            artifactSetSha256='1' * 64
+            artifacts=@([ordered]@{
+                name='fixture-state.private.json';sourcePath='C:\private\source\fixture-state.private.json'
+                targetPath='C:\private\snapshot\fixture-state.private.json';sha256='2' * 64
+                size=10;lastWriteTimeUtc='2026-07-23T04:02:00.0000000+00:00'
+            })
+        }
+        recovery=[ordered]@{allowedAttempts=1;nonce='sealed'}
+        journal=[ordered]@{path='C:\private\journal.jsonl';sourceSealedRecordHash='3' * 64}
+        secretsPrinted=$false;trafficStarted=$false;leaseAcquired=$false
+    }
+}
+
+$validDiagnosticPreparationReceipt = New-TestDiagnosticPreparationReceiptShape
+[void](Assert-DiagnosticFixturePreparationReceiptShape $validDiagnosticPreparationReceipt)
+$diagnosticReceiptWithRawError = $validDiagnosticPreparationReceipt |
+    ConvertTo-Json -Depth 40 | ConvertFrom-Json -DateKind String -Depth 40
+$diagnosticReceiptWithRawError | Add-Member -NotePropertyName rawError -NotePropertyValue 'forbidden'
+Assert-Throws {
+    Assert-DiagnosticFixturePreparationReceiptShape $diagnosticReceiptWithRawError
+} 'fields are invalid' 'Fixture preparation receipts must reject extra raw-error fields.'
+$diagnosticSnapshotWithStudentId = $validDiagnosticPreparationReceipt |
+    ConvertTo-Json -Depth 40 | ConvertFrom-Json -DateKind String -Depth 40
+$diagnosticSnapshotWithStudentId.snapshot.artifacts[0] |
+    Add-Member -NotePropertyName studentId -NotePropertyValue 'forbidden'
+Assert-Throws {
+    Assert-DiagnosticFixturePreparationReceiptShape $diagnosticSnapshotWithStudentId
+} 'fields are invalid' 'Fixture snapshot entries must reject identifier-bearing fields.'
+
+$validDiagnosticJournalRecords = @(
+    [pscustomobject]@{timestampUtc='2026-07-23T04:00:00.0000000+00:00'},
+    [pscustomobject]@{timestampUtc='2026-07-23T04:00:00.0000001+00:00'}
+)
+[void](Assert-DiagnosticPrepJournalTimestampSequence $validDiagnosticJournalRecords)
+Assert-Throws {
+    Assert-DiagnosticPrepJournalTimestampSequence @(
+        [pscustomobject]@{timestampUtc='2026-07-23T04:00:00.0000001+00:00'},
+        [pscustomobject]@{timestampUtc='2026-07-23T04:00:00.0000000+00:00'}
+    )
+} 'non-regressing' 'Fixture journal timestamps must not regress within a valid hash chain.'
+Assert-Throws {
+    Assert-DiagnosticPrepJournalTimestampSequence @(
+        [pscustomobject]@{timestampUtc='2026-07-23T04:00:00.0000000Z'}
+    )
+} 'round-tripping \+00:00 UTC string' 'Fixture journal timestamps must preserve their exact lexical UTC form.'
+$validDiagnosticJournalRecord = [ordered]@{
+    stage='preflight_accepted';status='completed'
+    process=[ordered]@{
+        pid=102;startedAtUtc='2026-07-23T04:00:00.0000000+00:00'
+        path='C:\pwsh.exe';kind='fixture-worker'
+    }
+    artifactHashes=[ordered]@{
+        manifestSha256='1' * 64;fixtureWorkerSha256='2' * 64
+        supervisorAdmissionSha256='3' * 64;supervisorAdmissionNonceSha256='4' * 64
+    }
+}
+[void](Assert-DiagnosticPrepJournalNestedShape $validDiagnosticJournalRecord 'initial')
+$diagnosticJournalWithTenantId = $validDiagnosticJournalRecord |
+    ConvertTo-Json -Depth 20 | ConvertFrom-Json -DateKind String -Depth 20
+$diagnosticJournalWithTenantId.artifactHashes |
+    Add-Member -NotePropertyName tenantId -NotePropertyValue 'forbidden'
+Assert-Throws {
+    Assert-DiagnosticPrepJournalNestedShape $diagnosticJournalWithTenantId 'initial'
+} 'fields are invalid' 'Fixture journal artifact hashes must reject tenant or identifier fields.'
+
+$initialDiagnosticBinding = [ordered]@{
+    publicationRecoveryAdmissionPath=$null;publicationRecoveryAdmissionSha256=$null
+    publicationRecoveryReceiptPath=$null;publicationRecoveryReceiptSha256=$null
+    publicationRecoveryWorkerOwnershipPath=$null
+    publicationRecoveryWorkerOwnershipSha256=$null
+}
+$initialDiagnosticResult = [ordered]@{}
+$absentDiagnosticRecoveryReceipt = Join-Path ([IO.Path]::GetTempPath()) `
+    "absent-diagnostic-recovery-$([Guid]::NewGuid().ToString('N')).json"
+[void](Assert-DiagnosticInitialPreparationHasNoRecoveryProvenance `
+    'initial' $initialDiagnosticBinding $initialDiagnosticResult $absentDiagnosticRecoveryReceipt)
+$diagnosticResultWithRecovery = [ordered]@{publicationRecoveryReceipt=[ordered]@{path='forbidden'}}
+Assert-Throws {
+    Assert-DiagnosticInitialPreparationHasNoRecoveryProvenance `
+        'initial' $initialDiagnosticBinding $diagnosticResultWithRecovery $absentDiagnosticRecoveryReceipt
+} 'must not contain recovery provenance' 'Initial preparation must reject recovery provenance in its result.'
+$diagnosticBindingWithRecovery = $initialDiagnosticBinding |
+    ConvertTo-Json -Depth 10 | ConvertFrom-Json -DateKind String -Depth 10
+$diagnosticBindingWithRecovery.publicationRecoveryAdmissionSha256 = '1' * 64
+Assert-Throws {
+    Assert-DiagnosticInitialPreparationHasNoRecoveryProvenance `
+        'initial' $diagnosticBindingWithRecovery $initialDiagnosticResult $absentDiagnosticRecoveryReceipt
+} 'must not bind recovery provenance' 'Initial preparation must reject recovery hashes in its binding.'
+$presentDiagnosticRecoveryReceipt = Join-Path ([IO.Path]::GetTempPath()) `
+    "present-diagnostic-recovery-$([Guid]::NewGuid().ToString('N')).json"
+try {
+    [IO.File]::WriteAllText($presentDiagnosticRecoveryReceipt, '{}', [Text.UTF8Encoding]::new($false))
+    Assert-Throws {
+        Assert-DiagnosticInitialPreparationHasNoRecoveryProvenance `
+            'initial' $initialDiagnosticBinding $initialDiagnosticResult $presentDiagnosticRecoveryReceipt
+    } 'ineligible while a publication-recovery receipt exists' `
+        'Initial preparation must reject an unbound recovery receipt on disk.'
+}
+finally {
+    if (Test-Path -LiteralPath $presentDiagnosticRecoveryReceipt) {
+        Remove-Item -LiteralPath $presentDiagnosticRecoveryReceipt -Force
+    }
+}
+$fixturePreparationReleaseArgs = @(
+    'diagnostic-prep-contract-test', ('1' * 40), ('2' * 40), ('sha256:' + ('3' * 64)),
+    'arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:1',
+    'arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:1'
+)
+Assert-Throws {
+    Assert-DiagnosticFixturePreparationBinding $null @fixturePreparationReleaseArgs | Out-Null
+} "requires 'fixturePreparation'" 'The diagnostic controller must reject missing repository-owned fixture-preparation provenance.'
+$historicalFixturePreparation = [pscustomobject]@{
+    version='fixture-preparation-receipt-v1';diagnosticEligible=$false
+}
+Assert-Throws {
+    Assert-DiagnosticFixturePreparationBinding $historicalFixturePreparation @fixturePreparationReleaseArgs | Out-Null
+} 'fixturePreparation fields are invalid' 'The diagnostic controller must reject malformed historical or rehearsal fixture-preparation provenance before reading its eligibility flag.'
 $orderedValueFixture = [ordered]@{falseValue=$false;zeroValue=0;emptyValue=@();nullValue=$null}
 Assert-Condition ((Get-Value $orderedValueFixture 'falseValue' $true) -eq $false) 'Get-Value must preserve false values from ordered dictionaries.'
 Assert-Condition ((Get-Value $orderedValueFixture 'zeroValue' 9) -eq 0) 'Get-Value must preserve zero values from ordered dictionaries.'
@@ -320,31 +533,31 @@ $monitorStartedAt = [DateTimeOffset]'2026-07-20T12:00:00Z'
 $heartbeatNow = $monitorStartedAt.AddSeconds(60)
 $healthyHeartbeat = [pscustomobject]@{runId='diagnostic-ip-test';phase='Waf';timestamp=$heartbeatNow.ToString('o');iteration=1;triggered=$false}
 Assert-HealthyMonitorHeartbeat -Heartbeat $healthyHeartbeat -ExpectedRunId 'diagnostic-ip-test' -ExpectedPhase 'Waf' -MonitorStartedAt $monitorStartedAt -Now $heartbeatNow
-$wrongRunHeartbeat = $healthyHeartbeat | ConvertTo-Json | ConvertFrom-Json
+$wrongRunHeartbeat = $healthyHeartbeat | ConvertTo-Json | ConvertFrom-Json -DateKind String
 $wrongRunHeartbeat.runId = 'wrong-run'
 Assert-Throws { Assert-HealthyMonitorHeartbeat -Heartbeat $wrongRunHeartbeat -ExpectedRunId 'diagnostic-ip-test' -ExpectedPhase 'Waf' -MonitorStartedAt $monitorStartedAt -Now $heartbeatNow } 'fresh, healthy' 'A wrong-run monitor heartbeat must fail closed.'
-$wrongPhaseHeartbeat = $healthyHeartbeat | ConvertTo-Json | ConvertFrom-Json
+$wrongPhaseHeartbeat = $healthyHeartbeat | ConvertTo-Json | ConvertFrom-Json -DateKind String
 $wrongPhaseHeartbeat.phase = 'Application'
 Assert-Throws { Assert-HealthyMonitorHeartbeat -Heartbeat $wrongPhaseHeartbeat -ExpectedRunId 'diagnostic-ip-test' -ExpectedPhase 'Waf' -MonitorStartedAt $monitorStartedAt -Now $heartbeatNow } 'fresh, healthy' 'A wrong-phase monitor heartbeat must fail closed.'
-$triggeredHeartbeat = $healthyHeartbeat | ConvertTo-Json | ConvertFrom-Json
+$triggeredHeartbeat = $healthyHeartbeat | ConvertTo-Json | ConvertFrom-Json -DateKind String
 $triggeredHeartbeat.triggered = $true
 Assert-Throws { Assert-HealthyMonitorHeartbeat -Heartbeat $triggeredHeartbeat -ExpectedRunId 'diagnostic-ip-test' -ExpectedPhase 'Waf' -MonitorStartedAt $monitorStartedAt -Now $heartbeatNow } 'fresh, healthy' 'A triggered monitor heartbeat must fail closed.'
-$nonBooleanHeartbeat = $healthyHeartbeat | ConvertTo-Json | ConvertFrom-Json
+$nonBooleanHeartbeat = $healthyHeartbeat | ConvertTo-Json | ConvertFrom-Json -DateKind String
 $nonBooleanHeartbeat.triggered = 'false'
 Assert-Throws { Assert-HealthyMonitorHeartbeat -Heartbeat $nonBooleanHeartbeat -ExpectedRunId 'diagnostic-ip-test' -ExpectedPhase 'Waf' -MonitorStartedAt $monitorStartedAt -Now $heartbeatNow } 'fresh, healthy' 'A non-Boolean trigger field must fail closed.'
-$staleHeartbeat = $healthyHeartbeat | ConvertTo-Json | ConvertFrom-Json
+$staleHeartbeat = $healthyHeartbeat | ConvertTo-Json | ConvertFrom-Json -DateKind String
 $staleHeartbeat.timestamp = $heartbeatNow.AddSeconds(-151).ToString('o')
 Assert-Throws { Assert-HealthyMonitorHeartbeat -Heartbeat $staleHeartbeat -ExpectedRunId 'diagnostic-ip-test' -ExpectedPhase 'Waf' -MonitorStartedAt $monitorStartedAt.AddMinutes(-10) -Now $heartbeatNow } 'fresh, healthy' 'A heartbeat beyond the unchanged 150-second threshold must fail closed.'
-$zeroIterationHeartbeat = $healthyHeartbeat | ConvertTo-Json | ConvertFrom-Json
+$zeroIterationHeartbeat = $healthyHeartbeat | ConvertTo-Json | ConvertFrom-Json -DateKind String
 $zeroIterationHeartbeat.iteration = 0
 Assert-Throws { Assert-HealthyMonitorHeartbeat -Heartbeat $zeroIterationHeartbeat -ExpectedRunId 'diagnostic-ip-test' -ExpectedPhase 'Waf' -MonitorStartedAt $monitorStartedAt -Now $heartbeatNow } 'fresh, healthy' 'A zero-iteration monitor heartbeat must fail closed.'
-$preLaunchHeartbeat = $healthyHeartbeat | ConvertTo-Json | ConvertFrom-Json
+$preLaunchHeartbeat = $healthyHeartbeat | ConvertTo-Json | ConvertFrom-Json -DateKind String
 $preLaunchHeartbeat.timestamp = $monitorStartedAt.AddSeconds(-1).ToString('o')
 Assert-Throws { Assert-HealthyMonitorHeartbeat -Heartbeat $preLaunchHeartbeat -ExpectedRunId 'diagnostic-ip-test' -ExpectedPhase 'Waf' -MonitorStartedAt $monitorStartedAt -Now $heartbeatNow } 'fresh, healthy' 'A pre-launch monitor heartbeat must fail closed.'
-$futureHeartbeat = $healthyHeartbeat | ConvertTo-Json | ConvertFrom-Json
+$futureHeartbeat = $healthyHeartbeat | ConvertTo-Json | ConvertFrom-Json -DateKind String
 $futureHeartbeat.timestamp = $heartbeatNow.AddSeconds(6).ToString('o')
 Assert-Throws { Assert-HealthyMonitorHeartbeat -Heartbeat $futureHeartbeat -ExpectedRunId 'diagnostic-ip-test' -ExpectedPhase 'Waf' -MonitorStartedAt $monitorStartedAt -Now $heartbeatNow } 'fresh, healthy' 'A monitor heartbeat beyond the five-second clock-skew allowance must fail closed.'
-$invalidTimestampHeartbeat = $healthyHeartbeat | ConvertTo-Json | ConvertFrom-Json
+$invalidTimestampHeartbeat = $healthyHeartbeat | ConvertTo-Json | ConvertFrom-Json -DateKind String
 $invalidTimestampHeartbeat.timestamp = 'invalid'
 Assert-Throws { Assert-HealthyMonitorHeartbeat -Heartbeat $invalidTimestampHeartbeat -ExpectedRunId 'diagnostic-ip-test' -ExpectedPhase 'Waf' -MonitorStartedAt $monitorStartedAt -Now $heartbeatNow } 'timestamp is invalid' 'An invalid monitor heartbeat timestamp must fail closed.'
 Assert-Condition ($script:GeneratorIpCheckSeconds -lt $script:MonitorHeartbeatStaleSeconds) 'The 60-second generator IP refresh must remain inside the unchanged 150-second monitor threshold.'
@@ -524,6 +737,163 @@ function Set-TestDiagnosticPrivateAcl {
     [IO.FileSystemAclExtensions]::SetAccessControl($item, $security)
 }
 
+function Set-TestDiagnosticPrivateDirectoryAcl {
+    param([string]$Path)
+    $current = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $item = Get-Item -LiteralPath $Path
+    $security = [IO.FileSystemAclExtensions]::GetAccessControl(
+        $item, [Security.AccessControl.AccessControlSections]::Access
+    )
+    $security.SetAccessRuleProtection($true, $false)
+    foreach ($existingRule in @($security.GetAccessRules(
+            $true, $true, [Security.Principal.SecurityIdentifier]
+        ))) {
+        [void]$security.RemoveAccessRuleSpecific($existingRule)
+    }
+    $security.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+        $current.User,
+        [Security.AccessControl.FileSystemRights]::FullControl,
+        ([Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
+            [Security.AccessControl.InheritanceFlags]::ObjectInherit),
+        [Security.AccessControl.PropagationFlags]::None,
+        [Security.AccessControl.AccessControlType]::Allow
+    ))
+    [IO.FileSystemAclExtensions]::SetAccessControl($item, $security)
+}
+
+Assert-Condition (Test-DiagnosticPathsOverlap 'C:\evidence\run' 'C:\evidence') `
+    'Path topology validation must detect nested mutable and protected roots.'
+Assert-Condition (-not (Test-DiagnosticPathsOverlap 'C:\evidence-a' 'C:\evidence-b')) `
+    'Path topology validation must not conflate sibling roots.'
+Assert-Throws {
+    Assert-DiagnosticExactKeys ([pscustomobject]@{recordHash='a';rawError='forbidden'}) `
+        @('recordHash') 'Fixture preparation journal record'
+} 'fields are invalid' `
+    'Journal validation must reject unhashable extra fields rather than hashing an allowlisted projection.'
+
+$atomicBindingRoot = Join-Path ([IO.Path]::GetTempPath()) `
+    "schoolpilot-diagnostic-atomic-binding-$([Guid]::NewGuid().ToString('N'))"
+$atomicRunId = 'diagnostic-atomic-binding-contract'
+$atomicConfigPath = Join-Path $atomicBindingRoot "$atomicRunId.config.json"
+$atomicHashPath = Join-Path $atomicBindingRoot "$atomicRunId.config.sha256.txt"
+$atomicReceiptPath = Join-Path $atomicBindingRoot "$atomicRunId.binding-receipt.json"
+$atomicEvidenceDirectory = Join-Path ([IO.Path]::GetTempPath()) `
+    "schoolpilot-diagnostic-atomic-evidence-$([Guid]::NewGuid().ToString('N'))"
+$atomicRelease = [ordered]@{
+    applicationGitSha='1' * 40;controllerGitSha='1' * 40
+    deployedImageDigest='sha256:' + ('2' * 64)
+    apiTaskDefinitionArn='arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:1'
+    workerTaskDefinitionArn='arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:1'
+}
+$atomicFixturePreparation = [ordered]@{
+    version='fixture-preparation-receipt-v1';diagnosticEligible=$true
+    receiptPath='C:\protected\receipt.json';receiptSha256='3' * 64
+    journalPath='C:\protected\journal.jsonl';journalSha256='4' * 64
+    journalTerminalHash='5' * 64;manifestPath='C:\protected\manifest.json'
+    manifestSha256='6' * 64;snapshotRoot='C:\protected\snapshot'
+    snapshotArtifactSetSha256='7' * 64
+}
+$atomicControllerHashes = [ordered]@{
+    coordinator='8' * 64;monitor='9' * 64
+}
+$atomicQuery = [pscustomobject]@{
+    Version='history-fallback-queryid-v1';QueryIdentifierSha256='a' * 64
+    Receipt=[pscustomobject]@{Sha256='b' * 64}
+}
+$atomicLease = [pscustomobject]@{
+    Version='database-insights-monitoring-lease-v3';ReceiptSha256='c' * 64
+    ReceiptPath='C:\mutable\lease.json';StatusPath='C:\mutable\lease.json.status.json'
+    WatchdogPath='C:\mutable\lease.json.watchdog.json'
+}
+$atomicGeneratorIp = '203.0.113.10'
+try {
+    [void](New-Item -ItemType Directory -Path $atomicBindingRoot)
+    Set-TestDiagnosticPrivateDirectoryAcl $atomicBindingRoot
+    [IO.File]::WriteAllText($atomicConfigPath, '{}', [Text.UTF8Encoding]::new($false))
+    $atomicConfigSha = (Get-FileHash -LiteralPath $atomicConfigPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    [IO.File]::WriteAllText(
+        $atomicHashPath, ($atomicConfigSha + [Environment]::NewLine), [Text.UTF8Encoding]::new($false)
+    )
+    $atomicReceipt = [ordered]@{
+        schemaVersion=3;type='waf800_batch_diagnostic_binding_receipt'
+        bindingVersion='fixture-preparation-binding-v1';diagnosticOnly=$true
+        diagnosticEligible=$true;certificationEligible=$false;trafficStarted=$false
+        boundAtUtc=[DateTimeOffset]::UtcNow.ToString('o');runId=$atomicRunId
+        configPath=$atomicConfigPath;configSha256=$atomicConfigSha
+        evidenceDirectory=$atomicEvidenceDirectory
+        manifest=[ordered]@{path='C:\protected\manifest.json';sha256='6' * 64}
+        release=$atomicRelease;controllerHashes=$atomicControllerHashes
+        fixturePreparation=$atomicFixturePreparation
+        historyFallbackQueryIdentity=[ordered]@{
+            version='history-fallback-queryid-v1';receiptSha256='b' * 64
+            queryIdentifierSha256='a' * 64;rawIdentifierPersisted=$false
+        }
+        databaseInsightsLease=[ordered]@{
+            version='database-insights-monitoring-lease-v3';receiptSha256='c' * 64
+            leasePurpose='diagnostic';rawLeaseIdPersisted=$false
+        }
+        expectedGeneratorPublicIpSha256=Get-StringSha256 $atomicGeneratorIp
+        rawSqlPersisted=$false;rawIdentifiersPersisted=$false
+        remainingAction='Run controller Mode=Validate, then exactly one Mode=Run only if validation succeeds.'
+    }
+    [IO.File]::WriteAllText(
+        $atomicReceiptPath, ($atomicReceipt | ConvertTo-Json -Depth 30), [Text.UTF8Encoding]::new($false)
+    )
+    foreach ($path in @($atomicConfigPath,$atomicHashPath,$atomicReceiptPath)) {
+        Set-TestDiagnosticPrivateAcl $path
+    }
+    $atomicEnvelope = Read-DiagnosticAtomicBindingEnvelope `
+        $atomicConfigPath $atomicConfigSha $atomicRunId $atomicEvidenceDirectory
+    Assert-Condition ($atomicEnvelope.Root -ceq [IO.Path]::GetFullPath($atomicBindingRoot)) `
+        'The diagnostic must accept the exact three-file ACL-private atomic binder output.'
+    $validatedFixtureStub = [pscustomobject]@{
+        ManifestPath='C:\protected\manifest.json';ManifestSha256='6' * 64
+        ControllerHashes=$atomicControllerHashes;SourceRoot='C:\protected\source'
+        SnapshotRoot='C:\protected\snapshot';RunRoot='C:\protected\run'
+        ManifestLeaseReceiptPath='C:\mutable\lease.json'
+        ManifestStartGatePath='C:\mutable\evidence\start.json'
+        ManifestTrafficMarkerPath='C:\mutable\evidence\traffic.json'
+    }
+    Assert-DiagnosticAtomicBindingCrossReferences `
+        $atomicEnvelope ([ordered]@{fixturePreparation=$atomicFixturePreparation}) `
+        $validatedFixtureStub $atomicRelease.applicationGitSha $atomicRelease.controllerGitSha `
+        $atomicRelease.deployedImageDigest $atomicRelease.apiTaskDefinitionArn `
+        $atomicRelease.workerTaskDefinitionArn $atomicQuery $atomicLease $atomicGeneratorIp
+    Assert-DiagnosticMutablePathTopology `
+        $atomicEvidenceDirectory $atomicBindingRoot $validatedFixtureStub $atomicLease
+    $atomicEnvelope.Receipt.controllerHashes.monitor = 'd' * 64
+    Assert-Throws {
+        Assert-DiagnosticAtomicBindingCrossReferences `
+            $atomicEnvelope ([ordered]@{fixturePreparation=$atomicFixturePreparation}) `
+            $validatedFixtureStub $atomicRelease.applicationGitSha $atomicRelease.controllerGitSha `
+            $atomicRelease.deployedImageDigest $atomicRelease.apiTaskDefinitionArn `
+            $atomicRelease.workerTaskDefinitionArn $atomicQuery $atomicLease $atomicGeneratorIp
+    } 'controller or fixture-preparation binding drifted' `
+        'A binding receipt with controller drift must fail closed.'
+    $atomicEnvelope.Receipt.controllerHashes.monitor = '9' * 64
+    $extraBindingFile = Join-Path $atomicBindingRoot 'manual-config.json'
+    [IO.File]::WriteAllText($extraBindingFile, '{}', [Text.UTF8Encoding]::new($false))
+    Set-TestDiagnosticPrivateAcl $extraBindingFile
+    Assert-Throws {
+        Read-DiagnosticAtomicBindingEnvelope `
+            $atomicConfigPath $atomicConfigSha $atomicRunId $atomicEvidenceDirectory | Out-Null
+    } 'exactly its config, SHA file, and binding receipt' `
+        'An arbitrary or manually reconstructed config beside the atomic binder output must fail closed.'
+    Remove-Item -LiteralPath $extraBindingFile -Force
+    $overlappingFixtureStub = $validatedFixtureStub.PSObject.Copy()
+    $overlappingFixtureStub.SourceRoot = $atomicEvidenceDirectory
+    Assert-Throws {
+        Assert-DiagnosticMutablePathTopology `
+            $atomicEvidenceDirectory $atomicBindingRoot $overlappingFixtureStub $atomicLease
+    } 'must not overlap sealed preparation' `
+        'A diagnostic evidence path overlapping fixture sources must fail before any write.'
+}
+finally {
+    if (Test-Path -LiteralPath $atomicBindingRoot) {
+        Remove-Item -LiteralPath $atomicBindingRoot -Recurse -Force
+    }
+}
+
 function Set-TestDiagnosticMalformedPrivateAcl {
     param(
         [string]$Path,
@@ -700,7 +1070,7 @@ finally {
 
 function Read-AtomicJson {
     param([string]$Path)
-    return Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -Depth 50
+    return Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -DateKind String -Depth 50
 }
 function Write-TestTrafficEvidence {
     param(
@@ -782,10 +1152,10 @@ $script:diagnosticTaskDefinition = [pscustomobject]@{
 }
 $logBinding = Resolve-ApiAwslogsBinding $script:diagnosticTaskDefinition $apiTaskArn 'us-east-1'
 Assert-Condition ($logBinding.ApiStreamPrefix -ceq 'api/api/') 'API log evidence must derive the deterministic container stream prefix from the exact task definition.'
-$wrongLogGroupTask = $script:diagnosticTaskDefinition | ConvertTo-Json -Depth 10 | ConvertFrom-Json -Depth 10
+$wrongLogGroupTask = $script:diagnosticTaskDefinition | ConvertTo-Json -Depth 10 | ConvertFrom-Json -DateKind String -Depth 10
 $wrongLogGroupTask.containerDefinitions[0].logConfiguration.options.'awslogs-group' = '/ecs/other'
 Assert-Throws { Resolve-ApiAwslogsBinding $wrongLogGroupTask $apiTaskArn 'us-east-1' } 'reviewed production awslogs binding' 'A different log group must fail the exact API log binding.'
-$wrongLogDriverTask = $script:diagnosticTaskDefinition | ConvertTo-Json -Depth 10 | ConvertFrom-Json -Depth 10
+$wrongLogDriverTask = $script:diagnosticTaskDefinition | ConvertTo-Json -Depth 10 | ConvertFrom-Json -DateKind String -Depth 10
 $wrongLogDriverTask.containerDefinitions[0].logConfiguration.logDriver = 'splunk'
 Assert-Throws { Resolve-ApiAwslogsBinding $wrongLogDriverTask $apiTaskArn 'us-east-1' } 'reviewed production awslogs binding' 'A non-awslogs driver must fail the exact API log binding.'
 Assert-Throws { Resolve-ApiAwslogsBinding $script:diagnosticTaskDefinition ($apiTaskArn -replace ':99$',':98') 'us-east-1' } 'exact bound task definition' 'Log evidence must reject a task-definition identity mismatch.'
@@ -844,7 +1214,7 @@ function New-DiagnosticSqlStatsResponse {
     })
     if ($script:diagnosticSqlStatsIdentityMode -ceq 'missing') { $grouped = @() }
     if ($script:diagnosticSqlStatsIdentityMode -ceq 'ambiguous' -and $grouped.Count -gt 0) {
-        $ambiguous = $grouped[0] | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+        $ambiguous = $grouped[0] | ConvertTo-Json -Depth 20 | ConvertFrom-Json -DateKind String -Depth 20
         $ambiguous.Key.Dimensions.'db.sql_tokenized.id' = 'history-token-2'
         $grouped += $ambiguous
     }
@@ -937,7 +1307,7 @@ function Invoke-AwsJson {
                 return ConvertTo-TestEvidenceAwsResponse $script:diagnosticMetricResponse
             }
             $script:diagnosticSqlStatsCallCount++
-            $parsedQueries = @($metricQueries | ConvertFrom-Json -Depth 20)
+            $parsedQueries = @($metricQueries | ConvertFrom-Json -DateKind String -Depth 20)
             Assert-Condition ($parsedQueries.Count -eq 6) 'The fallback SQL-statistics query must request every reviewed call and I/O metric together.'
             foreach ($query in $parsedQueries) {
                 Assert-Condition ([string]$query.Filter.'db.sql_tokenized.db_id' -ceq $historyQueryIdentifier) 'Every SQL-statistics metric must filter by the exact native PostgreSQL query identifier.'
@@ -967,7 +1337,7 @@ function Invoke-AwsJson {
             }
             if ($groupBy -ceq 'Group=db.sql_tokenized,Dimensions=[db.sql_tokenized.db_id,db.sql_tokenized.id,db.sql_tokenized.statement],Limit=25') {
                 $script:diagnosticSampledLoadCallCount++
-                $filter = (Get-TestArgumentValue $Arguments '--filter') | ConvertFrom-Json
+                $filter = (Get-TestArgumentValue $Arguments '--filter') | ConvertFrom-Json -DateKind String
                 Assert-Condition ([string]$filter.'db.sql_tokenized.db_id' -ceq $historyQueryIdentifier) 'Sampled fallback load must be filtered by the exact native query identifier.'
                 $sampledDbId = if($script:diagnosticSampledIdentityMode -ceq 'native_mismatch'){'9223372036854775807'}else{$historyQueryIdentifier}
                 $sampledStatement = if($script:diagnosticSampledIdentityMode -ceq 'marker_mismatch'){'SELECT 1'}else{$script:diagnosticHistoryStatement}
@@ -982,7 +1352,7 @@ function Invoke-AwsJson {
                     })
                 }
                 if ($script:diagnosticSampledIdentityMode -ceq 'ambiguous' -and $keys.Count -eq 1) {
-                    $extra = $keys[0] | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
+                    $extra = $keys[0] | ConvertTo-Json -Depth 20 | ConvertFrom-Json -DateKind String -Depth 20
                     $extra.Dimensions.'db.sql_tokenized.id' = 'history-token-2'
                     $keys += $extra
                 }
@@ -991,7 +1361,7 @@ function Invoke-AwsJson {
             }
             Assert-Condition ($groupBy -ceq 'Group=db.wait_event,Limit=25') 'Present history tokens must be resolved through filtered wait-event evidence.'
             $script:diagnosticWaitCallCount++
-            $filter = (Get-TestArgumentValue $Arguments '--filter') | ConvertFrom-Json
+            $filter = (Get-TestArgumentValue $Arguments '--filter') | ConvertFrom-Json -DateKind String
             $dbId = [string]$filter.'db.sql_tokenized.db_id'
             $tokenId = [string]$filter.'db.sql_tokenized.id'
             $waitIdentity = "$dbId|$tokenId"
@@ -1230,7 +1600,7 @@ Assert-Condition ($authorizationBelowBoundary.passed -and $authorizationBelowBou
 $script:diagnosticTopKeys[1].Total = 0.5
 
 $validHotPathLogResponse = $script:diagnosticHotPathLogResponse
-$wrongRuntimePayload = $hotPathMessage | ConvertFrom-Json -Depth 20
+$wrongRuntimePayload = $hotPathMessage | ConvertFrom-Json -DateKind String -Depth 20
 $wrongRuntimePayload.apiRuntimeTaskDefinitionSha256 = ('0' * 64)
 $script:diagnosticHotPathLogResponse = [pscustomobject]@{events=@([pscustomobject]@{
     timestamp=$startMs + 60000;logStreamName='api/api/runtime-mismatch'
@@ -1713,22 +2083,22 @@ $validatedClassifier = Assert-WafDeviceIngestClassifierContract $validRules 'cla
 Assert-Condition ($validatedClassifier.label -eq 'device-ingest') 'Valid exact WAF classifier should pass behavioral validation.'
 $validatedRules = @(Assert-WafRateRuleContract $validRules 'device-metric' 'api-metric')
 Assert-Condition ($validatedRules.Count -eq 2) 'Valid exact WAF rules should pass behavioral validation.'
-$wrongLimit = @($validRules | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30)
+$wrongLimit = @($validRules | ConvertTo-Json -Depth 30 | ConvertFrom-Json -DateKind String -Depth 30)
 $wrongLimit[1].Statement.RateBasedStatement.Limit = 99999
 Assert-Throws { Assert-WafRateRuleContract $wrongLimit 'device-metric' 'api-metric' } 'exact BLOCK' 'A changed WAF limit must be rejected.'
-$wrongScope = @($validRules | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30)
+$wrongScope = @($validRules | ConvertTo-Json -Depth 30 | ConvertFrom-Json -DateKind String -Depth 30)
 $wrongScope[2].Statement.RateBasedStatement.ScopeDownStatement.AndStatement.Statements[0].ByteMatchStatement.SearchString = 'L2JhZC8='
 Assert-Throws { Assert-WafRateRuleContract $wrongScope 'device-metric' 'api-metric' } 'scoped to /api/' 'A changed WAF scope must be rejected.'
-$wrongClassifierMethod = @($validRules | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30)
+$wrongClassifierMethod = @($validRules | ConvertTo-Json -Depth 30 | ConvertFrom-Json -DateKind String -Depth 30)
 $wrongClassifierMethod[0].Statement.AndStatement.Statements[0].ByteMatchStatement.SearchString = 'R0VU'
 Assert-Throws { Assert-WafDeviceIngestClassifierContract $wrongClassifierMethod 'classifier-metric' } 'exact POST' 'Classifier method drift must be rejected.'
-$wrongClassifierRegex = @($validRules | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30)
+$wrongClassifierRegex = @($validRules | ConvertTo-Json -Depth 30 | ConvertFrom-Json -DateKind String -Depth 30)
 $wrongClassifierRegex[0].Statement.AndStatement.Statements[1].RegexMatchStatement.RegexString = '^/api/device/heartbeat$'
 Assert-Throws { Assert-WafDeviceIngestClassifierContract $wrongClassifierRegex 'classifier-metric' } 'exact reviewed device-ingest URI regex' 'Classifier path drift must be rejected.'
-$wrongClassifierLabel = @($validRules | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30)
+$wrongClassifierLabel = @($validRules | ConvertTo-Json -Depth 30 | ConvertFrom-Json -DateKind String -Depth 30)
 $wrongClassifierLabel[0].RuleLabels[0].Name = 'device-ingest-drifted'
 Assert-Throws { Assert-WafDeviceIngestClassifierContract $wrongClassifierLabel 'classifier-metric' } 'device-ingest label' 'Classifier output-label drift must be rejected.'
-$wrongRateLabel = @($validRules | ConvertTo-Json -Depth 30 | ConvertFrom-Json -Depth 30)
+$wrongRateLabel = @($validRules | ConvertTo-Json -Depth 30 | ConvertFrom-Json -DateKind String -Depth 30)
 $wrongRateLabel[1].Statement.RateBasedStatement.ScopeDownStatement.LabelMatchStatement.Key = 'other:device-ingest'
 $wrongRateLabel[2].Statement.RateBasedStatement.ScopeDownStatement.AndStatement.Statements[1].NotStatement.Statement.LabelMatchStatement.Key = 'other:device-ingest'
 Assert-Throws { Assert-WafRateRuleContract $wrongRateLabel 'device-metric' 'api-metric' } 'device-ingest classifier label' 'Rate rules must consume the exact unqualified classifier label.'
@@ -1738,7 +2108,7 @@ $redisGroup = [pscustomobject]@{ReplicationGroupId='schoolpilot-production';Stat
 $redisCluster = [pscustomobject]@{CacheClusterId='schoolpilot-production-001';ReplicationGroupId='schoolpilot-production';CacheClusterStatus='available';CacheNodeType='cache.t4g.small'}
 $redisEvidence = Assert-RedisReplicationIdentity $redisGroup $redisCluster $redisResources
 Assert-Condition ($redisEvidence.clusterNodeType -eq 'cache.t4g.small') 'Valid Redis group/member identity should pass.'
-$wrongRedisCluster = $redisCluster | ConvertTo-Json -Depth 10 | ConvertFrom-Json -Depth 10
+$wrongRedisCluster = $redisCluster | ConvertTo-Json -Depth 10 | ConvertFrom-Json -DateKind String -Depth 10
 $wrongRedisCluster.ReplicationGroupId = 'other-group'
 Assert-Throws { Assert-RedisReplicationIdentity $redisGroup $wrongRedisCluster $redisResources } 'exact validated replication group' 'A Redis member/group mismatch must be rejected.'
 
@@ -1836,7 +2206,7 @@ $monitorRedisConfig = [pscustomobject]@{
 $monitorRedisState = Get-RedisState -Config $monitorRedisConfig
 Assert-Condition ((Get-OptionalValue $monitorRedisState 'clusterIdentityValid' $false) -eq $true) `
     'A valid diagnostic Redis group/member identity must remain true when the runtime gate reads the state through Get-OptionalValue.'
-$wrongMonitorRedisCluster = $redisCluster | ConvertTo-Json -Depth 10 | ConvertFrom-Json -Depth 10
+$wrongMonitorRedisCluster = $redisCluster | ConvertTo-Json -Depth 10 | ConvertFrom-Json -DateKind String -Depth 10
 $wrongMonitorRedisCluster.ReplicationGroupId = 'other-group'
 $script:monitorRedisClusterResponse = [pscustomobject]@{CacheClusters=@($wrongMonitorRedisCluster)}
 $wrongMonitorRedisState = Get-RedisState -Config $monitorRedisConfig

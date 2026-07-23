@@ -14,10 +14,12 @@ deployment checks, snapshots, and cost checks must also pass.
   scripts enforce their runtime floors before operational work.
 - Use the committed AWS provider `5.100.0` lock file. Never run
   `terraform init -upgrade` during this rollout.
-- Deploy only the backend from a clean merged `main`. While the launch-safe
-  2048 MiB API posture is selected, use
-  `./scripts/deploy.sh production --backend --activate-emergency`. Do not deploy
-  the frontend or package/upload the ClassPilot extension.
+- Deploy the application only from a clean merged `main`. While the launch-safe
+  2048 MiB API posture is selected, deploy the guarded backend first with
+  `./scripts/deploy.sh production --backend --activate-emergency
+  --classpilot-tile-auth-plan-gate`. After it passes, deploy the matching
+  frontend without changing the checkout. Both deployments must therefore bind
+  the identical release SHA. Do not package or upload the ClassPilot extension.
 - Keep RDS and Redis private. Public IPv4 is only for outbound egress from the
   staged ECS API and worker tasks; the ALB remains the only inbound API path.
 - Keep Route 53 DNS, nameservers, CloudFront routing, the HTTPS `/health`
@@ -158,7 +160,7 @@ finally { $PlanHandle.Dispose() }
 Remove-Item -LiteralPath $PlanPath -Force
 ```
 
-## Publish and backend deployment
+## Publish and same-SHA application deployment
 
 The rollout branch is `codex/aws-cost-reduction-launch-safety`. Before opening
 the PR, run backend tests/type-check/build/SOC 2 checks, frontend lint/API-route
@@ -170,10 +172,12 @@ Open a draft PR and require green CI, Gitleaks, and CodeQL. Review the full diff
 mark ready, squash-merge, update local `main`, and require a clean tree exactly
 equal to `origin/main`. Wait for post-merge CI and Trivy.
 
-Capture the current API and worker task-definition ARNs before deploying. Run:
+Capture the current API and worker task-definition ARNs before deploying. From
+the clean merged checkout, run the guarded backend first:
 
 ```bash
-./scripts/deploy.sh production --backend --activate-emergency
+./scripts/deploy.sh production --backend --activate-emergency \
+  --classpilot-tile-auth-plan-gate
 ```
 
 The reviewed flag keeps the current 2048 MiB API serving until a newly
@@ -207,7 +211,15 @@ and clean startup logs. In the reviewed `--activate-emergency` mode, the deploy
 registers and selects a new `schoolpilot-production-api-emergency` revision at
 `512 CPU / 2048 MiB`; the standard 1024 MiB revision remains unused. Record the
 active emergency ARN and verify that its image digest matches the worker digest
-before any load test.
+before publishing the matching frontend or running any load test. Without
+changing the checkout, republish the frontend from the identical SHA:
+
+```bash
+./scripts/deploy.sh production --frontend
+```
+
+Re-read `git rev-parse HEAD`, require it to equal the backend release SHA, and
+require the worktree to remain clean after both deployments.
 
 ## Synthetic fixture lifecycle
 
@@ -903,6 +915,264 @@ SSM restore parameters must already be nonempty strings; casting a decoded
 fresh no-traffic Standard/7 -> Advanced/465 -> Standard/7 proof through the
 ordinary receipt-bound wrapper before any fixture preparation or workload is
 separately approved.
+
+The rejected diagnostic
+`diagnostic-waf800-medium-datekind-20260722T233716Z-b2918be83d4d-r1` and all
+of its fixture sources, partial preparation state, receipts, lease candidates,
+and evidence paths are historical-only. The refresh and verification stages
+completed, but the external preparation wrapper disappeared before snapshot
+publication without persisting an owned child-process exit status. That is an
+orchestration/lifecycle failure; the evidence does not prove which external
+runtime terminated the wrapper. Never resume, republish, reconstruct, or bind
+that run.
+
+All new Waf/800 diagnostic preparation uses the repository-owned PowerShell
+7.5 preparation system. An ACL-restricted
+`waf800-diagnostic-prep-manifest-v1` binds the immutable run, release,
+controller, fixture inputs, query receipt, pinned timezone data, UTC execution
+window, roots, freshness limits, credential validity, and one-attempt policy.
+`start-waf800-diagnostic-preparation.ps1 -Mode Start` returns a durable ticket
+and launches a detached supervisor; the caller does not own the preparation
+worker lifetime. Before launch, Start publishes one immutable launch admission;
+the detached child validates that admission and authors the immutable ticket
+after first publishing a durable launch-presence record. The ticket binds the
+supervisor identity, launch admission, and control paths; no preparation worker
+can launch before it is committed. The supervisor holds a cross-session run-lock
+file, owns the complete worker process tree through a non-breakaway Windows Job
+Object, persists the worker's PID and creation identity, redirects stdout and
+stderr to private files, and commits the worker exit code and completion before
+it interprets worker output. Its terminal result binds the admission, ticket,
+run-lock, ownership proof, journal, receipt, and snapshot evidence. Its internal
+limit is 35 minutes.
+
+The worker records each admitted and completed stage in the ACL-private,
+hash-chained `diagnostic-prep-journal-v1`. After refresh, verification,
+freshness, and exact source hashing succeed, it seals an immutable
+`fixture-preparation-receipt-v1` before publication. The receipt alone is not
+completion evidence: a binder must also verify the journal's
+`terminal_commit/completed` record, the terminal journal hash, and the exact
+five-file snapshot manifest. Snapshot publication and diagnostic binding use
+same-parent staging directories and atomic directory renames.
+
+For a future run whose authorization explicitly allows it, exactly one
+`ResumePublication` may recover publication only. Recovery is filesystem-only:
+it cannot refresh, verify, call AWS, acquire a lease, or start traffic. It
+requires the original processes and named mutex to be absent, the sealed
+receipt and five sources to remain byte-identical and eligible, unchanged
+repository/release/script/manifest identities, no downstream run artifacts,
+and either an absent final snapshot or an exact already-published snapshot.
+A partial or mismatched final root is terminal and is never repaired,
+overwritten, or deleted. Diagnostic and certification controllers independently
+validate the mandatory `fixturePreparation` provenance and reject rehearsals,
+historical receipts, manual reconstruction, or any receipt, journal, snapshot,
+release, or controller drift.
+
+Recovery admission is itself immutable and is the first recovery-attempt
+artifact. A missing mutable state update after admission is reported as an
+incomplete admitted recovery, never treated as permission to make another
+attempt. Status and recovery may reconcile a coherent immutable terminal result
+or a persisted worker-exit observation after an interrupted mutable state
+commit, but cannot weaken or reconstruct worker, journal, receipt, or snapshot
+evidence.
+
+Repository release readiness rehearses this machinery only with an offline
+fake provider and a harmless local child supervised for at least 26 wall-clock
+minutes. Neither rehearsal may contact SchoolPilot, AWS, RDS, Redis, or live
+fixtures. Readiness does not authorize production fixture generation, a
+Database Insights lease, an eligible diagnostic binding, workload traffic, or
+certification; each requires the separately approved immutable run contract.
+
+Run the two durable rehearsal modes separately from a clean exact merged SHA.
+Each mode creates an ACL-private external artifact root and an immutable
+evidence receipt; it never uses the ordinary transient CI cleanup path:
+
+```powershell
+$EvidenceRoot = Join-Path $env:LOCALAPPDATA `
+  "SchoolPilot\aws-cost-rollout\diagnostic-prep-readiness\$((git rev-parse HEAD).Trim())"
+New-Item -ItemType Directory -Path $EvidenceRoot | Out-Null
+# Apply the documented current-operator-only protected ACL before invoking the modes.
+
+pwsh -NoProfile -File tests/aws-rollout-diagnostic-preparation.test.ps1 `
+  -Mode OfflineRehearsal `
+  -EvidenceOutputPath (Join-Path $EvidenceRoot "offline-rehearsal.private.json")
+
+pwsh -NoProfile -File tests/aws-rollout-diagnostic-preparation.test.ps1 `
+  -Mode HostSmoke -HostSmokeSeconds 1560 `
+  -EvidenceOutputPath (Join-Path $EvidenceRoot "host-smoke-26m.private.json")
+```
+
+Do not shorten `HostSmokeSeconds`; the mode rejects values below 1,560. Both
+receipts must say `diagnosticEligible=false`, `externalContactPermitted=false`,
+`trafficStarted=false`, and `leaseAcquired=false`. Independently rehash the
+retained journal, result, receipt, snapshot, binding (offline rehearsal), and
+evidence files before adding them to the readiness packet.
+
+The Windows CI preparation suite is a fail-closed contract test, not a durable
+rehearsal receipt: it uses private temporary roots and removes them when the
+test completes. Do not claim its transient files as readiness evidence or add a
+broken artifact upload that points at no stable workspace path. After the
+corrective merge, run the offline fake-provider flow and the 26-minute harmless
+host-supervision smoke from the exact merged SHA under reviewed external,
+ACL-private roots. Preserve their sanitized terminal results, journal hashes,
+fixture-preparation and binding receipts, and elapsed-time evidence for the
+readiness packet. Require the host smoke's
+`diagnostic-prep-host-supervision-smoke-v2` receipt: independently rehash its
+embedded canonical terminal `Status`, canonical terminal journal record, full
+journal, immutable supervisor result, and supervisor state; also require the
+record's chain hash to equal the terminal hash bound by `Status`. A v1 host
+smoke receipt is historical-only and cannot prove readiness. The host smoke
+must be launched from a disposable initiating shell and polled from a separate
+shell so its evidence proves survival beyond the former caller-owned timeout.
+
+For a separately approved future production diagnostic, start from the tracked
+[`scripts/load/waf800-diagnostic-prep-manifest.template.json`](../scripts/load/waf800-diagnostic-prep-manifest.template.json).
+Copy it to a fresh ACL-private external directory, replace every `__...__`
+placeholder, retain the exact key set, and bind every path and SHA-256 before
+admission. Never generate a per-run PowerShell wrapper. The template contains
+references only; credential-document contents remain outside the repository.
+Require one JSON value, no `testControls`, and current-user-only protected ACLs,
+then use the repository-owned lifecycle exactly as follows:
+
+```powershell
+$ManifestPath = "C:\absolute\private\fresh-run\prep-manifest.private.json"
+$ManifestSha256 = (Get-FileHash -LiteralPath $ManifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$Prep = "scripts/load/start-waf800-diagnostic-preparation.ps1"
+
+pwsh -NoProfile -File $Prep -Mode Validate `
+  -ManifestPath $ManifestPath -ExpectedManifestSha256 $ManifestSha256
+
+$Ticket = pwsh -NoProfile -File $Prep -Mode Start `
+  -ManifestPath $ManifestPath -ExpectedManifestSha256 $ManifestSha256 |
+  ConvertFrom-Json -DateKind String -Depth 100
+if ($LASTEXITCODE -ne 0 -or $Ticket.accepted -ne $true) {
+  throw "Preparation admission failed."
+}
+
+$TerminalPreparationStatuses = @("completed","failed","timed_out","interrupted")
+$PreparationStatusDeadline = [TimeSpan]::FromMinutes(40)
+$PreparationStatusWatch = [Diagnostics.Stopwatch]::StartNew()
+while ($true) {
+  $Status = pwsh -NoProfile -File $Prep -Mode Status `
+    -ManifestPath $ManifestPath -ExpectedManifestSha256 $ManifestSha256 |
+    ConvertFrom-Json -DateKind String -Depth 100
+  if ($LASTEXITCODE -ne 0) { throw "Preparation status validation failed." }
+  if ([string]$Status.status -in $TerminalPreparationStatuses) { break }
+  if ($Status.healthy -ne $true -or
+      -not [string]::IsNullOrWhiteSpace([string]$Status.finding)) {
+    throw "Preparation supervision became unhealthy at the reported last-known stage."
+  }
+  if ($PreparationStatusWatch.Elapsed -ge $PreparationStatusDeadline) {
+    throw "Preparation status polling exceeded its bounded 40-minute deadline."
+  }
+  Start-Sleep -Seconds 15
+}
+$PreparationStatusWatch.Stop()
+```
+
+`ResumePublication` is not a general retry. Invoke it at most once only when the
+run-specific authorization permits recovery and the terminal status plus sealed
+receipt meet the filesystem-only recovery contract:
+
+```powershell
+$Recovery = pwsh -NoProfile -File $Prep -Mode ResumePublication `
+  -ManifestPath $ManifestPath -ExpectedManifestSha256 $ManifestSha256 |
+  ConvertFrom-Json -DateKind String -Depth 100
+if ($LASTEXITCODE -ne 0 -or $Recovery.status -cne "completed") {
+  throw "The one publication recovery failed and the run is terminal."
+}
+$Status = pwsh -NoProfile -File $Prep -Mode Status `
+  -ManifestPath $ManifestPath -ExpectedManifestSha256 $ManifestSha256 |
+  ConvertFrom-Json -DateKind String -Depth 100
+```
+
+After a successful terminal status, and only after the separately authorized
+v3 lease exists, bind the group atomically from the exact status references:
+
+```powershell
+$FixtureReceiptPath = "C:\absolute\private\fresh-run\run-control\fixture-preparation-receipt.private.json"
+$LeaseReceiptPath = "C:\absolute\private\fresh-run\database-insights-lease.private.json"
+pwsh -NoProfile -File scripts/load/bind-fresh-diagnostic.ps1 `
+  -ManifestPath $ManifestPath -ExpectedManifestSha256 $ManifestSha256 `
+  -FixturePreparationReceiptPath $FixtureReceiptPath `
+  -ExpectedFixturePreparationReceiptSha256 `
+    (Get-FileHash -LiteralPath $FixtureReceiptPath -Algorithm SHA256).Hash.ToLowerInvariant() `
+  -SupervisorTicketPath $Status.ticket.path `
+  -ExpectedSupervisorTicketSha256 $Status.ticket.sha256 `
+  -SupervisorResultPath $Status.result.path `
+  -ExpectedSupervisorResultSha256 $Status.result.sha256 `
+  -DatabaseInsightsLeaseReceiptPath $LeaseReceiptPath `
+  -ExpectedDatabaseInsightsLeaseReceiptSha256 `
+    (Get-FileHash -LiteralPath $LeaseReceiptPath -Algorithm SHA256).Hash.ToLowerInvariant() `
+  -ExpectedGeneratorPublicIp "__CURRENT_BOUND_GENERATOR_IPV4__"
+```
+
+The current remediation-readiness authorization stops before every command in
+this production recipe. It is documented now so a future approved run uses
+reviewed repository-owned inputs rather than another ephemeral wrapper.
+
+Before either deployment, prepare one production saved plan solely as
+zero-change readiness evidence. Obey the weekday plan/deployment guards above,
+require clean `main == origin/main` at the merged SHA, initialize only from the
+committed lock file, and use the reviewed production variables:
+
+```powershell
+$GitSha = (git rev-parse HEAD).Trim()
+if ($GitSha -cne (git rev-parse origin/main).Trim()) {
+  throw "Readiness requires main == origin/main."
+}
+if (-not [string]::IsNullOrWhiteSpace((git status --porcelain))) {
+  throw "Readiness requires a clean worktree."
+}
+
+$PlanPath = Join-Path $PlanRoot "waf800-prep-readiness-$GitSha.tfplan"
+terraform -chdir=infra init -backend=false -lockfile=readonly -input=false
+if ($LASTEXITCODE -ne 0) { throw "Terraform initialization failed." }
+terraform -chdir=infra plan -input=false -lock-timeout=5m `
+  -var-file=production.tfvars -detailed-exitcode -out $PlanPath
+$PlanExitCode = $LASTEXITCODE
+if ($PlanExitCode -ne 0) {
+  if ($PlanExitCode -eq 2) {
+    throw "Readiness requires an exact zero-change Terraform plan."
+  }
+  throw "Terraform readiness planning failed."
+}
+
+$PlanJson = terraform -chdir=infra show -json $PlanPath |
+  ConvertFrom-Json -DateKind String -Depth 100
+if ($LASTEXITCODE -ne 0) { throw "Terraform plan JSON inspection failed." }
+$ChangedResources = @($PlanJson.resource_changes | Where-Object {
+  @($_.change.actions) -notcontains "no-op"
+})
+$ChangedOutputs = @($PlanJson.output_changes.PSObject.Properties | Where-Object {
+  $_.Value.actions -and @($_.Value.actions) -notcontains "no-op"
+})
+if ($ChangedResources.Count -ne 0 -or $ChangedOutputs.Count -ne 0) {
+  throw "Readiness Terraform plan is not zero-change."
+}
+$PlanSha256 = (Get-FileHash -LiteralPath $PlanPath -Algorithm SHA256).Hash.ToLowerInvariant()
+```
+
+Review the human plan and JSON, retain the exact saved-plan SHA-256 with the
+readiness evidence, and **do not run `terraform apply`**. A zero-change plan is
+proof of posture only; it grants no infrastructure mutation.
+
+The readiness packet is complete only when it contains:
+
+- the remediation audit, exact merged SHA, PR, and exact-SHA CI, CodeQL,
+  Gitleaks, and Trivy results;
+- the deployed image digest, API and worker task-definition revisions, frontend
+  publication identity, and fresh pre/post-deployment query-identity receipt;
+- SHA-256 values for all three preparation scripts and the mandatory
+  preparation, journal, binding, diagnostic, and certification schema/version
+  contracts;
+- the post-merge offline fake-provider preparation/binding receipt and the
+  separate 26-minute disposable-shell host-smoke journal, status, terminal
+  result, and elapsed-time evidence;
+- the reviewed zero-change Terraform plan, its SHA-256, human/JSON review
+  evidence, and an explicit record that no apply occurred; and
+- a stop-boundary attestation proving no production fixture refresh, Database
+  Insights lease, eligible diagnostic binding, workload traffic, or
+  certification preparation occurred.
 
 The acquisition preflight reads the live Scheduler group, numeric SSM document
 and content hash, both role trusts and complete permission sets, SQS encryption

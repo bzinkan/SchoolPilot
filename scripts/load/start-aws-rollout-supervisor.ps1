@@ -30,6 +30,14 @@ $script:RequiredDatabaseInsightsLeaseVersion = "database-insights-monitoring-lea
 $script:RequiredDatabaseInsightsDurableRestoreGuardVersion = "aws-scheduler-ssm-recurring-restore-v2"
 $script:RequiredDatabaseInsightsDurableRestoreAutomationVersion = "ssm-rds-monitoring-restore-v2"
 $script:RequiredPreservedMonitoringPostureEncodingVersion = "rds-preserved-monitoring-posture-json-v1"
+$script:RequiredFixturePreparationReceiptVersion = "fixture-preparation-receipt-v1"
+$script:RequiredDiagnosticPrepManifestVersion = "waf800-diagnostic-prep-manifest-v1"
+$script:RequiredDiagnosticPrepJournalVersion = "diagnostic-prep-journal-v1"
+$script:RequiredDiagnosticPrepSupervisorTicketVersion = "diagnostic-prep-supervisor-ticket-v2"
+$script:RequiredDiagnosticPrepSupervisorResultVersion = "diagnostic-prep-supervisor-v1"
+$script:RequiredDiagnosticPrepSupervisorRunLockVersion = "diagnostic-prep-supervisor-run-lock-v1"
+$script:RequiredDiagnosticPrepRecoveryAdmissionVersion = "diagnostic-prep-publication-recovery-admission-v1"
+$script:RequiredDiagnosticPrepRecoveryReceiptVersion = "fixture-publication-recovery-v1"
 
 function Resolve-ExternalPath {
     param([string]$Path, [string]$Name, [switch]$AllowMissing)
@@ -569,10 +577,15 @@ function Assert-CertificationPrivateFileAcl {
     param([string]$Path, [string]$Name)
     if (-not $IsWindows) { throw "$Name requires Windows ACL enforcement." }
     $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-    $item = Get-Item -LiteralPath $Path
+    $absolute = Resolve-ExternalPath -Path $Path -Name $Name
+    $item = Get-Item -LiteralPath $absolute -Force
     $acl = [IO.FileSystemAclExtensions]::GetAccessControl(
-        $item, [Security.AccessControl.AccessControlSections]::Access
+        $item, ([Security.AccessControl.AccessControlSections]::Access -bor
+            [Security.AccessControl.AccessControlSections]::Owner)
     )
+    if ($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $currentSid) {
+        throw "$Name must be owned by the current certification operator."
+    }
     if (-not $acl.AreAccessRulesProtected) { throw "$Name must disable inherited file access." }
     $rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
     if ($rules.Count -ne 1) { throw "$Name must be readable only by the current certification operator." }
@@ -584,6 +597,1762 @@ function Assert-CertificationPrivateFileAcl {
         $rule.InheritanceFlags -ne [Security.AccessControl.InheritanceFlags]::None -or
         $rule.PropagationFlags -ne [Security.AccessControl.PropagationFlags]::None) {
         throw "$Name must have one exact current-operator FullControl rule."
+    }
+}
+
+function Assert-CertificationPrivateDirectoryAcl {
+    param([string]$Path, [string]$Name)
+    if (-not $IsWindows) { throw "$Name requires Windows ACL enforcement." }
+    $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $absolute = [IO.Path]::GetFullPath($Path)
+    $cursor = $absolute
+    while ($cursor) {
+        if (Test-Path -LiteralPath $cursor) {
+            $candidate = Get-Item -LiteralPath $cursor -Force
+            if (($candidate.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "$Name must not traverse a reparse point."
+            }
+        }
+        $parent = [IO.Directory]::GetParent($cursor)
+        if ($null -eq $parent) { break }
+        $cursor = $parent.FullName
+    }
+    $item = Get-Item -LiteralPath $absolute -Force
+    if (-not $item.PSIsContainer) { throw "$Name must be a directory." }
+    $acl = [IO.FileSystemAclExtensions]::GetAccessControl(
+        $item, ([Security.AccessControl.AccessControlSections]::Access -bor
+            [Security.AccessControl.AccessControlSections]::Owner)
+    )
+    if ($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $currentSid) {
+        throw "$Name must be owned by the current certification operator."
+    }
+    $rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+    $expectedInheritance = [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
+        [Security.AccessControl.InheritanceFlags]::ObjectInherit
+    if (-not $acl.AreAccessRulesProtected -or $rules.Count -ne 1) {
+        throw "$Name must be accessible only by the current certification operator."
+    }
+    $rule = $rules[0]
+    if ($rule.IsInherited -or
+        $rule.AccessControlType -ne [Security.AccessControl.AccessControlType]::Allow -or
+        $rule.IdentityReference.Value -cne $currentSid -or
+        (($rule.FileSystemRights -band [Security.AccessControl.FileSystemRights]::FullControl) -ne
+            [Security.AccessControl.FileSystemRights]::FullControl) -or
+        $rule.InheritanceFlags -ne $expectedInheritance -or
+        $rule.PropagationFlags -ne [Security.AccessControl.PropagationFlags]::None) {
+        throw "$Name must have one exact inheritable current-operator FullControl rule."
+    }
+}
+
+function Get-CertificationPrepJournalRecordHash {
+    param($Record)
+    $canonical = [ordered]@{}
+    foreach ($name in @(
+        "schemaVersion", "type", "version", "sequence", "runId", "manifestSha256",
+        "timestampUtc", "stage", "status", "process", "exitCode", "artifactHashes",
+        "previousRecordHash", "failureCode", "failureStage"
+    )) {
+        $canonical[$name] = Get-CertificationValue $Record $name $null
+    }
+    return Get-CertificationCanonicalSha256 $canonical
+}
+
+function Assert-CertificationPrepJournalRecordKeys {
+    param($Record)
+    $required = @(
+        "schemaVersion", "type", "version", "sequence", "runId", "manifestSha256",
+        "timestampUtc", "stage", "status", "process", "exitCode", "artifactHashes",
+        "previousRecordHash", "failureCode", "failureStage", "recordHash"
+    )
+    if (@(Compare-Object ($required | Sort-Object) `
+            (@($Record.PSObject.Properties.Name) | Sort-Object)).Count -ne 0) {
+        throw "Fixture preparation journal record fields are invalid."
+    }
+}
+
+function Assert-CertificationExactPropertySet {
+    param($Value, [string[]]$Required, [string]$Name)
+    if ($null -eq $Value) { throw "$Name fields are invalid." }
+    $actual = if ($Value -is [Collections.IDictionary]) {
+        @($Value.Keys | ForEach-Object { [string]$_ })
+    }
+    else { @($Value.PSObject.Properties | ForEach-Object { [string]$_.Name }) }
+    $expectedKeys = @($Required | Sort-Object)
+    $actualKeys = @($actual | Sort-Object)
+    if ($expectedKeys.Count -ne $actualKeys.Count -or
+        @($expectedKeys | Where-Object { $_ -cnotin $actualKeys }).Count -ne 0 -or
+        @($actualKeys | Where-Object { $_ -cnotin $expectedKeys }).Count -ne 0) {
+        throw "$Name fields are invalid (expected=$($expectedKeys -join ','), actual=$($actualKeys -join ','))."
+    }
+}
+
+function Assert-CertificationPrepJournalTimestampSequence {
+    param([object[]]$Records)
+    $previousTimestamp = $null
+    foreach ($record in $Records) {
+        $timestampText = [string](Get-RequiredProperty $record "timestampUtc")
+        $parsedTimestamp = [DateTimeOffset]::MinValue
+        if ($timestampText -cnotmatch '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{7}\+00:00$' -or
+            -not [DateTimeOffset]::TryParseExact(
+                $timestampText, "o", [Globalization.CultureInfo]::InvariantCulture,
+                [Globalization.DateTimeStyles]::None, [ref]$parsedTimestamp
+            ) -or
+            $parsedTimestamp.Offset -ne [TimeSpan]::Zero -or
+            $parsedTimestamp.ToString("o", [Globalization.CultureInfo]::InvariantCulture) -cne
+                $timestampText) {
+            throw "Fixture preparation journal timestamp must be an exact round-tripping +00:00 UTC string."
+        }
+        if ($null -ne $previousTimestamp -and $parsedTimestamp -lt $previousTimestamp) {
+            throw "Fixture preparation journal timestamps must be non-regressing."
+        }
+        $previousTimestamp = $parsedTimestamp
+    }
+}
+
+function Assert-CertificationFixturePreparationReceiptShape {
+    param($Receipt)
+    Assert-CertificationExactPropertySet $Receipt @(
+        "schemaVersion","type","version","status","runId","diagnosticOnly",
+        "diagnosticEligible","certificationEligible","sealedAtUtc","manifest","release",
+        "controllerArtifacts","supervisorAdmission","fixture","execution","freshness",
+        "verification","credentials","snapshot","recovery","journal","secretsPrinted",
+        "trafficStarted","leaseAcquired"
+    ) "Fixture preparation receipt"
+    Assert-CertificationExactPropertySet (Get-RequiredProperty $Receipt "manifest") @(
+        "path","sha256"
+    ) "Fixture preparation receipt manifest"
+    Assert-CertificationExactPropertySet (Get-RequiredProperty $Receipt "release") @(
+        "applicationGitSha","controllerGitSha","deployedImageDigest",
+        "apiTaskDefinitionArn","workerTaskDefinitionArn"
+    ) "Fixture preparation receipt release"
+    foreach ($artifact in @((Get-RequiredProperty $Receipt "controllerArtifacts"))) {
+        Assert-CertificationExactPropertySet $artifact @("kind","path","sha256") `
+            "Fixture preparation receipt controller artifact"
+    }
+    $supervisorAdmission = Get-RequiredProperty $Receipt "supervisorAdmission"
+    Assert-CertificationExactPropertySet $supervisorAdmission @(
+        "type","version","sha256","nonceSha256","supervisor",
+        "supervisorLockPathSha256","originalTicketSha256","workerOwnership"
+    ) "Fixture preparation receipt supervisor admission"
+    Assert-CertificationExactPropertySet (Get-RequiredProperty $supervisorAdmission "supervisor") @(
+        "pid","startedAtUtc","path"
+    ) "Fixture preparation receipt supervisor identity"
+    $receiptWorkerOwnership = Get-RequiredProperty $supervisorAdmission "workerOwnership"
+    Assert-CertificationExactPropertySet $receiptWorkerOwnership @(
+        "path","sha256","version","jobPolicy","descendantPolicy"
+    ) "Fixture preparation receipt worker ownership"
+    if ([string](Get-CertificationValue $receiptWorkerOwnership "version" "") -cne
+            "diagnostic-prep-worker-job-v1" -or
+        [string](Get-CertificationValue $receiptWorkerOwnership "jobPolicy" "") -cne
+            "kill-on-supervisor-close-v1" -or
+        [string](Get-CertificationValue $receiptWorkerOwnership "descendantPolicy" "") -cne
+            "no-breakaway-v1") {
+        throw "Fixture preparation receipt worker ownership policy is invalid."
+    }
+    $fixture = Get-RequiredProperty $Receipt "fixture"
+    Assert-CertificationExactPropertySet $fixture @(
+        "fixtureId","provider","sourceRoot","fixtureCli","config"
+    ) "Fixture preparation receipt fixture"
+    foreach ($referenceName in @("fixtureCli","config")) {
+        Assert-CertificationExactPropertySet (Get-RequiredProperty $fixture $referenceName) @(
+            "path","sha256"
+        ) "Fixture preparation receipt $referenceName"
+    }
+    $execution = Get-RequiredProperty $Receipt "execution"
+    Assert-CertificationExactPropertySet $execution @(
+        "runStartedAtUtc","runDirectory","refreshCompletedAtUtc","verificationCompletedAtUtc",
+        "refreshExitCode","verificationExitCode","refreshStdoutSha256","refreshStderrSha256",
+        "verifyStdoutSha256","verifyStderrSha256","workerProcess"
+    ) "Fixture preparation receipt execution"
+    Assert-CertificationExactPropertySet (Get-RequiredProperty $execution "workerProcess") @(
+        "pid","startedAtUtc","path","kind"
+    ) "Fixture preparation receipt worker process"
+    Assert-CertificationExactPropertySet (Get-RequiredProperty $Receipt "freshness") @(
+        "refreshedAtUtc","verifiedAtUtc","checkedAtUtc",
+        "requiredVerificationMaximumAgeMinutes","requiredArtifactValiditySeconds",
+        "expiresAtUtc","deviceManifestExpiresAtUtc"
+    ) "Fixture preparation receipt freshness"
+    $verification = Get-RequiredProperty $Receipt "verification"
+    Assert-CertificationExactPropertySet $verification @(
+        "artifactSha256","counts","gates","countsAndGatesSha256"
+    ) "Fixture preparation receipt verification"
+    $counts = Get-RequiredProperty $verification "counts"
+    Assert-CertificationExactPropertySet $counts @(
+        "schools","teachers","officeStaff","students","classes","classRosterStudents",
+        "devices","activeDeviceSessions","activeSessions","commandBodies",
+        "authorizationPlanCohorts","liveAuth"
+    ) "Fixture preparation receipt verification counts"
+    Assert-CertificationExactPropertySet (Get-RequiredProperty $counts "authorizationPlanCohorts") @(
+        "coTeacherStudents","officeSupervisionStudents"
+    ) "Fixture preparation receipt authorization-plan counts"
+    Assert-CertificationExactPropertySet (Get-RequiredProperty $counts "liveAuth") @(
+        "commandAdministrators","teachers"
+    ) "Fixture preparation receipt live-authorization counts"
+    Assert-CertificationExactPropertySet (Get-RequiredProperty $verification "gates") @(
+        "autoEnrollDisabled","trackingDisabled","schedulesDisabled","exactSchoolTimezones",
+        "classRostersExactAndDisjoint","authorizationPlanCohortsExact",
+        "authorizationPlanOfficeStudentsOutsideTeacherRosters","allDeviceTokensLive",
+        "allStaffAuthArtifactsLive"
+    ) "Fixture preparation receipt verification gates"
+    Assert-CertificationExactPropertySet (Get-RequiredProperty $Receipt "credentials") @(
+        "expiresAtUtc","deviceManifestExpiresAtUtc","requiredValiditySeconds"
+    ) "Fixture preparation receipt credentials"
+    $snapshot = Get-RequiredProperty $Receipt "snapshot"
+    Assert-CertificationExactPropertySet $snapshot @(
+        "root","contract","artifactSetSha256","artifacts"
+    ) "Fixture preparation receipt snapshot"
+    foreach ($artifact in @((Get-RequiredProperty $snapshot "artifacts"))) {
+        Assert-CertificationExactPropertySet $artifact @(
+            "name","sourcePath","targetPath","sha256","size","lastWriteTimeUtc"
+        ) "Fixture preparation receipt snapshot artifact"
+    }
+    Assert-CertificationExactPropertySet (Get-RequiredProperty $Receipt "recovery") @(
+        "allowedAttempts","nonce"
+    ) "Fixture preparation receipt recovery"
+    Assert-CertificationExactPropertySet (Get-RequiredProperty $Receipt "journal") @(
+        "path","sourceSealedRecordHash"
+    ) "Fixture preparation receipt journal"
+}
+
+function Assert-CertificationPrepJournalNestedShape {
+    param($Record, [string]$ResultKind)
+    Assert-CertificationExactPropertySet (Get-RequiredProperty $Record "process") @(
+        "pid","startedAtUtc","path","kind"
+    ) "Fixture preparation journal process"
+    $stage = [string](Get-RequiredProperty $Record "stage")
+    $status = [string](Get-RequiredProperty $Record "status")
+    $requiredArtifactKeys = switch ($stage) {
+        "preflight_accepted" {
+            @("manifestSha256","fixtureWorkerSha256","supervisorAdmissionSha256",
+                "supervisorAdmissionNonceSha256"); break
+        }
+        { $_ -in @("refresh_admitted","verify_admitted") } {
+            @("fixtureCliSha256","fixtureCliGitObjectIdSha256","fixtureWorkerSha256",
+                "supervisorAdmissionSha256"); break
+        }
+        { $_ -in @("refresh_child_started","verify_child_started") } {
+            @("fixtureCliSha256","fixtureWorkerSha256","supervisorAdmissionSha256"); break
+        }
+        { $_ -in @("refresh_completed","verify_completed") } {
+            @("stdoutSha256","stderrSha256"); break
+        }
+        "freshness_accepted" { @("fixtureIdSha256"); break }
+        "source_hashes_sealed" { @("snapshotArtifactSetSha256"); break }
+        "fixture_receipt_sealed" {
+            @("fixturePreparationReceiptSha256","snapshotArtifactSetSha256",
+                "verificationCountsAndGatesSha256","supervisorAdmissionSha256"); break
+        }
+        "publication_started" {
+            @("fixturePreparationReceiptSha256","snapshotArtifactSetSha256"); break
+        }
+        "publication_completed" {
+            @("fixturePreparationReceiptSha256","snapshotArtifactSetSha256",
+                "verificationCountsAndGatesSha256"); break
+        }
+        { $_ -in @("publication_recovery_started","publication_recovery_completed") } {
+            @("publicationRecoveryReceiptSha256","snapshotArtifactSetSha256"); break
+        }
+        "terminal_commit" {
+            if ($status -ceq "failed") { @() }
+            elseif ($ResultKind -ceq "recovery") {
+                @("fixturePreparationReceiptSha256","publicationRecoveryReceiptSha256",
+                    "snapshotArtifactSetSha256","verificationCountsAndGatesSha256",
+                    "supervisorAdmissionSha256")
+            }
+            else {
+                @("fixturePreparationReceiptSha256","snapshotArtifactSetSha256",
+                    "verificationCountsAndGatesSha256","supervisorAdmissionSha256")
+            }
+            break
+        }
+        default { throw "Fixture preparation journal stage has no exact nested schema." }
+    }
+    Assert-CertificationExactPropertySet (Get-RequiredProperty $Record "artifactHashes") `
+        @($requiredArtifactKeys) "Fixture preparation journal artifact hashes"
+}
+
+function Assert-CertificationInitialPreparationHasNoRecoveryProvenance {
+    param(
+        [string]$ResultKind,
+        $Binding,
+        $SupervisorResult,
+        [string]$ManifestRecoveryReceiptPath
+    )
+    if ($ResultKind -cne "initial") { return }
+    foreach ($field in @(
+            "publicationRecoveryAdmissionPath","publicationRecoveryAdmissionSha256",
+            "publicationRecoveryReceiptPath","publicationRecoveryReceiptSha256",
+            "publicationRecoveryWorkerOwnershipPath",
+            "publicationRecoveryWorkerOwnershipSha256"
+        )) {
+        if ($null -ne (Get-CertificationValue $Binding $field $null)) {
+            throw "Initial fixture preparation must not bind recovery provenance."
+        }
+    }
+    foreach ($field in @(
+            "recoveryAdmission","publicationRecoveryReceipt","recovery","originalExecution"
+        )) {
+        if ($null -ne (Get-CertificationValue $SupervisorResult $field $null)) {
+            throw "Initial fixture preparation result must not contain recovery provenance."
+        }
+    }
+    if (Test-Path -LiteralPath $ManifestRecoveryReceiptPath) {
+        throw "Initial fixture preparation is ineligible while a publication-recovery receipt exists."
+    }
+}
+
+function Test-CertificationPathsOverlap {
+    param([string]$Left, [string]$Right)
+    $comparison = if ($IsWindows) {
+        [StringComparison]::OrdinalIgnoreCase
+    } else {
+        [StringComparison]::Ordinal
+    }
+    $leftFull = [IO.Path]::GetFullPath($Left).TrimEnd(
+        [IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar
+    )
+    $rightFull = [IO.Path]::GetFullPath($Right).TrimEnd(
+        [IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar
+    )
+    if ([string]::Equals($leftFull, $rightFull, $comparison)) { return $true }
+    $leftPrefix = $leftFull + [IO.Path]::DirectorySeparatorChar
+    $rightPrefix = $rightFull + [IO.Path]::DirectorySeparatorChar
+    return $leftFull.StartsWith($rightPrefix, $comparison) -or
+        $rightFull.StartsWith($leftPrefix, $comparison)
+}
+
+function Assert-CertificationFixturePreparationPathIsolation {
+    param(
+        $FixturePreparation,
+        [object[]]$CandidatePaths
+    )
+    $protectedRoots = @(
+        [pscustomobject]@{ Name = "fixture source root"; Path = $FixturePreparation.SourceRoot },
+        [pscustomobject]@{ Name = "fixture snapshot root"; Path = $FixturePreparation.SnapshotRoot },
+        [pscustomobject]@{ Name = "fixture preparation run root"; Path = $FixturePreparation.RunRoot },
+        [pscustomobject]@{ Name = "fixture binding root"; Path = $FixturePreparation.BindingRoot }
+    )
+    foreach ($candidate in @($CandidatePaths | Where-Object {
+            $null -ne $_ -and -not [string]::IsNullOrWhiteSpace([string]$_.Path)
+        })) {
+        $candidatePath = [IO.Path]::GetFullPath([string]$candidate.Path)
+        foreach ($protected in $protectedRoots) {
+            if (Test-CertificationPathsOverlap $candidatePath ([string]$protected.Path)) {
+                throw "Certification $($candidate.Name) must not overlap the protected $($protected.Name)."
+            }
+        }
+    }
+}
+
+function Get-CertificationSnapshotArtifactSetSha256 {
+    param($Artifacts)
+    $json = @($Artifacts | Sort-Object { [string]$_.name }) |
+        ConvertTo-Json -Depth 20 -Compress -AsArray
+    return Get-CertificationTextSha256 $json
+}
+
+function Test-CertificationBoundProcessPresent {
+    param($Identity, [string]$Name)
+    $pidValue = [int](Get-RequiredProperty $Identity "pid")
+    if ($pidValue -le 0) { throw "$Name process PID is malformed." }
+    try { $process = [Diagnostics.Process]::GetProcessById($pidValue) }
+    catch [ArgumentException] { return $false }
+    catch { throw "$Name process cannot be inspected safely." }
+    try {
+        $started = ([DateTimeOffset]$process.StartTime).ToUniversalTime().ToString("o")
+        $path = [IO.Path]::GetFullPath($process.Path)
+        return $started -ceq [string](Get-RequiredProperty $Identity "startedAtUtc") -and
+            [string]::Equals($path, [IO.Path]::GetFullPath([string](Get-RequiredProperty $Identity "path")),
+                [StringComparison]::OrdinalIgnoreCase)
+    }
+    catch { throw "$Name process identity cannot be inspected safely." }
+    finally { $process.Dispose() }
+}
+
+function Test-CertificationProcessObservationEqual {
+    param($Left, $Right)
+    if ($null -eq $Left -or $null -eq $Right) { return $false }
+    return [int](Get-CertificationValue $Left "pid" 0) -eq
+            [int](Get-CertificationValue $Right "pid" 0) -and
+        [string](Get-CertificationValue $Left "startedAtUtc" "") -ceq
+            [string](Get-CertificationValue $Right "startedAtUtc" "") -and
+        [string]::Equals(
+            [string](Get-CertificationValue $Left "path" ""),
+            [string](Get-CertificationValue $Right "path" ""),
+            [StringComparison]::OrdinalIgnoreCase
+        ) -and
+        [string](Get-CertificationValue $Left "completedAtUtc" "") -ceq
+            [string](Get-CertificationValue $Right "completedAtUtc" "") -and
+        (Get-CertificationValue $Left "exitCode" $null) -eq
+            (Get-CertificationValue $Right "exitCode" $null) -and
+        [bool](Get-CertificationValue $Left "timedOut" $false) -eq
+            [bool](Get-CertificationValue $Right "timedOut" $false) -and
+        [bool](Get-CertificationValue $Left "exitPersistedBeforeResultParsing" $false) -eq
+            [bool](Get-CertificationValue $Right "exitPersistedBeforeResultParsing" $false)
+}
+
+function Test-CertificationProcessIdentityEqual {
+    param($Left, $Right)
+    if ($null -eq $Left -or $null -eq $Right) { return $false }
+    return [int](Get-CertificationValue $Left "pid" 0) -eq
+            [int](Get-CertificationValue $Right "pid" 0) -and
+        [string](Get-CertificationValue $Left "startedAtUtc" "") -ceq
+            [string](Get-CertificationValue $Right "startedAtUtc" "") -and
+        [string]::Equals(
+            [string](Get-CertificationValue $Left "path" ""),
+            [string](Get-CertificationValue $Right "path" ""),
+            [StringComparison]::OrdinalIgnoreCase
+        )
+}
+
+function Assert-CertificationFixtureWorkerProvenance {
+    param(
+        [object[]]$Records, $ReceiptWorker, $OriginalWorker, $RecoveryWorker,
+        [string]$ResultKind, [string]$Provider
+    )
+    if (-not (Test-CertificationProcessIdentityEqual $ReceiptWorker $OriginalWorker)) {
+        throw "The supervisor observation is not bound to the receipt worker process."
+    }
+    $refreshChild = $null
+    $verifyChild = $null
+    $harmlessChild = $null
+    foreach ($record in $Records) {
+        $stage = [string](Get-RequiredProperty $record "stage")
+        $process = Get-RequiredProperty $record "process"
+        $expected = $null
+        switch -Regex ($stage) {
+            '^(preflight_accepted|freshness_accepted|source_hashes_sealed|fixture_receipt_sealed|publication_started|publication_completed|harmless_output_started|harmless_output_completed)$' {
+                $expected = $OriginalWorker; break
+            }
+            '^(refresh_admitted|verify_admitted)$' { $expected = $OriginalWorker; break }
+            '^(refresh_child_started|refresh_completed)$' {
+                if ($Provider -cne 'production') { $expected = $OriginalWorker; break }
+                if ($null -eq $refreshChild) { $refreshChild = $process }
+                $expected = $refreshChild; break
+            }
+            '^(verify_child_started|verify_completed)$' {
+                if ($Provider -cne 'production') { $expected = $OriginalWorker; break }
+                if ($null -eq $verifyChild) { $verifyChild = $process }
+                $expected = $verifyChild; break
+            }
+            '^(harmless_delay_started|harmless_delay_completed)$' {
+                if ($Provider -cne 'offline-fake') {
+                    throw "Harmless child evidence is forbidden for production preparation."
+                }
+                if ($null -eq $harmlessChild) { $harmlessChild = $process }
+                $expected = $harmlessChild; break
+            }
+            '^(publication_recovery_started|publication_recovery_completed)$' {
+                if ($ResultKind -cne 'recovery') { throw "Unexpected publication recovery process evidence." }
+                $expected = $RecoveryWorker; break
+            }
+            '^terminal_commit$' {
+                $expected = if ($ResultKind -ceq 'recovery' -and
+                    [string](Get-CertificationValue $record "status" "") -ceq 'completed') {
+                    $RecoveryWorker
+                } else { $OriginalWorker }
+                break
+            }
+            default { throw "Fixture preparation journal contains an unclassified process-bearing stage." }
+        }
+        if (-not (Test-CertificationProcessIdentityEqual $process $expected)) {
+            throw "Fixture preparation journal process provenance drifted from its classified owner."
+        }
+    }
+}
+
+function Assert-CertificationWorkerOwnership {
+    param(
+        $Reference, $ExpectedSupervisor, $ExpectedWorker,
+        [string]$ExpectedAdmissionSha256, [string]$ExpectedPath,
+        [string]$RunId, [string]$ManifestSha256
+    )
+    $binding = Assert-CertificationEvidenceReference $Reference "fixturePreparation worker ownership"
+    if (-not [string]::Equals($binding.path, [IO.Path]::GetFullPath($ExpectedPath),
+            [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Fixture preparation worker ownership path drifted."
+    }
+    Assert-CertificationPrivateFileAcl $binding.path "fixturePreparation worker ownership"
+    try {
+        $proof = Get-Content -LiteralPath $binding.path -Raw |
+            ConvertFrom-Json -DateKind String -Depth 30
+    }
+    catch { throw "Fixture preparation worker ownership proof is malformed." }
+    $expectedKeys = @(
+        "schemaVersion","type","version","runId","createdAtUtc","manifestSha256",
+        "supervisorAdmissionSha256","supervisor","worker","jobPolicy","descendantPolicy"
+    )
+    if (@(Compare-Object ($expectedKeys | Sort-Object) `
+            (@($proof.PSObject.Properties.Name) | Sort-Object)).Count -ne 0) {
+        throw "Fixture preparation worker ownership fields are invalid."
+    }
+    $createdAt = [DateTimeOffset]::MinValue
+    if ([int](Get-CertificationValue $proof "schemaVersion" 0) -ne 1 -or
+        [string](Get-CertificationValue $proof "type" "") -cne "diagnostic_prep_worker_ownership" -or
+        [string](Get-CertificationValue $proof "version" "") -cne "diagnostic-prep-worker-job-v1" -or
+        [string](Get-CertificationValue $proof "runId" "") -cne $RunId -or
+        [string](Get-CertificationValue $proof "manifestSha256" "") -cne $ManifestSha256 -or
+        [string](Get-CertificationValue $proof "supervisorAdmissionSha256" "") -cne $ExpectedAdmissionSha256 -or
+        [string](Get-CertificationValue $proof "jobPolicy" "") -cne "kill-on-supervisor-close-v1" -or
+        [string](Get-CertificationValue $proof "descendantPolicy" "") -cne "no-breakaway-v1" -or
+        -not [DateTimeOffset]::TryParseExact(
+            [string](Get-CertificationValue $proof "createdAtUtc" ""), "o",
+            [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None,
+            [ref]$createdAt
+        ) -or $createdAt.Offset -ne [TimeSpan]::Zero -or
+        -not (Test-CertificationProcessIdentityEqual `
+            (Get-RequiredProperty $proof "supervisor") $ExpectedSupervisor) -or
+        -not (Test-CertificationProcessIdentityEqual `
+            (Get-RequiredProperty $proof "worker") $ExpectedWorker)) {
+        throw "Fixture preparation worker ownership proof is not bound to the exact supervised process tree."
+    }
+    return $binding
+}
+
+function Assert-CertificationPrepMutexFree {
+    param([string]$MutexName, [string]$Name)
+    $mutex = [Threading.Mutex]::new($false, $MutexName)
+    $acquired = $false
+    try {
+        try { $acquired = $mutex.WaitOne(0) }
+        catch [Threading.AbandonedMutexException] { $acquired = $true }
+        if (-not $acquired) { throw "$Name mutex remains owned." }
+    }
+    finally {
+        if ($acquired) { $mutex.ReleaseMutex() }
+        $mutex.Dispose()
+    }
+}
+
+function Assert-CertificationPrepFileLockFree {
+    param([string]$Path, [string]$ExpectedSha256)
+    Assert-CertificationPrivateFileAcl $Path "fixturePreparation supervisor lock"
+    if ((Get-CertificationSha256 $Path) -cne $ExpectedSha256) {
+        throw "Fixture preparation supervisor lock changed after binding."
+    }
+    $stream = $null
+    try {
+        $stream = [IO.FileStream]::new($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read,
+            [IO.FileShare]::None, 4096, [IO.FileOptions]::WriteThrough)
+    }
+    catch { throw "Fixture preparation supervisor lock remains owned by another session." }
+    finally { if ($null -ne $stream) { $stream.Dispose() } }
+}
+
+function Assert-CertificationPrepJournalStateMachine {
+    param([object[]]$Records, [string]$ResultKind, [string]$Provider)
+    $pairs = @($Records | ForEach-Object {
+        ([string](Get-CertificationValue $_ "stage" "")) + "|" +
+            ([string](Get-CertificationValue $_ "status" ""))
+    })
+    if ($Provider -notin @("production", "offline-fake")) {
+        throw "Fixture preparation journal provider is unsupported."
+    }
+    $core = [Collections.Generic.List[string]]::new()
+    $core.Add("preflight_accepted|completed")
+    $core.Add("refresh_admitted|running")
+    if ($Provider -ceq "production") { $core.Add("refresh_child_started|running") }
+    $core.Add("refresh_completed|completed")
+    $core.Add("verify_admitted|running")
+    if ($Provider -ceq "production") { $core.Add("verify_child_started|running") }
+    foreach ($signature in @(
+        "verify_completed|completed", "freshness_accepted|completed",
+        "source_hashes_sealed|completed", "fixture_receipt_sealed|completed"
+    )) { $core.Add($signature) }
+    if ($pairs.Count -lt $core.Count -or
+        (ConvertTo-Json -Compress -InputObject @($pairs[0..($core.Count - 1)])) -cne
+            (ConvertTo-Json -Compress -InputObject $core)) {
+        throw "Fixture preparation journal violates the exact ordered state machine."
+    }
+    $suffix = if ($pairs.Count -eq $core.Count) { @() } else { @($pairs[$core.Count..($pairs.Count - 1)]) }
+    $allowedSignatures = if ($ResultKind -ceq "initial") {
+        @("publication_started|running;publication_completed|completed;terminal_commit|completed")
+    } else {
+        @(
+            "publication_recovery_started|running;publication_recovery_completed|completed;terminal_commit|completed",
+            "publication_started|running;publication_recovery_started|running;publication_recovery_completed|completed;terminal_commit|completed",
+            "publication_started|running;terminal_commit|failed;publication_recovery_started|running;publication_recovery_completed|completed;terminal_commit|completed",
+            "publication_started|running;publication_completed|completed;publication_recovery_started|running;publication_recovery_completed|completed;terminal_commit|completed",
+            "publication_started|running;publication_completed|completed;terminal_commit|failed;publication_recovery_started|running;publication_recovery_completed|completed;terminal_commit|completed"
+        )
+    }
+    if (($suffix -join ';') -cnotin $allowedSignatures -or
+        [int](Get-CertificationValue $Records[-1] "exitCode" -1) -ne 0) {
+        throw "Fixture preparation journal does not prove the exact initial or single recovery branch."
+    }
+}
+
+function Assert-CertificationFixtureChildEvidence {
+    param([object[]]$Records, $Manifest, $Receipt, [string]$WorkerSha256, [string]$TicketSha256)
+    $fixture = Get-RequiredProperty $Manifest "fixture"
+    $provider = [string](Get-RequiredProperty $fixture "provider")
+    $allChildren = @($Records | Where-Object {
+        [string](Get-CertificationValue $_ "stage" "") -in @("refresh_child_started", "verify_child_started")
+    })
+    if ($provider -ceq "offline-fake") {
+        if ($allChildren.Count -ne 0) { throw "Offline fixture preparation cannot bind production child evidence." }
+        return
+    }
+    if ($provider -cne "production") { throw "Fixture preparation child provider is unsupported." }
+    $fixtureCliSha256 = Assert-CertificationSha256 `
+        ([string](Get-RequiredProperty (Get-RequiredProperty $fixture "fixtureCli") "sha256")) `
+        "fixture CLI sha256"
+    $execution = Get-RequiredProperty $Receipt "execution"
+    $workerProcess = Get-RequiredProperty $execution "workerProcess"
+    $emptySha256 = Get-CertificationTextSha256 ""
+    foreach ($command in @("refresh", "verify")) {
+        $admitted = @($Records | Where-Object {
+            [string](Get-CertificationValue $_ "stage" "") -ceq "${command}_admitted" -and
+            [string](Get-CertificationValue $_ "status" "") -ceq "running"
+        })
+        $started = @($Records | Where-Object {
+            [string](Get-CertificationValue $_ "stage" "") -ceq "${command}_child_started" -and
+            [string](Get-CertificationValue $_ "status" "") -ceq "running"
+        })
+        $completed = @($Records | Where-Object {
+            [string](Get-CertificationValue $_ "stage" "") -ceq "${command}_completed" -and
+            [string](Get-CertificationValue $_ "status" "") -ceq "completed"
+        })
+        if ($admitted.Count -ne 1 -or $started.Count -ne 1 -or $completed.Count -ne 1 -or
+            [int](Get-CertificationValue $admitted[0] "sequence" 0) -ge
+                [int](Get-CertificationValue $started[0] "sequence" 0) -or
+            [int](Get-CertificationValue $started[0] "sequence" 0) -ge
+                [int](Get-CertificationValue $completed[0] "sequence" 0) -or
+            [int](Get-CertificationValue $completed[0] "exitCode" -1) -ne 0) {
+            throw "Production fixture child lifecycle is incomplete or out of order."
+        }
+        $admittedProcess = Get-RequiredProperty $admitted[0] "process"
+        $childProcess = Get-RequiredProperty $started[0] "process"
+        $completedProcess = Get-RequiredProperty $completed[0] "process"
+        $admittedHashes = Get-RequiredProperty $admitted[0] "artifactHashes"
+        $childHashes = Get-RequiredProperty $started[0] "artifactHashes"
+        $completedHashes = Get-RequiredProperty $completed[0] "artifactHashes"
+        $stdoutField = if ($command -ceq "refresh") { "refreshStdoutSha256" } else { "verifyStdoutSha256" }
+        $stderrField = if ($command -ceq "refresh") { "refreshStderrSha256" } else { "verifyStderrSha256" }
+        $expectedStdout = Assert-CertificationSha256 `
+            ([string](Get-RequiredProperty $execution $stdoutField)) "receipt.execution.$stdoutField"
+        $expectedStderr = Assert-CertificationSha256 `
+            ([string](Get-RequiredProperty $execution $stderrField)) "receipt.execution.$stderrField"
+        $childStartedAt = [DateTimeOffset]::MinValue
+        if ([int](Get-CertificationValue $admittedProcess "pid" 0) -ne
+                [int](Get-CertificationValue $workerProcess "pid" 0) -or
+            [string](Get-CertificationValue $admittedProcess "startedAtUtc" "") -cne
+                [string](Get-CertificationValue $workerProcess "startedAtUtc" "") -or
+            -not [string]::Equals(
+                [string](Get-CertificationValue $admittedProcess "path" ""),
+                [string](Get-CertificationValue $workerProcess "path" ""),
+                [StringComparison]::OrdinalIgnoreCase) -or
+            [string](Get-CertificationValue $admittedProcess "kind" "") -cne "fixture-worker" -or
+            [string](Get-CertificationValue $admittedHashes "fixtureCliSha256" "") -cne $fixtureCliSha256 -or
+            [string](Get-CertificationValue $admittedHashes "fixtureWorkerSha256" "") -cne $WorkerSha256 -or
+            [string](Get-CertificationValue $admittedHashes "supervisorAdmissionSha256" "") -cne $TicketSha256 -or
+            [int](Get-CertificationValue $childProcess "pid" 0) -le 0 -or
+            [int](Get-CertificationValue $childProcess "pid" 0) -eq
+                [int](Get-CertificationValue $workerProcess "pid" 0) -or
+            [int](Get-CertificationValue $childProcess "pid" 0) -ne
+                [int](Get-CertificationValue $completedProcess "pid" 0) -or
+            [string](Get-CertificationValue $childProcess "startedAtUtc" "") -cne
+                [string](Get-CertificationValue $completedProcess "startedAtUtc" "") -or
+            -not [string]::Equals(
+                [string](Get-CertificationValue $childProcess "path" ""),
+                [string](Get-CertificationValue $completedProcess "path" ""),
+                [StringComparison]::OrdinalIgnoreCase) -or
+            [string](Get-CertificationValue $childProcess "kind" "") -cne "fixture-$command" -or
+            [string](Get-CertificationValue $completedProcess "kind" "") -cne "fixture-$command" -or
+            -not [IO.Path]::IsPathRooted([string](Get-CertificationValue $childProcess "path" "")) -or
+            -not [DateTimeOffset]::TryParseExact(
+                [string](Get-CertificationValue $childProcess "startedAtUtc" ""), "o",
+                [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None,
+                [ref]$childStartedAt
+            ) -or $childStartedAt.Offset -ne [TimeSpan]::Zero -or
+            [string](Get-CertificationValue $childHashes "fixtureCliSha256" "") -cne $fixtureCliSha256 -or
+            [string](Get-CertificationValue $childHashes "fixtureWorkerSha256" "") -cne $WorkerSha256 -or
+            [string](Get-CertificationValue $childHashes "supervisorAdmissionSha256" "") -cne $TicketSha256 -or
+            [string](Get-CertificationValue $completedHashes "stdoutSha256" "") -cne $expectedStdout -or
+            [string](Get-CertificationValue $completedHashes "stderrSha256" "") -cne $expectedStderr -or
+            $expectedStderr -cne $emptySha256) {
+            throw "Production fixture child process or output evidence is invalid."
+        }
+    }
+}
+
+function Assert-CertificationFixturePreparationPublicBinding {
+    param($Binding, [string]$Name)
+    Assert-CertificationExactPropertySet $Binding @(
+        "version","receiptSha256","manifestSha256","journalSha256",
+        "journalTerminalHash","snapshotArtifactSetSha256","supervisorTicketSha256",
+        "supervisorResultSha256","supervisorResultKind","supervisorRunLockSha256",
+        "publicationRecoveryAdmissionSha256","publicationRecoveryReceiptSha256",
+        "verificationCountsAndGatesSha256","diagnosticEligible"
+    ) $Name
+    if ($null -eq $Binding -or
+        [string](Get-CertificationValue $Binding "version" "") -cne
+            $script:RequiredFixturePreparationReceiptVersion -or
+        (Get-CertificationValue $Binding "diagnosticEligible" $false) -ne $true) {
+        throw "$Name does not bind eligible fixture-preparation provenance."
+    }
+    foreach ($field in @(
+        "receiptSha256", "manifestSha256", "journalSha256", "journalTerminalHash",
+        "snapshotArtifactSetSha256",
+        "supervisorTicketSha256", "supervisorResultSha256", "supervisorRunLockSha256",
+        "verificationCountsAndGatesSha256"
+    )) {
+        [void](Assert-CertificationSha256 ([string](Get-RequiredProperty $Binding $field)) "$Name.$field")
+    }
+    if ([string](Get-RequiredProperty $Binding "supervisorResultKind") -notin @("initial","recovery")) {
+        throw "$Name.supervisorResultKind is invalid."
+    }
+    $recoveryHash = Get-CertificationValue $Binding "publicationRecoveryAdmissionSha256" $null
+    $recoveryReceiptHash = Get-CertificationValue $Binding "publicationRecoveryReceiptSha256" $null
+    if ([string](Get-RequiredProperty $Binding "supervisorResultKind") -ceq "recovery") {
+        [void](Assert-CertificationSha256 ([string]$recoveryHash) "$Name.publicationRecoveryAdmissionSha256")
+        [void](Assert-CertificationSha256 ([string]$recoveryReceiptHash) "$Name.publicationRecoveryReceiptSha256")
+    } elseif ($null -ne $recoveryHash -or $null -ne $recoveryReceiptHash) {
+        throw "$Name must not bind recovery evidence for an initial completion."
+    }
+    return $Binding
+}
+
+function Get-CertificationFixturePreparationBinding {
+    param(
+        $Config,
+        [string]$ExpectedRunId,
+        [string]$ApplicationGitSha,
+        [string]$ControllerGitSha,
+        [string]$DeployedImageDigest,
+        [string]$ApiTaskDefinitionArn,
+        [string]$WorkerTaskDefinitionArn,
+        $FixtureState,
+        $FixtureVerification,
+        $FixtureArtifacts
+    )
+    $binding = Get-RequiredProperty $Config "fixturePreparation"
+    Assert-CertificationExactPropertySet $binding @(
+        "version","diagnosticEligible","receiptPath","receiptSha256","journalPath",
+        "journalSha256","journalTerminalHash","manifestPath","manifestSha256",
+        "snapshotRoot","snapshotArtifactSetSha256","supervisorTicketPath",
+        "supervisorTicketSha256","supervisorLaunchAdmissionPath",
+        "supervisorLaunchAdmissionSha256","supervisorResultPath","supervisorResultSha256",
+        "supervisorResultKind","supervisorRunLockPath","supervisorRunLockSha256",
+        "publicationRecoveryAdmissionPath","publicationRecoveryAdmissionSha256",
+        "publicationRecoveryReceiptPath","publicationRecoveryReceiptSha256",
+        "workerOwnershipPath","workerOwnershipSha256",
+        "publicationRecoveryWorkerOwnershipPath","publicationRecoveryWorkerOwnershipSha256",
+        "verificationCountsAndGatesSha256","artifacts"
+    ) "fixturePreparation"
+    if ([string](Get-RequiredProperty $binding "version") -cne $script:RequiredFixturePreparationReceiptVersion -or
+        (Get-CertificationValue $binding "diagnosticEligible" $false) -ne $true) {
+        throw "fixturePreparation must bind an eligible repository-owned preparation receipt."
+    }
+    $receiptReference = Assert-CertificationEvidenceReference ([pscustomobject]@{
+        path=[string](Get-RequiredProperty $binding "receiptPath")
+        sha256=[string](Get-RequiredProperty $binding "receiptSha256")
+    }) "fixturePreparation.receipt"
+    $manifestReference = Assert-CertificationEvidenceReference ([pscustomobject]@{
+        path=[string](Get-RequiredProperty $binding "manifestPath")
+        sha256=[string](Get-RequiredProperty $binding "manifestSha256")
+    }) "fixturePreparation.manifest"
+    $journalPath = Resolve-ExternalPath -Path ([string](Get-RequiredProperty $binding "journalPath")) `
+        -Name "fixturePreparation.journalPath"
+    $journalTerminalHash = Assert-CertificationSha256 `
+        ([string](Get-RequiredProperty $binding "journalTerminalHash")) "fixturePreparation.journalTerminalHash"
+    $journalSha256 = Assert-CertificationSha256 `
+        ([string](Get-RequiredProperty $binding "journalSha256")) "fixturePreparation.journalSha256"
+    $snapshotRoot = Resolve-ExternalPath -Path ([string](Get-RequiredProperty $binding "snapshotRoot")) `
+        -Name "fixturePreparation.snapshotRoot"
+    $snapshotArtifactSetSha256 = Assert-CertificationSha256 `
+        ([string](Get-RequiredProperty $binding "snapshotArtifactSetSha256")) `
+        "fixturePreparation.snapshotArtifactSetSha256"
+    $supervisorTicketReference = Assert-CertificationEvidenceReference ([pscustomobject]@{
+        path=[string](Get-RequiredProperty $binding "supervisorTicketPath")
+        sha256=[string](Get-RequiredProperty $binding "supervisorTicketSha256")
+    }) "fixturePreparation.supervisorTicket"
+    $supervisorLaunchAdmissionReference = Assert-CertificationEvidenceReference ([pscustomobject]@{
+        path=[string](Get-RequiredProperty $binding "supervisorLaunchAdmissionPath")
+        sha256=[string](Get-RequiredProperty $binding "supervisorLaunchAdmissionSha256")
+    }) "fixturePreparation.supervisorLaunchAdmission"
+    $supervisorResultReference = Assert-CertificationEvidenceReference ([pscustomobject]@{
+        path=[string](Get-RequiredProperty $binding "supervisorResultPath")
+        sha256=[string](Get-RequiredProperty $binding "supervisorResultSha256")
+    }) "fixturePreparation.supervisorResult"
+    $supervisorResultKind = [string](Get-RequiredProperty $binding "supervisorResultKind")
+    $supervisorRunLockReference = Assert-CertificationEvidenceReference ([pscustomobject]@{
+        path=[string](Get-RequiredProperty $binding "supervisorRunLockPath")
+        sha256=[string](Get-RequiredProperty $binding "supervisorRunLockSha256")
+    }) "fixturePreparation.supervisorRunLock"
+    foreach ($path in @(
+            $receiptReference.path, $manifestReference.path, $journalPath,
+            $supervisorTicketReference.path, $supervisorLaunchAdmissionReference.path,
+            $supervisorResultReference.path,
+            $supervisorRunLockReference.path
+        )) {
+        Assert-CertificationPrivateFileAcl $path "fixturePreparation"
+    }
+    try {
+        $receipt = Get-Content -LiteralPath $receiptReference.path -Raw | ConvertFrom-Json -DateKind String -Depth 60
+        $manifest = Get-Content -LiteralPath $manifestReference.path -Raw | ConvertFrom-Json -DateKind String -Depth 60
+    }
+    catch { throw "Fixture preparation receipt and manifest must contain valid JSON." }
+    [void](Assert-CertificationFixturePreparationReceiptShape $receipt)
+    if ([int](Get-CertificationValue $manifest "schemaVersion" 0) -ne 1 -or
+        [string](Get-CertificationValue $manifest "type" "") -cne "waf800_diagnostic_prep_manifest" -or
+        [string](Get-CertificationValue $manifest "version" "") -cne $script:RequiredDiagnosticPrepManifestVersion -or
+        [string](Get-CertificationValue $manifest "runId" "") -cne $ExpectedRunId -or
+        (Get-CertificationValue $manifest "diagnosticOnly" $false) -ne $true -or
+        (Get-CertificationValue $manifest "diagnosticEligible" $false) -ne $true -or
+        (Get-CertificationValue $manifest "certificationEligible" $true) -ne $false) {
+        throw "Fixture preparation manifest is historical, a rehearsal, or otherwise ineligible."
+    }
+    $oneAttemptPolicy = Get-RequiredProperty $manifest "oneAttemptPolicy"
+    foreach ($field in @(
+        "refreshAttempts", "verificationAttempts", "initialPublicationAttempts", "publicationRecoveryAttempts"
+    )) {
+        if ([int](Get-CertificationValue $oneAttemptPolicy $field 0) -ne 1) {
+            throw "Fixture preparation manifest violates the exact one-attempt policy."
+        }
+    }
+    $manifestPaths = Get-RequiredProperty $manifest "paths"
+    $manifestFixture = Get-RequiredProperty $manifest "fixture"
+    $manifestRequiredFiles = @((Get-RequiredProperty $manifestFixture "requiredPrivateFiles") |
+        ForEach-Object { [string]$_ } | Sort-Object)
+    $requiredPrivateFiles = @(
+        "fixture-state.private.json", "load-auth.private.json", "load-command-bodies.private.json",
+        "load-devices.private.json", "verification.private.json"
+    )
+    $sourceRoot = Resolve-ExternalPath -Path ([string](Get-RequiredProperty $manifestFixture "sourceRoot")) `
+        -Name "fixturePreparation.sourceRoot"
+    $runRoot = Resolve-ExternalPath -Path ([string](Get-RequiredProperty $manifestPaths "runDirectoryRoot")) `
+        -Name "fixturePreparation.runDirectoryRoot"
+    $bindingRoot = Resolve-ExternalPath -Path ([string](Get-RequiredProperty $manifestPaths "bindingRoot")) `
+        -Name "fixturePreparation.bindingRoot"
+    foreach ($protectedRoot in @(
+            [pscustomobject]@{ Name = "fixturePreparation.sourceRoot"; Path = $sourceRoot },
+            [pscustomobject]@{ Name = "fixturePreparation.snapshotRoot"; Path = $snapshotRoot },
+            [pscustomobject]@{ Name = "fixturePreparation.runDirectoryRoot"; Path = $runRoot },
+            [pscustomobject]@{ Name = "fixturePreparation.bindingRoot"; Path = $bindingRoot }
+        )) {
+        Assert-CertificationPrivateDirectoryAcl $protectedRoot.Path $protectedRoot.Name
+    }
+    $rootPairs = @($sourceRoot, $snapshotRoot, $runRoot, $bindingRoot)
+    for ($leftIndex = 0; $leftIndex -lt $rootPairs.Count; $leftIndex++) {
+        for ($rightIndex = $leftIndex + 1; $rightIndex -lt $rootPairs.Count; $rightIndex++) {
+            if (Test-CertificationPathsOverlap $rootPairs[$leftIndex] $rootPairs[$rightIndex]) {
+                throw "Fixture preparation protected roots must be pairwise disjoint."
+            }
+        }
+    }
+    if ([IO.Path]::GetFullPath([string](Get-RequiredProperty $manifestPaths "fixturePreparationReceiptPath")) -cne
+            $receiptReference.path -or
+        [IO.Path]::GetFullPath([string](Get-RequiredProperty $manifestPaths "journalPath")) -cne $journalPath -or
+        [IO.Path]::GetFullPath([string](Get-RequiredProperty $manifestPaths "snapshotRoot")) -cne $snapshotRoot -or
+        [string](Get-CertificationValue $manifestFixture "provider" "") -cne "production" -or
+        @(Compare-Object $requiredPrivateFiles $manifestRequiredFiles).Count -ne 0) {
+        throw "Fixture preparation manifest paths or production fixture contract drifted from the binding."
+    }
+    $manifestRelease = Get-RequiredProperty $manifest "release"
+    if ([string](Get-CertificationValue $manifestRelease "applicationGitSha" "") -cne $ApplicationGitSha -or
+        [string](Get-CertificationValue $manifestRelease "controllerGitSha" "") -cne $ControllerGitSha -or
+        [string](Get-CertificationValue $manifestRelease "deployedImageDigest" "") -cne $DeployedImageDigest -or
+        [string](Get-CertificationValue $manifestRelease "apiTaskDefinitionArn" "") -cne $ApiTaskDefinitionArn -or
+        [string](Get-CertificationValue $manifestRelease "workerTaskDefinitionArn" "") -cne $WorkerTaskDefinitionArn) {
+        throw "Fixture preparation manifest release identity drifted from certification."
+    }
+    $receiptManifest = Get-RequiredProperty $receipt "manifest"
+    $receiptRelease = Get-RequiredProperty $receipt "release"
+    $receiptSnapshot = Get-RequiredProperty $receipt "snapshot"
+    $receiptJournal = Get-RequiredProperty $receipt "journal"
+    if ([int](Get-CertificationValue $receipt "schemaVersion" 0) -ne 1 -or
+        [string](Get-CertificationValue $receipt "type" "") -cne "fixture_preparation_receipt" -or
+        [string](Get-CertificationValue $receipt "version" "") -cne $script:RequiredFixturePreparationReceiptVersion -or
+        [string](Get-CertificationValue $receipt "status" "") -cne "sources_sealed" -or
+        [string](Get-CertificationValue $receipt "runId" "") -cne $ExpectedRunId -or
+        (Get-CertificationValue $receipt "diagnosticOnly" $false) -ne $true -or
+        (Get-CertificationValue $receipt "diagnosticEligible" $false) -ne $true -or
+        (Get-CertificationValue $receipt "certificationEligible" $true) -ne $false -or
+        [string](Get-CertificationValue $receiptManifest "path" "") -cne $manifestReference.path -or
+        [string](Get-CertificationValue $receiptManifest "sha256" "") -cne $manifestReference.sha256 -or
+        [string](Get-CertificationValue $receiptJournal "path" "") -cne $journalPath -or
+        [string](Get-CertificationValue $receiptRelease "applicationGitSha" "") -cne $ApplicationGitSha -or
+        [string](Get-CertificationValue $receiptRelease "controllerGitSha" "") -cne $ControllerGitSha -or
+        [string](Get-CertificationValue $receiptRelease "deployedImageDigest" "") -cne $DeployedImageDigest -or
+        [string](Get-CertificationValue $receiptRelease "apiTaskDefinitionArn" "") -cne $ApiTaskDefinitionArn -or
+        [string](Get-CertificationValue $receiptRelease "workerTaskDefinitionArn" "") -cne $WorkerTaskDefinitionArn -or
+        [string](Get-CertificationValue $receiptSnapshot "root" "") -cne $snapshotRoot) {
+        throw "Fixture preparation receipt is incomplete, reconstructed, or release-drifted."
+    }
+    $execution = Get-RequiredProperty $receipt "execution"
+    if ([int](Get-CertificationValue $execution "refreshExitCode" -1) -ne 0 -or
+        [int](Get-CertificationValue $execution "verificationExitCode" -1) -ne 0) {
+        throw "Fixture preparation does not prove successful refresh and verification processes."
+    }
+    $manifestRepositoryRoot = [IO.Path]::GetFullPath([string](Get-RequiredProperty $manifest "repositoryRoot"))
+    if (-not [string]::Equals($manifestRepositoryRoot, $repositoryRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Fixture preparation manifest repository identity drifted."
+    }
+    $manifestControllers = @((Get-RequiredProperty $manifest "controllerArtifacts"))
+    $receiptControllers = @((Get-RequiredProperty $receipt "controllerArtifacts"))
+    if ($manifestControllers.Count -lt 1 -or
+        (ConvertTo-Json -InputObject $manifestControllers -Depth 30 -Compress) -cne
+            (ConvertTo-Json -InputObject $receiptControllers -Depth 30 -Compress)) {
+        throw "Fixture preparation controller identities do not match the manifest."
+    }
+    $seenControllerKinds = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $boundControllers = @{}
+    foreach ($artifact in $manifestControllers) {
+        Assert-CertificationExactPropertySet $artifact @("kind","path","sha256") `
+            "Fixture preparation controller artifact"
+        $kind = [string](Get-RequiredProperty $artifact "kind")
+        $relativePath = [string](Get-RequiredProperty $artifact "path")
+        $expectedHash = Assert-CertificationSha256 ([string](Get-RequiredProperty $artifact "sha256")) `
+            "fixturePreparation controller $kind sha256"
+        if (-not $seenControllerKinds.Add($kind)) {
+            throw "Fixture preparation controller identities must be unique."
+        }
+        $controllerPath = if ([IO.Path]::IsPathRooted($relativePath)) {
+            [IO.Path]::GetFullPath($relativePath)
+        } else { [IO.Path]::GetFullPath((Join-Path $repositoryRoot $relativePath)) }
+        $repoPrefix = $repositoryRoot.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+        if (-not $controllerPath.StartsWith($repoPrefix, [StringComparison]::OrdinalIgnoreCase) -or
+            -not (Test-Path -LiteralPath $controllerPath -PathType Leaf) -or
+            (Get-CertificationSha256 $controllerPath) -cne $expectedHash) {
+            throw "Fixture preparation controller '$kind' drifted after preparation."
+        }
+        $boundControllers[$kind] = [ordered]@{ path = $controllerPath; sha256 = $expectedHash }
+    }
+    foreach ($requiredKind in @(
+        "prep-supervisor", "fixture-worker", "diagnostic-binder", "coordinator", "monitor", "harness",
+        "monotonic-deadline", "tile-poll-accounting", "database-insights-lease"
+    )) {
+        if (-not $seenControllerKinds.Contains($requiredKind)) {
+            throw "Fixture preparation controller '$requiredKind' is required."
+        }
+    }
+
+    try {
+        $supervisorTicket = Get-Content -LiteralPath $supervisorTicketReference.path -Raw |
+            ConvertFrom-Json -DateKind String -Depth 60
+        $supervisorResult = Get-Content -LiteralPath $supervisorResultReference.path -Raw |
+            ConvertFrom-Json -DateKind String -Depth 60
+    }
+    catch { throw "Fixture preparation supervisor evidence must contain valid JSON." }
+    $manifestRecoveryReceiptPath = [IO.Path]::GetFullPath(
+        [string](Get-RequiredProperty $manifestPaths "publicationRecoveryReceiptPath")
+    )
+    [void](Assert-CertificationInitialPreparationHasNoRecoveryProvenance `
+        $supervisorResultKind $binding $supervisorResult $manifestRecoveryReceiptPath)
+    $ticketControl = Get-RequiredProperty $supervisorTicket "control"
+    $ticketSupervisor = Get-RequiredProperty $supervisorTicket "supervisor"
+    $ticketWorker = Get-RequiredProperty $supervisorTicket "worker"
+    $ticketSupervisorScript = Get-RequiredProperty $supervisorTicket "supervisorScript"
+    $ticketLaunchAdmission = Get-RequiredProperty $supervisorTicket "launchAdmission"
+    $resultTicket = Get-RequiredProperty $supervisorResult "ticket"
+    $resultJournal = Get-RequiredProperty $supervisorResult "journal"
+    $resultReceipt = Get-RequiredProperty $supervisorResult "fixturePreparationReceipt"
+    $resultRunLock = Get-RequiredProperty $supervisorResult "supervisorRunLock"
+    Assert-CertificationExactPropertySet $resultJournal @(
+        "path","sha256","recordCount","terminalHash","terminalCommitted"
+    ) "Fixture preparation supervisor result journal"
+    $expectedTicketWorker = $boundControllers["fixture-worker"]
+    $expectedTicketSupervisor = $boundControllers["prep-supervisor"]
+    Assert-CertificationExactPropertySet $supervisorTicket @(
+        "schemaVersion","type","version","runId","createdAtUtc","diagnosticOnly",
+        "diagnosticEligible","certificationEligible","manifest","worker","supervisorScript",
+        "launchAdmission","supervisor","launchNonceSha256","timeoutSeconds","control"
+    ) "Fixture preparation supervisor ticket"
+    Assert-CertificationExactPropertySet (Get-RequiredProperty $supervisorTicket "manifest") `
+        @("path","sha256") "Fixture preparation supervisor ticket manifest"
+    Assert-CertificationExactPropertySet $ticketWorker @("path","sha256") `
+        "Fixture preparation supervisor ticket worker"
+    Assert-CertificationExactPropertySet $ticketSupervisorScript @("path","sha256") `
+        "Fixture preparation supervisor ticket script"
+    Assert-CertificationExactPropertySet $ticketLaunchAdmission @("path","sha256") `
+        "Fixture preparation supervisor ticket launch admission"
+    Assert-CertificationExactPropertySet $ticketSupervisor @("pid","startedAtUtc","path") `
+        "Fixture preparation supervisor ticket process"
+    Assert-CertificationExactPropertySet $ticketControl @(
+        "statePath","resultPath","journalPath","workerStdoutPath","workerStderrPath",
+        "supervisorStdoutPath","supervisorStderrPath","runMutexName",
+        "supervisorMutexName","supervisorLockPath"
+    ) "Fixture preparation supervisor ticket control"
+    $ticketCreatedAt = [DateTimeOffset]::MinValue
+    $ticketSupervisorStartedAt = [DateTimeOffset]::MinValue
+    if ([int](Get-CertificationValue $supervisorTicket "schemaVersion" 0) -ne 1 -or
+        [string](Get-CertificationValue $supervisorTicket "type" "") -cne "diagnostic_prep_supervisor_ticket" -or
+        [string](Get-CertificationValue $supervisorTicket "version" "") -cne
+            $script:RequiredDiagnosticPrepSupervisorTicketVersion -or
+        [string](Get-CertificationValue $supervisorTicket "runId" "") -cne $ExpectedRunId -or
+        (Get-CertificationValue $supervisorTicket "diagnosticOnly" $false) -ne $true -or
+        (Get-CertificationValue $supervisorTicket "diagnosticEligible" $false) -ne $true -or
+        (Get-CertificationValue $supervisorTicket "certificationEligible" $true) -ne $false -or
+        [string](Get-CertificationValue (Get-RequiredProperty $supervisorTicket "manifest") "path" "") -cne
+            $manifestReference.path -or
+        [string](Get-CertificationValue (Get-RequiredProperty $supervisorTicket "manifest") "sha256" "") -cne
+            $manifestReference.sha256 -or
+        [IO.Path]::GetFullPath([string](Get-CertificationValue $ticketWorker "path" "")) -cne
+            $expectedTicketWorker.path -or
+        [string](Get-CertificationValue $ticketWorker "sha256" "") -cne $expectedTicketWorker.sha256 -or
+        [IO.Path]::GetFullPath([string](Get-CertificationValue $ticketSupervisorScript "path" "")) -cne
+            $expectedTicketSupervisor.path -or
+        [string](Get-CertificationValue $ticketSupervisorScript "sha256" "") -cne
+            $expectedTicketSupervisor.sha256 -or
+        [string](Get-CertificationValue $ticketLaunchAdmission "path" "") -cne
+            $supervisorLaunchAdmissionReference.path -or
+        [string](Get-CertificationValue $ticketLaunchAdmission "sha256" "") -cne
+            $supervisorLaunchAdmissionReference.sha256 -or
+        [string](Get-CertificationValue $ticketControl "journalPath" "") -cne $journalPath -or
+        [string](Get-CertificationValue $ticketControl "statePath" "") -cne
+            [IO.Path]::GetFullPath([string](Get-RequiredProperty $manifestPaths "supervisorStatePath")) -or
+        [string](Get-CertificationValue $ticketControl "resultPath" "") -cne
+            [IO.Path]::GetFullPath((Join-Path $runRoot "supervisor-result.private.json")) -or
+        [string](Get-CertificationValue $ticketControl "workerStdoutPath" "") -cne
+            [IO.Path]::GetFullPath((Join-Path $runRoot "fixture-worker.stdout.log")) -or
+        [string](Get-CertificationValue $ticketControl "workerStderrPath" "") -cne
+            [IO.Path]::GetFullPath((Join-Path $runRoot "fixture-worker.stderr.log")) -or
+        [string](Get-CertificationValue $ticketControl "supervisorStdoutPath" "") -cne
+            [IO.Path]::GetFullPath((Join-Path $runRoot "supervisor.stdout.log")) -or
+        [string](Get-CertificationValue $ticketControl "supervisorStderrPath" "") -cne
+            [IO.Path]::GetFullPath((Join-Path $runRoot "supervisor.stderr.log")) -or
+        [string](Get-CertificationValue $ticketControl "runMutexName" "") -cne
+            "Local\SchoolPilot.Waf800DiagnosticPreparation.$((Get-CertificationTextSha256 $ExpectedRunId).Substring(0, 32))" -or
+        [string](Get-CertificationValue $ticketControl "supervisorMutexName" "") -cne
+            "Local\SchoolPilot.Waf800DiagnosticPreparationSupervisor.$((Get-CertificationTextSha256 $ExpectedRunId).Substring(0, 32))" -or
+        [string](Get-CertificationValue $ticketControl "supervisorLockPath" "") -cne
+            $supervisorRunLockReference.path -or
+        [string](Get-CertificationValue $resultRunLock "path" "") -cne $supervisorRunLockReference.path -or
+        [string](Get-CertificationValue $resultRunLock "sha256" "") -cne $supervisorRunLockReference.sha256 -or
+        [string](Get-CertificationValue $supervisorTicket "launchNonceSha256" "") -cnotmatch '^[0-9a-f]{64}$' -or
+        [int](Get-CertificationValue $supervisorTicket "timeoutSeconds" 0) -lt 1 -or
+        [int](Get-CertificationValue $supervisorTicket "timeoutSeconds" 0) -gt 2100 -or
+        -not [DateTimeOffset]::TryParseExact(
+            [string](Get-CertificationValue $supervisorTicket "createdAtUtc" ""), "o",
+            [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None,
+            [ref]$ticketCreatedAt
+        ) -or $ticketCreatedAt.Offset -ne [TimeSpan]::Zero -or
+        -not [DateTimeOffset]::TryParseExact(
+            [string](Get-CertificationValue $ticketSupervisor "startedAtUtc" ""), "o",
+            [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None,
+            [ref]$ticketSupervisorStartedAt
+        ) -or $ticketSupervisorStartedAt.Offset -ne [TimeSpan]::Zero) {
+        throw "Fixture preparation supervisor ticket or persistent lock binding changed."
+    }
+    try {
+        $supervisorLaunchAdmission = Get-Content -LiteralPath $supervisorLaunchAdmissionReference.path -Raw |
+            ConvertFrom-Json -DateKind String -Depth 40
+    }
+    catch { throw "Fixture preparation launch admission is malformed." }
+    $launchManifest = Get-RequiredProperty $supervisorLaunchAdmission "manifest"
+    $launchWorker = Get-RequiredProperty $supervisorLaunchAdmission "worker"
+    $launchSupervisorScript = Get-RequiredProperty $supervisorLaunchAdmission "supervisorScript"
+    $launchControl = Get-RequiredProperty $supervisorLaunchAdmission "control"
+    Assert-CertificationExactPropertySet $supervisorLaunchAdmission @(
+        "schemaVersion","type","version","runId","createdAtUtc","manifest","worker",
+        "supervisorScript","launchNonceSha256","timeoutSeconds","control"
+    ) "Fixture preparation launch admission"
+    foreach ($referenceContract in @(
+            [pscustomobject]@{ Value=$launchManifest; Name="launch admission manifest" },
+            [pscustomobject]@{ Value=$launchWorker; Name="launch admission worker" },
+            [pscustomobject]@{ Value=$launchSupervisorScript; Name="launch admission supervisor script" }
+        )) {
+        Assert-CertificationExactPropertySet $referenceContract.Value @("path","sha256") `
+            "Fixture preparation $($referenceContract.Name)"
+    }
+    Assert-CertificationExactPropertySet $launchControl @(
+        "ticketPath","statePath","resultPath","journalPath","workerStdoutPath","workerStderrPath",
+        "supervisorStdoutPath","supervisorStderrPath","runMutexName",
+        "supervisorMutexName","supervisorLockPath"
+    ) "Fixture preparation launch admission control"
+    $launchCreatedAt = [DateTimeOffset]::MinValue
+    if ([int](Get-CertificationValue $supervisorLaunchAdmission "schemaVersion" 0) -ne 1 -or
+        [string](Get-CertificationValue $supervisorLaunchAdmission "type" "") -cne
+            "diagnostic_prep_supervisor_launch_admission" -or
+        [string](Get-CertificationValue $supervisorLaunchAdmission "version" "") -cne
+            "diagnostic-prep-supervisor-launch-admission-v1" -or
+        [string](Get-CertificationValue $supervisorLaunchAdmission "runId" "") -cne $ExpectedRunId -or
+        [string](Get-CertificationValue $launchManifest "path" "") -cne $manifestReference.path -or
+        [string](Get-CertificationValue $launchManifest "sha256" "") -cne $manifestReference.sha256 -or
+        [IO.Path]::GetFullPath([string](Get-CertificationValue $launchWorker "path" "")) -cne
+            $expectedTicketWorker.path -or
+        [string](Get-CertificationValue $launchWorker "sha256" "") -cne $expectedTicketWorker.sha256 -or
+        [IO.Path]::GetFullPath([string](Get-CertificationValue $launchSupervisorScript "path" "")) -cne
+            $expectedTicketSupervisor.path -or
+        [string](Get-CertificationValue $launchSupervisorScript "sha256" "") -cne
+            $expectedTicketSupervisor.sha256 -or
+        [string](Get-CertificationValue $supervisorLaunchAdmission "launchNonceSha256" "") -cne
+            [string](Get-CertificationValue $supervisorTicket "launchNonceSha256" "") -or
+        [int](Get-CertificationValue $supervisorLaunchAdmission "timeoutSeconds" 0) -ne
+            [int](Get-CertificationValue $supervisorTicket "timeoutSeconds" 0) -or
+        [string](Get-CertificationValue $launchControl "ticketPath" "") -cne
+            $supervisorTicketReference.path -or
+        [string](Get-CertificationValue $launchControl "statePath" "") -cne
+            [string](Get-CertificationValue $ticketControl "statePath" "") -or
+        [string](Get-CertificationValue $launchControl "resultPath" "") -cne
+            [string](Get-CertificationValue $ticketControl "resultPath" "") -or
+        [string](Get-CertificationValue $launchControl "journalPath" "") -cne $journalPath -or
+        [string](Get-CertificationValue $launchControl "workerStdoutPath" "") -cne
+            [string](Get-CertificationValue $ticketControl "workerStdoutPath" "") -or
+        [string](Get-CertificationValue $launchControl "workerStderrPath" "") -cne
+            [string](Get-CertificationValue $ticketControl "workerStderrPath" "") -or
+        [string](Get-CertificationValue $launchControl "supervisorStdoutPath" "") -cne
+            [string](Get-CertificationValue $ticketControl "supervisorStdoutPath" "") -or
+        [string](Get-CertificationValue $launchControl "supervisorStderrPath" "") -cne
+            [string](Get-CertificationValue $ticketControl "supervisorStderrPath" "") -or
+        [string](Get-CertificationValue $launchControl "runMutexName" "") -cne
+            [string](Get-CertificationValue $ticketControl "runMutexName" "") -or
+        [string](Get-CertificationValue $launchControl "supervisorMutexName" "") -cne
+            [string](Get-CertificationValue $ticketControl "supervisorMutexName" "") -or
+        [string](Get-CertificationValue $launchControl "supervisorLockPath" "") -cne
+            $supervisorRunLockReference.path -or
+        -not [DateTimeOffset]::TryParseExact(
+            [string](Get-CertificationValue $supervisorLaunchAdmission "createdAtUtc" ""), "o",
+            [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::None,
+            [ref]$launchCreatedAt
+        ) -or $launchCreatedAt.Offset -ne [TimeSpan]::Zero -or
+        $ticketCreatedAt -lt $launchCreatedAt -or
+        $ticketCreatedAt -gt $launchCreatedAt.AddMinutes(5)) {
+        throw "Fixture preparation launch admission identity is invalid."
+    }
+    if ([int](Get-CertificationValue $supervisorResult "schemaVersion" 0) -ne 1 -or
+        [string](Get-CertificationValue $supervisorResult "type" "") -cne
+            "waf800_diagnostic_prep_supervisor_result" -or
+        [string](Get-CertificationValue $supervisorResult "version" "") -cne
+            $script:RequiredDiagnosticPrepSupervisorResultVersion -or
+        [string](Get-CertificationValue $supervisorResult "runId" "") -cne $ExpectedRunId -or
+        [string](Get-CertificationValue $supervisorResult "status" "") -cne "completed" -or
+        (Get-CertificationValue $supervisorResult "terminalEvidenceCommitted" $false) -ne $true -or
+        (Get-CertificationValue $supervisorResult "trafficStarted" $true) -ne $false -or
+        (Get-CertificationValue $supervisorResult "leaseAcquired" $true) -ne $false -or
+        (Get-CertificationValue $supervisorResult "rawErrorPersisted" $true) -ne $false -or
+        [string](Get-CertificationValue $resultTicket "path" "") -cne $supervisorTicketReference.path -or
+        [string](Get-CertificationValue $resultTicket "sha256" "") -cne $supervisorTicketReference.sha256 -or
+        [string](Get-CertificationValue $resultJournal "path" "") -cne $journalPath -or
+        (Get-CertificationValue $resultJournal "terminalCommitted" $false) -ne $true -or
+        [string](Get-CertificationValue $resultReceipt "path" "") -cne $receiptReference.path -or
+        [string](Get-CertificationValue $resultReceipt "sha256" "") -cne $receiptReference.sha256 -or
+        $supervisorResultKind -notin @("initial","recovery")) {
+        throw "Fixture preparation supervisor result is not a coherent completed no-traffic result."
+    }
+    $manifestRunRoot = [IO.Path]::GetFullPath([string](Get-RequiredProperty $manifestPaths "runDirectoryRoot"))
+    $expectedResultPath = if ($supervisorResultKind -ceq "initial") {
+        [IO.Path]::GetFullPath([string](Get-RequiredProperty $ticketControl "resultPath"))
+    } else {
+        [IO.Path]::GetFullPath((Join-Path $manifestRunRoot "publication-recovery-result.private.json"))
+    }
+    $terminalWorker = if ($supervisorResultKind -ceq "initial") {
+        Get-RequiredProperty $supervisorResult "worker"
+    } else {
+        Get-RequiredProperty (Get-RequiredProperty $supervisorResult "recovery") "worker"
+    }
+    $receiptWorkerProcess = Get-RequiredProperty (Get-RequiredProperty $receipt "execution") "workerProcess"
+    $originalTerminalWorker = if ($supervisorResultKind -ceq "initial") {
+        $terminalWorker
+    } else {
+        Get-RequiredProperty (Get-RequiredProperty $supervisorResult "originalExecution") "worker"
+    }
+    if (-not (Test-CertificationProcessIdentityEqual $receiptWorkerProcess $originalTerminalWorker)) {
+        throw "Fixture preparation receipt worker is not the exact supervisor-owned original worker."
+    }
+    $terminalSupervisor = Get-RequiredProperty $supervisorResult "supervisor"
+    $originalOwnershipResultReference = if ($supervisorResultKind -ceq "initial") {
+        Get-RequiredProperty $supervisorResult "workerOwnership"
+    } else {
+        Get-RequiredProperty (Get-RequiredProperty $supervisorResult "originalExecution") "workerOwnership"
+    }
+    $originalOwnershipBindingReference = [pscustomobject]@{
+        path = [string](Get-RequiredProperty $binding "workerOwnershipPath")
+        sha256 = [string](Get-RequiredProperty $binding "workerOwnershipSha256")
+    }
+    $receiptOwnershipReference = Get-RequiredProperty `
+        (Get-RequiredProperty $receipt "supervisorAdmission") "workerOwnership"
+    if ([string](Get-RequiredProperty $originalOwnershipResultReference "path") -cne
+            [string]$originalOwnershipBindingReference.path -or
+        [string](Get-RequiredProperty $originalOwnershipResultReference "sha256") -cne
+            [string]$originalOwnershipBindingReference.sha256 -or
+        [string](Get-RequiredProperty $receiptOwnershipReference "path") -cne
+            [string]$originalOwnershipBindingReference.path -or
+        [string](Get-RequiredProperty $receiptOwnershipReference "sha256") -cne
+            [string]$originalOwnershipBindingReference.sha256) {
+        throw "Fixture preparation ownership references drifted across receipt, result, and binding."
+    }
+    [void](Assert-CertificationWorkerOwnership $originalOwnershipBindingReference `
+        $ticketSupervisor $originalTerminalWorker $supervisorTicketReference.sha256 `
+        (Join-Path $manifestRunRoot "worker-ownership.private.json") `
+        $ExpectedRunId $manifestReference.sha256)
+    if ($supervisorResultKind -ceq "initial" -and
+        ([int](Get-CertificationValue $terminalSupervisor "pid" 0) -ne
+            [int](Get-CertificationValue $ticketSupervisor "pid" 0) -or
+         [string](Get-CertificationValue $terminalSupervisor "startedAtUtc" "") -cne
+            [string](Get-CertificationValue $ticketSupervisor "startedAtUtc" "") -or
+         -not [string]::Equals(
+            [string](Get-CertificationValue $terminalSupervisor "path" ""),
+            [string](Get-CertificationValue $ticketSupervisor "path" ""),
+            [StringComparison]::OrdinalIgnoreCase))) {
+        throw "Initial fixture preparation supervisor identity drifted from its immutable ticket."
+    }
+    $ticketSupervisorPresent = Test-CertificationBoundProcessPresent $ticketSupervisor `
+        "fixture preparation supervisor"
+    $terminalSupervisorPresent = Test-CertificationBoundProcessPresent $terminalSupervisor `
+        "terminal fixture preparation supervisor"
+    $terminalWorkerPresent = Test-CertificationBoundProcessPresent $terminalWorker `
+        "fixture preparation worker"
+    if ($supervisorResultReference.path -cne $expectedResultPath -or
+        [int](Get-CertificationValue $terminalWorker "exitCode" -1) -ne 0 -or
+        (Get-CertificationValue $terminalWorker "timedOut" $true) -ne $false -or
+        (Get-CertificationValue $terminalWorker "exitPersistedBeforeResultParsing" $false) -ne $true -or
+        $ticketSupervisorPresent -or $terminalSupervisorPresent -or $terminalWorkerPresent) {
+        throw "Fixture preparation process termination evidence is incomplete or still active."
+    }
+    try {
+        $supervisorRunLock = Get-Content -LiteralPath $supervisorRunLockReference.path -Raw |
+            ConvertFrom-Json -DateKind String -Depth 30
+    }
+    catch { throw "Fixture preparation supervisor run lock is malformed." }
+    $expectedSupervisorRunLock = [ordered]@{
+        schemaVersion=1;type="diagnostic_prep_supervisor_run_lock"
+        version=$script:RequiredDiagnosticPrepSupervisorRunLockVersion;runId=$ExpectedRunId
+        manifest=[ordered]@{path=$manifestReference.path;sha256=$manifestReference.sha256}
+        ticket=[ordered]@{path=$supervisorTicketReference.path;sha256=$supervisorTicketReference.sha256}
+        supervisorMutexName=[string](Get-RequiredProperty $ticketControl "supervisorMutexName")
+        workerMutexName=[string](Get-RequiredProperty $ticketControl "runMutexName")
+    }
+    if (($supervisorRunLock | ConvertTo-Json -Compress -Depth 20) -cne
+        ($expectedSupervisorRunLock | ConvertTo-Json -Compress -Depth 20)) {
+        throw "Fixture preparation supervisor run lock provenance is invalid."
+    }
+    Assert-CertificationPrepFileLockFree $supervisorRunLockReference.path $supervisorRunLockReference.sha256
+    Assert-CertificationPrepMutexFree ([string](Get-RequiredProperty $ticketControl "supervisorMutexName")) `
+        "fixture preparation supervisor"
+    Assert-CertificationPrepMutexFree ([string](Get-RequiredProperty $ticketControl "runMutexName")) `
+        "fixture preparation worker"
+    $publicationRecoveryAdmissionSha256 = $null
+    $publicationRecoveryReceiptSha256 = $null
+    if ($supervisorResultKind -ceq "recovery") {
+        $admissionReference = Assert-CertificationEvidenceReference ([pscustomobject]@{
+            path=[string](Get-RequiredProperty $binding "publicationRecoveryAdmissionPath")
+            sha256=[string](Get-RequiredProperty $binding "publicationRecoveryAdmissionSha256")
+        }) "fixturePreparation.publicationRecoveryAdmission"
+        Assert-CertificationPrivateFileAcl $admissionReference.path "fixturePreparation recovery admission"
+        $publicationRecoveryAdmissionSha256 = $admissionReference.sha256
+        $resultAdmission = Get-RequiredProperty $supervisorResult "recoveryAdmission"
+        $admission = Get-Content -LiteralPath $admissionReference.path -Raw |
+            ConvertFrom-Json -DateKind String -Depth 60
+        $admissionOriginal = Get-RequiredProperty $admission "originalExecution"
+        $resultOriginal = Get-RequiredProperty $supervisorResult "originalExecution"
+        $resultOriginalState = Get-RequiredProperty $resultOriginal "state"
+        $initialSupervisorResultPath = [IO.Path]::GetFullPath([string](Get-RequiredProperty $ticketControl "resultPath"))
+        $originalResultReference = Assert-CertificationEvidenceReference ([pscustomobject]@{
+            path=[string](Get-RequiredProperty $admissionOriginal "resultPath")
+            sha256=[string](Get-RequiredProperty $admissionOriginal "resultSha256")
+        }) "fixturePreparation.originalResult"
+        $originalStateReference = Assert-CertificationEvidenceReference ([pscustomobject]@{
+            path=[string](Get-RequiredProperty $admissionOriginal "statePath")
+            sha256=[string](Get-RequiredProperty $admissionOriginal "stateSha256")
+        }) "fixturePreparation.originalState"
+        Assert-CertificationPrivateFileAcl $originalResultReference.path "fixturePreparation original result"
+        Assert-CertificationPrivateFileAcl $originalStateReference.path "fixturePreparation original state"
+        try {
+            $originalResultEvidence = Get-Content -LiteralPath $originalResultReference.path -Raw |
+                ConvertFrom-Json -DateKind String -Depth 60
+            $originalStateEvidence = Get-Content -LiteralPath $originalStateReference.path -Raw |
+                ConvertFrom-Json -DateKind String -Depth 60
+        }
+        catch { throw "Fixture preparation original recovery evidence is malformed." }
+        $admissionSupervisor = Get-RequiredProperty $admission "supervisor"
+        $admissionManifest = Get-RequiredProperty $admission "manifest"
+        $admissionWorker = Get-RequiredProperty $admission "worker"
+        $admissionSupervisorScript = Get-RequiredProperty $admission "supervisorScript"
+        $admissionControl = Get-RequiredProperty $admission "control"
+        $originalResultSupervisor = Get-RequiredProperty $originalResultEvidence "supervisor"
+        $originalStateSupervisor = Get-RequiredProperty $originalStateEvidence "supervisor"
+        $resultOriginalWorker = Get-RequiredProperty $resultOriginal "worker"
+        $originalResultWorker = Get-RequiredProperty $originalResultEvidence "worker"
+        $originalStateWorker = Get-RequiredProperty $originalStateEvidence "worker"
+        $resultOriginalOwnership = Get-RequiredProperty $resultOriginal "workerOwnership"
+        $originalResultOwnership = Get-RequiredProperty $originalResultEvidence "workerOwnership"
+        $originalStateOwnership = Get-RequiredProperty $originalStateEvidence "workerOwnership"
+        if ([string](Get-CertificationValue $resultAdmission "path" "") -cne $admissionReference.path -or
+            [string](Get-CertificationValue $resultAdmission "sha256" "") -cne $admissionReference.sha256 -or
+            [int](Get-CertificationValue $admission "schemaVersion" 0) -ne 1 -or
+            [string](Get-CertificationValue $admission "type" "") -cne
+                "diagnostic_prep_publication_recovery_admission" -or
+            [string](Get-CertificationValue $admission "version" "") -cne
+                $script:RequiredDiagnosticPrepRecoveryAdmissionVersion -or
+            [string](Get-CertificationValue $admission "mode" "") -cne "ResumePublication" -or
+            [string](Get-CertificationValue $admission "runId" "") -cne $ExpectedRunId -or
+            [string](Get-CertificationValue $admissionManifest "path" "") -cne $manifestReference.path -or
+            [string](Get-CertificationValue $admissionManifest "sha256" "") -cne $manifestReference.sha256 -or
+            [IO.Path]::GetFullPath([string](Get-CertificationValue $admissionWorker "path" "")) -cne
+                $expectedTicketWorker.path -or
+            [string](Get-CertificationValue $admissionWorker "sha256" "") -cne
+                $expectedTicketWorker.sha256 -or
+            [IO.Path]::GetFullPath([string](Get-CertificationValue $admissionSupervisorScript "path" "")) -cne
+                $expectedTicketSupervisor.path -or
+            [string](Get-CertificationValue $admissionSupervisorScript "sha256" "") -cne
+                $expectedTicketSupervisor.sha256 -or
+            [string](Get-CertificationValue $admission "recoveryNonceSha256" "") -cnotmatch '^[0-9a-f]{64}$' -or
+            [IO.Path]::GetFullPath([string](Get-CertificationValue $admissionControl "statePath" "")) -cne
+                [IO.Path]::GetFullPath([string](Get-RequiredProperty $manifestPaths "supervisorStatePath")) -or
+            [IO.Path]::GetFullPath([string](Get-CertificationValue $admissionControl "recoveryResultPath" "")) -cne
+                [IO.Path]::GetFullPath((Join-Path $manifestRunRoot "publication-recovery-result.private.json")) -or
+            [IO.Path]::GetFullPath([string](Get-CertificationValue $admissionControl "recoveryStdoutPath" "")) -cne
+                [IO.Path]::GetFullPath((Join-Path $manifestRunRoot "publication-recovery.stdout.log")) -or
+            [IO.Path]::GetFullPath([string](Get-CertificationValue $admissionControl "recoveryStderrPath" "")) -cne
+                [IO.Path]::GetFullPath((Join-Path $manifestRunRoot "publication-recovery.stderr.log")) -or
+            [string](Get-CertificationValue $admissionControl "runMutexName" "") -cne
+                [string](Get-RequiredProperty $ticketControl "runMutexName") -or
+            [string](Get-CertificationValue $admissionControl "supervisorMutexName" "") -cne
+                [string](Get-RequiredProperty $ticketControl "supervisorMutexName") -or
+            [IO.Path]::GetFullPath([string](Get-CertificationValue $admissionControl "supervisorLockPath" "")) -cne
+                $supervisorRunLockReference.path -or
+            [string](Get-CertificationValue (Get-RequiredProperty $admission "originalTicket") "path" "") -cne
+                $supervisorTicketReference.path -or
+            [string](Get-CertificationValue (Get-RequiredProperty $admission "originalTicket") "sha256" "") -cne
+                $supervisorTicketReference.sha256 -or
+            [int](Get-CertificationValue $admissionSupervisor "pid" 0) -ne
+                [int](Get-CertificationValue $terminalSupervisor "pid" 0) -or
+            [string](Get-CertificationValue $admissionSupervisor "startedAtUtc" "") -cne
+                [string](Get-CertificationValue $terminalSupervisor "startedAtUtc" "") -or
+            -not [string]::Equals(
+                [string](Get-CertificationValue $admissionSupervisor "path" ""),
+                [string](Get-CertificationValue $terminalSupervisor "path" ""),
+                [StringComparison]::OrdinalIgnoreCase) -or
+            $originalResultReference.path -cne $initialSupervisorResultPath -or
+            $originalStateReference.path -cne
+                [IO.Path]::GetFullPath((Join-Path $manifestRunRoot "original-supervisor-state.private.json")) -or
+            [string](Get-CertificationValue $resultOriginal "resultPath" "") -cne
+                $originalResultReference.path -or
+            [string](Get-CertificationValue $resultOriginal "resultSha256" "") -cne
+                $originalResultReference.sha256 -or
+            [string](Get-CertificationValue $resultOriginalState "path" "") -cne
+                $originalStateReference.path -or
+            [string](Get-CertificationValue $resultOriginalState "sha256" "") -cne
+                $originalStateReference.sha256 -or
+            [string](Get-CertificationValue $admissionOriginal "fixturePreparationReceiptPath" "") -cne
+                $receiptReference.path -or
+            [string](Get-CertificationValue $admissionOriginal "fixturePreparationReceiptSha256" "") -cne
+                $receiptReference.sha256 -or
+            [int](Get-CertificationValue $originalResultEvidence "schemaVersion" 0) -ne 1 -or
+            [string](Get-CertificationValue $originalResultEvidence "type" "") -cne
+                "waf800_diagnostic_prep_supervisor_result" -or
+            [string](Get-CertificationValue $originalResultEvidence "version" "") -cne
+                $script:RequiredDiagnosticPrepSupervisorResultVersion -or
+            [string](Get-CertificationValue $originalResultEvidence "runId" "") -cne $ExpectedRunId -or
+            [string](Get-CertificationValue $originalResultEvidence "status" "") -notin
+                @("failed","timed_out","interrupted") -or
+            (Get-CertificationValue $originalResultEvidence "terminalEvidenceCommitted" $false) -ne $true -or
+            (Get-CertificationValue $originalResultEvidence "trafficStarted" $true) -ne $false -or
+            (Get-CertificationValue $originalResultEvidence "leaseAcquired" $true) -ne $false -or
+            (Get-CertificationValue $originalResultEvidence "rawErrorPersisted" $true) -ne $false -or
+            [string](Get-CertificationValue (Get-RequiredProperty $originalResultEvidence "ticket") "sha256" "") -cne
+                $supervisorTicketReference.sha256 -or
+            [int](Get-CertificationValue $originalResultSupervisor "pid" 0) -ne
+                [int](Get-CertificationValue $ticketSupervisor "pid" 0) -or
+            [string](Get-CertificationValue $originalResultSupervisor "startedAtUtc" "") -cne
+                [string](Get-CertificationValue $ticketSupervisor "startedAtUtc" "") -or
+            -not [string]::Equals(
+                [string](Get-CertificationValue $originalResultSupervisor "path" ""),
+                [string](Get-CertificationValue $ticketSupervisor "path" ""),
+                [StringComparison]::OrdinalIgnoreCase) -or
+            [int](Get-CertificationValue $originalStateEvidence "schemaVersion" 0) -ne 1 -or
+            [string](Get-CertificationValue $originalStateEvidence "type" "") -cne
+                "waf800_diagnostic_prep_supervisor_state" -or
+            [string](Get-CertificationValue $originalStateEvidence "runId" "") -cne $ExpectedRunId -or
+            [string](Get-CertificationValue $originalStateEvidence "status" "") -cne
+                [string](Get-CertificationValue $originalResultEvidence "status" "") -or
+            [string](Get-CertificationValue $originalStateEvidence "resultPath" "") -cne
+                $initialSupervisorResultPath -or
+            [int](Get-CertificationValue $originalStateSupervisor "pid" 0) -ne
+                [int](Get-CertificationValue $ticketSupervisor "pid" 0) -or
+            [string](Get-CertificationValue $originalStateSupervisor "startedAtUtc" "") -cne
+                [string](Get-CertificationValue $ticketSupervisor "startedAtUtc" "") -or
+            -not [string]::Equals(
+                [string](Get-CertificationValue $originalStateSupervisor "path" ""),
+                [string](Get-CertificationValue $ticketSupervisor "path" ""),
+                [StringComparison]::OrdinalIgnoreCase) -or
+            -not (Test-CertificationProcessObservationEqual $resultOriginalWorker $originalResultWorker) -or
+            -not (Test-CertificationProcessObservationEqual $resultOriginalWorker $originalStateWorker) -or
+            [string](Get-CertificationValue $resultOriginalOwnership "path" "") -cne
+                [string]$originalOwnershipBindingReference.path -or
+            [string](Get-CertificationValue $resultOriginalOwnership "sha256" "") -cne
+                [string]$originalOwnershipBindingReference.sha256 -or
+            [string](Get-CertificationValue $originalResultOwnership "path" "") -cne
+                [string]$originalOwnershipBindingReference.path -or
+            [string](Get-CertificationValue $originalResultOwnership "sha256" "") -cne
+                [string]$originalOwnershipBindingReference.sha256 -or
+            [string](Get-CertificationValue $originalStateOwnership "path" "") -cne
+                [string]$originalOwnershipBindingReference.path -or
+            [string](Get-CertificationValue $originalStateOwnership "sha256" "") -cne
+                [string]$originalOwnershipBindingReference.sha256) {
+            throw "Fixture preparation recovery admission identity is invalid."
+        }
+        $recoveryOwnershipResultReference = Get-RequiredProperty `
+            (Get-RequiredProperty $supervisorResult "recovery") "workerOwnership"
+        $recoveryOwnershipBindingReference = [pscustomobject]@{
+            path = [string](Get-RequiredProperty $binding "publicationRecoveryWorkerOwnershipPath")
+            sha256 = [string](Get-RequiredProperty $binding "publicationRecoveryWorkerOwnershipSha256")
+        }
+        if ([string](Get-RequiredProperty $recoveryOwnershipResultReference "path") -cne
+                [string]$recoveryOwnershipBindingReference.path -or
+            [string](Get-RequiredProperty $recoveryOwnershipResultReference "sha256") -cne
+                [string]$recoveryOwnershipBindingReference.sha256) {
+            throw "Publication recovery ownership reference drifted from the supervisor result."
+        }
+        [void](Assert-CertificationWorkerOwnership $recoveryOwnershipBindingReference `
+            $terminalSupervisor $terminalWorker $publicationRecoveryAdmissionSha256 `
+            (Join-Path $manifestRunRoot "publication-recovery-worker-ownership.private.json") `
+            $ExpectedRunId $manifestReference.sha256)
+        $recoveryReceiptReference = Assert-CertificationEvidenceReference ([pscustomobject]@{
+            path=[string](Get-RequiredProperty $binding "publicationRecoveryReceiptPath")
+            sha256=[string](Get-RequiredProperty $binding "publicationRecoveryReceiptSha256")
+        }) "fixturePreparation.publicationRecoveryReceipt"
+        Assert-CertificationPrivateFileAcl $recoveryReceiptReference.path `
+            "fixturePreparation recovery receipt"
+        $resultRecoveryReceipt = Get-RequiredProperty $supervisorResult "publicationRecoveryReceipt"
+        if ([IO.Path]::GetFullPath([string](Get-RequiredProperty $manifestPaths `
+                "publicationRecoveryReceiptPath")) -cne $recoveryReceiptReference.path -or
+            [string](Get-CertificationValue $resultRecoveryReceipt "path" "") -cne
+                $recoveryReceiptReference.path -or
+            [string](Get-CertificationValue $resultRecoveryReceipt "sha256" "") -cne
+                $recoveryReceiptReference.sha256) {
+            throw "Fixture preparation recovery receipt drifted from its manifest or supervisor result."
+        }
+        try {
+            $recoveryReceipt = Get-Content -LiteralPath $recoveryReceiptReference.path -Raw |
+                ConvertFrom-Json -DateKind String -Depth 40
+        }
+        catch { throw "Fixture preparation recovery receipt is malformed." }
+        $requiredRecoveryReceiptFields = @(
+            "schemaVersion","type","version","status","runId","manifestSha256",
+            "fixturePreparationReceiptSha256","recoveryNonceSha256",
+            "supervisorAdmissionSha256","supervisorAdmissionNonceSha256",
+            "originalSupervisorTicketSha256","admittedAtUtc"
+        )
+        if (@(Compare-Object ($requiredRecoveryReceiptFields | Sort-Object) `
+                (@($recoveryReceipt.PSObject.Properties.Name) | Sort-Object)).Count -ne 0) {
+            throw "Fixture preparation recovery receipt fields are invalid."
+        }
+        $sealedRecoveryNonceSha256 = Get-CertificationTextSha256 `
+            ([string](Get-RequiredProperty (Get-RequiredProperty $receipt "recovery") "nonce"))
+        $recoveryAdmittedAtUtc = [string](Get-RequiredProperty $recoveryReceipt "admittedAtUtc")
+        $parsedRecoveryAdmittedAtUtc = [DateTimeOffset]::MinValue
+        if ([int](Get-CertificationValue $recoveryReceipt "schemaVersion" 0) -ne 1 -or
+            [string](Get-CertificationValue $recoveryReceipt "type" "") -cne
+                "fixture_publication_recovery_receipt" -or
+            [string](Get-CertificationValue $recoveryReceipt "version" "") -cne
+                $script:RequiredDiagnosticPrepRecoveryReceiptVersion -or
+            [string](Get-CertificationValue $recoveryReceipt "status" "") -cne "admitted" -or
+            [string](Get-CertificationValue $recoveryReceipt "runId" "") -cne $ExpectedRunId -or
+            [string](Get-CertificationValue $recoveryReceipt "manifestSha256" "") -cne
+                $manifestReference.sha256 -or
+            [string](Get-CertificationValue $recoveryReceipt "fixturePreparationReceiptSha256" "") -cne
+                $receiptReference.sha256 -or
+            [string](Get-CertificationValue $recoveryReceipt "recoveryNonceSha256" "") -cne
+                $sealedRecoveryNonceSha256 -or
+            [string](Get-CertificationValue $recoveryReceipt "supervisorAdmissionSha256" "") -cne
+                $publicationRecoveryAdmissionSha256 -or
+            [string](Get-CertificationValue $recoveryReceipt "supervisorAdmissionNonceSha256" "") -cne
+                [string](Get-RequiredProperty $admission "recoveryNonceSha256") -or
+            [string](Get-CertificationValue $recoveryReceipt "originalSupervisorTicketSha256" "") -cne
+                $supervisorTicketReference.sha256 -or
+            -not [DateTimeOffset]::TryParseExact(
+                $recoveryAdmittedAtUtc, "o", [Globalization.CultureInfo]::InvariantCulture,
+                [Globalization.DateTimeStyles]::None, [ref]$parsedRecoveryAdmittedAtUtc
+            ) -or $parsedRecoveryAdmittedAtUtc.Offset -ne [TimeSpan]::Zero) {
+            throw "Fixture preparation recovery receipt identity is invalid."
+        }
+        $publicationRecoveryReceiptSha256 = $recoveryReceiptReference.sha256
+    }
+    else {
+        if ($null -ne (Get-CertificationValue $binding "publicationRecoveryWorkerOwnershipPath" $null) -or
+            $null -ne (Get-CertificationValue $binding "publicationRecoveryWorkerOwnershipSha256" $null)) {
+            throw "Initial fixture preparation must not bind recovery worker ownership."
+        }
+    }
+
+    $journalBytes = [IO.File]::ReadAllBytes($journalPath)
+    $actualJournalSha256 = Get-CertificationSha256 $journalPath
+    if ($actualJournalSha256 -cne $journalSha256 -or
+        [string](Get-CertificationValue $resultJournal "sha256" "") -cne $journalSha256) {
+        throw "Fixture preparation journal file hash drifted from its binding or supervisor result."
+    }
+    if ($journalBytes.Length -eq 0 -or $journalBytes[-1] -ne 0x0a) {
+        throw "Fixture preparation journal ends with an uncommitted partial record."
+    }
+    $records = @()
+    try {
+        $records = @(Get-Content -LiteralPath $journalPath | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            ForEach-Object { $_ | ConvertFrom-Json -DateKind String -Depth 60 })
+    }
+    catch { throw "Fixture preparation journal must be complete JSONL." }
+    if ($records.Count -lt 2) { throw "Fixture preparation journal is incomplete." }
+    [void](Assert-CertificationPrepJournalTimestampSequence $records)
+    $previousHash = $null
+    for ($index = 0; $index -lt $records.Count; $index++) {
+        $record = $records[$index]
+        Assert-CertificationPrepJournalRecordKeys $record
+        [void](Assert-CertificationPrepJournalNestedShape $record $supervisorResultKind)
+        $recordPreviousHash = Get-CertificationValue $record "previousRecordHash" $null
+        $previousHashMatches = if ($null -eq $previousHash) {
+            $null -eq $recordPreviousHash
+        } else { [string]$recordPreviousHash -ceq $previousHash }
+        if ([int](Get-CertificationValue $record "schemaVersion" 0) -ne 1 -or
+            [string](Get-CertificationValue $record "type" "") -cne "diagnostic_prep_journal_record" -or
+            [string](Get-CertificationValue $record "version" "") -cne $script:RequiredDiagnosticPrepJournalVersion -or
+            [int](Get-CertificationValue $record "sequence" 0) -ne ($index + 1) -or
+            [string](Get-CertificationValue $record "runId" "") -cne $ExpectedRunId -or
+            [string](Get-CertificationValue $record "manifestSha256" "") -cne $manifestReference.sha256 -or
+            -not $previousHashMatches) {
+            throw "Fixture preparation journal chain is invalid."
+        }
+        $recordHash = Assert-CertificationSha256 ([string](Get-RequiredProperty $record "recordHash")) `
+            "fixturePreparation journal recordHash"
+        if ((Get-CertificationPrepJournalRecordHash $record) -cne $recordHash) {
+            throw "Fixture preparation journal record hash validation failed."
+        }
+        $previousHash = $recordHash
+    }
+    [void](Assert-CertificationPrepJournalStateMachine $records $supervisorResultKind `
+        ([string](Get-RequiredProperty $manifestFixture "provider")))
+    [void](Assert-CertificationFixtureChildEvidence $records $manifest $receipt `
+        ([string](Get-RequiredProperty $ticketWorker "sha256")) $supervisorTicketReference.sha256)
+    [void](Assert-CertificationFixtureWorkerProvenance $records $receiptWorkerProcess `
+        $originalTerminalWorker $terminalWorker $supervisorResultKind `
+        ([string](Get-RequiredProperty $manifestFixture "provider")))
+    $terminal = $records[-1]
+    $terminalHashes = Get-RequiredProperty $terminal "artifactHashes"
+    $expectedTerminalAdmissionSha256 = if ($supervisorResultKind -ceq "initial") {
+        $supervisorTicketReference.sha256
+    } else { $publicationRecoveryAdmissionSha256 }
+    if ($previousHash -cne $journalTerminalHash -or
+        [string](Get-CertificationValue $resultJournal "terminalHash" "") -cne $journalTerminalHash -or
+        [int](Get-CertificationValue $resultJournal "recordCount" 0) -ne $records.Count -or
+        [string](Get-CertificationValue $terminal "stage" "") -cne "terminal_commit" -or
+        [string](Get-CertificationValue $terminal "status" "") -cne "completed" -or
+        [string](Get-CertificationValue $terminalHashes "fixturePreparationReceiptSha256" "") -cne $receiptReference.sha256 -or
+        [string](Get-CertificationValue $terminalHashes "snapshotArtifactSetSha256" "") -cne $snapshotArtifactSetSha256 -or
+        [string](Get-CertificationValue $terminalHashes "supervisorAdmissionSha256" "") -cne
+            $expectedTerminalAdmissionSha256) {
+        throw "Fixture preparation journal does not end in the exact completed publication commit."
+    }
+    if ($supervisorResultKind -ceq "recovery") {
+        $recoveryStartedRecords = @($records | Where-Object {
+            [string](Get-CertificationValue $_ "stage" "") -ceq "publication_recovery_started" -and
+            [string](Get-CertificationValue $_ "status" "") -ceq "running"
+        })
+        $recoveryCompletedRecords = @($records | Where-Object {
+            [string](Get-CertificationValue $_ "stage" "") -ceq "publication_recovery_completed" -and
+            [string](Get-CertificationValue $_ "status" "") -ceq "completed"
+        })
+        if ($recoveryStartedRecords.Count -ne 1 -or $recoveryCompletedRecords.Count -ne 1 -or
+            [string](Get-CertificationValue (Get-RequiredProperty $recoveryStartedRecords[0] "artifactHashes") `
+                "publicationRecoveryReceiptSha256" "") -cne $publicationRecoveryReceiptSha256 -or
+            [string](Get-CertificationValue (Get-RequiredProperty $recoveryCompletedRecords[0] "artifactHashes") `
+                "publicationRecoveryReceiptSha256" "") -cne $publicationRecoveryReceiptSha256 -or
+            [string](Get-CertificationValue $terminalHashes "publicationRecoveryReceiptSha256" "") -cne
+                $publicationRecoveryReceiptSha256) {
+            throw "Fixture preparation journal does not bind the exact one-use recovery receipt."
+        }
+    } elseif ($null -ne (Get-CertificationValue $terminalHashes `
+            "publicationRecoveryReceiptSha256" $null) -or
+        $null -ne (Get-CertificationValue $binding "publicationRecoveryReceiptSha256" $null) -or
+        $null -ne (Get-CertificationValue $binding "publicationRecoveryReceiptPath" $null)) {
+        throw "An initial fixture preparation must not bind publication-recovery evidence."
+    }
+    $sourceSealRecords = @($records | Where-Object {
+        [string](Get-CertificationValue $_ "stage" "") -ceq "source_hashes_sealed" -and
+        [string](Get-CertificationValue $_ "status" "") -ceq "completed"
+    })
+    $receiptSealRecords = @($records | Where-Object {
+        [string](Get-CertificationValue $_ "stage" "") -ceq "fixture_receipt_sealed" -and
+        [string](Get-CertificationValue $_ "status" "") -ceq "completed"
+    })
+    foreach ($stageContract in @(
+        @("preflight_accepted","completed"), @("refresh_admitted","running"),
+        @("refresh_completed","completed"), @("verify_admitted","running"),
+        @("verify_completed","completed"), @("freshness_accepted","completed")
+    )) {
+        $stageRecords = @($records | Where-Object {
+            [string](Get-CertificationValue $_ "stage" "") -ceq $stageContract[0] -and
+            [string](Get-CertificationValue $_ "status" "") -ceq $stageContract[1]
+        })
+        if ($stageRecords.Count -ne 1 -or
+            ($stageContract[0] -in @("refresh_completed","verify_completed") -and
+                [int](Get-CertificationValue $stageRecords[0] "exitCode" -1) -ne 0)) {
+            throw "Fixture preparation journal violates the exact one-attempt stage contract."
+        }
+    }
+    if ($sourceSealRecords.Count -ne 1 -or $receiptSealRecords.Count -ne 1 -or
+        [string](Get-CertificationValue $receiptJournal "sourceSealedRecordHash" "") -cne
+            [string](Get-RequiredProperty $sourceSealRecords[0] "recordHash")) {
+        throw "Fixture preparation receipt does not bind the unique sealed source record."
+    }
+    $receiptSealHashes = Get-RequiredProperty $receiptSealRecords[0] "artifactHashes"
+    if ([string](Get-CertificationValue $receiptSealHashes "fixturePreparationReceiptSha256" "") -cne
+            $receiptReference.sha256 -or
+        [string](Get-CertificationValue $receiptSealHashes "snapshotArtifactSetSha256" "") -cne
+            $snapshotArtifactSetSha256) {
+        throw "Fixture preparation journal does not bind the immutable receipt before publication."
+    }
+
+    $expectedNames = @(
+        "fixture-state.private.json", "load-auth.private.json", "load-command-bodies.private.json",
+        "load-devices.private.json", "verification.private.json"
+    )
+    Assert-CertificationPrivateDirectoryAcl $snapshotRoot "fixturePreparation snapshot root"
+    $snapshotEntries = @(Get-ChildItem -LiteralPath $snapshotRoot -Force)
+    if ($snapshotEntries.Count -ne 5 -or
+        @($snapshotEntries | Where-Object { $_.PSIsContainer }).Count -ne 0 -or
+        @(Compare-Object $expectedNames @($snapshotEntries.Name | Sort-Object)).Count -ne 0) {
+        throw "Fixture preparation snapshot root must contain exactly the five sealed artifacts."
+    }
+    $receiptArtifacts = @((Get-RequiredProperty $receiptSnapshot "artifacts"))
+    $bindingArtifacts = @((Get-RequiredProperty $binding "artifacts"))
+    if ($receiptArtifacts.Count -ne 5 -or $bindingArtifacts.Count -ne 5 -or
+        @(Compare-Object $expectedNames @($receiptArtifacts.name | ForEach-Object { [string]$_ } | Sort-Object)).Count -ne 0 -or
+        @(Compare-Object $expectedNames @($bindingArtifacts.name | ForEach-Object { [string]$_ } | Sort-Object)).Count -ne 0) {
+        throw "Fixture preparation must bind exactly the five private snapshot artifacts."
+    }
+    foreach ($receiptArtifact in $receiptArtifacts) {
+        Assert-CertificationExactPropertySet $receiptArtifact @(
+            "name","sourcePath","targetPath","sha256","size","lastWriteTimeUtc"
+        ) "Fixture preparation receipt snapshot artifact"
+    }
+    foreach ($bindingArtifact in $bindingArtifacts) {
+        Assert-CertificationExactPropertySet $bindingArtifact @(
+            "name","path","sha256","size","lastWriteTimeUtc"
+        ) "Fixture preparation binding snapshot artifact"
+    }
+    $artifactSetInput = @()
+    $validated = @()
+    foreach ($name in $expectedNames) {
+        $receiptArtifact = @($receiptArtifacts | Where-Object { [string]$_.name -ceq $name })
+        $boundArtifact = @($bindingArtifacts | Where-Object { [string]$_.name -ceq $name })
+        if ($receiptArtifact.Count -ne 1 -or $boundArtifact.Count -ne 1) {
+            throw "Fixture preparation artifact '$name' is ambiguous."
+        }
+        $path = Resolve-ExternalPath -Path ([string](Get-RequiredProperty $receiptArtifact[0] "targetPath")) `
+            -Name "fixturePreparation artifact $name"
+        $sha256 = Assert-CertificationSha256 ([string](Get-RequiredProperty $receiptArtifact[0] "sha256")) `
+            "fixturePreparation artifact $name sha256"
+        $size = [long](Get-RequiredProperty $receiptArtifact[0] "size")
+        $lastWriteTimeUtc = [string](Get-RequiredProperty $receiptArtifact[0] "lastWriteTimeUtc")
+        if ($path -cne [IO.Path]::GetFullPath((Join-Path $snapshotRoot $name)) -or
+            [string](Get-CertificationValue $boundArtifact[0] "path" "") -cne $path -or
+            [string](Get-CertificationValue $boundArtifact[0] "sha256" "") -cne $sha256 -or
+            [long](Get-CertificationValue $boundArtifact[0] "size" -1) -ne $size -or
+            [string](Get-CertificationValue $boundArtifact[0] "lastWriteTimeUtc" "") -cne $lastWriteTimeUtc -or
+            (Get-Item -LiteralPath $path).Length -ne $size -or
+            (Get-CertificationSha256 $path) -cne $sha256) {
+            throw "Fixture preparation snapshot artifact '$name' drifted from its sealed receipt."
+        }
+        Assert-CertificationPrivateFileAcl $path "fixturePreparation artifact $name"
+        $validated += [ordered]@{name=$name;path=$path;sha256=$sha256;size=$size;lastWriteTimeUtc=$lastWriteTimeUtc}
+        $artifactSetInput += [ordered]@{name=$name;sha256=$sha256;size=$size;lastWriteTimeUtc=$lastWriteTimeUtc}
+    }
+    if ((Get-CertificationSnapshotArtifactSetSha256 $artifactSetInput) -cne
+            $snapshotArtifactSetSha256 -or
+        [string](Get-CertificationValue $receiptSnapshot "artifactSetSha256" "") -cne
+            $snapshotArtifactSetSha256) {
+        throw "Fixture preparation snapshot artifact-set hash validation failed."
+    }
+
+    $verificationForHash = @($validated | Where-Object { $_.name -ceq "verification.private.json" })
+    if ($verificationForHash.Count -ne 1) { throw "Fixture preparation verification artifact is missing." }
+    $sealedVerification = Get-Content -LiteralPath $verificationForHash[0].path -Raw |
+        ConvertFrom-Json -DateKind String -Depth 40
+    $verificationCounts = $sealedVerification.counts
+    $verificationGates = $sealedVerification.gates
+    $sanitizedCounts = [ordered]@{
+        schools=[int]$verificationCounts.schools;teachers=[int]$verificationCounts.teachers
+        officeStaff=[int]$verificationCounts.officeStaff;students=[int]$verificationCounts.students
+        classes=[int]$verificationCounts.classes;classRosterStudents=[int]$verificationCounts.classRosterStudents
+        devices=[int]$verificationCounts.devices;activeDeviceSessions=[int]$verificationCounts.activeDeviceSessions
+        activeSessions=[int]$verificationCounts.activeSessions;commandBodies=[int]$verificationCounts.commandBodies
+        authorizationPlanCohorts=[ordered]@{
+            coTeacherStudents=[int]$verificationCounts.authorizationPlanCohorts.coTeacherStudents
+            officeSupervisionStudents=[int]$verificationCounts.authorizationPlanCohorts.officeSupervisionStudents
+        }
+        liveAuth=[ordered]@{
+            commandAdministrators=[int]$verificationCounts.liveAuth.commandAdministrators
+            teachers=[int]$verificationCounts.liveAuth.teachers
+        }
+    }
+    $sanitizedGates = [ordered]@{}
+    foreach ($gateName in @(
+        "autoEnrollDisabled","trackingDisabled","schedulesDisabled","exactSchoolTimezones",
+        "classRostersExactAndDisjoint","authorizationPlanCohortsExact",
+        "authorizationPlanOfficeStudentsOutsideTeacherRosters","allDeviceTokensLive","allStaffAuthArtifactsLive"
+    )) { $sanitizedGates[$gateName] = [bool](Get-CertificationValue $verificationGates $gateName $false) }
+    $verificationCountsAndGatesSha256 = Get-CertificationCanonicalSha256 ([ordered]@{
+        counts=$sanitizedCounts;gates=$sanitizedGates
+    })
+    $receiptVerification = Get-RequiredProperty $receipt "verification"
+    $receiptAdmission = Get-RequiredProperty $receipt "supervisorAdmission"
+    if ([string](Get-RequiredProperty $binding "verificationCountsAndGatesSha256") -cne
+            $verificationCountsAndGatesSha256 -or
+        [string](Get-CertificationValue $receiptVerification "artifactSha256" "") -cne
+            $verificationForHash[0].sha256 -or
+        [string](Get-CertificationValue $receiptVerification "countsAndGatesSha256" "") -cne
+            $verificationCountsAndGatesSha256 -or
+        [string](Get-CertificationValue $terminalHashes "verificationCountsAndGatesSha256" "") -cne
+            $verificationCountsAndGatesSha256 -or
+        [string](Get-CertificationValue $supervisorResult "verificationCountsAndGatesSha256" "") -cne
+            $verificationCountsAndGatesSha256 -or
+        [string](Get-CertificationValue $receiptAdmission "type" "") -cne
+            "diagnostic_prep_supervisor_ticket" -or
+        [string](Get-CertificationValue $receiptAdmission "sha256" "") -cne
+            $supervisorTicketReference.sha256 -or
+        $null -ne (Get-CertificationValue $receiptAdmission "originalTicketSha256" $null)) {
+        throw "Fixture preparation verification counts/gates evidence drifted from its sealed artifact."
+    }
+
+    $statePrepared = @($validated | Where-Object { $_.name -ceq "fixture-state.private.json" })
+    $verificationPrepared = @($validated | Where-Object { $_.name -ceq "verification.private.json" })
+    if ($statePrepared.Count -ne 1 -or $verificationPrepared.Count -ne 1 -or
+        $statePrepared[0].path -cne $FixtureState.path -or $statePrepared[0].sha256 -cne $FixtureState.sha256 -or
+        $verificationPrepared[0].path -cne $FixtureVerification.path -or
+        $verificationPrepared[0].sha256 -cne $FixtureVerification.sha256) {
+        throw "Certification fixture state or verification is not the repository-prepared snapshot."
+    }
+    $kindToName = [ordered]@{
+        "device-manifest"="load-devices.private.json"
+        "teacher-auth"="load-auth.private.json"
+        "command-bodies"="load-command-bodies.private.json"
+    }
+    foreach ($artifact in @($FixtureArtifacts)) {
+        $preparedName = [string]$kindToName[[string]$artifact.kind]
+        $prepared = @($validated | Where-Object { $_.name -ceq $preparedName })
+        if ($prepared.Count -ne 1 -or $prepared[0].path -cne $artifact.path -or
+            $prepared[0].sha256 -cne $artifact.sha256) {
+            throw "Certification fixture artifact '$($artifact.kind)' is not repository-prepared."
+        }
+    }
+    return [pscustomobject]@{
+        Public=[ordered]@{
+            version=$script:RequiredFixturePreparationReceiptVersion
+            receiptSha256=$receiptReference.sha256
+            manifestSha256=$manifestReference.sha256
+            journalSha256=$journalSha256
+            journalTerminalHash=$journalTerminalHash
+            snapshotArtifactSetSha256=$snapshotArtifactSetSha256
+            supervisorTicketSha256=$supervisorTicketReference.sha256
+            supervisorResultSha256=$supervisorResultReference.sha256
+            supervisorResultKind=$supervisorResultKind
+            supervisorRunLockSha256=$supervisorRunLockReference.sha256
+            publicationRecoveryAdmissionSha256=$publicationRecoveryAdmissionSha256
+            publicationRecoveryReceiptSha256=$publicationRecoveryReceiptSha256
+            verificationCountsAndGatesSha256=$verificationCountsAndGatesSha256
+            diagnosticEligible=$true
+        }
+        Version=$script:RequiredFixturePreparationReceiptVersion;Receipt=$receiptReference
+        Manifest=$manifestReference;JournalPath=$journalPath;JournalSha256=$journalSha256
+        JournalTerminalHash=$journalTerminalHash
+        SourceRoot=$sourceRoot;SnapshotRoot=$snapshotRoot;RunRoot=$runRoot;BindingRoot=$bindingRoot
+        SnapshotArtifactSetSha256=$snapshotArtifactSetSha256
+        SupervisorTicket=$supervisorTicketReference;SupervisorResult=$supervisorResultReference
+        SupervisorResultKind=$supervisorResultKind;SupervisorRunLock=$supervisorRunLockReference
+        PublicationRecoveryAdmissionSha256=$publicationRecoveryAdmissionSha256
+        PublicationRecoveryReceiptSha256=$publicationRecoveryReceiptSha256;Artifacts=@($validated)
+        VerificationCountsAndGatesSha256=$verificationCountsAndGatesSha256
     }
 }
 
@@ -2469,6 +4238,17 @@ function Get-CertificationContract {
         }
     }
     $expectedRdsClass = [string](Get-RequiredProperty $Config.resources "expectedRdsInstanceClass")
+    $fixturePreparation = Get-CertificationFixturePreparationBinding `
+        -Config $Config `
+        -ExpectedRunId ([string](Get-RequiredProperty $Config "runId")) `
+        -ApplicationGitSha $appSha `
+        -ControllerGitSha $controllerSha `
+        -DeployedImageDigest $imageDigest `
+        -ApiTaskDefinitionArn $activeApiArn `
+        -WorkerTaskDefinitionArn $activeWorkerArn `
+        -FixtureState $state `
+        -FixtureVerification $verification `
+        -FixtureArtifacts $artifactReferences
     $historyFallbackQueryIdentityReceipt = Get-CertificationHistoryFallbackQueryIdentity `
         $certification $appSha $imageDigest $activeApiArn $activeWorkerArn
     $databaseInsightsLease = Get-CertificationDatabaseInsightsLease `
@@ -2533,6 +4313,8 @@ function Get-CertificationContract {
         RollbackApiImageDigest = $rollbackApiImageDigest
         RollbackWorkerImageDigest = $rollbackWorkerImageDigest
         Fixture = [ordered]@{ state=$state;verification=$verification;artifacts=$artifactReferences;fixtureId=$fixtureGeneration.fixtureId;generatedAtUtc=$fixtureGeneration.generatedAtUtc;refreshedAtUtc=$fixtureGeneration.refreshedAtUtc;verifiedAtUtc=$verifiedAt.ToString("o");timezone=$expectedTimezone;plannedTrafficStartUtc=if($null -eq $plannedStart){$null}else{$plannedStart.ToString("o")} }
+        FixturePreparation = $fixturePreparation.Public
+        FixturePreparationPrivate = $fixturePreparation
         SchemaCompatibility = $schemaCompatibility; HistoricalEvidence = $historical; CapacityTrack = $capacityTrack
         BudgetAcknowledgement = $budgetAcknowledgement
         WorkloadSchemaVersion = $workloadSchemaVersion
@@ -3040,6 +4822,7 @@ function New-CertificationValidationReceipt {
         nonce=[Guid]::NewGuid().ToString("N");configSha256=Get-CertificationConfigHash
         controllerGitSha=$Contract.ControllerGitSha;controllerHashes=$Contract.ControllerHashes
         applicationGitSha=$Contract.ApplicationGitSha;deployedImageDigest=$Contract.DeployedImageDigest
+        fixturePreparation=$Contract.FixturePreparation
         historyFallbackQueryIdentity=$Contract.HistoryFallbackQueryIdentity
         historyFallbackPiEvidenceVersion=$Contract.HistoryFallbackPiEvidenceVersion
         databaseInsightsLease=$Contract.DatabaseInsightsLease
@@ -3072,6 +4855,10 @@ function Use-CertificationValidationReceipt {
         if ((ConvertTo-CertificationComparableJson $receipt.databaseInsightsLease) -cne
             (ConvertTo-CertificationComparableJson $Contract.DatabaseInsightsLease)) {
             throw "Validation receipt is bound to a different Database Insights monitoring lease."
+        }
+        if ((ConvertTo-CertificationComparableJson $receipt.fixturePreparation) -cne
+            (ConvertTo-CertificationComparableJson $Contract.FixturePreparation)) {
+            throw "Validation receipt is bound to different fixture-preparation provenance."
         }
         if ([int]$receipt.schemaVersion -ne 1 -or [string]$receipt.type -ne "certification_validation_receipt" -or
             [string]$receipt.runId -ne $runId -or [string]$receipt.chainId -ne $Contract.ChainId -or
@@ -3112,7 +4899,7 @@ function Get-CertificationChainRootBinding {
             databaseInsightsLease=$Contract.DatabaseInsightsLease
             controllerGitSha=$Contract.ControllerGitSha;controllerHashes=$Contract.ControllerHashes
             operatorConfigSha256=Get-CertificationConfigHash;boundRuntimeConfigSha256=$boundRuntimeConfigSha256;rollbackConfig=$boundRollbackConfigBinding;validationReceipt=$Receipt
-            taskDefinitions=$Preflight.taskDefinitions;fixture=$Contract.Fixture;schemaCompatibility=$Contract.SchemaCompatibility;budgetAcknowledgement=$Contract.BudgetAcknowledgement
+            taskDefinitions=$Preflight.taskDefinitions;fixture=$Contract.Fixture;fixturePreparation=$Contract.FixturePreparation;schemaCompatibility=$Contract.SchemaCompatibility;budgetAcknowledgement=$Contract.BudgetAcknowledgement
             generatorPublicIpv4=$GeneratorIp;historicalEvidenceDiagnosticOnly=$Contract.HistoricalEvidence
             datastorePosture=@{expectedRdsInstanceClass=[string]$config.resources.expectedRdsInstanceClass;expectedRedisNodeType=[string]$config.resources.expectedRedisNodeType;observedRds=$Preflight.posture.rds;observedRedis=$Preflight.posture.redis}
             networkPosture=@{expectedNatGatewayCount=[int]$config.resources.expectedNatGatewayCount;expectedEcsAssignPublicIp=[bool]$config.resources.expectedEcsAssignPublicIp;ecsTaskSubnetIds=@($config.resources.ecsTaskSubnetIds);observedServices=$Preflight.posture.services}
@@ -3124,6 +4911,8 @@ function Get-CertificationChainRootBinding {
     $rootReference = Get-RequiredProperty $Contract.Raw "chainRoot"
     $binding = Assert-CertificationEvidenceReference $rootReference "certification.chainRoot"
     $rootJson = Get-Content -LiteralPath $binding.path -Raw | ConvertFrom-Json -DateKind String -Depth 60
+    [void](Assert-CertificationFixturePreparationPublicBinding $rootJson.fixturePreparation `
+        "certification.chainRoot.fixturePreparation")
     if ([string]$rootJson.type -ne "certification_chain_root" -or [string]$rootJson.chainId -ne $Contract.ChainId -or
         [string]$rootJson.capacityTrack -ne $Contract.CapacityTrack -or
         [string]$rootJson.workloadSchemaVersion -cne $Contract.WorkloadSchemaVersion -or
@@ -3150,6 +4939,10 @@ function Assert-CertificationConsumedReceiptAttestation {
     $receiptRollback=Assert-CertificationEvidenceReference $receipt.rollbackConfig "$Name.validationReceipt.rollbackConfig"
     $attestedRollback=Assert-CertificationEvidenceReference (Get-RequiredProperty $Attestation "rollbackConfig") "$Name.rollbackConfig"
     $referenceRollback=Get-RequiredProperty $ReceiptReference "rollbackConfig"
+    [void](Assert-CertificationFixturePreparationPublicBinding $receipt.fixturePreparation `
+        "$Name.validationReceipt.fixturePreparation")
+    [void](Assert-CertificationFixturePreparationPublicBinding $Attestation.fixturePreparation `
+        "$Name.fixturePreparation")
     if([int]$receipt.schemaVersion -ne 1 -or [string]$receipt.type -ne "certification_validation_receipt" -or
         [string]$receipt.runId -ne [string]$Attestation.runId -or [string]$receipt.chainId -ne $Contract.ChainId -or
         [string]$receipt.applicationGitSha -ne $Contract.ApplicationGitSha -or [string]$receipt.deployedImageDigest -ne $Contract.DeployedImageDigest -or
@@ -3160,6 +4953,8 @@ function Assert-CertificationConsumedReceiptAttestation {
             (ConvertTo-CertificationComparableJson $Contract.DatabaseInsightsLease) -or
         [string]$receipt.controllerGitSha -ne $Contract.ControllerGitSha -or
         (ConvertTo-CertificationComparableJson $receipt.controllerHashes) -cne (ConvertTo-CertificationComparableJson $Contract.ControllerHashes) -or
+        (ConvertTo-CertificationComparableJson $receipt.fixturePreparation) -cne
+            (ConvertTo-CertificationComparableJson $Attestation.fixturePreparation) -or
         [string]$receipt.configSha256 -ne [string]$Attestation.operatorConfigSha256 -or
         [string]$receipt.nonce -notmatch '^[0-9a-f]{32}$' -or [string]$ReceiptReference.nonce -ne [string]$receipt.nonce -or
         [string]$ReceiptReference.operatorConfigSha256 -ne [string]$receipt.configSha256 -or
@@ -3358,6 +5153,8 @@ function Assert-CertificationChainContinuity {
     $predecessorSha = Assert-CertificationSha256 ([string](Get-RequiredProperty $Config "predecessorResultSha256")) "predecessorResultSha256"
     if ((Get-CertificationSha256 $predecessorPath) -ne $predecessorSha) { throw "Predecessor supervisor result was tampered with." }
     $envelope = Get-Content -LiteralPath $predecessorPath -Raw | ConvertFrom-Json -DateKind String -Depth 60
+    [void](Assert-CertificationFixturePreparationPublicBinding $envelope.fixturePreparation `
+        "predecessor.fixturePreparation")
     $predecessorLeaseRestoration = Get-CertificationValue $envelope "databaseInsightsRestoration"
     if ([int]$envelope.schemaVersion -ne 3 -or [string]$envelope.type -ne "certification_supervisor_terminal" -or
         [string](Get-CertificationValue $envelope "linkVersion" "") -cne $script:RequiredHistoryFallbackPiLinkVersion -or
@@ -3402,6 +5199,8 @@ function Assert-CertificationChainContinuity {
     if ([string]$envelope.linkSha256 -ne (Get-CertificationTextSha256 $linkInput)) { throw "Predecessor supervisor link seal is invalid." }
     $attestation = Get-Content -LiteralPath $envelopeStage.path -Raw | ConvertFrom-Json -DateKind String -Depth 60
     $monitor = Get-Content -LiteralPath $terminal.path -Raw | ConvertFrom-Json -DateKind String -Depth 60
+    [void](Assert-CertificationFixturePreparationPublicBinding $attestation.fixturePreparation `
+        "predecessor.stageAttestation.fixturePreparation")
     if ([int]$attestation.schemaVersion -ne 1 -or [string]$attestation.type -ne "certification_stage_attestation" -or [string]$attestation.runId -ne [string]$envelope.runId -or
         [string]$attestation.chainId -ne $Contract.ChainId -or [string]$attestation.phase -ne [string]$envelope.phase -or
         [string](Get-CertificationValue $attestation "stage" "") -ne [string](Get-CertificationValue $envelope "stage" "") -or
@@ -3416,6 +5215,8 @@ function Assert-CertificationChainContinuity {
             (ConvertTo-CertificationComparableJson $Contract.HistoryFallbackQueryIdentity) -or
         (ConvertTo-CertificationComparableJson $attestation.databaseInsightsLease) -cne
             (ConvertTo-CertificationComparableJson $Contract.DatabaseInsightsLease) -or
+        (ConvertTo-CertificationComparableJson $attestation.fixturePreparation) -cne
+            (ConvertTo-CertificationComparableJson $envelope.fixturePreparation) -or
         [string]$attestation.controllerGitSha -ne $Contract.ControllerGitSha -or
         (ConvertTo-CertificationComparableJson $attestation.controllerHashes) -cne (ConvertTo-CertificationComparableJson $Contract.ControllerHashes)) {
         throw "Predecessor stage attestation identity/root/controller continuity failed."
@@ -3476,7 +5277,7 @@ function Write-CertificationStageAttestation {
         databaseInsightsLease=$Contract.DatabaseInsightsLease
         controllerGitSha=$Contract.ControllerGitSha;controllerHashes=$Contract.ControllerHashes
         operatorConfigSha256=Get-CertificationConfigHash;boundRuntimeConfigSha256=$boundRuntimeConfigSha256;rollbackConfig=$boundRollbackConfigBinding
-        taskDefinitions=$Preflight.taskDefinitions;fixture=$Contract.Fixture;generatorPublicIpv4=$GeneratorIp
+        taskDefinitions=$Preflight.taskDefinitions;fixture=$Contract.Fixture;fixturePreparation=$Contract.FixturePreparation;generatorPublicIpv4=$GeneratorIp
         datastorePosture=@{expectedRdsInstanceClass=[string]$config.resources.expectedRdsInstanceClass;expectedRedisNodeType=[string]$config.resources.expectedRedisNodeType;observedRds=$Preflight.posture.rds;observedRedis=$Preflight.posture.redis}
         networkPosture=@{expectedNatGatewayCount=[int]$config.resources.expectedNatGatewayCount;expectedEcsAssignPublicIp=[bool]$config.resources.expectedEcsAssignPublicIp;ecsTaskSubnetIds=@($config.resources.ecsTaskSubnetIds);observedServices=$Preflight.posture.services}
         alarms=$Preflight.posture.alarms;schedules=$Preflight.posture.schedules;rollbackIdentities=@{api=$Contract.RollbackApiArn;worker=$Contract.RollbackWorkerArn;schemaCompatibility=$Contract.SchemaCompatibility}
@@ -3684,6 +5485,38 @@ if ($SupervisionKind -eq "Load") {
     }
 }
 
+$certificationIsolationCandidates = @(
+    [pscustomobject]@{ Name = "configuration path"; Path = $resolvedConfigPath },
+    [pscustomobject]@{ Name = "evidence directory"; Path = $evidenceDirectory },
+    [pscustomobject]@{ Name = "load progress path"; Path = $progressPath },
+    [pscustomobject]@{ Name = "load summary path"; Path = $summaryPath },
+    [pscustomobject]@{ Name = "static monitor configuration"; Path = $staticMonitorConfigPath },
+    [pscustomobject]@{ Name = "supervisor heartbeat"; Path = $heartbeatPath },
+    [pscustomobject]@{ Name = "supervisor result"; Path = $supervisorResultPath },
+    [pscustomobject]@{ Name = "bound monitor configuration"; Path = $boundConfigPath },
+    [pscustomobject]@{ Name = "bound rollback configuration"; Path = $boundRollbackConfigPath },
+    [pscustomobject]@{ Name = "harness stdout"; Path = $harnessStdout },
+    [pscustomobject]@{ Name = "harness stderr"; Path = $harnessStderr },
+    [pscustomobject]@{ Name = "monitor stdout"; Path = $monitorStdout },
+    [pscustomobject]@{ Name = "monitor stderr"; Path = $monitorStderr },
+    [pscustomobject]@{ Name = "generator IP evidence"; Path = $generatorIpEvidencePath },
+    [pscustomobject]@{ Name = "harness ready gate"; Path = $harnessReadyPath },
+    [pscustomobject]@{ Name = "harness traffic start gate"; Path = $harnessStartGatePath },
+    [pscustomobject]@{ Name = "AWS monitor evidence"; Path = $awsMonitorEvidencePath },
+    [pscustomobject]@{ Name = "monitor heartbeat"; Path = $monitorHeartbeatPath },
+    [pscustomobject]@{ Name = "monitor result"; Path = $monitorResultPath },
+    [pscustomobject]@{ Name = "rollback evidence"; Path = $rollbackEvidencePath },
+    [pscustomobject]@{ Name = "rollback state"; Path = $rollbackStatePath },
+    [pscustomobject]@{ Name = "rollback heartbeat"; Path = $rollbackHeartbeatPath },
+    [pscustomobject]@{ Name = "validation receipt"; Path = $validationReceiptPath },
+    [pscustomobject]@{ Name = "validation receipt seal"; Path = $validationReceiptSealPath },
+    [pscustomobject]@{ Name = "consumed validation receipt"; Path = $consumedValidationReceiptPath },
+    [pscustomobject]@{ Name = "chain root output"; Path = $chainRootOutputPath },
+    [pscustomobject]@{ Name = "stage attestation output"; Path = $stageAttestationPath },
+    [pscustomobject]@{ Name = "history fallback PI request"; Path = $historyFallbackPiRequestPath },
+    [pscustomobject]@{ Name = "history fallback PI receipt"; Path = $historyFallbackPiReceiptPath }
+)
+
 [ordered]@{
     valid = $true
     schemaVersion = 1
@@ -3701,6 +5534,10 @@ if ($Mode -eq "Validate") {
         # failure can restore Advanced/465 immediately instead of relying only
         # on the detached expiry watchdog.
         $certificationContract = Get-CertificationContract -Config $config -TestMode $testMode -BindHarnessArtifacts:($SupervisionKind -eq "Load")
+        if ($null -ne $certificationContract) {
+            Assert-CertificationFixturePreparationPathIsolation `
+                $certificationContract.FixturePreparationPrivate $certificationIsolationCandidates
+        }
         Invoke-StaticMonitorValidation -Config $config -EvidenceDirectory $evidenceDirectory -PwshPath $pwsh
         # Mode=Validate remains non-mutating on success. Its lease validation
         # proves both Advanced/465 and a fresh bound watchdog heartbeat.
@@ -3752,6 +5589,10 @@ try {
     # failures are inside this try so the bounded monitoring lease can be
     # restored fail-closed.
     $certificationContract = Get-CertificationContract -Config $config -TestMode $testMode -BindHarnessArtifacts:($SupervisionKind -eq "Load")
+    if ($null -ne $certificationContract) {
+        Assert-CertificationFixturePreparationPathIsolation `
+            $certificationContract.FixturePreparationPrivate $certificationIsolationCandidates
+    }
     Invoke-StaticMonitorValidation -Config $config -EvidenceDirectory $evidenceDirectory -PwshPath $pwsh
     if ($SupervisionKind -eq "Load") {
         Invoke-HarnessConfigurationPreflight -Config $config -NodePath $node.Source -HarnessPath $runtimeHarnessScript
@@ -4156,6 +5997,7 @@ try {
         workloadSchemaVersion = if ($null -eq $certificationContract) { $null } else { $certificationContract.WorkloadSchemaVersion }
         workloadEndpointShapeSha256 = if ($null -eq $certificationContract) { $null } else { $certificationContract.WorkloadEndpointShapeSha256 }
         historyFallbackQueryIdentity = if ($null -eq $certificationContract) { $null } else { $certificationContract.HistoryFallbackQueryIdentity }
+        fixturePreparation = if ($null -eq $certificationContract) { $null } else { $certificationContract.FixturePreparation }
         historyFallbackPiEvidenceVersion = if ($null -eq $certificationContract) { $null } else { $certificationContract.HistoryFallbackPiEvidenceVersion }
         historyFallbackPiEvidence = $historyFallbackPiEvidence
         databaseInsightsLease = if ($null -eq $certificationContract) { $null } else { $certificationContract.DatabaseInsightsLease }
@@ -4369,6 +6211,7 @@ catch {
         settledFindings=@($settledFindings)
         terminalMonitorResult=$terminalMonitorFailureBinding
         historyFallbackQueryIdentity = if ($null -eq $certificationContract) { $null } else { $certificationContract.HistoryFallbackQueryIdentity }
+        fixturePreparation = if ($null -eq $certificationContract) { $null } else { $certificationContract.FixturePreparation }
         historyFallbackPiEvidenceVersion = if ($null -eq $certificationContract) { $null } else { $certificationContract.HistoryFallbackPiEvidenceVersion }
         historyFallbackPiEvidence = $historyFallbackPiEvidence
         databaseInsightsLease = if ($null -eq $certificationContract) { $null } else { $certificationContract.DatabaseInsightsLease }
