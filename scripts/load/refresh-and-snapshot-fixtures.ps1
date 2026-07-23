@@ -1184,7 +1184,7 @@ function Assert-ManifestContract {
                 $script:Manifest.testControls.Contains('pauseAfterJournalStageSeconds')) -or
             ($script:Manifest.testControls.Contains('pauseAfterJournalStage') -and
                 ([string]$script:Manifest.testControls.pauseAfterJournalStage -cnotin $allowedPauseStages -or
-                 $pauseAfterJournalStageSeconds -lt 1 -or $pauseAfterJournalStageSeconds -gt 30)) -or
+                 $pauseAfterJournalStageSeconds -lt 1 -or $pauseAfterJournalStageSeconds -gt 120)) -or
             ($script:Manifest.testControls.Contains('faultStage') -and
                 [string]$script:Manifest.testControls.faultStage -cnotin $allowedFaultStages)) {
             throw 'Test controls are restricted to bounded offline, diagnostic-ineligible rehearsal.'

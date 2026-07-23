@@ -628,7 +628,10 @@ function Invoke-Supervisor {
 }
 
 function Wait-SupervisorTerminal {
-    param($Context, [int]$TimeoutSeconds = 60, [switch]$Fast)
+    # Hosted Windows can spend tens of seconds scanning newly created,
+    # ACL-protected process/journal artifacts. This is an observer timeout;
+    # the supervisor's own 35-minute bound remains the lifecycle authority.
+    param($Context, [int]$TimeoutSeconds = 120, [switch]$Fast)
     $watch = [Diagnostics.Stopwatch]::StartNew()
     do {
         Start-Sleep -Milliseconds 100
@@ -2317,13 +2320,20 @@ try {
         $boundaryContext = New-TestContext -Name ("external-stop-" +
             $boundaryStage.Replace('_','-')) -TestControls @{
                 pauseAfterJournalStage=$boundaryStage
-                pauseAfterJournalStageSeconds=30
+                # The hosted Windows runner can pause the observing test process
+                # for more than 30 seconds under concurrent CI load. Keep the
+                # offline-only worker parked long enough that PID reuse cannot
+                # turn an exact-identity assertion into a scheduler flake.
+                pauseAfterJournalStageSeconds=120
             }
         $contexts.Add($boundaryContext)
         [void](Invoke-Supervisor -Context $boundaryContext -Mode Start)
         $boundaryWorker = Wait-SupervisorWorkerIdentity $boundaryContext
         $boundaryRecord = Wait-PreparationJournalStage $boundaryContext $boundaryStage
-        Assert-Condition ([int]$boundaryRecord.process.pid -eq [int]$boundaryWorker.pid) `
+        Assert-Condition ([int]$boundaryRecord.process.pid -eq [int]$boundaryWorker.pid -and
+            [string]$boundaryRecord.process.startedAtUtc -ceq [string]$boundaryWorker.startedAtUtc -and
+            [string]::Equals([string]$boundaryRecord.process.path, [string]$boundaryWorker.path,
+                [StringComparison]::OrdinalIgnoreCase)) `
             "Boundary $boundaryStage must be committed by the exact supervisor-owned worker."
         $boundaryProcess = Get-Process -Id ([int]$boundaryWorker.pid) -ErrorAction Stop
         try {
