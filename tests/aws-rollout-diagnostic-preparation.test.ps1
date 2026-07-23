@@ -104,8 +104,14 @@ function Set-ExactPrivateAcl {
     $isDirectory = [bool]$item.PSIsContainer
     $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User
     $security = [IO.FileSystemAclExtensions]::GetAccessControl(
-        $item, [Security.AccessControl.AccessControlSections]::Access
+        $item, ([Security.AccessControl.AccessControlSections]::Access -bor
+            [Security.AccessControl.AccessControlSections]::Owner)
     )
+    # Elevated GitHub-hosted Windows runners may assign newly created files to
+    # BUILTIN\Administrators even though the current runner account created
+    # them.  The fixture helper must establish the same exact owner contract
+    # that production preparation validates, not merely replace access rules.
+    $security.SetOwner($sid)
     $security.SetAccessRuleProtection($true, $false)
     foreach ($existing in @($security.GetAccessRules(
         $true, $true, [Security.Principal.SecurityIdentifier]
@@ -1486,6 +1492,7 @@ try {
 
     $success = New-TestContext -Name 'success' -TestControls @{harmlessDelaySeconds=1}
     $contexts.Add($success)
+    Assert-ExactPrivateAclState -Path $success.ManifestPath
     $validate = Invoke-Supervisor -Context $success -Mode Validate
     Assert-Condition ($validate.ExitCode -eq 0 -and $validate.Json.valid -eq $true -and
         $validate.Json.mutationStarted -eq $false) 'Supervisor Validate must be bound and non-mutating.'
