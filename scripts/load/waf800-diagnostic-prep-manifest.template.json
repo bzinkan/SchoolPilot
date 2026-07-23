@@ -1,0 +1,130 @@
+{
+  "schemaVersion": 1,
+  "type": "waf800_diagnostic_prep_manifest",
+  "version": "waf800-diagnostic-prep-manifest-v1",
+  "createdAtUtc": "__UTC_ROUND_TRIP_TIMESTAMP__",
+  "runId": "__FRESH_IMMUTABLE_DIAGNOSTIC_RUN_ID__",
+  "diagnosticOnly": true,
+  "diagnosticEligible": true,
+  "certificationEligible": false,
+  "repositoryRoot": "__ABSOLUTE_REPOSITORY_ROOT__",
+  "release": {
+    "applicationGitSha": "__40_HEX_MERGED_SHA__",
+    "controllerGitSha": "__40_HEX_MERGED_SHA__",
+    "deployedImageDigest": "sha256:__64_HEX_IMAGE_DIGEST__",
+    "apiTaskDefinitionArn": "__REVISIONED_API_TASK_DEFINITION_ARN__",
+    "workerTaskDefinitionArn": "__REVISIONED_WORKER_TASK_DEFINITION_ARN__"
+  },
+  "controllerArtifacts": [
+    { "kind": "fixture-worker", "path": "scripts/load/refresh-and-snapshot-fixtures.ps1", "sha256": "__64_HEX_SHA256__" },
+    { "kind": "prep-supervisor", "path": "scripts/load/start-waf800-diagnostic-preparation.ps1", "sha256": "__64_HEX_SHA256__" },
+    { "kind": "diagnostic-binder", "path": "scripts/load/bind-fresh-diagnostic.ps1", "sha256": "__64_HEX_SHA256__" },
+    { "kind": "coordinator", "path": "scripts/load/start-waf800-batch-diagnostic.ps1", "sha256": "__64_HEX_SHA256__" },
+    { "kind": "monitor", "path": "scripts/load/aws-rollout-monitor.ps1", "sha256": "__64_HEX_SHA256__" },
+    { "kind": "harness", "path": "scripts/load/classpilot-load-test.mjs", "sha256": "__64_HEX_SHA256__" },
+    { "kind": "monotonic-deadline", "path": "scripts/load/monotonic-deadline.mjs", "sha256": "__64_HEX_SHA256__" },
+    { "kind": "tile-poll-accounting", "path": "scripts/load/tile-poll-accounting.mjs", "sha256": "__64_HEX_SHA256__" },
+    { "kind": "database-insights-lease", "path": "scripts/load/database-insights-lease.ps1", "sha256": "__64_HEX_SHA256__" }
+  ],
+  "executionWindow": {
+    "earliestUtc": "__EARLIEST_UTC_ROUND_TRIP_TIMESTAMP__",
+    "latestUtc": "__LATEST_UTC_ROUND_TRIP_TIMESTAMP__",
+    "timezone": "America/New_York",
+    "pinnedTzifPath": "__ABSOLUTE_ACL_PRIVATE_TZIF_PATH__",
+    "pinnedTzifSha256": "__64_HEX_SHA256__"
+  },
+  "fixture": {
+    "provider": "production",
+    "fixtureId": "__FRESH_FIXTURE_ID__",
+    "sourceRoot": "__ABSOLUTE_FRESH_SOURCE_ROOT__",
+    "config": { "path": "__ABSOLUTE_ACL_PRIVATE_FIXTURE_CONFIG__", "sha256": "__64_HEX_SHA256__" },
+    "fixtureCli": { "path": "__ABSOLUTE_REPOSITORY_FIXTURE_CLI__", "sha256": "__64_HEX_SHA256__" },
+    "fixturePasswords": { "path": "__ABSOLUTE_ACL_PRIVATE_FIXTURE_PASSWORD_DOCUMENT__", "sha256": "__64_HEX_SHA256__" },
+    "superAdminPassword": { "path": "__ABSOLUTE_ACL_PRIVATE_SUPER_ADMIN_PASSWORD_DOCUMENT__", "sha256": "__64_HEX_SHA256__" },
+    "superAdminOperation": { "path": "__ABSOLUTE_ACL_PRIVATE_SUPER_ADMIN_OPERATION_DOCUMENT__", "sha256": "__64_HEX_SHA256__" },
+    "baseUrl": "https://school-pilot.net",
+    "requiredVerificationMaximumAgeMinutes": 60,
+    "requiredArtifactValiditySeconds": 2700,
+    "requiredPrivateFiles": [
+      "fixture-state.private.json",
+      "verification.private.json",
+      "load-devices.private.json",
+      "load-auth.private.json",
+      "load-command-bodies.private.json"
+    ]
+  },
+  "paths": {
+    "runDirectoryRoot": "__ABSOLUTE_FRESH_RUN_CONTROL_ROOT__",
+    "snapshotRoot": "__ABSOLUTE_SNAPSHOT_PARENT__/__FRESH_IMMUTABLE_DIAGNOSTIC_RUN_ID__",
+    "journalPath": "__ABSOLUTE_FRESH_RUN_CONTROL_ROOT__/diagnostic-prep-journal.private.jsonl",
+    "fixturePreparationReceiptPath": "__ABSOLUTE_FRESH_RUN_CONTROL_ROOT__/fixture-preparation-receipt.private.json",
+    "publicationRecoveryReceiptPath": "__ABSOLUTE_FRESH_RUN_CONTROL_ROOT__/publication-recovery-receipt.private.json",
+    "supervisorStatePath": "__ABSOLUTE_FRESH_RUN_CONTROL_ROOT__/supervisor-state.private.json",
+    "leaseReceiptPath": "__ABSOLUTE_FRESH_LEASE_RECEIPT_PATH__",
+    "bindingRoot": "__ABSOLUTE_FRESH_BINDING_ROOT__",
+    "evidenceDirectory": "__ABSOLUTE_FRESH_EVIDENCE_ROOT__",
+    "startGatePath": "__ABSOLUTE_FRESH_START_GATE_PATH__",
+    "trafficMarkerPath": "__ABSOLUTE_FRESH_TRAFFIC_MARKER_PATH__"
+  },
+  "oneAttemptPolicy": {
+    "refreshAttempts": 1,
+    "verificationAttempts": 1,
+    "initialPublicationAttempts": 1,
+    "publicationRecoveryAttempts": 1
+  },
+  "workload": {
+    "stage": "800",
+    "devices": 810,
+    "durationSeconds": 1800,
+    "screenshotBytes": 40960,
+    "canaryDevices": 10,
+    "workloadSchemaVersion": "classpilot-tile-batch-v1",
+    "endpointShapeSha256": "8e9f1942e4b3a27de7dd0571a9f60ffeb276c089e4baae96a885dba69e3233b2"
+  },
+  "resources": {
+    "region": "us-east-1",
+    "accountId": "135775632425",
+    "cluster": "schoolpilot-production-cluster",
+    "apiService": "schoolpilot-production-api",
+    "workerService": "schoolpilot-production-scheduler-worker",
+    "rdsInstanceId": "__RDS_INSTANCE_IDENTIFIER__",
+    "redisCacheClusterId": "__REDIS_CACHE_CLUSTER_IDENTIFIER__",
+    "redisReplicationGroupId": "__REDIS_REPLICATION_GROUP_IDENTIFIER__",
+    "vpcId": "__VPC_ID__",
+    "wafWebAclName": "schoolpilot-production-cloudfront-waf",
+    "cloudFrontDistributionId": "__CLOUDFRONT_DISTRIBUTION_ID__",
+    "wafDeviceClassifierMetricName": "schoolpilot-production-device-ingest-classifier",
+    "wafDeviceRuleMetricName": "schoolpilot-production-device-ingest-rate-limit",
+    "wafApiRuleMetricName": "schoolpilot-production-api-rate-limit",
+    "targetGroupArn": "__API_TARGET_GROUP_ARN__",
+    "route53HealthCheckId": "__ROUTE53_HEALTH_CHECK_ID__",
+    "route53AlarmName": "__ROUTE53_ALARM_NAME__",
+    "notificationTopicArn": "__NOTIFICATION_TOPIC_ARN__",
+    "expectedRdsInstanceClass": "db.t4g.medium",
+    "expectedRedisNodeType": "cache.t4g.small",
+    "expectedNatGatewayCount": 2,
+    "expectedEcsAssignPublicIp": false,
+    "expectedRoute53MeasureLatency": true,
+    "ecsTaskSubnetIds": [
+      "__PRIVATE_ECS_SUBNET_ID_1__",
+      "__PRIVATE_ECS_SUBNET_ID_2__"
+    ],
+    "expectedActiveApiTaskDefinitionArn": "__REVISIONED_API_TASK_DEFINITION_ARN__",
+    "expectedActiveWorkerTaskDefinitionArn": "__REVISIONED_WORKER_TASK_DEFINITION_ARN__"
+  },
+  "historyFallbackQueryIdentity": {
+    "version": "history-fallback-queryid-v1",
+    "path": "__ABSOLUTE_ACL_PRIVATE_QUERY_IDENTITY_RECEIPT__",
+    "sha256": "__64_HEX_SHA256__"
+  },
+  "databaseInsightsLease": {
+    "version": "database-insights-monitoring-lease-v3",
+    "leasePurpose": "diagnostic",
+    "accountId": "__12_DIGIT_ACCOUNT_ID__",
+    "region": "__AWS_REGION__",
+    "dbInstanceIdentifier": "__DB_INSTANCE_IDENTIFIER__",
+    "expectedRdsInstanceClass": "db.t4g.medium",
+    "initialPosture": "Standard/7",
+    "requestedPosture": "Advanced/465"
+  }
+}

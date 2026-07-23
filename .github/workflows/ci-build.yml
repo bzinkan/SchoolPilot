@@ -251,6 +251,18 @@ jobs:
           }
           pwsh -NoProfile -File tests/powershell-json-datekind-conformance.test.ps1
 
+      - name: Waf/800 diagnostic preparation lifecycle tests
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/aws-rollout-diagnostic-preparation.test.ps1
+
+      - name: Fixture-preparation binding validation tests
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/aws-rollout-fixture-preparation-binding.test.ps1
+
+      - name: Credential-rotation contract tests
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/credential-rotation.test.ps1
+
       - name: Terraform formatting
         run: terraform fmt -check -recursive infra
 

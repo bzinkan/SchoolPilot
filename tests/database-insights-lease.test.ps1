@@ -518,8 +518,12 @@ try {
             $current = [Security.Principal.WindowsIdentity]::GetCurrent()
             $item = Get-Item -LiteralPath $malformedAclPath
             $security = [IO.FileSystemAclExtensions]::GetAccessControl(
-                $item, [Security.AccessControl.AccessControlSections]::Access
+                $item, ([Security.AccessControl.AccessControlSections]::Access -bor
+                    [Security.AccessControl.AccessControlSections]::Owner)
             )
+            if ($security.GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $current.User.Value) {
+                $security.SetOwner($current.User)
+            }
             $security.SetAccessRuleProtection($true, $false)
             foreach ($existingRule in @($security.GetAccessRules(
                     $true, $true, [Security.Principal.SecurityIdentifier]

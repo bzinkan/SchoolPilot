@@ -160,8 +160,12 @@ function Assert-HfPrivateAcl {
     $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     $item = Get-Item -LiteralPath $Path
     $acl = [IO.FileSystemAclExtensions]::GetAccessControl(
-        $item, [Security.AccessControl.AccessControlSections]::Access
+        $item, ([Security.AccessControl.AccessControlSections]::Access -bor
+            [Security.AccessControl.AccessControlSections]::Owner)
     )
+    if ($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $currentSid) {
+        throw "$Name must be owned by the current certification operator."
+    }
     if (-not $acl.AreAccessRulesProtected) { throw "$Name must disable inherited file access." }
     $rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
     if ($rules.Count -ne 1) { throw "$Name must be readable only by the current certification operator." }
@@ -182,8 +186,12 @@ function Set-HfPrivateAcl {
     $current = [Security.Principal.WindowsIdentity]::GetCurrent()
     $item = Get-Item -LiteralPath $Path
     $security = [IO.FileSystemAclExtensions]::GetAccessControl(
-        $item, [Security.AccessControl.AccessControlSections]::Access
+        $item, ([Security.AccessControl.AccessControlSections]::Access -bor
+            [Security.AccessControl.AccessControlSections]::Owner)
     )
+    if ($security.GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $current.User.Value) {
+        $security.SetOwner($current.User)
+    }
     $security.SetAccessRuleProtection($true, $false)
     foreach ($existingRule in @($security.GetAccessRules(
             $true, $true, [Security.Principal.SecurityIdentifier]

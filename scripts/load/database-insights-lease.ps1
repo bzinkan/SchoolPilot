@@ -109,8 +109,12 @@ function Set-DatabaseInsightsPrivateAcl {
     $isDirectory = Test-Path -LiteralPath $Path -PathType Container
     $item = Get-Item -LiteralPath $Path
     $security = [IO.FileSystemAclExtensions]::GetAccessControl(
-        $item, [Security.AccessControl.AccessControlSections]::Access
+        $item, ([Security.AccessControl.AccessControlSections]::Access -bor
+            [Security.AccessControl.AccessControlSections]::Owner)
     )
+    if ($security.GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $current.User.Value) {
+        $security.SetOwner($current.User)
+    }
     $inheritance = if ($isDirectory) {
         [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor `
             [Security.AccessControl.InheritanceFlags]::ObjectInherit
@@ -140,8 +144,12 @@ function Assert-DatabaseInsightsPrivateAcl {
     $isDirectory = Test-Path -LiteralPath $Path -PathType Container
     $item = Get-Item -LiteralPath $Path
     $verified = [IO.FileSystemAclExtensions]::GetAccessControl(
-        $item, [Security.AccessControl.AccessControlSections]::Access
+        $item, ([Security.AccessControl.AccessControlSections]::Access -bor
+            [Security.AccessControl.AccessControlSections]::Owner)
     )
+    if ($verified.GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $current.User.Value) {
+        throw "Database Insights lease artifacts must be owned by the current operator."
+    }
     if (-not $verified.AreAccessRulesProtected) {
         throw "Could not enforce a protected private ACL on the Database Insights lease artifact."
     }
