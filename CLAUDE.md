@@ -779,10 +779,12 @@ The staged WAF/alarm, public-ECS, NAT, Route 53, Redis, synthetic-load, state
 recovery, supervision, and rollback procedure lives in
 `docs/AWS_COST_ROLLOUT_OPERATIONS.md`; the thresholds and Chromebook onboarding
 hold live in `docs/SCALE_READINESS.md`. Follow those two files as one contract.
-`production.tfvars` intentionally contains future stage values, so never run an
-unscoped production apply. Use a unique external saved plan, verified DPAPI and
-OneDrive AES-GCM state backups before plan/before apply/after apply, and the
-exact phase shape from the runbook.
+`production.tfvars` is the canonical current Terraform-managed production
+baseline; never preload a future cost-stage value. Introduce each future value
+only through that phase's separately reviewed plan or PR, and never run an
+unreviewed production apply. Use a unique external saved plan, verified DPAPI
+and OneDrive AES-GCM state backups before plan/before apply/after apply, and
+the exact phase shape from the runbook.
 
 Useful safety checks:
 

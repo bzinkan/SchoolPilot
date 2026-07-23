@@ -47,6 +47,7 @@ jobs:
           tests/deploy-capacity-preflight.test.ts
           tests/deploy-classpilot-tile-auth-plan-gate.test.ts
           tests/deploy-runtime-secret-preflight.test.ts
+          tests/production-terraform-profile.test.ts
           tests/classpilot-load-preparer.test.ts
           tests/classpilot-load-harness.test.ts
 

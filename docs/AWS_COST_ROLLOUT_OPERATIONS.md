@@ -30,9 +30,11 @@ deployment checks, snapshots, and cost checks must also pass.
 - Real-student onboarding remains blocked until managed Chromebooks pass the
   physical extension smoke gate in `docs/SCALE_READINESS.md`.
 
-`production.tfvars` contains staged future values. Never run an unreviewed full
-apply. Each phase below uses a saved plan with the stated overrides and exact
-shape.
+`production.tfvars` is the canonical current Terraform-managed production
+baseline. Never preload a future cost-stage value or run an unreviewed
+production apply. Each phase below introduces its future value through the
+stated reviewed override or phase PR and uses a unique saved plan with the
+required exact shape.
 
 ## External working directories
 
@@ -1115,6 +1117,17 @@ zero-change readiness evidence. Obey the weekday plan/deployment guards above,
 require clean `main == origin/main` at the merged SHA, initialize only from the
 committed lock file, and use the reviewed production variables:
 
+The prior four-change plan for commit
+`27e518e65c5e75de30e9b9104d5b252625302dfb` (saved-plan SHA-256
+`10a2951bfcfb2cabf7f66f36c3bd521ac967fd647ee76572fc5ed2c4456035ed`)
+and its private failure evidence (SHA-256
+`051ad5c879cf27f9655289cee4a96a14cf5b65470062b4a378f84db00851815d`)
+are historical-only failure records. Never apply or reuse that plan, carry its
+hashes into a fresh readiness packet, or treat its evidence as current
+approval. Keep the artifacts outside the repository under their existing
+restricted access controls; do not copy their private contents into this
+runbook.
+
 ```powershell
 $GitSha = (git rev-parse HEAD).Trim()
 if ($GitSha -cne (git rev-parse origin/main).Trim()) {
@@ -1128,7 +1141,7 @@ $PlanPath = Join-Path $PlanRoot "waf800-prep-readiness-$GitSha.tfplan"
 terraform -chdir=infra init -backend=false -lockfile=readonly -input=false
 if ($LASTEXITCODE -ne 0) { throw "Terraform initialization failed." }
 terraform -chdir=infra plan -input=false -lock-timeout=5m `
-  -var-file=production.tfvars -detailed-exitcode -out $PlanPath
+  -var-file=production.tfvars -detailed-exitcode "-out=$PlanPath"
 $PlanExitCode = $LASTEXITCODE
 if ($PlanExitCode -ne 0) {
   if ($PlanExitCode -eq 2) {
@@ -1396,11 +1409,13 @@ described above; historical results and drills cannot seed it.
 
 ## Phase 2: public ECS while NAT remains
 
-Use the profile's public-task value while retaining the Route 53 override:
+Keep the canonical profile unchanged during this phase. Explicitly override
+only the ECS subnet posture for the reviewed public-task plan; the profile
+continues to retain NAT and Route 53 latency measurement:
 
 ```powershell
 terraform -chdir=infra plan -var-file=production.tfvars `
-  '-var=route53_measure_latency=true' `
+  '-var=ecs_tasks_in_public_subnets=true' `
   '-var=waf_rate_rule_action=block' `
   -out $PlanPath
 ```
@@ -1450,8 +1465,10 @@ total NAT bytes, no drops/allocation errors, and no upward trend.
 
 ## Phase 3: NAT removal
 
-Only after the soak passes, merge the minimal `production.tfvars` change to
-`enable_nat_gateway=false`. Retain public ECS and the Route 53 latency override.
+Only after the soak passes, merge a phase-specific `production.tfvars` PR that
+sets `ecs_tasks_in_public_subnets=true` and `enable_nat_gateway=false`. This
+records the already-live public-ECS posture and introduces NAT removal together
+only when the phase is authorized. Keep `route53_measure_latency=true`.
 Required shape: **0 add / 0 change / 6 destroy**—two private default routes,
 two NAT gateways, and two EIPs only.
 
@@ -1510,10 +1527,11 @@ gate, and verify no NAT gateway remains. Confirm delayed billing reports
 
 ## Phase 4: Route 53 latency measurement
 
-Remove only the temporary `route53_measure_latency=true` override. Required
-shape: **1 add / 1 alarm change / 1 destroy**, with the health check replacement
-created before the old check is destroyed. Abort for any hosted-zone, DNS,
-nameserver, CloudFront, or unrelated change.
+Only after NAT removal is accepted, merge a phase-specific
+`production.tfvars` PR that changes `route53_measure_latency` from `true` to
+`false`. Required shape: **1 add / 1 alarm change / 1 destroy**, with the health
+check replacement created before the old check is destroyed. Abort for any
+hosted-zone, DNS, nameserver, CloudFront, or unrelated change.
 
 Require every Route 53 checker to report exact HTTP 200 on HTTPS `/health` and
 the replacement alarm to remain `OK` for three one-minute periods.

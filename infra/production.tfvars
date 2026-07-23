@@ -9,9 +9,10 @@ aws_region  = "us-east-1"
 # Networking
 vpc_cidr = "10.1.0.0/16"
 az_count = 2
-# Staged value: switch enable_nat_gateway to false only after public-task egress
-# checks and the required 24-hour soak are green.
-ecs_tasks_in_public_subnets = true
+# Canonical Terraform-managed production baseline: ECS tasks remain private and
+# NAT remains enabled. Future public-ECS and NAT-removal values belong in their
+# separately reviewed phase plans/PRs and must not be preloaded here.
+ecs_tasks_in_public_subnets = false
 enable_nat_gateway          = true
 
 # Database — pilot-cost posture for confirmed onboarding while schools are pending
@@ -60,9 +61,9 @@ domain = "school-pilot.net"
 # Public OAuth identifier (not a secret). Pin it in the production profile so
 # Terraform-generated task definitions cannot clear Google sign-in.
 google_client_id = "562964657318-l7k0b7iuh0e16m88nqqvngs83eh3ddki.apps.googleusercontent.com"
-# Staged value: override to true in Week 1/public-ECS plans, then apply false
-# alone during the reviewed off-hours Route 53 phase.
-route53_measure_latency = false
+# Canonical production baseline. Commit false only in the separately reviewed
+# Route 53 phase after public-ECS and NAT-removal acceptance.
+route53_measure_latency = true
 
 # Alerts
 alerts_sns_topic_arn = "arn:aws:sns:us-east-1:135775632425:schoolpilot-production-alerts"
