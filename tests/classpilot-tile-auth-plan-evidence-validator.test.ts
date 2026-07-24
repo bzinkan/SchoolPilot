@@ -78,10 +78,36 @@ function validReport() {
   };
 }
 
-function events(report = validReport()) {
+function validLifecycle() {
+  return {
+    version: "transactional-plan-scenarios-v1",
+    seededRows: {
+      groupTeachers: 1,
+      teachingSessions: 1,
+      supervisionContexts: 1,
+      supervisionStudents: 40,
+      total: 43,
+    },
+    rollback: {
+      attempted: true,
+      completed: true,
+    },
+    residue: {
+      checked: true,
+      count: 0,
+      passed: true,
+    },
+  };
+}
+
+function events(
+  report = validReport(),
+  lifecycle: Record<string, unknown> | null = validLifecycle()
+) {
   return {
     events: [
       { message: "startup noise" },
+      ...(lifecycle ? [{ message: JSON.stringify(lifecycle) }] : []),
       { message: JSON.stringify(report) },
     ],
   };
@@ -112,6 +138,57 @@ describe("ClassPilot tile authorization plan identity evidence", () => {
     assert.deepEqual(
       extractClasspilotTileAuthorizationPlanIdentity(events(report)),
       report.historyFallbackSqlIdentity
+    );
+    assert.equal(
+      Object.hasOwn(sanitized, "transactionalPlanScenarios"),
+      false
+    );
+  });
+
+  it("requires exactly one fixed rollback-complete, zero-residue lifecycle event", () => {
+    const invalidLifecycleEvents = [
+      null,
+      { ...validLifecycle(), version: "transactional-plan-scenarios-v0" },
+      { ...validLifecycle(), schoolId: "school-secret" },
+      {
+        ...validLifecycle(),
+        seededRows: { ...validLifecycle().seededRows, total: 42 },
+      },
+      {
+        ...validLifecycle(),
+        seededRows: {
+          ...validLifecycle().seededRows,
+          supervisionStudents: 39,
+        },
+      },
+      {
+        ...validLifecycle(),
+        rollback: { attempted: true, completed: false },
+      },
+      {
+        ...validLifecycle(),
+        residue: { checked: true, count: 1, passed: false },
+      },
+    ];
+    for (const lifecycle of invalidLifecycleEvents) {
+      assert.throws(() =>
+        validateClasspilotTileAuthorizationPlanEvidence(
+          events(validReport(), lifecycle)
+        )
+      );
+      assert.throws(() =>
+        extractClasspilotTileAuthorizationPlanIdentity(
+          events(validReport(), lifecycle)
+        )
+      );
+    }
+
+    const duplicate = events();
+    duplicate.events.splice(2, 0, {
+      message: JSON.stringify(validLifecycle()),
+    });
+    assert.throws(() =>
+      validateClasspilotTileAuthorizationPlanEvidence(duplicate)
     );
   });
 

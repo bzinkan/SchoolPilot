@@ -76,7 +76,24 @@ function eventsDocument(
       trackIoTiming,
     },
   };
-  return { events: [{ message: JSON.stringify(report) }] };
+  const lifecycle = {
+    version: "transactional-plan-scenarios-v1",
+    seededRows: {
+      groupTeachers: 1,
+      teachingSessions: 1,
+      supervisionContexts: 1,
+      supervisionStudents: 40,
+      total: 43,
+    },
+    rollback: { attempted: true, completed: true },
+    residue: { checked: true, count: 0, passed: true },
+  };
+  return {
+    events: [
+      { message: JSON.stringify(lifecycle) },
+      { message: JSON.stringify(report) },
+    ],
+  };
 }
 
 const options = {
