@@ -101,6 +101,52 @@ async function readTransientRowCount(client: pg.Client): Promise<number> {
   }
 }
 
+async function readAdvisoryLockStates(
+  client: pg.Client,
+  backendPids: readonly number[]
+): Promise<Array<{ pid: number; granted: boolean }>> {
+  const result = await client.query<{ pid: number; granted: boolean }>(
+    `
+      SELECT pid, granted
+      FROM pg_locks
+      WHERE locktype = 'advisory'
+        AND pid = ANY($1::int[])
+      ORDER BY pid, granted DESC
+    `,
+    [backendPids]
+  );
+  return result.rows;
+}
+
+async function waitForAdvisoryLockSerialization(
+  client: pg.Client,
+  firstBackendPid: number,
+  secondBackendPid: number
+): Promise<Array<{ pid: number; granted: boolean }>> {
+  const deadline = process.hrtime.bigint() + 5_000_000_000n;
+  do {
+    const states = await readAdvisoryLockStates(client, [
+      firstBackendPid,
+      secondBackendPid,
+    ]);
+    if (
+      states.some(
+        (state) => state.pid === firstBackendPid && state.granted === true
+      ) &&
+      states.some(
+        (state) => state.pid === secondBackendPid && state.granted === false
+      )
+    ) {
+      return states;
+    }
+    await delay(25);
+  } while (process.hrtime.bigint() < deadline);
+
+  throw new Error(
+    "Timed out waiting for the second transactional plan gate to block on the advisory lock."
+  );
+}
+
 async function readExpiredSessionPosture(client: pg.Client): Promise<{
   expired_count: string;
   open_count: string;
@@ -522,8 +568,24 @@ describe(
           secondClient.connect(),
           observerClient.connect(),
         ]);
+        const releaseFirst = deferred();
+        const gateRuns: Promise<unknown>[] = [];
 
         try {
+          const [firstBackend, secondBackend] = await Promise.all([
+            firstClient.query<{ pid: number }>(
+              "SELECT pg_backend_pid()::int AS pid"
+            ),
+            secondClient.query<{ pid: number }>(
+              "SELECT pg_backend_pid()::int AS pid"
+            ),
+          ]);
+          const firstBackendPid = firstBackend.rows[0]?.pid;
+          const secondBackendPid = secondBackend.rows[0]?.pid;
+          assert.equal(typeof firstBackendPid, "number");
+          assert.equal(typeof secondBackendPid, "number");
+          assert.notEqual(firstBackendPid, secondBackendPid);
+
           const roleEvidence = await observerClient.query<{
             current_user: string;
             rolsuper: boolean;
@@ -568,11 +630,8 @@ describe(
           });
 
           const firstSeeded = deferred();
-          const releaseFirst = deferred();
           const secondLockRequested = deferred();
-          let firstWriteRolledBack = false;
           let secondLockAcquired = false;
-          let secondAcquiredAfterFirstRollback = false;
           let firstSeedPauseUsed = false;
           const firstLifecycle: unknown[] = [];
           const secondLifecycle: unknown[] = [];
@@ -590,9 +649,6 @@ describe(
                 firstSeeded.resolve();
                 await releaseFirst.promise;
               }
-              if (text === "ROLLBACK" && !firstWriteRolledBack) {
-                firstWriteRolledBack = true;
-              }
               return result;
             },
           };
@@ -605,7 +661,6 @@ describe(
                 secondLockRequested.resolve();
                 const result = await secondClient.query(text, values as any[]);
                 secondLockAcquired = true;
-                secondAcquiredAfterFirstRollback = firstWriteRolledBack;
                 return result;
               }
               return secondClient.query(text, values as any[]);
@@ -620,6 +675,7 @@ describe(
                 storageModule.buildHeartbeatTileHistoryBatchQuery,
               onLifecycleEvent: (event) => firstLifecycle.push(event),
             });
+          void firstRun.catch(() => undefined);
           await firstSeeded.promise;
           assert.equal(await readTransientRowCount(observerClient), 0);
 
@@ -631,8 +687,21 @@ describe(
                 storageModule.buildHeartbeatTileHistoryBatchQuery,
               onLifecycleEvent: (event) => secondLifecycle.push(event),
             });
+          void secondRun.catch(() => undefined);
+          gateRuns.push(firstRun, secondRun);
           await secondLockRequested.promise;
-          await delay(100);
+          const blockedLockStates = await waitForAdvisoryLockSerialization(
+            observerClient,
+            firstBackendPid,
+            secondBackendPid
+          );
+          assert.deepEqual(
+            blockedLockStates,
+            [
+              { pid: firstBackendPid, granted: true },
+              { pid: secondBackendPid, granted: false },
+            ].sort((left, right) => left.pid - right.pid)
+          );
           assert.equal(secondLockAcquired, false);
           releaseFirst.resolve();
 
@@ -643,7 +712,13 @@ describe(
           assert.equal(firstReport.status, "passed");
           assert.equal(secondReport.status, "passed");
           assert.equal(secondLockAcquired, true);
-          assert.equal(secondAcquiredAfterFirstRollback, true);
+          assert.deepEqual(
+            await readAdvisoryLockStates(observerClient, [
+              firstBackendPid,
+              secondBackendPid,
+            ]),
+            []
+          );
           assert.equal(firstLifecycle.length, 1);
           assert.equal(secondLifecycle.length, 1);
           for (const lifecycle of [...firstLifecycle, ...secondLifecycle]) {
@@ -666,6 +741,8 @@ describe(
             open_count: "0",
           });
         } finally {
+          releaseFirst.resolve();
+          await Promise.allSettled(gateRuns);
           await Promise.allSettled([
             firstClient.end(),
             secondClient.end(),
