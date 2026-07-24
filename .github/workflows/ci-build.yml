@@ -645,7 +645,7 @@ jobs:
 
       - name: Open or update SOC 2 approval issue
         if: github.event_name != 'pull_request'
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         env:
           SOC2_APPROVAL_NOTIFY_USERS: ${{ vars.SOC2_APPROVAL_NOTIFY_USERS }}
           SOC2_APPROVAL_LABEL: ${{ vars.SOC2_APPROVAL_LABEL }}
