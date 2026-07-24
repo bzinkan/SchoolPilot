@@ -16,6 +16,52 @@ function Assert-Condition {
     if (-not $Condition) { throw $Message }
 }
 
+function Stop-AndDrainTestProcess {
+    param(
+        [Diagnostics.Process]$Process,
+        [Parameter(Mandatory = $true)]
+        [string]$Name
+    )
+    if ($null -eq $Process) { return }
+    try {
+        $Process.Refresh()
+        if (-not $Process.HasExited) {
+            try {
+                $Process.Kill($true)
+            }
+            catch [InvalidOperationException] {
+                $Process.Refresh()
+                if (-not $Process.HasExited) { throw }
+            }
+        }
+        if (-not $Process.WaitForExit(10000)) {
+            throw "Timed out draining test process '$Name'."
+        }
+        # Complete asynchronous redirected-stream delivery before disposal.
+        $Process.WaitForExit()
+        $Process.Refresh()
+    }
+    finally {
+        $Process.Dispose()
+    }
+}
+
+function Stop-AndDrainTestProcesses {
+    param([Collections.IDictionary]$Processes)
+    $failures = [System.Collections.Generic.List[string]]::new()
+    foreach ($entry in $Processes.GetEnumerator()) {
+        try {
+            Stop-AndDrainTestProcess -Process $entry.Value -Name ([string]$entry.Key)
+        }
+        catch {
+            $failures.Add("$($entry.Key): $($_.Exception.Message)")
+        }
+    }
+    if ($failures.Count -gt 0) {
+        throw "Could not drain all test processes: $($failures -join '; ')"
+    }
+}
+
 function Get-AtomicJsonFunctionSource {
     param([string]$ScriptPath)
     $tokens = $null
@@ -226,7 +272,7 @@ $global:SchoolPilotTestDeploymentPayloads = [System.Collections.Generic.List[obj
 $global:SchoolPilotTestAutoscalingPayloads = [System.Collections.Generic.List[object]]::new()
 $global:SchoolPilotTestTaskUpdateObservations = [System.Collections.Generic.List[object]]::new()
 $global:SchoolPilotTestUpdateServiceCallCount = 0
-$global:SchoolPilotTestFailUpdateServiceCalls = @()
+$global:SchoolPilotTestFailUpdateServiceSelector = $null
 $global:SchoolPilotTestForceUnstableService = ""
 $global:SchoolPilotTestFailedDeploymentService = ""
 $global:SchoolPilotTestTransientMixedDeploymentPolls = @{ api = 0; worker = 0 }
@@ -564,12 +610,15 @@ function global:aws {
         return '{}'
     }
     if ($service -eq "ecs" -and $operation -eq "update-service") {
-        $global:SchoolPilotTestUpdateServiceCallCount++
-        if ($global:SchoolPilotTestUpdateServiceCallCount -in @($global:SchoolPilotTestFailUpdateServiceCalls)) {
-            throw "Mock update-service failure at call $($global:SchoolPilotTestUpdateServiceCallCount)."
-        }
         $serviceName = Get-ArgumentValue -Arguments $arguments -Name "--service"
         $taskDefinition = Get-ArgumentValue -Arguments $arguments -Name "--task-definition"
+        $global:SchoolPilotTestUpdateServiceCallCount++
+        $failureSelector = $global:SchoolPilotTestFailUpdateServiceSelector
+        if ($null -ne $failureSelector -and
+            [string]$failureSelector.service -ceq [string]$serviceName -and
+            [string]$failureSelector.taskDefinition -ceq [string]$taskDefinition) {
+            throw "Mock update-service failure for service '$serviceName' and task definition '$taskDefinition'."
+        }
         if ($taskDefinition) {
             $desiredCount = [int]$global:SchoolPilotTestServiceState[$serviceName].desired
             $deploymentConfiguration = $global:SchoolPilotTestServiceState[$serviceName].deploymentConfiguration
@@ -1738,11 +1787,14 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
                 }
                 finally {
                     if ($null -ne $barrierCoordinatorProcess) {
-                        if (-not $barrierCoordinatorProcess.WaitForExit(5000)) {
-                            Stop-Process -Id $barrierCoordinatorProcess.Id -Force -ErrorAction SilentlyContinue
-                        }
+                        [void]$barrierCoordinatorProcess.WaitForExit(5000)
                         $barrierCoordinatorProcess.Refresh()
-                        if ($barrierCoordinatorProcess.HasExited) { $barrierCoordinatorExitCode = $barrierCoordinatorProcess.ExitCode }
+                        if ($barrierCoordinatorProcess.HasExited) {
+                            $barrierCoordinatorExitCode = $barrierCoordinatorProcess.ExitCode
+                        }
+                        Stop-AndDrainTestProcess -Process $barrierCoordinatorProcess `
+                            -Name "$caseRunId barrier coordinator"
+                        $barrierCoordinatorProcess = $null
                     }
                     foreach ($entry in $barrierEnvironment.GetEnumerator()) {
                         [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, "Process")
@@ -2068,7 +2120,8 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
             Assert-Condition ($raceResult.failures -contains "monitor_iteration_limit_reached_before_acceptance" -and
                 $raceResult.failures -notcontains "load_progress_parse_error" -and $raceResult.failures -notcontains "load_summary_invalid" -and
                 $raceResult.failures -notcontains "load_generator_process_lost") "$raceKind commit window must be retried within grace instead of invalidating the run."
-            if (-not $raceHarness.HasExited) { Stop-Process -Id $raceHarness.Id -Force }
+            Stop-AndDrainTestProcess -Process $raceHarness -Name "$raceKind race harness"
+            $raceHarness = $null
         }
 
         $limitRunId = "limit-fail-test"
@@ -2200,8 +2253,8 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
                 if ($null -ne $Summary.fatalGate) { $finalEvent.fatalGate = $Summary.fatalGate }
                 [IO.File]::AppendAllText($caseProgress, ($finalEvent|ConvertTo-Json -Compress -Depth 12)+[Environment]::NewLine, [Text.UTF8Encoding]::new($false))
                 if ($StopHarnessAfterFinal -and -not $caseHarness.HasExited) {
-                    Stop-Process -Id $caseHarness.Id -Force
-                    $caseHarness.WaitForExit()
+                    Stop-AndDrainTestProcess -Process $caseHarness -Name "$CaseId strict-duration harness"
+                    $caseHarness = $null
                 }
                 Assert-Condition ($process.WaitForExit(30000)) "$CaseId strict duration monitor did not finish."
                 $result = Get-Content -LiteralPath (Join-Path $childEvidence "$CaseId-monitor-result.json") -Raw | ConvertFrom-Json -Depth 30
@@ -2209,7 +2262,10 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
                 return [pscustomobject]@{process=$process;result=$result;lastEvidence=$lastEvidence}
             }
             finally {
-                if ($null -ne $caseHarness -and -not $caseHarness.HasExited) { Stop-Process -Id $caseHarness.Id -Force }
+                if ($null -ne $caseHarness) {
+                    Stop-AndDrainTestProcess -Process $caseHarness -Name "$CaseId strict-duration harness"
+                    $caseHarness = $null
+                }
             }
         }
 
@@ -2578,7 +2634,8 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
             $loadWindowResult.acceptance.metrics.rds_cpu.count -eq 4 -and
             $loadWindowResult.acceptance.metrics.rds_cpu.maximum -eq 70) "Load telemetry must use the full actual traffic window, retain its delayed tail spike, and exclude pre-start, post-stop, and future RDS points across later polls."
         Remove-Item Env:SCHOOLPILOT_TEST_RDS_CPU_LOAD_WINDOW_START -ErrorAction SilentlyContinue
-        if (-not $loadWindowHarness.HasExited) { Stop-Process -Id $loadWindowHarness.Id -Force }
+        Stop-AndDrainTestProcess -Process $loadWindowHarness -Name "load-window harness"
+        $loadWindowHarness = $null
 
         $futureFinalRunId = "load-future-final-rejected"
         $futureFinalProgress = Join-Path $childRoot "$futureFinalRunId-progress.jsonl"
@@ -2623,7 +2680,8 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         Assert-Condition ($futureFinalMonitor.ExitCode -eq 2 -and
             $futureFinalResult.failures -contains "load_workload_contract_mismatch" -and
             -not $futureFinalResult.rollback.attempted) "A future-dated final progress record must fail closed without extending telemetry or guessing at rollback."
-        if (-not $futureFinalHarness.HasExited) { Stop-Process -Id $futureFinalHarness.Id -Force }
+        Stop-AndDrainTestProcess -Process $futureFinalHarness -Name "future-final harness"
+        $futureFinalHarness = $null
 
         $fiveMinuteConfig = $limitConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
         $fiveMinuteConfig.runId = "five-minute-telemetry-complete"
@@ -2680,11 +2738,21 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         Remove-Item Env:SCHOOLPILOT_TEST_WAF_ZERO -ErrorAction SilentlyContinue
         Remove-Item Env:SCHOOLPILOT_TEST_WAF_DEVICE_BLOCK,Env:SCHOOLPILOT_TEST_WAF_API_BLOCK -ErrorAction SilentlyContinue
         Remove-Item Env:SCHOOLPILOT_TEST_METRIC_STEP_FILE,Env:SCHOOLPILOT_TEST_METRIC_STEP_START,Env:SCHOOLPILOT_TEST_METRIC_STEP_SECONDS -ErrorAction SilentlyContinue
-        if (Get-Variable slowRollbackProcess -ErrorAction SilentlyContinue) { if (-not $slowRollbackProcess.HasExited) { Stop-Process -Id $slowRollbackProcess.Id -Force } }
-        if (Get-Variable uncorrelatedMonitor -ErrorAction SilentlyContinue) { if (-not $uncorrelatedMonitor.HasExited) { Stop-Process -Id $uncorrelatedMonitor.Id -Force } }
-        if (Get-Variable uncorrelatedHarness -ErrorAction SilentlyContinue) { if (-not $uncorrelatedHarness.HasExited) { Stop-Process -Id $uncorrelatedHarness.Id -Force } }
-        if (Get-Variable correlatedMonitor -ErrorAction SilentlyContinue) { if (-not $correlatedMonitor.HasExited) { Stop-Process -Id $correlatedMonitor.Id -Force } }
-        if (Get-Variable correlatedHarness -ErrorAction SilentlyContinue) { if (-not $correlatedHarness.HasExited) { Stop-Process -Id $correlatedHarness.Id -Force } }
+        $preRollbackProcesses = [ordered]@{}
+        foreach ($processVariable in @(
+            "slowRollbackProcess",
+            "uncorrelatedMonitor", "uncorrelatedHarness",
+            "genericRejectedMonitor", "genericRejectedHarness",
+            "combinedMonitor", "combinedHarness",
+            "correlatedMonitor", "correlatedHarness",
+            "raceMonitor", "raceHarness"
+        )) {
+            $candidate = Get-Variable $processVariable -ErrorAction SilentlyContinue
+            if ($null -ne $candidate -and $null -ne $candidate.Value) {
+                $preRollbackProcesses[$processVariable] = $candidate.Value
+            }
+        }
+        Stop-AndDrainTestProcesses -Processes $preRollbackProcesses
 
         $env:SCHOOLPILOT_TEST_REDIS_TYPE = "cache.t4g.micro"
         $env:SCHOOLPILOT_TEST_SNAPSHOT_TIME = [DateTimeOffset]::UtcNow.ToString("o")
@@ -2874,7 +2942,8 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
             $completedWaitResult.workload.tileBatch.screenshotLogicalOperations -eq 800 -and
             $completedWaitResult.workload.tileBatch.screenshotAttempts -eq 800
         ) "The actual monitor writer must seal the schema, endpoint shape, 20x40 cohort contract, and per-tile logical accounting for supervisor continuity."
-        if (-not $completedWaitHarness.HasExited) { Stop-Process -Id $completedWaitHarness.Id -Force }
+        Stop-AndDrainTestProcess -Process $completedWaitHarness -Name "completed-wait harness"
+        $completedWaitHarness = $null
         Remove-Item Env:SCHOOLPILOT_TEST_SNAPSHOT_TIME_FILE -ErrorAction SilentlyContinue
         Remove-Item Env:SCHOOLPILOT_TEST_REDIS_TYPE -ErrorAction SilentlyContinue
 
@@ -2915,17 +2984,19 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         Remove-Item Env:SCHOOLPILOT_TEST_SWAP_COUNTER -ErrorAction SilentlyContinue
         Remove-Item Env:SCHOOLPILOT_TEST_METRIC_TIMESTAMP -ErrorAction SilentlyContinue
         Remove-Item Env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_BASE,Env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_PATTERN,Env:SCHOOLPILOT_TEST_RDS_CPU_BOUNDARY_STEP_FILE,Env:SCHOOLPILOT_TEST_RDS_CPU_LOAD_WINDOW_START -ErrorAction SilentlyContinue
-        if ($childMonitor -and -not $childMonitor.HasExited) { Stop-Process -Id $childMonitor.Id -Force }
-        if ($oomOnlyMonitor -and -not $oomOnlyMonitor.HasExited) { Stop-Process -Id $oomOnlyMonitor.Id -Force }
-        if ($oomOnlyHarness -and -not $oomOnlyHarness.HasExited) { Stop-Process -Id $oomOnlyHarness.Id -Force }
-        if ($limitMonitor -and -not $limitMonitor.HasExited) { Stop-Process -Id $limitMonitor.Id -Force }
-        if ($loadWindowMonitor -and -not $loadWindowMonitor.HasExited) { Stop-Process -Id $loadWindowMonitor.Id -Force }
-        if ($loadWindowHarness -and -not $loadWindowHarness.HasExited) { Stop-Process -Id $loadWindowHarness.Id -Force }
-        if ($futureFinalMonitor -and -not $futureFinalMonitor.HasExited) { Stop-Process -Id $futureFinalMonitor.Id -Force }
-        if ($futureFinalHarness -and -not $futureFinalHarness.HasExited) { Stop-Process -Id $futureFinalHarness.Id -Force }
-        if ($completedWaitMonitor -and -not $completedWaitMonitor.HasExited) { Stop-Process -Id $completedWaitMonitor.Id -Force }
-        if ($completedWaitHarness -and -not $completedWaitHarness.HasExited) { Stop-Process -Id $completedWaitHarness.Id -Force }
-        if (-not $sleepProcess.HasExited) { Stop-Process -Id $sleepProcess.Id -Force }
+        Stop-AndDrainTestProcesses -Processes ([ordered]@{
+            "child monitor" = $childMonitor
+            "OOM-only monitor" = $oomOnlyMonitor
+            "OOM-only harness" = $oomOnlyHarness
+            "limit monitor" = $limitMonitor
+            "load-window monitor" = $loadWindowMonitor
+            "load-window harness" = $loadWindowHarness
+            "future-final monitor" = $futureFinalMonitor
+            "future-final harness" = $futureFinalHarness
+            "completed-wait monitor" = $completedWaitMonitor
+            "completed-wait harness" = $completedWaitHarness
+            "sleep harness" = $sleepProcess
+        })
     }
 
     $exactGitSha = ([string](@(& git -C $repositoryRoot rev-parse --verify HEAD) | Select-Object -First 1)).Trim().ToLowerInvariant()
@@ -3075,12 +3146,21 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
     $wrongCheckpointError = $null
     try { & $rollbackScript -ConfigPath $rollbackConfigPath -Action Application -Mode Execute | Out-Null }
     catch { $wrongCheckpointError = $_ }
+    $wrongCheckpointDiagnostic = [ordered]@{
+        error = if ($null -eq $wrongCheckpointError) { "<none>" } else { [string]$wrongCheckpointError.Exception.Message }
+        updateServiceCallsBefore = $wrongCheckpointUpdateStart
+        updateServiceCallsAfter = $global:SchoolPilotTestUpdateServiceCallCount
+        registerTargetCallsBefore = $wrongCheckpointRegisterStart
+        registerTargetCallsAfter = $global:SchoolPilotTestAutoscalingRegisterCallCount
+        expectedResourceId = "service/cluster/api"
+        checkpointResourceId = [string]$invalidCheckpointBase.originalApiAutoscalingTarget.resourceId
+    } | ConvertTo-Json -Compress -Depth 10
     Assert-Condition (
         $null -ne $wrongCheckpointError -and
         $wrongCheckpointError.Exception.Message -match "invalid API scalable target" -and
         $global:SchoolPilotTestUpdateServiceCallCount -eq $wrongCheckpointUpdateStart -and
         $global:SchoolPilotTestAutoscalingRegisterCallCount -eq $wrongCheckpointRegisterStart
-    ) "A recovery checkpoint bound to another scalable target must fail closed before any autoscaling or ECS mutation."
+    ) "A recovery checkpoint bound to another scalable target must fail closed before any autoscaling or ECS mutation. Observed: $wrongCheckpointDiagnostic"
     [IO.File]::Delete($applicationRecoveryCheckpointPath)
 
     $invalidCheckpointBase.originalApiAutoscalingTarget.resourceId = "service/cluster/api"
@@ -3943,18 +4023,28 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
     [IO.File]::WriteAllText($rollbackConfigPath, ($apiUpdateFailureConfig | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
     $global:SchoolPilotTestServiceState.api.taskDefinition = "api-current"
     $global:SchoolPilotTestServiceState.worker.taskDefinition = "worker-current"
-    $apiFailureCallStart = $global:SchoolPilotTestUpdateServiceCallCount
     $apiFailurePayloadStart = $global:SchoolPilotTestDeploymentPayloads.Count
     $apiFailureTaskStart = $global:SchoolPilotTestTaskUpdateObservations.Count
-    $global:SchoolPilotTestFailUpdateServiceCalls = @($apiFailureCallStart + 2)
+    $global:SchoolPilotTestFailUpdateServiceSelector = [ordered]@{
+        service = "api"
+        taskDefinition = "api-previous"
+    }
     $apiFailureError = $null
     try { & $rollbackScript -ConfigPath $rollbackConfigPath -Action Application -Mode Execute | Out-Null }
     catch { $apiFailureError = $_ }
-    finally { $global:SchoolPilotTestFailUpdateServiceCalls = @() }
+    finally { $global:SchoolPilotTestFailUpdateServiceSelector = $null }
+    $apiFailureDiagnostic = [ordered]@{
+        error = if ($null -eq $apiFailureError) { "<none>" } else { [string]$apiFailureError.Exception.Message }
+        policyPayloadCount = $global:SchoolPilotTestDeploymentPayloads.Count - $apiFailurePayloadStart
+        taskUpdateCount = $global:SchoolPilotTestTaskUpdateObservations.Count - $apiFailureTaskStart
+        apiTaskDefinition = [string]$global:SchoolPilotTestServiceState.api.taskDefinition
+        workerTaskDefinition = [string]$global:SchoolPilotTestServiceState.worker.taskDefinition
+    } | ConvertTo-Json -Compress -Depth 10
     Assert-Condition (
         $null -ne $apiFailureError -and
-        $apiFailureError.Exception.Message -eq "Mock update-service failure at call $($apiFailureCallStart + 2)."
-    ) "An API revision-update failure must preserve the original exception."
+        $apiFailureError.Exception.Message -eq
+            "Mock update-service failure for service 'api' and task definition 'api-previous'."
+    ) "An API revision-update failure must preserve the original exception. Observed: $apiFailureDiagnostic"
     $apiFailurePayloads = @($global:SchoolPilotTestDeploymentPayloads | Select-Object -Skip $apiFailurePayloadStart)
     Assert-Condition (
         $apiFailurePayloads.Count -eq 2 -and
@@ -3996,21 +4086,35 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
     $global:SchoolPilotTestServiceState.worker.taskDefinition = "worker-current"
     $workerFailureCallStart = $global:SchoolPilotTestUpdateServiceCallCount
     $workerFailureTaskStart = $global:SchoolPilotTestTaskUpdateObservations.Count
-    $global:SchoolPilotTestFailUpdateServiceCalls = @($workerFailureCallStart + 4)
+    $global:SchoolPilotTestFailUpdateServiceSelector = [ordered]@{
+        service = "worker"
+        taskDefinition = "worker-previous"
+    }
     $workerFailureError = $null
     try { & $rollbackScript -ConfigPath $rollbackConfigPath -Action Application -Mode Execute | Out-Null }
     catch { $workerFailureError = $_ }
-    finally { $global:SchoolPilotTestFailUpdateServiceCalls = @() }
+    finally { $global:SchoolPilotTestFailUpdateServiceSelector = $null }
     $workerFailureTaskUpdates = @($global:SchoolPilotTestTaskUpdateObservations | Select-Object -Skip $workerFailureTaskStart)
+    $workerFailureDiagnostic = [ordered]@{
+        error = if ($null -eq $workerFailureError) { $null } else { [string]$workerFailureError.Exception.Message }
+        taskUpdateCount = $workerFailureTaskUpdates.Count
+        taskUpdateServices = @($workerFailureTaskUpdates | ForEach-Object { [string]$_.service })
+        apiTaskDefinition = [string]$global:SchoolPilotTestServiceState.api.taskDefinition
+        workerTaskDefinition = [string]$global:SchoolPilotTestServiceState.worker.taskDefinition
+        apiMaximumPercent = [int]$global:SchoolPilotTestServiceState.api.deploymentConfiguration.maximumPercent
+        workerMaximumPercent = [int]$global:SchoolPilotTestServiceState.worker.deploymentConfiguration.maximumPercent
+        updateServiceCallsObserved = $global:SchoolPilotTestUpdateServiceCallCount - $workerFailureCallStart
+    } | ConvertTo-Json -Compress -Depth 10
     Assert-Condition (
         $null -ne $workerFailureError -and
-        $workerFailureError.Exception.Message -eq "Mock update-service failure at call $($workerFailureCallStart + 4)." -and
+        $workerFailureError.Exception.Message -eq
+            "Mock update-service failure for service 'worker' and task definition 'worker-previous'." -and
         $workerFailureTaskUpdates.Count -eq 1 -and $workerFailureTaskUpdates[0].service -eq "api" -and
         $global:SchoolPilotTestServiceState.api.taskDefinition -eq "api-previous" -and
         $global:SchoolPilotTestServiceState.worker.taskDefinition -eq "worker-current" -and
         [int]$global:SchoolPilotTestServiceState.api.deploymentConfiguration.maximumPercent -eq 100 -and
         [int]$global:SchoolPilotTestServiceState.worker.deploymentConfiguration.maximumPercent -eq 100
-    ) "A worker update failure may occur only after exact API convergence and must retain both safe policies."
+    ) "A worker update failure may occur only after exact API convergence and must retain both safe policies. Observed: $workerFailureDiagnostic"
     $workerFailureEvidence = @(Get-Content -LiteralPath (Join-Path $evidenceDirectory "$($workerUpdateFailureConfig.runId)-rollback.jsonl") |
         ForEach-Object { $_ | ConvertFrom-Json -Depth 30 })
     $workerFailureFailed = @($workerFailureEvidence | Where-Object status -eq "failed")
@@ -4261,7 +4365,7 @@ finally {
     Remove-Variable SchoolPilotTestDeploymentPayloads -Scope Global -ErrorAction SilentlyContinue
     Remove-Variable SchoolPilotTestTaskUpdateObservations -Scope Global -ErrorAction SilentlyContinue
     Remove-Variable SchoolPilotTestUpdateServiceCallCount -Scope Global -ErrorAction SilentlyContinue
-    Remove-Variable SchoolPilotTestFailUpdateServiceCalls -Scope Global -ErrorAction SilentlyContinue
+    Remove-Variable SchoolPilotTestFailUpdateServiceSelector -Scope Global -ErrorAction SilentlyContinue
     Remove-Variable SchoolPilotTestForceUnstableService -Scope Global -ErrorAction SilentlyContinue
     Remove-Variable SchoolPilotTestFailedDeploymentService -Scope Global -ErrorAction SilentlyContinue
     Remove-Variable SchoolPilotTestTransientMixedDeploymentPolls -Scope Global -ErrorAction SilentlyContinue
