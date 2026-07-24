@@ -73,6 +73,23 @@ const HISTORY_FALLBACK_SQL_IDENTITY_KEYS = [
   "version",
 ];
 const HISTORY_FALLBACK_QUERY_IDENTITY_VERSION = "history-fallback-queryid-v1";
+const TRANSACTIONAL_PLAN_SCENARIOS_VERSION =
+  "transactional-plan-scenarios-v1";
+const TRANSACTIONAL_PLAN_SCENARIOS_KEYS = [
+  "residue",
+  "rollback",
+  "seededRows",
+  "version",
+];
+const TRANSACTIONAL_PLAN_SEEDED_ROWS_KEYS = [
+  "groupTeachers",
+  "supervisionContexts",
+  "supervisionStudents",
+  "teachingSessions",
+  "total",
+];
+const TRANSACTIONAL_PLAN_ROLLBACK_KEYS = ["attempted", "completed"];
+const TRANSACTIONAL_PLAN_RESIDUE_KEYS = ["checked", "count", "passed"];
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const SIGNED_BIGINT_PATTERN = /^-?(?:0|[1-9]\d*)$/;
 const SIGNED_BIGINT_MIN = -(1n << 63n);
@@ -115,12 +132,13 @@ function isSafeEngineVersion(value) {
     !/[\u0000-\u001f\u007f]/.test(value);
 }
 
-function parseReportCandidates(eventsDocument) {
+function parseEvidenceCandidates(eventsDocument) {
   if (!isRecord(eventsDocument) || !Array.isArray(eventsDocument.events)) {
     throw new Error("invalid_events_document");
   }
 
-  const candidates = [];
+  const reportCandidates = [];
+  const lifecycleCandidates = [];
   for (const event of eventsDocument.events) {
     if (!isRecord(event) || typeof event.message !== "string") continue;
     let parsed;
@@ -131,15 +149,52 @@ function parseReportCandidates(eventsDocument) {
     }
     if (isRecord(parsed) && Object.hasOwn(parsed, "status") &&
         Object.hasOwn(parsed, "thresholds") && Object.hasOwn(parsed, "scenarios")) {
-      candidates.push(parsed);
+      reportCandidates.push(parsed);
+    }
+    if (isRecord(parsed) &&
+        (parsed.version === TRANSACTIONAL_PLAN_SCENARIOS_VERSION ||
+          (Object.hasOwn(parsed, "seededRows") &&
+            Object.hasOwn(parsed, "rollback") &&
+            Object.hasOwn(parsed, "residue")))) {
+      lifecycleCandidates.push(parsed);
     }
   }
-  if (candidates.length !== 1) throw new Error("report_count_invalid");
-  return candidates[0];
+  if (reportCandidates.length !== 1) throw new Error("report_count_invalid");
+  if (lifecycleCandidates.length !== 1) {
+    throw new Error("transactional_plan_scenarios_count_invalid");
+  }
+  return {
+    report: reportCandidates[0],
+    lifecycle: lifecycleCandidates[0],
+  };
+}
+
+function validateTransactionalPlanScenariosLifecycle(lifecycle) {
+  if (!hasExactKeys(lifecycle, TRANSACTIONAL_PLAN_SCENARIOS_KEYS) ||
+      lifecycle.version !== TRANSACTIONAL_PLAN_SCENARIOS_VERSION ||
+      !hasExactKeys(
+        lifecycle.seededRows,
+        TRANSACTIONAL_PLAN_SEEDED_ROWS_KEYS
+      ) ||
+      lifecycle.seededRows.groupTeachers !== 1 ||
+      lifecycle.seededRows.teachingSessions !== 1 ||
+      lifecycle.seededRows.supervisionContexts !== 1 ||
+      lifecycle.seededRows.supervisionStudents !== 40 ||
+      lifecycle.seededRows.total !== 43 ||
+      !hasExactKeys(lifecycle.rollback, TRANSACTIONAL_PLAN_ROLLBACK_KEYS) ||
+      lifecycle.rollback.attempted !== true ||
+      lifecycle.rollback.completed !== true ||
+      !hasExactKeys(lifecycle.residue, TRANSACTIONAL_PLAN_RESIDUE_KEYS) ||
+      lifecycle.residue.checked !== true ||
+      lifecycle.residue.count !== 0 ||
+      lifecycle.residue.passed !== true) {
+    throw new Error("transactional_plan_scenarios_contract_invalid");
+  }
 }
 
 export function validateClasspilotTileAuthorizationPlanEvidence(eventsDocument) {
-  const report = parseReportCandidates(eventsDocument);
+  const { report, lifecycle } = parseEvidenceCandidates(eventsDocument);
+  validateTransactionalPlanScenariosLifecycle(lifecycle);
   if (!hasExactKeys(report, TOP_LEVEL_KEYS) || report.status !== "passed" ||
       report.samples !== 20 || report.warmups !== 2 || report.cohortSize !== 40) {
     throw new Error("report_contract_invalid");
@@ -286,7 +341,7 @@ export function validateClasspilotTileAuthorizationPlanEvidence(eventsDocument) 
 }
 
 export function extractClasspilotTileAuthorizationPlanIdentity(eventsDocument) {
-  const report = parseReportCandidates(eventsDocument);
+  const { report } = parseEvidenceCandidates(eventsDocument);
   // Full validation is intentionally mandatory before releasing the raw query
   // identifier to the access-controlled receipt writer.
   validateClasspilotTileAuthorizationPlanEvidence(eventsDocument);

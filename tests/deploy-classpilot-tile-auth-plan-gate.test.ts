@@ -115,10 +115,36 @@ function validReport() {
   };
 }
 
-function runValidator(report: Record<string, unknown>) {
+function validLifecycle() {
+  return {
+    version: "transactional-plan-scenarios-v1",
+    seededRows: {
+      groupTeachers: 1,
+      teachingSessions: 1,
+      supervisionContexts: 1,
+      supervisionStudents: 40,
+      total: 43,
+    },
+    rollback: {
+      attempted: true,
+      completed: true,
+    },
+    residue: {
+      checked: true,
+      count: 0,
+      passed: true,
+    },
+  };
+}
+
+function runValidator(
+  report: Record<string, unknown>,
+  lifecycle: Record<string, unknown> | null = validLifecycle()
+) {
   const input = JSON.stringify({
     events: [
       { message: "non-json startup noise" },
+      ...(lifecycle ? [{ message: JSON.stringify(lifecycle) }] : []),
       { message: JSON.stringify(report) },
     ],
   });
@@ -481,6 +507,10 @@ rm -f "$capture_path"
       result.stdout.includes(validReport().historyFallbackSqlIdentity.queryIdentifier),
       false
     );
+    assert.equal(
+      Object.hasOwn(output, "transactionalPlanScenarios"),
+      false
+    );
   });
 
   it("rejects relaxed, failed, or identifier-bearing evidence without echoing it", () => {
@@ -515,6 +545,36 @@ rm -f "$capture_path"
       assert.equal(result.stdout, "");
       assert.equal(result.stderr.trim(), "classpilot_tile_authorization_plan_evidence_invalid");
       assert.doesNotMatch(result.stderr, /student-secret-123/);
+    }
+  });
+
+  it("requires one sanitized rollback-complete, zero-residue lifecycle event", () => {
+    const cases: Array<Record<string, unknown> | null> = [
+      null,
+      { ...validLifecycle(), version: "transactional-plan-scenarios-v0" },
+      { ...validLifecycle(), rawSql: "SELECT secret" },
+      {
+        ...validLifecycle(),
+        seededRows: { ...validLifecycle().seededRows, total: 44 },
+      },
+      {
+        ...validLifecycle(),
+        rollback: { attempted: true, completed: false },
+      },
+      {
+        ...validLifecycle(),
+        residue: { checked: true, count: 1, passed: false },
+      },
+    ];
+    for (const lifecycle of cases) {
+      const result = runValidator(validReport(), lifecycle);
+      assert.notEqual(result.status, 0);
+      assert.equal(result.stdout, "");
+      assert.equal(
+        result.stderr.trim(),
+        "classpilot_tile_authorization_plan_evidence_invalid"
+      );
+      assert.doesNotMatch(result.stderr, /SELECT secret/);
     }
   });
 });

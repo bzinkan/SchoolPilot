@@ -736,12 +736,72 @@ the API and worker back to their captured revisions. The pre-deployment probe
 runs before the autoscaling hold; the post-deployment probe runs under that
 hold after strict API/worker convergence and before exact scaling restoration.
 
+The gate must not depend on an ambient open teaching or supervision session.
+For every invocation it takes a transaction-scoped advisory lock and uses one
+`REPEATABLE READ`, write-capable transaction under the existing application
+role. It discovers only an unambiguous non-billable SchoolPilot-owned synthetic
+base from the school and
+`synthetic-load-fixture:<fixtureId>:class:<ordinal>` markers. The base must
+already provide the two active teachers, office-staff membership, disjoint
+40-student cohorts, and same-school live and historical device access. The gate
+does not repair or refresh the persistent fixture.
+
+After the global teaching-session school-integrity precheck succeeds, the gate
+uses explicit random IDs to insert exactly one co-teacher relationship, one
+school-scoped open live teaching session, one active office-supervision
+context, and 40 supervision assignments. Discovery, all six authorization
+series, the history-fallback series, both schema checks, and both query-ID
+probes remain inside that transaction and are constrained to the seeded
+fixture/staff/cohorts. The gate then explicitly rolls back; there is no
+write-transaction commit path. A separate super-scoped read-only transaction
+must prove all 43 IDs absent before a passing report is eligible.
+
+Deployment evidence must contain exactly one sanitized
+`transactional-plan-scenarios-v1` lifecycle event with fixed 1/1/1/40 counts,
+completed rollback, and zero residue, plus the existing unchanged plan report.
+The lifecycle event contains no identifier, SQL, or tenant data. Seed,
+discovery, plan, identity, rollback, residue, connection, timeout, or
+concurrency failure stops the deployment without a bypass. Do not run a
+production fixture refresh before this gate.
+
 The failed pre-deployment artifacts at application SHA
 `ba416e4f46cc175af62863e3a06573ef5d23504e`, image digest
 `sha256:0c4653b244e8e7bc7a12ac7828b5e9421eacf376dc3d5ab7b7ac75413f844c5a`,
 and task definitions `schoolpilot-production-api:128` and
 `schoolpilot-production-api-emergency:28` are historical-only and ineligible
 for diagnostics or certification. That gate produced no query-identity receipt.
+
+The later failed self-contained release candidate at application SHA
+`ada101ecdd127c624b9bbe7974ce70f090582f0f`, image digest
+`sha256:1194aded2d731b8cf9fedacb850ec9cd815cd88cae85bd0d46682015e3496beb`,
+and task definitions `schoolpilot-production-api:132` and
+`schoolpilot-production-api-emergency:32` is also historical-only. Its
+predeployment gate correctly stopped because the ambient synthetic teaching
+sessions had expired; no service activation, migration, frontend publication,
+query-identity receipt, fixture refresh, Database Insights lease, or traffic
+occurred. Never deploy, resume, or use these identities as diagnostic or
+certification provenance.
+
+For the self-provisioning-gate remediation, require exact merged-SHA CI,
+CodeQL, Gitleaks, and Trivy success, then save and independently parse a fresh
+production Terraform plan with detailed exit code `0`, zero resource/output
+actions, and no apply. Deploy outside both the weekday 04:45-10:14
+America/New_York deploy guard and the 01:15-02:15 plan-gate exclusion. Run the
+guarded backend first, the matching frontend from the identical SHA, one
+offline preparation/binding rehearsal, and one 1,560-second harmless
+host-supervision smoke. The readiness packet must bind the workflow,
+zero-change Terraform, release/task/frontend, query-identity,
+transactional-rollback, rehearsal, and host-smoke evidence.
+
+If and only if that packet is accepted by 21:00 America/New_York on July 24,
+2026, this remediation authorizes one fresh immutable diagnostic: one fixture
+refresh and verification, one initial atomic publication (plus at most one
+hash-identical filesystem-only publication recovery), one Database Insights
+Advanced lease from verified Standard/7, one `Validate`, and one strict
+30-minute Waf/800 `Run`. Any readiness, preparation, workload, evidence, or
+restoration failure stops without another refresh or traffic attempt. Missing
+the cutoff also stops. Diagnostic evidence is not certification provenance;
+certification traffic remains separately authorized.
 
 Before certification, run one 30-minute diagnostic-only Waf/800 using the new
 batch workload. Every RDS CPU minute must be below 65%; HTTP 5xx and network

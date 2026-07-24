@@ -196,6 +196,7 @@ jobs:
       - name: RLS-enabled cross-tenant and tile-read isolation tests
         run: >-
           node --import tsx --test --test-concurrency=1
+          tests/classpilot-tile-authorization-plan-self-provisioning.integration.test.ts
           tests/cross-tenant-isolation.test.ts
           tests/classpilot-tile-read-scope.test.ts
 
