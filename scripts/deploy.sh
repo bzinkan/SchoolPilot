@@ -508,8 +508,45 @@ production_backend_capacity_preflight() {
   success "Production backend capacity preflight OK: API desiredCount=${PRODUCTION_PREFLIGHT_API_DESIRED}, worker desiredCount=1, both stable"
 }
 
+production_tzif_date_at_epoch() {
+  local tzif_path="$1"
+  local epoch="$2"
+  local format="$3"
+  if TZ=":$tzif_path" date --date="@${epoch}" "$format" 2>/dev/null; then
+    return 0
+  fi
+  TZ=":$tzif_path" date -r "$epoch" "$format" 2>/dev/null
+}
+
+production_eastern_tzif_path() {
+  local candidate winter summer
+  for candidate in \
+    "/usr/share/zoneinfo/America/New_York" \
+    "/mingw64/share/zoneinfo/America/New_York"; do
+    if [[ ! -f "$candidate" ]]; then
+      continue
+    fi
+    if ! winter=$(production_tzif_date_at_epoch "$candidate" "1768478400" '+%z %Z') ||
+       ! summer=$(production_tzif_date_at_epoch "$candidate" "1784116800" '+%z %Z'); then
+      continue
+    fi
+    if [[ "$winter" == "-0500 EST" && "$summer" == "-0400 EDT" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
 production_eastern_weekday_hhmm() {
-  TZ=America/New_York date '+%u %H%M'
+  local tzif_path
+  if ! tzif_path=$(production_eastern_tzif_path); then
+    return 1
+  fi
+  # Git Bash on Windows can silently resolve TZ=America/New_York as GMT.
+  # Bind the validated TZif file explicitly so both deployment guards use
+  # actual Eastern civil time on Windows and Linux.
+  TZ=":$tzif_path" date '+%u %H%M'
 }
 
 production_backend_deploy_window_preflight() {
