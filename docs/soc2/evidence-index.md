@@ -7,6 +7,7 @@ exports, or generated evidence packets to this repository.
 | Evidence Area | Primary Controls | Collection Mode | Private Location |
 | --- | --- | --- | --- |
 | CI/build/test packets | SP-SEC-002, SP-SEC-004, SP-CONF-002 | Automated | GitHub Actions artifacts and `SchoolPilot-SOC2-Evidence/ci/` |
+| Frontend dependency audit packet | SP-SEC-004 | Automated | GitHub Actions artifact `frontend-dependency-audit` |
 | Private evidence readiness metadata | Approval queue prerequisites | Automated metadata only | GitHub Actions artifact `soc2-private-evidence-readiness` and ignored `soc2-evidence/private-readiness/` |
 | Approval queue | Human-approved evidence items | Automated draft plus founder approval | GitHub issue `SOC 2 approvals pending`, GitHub Actions artifact `soc2-approval-queue`, and `SchoolPilot-SOC2-Evidence/approvals/` |
 | Privileged access evidence packet | SP-SEC-001 | Automated | GitHub Actions artifact `soc2-evidence-privileged-access` and ignored `soc2-evidence/privileged-access/` |

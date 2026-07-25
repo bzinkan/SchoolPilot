@@ -72,7 +72,7 @@ All third-party service providers handling PII are reviewed annually and must si
 - Helmet.js security headers: CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy.
 - Rate limiting on authentication endpoints to prevent brute-force.
 - Parameterized queries via Drizzle ORM (no raw SQL injection risk).
-- Dependency vulnerability scanning via `npm audit` on every CI run (critical-severity vulnerabilities block deploys).
+- Dependency vulnerability scanning runs on every CI build. The production-dependency gate blocks high- and critical-severity findings unless an explicitly scoped, time-bound, evidence-backed disposition passes validation; the complete production and development dependency tree is scanned, with normalized findings and dependency counts retained for security review.
 - Automated tests run on every pull request before merge.
 
 ### 5.4 Logging and Monitoring

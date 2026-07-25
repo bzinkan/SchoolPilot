@@ -120,7 +120,7 @@ The HECVAT Lite is a subset of the full HECVAT created by EDUCAUSE and the REN-I
 |---|----------|----------|-------|
 | 7.1 | Secure development lifecycle (SDLC) documented? | **Yes** | WISP Section 5.5: PR review, CI security audit, no prod data in dev |
 | 7.2 | Code review on all changes? | **Yes** | PR-based review required before merge to main |
-| 7.3 | Dependency vulnerability scanning? | **Yes** | `npm audit` runs on every CI build; critical-level blocks deploy |
+| 7.3 | Dependency vulnerability scanning? | **Yes** | Every CI build blocks high/critical production-dependency findings unless a narrowly scoped, time-bound, evidence-backed disposition passes validation; the complete production and development dependency tree is scanned, with normalized findings and dependency counts retained and reviewed |
 | 7.4 | Static application security testing (SAST)? | **Partial** | TypeScript type checker + ESLint in CI; dedicated SAST tooling on roadmap |
 | 7.5 | Dynamic application security testing (DAST)? | **No** | Planned with third-party pentest |
 | 7.6 | Input validation framework? | **Yes** | Zod schema validation on all API inputs; Drizzle ORM parameterized queries prevent SQL injection |
