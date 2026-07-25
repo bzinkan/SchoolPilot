@@ -337,12 +337,8 @@ async function collectFiles(root, { extensions = null } = {}) {
 
 function isExcludedProjectDirectory(relativePath) {
   const normalized = normalizeRelativePath(relativePath);
-  const segments = normalized.split('/');
-  if (
-    segments.some((segment) =>
-      PROJECT_EXCLUDED_DIRECTORY_NAMES.has(segment)
-    )
-  ) {
+  const [topLevelDirectory] = normalized.split('/');
+  if (PROJECT_EXCLUDED_DIRECTORY_NAMES.has(topLevelDirectory)) {
     return true;
   }
   return /^android-(?:gopilot|passpilot)\/app\/build(?:\/|$)/.test(normalized);
@@ -481,35 +477,315 @@ function validatePackageIdentity({
   };
 }
 
-function parseNamedImports(specifierText) {
-  const trimmed = specifierText.trim();
-  if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return null;
-  const body = trimmed.slice(1, -1);
+function parseNamedImports(tokens) {
+  const specifierTokens = [...tokens];
+  if (specifierTokens[0]?.value === 'type') specifierTokens.shift();
+  if (
+    specifierTokens[0]?.value !== '{' ||
+    specifierTokens.at(-1)?.value !== '}'
+  ) {
+    return null;
+  }
+  const body = specifierTokens.slice(1, -1);
   const names = [];
-  for (const rawPart of body.split(',')) {
-    const part = rawPart.trim();
-    if (!part) continue;
-    const withoutType = part.replace(/^type\s+/, '');
-    const importedName = withoutType.split(/\s+as\s+/i)[0]?.trim();
-    if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(importedName ?? '')) return null;
+  let part = [];
+  for (let index = 0; index <= body.length; index += 1) {
+    const token = body[index];
+    if (token?.value !== ',' && index < body.length) {
+      part.push(token);
+      continue;
+    }
+    if (part.length === 0) continue;
+    if (part[0]?.value === 'type') part = part.slice(1);
+    if (
+      part.length !== 1 &&
+      !(
+        part.length === 3 &&
+        part[1]?.value === 'as' &&
+        part[2]?.type === 'identifier'
+      )
+    ) {
+      return null;
+    }
+    const importedName = part[0]?.value;
+    if (
+      part[0]?.type !== 'identifier' ||
+      !/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(importedName ?? '')
+    ) {
+      return null;
+    }
     names.push(importedName);
+    part = [];
   }
   return names;
 }
 
-function findStaticImports(text) {
-  const imports = [];
-  const pattern =
-    /(?:^|[\r\n;])\s*import\s+(?!['"(])(?:type\s+)?([\s\S]*?)\s+from\s+(['"])([^'"\r\n]+)\2\s*;?/gm;
-  for (const match of text.matchAll(pattern)) {
-    const importOffset = match[0].indexOf('import');
-    imports.push({
-      index: (match.index ?? 0) + Math.max(0, importOffset),
-      specifierText: match[1],
-      moduleName: match[3],
-    });
+function isIdentifierStart(character) {
+  return /[A-Za-z_$]/.test(character);
+}
+
+function isIdentifierPart(character) {
+  return /[A-Za-z0-9_$]/.test(character);
+}
+
+function readStringToken(text, start) {
+  const quote = text[start];
+  let value = '';
+  for (let index = start + 1; index < text.length; index += 1) {
+    const character = text[index];
+    if (character === quote) {
+      return {
+        end: index + 1,
+        token: { type: 'string', value, index: start },
+      };
+    }
+    if (character !== '\\') {
+      if (character === '\r' || character === '\n') return null;
+      value += character;
+      continue;
+    }
+
+    index += 1;
+    if (index >= text.length) return null;
+    const escaped = text[index];
+    if (escaped === '\r' || escaped === '\n') {
+      if (escaped === '\r' && text[index + 1] === '\n') index += 1;
+      continue;
+    }
+    const simpleEscapes = new Map([
+      ['b', '\b'],
+      ['f', '\f'],
+      ['n', '\n'],
+      ['r', '\r'],
+      ['t', '\t'],
+      ['v', '\v'],
+      ['0', '\0'],
+    ]);
+    if (simpleEscapes.has(escaped)) {
+      value += simpleEscapes.get(escaped);
+      continue;
+    }
+    if (escaped === 'x') {
+      const digits = text.slice(index + 1, index + 3);
+      if (!/^[0-9A-Fa-f]{2}$/.test(digits)) return null;
+      value += String.fromCodePoint(Number.parseInt(digits, 16));
+      index += 2;
+      continue;
+    }
+    if (escaped === 'u') {
+      if (text[index + 1] === '{') {
+        const close = text.indexOf('}', index + 2);
+        const digits = close === -1 ? '' : text.slice(index + 2, close);
+        if (!/^[0-9A-Fa-f]{1,6}$/.test(digits)) return null;
+        const codePoint = Number.parseInt(digits, 16);
+        if (codePoint > 0x10ffff) return null;
+        value += String.fromCodePoint(codePoint);
+        index = close;
+        continue;
+      }
+      const digits = text.slice(index + 1, index + 5);
+      if (!/^[0-9A-Fa-f]{4}$/.test(digits)) return null;
+      value += String.fromCodePoint(Number.parseInt(digits, 16));
+      index += 4;
+      continue;
+    }
+    value += escaped;
   }
-  return imports;
+  return null;
+}
+
+function tokenizeJavaScript(text) {
+  const tokens = [];
+
+  function scanCode(start, stopAtTemplateExpressionEnd = false) {
+    let braceDepth = 0;
+    let index = start;
+    while (index < text.length) {
+      const character = text[index];
+      if (/\s/.test(character)) {
+        index += 1;
+        continue;
+      }
+      if (character === '/' && text[index + 1] === '/') {
+        index += 2;
+        while (index < text.length && text[index] !== '\n') index += 1;
+        continue;
+      }
+      if (character === '/' && text[index + 1] === '*') {
+        const close = text.indexOf('*/', index + 2);
+        index = close === -1 ? text.length : close + 2;
+        continue;
+      }
+      if (character === "'" || character === '"') {
+        const result = readStringToken(text, index);
+        if (!result) {
+          index += 1;
+          continue;
+        }
+        tokens.push(result.token);
+        index = result.end;
+        continue;
+      }
+      if (character === '`') {
+        index = scanTemplate(index + 1);
+        continue;
+      }
+      if (isIdentifierStart(character)) {
+        const identifierStart = index;
+        index += 1;
+        while (index < text.length && isIdentifierPart(text[index])) {
+          index += 1;
+        }
+        tokens.push({
+          type: 'identifier',
+          value: text.slice(identifierStart, index),
+          index: identifierStart,
+        });
+        continue;
+      }
+      if (character === '{') braceDepth += 1;
+      if (character === '}') {
+        if (stopAtTemplateExpressionEnd && braceDepth === 0) {
+          return index + 1;
+        }
+        braceDepth = Math.max(0, braceDepth - 1);
+      }
+      tokens.push({ type: 'punctuator', value: character, index });
+      index += 1;
+    }
+    return index;
+  }
+
+  function scanTemplate(start) {
+    let index = start;
+    while (index < text.length) {
+      if (text[index] === '\\') {
+        index += 2;
+        continue;
+      }
+      if (text[index] === '`') return index + 1;
+      if (text[index] === '$' && text[index + 1] === '{') {
+        index = scanCode(index + 2, true);
+        continue;
+      }
+      index += 1;
+    }
+    return index;
+  }
+
+  scanCode(0);
+  return tokens;
+}
+
+function findTopLevelFrom(tokens, start) {
+  let braceDepth = 0;
+  let bracketDepth = 0;
+  let parenthesisDepth = 0;
+  for (let index = start; index < tokens.length; index += 1) {
+    const value = tokens[index].value;
+    if (
+      value === 'from' &&
+      braceDepth === 0 &&
+      bracketDepth === 0 &&
+      parenthesisDepth === 0 &&
+      tokens[index + 1]?.type === 'string'
+    ) {
+      return index;
+    }
+    if (
+      value === ';' &&
+      braceDepth === 0 &&
+      bracketDepth === 0 &&
+      parenthesisDepth === 0
+    ) {
+      return -1;
+    }
+    if (value === '{') braceDepth += 1;
+    else if (value === '}') braceDepth = Math.max(0, braceDepth - 1);
+    else if (value === '[') bracketDepth += 1;
+    else if (value === ']') bracketDepth = Math.max(0, bracketDepth - 1);
+    else if (value === '(') parenthesisDepth += 1;
+    else if (value === ')') {
+      parenthesisDepth = Math.max(0, parenthesisDepth - 1);
+    }
+  }
+  return -1;
+}
+
+function findModuleReferences(text) {
+  const tokens = tokenizeJavaScript(text);
+  const references = [];
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    const previous = tokens[index - 1];
+    if (token.value === 'import' && previous?.value !== '.') {
+      const next = tokens[index + 1];
+      if (next?.type === 'string') {
+        references.push({
+          index: token.index,
+          kind: 'side-effect',
+          moduleName: next.value,
+          specifierTokens: [],
+        });
+        continue;
+      }
+      if (
+        next?.value === '(' &&
+        tokens[index + 2]?.type === 'string'
+      ) {
+        references.push({
+          index: token.index,
+          kind: 'dynamic',
+          moduleName: tokens[index + 2].value,
+          specifierTokens: [],
+        });
+        continue;
+      }
+      if (next?.value === '.') continue;
+      const fromIndex = findTopLevelFrom(tokens, index + 1);
+      if (fromIndex !== -1) {
+        references.push({
+          index: token.index,
+          kind: 'static',
+          moduleName: tokens[fromIndex + 1].value,
+          specifierTokens: tokens.slice(index + 1, fromIndex),
+        });
+      }
+      continue;
+    }
+    if (
+      token.value === 'require' &&
+      previous?.value !== '.' &&
+      tokens[index + 1]?.value === '(' &&
+      tokens[index + 2]?.type === 'string'
+    ) {
+      references.push({
+        index: token.index,
+        kind: 'require',
+        moduleName: tokens[index + 2].value,
+        specifierTokens: [],
+      });
+      continue;
+    }
+    if (
+      token.value === 'export' &&
+      (tokens[index + 1]?.value === '{' ||
+        tokens[index + 1]?.value === '*' ||
+        (tokens[index + 1]?.value === 'type' &&
+          tokens[index + 2]?.value === '{'))
+    ) {
+      const fromIndex = findTopLevelFrom(tokens, index + 1);
+      if (fromIndex !== -1) {
+        references.push({
+          index: token.index,
+          kind: 'reexport',
+          moduleName: tokens[fromIndex + 1].value,
+          specifierTokens: [],
+        });
+      }
+    }
+  }
+  return references;
 }
 
 function scanSourceFile(text, relativePath) {
@@ -527,9 +803,10 @@ function scanSourceFile(text, relativePath) {
     );
   }
 
-  const staticImports = findStaticImports(text);
-  for (const sourceImport of staticImports.filter(({ moduleName }) =>
-    ROUTER_MODULE_PATTERN.test(moduleName)
+  const moduleReferences = findModuleReferences(text);
+  for (const sourceImport of moduleReferences.filter(
+    ({ kind, moduleName }) =>
+      kind === 'static' && ROUTER_MODULE_PATTERN.test(moduleName)
   )) {
     routerImportCount += 1;
     const { moduleName } = sourceImport;
@@ -544,7 +821,7 @@ function scanSourceFile(text, relativePath) {
       );
       continue;
     }
-    const names = parseNamedImports(sourceImport.specifierText);
+    const names = parseNamedImports(sourceImport.specifierTokens);
     if (!names || names.length === 0) {
       violations.push(
         violation('source.invalid-router-import-shape', {
@@ -568,27 +845,23 @@ function scanSourceFile(text, relativePath) {
     }
   }
 
-  const moduleReferencePatterns = [
-    /\bimport\s*(['"])(react-router(?:-dom)?(?:\/[^'"]*)?|@react-router\/[^'"]+)\1/g,
-    /\bimport\s*\(\s*(['"])(react-router(?:-dom)?(?:\/[^'"]*)?|@react-router\/[^'"]+)\1\s*\)/g,
-    /\brequire\s*\(\s*(['"])(react-router(?:-dom)?(?:\/[^'"]*)?|@react-router\/[^'"]+)\1\s*\)/g,
-    /\bexport\s+[^;]*?\s+from\s+(['"])(react-router(?:-dom)?(?:\/[^'"]*)?|@react-router\/[^'"]+)\1/g,
-  ];
-  for (const pattern of moduleReferencePatterns) {
-    for (const match of text.matchAll(pattern)) {
-      routerImportCount += 1;
-      violations.push(
-        violation('source.forbidden-router-module', {
-          file: relativePath,
-          line: lineForIndex(text, match.index ?? 0),
-          rule: 'side-effect-dynamic-require-or-reexport',
-        })
-      );
-    }
+  for (const sourceImport of moduleReferences.filter(
+    ({ kind, moduleName }) =>
+      kind !== 'static' && ROUTER_MODULE_PATTERN.test(moduleName)
+  )) {
+    routerImportCount += 1;
+    violations.push(
+      violation('source.forbidden-router-module', {
+        file: relativePath,
+        line: lineForIndex(text, sourceImport.index),
+        rule: 'side-effect-dynamic-require-or-reexport',
+      })
+    );
   }
 
-  for (const sourceImport of staticImports.filter(({ moduleName }) =>
-    /^react-dom(?:\/.*)?$/.test(moduleName)
+  for (const sourceImport of moduleReferences.filter(
+    ({ kind, moduleName }) =>
+      kind === 'static' && /^react-dom(?:\/.*)?$/.test(moduleName)
   )) {
     const { moduleName } = sourceImport;
     const line = lineForIndex(text, sourceImport.index);
@@ -605,7 +878,7 @@ function scanSourceFile(text, relativePath) {
       );
       continue;
     }
-    const names = parseNamedImports(sourceImport.specifierText);
+    const names = parseNamedImports(sourceImport.specifierTokens);
     if (!names || names.length === 0) {
       violations.push(
         violation('source.invalid-react-dom-import-shape', {
@@ -630,25 +903,19 @@ function scanSourceFile(text, relativePath) {
     }
   }
 
-  const reactDomModuleReferencePatterns = [
-    /\bimport\s*(['"])(react-dom(?:\/[^'"]*)?)\1/g,
-    /\bimport\s*\(\s*(['"])(react-dom(?:\/[^'"]*)?)\1\s*\)/g,
-    /\brequire\s*\(\s*(['"])(react-dom(?:\/[^'"]*)?)\1\s*\)/g,
-    /\bexport\s+[^;]*?\s+from\s+(['"])(react-dom(?:\/[^'"]*)?)\1/g,
-  ];
-  for (const pattern of reactDomModuleReferencePatterns) {
-    for (const match of text.matchAll(pattern)) {
-      const moduleName = match[2];
-      violations.push(
-        violation('source.forbidden-react-dom-module', {
-          file: relativePath,
-          line: lineForIndex(text, match.index ?? 0),
-          rule: moduleName.startsWith('react-dom/server')
-            ? 'ssr-react-dom-module'
-            : 'dynamic-require-reexport-or-side-effect-react-dom',
-        })
-      );
-    }
+  for (const sourceImport of moduleReferences.filter(
+    ({ kind, moduleName }) =>
+      kind !== 'static' && /^react-dom(?:\/.*)?$/.test(moduleName)
+  )) {
+    violations.push(
+      violation('source.forbidden-react-dom-module', {
+        file: relativePath,
+        line: lineForIndex(text, sourceImport.index),
+        rule: sourceImport.moduleName.startsWith('react-dom/server')
+          ? 'ssr-react-dom-module'
+          : 'dynamic-require-reexport-or-side-effect-react-dom',
+      })
+    );
   }
 
   for (const group of FORBIDDEN_SOURCE_API_GROUPS) {

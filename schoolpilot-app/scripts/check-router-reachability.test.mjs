@@ -227,6 +227,54 @@ const rsc = import('react-router/rsc');
   );
 });
 
+test('rejects comment-interleaved Router module references without matching inert text', async (t) => {
+  const forbiddenFixture = await createFixture({
+    source: `${ALLOWED_SOURCE}
+import /* side effect */ 'react-router/rsc';
+const dynamicRsc = import(/* dynamic */ 'react-router/rsc');
+const requiredRsc = require(/* commonjs */ 'react-router/rsc');
+export /* re-export */ { RSCHydratedRouter } /* source */ from /* module */ 'react-router/rsc';
+import /* declaration */ { createStaticHandler } /* source */ from /* module */ 'react-router/server';
+`,
+  });
+  t.after(() =>
+    rm(forbiddenFixture.root, { recursive: true, force: true })
+  );
+
+  const forbidden = await evaluate(forbiddenFixture);
+  assert.equal(forbidden.passed, false);
+  const moduleViolations = forbidden.violations.filter(
+    (entry) => entry.code === 'source.forbidden-router-module'
+  );
+  assert.equal(moduleViolations.length, 5, JSON.stringify(forbidden.violations));
+  assert.ok(
+    moduleViolations.some(
+      (entry) => entry.rule === 'direct-or-internal-router-import'
+    )
+  );
+  assert.equal(
+    moduleViolations.filter(
+      (entry) => entry.rule === 'side-effect-dynamic-require-or-reexport'
+    ).length,
+    4
+  );
+
+  const inertFixture = await createFixture({
+    source: `${ALLOWED_SOURCE}
+const quoted = "import(/* comment */ 'react-router/rsc')";
+const templated = \`require(/* comment */ 'react-router/rsc')\`;
+// import /* comment */ 'react-router/rsc';
+/* require(
+  'react-router/rsc'
+); */
+`,
+  });
+  t.after(() => rm(inertFixture.root, { recursive: true, force: true }));
+
+  const inert = await evaluate(inertFixture);
+  assert.equal(inert.passed, true, JSON.stringify(inert.violations));
+});
+
 test('preserves createRoot/createPortal but rejects SSR and hydration imports', async (t) => {
   const fixture = await createFixture({
     source: `${ALLOWED_SOURCE}
@@ -401,6 +449,55 @@ test('binds project code into the source hash and excludes generated trees', asy
   assert.equal(
     generatedEvidenceChanged.sourceTreeSha256,
     projectCodeChanged.sourceTreeSha256
+  );
+});
+
+test('scans and hash-binds generated-looking directories nested under shipped source', async (t) => {
+  const fixture = await createFixture();
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  const shippedCoverage = path.join(fixture.sourceRoot, 'coverage');
+  const shippedDist = path.join(fixture.sourceRoot, 'dist');
+  await mkdir(shippedCoverage, { recursive: true });
+  await mkdir(shippedDist, { recursive: true });
+  await writeFile(
+    path.join(shippedCoverage, 'feature.mjs'),
+    'export const shippedCoverageFeature = true;\n',
+    'utf8'
+  );
+  await writeFile(
+    path.join(shippedDist, 'feature.mjs'),
+    'export const shippedDistFeature = true;\n',
+    'utf8'
+  );
+
+  const first = await evaluate(fixture);
+  assert.equal(first.passed, true, JSON.stringify(first.violations));
+  assert.equal(first.sourceFileCount, 3);
+
+  await writeFile(
+    path.join(shippedCoverage, 'feature.mjs'),
+    'export const shippedCoverageFeature = false;\n',
+    'utf8'
+  );
+  const hashChanged = await evaluate(fixture);
+  assert.equal(hashChanged.passed, true, JSON.stringify(hashChanged.violations));
+  assert.notEqual(hashChanged.sourceTreeSha256, first.sourceTreeSha256);
+  assert.equal(hashChanged.sourceFileCount, first.sourceFileCount);
+
+  await writeFile(
+    path.join(shippedDist, 'feature.mjs'),
+    "const server = import(/* shipped */ 'react-router/rsc');\nexport default server;\n",
+    'utf8'
+  );
+  const forbidden = await evaluate(fixture);
+  assert.equal(forbidden.passed, false);
+  assert.ok(
+    forbidden.violations.some(
+      (entry) =>
+        entry.file === 'src/dist/feature.mjs' &&
+        entry.code === 'source.forbidden-router-module'
+    ),
+    JSON.stringify(forbidden.violations)
   );
 });
 

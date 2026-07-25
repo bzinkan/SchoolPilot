@@ -15,20 +15,97 @@ const port = Number(process.env.PREVIEW_SMOKE_PORT ?? '4173');
 const baseUrl = `http://${host}:${port}`;
 const timeoutMilliseconds = 30_000;
 
+const personas = {
+  anonymous: {
+    schoolId: null,
+    auth: {
+      user: null,
+      memberships: [],
+      licenses: {},
+    },
+  },
+  classpilotTeacher: {
+    schoolId: 'preview-classpilot-school',
+    auth: {
+      user: {
+        id: 'preview-classpilot-teacher',
+        email: 'preview-classpilot-teacher@example.invalid',
+        firstName: 'Preview',
+        lastName: 'Teacher',
+        isSuperAdmin: false,
+      },
+      memberships: [
+        {
+          id: 'preview-classpilot-membership',
+          schoolId: 'preview-classpilot-school',
+          schoolName: 'Preview ClassPilot School',
+          schoolSlug: 'preview-classpilot-school',
+          schoolTimezone: 'America/New_York',
+          role: 'teacher',
+        },
+      ],
+      licenses: {
+        classPilot: true,
+        passPilot: false,
+        goPilot: false,
+      },
+    },
+  },
+  gopilotParent: {
+    schoolId: 'preview-gopilot-school',
+    auth: {
+      user: {
+        id: 'preview-gopilot-parent',
+        email: 'preview-gopilot-parent@example.invalid',
+        firstName: 'Preview Parent',
+        lastName: 'User',
+        isSuperAdmin: false,
+      },
+      memberships: [
+        {
+          id: 'preview-gopilot-membership',
+          schoolId: 'preview-gopilot-school',
+          schoolName: 'Preview GoPilot School',
+          schoolSlug: 'preview-gopilot-school',
+          schoolTimezone: 'America/New_York',
+          dismissalTime: '15:00',
+          carNumber: '42',
+          role: 'parent',
+          gopilotRole: 'parent',
+        },
+      ],
+      licenses: {
+        classPilot: false,
+        passPilot: false,
+        goPilot: true,
+      },
+    },
+  },
+};
+
+async function assertClassPilotDashboard(page) {
+  await page
+    .getByRole('heading', { name: 'ClassPilot', exact: true })
+    .waitFor({ state: 'visible' });
+  await page
+    .locator('header')
+    .getByText('Teacher Dashboard', { exact: false })
+    .waitFor({ state: 'visible' });
+  await page.getByTestId('badge-connection-status').waitFor({ state: 'visible' });
+}
+
 const cases = [
   {
     requestedPath: '/classpilot',
-    expectedPath: '/',
-    assertion: async (page) => {
-      await page
-        .getByRole('link', { name: 'Sign In', exact: true })
-        .waitFor({ state: 'visible' });
-    },
-    surface: 'unauthenticated landing guard',
+    expectedPath: '/classpilot',
+    persona: personas.classpilotTeacher,
+    assertion: assertClassPilotDashboard,
+    surface: 'licensed teacher dashboard',
   },
   {
     requestedPath: '/passpilot/kiosk',
     expectedPath: '/passpilot/kiosk',
+    persona: personas.anonymous,
     assertion: async (page) => {
       await page
         .getByRole('heading', { name: 'Kiosk Setup Required', exact: true })
@@ -41,13 +118,28 @@ const cases = [
   },
   {
     requestedPath: '/gopilot/parent',
-    expectedPath: '/',
+    expectedPath: '/gopilot/parent',
+    persona: personas.gopilotParent,
     assertion: async (page) => {
       await page
-        .getByRole('link', { name: 'Sign In', exact: true })
+        .getByRole('heading', { name: 'Preview Parent', exact: true })
+        .waitFor({ state: 'visible' });
+      await page
+        .getByRole('heading', { name: 'My Children', exact: true })
+        .waitFor({ state: 'visible' });
+      await page
+        .getByText('Preview Child', { exact: true })
         .waitFor({ state: 'visible' });
     },
-    surface: 'unauthenticated landing guard',
+    surface: 'licensed parent application',
+  },
+  {
+    requestedPath: '/preview-smoke/unknown-route',
+    expectedPath: '/classpilot',
+    expectCatchAllRedirect: true,
+    persona: personas.classpilotTeacher,
+    assertion: assertClassPilotDashboard,
+    surface: 'authenticated catch-all redirect to licensed default',
   },
 ];
 
@@ -130,13 +222,90 @@ async function stopPreview(child) {
   if (child.exitCode === null) child.kill('SIGKILL');
 }
 
+function responseBodyFor(testCase, requestUrl) {
+  const { pathname } = requestUrl;
+  if (pathname === '/api/auth/me') return testCase.persona.auth;
+
+  if (testCase.persona === personas.anonymous) {
+    throw new Error('preview_api_request_not_allowlisted');
+  }
+
+  if (testCase.persona === personas.gopilotParent) {
+    if (pathname === '/api/me/children') {
+      return {
+        children: [
+          {
+            id: 'preview-child',
+            firstName: 'Preview',
+            lastName: 'Child',
+            gradeLevel: '4',
+            homeroom: 'Preview Homeroom',
+            dismissalType: 'car',
+          },
+        ],
+      };
+    }
+    if (/^\/api\/students\/[^/]+\/pickups$/.test(pathname)) {
+      return { pickups: [] };
+    }
+    if (/^\/api\/schools\/[^/]+\/sessions\/active$/.test(pathname)) {
+      return { session: null };
+    }
+    if (/^\/api\/schools\/[^/]+\/settings$/.test(pathname)) {
+      return {};
+    }
+    throw new Error('preview_api_request_not_allowlisted');
+  }
+
+  if (testCase.persona !== personas.classpilotTeacher) {
+    throw new Error('preview_api_persona_invalid');
+  }
+
+  const classpilotResponses = {
+    '/api/students-aggregated': { students: [] },
+    '/api/settings': { settings: {} },
+    '/api/flight-paths': { flightPaths: [] },
+    '/api/block-lists': { blockLists: [] },
+    '/api/sessions/active': { session: null },
+    '/api/teacher/groups': { groups: [] },
+    '/api/coverage/contexts': { contexts: [] },
+    '/api/coverage/capabilities': {},
+    '/api/coverage/available-students': {
+      students: [],
+      scheduledCoverageGroups: [],
+    },
+    '/api/coverage/claimed-students': { students: [] },
+    '/api/coverage/reroute-targets': { targets: [] },
+    '/api/classpilot/scheduled-conflicts': { conflicts: [] },
+    '/api/admin/attendance': { records: [] },
+  };
+  if (!Object.hasOwn(classpilotResponses, pathname)) {
+    throw new Error('preview_api_request_not_allowlisted');
+  }
+  return classpilotResponses[pathname];
+}
+
 async function verifyCase(browser, testCase) {
   const context = await browser.newContext({
     baseURL: baseUrl,
     serviceWorkers: 'block',
   });
+  await context.addInitScript((schoolId) => {
+    if (schoolId) {
+      window.localStorage.setItem('sp_activeSchoolId', schoolId);
+    } else {
+      window.localStorage.removeItem('sp_activeSchoolId');
+    }
+  }, testCase.persona.schoolId);
   const page = await context.newPage();
   const browserErrors = [];
+  let apiFailureCode = null;
+
+  const assertApiRequestsAllowlisted = () => {
+    if (apiFailureCode) {
+      fail(`${testCase.requestedPath} ${apiFailureCode}`);
+    }
+  };
 
   page.on('pageerror', (error) => {
     browserErrors.push(`pageerror:${error.message}`);
@@ -163,12 +332,31 @@ async function verifyCase(browser, testCase) {
     );
   });
 
+  await page.routeWebSocket('**/ws', (webSocket) => {
+    webSocket.onMessage(() => {});
+  });
   await page.route('**/api/**', async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: '{"user":null,"memberships":[],"licenses":{}}',
-    });
+    try {
+      const body = responseBodyFor(
+        testCase,
+        new URL(route.request().url())
+      );
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(body),
+      });
+    } catch (error) {
+      apiFailureCode =
+        error instanceof Error &&
+        [
+          'preview_api_request_not_allowlisted',
+          'preview_api_persona_invalid',
+        ].includes(error.message)
+          ? error.message
+          : 'preview_api_stub_runtime_failure';
+      await route.abort('blockedbyclient');
+    }
   });
   await page.route('https://fonts.googleapis.com/**', async (route) => {
     await route.fulfill({
@@ -193,12 +381,23 @@ async function verifyCase(browser, testCase) {
     if (!response || response.status() !== 200) {
       fail(`${testCase.requestedPath} did not return the production shell`);
     }
+    assertApiRequestsAllowlisted();
     await page.waitForURL(
       (url) => url.pathname === testCase.expectedPath,
       { timeout: timeoutMilliseconds }
     );
+    const finalPath = new URL(page.url()).pathname;
+    const redirectedByCatchAll = finalPath !== testCase.requestedPath;
+    if (redirectedByCatchAll !== (testCase.expectCatchAllRedirect === true)) {
+      fail(
+        `${testCase.requestedPath} ${
+          testCase.expectCatchAllRedirect ? 'did not use' : 'unexpectedly used'
+        } the catch-all redirect`
+      );
+    }
     await testCase.assertion(page);
     await page.waitForTimeout(250);
+    assertApiRequestsAllowlisted();
     if (browserErrors.length > 0) {
       fail(
         `${testCase.requestedPath} emitted browser errors: ` +
