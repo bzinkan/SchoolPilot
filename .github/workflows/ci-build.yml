@@ -361,6 +361,14 @@ jobs:
         working-directory: schoolpilot-app
         run: npm run build
 
+      - name: Install Chromium for production-preview smoke
+        working-directory: schoolpilot-app
+        run: npx playwright install --with-deps chromium
+
+      - name: Smoke production preview routes
+        working-directory: schoolpilot-app
+        run: npm run test:production-preview
+
       - name: Validate standard frontend Router bundle
         working-directory: schoolpilot-app
         run: npm run audit:router:postbuild:standard
@@ -401,7 +409,7 @@ jobs:
           node scripts/soc2/collect-ci-evidence.mjs
           --job "Frontend lint and build"
           --controls "SP-SEC-004"
-          --summary "This job scheduled the high/critical production-dependency gate, complete-tree audit collection, frontend API-routing and ClassPilot tile-batching contracts, lint, standard/GoPilot/PassPilot builds, and post-build Router reachability validation; the job status and separate frontend dependency audit packet record which gates completed and whether they passed."
+          --summary "This job scheduled the high/critical production-dependency gate, complete-tree audit collection, frontend API-routing and ClassPilot tile-batching contracts, lint, the standard production-preview browser smoke, standard/GoPilot/PassPilot builds, and post-build Router reachability validation; the job status and separate frontend dependency audit packet record which gates completed and whether they passed."
 
       - name: Upload SOC 2 evidence
         if: always()

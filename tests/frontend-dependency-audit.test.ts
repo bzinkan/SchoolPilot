@@ -15,6 +15,7 @@ import {
   evaluateFrontendDependencyAudit,
   parseNpmAuditV2Result,
   renderFrontendDependencyAuditMarkdown,
+  runNpmAudit,
 } from "../schoolpilot-app/scripts/frontend-dependency-audit.mjs";
 
 type Severity = "info" | "low" | "moderate" | "high" | "critical";
@@ -609,6 +610,83 @@ describe("frontend dependency audit engine", () => {
     assert.equal(brace?.dependencyScope, "development");
     assert.equal(brace?.reviewStatus, "reported-development");
     assert.equal(report.review.developmentAdvisoryCount, 1);
+  });
+
+  it("forces a complete full-tree audit despite inherited npm_config_omit=dev", () => {
+    const previousOmit = process.env.npm_config_omit;
+    process.env.npm_config_omit = "dev";
+    const calls: string[][] = [];
+    const runner = (args: string[]) => {
+      calls.push([...args]);
+      assert.equal(process.env.npm_config_omit, "dev");
+      if (args[0] === "config") {
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify({
+            omit: [],
+            include: ["dev", "optional", "peer"],
+          }),
+          stderr: "",
+          invocationError: null,
+        };
+      }
+      return {
+        exitCode: 1,
+        stdout: JSON.stringify(auditDocument([{
+          id: BRACE_ADVISORY,
+          name: "brace-expansion",
+          severity: "high",
+        }])),
+        stderr: "",
+        invocationError: null,
+      };
+    };
+
+    try {
+      const result = runNpmAudit("full", "fixture-root", runner);
+      assert.equal(result.exitCode, 1);
+      assert.deepEqual(calls, [
+        [
+          "config",
+          "list",
+          "--json",
+          "--include=dev",
+          "--include=optional",
+          "--include=peer",
+        ],
+        [
+          "audit",
+          "--include=dev",
+          "--include=optional",
+          "--include=peer",
+          "--json",
+        ],
+      ]);
+
+      assert.throws(
+        () => runNpmAudit("full", "fixture-root", (args: string[]) => {
+          if (args[0] === "config") {
+            return {
+              exitCode: 0,
+              stdout: JSON.stringify({
+                omit: ["dev"],
+                include: ["optional", "peer"],
+              }),
+              stderr: "",
+              invocationError: null,
+            };
+          }
+          throw new Error("audit_must_not_run_after_scope_failure");
+        }),
+        /npm_audit_full_scope_config_invalid/
+      );
+    } finally {
+      if (previousOmit === undefined) {
+        delete process.env.npm_config_omit;
+      } else {
+        process.env.npm_config_omit = previousOmit;
+      }
+    }
   });
 
   it("rejects malformed reports and invalid npm tool semantics", () => {

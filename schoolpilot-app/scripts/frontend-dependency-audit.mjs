@@ -1036,11 +1036,54 @@ function runNpmCommand(args, projectRoot) {
   return runCommand("npm", args, projectRoot);
 }
 
-export function runNpmAudit(scope, projectRoot) {
-  const args = scope === "production"
-    ? ["audit", "--omit=dev", "--json"]
-    : ["audit", "--json"];
-  return runNpmCommand(args, projectRoot);
+const FULL_TREE_INCLUDE_FLAGS = [
+  "--include=dev",
+  "--include=optional",
+  "--include=peer",
+];
+
+function validateFullTreeNpmConfiguration(result) {
+  if (result.invocationError ||
+      result.exitCode !== 0 ||
+      typeof result.stderr !== "string") {
+    throw new Error("npm_audit_full_scope_config_failed");
+  }
+  const configuration = parseJsonDocument(
+    result.stdout,
+    "npm_audit_full_scope_config_invalid"
+  );
+  if (!isRecord(configuration) ||
+      !Array.isArray(configuration.include) ||
+      !Array.isArray(configuration.omit) ||
+      configuration.include.some((value) => typeof value !== "string") ||
+      configuration.omit.some((value) => typeof value !== "string") ||
+      !sameStringSet(configuration.include, ["dev", "optional", "peer"]) ||
+      configuration.omit.length !== 0) {
+    throw new Error("npm_audit_full_scope_config_invalid");
+  }
+}
+
+export function runNpmAudit(
+  scope,
+  projectRoot,
+  npmRunner = runNpmCommand
+) {
+  if (scope === "production") {
+    return npmRunner(["audit", "--omit=dev", "--json"], projectRoot);
+  }
+  if (scope !== "full") {
+    throw new Error("npm_audit_scope_invalid");
+  }
+
+  const configuration = npmRunner(
+    ["config", "list", "--json", ...FULL_TREE_INCLUDE_FLAGS],
+    projectRoot
+  );
+  validateFullTreeNpmConfiguration(configuration);
+  return npmRunner(
+    ["audit", ...FULL_TREE_INCLUDE_FLAGS, "--json"],
+    projectRoot
+  );
 }
 
 function parseArguments(argv) {

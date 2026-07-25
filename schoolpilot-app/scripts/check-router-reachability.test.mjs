@@ -287,6 +287,138 @@ export { renderToStaticMarkup } from 'react-dom/server';
   );
 });
 
+test('scans root configs, nested build code, and server entries outside src', async (t) => {
+  const fixture = await createFixture();
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  await writeFile(
+    path.join(fixture.root, 'vite.config.mts'),
+    "import { reactRouter } from '@react-router/dev/vite';\nexport default reactRouter();\n",
+    'utf8'
+  );
+  await writeFile(
+    path.join(fixture.root, 'react-router.config.ts'),
+    'export default {};\n',
+    'utf8'
+  );
+  await mkdir(path.join(fixture.root, 'build'), { recursive: true });
+  await writeFile(
+    path.join(fixture.root, 'build', 'router-plugin.mjs'),
+    "const rsc = import('react-router/rsc');\nexport default rsc;\n",
+    'utf8'
+  );
+  await mkdir(path.join(fixture.root, 'server'), { recursive: true });
+  await writeFile(
+    path.join(fixture.root, 'server', 'entry.cts'),
+    "const server = require('react-dom/server.node');\nmodule.exports = server;\n",
+    'utf8'
+  );
+
+  const evidence = await evaluate(fixture);
+  assert.equal(evidence.passed, false);
+  assert.ok(
+    evidence.violations.some(
+      (entry) =>
+        entry.file === 'vite.config.mts' &&
+        entry.code === 'source.forbidden-router-module' &&
+        entry.rule === 'direct-or-internal-router-import'
+    ),
+    JSON.stringify(evidence.violations)
+  );
+  assert.ok(
+    evidence.violations.some(
+      (entry) =>
+        entry.file === 'react-router.config.ts' &&
+        entry.code === 'source.forbidden-router-api' &&
+        entry.rule === 'framework-config-file'
+    ),
+    JSON.stringify(evidence.violations)
+  );
+  assert.ok(
+    evidence.violations.some(
+      (entry) =>
+        entry.file === 'build/router-plugin.mjs' &&
+        entry.code === 'source.forbidden-router-module'
+    ),
+    JSON.stringify(evidence.violations)
+  );
+  assert.ok(
+    evidence.violations.some(
+      (entry) =>
+        entry.file === 'server/entry.cts' &&
+        entry.code === 'source.forbidden-react-dom-module' &&
+        entry.rule === 'ssr-react-dom-module'
+    ),
+    JSON.stringify(evidence.violations)
+  );
+});
+
+test('binds project code into the source hash and excludes generated trees', async (t) => {
+  const fixture = await createFixture();
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  await writeFile(
+    path.join(fixture.root, 'vite.config.js'),
+    "export default { build: { sourcemap: false } };\n",
+    'utf8'
+  );
+  for (const directory of ['node_modules', 'dist', 'audit-evidence']) {
+    await mkdir(path.join(fixture.root, directory), { recursive: true });
+    await writeFile(
+      path.join(fixture.root, directory, 'ignored-server.mjs'),
+      "import { renderToString } from 'react-dom/server';\n",
+      'utf8'
+    );
+  }
+
+  const first = await evaluate(fixture);
+  assert.equal(first.passed, true, JSON.stringify(first.violations));
+  assert.ok(first.sourceFileCount >= 2);
+
+  await writeFile(
+    path.join(fixture.root, 'vite.config.js'),
+    "export default { build: { sourcemap: true } };\n",
+    'utf8'
+  );
+  const projectCodeChanged = await evaluate(fixture);
+  assert.equal(
+    projectCodeChanged.passed,
+    true,
+    JSON.stringify(projectCodeChanged.violations)
+  );
+  assert.notEqual(projectCodeChanged.sourceTreeSha256, first.sourceTreeSha256);
+  assert.equal(projectCodeChanged.sourceFileCount, first.sourceFileCount);
+
+  await writeFile(
+    path.join(fixture.root, 'audit-evidence', 'ignored-server.mjs'),
+    "import { renderToPipeableStream } from 'react-dom/server.node';\n",
+    'utf8'
+  );
+  const generatedEvidenceChanged = await evaluate(fixture);
+  assert.equal(
+    generatedEvidenceChanged.passed,
+    true,
+    JSON.stringify(generatedEvidenceChanged.violations)
+  );
+  assert.equal(
+    generatedEvidenceChanged.sourceTreeSha256,
+    projectCodeChanged.sourceTreeSha256
+  );
+});
+
+test('rejects a narrowed source root that could evade project scanning', async (t) => {
+  const fixture = await createFixture();
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  const narrowedRoot = path.join(fixture.root, 'client');
+  await mkdir(narrowedRoot, { recursive: true });
+  await writeFile(path.join(narrowedRoot, 'App.jsx'), ALLOWED_SOURCE, 'utf8');
+
+  const evidence = await evaluate(fixture, { sourceRoot: narrowedRoot });
+  assert.equal(evidence.passed, false);
+  assert.ok(
+    evidence.violations.some((entry) => entry.code === 'source.root-invalid')
+  );
+  assert.equal(evidence.sourceTreeSha256, null);
+});
+
 test('post-build mode accepts clean assets and rejects vulnerable runtime tokens', async (t) => {
   const fixture = await createFixture();
   t.after(() => rm(fixture.root, { recursive: true, force: true }));

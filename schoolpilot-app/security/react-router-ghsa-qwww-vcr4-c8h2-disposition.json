@@ -2,7 +2,7 @@
   "schemaVersion": "frontend-dependency-disposition-v1",
   "advisoryId": "GHSA-qwww-vcr4-c8h2",
   "expiresAtUtc": "2026-08-24T00:00:00Z",
-  "packageLockSha256": "35f63d64a56e838a72e325af571770c17e7ea3c24e97a5013235797f0f33de08",
+  "packageLockSha256": "8bec9b4e582f0a721d99d8ba5aeeb488aefa885d4a6f6ff7fa2ef6a01485ea7d",
   "reachabilityEvidenceVersion": "frontend-router-reachability-v1",
   "router": {
     "packageName": "react-router",

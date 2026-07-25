@@ -20,10 +20,39 @@ export const ROUTER_DISPOSITION_SCHEMA_VERSION =
 export const ROUTER_ADVISORY_ID = 'GHSA-qwww-vcr4-c8h2';
 export const REQUIRED_ROUTER_VERSION = '7.18.0';
 
-const SOURCE_EXTENSIONS = new Set(['.js', '.jsx', '.mjs', '.cjs', '.ts', '.tsx']);
+const SOURCE_EXTENSIONS = new Set([
+  '.js',
+  '.jsx',
+  '.mjs',
+  '.cjs',
+  '.ts',
+  '.tsx',
+  '.mts',
+  '.cts',
+]);
 const TEXT_BUNDLE_EXTENSIONS = new Set(['.html', '.js', '.mjs', '.cjs']);
 const VALID_MODES = new Set(['source-only', 'post-build']);
 const VALID_VARIANTS = new Set(['standard', 'gopilot', 'passpilot']);
+const PROJECT_EXCLUDED_DIRECTORY_NAMES = new Set([
+  '.git',
+  '.vite',
+  'audit-evidence',
+  'coverage',
+  'dist',
+  'dist-ssr',
+  'node_modules',
+]);
+// The policy implementation and its regression fixtures necessarily contain
+// the forbidden literals. They remain part of sourceTreeSha256, but only these
+// two exact non-runtime files are exempt from evaluating their fixture text.
+const PROJECT_HASH_ONLY_FILES = new Set([
+  'scripts/check-router-reachability.mjs',
+  'scripts/check-router-reachability.test.mjs',
+]);
+const ROUTER_CONFIG_FILE_PATTERN =
+  /(?:^|\/)react-router\.config\.(?:c|m)?(?:j|t)sx?$/;
+const ROUTER_MODULE_PATTERN =
+  /^(?:react-router(?:-dom)?(?:\/.*)?|@react-router\/[^/]+(?:\/.*)?)$/;
 
 const ALLOWED_ROUTER_DOM_IMPORTS = new Set([
   'BrowserRouter',
@@ -306,6 +335,58 @@ async function collectFiles(root, { extensions = null } = {}) {
   return files;
 }
 
+function isExcludedProjectDirectory(relativePath) {
+  const normalized = normalizeRelativePath(relativePath);
+  const segments = normalized.split('/');
+  if (
+    segments.some((segment) =>
+      PROJECT_EXCLUDED_DIRECTORY_NAMES.has(segment)
+    )
+  ) {
+    return true;
+  }
+  return /^android-(?:gopilot|passpilot)\/app\/build(?:\/|$)/.test(normalized);
+}
+
+async function collectProjectSourceFiles(projectRoot) {
+  const rootInfo = await lstat(projectRoot);
+  if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) {
+    throw new Error('invalid-project-root');
+  }
+
+  const files = [];
+  async function visit(current, relative) {
+    const entries = await readdir(current, { withFileTypes: true });
+    entries.sort((left, right) => left.name.localeCompare(right.name));
+    for (const entry of entries) {
+      const childRelative = relative ? path.join(relative, entry.name) : entry.name;
+      const childPath = path.join(current, entry.name);
+      if (
+        (entry.isDirectory() || entry.isSymbolicLink()) &&
+        isExcludedProjectDirectory(childRelative)
+      ) {
+        continue;
+      }
+      if (entry.isSymbolicLink()) {
+        throw new Error('symlink-not-allowed');
+      }
+      if (entry.isDirectory()) {
+        await visit(childPath, childRelative);
+      } else if (
+        entry.isFile() &&
+        SOURCE_EXTENSIONS.has(path.extname(entry.name).toLowerCase())
+      ) {
+        files.push({
+          absolutePath: childPath,
+          relativePath: normalizeRelativePath(childRelative),
+        });
+      }
+    }
+  }
+  await visit(projectRoot, '');
+  return files;
+}
+
 async function hashTree(files) {
   const manifest = [];
   for (const file of files) {
@@ -436,9 +517,19 @@ function scanSourceFile(text, relativePath) {
   const importedSymbols = [];
   let routerImportCount = 0;
 
+  if (ROUTER_CONFIG_FILE_PATTERN.test(relativePath)) {
+    violations.push(
+      violation('source.forbidden-router-api', {
+        file: relativePath,
+        line: 1,
+        rule: 'framework-config-file',
+      })
+    );
+  }
+
   const staticImports = findStaticImports(text);
   for (const sourceImport of staticImports.filter(({ moduleName }) =>
-    /^react-router(?:-dom)?(?:\/.*)?$/.test(moduleName)
+    ROUTER_MODULE_PATTERN.test(moduleName)
   )) {
     routerImportCount += 1;
     const { moduleName } = sourceImport;
@@ -478,10 +569,10 @@ function scanSourceFile(text, relativePath) {
   }
 
   const moduleReferencePatterns = [
-    /\bimport\s*(['"])(react-router(?:-dom)?(?:\/[^'"]*)?)\1/g,
-    /\bimport\s*\(\s*(['"])(react-router(?:-dom)?(?:\/[^'"]*)?)\1\s*\)/g,
-    /\brequire\s*\(\s*(['"])(react-router(?:-dom)?(?:\/[^'"]*)?)\1\s*\)/g,
-    /\bexport\s+[^;]*?\s+from\s+(['"])(react-router(?:-dom)?(?:\/[^'"]*)?)\1/g,
+    /\bimport\s*(['"])(react-router(?:-dom)?(?:\/[^'"]*)?|@react-router\/[^'"]+)\1/g,
+    /\bimport\s*\(\s*(['"])(react-router(?:-dom)?(?:\/[^'"]*)?|@react-router\/[^'"]+)\1\s*\)/g,
+    /\brequire\s*\(\s*(['"])(react-router(?:-dom)?(?:\/[^'"]*)?|@react-router\/[^'"]+)\1\s*\)/g,
+    /\bexport\s+[^;]*?\s+from\s+(['"])(react-router(?:-dom)?(?:\/[^'"]*)?|@react-router\/[^'"]+)\1/g,
   ];
   for (const pattern of moduleReferencePatterns) {
     for (const match of text.matchAll(pattern)) {
@@ -590,10 +681,18 @@ function scanSourceFile(text, relativePath) {
   return { importedSymbols, routerImportCount, violations };
 }
 
-async function scanSources(sourceRoot, violations) {
+async function scanSources(projectRoot, sourceRoot, violations) {
   let files;
   try {
-    files = await collectFiles(sourceRoot, { extensions: SOURCE_EXTENSIONS });
+    const expectedSourceRoot = path.join(projectRoot, 'src');
+    if (path.resolve(sourceRoot) !== path.resolve(expectedSourceRoot)) {
+      throw new Error('source-root-not-project-src');
+    }
+    const sourceInfo = await lstat(sourceRoot);
+    if (!sourceInfo.isDirectory() || sourceInfo.isSymbolicLink()) {
+      throw new Error('invalid-source-root');
+    }
+    files = await collectProjectSourceFiles(projectRoot);
   } catch {
     violations.push(violation('source.root-invalid'));
     return {
@@ -616,6 +715,9 @@ async function scanSources(sourceRoot, violations) {
   const importedSymbols = [];
   let routerImportCount = 0;
   for (const file of files) {
+    if (PROJECT_HASH_ONLY_FILES.has(file.relativePath)) {
+      continue;
+    }
     const text = await readFile(file.absolutePath, 'utf8');
     const result = scanSourceFile(text, file.relativePath);
     importedSymbols.push(...result.importedSymbols);
@@ -726,6 +828,7 @@ export async function evaluateRouterReachability({
   if (mode === 'post-build' && !distRoot) {
     violations.push(violation('input.dist-root-missing'));
   }
+  const projectRoot = path.dirname(path.resolve(packageJsonPath));
 
   const packageResult = await readJsonFile(
     packageJsonPath,
@@ -759,7 +862,7 @@ export async function evaluateRouterReachability({
     violations,
   });
 
-  const source = await scanSources(sourceRoot, violations);
+  const source = await scanSources(projectRoot, sourceRoot, violations);
   let bundle = { bundleFileCount: 0, bundleTreeSha256: null };
   if (mode === 'post-build' && distRoot) {
     bundle = await scanBundle(distRoot, violations);
