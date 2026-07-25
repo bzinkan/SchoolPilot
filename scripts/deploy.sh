@@ -13,6 +13,9 @@
 #     --classpilot-tile-auth-plan-gate --classpilot-tile-auth-plan-rehearsal
 #                                       # Build/register inactive exact candidates and run the preflight/full gate only
 #   ./scripts/deploy.sh production --backend --activate-emergency \
+#     --classpilot-tile-auth-plan-observation
+#                                       # Build/register inactive exact candidates and run one read-only base observation only
+#   ./scripts/deploy.sh production --backend --activate-emergency \
 #     --classpilot-tile-auth-plan-gate \
 #     --reuse-classpilot-tile-auth-plan-rehearsal <private-receipt-path> \
 #     --expected-classpilot-tile-auth-plan-rehearsal-sha256 <64-hex>
@@ -37,6 +40,7 @@ SKIP_WAIT=false
 ACTIVATE_EMERGENCY=false
 RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE=false
 RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=false
+RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION=false
 REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=""
 EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL_SHA256=""
 SAME_IMAGE_NETWORKING_STAGE=""
@@ -76,6 +80,10 @@ while [[ $# -gt 0 ]]; do
     --classpilot-tile-auth-plan-gate) RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE=true; shift ;;
     --classpilot-tile-auth-plan-rehearsal)
       RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=true
+      shift
+      ;;
+    --classpilot-tile-auth-plan-observation)
+      RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION=true
       shift
       ;;
     --reuse-classpilot-tile-auth-plan-rehearsal)
@@ -175,6 +183,14 @@ TILE_AUTH_PLAN_REHEARSAL_WORKER_TASK_DEFINITION_SHA256=""
 TILE_AUTH_PLAN_REHEARSAL_ATTEMPT_ADMITTED=false
 TILE_AUTH_PLAN_REHEARSAL_ATTEMPT_SHA256=""
 TILE_AUTH_PLAN_REHEARSAL_ATTEMPT_TERMINAL=false
+TILE_AUTH_PLAN_OBSERVATION_ID=""
+TILE_AUTH_PLAN_OBSERVATION_TASK_ARN=""
+TILE_AUTH_PLAN_OBSERVATION_TASK_EXIT_CODE=""
+TILE_AUTH_PLAN_OBSERVATION_LOG_STREAM_SHA256=""
+TILE_AUTH_PLAN_OBSERVATION_EVIDENCE_JSON=""
+TILE_AUTH_PLAN_OBSERVATION_POSTURE_SHA256=""
+TILE_AUTH_PLAN_OBSERVATION_PACKET_PATH=""
+TILE_AUTH_PLAN_OBSERVATION_PACKET_SHA256=""
 CLASSPILOT_TILE_AUTH_SERVICE_MUTATION_STARTED=false
 CLASSPILOT_TILE_AUTH_SAFE_TERMINAL_REACHED=false
 
@@ -532,7 +548,8 @@ production_backend_deploy_window_preflight() {
 }
 
 classpilot_tile_auth_plan_window_preflight() {
-  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE" != true ]]; then
+  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE" != true &&
+        "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" != true ]]; then
     return 0
   fi
 
@@ -1061,6 +1078,23 @@ validate_emergency_activation_mode() {
 }
 
 validate_classpilot_tile_auth_plan_gate_mode() {
+  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" == true ]]; then
+    if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE" == true ||
+          "$RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" == true ||
+          -n "$REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" ||
+          -n "$EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL_SHA256" ]]; then
+      error "The ClassPilot tile authorization observation is standalone and cannot admit, run, or consume a rehearsal or deployment gate."
+      return 1
+    fi
+    if [[ "$ENV" != "production" || "$DEPLOY_BACKEND" != true ||
+          "$DEPLOY_FRONTEND" != false || "$ACTIVATE_EMERGENCY" != true ||
+          -n "$SAME_IMAGE_NETWORKING_STAGE" || "$SKIP_WAIT" == true ]]; then
+      error "--classpilot-tile-auth-plan-observation is allowed only with production --backend --activate-emergency and rejects frontend, same-image, and --skip-wait modes."
+      return 1
+    fi
+    return 0
+  fi
+
   if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE" != true ]]; then
     if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" == true ||
           -n "$REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" ||
@@ -1353,7 +1387,7 @@ NODE
   local events_json sanitized_report="" sanitized_failure_code=""
   while (( SECONDS < log_deadline )); do
     events_json=""
-    if events_json=$(node \
+    if events_json=$(MSYS_NO_PATHCONV=1 node \
       "$SCRIPT_DIR/read-classpilot-tile-auth-plan-log-events.mjs" \
       --log-group-name "$log_group" \
       --log-stream-name "$log_stream" \
@@ -1429,7 +1463,8 @@ NODE
 }
 
 run_classpilot_tile_auth_plan_base_preflight() {
-  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" != true ]]; then
+  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" != true &&
+        "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" != true ]]; then
     return 0
   fi
 
@@ -1488,6 +1523,9 @@ NODE
     error "ECS did not return exactly one base-preflight task bound to the expected candidate revision."
     return 1
   fi
+  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" == true ]]; then
+    TILE_AUTH_PLAN_OBSERVATION_TASK_ARN="$task_arn"
+  fi
 
   set +e
   wait_for_classpilot_tile_auth_plan_task_stopped "$task_arn"
@@ -1544,11 +1582,30 @@ NODE
     error "The ClassPilot tile authorization base preflight log stream does not match the exact candidate task definition."
     return 1
   fi
+  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" == true ]]; then
+    TILE_AUTH_PLAN_OBSERVATION_TASK_EXIT_CODE="$task_exit_code"
+    if ! TILE_AUTH_PLAN_OBSERVATION_LOG_STREAM_SHA256=$(
+      printf '%s' "$log_stream" | node -e '
+        const crypto = require("crypto");
+        let value = "";
+        process.stdin.setEncoding("utf8");
+        process.stdin.on("data", chunk => { value += chunk; });
+        process.stdin.on("end", () => {
+          process.stdout.write(
+            crypto.createHash("sha256").update(value, "utf8").digest("hex")
+          );
+        });
+      '
+    ) || [[ ! "$TILE_AUTH_PLAN_OBSERVATION_LOG_STREAM_SHA256" =~ ^[a-f0-9]{64}$ ]]; then
+      error "The ClassPilot tile authorization observation log-stream binding could not be hashed."
+      return 1
+    fi
+  fi
 
   local log_deadline=$((SECONDS + TILE_AUTH_PLAN_LOG_WAIT_SECONDS))
-  local events_json="" sanitized_preflight="" sanitized_failure_code=""
+  local events_json="" sanitized_preflight="" sanitized_failure_code="" sanitized_funnel=""
   while (( SECONDS < log_deadline )); do
-    if events_json=$(node \
+    if events_json=$(MSYS_NO_PATHCONV=1 node \
       "$SCRIPT_DIR/read-classpilot-tile-auth-plan-log-events.mjs" \
       --log-group-name "$log_group" \
       --log-stream-name "$log_stream" \
@@ -1561,15 +1618,34 @@ NODE
         sanitized_preflight=""
       elif sanitized_failure_code=$(printf '%s' "$events_json" | \
         node "$SCRIPT_DIR/extract-classpilot-tile-auth-plan-failure.mjs" 2>/dev/null); then
-        break
+        if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" == true ]]; then
+          if sanitized_funnel=$(printf '%s' "$events_json" | \
+            node "$SCRIPT_DIR/validate-classpilot-tile-auth-plan-base-funnel-evidence.mjs" 2>/dev/null); then
+            break
+          fi
+          sanitized_funnel=""
+          sanitized_failure_code=""
+        else
+          break
+        fi
       else
         sanitized_failure_code=""
+        sanitized_funnel=""
       fi
     fi
     sleep "$TILE_AUTH_PLAN_LOG_POLL_SECONDS"
   done
 
   if [[ "$task_exit_code" != "0" ]]; then
+    if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" == true &&
+          "$task_exit_code" == "1" &&
+          "$sanitized_failure_code" == "representative_scenario_missing" &&
+          -n "$sanitized_funnel" ]]; then
+      TILE_AUTH_PLAN_OBSERVATION_EVIDENCE_JSON="$events_json"
+      success "ClassPilot tile authorization base observation captured a sanitized eligibility-funnel failure (failureCode=${sanitized_failure_code}, logStreamSha256=${TILE_AUTH_PLAN_OBSERVATION_LOG_STREAM_SHA256})"
+      printf '%s\n' "$sanitized_funnel"
+      return 0
+    fi
     if [[ -z "$sanitized_failure_code" ]]; then
       error "The failed ClassPilot tile authorization base preflight did not publish one allowlisted sanitized failure."
     else
@@ -1584,6 +1660,9 @@ NODE
 
   TILE_AUTH_PLAN_PREFLIGHT_EVENTS_JSON="$events_json"
   TILE_AUTH_PLAN_PREFLIGHT_EVIDENCE_JSON="$sanitized_preflight"
+  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" == true ]]; then
+    TILE_AUTH_PLAN_OBSERVATION_EVIDENCE_JSON="$events_json"
+  fi
   success "ClassPilot tile authorization base preflight passed (logGroup=${log_group}, logStream=${log_stream})"
   printf '%s\n' "$sanitized_preflight"
 }
@@ -1634,6 +1713,107 @@ resolve_classpilot_tile_auth_candidate_network() {
   fi
   NETWORK_CONFIG="$network_config"
   TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256="$network_sha"
+}
+
+capture_classpilot_tile_auth_observation_posture() {
+  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" != true ]]; then
+    return 0
+  fi
+
+  local snapshot
+  if ! snapshot=$(production_service_snapshot); then
+    error "The ClassPilot tile authorization observation could not capture the final production service posture."
+    return 1
+  fi
+  if ! validate_production_service_snapshot \
+    "$snapshot" \
+    "$PRODUCTION_ROLLBACK_API_TASK_DEFINITION" \
+    "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION"; then
+    error "The production service posture drifted before the ClassPilot tile authorization observation packet was sealed."
+    return 1
+  fi
+
+  if ! TILE_AUTH_PLAN_OBSERVATION_POSTURE_SHA256=$(
+    TILE_AUTH_PLAN_OBSERVATION_SERVICE_SNAPSHOT="$snapshot" \
+    EXPECTED_API_SERVICE="$SERVICE" \
+    EXPECTED_WORKER_SERVICE="$WORKER_SERVICE" \
+    EXPECTED_ENVIRONMENT="$ENV" \
+    EXPECTED_REGION="$REGION" \
+    EXPECTED_ACCOUNT_ID="$ACCOUNT_ID" node <<'NODE'
+const crypto = require("crypto");
+const lines = (process.env.TILE_AUTH_PLAN_OBSERVATION_SERVICE_SNAPSHOT || "")
+  .split(/\r?\n/)
+  .filter((line) => line.length > 0);
+const expectedNames = new Set([
+  process.env.EXPECTED_API_SERVICE,
+  process.env.EXPECTED_WORKER_SERVICE,
+]);
+if (lines.length !== 2 || expectedNames.size !== 2) process.exit(1);
+const services = lines.map((line) => {
+  const fields = line.split("\t").map((value) => value.replace(/\r$/, ""));
+  if (fields.length !== 9 || !expectedNames.has(fields[0])) process.exit(1);
+  return {
+    serviceName: fields[0],
+    status: fields[1],
+    desiredCount: Number(fields[2]),
+    runningCount: Number(fields[3]),
+    pendingCount: Number(fields[4]),
+    deploymentCount: Number(fields[5]),
+    taskDefinitionArn: fields[6],
+    primaryTaskDefinitionArn: fields[7],
+    rolloutState: fields[8],
+  };
+}).sort((left, right) => left.serviceName.localeCompare(right.serviceName));
+if (new Set(services.map((service) => service.serviceName)).size !== 2 ||
+    services.some((service) =>
+      service.status !== "ACTIVE" ||
+      service.rolloutState !== "COMPLETED" ||
+      !Number.isSafeInteger(service.desiredCount) ||
+      service.desiredCount < 1 ||
+      service.runningCount !== service.desiredCount ||
+      service.pendingCount !== 0 ||
+      service.deploymentCount !== 1 ||
+      service.taskDefinitionArn !== service.primaryTaskDefinitionArn
+    )) {
+  process.exit(1);
+}
+
+const posture = {
+  accountId: process.env.EXPECTED_ACCOUNT_ID,
+  environment: process.env.EXPECTED_ENVIRONMENT,
+  region: process.env.EXPECTED_REGION,
+  services,
+  version: "classpilot-tile-auth-plan-observation-posture-v1",
+};
+process.stdout.write(
+  crypto.createHash("sha256")
+    .update(JSON.stringify(posture), "utf8")
+    .digest("hex")
+);
+NODE
+  ) || [[ ! "$TILE_AUTH_PLAN_OBSERVATION_POSTURE_SHA256" =~ ^[a-f0-9]{64}$ ]]; then
+    error "The ClassPilot tile authorization observation posture could not be canonicalized."
+    return 1
+  fi
+}
+
+assert_classpilot_tile_auth_observation_network_unchanged() {
+  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" != true ]]; then
+    return 0
+  fi
+  local expected_network_sha="$TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256"
+  if [[ ! "$expected_network_sha" =~ ^[a-f0-9]{64}$ ]]; then
+    error "The ClassPilot tile authorization observation has no bound candidate network hash."
+    return 1
+  fi
+  if ! resolve_classpilot_tile_auth_candidate_network; then
+    error "The ClassPilot tile authorization observation could not re-read the active candidate network."
+    return 1
+  fi
+  if [[ "$TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256" != "$expected_network_sha" ]]; then
+    error "The active candidate network drifted during the ClassPilot tile authorization observation."
+    return 1
+  fi
 }
 
 assert_classpilot_rehearsal_network_unchanged() {
@@ -2180,6 +2360,132 @@ NODE
   TILE_AUTH_PLAN_REHEARSAL_RECEIPT_PATH="$receipt_path"
   TILE_AUTH_PLAN_REHEARSAL_RECEIPT_SHA256="$receipt_sha"
   success "ClassPilot tile authorization candidate rehearsal passed (receipt=${receipt_path}, receiptSha256=${receipt_sha}, expiresAtUtc=${expires_at})"
+}
+
+write_classpilot_tile_auth_plan_observation_packet() {
+  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" != true ]]; then
+    return 0
+  fi
+  if [[ -z "${LOCALAPPDATA:-}" ]]; then
+    error "LOCALAPPDATA is required for the ACL-restricted ClassPilot tile authorization observation packet."
+    return 1
+  fi
+  if [[ -z "$TILE_AUTH_PLAN_OBSERVATION_EVIDENCE_JSON" ||
+        ! "$TILE_AUTH_PLAN_OBSERVATION_TASK_ARN" =~ ^arn:aws:ecs:${REGION}:${ACCOUNT_ID}:task/([^/]+/)?[a-f0-9]{32}$ ||
+        ! "$TILE_AUTH_PLAN_OBSERVATION_TASK_EXIT_CODE" =~ ^([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$ ||
+        ! "$TILE_AUTH_PLAN_OBSERVATION_LOG_STREAM_SHA256" =~ ^[a-f0-9]{64}$ ||
+        ! "$TILE_AUTH_PLAN_OBSERVATION_POSTURE_SHA256" =~ ^[a-f0-9]{64}$ ||
+        ! "$TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256" =~ ^[a-f0-9]{64}$ ]]; then
+    error "The ClassPilot tile authorization observation bindings are incomplete or malformed."
+    return 1
+  fi
+
+  TILE_AUTH_PLAN_OBSERVATION_ID="tile-plan-observe-$(date -u +%Y%m%dt%H%M%Sz)-${LOCAL_SHA:0:12}"
+  local output_directory="${LOCALAPPDATA}/SchoolPilot/load-gates/tile-auth-observations/${LOCAL_SHA}/${TILE_AUTH_PLAN_OBSERVATION_ID}"
+  local identity_args=(
+    --observation-id "$TILE_AUTH_PLAN_OBSERVATION_ID"
+    --application-sha "$LOCAL_SHA"
+    --image-digest "$DIGEST"
+    --candidate-api-task-definition-arn "$API_ROLLOUT_TASK_DEF"
+    --candidate-worker-task-definition-arn "$WORKER_CANDIDATE_TASK_DEF"
+    --active-api-task-definition-arn "$PRODUCTION_ROLLBACK_API_TASK_DEFINITION_ARN"
+    --active-worker-task-definition-arn "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION_ARN"
+    --network-configuration-sha256 "$TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256"
+    --production-posture-sha256 "$TILE_AUTH_PLAN_OBSERVATION_POSTURE_SHA256"
+    --terminal-task-arn "$TILE_AUTH_PLAN_OBSERVATION_TASK_ARN"
+    --terminal-task-exit-code "$TILE_AUTH_PLAN_OBSERVATION_TASK_EXIT_CODE"
+    --terminal-log-stream-sha256 "$TILE_AUTH_PLAN_OBSERVATION_LOG_STREAM_SHA256"
+  )
+
+  local write_summary write_binding packet_path packet_sha observation_id outcome eligible_deploy eligible_diagnostic eligible_certification extra
+  if ! write_summary=$(printf '%s' "$TILE_AUTH_PLAN_OBSERVATION_EVIDENCE_JSON" | node \
+    "$SCRIPT_DIR/manage-classpilot-tile-auth-plan-observation.mjs" write \
+    --output "$output_directory" \
+    "${identity_args[@]}" 2>/dev/null); then
+    error "The ACL-restricted ClassPilot tile authorization observation packet could not be sealed."
+    return 1
+  fi
+  if ! write_binding=$(CLASSPILOT_OBSERVATION_SUMMARY="$write_summary" node <<'NODE'
+const value = JSON.parse(process.env.CLASSPILOT_OBSERVATION_SUMMARY || "null");
+if (value?.schemaVersion !== 1 ||
+    value?.version !== "classpilot-tile-auth-plan-observation-v1" ||
+    typeof value.path !== "string" || value.path.length === 0 ||
+    !/^[a-f0-9]{64}$/.test(value.sha256 || "") ||
+    !/^[a-z0-9][a-z0-9-]{7,127}$/.test(value.observationId || "") ||
+    !["base_eligible", "base_ineligible"].includes(value.observationOutcome) ||
+    value.eligibleForDeployment !== false ||
+    value.eligibleForDiagnostic !== false ||
+    value.eligibleForCertification !== false) process.exit(1);
+process.stdout.write([
+  value.path,
+  value.sha256,
+  value.observationId,
+  value.observationOutcome,
+  String(value.eligibleForDeployment),
+  String(value.eligibleForDiagnostic),
+  String(value.eligibleForCertification),
+].join("\t"));
+NODE
+  ); then
+    error "The sealed ClassPilot tile authorization observation summary was malformed."
+    return 1
+  fi
+  IFS=$'\t' read -r packet_path packet_sha observation_id outcome eligible_deploy eligible_diagnostic eligible_certification extra <<< "$write_binding"
+  if [[ -z "$packet_path" || ! "$packet_sha" =~ ^[a-f0-9]{64}$ ||
+        "$observation_id" != "$TILE_AUTH_PLAN_OBSERVATION_ID" ||
+        ( "$outcome" != "base_eligible" && "$outcome" != "base_ineligible" ) ||
+        "$eligible_deploy" != "false" || "$eligible_diagnostic" != "false" ||
+        "$eligible_certification" != "false" || -n "$extra" ]]; then
+    error "The sealed ClassPilot tile authorization observation summary was ambiguous."
+    return 1
+  fi
+
+  local inspect_summary inspect_binding inspect_path inspect_sha inspect_id inspect_outcome inspect_deploy inspect_diagnostic inspect_certification
+  if ! inspect_summary=$(node \
+    "$SCRIPT_DIR/manage-classpilot-tile-auth-plan-observation.mjs" inspect \
+    --packet "$packet_path" \
+    --expected-packet-sha256 "$packet_sha" \
+    "${identity_args[@]}" 2>/dev/null); then
+    error "The sealed ClassPilot tile authorization observation packet failed independent identity and companion-evidence inspection."
+    return 1
+  fi
+  if ! inspect_binding=$(CLASSPILOT_OBSERVATION_SUMMARY="$inspect_summary" node <<'NODE'
+const value = JSON.parse(process.env.CLASSPILOT_OBSERVATION_SUMMARY || "null");
+if (value?.schemaVersion !== 1 ||
+    value?.version !== "classpilot-tile-auth-plan-observation-v1" ||
+    typeof value.path !== "string" || value.path.length === 0 ||
+    !/^[a-f0-9]{64}$/.test(value.sha256 || "") ||
+    !/^[a-z0-9][a-z0-9-]{7,127}$/.test(value.observationId || "") ||
+    !["base_eligible", "base_ineligible"].includes(value.observationOutcome) ||
+    value.eligibleForDeployment !== false ||
+    value.eligibleForDiagnostic !== false ||
+    value.eligibleForCertification !== false) process.exit(1);
+process.stdout.write([
+  value.path,
+  value.sha256,
+  value.observationId,
+  value.observationOutcome,
+  String(value.eligibleForDeployment),
+  String(value.eligibleForDiagnostic),
+  String(value.eligibleForCertification),
+].join("\t"));
+NODE
+  ); then
+    error "The inspected ClassPilot tile authorization observation summary was malformed."
+    return 1
+  fi
+  IFS=$'\t' read -r inspect_path inspect_sha inspect_id inspect_outcome inspect_deploy inspect_diagnostic inspect_certification extra <<< "$inspect_binding"
+  if [[ "$inspect_path" != "$packet_path" || "$inspect_sha" != "$packet_sha" ||
+        "$inspect_id" != "$observation_id" || "$inspect_outcome" != "$outcome" ||
+        "$inspect_deploy" != "false" || "$inspect_diagnostic" != "false" ||
+        "$inspect_certification" != "false" || -n "$extra" ]]; then
+    error "The ClassPilot tile authorization observation packet changed between sealing and inspection."
+    return 1
+  fi
+
+  TILE_AUTH_PLAN_OBSERVATION_PACKET_PATH="$packet_path"
+  TILE_AUTH_PLAN_OBSERVATION_PACKET_SHA256="$packet_sha"
+  success "ClassPilot tile authorization observation sealed (outcome=${outcome}, packet=${packet_path}, packetSha256=${packet_sha}, eligibleForDeployment=false, eligibleForDiagnostic=false, eligibleForCertification=false)"
 }
 
 launch_safe_active_api_preflight() {
@@ -3186,6 +3492,7 @@ info "Frontend:   $DEPLOY_FRONTEND"
 info "2048 API:   $ACTIVATE_EMERGENCY"
 info "Tile plans: $RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE"
 info "Plan rehearse: $RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL"
+info "Plan observe:  $RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION"
 info "Plan receipt:  ${REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL:+provided}"
 info "Same image: ${SAME_IMAGE_NETWORKING_STAGE:-false}"
 echo ""
@@ -3558,7 +3865,8 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
     success "Launch-safe API rollout selected: ${API_ROLLOUT_TASK_DEF} (512 CPU / 2048 MiB)"
   fi
   register_classpilot_candidate_worker_task_definition
-  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE" == true ]]; then
+  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE" == true ||
+        "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" == true ]]; then
     verify_classpilot_rehearsed_candidates
   fi
   fi
@@ -3567,19 +3875,28 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
   # the service VPC before the autoscaling hold, migration, or service update.
   # It cannot seed certification; it only proves the reviewed authorization
   # SQL plans and teaching-session school integrity for this release.
-  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE" == true ]]; then
+  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE" == true ||
+        "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" == true ]]; then
     if ! production_backend_deploy_window_preflight "before ClassPilot plan-gate execution"; then
       exit 1
     fi
   fi
-  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" == true ]]; then
-    production_backend_capacity_preflight "before candidate gate-only rehearsal"
+  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" == true ||
+        "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" == true ]]; then
+    production_backend_capacity_preflight "before candidate read-only preflight"
     if [[ "$PRODUCTION_PREFLIGHT_API_TASK_DEFINITION" != "$PRODUCTION_ROLLBACK_API_TASK_DEFINITION" ||
           "$PRODUCTION_PREFLIGHT_WORKER_TASK_DEFINITION" != "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION" ]]; then
-      error "The active API/worker baseline changed after candidate preparation; refusing the rehearsal."
+      error "The active API/worker baseline changed after candidate preparation; refusing the read-only candidate preflight."
       exit 1
     fi
     run_classpilot_tile_auth_plan_base_preflight
+  fi
+  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" == true ]]; then
+    assert_classpilot_tile_auth_observation_network_unchanged
+    capture_classpilot_tile_auth_observation_posture
+    write_classpilot_tile_auth_plan_observation_packet
+    success "Candidate base observation complete; no rehearsal admission, full plan gate, migration, scaling hold, service update, frontend publication, fixture mutation, lease, or traffic action was attempted."
+    exit 0
   fi
   run_classpilot_tile_auth_plan_gate predeploy
   if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" == true ]]; then

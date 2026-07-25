@@ -14,9 +14,11 @@ const ciWorkflow = readFileSync(
 describe("ClassPilot tile authorization readiness governance", () => {
   it("keeps the v2 evidence, one-attempt receipt, and database regressions in CI", () => {
     const backendTests = [
+      "tests/classpilot-tile-auth-plan-base-funnel-evidence.test.ts",
       "tests/classpilot-tile-auth-plan-evidence-validator.test.ts",
       "tests/classpilot-tile-auth-plan-lifecycle-cli.test.ts",
       "tests/deploy-classpilot-tile-auth-plan-gate.test.ts",
+      "tests/classpilot-tile-auth-plan-observation.test.ts",
       "tests/classpilot-tile-auth-plan-rehearsal-receipt.test.ts",
       "tests/classpilot-tile-auth-plan-readiness-governance.test.ts",
     ];
@@ -117,6 +119,35 @@ describe("ClassPilot tile authorization readiness governance", () => {
     );
   });
 
+  it("keeps observation evidence non-consuming and ineligible", () => {
+    for (const required of [
+      "--classpilot-tile-auth-plan-observation",
+      "`classpilot-tile-auth-plan-base-funnel-v1`",
+      "`classpilot-tile-auth-plan-observation-v1`",
+      "creates no\nrehearsal admission or receipt",
+      "`base_eligible`",
+      "`base_ineligible`",
+      "`eligibleForDeployment`, `eligibleForDiagnostic`, and\n`eligibleForCertification` are exactly `false`",
+      "current authorization permits exactly one and no\nautomatic retry",
+      "is never an alternate deployment path",
+      "report-only exception",
+    ]) {
+      assert.ok(
+        runbook.includes(required),
+        `runbook is missing the observation invariant: ${required}`
+      );
+    }
+
+    assert.match(
+      runbook,
+      /This failure evidence cannot satisfy the unchanged passing preflight or either\s+complete release gate\./
+    );
+    assert.match(
+      runbook,
+      /Rehearsal inspection and\s+consumption, deployment admission, diagnostic binding, and certification\s+validation must reject an observation packet/
+    );
+  });
+
   it("records the failed candidate and enforces the readiness-only boundary", () => {
     for (const required of [
       "`3c82f540cccfaf0badd70312e76e69770b6cfaed`",
@@ -124,9 +155,10 @@ describe("ClassPilot tile authorization readiness governance", () => {
       "`schoolpilot-production-api:133`",
       "`schoolpilot-production-api-emergency:33`",
       "is historical-only",
-      "This remediation stops after the independently validated readiness packet.",
-      "It authorizes no production fixture refresh or provisioning",
-      "A later\ndiagnostic requires separate approval after fixture provenance is resolved.",
+      "The current observation-only remediation stops after one independently\ninspected observation packet.",
+      "It authorizes no rehearsal, serving deployment",
+      "production fixture refresh or provisioning",
+      "diagnostic binding",
       "failure is\nterminal for that SHA",
       "the per-SHA atomic admission marker, immutable passed terminal marker",
       "their common protected execution-authority\n  SHA-256",
@@ -135,6 +167,28 @@ describe("ClassPilot tile authorization readiness governance", () => {
       assert.ok(
         runbook.includes(required),
         `runbook is missing the stop-boundary invariant: ${required}`
+      );
+    }
+    assert.doesNotMatch(
+      runbook,
+      /--classpilot-tile-auth-plan-gate\s+\\\s*\n\s*--classpilot-tile-auth-plan-observation/,
+      "observation mode must remain standalone from the deployment gate"
+    );
+  });
+
+  it("records the f326 observation predecessor as historical-only", () => {
+    for (const required of [
+      "`f3265563ac2efb673a2974a1adafefe32dcedb42`",
+      "`sha256:56e973299479638e02f496b0641a21945440367cbe0a3d782c3fc75e6442673a`",
+      "`schoolpilot-production-api-emergency:34`",
+      "`schoolpilot-production-scheduler-worker:49`",
+      "`representative_scenario_missing`",
+      "ineligible for deployment, diagnostics, and\ncertification",
+      "must not be promoted or reused",
+    ]) {
+      assert.ok(
+        runbook.includes(required),
+        `runbook is missing the historical observation predecessor: ${required}`
       );
     }
   });

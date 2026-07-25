@@ -45,9 +45,11 @@ jobs:
           tests/school-time-cache.test.ts
           tests/hot-path-logging.test.ts
           tests/deploy-capacity-preflight.test.ts
+          tests/classpilot-tile-auth-plan-base-funnel-evidence.test.ts
           tests/classpilot-tile-auth-plan-evidence-validator.test.ts
           tests/classpilot-tile-auth-plan-lifecycle-cli.test.ts
           tests/deploy-classpilot-tile-auth-plan-gate.test.ts
+          tests/classpilot-tile-auth-plan-observation.test.ts
           tests/classpilot-tile-auth-plan-rehearsal-receipt.test.ts
           tests/classpilot-tile-auth-plan-readiness-governance.test.ts
           tests/deploy-runtime-secret-preflight.test.ts

@@ -5,6 +5,7 @@ import {
   ClasspilotTileAuthorizationPlanCheckError,
   runClasspilotTileAuthorizationPlanBasePreflight,
   runClasspilotTileAuthorizationPlanCheck,
+  validateClasspilotTileAuthorizationPlanBaseFunnelEvidence,
 } from "../services/classpilotTileAuthorizationPlanCheck.js";
 
 type CliOptions = {
@@ -231,6 +232,27 @@ export function createClasspilotTilePlanResidueClientReleaseError(
     : undefined;
 }
 
+export function sanitizeClasspilotTileAuthorizationPlanCheckFailure(
+  error: ClasspilotTileAuthorizationPlanCheckError
+): Record<string, unknown> {
+  const failure: Record<string, unknown> = {
+    status: "failed",
+    failureCode: error.failureCode,
+    labels: error.labels,
+    invalidTeachingSessionSchools: error.invalidCount,
+  };
+  if (
+    error.failureCode === "representative_scenario_missing" &&
+    error.funnelEvidence !== undefined
+  ) {
+    failure.funnelEvidence =
+      validateClasspilotTileAuthorizationPlanBaseFunnelEvidence(
+        error.funnelEvidence
+      );
+  }
+  return failure;
+}
+
 function usage(): string {
   return [
     "Usage: node dist/cli/checkClasspilotTileAuthorizationPlans.js (--execute | --preflight-base) [options]",
@@ -393,15 +415,7 @@ export async function runClasspilotTilePlanCli(args: string[]): Promise<number> 
       );
     }
     if (error instanceof ClasspilotTileAuthorizationPlanCheckError) {
-      emit(
-        {
-          status: "failed",
-          failureCode: error.failureCode,
-          labels: error.labels,
-          invalidTeachingSessionSchools: error.invalidCount,
-        },
-        true
-      );
+      emit(sanitizeClasspilotTileAuthorizationPlanCheckFailure(error), true);
     } else {
       emit({ status: "failed", failureCode: "database_operation_failed" }, true);
     }

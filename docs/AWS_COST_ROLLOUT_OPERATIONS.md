@@ -801,6 +801,19 @@ reused plus missing equal to 80, and zero conflicts. It contains aggregate
 counts only. Preflight is advisory fail-fast evidence; it does not replace
 either complete rollback-only gate.
 
+A failed base preflight emits one
+`classpilot-tile-auth-plan-base-funnel-v1` object from that same
+snapshot-consistent statement. Its exact top-level fields are `version`,
+`failureStage`, `firstEmptyStage`, `cohortSize`, `counts`, and
+`sessionPosture`. The allowlisted counts cover only the owned synthetic
+group/marker/license, roster/device/supervision/co-teacher/cohort,
+office-membership/cohort, alternate-teacher, selection, and final-base stages.
+They contain no identifiers or SQL. `base_funnel` identifies the first zero
+stage, `base_shape` proves a selected base with an invalid aggregate shape, and
+`session_posture` binds the 80-pair reused/missing/conflicting arithmetic.
+This failure evidence cannot satisfy the unchanged passing preflight or either
+complete release gate.
+
 The failed pre-deployment artifacts at application SHA
 `ba416e4f46cc175af62863e3a06573ef5d23504e`, image digest
 `sha256:0c4653b244e8e7bc7a12ac7828b5e9421eacf376dc3d5ab7b7ac75413f844c5a`,
@@ -829,6 +842,50 @@ because no stable base satisfied the remaining active-session dependency. No
 candidate service was activated, and no migration, frontend publication,
 query-identity receipt, fixture refresh, Database Insights lease, or traffic
 occurred. Never reuse these identities or their missing receipt.
+
+The later failed preflight candidate at application SHA
+`f3265563ac2efb673a2974a1adafefe32dcedb42`, image digest
+`sha256:56e973299479638e02f496b0641a21945440367cbe0a3d782c3fc75e6442673a`,
+and inactive task definitions `schoolpilot-production-api-emergency:34` and
+`schoolpilot-production-scheduler-worker:49` is historical-only. It emitted
+`representative_scenario_missing` but no eligible rehearsal receipt, migration,
+service activation, frontend publication, fixture mutation, monitoring lease,
+or traffic. These identities are ineligible for deployment, diagnostics, and
+certification and must not be promoted or reused.
+
+For an explicitly authorized, non-consuming investigation, run exactly one
+inactive-candidate observation:
+
+```bash
+./scripts/deploy.sh production --backend --activate-emergency \
+  --classpilot-tile-auth-plan-observation
+```
+
+Observation mode performs the normal source, workflow, timing, AWS-identity,
+topology, and production-posture checks; builds, pushes, and registers the
+inactive API/worker candidate; and runs only the read-only base preflight. It
+performs no migration, scaling hold, service update, frontend publication,
+fixture mutation, Database Insights lease, or workload traffic. It creates no
+rehearsal admission or receipt, does not consume the per-SHA one-attempt
+rehearsal boundary, and is never an alternate deployment path.
+
+Seal the result as an ACL-private
+`classpilot-tile-auth-plan-observation-v1` packet. The packet is a strict
+tagged union: terminal exit zero requires outcome `base_eligible` and exactly
+one canonical `classpilot-tile-auth-plan-base-preflight-v1` companion; the
+expected base-ineligibility exit `1` requires outcome `base_ineligible` and
+exactly one canonical `classpilot-tile-auth-plan-base-funnel-v1` companion.
+Every other nonzero exit fails closed without an observation packet. It binds the observation
+ID, SHA, digest, inactive task definitions, active baseline, network and
+production-posture hashes, terminal task ARN/exit code/log-stream hash,
+canonical evidence/hash, and UTC creation timestamp. In both variants,
+`eligibleForDeployment`, `eligibleForDiagnostic`, and
+`eligibleForCertification` are exactly `false`. Rehearsal inspection and
+consumption, deployment admission, diagnostic binding, and certification
+validation must reject an observation packet even when its base preflight
+passed. Observation is technically retryable, but a run authorization may
+bound it more tightly; the current authorization permits exactly one and no
+automatic retry.
 
 For the completed session-independent remediation, require exact merged-SHA
 CI, CodeQL, Gitleaks, and Trivy success, then save and independently parse a
@@ -916,11 +973,13 @@ sanitized gate failure code. Exit zero plus complete valid evidence remains
 mandatory for acceptance; log binding must never replace the real gate
 failure.
 
-This remediation stops after the independently validated readiness packet.
-It authorizes no production fixture refresh or provisioning, historical-state
-promotion, Database Insights lease, diagnostic binding, `Validate`, workload
-traffic, certification preparation, or certification traffic. A later
-diagnostic requires separate approval after fixture provenance is resolved.
+The current observation-only remediation stops after one independently
+inspected observation packet. It authorizes no rehearsal, serving deployment,
+report-only exception, production fixture refresh or provisioning,
+historical-state promotion, Database Insights lease, diagnostic binding,
+`Validate`, workload traffic, certification preparation, or certification
+traffic. The observed stage counts must drive a new, separately approved
+predicate or fixture-continuity remediation; do not apply an automatic fix.
 Any candidate rehearsal, preflight, gate, rollback, residue check, deployment,
 convergence, offline rehearsal, host smoke, or scaling-restoration failure is
 terminal for that SHA; do not repeat, patch in place, or consume its receipt.
