@@ -3,6 +3,7 @@
 import { pathToFileURL } from "node:url";
 
 const ALLOWED_FAILURE_CODES = new Set([
+  "base_funnel_evidence_invalid",
   "database_operation_failed",
   "execute_required",
   "history_fallback_query_identity_invalid",

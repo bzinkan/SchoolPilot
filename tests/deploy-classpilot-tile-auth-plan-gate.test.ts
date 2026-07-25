@@ -288,6 +288,208 @@ validate_classpilot_tile_auth_plan_gate_mode
     }
   });
 
+  it("keeps the read-only observation standalone from rehearsal and deployment admission", () => {
+    assert.match(
+      deploySource,
+      /--classpilot-tile-auth-plan-observation\)\s+RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION=true/
+    );
+    const accepted = runDeployHelper(`
+ENV=production
+DEPLOY_BACKEND=true
+DEPLOY_FRONTEND=false
+ACTIVATE_EMERGENCY=true
+SAME_IMAGE_NETWORKING_STAGE=""
+SKIP_WAIT=false
+RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE=false
+RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=false
+RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION=true
+REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=""
+EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL_SHA256=""
+validate_classpilot_tile_auth_plan_gate_mode
+`);
+    assert.equal(accepted.status, 0, accepted.stderr);
+
+    for (const invalid of [
+      "RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE=true",
+      "RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=true",
+      "ENV=staging",
+      "DEPLOY_FRONTEND=true",
+      "ACTIVATE_EMERGENCY=false",
+      "SAME_IMAGE_NETWORKING_STAGE=PublicEcs",
+      "SKIP_WAIT=true",
+    ]) {
+      const rejected = runDeployHelper(`
+ENV=production
+DEPLOY_BACKEND=true
+DEPLOY_FRONTEND=false
+ACTIVATE_EMERGENCY=true
+SAME_IMAGE_NETWORKING_STAGE=""
+SKIP_WAIT=false
+RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE=false
+RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=false
+RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION=true
+REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=""
+EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL_SHA256=""
+${invalid}
+validate_classpilot_tile_auth_plan_gate_mode
+`);
+      assert.notEqual(rejected.status, 0, invalid);
+    }
+
+    const noAdmission = runDeployHelper(`
+RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE=false
+RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=false
+RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION=true
+TILE_AUTH_PLAN_REHEARSAL_ATTEMPT_ADMITTED=false
+admit_classpilot_tile_auth_plan_rehearsal_attempt
+[[ "$TILE_AUTH_PLAN_REHEARSAL_ATTEMPT_ADMITTED" == false ]]
+`);
+    assert.equal(noAdmission.status, 0, noAdmission.stderr);
+  });
+
+  it("stops a base observation before the full gate and every deployment mutation", () => {
+    const backendStart = deploySource.indexOf("# BACKEND DEPLOY");
+    const candidateRegistration = deploySource.indexOf(
+      "register_classpilot_candidate_worker_task_definition",
+      backendStart
+    );
+    const preflight = deploySource.indexOf(
+      "run_classpilot_tile_auth_plan_base_preflight",
+      candidateRegistration
+    );
+    const packet = deploySource.indexOf(
+      "write_classpilot_tile_auth_plan_observation_packet",
+      preflight
+    );
+    const observationStop = deploySource.indexOf(
+      'success "Candidate base observation complete;',
+      packet
+    );
+    const observationExit = deploySource.indexOf("exit 0", observationStop);
+    const fullGate = deploySource.indexOf(
+      "run_classpilot_tile_auth_plan_gate predeploy",
+      observationExit
+    );
+    const hold = deploySource.indexOf(
+      "acquire_production_scaling_hold",
+      observationExit
+    );
+    assert.ok(
+      backendStart > 0 &&
+      candidateRegistration > backendStart &&
+      preflight > candidateRegistration &&
+      packet > preflight &&
+      observationStop > packet &&
+      observationExit > observationStop &&
+      fullGate > observationExit &&
+      hold > fullGate
+    );
+
+    const observationPath = deploySource.slice(backendStart, observationExit);
+    assert.doesNotMatch(observationPath, /run_classpilot_tile_auth_plan_gate predeploy/);
+    assert.doesNotMatch(observationPath, /write_classpilot_rehearsal_receipt/);
+    assert.doesNotMatch(observationPath, /acquire_production_scaling_hold/);
+    assert.doesNotMatch(observationPath, /RUN_MIGRATIONS_ONLY","value":"true"/);
+    assert.doesNotMatch(observationPath, /^\s*aws ecs update-service/m);
+    assert.doesNotMatch(
+      observationPath,
+      /^\s*(?:aws s3 sync|aws cloudfront create-invalidation)/m
+    );
+    assert.doesNotMatch(
+      observationPath,
+      /prepare-classpilot-load-test|refresh-and-snapshot-fixtures|database-insights-lease|load:classpilot/
+    );
+    assert.match(
+      observationPath,
+      /run_classpilot_tile_auth_plan_base_preflight[\s\S]*assert_classpilot_tile_auth_observation_network_unchanged[\s\S]*capture_classpilot_tile_auth_observation_posture[\s\S]*write_classpilot_tile_auth_plan_observation_packet/
+    );
+    assert.match(
+      deploySource,
+      /eligibleForDeployment=false, eligibleForDiagnostic=false, eligibleForCertification=false/
+    );
+    const preflightImplementation = deploySource.slice(
+      deploySource.indexOf("run_classpilot_tile_auth_plan_base_preflight() {"),
+      deploySource.indexOf(
+        "\nresolve_classpilot_tile_auth_candidate_network()",
+        deploySource.indexOf("run_classpilot_tile_auth_plan_base_preflight() {")
+      )
+    );
+    assert.match(
+      preflightImplementation,
+      /validate-classpilot-tile-auth-plan-base-funnel-evidence\.mjs/
+    );
+    assert.match(
+      preflightImplementation,
+      /task_exit_code" == "1"[\s\S]*sanitized_failure_code" == "representative_scenario_missing"[\s\S]*TILE_AUTH_PLAN_OBSERVATION_EVIDENCE_JSON="\$events_json"[\s\S]*return 0/
+    );
+    assert.match(
+      deploySource,
+      /manage-classpilot-tile-auth-plan-observation\.mjs" write[\s\S]*manage-classpilot-tile-auth-plan-observation\.mjs" inspect/
+    );
+  });
+
+  it("revalidates the exact candidate network after the observation task", () => {
+    const implementation = deploySource.slice(
+      deploySource.indexOf(
+        "assert_classpilot_tile_auth_observation_network_unchanged() {"
+      ),
+      deploySource.indexOf(
+        "\nassert_classpilot_rehearsal_network_unchanged()",
+        deploySource.indexOf(
+          "assert_classpilot_tile_auth_observation_network_unchanged() {"
+        )
+      )
+    );
+    assert.match(
+      implementation,
+      /expected_network_sha="\$TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256"/
+    );
+    assert.match(
+      implementation,
+      /resolve_classpilot_tile_auth_candidate_network/
+    );
+    assert.match(
+      implementation,
+      /TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256" != "\$expected_network_sha"/
+    );
+  });
+
+  it("hashes only a stable exact serving posture into observation evidence", () => {
+    const apiArn =
+      "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:31";
+    const workerArn =
+      "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:48";
+    const accepted = runDeployHelper(`
+RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE=false
+RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=false
+RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION=true
+PRODUCTION_ROLLBACK_API_TASK_DEFINITION='schoolpilot-production-api-emergency:31'
+PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION='schoolpilot-production-scheduler-worker:48'
+production_service_snapshot() {
+  printf '%s\\tACTIVE\\t1\\t1\\t0\\t1\\t%s\\t%s\\tCOMPLETED\\n' "$SERVICE" '${apiArn}' '${apiArn}'
+  printf '%s\\tACTIVE\\t1\\t1\\t0\\t1\\t%s\\t%s\\tCOMPLETED\\n' "$WORKER_SERVICE" '${workerArn}' '${workerArn}'
+}
+capture_classpilot_tile_auth_observation_posture
+[[ "$TILE_AUTH_PLAN_OBSERVATION_POSTURE_SHA256" =~ ^[a-f0-9]{64}$ ]]
+`);
+    assert.equal(accepted.status, 0, accepted.stderr);
+
+    const drifted = runDeployHelper(`
+RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE=false
+RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=false
+RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION=true
+PRODUCTION_ROLLBACK_API_TASK_DEFINITION='schoolpilot-production-api-emergency:31'
+PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION='schoolpilot-production-scheduler-worker:48'
+production_service_snapshot() {
+  printf '%s\\tACTIVE\\t1\\t1\\t0\\t1\\t%s\\t%s\\tCOMPLETED\\n' "$SERVICE" '${apiArn.replace(":31", ":32")}' '${apiArn.replace(":31", ":32")}'
+  printf '%s\\tACTIVE\\t1\\t1\\t0\\t1\\t%s\\t%s\\tCOMPLETED\\n' "$WORKER_SERVICE" '${workerArn}' '${workerArn}'
+}
+capture_classpilot_tile_auth_observation_posture
+`);
+    assert.notEqual(drifted.status, 0);
+    assert.match(drifted.stderr, /drifted|unexpected task definition/i);
+  });
+
   it("blocks only the actual 01:15-02:15 Eastern maintenance window", () => {
     for (const clock of ["1 0115", "7 0130", "3 0200", "5 0214"]) {
       const result = runDeployHelper("classpilot_tile_auth_plan_window_preflight", clock);
@@ -542,6 +744,7 @@ fi
     const accepted = runDeployHelper(`
 RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE=false
 RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=false
+RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION=false
 REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=""
 EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL_SHA256=""
 ENV=production
@@ -555,7 +758,7 @@ validate_classpilot_tile_auth_plan_gate_mode
     assert.equal(accepted.status, 0, accepted.stderr);
     assert.match(
       deploySource,
-      /register_classpilot_candidate_worker_task_definition[\s\S]*if \[\[ "\$RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE" == true \]\]; then\s+verify_classpilot_rehearsed_candidates/
+      /register_classpilot_candidate_worker_task_definition[\s\S]*if \[\[ "\$RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE" == true \|\|[\s\S]*"\$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" == true \]\]; then\s+verify_classpilot_rehearsed_candidates/
     );
   });
 
@@ -1092,6 +1295,26 @@ fi
       deploySource,
       /failed \(failureCode=\$\{sanitized_failure_code\}\)/
     );
+  });
+
+  it("disables Git Bash path conversion at both CloudWatch reader boundaries", () => {
+    const outerCalls = [
+      ...deploySource.matchAll(
+        /MSYS_NO_PATHCONV=1 node \\\n\s+"\$SCRIPT_DIR\/read-classpilot-tile-auth-plan-log-events\.mjs"/g
+      ),
+    ];
+    assert.equal(outerCalls.length, 2);
+
+    const result = spawnSync(
+      bashExecutable(),
+      [
+        "-lc",
+        "MSYS_NO_PATHCONV=1 node -e 'process.stdout.write(process.argv[1])' /ecs/schoolpilot-production-api",
+      ],
+      { encoding: "utf8" }
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout, "/ecs/schoolpilot-production-api");
   });
 
   it("paginates the exact bound stream so terminal failures after event 100 survive", async () => {

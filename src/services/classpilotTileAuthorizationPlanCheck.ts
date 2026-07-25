@@ -36,6 +36,8 @@ const TRANSACTIONAL_PLAN_SCENARIO_VERSION =
   "transactional-plan-scenarios-v2" as const;
 const TRANSACTIONAL_PLAN_BASE_PREFLIGHT_VERSION =
   "classpilot-tile-auth-plan-base-preflight-v1" as const;
+export const CLASSPILOT_TILE_AUTHORIZATION_PLAN_BASE_FUNNEL_VERSION =
+  "classpilot-tile-auth-plan-base-funnel-v1" as const;
 const TRANSACTIONAL_PLAN_ADVISORY_LOCK_KEY =
   "classpilot-tile-authorization-plan-gate-v1";
 const TRANSACTIONAL_PLAN_REQUIRED_SESSION_PAIRS =
@@ -159,6 +161,53 @@ export type ClasspilotTileAuthorizationPlanBasePreflightReport = {
   conflictingSessionPairs: 0;
 };
 
+export type ClasspilotTileAuthorizationPlanBaseFunnelCounts = {
+  syntheticDescribedGroups: number;
+  syntheticSchoolGroups: number;
+  primaryTeacherGroups: number;
+  licensedGroups: number;
+  activeRosterStudents: number;
+  canonicalMappedRosterStudents: number;
+  unsupervisedRosterStudents: number;
+  noCoTeacherGroups: number;
+  exactCohortGroups: number;
+  eligibleGroupSchools: number;
+  activeOfficeMemberships: number;
+  uniqueOfficeMembershipSchools: number;
+  activeOfficeStudents: number;
+  canonicalMappedOfficeStudents: number;
+  unrosteredOfficeStudents: number;
+  unsupervisedOfficeStudents: number;
+  officeCohortReadySchools: number;
+  alternateTeacherReadySchools: number;
+  eligibleSchools: number;
+  selectedSchools: number;
+  selectedGroups: number;
+  selectedCoTeachers: number;
+  selectedOfficeStaff: number;
+  selectedOfficeCohorts: number;
+  finalBases: number;
+};
+
+export type ClasspilotTileAuthorizationPlanBaseFunnelStage =
+  | keyof ClasspilotTileAuthorizationPlanBaseFunnelCounts
+  | "none";
+
+export type ClasspilotTileAuthorizationPlanBaseFunnelEvidence = {
+  version:
+    typeof CLASSPILOT_TILE_AUTHORIZATION_PLAN_BASE_FUNNEL_VERSION;
+  failureStage: "base_funnel" | "base_shape" | "session_posture";
+  firstEmptyStage: ClasspilotTileAuthorizationPlanBaseFunnelStage;
+  cohortSize: typeof CLASSPILOT_TILE_AUTHORIZATION_PLAN_COHORT_SIZE;
+  counts: ClasspilotTileAuthorizationPlanBaseFunnelCounts;
+  sessionPosture: {
+    requiredSessionPairs: number;
+    reusedActiveSessionPairs: number;
+    missingSessionPairs: number;
+    conflictingSessionPairs: number;
+  } | null;
+};
+
 export type ClasspilotTilePlanEvidence = {
   executionMs: number;
   tempReadBlocks: number;
@@ -244,11 +293,14 @@ export class ClasspilotTileAuthorizationPlanCheckError extends Error {
       | "invalid_configuration"
       | "teaching_session_school_integrity_failed"
       | "representative_scenario_missing"
+      | "base_funnel_evidence_invalid"
       | "invalid_explain_document"
       | "history_fallback_query_identity_invalid"
       | "transactional_scenario_lifecycle_failed",
     readonly labels: ClasspilotTilePlanScenarioLabel[] = [],
-    readonly invalidCount = 0
+    readonly invalidCount = 0,
+    readonly funnelEvidence?:
+      ClasspilotTileAuthorizationPlanBaseFunnelEvidence
   ) {
     super(failureCode);
     this.name = "ClasspilotTileAuthorizationPlanCheckError";
@@ -293,9 +345,14 @@ const TRANSACTIONAL_PLAN_BASE_SQL = `
     WHERE class_group.status = 'active'
       AND class_group.schedule_enabled = false
   ),
-  marked_groups AS MATERIALIZED (
+  synthetic_described_groups AS MATERIALIZED (
     SELECT described.*
     FROM described_groups AS described
+    WHERE described.fixture_id IS NOT NULL
+  ),
+  synthetic_school_groups AS MATERIALIZED (
+    SELECT described.*
+    FROM synthetic_described_groups AS described
     INNER JOIN schools AS school
       ON school.id = described.school_id
      AND school.status = 'active'
@@ -307,25 +364,36 @@ const TRANSACTIONAL_PLAN_BASE_SQL = `
      AND school.total_paid = 0
      AND school.name LIKE '%[SYNTHETIC LOAD TEST - NON-BILLABLE]%'
      AND position(lower(described.fixture_id) IN lower(school.name)) > 0
+  ),
+  primary_teacher_groups AS MATERIALIZED (
+    SELECT described.*
+    FROM synthetic_school_groups AS described
     INNER JOIN school_memberships AS primary_membership
       ON primary_membership.user_id = described.primary_teacher_id
      AND primary_membership.school_id = described.school_id
      AND primary_membership.role = 'teacher'
      AND primary_membership.status = 'active'
-    WHERE described.fixture_id IS NOT NULL
-      AND EXISTS (
-        SELECT 1
-        FROM product_licenses AS classpilot_license
-        WHERE classpilot_license.school_id = described.school_id
-          AND classpilot_license.product = 'CLASSPILOT'
-          AND classpilot_license.status = 'active'
-          AND (
-            classpilot_license.expires_at IS NULL
-            OR classpilot_license.expires_at > now()
-          )
-      )
   ),
-  qualified_group_students AS MATERIALIZED (
+  licensed_groups AS MATERIALIZED (
+    SELECT described.*
+    FROM primary_teacher_groups AS described
+    WHERE EXISTS (
+      SELECT 1
+      FROM product_licenses AS classpilot_license
+      WHERE classpilot_license.school_id = described.school_id
+        AND classpilot_license.product = 'CLASSPILOT'
+        AND classpilot_license.status = 'active'
+        AND (
+          classpilot_license.expires_at IS NULL
+          OR classpilot_license.expires_at > now()
+        )
+    )
+  ),
+  marked_groups AS MATERIALIZED (
+    SELECT licensed.*
+    FROM licensed_groups AS licensed
+  ),
+  active_roster_students AS MATERIALIZED (
     SELECT
       marked.group_id,
       marked.school_id,
@@ -333,7 +401,7 @@ const TRANSACTIONAL_PLAN_BASE_SQL = `
       marked.description,
       marked.fixture_id,
       roster.student_id,
-      historical_device.device_id
+      student.student_id_number
     FROM marked_groups AS marked
     INNER JOIN group_students AS roster
       ON roster.group_id = marked.group_id
@@ -343,26 +411,57 @@ const TRANSACTIONAL_PLAN_BASE_SQL = `
      AND student.status = 'active'
      AND upper(student.student_id_number)
        ~ ('^' || upper(marked.fixture_id) || '-P-[0-9]{4}$')
+  ),
+  canonical_mapped_roster_students AS MATERIALIZED (
+    SELECT
+      roster.group_id,
+      roster.school_id,
+      roster.primary_teacher_id,
+      roster.description,
+      roster.fixture_id,
+      roster.student_id,
+      historical_device.device_id
+    FROM active_roster_students AS roster
     INNER JOIN student_devices AS historical_mapping
       ON historical_mapping.student_id = roster.student_id
      AND historical_mapping.device_id =
-       marked.fixture_id || '-primary-' ||
-       right(student.student_id_number, 4)
+       roster.fixture_id || '-primary-' ||
+       right(roster.student_id_number, 4)
     INNER JOIN devices AS historical_device
       ON historical_device.device_id = historical_mapping.device_id
-     AND historical_device.school_id = marked.school_id
+     AND historical_device.school_id = roster.school_id
+  ),
+  qualified_group_students AS MATERIALIZED (
+    SELECT
+      roster.group_id,
+      roster.school_id,
+      roster.primary_teacher_id,
+      roster.description,
+      roster.fixture_id,
+      roster.student_id,
+      roster.device_id
+    FROM canonical_mapped_roster_students AS roster
     WHERE NOT EXISTS (
         SELECT 1
         FROM classpilot_supervision_students AS supervised
         INNER JOIN classpilot_supervision_contexts AS context
           ON context.id = supervised.context_id
-         AND context.school_id = marked.school_id
+         AND context.school_id = roster.school_id
          AND context.status = 'active'
          AND context.ends_at > now()
-        WHERE supervised.school_id = marked.school_id
+        WHERE supervised.school_id = roster.school_id
           AND supervised.student_id = roster.student_id
           AND supervised.released_at IS NULL
       )
+  ),
+  no_co_teacher_group_students AS MATERIALIZED (
+    SELECT qualified.*
+    FROM qualified_group_students AS qualified
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM group_teachers AS existing_co_teacher
+      WHERE existing_co_teacher.group_id = qualified.group_id
+    )
   ),
   eligible_groups AS MATERIALIZED (
     SELECT
@@ -375,12 +474,7 @@ const TRANSACTIONAL_PLAN_BASE_SQL = `
         AS teacher_student_ids,
       array_agg(qualified.device_id ORDER BY qualified.student_id)
         AS teacher_device_ids
-    FROM qualified_group_students AS qualified
-    WHERE NOT EXISTS (
-      SELECT 1
-      FROM group_teachers AS existing_co_teacher
-      WHERE existing_co_teacher.group_id = qualified.group_id
-    )
+    FROM no_co_teacher_group_students AS qualified
     GROUP BY
       qualified.group_id,
       qualified.school_id,
@@ -411,45 +505,104 @@ const TRANSACTIONAL_PLAN_BASE_SQL = `
     WHERE membership.role = 'office_staff'
       AND membership.status = 'active'
   ),
-  office_candidates AS MATERIALIZED (
+  active_office_students AS MATERIALIZED (
     SELECT
       eligible_school.school_id,
       eligible_school.fixture_id,
       student.id AS student_id,
-      historical_device.device_id,
-      row_number() OVER (
-        PARTITION BY eligible_school.school_id
-        ORDER BY student.id
-      ) AS student_rank,
-      count(*) OVER (
-        PARTITION BY eligible_school.school_id
-    ) AS cohort_count
+      student.student_id_number
     FROM eligible_group_schools AS eligible_school
     INNER JOIN students AS student
       ON student.school_id = eligible_school.school_id
      AND student.status = 'active'
      AND upper(student.student_id_number)
        ~ ('^' || upper(eligible_school.fixture_id) || '-P-[0-9]{4}$')
+  ),
+  canonical_mapped_office_students AS MATERIALIZED (
+    SELECT
+      student.school_id,
+      student.fixture_id,
+      student.student_id,
+      historical_device.device_id
+    FROM active_office_students AS student
     INNER JOIN student_devices AS historical_mapping
-      ON historical_mapping.student_id = student.id
+      ON historical_mapping.student_id = student.student_id
      AND historical_mapping.device_id =
-       eligible_school.fixture_id || '-primary-' ||
+       student.fixture_id || '-primary-' ||
        right(student.student_id_number, 4)
     INNER JOIN devices AS historical_device
       ON historical_device.device_id = historical_mapping.device_id
-     AND historical_device.school_id = eligible_school.school_id
+     AND historical_device.school_id = student.school_id
+  ),
+  unrostered_office_students AS MATERIALIZED (
+    SELECT student.*
+    FROM canonical_mapped_office_students AS student
     WHERE NOT EXISTS (
       SELECT 1
       FROM group_students AS any_roster
-      WHERE any_roster.student_id = student.id
+      WHERE any_roster.student_id = student.student_id
     )
-      AND NOT EXISTS (
-        SELECT 1
-        FROM classpilot_supervision_students AS supervised
-        WHERE supervised.school_id = eligible_school.school_id
-          AND supervised.student_id = student.id
-          AND supervised.released_at IS NULL
-      )
+  ),
+  office_candidates AS MATERIALIZED (
+    SELECT
+      student.school_id,
+      student.fixture_id,
+      student.student_id,
+      student.device_id,
+      row_number() OVER (
+        PARTITION BY student.school_id
+        ORDER BY student.student_id
+      ) AS student_rank,
+      count(*) OVER (
+        PARTITION BY student.school_id
+    ) AS cohort_count
+    FROM unrostered_office_students AS student
+    WHERE NOT EXISTS (
+      SELECT 1
+      FROM classpilot_supervision_students AS supervised
+      WHERE supervised.school_id = student.school_id
+        AND supervised.student_id = student.student_id
+        AND supervised.released_at IS NULL
+    )
+  ),
+  unique_office_membership_schools AS MATERIALIZED (
+    SELECT eligible_school.*
+    FROM eligible_group_schools AS eligible_school
+    WHERE (
+      SELECT count(*)
+      FROM office_memberships AS office
+      WHERE office.school_id = eligible_school.school_id
+        AND office.membership_count = 1
+    ) = 1
+  ),
+  office_cohort_ready_schools AS MATERIALIZED (
+    SELECT eligible_school.*
+    FROM eligible_group_schools AS eligible_school
+    WHERE (
+      SELECT max(office.cohort_count)
+      FROM office_candidates AS office
+      WHERE office.school_id = eligible_school.school_id
+    ) >= $1
+  ),
+  alternate_teacher_ready_schools AS MATERIALIZED (
+    SELECT eligible_school.*
+    FROM eligible_group_schools AS eligible_school
+    WHERE EXISTS (
+      SELECT 1
+      FROM marked_groups AS other_group
+      INNER JOIN school_memberships AS other_teacher_membership
+        ON other_teacher_membership.user_id = other_group.primary_teacher_id
+       AND other_teacher_membership.school_id = other_group.school_id
+       AND other_teacher_membership.role = 'teacher'
+       AND other_teacher_membership.status = 'active'
+      INNER JOIN eligible_groups AS eligible_group
+        ON eligible_group.school_id = other_group.school_id
+       AND eligible_group.fixture_id = other_group.fixture_id
+      WHERE other_group.school_id = eligible_school.school_id
+        AND other_group.fixture_id = eligible_school.fixture_id
+        AND other_group.primary_teacher_id
+          <> eligible_group.primary_teacher_id
+    )
   ),
   eligible_schools AS MATERIALIZED (
     SELECT eligible_school.*
@@ -531,22 +684,93 @@ const TRANSACTIONAL_PLAN_BASE_SQL = `
     WHERE office.student_rank <= $1
       AND office.cohort_count >= $1
     GROUP BY office.school_id
+  ),
+  final_bases AS MATERIALIZED (
+    SELECT
+      selected.school_id,
+      selected.group_id,
+      selected.primary_teacher_id,
+      co_teacher.co_teacher_id,
+      office_staff.office_staff_id,
+      selected.teacher_student_ids,
+      selected.teacher_device_ids,
+      office_cohort.office_student_ids,
+      office_cohort.office_device_ids
+    FROM selected_group AS selected
+    CROSS JOIN selected_co_teacher AS co_teacher
+    CROSS JOIN selected_office_staff AS office_staff
+    INNER JOIN selected_office_cohort AS office_cohort
+      ON office_cohort.school_id = selected.school_id
   )
   SELECT
-    selected.school_id,
-    selected.group_id,
-    selected.primary_teacher_id,
-    co_teacher.co_teacher_id,
-    office_staff.office_staff_id,
-    selected.teacher_student_ids,
-    selected.teacher_device_ids,
-    office_cohort.office_student_ids,
-    office_cohort.office_device_ids
-  FROM selected_group AS selected
-  CROSS JOIN selected_co_teacher AS co_teacher
-  CROSS JOIN selected_office_staff AS office_staff
-  INNER JOIN selected_office_cohort AS office_cohort
-    ON office_cohort.school_id = selected.school_id
+    final.school_id,
+    final.group_id,
+    final.primary_teacher_id,
+    final.co_teacher_id,
+    final.office_staff_id,
+    final.teacher_student_ids,
+    final.teacher_device_ids,
+    final.office_student_ids,
+    final.office_device_ids,
+    (SELECT count(*)::integer FROM synthetic_described_groups)
+      AS synthetic_described_groups,
+    (SELECT count(*)::integer FROM synthetic_school_groups)
+      AS synthetic_school_groups,
+    (SELECT count(*)::integer FROM primary_teacher_groups)
+      AS primary_teacher_groups,
+    (SELECT count(*)::integer FROM licensed_groups)
+      AS licensed_groups,
+    (SELECT count(*)::integer FROM active_roster_students)
+      AS active_roster_students,
+    (SELECT count(*)::integer FROM canonical_mapped_roster_students)
+      AS canonical_mapped_roster_students,
+    (SELECT count(*)::integer FROM qualified_group_students)
+      AS unsupervised_roster_students,
+    (
+      SELECT count(DISTINCT no_co_teacher.group_id)::integer
+      FROM no_co_teacher_group_students AS no_co_teacher
+    ) AS no_co_teacher_groups,
+    (SELECT count(*)::integer FROM eligible_groups)
+      AS exact_cohort_groups,
+    (SELECT count(*)::integer FROM eligible_group_schools)
+      AS eligible_group_schools,
+    (SELECT count(*)::integer FROM office_memberships)
+      AS active_office_memberships,
+    (SELECT count(*)::integer FROM unique_office_membership_schools)
+      AS unique_office_membership_schools,
+    (SELECT count(*)::integer FROM active_office_students)
+      AS active_office_students,
+    (SELECT count(*)::integer FROM canonical_mapped_office_students)
+      AS canonical_mapped_office_students,
+    (SELECT count(*)::integer FROM unrostered_office_students)
+      AS unrostered_office_students,
+    (SELECT count(*)::integer FROM office_candidates)
+      AS unsupervised_office_students,
+    (SELECT count(*)::integer FROM office_cohort_ready_schools)
+      AS office_cohort_ready_schools,
+    (SELECT count(*)::integer FROM alternate_teacher_ready_schools)
+      AS alternate_teacher_ready_schools,
+    (SELECT count(*)::integer FROM eligible_schools)
+      AS eligible_schools,
+    (SELECT count(*)::integer FROM selected_school)
+      AS selected_schools,
+    (SELECT count(*)::integer FROM selected_group)
+      AS selected_groups,
+    (SELECT count(*)::integer FROM selected_co_teacher)
+      AS selected_co_teachers,
+    (SELECT count(*)::integer FROM selected_office_staff)
+      AS selected_office_staff,
+    (SELECT count(*)::integer FROM selected_office_cohort)
+      AS selected_office_cohorts,
+    (SELECT count(*)::integer FROM final_bases)
+      AS final_bases
+  FROM (SELECT 1) AS singleton
+  LEFT JOIN LATERAL (
+    SELECT *
+    FROM final_bases
+    WHERE (SELECT count(*) FROM final_bases) = 1
+    LIMIT 1
+  ) AS final ON true
 `;
 
 const TRANSACTIONAL_PLAN_SESSION_POSTURE_SQL = `
@@ -1092,16 +1316,348 @@ async function discoverScenarios(
   return discovered;
 }
 
-function representativeScenarioFailure(): never {
+function baseFunnelEvidenceInvalid(): never {
+  throw new ClasspilotTileAuthorizationPlanCheckError(
+    "base_funnel_evidence_invalid"
+  );
+}
+
+const BASE_FUNNEL_COUNT_KEYS = [
+  "syntheticDescribedGroups",
+  "syntheticSchoolGroups",
+  "primaryTeacherGroups",
+  "licensedGroups",
+  "activeRosterStudents",
+  "canonicalMappedRosterStudents",
+  "unsupervisedRosterStudents",
+  "noCoTeacherGroups",
+  "exactCohortGroups",
+  "eligibleGroupSchools",
+  "activeOfficeMemberships",
+  "uniqueOfficeMembershipSchools",
+  "activeOfficeStudents",
+  "canonicalMappedOfficeStudents",
+  "unrosteredOfficeStudents",
+  "unsupervisedOfficeStudents",
+  "officeCohortReadySchools",
+  "alternateTeacherReadySchools",
+  "eligibleSchools",
+  "selectedSchools",
+  "selectedGroups",
+  "selectedCoTeachers",
+  "selectedOfficeStaff",
+  "selectedOfficeCohorts",
+  "finalBases",
+] as const satisfies readonly (
+  keyof ClasspilotTileAuthorizationPlanBaseFunnelCounts
+)[];
+
+const BASE_FUNNEL_DATABASE_COLUMNS = {
+  syntheticDescribedGroups: "synthetic_described_groups",
+  syntheticSchoolGroups: "synthetic_school_groups",
+  primaryTeacherGroups: "primary_teacher_groups",
+  licensedGroups: "licensed_groups",
+  activeRosterStudents: "active_roster_students",
+  canonicalMappedRosterStudents: "canonical_mapped_roster_students",
+  unsupervisedRosterStudents: "unsupervised_roster_students",
+  noCoTeacherGroups: "no_co_teacher_groups",
+  exactCohortGroups: "exact_cohort_groups",
+  eligibleGroupSchools: "eligible_group_schools",
+  activeOfficeMemberships: "active_office_memberships",
+  uniqueOfficeMembershipSchools: "unique_office_membership_schools",
+  activeOfficeStudents: "active_office_students",
+  canonicalMappedOfficeStudents: "canonical_mapped_office_students",
+  unrosteredOfficeStudents: "unrostered_office_students",
+  unsupervisedOfficeStudents: "unsupervised_office_students",
+  officeCohortReadySchools: "office_cohort_ready_schools",
+  alternateTeacherReadySchools: "alternate_teacher_ready_schools",
+  eligibleSchools: "eligible_schools",
+  selectedSchools: "selected_schools",
+  selectedGroups: "selected_groups",
+  selectedCoTeachers: "selected_co_teachers",
+  selectedOfficeStaff: "selected_office_staff",
+  selectedOfficeCohorts: "selected_office_cohorts",
+  finalBases: "final_bases",
+} as const satisfies Record<
+  keyof ClasspilotTileAuthorizationPlanBaseFunnelCounts,
+  string
+>;
+
+const BASE_FUNNEL_MAX_COUNT = 1_000_000;
+
+function isPlainRecord(
+  value: unknown
+): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function hasExactRecordKeys(
+  value: unknown,
+  keys: readonly string[]
+): value is Record<string, unknown> {
+  return (
+    isPlainRecord(value) &&
+    JSON.stringify(Object.keys(value).sort()) ===
+      JSON.stringify([...keys].sort())
+  );
+}
+
+function isNonnegativeInteger(value: unknown): value is number {
+  return Number.isInteger(value) && (value as number) >= 0;
+}
+
+function firstEmptyBaseFunnelStage(
+  counts: ClasspilotTileAuthorizationPlanBaseFunnelCounts
+): ClasspilotTileAuthorizationPlanBaseFunnelStage {
+  return (
+    BASE_FUNNEL_COUNT_KEYS.find((key) => counts[key] === 0) ??
+    "none"
+  );
+}
+
+function hasValidBaseFunnelCountRelationships(
+  counts: ClasspilotTileAuthorizationPlanBaseFunnelCounts
+): boolean {
+  return (
+    counts.syntheticSchoolGroups <= counts.syntheticDescribedGroups &&
+    counts.primaryTeacherGroups <= counts.syntheticSchoolGroups &&
+    counts.licensedGroups <= counts.primaryTeacherGroups &&
+    counts.canonicalMappedRosterStudents <= counts.activeRosterStudents &&
+    counts.unsupervisedRosterStudents <=
+      counts.canonicalMappedRosterStudents &&
+    counts.noCoTeacherGroups <= counts.licensedGroups &&
+    counts.exactCohortGroups <= counts.noCoTeacherGroups &&
+    counts.eligibleGroupSchools <= counts.exactCohortGroups &&
+    counts.exactCohortGroups *
+        CLASSPILOT_TILE_AUTHORIZATION_PLAN_COHORT_SIZE <=
+      counts.unsupervisedRosterStudents &&
+    counts.uniqueOfficeMembershipSchools <= counts.eligibleGroupSchools &&
+    counts.uniqueOfficeMembershipSchools <=
+      counts.activeOfficeMemberships &&
+    counts.canonicalMappedOfficeStudents <= counts.activeOfficeStudents &&
+    counts.unrosteredOfficeStudents <=
+      counts.canonicalMappedOfficeStudents &&
+    counts.unsupervisedOfficeStudents <= counts.unrosteredOfficeStudents &&
+    counts.officeCohortReadySchools <= counts.eligibleGroupSchools &&
+    counts.alternateTeacherReadySchools <= counts.eligibleGroupSchools &&
+    counts.eligibleSchools <= counts.uniqueOfficeMembershipSchools &&
+    counts.eligibleSchools <= counts.officeCohortReadySchools &&
+    counts.eligibleSchools <= counts.alternateTeacherReadySchools &&
+    counts.selectedSchools <= 1 &&
+    counts.selectedSchools <= counts.eligibleSchools &&
+    counts.selectedGroups <= 1 &&
+    counts.selectedGroups <= counts.selectedSchools &&
+    counts.selectedCoTeachers <= 1 &&
+    counts.selectedCoTeachers <= counts.selectedGroups &&
+    counts.selectedOfficeStaff <= 1 &&
+    counts.selectedOfficeStaff <= counts.selectedSchools &&
+    counts.selectedOfficeCohorts <= 1 &&
+    counts.selectedOfficeCohorts <= counts.selectedSchools &&
+    counts.finalBases <= 1 &&
+    counts.finalBases <= counts.selectedGroups &&
+    counts.finalBases <= counts.selectedCoTeachers &&
+    counts.finalBases <= counts.selectedOfficeStaff &&
+    counts.finalBases <= counts.selectedOfficeCohorts
+  );
+}
+
+export function validateClasspilotTileAuthorizationPlanBaseFunnelEvidence(
+  value: unknown
+): ClasspilotTileAuthorizationPlanBaseFunnelEvidence {
+  const rootKeys = [
+    "cohortSize",
+    "counts",
+    "failureStage",
+    "firstEmptyStage",
+    "sessionPosture",
+    "version",
+  ] as const;
+  if (
+    !hasExactRecordKeys(value, rootKeys) ||
+    value.version !==
+      CLASSPILOT_TILE_AUTHORIZATION_PLAN_BASE_FUNNEL_VERSION ||
+    typeof value.failureStage !== "string" ||
+    !["base_funnel", "base_shape", "session_posture"].includes(
+      value.failureStage
+    ) ||
+    value.cohortSize !== CLASSPILOT_TILE_AUTHORIZATION_PLAN_COHORT_SIZE ||
+    !hasExactRecordKeys(value.counts, BASE_FUNNEL_COUNT_KEYS)
+  ) {
+    throw new Error(
+      "classpilot_tile_authorization_plan_base_funnel_invalid"
+    );
+  }
+
+  const countsRecord = value.counts as Record<string, unknown>;
+  const counts = Object.fromEntries(
+    BASE_FUNNEL_COUNT_KEYS.map((key) => [key, countsRecord[key]])
+  ) as ClasspilotTileAuthorizationPlanBaseFunnelCounts;
+  if (
+    BASE_FUNNEL_COUNT_KEYS.some(
+      (key) =>
+        !Number.isInteger(counts[key]) ||
+        counts[key] < 0 ||
+        counts[key] > BASE_FUNNEL_MAX_COUNT
+    ) ||
+    !hasValidBaseFunnelCountRelationships(counts)
+  ) {
+    throw new Error(
+      "classpilot_tile_authorization_plan_base_funnel_invalid"
+    );
+  }
+
+  const failureStage = value.failureStage as
+    ClasspilotTileAuthorizationPlanBaseFunnelEvidence["failureStage"];
+  const expectedFirstEmptyStage = firstEmptyBaseFunnelStage(counts);
+  const firstEmptyStage = value.firstEmptyStage;
+  if (
+    typeof firstEmptyStage !== "string" ||
+    ![...BASE_FUNNEL_COUNT_KEYS, "none"].includes(
+      firstEmptyStage as ClasspilotTileAuthorizationPlanBaseFunnelStage
+    ) ||
+    firstEmptyStage !== expectedFirstEmptyStage
+  ) {
+    throw new Error(
+      "classpilot_tile_authorization_plan_base_funnel_invalid"
+    );
+  }
+
+  let sessionPosture:
+    ClasspilotTileAuthorizationPlanBaseFunnelEvidence["sessionPosture"] =
+      null;
+  if (value.sessionPosture !== null) {
+    const sessionKeys = [
+      "conflictingSessionPairs",
+      "missingSessionPairs",
+      "requiredSessionPairs",
+      "reusedActiveSessionPairs",
+    ] as const;
+    if (!hasExactRecordKeys(value.sessionPosture, sessionKeys)) {
+      throw new Error(
+        "classpilot_tile_authorization_plan_base_funnel_invalid"
+      );
+    }
+    const posture = value.sessionPosture as Record<string, unknown>;
+    const requiredSessionPairs = posture.requiredSessionPairs;
+    const reusedActiveSessionPairs =
+      posture.reusedActiveSessionPairs;
+    const missingSessionPairs = posture.missingSessionPairs;
+    const conflictingSessionPairs =
+      posture.conflictingSessionPairs;
+    if (
+      !isNonnegativeInteger(requiredSessionPairs) ||
+      !isNonnegativeInteger(reusedActiveSessionPairs) ||
+      !isNonnegativeInteger(missingSessionPairs) ||
+      !isNonnegativeInteger(conflictingSessionPairs) ||
+      requiredSessionPairs !== TRANSACTIONAL_PLAN_REQUIRED_SESSION_PAIRS ||
+      reusedActiveSessionPairs +
+          missingSessionPairs +
+          conflictingSessionPairs !==
+        requiredSessionPairs
+    ) {
+      throw new Error(
+        "classpilot_tile_authorization_plan_base_funnel_invalid"
+      );
+    }
+    sessionPosture = {
+      requiredSessionPairs,
+      reusedActiveSessionPairs,
+      missingSessionPairs,
+      conflictingSessionPairs,
+    };
+  }
+
+  if (
+    (failureStage === "base_funnel" &&
+      (counts.finalBases !== 0 ||
+        expectedFirstEmptyStage === "none" ||
+        sessionPosture !== null)) ||
+    (failureStage === "base_shape" &&
+      (counts.finalBases !== 1 ||
+        expectedFirstEmptyStage !== "none" ||
+        sessionPosture !== null)) ||
+    (failureStage === "session_posture" &&
+      (counts.finalBases !== 1 ||
+        expectedFirstEmptyStage !== "none" ||
+        sessionPosture === null ||
+        sessionPosture.conflictingSessionPairs === 0))
+  ) {
+    throw new Error(
+      "classpilot_tile_authorization_plan_base_funnel_invalid"
+    );
+  }
+
+  return {
+    version: CLASSPILOT_TILE_AUTHORIZATION_PLAN_BASE_FUNNEL_VERSION,
+    failureStage,
+    firstEmptyStage: expectedFirstEmptyStage,
+    cohortSize: CLASSPILOT_TILE_AUTHORIZATION_PLAN_COHORT_SIZE,
+    counts,
+    sessionPosture,
+  };
+}
+
+function readBaseFunnelCounts(
+  row: Record<string, unknown>
+): ClasspilotTileAuthorizationPlanBaseFunnelCounts {
+  const counts = Object.fromEntries(
+    BASE_FUNNEL_COUNT_KEYS.map((key) => [
+      key,
+      row[BASE_FUNNEL_DATABASE_COLUMNS[key]],
+    ])
+  ) as ClasspilotTileAuthorizationPlanBaseFunnelCounts;
+  if (
+    BASE_FUNNEL_COUNT_KEYS.some(
+      (key) =>
+        !Number.isInteger(counts[key]) ||
+        counts[key] < 0 ||
+        counts[key] > BASE_FUNNEL_MAX_COUNT
+    ) ||
+    !hasValidBaseFunnelCountRelationships(counts)
+  ) {
+    baseFunnelEvidenceInvalid();
+  }
+  return counts;
+}
+
+function createBaseFunnelEvidence(
+  counts: ClasspilotTileAuthorizationPlanBaseFunnelCounts,
+  failureStage:
+    ClasspilotTileAuthorizationPlanBaseFunnelEvidence["failureStage"],
+  sessionPosture:
+    ClasspilotTileAuthorizationPlanBaseFunnelEvidence["sessionPosture"] =
+      null
+): ClasspilotTileAuthorizationPlanBaseFunnelEvidence {
+  return validateClasspilotTileAuthorizationPlanBaseFunnelEvidence({
+    version: CLASSPILOT_TILE_AUTHORIZATION_PLAN_BASE_FUNNEL_VERSION,
+    failureStage,
+    firstEmptyStage: firstEmptyBaseFunnelStage(counts),
+    cohortSize: CLASSPILOT_TILE_AUTHORIZATION_PLAN_COHORT_SIZE,
+    counts,
+    sessionPosture,
+  });
+}
+
+function baseFunnelFailure(
+  counts: ClasspilotTileAuthorizationPlanBaseFunnelCounts,
+  failureStage:
+    ClasspilotTileAuthorizationPlanBaseFunnelEvidence["failureStage"],
+  sessionPosture:
+    ClasspilotTileAuthorizationPlanBaseFunnelEvidence["sessionPosture"] =
+      null
+): never {
   throw new ClasspilotTileAuthorizationPlanCheckError(
     "representative_scenario_missing",
-    SCENARIOS.map((scenario) => scenario.label)
+    [],
+    0,
+    createBaseFunnelEvidence(counts, failureStage, sessionPosture)
   );
 }
 
 function requireUniqueStringArray(
   value: unknown,
-  expectedLength: number
+  expectedLength: number,
+  counts: ClasspilotTileAuthorizationPlanBaseFunnelCounts
 ): string[] {
   if (
     !Array.isArray(value) ||
@@ -1109,7 +1665,7 @@ function requireUniqueStringArray(
     value.some((entry) => typeof entry !== "string" || entry.length === 0) ||
     new Set(value).size !== expectedLength
   ) {
-    representativeScenarioFailure();
+    baseFunnelFailure(counts, "base_shape");
   }
   return value;
 }
@@ -1117,22 +1673,22 @@ function requireUniqueStringArray(
 async function readTransactionalPlanBase(
   client: ClasspilotTilePlanQueryClient,
   cohortSize: number
-): Promise<TransactionalPlanBase> {
-  const result = await client.query<{
-    school_id: unknown;
-    group_id: unknown;
-    primary_teacher_id: unknown;
-    co_teacher_id: unknown;
-    office_staff_id: unknown;
-    teacher_student_ids: unknown;
-    teacher_device_ids: unknown;
-    office_student_ids: unknown;
-    office_device_ids: unknown;
-  }>(TRANSACTIONAL_PLAN_BASE_SQL, [cohortSize]);
-  if (result.rows.length !== 1) representativeScenarioFailure();
+): Promise<{
+  base: TransactionalPlanBase;
+  funnelCounts: ClasspilotTileAuthorizationPlanBaseFunnelCounts;
+}> {
+  const result = await client.query<Record<string, unknown>>(
+    TRANSACTIONAL_PLAN_BASE_SQL,
+    [cohortSize]
+  );
+  if (result.rows.length !== 1) baseFunnelEvidenceInvalid();
   const row = result.rows[0];
+  if (!row) baseFunnelEvidenceInvalid();
+  const funnelCounts = readBaseFunnelCounts(row);
+  if (funnelCounts.finalBases !== 1) {
+    baseFunnelFailure(funnelCounts, "base_funnel");
+  }
   if (
-    !row ||
     typeof row.school_id !== "string" ||
     row.school_id.length === 0 ||
     typeof row.group_id !== "string" ||
@@ -1147,23 +1703,27 @@ async function readTransactionalPlanBase(
     row.primary_teacher_id === row.office_staff_id ||
     row.co_teacher_id === row.office_staff_id
   ) {
-    representativeScenarioFailure();
+    baseFunnelFailure(funnelCounts, "base_shape");
   }
   const teacherStudentIds = requireUniqueStringArray(
     row.teacher_student_ids,
-    cohortSize
+    cohortSize,
+    funnelCounts
   );
   const officeStudentIds = requireUniqueStringArray(
     row.office_student_ids,
-    cohortSize
+    cohortSize,
+    funnelCounts
   );
   const teacherDeviceIds = requireUniqueStringArray(
     row.teacher_device_ids,
-    cohortSize
+    cohortSize,
+    funnelCounts
   );
   const officeDeviceIds = requireUniqueStringArray(
     row.office_device_ids,
-    cohortSize
+    cohortSize,
+    funnelCounts
   );
   if (
     officeStudentIds.some((studentId) =>
@@ -1171,18 +1731,21 @@ async function readTransactionalPlanBase(
     ) ||
     officeDeviceIds.some((deviceId) => teacherDeviceIds.includes(deviceId))
   ) {
-    representativeScenarioFailure();
+    baseFunnelFailure(funnelCounts, "base_shape");
   }
   return {
-    schoolId: row.school_id,
-    groupId: row.group_id,
-    primaryTeacherId: row.primary_teacher_id,
-    coTeacherId: row.co_teacher_id,
-    officeStaffId: row.office_staff_id,
-    teacherStudentIds,
-    teacherDeviceIds,
-    officeStudentIds,
-    officeDeviceIds,
+    base: {
+      schoolId: row.school_id,
+      groupId: row.group_id,
+      primaryTeacherId: row.primary_teacher_id,
+      coTeacherId: row.co_teacher_id,
+      officeStaffId: row.office_staff_id,
+      teacherStudentIds,
+      teacherDeviceIds,
+      officeStudentIds,
+      officeDeviceIds,
+    },
+    funnelCounts,
   };
 }
 
@@ -1228,7 +1791,8 @@ function parseSessionPostureResult(
     reused_count: number | string;
     missing_count: number | string;
     conflicting_count: number | string;
-  }>
+  }>,
+  funnelCounts: ClasspilotTileAuthorizationPlanBaseFunnelCounts
 ): TransactionalPlanSessionPosture {
   const required = Number(result.rows[0]?.required_count);
   const reused = Number(result.rows[0]?.reused_count);
@@ -1240,17 +1804,25 @@ function parseSessionPostureResult(
       (value) => Number.isInteger(value) && value >= 0
     ) ||
     required !== TRANSACTIONAL_PLAN_REQUIRED_SESSION_PAIRS ||
-    reused + missing + conflicting !== required ||
-    conflicting !== 0
+    reused + missing + conflicting !== required
   ) {
-    representativeScenarioFailure();
+    baseFunnelEvidenceInvalid();
+  }
+  if (conflicting !== 0) {
+    baseFunnelFailure(funnelCounts, "session_posture", {
+      requiredSessionPairs: required,
+      reusedActiveSessionPairs: reused,
+      missingSessionPairs: missing,
+      conflictingSessionPairs: conflicting,
+    });
   }
   return { required, reused, missing, conflicting };
 }
 
 async function readTransactionalPlanSessionPosture(
   client: ClasspilotTilePlanQueryClient,
-  base: TransactionalPlanBase
+  base: TransactionalPlanBase,
+  funnelCounts: ClasspilotTileAuthorizationPlanBaseFunnelCounts
 ): Promise<TransactionalPlanSessionPosture> {
   const pairs = transactionalPlanPairs(base);
   return parseSessionPostureResult(
@@ -1262,7 +1834,8 @@ async function readTransactionalPlanSessionPosture(
     }>(TRANSACTIONAL_PLAN_SESSION_POSTURE_SQL, [
       pairs.studentIds,
       pairs.deviceIds,
-    ])
+    ]),
+    funnelCounts
   );
 }
 
@@ -2106,13 +2679,14 @@ export async function runClasspilotTileAuthorizationPlanBasePreflight(options: {
       "SELECT set_config('app.is_super', 'on', true)"
     );
     await runTeachingSessionSchoolPrecheck(options.client);
-    const base = await readTransactionalPlanBase(
+    const baseEvaluation = await readTransactionalPlanBase(
       options.client,
       CLASSPILOT_TILE_AUTHORIZATION_PLAN_COHORT_SIZE
     );
     const posture = await readTransactionalPlanSessionPosture(
       options.client,
-      base
+      baseEvaluation.base,
+      baseEvaluation.funnelCounts
     );
     report = {
       version: TRANSACTIONAL_PLAN_BASE_PREFLIGHT_VERSION,
@@ -2137,10 +2711,7 @@ export async function runClasspilotTileAuthorizationPlanBasePreflight(options: {
   }
   if (primaryError) throw primaryError;
   if (!report) {
-    throw new ClasspilotTileAuthorizationPlanCheckError(
-      "representative_scenario_missing",
-      SCENARIOS.map((scenario) => scenario.label)
-    );
+    baseFunnelEvidenceInvalid();
   }
   return report;
 }
@@ -2204,13 +2775,15 @@ export async function runClasspilotTileAuthorizationPlanCheck(options: {
     );
     const invalidTeachingSessionSchools =
       await runTeachingSessionSchoolPrecheck(options.client);
-    const base = await readTransactionalPlanBase(
+    const baseEvaluation = await readTransactionalPlanBase(
       options.client,
       CLASSPILOT_TILE_AUTHORIZATION_PLAN_COHORT_SIZE
     );
+    const base = baseEvaluation.base;
     const sessionPosture = await readTransactionalPlanSessionPosture(
       options.client,
-      base
+      base,
+      baseEvaluation.funnelCounts
     );
     reusedActiveSessionPairs = sessionPosture.reused;
     reusedActiveSessionPairs = await seedTransactionalPlanScenarios(

@@ -122,7 +122,14 @@ function fetchAwsPage({ logGroupName, logStreamName, region }, nextToken) {
 
   const result = spawnSync(process.env.AWS_CLI_EXECUTABLE || "aws", args, {
     encoding: "utf8",
-    env: { ...process.env, MSYS_NO_PATHCONV: "1" },
+    // The deploy wrapper also disables conversion on this Node invocation so
+    // `/ecs/...` survives the Git-Bash-to-node.exe boundary. Keep both knobs
+    // on the nested AWS process as defense in depth for direct invocations.
+    env: {
+      ...process.env,
+      MSYS_NO_PATHCONV: "1",
+      MSYS2_ARG_CONV_EXCL: "*",
+    },
     windowsHide: true,
     timeout: 30_000,
     maxBuffer: 4 * 1024 * 1024,

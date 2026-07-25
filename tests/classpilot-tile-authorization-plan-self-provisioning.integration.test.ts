@@ -50,6 +50,22 @@ const allStudentNumbers = allStudentIds.map(
   (_studentId, index) =>
     `${fixtureId.toUpperCase()}-P-${String(index + 1).padStart(4, "0")}`
 );
+const ambiguousFixtureId = `gate-${randomUUID().slice(0, 8)}`;
+const ambiguousSchoolId = randomUUID();
+const ambiguousPrimaryTeacherId = randomUUID();
+const ambiguousCoTeacherId = randomUUID();
+const ambiguousOfficeStaffId = randomUUID();
+const ambiguousClassGroupId = randomUUID();
+const ambiguousOtherGroupId = randomUUID();
+const ambiguousStudentIds = Array.from({ length: 80 }, () => randomUUID());
+const ambiguousDeviceIds = ambiguousStudentIds.map(
+  (_studentId, index) =>
+    `${ambiguousFixtureId}-primary-${String(index + 1).padStart(4, "0")}`
+);
+const ambiguousStudentNumbers = ambiguousStudentIds.map(
+  (_studentId, index) =>
+    `${ambiguousFixtureId.toUpperCase()}-P-${String(index + 1).padStart(4, "0")}`
+);
 
 let adminClient: pg.Client | undefined;
 let productionDbModule: typeof import("../dist/db.js") | undefined;
@@ -416,6 +432,181 @@ async function seedOwnedFixture(client: pg.Client): Promise<void> {
   }
 }
 
+async function seedAmbiguousOwnedFixture(client: pg.Client): Promise<void> {
+  await client.query(
+    `
+      INSERT INTO schools (
+        id, name, domain, slug, status, is_active, plan_status,
+        stripe_customer_id, stripe_subscription_id, total_paid
+      )
+      VALUES ($1, $2, $3, $4, 'active', true, 'active', NULL, NULL, 0)
+    `,
+    [
+      ambiguousSchoolId,
+      `[SYNTHETIC LOAD TEST - NON-BILLABLE] ${ambiguousFixtureId} ambiguity`,
+      `${ambiguousFixtureId}.example.invalid`,
+      `${ambiguousFixtureId}-school`,
+    ]
+  );
+  await client.query(
+    `
+      INSERT INTO users (id, email, first_name, last_name)
+      VALUES
+        ($1, $4, 'Synthetic', 'Ambiguous Primary'),
+        ($2, $5, 'Synthetic', 'Ambiguous Alternate'),
+        ($3, $6, 'Synthetic', 'Ambiguous Office')
+    `,
+    [
+      ambiguousPrimaryTeacherId,
+      ambiguousCoTeacherId,
+      ambiguousOfficeStaffId,
+      `${ambiguousFixtureId}-primary@example.invalid`,
+      `${ambiguousFixtureId}-alternate@example.invalid`,
+      `${ambiguousFixtureId}-office@example.invalid`,
+    ]
+  );
+  await client.query(
+    `
+      INSERT INTO school_memberships (
+        id, user_id, school_id, role, status
+      )
+      VALUES
+        (gen_random_uuid()::text, $1, $4, 'teacher', 'active'),
+        (gen_random_uuid()::text, $2, $4, 'teacher', 'active'),
+        (gen_random_uuid()::text, $3, $4, 'office_staff', 'active')
+    `,
+    [
+      ambiguousPrimaryTeacherId,
+      ambiguousCoTeacherId,
+      ambiguousOfficeStaffId,
+      ambiguousSchoolId,
+    ]
+  );
+  await client.query(
+    `
+      INSERT INTO product_licenses (id, school_id, product, status)
+      VALUES (gen_random_uuid()::text, $1, 'CLASSPILOT', 'active')
+    `,
+    [ambiguousSchoolId]
+  );
+  await client.query(
+    `
+      INSERT INTO groups (
+        id, school_id, teacher_id, name, description, group_type,
+        status, schedule_enabled
+      )
+      VALUES
+        (
+          $1, $3, $4, 'Synthetic ambiguity class 01',
+          $6, 'admin_class', 'active', false
+        ),
+        (
+          $2, $3, $5, 'Synthetic ambiguity class 02',
+          $7, 'admin_class', 'active', false
+        )
+    `,
+    [
+      ambiguousClassGroupId,
+      ambiguousOtherGroupId,
+      ambiguousSchoolId,
+      ambiguousPrimaryTeacherId,
+      ambiguousCoTeacherId,
+      `synthetic-load-fixture:${ambiguousFixtureId}:class:01`,
+      `synthetic-load-fixture:${ambiguousFixtureId}:class:02`,
+    ]
+  );
+  await client.query(
+    `
+      INSERT INTO students (
+        id, school_id, first_name, last_name, student_id_number, status
+      )
+      SELECT
+        fixture.id,
+        $3,
+        'Synthetic',
+        'Ambiguity Student ' || fixture.ordinality::text,
+        fixture.student_number,
+        'active'
+      FROM unnest($1::text[], $2::text[])
+        WITH ORDINALITY AS fixture(id, student_number, ordinality)
+    `,
+    [ambiguousStudentIds, ambiguousStudentNumbers, ambiguousSchoolId]
+  );
+  await client.query(
+    `
+      INSERT INTO group_students (id, group_id, student_id)
+      SELECT gen_random_uuid()::text, $2, fixture.student_id
+      FROM unnest($1::text[]) AS fixture(student_id)
+    `,
+    [ambiguousStudentIds.slice(0, 40), ambiguousClassGroupId]
+  );
+  await client.query(
+    `
+      INSERT INTO devices (
+        device_id, device_name, school_id, class_id
+      )
+      SELECT
+        fixture.device_id,
+        'Synthetic ambiguity device ' || fixture.ordinality::text,
+        $2,
+        $3
+      FROM unnest($1::text[])
+        WITH ORDINALITY AS fixture(device_id, ordinality)
+    `,
+    [ambiguousDeviceIds, ambiguousSchoolId, ambiguousClassGroupId]
+  );
+  await client.query(
+    `
+      INSERT INTO student_devices (
+        id, student_id, device_id, first_seen_at, last_seen_at
+      )
+      SELECT
+        gen_random_uuid()::text,
+        fixture.student_id,
+        fixture.device_id,
+        now() - interval '1 hour',
+        now()
+      FROM unnest($1::text[], $2::text[])
+        AS fixture(student_id, device_id)
+    `,
+    [ambiguousStudentIds, ambiguousDeviceIds]
+  );
+}
+
+async function cleanupAmbiguousOwnedFixture(client: pg.Client): Promise<void> {
+  await client.query(
+    "DELETE FROM group_students WHERE group_id = ANY($1::text[])",
+    [[ambiguousClassGroupId, ambiguousOtherGroupId]]
+  );
+  await client.query("DELETE FROM groups WHERE school_id = $1", [
+    ambiguousSchoolId,
+  ]);
+  await client.query(
+    "DELETE FROM student_devices WHERE student_id = ANY($1::text[])",
+    [ambiguousStudentIds]
+  );
+  await client.query("DELETE FROM devices WHERE school_id = $1", [
+    ambiguousSchoolId,
+  ]);
+  await client.query("DELETE FROM students WHERE school_id = $1", [
+    ambiguousSchoolId,
+  ]);
+  await client.query("DELETE FROM product_licenses WHERE school_id = $1", [
+    ambiguousSchoolId,
+  ]);
+  await client.query("DELETE FROM school_memberships WHERE school_id = $1", [
+    ambiguousSchoolId,
+  ]);
+  await client.query("DELETE FROM schools WHERE id = $1", [ambiguousSchoolId]);
+  await client.query("DELETE FROM users WHERE id = ANY($1::text[])", [
+    [
+      ambiguousPrimaryTeacherId,
+      ambiguousCoTeacherId,
+      ambiguousOfficeStaffId,
+    ],
+  ]);
+}
+
 async function cleanupOwnedFixture(client: pg.Client): Promise<void> {
   await client.query("BEGIN");
   try {
@@ -518,6 +709,7 @@ describe(
       }
       if (adminClient) {
         try {
+          await cleanupAmbiguousOwnedFixture(adminClient);
           await cleanupOwnedFixture(adminClient);
         } finally {
           await adminClient.query(
@@ -532,6 +724,468 @@ describe(
         }
       }
     });
+
+    it(
+      "reports real snapshot-consistent counts at every mutable eligibility boundary",
+      { timeout: 120_000 },
+      async () => {
+        assert.ok(adminClient);
+        assert.ok(applicationDatabaseUrl);
+        assert.ok(planCheckModule);
+
+        const applicationClient = new pg.Client({
+          connectionString: applicationDatabaseUrl,
+          statement_timeout: 15_000,
+        });
+        await applicationClient.connect();
+
+        async function expectFailure(
+          firstEmptyStage: string,
+          expectedCounts: Readonly<Record<string, number>>
+        ): Promise<void> {
+          assert.ok(planCheckModule);
+          await assert.rejects(
+            planCheckModule.runClasspilotTileAuthorizationPlanBasePreflight({
+              client: applicationClient,
+            }),
+            (error) => {
+              if (
+                !(error instanceof
+                  planCheckModule!.ClasspilotTileAuthorizationPlanCheckError) ||
+                error.failureCode !== "representative_scenario_missing" ||
+                error.labels.length !== 0 ||
+                error.funnelEvidence?.failureStage !== "base_funnel" ||
+                error.funnelEvidence.firstEmptyStage !== firstEmptyStage
+              ) {
+                return false;
+              }
+              for (const [key, value] of Object.entries(expectedCounts)) {
+                assert.equal(
+                  (
+                    error.funnelEvidence.counts as unknown as Record<
+                      string,
+                      number
+                    >
+                  )[key],
+                  value,
+                  key
+                );
+              }
+              return true;
+            }
+          );
+        }
+
+        async function runMutationCase(
+          firstEmptyStage: string,
+          expectedCounts: Readonly<Record<string, number>>,
+          mutate: () => Promise<unknown>,
+          restore: () => Promise<unknown>
+        ): Promise<void> {
+          try {
+            await mutate();
+            await expectFailure(firstEmptyStage, expectedCounts);
+          } finally {
+            await restore();
+          }
+          const restored =
+            await planCheckModule!.runClasspilotTileAuthorizationPlanBasePreflight({
+              client: applicationClient,
+            });
+          assert.equal(restored.status, "passed");
+        }
+
+        const schoolName =
+          `[SYNTHETIC LOAD TEST - NON-BILLABLE] ${fixtureId} plan gate integration`;
+        const classDescription =
+          `synthetic-load-fixture:${fixtureId}:class:01`;
+        const otherDescription =
+          `synthetic-load-fixture:${fixtureId}:class:02`;
+        const rosterSupervisionContextId = randomUUID();
+        const rosterSupervisionStudentIds = rosterStudentIds.map(() =>
+          randomUUID()
+        );
+        const officeSupervisionContextId = randomUUID();
+        const officeSupervisionStudentIds = officeStudentIds.map(() =>
+          randomUUID()
+        );
+        const existingCoTeacherId = randomUUID();
+        const secondOfficeStaffId = randomUUID();
+
+        try {
+          await runMutationCase(
+            "syntheticDescribedGroups",
+            { syntheticDescribedGroups: 0 },
+            () =>
+              adminClient!.query(
+                "UPDATE groups SET description = 'ordinary class' WHERE id = ANY($1::text[])",
+                [[classGroupId, otherGroupId]]
+              ),
+            async () => {
+              await adminClient!.query(
+                "UPDATE groups SET description = $2 WHERE id = $1",
+                [classGroupId, classDescription]
+              );
+              await adminClient!.query(
+                "UPDATE groups SET description = $2 WHERE id = $1",
+                [otherGroupId, otherDescription]
+              );
+            }
+          );
+
+          await runMutationCase(
+            "syntheticSchoolGroups",
+            {
+              syntheticDescribedGroups: 2,
+              syntheticSchoolGroups: 0,
+            },
+            () =>
+              adminClient!.query(
+                "UPDATE schools SET name = 'Synthetic fixture without ownership marker' WHERE id = $1",
+                [schoolId]
+              ),
+            () =>
+              adminClient!.query("UPDATE schools SET name = $2 WHERE id = $1", [
+                schoolId,
+                schoolName,
+              ])
+          );
+
+          await runMutationCase(
+            "primaryTeacherGroups",
+            { syntheticSchoolGroups: 2, primaryTeacherGroups: 0 },
+            () =>
+              adminClient!.query(
+                "UPDATE school_memberships SET status = 'inactive' WHERE school_id = $1 AND role = 'teacher'",
+                [schoolId]
+              ),
+            () =>
+              adminClient!.query(
+                "UPDATE school_memberships SET status = 'active' WHERE school_id = $1 AND role = 'teacher'",
+                [schoolId]
+              )
+          );
+
+          await runMutationCase(
+            "licensedGroups",
+            { primaryTeacherGroups: 2, licensedGroups: 0 },
+            () =>
+              adminClient!.query(
+                "UPDATE product_licenses SET status = 'inactive' WHERE school_id = $1 AND product = 'CLASSPILOT'",
+                [schoolId]
+              ),
+            () =>
+              adminClient!.query(
+                "UPDATE product_licenses SET status = 'active' WHERE school_id = $1 AND product = 'CLASSPILOT'",
+                [schoolId]
+              )
+          );
+
+          await runMutationCase(
+            "activeRosterStudents",
+            { licensedGroups: 2, activeRosterStudents: 0 },
+            () =>
+              adminClient!.query(
+                "UPDATE students SET status = 'inactive' WHERE id = ANY($1::text[])",
+                [rosterStudentIds]
+              ),
+            () =>
+              adminClient!.query(
+                "UPDATE students SET status = 'active' WHERE id = ANY($1::text[])",
+                [rosterStudentIds]
+              )
+          );
+
+          await runMutationCase(
+            "canonicalMappedRosterStudents",
+            {
+              activeRosterStudents: 40,
+              canonicalMappedRosterStudents: 0,
+            },
+            () =>
+              adminClient!.query(
+                "DELETE FROM student_devices WHERE student_id = ANY($1::text[])",
+                [rosterStudentIds]
+              ),
+            () =>
+              adminClient!.query(
+                `
+                  INSERT INTO student_devices (
+                    id, student_id, device_id, first_seen_at, last_seen_at
+                  )
+                  SELECT
+                    gen_random_uuid()::text,
+                    fixture.student_id,
+                    fixture.device_id,
+                    now() - interval '1 hour',
+                    now()
+                  FROM unnest($1::text[], $2::text[])
+                    AS fixture(student_id, device_id)
+                  ON CONFLICT DO NOTHING
+                `,
+                [rosterStudentIds, allDeviceIds.slice(0, 40)]
+              )
+          );
+
+          await runMutationCase(
+            "unsupervisedRosterStudents",
+            {
+              canonicalMappedRosterStudents: 40,
+              unsupervisedRosterStudents: 0,
+            },
+            async () => {
+              await adminClient!.query(
+                `
+                  INSERT INTO classpilot_supervision_contexts (
+                    id, school_id, context_type, name, status,
+                    assigned_staff_id, created_by, starts_at, ends_at,
+                    created_at, updated_at
+                  )
+                  VALUES (
+                    $1, $2, 'office', 'integration roster supervision',
+                    'active', $3, $3, now() - interval '1 minute',
+                    now() + interval '1 hour', now(), now()
+                  )
+                `,
+                [rosterSupervisionContextId, schoolId, officeStaffId]
+              );
+              await adminClient!.query(
+                `
+                  INSERT INTO classpilot_supervision_students (
+                    id, school_id, context_id, student_id, source,
+                    assigned_by, assigned_at
+                  )
+                  SELECT
+                    fixture.id, $3, $4, fixture.student_id,
+                    'authorization_plan_gate', $5, now()
+                  FROM unnest($1::text[], $2::text[])
+                    AS fixture(id, student_id)
+                `,
+                [
+                  rosterSupervisionStudentIds,
+                  rosterStudentIds,
+                  schoolId,
+                  rosterSupervisionContextId,
+                  officeStaffId,
+                ]
+              );
+            },
+            async () => {
+              await adminClient!.query(
+                "DELETE FROM classpilot_supervision_students WHERE context_id = $1",
+                [rosterSupervisionContextId]
+              );
+              await adminClient!.query(
+                "DELETE FROM classpilot_supervision_contexts WHERE id = $1",
+                [rosterSupervisionContextId]
+              );
+            }
+          );
+
+          await runMutationCase(
+            "noCoTeacherGroups",
+            { unsupervisedRosterStudents: 40, noCoTeacherGroups: 0 },
+            () =>
+              adminClient!.query(
+                `
+                  INSERT INTO group_teachers (
+                    id, group_id, teacher_id, role, assigned_at
+                  )
+                  VALUES ($1, $2, $3, 'co-teacher', now())
+                `,
+                [existingCoTeacherId, classGroupId, coTeacherId]
+              ),
+            () =>
+              adminClient!.query("DELETE FROM group_teachers WHERE id = $1", [
+                existingCoTeacherId,
+              ])
+          );
+
+          await runMutationCase(
+            "exactCohortGroups",
+            { noCoTeacherGroups: 1, exactCohortGroups: 0 },
+            () =>
+              adminClient!.query(
+                "DELETE FROM group_students WHERE group_id = $1 AND student_id = $2",
+                [classGroupId, rosterStudentIds[0]]
+              ),
+            () =>
+              adminClient!.query(
+                "INSERT INTO group_students (id, group_id, student_id) VALUES (gen_random_uuid()::text, $1, $2) ON CONFLICT DO NOTHING",
+                [classGroupId, rosterStudentIds[0]]
+              )
+          );
+
+          await runMutationCase(
+            "activeOfficeMemberships",
+            { eligibleGroupSchools: 1, activeOfficeMemberships: 0 },
+            () =>
+              adminClient!.query(
+                "UPDATE school_memberships SET status = 'inactive' WHERE school_id = $1 AND role = 'office_staff'",
+                [schoolId]
+              ),
+            () =>
+              adminClient!.query(
+                "UPDATE school_memberships SET status = 'active' WHERE school_id = $1 AND role = 'office_staff'",
+                [schoolId]
+              )
+          );
+
+          await runMutationCase(
+            "uniqueOfficeMembershipSchools",
+            {
+              activeOfficeMemberships: 2,
+              uniqueOfficeMembershipSchools: 0,
+            },
+            async () => {
+              await adminClient!.query(
+                `
+                  INSERT INTO users (id, email, first_name, last_name)
+                  VALUES ($1, $2, 'Synthetic', 'Second Office')
+                `,
+                [
+                  secondOfficeStaffId,
+                  `${fixtureId}-second-office@example.invalid`,
+                ]
+              );
+              await adminClient!.query(
+                `
+                  INSERT INTO school_memberships (
+                    id, user_id, school_id, role, status
+                  )
+                  VALUES (gen_random_uuid()::text, $1, $2, 'office_staff', 'active')
+                `,
+                [secondOfficeStaffId, schoolId]
+              );
+            },
+            async () => {
+              await adminClient!.query(
+                "DELETE FROM school_memberships WHERE school_id = $1 AND user_id = $2",
+                [schoolId, secondOfficeStaffId]
+              );
+              await adminClient!.query("DELETE FROM users WHERE id = $1", [
+                secondOfficeStaffId,
+              ]);
+            }
+          );
+
+          await runMutationCase(
+            "unrosteredOfficeStudents",
+            {
+              canonicalMappedOfficeStudents: 80,
+              unrosteredOfficeStudents: 0,
+            },
+            () =>
+              adminClient!.query(
+                `
+                  INSERT INTO group_students (id, group_id, student_id)
+                  SELECT gen_random_uuid()::text, $2, fixture.student_id
+                  FROM unnest($1::text[]) AS fixture(student_id)
+                `,
+                [officeStudentIds, otherGroupId]
+              ),
+            () =>
+              adminClient!.query(
+                "DELETE FROM group_students WHERE group_id = $1",
+                [otherGroupId]
+              )
+          );
+
+          await runMutationCase(
+            "unsupervisedOfficeStudents",
+            {
+              unrosteredOfficeStudents: 40,
+              unsupervisedOfficeStudents: 0,
+            },
+            async () => {
+              await adminClient!.query(
+                `
+                  INSERT INTO classpilot_supervision_contexts (
+                    id, school_id, context_type, name, status,
+                    assigned_staff_id, created_by, starts_at, ends_at,
+                    created_at, updated_at
+                  )
+                  VALUES (
+                    $1, $2, 'office', 'integration inactive office supervision',
+                    'inactive', $3, $3, now() - interval '1 minute',
+                    now() + interval '1 hour', now(), now()
+                  )
+                `,
+                [officeSupervisionContextId, schoolId, officeStaffId]
+              );
+              await adminClient!.query(
+                `
+                  INSERT INTO classpilot_supervision_students (
+                    id, school_id, context_id, student_id, source,
+                    assigned_by, assigned_at
+                  )
+                  SELECT
+                    fixture.id, $3, $4, fixture.student_id,
+                    'authorization_plan_gate', $5, now()
+                  FROM unnest($1::text[], $2::text[])
+                    AS fixture(id, student_id)
+                `,
+                [
+                  officeSupervisionStudentIds,
+                  officeStudentIds,
+                  schoolId,
+                  officeSupervisionContextId,
+                  officeStaffId,
+                ]
+              );
+            },
+            async () => {
+              await adminClient!.query(
+                "DELETE FROM classpilot_supervision_students WHERE context_id = $1",
+                [officeSupervisionContextId]
+              );
+              await adminClient!.query(
+                "DELETE FROM classpilot_supervision_contexts WHERE id = $1",
+                [officeSupervisionContextId]
+              );
+            }
+          );
+
+          await runMutationCase(
+            "alternateTeacherReadySchools",
+            {
+              officeCohortReadySchools: 1,
+              alternateTeacherReadySchools: 0,
+            },
+            () =>
+              adminClient!.query(
+                "UPDATE school_memberships SET status = 'inactive' WHERE school_id = $1 AND user_id = $2",
+                [schoolId, coTeacherId]
+              ),
+            () =>
+              adminClient!.query(
+                "UPDATE school_memberships SET status = 'active' WHERE school_id = $1 AND user_id = $2",
+                [schoolId, coTeacherId]
+              )
+          );
+
+          await seedAmbiguousOwnedFixture(adminClient);
+          try {
+            await expectFailure("selectedSchools", {
+              eligibleSchools: 2,
+              selectedSchools: 0,
+            });
+          } finally {
+            await cleanupAmbiguousOwnedFixture(adminClient);
+          }
+          assert.equal(
+            (
+              await planCheckModule.runClasspilotTileAuthorizationPlanBasePreflight({
+                client: applicationClient,
+              })
+            ).status,
+            "passed"
+          );
+        } finally {
+          await applicationClient.end();
+        }
+      }
+    );
 
     it(
       "provisions missing device sessions, hides all 123 rows, rolls back, and serializes two real gates",
@@ -881,7 +1535,12 @@ describe(
             (error) =>
               error instanceof
                 planCheckModule.ClasspilotTileAuthorizationPlanCheckError &&
-              error.failureCode === "representative_scenario_missing"
+              error.failureCode === "representative_scenario_missing" &&
+              error.funnelEvidence?.failureStage === "base_funnel" &&
+              error.funnelEvidence.firstEmptyStage ===
+                "exactCohortGroups" &&
+              error.funnelEvidence.counts.canonicalMappedRosterStudents ===
+                39
           );
           await adminClient.query(
             `
@@ -917,7 +1576,12 @@ describe(
             (error) =>
               error instanceof
                 planCheckModule.ClasspilotTileAuthorizationPlanCheckError &&
-              error.failureCode === "representative_scenario_missing"
+              error.failureCode === "representative_scenario_missing" &&
+              error.funnelEvidence?.failureStage === "base_funnel" &&
+              error.funnelEvidence.firstEmptyStage ===
+                "exactCohortGroups" &&
+              error.funnelEvidence.counts.canonicalMappedRosterStudents ===
+                39
           );
           await adminClient.query(
             `
@@ -952,7 +1616,11 @@ describe(
             (error) =>
               error instanceof
                 planCheckModule.ClasspilotTileAuthorizationPlanCheckError &&
-              error.failureCode === "representative_scenario_missing"
+              error.failureCode === "representative_scenario_missing" &&
+              error.funnelEvidence?.failureStage === "base_funnel" &&
+              error.funnelEvidence.firstEmptyStage ===
+                "exactCohortGroups" &&
+              error.funnelEvidence.counts.activeRosterStudents === 39
           );
           await adminClient.query(
             `
@@ -992,7 +1660,12 @@ describe(
               (error) =>
                 error instanceof
                   planCheckModule.ClasspilotTileAuthorizationPlanCheckError &&
-                error.failureCode === "representative_scenario_missing"
+                error.failureCode === "representative_scenario_missing" &&
+                error.funnelEvidence?.failureStage === "base_funnel" &&
+                error.funnelEvidence.firstEmptyStage ===
+                  "exactCohortGroups" &&
+                error.funnelEvidence.counts.canonicalMappedRosterStudents ===
+                  39
             );
           } finally {
             await adminClient.query(
@@ -1156,7 +1829,11 @@ describe(
             (error) =>
               error instanceof
                 planCheckModule.ClasspilotTileAuthorizationPlanCheckError &&
-              error.failureCode === "representative_scenario_missing"
+              error.failureCode === "representative_scenario_missing" &&
+              error.funnelEvidence?.failureStage === "session_posture" &&
+              error.funnelEvidence.firstEmptyStage === "none" &&
+              error.funnelEvidence.sessionPosture
+                ?.conflictingSessionPairs === 1
           );
         } finally {
           releaseFirst.resolve();

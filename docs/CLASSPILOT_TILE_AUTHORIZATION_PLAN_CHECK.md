@@ -103,6 +103,45 @@ It runs in a rollback-only `REPEATABLE READ READ ONLY` transaction and emits
 one aggregate `classpilot-tile-auth-plan-base-preflight-v1` event proving one
 eligible base, 80 required pairs, the reused/missing split, and zero conflicts.
 
+When base selection fails, the same snapshot-consistent statement emits one
+sanitized `classpilot-tile-auth-plan-base-funnel-v1` object. It identifies
+`base_funnel`, `base_shape`, or `session_posture` as the failure stage and
+reports only bounded synthetic-fixture aggregate counts plus the independently
+derived first empty stage. It contains no school, fixture, staff, student,
+device, SQL, parameter, query-ID, or raw-error value. The passing preflight
+schema above remains unchanged; funnel evidence is failure evidence and can
+never satisfy the release gate.
+
+An explicitly authorized investigation may run the non-consuming observation
+form:
+
+```bash
+./scripts/deploy.sh production --backend --activate-emergency \
+  --classpilot-tile-auth-plan-observation
+```
+
+Observation mode performs the normal source, workflow, timing, AWS-identity,
+topology, and production-posture checks, then builds, pushes, and registers an
+inactive candidate and runs only the read-only base preflight. It performs no
+migration, scaling hold, service update, frontend publication, fixture
+mutation, monitoring lease, or workload traffic. It creates neither a
+rehearsal admission nor a rehearsal receipt and therefore does not consume the
+one-attempt rehearsal boundary.
+
+The final ACL-private `classpilot-tile-auth-plan-observation-v1` packet is a
+strict tagged union. Exit zero binds one canonical
+`classpilot-tile-auth-plan-base-preflight-v1` companion and outcome
+`base_eligible`; the expected base-ineligibility exit `1` binds one canonical
+`classpilot-tile-auth-plan-base-funnel-v1` companion and outcome
+`base_ineligible`. Every other nonzero exit fails closed and cannot seal an
+observation packet. A packet cannot contain both companions. It binds the
+observation ID, SHA, digest, inactive API/worker definitions, active baseline,
+network and posture hashes, terminal task/exit/log-stream hash, evidence hash,
+and creation time. Every packet sets `eligibleForDeployment`,
+`eligibleForDiagnostic`, and `eligibleForCertification` to `false`.
+Observation packets are evidence only: rehearsal inspection/consumption,
+deployment, diagnostic, and certification admission must reject them.
+
 For an authorized production release, first invoke the candidate-only
 rehearsal:
 
@@ -178,6 +217,16 @@ and inactive task definitions `schoolpilot-production-api:133` and
 eligible query receipt and must never be rehearsed, deployed, or used as
 provenance.
 
+The later failed preflight candidate at SHA
+`f3265563ac2efb673a2974a1adafefe32dcedb42`, image digest
+`sha256:56e973299479638e02f496b0641a21945440367cbe0a3d782c3fc75e6442673a`,
+and inactive task definitions `schoolpilot-production-api-emergency:34` and
+`schoolpilot-production-scheduler-worker:49` is historical-only. Its
+`representative_scenario_missing` result produced no rehearsal receipt,
+migration, service activation, frontend publication, fixture mutation,
+monitoring lease, traffic, diagnostic provenance, or certification
+provenance. Never reuse or promote those identities.
+
 The production gate cannot start during the actual 01:15-02:15
 America/New_York purge/rollup window. A missing, ambiguous, inactive,
 incomplete, cross-school, or conflicted owned base fixture is a failed gate,
@@ -185,7 +234,10 @@ not permission to inspect ordinary tenants, refresh fixtures, or reduce the
 cohort. The checker reports whether existing plans pass; it never creates or
 recommends an index by itself.
 
-The current authorization ends after a sealed, independently validated
-readiness packet. It does not authorize a production fixture refresh or
+The current observation-only authorization ends after exactly one sealed and
+independently inspected observation packet. It does not authorize a rehearsal,
+serving deployment, report-only exception, production fixture refresh or
 provisioning, historical-state promotion, Terraform apply, Database Insights
 lease, diagnostic binding or validation, workload traffic, or certification.
+Use the observed first-empty-stage/count evidence to write a separately
+approved remediation; do not mutate an eligibility predicate automatically.

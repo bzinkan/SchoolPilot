@@ -6,6 +6,7 @@ import {
   createClasspilotTilePlanResidueClientReleaseError,
   createClasspilotTilePlanWriteClientReleaseError,
   parseClasspilotTilePlanCliArgs,
+  sanitizeClasspilotTileAuthorizationPlanCheckFailure,
 } from "../src/cli/checkClasspilotTileAuthorizationPlans.ts";
 import {
   assertClasspilotHistoryFallbackPiStatementDiscoverable,
@@ -26,6 +27,7 @@ import {
   runClasspilotTileAuthorizationPlanCheck,
   summarizeClasspilotTileHistoryFallbackPlan,
   summarizeClasspilotTilePlanScenario,
+  validateClasspilotTileAuthorizationPlanBaseFunnelEvidence,
 } from "../src/services/classpilotTileAuthorizationPlanCheck.ts";
 
 function sample(overrides: Partial<{
@@ -63,6 +65,81 @@ function historySample(overrides: Partial<{
   };
 }
 
+const FUNNEL_STAGE_COLUMNS = [
+  ["syntheticDescribedGroups", "synthetic_described_groups"],
+  ["syntheticSchoolGroups", "synthetic_school_groups"],
+  ["primaryTeacherGroups", "primary_teacher_groups"],
+  ["licensedGroups", "licensed_groups"],
+  ["activeRosterStudents", "active_roster_students"],
+  ["canonicalMappedRosterStudents", "canonical_mapped_roster_students"],
+  ["unsupervisedRosterStudents", "unsupervised_roster_students"],
+  ["noCoTeacherGroups", "no_co_teacher_groups"],
+  ["exactCohortGroups", "exact_cohort_groups"],
+  ["eligibleGroupSchools", "eligible_group_schools"],
+  ["activeOfficeMemberships", "active_office_memberships"],
+  ["uniqueOfficeMembershipSchools", "unique_office_membership_schools"],
+  ["activeOfficeStudents", "active_office_students"],
+  ["canonicalMappedOfficeStudents", "canonical_mapped_office_students"],
+  ["unrosteredOfficeStudents", "unrostered_office_students"],
+  ["unsupervisedOfficeStudents", "unsupervised_office_students"],
+  ["officeCohortReadySchools", "office_cohort_ready_schools"],
+  ["alternateTeacherReadySchools", "alternate_teacher_ready_schools"],
+  ["eligibleSchools", "eligible_schools"],
+  ["selectedSchools", "selected_schools"],
+  ["selectedGroups", "selected_groups"],
+  ["selectedCoTeachers", "selected_co_teachers"],
+  ["selectedOfficeStaff", "selected_office_staff"],
+  ["selectedOfficeCohorts", "selected_office_cohorts"],
+  ["finalBases", "final_bases"],
+] as const;
+
+const PASSING_FUNNEL_COUNTS = {
+  syntheticDescribedGroups: 2,
+  syntheticSchoolGroups: 2,
+  primaryTeacherGroups: 2,
+  licensedGroups: 2,
+  activeRosterStudents: 80,
+  canonicalMappedRosterStudents: 80,
+  unsupervisedRosterStudents: 80,
+  noCoTeacherGroups: 2,
+  exactCohortGroups: 2,
+  eligibleGroupSchools: 1,
+  activeOfficeMemberships: 1,
+  uniqueOfficeMembershipSchools: 1,
+  activeOfficeStudents: 80,
+  canonicalMappedOfficeStudents: 80,
+  unrosteredOfficeStudents: 40,
+  unsupervisedOfficeStudents: 40,
+  officeCohortReadySchools: 1,
+  alternateTeacherReadySchools: 1,
+  eligibleSchools: 1,
+  selectedSchools: 1,
+  selectedGroups: 1,
+  selectedCoTeachers: 1,
+  selectedOfficeStaff: 1,
+  selectedOfficeCohorts: 1,
+  finalBases: 1,
+};
+
+const PASSING_FUNNEL_DATABASE_COUNTS = Object.fromEntries(
+  FUNNEL_STAGE_COLUMNS.map(([key, column]) => [
+    column,
+    PASSING_FUNNEL_COUNTS[key],
+  ])
+);
+
+function databaseFunnelCountsForFirstEmptyStage(
+  firstEmptyStage: keyof typeof PASSING_FUNNEL_COUNTS
+): Record<string, number> {
+  let empty = false;
+  return Object.fromEntries(
+    FUNNEL_STAGE_COLUMNS.map(([key, column]) => {
+      if (key === firstEmptyStage) empty = true;
+      return [column, empty ? 0 : PASSING_FUNNEL_COUNTS[key]];
+    })
+  );
+}
+
 const PLAN_CONTROL_QUERIES = new Set([
   "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ WRITE",
   "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY",
@@ -80,6 +157,7 @@ function createQueryIdGateHarness(options: {
   settingRows?: Record<string, unknown>[];
   identityExplainRows?: Record<string, unknown>[][];
   baseRows?: Record<string, unknown>[];
+  baseFunnelDatabaseCounts?: Record<string, number>;
   residueRows?: Record<string, unknown>[];
   sessionPosture?: Partial<{
     required: number;
@@ -172,6 +250,32 @@ function createQueryIdGateHarness(options: {
     teacher_device_ids: deviceIds,
     office_student_ids: officeStudentIds,
     office_device_ids: officeDeviceIds,
+    synthetic_described_groups: 2,
+    synthetic_school_groups: 2,
+    primary_teacher_groups: 2,
+    licensed_groups: 2,
+    active_roster_students: 80,
+    canonical_mapped_roster_students: 80,
+    unsupervised_roster_students: 80,
+    no_co_teacher_groups: 2,
+    exact_cohort_groups: 2,
+    eligible_group_schools: 1,
+    active_office_memberships: 1,
+    unique_office_membership_schools: 1,
+    active_office_students: 80,
+    canonical_mapped_office_students: 80,
+    unrostered_office_students: 40,
+    unsupervised_office_students: 40,
+    office_cohort_ready_schools: 1,
+    alternate_teacher_ready_schools: 1,
+    eligible_schools: 1,
+    selected_schools: 1,
+    selected_groups: 1,
+    selected_co_teachers: 1,
+    selected_office_staff: 1,
+    selected_office_cohorts: 1,
+    final_bases: 1,
+    ...options.baseFunnelDatabaseCounts,
   };
   const client = {
     async query(text: string, values?: readonly unknown[]) {
@@ -961,6 +1065,200 @@ describe("ClassPilot tile authorization plan checker", () => {
         "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY",
         "ROLLBACK",
       ]
+    );
+  });
+
+  it("reports the deterministic first empty stage for every base-funnel boundary", async () => {
+    for (const [firstEmptyStage] of FUNNEL_STAGE_COLUMNS) {
+      const harness = createQueryIdGateHarness({
+        baseFunnelDatabaseCounts:
+          databaseFunnelCountsForFirstEmptyStage(firstEmptyStage),
+      });
+      await assert.rejects(
+        runClasspilotTileAuthorizationPlanBasePreflight({
+          client: harness.client,
+        }),
+        (error) => {
+          if (
+            !(error instanceof ClasspilotTileAuthorizationPlanCheckError) ||
+            error.failureCode !== "representative_scenario_missing" ||
+            !error.funnelEvidence
+          ) {
+            return false;
+          }
+          assert.deepEqual(
+            validateClasspilotTileAuthorizationPlanBaseFunnelEvidence(
+              error.funnelEvidence
+            ),
+            error.funnelEvidence
+          );
+          assert.equal(error.labels.length, 0);
+          assert.equal(error.funnelEvidence.failureStage, "base_funnel");
+          assert.equal(
+            error.funnelEvidence.firstEmptyStage,
+            firstEmptyStage
+          );
+          assert.equal(error.funnelEvidence.counts.finalBases, 0);
+          assert.equal(error.funnelEvidence.sessionPosture, null);
+          assert.doesNotMatch(
+            JSON.stringify(error.funnelEvidence),
+            /school-sensitive|student-sensitive|fixture-sensitive-primary|\bSELECT\s|synthetic-load-fixture/i
+          );
+          return true;
+        }
+      );
+      assert.equal(
+        harness.getQueryLog().filter(({ text }) =>
+          text.includes("/* transactional_plan_base_v2 */")
+        ).length,
+        1
+      );
+      assert.equal(
+        harness.getQueryLog().filter(({ text }) =>
+          text.includes("/* transactional_plan_session_posture_v1 */")
+        ).length,
+        0
+      );
+      assert.deepEqual(
+        harness.getQueryLog()
+          .filter(({ text }) =>
+            text.startsWith("BEGIN TRANSACTION") || text === "ROLLBACK"
+          )
+          .map(({ text }) => text),
+        [
+          "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY",
+          "ROLLBACK",
+        ]
+      );
+    }
+  });
+
+  it("distinguishes malformed selected-base shape from session conflicts", async () => {
+    const malformedHarness = createQueryIdGateHarness();
+    const malformedBase = {
+      ...malformedHarness.fixture.baseRow,
+      teacher_student_ids: malformedHarness.fixture.studentIds.slice(0, 39),
+    };
+    const malformedRun = createQueryIdGateHarness({
+      baseRows: [malformedBase],
+    });
+    await assert.rejects(
+      runClasspilotTileAuthorizationPlanBasePreflight({
+        client: malformedRun.client,
+      }),
+      (error) => {
+        if (
+          !(error instanceof ClasspilotTileAuthorizationPlanCheckError) ||
+          !error.funnelEvidence
+        ) {
+          return false;
+        }
+        assert.equal(error.funnelEvidence.failureStage, "base_shape");
+        assert.equal(error.funnelEvidence.firstEmptyStage, "none");
+        assert.equal(error.funnelEvidence.counts.finalBases, 1);
+        assert.equal(error.funnelEvidence.sessionPosture, null);
+        return true;
+      }
+    );
+
+    const sessionRun = createQueryIdGateHarness({
+      sessionPosture: {
+        reused: 20,
+        missing: 59,
+        conflicting: 1,
+      },
+    });
+    await assert.rejects(
+      runClasspilotTileAuthorizationPlanBasePreflight({
+        client: sessionRun.client,
+      }),
+      (error) => {
+        if (
+          !(error instanceof ClasspilotTileAuthorizationPlanCheckError) ||
+          !error.funnelEvidence
+        ) {
+          return false;
+        }
+        assert.equal(error.funnelEvidence.failureStage, "session_posture");
+        assert.equal(error.funnelEvidence.firstEmptyStage, "none");
+        assert.deepEqual(error.funnelEvidence.sessionPosture, {
+          requiredSessionPairs: 80,
+          reusedActiveSessionPairs: 20,
+          missingSessionPairs: 59,
+          conflictingSessionPairs: 1,
+        });
+        return true;
+      }
+    );
+  });
+
+  it("emits funnel evidence only for the allowlisted representative failure", () => {
+    const counts = {
+      ...PASSING_FUNNEL_COUNTS,
+      selectedCoTeachers: 0,
+      selectedOfficeStaff: 0,
+      selectedOfficeCohorts: 0,
+      finalBases: 0,
+    };
+    const funnelEvidence =
+      validateClasspilotTileAuthorizationPlanBaseFunnelEvidence({
+        version: "classpilot-tile-auth-plan-base-funnel-v1",
+        failureStage: "base_funnel",
+        firstEmptyStage: "selectedCoTeachers",
+        cohortSize: 40,
+        counts,
+        sessionPosture: null,
+      });
+    const allowed = sanitizeClasspilotTileAuthorizationPlanCheckFailure(
+      new ClasspilotTileAuthorizationPlanCheckError(
+        "representative_scenario_missing",
+        [],
+        0,
+        funnelEvidence
+      )
+    );
+    assert.deepEqual(allowed.funnelEvidence, funnelEvidence);
+
+    const unrelated = sanitizeClasspilotTileAuthorizationPlanCheckFailure(
+      new ClasspilotTileAuthorizationPlanCheckError(
+        "invalid_configuration",
+        [],
+        0,
+        funnelEvidence
+      )
+    );
+    assert.equal("funnelEvidence" in unrelated, false);
+
+    assert.throws(
+      () =>
+        validateClasspilotTileAuthorizationPlanBaseFunnelEvidence({
+          version: "classpilot-tile-auth-plan-base-funnel-v1",
+          failureStage: new String("base_funnel"),
+          firstEmptyStage: "selectedCoTeachers",
+          cohortSize: 40,
+          counts,
+          sessionPosture: null,
+        }),
+      /classpilot_tile_authorization_plan_base_funnel_invalid/
+    );
+  });
+
+  it("fails malformed base-funnel evidence without scenario labels", async () => {
+    const harness = createQueryIdGateHarness({
+      baseFunnelDatabaseCounts: {
+        ...PASSING_FUNNEL_DATABASE_COUNTS,
+        final_bases: -1,
+      },
+    });
+    await assert.rejects(
+      runClasspilotTileAuthorizationPlanBasePreflight({
+        client: harness.client,
+      }),
+      (error) =>
+        error instanceof ClasspilotTileAuthorizationPlanCheckError &&
+        error.failureCode === "base_funnel_evidence_invalid" &&
+        error.labels.length === 0 &&
+        error.funnelEvidence === undefined
     );
   });
 
