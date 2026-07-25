@@ -4028,16 +4028,27 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
     $terminalReuseConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
     $terminalReuseConfig.runId = "availability-violation-terminal-reuse-rejected"
     [IO.File]::WriteAllText($rollbackConfigPath, ($terminalReuseConfig | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+    $terminalReuseCheckpointHashBefore = (Get-FileHash -LiteralPath $applicationRecoveryCheckpointPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $terminalReuseStatePath = Join-Path $evidenceDirectory "$($terminalReuseConfig.runId)-rollback-state.json"
+    $terminalReuseHeartbeatPath = Join-Path $evidenceDirectory "$($terminalReuseConfig.runId)-rollback-heartbeat.json"
     $terminalReuseUpdateStart = $global:SchoolPilotTestUpdateServiceCallCount
     $terminalReuseRegisterStart = $global:SchoolPilotTestAutoscalingRegisterCallCount
     $terminalReuseError = $null
     try { & $rollbackScript -ConfigPath $rollbackConfigPath -Action Application -Mode Execute | Out-Null }
     catch { $terminalReuseError = $_ }
+    $terminalReuseCheckpointHashAfter = (Get-FileHash -LiteralPath $applicationRecoveryCheckpointPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $terminalReuseCheckpointAfter = Get-Content -LiteralPath $applicationRecoveryCheckpointPath -Raw | ConvertFrom-Json -Depth 30
+    $terminalReuseErrorMessage = if ($null -eq $terminalReuseError) { "<none>" } else { $terminalReuseError.Exception.Message }
+    $terminalReuseUpdateDelta = $global:SchoolPilotTestUpdateServiceCallCount - $terminalReuseUpdateStart
+    $terminalReuseRegisterDelta = $global:SchoolPilotTestAutoscalingRegisterCallCount - $terminalReuseRegisterStart
     Assert-Condition (
         $null -ne $terminalReuseError -and $terminalReuseError.Exception.Message -match "terminal availability-violation checkpoint" -and
-        $global:SchoolPilotTestUpdateServiceCallCount -eq $terminalReuseUpdateStart -and
-        $global:SchoolPilotTestAutoscalingRegisterCallCount -eq $terminalReuseRegisterStart
-    ) "A terminal availability-violation checkpoint must fail closed on reuse before any recovery mutation."
+        $terminalReuseUpdateDelta -eq 0 -and $terminalReuseRegisterDelta -eq 0 -and
+        $terminalReuseCheckpointHashAfter -eq $terminalReuseCheckpointHashBefore -and
+        $terminalReuseCheckpointAfter.status -eq "completed_with_availability_violation" -and
+        -not (Test-Path -LiteralPath $terminalReuseStatePath) -and
+        -not (Test-Path -LiteralPath $terminalReuseHeartbeatPath)
+    ) "A terminal availability-violation checkpoint must fail closed before heartbeat startup or recovery mutation (error=$terminalReuseErrorMessage; updateDelta=$terminalReuseUpdateDelta; registerDelta=$terminalReuseRegisterDelta; hashUnchanged=$($terminalReuseCheckpointHashAfter -eq $terminalReuseCheckpointHashBefore); status=$($terminalReuseCheckpointAfter.status); stateExists=$(Test-Path -LiteralPath $terminalReuseStatePath); heartbeatExists=$(Test-Path -LiteralPath $terminalReuseHeartbeatPath))."
     [IO.File]::Delete($applicationRecoveryCheckpointPath)
 
     $workerRestartConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20

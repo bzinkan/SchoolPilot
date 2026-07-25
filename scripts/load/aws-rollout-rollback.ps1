@@ -946,6 +946,18 @@ function Get-ApplicationRecoveryCheckpointPath {
     return Join-ContainedPath $Config.resolvedEvidenceDirectory "application-recovery-checkpoint.json"
 }
 
+function Read-ApplicationRecoveryCheckpointForReuse {
+    param($Config)
+    $path = Get-ApplicationRecoveryCheckpointPath -Config $Config
+    if (-not (Test-Path -LiteralPath $path)) { return $null }
+    $checkpoint = Read-AtomicJson -Path $path
+    $status = [string](Get-OptionalObjectValue -Object $checkpoint -Property "status" -Default "")
+    if ($status -eq "completed_with_availability_violation") {
+        throw "Application rollback found a terminal availability-violation checkpoint; progression remains blocked and this evidence directory cannot be reused."
+    }
+    return $checkpoint
+}
+
 function Assert-ApplicationRecoveryCheckpointBinding {
     param($Config, $Checkpoint)
     $expected = Get-OptionalObjectValue -Object $Checkpoint -Property "expectedTaskDefinitions" -Default $null
@@ -1385,12 +1397,9 @@ function Restore-Application {
     $recoveryCheckpointPath = Get-ApplicationRecoveryCheckpointPath -Config $Config
     $recoveryCheckpoint = $null
     $recoveryCheckpointResumed = $false
-    if (Test-Path -LiteralPath $recoveryCheckpointPath) {
-        $candidateCheckpoint = Read-AtomicJson -Path $recoveryCheckpointPath
+    $candidateCheckpoint = Read-ApplicationRecoveryCheckpointForReuse -Config $Config
+    if ($null -ne $candidateCheckpoint) {
         $candidateStatus = [string](Get-OptionalObjectValue -Object $candidateCheckpoint -Property "status" -Default "")
-        if ($candidateStatus -eq "completed_with_availability_violation") {
-            throw "Application rollback found a terminal availability-violation checkpoint; progression remains blocked and this evidence directory cannot be reused."
-        }
         if ($candidateStatus -eq "active") {
             Assert-ApplicationRecoveryCheckpointBinding -Config $Config -Checkpoint $candidateCheckpoint
             $recoveryCheckpoint = $candidateCheckpoint
@@ -2140,6 +2149,13 @@ $config = Read-Config
     schemaVersion = 1
 } | ConvertTo-Json
 if ($Mode -eq "Validate") { exit 0 }
+
+# A terminal availability violation is immutable recovery evidence. Reject its
+# reuse before starting the heartbeat worker or performing any AWS read, while
+# retaining the same check inside Restore-Application to close the TOCTOU gap.
+if ($Action -eq "Application") {
+    [void](Read-ApplicationRecoveryCheckpointForReuse -Config $config)
+}
 
 $script:RollbackRunId = [string]$config.runId
 New-Item -ItemType Directory -Path $config.resolvedEvidenceDirectory -Force | Out-Null
