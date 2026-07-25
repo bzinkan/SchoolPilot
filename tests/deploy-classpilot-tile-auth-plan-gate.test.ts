@@ -4,9 +4,22 @@ import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import {
+  collectClasspilotTileAuthorizationPlanLogEvents,
+} from "../scripts/read-classpilot-tile-auth-plan-log-events.mjs";
+import {
+  extractClasspilotTileAuthorizationPlanFailure,
+} from "../scripts/extract-classpilot-tile-auth-plan-failure.mjs";
 
 const deploySource = readFileSync(new URL("../scripts/deploy.sh", import.meta.url), "utf8")
   .replace(/\r\n/g, "\n");
+const rehearsalReceiptManagerSource = readFileSync(
+  new URL(
+    "../scripts/manage-classpilot-tile-auth-plan-rehearsal-receipt.mjs",
+    import.meta.url
+  ),
+  "utf8"
+).replace(/\r\n/g, "\n");
 const libraryBoundary = deploySource.indexOf("# --- Preflight checks ---");
 assert.ok(libraryBoundary > 0);
 const deployLibrarySource = deploySource.slice(0, libraryBoundary);
@@ -35,6 +48,9 @@ function runDeployHelper(body: string, easternClock = "1 1200") {
     input: `
 ${deployLibrarySource}
 RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE=true
+RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=true
+REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=""
+EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL_SHA256=""
 production_eastern_weekday_hhmm() { printf '%s\\n' "$TEST_EASTERN_CLOCK"; }
 info() { :; }
 success() { :; }
@@ -117,13 +133,17 @@ function validReport() {
 
 function validLifecycle() {
   return {
-    version: "transactional-plan-scenarios-v1",
+    version: "transactional-plan-scenarios-v2",
+    requiredSessionPairs: 80,
+    reusedActiveSessionPairs: 0,
+    insertedSessionPairs: 80,
     seededRows: {
       groupTeachers: 1,
       teachingSessions: 1,
       supervisionContexts: 1,
       supervisionStudents: 40,
-      total: 43,
+      studentSessions: 80,
+      total: 123,
     },
     rollback: {
       attempted: true,
@@ -176,6 +196,12 @@ function validTaskResult(logStreamName?: unknown) {
       containers: [api],
     }],
   };
+}
+
+function taskResultWithExitCode(exitCode: number, logStreamName?: unknown) {
+  const result = validTaskResult(logStreamName);
+  result.tasks[0].containers[0].exitCode = exitCode;
+  return result;
 }
 
 function runLogBindingResolver(
@@ -275,14 +301,39 @@ validate_classpilot_tile_auth_plan_gate_mode
   });
 
   it("runs the exact new revision before hold, migration, and service mutation", () => {
+    const backendStart = deploySource.indexOf("# BACKEND DEPLOY");
+    const network = deploySource.indexOf(
+      "resolve_classpilot_tile_auth_candidate_network",
+      backendStart
+    );
     const rolloutStart = deploySource.indexOf('API_ROLLOUT_TASK_DEF="${NAME}-api:${NEW_REV}"');
-    const network = deploySource.indexOf("NETWORK_CONFIG=$(node -e", rolloutStart);
-    const gate = deploySource.indexOf("run_classpilot_tile_auth_plan_gate", network);
+    const candidateRegistration = deploySource.indexOf(
+      "register_classpilot_candidate_worker_task_definition",
+      rolloutStart
+    );
+    const finalDeployWindow = deploySource.indexOf(
+      'production_backend_deploy_window_preflight "before ClassPilot plan-gate execution"',
+      candidateRegistration
+    );
+    const basePreflight = deploySource.indexOf(
+      "run_classpilot_tile_auth_plan_base_preflight",
+      finalDeployWindow
+    );
+    const gate = deploySource.indexOf(
+      "run_classpilot_tile_auth_plan_gate predeploy",
+      rolloutStart
+    );
     const hold = deploySource.indexOf("acquire_production_scaling_hold", gate);
     const migration = deploySource.indexOf('info "Running startup migrations', hold);
     const update = deploySource.indexOf("aws ecs update-service", migration);
-    assert.ok(rolloutStart > 0 && rolloutStart < network);
-    assert.ok(network < gate && gate < hold && hold < migration && migration < update);
+    assert.ok(network > backendStart && network < rolloutStart);
+    assert.ok(
+      rolloutStart < candidateRegistration &&
+      candidateRegistration < finalDeployWindow &&
+      finalDeployWindow < basePreflight &&
+      basePreflight < gate
+    );
+    assert.ok(rolloutStart < gate && gate < hold && hold < migration && migration < update);
 
     const implementationStart = deploySource.indexOf("run_classpilot_tile_auth_plan_gate() {");
     const implementationEnd = deploySource.indexOf("\nlaunch_safe_active_api_preflight()", implementationStart);
@@ -304,8 +355,9 @@ validate_classpilot_tile_auth_plan_gate_mode
     assert.doesNotMatch(implementation, /describe-log-streams|filter-log-events/);
     assert.match(
       implementation,
-      /events_json=\$\(MSYS_NO_PATHCONV=1 aws logs get-log-events[\s\S]*printf '%s' "\$events_json" \|/
+      /read-classpilot-tile-auth-plan-log-events\.mjs[\s\S]*printf '%s' "\$events_json" \|/
     );
+    assert.doesNotMatch(implementation, /get-log-events[\s\S]*--limit 100(?:\s|\\)/);
   });
 
   it("rechecks the exact active revision after convergence and rolls back on drift", () => {
@@ -412,8 +464,697 @@ rm -f "$capture_path"
         logRegion: "us-east-1",
         logPrefix: "api",
         logStream: `api/api/${taskId}`,
+        exitCode: 0,
       });
     }
+  });
+
+  it("returns before starting a plan task when the window preflight rejects", () => {
+    const result = runDeployHelper(`
+REGION=us-east-1
+ACCOUNT_ID=123456789012
+NAME=schoolpilot-production
+CLUSTER=schoolpilot-production-cluster
+API_ROLLOUT_TASK_DEF=arn:aws:ecs:us-east-1:123456789012:task-definition/schoolpilot-production-api-emergency:41
+IMAGE_TAG=abcdef123456
+NETWORK_CONFIG='awsvpcConfiguration={subnets=[subnet-a],securityGroups=[sg-a],assignPublicIp=DISABLED}'
+attempt_path="$(mktemp)"
+rm -f "$attempt_path"
+classpilot_tile_auth_plan_window_preflight() { return 1; }
+aws() {
+  printf 'aws_was_called\\n' > "$attempt_path"
+  return 1
+}
+if run_classpilot_tile_auth_plan_gate predeploy; then
+  printf 'window_rejection_was_accepted\\n' >&2
+  exit 99
+fi
+if [[ -e "$attempt_path" ]]; then
+  printf 'plan_task_started_after_window_rejection\\n' >&2
+  exit 98
+fi
+`);
+    assert.equal(result.status, 0, result.stderr);
+    assert.doesNotMatch(
+      result.stderr,
+      /window_rejection_was_accepted|plan_task_started_after_window_rejection/
+    );
+  });
+
+  it("rechecks the weekday deploy window inside both production gate tasks", () => {
+    const result = runDeployHelper(`
+REGION=us-east-1
+ACCOUNT_ID=123456789012
+NAME=schoolpilot-production
+CLUSTER=schoolpilot-production-cluster
+API_ROLLOUT_TASK_DEF=arn:aws:ecs:us-east-1:123456789012:task-definition/schoolpilot-production-api-emergency:41
+IMAGE_TAG=abcdef123456
+NETWORK_CONFIG='awsvpcConfiguration={subnets=[subnet-a],securityGroups=[sg-a],assignPublicIp=DISABLED}'
+attempt_path="$(mktemp)"
+rm -f "$attempt_path"
+production_backend_deploy_window_preflight() { return 1; }
+classpilot_tile_auth_plan_window_preflight() { return 0; }
+aws() {
+  printf 'aws_was_called\\n' > "$attempt_path"
+  return 1
+}
+if run_classpilot_tile_auth_plan_base_preflight; then
+  printf 'base_preflight_window_rejection_was_accepted\\n' >&2
+  exit 99
+fi
+if run_classpilot_tile_auth_plan_gate predeploy; then
+  printf 'plan_gate_window_rejection_was_accepted\\n' >&2
+  exit 98
+fi
+if [[ -e "$attempt_path" ]]; then
+  printf 'gate_task_started_after_deploy_window_rejection\\n' >&2
+  exit 97
+fi
+`);
+    assert.equal(result.status, 0, result.stderr);
+    assert.doesNotMatch(
+      result.stderr,
+      /window_rejection_was_accepted|gate_task_started_after_deploy_window_rejection/
+    );
+  });
+
+  it("leaves ordinary non-gated backend mode eligible for the standard API family", () => {
+    const accepted = runDeployHelper(`
+RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE=false
+RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=false
+REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=""
+EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL_SHA256=""
+ENV=production
+DEPLOY_BACKEND=true
+DEPLOY_FRONTEND=false
+ACTIVATE_EMERGENCY=false
+SAME_IMAGE_NETWORKING_STAGE=""
+SKIP_WAIT=false
+validate_classpilot_tile_auth_plan_gate_mode
+`);
+    assert.equal(accepted.status, 0, accepted.stderr);
+    assert.match(
+      deploySource,
+      /register_classpilot_candidate_worker_task_definition[\s\S]*if \[\[ "\$RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE" == true \]\]; then\s+verify_classpilot_rehearsed_candidates/
+    );
+  });
+
+  it("renders candidates only from exact serving revisions when higher inactive revisions exist", () => {
+    const servingApi =
+      "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:29";
+    const servingWorker =
+      "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:46";
+    const result = runDeployHelper(`
+ENV=production
+DEPLOY_BACKEND=true
+REGION=us-east-1
+ACCOUNT_ID=135775632425
+SERVICE=schoolpilot-production-api
+WORKER_SERVICE=schoolpilot-production-scheduler-worker
+PRODUCTION_ROLLBACK_API_TASK_DEFINITION=schoolpilot-production-api-emergency:29
+PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION=schoolpilot-production-scheduler-worker:46
+PRODUCTION_PREFLIGHT_API_TASK_DEFINITION=schoolpilot-production-api-emergency:29
+PRODUCTION_PREFLIGHT_WORKER_TASK_DEFINITION=schoolpilot-production-scheduler-worker:46
+PRODUCTION_ROLLBACK_API_TASK_DEFINITION_ARN=${servingApi}
+PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION_ARN=${servingWorker}
+PRODUCTION_PREFLIGHT_API_TASK_DEFINITION_ARN=${servingApi}
+PRODUCTION_PREFLIGHT_WORKER_TASK_DEFINITION_ARN=${servingWorker}
+capture_path="$(mktemp)"
+aws() {
+  printf '%s\\n' "$*" >> "$capture_path"
+  local ref=""
+  while [[ $# -gt 0 ]]; do
+    if [[ "$1" == "--task-definition" ]]; then
+      ref="$2"
+      break
+    fi
+    shift
+  done
+  case "$ref" in
+    ${servingApi})
+      printf '%s\\n' '{"taskDefinitionArn":"${servingApi}","revision":29,"status":"ACTIVE"}'
+      ;;
+    ${servingWorker})
+      printf '%s\\n' '{"taskDefinitionArn":"${servingWorker}","revision":46,"status":"ACTIVE"}'
+      ;;
+    schoolpilot-production-api|schoolpilot-production-api-emergency)
+      printf '%s\\n' '{"taskDefinitionArn":"arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api:999","revision":999,"status":"ACTIVE"}'
+      ;;
+    schoolpilot-production-scheduler-worker)
+      printf '%s\\n' '{"taskDefinitionArn":"arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:999","revision":999,"status":"ACTIVE"}'
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+resolve_classpilot_candidate_source_task_definitions
+describe_exact_classpilot_candidate_task_definition \
+  "$API_CANDIDATE_SOURCE_TASK_DEFINITION_ARN" .candidate-api-source.json
+describe_exact_classpilot_candidate_task_definition \
+  "$WORKER_CANDIDATE_SOURCE_TASK_DEFINITION_ARN" .candidate-worker-source.json
+printf 'api=%s\\nworker=%s\\n' \
+  "$API_CANDIDATE_SOURCE_TASK_DEFINITION_ARN" \
+  "$WORKER_CANDIDATE_SOURCE_TASK_DEFINITION_ARN"
+cat "$capture_path"
+rm -f "$capture_path" .candidate-api-source.json .candidate-worker-source.json
+`);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, new RegExp(`api=${servingApi}`));
+    assert.match(result.stdout, new RegExp(`worker=${servingWorker}`));
+    assert.match(result.stdout, new RegExp(`--task-definition ${servingApi}`));
+    assert.match(result.stdout, new RegExp(`--task-definition ${servingWorker}`));
+    assert.doesNotMatch(result.stdout, /:999/);
+
+    const candidateRenderStart = deploySource.indexOf(
+      "resolve_classpilot_candidate_source_task_definitions()"
+    );
+    const candidateRenderEnd = deploySource.indexOf(
+      "if [[ \"$RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL\" == true ]]",
+      deploySource.indexOf("# BACKEND DEPLOY")
+    );
+    const candidateRender = deploySource.slice(candidateRenderStart, candidateRenderEnd);
+    assert.doesNotMatch(
+      candidateRender,
+      /describe-task-definition[\s\S]{0,200}--task-definition "\$WORKER_SERVICE"/
+    );
+    assert.doesNotMatch(
+      candidateRender,
+      /describe-task-definition[\s\S]{0,200}--task-definition "\$\{NAME\}-api"/
+    );
+    assert.match(
+      candidateRender,
+      /API_FAMILY="\$\{NAME\}-api"[\s\S]*td\.family = process\.env\.API_FAMILY/
+    );
+  });
+
+  it("stops a gate-only rehearsal before every prohibited deployment mutation", () => {
+    const backendStart = deploySource.indexOf("# BACKEND DEPLOY");
+    const rehearsalStop = deploySource.indexOf(
+      'success "Candidate gate-only rehearsal complete;',
+      backendStart
+    );
+    const rehearsalExit = deploySource.indexOf("exit 0", rehearsalStop);
+    const hold = deploySource.indexOf("acquire_production_scaling_hold", rehearsalExit);
+    const migration = deploySource.indexOf(
+      'info "Running startup migrations',
+      rehearsalExit
+    );
+    const serviceUpdate = deploySource.indexOf(
+      "aws ecs update-service",
+      rehearsalExit
+    );
+    assert.ok(
+      backendStart > 0 &&
+      rehearsalStop > backendStart &&
+      rehearsalExit > rehearsalStop &&
+      hold > rehearsalExit &&
+      migration > hold &&
+      serviceUpdate > migration
+    );
+
+    const admittedGateOnlyPath = deploySource.slice(backendStart, rehearsalExit);
+    assert.doesNotMatch(admittedGateOnlyPath, /acquire_production_scaling_hold/);
+    assert.doesNotMatch(admittedGateOnlyPath, /RUN_MIGRATIONS_ONLY/);
+    assert.doesNotMatch(admittedGateOnlyPath, /^\s*aws ecs update-service/m);
+    assert.doesNotMatch(
+      admittedGateOnlyPath,
+      /^\s*(?:aws s3 sync|aws cloudfront create-invalidation)/m
+    );
+    assert.doesNotMatch(
+      admittedGateOnlyPath,
+      /prepare-classpilot-load-test|refresh-and-snapshot-fixtures|start-waf800-batch-diagnostic/
+    );
+    assert.doesNotMatch(
+      admittedGateOnlyPath,
+      /database-insights-lease|aws ssm start-automation-execution|load:classpilot/
+    );
+    assert.doesNotMatch(
+      admittedGateOnlyPath,
+      /(?:^|\s)terraform\s+(?:apply|import|state)|aws rds modify-db-instance/
+    );
+    assert.doesNotMatch(
+      admittedGateOnlyPath,
+      /aws elasticache modify|aws wafv2 (?:update|delete|create)/
+    );
+    assert.match(
+      admittedGateOnlyPath,
+      /run_classpilot_tile_auth_plan_base_preflight[\s\S]*run_classpilot_tile_auth_plan_gate predeploy[\s\S]*write_classpilot_rehearsal_receipt/
+    );
+  });
+
+  it("durably admits exactly one rehearsal attempt and seals every terminal path", () => {
+    const backendStart = deploySource.indexOf("# BACKEND DEPLOY");
+    const admission = deploySource.indexOf(
+      "admit_classpilot_tile_auth_plan_rehearsal_attempt",
+      backendStart
+    );
+    const candidateNetwork = deploySource.indexOf(
+      "resolve_classpilot_tile_auth_candidate_network",
+      admission
+    );
+    const build = deploySource.indexOf('info "Building Docker image', admission);
+    const receipt = deploySource.indexOf(
+      "write_classpilot_rehearsal_receipt",
+      build
+    );
+    const passedTerminal = deploySource.indexOf(
+      "seal_classpilot_tile_auth_plan_rehearsal_terminal passed",
+      receipt
+    );
+    const rehearsalExit = deploySource.indexOf("exit 0", passedTerminal);
+    assert.ok(
+      admission > backendStart &&
+      candidateNetwork > admission &&
+      build > candidateNetwork &&
+      receipt > build &&
+      passedTerminal > receipt &&
+      rehearsalExit > passedTerminal
+    );
+    assert.match(
+      deploySource,
+      /deploy_exit_cleanup\(\)[\s\S]*TILE_AUTH_PLAN_REHEARSAL_ATTEMPT_ADMITTED[\s\S]*seal_classpilot_tile_auth_plan_rehearsal_terminal failed/
+    );
+    assert.match(
+      deploySource,
+      /manage-classpilot-tile-auth-plan-rehearsal-receipt\.mjs" admit/
+    );
+    assert.match(
+      deploySource,
+      /manage-classpilot-tile-auth-plan-rehearsal-receipt\.mjs"[\s\S]*terminal[\s\S]*--expected-admission-sha256/
+    );
+  });
+
+  it("binds guarded reuse to one Windows execution authority and last-moment expiry", () => {
+    assert.match(
+      rehearsalReceiptManagerSource,
+      /classpilot-tile-auth-plan-execution-authority-v1/
+    );
+    assert.match(
+      rehearsalReceiptManagerSource,
+      /MachineGuid[\s\S]*whoami\.exe[\s\S]*userSid/
+    );
+    assert.match(
+      rehearsalReceiptManagerSource,
+      /executionAuthoritySha256/
+    );
+    const consumeStart = rehearsalReceiptManagerSource.indexOf(
+      "export function consumeClasspilotTileAuthorizationPlanRehearsalReceipt"
+    );
+    const finalAuthority = rehearsalReceiptManagerSource.indexOf(
+      "resolveClasspilotTileAuthorizationPlanExecutionAuthority()",
+      consumeStart
+    );
+    const preparedDirectory = rehearsalReceiptManagerSource.indexOf(
+      "const consumptionDirectory = preparePrivateOutputDirectory(",
+      finalAuthority
+    );
+    const preliminaryFreshness = rehearsalReceiptManagerSource.indexOf(
+      'runTestConsumptionHook(expected, "before-preliminary-timestamp")',
+      preparedDirectory
+    );
+    const atomicReservation = rehearsalReceiptManagerSource.indexOf(
+      "const reservation = reserveConsumptionMarker(consumptionDirectory)",
+      preliminaryFreshness
+    );
+    const commitCall = rehearsalReceiptManagerSource.indexOf(
+      "const marker = commitConsumptionMarker(",
+      atomicReservation
+    );
+    const commitStart = rehearsalReceiptManagerSource.indexOf(
+      "function commitConsumptionMarker("
+    );
+    const finalPostReservationHook = rehearsalReceiptManagerSource.indexOf(
+      '"before-final-post-reservation-timestamp"',
+      commitStart
+    );
+    const finalConsumedAt = rehearsalReceiptManagerSource.indexOf(
+      "const consumedAtUtc = requireReceiptFreshAtConsumption(",
+      finalPostReservationHook
+    );
+    const privateAcl = rehearsalReceiptManagerSource.indexOf(
+      "restrictPrivateOutputArtifact(reservation.target)",
+      finalConsumedAt
+    );
+    assert.ok(
+      consumeStart > 0 &&
+      finalAuthority > consumeStart &&
+      preparedDirectory > finalAuthority &&
+      preliminaryFreshness > preparedDirectory &&
+      atomicReservation > preliminaryFreshness &&
+      commitCall > atomicReservation &&
+      commitStart > 0 &&
+      finalPostReservationHook > commitStart &&
+      finalConsumedAt > finalPostReservationHook &&
+      privateAcl > finalConsumedAt
+    );
+    const preReservationWindow = rehearsalReceiptManagerSource.slice(
+      preliminaryFreshness,
+      atomicReservation
+    );
+    const postReservationWindow = rehearsalReceiptManagerSource.slice(
+      finalConsumedAt,
+      privateAcl
+    );
+    assert.doesNotMatch(
+      preReservationWindow,
+      /resolveClasspilotTileAuthorizationPlanExecutionAuthority|preparePrivateOutputDirectory/
+    );
+    assert.doesNotMatch(postReservationWindow, /restrictPrivateOutputArtifact/);
+    assert.doesNotMatch(
+      rehearsalReceiptManagerSource,
+      /executionAuthority(?:Host|Hostname|MachineGuid|UserSid)/
+    );
+  });
+
+  it("revalidates exact rehearsed candidates and rejects immutable definition drift", () => {
+    const result = runDeployHelper(`
+REGION=us-east-1
+ACCOUNT_ID=135775632425
+NAME=schoolpilot-production
+ECR_REPO=135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api
+IMAGE_TAG=test-sha
+DIGEST=sha256:${"d".repeat(64)}
+API_ROLLOUT_TASK_DEF=arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:34
+WORKER_CANDIDATE_TASK_DEF=arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:49
+DRIFT_CANDIDATE=false
+aws() {
+  if [[ "$1 $2" == "ecr describe-images" ]]; then
+    printf '%s\\n' "$DIGEST"
+    return 0
+  fi
+  if [[ "$1 $2" != "ecs describe-task-definition" ]]; then
+    return 1
+  fi
+  local ref=""
+  while [[ $# -gt 0 ]]; do
+    if [[ "$1" == "--task-definition" ]]; then
+      ref="$2"
+      break
+    fi
+    shift
+  done
+  if [[ "$ref" == "$API_ROLLOUT_TASK_DEF" ]]; then
+    local drift='[]'
+    if [[ "$DRIFT_CANDIDATE" == true ]]; then
+      drift='[{"name":"IMMUTABLE_DRIFT","value":"true"}]'
+    fi
+    printf '{"taskDefinitionArn":"%s","status":"ACTIVE","family":"schoolpilot-production-api-emergency","cpu":"512","memory":"2048","containerDefinitions":[{"name":"api","image":"%s@%s","environment":%s}]}\\n' \
+      "$ref" "$ECR_REPO" "$DIGEST" "$drift"
+    return 0
+  fi
+  if [[ "$ref" == "$WORKER_CANDIDATE_TASK_DEF" ]]; then
+    printf '{"taskDefinitionArn":"%s","status":"ACTIVE","family":"schoolpilot-production-scheduler-worker","containerDefinitions":[{"name":"scheduler-worker","image":"%s@%s"}]}\\n' \
+      "$ref" "$ECR_REPO" "$DIGEST"
+    return 0
+  fi
+  return 1
+}
+verify_classpilot_rehearsed_candidates
+first_api_sha="$TILE_AUTH_PLAN_REHEARSAL_API_TASK_DEFINITION_SHA256"
+first_worker_sha="$TILE_AUTH_PLAN_REHEARSAL_WORKER_TASK_DEFINITION_SHA256"
+DRIFT_CANDIDATE=true
+if verify_classpilot_rehearsed_candidates; then
+  printf 'candidate_drift_was_accepted\\n' >&2
+  exit 99
+fi
+printf 'apiSha=%s\\nworkerSha=%s\\n' "$first_api_sha" "$first_worker_sha"
+rm -f .tile-auth-plan-rehearsed-api.json .tile-auth-plan-rehearsed-worker.json
+`);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /apiSha=[a-f0-9]{64}/);
+    assert.match(result.stdout, /workerSha=[a-f0-9]{64}/);
+    assert.match(
+      result.stderr,
+      /exact candidate task definitions drifted from their rehearsal receipt/i
+    );
+    assert.doesNotMatch(result.stderr, /IMMUTABLE_DRIFT/);
+  });
+
+  it("validates rehearsal task ARNs against runtime region, account, and families", () => {
+    const hash = "a".repeat(64);
+    const summary = JSON.stringify({
+      schemaVersion: 1,
+      version: "classpilot-tile-auth-plan-rehearsal-v1",
+      receiptSha256: hash,
+      imageDigest: `sha256:${"b".repeat(64)}`,
+      candidateApiTaskDefinitionArn:
+        "arn:aws:ecs:us-west-2:123456789012:task-definition/schoolpilot-staging-api-emergency:41",
+      candidateApiTaskDefinitionSha256: hash,
+      candidateWorkerTaskDefinitionArn:
+        "arn:aws:ecs:us-west-2:123456789012:task-definition/schoolpilot-staging-scheduler-worker:42",
+      candidateWorkerTaskDefinitionSha256: hash,
+      historyFallbackIdentitySha256: hash,
+      queryIdentifierSha256: hash,
+      preflightEvidenceSha256: hash,
+      planEventsSha256: hash,
+      sanitizedPlanReportSha256: hash,
+      lifecycleEvidenceSha256: hash,
+    });
+    const wrongRegion = summary.replaceAll("us-west-2", "us-east-1");
+    const result = runDeployHelper(`
+REGION=us-west-2
+ACCOUNT_ID=123456789012
+NAME=schoolpilot-staging
+WORKER_SERVICE=schoolpilot-staging-scheduler-worker
+parse_classpilot_rehearsal_binding '${summary}'
+if parse_classpilot_rehearsal_binding '${wrongRegion}' >/dev/null 2>&1; then
+  printf 'wrong_region_was_accepted\\n' >&2
+  exit 99
+fi
+`);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(
+      result.stdout,
+      /arn:aws:ecs:us-west-2:123456789012:task-definition\/schoolpilot-staging-api-emergency:41/
+    );
+    assert.doesNotMatch(result.stderr, /wrong_region_was_accepted/);
+    assert.doesNotMatch(
+      deploySource,
+      /const api = \/\^arn:aws:ecs:us-east-1:135775632425/
+    );
+  });
+
+  it("rechecks the receipt-bound API network before migration and service mutation", () => {
+    const result = runDeployHelper(`
+REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=C:/private/rehearsal.json
+REGION=us-east-1
+CLUSTER=schoolpilot-production-cluster
+SERVICE=schoolpilot-production-api
+DRIFT_NETWORK=false
+aws() {
+  if [[ "$1 $2" != "ecs describe-services" ]]; then
+    return 1
+  fi
+  if [[ "$DRIFT_NETWORK" == true ]]; then
+    printf '%s\\n' '{"subnets":["subnet-b"],"securityGroups":["sg-a"],"assignPublicIp":"ENABLED"}'
+  else
+    printf '%s\\n' '{"subnets":["subnet-a"],"securityGroups":["sg-a"],"assignPublicIp":"DISABLED"}'
+  fi
+}
+resolve_classpilot_tile_auth_candidate_network
+TILE_AUTH_PLAN_REHEARSAL_CONSUMED_NETWORK_SHA256="$TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256"
+assert_classpilot_rehearsal_network_unchanged
+DRIFT_NETWORK=true
+if assert_classpilot_rehearsal_network_unchanged; then
+  printf 'network_drift_was_accepted\\n' >&2
+  exit 99
+fi
+rm -f .ecs-network.json
+`);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stderr, /network configuration drifted/i);
+    assert.doesNotMatch(result.stderr, /network_drift_was_accepted/);
+    const rechecks = [
+      ...deploySource.matchAll(/assert_classpilot_rehearsal_network_unchanged/g),
+    ];
+    assert.ok(rechecks.length >= 3);
+    const preMigrationRecheck = deploySource.indexOf(
+      "if ! assert_classpilot_rehearsal_network_unchanged",
+      deploySource.indexOf("run_classpilot_tile_auth_plan_gate predeploy")
+    );
+    const hold = deploySource.indexOf(
+      "acquire_production_scaling_hold",
+      preMigrationRecheck
+    );
+    const preMutationRecheck = deploySource.indexOf(
+      "if ! assert_classpilot_rehearsal_network_unchanged",
+      hold
+    );
+    const mutation = deploySource.indexOf(
+      "CLASSPILOT_TILE_AUTH_SERVICE_MUTATION_STARTED=true",
+      preMutationRecheck
+    );
+    assert.ok(
+      preMigrationRecheck > 0 &&
+      hold > preMigrationRecheck &&
+      preMutationRecheck > hold &&
+      mutation > preMutationRecheck
+    );
+  });
+
+  it("fails closed and clears stale network state when revalidation errors", () => {
+    const result = runDeployHelper(`
+REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=C:/private/rehearsal.json
+TILE_AUTH_PLAN_REHEARSAL_CONSUMED_NETWORK_SHA256="${"a".repeat(64)}"
+TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256="${"a".repeat(64)}"
+NETWORK_CONFIG="stale-network"
+resolve_classpilot_tile_auth_candidate_network() { return 1; }
+if assert_classpilot_rehearsal_network_unchanged; then
+  printf 'network_lookup_failure_was_accepted\\n' >&2
+  exit 99
+fi
+if [[ -n "$NETWORK_CONFIG" || -n "$TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256" ]]; then
+  printf 'stale_network_binding_survived\\n' >&2
+  exit 98
+fi
+`);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stderr, /could not be revalidated/i);
+    assert.doesNotMatch(
+      result.stderr,
+      /network_lookup_failure_was_accepted|stale_network_binding_survived/
+    );
+  });
+
+  it("trap-recovers both services after any guarded service mutation", () => {
+    const mutation = deploySource.indexOf(
+      "CLASSPILOT_TILE_AUTH_SERVICE_MUTATION_STARTED=true"
+    );
+    const apiUpdate = deploySource.indexOf("aws ecs update-service", mutation);
+    assert.ok(mutation > 0 && mutation < apiUpdate);
+    assert.match(
+      deploySource,
+      /deploy_exit_cleanup\(\)[\s\S]*CLASSPILOT_TILE_AUTH_SERVICE_MUTATION_STARTED[\s\S]*rollback_classpilot_tile_auth_deployment/
+    );
+    assert.match(
+      deploySource,
+      /CLASSPILOT_TILE_AUTH_SERVICE_MUTATION_STARTED=false[\s\S]*CLASSPILOT_TILE_AUTH_SAFE_TERMINAL_REACHED=true/
+    );
+  });
+
+  it("binds exact logs for nonzero terminal exits before interpreting failure", () => {
+    for (const exitCode of [1, 2, 137, 255]) {
+      for (const reportedStream of [
+        undefined,
+        null,
+        `api/api/${taskId}`,
+        "api/api/00000000000000000000000000000000",
+        123,
+        "",
+      ]) {
+        const taskResult =
+          reportedStream === undefined
+            ? taskResultWithExitCode(exitCode)
+            : taskResultWithExitCode(exitCode, reportedStream);
+        const result = runLogBindingResolver(taskResult);
+        assert.equal(result.status, 0, result.stderr);
+        assert.deepEqual(JSON.parse(result.stdout), {
+          logGroup: "/ecs/schoolpilot-production-api",
+          logRegion: "us-east-1",
+          logPrefix: "api",
+          logStream: `api/api/${taskId}`,
+          exitCode,
+        });
+      }
+    }
+    for (const exitCode of [-1, 1.5, 256]) {
+      const result = runLogBindingResolver(taskResultWithExitCode(exitCode));
+      assert.notEqual(result.status, 0);
+    }
+    const conflictingResult = runLogBindingResolver(
+      taskResultWithExitCode(
+        2,
+        "api/api/00000000000000000000000000000000"
+      )
+    );
+    assert.equal(conflictingResult.status, 0, conflictingResult.stderr);
+    const binding = JSON.parse(conflictingResult.stdout);
+    assert.equal(binding.logStream, `api/api/${taskId}`);
+    assert.equal(
+      extractClasspilotTileAuthorizationPlanFailure({
+        events: [{
+          timestamp: 1,
+          ingestionTime: 2,
+          message: JSON.stringify({
+            status: "failed",
+            failureCode: "representative_scenario_missing",
+          }),
+        }],
+      }),
+      "representative_scenario_missing"
+    );
+    assert.match(
+      deploySource,
+      /extract-classpilot-tile-auth-plan-failure\.mjs/
+    );
+    assert.match(
+      deploySource,
+      /failed \(failureCode=\$\{sanitized_failure_code\}\)/
+    );
+  });
+
+  it("paginates the exact bound stream so terminal failures after event 100 survive", async () => {
+    const noise = Array.from({ length: 100 }, (_, index) => ({
+      timestamp: index,
+      ingestionTime: index + 1,
+      message: `startup-${index}`,
+    }));
+    const terminalFailure = {
+      timestamp: 100,
+      ingestionTime: 101,
+      message: JSON.stringify({
+        status: "failed",
+        failureCode: "representative_scenario_missing",
+      }),
+    };
+    const requestedTokens: Array<string | undefined> = [];
+    const document = await collectClasspilotTileAuthorizationPlanLogEvents({
+      fetchPage: async (token) => {
+        requestedTokens.push(token);
+        if (token === undefined) {
+          return { events: noise, nextForwardToken: "forward-1" };
+        }
+        if (token === "forward-1") {
+          return { events: [terminalFailure], nextForwardToken: "forward-2" };
+        }
+        return { events: [], nextForwardToken: "forward-2" };
+      },
+    });
+    assert.deepEqual(requestedTokens, [undefined, "forward-1", "forward-2"]);
+    assert.equal(document.events.length, 101);
+    assert.equal(
+      extractClasspilotTileAuthorizationPlanFailure(document),
+      "representative_scenario_missing"
+    );
+  });
+
+  it("fails closed on CloudWatch token cycles and bounded event overflow", async () => {
+    await assert.rejects(() =>
+      collectClasspilotTileAuthorizationPlanLogEvents({
+        fetchPage: async (token) => {
+          if (token === undefined) {
+            return { events: [], nextForwardToken: "forward-1" };
+          }
+          if (token === "forward-1") {
+            return { events: [], nextForwardToken: "forward-2" };
+          }
+          return { events: [], nextForwardToken: "forward-1" };
+        },
+      })
+    );
+    await assert.rejects(() =>
+      collectClasspilotTileAuthorizationPlanLogEvents({
+        maxEvents: 1,
+        fetchPage: async () => ({
+          events: [
+            { timestamp: 1, ingestionTime: 1, message: "one" },
+            { timestamp: 2, ingestionTime: 2, message: "two" },
+          ],
+          nextForwardToken: "forward-1",
+        }),
+      })
+    );
   });
 
   it("accepts only an exact reported stream and rejects unsafe task bindings", () => {

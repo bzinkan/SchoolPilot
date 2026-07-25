@@ -15,11 +15,12 @@ deployment checks, snapshots, and cost checks must also pass.
 - Use the committed AWS provider `5.100.0` lock file. Never run
   `terraform init -upgrade` during this rollout.
 - Deploy the application only from a clean merged `main`. While the launch-safe
-  2048 MiB API posture is selected, deploy the guarded backend first with
-  `./scripts/deploy.sh production --backend --activate-emergency
-  --classpilot-tile-auth-plan-gate`. After it passes, deploy the matching
-  frontend without changing the checkout. Both deployments must therefore bind
-  the identical release SHA. Do not package or upload the ClassPilot extension.
+  2048 MiB API posture is selected, first run the inactive candidate through
+  the gate-only rehearsal described below. Then deploy that exact rehearsed
+  candidate with the single-use receipt before publishing the matching
+  frontend without changing the checkout. Both backend operations must bind
+  the identical release SHA and image digest; the frontend binds that same
+  SHA. Do not package or upload the ClassPilot extension.
 - Keep RDS and Redis private. Public IPv4 is only for outbound egress from the
   staged ECS API and worker tasks; the ALB remains the only inbound API path.
 - Keep Route 53 DNS, nameservers, CloudFront routing, the HTTPS `/health`
@@ -175,17 +176,29 @@ mark ready, squash-merge, update local `main`, and require a clean tree exactly
 equal to `origin/main`. Wait for post-merge CI and Trivy.
 
 Capture the current API and worker task-definition ARNs before deploying. From
-the clean merged checkout, run the guarded backend first:
+the clean merged checkout, run the inactive candidate rehearsal first:
 
 ```bash
 ./scripts/deploy.sh production --backend --activate-emergency \
-  --classpilot-tile-auth-plan-gate
+  --classpilot-tile-auth-plan-gate \
+  --classpilot-tile-auth-plan-rehearsal
 ```
 
-The reviewed flag keeps the current 2048 MiB API serving until a newly
-registered, digest-matched 2048 MiB revision is healthy. It binds that exact
-revision to the migration task, API service update, and strict stability check;
-the worker is updated to the same image digest at its existing 256/512 size.
+After it seals a passing receipt, deploy the exact same candidate:
+
+```bash
+./scripts/deploy.sh production --backend --activate-emergency \
+  --classpilot-tile-auth-plan-gate \
+  --reuse-classpilot-tile-auth-plan-rehearsal <absolute-private-receipt-path> \
+  --expected-classpilot-tile-auth-plan-rehearsal-sha256 <64-hex>
+```
+
+The rehearsal keeps the current release serving and performs no migration or
+service mutation. The guarded reuse keeps the current 2048 MiB API serving
+until the rehearsed, digest-matched 2048 MiB revision is healthy. It binds that
+exact revision to the migration task, API service update, and strict stability
+check; the worker is updated to the same image digest at its existing 256/512
+size.
 
 Do not use `--skip-wait` in production. The script fails closed unless the API
 is stable at `1/1` or `2/2` and the worker is stable at `1/1`. After the slow
@@ -697,12 +710,9 @@ private ECS/NAT posture, existing schedules, and the 512 CPU / 2048 MiB API
 posture. The backward-compatible backend deploys before the matching frontend,
 both from one new release commit.
 
-For this one remediation, deploy the backend with the release-bound plan gate:
-
-```bash
-./scripts/deploy.sh production --backend --activate-emergency \
-  --classpilot-tile-auth-plan-gate
-```
+For every new release, the backend uses the release-bound plan gate through the
+candidate-rehearsal and single-use guarded-reuse sequence above. A direct
+unrehearsed plan-gated deployment is ineligible.
 
 The gate uses the freshly registered digest-pinned emergency revision and the
 service network configuration. It must produce the fixed six-scenario,
@@ -736,33 +746,60 @@ the API and worker back to their captured revisions. The pre-deployment probe
 runs before the autoscaling hold; the post-deployment probe runs under that
 hold after strict API/worker convergence and before exact scaling restoration.
 
-The gate must not depend on an ambient open teaching or supervision session.
-For every invocation it takes a transaction-scoped advisory lock and uses one
-`REPEATABLE READ`, write-capable transaction under the existing application
-role. It discovers only an unambiguous non-billable SchoolPilot-owned synthetic
-base from the school and
-`synthetic-load-fixture:<fixtureId>:class:<ordinal>` markers. The base must
-already provide the two active teachers, office-staff membership, disjoint
-40-student cohorts, and same-school live and historical device access. The gate
-does not repair or refresh the persistent fixture.
+The gate must not depend on an ambient open teaching, supervision, or student
+device session. For every invocation it takes a transaction-scoped advisory
+lock and uses one `REPEATABLE READ`, write-capable transaction under the
+existing application role. It discovers only an unambiguous non-billable
+SchoolPilot-owned synthetic base from the school and
+`synthetic-load-fixture:<fixtureId>:class:<ordinal>` markers. The stable base
+must provide two active teachers, one office-staff membership, disjoint
+40-student cohorts, and historical same-school device mappings. It binds each
+selected `<fixtureId>-P-####` student to the corresponding
+`<fixtureId>-primary-####` device and requires all 80 pairs and devices to be
+distinct. Active `student_sessions` do not participate in base or cohort
+selection; they are classified only after the deterministic 80 pairs have
+been selected. The gate does not repair or refresh the persistent fixture.
+
+Inside that transaction, an already-active student session is reused only when
+it matches the exact selected student/device pair. If neither side is active,
+the gate inserts an explicit random-ID active session for the pair. An active
+student or device bound to a different counterpart, an ambiguous mapping, a
+cross-school row, or an incomplete cohort fails before measurement. The gate
+never updates, deactivates, or deletes an existing session.
 
 After the global teaching-session school-integrity precheck succeeds, the gate
-uses explicit random IDs to insert exactly one co-teacher relationship, one
-school-scoped open live teaching session, one active office-supervision
-context, and 40 supervision assignments. Discovery, all six authorization
+also inserts exactly one co-teacher relationship, one school-scoped open live
+teaching session, one active office-supervision context, and 40 supervision
+assignments. Stable discovery, session representation, all six authorization
 series, the history-fallback series, both schema checks, and both query-ID
-probes remain inside that transaction and are constrained to the seeded
+probes remain in that transaction and are constrained to the selected
 fixture/staff/cohorts. The gate then explicitly rolls back; there is no
-write-transaction commit path. A separate super-scoped read-only transaction
-must prove all 43 IDs absent before a passing report is eligible.
+write-transaction commit path. A distinct pool connection running a separate
+super-scoped read-only transaction must prove every generated ID absent before
+a passing report is eligible.
 
 Deployment evidence must contain exactly one sanitized
-`transactional-plan-scenarios-v1` lifecycle event with fixed 1/1/1/40 counts,
-completed rollback, and zero residue, plus the existing unchanged plan report.
-The lifecycle event contains no identifier, SQL, or tenant data. Seed,
-discovery, plan, identity, rollback, residue, connection, timeout, or
+`transactional-plan-scenarios-v2` lifecycle event. Its exact top-level fields
+are `version`, `requiredSessionPairs`, `reusedActiveSessionPairs`,
+`insertedSessionPairs`, `seededRows`, `rollback`, and `residue`.
+`requiredSessionPairs` is 80, reused plus inserted is 80, the fixed
+`seededRows` counts are 1/1/1/40, `studentSessions` equals the inserted count,
+and `total` equals 43 plus that count. Rollback must complete and residue must
+be zero. Version 1 and 43-only evidence are historical and ineligible for new
+deployments. The lifecycle event contains no identifier, SQL, or tenant data.
+Seed, discovery, plan, identity, rollback, residue, connection, timeout, or
 concurrency failure stops the deployment without a bypass. Do not run a
 production fixture refresh before this gate.
+
+The shared read-only base preflight runs in `REPEATABLE READ READ ONLY` and
+rolls back. Its sole passing event is
+`classpilot-tile-auth-plan-base-preflight-v1`. Its exact fields are `version`,
+`status`, `eligibleBases`, `requiredSessionPairs`,
+`reusedActiveSessionPairs`, `missingSessionPairs`, and
+`conflictingSessionPairs`, with exactly one eligible base, 80 required pairs,
+reused plus missing equal to 80, and zero conflicts. It contains aggregate
+counts only. Preflight is advisory fail-fast evidence; it does not replace
+either complete rollback-only gate.
 
 The failed pre-deployment artifacts at application SHA
 `ba416e4f46cc175af62863e3a06573ef5d23504e`, image digest
@@ -782,29 +819,114 @@ query-identity receipt, fixture refresh, Database Insights lease, or traffic
 occurred. Never deploy, resume, or use these identities as diagnostic or
 certification provenance.
 
-For the self-provisioning-gate remediation, require exact merged-SHA CI,
-CodeQL, Gitleaks, and Trivy success, then save and independently parse a fresh
-production Terraform plan with detailed exit code `0`, zero resource/output
-actions, and no apply. Deploy outside both the weekday 04:45-10:14
-America/New_York deploy guard and the 01:15-02:15 plan-gate exclusion. Run the
-guarded backend first, the matching frontend from the identical SHA, one
-offline preparation/binding rehearsal, and one 1,560-second harmless
-host-supervision smoke. The readiness packet must bind the workflow,
-zero-change Terraform, release/task/frontend, query-identity,
-transactional-rollback, rehearsal, and host-smoke evidence.
+The failed rollback-safe candidate at application SHA
+`3c82f540cccfaf0badd70312e76e69770b6cfaed`, image digest
+`sha256:776bd7e55a64c9da26d5eb1f38887f0402b0f1d143d3a1ca20a47246d459c1d6`,
+and inactive task definitions `schoolpilot-production-api:133` and
+`schoolpilot-production-api-emergency:33` is historical-only. The plan task
+inserted no rows, completed rollback with zero residue, and correctly failed
+because no stable base satisfied the remaining active-session dependency. No
+candidate service was activated, and no migration, frontend publication,
+query-identity receipt, fixture refresh, Database Insights lease, or traffic
+occurred. Never reuse these identities or their missing receipt.
 
-If and only if that packet is accepted by 21:00 America/New_York on July 24,
-2026, this remediation authorizes one fresh immutable diagnostic: one fixture
-refresh and verification, one initial atomic publication (plus at most one
-hash-identical filesystem-only publication recovery), one Database Insights
-Advanced lease from verified Standard/7, one `Validate`, and one strict
-30-minute Waf/800 `Run`. Any readiness, preparation, workload, evidence, or
-restoration failure stops without another refresh or traffic attempt. Missing
-the cutoff also stops. Diagnostic evidence is not certification provenance;
-certification traffic remains separately authorized.
+For the completed session-independent remediation, require exact merged-SHA
+CI, CodeQL, Gitleaks, and Trivy success, then save and independently parse a
+fresh production Terraform plan with detailed exit code `0`, zero
+resource/output actions, and no apply. Operate outside both the weekday
+04:45-10:14 America/New_York deploy guard and the 01:15-02:15 plan-gate
+exclusion.
 
-Before certification, run one 30-minute diagnostic-only Waf/800 using the new
-batch workload. Every RDS CPU minute must be below 65%; HTTP 5xx and network
+Run the inactive candidate once in gate-only mode:
+
+```bash
+./scripts/deploy.sh production --backend --activate-emergency \
+  --classpilot-tile-auth-plan-gate \
+  --classpilot-tile-auth-plan-rehearsal
+```
+
+Before any candidate build, push, registration, or candidate base preflight,
+the deployer
+must atomically and exclusively admit the SHA under
+`$LOCALAPPDATA/SchoolPilot/load-gates/tile-auth-rehearsals/<SHA>`. The fixed
+`classpilot-tile-auth-plan-rehearsal-attempt.private.json` admission marker is
+durable and may be created only once. An existing admission or terminal marker
+rejects another rehearsal for that SHA.
+
+After admission, an EXIT/failure trap must seal exactly one immutable
+`classpilot-tile-auth-plan-rehearsal-terminal.private.json` marker with
+`status` equal to `passed` or `failed`; it must never delete, reset, or
+overwrite either marker. A passed terminal binds the exact rehearsal-receipt
+SHA-256. A failed terminal, or an admitted attempt that cannot produce a
+coherent passed terminal, permanently makes that SHA ineligible. Receipt
+`inspect` and `consume` require the passed terminal marker and its matching
+receipt hash. Admission, terminal, receipt, inspection, consumption, and the
+canonical consumption marker also bind one protected execution-authority
+SHA-256. On production Windows that hash is derived from the stable machine
+identity plus the current user SID; neither raw value is written or logged.
+Resolution failure or an authority mismatch fails closed, so copying the
+complete private tree to another host or user does not transfer deployment
+authority. Receipt freshness is half-open: `now < expiresAtUtc`; the exact
+expiry instant and every later instant (`now >= expiresAtUtc`) are rejected.
+Consumption captures its own current UTC value and repeats that half-open
+check immediately before attempting the atomic consumption marker; an earlier
+successful inspection cannot bridge the expiry boundary.
+
+This mode performs the normal source, workflow, timing, AWS, and posture
+checks; builds, pushes, and registers inactive candidate definitions; runs the
+read-only preflight and complete rollback-only gate; and performs no migration,
+scaling hold, serving-service update, frontend publication, fixture mutation,
+Database Insights lease, or traffic. Building, pushing, and registering the
+inactive candidate are the only candidate control-plane writes; they do not
+change the serving release or committed production data. A pass seals one ACL-private
+`classpilot-tile-auth-plan-rehearsal-v1` receipt. The receipt binds the SHA,
+digest, inactive task definitions, active baseline, network configuration,
+preflight, lifecycle, plan, and query-identity hashes; expires after 60
+minutes; and is consumed once through its immutable sidecar. The consumption
+sidecar is atomically created in the canonical
+`tile-auth-rehearsals/<SHA>` attempt root and explicitly binds the immutable
+admission, terminal, receipt, and protected execution-authority hashes. It is
+not scoped to the supplied receipt directory: byte-identical copies and
+concurrent consumers on the authorized execution authority share the same
+single-use marker.
+
+Deploy only that exact candidate:
+
+```bash
+./scripts/deploy.sh production --backend --activate-emergency \
+  --classpilot-tile-auth-plan-gate \
+  --reuse-classpilot-tile-auth-plan-rehearsal <absolute-private-receipt-path> \
+  --expected-classpilot-tile-auth-plan-rehearsal-sha256 <64-hex>
+```
+
+The deployment verifies the unused, unexpired receipt and all bound state,
+reruns the complete gate before migration, then reruns it from the active
+revision after strict convergence. It rejects a different SHA, digest, task
+definition, baseline, network configuration, identity, expired receipt, or
+second consumption. After the guarded backend passes, publish the matching
+frontend from the unchanged checkout, run one offline preparation/binding
+rehearsal, and run one 1,560-second harmless host-supervision smoke.
+
+For every terminal plan task, resolve and validate the exact task definition,
+container, awslogs configuration, stream, and integer exit code before judging
+the gate. A null or omitted ECS `logStreamName` is deterministically derived
+from the verified stream prefix, container name, and exact ECS task ID. Fetch
+that exact stream even when exit is nonzero, then surface only an allowlisted
+sanitized gate failure code. Exit zero plus complete valid evidence remains
+mandatory for acceptance; log binding must never replace the real gate
+failure.
+
+This remediation stops after the independently validated readiness packet.
+It authorizes no production fixture refresh or provisioning, historical-state
+promotion, Database Insights lease, diagnostic binding, `Validate`, workload
+traffic, certification preparation, or certification traffic. A later
+diagnostic requires separate approval after fixture provenance is resolved.
+Any candidate rehearsal, preflight, gate, rollback, residue check, deployment,
+convergence, offline rehearsal, host smoke, or scaling-restoration failure is
+terminal for that SHA; do not repeat, patch in place, or consume its receipt.
+
+Any later separately authorized diagnostic-only Waf/800 must use the new batch
+workload. Every RDS CPU minute must be below 65%; HTTP 5xx and network
 errors must each remain below 0.1%; screenshot tile success must be at least
 99%; admission-timeout 503s must be zero; screenshot-batch p95 must be at most
 750 ms and history-batch p95 at most one second; PostgreSQL SQLSTATE `57014`
@@ -1233,6 +1355,12 @@ The readiness packet is complete only when it contains:
 
 - the remediation audit, exact merged SHA, PR, and exact-SHA CI, CodeQL,
   Gitleaks, and Trivy results;
+- the per-SHA atomic admission marker, immutable passed terminal marker, the
+  unused-to-consumed `classpilot-tile-auth-plan-rehearsal-v1` receipt, its
+  immutable consumption sidecar, their common protected execution-authority
+  SHA-256, exact candidate/baseline/network bindings, base-preflight evidence,
+  and predeployment and postdeployment
+  `transactional-plan-scenarios-v2` rollback/residue evidence;
 - the deployed image digest, API and worker task-definition revisions, frontend
   publication identity, and fresh pre/post-deployment query-identity receipt;
 - SHA-256 values for all three preparation scripts and the mandatory
@@ -1243,9 +1371,10 @@ The readiness packet is complete only when it contains:
   result, and elapsed-time evidence;
 - the reviewed zero-change Terraform plan, its SHA-256, human/JSON review
   evidence, and an explicit record that no apply occurred; and
-- a stop-boundary attestation proving no production fixture refresh, Database
-  Insights lease, eligible diagnostic binding, workload traffic, or
-  certification preparation occurred.
+- a stop-boundary attestation proving no production fixture refresh or
+  provisioning, historical-state promotion, Database Insights lease, eligible
+  diagnostic binding, `Validate`, workload traffic, or certification
+  preparation occurred.
 
 The acquisition preflight reads the live Scheduler group, numeric SSM document
 and content hash, both role trusts and complete permission sets, SQS encryption

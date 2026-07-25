@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { readFileSync } from "node:fs";
 import { sql } from "drizzle-orm";
-import { parseClasspilotTilePlanCliArgs } from "../src/cli/checkClasspilotTileAuthorizationPlans.ts";
+import {
+  createClasspilotTilePlanResidueClientReleaseError,
+  createClasspilotTilePlanWriteClientReleaseError,
+  parseClasspilotTilePlanCliArgs,
+} from "../src/cli/checkClasspilotTileAuthorizationPlans.ts";
 import {
   assertClasspilotHistoryFallbackPiStatementDiscoverable,
   CLASSPILOT_HISTORY_FALLBACK_PI_STATEMENT_PREVIEW_CHARACTERS,
@@ -18,6 +22,7 @@ import {
   ClasspilotTileAuthorizationPlanCheckError,
   inspectClasspilotTileExplainDocument,
   inspectClasspilotTileHistoryFallbackExplainDocument,
+  runClasspilotTileAuthorizationPlanBasePreflight,
   runClasspilotTileAuthorizationPlanCheck,
   summarizeClasspilotTileHistoryFallbackPlan,
   summarizeClasspilotTilePlanScenario,
@@ -60,6 +65,7 @@ function historySample(overrides: Partial<{
 
 const PLAN_CONTROL_QUERIES = new Set([
   "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ WRITE",
+  "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY",
   "BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED READ ONLY",
   "COMMIT",
   "ROLLBACK",
@@ -75,7 +81,14 @@ function createQueryIdGateHarness(options: {
   identityExplainRows?: Record<string, unknown>[][];
   baseRows?: Record<string, unknown>[];
   residueRows?: Record<string, unknown>[];
+  sessionPosture?: Partial<{
+    required: number;
+    reused: number;
+    missing: number;
+    conflicting: number;
+  }>;
   seedCounts?: Partial<Record<
+    | "student_sessions"
     | "group_teacher"
     | "teaching_session"
     | "supervision_context"
@@ -85,6 +98,7 @@ function createQueryIdGateHarness(options: {
   failQueryMarker?: string;
   failError?: Error;
   failRollback?: boolean;
+  failResidueRollback?: boolean;
   onQuery?: (
     text: string,
     values: readonly unknown[]
@@ -104,7 +118,10 @@ function createQueryIdGateHarness(options: {
     (_, index) => `office-student-sensitive-${index + 1}`
   );
   const deviceIds = studentIds.map(
-    (_, index) => `device-sensitive-${index + 1}`
+    (_, index) => `fixture-sensitive-primary-${String(index + 1).padStart(4, "0")}`
+  );
+  const officeDeviceIds = officeStudentIds.map(
+    (_, index) => `fixture-sensitive-primary-${String(index + 41).padStart(4, "0")}`
   );
   const settingRows = options.settingRows ?? [{ compute_query_id: "auto" }];
   const identityExplainRows = options.identityExplainRows ?? [
@@ -125,11 +142,20 @@ function createQueryIdGateHarness(options: {
   let historyExplainCalls = 0;
   let historySchemaIdentityCalls = 0;
   const queryLog: { text: string; values: readonly unknown[] }[] = [];
+  const residueQueryLog: { text: string; values: readonly unknown[] }[] = [];
   const seedQueries: {
     marker: string;
     values: readonly unknown[];
   }[] = [];
+  const sessionPosture = {
+    required: 80,
+    reused: 0,
+    missing: 80,
+    conflicting: 0,
+    ...options.sessionPosture,
+  };
   const seedCounts = {
+    student_sessions: sessionPosture.missing,
     group_teacher: 1,
     teaching_session: 1,
     supervision_context: 1,
@@ -143,9 +169,10 @@ function createQueryIdGateHarness(options: {
     co_teacher_id: "co-teacher-sensitive-fixture",
     office_staff_id: "office-staff-sensitive-fixture",
     teacher_student_ids: studentIds,
+    teacher_device_ids: deviceIds,
     office_student_ids: officeStudentIds,
+    office_device_ids: officeDeviceIds,
   };
-
   const client = {
     async query(text: string, values?: readonly unknown[]) {
       const capturedValues = values ?? [];
@@ -178,8 +205,32 @@ function createQueryIdGateHarness(options: {
       if (text.includes("count(*)::integer AS invalid_count")) {
         return { rows: [{ invalid_count: 0 }] };
       }
-      if (text.includes("/* transactional_plan_base_v1 */")) {
+      if (text.includes("/* transactional_plan_base_v2 */")) {
         return { rows: options.baseRows ?? [defaultBaseRow] };
+      }
+      if (text.includes("/* transactional_plan_session_posture_v1 */")) {
+        return {
+          rows: [{
+            required_count: sessionPosture.required,
+            reused_count: sessionPosture.reused,
+            missing_count: sessionPosture.missing,
+            conflicting_count: sessionPosture.conflicting,
+          }],
+        };
+      }
+      if (text.includes("/* transactional_plan_seed_student_sessions_v1 */")) {
+        seedQueries.push({
+          marker: "transactional_plan_seed_student_sessions_v1",
+          values: capturedValues,
+        });
+        return {
+          rows: [{
+            required_count: sessionPosture.required,
+            reused_count: sessionPosture.reused,
+            conflicting_count: sessionPosture.conflicting,
+            inserted_count: seedCounts.student_sessions,
+          }],
+        };
       }
       const seedMarkers = [
         ["transactional_plan_seed_group_teacher_v1", "group_teacher"],
@@ -199,7 +250,7 @@ function createQueryIdGateHarness(options: {
           return { rows: [{ inserted_count: seedCounts[countKey] }] };
         }
       }
-      if (text.includes("/* transactional_plan_residue_v1 */")) {
+      if (text.includes("/* transactional_plan_residue_v2 */")) {
         return { rows: options.residueRows ?? [{ residue_count: 0 }] };
       }
       if (text.includes("array_agg(student_id ORDER BY student_rank)")) {
@@ -361,9 +412,32 @@ function createQueryIdGateHarness(options: {
       throw new Error("unexpected_plan_check_query");
     },
   };
+  const residueClient = {
+    async query(text: string, values?: readonly unknown[]) {
+      const capturedValues = values ?? [];
+      queryLog.push({ text, values: capturedValues });
+      residueQueryLog.push({ text, values: capturedValues });
+      await options.onQuery?.(text, capturedValues);
+      if (options.failQueryMarker && text.includes(options.failQueryMarker)) {
+        throw options.failError ?? new Error("injected_plan_check_failure");
+      }
+      if (
+        text === "ROLLBACK" &&
+        options.failResidueRollback
+      ) {
+        throw new Error("injected_residue_rollback_failure");
+      }
+      if (PLAN_CONTROL_QUERIES.has(text)) return { rows: [] };
+      if (text.includes("/* transactional_plan_residue_v2 */")) {
+        return { rows: options.residueRows ?? [{ residue_count: 0 }] };
+      }
+      throw new Error("unexpected_plan_check_residue_query");
+    },
+  };
 
   return {
     client,
+    residueClient,
     buildQuery: (_options: unknown, accessMode: "live" | "history") =>
       sql.raw(`SELECT 'authorization_${accessMode}' AS marker`),
     buildHistoryQuery: (
@@ -386,12 +460,14 @@ function createQueryIdGateHarness(options: {
     getHistoryExplainCalls: () => historyExplainCalls,
     getHistorySchemaIdentityCalls: () => historySchemaIdentityCalls,
     getQueryLog: () => [...queryLog],
+    getResidueQueryLog: () => [...residueQueryLog],
     getSeedQueries: () => [...seedQueries],
     fixture: {
       schoolId,
       studentIds,
       officeStudentIds,
       deviceIds,
+      officeDeviceIds,
       baseRow: defaultBaseRow,
     },
   };
@@ -433,7 +509,7 @@ function assertWriteTransactionRolledBackWithoutCommit(
 function assertSanitizedLifecycleEvents(events: readonly unknown[]): void {
   assert.equal(events.length, 1);
   const serialized = JSON.stringify(events);
-  assert.match(serialized, /transactional-plan-scenarios-v1/);
+  assert.match(serialized, /transactional-plan-scenarios-v2/);
   assert.doesNotMatch(serialized, /sensitive/);
   assert.doesNotMatch(
     serialized,
@@ -445,12 +521,24 @@ describe("ClassPilot tile authorization plan checker", () => {
   it("requires explicit execution and at least twenty measured samples", () => {
     assert.deepEqual(parseClasspilotTilePlanCliArgs(["--execute"]), {
       execute: true,
+      preflightBase: false,
       help: false,
       samples: 20,
     });
     assert.deepEqual(
       parseClasspilotTilePlanCliArgs(["--execute", "--samples", "30"]),
-      { execute: true, help: false, samples: 30 }
+      { execute: true, preflightBase: false, help: false, samples: 30 }
+    );
+    assert.deepEqual(parseClasspilotTilePlanCliArgs(["--preflight-base"]), {
+      execute: false,
+      preflightBase: true,
+      help: false,
+      samples: 20,
+    });
+    assert.throws(
+      () =>
+        parseClasspilotTilePlanCliArgs(["--execute", "--preflight-base"]),
+      /invalid_arguments/
     );
     assert.throws(
       () => parseClasspilotTilePlanCliArgs(["--samples", "19"]),
@@ -626,6 +714,7 @@ describe("ClassPilot tile authorization plan checker", () => {
       });
       const report = await runClasspilotTileAuthorizationPlanCheck({
         client: harness.client,
+        residueClient: harness.residueClient,
         buildQuery: harness.buildQuery,
         buildHistoryQuery: harness.buildHistoryQuery,
       });
@@ -649,6 +738,7 @@ describe("ClassPilot tile authorization plan checker", () => {
       await expectHistoryFallbackIdentityFailure(
         runClasspilotTileAuthorizationPlanCheck({
           client: harness.client,
+          residueClient: harness.residueClient,
           buildQuery: harness.buildQuery,
           buildHistoryQuery: harness.buildHistoryQuery,
         })
@@ -688,6 +778,7 @@ describe("ClassPilot tile authorization plan checker", () => {
       await expectHistoryFallbackIdentityFailure(
         runClasspilotTileAuthorizationPlanCheck({
           client: harness.client,
+          residueClient: harness.residueClient,
           buildQuery: harness.buildQuery,
           buildHistoryQuery: harness.buildHistoryQuery,
           onLifecycleEvent: (event) => lifecycleEvents.push(event),
@@ -718,6 +809,7 @@ describe("ClassPilot tile authorization plan checker", () => {
       await assert.rejects(
         runClasspilotTileAuthorizationPlanCheck({
           client: harness.client,
+          residueClient: harness.residueClient,
           buildQuery: harness.buildQuery,
           buildHistoryQuery: harness.buildHistoryQuery,
           onLifecycleEvent: (event) => lifecycleEvents.push(event),
@@ -748,6 +840,19 @@ describe("ClassPilot tile authorization plan checker", () => {
         },
       ],
       [
+        {
+          ...base,
+          office_device_ids: [...canonical.fixture.deviceIds],
+        },
+      ],
+      [
+        {
+          ...base,
+          teacher_device_ids:
+            canonical.fixture.deviceIds.slice(0, 39),
+        },
+      ],
+      [
         base,
         {
           ...base,
@@ -762,6 +867,7 @@ describe("ClassPilot tile authorization plan checker", () => {
       await assert.rejects(
         runClasspilotTileAuthorizationPlanCheck({
           client: harness.client,
+          residueClient: harness.residueClient,
           buildQuery: harness.buildQuery,
           buildHistoryQuery: harness.buildHistoryQuery,
         }),
@@ -772,8 +878,168 @@ describe("ClassPilot tile authorization plan checker", () => {
     }
   });
 
-  it("requires the exact one, one, one, forty seed cardinalities and never commits a failed seed", async () => {
+  it("rejects a shared residue connection and poisons uncertain write connections", async () => {
+    const harness = createQueryIdGateHarness();
+    await assert.rejects(
+      runClasspilotTileAuthorizationPlanCheck({
+        client: harness.client,
+        residueClient: harness.client,
+        buildQuery: harness.buildQuery,
+        buildHistoryQuery: harness.buildHistoryQuery,
+      }),
+      (error) =>
+        error instanceof ClasspilotTileAuthorizationPlanCheckError &&
+        error.failureCode === "invalid_configuration"
+    );
+    assert.deepEqual(harness.getQueryLog(), []);
+    assert.equal(
+      createClasspilotTilePlanWriteClientReleaseError({
+        rollback: { attempted: true, completed: true },
+      }),
+      undefined
+    );
+    assert.equal(
+      createClasspilotTilePlanWriteClientReleaseError({
+        rollback: { attempted: false, completed: false },
+      }),
+      undefined
+    );
+    assert.equal(
+      createClasspilotTilePlanWriteClientReleaseError(null),
+      undefined
+    );
+    assert.equal(
+      createClasspilotTilePlanWriteClientReleaseError({
+        rollback: { attempted: true, completed: false },
+      })?.message,
+      "classpilot_tile_auth_plan_write_connection_discarded"
+    );
+    assert.equal(
+      createClasspilotTilePlanResidueClientReleaseError({
+        residue: { checked: true },
+      }),
+      undefined
+    );
+    assert.equal(
+      createClasspilotTilePlanResidueClientReleaseError({
+        residue: { checked: false },
+      })?.message,
+      "classpilot_tile_auth_plan_residue_connection_discarded"
+    );
+    assert.equal(
+      createClasspilotTilePlanResidueClientReleaseError(null),
+      undefined
+    );
+  });
+
+  it("preflights the stable base read-only with exact aggregate session posture", async () => {
+    const harness = createQueryIdGateHarness({
+      sessionPosture: { reused: 31, missing: 49 },
+    });
+    const report =
+      await runClasspilotTileAuthorizationPlanBasePreflight({
+        client: harness.client,
+      });
+    assert.deepEqual(report, {
+      version: "classpilot-tile-auth-plan-base-preflight-v1",
+      status: "passed",
+      eligibleBases: 1,
+      requiredSessionPairs: 80,
+      reusedActiveSessionPairs: 31,
+      missingSessionPairs: 49,
+      conflictingSessionPairs: 0,
+    });
+    assert.equal(harness.getSeedQueries().length, 0);
+    assert.equal(harness.getDiscoveryCalls(), 0);
+    assert.deepEqual(
+      harness.getQueryLog()
+        .filter(({ text }) =>
+          text.startsWith("BEGIN TRANSACTION") || text === "ROLLBACK"
+        )
+        .map(({ text }) => text),
+      [
+        "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY",
+        "ROLLBACK",
+      ]
+    );
+  });
+
+  it("reuses exact active pairs and inserts only missing pairs", async () => {
+    for (const reused of [0, 37, 80]) {
+      const harness = createQueryIdGateHarness({
+        sessionPosture: {
+          reused,
+          missing: 80 - reused,
+        },
+      });
+      const lifecycleEvents: unknown[] = [];
+      const report = await runClasspilotTileAuthorizationPlanCheck({
+        client: harness.client,
+        residueClient: harness.residueClient,
+        buildQuery: harness.buildQuery,
+        buildHistoryQuery: harness.buildHistoryQuery,
+        onLifecycleEvent: (event) => lifecycleEvents.push(event),
+      });
+      assert.equal(report.status, "passed");
+      assert.deepEqual(lifecycleEvents, [{
+        version: "transactional-plan-scenarios-v2",
+        requiredSessionPairs: 80,
+        reusedActiveSessionPairs: reused,
+        insertedSessionPairs: 80 - reused,
+        seededRows: {
+          groupTeachers: 1,
+          teachingSessions: 1,
+          supervisionContexts: 1,
+          supervisionStudents: 40,
+          studentSessions: 80 - reused,
+          total: 123 - reused,
+        },
+        rollback: { attempted: true, completed: true },
+        residue: { checked: true, count: 0, passed: true },
+      }]);
+      const residueQueries = harness.getResidueQueryLog();
+      assert.equal(
+        residueQueries.filter(({ text }) =>
+          text.includes("/* transactional_plan_residue_v2 */")
+        ).length,
+        1
+      );
+      assert.equal(
+        residueQueries.some(({ text }) =>
+          text.includes("transactional_plan_seed_")
+        ),
+        false
+      );
+    }
+  });
+
+  it("fails closed before seeding for conflicting active student or device pairs", async () => {
+    const harness = createQueryIdGateHarness({
+      sessionPosture: {
+        reused: 0,
+        missing: 79,
+        conflicting: 1,
+      },
+    });
+    await assert.rejects(
+      runClasspilotTileAuthorizationPlanCheck({
+        client: harness.client,
+        residueClient: harness.residueClient,
+        buildQuery: harness.buildQuery,
+        buildHistoryQuery: harness.buildHistoryQuery,
+      }),
+      (error) =>
+        error instanceof ClasspilotTileAuthorizationPlanCheckError &&
+        error.failureCode === "representative_scenario_missing"
+    );
+    assert.equal(harness.getSeedQueries().length, 0);
+    assertWriteTransactionRolledBackWithoutCommit(harness.getQueryLog());
+  });
+
+  it("requires exact session-pair and fixed seed cardinalities and never commits a failed seed", async () => {
     const cases = [
+      { student_sessions: 79 },
+      { student_sessions: 81 },
       { group_teacher: 0 },
       { teaching_session: 0 },
       { supervision_context: 0 },
@@ -787,6 +1053,7 @@ describe("ClassPilot tile authorization plan checker", () => {
       await assert.rejects(
         runClasspilotTileAuthorizationPlanCheck({
           client: harness.client,
+          residueClient: harness.residueClient,
           buildQuery: harness.buildQuery,
           buildHistoryQuery: harness.buildHistoryQuery,
           onLifecycleEvent: (event) => lifecycleEvents.push(event),
@@ -802,12 +1069,14 @@ describe("ClassPilot tile authorization plan checker", () => {
   it("stops before measurement when tenant context or seed privileges are denied", async () => {
     for (const failQueryMarker of [
       "SELECT set_config('app.is_super', 'on', true)",
+      "/* transactional_plan_seed_student_sessions_v1 */",
       "/* transactional_plan_seed_group_teacher_v1 */",
     ]) {
       const harness = createQueryIdGateHarness({ failQueryMarker });
       await assert.rejects(
         runClasspilotTileAuthorizationPlanCheck({
           client: harness.client,
+          residueClient: harness.residueClient,
           buildQuery: harness.buildQuery,
           buildHistoryQuery: harness.buildHistoryQuery,
         })
@@ -831,6 +1100,7 @@ describe("ClassPilot tile authorization plan checker", () => {
     await assert.rejects(
       runClasspilotTileAuthorizationPlanCheck({
         client: harness.client,
+        residueClient: harness.residueClient,
         buildQuery: harness.buildQuery,
         buildHistoryQuery: harness.buildHistoryQuery,
         onLifecycleEvent: (event) => lifecycleEvents.push(event),
@@ -844,13 +1114,28 @@ describe("ClassPilot tile authorization plan checker", () => {
     );
     assert.equal(
       queryLog.filter(({ text }) =>
-        text.includes("/* transactional_plan_residue_v1 */")
+        text.includes("/* transactional_plan_residue_v2 */")
       ).length,
-      0
+      1
     );
     assert.equal(
       queryLog.filter(({ text }) => text === "COMMIT").length,
-      0
+      1
+    );
+    assert.deepEqual(
+      harness.getResidueQueryLog().map(({ text }) =>
+        PLAN_CONTROL_QUERIES.has(text)
+          ? text
+          : text.match(/\/\* ([a-z0-9_]+) \*\//)?.[1]
+      ),
+      [
+        "BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED READ ONLY",
+        "SELECT set_config('statement_timeout', $1, true)",
+        "SELECT set_config('lock_timeout', $1, true)",
+        "SELECT set_config('app.is_super', 'on', true)",
+        "transactional_plan_residue_v2",
+        "COMMIT",
+      ]
     );
     assertSanitizedLifecycleEvents(lifecycleEvents);
     assert.deepEqual(
@@ -858,7 +1143,7 @@ describe("ClassPilot tile authorization plan checker", () => {
       {
         ...(lifecycleEvents[0] as Record<string, unknown>),
         rollback: { attempted: true, completed: false },
-        residue: { checked: false, count: null, passed: false },
+        residue: { checked: true, count: 0, passed: true },
       }
     );
   });
@@ -872,13 +1157,14 @@ describe("ClassPilot tile authorization plan checker", () => {
     await assert.rejects(
       runClasspilotTileAuthorizationPlanCheck({
         client: harness.client,
+        residueClient: harness.residueClient,
         buildQuery: harness.buildQuery,
         buildHistoryQuery: harness.buildHistoryQuery,
         onLifecycleEvent: (event) => lifecycleEvents.push(event),
       })
     );
     const queryLog = harness.getQueryLog();
-    assert.equal(harness.getSeedQueries().length, 4);
+    assert.equal(harness.getSeedQueries().length, 5);
     assertWriteTransactionRolledBackWithoutCommit(queryLog);
     assertSanitizedLifecycleEvents(lifecycleEvents);
   });
@@ -890,7 +1176,9 @@ describe("ClassPilot tile authorization plan checker", () => {
       "SELECT set_config('lock_timeout', $1, true)",
       "SELECT set_config('app.is_super', 'on', true)",
       "count(*)::integer AS invalid_count",
-      "/* transactional_plan_base_v1 */",
+      "/* transactional_plan_base_v2 */",
+      "/* transactional_plan_session_posture_v1 */",
+      "/* transactional_plan_seed_student_sessions_v1 */",
       "/* transactional_plan_seed_group_teacher_v1 */",
       "/* transactional_plan_seed_teaching_session_v1 */",
       "/* transactional_plan_seed_supervision_context_v1 */",
@@ -901,7 +1189,7 @@ describe("ClassPilot tile authorization plan checker", () => {
       "SELECT current_setting('compute_query_id', true) AS compute_query_id",
       "heartbeats_column_signature",
       "EXPLAIN (VERBOSE, FORMAT TEXT)",
-      "/* transactional_plan_residue_v1 */",
+      "/* transactional_plan_residue_v2 */",
     ];
 
     for (const failQueryMarker of phases) {
@@ -917,6 +1205,7 @@ describe("ClassPilot tile authorization plan checker", () => {
       await assert.rejects(
         runClasspilotTileAuthorizationPlanCheck({
           client: harness.client,
+          residueClient: harness.residueClient,
           buildQuery: harness.buildQuery,
           buildHistoryQuery: harness.buildHistoryQuery,
           onLifecycleEvent: (event) => lifecycleEvents.push(event),
@@ -940,6 +1229,7 @@ describe("ClassPilot tile authorization plan checker", () => {
     await assert.rejects(
       runClasspilotTileAuthorizationPlanCheck({
         client: harness.client,
+        residueClient: harness.residueClient,
         buildQuery: harness.buildQuery,
         buildHistoryQuery: harness.buildHistoryQuery,
         onLifecycleEvent: (event) => lifecycleEvents.push(event),
@@ -949,7 +1239,7 @@ describe("ClassPilot tile authorization plan checker", () => {
     const queryLog = harness.getQueryLog();
     const rollback = queryLog.findIndex(({ text }) => text === "ROLLBACK");
     const residue = queryLog.findIndex(({ text }) =>
-      text.includes("/* transactional_plan_residue_v1 */")
+      text.includes("/* transactional_plan_residue_v2 */")
     );
     assert.ok(rollback >= 0);
     assert.ok(residue > rollback);
@@ -1117,6 +1407,7 @@ describe("ClassPilot tile authorization plan checker", () => {
     let lifecycleEvent: unknown;
     const report = await runClasspilotTileAuthorizationPlanCheck({
       client: harness.client,
+      residueClient: harness.residueClient,
       buildQuery: harness.buildQuery,
       buildHistoryQuery: (historySchoolId, accesses, limit) => {
         historyBuilderCalls += 1;
@@ -1155,13 +1446,17 @@ describe("ClassPilot tile authorization plan checker", () => {
       limit: 10,
     });
     assert.deepEqual(lifecycleEvent, {
-      version: "transactional-plan-scenarios-v1",
+      version: "transactional-plan-scenarios-v2",
+      requiredSessionPairs: 80,
+      reusedActiveSessionPairs: 0,
+      insertedSessionPairs: 80,
       seededRows: {
         groupTeachers: 1,
         teachingSessions: 1,
         supervisionContexts: 1,
         supervisionStudents: 40,
-        total: 43,
+        studentSessions: 80,
+        total: 123,
       },
       rollback: {
         attempted: true,
@@ -1179,6 +1474,7 @@ describe("ClassPilot tile authorization plan checker", () => {
     assert.deepEqual(
       seedQueries.map((entry) => entry.marker),
       [
+        "transactional_plan_seed_student_sessions_v1",
         "transactional_plan_seed_group_teacher_v1",
         "transactional_plan_seed_teaching_session_v1",
         "transactional_plan_seed_supervision_context_v1",
@@ -1192,7 +1488,14 @@ describe("ClassPilot tile authorization plan checker", () => {
           values.every((value) => value !== null && value !== undefined)
       )
     );
-    const supervisionStudentSeed = seedQueries[3]?.values ?? [];
+    const sessionSeed = seedQueries[0]?.values ?? [];
+    assert.equal(
+      sessionSeed.filter(
+        (value) => Array.isArray(value) && value.length === 80
+      ).length,
+      3
+    );
+    const supervisionStudentSeed = seedQueries[4]?.values ?? [];
     assert.equal(
       supervisionStudentSeed.filter(
         (value) => Array.isArray(value) && value.length === 40
@@ -1213,7 +1516,7 @@ describe("ClassPilot tile authorization plan checker", () => {
         text === "BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED READ ONLY"
     );
     const residue = queryLog.findIndex(({ text }) =>
-      text.includes("/* transactional_plan_residue_v1 */")
+      text.includes("/* transactional_plan_residue_v2 */")
     );
     const residueCommit = queryLog.findIndex(
       ({ text }, index) => index > residue && text === "COMMIT"
@@ -1302,6 +1605,7 @@ describe("ClassPilot tile authorization plan checker", () => {
     let maximumPendingRows = 0;
     const observerReads: number[] = [];
     const markerCounts = new Map([
+      ["transactional_plan_seed_student_sessions_v1", 80],
       ["transactional_plan_seed_group_teacher_v1", 1],
       ["transactional_plan_seed_teaching_session_v1", 1],
       ["transactional_plan_seed_supervision_context_v1", 1],
@@ -1328,13 +1632,14 @@ describe("ClassPilot tile authorization plan checker", () => {
 
     const report = await runClasspilotTileAuthorizationPlanCheck({
       client: harness.client,
+      residueClient: harness.residueClient,
       buildQuery: harness.buildQuery,
       buildHistoryQuery: harness.buildHistoryQuery,
     });
 
     assert.equal(report.status, "passed");
-    assert.equal(maximumPendingRows, 43);
-    assert.deepEqual(observerReads, [0, 0, 0, 0]);
+    assert.equal(maximumPendingRows, 123);
+    assert.deepEqual(observerReads, [0, 0, 0, 0, 0]);
     assert.equal(pendingRows, 0);
     assert.equal(committedRows, 0);
   });
@@ -1382,11 +1687,13 @@ describe("ClassPilot tile authorization plan checker", () => {
     const [firstReport, secondReport] = await Promise.all([
       runClasspilotTileAuthorizationPlanCheck({
         client: first.client,
+        residueClient: first.residueClient,
         buildQuery: first.buildQuery,
         buildHistoryQuery: first.buildHistoryQuery,
       }),
       runClasspilotTileAuthorizationPlanCheck({
         client: second.client,
+        residueClient: second.residueClient,
         buildQuery: second.buildQuery,
         buildHistoryQuery: second.buildHistoryQuery,
       }),
@@ -1423,7 +1730,9 @@ describe("ClassPilot tile authorization plan checker", () => {
       service,
       /SELECT pg_advisory_xact_lock\(hashtextextended\(\$1::text, 0\)\)/
     );
-    assert.match(service, /transactional_plan_base_v1/);
+    assert.match(service, /transactional_plan_base_v2/);
+    assert.match(service, /transactional_plan_session_posture_v1/);
+    assert.match(service, /transactional_plan_seed_student_sessions_v1/);
     assert.match(
       service,
       /\^synthetic-load-fixture:\(\[a-z0-9\]\[a-z0-9-\]\{2,40\}\):class:\[0-9\]\{2\}\$/
@@ -1435,17 +1744,27 @@ describe("ClassPilot tile authorization plan checker", () => {
     assert.match(service, /AND co_teacher\.id = \$6/);
     assert.match(service, /WHERE context\.id = \$5/);
     assert.match(service, /group_students AS any_roster/);
+    assert.match(service, /-P-\[0-9\]\{4\}\$/);
+    assert.match(service, /'-primary-'/);
+    assert.match(service, /historical_mapping\.device_id/);
+    assert.match(service, /conflicting_pair_exists/);
+    assert.match(service, /active_session\.is_active = true/);
+    const baseSql = service.slice(
+      service.indexOf("/* transactional_plan_base_v2 */"),
+      service.indexOf("/* transactional_plan_session_posture_v1 */")
+    );
+    assert.doesNotMatch(baseSql, /student_sessions/);
     assert.match(service, /supervised\.released_at IS NULL/);
     assert.match(service, /transactional_plan_seed_group_teacher_v1/);
     assert.match(service, /transactional_plan_seed_teaching_session_v1/);
     assert.match(service, /transactional_plan_seed_supervision_context_v1/);
     assert.match(service, /transactional_plan_seed_supervision_students_v1/);
-    assert.match(service, /transactional_plan_residue_v1/);
+    assert.match(service, /transactional_plan_residue_v2/);
     assert.match(
       service,
       /BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED READ ONLY/
     );
-    assert.match(service, /transactional-plan-scenarios-v1/);
+    assert.match(service, /transactional-plan-scenarios-v2/);
     assert.match(service, /set_config\('app\.is_super', 'on', true\)/);
     assert.match(service, /set_config\('app\.is_super', 'off', true\)/);
     assert.match(service, /set_config\('app\.school_id', \$1, true\)/);
@@ -1462,9 +1781,12 @@ describe("ClassPilot tile authorization plan checker", () => {
     assert.match(service, /nodeType === "WindowAgg"/);
     assert.match(service, /node\["Relation Name"\] === "heartbeats"/);
     assert.match(service, /INSERT INTO group_teachers/);
+    assert.match(service, /INSERT INTO student_sessions/);
     assert.match(service, /INSERT INTO teaching_sessions/);
     assert.match(service, /INSERT INTO classpilot_supervision_contexts/);
     assert.match(service, /INSERT INTO classpilot_supervision_students/);
+    assert.doesNotMatch(service, /UPDATE student_sessions/);
+    assert.doesNotMatch(service, /DELETE FROM student_sessions/);
     assert.doesNotMatch(service, /\bnextval\s*\(/);
     assert.match(cli, /buildHeartbeatTileHistoryBatchQuery/);
     assert.match(service, /session\.school_id IS NULL/);

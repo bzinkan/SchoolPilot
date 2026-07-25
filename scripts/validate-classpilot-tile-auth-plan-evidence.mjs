@@ -72,11 +72,18 @@ const HISTORY_FALLBACK_SQL_IDENTITY_KEYS = [
   "trackIoTiming",
   "version",
 ];
+const SANITIZED_HISTORY_FALLBACK_SQL_IDENTITY_KEYS =
+  HISTORY_FALLBACK_SQL_IDENTITY_KEYS.filter(
+    (key) => key !== "queryIdentifier"
+  );
 const HISTORY_FALLBACK_QUERY_IDENTITY_VERSION = "history-fallback-queryid-v1";
 const TRANSACTIONAL_PLAN_SCENARIOS_VERSION =
-  "transactional-plan-scenarios-v1";
+  "transactional-plan-scenarios-v2";
 const TRANSACTIONAL_PLAN_SCENARIOS_KEYS = [
+  "insertedSessionPairs",
+  "requiredSessionPairs",
   "residue",
+  "reusedActiveSessionPairs",
   "rollback",
   "seededRows",
   "version",
@@ -85,6 +92,7 @@ const TRANSACTIONAL_PLAN_SEEDED_ROWS_KEYS = [
   "groupTeachers",
   "supervisionContexts",
   "supervisionStudents",
+  "studentSessions",
   "teachingSessions",
   "total",
 ];
@@ -169,9 +177,19 @@ function parseEvidenceCandidates(eventsDocument) {
   };
 }
 
-function validateTransactionalPlanScenariosLifecycle(lifecycle) {
+export function validateClasspilotTileAuthorizationPlanLifecycleEvidence(
+  lifecycle
+) {
   if (!hasExactKeys(lifecycle, TRANSACTIONAL_PLAN_SCENARIOS_KEYS) ||
       lifecycle.version !== TRANSACTIONAL_PLAN_SCENARIOS_VERSION ||
+      lifecycle.requiredSessionPairs !== 80 ||
+      !Number.isInteger(lifecycle.reusedActiveSessionPairs) ||
+      lifecycle.reusedActiveSessionPairs < 0 ||
+      lifecycle.reusedActiveSessionPairs > 80 ||
+      !Number.isInteger(lifecycle.insertedSessionPairs) ||
+      lifecycle.insertedSessionPairs < 0 ||
+      lifecycle.insertedSessionPairs > 80 ||
+      lifecycle.reusedActiveSessionPairs + lifecycle.insertedSessionPairs !== 80 ||
       !hasExactKeys(
         lifecycle.seededRows,
         TRANSACTIONAL_PLAN_SEEDED_ROWS_KEYS
@@ -180,7 +198,9 @@ function validateTransactionalPlanScenariosLifecycle(lifecycle) {
       lifecycle.seededRows.teachingSessions !== 1 ||
       lifecycle.seededRows.supervisionContexts !== 1 ||
       lifecycle.seededRows.supervisionStudents !== 40 ||
-      lifecycle.seededRows.total !== 43 ||
+      lifecycle.seededRows.studentSessions !==
+        lifecycle.insertedSessionPairs ||
+      lifecycle.seededRows.total !== 43 + lifecycle.insertedSessionPairs ||
       !hasExactKeys(lifecycle.rollback, TRANSACTIONAL_PLAN_ROLLBACK_KEYS) ||
       lifecycle.rollback.attempted !== true ||
       lifecycle.rollback.completed !== true ||
@@ -190,11 +210,32 @@ function validateTransactionalPlanScenariosLifecycle(lifecycle) {
       lifecycle.residue.passed !== true) {
     throw new Error("transactional_plan_scenarios_contract_invalid");
   }
+  return {
+    version: TRANSACTIONAL_PLAN_SCENARIOS_VERSION,
+    requiredSessionPairs: 80,
+    reusedActiveSessionPairs: lifecycle.reusedActiveSessionPairs,
+    insertedSessionPairs: lifecycle.insertedSessionPairs,
+    seededRows: {
+      groupTeachers: 1,
+      teachingSessions: 1,
+      supervisionContexts: 1,
+      supervisionStudents: 40,
+      studentSessions: lifecycle.insertedSessionPairs,
+      total: 43 + lifecycle.insertedSessionPairs,
+    },
+    rollback: {
+      attempted: true,
+      completed: true,
+    },
+    residue: {
+      checked: true,
+      count: 0,
+      passed: true,
+    },
+  };
 }
 
-export function validateClasspilotTileAuthorizationPlanEvidence(eventsDocument) {
-  const { report, lifecycle } = parseEvidenceCandidates(eventsDocument);
-  validateTransactionalPlanScenariosLifecycle(lifecycle);
+function validatePlanReportMeasurements(report) {
   if (!hasExactKeys(report, TOP_LEVEL_KEYS) || report.status !== "passed" ||
       report.samples !== 20 || report.warmups !== 2 || report.cohortSize !== 40) {
     throw new Error("report_contract_invalid");
@@ -256,29 +297,10 @@ export function validateClasspilotTileAuthorizationPlanEvidence(eventsDocument) 
       historyFallback.perPairIndexLimit !== true) {
     throw new Error("history_fallback_contract_invalid");
   }
+}
 
-  const historyFallbackSqlIdentity = report.historyFallbackSqlIdentity;
-  if (!hasExactKeys(
-        historyFallbackSqlIdentity,
-        HISTORY_FALLBACK_SQL_IDENTITY_KEYS
-      ) ||
-      historyFallbackSqlIdentity.version !== HISTORY_FALLBACK_QUERY_IDENTITY_VERSION ||
-      !isValidSignedNonzeroBigint(historyFallbackSqlIdentity.queryIdentifier) ||
-      !SHA256_PATTERN.test(historyFallbackSqlIdentity.queryIdentifierSha256) ||
-      historyFallbackSqlIdentity.queryIdentifierSha256 !==
-        sha256(historyFallbackSqlIdentity.queryIdentifier) ||
-      !SHA256_PATTERN.test(historyFallbackSqlIdentity.compiledSqlSha256) ||
-      !SHA256_PATTERN.test(
-        historyFallbackSqlIdentity.parameterTypeSignatureSha256
-      ) ||
-      !isSafeEngineVersion(historyFallbackSqlIdentity.engineVersion) ||
-      !SHA256_PATTERN.test(historyFallbackSqlIdentity.schemaIdentitySha256) ||
-      historyFallbackSqlIdentity.trackIoTiming !== true) {
-    throw new Error("history_fallback_sql_identity_invalid");
-  }
-
-  // Rebuild the record from the reviewed aggregate-only schema. This keeps
-  // task/log metadata and any unexpected fields out of deploy output.
+function rebuildSanitizedPlanReport(report, historyFallbackSqlIdentity) {
+  const historyFallback = report.historyFallback;
   return {
     status: "passed",
     precheck: { invalidTeachingSessionSchools: 0 },
@@ -338,6 +360,54 @@ export function validateClasspilotTileAuthorizationPlanEvidence(eventsDocument) 
       trackIoTiming: true,
     },
   };
+}
+
+export function validateSanitizedClasspilotTileAuthorizationPlanReport(report) {
+  validatePlanReportMeasurements(report);
+  const identity = report.historyFallbackSqlIdentity;
+  if (
+    !hasExactKeys(identity, SANITIZED_HISTORY_FALLBACK_SQL_IDENTITY_KEYS) ||
+    identity.version !== HISTORY_FALLBACK_QUERY_IDENTITY_VERSION ||
+    !SHA256_PATTERN.test(identity.queryIdentifierSha256) ||
+    !SHA256_PATTERN.test(identity.compiledSqlSha256) ||
+    !SHA256_PATTERN.test(identity.parameterTypeSignatureSha256) ||
+    !isSafeEngineVersion(identity.engineVersion) ||
+    !SHA256_PATTERN.test(identity.schemaIdentitySha256) ||
+    identity.trackIoTiming !== true
+  ) {
+    throw new Error("history_fallback_sql_identity_invalid");
+  }
+  return rebuildSanitizedPlanReport(report, identity);
+}
+
+export function validateClasspilotTileAuthorizationPlanEvidence(eventsDocument) {
+  const { report, lifecycle } = parseEvidenceCandidates(eventsDocument);
+  validateClasspilotTileAuthorizationPlanLifecycleEvidence(lifecycle);
+  validatePlanReportMeasurements(report);
+
+  const historyFallbackSqlIdentity = report.historyFallbackSqlIdentity;
+  if (!hasExactKeys(
+        historyFallbackSqlIdentity,
+        HISTORY_FALLBACK_SQL_IDENTITY_KEYS
+      ) ||
+      historyFallbackSqlIdentity.version !== HISTORY_FALLBACK_QUERY_IDENTITY_VERSION ||
+      !isValidSignedNonzeroBigint(historyFallbackSqlIdentity.queryIdentifier) ||
+      !SHA256_PATTERN.test(historyFallbackSqlIdentity.queryIdentifierSha256) ||
+      historyFallbackSqlIdentity.queryIdentifierSha256 !==
+        sha256(historyFallbackSqlIdentity.queryIdentifier) ||
+      !SHA256_PATTERN.test(historyFallbackSqlIdentity.compiledSqlSha256) ||
+      !SHA256_PATTERN.test(
+        historyFallbackSqlIdentity.parameterTypeSignatureSha256
+      ) ||
+      !isSafeEngineVersion(historyFallbackSqlIdentity.engineVersion) ||
+      !SHA256_PATTERN.test(historyFallbackSqlIdentity.schemaIdentitySha256) ||
+      historyFallbackSqlIdentity.trackIoTiming !== true) {
+    throw new Error("history_fallback_sql_identity_invalid");
+  }
+
+  // Rebuild the record from the reviewed aggregate-only schema. This keeps
+  // task/log metadata and any unexpected fields out of deploy output.
+  return rebuildSanitizedPlanReport(report, historyFallbackSqlIdentity);
 }
 
 export function extractClasspilotTileAuthorizationPlanIdentity(eventsDocument) {

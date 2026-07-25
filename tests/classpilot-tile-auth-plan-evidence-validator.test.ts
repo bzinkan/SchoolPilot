@@ -80,13 +80,17 @@ function validReport() {
 
 function validLifecycle() {
   return {
-    version: "transactional-plan-scenarios-v1",
+    version: "transactional-plan-scenarios-v2",
+    requiredSessionPairs: 80,
+    reusedActiveSessionPairs: 32,
+    insertedSessionPairs: 48,
     seededRows: {
       groupTeachers: 1,
       teachingSessions: 1,
       supervisionContexts: 1,
       supervisionStudents: 40,
-      total: 43,
+      studentSessions: 48,
+      total: 91,
     },
     rollback: {
       attempted: true,
@@ -149,16 +153,32 @@ describe("ClassPilot tile authorization plan identity evidence", () => {
     const invalidLifecycleEvents = [
       null,
       { ...validLifecycle(), version: "transactional-plan-scenarios-v0" },
+      { ...validLifecycle(), version: "transactional-plan-scenarios-v1" },
       { ...validLifecycle(), schoolId: "school-secret" },
       {
         ...validLifecycle(),
-        seededRows: { ...validLifecycle().seededRows, total: 42 },
+        seededRows: { ...validLifecycle().seededRows, total: 90 },
       },
       {
         ...validLifecycle(),
         seededRows: {
           ...validLifecycle().seededRows,
           supervisionStudents: 39,
+        },
+      },
+      {
+        ...validLifecycle(),
+        reusedActiveSessionPairs: 31,
+      },
+      {
+        ...validLifecycle(),
+        insertedSessionPairs: 49,
+      },
+      {
+        ...validLifecycle(),
+        seededRows: {
+          ...validLifecycle().seededRows,
+          studentSessions: 47,
         },
       },
       {

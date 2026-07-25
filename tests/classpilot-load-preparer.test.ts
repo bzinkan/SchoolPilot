@@ -997,8 +997,6 @@ describe("ClassPilot synthetic load fixture preparer", () => {
       classCounter: 0,
       sessionCounter: 0,
       contextCounter: 0,
-      dropFirstTeacherResponse: true,
-      dropFirstSignOutResponse: false,
       deletedSchools: new Set<string>(),
     };
     const readBody = async (request: import("node:http").IncomingMessage) => {
@@ -1179,11 +1177,6 @@ describe("ClassPilot synthetic load fixture preparer", () => {
           };
           model.staff[schoolKey].push(entry);
           model.events.push(`${identityPrefix}-created:${body.email}`);
-          if (!isOfficeStaff && model.dropFirstTeacherResponse) {
-            model.dropFirstTeacherResponse = false;
-            request.socket.destroy();
-            return;
-          }
           return send(201, { user: entry.user, membership: { id: entry.membershipId, role } });
         }
         const adminUserMatch = /^\/api\/admin\/users\/([^/]+)(?:\/(password))?$/.exec(url.pathname);
@@ -1343,11 +1336,6 @@ describe("ClassPilot synthetic load fixture preparer", () => {
           return send(200, { enableTrackingHours: school.trackingEnabled });
         }
         if (url.pathname === "/api/classpilot/extension/sign-out" && request.method === "POST") {
-          if (model.dropFirstSignOutResponse) {
-            model.dropFirstSignOutResponse = false;
-            request.socket.destroy();
-            return;
-          }
           return send(200, { success: true });
         }
         if (url.pathname === "/api/classpilot/devices" && request.method === "GET") return send(200, { devices: [...model.devices[schoolKey].values()] });
@@ -1406,10 +1394,39 @@ describe("ClassPilot synthetic load fixture preparer", () => {
       CLP_OPERATOR_ALIAS_CONFIRMED: "launch-safe-2026",
       CLP_CANARY_ALIAS_CONFIRMED: "launch-safe-2026",
     }));
+    const runWithInjectedTransportFailure = async (pathname: string, operation: () => Promise<unknown>) => {
+      const actualFetch = globalThis.fetch;
+      let injected = false;
+      globalThis.fetch = async (input, init) => {
+        const requestUrl = new URL(input instanceof Request ? input.url : String(input));
+        const method = String(init?.method || (input instanceof Request ? input.method : "GET")).toUpperCase();
+        const shouldDrop = !injected && method === "POST" && requestUrl.pathname === pathname;
+        const fetchInit = shouldDrop
+          ? { ...init, headers: new Headers(init?.headers) }
+          : init;
+        if (shouldDrop) fetchInit.headers.set("Connection", "close");
+        const response = await actualFetch(input, fetchInit);
+        if (shouldDrop) {
+          // The server-side mutation and complete response both happened.
+          // Drop only the client observation to exercise durable recovery
+          // without poisoning Node's process-global connection pool.
+          await response.arrayBuffer();
+          injected = true;
+          throw new Error("injected transport observation failure");
+        }
+        return response;
+      };
+      try {
+        await assert.rejects(operation, /Network request failed/);
+      } finally {
+        globalThis.fetch = actualFetch;
+      }
+      assert.equal(injected, true, `expected a transport failure for ${pathname}`);
+    };
     try {
-      await assert.rejects(
+      await runWithInjectedTransportFailure(
+        "/api/admin/users",
         () => runPreparerCli(["provision", "--config", localConfigPath, "--output", output]),
-        /Network request failed/,
       );
       const crashLedger = JSON.parse(readFileSync(join(output, FILES.ownership), "utf8"));
       assert.equal(Object.keys(crashLedger.schools).length, 2);
@@ -1498,10 +1515,9 @@ describe("ClassPilot synthetic load fixture preparer", () => {
       assert.equal(harness.status, 0, harness.stderr);
       assert.equal(JSON.parse(harness.stdout).launchContract.teacherActors, 20);
 
-      model.dropFirstSignOutResponse = true;
-      await assert.rejects(
+      await runWithInjectedTransportFailure(
+        "/api/classpilot/extension/sign-out",
         () => runPreparerCli(["deactivate", "--confirm", "launch-safe-2026", "--config", localConfigPath, "--output", output]),
-        /Network request failed/,
       );
       const destructiveCheckpoint = JSON.parse(readFileSync(join(output, FILES.state), "utf8"));
       assert.ok(destructiveCheckpoint.deactivation.startedAt);
@@ -1540,6 +1556,8 @@ describe("ClassPilot synthetic load fixture preparer", () => {
     } finally {
       for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];
       Object.assign(process.env, saved);
+      server.closeIdleConnections();
+      server.closeAllConnections();
       await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
     }
   });
