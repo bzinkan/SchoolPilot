@@ -2492,7 +2492,12 @@ try {
     $recoveryResultCommit = New-TestContext -Name 'recovery-result-state-reconciliation' `
         -TestControls @{
             faultStage='publication_during_copy'
-            supervisorAfterResultCommitDelayMilliseconds=30000
+            # Exercise the real separate-process Status path. Hosted Windows
+            # malware scanning can consume the generic 30-second observation
+            # gap before that pwsh starts, so recovery has its own bounded
+            # offline-only gap. The test kills the supervisor immediately
+            # after the assertion and does not add successful-run latency.
+            supervisorAfterRecoveryResultCommitDelayMilliseconds=180000
         }
     $contexts.Add($recoveryResultCommit)
     [void](Invoke-Supervisor -Context $recoveryResultCommit -Mode Start)
