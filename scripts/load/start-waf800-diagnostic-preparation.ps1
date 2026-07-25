@@ -559,7 +559,7 @@ function Get-OfflineTestDelayMilliseconds {
         throw "Supervisor delay controls are restricted to diagnostic-ineligible offline rehearsal."
     }
     $raw = Get-RequiredValue $controls $Name
-    if ($raw -isnot [ValueType] -or [string]$raw -cnotmatch '^\d{1,5}$') {
+    if ($raw -isnot [ValueType] -or [string]$raw -cnotmatch '^\d{1,6}$') {
         throw "An offline supervisor delay control is malformed."
     }
     $value = [int]$raw
@@ -3676,7 +3676,7 @@ function Invoke-ResumePublicationMode {
         Write-PrivateJson $Control.RecoveryResult $result -Immutable
         $resultRef = [ordered]@{ path = $Control.RecoveryResult; sha256 = Get-FileSha256 $Control.RecoveryResult }
         $afterResultCommitDelay = Get-OfflineTestDelayMilliseconds $ManifestInfo `
-            "supervisorAfterResultCommitDelayMilliseconds"
+            "supervisorAfterRecoveryResultCommitDelayMilliseconds" -Maximum 180000
         if ($afterResultCommitDelay -gt 0) {
             Start-Sleep -Milliseconds $afterResultCommitDelay
         }

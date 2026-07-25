@@ -1083,6 +1083,7 @@ function Assert-ManifestContract {
                 'supervisorAfterRecoveryWorkerAssignmentBeforeResumeDelayMilliseconds',
                 'supervisorAfterWorkerExitedStateDelayMilliseconds',
                 'supervisorAfterResultCommitDelayMilliseconds',
+                'supervisorAfterRecoveryResultCommitDelayMilliseconds',
                 'supervisorAfterRecoveryAdmissionDelayMilliseconds',
                 'afterFixtureReceiptSealDelaySeconds',
                 'offlineFakeCredentialValidityMarginSeconds',
@@ -1161,6 +1162,18 @@ function Assert-ManifestContract {
                     [int]$delayValue -gt 30000) {
                     throw 'A supervisor test delay is outside its bounded offline range.'
                 }
+            }
+        }
+        if ($script:Manifest.testControls.Contains(
+                'supervisorAfterRecoveryResultCommitDelayMilliseconds'
+            )) {
+            $recoveryResultDelay = $script:Manifest.testControls[
+                'supervisorAfterRecoveryResultCommitDelayMilliseconds'
+            ]
+            if ($recoveryResultDelay -isnot [ValueType] -or
+                [string]$recoveryResultDelay -cnotmatch '^\d{1,6}$' -or
+                [int]$recoveryResultDelay -gt 180000) {
+                throw 'The recovery-result supervisor test delay is outside its bounded offline range.'
             }
         }
         $allowedFaultStages = @(
