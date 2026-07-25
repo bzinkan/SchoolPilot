@@ -23,7 +23,11 @@ function Stop-AndDrainTestProcess {
         [string]$Name
     )
     if ($null -eq $Process) { return }
+    $drained = $false
+    $rebound = $null
     try {
+        $processId = $Process.Id
+        $processStartedAtUtc = $Process.StartTime.ToUniversalTime()
         $Process.Refresh()
         if (-not $Process.HasExited) {
             try {
@@ -34,15 +38,81 @@ function Stop-AndDrainTestProcess {
                 if (-not $Process.HasExited) { throw }
             }
         }
-        if (-not $Process.WaitForExit(10000)) {
-            throw "Timed out draining test process '$Name'."
+        if ($Process.WaitForExit(10000)) {
+            # Complete asynchronous redirected-stream delivery before disposal.
+            $Process.WaitForExit()
+            $drained = $true
+            return
         }
-        # Complete asynchronous redirected-stream delivery before disposal.
-        $Process.WaitForExit()
-        $Process.Refresh()
+
+        # A tree kill can leave the original Process handle unsignaled on a
+        # busy Windows runner. Rebind the exact PID creation identity and issue
+        # one direct-root kill before declaring cleanup failure.
+        $rebound = Get-Process -Id $processId -ErrorAction SilentlyContinue
+        if ($null -eq $rebound) {
+            $Process.WaitForExit()
+            $drained = $true
+            return
+        }
+        if ($rebound.StartTime.ToUniversalTime() -ne $processStartedAtUtc) {
+            throw "PID creation identity changed while draining test process '$Name'."
+        }
+        $rebound.Refresh()
+        if (-not $rebound.HasExited) {
+            try {
+                $rebound.Kill()
+            }
+            catch [InvalidOperationException] {
+                $rebound.Refresh()
+                if (-not $rebound.HasExited) { throw }
+            }
+        }
+        if (-not $rebound.WaitForExit(20000)) {
+            throw "Timed out draining test process '$Name' after direct-root fallback."
+        }
+        $rebound.WaitForExit()
+        $drained = $true
     }
     finally {
+        # Never dispose the last owned handle on a failed drain. The caller can
+        # retain it in an outer registry and retry before evidence cleanup.
+        if ($drained) {
+            $Process.Dispose()
+        }
+        # A rebound handle is internal to this helper and must never leak, even
+        # when identity validation or the fallback drain fails.
+        if ($null -ne $rebound -and -not [object]::ReferenceEquals($rebound, $Process)) {
+            $rebound.Dispose()
+        }
+    }
+}
+
+function Release-AndDrainTestProcess {
+    param(
+        [Diagnostics.Process]$Process,
+        [Parameter(Mandatory = $true)]
+        [string]$SignalPath,
+        [Parameter(Mandatory = $true)]
+        [string]$Name
+    )
+    $Process.Refresh()
+    $wasRunningBeforeSignal = -not $Process.HasExited
+    [IO.File]::WriteAllText($SignalPath, "release", [Text.UTF8Encoding]::new($false))
+    if ($Process.WaitForExit(10000)) {
+        $Process.WaitForExit()
+        $exitCode = $Process.ExitCode
         $Process.Dispose()
+        return [pscustomobject]@{
+            wasRunningBeforeSignal = $wasRunningBeforeSignal
+            exitedAfterSignal = $true
+            exitCode = $exitCode
+        }
+    }
+    Stop-AndDrainTestProcess -Process $Process -Name $Name
+    return [pscustomobject]@{
+        wasRunningBeforeSignal = $wasRunningBeforeSignal
+        exitedAfterSignal = $false
+        exitCode = $null
     }
 }
 
@@ -1682,6 +1752,8 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
     $completedWaitMonitor = $null
     $completedWaitHarness = $null
     $slowRollbackProcess = $null
+    $strictDurationMonitors = [ordered]@{}
+    $strictDurationHarnesses = [ordered]@{}
     $childBlockFailure = $null
     $childBlockCleanupFailures = [System.Collections.Generic.List[string]]::new()
     try {
@@ -2350,12 +2422,67 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
             }
         }
 
+        $strictDurationHarnessScript = Join-Path $childRoot "strict-duration-harness.ps1"
+        $strictDurationHarnessSource = @'
+param(
+    [Parameter(Mandatory = $true)][string]$SignalPath,
+    [Parameter(Mandatory = $true)][int]$ParentProcessId,
+    [Parameter(Mandatory = $true)][long]$ParentProcessStartedAtUtcTicks
+)
+while (-not (Test-Path -LiteralPath $SignalPath)) {
+    $parent = Get-Process -Id $ParentProcessId -ErrorAction SilentlyContinue
+    if ($null -eq $parent) { exit 10 }
+    try {
+        if ($parent.StartTime.ToUniversalTime().Ticks -ne $ParentProcessStartedAtUtcTicks) { exit 11 }
+    }
+    finally {
+        $parent.Dispose()
+    }
+    Start-Sleep -Milliseconds 50
+}
+exit 0
+'@
+        [IO.File]::WriteAllText(
+            $strictDurationHarnessScript,
+            $strictDurationHarnessSource,
+            [Text.UTF8Encoding]::new($false)
+        )
+
         function Invoke-StrictDurationSummaryCase {
             param([string]$CaseId, $Summary, [double]$FinalWallClockOffsetSeconds = 0, [switch]$StopHarnessAfterFinal)
             $caseProgress = Join-Path $childRoot "$CaseId-progress.jsonl"
             $caseSummary = Join-Path $childRoot "$CaseId-summary.json"
-            Remove-Item -LiteralPath $caseProgress,$caseSummary -ErrorAction SilentlyContinue
-            $caseHarness = Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList @("-NoProfile","-Command","Start-Sleep -Seconds 60") -PassThru -NoNewWindow
+            $caseHarnessSignal = Join-Path $childRoot "$CaseId-harness-release"
+            Remove-Item -LiteralPath $caseProgress,$caseSummary,$caseHarnessSignal -ErrorAction SilentlyContinue
+            $caseHarnessStartInfo = [Diagnostics.ProcessStartInfo]::new()
+            $caseHarnessStartInfo.UseShellExecute = $false
+            $caseHarnessStartInfo.CreateNoWindow = $true
+            $testHostProcess = [Diagnostics.Process]::GetCurrentProcess()
+            try {
+                $caseHarnessStartInfo.FileName = $testHostProcess.Path
+                $testHostStartedAtUtcTicks = $testHostProcess.StartTime.ToUniversalTime().Ticks
+            }
+            finally {
+                $testHostProcess.Dispose()
+            }
+            foreach ($argument in @(
+                "-NoProfile",
+                "-File",
+                $strictDurationHarnessScript,
+                "-SignalPath",
+                $caseHarnessSignal,
+                "-ParentProcessId",
+                $PID,
+                "-ParentProcessStartedAtUtcTicks",
+                $testHostStartedAtUtcTicks
+            )) {
+                [void]$caseHarnessStartInfo.ArgumentList.Add([string]$argument)
+            }
+            $caseHarness = [Diagnostics.Process]::Start($caseHarnessStartInfo)
+            $strictDurationHarnesses[$CaseId] = $caseHarness
+            $caseMonitor = $null
+            $caseMonitorExitCode = $null
+            $caseBarrierRelease = $null
             try {
                 Start-Sleep -Milliseconds 200
                 $caseStartedAt = [DateTimeOffset]::UtcNow
@@ -2386,11 +2513,31 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
                 # minute even when this test deliberately moves the final wall
                 # clock backward or the host crosses a minute boundary.
                 $oldCaseMetricTimestamp = $env:SCHOOLPILOT_TEST_METRIC_TIMESTAMP
+                $caseBarrierEnvironment = [ordered]@{}
+                $caseBarrierReady = $null
+                if ($StopHarnessAfterFinal) {
+                    $caseBarrierArm = Join-Path $childRoot "$CaseId-sample-barrier-arm.flag"
+                    $caseBarrierReady = Join-Path $childRoot "$CaseId-sample-barrier-ready.flag"
+                    $caseBarrierRelease = Join-Path $childRoot "$CaseId-sample-barrier-release.flag"
+                    $caseBarrierConsumed = Join-Path $childRoot "$CaseId-sample-barrier-consumed.flag"
+                    Remove-Item -LiteralPath $caseBarrierArm,$caseBarrierReady,$caseBarrierRelease,$caseBarrierConsumed -ErrorAction SilentlyContinue
+                    [IO.File]::WriteAllText($caseBarrierArm, "1", [Text.UTF8Encoding]::new($false))
+                    foreach ($entry in ([ordered]@{
+                        SCHOOLPILOT_TEST_SAMPLE_BARRIER_ARM = $caseBarrierArm
+                        SCHOOLPILOT_TEST_SAMPLE_BARRIER_READY = $caseBarrierReady
+                        SCHOOLPILOT_TEST_SAMPLE_BARRIER_RELEASE = $caseBarrierRelease
+                        SCHOOLPILOT_TEST_SAMPLE_BARRIER_CONSUMED = $caseBarrierConsumed
+                    }).GetEnumerator()) {
+                        $caseBarrierEnvironment[$entry.Key] = [Environment]::GetEnvironmentVariable($entry.Key, "Process")
+                        [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, "Process")
+                    }
+                }
                 $env:SCHOOLPILOT_TEST_METRIC_TIMESTAMP = $caseStartedAt.ToString("o")
                 try {
-                    $process = Start-Process -FilePath (Get-Process -Id $PID).Path `
+                    $caseMonitor = Start-Process -FilePath $caseHarnessStartInfo.FileName `
                         -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$monitorScript,"-ConfigPath",$casePath,"-Mode","Monitor") `
                         -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $childRoot "$CaseId.out") -RedirectStandardError (Join-Path $childRoot "$CaseId.err")
+                    $strictDurationMonitors[$CaseId] = $caseMonitor
                 }
                 finally {
                     if ($null -eq $oldCaseMetricTimestamp) {
@@ -2399,29 +2546,86 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
                     else {
                         $env:SCHOOLPILOT_TEST_METRIC_TIMESTAMP = $oldCaseMetricTimestamp
                     }
+                    foreach ($entry in $caseBarrierEnvironment.GetEnumerator()) {
+                        [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, "Process")
+                    }
                 }
                 $evidencePath = Join-Path $childEvidence "$CaseId-aws-monitor.jsonl"
                 $startDeadline = [DateTimeOffset]::UtcNow.AddSeconds(15)
-                while (-not (Test-Path -LiteralPath $evidencePath) -and -not $process.HasExited -and [DateTimeOffset]::UtcNow -lt $startDeadline) { Start-Sleep -Milliseconds 100 }
                 $startError = Get-Content -LiteralPath (Join-Path $childRoot "$CaseId.err") -Raw -ErrorAction SilentlyContinue
-                Assert-Condition (Test-Path -LiteralPath $evidencePath) "$CaseId strict duration monitor did not start (stderr: $startError)."
+                if ($StopHarnessAfterFinal) {
+                    while (-not (Test-Path -LiteralPath $caseBarrierReady) -and
+                        -not $caseMonitor.HasExited -and [DateTimeOffset]::UtcNow -lt $startDeadline) {
+                        Start-Sleep -Milliseconds 100
+                    }
+                    $startError = Get-Content -LiteralPath (Join-Path $childRoot "$CaseId.err") -Raw -ErrorAction SilentlyContinue
+                    Assert-Condition (Test-Path -LiteralPath $caseBarrierReady) `
+                        "$CaseId strict duration monitor did not reach its first sample barrier (stderr: $startError)."
+                }
+                else {
+                    while (-not (Test-Path -LiteralPath $evidencePath) -and
+                        -not $caseMonitor.HasExited -and [DateTimeOffset]::UtcNow -lt $startDeadline) {
+                        Start-Sleep -Milliseconds 100
+                    }
+                    $startError = Get-Content -LiteralPath (Join-Path $childRoot "$CaseId.err") -Raw -ErrorAction SilentlyContinue
+                    Assert-Condition (Test-Path -LiteralPath $evidencePath) `
+                        "$CaseId strict duration monitor did not start (stderr: $startError)."
+                }
                 [IO.File]::WriteAllText($caseSummary, ($Summary|ConvertTo-Json -Depth 15), [Text.UTF8Encoding]::new($false))
                 $finalEvent = @{schemaVersion=1;type="progress";event="final";runId=$CaseId;stage="800";timestamp=[DateTimeOffset]::UtcNow.AddSeconds($FinalWallClockOffsetSeconds).ToString("o")}
                 if ($null -ne $Summary.fatalGate) { $finalEvent.fatalGate = $Summary.fatalGate }
                 [IO.File]::AppendAllText($caseProgress, ($finalEvent|ConvertTo-Json -Compress -Depth 12)+[Environment]::NewLine, [Text.UTF8Encoding]::new($false))
-                if ($StopHarnessAfterFinal -and -not $caseHarness.HasExited) {
-                    Stop-AndDrainTestProcess -Process $caseHarness -Name "$CaseId strict-duration harness"
+                if ($StopHarnessAfterFinal) {
+                    $release = Release-AndDrainTestProcess `
+                        -Process $caseHarness `
+                        -SignalPath $caseHarnessSignal `
+                        -Name "$CaseId strict-duration harness"
+                    [void]$strictDurationHarnesses.Remove($CaseId)
                     $caseHarness = $null
+                    Assert-Condition ($release.wasRunningBeforeSignal -and
+                        $release.exitedAfterSignal -and $release.exitCode -eq 0) `
+                        "$CaseId strict-duration harness did not exit normally after coherent terminal evidence."
+                    [IO.File]::WriteAllText($caseBarrierRelease, "1", [Text.UTF8Encoding]::new($false))
                 }
-                Assert-Condition ($process.WaitForExit(30000)) "$CaseId strict duration monitor did not finish."
+                Assert-Condition ($caseMonitor.WaitForExit(30000)) "$CaseId strict duration monitor did not finish."
+                $caseMonitor.WaitForExit()
+                $caseMonitorExitCode = $caseMonitor.ExitCode
+                $caseMonitor.Dispose()
+                [void]$strictDurationMonitors.Remove($CaseId)
+                $caseMonitor = $null
+                Assert-Condition (Test-Path -LiteralPath $evidencePath) `
+                    "$CaseId strict duration monitor produced no evidence."
                 $result = Get-Content -LiteralPath (Join-Path $childEvidence "$CaseId-monitor-result.json") -Raw | ConvertFrom-Json -Depth 30
                 $lastEvidence = Get-Content -LiteralPath $evidencePath -Tail 1 -ErrorAction SilentlyContinue
-                return [pscustomobject]@{process=$process;result=$result;lastEvidence=$lastEvidence}
+                return [pscustomobject]@{
+                    process = [pscustomobject]@{ ExitCode = $caseMonitorExitCode }
+                    result = $result
+                    lastEvidence = $lastEvidence
+                }
             }
             finally {
-                if ($null -ne $caseHarness) {
-                    Stop-AndDrainTestProcess -Process $caseHarness -Name "$CaseId strict-duration harness"
-                    $caseHarness = $null
+                try {
+                    if ($StopHarnessAfterFinal -and
+                        $null -ne $caseBarrierRelease -and
+                        -not (Test-Path -LiteralPath $caseBarrierRelease)) {
+                        [IO.File]::WriteAllText($caseBarrierRelease, "1", [Text.UTF8Encoding]::new($false))
+                    }
+                    if ($null -ne $caseMonitor) {
+                        Stop-AndDrainTestProcess -Process $caseMonitor -Name "$CaseId strict-duration monitor"
+                        [void]$strictDurationMonitors.Remove($CaseId)
+                        $caseMonitor = $null
+                    }
+                    if ($null -ne $caseHarness) {
+                        [void](Release-AndDrainTestProcess `
+                            -Process $caseHarness `
+                            -SignalPath $caseHarnessSignal `
+                            -Name "$CaseId strict-duration harness")
+                        [void]$strictDurationHarnesses.Remove($CaseId)
+                        $caseHarness = $null
+                    }
+                }
+                finally {
+                    Remove-Item -LiteralPath $caseHarnessSignal -ErrorAction SilentlyContinue
                 }
             }
         }
@@ -3128,6 +3332,24 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         $childBlockFailure = $_
     }
     finally {
+        if ($strictDurationMonitors.Count -gt 0) {
+            try {
+                Stop-AndDrainTestProcesses -Processes $strictDurationMonitors
+                $strictDurationMonitors.Clear()
+            }
+            catch {
+                $childBlockCleanupFailures.Add("strict-duration monitor drain: $($_.Exception.Message)")
+            }
+        }
+        if ($strictDurationHarnesses.Count -gt 0) {
+            try {
+                Stop-AndDrainTestProcesses -Processes $strictDurationHarnesses
+                $strictDurationHarnesses.Clear()
+            }
+            catch {
+                $childBlockCleanupFailures.Add("strict-duration process drain: $($_.Exception.Message)")
+            }
+        }
         try {
             Stop-AndDrainTestProcesses -Processes ([ordered]@{
                 "child monitor" = $childMonitor
