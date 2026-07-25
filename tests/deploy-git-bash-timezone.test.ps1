@@ -28,7 +28,11 @@ tzif_path=`$(production_eastern_tzif_path) || exit 91
 printf 'tzif=%s\n' "`$tzif_path"
 printf 'winter=%s\n' "`$(production_tzif_date_at_epoch "`$tzif_path" "1768478400" '+%u %H%M %z %Z')"
 printf 'summer=%s\n' "`$(production_tzif_date_at_epoch "`$tzif_path" "1784116800" '+%u %H%M %z %Z')"
-printf 'now=%s\n' "`$(production_eastern_weekday_hhmm)"
+expected_now=`$(TZ=:"`$tzif_path" date '+%u %H%M') || exit 92
+actual_now=`$(production_eastern_weekday_hhmm) || exit 93
+[[ "`$actual_now" == "`$expected_now" ]] || exit 94
+printf 'expectedNow=%s\n' "`$expected_now"
+printf 'now=%s\n' "`$actual_now"
 "@
 
 $output = @($probe | & $bash -s 2>&1)
@@ -40,6 +44,7 @@ if ($exitCode -ne 0) {
 if ($text -notmatch '(?m)^tzif=/(?:usr|mingw64)/share/zoneinfo/America/New_York$' -or
     $text -notmatch '(?m)^winter=4 0700 -0500 EST$' -or
     $text -notmatch '(?m)^summer=3 0800 -0400 EDT$' -or
+    $text -notmatch '(?m)^expectedNow=[1-7] [0-2][0-9][0-5][0-9]$' -or
     $text -notmatch '(?m)^now=[1-7] [0-2][0-9][0-5][0-9]$') {
     throw 'The Git Bash deployment clock did not bind verified America/New_York TZif data.'
 }
