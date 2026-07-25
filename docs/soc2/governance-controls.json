@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "program": "SchoolPilot SOC 2 Type II readiness",
-  "lastUpdated": "2026-06-27",
+  "lastUpdated": "2026-07-24",
   "evidenceRepository": "SchoolPilot-SOC2-Evidence",
   "humanApprovalBoundary": "Automation may collect status and evidence pointers, but human-owned approvals, risk acceptances, vendor DPA confirmations, incident decisions, training attestations, and CPA audit judgments must be signed by an accountable person.",
   "controls": [
@@ -122,6 +122,11 @@
           "name": "Frontend CI evidence",
           "automation": "automated",
           "privateEvidenceLocation": "GitHub Actions artifact: soc2-evidence-frontend"
+        },
+        {
+          "name": "Frontend dependency audit evidence",
+          "automation": "automated",
+          "privateEvidenceLocation": "GitHub Actions artifact: frontend-dependency-audit"
         },
         {
           "name": "Shadow deployment evidence packet",

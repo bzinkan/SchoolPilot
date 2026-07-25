@@ -334,9 +334,20 @@ jobs:
         working-directory: schoolpilot-app
         run: npm ci
 
-      - name: Audit frontend dependencies
+      - name: Test Router reachability validator
         working-directory: schoolpilot-app
-        run: npm audit --audit-level=high
+        run: npm run test:router-reachability
+
+      - name: Test frontend dependency audit engine and scope contract
+        run: npx tsx --test tests/frontend-dependency-audit.test.ts
+
+      - name: Collect dependency audit and validate source reachability
+        working-directory: schoolpilot-app
+        run: npm run audit:dependencies
+
+      - name: Test frontend API routing contract
+        working-directory: schoolpilot-app
+        run: npm run test:api-routing
 
       - name: Test ClassPilot tile batching contract
         working-directory: schoolpilot-app
@@ -350,6 +361,38 @@ jobs:
         working-directory: schoolpilot-app
         run: npm run build
 
+      - name: Validate standard frontend Router bundle
+        working-directory: schoolpilot-app
+        run: npm run audit:router:postbuild:standard
+
+      - name: Build GoPilot frontend
+        working-directory: schoolpilot-app
+        run: npm run build:gopilot
+
+      - name: Validate GoPilot Router bundle
+        working-directory: schoolpilot-app
+        run: npm run audit:router:postbuild:gopilot
+
+      - name: Build PassPilot frontend
+        working-directory: schoolpilot-app
+        run: npm run build:passpilot
+
+      - name: Validate PassPilot Router bundle
+        working-directory: schoolpilot-app
+        run: npm run audit:router:postbuild:passpilot
+
+      - name: Finalize production dependency gate
+        working-directory: schoolpilot-app
+        run: npm run audit:dependencies:finalize
+
+      - name: Upload frontend dependency audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dependency-audit
+          path: schoolpilot-app/audit-evidence/
+          if-no-files-found: error
+
       - name: Collect SOC 2 evidence
         if: always()
         env:
@@ -358,7 +401,7 @@ jobs:
           node scripts/soc2/collect-ci-evidence.mjs
           --job "Frontend lint and build"
           --controls "SP-SEC-004"
-          --summary "Frontend dependency audit, ClassPilot tile-batching contract, lint, and production Vite build ran for this commit."
+          --summary "This job scheduled the high/critical production-dependency gate, complete-tree audit collection, frontend API-routing and ClassPilot tile-batching contracts, lint, standard/GoPilot/PassPilot builds, and post-build Router reachability validation; the job status and separate frontend dependency audit packet record which gates completed and whether they passed."
 
       - name: Upload SOC 2 evidence
         if: always()
