@@ -3,19 +3,24 @@ import type { PoolClient } from "pg";
 import {
   CLASSPILOT_TILE_AUTHORIZATION_PLAN_SAMPLES,
   ClasspilotTileAuthorizationPlanCheckError,
+  runClasspilotTileAuthorizationPlanBasePreflight,
   runClasspilotTileAuthorizationPlanCheck,
 } from "../services/classpilotTileAuthorizationPlanCheck.js";
 
 type CliOptions = {
   execute: boolean;
+  preflightBase: boolean;
   help: boolean;
   samples: number;
 };
 
 const TRANSACTIONAL_PLAN_SCENARIOS_VERSION =
-  "transactional-plan-scenarios-v1";
+  "transactional-plan-scenarios-v2";
 const TRANSACTIONAL_PLAN_SCENARIOS_KEYS = [
+  "insertedSessionPairs",
+  "requiredSessionPairs",
   "residue",
+  "reusedActiveSessionPairs",
   "rollback",
   "seededRows",
   "version",
@@ -24,11 +29,23 @@ const TRANSACTIONAL_PLAN_SEEDED_ROWS_KEYS = [
   "groupTeachers",
   "supervisionContexts",
   "supervisionStudents",
+  "studentSessions",
   "teachingSessions",
   "total",
 ] as const;
 const TRANSACTIONAL_PLAN_ROLLBACK_KEYS = ["attempted", "completed"] as const;
 const TRANSACTIONAL_PLAN_RESIDUE_KEYS = ["checked", "count", "passed"] as const;
+const BASE_PREFLIGHT_VERSION =
+  "classpilot-tile-auth-plan-base-preflight-v1";
+const BASE_PREFLIGHT_KEYS = [
+  "conflictingSessionPairs",
+  "eligibleBases",
+  "missingSessionPairs",
+  "requiredSessionPairs",
+  "reusedActiveSessionPairs",
+  "status",
+  "version",
+] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -62,7 +79,11 @@ export function sanitizeTransactionalPlanScenariosLifecycleEvent(
     !Number.isInteger(seededRows.teachingSessions) ||
     !Number.isInteger(seededRows.supervisionContexts) ||
     !Number.isInteger(seededRows.supervisionStudents) ||
+    !Number.isInteger(seededRows.studentSessions) ||
     !Number.isInteger(seededRows.total) ||
+    !Number.isInteger(event.requiredSessionPairs) ||
+    !Number.isInteger(event.reusedActiveSessionPairs) ||
+    !Number.isInteger(event.insertedSessionPairs) ||
     !hasExactKeys(rollback, TRANSACTIONAL_PLAN_ROLLBACK_KEYS) ||
     typeof rollback.attempted !== "boolean" ||
     typeof rollback.completed !== "boolean" ||
@@ -79,7 +100,11 @@ export function sanitizeTransactionalPlanScenariosLifecycleEvent(
   const teachingSessions = seededRows.teachingSessions as number;
   const supervisionContexts = seededRows.supervisionContexts as number;
   const supervisionStudents = seededRows.supervisionStudents as number;
+  const studentSessions = seededRows.studentSessions as number;
   const total = seededRows.total as number;
+  const requiredSessionPairs = event.requiredSessionPairs as number;
+  const reusedActiveSessionPairs = event.reusedActiveSessionPairs as number;
+  const insertedSessionPairs = event.insertedSessionPairs as number;
   const residueChecked = residue.checked;
   const residueCount = residue.count;
   const residuePassed = residue.passed;
@@ -87,7 +112,7 @@ export function sanitizeTransactionalPlanScenariosLifecycleEvent(
     residueCount === null ||
     (Number.isInteger(residueCount) &&
       (residueCount as number) >= 0 &&
-      (residueCount as number) <= 43);
+      (residueCount as number) <= 123);
   if (
     !validResidueCount ||
     groupTeachers < 0 ||
@@ -98,11 +123,21 @@ export function sanitizeTransactionalPlanScenariosLifecycleEvent(
     supervisionContexts > 1 ||
     supervisionStudents < 0 ||
     supervisionStudents > 40 ||
+    studentSessions < 0 ||
+    studentSessions > 80 ||
+    requiredSessionPairs !== 80 ||
+    reusedActiveSessionPairs < 0 ||
+    reusedActiveSessionPairs > requiredSessionPairs ||
+    insertedSessionPairs < 0 ||
+    insertedSessionPairs > requiredSessionPairs ||
+    reusedActiveSessionPairs + insertedSessionPairs > requiredSessionPairs ||
+    studentSessions !== insertedSessionPairs ||
     total !==
       groupTeachers +
         teachingSessions +
         supervisionContexts +
-        supervisionStudents ||
+        supervisionStudents +
+        studentSessions ||
     (rollbackCompleted && !rollbackAttempted) ||
     (residueChecked &&
       (residueCount === null || residuePassed !== (residueCount === 0))) ||
@@ -113,11 +148,15 @@ export function sanitizeTransactionalPlanScenariosLifecycleEvent(
 
   return {
     version: TRANSACTIONAL_PLAN_SCENARIOS_VERSION,
+    requiredSessionPairs,
+    reusedActiveSessionPairs,
+    insertedSessionPairs,
     seededRows: {
       groupTeachers,
       teachingSessions,
       supervisionContexts,
       supervisionStudents,
+      studentSessions,
       total,
     },
     rollback: {
@@ -132,13 +171,74 @@ export function sanitizeTransactionalPlanScenariosLifecycleEvent(
   };
 }
 
+export function sanitizeClasspilotTileAuthorizationPlanBasePreflight(
+  event: unknown
+): Record<string, unknown> {
+  if (
+    !hasExactKeys(event, BASE_PREFLIGHT_KEYS) ||
+    event.version !== BASE_PREFLIGHT_VERSION ||
+    event.status !== "passed" ||
+    event.eligibleBases !== 1 ||
+    event.requiredSessionPairs !== 80 ||
+    !Number.isInteger(event.reusedActiveSessionPairs) ||
+    !Number.isInteger(event.missingSessionPairs) ||
+    event.conflictingSessionPairs !== 0
+  ) {
+    throw new Error("classpilot_tile_auth_plan_base_preflight_invalid");
+  }
+  const reusedActiveSessionPairs = event.reusedActiveSessionPairs as number;
+  const missingSessionPairs = event.missingSessionPairs as number;
+  if (
+    reusedActiveSessionPairs < 0 ||
+    reusedActiveSessionPairs > 80 ||
+    missingSessionPairs < 0 ||
+    missingSessionPairs > 80 ||
+    reusedActiveSessionPairs + missingSessionPairs !== 80
+  ) {
+    throw new Error("classpilot_tile_auth_plan_base_preflight_invalid");
+  }
+  return {
+    version: BASE_PREFLIGHT_VERSION,
+    status: "passed",
+    eligibleBases: 1,
+    requiredSessionPairs: 80,
+    reusedActiveSessionPairs,
+    missingSessionPairs,
+    conflictingSessionPairs: 0,
+  };
+}
+
+export function createClasspilotTilePlanWriteClientReleaseError(
+  lifecycleEvent: unknown
+): Error | undefined {
+  if (!isRecord(lifecycleEvent) || !isRecord(lifecycleEvent.rollback)) {
+    return undefined;
+  }
+  return lifecycleEvent.rollback.attempted === true &&
+    lifecycleEvent.rollback.completed !== true
+    ? new Error("classpilot_tile_auth_plan_write_connection_discarded")
+    : undefined;
+}
+
+export function createClasspilotTilePlanResidueClientReleaseError(
+  lifecycleEvent: unknown
+): Error | undefined {
+  if (!isRecord(lifecycleEvent) || !isRecord(lifecycleEvent.residue)) {
+    return undefined;
+  }
+  return lifecycleEvent.residue.checked !== true
+    ? new Error("classpilot_tile_auth_plan_residue_connection_discarded")
+    : undefined;
+}
+
 function usage(): string {
   return [
-    "Usage: node dist/cli/checkClasspilotTileAuthorizationPlans.js --execute [options]",
+    "Usage: node dist/cli/checkClasspilotTileAuthorizationPlans.js (--execute | --preflight-base) [options]",
     "",
     "Options:",
     "  --samples <20-100>  Measured warm-plan samples per scenario (default 20).",
-    "  --help              Show help without connecting to PostgreSQL.",
+    "  --preflight-base     Read-only validation of the stable 80-pair base.",
+    "  --help                Show help without connecting to PostgreSQL.",
     "",
     "Provisions rollback-only plan scenarios, runs six tenant-scoped",
     "authorization EXPLAIN checks plus the exact 40-student history fallback,",
@@ -149,6 +249,7 @@ function usage(): string {
 export function parseClasspilotTilePlanCliArgs(args: string[]): CliOptions {
   const options: CliOptions = {
     execute: false,
+    preflightBase: false,
     help: false,
     samples: CLASSPILOT_TILE_AUTHORIZATION_PLAN_SAMPLES,
   };
@@ -156,6 +257,10 @@ export function parseClasspilotTilePlanCliArgs(args: string[]): CliOptions {
     const argument = args[index];
     if (argument === "--execute") {
       options.execute = true;
+      continue;
+    }
+    if (argument === "--preflight-base") {
+      options.preflightBase = true;
       continue;
     }
     if (argument === "--help" || argument === "-h") {
@@ -176,6 +281,9 @@ export function parseClasspilotTilePlanCliArgs(args: string[]): CliOptions {
     options.samples < CLASSPILOT_TILE_AUTHORIZATION_PLAN_SAMPLES ||
     options.samples > 100
   ) {
+    throw new Error("invalid_arguments");
+  }
+  if (options.execute && options.preflightBase) {
     throw new Error("invalid_arguments");
   }
   return options;
@@ -199,25 +307,40 @@ export async function runClasspilotTilePlanCli(args: string[]): Promise<number> 
     process.stdout.write(`${usage()}\n`);
     return 0;
   }
-  if (!options.execute) {
+  if (!options.execute && !options.preflightBase) {
     emit({ status: "failed", failureCode: "execute_required" }, true);
     return 2;
   }
 
   let databaseModule: typeof import("../db.js") | undefined;
   let client: PoolClient | undefined;
+  let residueClient: PoolClient | undefined;
+  let writeClientReleaseError: Error | undefined;
+  let residueClientReleaseError: Error | undefined;
   let lifecycleEventCount = 0;
   let lifecycleCleanupPassed = false;
   try {
     databaseModule = await import("../db.js");
-    const storageModule = await import("../services/storage.js");
     client = await databaseModule.pool.connect();
+    if (options.preflightBase) {
+      const preflight =
+        await runClasspilotTileAuthorizationPlanBasePreflight({ client });
+      emit(sanitizeClasspilotTileAuthorizationPlanBasePreflight(preflight));
+      return 0;
+    }
+    const storageModule = await import("../services/storage.js");
+    residueClient = await databaseModule.pool.connect();
     const report = await runClasspilotTileAuthorizationPlanCheck({
       client,
+      residueClient,
       buildQuery: storageModule.buildClassPilotTileAuthorizationQuery,
       buildHistoryQuery: storageModule.buildHeartbeatTileHistoryBatchQuery,
       samples: options.samples,
       onLifecycleEvent: (event: unknown) => {
+        writeClientReleaseError =
+          createClasspilotTilePlanWriteClientReleaseError(event);
+        residueClientReleaseError =
+          createClasspilotTilePlanResidueClientReleaseError(event);
         if (lifecycleEventCount !== 0) {
           throw new Error("transactional_plan_scenarios_lifecycle_duplicate");
         }
@@ -233,7 +356,14 @@ export async function runClasspilotTilePlanCli(args: string[]): Promise<number> 
           seededRows.teachingSessions === 1 &&
           seededRows.supervisionContexts === 1 &&
           seededRows.supervisionStudents === 40 &&
-          seededRows.total === 43 &&
+          Number.isInteger(seededRows.studentSessions) &&
+          sanitized.requiredSessionPairs === 80 &&
+          (sanitized.reusedActiveSessionPairs as number) +
+              (sanitized.insertedSessionPairs as number) ===
+            80 &&
+          seededRows.studentSessions === sanitized.insertedSessionPairs &&
+          seededRows.total ===
+            43 + (sanitized.insertedSessionPairs as number) &&
           rollback.completed === true &&
           residue.checked === true &&
           residue.count === 0 &&
@@ -243,9 +373,25 @@ export async function runClasspilotTilePlanCli(args: string[]): Promise<number> 
     if (lifecycleEventCount !== 1 || !lifecycleCleanupPassed) {
       throw new Error("transactional_plan_scenarios_lifecycle_missing");
     }
-    emit(report as unknown as Record<string, unknown>, report.status !== "passed");
-    return report.status === "passed" ? 0 : 1;
+    if (report.status !== "passed") {
+      emit(report as unknown as Record<string, unknown>, true);
+      emit(
+        {
+          status: "failed",
+          failureCode: "plan_threshold_failed",
+        },
+        true
+      );
+      return 1;
+    }
+    emit(report as unknown as Record<string, unknown>);
+    return 0;
   } catch (error) {
+    if (options.preflightBase) {
+      writeClientReleaseError = new Error(
+        "classpilot_tile_auth_plan_preflight_connection_discarded"
+      );
+    }
     if (error instanceof ClasspilotTileAuthorizationPlanCheckError) {
       emit(
         {
@@ -261,7 +407,10 @@ export async function runClasspilotTilePlanCli(args: string[]): Promise<number> 
     }
     return 1;
   } finally {
-    client?.release();
+    if (client) {
+      client.release(writeClientReleaseError);
+    }
+    residueClient?.release(residueClientReleaseError);
     if (databaseModule) {
       await Promise.allSettled([
         databaseModule.pool.end(),

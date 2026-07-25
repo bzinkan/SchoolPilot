@@ -267,6 +267,19 @@ export function preparePrivateOutputDirectory(outputPath, loadGatesRoot = config
   return real;
 }
 
+export function restrictPrivateOutputArtifact(targetPath, loadGatesRoot = configuredLoadGatesRoot()) {
+  const realRoot = fs.realpathSync(loadGatesRoot);
+  const realTarget = fs.realpathSync(targetPath);
+  if (
+    !isPathInside(realTarget, realRoot) ||
+    !fs.statSync(realTarget).isFile()
+  ) {
+    throw new SafeError("Private output artifact must be a file under the configured load-gates root");
+  }
+  restrictAcl(realTarget, false);
+  return realTarget;
+}
+
 export function writePrivateJson(outputDirectory, filename, value) {
   if (path.basename(filename) !== filename || !filename.endsWith(".json")) throw new SafeError("Invalid private artifact filename");
   const target = path.join(outputDirectory, filename);

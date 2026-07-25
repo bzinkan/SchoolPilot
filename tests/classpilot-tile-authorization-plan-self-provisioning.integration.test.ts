@@ -43,10 +43,12 @@ const rosterStudentIds = Array.from({ length: 40 }, () => randomUUID());
 const officeStudentIds = Array.from({ length: 40 }, () => randomUUID());
 const allStudentIds = [...rosterStudentIds, ...officeStudentIds];
 const allDeviceIds = allStudentIds.map(
-  (_studentId, index) => `${fixtureId}-device-${String(index + 1).padStart(2, "0")}`
+  (_studentId, index) =>
+    `${fixtureId}-primary-${String(index + 1).padStart(4, "0")}`
 );
 const allStudentNumbers = allStudentIds.map(
-  (_studentId, index) => `${fixtureId}-P-${String(index + 1).padStart(3, "0")}`
+  (_studentId, index) =>
+    `${fixtureId.toUpperCase()}-P-${String(index + 1).padStart(4, "0")}`
 );
 
 let adminClient: pg.Client | undefined;
@@ -91,9 +93,15 @@ async function readTransientRowCount(client: pg.Client): Promise<number> {
               AND source = 'authorization_plan_gate'
               AND released_at IS NULL
           )
+          + (
+            SELECT count(*)
+            FROM student_sessions
+            WHERE student_id = ANY($3::text[])
+              AND is_active = true
+          )
         )::text AS transient_count
       `,
-      [classGroupId, schoolId]
+      [classGroupId, schoolId, allStudentIds]
     );
     return Number(result.rows[0]?.transient_count);
   } finally {
@@ -344,23 +352,6 @@ async function seedOwnedFixture(client: pg.Client): Promise<void> {
   );
   await client.query(
     `
-      INSERT INTO student_sessions (
-        id, student_id, device_id, started_at, last_seen_at, is_active
-      )
-      SELECT
-        gen_random_uuid()::text,
-        fixture.student_id,
-        fixture.device_id,
-        now() - interval '1 hour',
-        now(),
-        true
-      FROM unnest($1::text[], $2::text[])
-        AS fixture(student_id, device_id)
-    `,
-    [allStudentIds, allDeviceIds]
-  );
-  await client.query(
-    `
       INSERT INTO teaching_sessions (
         id, group_id, teacher_id, school_id, start_time,
         session_mode, end_time, created_at
@@ -543,8 +534,8 @@ describe(
     });
 
     it(
-      "uses expired-session fixture state, hides all 43 rows, rolls back, and serializes two real gates",
-      { timeout: 120_000 },
+      "provisions missing device sessions, hides all 123 rows, rolls back, and serializes two real gates",
+      { timeout: 180_000 },
       async () => {
         assert.ok(applicationDatabaseUrl);
         assert.ok(rlsTestRole);
@@ -563,28 +554,64 @@ describe(
           connectionString: applicationDatabaseUrl,
           statement_timeout: 15_000,
         });
+        const firstResidueClient = new pg.Client({
+          connectionString: applicationDatabaseUrl,
+          statement_timeout: 15_000,
+        });
+        const secondResidueClient = new pg.Client({
+          connectionString: applicationDatabaseUrl,
+          statement_timeout: 15_000,
+        });
         await Promise.all([
           firstClient.connect(),
           secondClient.connect(),
           observerClient.connect(),
+          firstResidueClient.connect(),
+          secondResidueClient.connect(),
         ]);
         const releaseFirst = deferred();
         const gateRuns: Promise<unknown>[] = [];
 
         try {
-          const [firstBackend, secondBackend] = await Promise.all([
+          const [
+            firstBackend,
+            secondBackend,
+            firstResidueBackend,
+            secondResidueBackend,
+          ] = await Promise.all([
             firstClient.query<{ pid: number }>(
               "SELECT pg_backend_pid()::int AS pid"
             ),
             secondClient.query<{ pid: number }>(
               "SELECT pg_backend_pid()::int AS pid"
             ),
+            firstResidueClient.query<{ pid: number }>(
+              "SELECT pg_backend_pid()::int AS pid"
+            ),
+            secondResidueClient.query<{ pid: number }>(
+              "SELECT pg_backend_pid()::int AS pid"
+            ),
           ]);
           const firstBackendPid = firstBackend.rows[0]?.pid;
           const secondBackendPid = secondBackend.rows[0]?.pid;
+          const firstResidueBackendPid =
+            firstResidueBackend.rows[0]?.pid;
+          const secondResidueBackendPid =
+            secondResidueBackend.rows[0]?.pid;
           assert.equal(typeof firstBackendPid, "number");
           assert.equal(typeof secondBackendPid, "number");
+          assert.equal(typeof firstResidueBackendPid, "number");
+          assert.equal(typeof secondResidueBackendPid, "number");
           assert.notEqual(firstBackendPid, secondBackendPid);
+          assert.equal(
+            new Set([
+              firstBackendPid,
+              secondBackendPid,
+              firstResidueBackendPid,
+              secondResidueBackendPid,
+            ]).size,
+            4
+          );
 
           const roleEvidence = await observerClient.query<{
             current_user: string;
@@ -628,7 +655,20 @@ describe(
             expired_count: "1",
             open_count: "0",
           });
-
+          assert.deepEqual(
+            await planCheckModule.runClasspilotTileAuthorizationPlanBasePreflight({
+              client: firstClient,
+            }),
+            {
+              version: "classpilot-tile-auth-plan-base-preflight-v1",
+              status: "passed",
+              eligibleBases: 1,
+              requiredSessionPairs: 80,
+              reusedActiveSessionPairs: 0,
+              missingSessionPairs: 80,
+              conflictingSessionPairs: 0,
+            }
+          );
           const firstSeeded = deferred();
           const secondLockRequested = deferred();
           let secondLockAcquired = false;
@@ -670,6 +710,7 @@ describe(
           const firstRun =
             planCheckModule.runClasspilotTileAuthorizationPlanCheck({
               client: firstWrappedClient,
+              residueClient: firstResidueClient,
               buildQuery: storageModule.buildClassPilotTileAuthorizationQuery,
               buildHistoryQuery:
                 storageModule.buildHeartbeatTileHistoryBatchQuery,
@@ -682,6 +723,7 @@ describe(
           const secondRun =
             planCheckModule.runClasspilotTileAuthorizationPlanCheck({
               client: secondWrappedClient,
+              residueClient: secondResidueClient,
               buildQuery: storageModule.buildClassPilotTileAuthorizationQuery,
               buildHistoryQuery:
                 storageModule.buildHeartbeatTileHistoryBatchQuery,
@@ -723,13 +765,17 @@ describe(
           assert.equal(secondLifecycle.length, 1);
           for (const lifecycle of [...firstLifecycle, ...secondLifecycle]) {
             assert.deepEqual(lifecycle, {
-              version: "transactional-plan-scenarios-v1",
+              version: "transactional-plan-scenarios-v2",
+              requiredSessionPairs: 80,
+              reusedActiveSessionPairs: 0,
+              insertedSessionPairs: 80,
               seededRows: {
                 groupTeachers: 1,
                 teachingSessions: 1,
                 supervisionContexts: 1,
                 supervisionStudents: 40,
-                total: 43,
+                studentSessions: 80,
+                total: 123,
               },
               rollback: { attempted: true, completed: true },
               residue: { checked: true, count: 0, passed: true },
@@ -740,6 +786,378 @@ describe(
             expired_count: "1",
             open_count: "0",
           });
+
+          assert.ok(adminClient);
+          const uncertaintyPool = new pg.Pool({
+            connectionString: applicationDatabaseUrl,
+            max: 1,
+          });
+          const uncertaintyResidueClient = new pg.Client({
+            connectionString: applicationDatabaseUrl,
+            statement_timeout: 15_000,
+          });
+          await uncertaintyResidueClient.connect();
+          const uncertainWriteClient = await uncertaintyPool.connect();
+          const uncertainLifecycle: unknown[] = [];
+          let uncertainWriteReleased = false;
+          try {
+            const uncertainWrappedClient: QueryClient = {
+              async query(text, values) {
+                if (text === "ROLLBACK") {
+                  throw new Error("injected_rollback_transport_loss");
+                }
+                return uncertainWriteClient.query(text, values as any[]);
+              },
+            };
+            await assert.rejects(
+              planCheckModule.runClasspilotTileAuthorizationPlanCheck({
+                client: uncertainWrappedClient,
+                residueClient: uncertaintyResidueClient,
+                buildQuery:
+                  storageModule.buildClassPilotTileAuthorizationQuery,
+                buildHistoryQuery:
+                  storageModule.buildHeartbeatTileHistoryBatchQuery,
+                onLifecycleEvent: (event) =>
+                  uncertainLifecycle.push(event),
+              }),
+              (error) =>
+                error instanceof
+                planCheckModule.ClasspilotTileAuthorizationPlanCheckError &&
+                error.failureCode ===
+                  "transactional_scenario_lifecycle_failed"
+            );
+            assert.equal(uncertainLifecycle.length, 1);
+            assert.deepEqual(
+              (
+                uncertainLifecycle[0] as {
+                  rollback: unknown;
+                  residue: unknown;
+                }
+              ).rollback,
+              { attempted: true, completed: false }
+            );
+            assert.deepEqual(
+              (
+                uncertainLifecycle[0] as {
+                  rollback: unknown;
+                  residue: unknown;
+                }
+              ).residue,
+              { checked: true, count: 0, passed: true }
+            );
+            uncertainWriteClient.release(
+              new Error(
+                "classpilot_tile_auth_plan_write_connection_discarded"
+              )
+            );
+            uncertainWriteReleased = true;
+          } finally {
+            if (!uncertainWriteReleased) {
+              uncertainWriteClient.release(
+                new Error(
+                  "classpilot_tile_auth_plan_write_connection_discarded"
+                )
+              );
+            }
+            await Promise.allSettled([
+              uncertaintyResidueClient.end(),
+              uncertaintyPool.end(),
+            ]);
+          }
+          assert.equal(await readTransientRowCount(observerClient), 0);
+
+          await adminClient.query(
+            `
+              DELETE FROM student_devices
+              WHERE student_id = $1
+                AND device_id = $2
+            `,
+            [allStudentIds[0], allDeviceIds[0]]
+          );
+          await assert.rejects(
+            planCheckModule.runClasspilotTileAuthorizationPlanBasePreflight({
+              client: firstClient,
+            }),
+            (error) =>
+              error instanceof
+                planCheckModule.ClasspilotTileAuthorizationPlanCheckError &&
+              error.failureCode === "representative_scenario_missing"
+          );
+          await adminClient.query(
+            `
+              INSERT INTO student_devices (
+                id, student_id, device_id, first_seen_at, last_seen_at
+              )
+              VALUES (gen_random_uuid()::text, $1, $2, now(), now())
+            `,
+            [allStudentIds[0], allDeviceIds[0]]
+          );
+
+          await adminClient.query(
+            `
+              DELETE FROM student_devices
+              WHERE student_id = $1
+                AND device_id = $2
+            `,
+            [allStudentIds[1], allDeviceIds[1]]
+          );
+          await adminClient.query(
+            `
+              INSERT INTO student_devices (
+                id, student_id, device_id, first_seen_at, last_seen_at
+              )
+              VALUES (gen_random_uuid()::text, $1, $2, now(), now())
+            `,
+            [allStudentIds[1], allDeviceIds[0]]
+          );
+          await assert.rejects(
+            planCheckModule.runClasspilotTileAuthorizationPlanBasePreflight({
+              client: firstClient,
+            }),
+            (error) =>
+              error instanceof
+                planCheckModule.ClasspilotTileAuthorizationPlanCheckError &&
+              error.failureCode === "representative_scenario_missing"
+          );
+          await adminClient.query(
+            `
+              DELETE FROM student_devices
+              WHERE student_id = $1
+                AND device_id = $2
+            `,
+            [allStudentIds[1], allDeviceIds[0]]
+          );
+          await adminClient.query(
+            `
+              INSERT INTO student_devices (
+                id, student_id, device_id, first_seen_at, last_seen_at
+              )
+              VALUES (gen_random_uuid()::text, $1, $2, now(), now())
+            `,
+            [allStudentIds[1], allDeviceIds[1]]
+          );
+
+          await adminClient.query(
+            `
+              DELETE FROM group_students
+              WHERE group_id = $1
+                AND student_id = $2
+            `,
+            [classGroupId, rosterStudentIds[0]]
+          );
+          await assert.rejects(
+            planCheckModule.runClasspilotTileAuthorizationPlanBasePreflight({
+              client: firstClient,
+            }),
+            (error) =>
+              error instanceof
+                planCheckModule.ClasspilotTileAuthorizationPlanCheckError &&
+              error.failureCode === "representative_scenario_missing"
+          );
+          await adminClient.query(
+            `
+              INSERT INTO group_students (id, group_id, student_id)
+              VALUES (gen_random_uuid()::text, $1, $2)
+            `,
+            [classGroupId, rosterStudentIds[0]]
+          );
+
+          const crossSchoolId = randomUUID();
+          await adminClient.query(
+            `
+              INSERT INTO schools (
+                id, name, domain, slug, status, is_active, plan_status,
+                stripe_customer_id, stripe_subscription_id, total_paid
+              )
+              VALUES (
+                $1, 'Synthetic cross-school mapping target',
+                $2, $3, 'active', true, 'active', NULL, NULL, 0
+              )
+            `,
+            [
+              crossSchoolId,
+              `${fixtureId}-cross.example.invalid`,
+              `${fixtureId}-cross-school`,
+            ]
+          );
+          try {
+            await adminClient.query(
+              "UPDATE devices SET school_id = $1 WHERE device_id = $2",
+              [crossSchoolId, allDeviceIds[0]]
+            );
+            await assert.rejects(
+              planCheckModule.runClasspilotTileAuthorizationPlanBasePreflight({
+                client: firstClient,
+              }),
+              (error) =>
+                error instanceof
+                  planCheckModule.ClasspilotTileAuthorizationPlanCheckError &&
+                error.failureCode === "representative_scenario_missing"
+            );
+          } finally {
+            await adminClient.query(
+              "UPDATE devices SET school_id = $1 WHERE device_id = $2",
+              [schoolId, allDeviceIds[0]]
+            );
+            await adminClient.query(
+              "DELETE FROM schools WHERE id = $1",
+              [crossSchoolId]
+            );
+          }
+
+          await adminClient.query(
+            `
+              INSERT INTO student_sessions (
+                id, student_id, device_id, started_at, last_seen_at, is_active
+              )
+              SELECT
+                gen_random_uuid()::text,
+                fixture.student_id,
+                fixture.device_id,
+                now(),
+                now(),
+                true
+              FROM unnest($1::text[], $2::text[])
+                AS fixture(student_id, device_id)
+            `,
+            [allStudentIds.slice(0, 40), allDeviceIds.slice(0, 40)]
+          );
+          assert.deepEqual(
+            await planCheckModule.runClasspilotTileAuthorizationPlanBasePreflight({
+              client: firstClient,
+            }),
+            {
+              version: "classpilot-tile-auth-plan-base-preflight-v1",
+              status: "passed",
+              eligibleBases: 1,
+              requiredSessionPairs: 80,
+              reusedActiveSessionPairs: 40,
+              missingSessionPairs: 40,
+              conflictingSessionPairs: 0,
+            }
+          );
+          const mixedLifecycle: unknown[] = [];
+          const mixedReport =
+            await planCheckModule.runClasspilotTileAuthorizationPlanCheck({
+              client: firstClient,
+              residueClient: firstResidueClient,
+              buildQuery: storageModule.buildClassPilotTileAuthorizationQuery,
+              buildHistoryQuery:
+                storageModule.buildHeartbeatTileHistoryBatchQuery,
+              onLifecycleEvent: (event) => mixedLifecycle.push(event),
+            });
+          assert.equal(mixedReport.status, "passed");
+          assert.deepEqual(mixedLifecycle, [
+            {
+              version: "transactional-plan-scenarios-v2",
+              requiredSessionPairs: 80,
+              reusedActiveSessionPairs: 40,
+              insertedSessionPairs: 40,
+              seededRows: {
+                groupTeachers: 1,
+                teachingSessions: 1,
+                supervisionContexts: 1,
+                supervisionStudents: 40,
+                studentSessions: 40,
+                total: 83,
+              },
+              rollback: { attempted: true, completed: true },
+              residue: { checked: true, count: 0, passed: true },
+            },
+          ]);
+          await adminClient.query(
+            `
+              INSERT INTO student_sessions (
+                id, student_id, device_id, started_at, last_seen_at, is_active
+              )
+              SELECT
+                gen_random_uuid()::text,
+                fixture.student_id,
+                fixture.device_id,
+                now(),
+                now(),
+                true
+              FROM unnest($1::text[], $2::text[])
+                AS fixture(student_id, device_id)
+            `,
+            [allStudentIds.slice(40), allDeviceIds.slice(40)]
+          );
+          assert.deepEqual(
+            await planCheckModule.runClasspilotTileAuthorizationPlanBasePreflight({
+              client: firstClient,
+            }),
+            {
+              version: "classpilot-tile-auth-plan-base-preflight-v1",
+              status: "passed",
+              eligibleBases: 1,
+              requiredSessionPairs: 80,
+              reusedActiveSessionPairs: 80,
+              missingSessionPairs: 0,
+              conflictingSessionPairs: 0,
+            }
+          );
+          const fullyReusedLifecycle: unknown[] = [];
+          const fullyReusedReport =
+            await planCheckModule.runClasspilotTileAuthorizationPlanCheck({
+              client: firstClient,
+              residueClient: firstResidueClient,
+              buildQuery: storageModule.buildClassPilotTileAuthorizationQuery,
+              buildHistoryQuery:
+                storageModule.buildHeartbeatTileHistoryBatchQuery,
+              onLifecycleEvent: (event) =>
+                fullyReusedLifecycle.push(event),
+            });
+          assert.equal(fullyReusedReport.status, "passed");
+          assert.deepEqual(fullyReusedLifecycle, [
+            {
+              version: "transactional-plan-scenarios-v2",
+              requiredSessionPairs: 80,
+              reusedActiveSessionPairs: 80,
+              insertedSessionPairs: 0,
+              seededRows: {
+                groupTeachers: 1,
+                teachingSessions: 1,
+                supervisionContexts: 1,
+                supervisionStudents: 40,
+                studentSessions: 0,
+                total: 43,
+              },
+              rollback: { attempted: true, completed: true },
+              residue: { checked: true, count: 0, passed: true },
+            },
+          ]);
+          const conflictingDeviceId = `${fixtureId}-conflicting-0001`;
+          await adminClient.query(
+            "DELETE FROM student_sessions WHERE student_id = $1",
+            [allStudentIds[0]]
+          );
+          await adminClient.query(
+            `
+              INSERT INTO devices (
+                device_id, device_name, school_id, class_id
+              )
+              VALUES ($1, 'Synthetic conflicting plan device', $2, $3)
+            `,
+            [conflictingDeviceId, schoolId, classGroupId]
+          );
+          await adminClient.query(
+            `
+              INSERT INTO student_sessions (
+                id, student_id, device_id, started_at, last_seen_at, is_active
+              )
+              VALUES (gen_random_uuid()::text, $1, $2, now(), now(), true)
+            `,
+            [allStudentIds[0], conflictingDeviceId]
+          );
+          await assert.rejects(
+            planCheckModule.runClasspilotTileAuthorizationPlanBasePreflight({
+              client: firstClient,
+            }),
+            (error) =>
+              error instanceof
+                planCheckModule.ClasspilotTileAuthorizationPlanCheckError &&
+              error.failureCode === "representative_scenario_missing"
+          );
         } finally {
           releaseFirst.resolve();
           await Promise.allSettled(gateRuns);
@@ -747,6 +1165,8 @@ describe(
             firstClient.end(),
             secondClient.end(),
             observerClient.end(),
+            firstResidueClient.end(),
+            secondResidueClient.end(),
           ]);
         }
       }

@@ -25,18 +25,27 @@ The gate then discovers exactly one unambiguous, active SchoolPilot-owned
 synthetic fixture from the non-billable school marker and
 `synthetic-load-fixture:<fixtureId>:class:<ordinal>` class markers. The retained
 base must contain a primary teacher, another active teacher, an active
-office-staff membership, a conflict-free 40-student class roster, a distinct
-conflict-free 40-student office cohort, and same-school active sessions plus
-historical device mappings for every student. Ordinary tenant data and ambient
-open sessions are ineligible.
+office-staff membership, a 40-student class roster without active supervision
+conflicts, a distinct 40-student office cohort without active supervision
+conflicts, and the canonical historical mapping from each
+`<fixtureId>-P-####` student to its same-school
+`<fixtureId>-primary-####` device. All 80 devices must be distinct. Ordinary
+tenant data is ineligible. Active `student_sessions` do not participate in
+base or cohort selection; they are classified only after the deterministic 80
+pairs have been selected.
 
-Using explicit random IDs and parameters, the gate inserts exactly 43
-transaction-local rows: one co-teacher relationship, one correctly
-school-scoped open live teaching session, one active office-supervision
-context, and 40 office-supervision assignments. It does not consume sequences,
-update existing rows, insert heartbeats, or call an application API. Discovery
-is constrained to these seeded objects and produces one complete
-representative cohort for each label:
+For the 80 canonical pairs, the gate reuses an active session only when it
+matches the exact student and device. It inserts an explicit-ID active session
+when neither side has an active counterpart and fails if either side is bound
+elsewhere. It never updates or deactivates an existing session.
+
+Using explicit random IDs and parameters, the gate therefore inserts 43-123
+transaction-local rows: zero to 80 missing student sessions, one co-teacher
+relationship, one correctly school-scoped open live teaching session, one
+active office-supervision context, and 40 office-supervision assignments. It
+does not consume sequences, update existing rows, insert heartbeats, or call an
+application API. Discovery is constrained to these selected and seeded objects
+and produces one complete representative cohort for each label:
 
 - `teacher.live` and `teacher.history`
 - `co_teacher.live` and `co_teacher.history`
@@ -62,44 +71,112 @@ be relaxed by command-line flags.
 
 The report is built in memory before the write transaction is explicitly
 rolled back; there is no write-transaction commit path. A new super-scoped
-read-only transaction then proves that all 43 explicit IDs are absent. Only
-after rollback and zero residue succeed may the CLI emit a passing report.
-Connection loss, timeout, query drift, rollback failure, residue, or a
-concurrent gate conflict fails closed.
+read-only transaction on a distinct pool connection then proves that every
+generated ID is absent; the write connection is never eligible to perform its
+own residue check. If rollback cannot be proved, that write connection is
+released to the pool with an error so it is destroyed, even when the separate
+residue observation is zero. Only after rollback and zero residue succeed may
+the CLI emit a passing report. Connection loss, timeout, query drift, rollback
+failure, residue, or a concurrent gate conflict fails closed.
 
 The existing counts-only plan report remains unchanged. A separate
-`transactional-plan-scenarios-v1` event contains only the fixed 1/1/1/40 row
-counts, rollback status, and zero-residue status. The deployer requires exactly
-one valid lifecycle event and one valid plan report. The lifecycle event and
-the deployer's normal sanitized projection contain no tenant, staff, student,
+`transactional-plan-scenarios-v2` event contains the fixed 1/1/1/40 counts,
+80 required session pairs, exact-pair reuse and inserted-session counts,
+rollback status, and zero-residue status. Reused plus inserted must equal 80,
+and the total inserted rows must equal 43 plus the inserted-session count.
+Version 1 evidence is ineligible. The deployer requires exactly one valid
+lifecycle event and one valid plan report. The lifecycle event and the
+deployer's normal sanitized projection contain no tenant, staff, student,
 device, SQL, parameter, raw query-ID, or raw-plan values. The unchanged full
 report carries the signed query ID only in the access-controlled exact task-log
 stream so the private receipt writer can bind it; it is never copied to normal
 deploy output. Unexpected database errors are reduced to
 `database_operation_failed`.
 
-For the authorized production batch-tile remediation, invoke the deployer's
-opt-in release gate:
+The read-only fail-fast form uses the same stable base evaluator:
+
+```bash
+node dist/cli/checkClasspilotTileAuthorizationPlans.js --preflight-base
+```
+
+It runs in a rollback-only `REPEATABLE READ READ ONLY` transaction and emits
+one aggregate `classpilot-tile-auth-plan-base-preflight-v1` event proving one
+eligible base, 80 required pairs, the reused/missing split, and zero conflicts.
+
+For an authorized production release, first invoke the candidate-only
+rehearsal:
 
 ```bash
 ./scripts/deploy.sh production --backend --activate-emergency \
-  --classpilot-tile-auth-plan-gate
+  --classpilot-tile-auth-plan-gate \
+  --classpilot-tile-auth-plan-rehearsal
 ```
 
+Before any candidate build, push, registration, or candidate base preflight,
+the deployer
+atomically and exclusively writes the fixed admission marker at
+`$LOCALAPPDATA/SchoolPilot/load-gates/tile-auth-rehearsals/<SHA>/classpilot-tile-auth-plan-rehearsal-attempt.private.json`.
+The marker is durable and permits exactly one rehearsal admission for that
+SHA. Once admitted, an EXIT/failure trap must seal exactly one immutable
+`classpilot-tile-auth-plan-rehearsal-terminal.private.json` marker with
+`status: passed` or `status: failed`; neither marker may be deleted, reset, or
+overwritten. A passed terminal binds the exact receipt SHA-256. A failed
+terminal, or an admitted attempt without a coherent passed terminal,
+permanently disqualifies the SHA.
+
 After building and registering the new digest-pinned 512/2048 API revision,
-the deployer runs exactly one Fargate task on that full revision ARN using the
-live service VPC/security groups and inherited database secret/container
-identity. It overrides only the command and disables startup migrations and
-the scheduler. The command is fixed to
-`node dist/cli/checkClasspilotTileAuthorizationPlans.js --execute`; the deploy
-flag exposes no bypass, sample, cohort, or threshold option.
+the deployer runs the read-only preflight and complete gate using the live
+service VPC/security groups and inherited database secret/container identity.
+It performs no migration, scaling hold, serving-service update, frontend
+publication, fixture mutation, lease, or traffic. Its build, image push, and
+inactive task-definition registrations are the only candidate control-plane
+writes; the plan task's bounded data writes remain transaction-local and are
+rolled back before acceptance. A pass seals an ACL-private, single-use, 60-minute
+`classpilot-tile-auth-plan-rehearsal-v1` receipt. Receipt `inspect` and
+`consume` require the immutable passed terminal and its matching receipt hash.
+Admission, terminal, receipt, inspection, consumption, and the canonical
+consumption marker bind a protected execution-authority SHA-256. Production
+Windows derives it from the stable machine identity and current user SID and
+never persists or logs either raw value. Missing authority data or a mismatch
+fails closed, so a complete copied evidence tree is not consumable by another
+host or user.
+Consumption is an atomic marker in the canonical per-SHA attempt root, not
+beside the caller-supplied receipt. Consequently, copying a byte-identical
+receipt and companion set anywhere else under the load-gates root cannot
+create another consumable capability, and concurrent consumers can produce
+only one winner.
+The validity interval is half-open: the exact expiry instant is rejected, so
+`now >= expiresAtUtc` is expired. Consumption captures its actual UTC time and
+rechecks that condition immediately before atomic marker creation; inspection
+before expiry cannot authorize consumption at or after expiry. Deploy only
+that exact candidate with the receipt path and its out-of-band SHA-256:
+
+```bash
+./scripts/deploy.sh production --backend --activate-emergency \
+  --classpilot-tile-auth-plan-gate \
+  --reuse-classpilot-tile-auth-plan-rehearsal <absolute-private-receipt-path> \
+  --expected-classpilot-tile-auth-plan-rehearsal-sha256 <64-hex>
+```
+
+The guarded deployment verifies the bound SHA, digest, task definitions,
+baseline, network, evidence hashes, and receipt freshness before consuming it.
+It reruns the complete gate before migration and after strict convergence.
 
 The task has a 900-second controller deadline and a bounded 120-second stop
-observation. It must stop cleanly with one successful `api` container. The
-deployer then reads the exact task's awslogs stream, accepts only the strict
-aggregate schema documented above, prints only a canonical sanitized report
-and its log group/stream, and never persists raw log messages. Failure occurs
-before the autoscaling hold, migration task, or either service update.
+observation. The deployer resolves the exact task's awslogs stream before
+interpreting the exit code, including when ECS omits `logStreamName`. A passing
+task requires exit zero and the strict aggregate schemas above. A nonzero task
+still has its exact stream read so the allowlisted sanitized gate failure is
+reported instead of a derivative log-binding error. Raw log messages are never
+persisted.
+
+The failed candidate at SHA
+`3c82f540cccfaf0badd70312e76e69770b6cfaed`, image digest
+`sha256:776bd7e55a64c9da26d5eb1f38887f0402b0f1d143d3a1ca20a47246d459c1d6`,
+and inactive task definitions `schoolpilot-production-api:133` and
+`schoolpilot-production-api-emergency:33` is historical-only. It has no
+eligible query receipt and must never be rehearsed, deployed, or used as
+provenance.
 
 The production gate cannot start during the actual 01:15-02:15
 America/New_York purge/rollup window. A missing, ambiguous, inactive,
@@ -107,3 +184,8 @@ incomplete, cross-school, or conflicted owned base fixture is a failed gate,
 not permission to inspect ordinary tenants, refresh fixtures, or reduce the
 cohort. The checker reports whether existing plans pass; it never creates or
 recommends an index by itself.
+
+The current authorization ends after a sealed, independently validated
+readiness packet. It does not authorize a production fixture refresh or
+provisioning, historical-state promotion, Terraform apply, Database Insights
+lease, diagnostic binding or validation, workload traffic, or certification.

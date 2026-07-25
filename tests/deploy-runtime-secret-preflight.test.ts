@@ -478,7 +478,10 @@ runtime_securestring_preflight
     const renderMarker = 'IMAGE_REF="${ECR_REPO}@${DIGEST}" node -e \'';
     const renderMarkerIndex = deploySource.indexOf(renderMarker);
     const renderScriptStart = renderMarkerIndex + renderMarker.length;
-    const renderScriptEnd = deploySource.indexOf("\n  '\n\n  NEW_REV=", renderScriptStart);
+    const renderScriptEnd = deploySource.indexOf(
+      "\n  '\n\n  STANDARD_API_CANDIDATE_TASK_DEFINITION_ARN=",
+      renderScriptStart
+    );
     assert.ok(renderMarkerIndex > 0 && renderScriptEnd > renderScriptStart);
     const renderScript = deploySource.slice(renderScriptStart, renderScriptEnd);
 
@@ -500,6 +503,9 @@ runtime_securestring_preflight
       ]).replaceAll(context.accountId, "135775632425")
     );
     const currentTask = {
+      taskDefinitionArn:
+        "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api:101",
+      status: "ACTIVE",
       family: "schoolpilot-production-api",
       cpu: "512",
       memory: "1024",
@@ -515,21 +521,8 @@ runtime_securestring_preflight
         },
       ],
     };
-    const templateTask = {
-      family: "schoolpilot-production-api",
-      cpu: "512",
-      memory: "1024",
-      containerDefinitions: [
-        {
-          name: "api",
-          image: "template.invalid/image:latest",
-          environment: [{ name: "PORT", value: "4000" }],
-          secrets: deploySecrets.filter((secret: { name: string }) => secret.name !== "OPENAI_API_KEY"),
-        },
-      ],
-    };
     writeFileSync(join(fixtureDir, ".taskdef-current.json"), JSON.stringify(currentTask));
-    writeFileSync(join(fixtureDir, ".taskdef-template.json"), JSON.stringify(templateTask));
+    writeFileSync(join(fixtureDir, ".taskdef-template.json"), JSON.stringify(currentTask));
     const imageRef = "135775632425.dkr.ecr.us-east-1.amazonaws.com/schoolpilot-production-api@sha256:0123456789abcdef";
 
     try {
@@ -542,6 +535,8 @@ runtime_securestring_preflight
           REGION: "us-east-1",
           PROJECT: "schoolpilot",
           ENVIRONMENT: "production",
+          API_FAMILY: "schoolpilot-production-api",
+          EXPECTED_API_SOURCE_ARN: currentTask.taskDefinitionArn,
           IMAGE_REF: imageRef,
         },
       });

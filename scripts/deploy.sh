@@ -10,8 +10,13 @@
 #   ./scripts/deploy.sh production --backend --activate-emergency
 #                                       # Backend only; activate the newly registered 512/2048 API revision
 #   ./scripts/deploy.sh production --backend --activate-emergency \
-#     --classpilot-tile-auth-plan-gate
-#                                       # Run the fixed ClassPilot plan/identity gate before and after rollout; post-deploy drift rolls back
+#     --classpilot-tile-auth-plan-gate --classpilot-tile-auth-plan-rehearsal
+#                                       # Build/register inactive exact candidates and run the preflight/full gate only
+#   ./scripts/deploy.sh production --backend --activate-emergency \
+#     --classpilot-tile-auth-plan-gate \
+#     --reuse-classpilot-tile-auth-plan-rehearsal <private-receipt-path> \
+#     --expected-classpilot-tile-auth-plan-rehearsal-sha256 <64-hex>
+#                                       # Consume one fresh rehearsal receipt and deploy only its exact candidates
 #   ./scripts/deploy.sh production --backend --same-image-networking-stage PublicEcs \
 #     --expected-app-sha <40-hex-sha> --expected-image-digest sha256:<64-hex> \
 #     --expected-api-task-definition <full-arn> --expected-worker-task-definition <full-arn> \
@@ -31,6 +36,9 @@ DEPLOY_FRONTEND=true
 SKIP_WAIT=false
 ACTIVATE_EMERGENCY=false
 RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE=false
+RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=false
+REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=""
+EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL_SHA256=""
 SAME_IMAGE_NETWORKING_STAGE=""
 EXPECTED_APP_SHA=""
 EXPECTED_IMAGE_DIGEST=""
@@ -50,6 +58,7 @@ EMERGENCY_TASK_DEF_ARN=""
 EMERGENCY_TASK_DEF_REVISION=""
 API_ROLLOUT_TASK_DEF=""
 WORKER_NEW_REV=""
+WORKER_CANDIDATE_TASK_DEF=""
 MIGRATION_TASK_WAIT_SECONDS=3600
 MIGRATION_TASK_POLL_SECONDS=15
 MIGRATION_TASK_STOP_WAIT_SECONDS=300
@@ -65,6 +74,20 @@ while [[ $# -gt 0 ]]; do
     --frontend) DEPLOY_BACKEND=false; shift ;;
     --activate-emergency) ACTIVATE_EMERGENCY=true; shift ;;
     --classpilot-tile-auth-plan-gate) RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE=true; shift ;;
+    --classpilot-tile-auth-plan-rehearsal)
+      RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=true
+      shift
+      ;;
+    --reuse-classpilot-tile-auth-plan-rehearsal)
+      [[ $# -ge 2 ]] || { echo "--reuse-classpilot-tile-auth-plan-rehearsal requires an absolute private receipt path"; exit 1; }
+      REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL="$2"
+      shift 2
+      ;;
+    --expected-classpilot-tile-auth-plan-rehearsal-sha256)
+      [[ $# -ge 2 ]] || { echo "--expected-classpilot-tile-auth-plan-rehearsal-sha256 requires a 64-hex SHA-256"; exit 1; }
+      EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL_SHA256="$2"
+      shift 2
+      ;;
     --same-image-networking-stage)
       [[ $# -ge 2 ]] || { echo "--same-image-networking-stage requires PublicEcs or NatRemoved"; exit 1; }
       SAME_IMAGE_NETWORKING_STAGE="$2"
@@ -124,12 +147,36 @@ PRODUCTION_SCALING_PRIOR_OUT=""
 PRODUCTION_SCALING_PRIOR_SCHEDULED=""
 PRODUCTION_PREFLIGHT_API_TASK_DEFINITION=""
 PRODUCTION_PREFLIGHT_WORKER_TASK_DEFINITION=""
+PRODUCTION_PREFLIGHT_API_TASK_DEFINITION_ARN=""
+PRODUCTION_PREFLIGHT_WORKER_TASK_DEFINITION_ARN=""
 PRODUCTION_ROLLBACK_API_TASK_DEFINITION=""
 PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION=""
+PRODUCTION_ROLLBACK_API_TASK_DEFINITION_ARN=""
+PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION_ARN=""
+API_CANDIDATE_SOURCE_TASK_DEFINITION_ARN=""
+WORKER_CANDIDATE_SOURCE_TASK_DEFINITION_ARN=""
+STANDARD_API_CANDIDATE_TASK_DEFINITION_ARN=""
 TILE_AUTH_PLAN_PRE_IDENTITY_SHA256=""
 TILE_AUTH_PLAN_PRE_QUERY_IDENTIFIER_SHA256=""
 TILE_AUTH_PLAN_IDENTITY_RECEIPT_PATH_SHA256=""
 TILE_AUTH_PLAN_IDENTITY_RECEIPT_SHA256=""
+TILE_AUTH_PLAN_PREFLIGHT_EVENTS_JSON=""
+TILE_AUTH_PLAN_PREDEPLOY_EVENTS_JSON=""
+TILE_AUTH_PLAN_PREFLIGHT_EVIDENCE_JSON=""
+TILE_AUTH_PLAN_PREDEPLOY_REPORT_JSON=""
+TILE_AUTH_PLAN_REHEARSAL_RECEIPT_PATH=""
+TILE_AUTH_PLAN_REHEARSAL_RECEIPT_SHA256=""
+TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256=""
+TILE_AUTH_PLAN_REHEARSAL_CONSUMED_NETWORK_SHA256=""
+TILE_AUTH_PLAN_REHEARSAL_IDENTITY_SHA256=""
+TILE_AUTH_PLAN_REHEARSAL_QUERY_IDENTIFIER_SHA256=""
+TILE_AUTH_PLAN_REHEARSAL_API_TASK_DEFINITION_SHA256=""
+TILE_AUTH_PLAN_REHEARSAL_WORKER_TASK_DEFINITION_SHA256=""
+TILE_AUTH_PLAN_REHEARSAL_ATTEMPT_ADMITTED=false
+TILE_AUTH_PLAN_REHEARSAL_ATTEMPT_SHA256=""
+TILE_AUTH_PLAN_REHEARSAL_ATTEMPT_TERMINAL=false
+CLASSPILOT_TILE_AUTH_SERVICE_MUTATION_STARTED=false
+CLASSPILOT_TILE_AUTH_SAFE_TERMINAL_REACHED=false
 
 # Colors (works in most terminals)
 RED='\033[0;31m'
@@ -325,6 +372,8 @@ validate_production_service_snapshot() {
   local api_desired=""
   local api_task_definition=""
   local worker_task_definition=""
+  local api_task_definition_arn=""
+  local worker_task_definition_arn=""
 
   if [[ -n "$expected_api_ref" || -n "$expected_worker_ref" ]]; then
     if [[ -z "$expected_api_ref" || -z "$expected_worker_ref" ]] ||
@@ -345,6 +394,12 @@ validate_production_service_snapshot() {
           ! "$pending" =~ ^(0|[1-9][0-9]*)$ ||
           ! "$deployment_count" =~ ^(0|[1-9][0-9]*)$ ]]; then
       error "Production ECS service state was malformed or ambiguous; refusing the backend deployment."
+      return 1
+    fi
+
+    if [[ ! "$service_task_definition" =~ ^arn:aws:ecs:${REGION}:${ACCOUNT_ID}:task-definition/[A-Za-z0-9_-]+:[1-9][0-9]*$ ||
+          ! "$primary_task_definition" =~ ^arn:aws:ecs:${REGION}:${ACCOUNT_ID}:task-definition/[A-Za-z0-9_-]+:[1-9][0-9]*$ ]]; then
+      error "Production ECS service ${service_name} did not return exact task-definition ARNs in the expected account and region; refusing the backend deployment."
       return 1
     fi
 
@@ -370,6 +425,7 @@ validate_production_service_snapshot() {
         api_seen=$((api_seen + 1))
         api_desired="$desired"
         api_task_definition="$normalized_service_task_definition"
+        api_task_definition_arn="$service_task_definition"
         if [[ -n "$expected_api" && "$normalized_service_task_definition" != "$expected_api" ]]; then
           error "Production API completed an unexpected task definition (${normalized_service_task_definition}; expected ${expected_api}); refusing the backend deployment."
           return 1
@@ -382,6 +438,7 @@ validate_production_service_snapshot() {
       "$WORKER_SERVICE")
         worker_seen=$((worker_seen + 1))
         worker_task_definition="$normalized_service_task_definition"
+        worker_task_definition_arn="$service_task_definition"
         if [[ -n "$expected_worker" && "$normalized_service_task_definition" != "$expected_worker" ]]; then
           error "Production scheduler worker completed an unexpected task definition (${normalized_service_task_definition}; expected ${expected_worker}); refusing the backend deployment."
           return 1
@@ -406,6 +463,8 @@ validate_production_service_snapshot() {
   PRODUCTION_PREFLIGHT_API_DESIRED="$api_desired"
   PRODUCTION_PREFLIGHT_API_TASK_DEFINITION="$api_task_definition"
   PRODUCTION_PREFLIGHT_WORKER_TASK_DEFINITION="$worker_task_definition"
+  PRODUCTION_PREFLIGHT_API_TASK_DEFINITION_ARN="$api_task_definition_arn"
+  PRODUCTION_PREFLIGHT_WORKER_TASK_DEFINITION_ARN="$worker_task_definition_arn"
 }
 
 production_backend_capacity_preflight() {
@@ -766,6 +825,10 @@ rollback_classpilot_tile_auth_deployment() {
     error "Autoscaling restoration failed after the guarded identity rollback."
     failed=true
   fi
+  if [[ "$failed" == false ]]; then
+    CLASSPILOT_TILE_AUTH_SERVICE_MUTATION_STARTED=false
+    CLASSPILOT_TILE_AUTH_SAFE_TERMINAL_REACHED=true
+  fi
   [[ "$failed" == false ]]
 }
 
@@ -778,6 +841,10 @@ TEMP_FILES=(
   .ecs-network.json
   .tile-auth-plan-task.json
   .tile-auth-plan-result.json
+  .tile-auth-plan-preflight-task.json
+  .tile-auth-plan-preflight-result.json
+  .tile-auth-plan-rehearsed-api.json
+  .tile-auth-plan-rehearsed-worker.json
   .migration-task.json
   .migration-result.json
   .migration-stop.json
@@ -804,6 +871,16 @@ deploy_exit_cleanup() {
   local exit_code=$?
   trap - EXIT
 
+  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE" == true &&
+        "$CLASSPILOT_TILE_AUTH_SERVICE_MUTATION_STARTED" == true &&
+        "$CLASSPILOT_TILE_AUTH_SAFE_TERMINAL_REACHED" != true ]]; then
+    warn "Guarded ClassPilot deploy exited after a possible service mutation; restoring the exact predeployment API and worker revisions..."
+    if ! rollback_classpilot_tile_auth_deployment; then
+      error "EXIT recovery could not prove the guarded API/worker rollback."
+      exit_code=1
+    fi
+  fi
+
   if [[ "$PRODUCTION_SCALING_HOLD_ACTIVE" == true ]]; then
     if [[ -n "$SAME_IMAGE_NETWORKING_STAGE" &&
           "$SAME_IMAGE_SERVICE_MUTATION_STARTED" == true &&
@@ -819,6 +896,15 @@ deploy_exit_cleanup() {
     warn "Deploy exited while the production autoscaling hold was active; attempting recovery..."
     if ! restore_production_scaling_hold; then
       error "EXIT recovery could not restore production API autoscaling. Manual recovery is required immediately."
+      exit_code=1
+    fi
+  fi
+
+  if [[ "$TILE_AUTH_PLAN_REHEARSAL_ATTEMPT_ADMITTED" == true &&
+        "$TILE_AUTH_PLAN_REHEARSAL_ATTEMPT_TERMINAL" != true ]]; then
+    warn "Candidate rehearsal exited without a terminal attempt record; sealing a failed terminal."
+    if ! seal_classpilot_tile_auth_plan_rehearsal_terminal failed; then
+      error "The failed ClassPilot candidate rehearsal terminal could not be sealed."
       exit_code=1
     fi
   fi
@@ -976,6 +1062,12 @@ validate_emergency_activation_mode() {
 
 validate_classpilot_tile_auth_plan_gate_mode() {
   if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE" != true ]]; then
+    if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" == true ||
+          -n "$REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" ||
+          -n "$EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL_SHA256" ]]; then
+      error "ClassPilot tile authorization rehearsal modes require --classpilot-tile-auth-plan-gate."
+      return 1
+    fi
     return 0
   fi
 
@@ -983,6 +1075,24 @@ validate_classpilot_tile_auth_plan_gate_mode() {
         "$DEPLOY_FRONTEND" != false || "$ACTIVATE_EMERGENCY" != true ||
         -n "$SAME_IMAGE_NETWORKING_STAGE" || "$SKIP_WAIT" == true ]]; then
     error "--classpilot-tile-auth-plan-gate is allowed only with production --backend --activate-emergency and rejects frontend, same-image, and --skip-wait modes."
+    return 1
+  fi
+
+  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" == true &&
+        ( -n "$REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" ||
+          -n "$EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL_SHA256" ) ]]; then
+    error "A ClassPilot tile authorization plan rehearsal cannot consume another rehearsal receipt."
+    return 1
+  fi
+  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" != true &&
+        ( -z "$REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" ||
+          ! "$EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL_SHA256" =~ ^[a-f0-9]{64}$ ) ]]; then
+    error "A guarded ClassPilot tile authorization plan deployment requires --reuse-classpilot-tile-auth-plan-rehearsal and its out-of-band --expected-classpilot-tile-auth-plan-rehearsal-sha256."
+    return 1
+  fi
+  if [[ -n "$REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" &&
+        ! "$REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" =~ ^([A-Za-z]:[\\/]|/) ]]; then
+    error "The ClassPilot tile authorization plan rehearsal receipt path must be absolute."
     return 1
   fi
 }
@@ -1128,7 +1238,12 @@ run_classpilot_tile_auth_plan_gate() {
     failure_suffix="The new service revisions must be rolled back."
   fi
 
-  classpilot_tile_auth_plan_window_preflight
+  if ! production_backend_deploy_window_preflight "before ClassPilot plan-gate ${phase} task"; then
+    return 1
+  fi
+  if ! classpilot_tile_auth_plan_window_preflight; then
+    return 1
+  fi
 
   local expected_task_pattern="^arn:aws:ecs:${REGION}:${ACCOUNT_ID}:task-definition/${NAME}-api-emergency:[1-9][0-9]*$"
   if [[ ! "$API_ROLLOUT_TASK_DEF" =~ $expected_task_pattern ]]; then
@@ -1205,7 +1320,7 @@ NODE
     return 1
   fi
 
-  local log_configuration_json log_binding log_group log_region log_prefix log_stream extra
+  local log_configuration_json log_binding log_group log_region log_prefix log_stream task_exit_code extra
   if ! log_configuration_json=$(aws ecs describe-task-definition \
     --task-definition "$API_ROLLOUT_TASK_DEF" \
     --query 'taskDefinition.containerDefinitions[?name==`api`] | [0].logConfiguration' \
@@ -1226,34 +1341,46 @@ NODE
     error "The ClassPilot tile authorization plan task or its exact awslogs binding is invalid. ${failure_suffix}"
     return 1
   fi
-  IFS=$'\t' read -r log_group log_region log_prefix log_stream extra <<< "$log_binding"
+  IFS=$'\t' read -r log_group log_region log_prefix log_stream task_exit_code extra <<< "$log_binding"
   if [[ -z "$log_group" || "$log_region" != "$REGION" || -z "$log_prefix" || -n "$extra" ||
-        -z "$log_stream" || "$log_stream" != "${log_prefix}/api/"* ]]; then
+        -z "$log_stream" || "$log_stream" != "${log_prefix}/api/"* ||
+        ! "$task_exit_code" =~ ^([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$ ]]; then
     error "The ClassPilot tile authorization plan log stream does not match the exact API task definition. ${failure_suffix}"
     return 1
   fi
 
   local log_deadline=$((SECONDS + TILE_AUTH_PLAN_LOG_WAIT_SECONDS))
-  local events_json sanitized_report=""
+  local events_json sanitized_report="" sanitized_failure_code=""
   while (( SECONDS < log_deadline )); do
     events_json=""
-    # Git Bash on Windows rewrites a leading /ecs/... argument unless path
-    # conversion is disabled for this native AWS CLI invocation.
-    if events_json=$(MSYS_NO_PATHCONV=1 aws logs get-log-events \
+    if events_json=$(node \
+      "$SCRIPT_DIR/read-classpilot-tile-auth-plan-log-events.mjs" \
       --log-group-name "$log_group" \
       --log-stream-name "$log_stream" \
-      --start-from-head \
-      --limit 100 \
-      --output json \
-      --region "$REGION" \
-      --no-cli-pager 2>/dev/null) &&
-       sanitized_report=$(printf '%s' "$events_json" | \
-         node "$SCRIPT_DIR/validate-classpilot-tile-auth-plan-evidence.mjs" 2>/dev/null); then
-      break
+      --region "$REGION" 2>/dev/null); then
+      if [[ "$task_exit_code" == "0" ]]; then
+        if sanitized_report=$(printf '%s' "$events_json" | \
+          node "$SCRIPT_DIR/validate-classpilot-tile-auth-plan-evidence.mjs" 2>/dev/null); then
+          break
+        fi
+        sanitized_report=""
+      elif sanitized_failure_code=$(printf '%s' "$events_json" | \
+        node "$SCRIPT_DIR/extract-classpilot-tile-auth-plan-failure.mjs" 2>/dev/null); then
+        break
+      else
+        sanitized_failure_code=""
+      fi
     fi
-    sanitized_report=""
     sleep "$TILE_AUTH_PLAN_LOG_POLL_SECONDS"
   done
+  if [[ "$task_exit_code" != "0" ]]; then
+    if [[ -z "$sanitized_failure_code" ]]; then
+      error "The failed ClassPilot tile authorization plan task did not publish one allowlisted sanitized failure within the bounded CloudWatch window. ${failure_suffix}"
+    else
+      error "The ClassPilot tile authorization plan task failed (failureCode=${sanitized_failure_code}). ${failure_suffix}"
+    fi
+    return 1
+  fi
   if [[ -z "$sanitized_report" ]]; then
     error "No valid sanitized ClassPilot tile authorization plan evidence appeared within the bounded CloudWatch window. ${failure_suffix}"
     return 1
@@ -1272,8 +1399,16 @@ NODE
   fi
 
   if [[ "$phase" == "predeploy" ]]; then
+    if [[ -n "$REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" &&
+          ( "$identity_sha256" != "$TILE_AUTH_PLAN_REHEARSAL_IDENTITY_SHA256" ||
+            "$query_identifier_sha256" != "$TILE_AUTH_PLAN_REHEARSAL_QUERY_IDENTIFIER_SHA256" ) ]]; then
+      error "The pre-deployment history fallback SQL identity differs from the consumed candidate rehearsal. ${failure_suffix}"
+      return 1
+    fi
     TILE_AUTH_PLAN_PRE_IDENTITY_SHA256="$identity_sha256"
     TILE_AUTH_PLAN_PRE_QUERY_IDENTIFIER_SHA256="$query_identifier_sha256"
+    TILE_AUTH_PLAN_PREDEPLOY_EVENTS_JSON="$events_json"
+    TILE_AUTH_PLAN_PREDEPLOY_REPORT_JSON="$sanitized_report"
   else
     if [[ -z "$TILE_AUTH_PLAN_PRE_IDENTITY_SHA256" ||
           -z "$TILE_AUTH_PLAN_PRE_QUERY_IDENTIFIER_SHA256" ||
@@ -1291,6 +1426,760 @@ NODE
 
   success "ClassPilot tile authorization plan gate passed (phase=${phase}, identitySha256=${identity_sha256}, queryIdentifierSha256=${query_identifier_sha256}, logGroup=${log_group}, logStream=${log_stream})"
   printf '%s\n' "$sanitized_report"
+}
+
+run_classpilot_tile_auth_plan_base_preflight() {
+  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" != true ]]; then
+    return 0
+  fi
+
+  if ! production_backend_deploy_window_preflight "before ClassPilot plan-gate base-preflight task"; then
+    return 1
+  fi
+  if ! classpilot_tile_auth_plan_window_preflight; then
+    return 1
+  fi
+
+  local expected_task_pattern="^arn:aws:ecs:${REGION}:${ACCOUNT_ID}:task-definition/${NAME}-api-emergency:[1-9][0-9]*$"
+  if [[ ! "$API_ROLLOUT_TASK_DEF" =~ $expected_task_pattern ]]; then
+    error "The ClassPilot tile authorization base preflight requires the exact freshly registered emergency task-definition ARN."
+    return 1
+  fi
+
+  local started_by="sp-tile-base-${IMAGE_TAG}"
+  if [[ ! "$started_by" =~ ^[A-Za-z0-9_-]{1,36}$ ]]; then
+    error "The release image tag cannot be bound safely to the ClassPilot tile authorization base preflight."
+    return 1
+  fi
+
+  info "Running the read-only ClassPilot tile authorization base preflight against ${API_ROLLOUT_TASK_DEF}..."
+  if ! aws ecs run-task \
+    --cluster "$CLUSTER" \
+    --launch-type FARGATE \
+    --task-definition "$API_ROLLOUT_TASK_DEF" \
+    --network-configuration "$NETWORK_CONFIG" \
+    --count 1 \
+    --started-by "$started_by" \
+    --overrides '{"containerOverrides":[{"name":"api","command":["node","dist/cli/checkClasspilotTileAuthorizationPlans.js","--preflight-base"],"environment":[{"name":"RUN_MIGRATIONS_ON_STARTUP","value":"false"},{"name":"RUN_MIGRATIONS_ONLY","value":"false"},{"name":"SCHEDULER_ENABLED","value":"false"}]}]}' \
+    --output json \
+    --region "$REGION" \
+    --no-cli-pager > .tile-auth-plan-preflight-task.json; then
+    error "The ClassPilot tile authorization base preflight task could not be started. No migration or service rollout was attempted."
+    return 1
+  fi
+
+  local task_arn
+  if ! task_arn=$(TILE_AUTH_PLAN_TASK_PATH=".tile-auth-plan-preflight-task.json" \
+    EXPECTED_TASK_DEFINITION="$API_ROLLOUT_TASK_DEF" \
+    EXPECTED_REGION="$REGION" \
+    EXPECTED_ACCOUNT_ID="$ACCOUNT_ID" node <<'NODE'
+const fs = require("fs");
+const response = JSON.parse(fs.readFileSync(process.env.TILE_AUTH_PLAN_TASK_PATH, "utf8"));
+const tasks = Array.isArray(response?.tasks) ? response.tasks : [];
+const failures = Array.isArray(response?.failures) ? response.failures : [];
+const task = tasks[0];
+const prefix = `arn:aws:ecs:${process.env.EXPECTED_REGION}:${process.env.EXPECTED_ACCOUNT_ID}:task/`;
+if (failures.length !== 0 || tasks.length !== 1 ||
+    task?.taskDefinitionArn !== process.env.EXPECTED_TASK_DEFINITION ||
+    typeof task?.taskArn !== "string" || !task.taskArn.startsWith(prefix)) process.exit(1);
+process.stdout.write(task.taskArn);
+NODE
+  ); then
+    error "ECS did not return exactly one base-preflight task bound to the expected candidate revision."
+    return 1
+  fi
+
+  set +e
+  wait_for_classpilot_tile_auth_plan_task_stopped "$task_arn"
+  local wait_result=$?
+  set -e
+  if [[ "$wait_result" -eq 124 ]]; then
+    error "The ClassPilot tile authorization base preflight exceeded its 900-second controller deadline and was stopped."
+    return 1
+  elif [[ "$wait_result" -eq 125 ]]; then
+    error "The ClassPilot tile authorization base preflight did not report STOPPED within the bounded stop-observation window."
+    return 1
+  elif [[ "$wait_result" -ne 0 ]]; then
+    error "ClassPilot tile authorization base preflight observation failed."
+    return 1
+  fi
+
+  if ! aws ecs describe-tasks \
+    --cluster "$CLUSTER" \
+    --tasks "$task_arn" \
+    --query '{failures:failures,tasks:tasks[].{taskArn:taskArn,taskDefinitionArn:taskDefinitionArn,lastStatus:lastStatus,containers:containers[].{name:name,lastStatus:lastStatus,exitCode:exitCode,logStreamName:logStreamName}}}' \
+    --output json \
+    --region "$REGION" \
+    --no-cli-pager > .tile-auth-plan-preflight-result.json; then
+    error "The terminal ClassPilot tile authorization base preflight task could not be described."
+    return 1
+  fi
+
+  local log_configuration_json log_binding log_group log_region log_prefix log_stream task_exit_code extra
+  if ! log_configuration_json=$(aws ecs describe-task-definition \
+    --task-definition "$API_ROLLOUT_TASK_DEF" \
+    --query 'taskDefinition.containerDefinitions[?name==`api`] | [0].logConfiguration' \
+    --output json \
+    --region "$REGION" \
+    --no-cli-pager); then
+    error "The ClassPilot tile authorization base preflight log binding could not be resolved."
+    return 1
+  fi
+  if ! log_binding=$(TILE_AUTH_PLAN_RESULT_PATH=".tile-auth-plan-preflight-result.json" \
+    TILE_AUTH_PLAN_LOG_CONFIGURATION_JSON="$log_configuration_json" \
+    EXPECTED_TASK_ARN="$task_arn" \
+    EXPECTED_TASK_DEFINITION="$API_ROLLOUT_TASK_DEF" \
+    EXPECTED_REGION="$REGION" \
+    EXPECTED_ACCOUNT_ID="$ACCOUNT_ID" \
+    node "$SCRIPT_DIR/resolve-classpilot-tile-auth-plan-log-binding.mjs" 2>/dev/null
+  ); then
+    error "The ClassPilot tile authorization base preflight task or its exact awslogs binding is invalid."
+    return 1
+  fi
+  IFS=$'\t' read -r log_group log_region log_prefix log_stream task_exit_code extra <<< "$log_binding"
+  if [[ -z "$log_group" || "$log_region" != "$REGION" || -z "$log_prefix" ||
+        -z "$log_stream" || "$log_stream" != "${log_prefix}/api/"* ||
+        ! "$task_exit_code" =~ ^([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$ ||
+        -n "$extra" ]]; then
+    error "The ClassPilot tile authorization base preflight log stream does not match the exact candidate task definition."
+    return 1
+  fi
+
+  local log_deadline=$((SECONDS + TILE_AUTH_PLAN_LOG_WAIT_SECONDS))
+  local events_json="" sanitized_preflight="" sanitized_failure_code=""
+  while (( SECONDS < log_deadline )); do
+    if events_json=$(node \
+      "$SCRIPT_DIR/read-classpilot-tile-auth-plan-log-events.mjs" \
+      --log-group-name "$log_group" \
+      --log-stream-name "$log_stream" \
+      --region "$REGION" 2>/dev/null); then
+      if [[ "$task_exit_code" == "0" ]]; then
+        if sanitized_preflight=$(printf '%s' "$events_json" | \
+          node "$SCRIPT_DIR/validate-classpilot-tile-auth-plan-preflight-evidence.mjs" 2>/dev/null); then
+          break
+        fi
+        sanitized_preflight=""
+      elif sanitized_failure_code=$(printf '%s' "$events_json" | \
+        node "$SCRIPT_DIR/extract-classpilot-tile-auth-plan-failure.mjs" 2>/dev/null); then
+        break
+      else
+        sanitized_failure_code=""
+      fi
+    fi
+    sleep "$TILE_AUTH_PLAN_LOG_POLL_SECONDS"
+  done
+
+  if [[ "$task_exit_code" != "0" ]]; then
+    if [[ -z "$sanitized_failure_code" ]]; then
+      error "The failed ClassPilot tile authorization base preflight did not publish one allowlisted sanitized failure."
+    else
+      error "The ClassPilot tile authorization base preflight failed (failureCode=${sanitized_failure_code})."
+    fi
+    return 1
+  fi
+  if [[ -z "$sanitized_preflight" ]]; then
+    error "No valid sanitized ClassPilot tile authorization base-preflight evidence appeared within the bounded CloudWatch window."
+    return 1
+  fi
+
+  TILE_AUTH_PLAN_PREFLIGHT_EVENTS_JSON="$events_json"
+  TILE_AUTH_PLAN_PREFLIGHT_EVIDENCE_JSON="$sanitized_preflight"
+  success "ClassPilot tile authorization base preflight passed (logGroup=${log_group}, logStream=${log_stream})"
+  printf '%s\n' "$sanitized_preflight"
+}
+
+resolve_classpilot_tile_auth_candidate_network() {
+  info "Resolving the exact ECS network configuration for candidate gate tasks..."
+  if ! aws ecs describe-services \
+    --cluster "$CLUSTER" \
+    --services "$SERVICE" \
+    --query 'services[0].networkConfiguration.awsvpcConfiguration' \
+    --output json \
+    --region "$REGION" \
+    --no-cli-pager > .ecs-network.json; then
+    error "Could not read the active API network configuration."
+    return 1
+  fi
+
+  local binding network_config network_sha extra
+  if ! binding=$(node -e '
+    const crypto = require("crypto");
+    const fs = require("fs");
+    const cfg = JSON.parse(fs.readFileSync(".ecs-network.json", "utf8"));
+    const subnets = [...new Set(Array.isArray(cfg?.subnets) ? cfg.subnets : [])].sort();
+    const securityGroups = [...new Set(
+      Array.isArray(cfg?.securityGroups) ? cfg.securityGroups : []
+    )].sort();
+    const assignPublicIp = cfg?.assignPublicIp || "DISABLED";
+    if (subnets.length === 0 || securityGroups.length === 0 ||
+        !["ENABLED", "DISABLED"].includes(assignPublicIp) ||
+        subnets.some((value) => !/^subnet-[a-f0-9]+$/.test(value)) ||
+        securityGroups.some((value) => !/^sg-[a-f0-9]+$/.test(value))) {
+      process.exit(1);
+    }
+    const canonical = JSON.stringify({assignPublicIp,securityGroups,subnets});
+    const hash = crypto.createHash("sha256").update(canonical, "utf8").digest("hex");
+    const rendered =
+      `awsvpcConfiguration={subnets=[${subnets.join(",")}],` +
+      `securityGroups=[${securityGroups.join(",")}],assignPublicIp=${assignPublicIp}}`;
+    process.stdout.write(`${rendered}\t${hash}`);
+  '); then
+    error "The active API network configuration is malformed or ambiguous."
+    return 1
+  fi
+  IFS=$'\t' read -r network_config network_sha extra <<< "$binding"
+  if [[ -z "$network_config" || ! "$network_sha" =~ ^[a-f0-9]{64}$ || -n "$extra" ]]; then
+    error "The active API network binding could not be canonicalized."
+    return 1
+  fi
+  NETWORK_CONFIG="$network_config"
+  TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256="$network_sha"
+}
+
+assert_classpilot_rehearsal_network_unchanged() {
+  if [[ -z "$REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" ]]; then
+    return 0
+  fi
+  if [[ ! "$TILE_AUTH_PLAN_REHEARSAL_CONSUMED_NETWORK_SHA256" =~ ^[a-f0-9]{64}$ ]]; then
+    error "The consumed ClassPilot rehearsal network binding is unavailable."
+    return 1
+  fi
+
+  NETWORK_CONFIG=""
+  TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256=""
+  if ! resolve_classpilot_tile_auth_candidate_network; then
+    error "The active API network configuration could not be revalidated against the consumed candidate rehearsal."
+    return 1
+  fi
+  if [[ "$TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256" != "$TILE_AUTH_PLAN_REHEARSAL_CONSUMED_NETWORK_SHA256" ]]; then
+    error "The active API network configuration drifted from the consumed candidate rehearsal."
+    return 1
+  fi
+}
+
+canonical_classpilot_candidate_source_task_definition_arn() {
+  local ref="${1%$'\r'}"
+  local kind="$2"
+  local normalized family revision
+
+  if [[ ! "$ref" =~ ^arn:aws:ecs:${REGION}:${ACCOUNT_ID}:task-definition/[A-Za-z0-9_-]+:[1-9][0-9]*$ ]]; then
+    return 1
+  fi
+  if ! normalized=$(normalize_task_definition_ref "$ref"); then
+    return 1
+  fi
+  family="${normalized%:*}"
+  revision="${normalized##*:}"
+  case "$kind" in
+    api)
+      if [[ "$family" != "$SERVICE" && "$family" != "${SERVICE}-emergency" ]]; then
+        return 1
+      fi
+      ;;
+    worker)
+      if [[ "$family" != "$WORKER_SERVICE" ]]; then
+        return 1
+      fi
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+
+  printf 'arn:aws:ecs:%s:%s:task-definition/%s:%s\n' \
+    "$REGION" "$ACCOUNT_ID" "$family" "$revision"
+}
+
+resolve_classpilot_candidate_source_task_definitions() {
+  local api_ref worker_ref
+
+  if [[ "$ENV" == "production" ]]; then
+    if [[ -z "$PRODUCTION_ROLLBACK_API_TASK_DEFINITION" ||
+          -z "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION" ||
+          -z "$PRODUCTION_ROLLBACK_API_TASK_DEFINITION_ARN" ||
+          -z "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION_ARN" ||
+          "$PRODUCTION_PREFLIGHT_API_TASK_DEFINITION" != "$PRODUCTION_ROLLBACK_API_TASK_DEFINITION" ||
+          "$PRODUCTION_PREFLIGHT_WORKER_TASK_DEFINITION" != "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION" ||
+          "$PRODUCTION_PREFLIGHT_API_TASK_DEFINITION_ARN" != "$PRODUCTION_ROLLBACK_API_TASK_DEFINITION_ARN" ||
+          "$PRODUCTION_PREFLIGHT_WORKER_TASK_DEFINITION_ARN" != "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION_ARN" ]]; then
+      error "The immutable serving API/worker task-definition sources are unavailable or drifted."
+      return 1
+    fi
+    api_ref="$PRODUCTION_ROLLBACK_API_TASK_DEFINITION_ARN"
+    worker_ref="$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION_ARN"
+  else
+    if ! api_ref=$(aws ecs describe-services \
+        --cluster "$CLUSTER" \
+        --services "$SERVICE" \
+        --query 'services[0].taskDefinition' \
+        --output text \
+        --region "$REGION" \
+        --no-cli-pager) ||
+      ! worker_ref=$(aws ecs describe-services \
+        --cluster "$CLUSTER" \
+        --services "$WORKER_SERVICE" \
+        --query 'services[0].taskDefinition' \
+        --output text \
+        --region "$REGION" \
+        --no-cli-pager); then
+      error "Could not resolve the immutable serving API/worker task-definition sources."
+      return 1
+    fi
+  fi
+
+  if ! API_CANDIDATE_SOURCE_TASK_DEFINITION_ARN=$(
+      canonical_classpilot_candidate_source_task_definition_arn "$api_ref" api
+    ) ||
+    ! WORKER_CANDIDATE_SOURCE_TASK_DEFINITION_ARN=$(
+      canonical_classpilot_candidate_source_task_definition_arn "$worker_ref" worker
+    ); then
+    error "The serving API/worker task-definition sources were not exact immutable revisions in the expected account, region, or families."
+    return 1
+  fi
+}
+
+describe_exact_classpilot_candidate_task_definition() {
+  local task_definition_arn="$1"
+  local output_path="$2"
+  if [[ ! "$task_definition_arn" =~ ^arn:aws:ecs:${REGION}:${ACCOUNT_ID}:task-definition/[A-Za-z0-9_-]+:[1-9][0-9]*$ ]]; then
+    error "A candidate task-definition source was not an exact immutable ARN."
+    return 1
+  fi
+  aws ecs describe-task-definition \
+    --task-definition "$task_definition_arn" \
+    --query taskDefinition \
+    --output json \
+    --region "$REGION" \
+    --no-cli-pager > "$output_path"
+}
+
+register_classpilot_candidate_worker_task_definition() {
+  info "Rendering scheduler worker task definition for the inactive candidate..."
+  if ! describe_exact_classpilot_candidate_task_definition \
+      "$WORKER_CANDIDATE_SOURCE_TASK_DEFINITION_ARN" \
+      .worker-taskdef-current.json ||
+    ! describe_exact_classpilot_candidate_task_definition \
+      "$STANDARD_API_CANDIDATE_TASK_DEFINITION_ARN" \
+      .worker-env-source.json; then
+    error "Could not read the source task definitions for the scheduler-worker candidate."
+    return 1
+  fi
+
+  if ! IMAGE_REF="${ECR_REPO}@${DIGEST}" \
+    EXPECTED_WORKER_SOURCE_ARN="$WORKER_CANDIDATE_SOURCE_TASK_DEFINITION_ARN" \
+    EXPECTED_API_SOURCE_ARN="$STANDARD_API_CANDIDATE_TASK_DEFINITION_ARN" node -e '
+    const fs = require("fs");
+    const td = JSON.parse(fs.readFileSync(".worker-taskdef-current.json", "utf8"));
+    const api = JSON.parse(fs.readFileSync(".worker-env-source.json", "utf8"));
+    if (td.taskDefinitionArn !== process.env.EXPECTED_WORKER_SOURCE_ARN ||
+        api.taskDefinitionArn !== process.env.EXPECTED_API_SOURCE_ARN ||
+        td.status !== "ACTIVE" || api.status !== "ACTIVE") {
+      throw new Error("Worker candidate sources do not match their exact immutable task definitions");
+    }
+    ["taskDefinitionArn","revision","status","requiresAttributes","compatibilities","registeredAt","registeredBy"].forEach(k => delete td[k]);
+    function mergeNamed(base = [], overlay = []) {
+      const merged = new Map();
+      for (const item of base) merged.set(item.name, item);
+      for (const item of overlay) merged.set(item.name, item);
+      return [...merged.values()];
+    }
+    function dedupeEnvAgainstSecrets(container) {
+      const secretNames = new Set((container.secrets || []).map(item => item.name));
+      container.environment = (container.environment || []).filter(
+        item => !secretNames.has(item.name)
+      );
+    }
+    function reconcileOptionalSecrets(container, sourceContainer) {
+      const optionalNames = new Set(["GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY_PREVIOUS"]);
+      const retiredNames = new Set(["OPENAI_API_KEY"]);
+      const enabledNames = new Set((sourceContainer.secrets || []).map(item => item.name));
+      container.secrets = (container.secrets || []).filter(
+        item => !retiredNames.has(item.name) &&
+          (!optionalNames.has(item.name) || enabledNames.has(item.name))
+      );
+      container.environment = (container.environment || []).filter(
+        item => !retiredNames.has(item.name) &&
+          (!optionalNames.has(item.name) || enabledNames.has(item.name))
+      );
+    }
+    const container = td.containerDefinitions.find(
+      c => c.name === "scheduler-worker"
+    ) || td.containerDefinitions[0];
+    const apiContainer = (api.containerDefinitions || []).find(
+      c => c.name === "api"
+    ) || api.containerDefinitions?.[0] || {};
+    if (!container || !process.env.IMAGE_REF?.includes("@sha256:")) process.exit(1);
+    container.image = process.env.IMAGE_REF;
+    container.environment = mergeNamed(apiContainer.environment, container.environment);
+    container.secrets = mergeNamed(apiContainer.secrets, container.secrets);
+    reconcileOptionalSecrets(container, apiContainer);
+    dedupeEnvAgainstSecrets(container);
+    fs.writeFileSync(".worker-taskdef-new.json", JSON.stringify(td));
+  '; then
+    error "The scheduler-worker candidate task definition could not be rendered safely."
+    return 1
+  fi
+
+  local worker_arn
+  if ! worker_arn=$(aws ecs register-task-definition \
+    --cli-input-json file://.worker-taskdef-new.json \
+    --query 'taskDefinition.taskDefinitionArn' \
+    --output text \
+    --region "$REGION" \
+    --no-cli-pager); then
+    error "The scheduler-worker candidate task definition could not be registered."
+    return 1
+  fi
+  local expected_pattern="^arn:aws:ecs:${REGION}:${ACCOUNT_ID}:task-definition/${WORKER_SERVICE}:([1-9][0-9]*)$"
+  if [[ ! "$worker_arn" =~ $expected_pattern ]]; then
+    error "The registered scheduler-worker candidate ARN was malformed."
+    return 1
+  fi
+  WORKER_CANDIDATE_TASK_DEF="$worker_arn"
+  WORKER_NEW_REV="${BASH_REMATCH[1]}"
+  success "Registered inactive scheduler-worker candidate ${WORKER_CANDIDATE_TASK_DEF} (image pinned by digest)"
+}
+
+verify_classpilot_rehearsed_candidates() {
+  local tag_digest
+  if ! tag_digest=$(aws ecr describe-images \
+    --repository-name "${NAME}-api" \
+    --image-ids imageTag="${IMAGE_TAG}" \
+    --query 'imageDetails[0].imageDigest' \
+    --output text \
+    --region "$REGION" \
+    --no-cli-pager) ||
+    [[ "$tag_digest" != "$DIGEST" ]]; then
+    error "The merged-SHA ECR tag no longer resolves to the rehearsed image digest."
+    return 1
+  fi
+  if ! aws ecs describe-task-definition \
+    --task-definition "$API_ROLLOUT_TASK_DEF" \
+    --query taskDefinition \
+    --output json \
+    --region "$REGION" \
+    --no-cli-pager > .tile-auth-plan-rehearsed-api.json ||
+    ! aws ecs describe-task-definition \
+      --task-definition "$WORKER_CANDIDATE_TASK_DEF" \
+      --query taskDefinition \
+      --output json \
+      --region "$REGION" \
+      --no-cli-pager > .tile-auth-plan-rehearsed-worker.json; then
+    error "The exact rehearsed candidate task definitions could not be read."
+    return 1
+  fi
+  if ! EXPECTED_API_ARN="$API_ROLLOUT_TASK_DEF" \
+    EXPECTED_WORKER_ARN="$WORKER_CANDIDATE_TASK_DEF" \
+    EXPECTED_IMAGE="${ECR_REPO}@${DIGEST}" node -e '
+    const fs = require("fs");
+    const api = JSON.parse(fs.readFileSync(".tile-auth-plan-rehearsed-api.json", "utf8"));
+    const worker = JSON.parse(fs.readFileSync(".tile-auth-plan-rehearsed-worker.json", "utf8"));
+    const apiContainers = (api.containerDefinitions || []).filter(c => c.name === "api");
+    const workerContainers = (worker.containerDefinitions || []).filter(
+      c => c.name === "scheduler-worker"
+    );
+    const apiContainer = apiContainers[0];
+    const workerContainer = workerContainers[0];
+    const apiHardMemory = apiContainer?.memory;
+    if (api.taskDefinitionArn !== process.env.EXPECTED_API_ARN ||
+        worker.taskDefinitionArn !== process.env.EXPECTED_WORKER_ARN ||
+        api.status !== "ACTIVE" || worker.status !== "ACTIVE" ||
+        api.family !== "schoolpilot-production-api-emergency" ||
+        worker.family !== "schoolpilot-production-scheduler-worker" ||
+        String(api.cpu) !== "512" || String(api.memory) !== "2048" ||
+        (apiHardMemory !== undefined && apiHardMemory !== null &&
+          Number(apiHardMemory) < 2048) ||
+        apiContainers.length !== 1 || workerContainers.length !== 1 ||
+        apiContainer?.image !== process.env.EXPECTED_IMAGE ||
+        workerContainer?.image !== process.env.EXPECTED_IMAGE) {
+      process.exit(1);
+    }
+  '; then
+    error "The rehearsed candidate definitions drifted from their bound digest, families, or launch-safe posture."
+    return 1
+  fi
+
+  local definition_hashes api_sha worker_sha extra
+  if ! definition_hashes=$(node -e '
+    const crypto = require("crypto");
+    const fs = require("fs");
+    function stable(value) {
+      if (Array.isArray(value)) return value.map(stable);
+      if (!value || typeof value !== "object") return value;
+      return Object.fromEntries(
+        Object.keys(value).sort().map(key => [key, stable(value[key])])
+      );
+    }
+    function hash(filename) {
+      const value = JSON.parse(fs.readFileSync(filename, "utf8"));
+      return crypto.createHash("sha256")
+        .update(JSON.stringify(stable(value)), "utf8").digest("hex");
+    }
+    process.stdout.write(
+      `${hash(".tile-auth-plan-rehearsed-api.json")}\t` +
+      `${hash(".tile-auth-plan-rehearsed-worker.json")}`
+    );
+  '); then
+    error "The rehearsed candidate task-definition bindings could not be hashed."
+    return 1
+  fi
+  IFS=$'\t' read -r api_sha worker_sha extra <<< "$definition_hashes"
+  if [[ ! "$api_sha" =~ ^[a-f0-9]{64}$ ||
+        ! "$worker_sha" =~ ^[a-f0-9]{64}$ || -n "$extra" ]]; then
+    error "The rehearsed candidate task-definition hashes were malformed."
+    return 1
+  fi
+  if [[ -n "$TILE_AUTH_PLAN_REHEARSAL_API_TASK_DEFINITION_SHA256" &&
+        ( "$api_sha" != "$TILE_AUTH_PLAN_REHEARSAL_API_TASK_DEFINITION_SHA256" ||
+          "$worker_sha" != "$TILE_AUTH_PLAN_REHEARSAL_WORKER_TASK_DEFINITION_SHA256" ) ]]; then
+    error "The exact candidate task definitions drifted from their rehearsal receipt."
+    return 1
+  fi
+  TILE_AUTH_PLAN_REHEARSAL_API_TASK_DEFINITION_SHA256="$api_sha"
+  TILE_AUTH_PLAN_REHEARSAL_WORKER_TASK_DEFINITION_SHA256="$worker_sha"
+}
+
+parse_classpilot_rehearsal_binding() {
+  local binding_json="$1"
+  REHEARSAL_BINDING_JSON="$binding_json" \
+    EXPECTED_REGION="$REGION" \
+    EXPECTED_ACCOUNT_ID="$ACCOUNT_ID" \
+    EXPECTED_API_FAMILY="${NAME}-api-emergency" \
+    EXPECTED_WORKER_FAMILY="$WORKER_SERVICE" node <<'NODE'
+const value = JSON.parse(process.env.REHEARSAL_BINDING_JSON || "null");
+const hash = /^[a-f0-9]{64}$/;
+const digest = /^sha256:[a-f0-9]{64}$/;
+const region = process.env.EXPECTED_REGION;
+const accountId = process.env.EXPECTED_ACCOUNT_ID;
+const apiFamily = process.env.EXPECTED_API_FAMILY;
+const workerFamily = process.env.EXPECTED_WORKER_FAMILY;
+if (!/^[a-z]{2}-[a-z]+-\d$/.test(region || "") ||
+    !/^\d{12}$/.test(accountId || "") ||
+    !/^[A-Za-z0-9_-]+$/.test(apiFamily || "") ||
+    !/^[A-Za-z0-9_-]+$/.test(workerFamily || "")) process.exit(1);
+const hasExactRevision = (candidate, family) => {
+  const prefix =
+    `arn:aws:ecs:${region}:${accountId}:task-definition/${family}:`;
+  return typeof candidate === "string" &&
+    candidate.startsWith(prefix) &&
+    /^[1-9]\d*$/.test(candidate.slice(prefix.length));
+};
+if (value?.schemaVersion !== 1 ||
+    value?.version !== "classpilot-tile-auth-plan-rehearsal-v1" ||
+    !hash.test(value.receiptSha256 || "") ||
+    !digest.test(value.imageDigest || "") ||
+    !hasExactRevision(value.candidateApiTaskDefinitionArn, apiFamily) ||
+    !hash.test(value.candidateApiTaskDefinitionSha256 || "") ||
+    !hasExactRevision(value.candidateWorkerTaskDefinitionArn, workerFamily) ||
+    !hash.test(value.candidateWorkerTaskDefinitionSha256 || "") ||
+    !hash.test(value.historyFallbackIdentitySha256 || "") ||
+    !hash.test(value.queryIdentifierSha256 || "") ||
+    !hash.test(value.preflightEvidenceSha256 || "") ||
+    !hash.test(value.planEventsSha256 || "") ||
+    !hash.test(value.sanitizedPlanReportSha256 || "") ||
+    !hash.test(value.lifecycleEvidenceSha256 || "")) process.exit(1);
+process.stdout.write([
+  value.receiptSha256,
+  value.imageDigest,
+  value.candidateApiTaskDefinitionArn,
+  value.candidateApiTaskDefinitionSha256,
+  value.candidateWorkerTaskDefinitionArn,
+  value.candidateWorkerTaskDefinitionSha256,
+  value.historyFallbackIdentitySha256,
+  value.queryIdentifierSha256,
+].join("\t"));
+NODE
+}
+
+admit_classpilot_tile_auth_plan_rehearsal_attempt() {
+  local summary binding attempt_sha extra
+  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" != true ]]; then
+    return 0
+  fi
+  if [[ "$TILE_AUTH_PLAN_REHEARSAL_ATTEMPT_ADMITTED" == true ]]; then
+    error "The ClassPilot tile authorization rehearsal attempt was already admitted in this process."
+    return 1
+  fi
+  if ! summary=$(node \
+    "$SCRIPT_DIR/manage-classpilot-tile-auth-plan-rehearsal-receipt.mjs" admit \
+    --application-sha "$LOCAL_SHA" 2>/dev/null); then
+    error "The single-use ClassPilot tile authorization rehearsal attempt could not be admitted."
+    return 1
+  fi
+  if ! binding=$(REHEARSAL_ATTEMPT_JSON="$summary" \
+    EXPECTED_APPLICATION_SHA="$LOCAL_SHA" node <<'NODE'
+const value = JSON.parse(process.env.REHEARSAL_ATTEMPT_JSON || "null");
+if (value?.schemaVersion !== 1 ||
+    value?.version !== "classpilot-tile-auth-plan-rehearsal-attempt-v1" ||
+    value?.applicationGitSha !== process.env.EXPECTED_APPLICATION_SHA ||
+    !/^[a-f0-9]{64}$/.test(value?.sha256 || "")) process.exit(1);
+process.stdout.write(value.sha256);
+NODE
+  ); then
+    error "The ClassPilot tile authorization rehearsal admission evidence was malformed."
+    return 1
+  fi
+  IFS=$'\t' read -r attempt_sha extra <<< "$binding"
+  if [[ ! "$attempt_sha" =~ ^[a-f0-9]{64}$ || -n "$extra" ]]; then
+    error "The ClassPilot tile authorization rehearsal admission hash was malformed."
+    return 1
+  fi
+  TILE_AUTH_PLAN_REHEARSAL_ATTEMPT_SHA256="$attempt_sha"
+  TILE_AUTH_PLAN_REHEARSAL_ATTEMPT_ADMITTED=true
+  success "Admitted the one-attempt ClassPilot candidate rehearsal (admissionSha256=${attempt_sha})"
+}
+
+seal_classpilot_tile_auth_plan_rehearsal_terminal() {
+  local outcome="$1"
+  local summary binding status admission_sha receipt_sha extra
+  if [[ "$TILE_AUTH_PLAN_REHEARSAL_ATTEMPT_ADMITTED" != true ||
+        "$TILE_AUTH_PLAN_REHEARSAL_ATTEMPT_TERMINAL" == true ||
+        ! "$TILE_AUTH_PLAN_REHEARSAL_ATTEMPT_SHA256" =~ ^[a-f0-9]{64}$ ]]; then
+    return 1
+  fi
+
+  local command=(
+    node "$SCRIPT_DIR/manage-classpilot-tile-auth-plan-rehearsal-receipt.mjs"
+    terminal
+    --application-sha "$LOCAL_SHA"
+    --expected-admission-sha256 "$TILE_AUTH_PLAN_REHEARSAL_ATTEMPT_SHA256"
+    --outcome "$outcome"
+  )
+  if [[ "$outcome" == "passed" ]]; then
+    if [[ -z "$TILE_AUTH_PLAN_REHEARSAL_RECEIPT_PATH" ||
+          ! "$TILE_AUTH_PLAN_REHEARSAL_RECEIPT_SHA256" =~ ^[a-f0-9]{64}$ ]]; then
+      return 1
+    fi
+    command+=(
+      --receipt "$TILE_AUTH_PLAN_REHEARSAL_RECEIPT_PATH"
+      --receipt-sha256 "$TILE_AUTH_PLAN_REHEARSAL_RECEIPT_SHA256"
+    )
+  elif [[ "$outcome" != "failed" ]]; then
+    return 1
+  fi
+
+  if ! summary=$("${command[@]}" 2>/dev/null); then
+    return 1
+  fi
+  if ! binding=$(REHEARSAL_TERMINAL_JSON="$summary" \
+    EXPECTED_APPLICATION_SHA="$LOCAL_SHA" \
+    EXPECTED_ADMISSION_SHA="$TILE_AUTH_PLAN_REHEARSAL_ATTEMPT_SHA256" \
+    EXPECTED_OUTCOME="$outcome" \
+    EXPECTED_RECEIPT_SHA="$TILE_AUTH_PLAN_REHEARSAL_RECEIPT_SHA256" node <<'NODE'
+const value = JSON.parse(process.env.REHEARSAL_TERMINAL_JSON || "null");
+const expectedReceipt =
+  process.env.EXPECTED_OUTCOME === "passed"
+    ? process.env.EXPECTED_RECEIPT_SHA
+    : null;
+if (value?.schemaVersion !== 1 ||
+    value?.version !== "classpilot-tile-auth-plan-rehearsal-terminal-v1" ||
+    value?.applicationGitSha !== process.env.EXPECTED_APPLICATION_SHA ||
+    value?.admissionSha256 !== process.env.EXPECTED_ADMISSION_SHA ||
+    value?.status !== process.env.EXPECTED_OUTCOME ||
+    value?.receiptSha256 !== expectedReceipt ||
+    !/^[a-f0-9]{64}$/.test(value?.sha256 || "")) process.exit(1);
+process.stdout.write(
+  `${value.status}\t${value.admissionSha256}\t${value.receiptSha256 ?? ""}`
+);
+NODE
+  ); then
+    return 1
+  fi
+  IFS=$'\t' read -r status admission_sha receipt_sha extra <<< "$binding"
+  if [[ "$status" != "$outcome" ||
+        "$admission_sha" != "$TILE_AUTH_PLAN_REHEARSAL_ATTEMPT_SHA256" ||
+        -n "$extra" ||
+        ( "$outcome" == "passed" &&
+          "$receipt_sha" != "$TILE_AUTH_PLAN_REHEARSAL_RECEIPT_SHA256" ) ||
+        ( "$outcome" == "failed" && -n "$receipt_sha" ) ]]; then
+    return 1
+  fi
+  TILE_AUTH_PLAN_REHEARSAL_ATTEMPT_TERMINAL=true
+}
+
+inspect_or_consume_classpilot_rehearsal_receipt() {
+  local mode="$1"
+  local summary binding receipt_sha digest api_arn api_sha worker_arn worker_sha identity_sha query_sha extra
+  if ! summary=$(node \
+    "$SCRIPT_DIR/manage-classpilot-tile-auth-plan-rehearsal-receipt.mjs" "$mode" \
+    --receipt "$REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" \
+    --expected-receipt-sha256 "$EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL_SHA256" \
+    --application-sha "$LOCAL_SHA" \
+    --active-api-task-definition-arn "$PRODUCTION_PREFLIGHT_API_TASK_DEFINITION_ARN" \
+    --active-worker-task-definition-arn "$PRODUCTION_PREFLIGHT_WORKER_TASK_DEFINITION_ARN" \
+    --network-configuration-sha256 "$TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256" \
+    2>/dev/null); then
+    error "The ClassPilot tile authorization rehearsal receipt is invalid, expired, used, or does not match the active baseline."
+    return 1
+  fi
+  if ! binding=$(parse_classpilot_rehearsal_binding "$summary"); then
+    error "The ClassPilot tile authorization rehearsal receipt binding was malformed."
+    return 1
+  fi
+  IFS=$'\t' read -r receipt_sha digest api_arn api_sha worker_arn worker_sha identity_sha query_sha extra <<< "$binding"
+  if [[ -n "$extra" ||
+        "$receipt_sha" != "$EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL_SHA256" ]]; then
+    error "The ClassPilot tile authorization rehearsal receipt does not match its out-of-band SHA-256."
+    return 1
+  fi
+  TILE_AUTH_PLAN_REHEARSAL_RECEIPT_SHA256="$receipt_sha"
+  DIGEST="$digest"
+  API_ROLLOUT_TASK_DEF="$api_arn"
+  TILE_AUTH_PLAN_REHEARSAL_API_TASK_DEFINITION_SHA256="$api_sha"
+  WORKER_CANDIDATE_TASK_DEF="$worker_arn"
+  TILE_AUTH_PLAN_REHEARSAL_WORKER_TASK_DEFINITION_SHA256="$worker_sha"
+  WORKER_NEW_REV="${worker_arn##*:}"
+  TILE_AUTH_PLAN_REHEARSAL_IDENTITY_SHA256="$identity_sha"
+  TILE_AUTH_PLAN_REHEARSAL_QUERY_IDENTIFIER_SHA256="$query_sha"
+}
+
+write_classpilot_rehearsal_receipt() {
+  if [[ -z "${LOCALAPPDATA:-}" ]]; then
+    error "LOCALAPPDATA is required for the ACL-restricted plan-gate rehearsal receipt."
+    return 1
+  fi
+  local output_directory="${LOCALAPPDATA}/SchoolPilot/load-gates/tile-auth-rehearsals/${LOCAL_SHA}/$(date -u +%Y%m%dT%H%M%SZ)"
+  local summary binding
+  if ! summary=$(printf '%s\0%s' \
+      "$TILE_AUTH_PLAN_PREFLIGHT_EVENTS_JSON" \
+      "$TILE_AUTH_PLAN_PREDEPLOY_EVENTS_JSON" | node \
+    "$SCRIPT_DIR/manage-classpilot-tile-auth-plan-rehearsal-receipt.mjs" write \
+    --output "$output_directory" \
+    --application-sha "$LOCAL_SHA" \
+    --image-digest "$DIGEST" \
+    --candidate-api-task-definition-arn "$API_ROLLOUT_TASK_DEF" \
+    --candidate-api-task-definition-sha256 "$TILE_AUTH_PLAN_REHEARSAL_API_TASK_DEFINITION_SHA256" \
+    --candidate-worker-task-definition-arn "$WORKER_CANDIDATE_TASK_DEF" \
+    --candidate-worker-task-definition-sha256 "$TILE_AUTH_PLAN_REHEARSAL_WORKER_TASK_DEFINITION_SHA256" \
+    --active-api-task-definition-arn "$PRODUCTION_PREFLIGHT_API_TASK_DEFINITION_ARN" \
+    --active-worker-task-definition-arn "$PRODUCTION_PREFLIGHT_WORKER_TASK_DEFINITION_ARN" \
+    --network-configuration-sha256 "$TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256" \
+    2>/dev/null); then
+    error "The ACL-restricted ClassPilot tile authorization rehearsal receipt could not be sealed."
+    return 1
+  fi
+  if ! binding=$(REHEARSAL_SUMMARY_JSON="$summary" node <<'NODE'
+const value = JSON.parse(process.env.REHEARSAL_SUMMARY_JSON || "null");
+if (value?.schemaVersion !== 1 ||
+    value?.version !== "classpilot-tile-auth-plan-rehearsal-v1" ||
+    typeof value.path !== "string" || value.path.length === 0 ||
+    !/^[a-f0-9]{64}$/.test(value.sha256 || "") ||
+    !/^\d{4}-\d{2}-\d{2}T/.test(value.expiresAtUtc || "")) process.exit(1);
+process.stdout.write(`${value.path}\t${value.sha256}\t${value.expiresAtUtc}`);
+NODE
+  ); then
+    error "The sealed ClassPilot tile authorization rehearsal receipt summary was malformed."
+    return 1
+  fi
+  local receipt_path receipt_sha expires_at extra
+  IFS=$'\t' read -r receipt_path receipt_sha expires_at extra <<< "$binding"
+  if [[ -z "$receipt_path" || -n "$extra" ]]; then
+    error "The sealed ClassPilot tile authorization rehearsal receipt summary was ambiguous."
+    return 1
+  fi
+  TILE_AUTH_PLAN_REHEARSAL_RECEIPT_PATH="$receipt_path"
+  TILE_AUTH_PLAN_REHEARSAL_RECEIPT_SHA256="$receipt_sha"
+  success "ClassPilot tile authorization candidate rehearsal passed (receipt=${receipt_path}, receiptSha256=${receipt_sha}, expiresAtUtc=${expires_at})"
 }
 
 launch_safe_active_api_preflight() {
@@ -2296,6 +3185,8 @@ info "Backend:    $DEPLOY_BACKEND"
 info "Frontend:   $DEPLOY_FRONTEND"
 info "2048 API:   $ACTIVATE_EMERGENCY"
 info "Tile plans: $RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE"
+info "Plan rehearse: $RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL"
+info "Plan receipt:  ${REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL:+provided}"
 info "Same image: ${SAME_IMAGE_NETWORKING_STAGE:-false}"
 echo ""
 
@@ -2409,6 +3300,8 @@ if [[ "$ENV" == "production" && "$DEPLOY_BACKEND" == true ]]; then
   # variables after either service has been changed.
   PRODUCTION_ROLLBACK_API_TASK_DEFINITION="$PRODUCTION_PREFLIGHT_API_TASK_DEFINITION"
   PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION="$PRODUCTION_PREFLIGHT_WORKER_TASK_DEFINITION"
+  PRODUCTION_ROLLBACK_API_TASK_DEFINITION_ARN="$PRODUCTION_PREFLIGHT_API_TASK_DEFINITION_ARN"
+  PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION_ARN="$PRODUCTION_PREFLIGHT_WORKER_TASK_DEFINITION_ARN"
 fi
 launch_safe_active_api_preflight
 
@@ -2429,6 +3322,40 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
     same_image_networking_redeploy
     exit 0
   fi
+
+  if ! admit_classpilot_tile_auth_plan_rehearsal_attempt; then
+    exit 1
+  fi
+  resolve_classpilot_tile_auth_candidate_network
+
+  if [[ -n "$REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" ]]; then
+    production_backend_capacity_preflight "before rehearsal receipt consumption"
+    if [[ "$PRODUCTION_PREFLIGHT_API_TASK_DEFINITION" != "$PRODUCTION_ROLLBACK_API_TASK_DEFINITION" ||
+          "$PRODUCTION_PREFLIGHT_WORKER_TASK_DEFINITION" != "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION" ]]; then
+      error "The active API/worker baseline changed before rehearsal receipt consumption."
+      exit 1
+    fi
+    info "Inspecting the fresh ClassPilot tile authorization candidate rehearsal receipt..."
+    inspect_or_consume_classpilot_rehearsal_receipt inspect
+    verify_classpilot_rehearsed_candidates
+    local_rehearsal_receipt_sha="$TILE_AUTH_PLAN_REHEARSAL_RECEIPT_SHA256"
+    local_rehearsal_api="$API_ROLLOUT_TASK_DEF"
+    local_rehearsal_worker="$WORKER_CANDIDATE_TASK_DEF"
+    local_rehearsal_digest="$DIGEST"
+    local_rehearsal_network_sha="$TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256"
+    inspect_or_consume_classpilot_rehearsal_receipt consume
+    if [[ "$TILE_AUTH_PLAN_REHEARSAL_RECEIPT_SHA256" != "$local_rehearsal_receipt_sha" ||
+          "$API_ROLLOUT_TASK_DEF" != "$local_rehearsal_api" ||
+          "$WORKER_CANDIDATE_TASK_DEF" != "$local_rehearsal_worker" ||
+          "$DIGEST" != "$local_rehearsal_digest" ||
+          "$TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256" != "$local_rehearsal_network_sha" ]]; then
+      error "The rehearsal receipt binding changed between inspection and its single-use consumption."
+      exit 1
+    fi
+    TILE_AUTH_PLAN_REHEARSAL_CONSUMED_NETWORK_SHA256="$local_rehearsal_network_sha"
+    success "Consumed the one-use candidate rehearsal receipt (receiptSha256=${TILE_AUTH_PLAN_REHEARSAL_RECEIPT_SHA256})"
+  else
+  resolve_classpilot_candidate_source_task_definitions
 
   # Step 1: Build Docker image
   info "Building Docker image..."
@@ -2464,37 +3391,32 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
     --region "$REGION")
   info "Digest: $DIGEST"
 
-  info "Rendering task definition from the live service plus Terraform template..."
-  CURRENT_API_TASK_DEF=$(aws ecs describe-services \
-    --cluster "$CLUSTER" \
-    --services "$SERVICE" \
-    --query 'services[0].taskDefinition' \
-    --output text \
-    --region "$REGION")
-
-  aws ecs describe-task-definition \
-    --task-definition "$CURRENT_API_TASK_DEF" \
-    --query taskDefinition \
-    --output json \
-    --region "$REGION" > .taskdef-current.json
-
-  aws ecs describe-task-definition \
-    --task-definition "${NAME}-api" \
-    --query taskDefinition \
-    --output json \
-    --region "$REGION" > .taskdef-template.json
+  info "Rendering task definition from the exact immutable serving API revision..."
+  describe_exact_classpilot_candidate_task_definition \
+    "$API_CANDIDATE_SOURCE_TASK_DEFINITION_ARN" \
+    .taskdef-current.json
+  cp .taskdef-current.json .taskdef-template.json
 
   # Relative paths so this works with Windows node under Git Bash too.
-  ACCOUNT_ID="$ACCOUNT_ID" REGION="$REGION" PROJECT="$PROJECT" ENVIRONMENT="$ENV" IMAGE_REF="${ECR_REPO}@${DIGEST}" node -e '
+  ACCOUNT_ID="$ACCOUNT_ID" REGION="$REGION" PROJECT="$PROJECT" ENVIRONMENT="$ENV" \
+    API_FAMILY="${NAME}-api" \
+    EXPECTED_API_SOURCE_ARN="$API_CANDIDATE_SOURCE_TASK_DEFINITION_ARN" \
+    IMAGE_REF="${ECR_REPO}@${DIGEST}" node -e '
     const fs = require("fs");
     const td = JSON.parse(fs.readFileSync(".taskdef-current.json", "utf8"));
     const template = JSON.parse(fs.readFileSync(".taskdef-template.json", "utf8"));
+    if (td.taskDefinitionArn !== process.env.EXPECTED_API_SOURCE_ARN ||
+        template.taskDefinitionArn !== process.env.EXPECTED_API_SOURCE_ARN ||
+        td.status !== "ACTIVE" || template.status !== "ACTIVE") {
+      throw new Error("API candidate source does not match the exact serving task definition");
+    }
     const readonly = ["taskDefinitionArn","revision","status","requiresAttributes","compatibilities","registeredAt","registeredBy"];
     readonly.forEach(k => delete td[k]);
 
-    for (const key of ["family","taskRoleArn","executionRoleArn","networkMode","requiresCompatibilities","cpu","memory","runtimePlatform","ephemeralStorage"]) {
+    for (const key of ["taskRoleArn","executionRoleArn","networkMode","requiresCompatibilities","cpu","memory","runtimePlatform","ephemeralStorage"]) {
       if (template[key] !== undefined) td[key] = template[key];
     }
+    td.family = process.env.API_FAMILY;
 
     function mergeNamed(base = [], overlay = []) {
       const merged = new Map();
@@ -2554,11 +3476,17 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
     fs.writeFileSync(".taskdef-new.json", JSON.stringify(td));
   '
 
-  NEW_REV=$(aws ecs register-task-definition \
+  STANDARD_API_CANDIDATE_TASK_DEFINITION_ARN=$(aws ecs register-task-definition \
     --cli-input-json file://.taskdef-new.json \
-    --query 'taskDefinition.revision' \
+    --query 'taskDefinition.taskDefinitionArn' \
     --output text \
     --region "$REGION")
+  standard_api_pattern="^arn:aws:ecs:${REGION}:${ACCOUNT_ID}:task-definition/${NAME}-api:([1-9][0-9]*)$"
+  if [[ ! "$STANDARD_API_CANDIDATE_TASK_DEFINITION_ARN" =~ $standard_api_pattern ]]; then
+    error "The registered standard API candidate ARN was malformed."
+    exit 1
+  fi
+  NEW_REV="${BASH_REMATCH[1]}"
   success "Registered ${NAME}-api:${NEW_REV} (image pinned by digest)"
 
   # Pre-register an unused, digest-identical OOM recovery target. It is cloned
@@ -2629,32 +3557,44 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
     API_ROLLOUT_TASK_DEF="$EMERGENCY_TASK_DEF_ARN"
     success "Launch-safe API rollout selected: ${API_ROLLOUT_TASK_DEF} (512 CPU / 2048 MiB)"
   fi
-
-  # Step 5: Run migrations as an explicit one-off task before any service rollout.
-  info "Resolving ECS network configuration for migration task..."
-  aws ecs describe-services \
-    --cluster "$CLUSTER" \
-    --services "$SERVICE" \
-    --query 'services[0].networkConfiguration.awsvpcConfiguration' \
-    --output json \
-    --region "$REGION" > .ecs-network.json
-
-  NETWORK_CONFIG=$(node -e '
-    const fs = require("fs");
-    const cfg = JSON.parse(fs.readFileSync(".ecs-network.json", "utf8"));
-    if (!Array.isArray(cfg.subnets) || cfg.subnets.length === 0) {
-      throw new Error("ECS service has no subnet network configuration");
-    }
-    const securityGroups = Array.isArray(cfg.securityGroups) ? cfg.securityGroups : [];
-    const assignPublicIp = cfg.assignPublicIp || "DISABLED";
-    console.log(`awsvpcConfiguration={subnets=[${cfg.subnets.join(",")}],securityGroups=[${securityGroups.join(",")}],assignPublicIp=${assignPublicIp}}`);
-  ')
+  register_classpilot_candidate_worker_task_definition
+  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE" == true ]]; then
+    verify_classpilot_rehearsed_candidates
+  fi
+  fi
 
   # This opt-in release gate runs the exact digest-pinned 512/2048 revision in
   # the service VPC before the autoscaling hold, migration, or service update.
   # It cannot seed certification; it only proves the reviewed authorization
   # SQL plans and teaching-session school integrity for this release.
+  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE" == true ]]; then
+    if ! production_backend_deploy_window_preflight "before ClassPilot plan-gate execution"; then
+      exit 1
+    fi
+  fi
+  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" == true ]]; then
+    production_backend_capacity_preflight "before candidate gate-only rehearsal"
+    if [[ "$PRODUCTION_PREFLIGHT_API_TASK_DEFINITION" != "$PRODUCTION_ROLLBACK_API_TASK_DEFINITION" ||
+          "$PRODUCTION_PREFLIGHT_WORKER_TASK_DEFINITION" != "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION" ]]; then
+      error "The active API/worker baseline changed after candidate preparation; refusing the rehearsal."
+      exit 1
+    fi
+    run_classpilot_tile_auth_plan_base_preflight
+  fi
   run_classpilot_tile_auth_plan_gate predeploy
+  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" == true ]]; then
+    write_classpilot_rehearsal_receipt
+    if ! seal_classpilot_tile_auth_plan_rehearsal_terminal passed; then
+      error "The passing ClassPilot candidate rehearsal terminal could not be sealed."
+      exit 1
+    fi
+    success "Candidate gate-only rehearsal complete; no migration, scaling hold, service update, frontend publication, fixture mutation, lease, or traffic action was attempted."
+    exit 0
+  fi
+  if ! assert_classpilot_rehearsal_network_unchanged; then
+    error "The consumed rehearsal baseline drifted before the guarded deployment."
+    exit 1
+  fi
 
   # Acquire the hold only after the slow image and task-definition work, then
   # keep it through the one-off migration and both ECS service deployments.
@@ -2735,8 +3675,16 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
     error "Production ECS task revisions changed after the immutable rollback identities were captured; refusing the service rollout."
     exit 1
   fi
+  if ! assert_classpilot_rehearsal_network_unchanged; then
+    error "The consumed rehearsal network binding drifted before service rollout."
+    exit 1
+  fi
   launch_safe_active_api_preflight
   info "Updating ECS API service to ${API_ROLLOUT_TASK_DEF}..."
+  # Set before the request because a lost CLI response can leave an applied,
+  # otherwise unobserved service mutation. The EXIT trap restores both exact
+  # predeployment revisions until postdeploy identity and scaling are sealed.
+  CLASSPILOT_TILE_AUTH_SERVICE_MUTATION_STARTED=true
   aws ecs update-service \
     --cluster "$CLUSTER" \
     --service "$SERVICE" \
@@ -2747,74 +3695,15 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
 
   UPDATED_WORKER=false
   if [[ "$(ecs_service_status "$WORKER_SERVICE")" == "ACTIVE" ]]; then
-    info "Rendering scheduler worker task definition from the current worker revision..."
-    aws ecs describe-task-definition \
-      --task-definition "$WORKER_SERVICE" \
-      --query taskDefinition \
-      --output json \
-      --region "$REGION" > .worker-taskdef-current.json
-
-    aws ecs describe-task-definition \
-      --task-definition "${NAME}-api:${NEW_REV}" \
-      --query taskDefinition \
-      --output json \
-      --region "$REGION" > .worker-env-source.json
-
-    IMAGE_REF="${ECR_REPO}@${DIGEST}" node -e '
-      const fs = require("fs");
-      const td = JSON.parse(fs.readFileSync(".worker-taskdef-current.json", "utf8"));
-      const api = JSON.parse(fs.readFileSync(".worker-env-source.json", "utf8"));
-      ["taskDefinitionArn","revision","status","requiresAttributes","compatibilities","registeredAt","registeredBy"].forEach(k => delete td[k]);
-
-      function mergeNamed(base = [], overlay = []) {
-        const merged = new Map();
-        for (const item of base) merged.set(item.name, item);
-        for (const item of overlay) merged.set(item.name, item);
-        return [...merged.values()];
-      }
-
-      function dedupeEnvAgainstSecrets(container) {
-        const secretNames = new Set((container.secrets || []).map(item => item.name));
-        container.environment = (container.environment || []).filter(item => !secretNames.has(item.name));
-      }
-
-      function reconcileOptionalSecrets(container, sourceContainer) {
-        const optionalNames = new Set(["GOOGLE_OAUTH_TOKEN_ENCRYPTION_KEY_PREVIOUS"]);
-        const retiredNames = new Set(["OPENAI_API_KEY"]);
-        const enabledNames = new Set((sourceContainer.secrets || []).map(item => item.name));
-        container.secrets = (container.secrets || []).filter(
-          item => !retiredNames.has(item.name) &&
-            (!optionalNames.has(item.name) || enabledNames.has(item.name))
-        );
-        container.environment = (container.environment || []).filter(
-          item => !retiredNames.has(item.name) &&
-            (!optionalNames.has(item.name) || enabledNames.has(item.name))
-        );
-      }
-
-      const container = td.containerDefinitions.find(c => c.name === "scheduler-worker") || td.containerDefinitions[0];
-      const apiContainer = (api.containerDefinitions || []).find(c => c.name === "api") || api.containerDefinitions?.[0] || {};
-      container.image = process.env.IMAGE_REF;
-      container.environment = mergeNamed(apiContainer.environment, container.environment);
-      container.secrets = mergeNamed(apiContainer.secrets, container.secrets);
-      reconcileOptionalSecrets(container, apiContainer);
-      dedupeEnvAgainstSecrets(container);
-      fs.writeFileSync(".worker-taskdef-new.json", JSON.stringify(td));
-    '
-
-    WORKER_NEW_REV=$(aws ecs register-task-definition \
-      --cli-input-json file://.worker-taskdef-new.json \
-      --query 'taskDefinition.revision' \
-      --output text \
-      --region "$REGION")
-    rm -f .worker-taskdef-current.json .worker-env-source.json .worker-taskdef-new.json
-    success "Registered ${WORKER_SERVICE}:${WORKER_NEW_REV} (image pinned by digest)"
-
-    info "Updating scheduler worker service to revision ${WORKER_NEW_REV}..."
+    if [[ ! "$WORKER_CANDIDATE_TASK_DEF" =~ ^arn:aws:ecs:${REGION}:${ACCOUNT_ID}:task-definition/${WORKER_SERVICE}:[1-9][0-9]*$ ]]; then
+      error "The exact rehearsed scheduler-worker candidate binding is missing or malformed."
+      exit 1
+    fi
+    info "Updating scheduler worker service to exact candidate ${WORKER_CANDIDATE_TASK_DEF}..."
     aws ecs update-service \
       --cluster "$CLUSTER" \
       --service "$WORKER_SERVICE" \
-      --task-definition "${WORKER_SERVICE}:${WORKER_NEW_REV}" \
+      --task-definition "$WORKER_CANDIDATE_TASK_DEF" \
       --region "$REGION" \
       --query 'service.{status:status,desired:desiredCount,running:runningCount,taskDef:taskDefinition}' \
       --output table
@@ -2870,6 +3759,8 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
     error "Backend deployment stabilized, but autoscaling restoration failed; failing the deploy and retrying restoration from the EXIT trap."
     exit 1
   fi
+  CLASSPILOT_TILE_AUTH_SERVICE_MUTATION_STARTED=false
+  CLASSPILOT_TILE_AUTH_SAFE_TERMINAL_REACHED=true
 
   if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE" == true ]]; then
     success "Backend deploy complete (historyFallbackIdentityReceiptPathSha256=${TILE_AUTH_PLAN_IDENTITY_RECEIPT_PATH_SHA256}, receiptSha256=${TILE_AUTH_PLAN_IDENTITY_RECEIPT_SHA256})"

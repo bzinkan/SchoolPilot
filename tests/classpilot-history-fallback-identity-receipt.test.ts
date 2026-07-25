@@ -77,13 +77,17 @@ function eventsDocument(
     },
   };
   const lifecycle = {
-    version: "transactional-plan-scenarios-v1",
+    version: "transactional-plan-scenarios-v2",
+    requiredSessionPairs: 80,
+    reusedActiveSessionPairs: 0,
+    insertedSessionPairs: 80,
     seededRows: {
       groupTeachers: 1,
       teachingSessions: 1,
       supervisionContexts: 1,
       supervisionStudents: 40,
-      total: 43,
+      studentSessions: 80,
+      total: 123,
     },
     rollback: { attempted: true, completed: true },
     residue: { checked: true, count: 0, passed: true },

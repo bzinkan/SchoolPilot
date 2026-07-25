@@ -46,7 +46,13 @@ export function resolveClasspilotTileAuthorizationPlanLogBinding({
   const containers = Array.isArray(task.containers) ? task.containers : [];
   const apiContainers = containers.filter((container) => container?.name === "api");
   const api = apiContainers[0];
-  if (apiContainers.length !== 1 || api?.lastStatus !== "STOPPED" || api?.exitCode !== 0) {
+  if (
+    apiContainers.length !== 1 ||
+    api?.lastStatus !== "STOPPED" ||
+    !Number.isSafeInteger(api?.exitCode) ||
+    api.exitCode < 0 ||
+    api.exitCode > 255
+  ) {
     throw new Error("container_result_invalid");
   }
 
@@ -64,17 +70,29 @@ export function resolveClasspilotTileAuthorizationPlanLogBinding({
   // stream prefix/container-name/task-id. Some terminal DescribeTasks responses
   // omit the optional logStreamName field, so derive the exact same value from
   // already-bound task metadata instead of discovering or guessing a stream.
+  // A failed container's optional reported value is not authoritative: ECS can
+  // omit, truncate, or return stale metadata on terminal failures. The exact
+  // deterministic stream must still be read so the real sanitized gate failure
+  // is preserved. Successful tasks remain strict because accepting conflicting
+  // metadata would weaken their positive-evidence binding.
   const logStream = `${logPrefix}/api/${taskId}`;
-  if (Object.hasOwn(api, "logStreamName") && api.logStreamName != null &&
-      api.logStreamName !== logStream) {
-    throw new Error("reported_log_stream_mismatch");
-  }
-  if (Object.hasOwn(api, "logStreamName") && api.logStreamName != null &&
-      typeof api.logStreamName !== "string") {
-    throw new Error("reported_log_stream_invalid");
+  if (api.exitCode === 0 && Object.hasOwn(api, "logStreamName") &&
+      api.logStreamName != null) {
+    if (typeof api.logStreamName !== "string") {
+      throw new Error("reported_log_stream_invalid");
+    }
+    if (api.logStreamName !== logStream) {
+      throw new Error("reported_log_stream_mismatch");
+    }
   }
 
-  return { logGroup, logRegion, logPrefix, logStream };
+  return {
+    logGroup,
+    logRegion,
+    logPrefix,
+    logStream,
+    exitCode: api.exitCode,
+  };
 }
 
 const invokedPath = process.argv[1];
@@ -93,7 +111,7 @@ if (invokedPath && import.meta.url === pathToFileURL(invokedPath).href) {
       expectedAccountId: process.env.EXPECTED_ACCOUNT_ID,
     });
     process.stdout.write(
-      `${binding.logGroup}\t${binding.logRegion}\t${binding.logPrefix}\t${binding.logStream}`
+      `${binding.logGroup}\t${binding.logRegion}\t${binding.logPrefix}\t${binding.logStream}\t${binding.exitCode}`
     );
   } catch {
     process.stderr.write("classpilot_tile_authorization_plan_log_binding_invalid\n");

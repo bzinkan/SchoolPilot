@@ -33,9 +33,13 @@ const ADVISORY_LOCK_WAIT_TIMEOUT_MS = 60_000;
 const ADVISORY_LOCK_STATEMENT_TIMEOUT_MS =
   ADVISORY_LOCK_WAIT_TIMEOUT_MS + 5_000;
 const TRANSACTIONAL_PLAN_SCENARIO_VERSION =
-  "transactional-plan-scenarios-v1" as const;
+  "transactional-plan-scenarios-v2" as const;
+const TRANSACTIONAL_PLAN_BASE_PREFLIGHT_VERSION =
+  "classpilot-tile-auth-plan-base-preflight-v1" as const;
 const TRANSACTIONAL_PLAN_ADVISORY_LOCK_KEY =
   "classpilot-tile-authorization-plan-gate-v1";
+const TRANSACTIONAL_PLAN_REQUIRED_SESSION_PAIRS =
+  CLASSPILOT_TILE_AUTHORIZATION_PLAN_COHORT_SIZE * 2;
 
 export type ClasspilotTilePlanScenarioLabel =
   | "teacher.live"
@@ -102,7 +106,9 @@ type TransactionalPlanBase = {
   coTeacherId: string;
   officeStaffId: string;
   teacherStudentIds: string[];
+  teacherDeviceIds: string[];
   officeStudentIds: string[];
+  officeDeviceIds: string[];
 };
 
 type TransactionalPlanSeedIds = {
@@ -110,6 +116,7 @@ type TransactionalPlanSeedIds = {
   teachingSessionId: string;
   supervisionContextId: string;
   supervisionStudentIds: string[];
+  studentSessionIds: string[];
 };
 
 type TransactionalPlanSeedCounts = {
@@ -117,11 +124,15 @@ type TransactionalPlanSeedCounts = {
   teachingSessions: number;
   supervisionContexts: number;
   supervisionStudents: number;
+  studentSessions: number;
   total: number;
 };
 
 export type ClasspilotTransactionalPlanScenariosLifecycleEvent = {
   version: typeof TRANSACTIONAL_PLAN_SCENARIO_VERSION;
+  requiredSessionPairs: number;
+  reusedActiveSessionPairs: number;
+  insertedSessionPairs: number;
   seededRows: TransactionalPlanSeedCounts;
   rollback: {
     attempted: boolean;
@@ -137,6 +148,16 @@ export type ClasspilotTransactionalPlanScenariosLifecycleEvent = {
 export type ClasspilotTransactionalPlanScenariosLifecycleListener = (
   event: ClasspilotTransactionalPlanScenariosLifecycleEvent
 ) => void | Promise<void>;
+
+export type ClasspilotTileAuthorizationPlanBasePreflightReport = {
+  version: typeof TRANSACTIONAL_PLAN_BASE_PREFLIGHT_VERSION;
+  status: "passed";
+  eligibleBases: 1;
+  requiredSessionPairs: number;
+  reusedActiveSessionPairs: number;
+  missingSessionPairs: number;
+  conflictingSessionPairs: 0;
+};
 
 export type ClasspilotTilePlanEvidence = {
   executionMs: number;
@@ -257,7 +278,7 @@ const TEACHING_SESSION_SCHOOL_PRECHECK_SQL = `
 `;
 
 const TRANSACTIONAL_PLAN_BASE_SQL = `
-  /* transactional_plan_base_v1 */
+  /* transactional_plan_base_v2 */
   WITH described_groups AS MATERIALIZED (
     SELECT
       class_group.id AS group_id,
@@ -311,7 +332,8 @@ const TRANSACTIONAL_PLAN_BASE_SQL = `
       marked.primary_teacher_id,
       marked.description,
       marked.fixture_id,
-      roster.student_id
+      roster.student_id,
+      historical_device.device_id
     FROM marked_groups AS marked
     INNER JOIN group_students AS roster
       ON roster.group_id = marked.group_id
@@ -319,25 +341,17 @@ const TRANSACTIONAL_PLAN_BASE_SQL = `
       ON student.id = roster.student_id
      AND student.school_id = marked.school_id
      AND student.status = 'active'
-     AND upper(student.student_id_number) LIKE upper(marked.fixture_id) || '-P-%'
-    WHERE EXISTS (
-      SELECT 1
-      FROM student_sessions AS active_session
-      INNER JOIN devices AS active_device
-        ON active_device.device_id = active_session.device_id
-       AND active_device.school_id = marked.school_id
-      WHERE active_session.student_id = roster.student_id
-        AND active_session.is_active = true
-    )
-      AND EXISTS (
-        SELECT 1
-        FROM student_devices AS historical_mapping
-        INNER JOIN devices AS historical_device
-          ON historical_device.device_id = historical_mapping.device_id
-         AND historical_device.school_id = marked.school_id
-        WHERE historical_mapping.student_id = roster.student_id
-      )
-      AND NOT EXISTS (
+     AND upper(student.student_id_number)
+       ~ ('^' || upper(marked.fixture_id) || '-P-[0-9]{4}$')
+    INNER JOIN student_devices AS historical_mapping
+      ON historical_mapping.student_id = roster.student_id
+     AND historical_mapping.device_id =
+       marked.fixture_id || '-primary-' ||
+       right(student.student_id_number, 4)
+    INNER JOIN devices AS historical_device
+      ON historical_device.device_id = historical_mapping.device_id
+     AND historical_device.school_id = marked.school_id
+    WHERE NOT EXISTS (
         SELECT 1
         FROM classpilot_supervision_students AS supervised
         INNER JOIN classpilot_supervision_contexts AS context
@@ -358,7 +372,9 @@ const TRANSACTIONAL_PLAN_BASE_SQL = `
       qualified.description,
       qualified.fixture_id,
       array_agg(qualified.student_id ORDER BY qualified.student_id)
-        AS teacher_student_ids
+        AS teacher_student_ids,
+      array_agg(qualified.device_id ORDER BY qualified.student_id)
+        AS teacher_device_ids
     FROM qualified_group_students AS qualified
     WHERE NOT EXISTS (
       SELECT 1
@@ -400,41 +416,33 @@ const TRANSACTIONAL_PLAN_BASE_SQL = `
       eligible_school.school_id,
       eligible_school.fixture_id,
       student.id AS student_id,
+      historical_device.device_id,
       row_number() OVER (
         PARTITION BY eligible_school.school_id
         ORDER BY student.id
       ) AS student_rank,
       count(*) OVER (
         PARTITION BY eligible_school.school_id
-      ) AS cohort_count
+    ) AS cohort_count
     FROM eligible_group_schools AS eligible_school
     INNER JOIN students AS student
       ON student.school_id = eligible_school.school_id
      AND student.status = 'active'
      AND upper(student.student_id_number)
-       LIKE upper(eligible_school.fixture_id) || '-P-%'
+       ~ ('^' || upper(eligible_school.fixture_id) || '-P-[0-9]{4}$')
+    INNER JOIN student_devices AS historical_mapping
+      ON historical_mapping.student_id = student.id
+     AND historical_mapping.device_id =
+       eligible_school.fixture_id || '-primary-' ||
+       right(student.student_id_number, 4)
+    INNER JOIN devices AS historical_device
+      ON historical_device.device_id = historical_mapping.device_id
+     AND historical_device.school_id = eligible_school.school_id
     WHERE NOT EXISTS (
       SELECT 1
       FROM group_students AS any_roster
       WHERE any_roster.student_id = student.id
     )
-      AND EXISTS (
-        SELECT 1
-        FROM student_sessions AS active_session
-        INNER JOIN devices AS active_device
-          ON active_device.device_id = active_session.device_id
-         AND active_device.school_id = eligible_school.school_id
-        WHERE active_session.student_id = student.id
-          AND active_session.is_active = true
-      )
-      AND EXISTS (
-        SELECT 1
-        FROM student_devices AS historical_mapping
-        INNER JOIN devices AS historical_device
-          ON historical_device.device_id = historical_mapping.device_id
-         AND historical_device.school_id = eligible_school.school_id
-        WHERE historical_mapping.student_id = student.id
-      )
       AND NOT EXISTS (
         SELECT 1
         FROM classpilot_supervision_students AS supervised
@@ -514,7 +522,9 @@ const TRANSACTIONAL_PLAN_BASE_SQL = `
     SELECT
       office.school_id,
       array_agg(office.student_id ORDER BY office.student_rank)
-        AS office_student_ids
+        AS office_student_ids,
+      array_agg(office.device_id ORDER BY office.student_rank)
+        AS office_device_ids
     FROM office_candidates AS office
     INNER JOIN selected_school AS selected
       ON selected.school_id = office.school_id
@@ -529,12 +539,136 @@ const TRANSACTIONAL_PLAN_BASE_SQL = `
     co_teacher.co_teacher_id,
     office_staff.office_staff_id,
     selected.teacher_student_ids,
-    office_cohort.office_student_ids
+    selected.teacher_device_ids,
+    office_cohort.office_student_ids,
+    office_cohort.office_device_ids
   FROM selected_group AS selected
   CROSS JOIN selected_co_teacher AS co_teacher
   CROSS JOIN selected_office_staff AS office_staff
   INNER JOIN selected_office_cohort AS office_cohort
     ON office_cohort.school_id = selected.school_id
+`;
+
+const TRANSACTIONAL_PLAN_SESSION_POSTURE_SQL = `
+  /* transactional_plan_session_posture_v1 */
+  WITH requested AS MATERIALIZED (
+    SELECT student_id, device_id
+    FROM unnest($1::text[], $2::text[])
+      AS requested(student_id, device_id)
+  ),
+  classified AS MATERIALIZED (
+    SELECT
+      requested.student_id,
+      requested.device_id,
+      EXISTS (
+        SELECT 1
+        FROM student_sessions AS active_session
+        WHERE active_session.is_active = true
+          AND active_session.student_id = requested.student_id
+          AND active_session.device_id = requested.device_id
+      ) AS exact_pair_exists,
+      EXISTS (
+        SELECT 1
+        FROM student_sessions AS active_session
+        WHERE active_session.is_active = true
+          AND (
+            (
+              active_session.student_id = requested.student_id
+              AND active_session.device_id <> requested.device_id
+            )
+            OR (
+              active_session.device_id = requested.device_id
+              AND active_session.student_id <> requested.student_id
+            )
+          )
+      ) AS conflicting_pair_exists
+    FROM requested
+  )
+  SELECT
+    count(*)::integer AS required_count,
+    count(*) FILTER (
+      WHERE exact_pair_exists AND NOT conflicting_pair_exists
+    )::integer AS reused_count,
+    count(*) FILTER (
+      WHERE NOT exact_pair_exists AND NOT conflicting_pair_exists
+    )::integer AS missing_count,
+    count(*) FILTER (
+      WHERE conflicting_pair_exists
+    )::integer AS conflicting_count
+  FROM classified
+`;
+
+const SEED_STUDENT_SESSIONS_SQL = `
+  /* transactional_plan_seed_student_sessions_v1 */
+  WITH requested AS MATERIALIZED (
+    SELECT seed_id, student_id, device_id
+    FROM unnest($1::text[], $2::text[], $3::text[])
+      AS requested(seed_id, student_id, device_id)
+  ),
+  classified AS MATERIALIZED (
+    SELECT
+      requested.*,
+      EXISTS (
+        SELECT 1
+        FROM student_sessions AS active_session
+        WHERE active_session.is_active = true
+          AND active_session.student_id = requested.student_id
+          AND active_session.device_id = requested.device_id
+      ) AS exact_pair_exists,
+      EXISTS (
+        SELECT 1
+        FROM student_sessions AS active_session
+        WHERE active_session.is_active = true
+          AND (
+            (
+              active_session.student_id = requested.student_id
+              AND active_session.device_id <> requested.device_id
+            )
+            OR (
+              active_session.device_id = requested.device_id
+              AND active_session.student_id <> requested.student_id
+            )
+          )
+      ) AS conflicting_pair_exists
+    FROM requested
+  ),
+  inserted AS (
+    INSERT INTO student_sessions (
+      id,
+      student_id,
+      device_id,
+      started_at,
+      last_seen_at,
+      ended_at,
+      is_active
+    )
+    SELECT
+      classified.seed_id,
+      classified.student_id,
+      classified.device_id,
+      now(),
+      now(),
+      NULL,
+      true
+    FROM classified
+    WHERE classified.exact_pair_exists = false
+      AND classified.conflicting_pair_exists = false
+    RETURNING 1
+  )
+  SELECT
+    (SELECT count(*)::integer FROM classified) AS required_count,
+    (
+      SELECT count(*)::integer
+      FROM classified
+      WHERE exact_pair_exists = true
+        AND conflicting_pair_exists = false
+    ) AS reused_count,
+    (
+      SELECT count(*)::integer
+      FROM classified
+      WHERE conflicting_pair_exists = true
+    ) AS conflicting_count,
+    (SELECT count(*)::integer FROM inserted) AS inserted_count
 `;
 
 const SEED_GROUP_TEACHER_SQL = `
@@ -637,7 +771,7 @@ const SEED_SUPERVISION_STUDENTS_SQL = `
 `;
 
 const TRANSACTIONAL_PLAN_RESIDUE_SQL = `
-  /* transactional_plan_residue_v1 */
+  /* transactional_plan_residue_v2 */
   SELECT (
     (SELECT count(*) FROM group_teachers WHERE id = $1)
     + (SELECT count(*) FROM teaching_sessions WHERE id = $2)
@@ -647,6 +781,11 @@ const TRANSACTIONAL_PLAN_RESIDUE_SQL = `
       FROM classpilot_supervision_students
       WHERE context_id = $3
          OR id = ANY($4::text[])
+    )
+    + (
+      SELECT count(*)
+      FROM student_sessions
+      WHERE id = ANY($5::text[])
     )
   )::integer AS residue_count
 `;
@@ -986,7 +1125,9 @@ async function readTransactionalPlanBase(
     co_teacher_id: unknown;
     office_staff_id: unknown;
     teacher_student_ids: unknown;
+    teacher_device_ids: unknown;
     office_student_ids: unknown;
+    office_device_ids: unknown;
   }>(TRANSACTIONAL_PLAN_BASE_SQL, [cohortSize]);
   if (result.rows.length !== 1) representativeScenarioFailure();
   const row = result.rows[0];
@@ -1016,10 +1157,19 @@ async function readTransactionalPlanBase(
     row.office_student_ids,
     cohortSize
   );
+  const teacherDeviceIds = requireUniqueStringArray(
+    row.teacher_device_ids,
+    cohortSize
+  );
+  const officeDeviceIds = requireUniqueStringArray(
+    row.office_device_ids,
+    cohortSize
+  );
   if (
     officeStudentIds.some((studentId) =>
       teacherStudentIds.includes(studentId)
-    )
+    ) ||
+    officeDeviceIds.some((deviceId) => teacherDeviceIds.includes(deviceId))
   ) {
     representativeScenarioFailure();
   }
@@ -1030,12 +1180,15 @@ async function readTransactionalPlanBase(
     coTeacherId: row.co_teacher_id,
     officeStaffId: row.office_staff_id,
     teacherStudentIds,
+    teacherDeviceIds,
     officeStudentIds,
+    officeDeviceIds,
   };
 }
 
 function createTransactionalPlanSeedIds(
-  cohortSize: number
+  cohortSize: number,
+  requiredSessionPairs = cohortSize * 2
 ): TransactionalPlanSeedIds {
   return {
     groupTeacherId: randomUUID(),
@@ -1045,7 +1198,72 @@ function createTransactionalPlanSeedIds(
       { length: cohortSize },
       () => randomUUID()
     ),
+    studentSessionIds: Array.from(
+      { length: requiredSessionPairs },
+      () => randomUUID()
+    ),
   };
+}
+
+type TransactionalPlanSessionPosture = {
+  required: number;
+  reused: number;
+  missing: number;
+  conflicting: number;
+};
+
+function transactionalPlanPairs(base: TransactionalPlanBase): {
+  studentIds: string[];
+  deviceIds: string[];
+} {
+  return {
+    studentIds: [...base.teacherStudentIds, ...base.officeStudentIds],
+    deviceIds: [...base.teacherDeviceIds, ...base.officeDeviceIds],
+  };
+}
+
+function parseSessionPostureResult(
+  result: QueryResult<{
+    required_count: number | string;
+    reused_count: number | string;
+    missing_count: number | string;
+    conflicting_count: number | string;
+  }>
+): TransactionalPlanSessionPosture {
+  const required = Number(result.rows[0]?.required_count);
+  const reused = Number(result.rows[0]?.reused_count);
+  const missing = Number(result.rows[0]?.missing_count);
+  const conflicting = Number(result.rows[0]?.conflicting_count);
+  if (
+    result.rows.length !== 1 ||
+    ![required, reused, missing, conflicting].every(
+      (value) => Number.isInteger(value) && value >= 0
+    ) ||
+    required !== TRANSACTIONAL_PLAN_REQUIRED_SESSION_PAIRS ||
+    reused + missing + conflicting !== required ||
+    conflicting !== 0
+  ) {
+    representativeScenarioFailure();
+  }
+  return { required, reused, missing, conflicting };
+}
+
+async function readTransactionalPlanSessionPosture(
+  client: ClasspilotTilePlanQueryClient,
+  base: TransactionalPlanBase
+): Promise<TransactionalPlanSessionPosture> {
+  const pairs = transactionalPlanPairs(base);
+  return parseSessionPostureResult(
+    await client.query<{
+      required_count: number | string;
+      reused_count: number | string;
+      missing_count: number | string;
+      conflicting_count: number | string;
+    }>(TRANSACTIONAL_PLAN_SESSION_POSTURE_SQL, [
+      pairs.studentIds,
+      pairs.deviceIds,
+    ])
+  );
 }
 
 function requireInsertedCount(
@@ -1069,8 +1287,53 @@ async function seedTransactionalPlanScenarios(
   client: ClasspilotTilePlanQueryClient,
   base: TransactionalPlanBase,
   seedIds: TransactionalPlanSeedIds,
-  counts: TransactionalPlanSeedCounts
-): Promise<void> {
+  counts: TransactionalPlanSeedCounts,
+  expectedSessionPosture: TransactionalPlanSessionPosture
+): Promise<number> {
+  const pairs = transactionalPlanPairs(base);
+  const sessionResult = await client.query<{
+    required_count: number | string;
+    reused_count: number | string;
+    conflicting_count: number | string;
+    inserted_count: number | string;
+  }>(SEED_STUDENT_SESSIONS_SQL, [
+    seedIds.studentSessionIds,
+    pairs.studentIds,
+    pairs.deviceIds,
+  ]);
+  const requiredSessionPairs = Number(
+    sessionResult.rows[0]?.required_count
+  );
+  const reusedActiveSessionPairs = Number(
+    sessionResult.rows[0]?.reused_count
+  );
+  const conflictingSessionPairs = Number(
+    sessionResult.rows[0]?.conflicting_count
+  );
+  const insertedSessionPairs = Number(
+    sessionResult.rows[0]?.inserted_count
+  );
+  if (
+    sessionResult.rows.length !== 1 ||
+    ![
+      requiredSessionPairs,
+      reusedActiveSessionPairs,
+      conflictingSessionPairs,
+      insertedSessionPairs,
+    ].every((value) => Number.isInteger(value) && value >= 0) ||
+    requiredSessionPairs !== TRANSACTIONAL_PLAN_REQUIRED_SESSION_PAIRS ||
+    reusedActiveSessionPairs !== expectedSessionPosture.reused ||
+    insertedSessionPairs !== expectedSessionPosture.missing ||
+    conflictingSessionPairs !== 0 ||
+    reusedActiveSessionPairs + insertedSessionPairs !== requiredSessionPairs
+  ) {
+    throw new ClasspilotTileAuthorizationPlanCheckError(
+      "transactional_scenario_lifecycle_failed"
+    );
+  }
+  counts.studentSessions = insertedSessionPairs;
+  counts.total += counts.studentSessions;
+
   counts.groupTeachers = requireInsertedCount(
     await client.query<{ inserted_count: number | string }>(
       SEED_GROUP_TEACHER_SQL,
@@ -1121,11 +1384,12 @@ async function seedTransactionalPlanScenarios(
     CLASSPILOT_TILE_AUTHORIZATION_PLAN_COHORT_SIZE
   );
   counts.total += counts.supervisionStudents;
-  if (counts.total !== 43) {
+  if (counts.total !== 43 + insertedSessionPairs) {
     throw new ClasspilotTileAuthorizationPlanCheckError(
       "transactional_scenario_lifecycle_failed"
     );
   }
+  return reusedActiveSessionPairs;
 }
 
 async function runTeachingSessionSchoolPrecheck(
@@ -1186,6 +1450,7 @@ async function verifyTransactionalPlanResidue(
       seedIds.teachingSessionId,
       seedIds.supervisionContextId,
       seedIds.supervisionStudentIds,
+      seedIds.studentSessionIds,
     ]);
     const residueCount = Number(result.rows[0]?.residue_count);
     if (
@@ -1825,13 +2090,74 @@ async function measureHistoryFallback(
     };
 }
 
+export async function runClasspilotTileAuthorizationPlanBasePreflight(options: {
+  client: ClasspilotTilePlanQueryClient;
+}): Promise<ClasspilotTileAuthorizationPlanBasePreflightReport> {
+  let transactionStarted = false;
+  let report: ClasspilotTileAuthorizationPlanBasePreflightReport | undefined;
+  let primaryError: unknown;
+  try {
+    await options.client.query(
+      "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"
+    );
+    transactionStarted = true;
+    await configureTransaction(options.client);
+    await options.client.query(
+      "SELECT set_config('app.is_super', 'on', true)"
+    );
+    await runTeachingSessionSchoolPrecheck(options.client);
+    const base = await readTransactionalPlanBase(
+      options.client,
+      CLASSPILOT_TILE_AUTHORIZATION_PLAN_COHORT_SIZE
+    );
+    const posture = await readTransactionalPlanSessionPosture(
+      options.client,
+      base
+    );
+    report = {
+      version: TRANSACTIONAL_PLAN_BASE_PREFLIGHT_VERSION,
+      status: "passed",
+      eligibleBases: 1,
+      requiredSessionPairs: posture.required,
+      reusedActiveSessionPairs: posture.reused,
+      missingSessionPairs: posture.missing,
+      conflictingSessionPairs: 0,
+    };
+  } catch (error) {
+    primaryError = error;
+  }
+
+  const rollbackCompleted = transactionStarted
+    ? await rollbackRequired(options.client)
+    : false;
+  if (!transactionStarted || !rollbackCompleted) {
+    throw new ClasspilotTileAuthorizationPlanCheckError(
+      "transactional_scenario_lifecycle_failed"
+    );
+  }
+  if (primaryError) throw primaryError;
+  if (!report) {
+    throw new ClasspilotTileAuthorizationPlanCheckError(
+      "representative_scenario_missing",
+      SCENARIOS.map((scenario) => scenario.label)
+    );
+  }
+  return report;
+}
+
 export async function runClasspilotTileAuthorizationPlanCheck(options: {
   client: ClasspilotTilePlanQueryClient;
+  residueClient: ClasspilotTilePlanQueryClient;
   buildQuery: ClasspilotTileAuthorizationQueryBuilder;
   buildHistoryQuery: ClasspilotTileHistoryFallbackQueryBuilder;
   samples?: number;
   onLifecycleEvent?: ClasspilotTransactionalPlanScenariosLifecycleListener;
 }): Promise<ClasspilotTileAuthorizationPlanReport> {
+  if (options.residueClient === options.client) {
+    throw new ClasspilotTileAuthorizationPlanCheckError(
+      "invalid_configuration"
+    );
+  }
   const samples = options.samples ?? CLASSPILOT_TILE_AUTHORIZATION_PLAN_SAMPLES;
   if (
     !Number.isInteger(samples) ||
@@ -1843,24 +2169,27 @@ export async function runClasspilotTileAuthorizationPlanCheck(options: {
     );
   }
   const seedIds = createTransactionalPlanSeedIds(
-    CLASSPILOT_TILE_AUTHORIZATION_PLAN_COHORT_SIZE
+    CLASSPILOT_TILE_AUTHORIZATION_PLAN_COHORT_SIZE,
+    TRANSACTIONAL_PLAN_REQUIRED_SESSION_PAIRS
   );
   const seededRows: TransactionalPlanSeedCounts = {
     groupTeachers: 0,
     teachingSessions: 0,
     supervisionContexts: 0,
     supervisionStudents: 0,
+    studentSessions: 0,
     total: 0,
   };
-  let transactionStarted = false;
+  let reusedActiveSessionPairs = 0;
+  let transactionStartAttempted = false;
   let primaryError: unknown;
   let report: ClasspilotTileAuthorizationPlanReport | undefined;
 
   try {
+    transactionStartAttempted = true;
     await options.client.query(
       "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ WRITE"
     );
-    transactionStarted = true;
     // Bound the serialized wait explicitly rather than relying on the
     // connection's ambient role/session posture. Once ownership is acquired,
     // replace this wait budget with the much shorter measurement timeouts.
@@ -1879,11 +2208,17 @@ export async function runClasspilotTileAuthorizationPlanCheck(options: {
       options.client,
       CLASSPILOT_TILE_AUTHORIZATION_PLAN_COHORT_SIZE
     );
-    await seedTransactionalPlanScenarios(
+    const sessionPosture = await readTransactionalPlanSessionPosture(
+      options.client,
+      base
+    );
+    reusedActiveSessionPairs = sessionPosture.reused;
+    reusedActiveSessionPairs = await seedTransactionalPlanScenarios(
       options.client,
       base,
       seedIds,
-      seededRows
+      seededRows,
+      sessionPosture
     );
     const discoveredScenarios = await discoverScenarios(
       options.client,
@@ -1950,17 +2285,17 @@ export async function runClasspilotTileAuthorizationPlanCheck(options: {
     primaryError = error;
   }
 
-  const rollbackAttempted = transactionStarted;
-  const rollbackCompleted = transactionStarted
+  const rollbackAttempted = transactionStartAttempted;
+  const rollbackCompleted = transactionStartAttempted
     ? await rollbackRequired(options.client)
     : false;
   let residueChecked = false;
   let residueCount: number | null = null;
   let residueError: unknown;
-  if (!transactionStarted || rollbackCompleted) {
+  if (transactionStartAttempted) {
     try {
       residueCount = await verifyTransactionalPlanResidue(
-        options.client,
+        options.residueClient,
         seedIds
       );
       residueChecked = true;
@@ -1970,6 +2305,9 @@ export async function runClasspilotTileAuthorizationPlanCheck(options: {
   }
   const lifecycleEvent: ClasspilotTransactionalPlanScenariosLifecycleEvent = {
     version: TRANSACTIONAL_PLAN_SCENARIO_VERSION,
+    requiredSessionPairs: TRANSACTIONAL_PLAN_REQUIRED_SESSION_PAIRS,
+    reusedActiveSessionPairs,
+    insertedSessionPairs: seededRows.studentSessions,
     seededRows: { ...seededRows },
     rollback: {
       attempted: rollbackAttempted,
@@ -1991,7 +2329,7 @@ export async function runClasspilotTileAuthorizationPlanCheck(options: {
   }
 
   if (
-    (transactionStarted && !rollbackCompleted) ||
+    (transactionStartAttempted && !rollbackCompleted) ||
     !residueChecked ||
     residueCount !== 0 ||
     residueError ||
@@ -2009,7 +2347,9 @@ export async function runClasspilotTileAuthorizationPlanCheck(options: {
     seededRows.supervisionContexts !== 1 ||
     seededRows.supervisionStudents !==
       CLASSPILOT_TILE_AUTHORIZATION_PLAN_COHORT_SIZE ||
-    seededRows.total !== 43
+    reusedActiveSessionPairs + seededRows.studentSessions !==
+      TRANSACTIONAL_PLAN_REQUIRED_SESSION_PAIRS ||
+    seededRows.total !== 43 + seededRows.studentSessions
   ) {
     throw new ClasspilotTileAuthorizationPlanCheckError(
       "transactional_scenario_lifecycle_failed"
