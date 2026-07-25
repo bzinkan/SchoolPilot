@@ -677,6 +677,28 @@ function Wait-SupervisorWorkerIdentity {
     $watch = [Diagnostics.Stopwatch]::StartNew()
     do {
         Start-Sleep -Milliseconds 100
+        # The immutable ownership proof is authored by the supervisor before it
+        # resumes the worker.  Consume that exact identity instead of
+        # reconstructing one from a concurrent WMI child-process observation.
+        # That observer can race ahead of the running-state publication and is
+        # not the authority that admitted the worker.
+        $ownershipPath = Join-Path $Context.RunRoot 'worker-ownership.private.json'
+        if (Test-Path -LiteralPath $ownershipPath -PathType Leaf) {
+            try {
+                $ownership = Get-Content -LiteralPath $ownershipPath -Raw |
+                    ConvertFrom-Json -DateKind String -Depth 30
+                if ([string]$ownership.type -ceq 'diagnostic_prep_worker_ownership' -and
+                    [string]$ownership.version -ceq 'diagnostic-prep-worker-job-v1' -and
+                    [string]$ownership.runId -ceq [string]$Context.Manifest.runId -and
+                    $null -ne $ownership.worker -and
+                    [int]$ownership.worker.pid -gt 0 -and
+                    -not [string]::IsNullOrWhiteSpace([string]$ownership.worker.startedAtUtc) -and
+                    -not [string]::IsNullOrWhiteSpace([string]$ownership.worker.path)) {
+                    return $ownership.worker
+                }
+            }
+            catch { }
+        }
         $statePath = [string]$Context.Manifest.paths.supervisorStatePath
         if (Test-Path -LiteralPath $statePath -PathType Leaf) {
             try {
@@ -686,26 +708,6 @@ function Wait-SupervisorWorkerIdentity {
                     [int]$state.worker.pid -gt 0 -and
                     -not [string]::IsNullOrWhiteSpace([string]$state.worker.startedAtUtc)) {
                     return $state.worker
-                }
-            }
-            catch { }
-        }
-        $ticketPath = Join-Path $Context.RunRoot 'supervisor-ticket.private.json'
-        if (Test-Path -LiteralPath $ticketPath -PathType Leaf) {
-            try {
-                $ticket = Get-Content -LiteralPath $ticketPath -Raw |
-                    ConvertFrom-Json -DateKind String -Depth 30
-                $children = @(Get-CimInstance Win32_Process -Filter "ParentProcessId = $([int]$ticket.supervisor.pid)" |
-                    Where-Object {
-                        [string]$_.CommandLine -like ('*' + [IO.Path]::GetFileName($workerPath) + '*')
-                    })
-                if ($children.Count -eq 1) {
-                    $child = Get-Process -Id ([int]$children[0].ProcessId) -ErrorAction Stop
-                    return [pscustomobject]@{
-                        pid = [int]$child.Id
-                        startedAtUtc = ([DateTimeOffset]$child.StartTime.ToUniversalTime()).ToString('o')
-                        path = [string]$child.Path
-                    }
                 }
             }
             catch { }

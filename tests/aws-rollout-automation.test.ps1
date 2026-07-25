@@ -274,7 +274,7 @@ $global:SchoolPilotTestTaskUpdateObservations = [System.Collections.Generic.List
 $global:SchoolPilotTestUpdateServiceCallCount = 0
 $global:SchoolPilotTestFailUpdateServiceSelector = $null
 $global:SchoolPilotTestForceUnstableService = ""
-$global:SchoolPilotTestFailedDeploymentService = ""
+$global:SchoolPilotTestFailedDeploymentSelector = $null
 $global:SchoolPilotTestTransientMixedDeploymentPolls = @{ api = 0; worker = 0 }
 $global:SchoolPilotTestTargetDrainingPolls = 0
 $global:SchoolPilotTestZeroHealthyTargetPolls = 0
@@ -349,14 +349,23 @@ function global:aws {
         if ($apiTransientMixed) { $global:SchoolPilotTestTransientMixedDeploymentPolls.api-- }
         $workerTransientMixed = [int]$global:SchoolPilotTestTransientMixedDeploymentPolls.worker -gt 0
         if ($workerTransientMixed) { $global:SchoolPilotTestTransientMixedDeploymentPolls.worker-- }
+        $failedDeploymentSelector = $global:SchoolPilotTestFailedDeploymentSelector
+        $apiFailedDeployment = $null -ne $failedDeploymentSelector -and
+            [string]$failedDeploymentSelector.service -eq "api" -and
+            [string]$failedDeploymentSelector.taskDefinition -eq
+                [string]$global:SchoolPilotTestServiceState.api.taskDefinition
+        $workerFailedDeployment = $null -ne $failedDeploymentSelector -and
+            [string]$failedDeploymentSelector.service -eq "worker" -and
+            [string]$failedDeploymentSelector.taskDefinition -eq
+                [string]$global:SchoolPilotTestServiceState.worker.taskDefinition
         $apiDeployments = @(
-            @{ id = "ecs-svc/api-primary"; status = "PRIMARY"; rolloutState = if ($global:SchoolPilotTestFailedDeploymentService -eq "api") { "FAILED" } else { "COMPLETED" }; taskDefinition = $global:SchoolPilotTestServiceState.api.taskDefinition; desiredCount = $global:SchoolPilotTestServiceState.api.desired; runningCount = $global:SchoolPilotTestServiceState.api.running; pendingCount = $global:SchoolPilotTestServiceState.api.pending }
+            @{ id = "ecs-svc/api-primary"; status = "PRIMARY"; rolloutState = if ($apiFailedDeployment) { "FAILED" } else { "COMPLETED" }; taskDefinition = $global:SchoolPilotTestServiceState.api.taskDefinition; desiredCount = $global:SchoolPilotTestServiceState.api.desired; runningCount = $global:SchoolPilotTestServiceState.api.running; pendingCount = $global:SchoolPilotTestServiceState.api.pending }
         )
         if ($global:SchoolPilotTestForceUnstableService -eq "api" -or $apiTransientMixed) {
             $apiDeployments += @{ id = "ecs-svc/api-draining"; status = "ACTIVE"; rolloutState = "IN_PROGRESS"; taskDefinition = "api-mixed"; desiredCount = 0; runningCount = 1; pendingCount = 0 }
         }
         $workerDeployments = @(
-            @{ id = "ecs-svc/worker-primary"; status = "PRIMARY"; rolloutState = if ($global:SchoolPilotTestFailedDeploymentService -eq "worker") { "FAILED" } else { "COMPLETED" }; taskDefinition = $global:SchoolPilotTestServiceState.worker.taskDefinition; desiredCount = $global:SchoolPilotTestServiceState.worker.desired; runningCount = $global:SchoolPilotTestServiceState.worker.running; pendingCount = $global:SchoolPilotTestServiceState.worker.pending }
+            @{ id = "ecs-svc/worker-primary"; status = "PRIMARY"; rolloutState = if ($workerFailedDeployment) { "FAILED" } else { "COMPLETED" }; taskDefinition = $global:SchoolPilotTestServiceState.worker.taskDefinition; desiredCount = $global:SchoolPilotTestServiceState.worker.desired; runningCount = $global:SchoolPilotTestServiceState.worker.running; pendingCount = $global:SchoolPilotTestServiceState.worker.pending }
         )
         if ($global:SchoolPilotTestForceUnstableService -eq "worker" -or $workerTransientMixed) {
             $workerDeployments += @{ id = "ecs-svc/worker-draining"; status = "ACTIVE"; rolloutState = "IN_PROGRESS"; taskDefinition = "worker-mixed"; desiredCount = 0; runningCount = 1; pendingCount = 0 }
@@ -4140,16 +4149,39 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
     [IO.File]::WriteAllText($rollbackConfigPath, ($failedDeploymentConfig | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
     $global:SchoolPilotTestServiceState.api.taskDefinition = "api-current"
     $global:SchoolPilotTestServiceState.worker.taskDefinition = "worker-current"
-    $global:SchoolPilotTestFailedDeploymentService = "api"
+    $failedDeploymentTaskStart = $global:SchoolPilotTestTaskUpdateObservations.Count
+    $global:SchoolPilotTestFailedDeploymentSelector = [ordered]@{
+        service = "api"
+        taskDefinition = "api-previous"
+    }
     $failedDeploymentError = $null
     try { & $rollbackScript -ConfigPath $rollbackConfigPath -Action Application -Mode Execute | Out-Null }
     catch { $failedDeploymentError = $_ }
-    finally { $global:SchoolPilotTestFailedDeploymentService = "" }
+    finally { $global:SchoolPilotTestFailedDeploymentSelector = $null }
+    $failedDeploymentTaskUpdates = @(
+        $global:SchoolPilotTestTaskUpdateObservations |
+            Select-Object -Skip $failedDeploymentTaskStart
+    )
+    $failedDeploymentDiagnostic = [ordered]@{
+        error = if ($null -eq $failedDeploymentError) {
+            "<none>"
+        }
+        else {
+            [string]$failedDeploymentError.Exception.Message
+        }
+        taskUpdateCount = $failedDeploymentTaskUpdates.Count
+        taskUpdateServices = @(
+            $failedDeploymentTaskUpdates | ForEach-Object { [string]$_.service }
+        )
+        apiTaskDefinition = [string]$global:SchoolPilotTestServiceState.api.taskDefinition
+        workerTaskDefinition = [string]$global:SchoolPilotTestServiceState.worker.taskDefinition
+    } | ConvertTo-Json -Compress -Depth 10
     Assert-Condition (
         $null -ne $failedDeploymentError -and
         $failedDeploymentError.Exception.Message -match "rolloutState=FAILED" -and
-        $global:SchoolPilotTestServiceState.worker.taskDefinition -eq "worker-current"
-    ) "A failed API deployment must stop before worker rollback."
+        $global:SchoolPilotTestServiceState.worker.taskDefinition -eq "worker-current" -and
+        @($failedDeploymentTaskUpdates | Where-Object service -eq "worker").Count -eq 0
+    ) "A failed API deployment must stop before worker rollback. Observed: $failedDeploymentDiagnostic"
     $failedDeploymentEvidence = @(Get-Content -LiteralPath (Join-Path $evidenceDirectory "$($failedDeploymentConfig.runId)-rollback.jsonl") |
         ForEach-Object { $_ | ConvertFrom-Json -Depth 30 })
     $failedDeploymentFailed = @($failedDeploymentEvidence | Where-Object status -eq "failed")
@@ -4367,7 +4399,7 @@ finally {
     Remove-Variable SchoolPilotTestUpdateServiceCallCount -Scope Global -ErrorAction SilentlyContinue
     Remove-Variable SchoolPilotTestFailUpdateServiceSelector -Scope Global -ErrorAction SilentlyContinue
     Remove-Variable SchoolPilotTestForceUnstableService -Scope Global -ErrorAction SilentlyContinue
-    Remove-Variable SchoolPilotTestFailedDeploymentService -Scope Global -ErrorAction SilentlyContinue
+    Remove-Variable SchoolPilotTestFailedDeploymentSelector -Scope Global -ErrorAction SilentlyContinue
     Remove-Variable SchoolPilotTestTransientMixedDeploymentPolls -Scope Global -ErrorAction SilentlyContinue
     Remove-Variable SchoolPilotTestTargetDrainingPolls -Scope Global -ErrorAction SilentlyContinue
     Remove-Variable SchoolPilotTestTamperNatPlanBeforeApplyPath -Scope Global -ErrorAction SilentlyContinue
