@@ -259,6 +259,10 @@ jobs:
           }
           pwsh -NoProfile -File tests/powershell-json-datekind-conformance.test.ps1
 
+      - name: Git Bash production Eastern clock
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/deploy-git-bash-timezone.test.ps1
+
       - name: Waf/800 diagnostic preparation lifecycle tests
         shell: pwsh
         run: pwsh -NoProfile -File tests/aws-rollout-diagnostic-preparation.test.ps1
