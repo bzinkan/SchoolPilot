@@ -12,10 +12,10 @@ const viteEntry = path.join(projectRoot, 'node_modules', 'vite', 'bin', 'vite.js
 const distIndex = path.join(projectRoot, 'dist', 'index.html');
 const host = '127.0.0.1';
 const port = Number(process.env.PREVIEW_SMOKE_PORT ?? '4173');
-const baseUrl = `http://${host}:${port}`;
+export const baseUrl = `http://${host}:${port}`;
 const timeoutMilliseconds = 30_000;
 
-const personas = {
+export const personas = {
   anonymous: {
     schoolId: null,
     auth: {
@@ -53,6 +53,7 @@ const personas = {
   },
   gopilotParent: {
     schoolId: 'preview-gopilot-school',
+    childId: 'preview-child',
     auth: {
       user: {
         id: 'preview-gopilot-parent',
@@ -222,20 +223,87 @@ async function stopPreview(child) {
   if (child.exitCode === null) child.kill('SIGKILL');
 }
 
-function responseBodyFor(testCase, requestUrl) {
+function apiFailure(code) {
+  throw new Error(code);
+}
+
+function requestHeaders(request) {
+  return Object.fromEntries(
+    Object.entries(request.headers()).map(([name, value]) => [
+      name.toLowerCase(),
+      value,
+    ])
+  );
+}
+
+function assertExactQuery(requestUrl, expectedEntries) {
+  const actualEntries = [...requestUrl.searchParams.entries()].sort();
+  const normalizedExpected = [...expectedEntries].sort();
+  if (
+    actualEntries.length !== normalizedExpected.length ||
+    actualEntries.some(
+      ([name, value], index) =>
+        name !== normalizedExpected[index][0] ||
+        value !== normalizedExpected[index][1]
+    )
+  ) {
+    apiFailure('preview_api_query_invalid');
+  }
+}
+
+function dateInTimezone(date, timezone) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
+}
+
+function validateApiRequestEnvelope(testCase, request, requestUrl) {
+  if (requestUrl.origin !== baseUrl) {
+    apiFailure('preview_api_origin_invalid');
+  }
+  if (request.method() !== 'GET') {
+    apiFailure('preview_api_method_invalid');
+  }
+
+  const actualSchoolId = requestHeaders(request)['x-school-id'];
+  const expectedSchoolId = testCase.persona.schoolId;
+  if (
+    (expectedSchoolId === null && actualSchoolId !== undefined) ||
+    (expectedSchoolId !== null && actualSchoolId !== expectedSchoolId)
+  ) {
+    apiFailure('preview_api_school_binding_invalid');
+  }
+}
+
+export function responseBodyFor(
+  testCase,
+  request,
+  { now = new Date() } = {}
+) {
+  const requestUrl = new URL(request.url());
   const { pathname } = requestUrl;
-  if (pathname === '/api/auth/me') return testCase.persona.auth;
+  validateApiRequestEnvelope(testCase, request, requestUrl);
+
+  const noQuery = () => assertExactQuery(requestUrl, []);
+  if (pathname === '/api/auth/me') {
+    noQuery();
+    return testCase.persona.auth;
+  }
 
   if (testCase.persona === personas.anonymous) {
-    throw new Error('preview_api_request_not_allowlisted');
+    apiFailure('preview_api_request_not_allowlisted');
   }
 
   if (testCase.persona === personas.gopilotParent) {
     if (pathname === '/api/me/children') {
+      noQuery();
       return {
         children: [
           {
-            id: 'preview-child',
+            id: testCase.persona.childId,
             firstName: 'Preview',
             lastName: 'Child',
             gradeLevel: '4',
@@ -245,20 +313,34 @@ function responseBodyFor(testCase, requestUrl) {
         ],
       };
     }
-    if (/^\/api\/students\/[^/]+\/pickups$/.test(pathname)) {
+    if (pathname === `/api/students/${testCase.persona.childId}/pickups`) {
+      noQuery();
       return { pickups: [] };
     }
-    if (/^\/api\/schools\/[^/]+\/sessions\/active$/.test(pathname)) {
+    if (
+      pathname ===
+      `/api/schools/${testCase.persona.schoolId}/sessions/active`
+    ) {
+      noQuery();
       return { session: null };
     }
-    if (/^\/api\/schools\/[^/]+\/settings$/.test(pathname)) {
+    if (
+      pathname === `/api/schools/${testCase.persona.schoolId}/settings`
+    ) {
+      noQuery();
       return {};
     }
-    throw new Error('preview_api_request_not_allowlisted');
+    if (
+      /^\/api\/students\/[^/]+\/pickups$/.test(pathname) ||
+      /^\/api\/schools\/[^/]+\/(?:sessions\/active|settings)$/.test(pathname)
+    ) {
+      apiFailure('preview_api_resource_binding_invalid');
+    }
+    apiFailure('preview_api_request_not_allowlisted');
   }
 
   if (testCase.persona !== personas.classpilotTeacher) {
-    throw new Error('preview_api_persona_invalid');
+    apiFailure('preview_api_persona_invalid');
   }
 
   const classpilotResponses = {
@@ -280,7 +362,20 @@ function responseBodyFor(testCase, requestUrl) {
     '/api/admin/attendance': { records: [] },
   };
   if (!Object.hasOwn(classpilotResponses, pathname)) {
-    throw new Error('preview_api_request_not_allowlisted');
+    apiFailure('preview_api_request_not_allowlisted');
+  }
+  if (pathname === '/api/admin/attendance') {
+    assertExactQuery(requestUrl, [
+      [
+        'date',
+        dateInTimezone(
+          now,
+          testCase.persona.auth.memberships[0].schoolTimezone
+        ),
+      ],
+    ]);
+  } else {
+    noQuery();
   }
   return classpilotResponses[pathname];
 }
@@ -328,7 +423,7 @@ async function verifyCase(browser, testCase) {
   page.on('requestfailed', (request) => {
     const url = new URL(request.url());
     browserErrors.push(
-      `requestfailed:${url.origin === baseUrl ? url.pathname : url.origin}`
+      `requestfailed:${url.origin === baseUrl ? url.pathname : 'cross-origin'}`
     );
   });
 
@@ -337,10 +432,7 @@ async function verifyCase(browser, testCase) {
   });
   await page.route('**/api/**', async (route) => {
     try {
-      const body = responseBodyFor(
-        testCase,
-        new URL(route.request().url())
-      );
+      const body = responseBodyFor(testCase, route.request());
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -352,6 +444,11 @@ async function verifyCase(browser, testCase) {
         [
           'preview_api_request_not_allowlisted',
           'preview_api_persona_invalid',
+          'preview_api_origin_invalid',
+          'preview_api_method_invalid',
+          'preview_api_school_binding_invalid',
+          'preview_api_resource_binding_invalid',
+          'preview_api_query_invalid',
         ].includes(error.message)
           ? error.message
           : 'preview_api_stub_runtime_failure';
@@ -430,7 +527,15 @@ async function main() {
   process.stdout.write('frontend_production_preview_smoke_passed\n');
 }
 
-main().catch((error) => {
-  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
-  process.exitCode = 1;
-});
+const isDirectExecution =
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
+
+if (isDirectExecution) {
+  main().catch((error) => {
+    process.stderr.write(
+      `${error instanceof Error ? error.message : String(error)}\n`
+    );
+    process.exitCode = 1;
+  });
+}

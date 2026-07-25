@@ -12,6 +12,7 @@ import {
 } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { parse } from '@babel/parser';
 
 export const ROUTER_REACHABILITY_EVIDENCE_VERSION =
   'frontend-router-reachability-v1';
@@ -477,314 +478,220 @@ function validatePackageIdentity({
   };
 }
 
-function parseNamedImports(tokens) {
-  const specifierTokens = [...tokens];
-  if (specifierTokens[0]?.value === 'type') specifierTokens.shift();
-  if (
-    specifierTokens[0]?.value !== '{' ||
-    specifierTokens.at(-1)?.value !== '}'
-  ) {
-    return null;
-  }
-  const body = specifierTokens.slice(1, -1);
+function parseNamedImports(specifiers) {
+  if (!Array.isArray(specifiers)) return null;
   const names = [];
-  let part = [];
-  for (let index = 0; index <= body.length; index += 1) {
-    const token = body[index];
-    if (token?.value !== ',' && index < body.length) {
-      part.push(token);
-      continue;
-    }
-    if (part.length === 0) continue;
-    if (part[0]?.value === 'type') part = part.slice(1);
-    if (
-      part.length !== 1 &&
-      !(
-        part.length === 3 &&
-        part[1]?.value === 'as' &&
-        part[2]?.type === 'identifier'
-      )
-    ) {
-      return null;
-    }
-    const importedName = part[0]?.value;
-    if (
-      part[0]?.type !== 'identifier' ||
-      !/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(importedName ?? '')
-    ) {
-      return null;
-    }
+  for (const specifier of specifiers) {
+    if (specifier?.type !== 'ImportSpecifier') return null;
+    const importedName =
+      specifier.imported?.type === 'Identifier'
+        ? specifier.imported.name
+        : specifier.imported?.type === 'StringLiteral'
+          ? specifier.imported.value
+          : null;
+    if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(importedName ?? '')) return null;
     names.push(importedName);
-    part = [];
   }
   return names;
 }
 
-function isIdentifierStart(character) {
-  return /[A-Za-z_$]/.test(character);
-}
-
-function isIdentifierPart(character) {
-  return /[A-Za-z0-9_$]/.test(character);
-}
-
-function readStringToken(text, start) {
-  const quote = text[start];
-  let value = '';
-  for (let index = start + 1; index < text.length; index += 1) {
-    const character = text[index];
-    if (character === quote) {
-      return {
-        end: index + 1,
-        token: { type: 'string', value, index: start },
-      };
-    }
-    if (character !== '\\') {
-      if (character === '\r' || character === '\n') return null;
-      value += character;
-      continue;
-    }
-
-    index += 1;
-    if (index >= text.length) return null;
-    const escaped = text[index];
-    if (escaped === '\r' || escaped === '\n') {
-      if (escaped === '\r' && text[index + 1] === '\n') index += 1;
-      continue;
-    }
-    const simpleEscapes = new Map([
-      ['b', '\b'],
-      ['f', '\f'],
-      ['n', '\n'],
-      ['r', '\r'],
-      ['t', '\t'],
-      ['v', '\v'],
-      ['0', '\0'],
+function parseSource(text, relativePath) {
+  const extension = path.extname(relativePath).toLowerCase();
+  const plugins = [];
+  if (['.jsx', '.tsx'].includes(extension)) plugins.push('jsx');
+  if (['.ts', '.tsx', '.mts', '.cts'].includes(extension)) {
+    plugins.push([
+      'typescript',
+      {
+        disallowAmbiguousJSXLike: ['.mts', '.cts'].includes(extension),
+      },
     ]);
-    if (simpleEscapes.has(escaped)) {
-      value += simpleEscapes.get(escaped);
-      continue;
-    }
-    if (escaped === 'x') {
-      const digits = text.slice(index + 1, index + 3);
-      if (!/^[0-9A-Fa-f]{2}$/.test(digits)) return null;
-      value += String.fromCodePoint(Number.parseInt(digits, 16));
-      index += 2;
-      continue;
-    }
-    if (escaped === 'u') {
-      if (text[index + 1] === '{') {
-        const close = text.indexOf('}', index + 2);
-        const digits = close === -1 ? '' : text.slice(index + 2, close);
-        if (!/^[0-9A-Fa-f]{1,6}$/.test(digits)) return null;
-        const codePoint = Number.parseInt(digits, 16);
-        if (codePoint > 0x10ffff) return null;
-        value += String.fromCodePoint(codePoint);
-        index = close;
-        continue;
-      }
-      const digits = text.slice(index + 1, index + 5);
-      if (!/^[0-9A-Fa-f]{4}$/.test(digits)) return null;
-      value += String.fromCodePoint(Number.parseInt(digits, 16));
-      index += 4;
-      continue;
-    }
-    value += escaped;
+  }
+  return parse(text, {
+    allowAwaitOutsideFunction: true,
+    allowReturnOutsideFunction: true,
+    createImportExpressions: true,
+    errorRecovery: false,
+    plugins,
+    sourceFilename: relativePath,
+    sourceType: 'unambiguous',
+  });
+}
+
+function staticStringValue(node) {
+  if (node?.type === 'StringLiteral') return node.value;
+  if (
+    node?.type === 'BinaryExpression' &&
+    node.operator === '+'
+  ) {
+    const left = staticStringValue(node.left);
+    const right = staticStringValue(node.right);
+    return left === null || right === null ? null : left + right;
+  }
+  if (
+    node?.type === 'ParenthesizedExpression' ||
+    node?.type === 'TSAsExpression' ||
+    node?.type === 'TSTypeAssertion' ||
+    node?.type === 'TSNonNullExpression'
+  ) {
+    return staticStringValue(node.expression);
+  }
+  if (node?.type !== 'TemplateLiteral') return null;
+  let value = '';
+  for (let index = 0; index < node.quasis.length; index += 1) {
+    const quasi = node.quasis[index];
+    const cooked = quasi?.value?.cooked;
+    if (typeof cooked !== 'string') return null;
+    value += cooked;
+    if (index >= node.expressions.length) continue;
+    const expressionValue = staticStringValue(node.expressions[index]);
+    if (expressionValue === null) return null;
+    value += expressionValue;
+  }
+  return value;
+}
+
+function moduleReferenceValue(node) {
+  const exact = staticStringValue(node);
+  if (exact !== null) return exact;
+  if (node?.type !== 'TemplateLiteral') return null;
+  const staticShape = node.quasis
+    .map((quasi) => quasi?.value?.cooked)
+    .filter((value) => typeof value === 'string')
+    .join('');
+  if (staticShape.startsWith('@react-router/')) {
+    return '@react-router/__dynamic-template__';
+  }
+  if (staticShape.startsWith('react-router')) {
+    return 'react-router/__dynamic-template__';
+  }
+  if (staticShape.startsWith('react-dom')) {
+    return 'react-dom/__dynamic-template__';
   }
   return null;
 }
 
-function tokenizeJavaScript(text) {
-  const tokens = [];
-
-  function scanCode(start, stopAtTemplateExpressionEnd = false) {
-    let braceDepth = 0;
-    let index = start;
-    while (index < text.length) {
-      const character = text[index];
-      if (/\s/.test(character)) {
-        index += 1;
-        continue;
-      }
-      if (character === '/' && text[index + 1] === '/') {
-        index += 2;
-        while (index < text.length && text[index] !== '\n') index += 1;
-        continue;
-      }
-      if (character === '/' && text[index + 1] === '*') {
-        const close = text.indexOf('*/', index + 2);
-        index = close === -1 ? text.length : close + 2;
-        continue;
-      }
-      if (character === "'" || character === '"') {
-        const result = readStringToken(text, index);
-        if (!result) {
-          index += 1;
-          continue;
-        }
-        tokens.push(result.token);
-        index = result.end;
-        continue;
-      }
-      if (character === '`') {
-        index = scanTemplate(index + 1);
-        continue;
-      }
-      if (isIdentifierStart(character)) {
-        const identifierStart = index;
-        index += 1;
-        while (index < text.length && isIdentifierPart(text[index])) {
-          index += 1;
-        }
-        tokens.push({
-          type: 'identifier',
-          value: text.slice(identifierStart, index),
-          index: identifierStart,
-        });
-        continue;
-      }
-      if (character === '{') braceDepth += 1;
-      if (character === '}') {
-        if (stopAtTemplateExpressionEnd && braceDepth === 0) {
-          return index + 1;
-        }
-        braceDepth = Math.max(0, braceDepth - 1);
-      }
-      tokens.push({ type: 'punctuator', value: character, index });
-      index += 1;
-    }
-    return index;
+function propertyName(member) {
+  if (!member?.computed && member?.property?.type === 'Identifier') {
+    return member.property.name;
   }
-
-  function scanTemplate(start) {
-    let index = start;
-    while (index < text.length) {
-      if (text[index] === '\\') {
-        index += 2;
-        continue;
-      }
-      if (text[index] === '`') return index + 1;
-      if (text[index] === '$' && text[index + 1] === '{') {
-        index = scanCode(index + 2, true);
-        continue;
-      }
-      index += 1;
-    }
-    return index;
-  }
-
-  scanCode(0);
-  return tokens;
+  return staticStringValue(member?.property);
 }
 
-function findTopLevelFrom(tokens, start) {
-  let braceDepth = 0;
-  let bracketDepth = 0;
-  let parenthesisDepth = 0;
-  for (let index = start; index < tokens.length; index += 1) {
-    const value = tokens[index].value;
-    if (
-      value === 'from' &&
-      braceDepth === 0 &&
-      bracketDepth === 0 &&
-      parenthesisDepth === 0 &&
-      tokens[index + 1]?.type === 'string'
-    ) {
-      return index;
-    }
-    if (
-      value === ';' &&
-      braceDepth === 0 &&
-      bracketDepth === 0 &&
-      parenthesisDepth === 0
-    ) {
-      return -1;
-    }
-    if (value === '{') braceDepth += 1;
-    else if (value === '}') braceDepth = Math.max(0, braceDepth - 1);
-    else if (value === '[') bracketDepth += 1;
-    else if (value === ']') bracketDepth = Math.max(0, bracketDepth - 1);
-    else if (value === '(') parenthesisDepth += 1;
-    else if (value === ')') {
-      parenthesisDepth = Math.max(0, parenthesisDepth - 1);
-    }
+function isRequireCallee(node) {
+  if (node?.type === 'Identifier') return node.name === 'require';
+  if (
+    node?.type !== 'MemberExpression' &&
+    node?.type !== 'OptionalMemberExpression'
+  ) {
+    return false;
   }
-  return -1;
+  return (
+    propertyName(node) === 'require' &&
+    node.object?.type === 'Identifier' &&
+    (node.object.name === 'module' || node.object.name === 'globalThis')
+  );
 }
 
-function findModuleReferences(text) {
-  const tokens = tokenizeJavaScript(text);
-  const references = [];
-  for (let index = 0; index < tokens.length; index += 1) {
-    const token = tokens[index];
-    const previous = tokens[index - 1];
-    if (token.value === 'import' && previous?.value !== '.') {
-      const next = tokens[index + 1];
-      if (next?.type === 'string') {
-        references.push({
-          index: token.index,
-          kind: 'side-effect',
-          moduleName: next.value,
-          specifierTokens: [],
-        });
-        continue;
-      }
-      if (
-        next?.value === '(' &&
-        tokens[index + 2]?.type === 'string'
-      ) {
-        references.push({
-          index: token.index,
-          kind: 'dynamic',
-          moduleName: tokens[index + 2].value,
-          specifierTokens: [],
-        });
-        continue;
-      }
-      if (next?.value === '.') continue;
-      const fromIndex = findTopLevelFrom(tokens, index + 1);
-      if (fromIndex !== -1) {
-        references.push({
-          index: token.index,
-          kind: 'static',
-          moduleName: tokens[fromIndex + 1].value,
-          specifierTokens: tokens.slice(index + 1, fromIndex),
-        });
-      }
+function walkAst(node, visit) {
+  if (!node || typeof node !== 'object') return;
+  if (typeof node.type === 'string') visit(node);
+  for (const [key, value] of Object.entries(node)) {
+    if (
+      key === 'loc' ||
+      key === 'start' ||
+      key === 'end' ||
+      key === 'extra' ||
+      key === 'errors'
+    ) {
       continue;
     }
+    if (Array.isArray(value)) {
+      for (const entry of value) walkAst(entry, visit);
+    } else {
+      walkAst(value, visit);
+    }
+  }
+}
+
+function findModuleReferences(text, relativePath) {
+  const ast = parseSource(text, relativePath);
+  const references = [];
+  walkAst(ast, (node) => {
+    if (node.type === 'ImportDeclaration') {
+      references.push({
+        index: node.start ?? 0,
+        kind: node.specifiers.length === 0 ? 'side-effect' : 'static',
+        moduleName: staticStringValue(node.source),
+        specifiers: node.specifiers,
+      });
+      return;
+    }
     if (
-      token.value === 'require' &&
-      previous?.value !== '.' &&
-      tokens[index + 1]?.value === '(' &&
-      tokens[index + 2]?.type === 'string'
+      (node.type === 'ExportNamedDeclaration' ||
+        node.type === 'ExportAllDeclaration') &&
+      node.source
     ) {
       references.push({
-        index: token.index,
-        kind: 'require',
-        moduleName: tokens[index + 2].value,
-        specifierTokens: [],
+        index: node.start ?? 0,
+        kind: 'reexport',
+        moduleName: staticStringValue(node.source),
+        specifiers: [],
       });
-      continue;
+      return;
+    }
+    if (node.type === 'ImportExpression') {
+      const moduleName = moduleReferenceValue(node.source);
+      if (moduleName !== null) {
+        references.push({
+          index: node.start ?? 0,
+          kind: 'dynamic',
+          moduleName,
+          specifiers: [],
+        });
+      }
+      return;
     }
     if (
-      token.value === 'export' &&
-      (tokens[index + 1]?.value === '{' ||
-        tokens[index + 1]?.value === '*' ||
-        (tokens[index + 1]?.value === 'type' &&
-          tokens[index + 2]?.value === '{'))
+      (node.type === 'CallExpression' ||
+        node.type === 'OptionalCallExpression') &&
+      isRequireCallee(node.callee)
     ) {
-      const fromIndex = findTopLevelFrom(tokens, index + 1);
-      if (fromIndex !== -1) {
+      const moduleName = moduleReferenceValue(node.arguments?.[0]);
+      if (moduleName !== null) {
         references.push({
-          index: token.index,
-          kind: 'reexport',
-          moduleName: tokens[fromIndex + 1].value,
-          specifierTokens: [],
+          index: node.start ?? 0,
+          kind: 'require',
+          moduleName,
+          specifiers: [],
+        });
+      }
+      return;
+    }
+    if (node.type === 'TSImportType') {
+      const moduleName = moduleReferenceValue(node.argument);
+      if (moduleName !== null) {
+        references.push({
+          index: node.start ?? 0,
+          kind: 'type-import',
+          moduleName,
+          specifiers: [],
+        });
+      }
+      return;
+    }
+    if (node.type === 'TSExternalModuleReference') {
+      const moduleName = moduleReferenceValue(node.expression);
+      if (moduleName !== null) {
+        references.push({
+          index: node.start ?? 0,
+          kind: 'require',
+          moduleName,
+          specifiers: [],
         });
       }
     }
-  }
+  });
   return references;
 }
 
@@ -803,7 +710,17 @@ function scanSourceFile(text, relativePath) {
     );
   }
 
-  const moduleReferences = findModuleReferences(text);
+  let moduleReferences;
+  try {
+    moduleReferences = findModuleReferences(text, relativePath);
+  } catch {
+    violations.push(
+      violation('source.parse-failed', {
+        file: relativePath,
+      })
+    );
+    return { importedSymbols, routerImportCount, violations };
+  }
   for (const sourceImport of moduleReferences.filter(
     ({ kind, moduleName }) =>
       kind === 'static' && ROUTER_MODULE_PATTERN.test(moduleName)
@@ -821,7 +738,7 @@ function scanSourceFile(text, relativePath) {
       );
       continue;
     }
-    const names = parseNamedImports(sourceImport.specifierTokens);
+    const names = parseNamedImports(sourceImport.specifiers);
     if (!names || names.length === 0) {
       violations.push(
         violation('source.invalid-router-import-shape', {
@@ -878,7 +795,7 @@ function scanSourceFile(text, relativePath) {
       );
       continue;
     }
-    const names = parseNamedImports(sourceImport.specifierTokens);
+    const names = parseNamedImports(sourceImport.specifiers);
     if (!names || names.length === 0) {
       violations.push(
         violation('source.invalid-react-dom-import-shape', {

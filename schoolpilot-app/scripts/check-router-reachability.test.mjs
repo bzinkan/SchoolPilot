@@ -275,6 +275,44 @@ const templated = \`require(/* comment */ 'react-router/rsc')\`;
   assert.equal(inert.passed, true, JSON.stringify(inert.violations));
 });
 
+test('uses parsed syntax for regexes, template imports, and require variants', async (t) => {
+  const fixture = await createFixture({
+    source: `${ALLOWED_SOURCE}
+const inertRegex = /import\\(\\s*['"]react-router\\/rsc['"]\\s*\\)/;
+const templateRsc = import(\`react-router/rsc\`);
+const interpolatedTemplateRsc = import(\`react-router/\${'rsc'}\`);
+const dynamicTemplateRsc = import(\`react-router/\${routerEntry}\`);
+const concatenatedRsc = import('react-' + 'router/rsc');
+const moduleRsc = module.require('react-router/rsc');
+const computedModuleRsc = module['require']('react-router/rsc');
+const globalRsc = globalThis.require('react-router/rsc');
+const optionalRsc = require?.('react-router/rsc');
+const optionalModuleRsc = module.require?.('react-router/rsc');
+const optionalMemberRsc = module?.require('react-router/rsc');
+const optionalGlobalRsc = globalThis?.require?.('react-router/rsc');
+`,
+  });
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+
+  const evidence = await evaluate(fixture);
+  assert.equal(evidence.passed, false);
+  const moduleViolations = evidence.violations.filter(
+    (entry) =>
+      entry.code === 'source.forbidden-router-module' &&
+      entry.rule === 'side-effect-dynamic-require-or-reexport'
+  );
+  assert.equal(moduleViolations.length, 11, JSON.stringify(evidence.violations));
+
+  const regexOnly = await createFixture({
+    source: `${ALLOWED_SOURCE}
+const inertRegex = /import\\(\\s*['"]react-router\\/rsc['"]\\s*\\)/;
+`,
+  });
+  t.after(() => rm(regexOnly.root, { recursive: true, force: true }));
+  const inertEvidence = await evaluate(regexOnly);
+  assert.equal(inertEvidence.passed, true, JSON.stringify(inertEvidence.violations));
+});
+
 test('preserves createRoot/createPortal but rejects SSR and hydration imports', async (t) => {
   const fixture = await createFixture({
     source: `${ALLOWED_SOURCE}
