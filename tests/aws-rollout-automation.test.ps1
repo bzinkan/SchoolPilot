@@ -62,6 +62,40 @@ function Stop-AndDrainTestProcesses {
     }
 }
 
+function Remove-TestDirectoryWithRetry {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+        [ValidateRange(1, 30000)]
+        [int]$TimeoutMilliseconds = 10000
+    )
+    if (-not (Test-Path -LiteralPath $Path)) { return }
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    $lastFailureMessage = $null
+    do {
+        try {
+            Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
+            if (-not (Test-Path -LiteralPath $Path)) { return }
+        }
+        catch {
+            $failure = $_.Exception
+            $sharingFailure = $false
+            while ($null -ne $failure) {
+                if ($failure -is [IO.IOException] -or
+                    $failure -is [UnauthorizedAccessException]) {
+                    $sharingFailure = $true
+                    break
+                }
+                $failure = $failure.InnerException
+            }
+            if (-not $sharingFailure) { throw }
+            $lastFailureMessage = $_.Exception.Message
+        }
+        Start-Sleep -Milliseconds 100
+    } while ($watch.ElapsedMilliseconds -lt $TimeoutMilliseconds)
+    throw "Timed out removing test directory '$Path' after its owned processes were drained. Last failure: $lastFailureMessage"
+}
+
 function Get-AtomicJsonFunctionSource {
     param([string]$ScriptPath)
     $tokens = $null
@@ -208,6 +242,8 @@ foreach ($functionName in @("Get-AtomicJsonMutexName", "Invoke-WithAtomicJsonMut
     Invoke-Expression $definition.Extent.Text
 }
 $monitorJsonBoundaryPath = Join-Path ([IO.Path]::GetTempPath()) "schoolpilot-monitor-datekind-$([Guid]::NewGuid().ToString('N')).json"
+$topLevelFailure = $null
+$topLevelCleanupFailure = $null
 try {
     [IO.File]::WriteAllText($monitorJsonBoundaryPath,
         '{"timestamp":"2026-07-22T15:58:03.1234567Z","nested":{"expiresAtUtc":"2026-07-22T15:58:03.7654321+00:00","operatorOffset":"2026-07-22T11:58:03.1111111-04:00"}}',
@@ -1502,7 +1538,17 @@ if ($service -eq "wafv2" -and $operation -eq "get-web-acl") {
     @{Name="ApiRateLimit";Priority=40;Action=$action;Statement=@{RateBasedStatement=@{Limit=50000;AggregateKeyType="IP"}};VisibilityConfig=@{SampledRequestsEnabled=$true;CloudWatchMetricsEnabled=$true;MetricName="api"}}
   );VisibilityConfig=@{SampledRequestsEnabled=$true;CloudWatchMetricsEnabled=$true;MetricName="acl"}}}|ConvertTo-Json -Depth 20 -Compress; exit 0
 }
-if ($service -eq "wafv2" -and $operation -eq "update-web-acl") { if($env:SCHOOLPILOT_TEST_WAF_DELAY){Start-Sleep -Seconds ([int]$env:SCHOOLPILOT_TEST_WAF_DELAY)};[IO.File]::WriteAllText($env:SCHOOLPILOT_TEST_WAF_FLAG,"count"); '{}'; exit 0 }
+if ($service -eq "wafv2" -and $operation -eq "update-web-acl") {
+  if($env:SCHOOLPILOT_TEST_WAF_READY_PATH){[IO.File]::WriteAllText($env:SCHOOLPILOT_TEST_WAF_READY_PATH,"ready")}
+  if($env:SCHOOLPILOT_TEST_WAF_RELEASE_PATH){
+    $releaseDeadline=[DateTimeOffset]::UtcNow.AddSeconds(20)
+    while(-not (Test-Path -LiteralPath $env:SCHOOLPILOT_TEST_WAF_RELEASE_PATH) -and [DateTimeOffset]::UtcNow -lt $releaseDeadline){Start-Sleep -Milliseconds 50}
+    if(-not (Test-Path -LiteralPath $env:SCHOOLPILOT_TEST_WAF_RELEASE_PATH)){throw "Timed out waiting for the test-only WAF release barrier."}
+  } elseif($env:SCHOOLPILOT_TEST_WAF_DELAY){
+    Start-Sleep -Seconds ([int]$env:SCHOOLPILOT_TEST_WAF_DELAY)
+  }
+  [IO.File]::WriteAllText($env:SCHOOLPILOT_TEST_WAF_FLAG,"count"); '{}'; exit 0
+}
 throw "Unexpected child AWS call: $($arguments -join ' ')"
 '@
     [IO.File]::WriteAllText($childAws, $childAwsSource, [Text.UTF8Encoding]::new($false))
@@ -1635,6 +1681,9 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
     $futureFinalHarness = $null
     $completedWaitMonitor = $null
     $completedWaitHarness = $null
+    $slowRollbackProcess = $null
+    $childBlockFailure = $null
+    $childBlockCleanupFailures = [System.Collections.Generic.List[string]]::new()
     try {
         $childMonitor = Start-Process -FilePath (Get-Process -Id $PID).Path `
             -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$monitorScript,"-ConfigPath",$childConfigPath,"-Mode","Monitor") `
@@ -1854,46 +1903,131 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         $slowRollbackConfig.evidenceDirectory = $slowEvidence
         [IO.File]::WriteAllText($childRollbackConfigPath, ($slowRollbackConfig|ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
         Remove-Item -LiteralPath $wafFlag -ErrorAction SilentlyContinue
-        $env:SCHOOLPILOT_TEST_WAF_DELAY = "3"
-        $slowRollbackProcess = Start-Process -FilePath (Get-Process -Id $PID).Path `
-            -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$rollbackScript,"-ConfigPath",$childRollbackConfigPath,"-Action","Waf","-Mode","Execute") `
-            -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $childRoot "slow-rollback.out") -RedirectStandardError (Join-Path $childRoot "slow-rollback.err")
-        $slowHeartbeatPath = Join-Path $slowEvidence "slow-waf-rollback-heartbeat-rollback-heartbeat.json"
-        $slowHeartbeatDeadline = [DateTimeOffset]::UtcNow.AddSeconds(10)
-        while (-not (Test-Path -LiteralPath $slowHeartbeatPath) -and [DateTimeOffset]::UtcNow -lt $slowHeartbeatDeadline) { Start-Sleep -Milliseconds 100 }
-        $slowRollbackError = Get-Content -LiteralPath (Join-Path $childRoot "slow-rollback.err") -Raw -ErrorAction SilentlyContinue
-        $slowRollbackOut = Get-Content -LiteralPath (Join-Path $childRoot "slow-rollback.out") -Raw -ErrorAction SilentlyContinue
-        $slowStateDebugPath = Join-Path $slowEvidence "slow-waf-rollback-heartbeat-rollback-state.json"
-        $slowStateDebug = Get-Content -LiteralPath $slowStateDebugPath -Raw -ErrorAction SilentlyContinue
-        $slowRollbackProcess.Refresh()
-        Assert-Condition (Test-Path -LiteralPath $slowHeartbeatPath) "Slow rollback did not create its independent heartbeat (exited=$($slowRollbackProcess.HasExited); state=$slowStateDebug; stdout=$slowRollbackOut; stderr=$slowRollbackError)."
-        $firstSlowHeartbeatWrite = (Get-Item -LiteralPath $slowHeartbeatPath).LastWriteTimeUtc
-        Start-Sleep -Milliseconds 1500
-        $secondSlowHeartbeatWrite = (Get-Item -LiteralPath $slowHeartbeatPath).LastWriteTimeUtc
-        Assert-Condition ($secondSlowHeartbeatWrite -gt $firstSlowHeartbeatWrite) "Rollback heartbeat must keep advancing while a slow AWS mutation blocks the monitor process."
-        $slowRollbackExited = $slowRollbackProcess.WaitForExit(15000)
+        $slowWafReadyPath = Join-Path $childRoot "slow-waf.ready"
+        $slowWafReleasePath = Join-Path $childRoot "slow-waf.release"
+        Remove-Item -LiteralPath $slowWafReadyPath,$slowWafReleasePath -ErrorAction SilentlyContinue
+        $env:SCHOOLPILOT_TEST_WAF_READY_PATH = $slowWafReadyPath
+        $env:SCHOOLPILOT_TEST_WAF_RELEASE_PATH = $slowWafReleasePath
         $slowRollbackExitCode = $null
-        if ($slowRollbackExited) {
-            # A timed wait can return before Start-Process finishes draining its
-            # redirected streams on Windows. The parameterless wait releases
-            # slow-rollback.out/.err before the outer test removes $tempRoot.
-            $slowRollbackProcess.WaitForExit()
+        $slowRollbackFailure = $null
+        $slowRollbackCleanupFailures = [System.Collections.Generic.List[string]]::new()
+        $slowRollbackProcessId = $null
+        $slowRollbackProcessStartedAtUtc = $null
+        try {
+            $slowRollbackProcess = Start-Process -FilePath (Get-Process -Id $PID).Path `
+                -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$rollbackScript,"-ConfigPath",$childRollbackConfigPath,"-Action","Waf","-Mode","Execute") `
+                -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $childRoot "slow-rollback.out") -RedirectStandardError (Join-Path $childRoot "slow-rollback.err")
+            $slowRollbackProcessId = $slowRollbackProcess.Id
+            $slowRollbackProcessStartedAtUtc = $slowRollbackProcess.StartTime.ToUniversalTime()
+            $slowWafReadyDeadline = [DateTimeOffset]::UtcNow.AddSeconds(30)
+            while (-not (Test-Path -LiteralPath $slowWafReadyPath) -and [DateTimeOffset]::UtcNow -lt $slowWafReadyDeadline) {
+                Start-Sleep -Milliseconds 100
+                $slowRollbackProcess.Refresh()
+                if ($slowRollbackProcess.HasExited) { break }
+            }
+            $slowHeartbeatPath = Join-Path $slowEvidence "slow-waf-rollback-heartbeat-rollback-heartbeat.json"
+            $slowHeartbeatDeadline = [DateTimeOffset]::UtcNow.AddSeconds(10)
+            while (-not (Test-Path -LiteralPath $slowHeartbeatPath) -and [DateTimeOffset]::UtcNow -lt $slowHeartbeatDeadline) {
+                Start-Sleep -Milliseconds 100
+                $slowRollbackProcess.Refresh()
+                if ($slowRollbackProcess.HasExited) { break }
+            }
+            $slowRollbackError = Get-Content -LiteralPath (Join-Path $childRoot "slow-rollback.err") -Raw -ErrorAction SilentlyContinue
+            $slowRollbackOut = Get-Content -LiteralPath (Join-Path $childRoot "slow-rollback.out") -Raw -ErrorAction SilentlyContinue
+            $slowStateDebugPath = Join-Path $slowEvidence "slow-waf-rollback-heartbeat-rollback-state.json"
+            $slowStateDebug = Get-Content -LiteralPath $slowStateDebugPath -Raw -ErrorAction SilentlyContinue
             $slowRollbackProcess.Refresh()
-            $slowRollbackExitCode = $slowRollbackProcess.ExitCode
-            foreach ($redirectedPath in @(
-                (Join-Path $childRoot "slow-rollback.out"),
-                (Join-Path $childRoot "slow-rollback.err")
-            )) {
-                $redirectProbe = [IO.File]::Open(
-                    $redirectedPath,
-                    [IO.FileMode]::Open,
-                    [IO.FileAccess]::ReadWrite,
-                    [IO.FileShare]::None
-                )
-                $redirectProbe.Dispose()
+            Assert-Condition (Test-Path -LiteralPath $slowWafReadyPath) "Slow rollback did not reach the deterministic WAF mutation barrier (exited=$($slowRollbackProcess.HasExited); state=$slowStateDebug; stdout=$slowRollbackOut; stderr=$slowRollbackError)."
+            Assert-Condition (Test-Path -LiteralPath $slowHeartbeatPath) "Slow rollback did not create its independent heartbeat (exited=$($slowRollbackProcess.HasExited); state=$slowStateDebug; stdout=$slowRollbackOut; stderr=$slowRollbackError)."
+            $firstSlowHeartbeatWrite = (Get-Item -LiteralPath $slowHeartbeatPath).LastWriteTimeUtc
+            $secondSlowHeartbeatWrite = $firstSlowHeartbeatWrite
+            $slowHeartbeatAdvanceDeadline = [DateTimeOffset]::UtcNow.AddSeconds(10)
+            while ($secondSlowHeartbeatWrite -le $firstSlowHeartbeatWrite -and
+                [DateTimeOffset]::UtcNow -lt $slowHeartbeatAdvanceDeadline) {
+                Start-Sleep -Milliseconds 100
+                $secondSlowHeartbeatWrite = (Get-Item -LiteralPath $slowHeartbeatPath).LastWriteTimeUtc
+                $slowRollbackProcess.Refresh()
+                if ($slowRollbackProcess.HasExited) { break }
+            }
+            Assert-Condition ($secondSlowHeartbeatWrite -gt $firstSlowHeartbeatWrite) "Rollback heartbeat must keep advancing while a slow AWS mutation blocks the monitor process."
+            [IO.File]::WriteAllText($slowWafReleasePath, "release", [Text.UTF8Encoding]::new($false))
+            $slowRollbackExited = $slowRollbackProcess.WaitForExit(15000)
+            if ($slowRollbackExited) {
+                # A timed wait can return before Start-Process finishes draining
+                # redirected streams on Windows. Drain once before disposal.
+                $slowRollbackProcess.WaitForExit()
+                $slowRollbackProcess.Refresh()
+                $slowRollbackExitCode = $slowRollbackProcess.ExitCode
+            }
+            Assert-Condition ($slowRollbackExited -and $slowRollbackExitCode -eq 0) "Slow WAF rollback must complete within its bounded action deadline."
+        }
+        catch {
+            $slowRollbackFailure = $_
+        }
+        finally {
+            if (-not (Test-Path -LiteralPath $slowWafReleasePath)) {
+                try {
+                    [IO.File]::WriteAllText($slowWafReleasePath, "release", [Text.UTF8Encoding]::new($false))
+                }
+                catch {
+                    $slowRollbackCleanupFailures.Add("release barrier: $($_.Exception.Message)")
+                }
+            }
+            if ($null -ne $slowRollbackProcess) {
+                $slowRollbackProcessToDrain = $slowRollbackProcess
+                try {
+                    $slowRollbackProcessToDrain.Refresh()
+                    if (-not $slowRollbackProcessToDrain.HasExited) {
+                        [void]$slowRollbackProcessToDrain.WaitForExit(5000)
+                    }
+                    Stop-AndDrainTestProcess -Process $slowRollbackProcessToDrain -Name "slow WAF rollback"
+                }
+                catch {
+                    $slowRollbackCleanupFailures.Add("owned process drain: $($_.Exception.Message)")
+                    $fallbackSlowRollbackProcess = if ($null -ne $slowRollbackProcessId) {
+                        Get-Process -Id $slowRollbackProcessId -ErrorAction SilentlyContinue
+                    } else {
+                        $null
+                    }
+                    if ($null -ne $fallbackSlowRollbackProcess) {
+                        try {
+                            if ($fallbackSlowRollbackProcess.StartTime.ToUniversalTime() -ne $slowRollbackProcessStartedAtUtc) {
+                                throw "PID creation identity changed before fallback drain."
+                            }
+                            Stop-AndDrainTestProcess -Process $fallbackSlowRollbackProcess -Name "slow WAF rollback fallback"
+                        }
+                        catch {
+                            $slowRollbackCleanupFailures.Add("fallback process drain: $($_.Exception.Message)")
+                        }
+                    }
+                }
+                $slowRollbackProcess = $null
+            }
+            try {
+                Remove-Item Env:SCHOOLPILOT_TEST_WAF_READY_PATH,Env:SCHOOLPILOT_TEST_WAF_RELEASE_PATH -ErrorAction SilentlyContinue
+            }
+            catch {
+                $slowRollbackCleanupFailures.Add("environment restore: $($_.Exception.Message)")
             }
         }
-        Assert-Condition ($slowRollbackExited -and $slowRollbackExitCode -eq 0) "Slow WAF rollback must complete within its bounded action deadline."
+        $slowRollbackCleanupFailureText = $slowRollbackCleanupFailures -join "; "
+        if ($null -ne $slowRollbackFailure -and $slowRollbackCleanupFailures.Count -gt 0) {
+            throw "Slow WAF rollback assertion failed: $($slowRollbackFailure.Exception.Message) Cleanup also failed: $slowRollbackCleanupFailureText"
+        }
+        if ($null -ne $slowRollbackFailure) { throw $slowRollbackFailure }
+        if ($slowRollbackCleanupFailures.Count -gt 0) { throw "Slow WAF rollback cleanup failed: $slowRollbackCleanupFailureText" }
+        foreach ($redirectedPath in @(
+            (Join-Path $childRoot "slow-rollback.out"),
+            (Join-Path $childRoot "slow-rollback.err")
+        )) {
+            $redirectProbe = [IO.File]::Open(
+                $redirectedPath,
+                [IO.FileMode]::Open,
+                [IO.FileAccess]::ReadWrite,
+                [IO.FileShare]::None
+            )
+            $redirectProbe.Dispose()
+        }
         $slowState = Get-Content -LiteralPath (Join-Path $slowEvidence "slow-waf-rollback-heartbeat-rollback-state.json") -Raw | ConvertFrom-Json
         Assert-Condition ($slowState.status -eq "completed") "Rollback progress state must end in completed after the slow action."
         foreach ($slowEvidenceFile in @(Get-ChildItem -LiteralPath $slowEvidence -File -Force)) {
@@ -1905,9 +2039,8 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
             )
             $slowEvidenceProbe.Dispose()
         }
-        Remove-Item -LiteralPath $slowEvidence -Recurse -Force
+        Remove-TestDirectoryWithRetry -Path $slowEvidence
         Assert-Condition (-not (Test-Path -LiteralPath $slowEvidence)) "Rollback parent exit must release every heartbeat descendant evidence handle."
-        Remove-Item Env:SCHOOLPILOT_TEST_WAF_DELAY -ErrorAction SilentlyContinue
 
         Remove-Item -LiteralPath $oomFlag -ErrorAction SilentlyContinue
         $uncorrelatedRunId = "uncorrelated-valid-403"
@@ -2249,9 +2382,24 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
                 } -Force
                 $casePath = Join-Path $childRoot "$CaseId-monitor.json"
                 [IO.File]::WriteAllText($casePath, ($caseConfig|ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
-                $process = Start-Process -FilePath (Get-Process -Id $PID).Path `
-                    -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$monitorScript,"-ConfigPath",$casePath,"-Mode","Monitor") `
-                    -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $childRoot "$CaseId.out") -RedirectStandardError (Join-Path $childRoot "$CaseId.err")
+                # Keep the synthetic CloudWatch sample inside the logical traffic
+                # minute even when this test deliberately moves the final wall
+                # clock backward or the host crosses a minute boundary.
+                $oldCaseMetricTimestamp = $env:SCHOOLPILOT_TEST_METRIC_TIMESTAMP
+                $env:SCHOOLPILOT_TEST_METRIC_TIMESTAMP = $caseStartedAt.ToString("o")
+                try {
+                    $process = Start-Process -FilePath (Get-Process -Id $PID).Path `
+                        -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$monitorScript,"-ConfigPath",$casePath,"-Mode","Monitor") `
+                        -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $childRoot "$CaseId.out") -RedirectStandardError (Join-Path $childRoot "$CaseId.err")
+                }
+                finally {
+                    if ($null -eq $oldCaseMetricTimestamp) {
+                        Remove-Item Env:SCHOOLPILOT_TEST_METRIC_TIMESTAMP -ErrorAction SilentlyContinue
+                    }
+                    else {
+                        $env:SCHOOLPILOT_TEST_METRIC_TIMESTAMP = $oldCaseMetricTimestamp
+                    }
+                }
                 $evidencePath = Join-Path $childEvidence "$CaseId-aws-monitor.jsonl"
                 $startDeadline = [DateTimeOffset]::UtcNow.AddSeconds(15)
                 while (-not (Test-Path -LiteralPath $evidencePath) -and -not $process.HasExited -and [DateTimeOffset]::UtcNow -lt $startDeadline) { Start-Sleep -Milliseconds 100 }
@@ -2976,36 +3124,56 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
         Assert-Condition ($monitorOnlyMonitorResult.status -eq "completed") "MonitorOnly lifecycle must supervise the AWS monitor to completion."
         Assert-Condition (-not (Test-Path -LiteralPath (Join-Path $monitorOnlyEvidence "$monitorOnlyRunId-harness.stdout.log"))) "MonitorOnly lifecycle must never launch or create artifacts for load traffic."
     }
+    catch {
+        $childBlockFailure = $_
+    }
     finally {
-        $env:PATH = $oldPath
-        $env:SCHOOLPILOT_TEST_WAF_FLAG = $oldFlag
-        $env:SCHOOLPILOT_TEST_OOM_FLAG = $oldOomFlag
-        $env:SCHOOLPILOT_TEST_API_TASK_FLAG = $oldApiTaskFlag
-        $env:SCHOOLPILOT_TEST_WORKER_TASK_FLAG = $oldWorkerTaskFlag
-        $env:SCHOOLPILOT_TEST_UPDATE_LOG = $oldUpdateLog
-        $env:SCHOOLPILOT_TEST_AUTOSCALING_FLAG = $oldAutoscalingFlag
-        Remove-Item Env:SCHOOLPILOT_TEST_NAT_ZERO -ErrorAction SilentlyContinue
-        Remove-Item Env:SCHOOLPILOT_TEST_REDIS_TYPE -ErrorAction SilentlyContinue
-        Remove-Item Env:SCHOOLPILOT_TEST_SNAPSHOT_TIME -ErrorAction SilentlyContinue
-        Remove-Item Env:SCHOOLPILOT_TEST_SNAPSHOT_TIME_FILE -ErrorAction SilentlyContinue
-        Remove-Item Env:SCHOOLPILOT_TEST_PUBLIC_IP -ErrorAction SilentlyContinue
-        Remove-Item Env:SCHOOLPILOT_TEST_AUX_BREACH -ErrorAction SilentlyContinue
-        Remove-Item Env:SCHOOLPILOT_TEST_SWAP_COUNTER -ErrorAction SilentlyContinue
-        Remove-Item Env:SCHOOLPILOT_TEST_METRIC_TIMESTAMP -ErrorAction SilentlyContinue
-        Remove-Item Env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_BASE,Env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_PATTERN,Env:SCHOOLPILOT_TEST_RDS_CPU_BOUNDARY_STEP_FILE,Env:SCHOOLPILOT_TEST_RDS_CPU_LOAD_WINDOW_START -ErrorAction SilentlyContinue
-        Stop-AndDrainTestProcesses -Processes ([ordered]@{
-            "child monitor" = $childMonitor
-            "OOM-only monitor" = $oomOnlyMonitor
-            "OOM-only harness" = $oomOnlyHarness
-            "limit monitor" = $limitMonitor
-            "load-window monitor" = $loadWindowMonitor
-            "load-window harness" = $loadWindowHarness
-            "future-final monitor" = $futureFinalMonitor
-            "future-final harness" = $futureFinalHarness
-            "completed-wait monitor" = $completedWaitMonitor
-            "completed-wait harness" = $completedWaitHarness
-            "sleep harness" = $sleepProcess
-        })
+        try {
+            Stop-AndDrainTestProcesses -Processes ([ordered]@{
+                "child monitor" = $childMonitor
+                "OOM-only monitor" = $oomOnlyMonitor
+                "OOM-only harness" = $oomOnlyHarness
+                "limit monitor" = $limitMonitor
+                "load-window monitor" = $loadWindowMonitor
+                "load-window harness" = $loadWindowHarness
+                "future-final monitor" = $futureFinalMonitor
+                "future-final harness" = $futureFinalHarness
+                "completed-wait monitor" = $completedWaitMonitor
+                "completed-wait harness" = $completedWaitHarness
+                "slow WAF rollback" = $slowRollbackProcess
+                "sleep harness" = $sleepProcess
+            })
+        }
+        catch {
+            $childBlockCleanupFailures.Add("process drain: $($_.Exception.Message)")
+        }
+        try {
+            $env:PATH = $oldPath
+            $env:SCHOOLPILOT_TEST_WAF_FLAG = $oldFlag
+            $env:SCHOOLPILOT_TEST_OOM_FLAG = $oldOomFlag
+            $env:SCHOOLPILOT_TEST_API_TASK_FLAG = $oldApiTaskFlag
+            $env:SCHOOLPILOT_TEST_WORKER_TASK_FLAG = $oldWorkerTaskFlag
+            $env:SCHOOLPILOT_TEST_UPDATE_LOG = $oldUpdateLog
+            $env:SCHOOLPILOT_TEST_AUTOSCALING_FLAG = $oldAutoscalingFlag
+            Remove-Item Env:SCHOOLPILOT_TEST_NAT_ZERO -ErrorAction SilentlyContinue
+            Remove-Item Env:SCHOOLPILOT_TEST_REDIS_TYPE -ErrorAction SilentlyContinue
+            Remove-Item Env:SCHOOLPILOT_TEST_SNAPSHOT_TIME -ErrorAction SilentlyContinue
+            Remove-Item Env:SCHOOLPILOT_TEST_SNAPSHOT_TIME_FILE -ErrorAction SilentlyContinue
+            Remove-Item Env:SCHOOLPILOT_TEST_PUBLIC_IP -ErrorAction SilentlyContinue
+            Remove-Item Env:SCHOOLPILOT_TEST_AUX_BREACH -ErrorAction SilentlyContinue
+            Remove-Item Env:SCHOOLPILOT_TEST_SWAP_COUNTER -ErrorAction SilentlyContinue
+            Remove-Item Env:SCHOOLPILOT_TEST_METRIC_TIMESTAMP -ErrorAction SilentlyContinue
+            Remove-Item Env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_BASE,Env:SCHOOLPILOT_TEST_RDS_CPU_RUNTIME_PATTERN,Env:SCHOOLPILOT_TEST_RDS_CPU_BOUNDARY_STEP_FILE,Env:SCHOOLPILOT_TEST_RDS_CPU_LOAD_WINDOW_START -ErrorAction SilentlyContinue
+        }
+        catch {
+            $childBlockCleanupFailures.Add("environment restore: $($_.Exception.Message)")
+        }
+        $childBlockCleanupFailureText = $childBlockCleanupFailures -join "; "
+        if ($null -ne $childBlockFailure -and $childBlockCleanupFailures.Count -gt 0) {
+            throw "Child rollout regression failed: $($childBlockFailure.Exception.Message) Child cleanup also failed: $childBlockCleanupFailureText"
+        }
+        if ($null -ne $childBlockFailure) { throw $childBlockFailure }
+        if ($childBlockCleanupFailures.Count -gt 0) { throw "Child rollout regression cleanup failed: $childBlockCleanupFailureText" }
     }
 
     $exactGitSha = ([string](@(& git -C $repositoryRoot rev-parse --verify HEAD) | Select-Object -First 1)).Trim().ToLowerInvariant()
@@ -4385,6 +4553,9 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
     $testClock.Stop()
     Write-Host ("AWS rollout monitor and rollback automation tests: PASS ({0} assertions, {1:N1}s)" -f $script:AssertionCount,$testClock.Elapsed.TotalSeconds)
 }
+catch {
+    $topLevelFailure = $_
+}
 finally {
     if ($null -ne $previousRolloutTestSentinel) { $env:SCHOOLPILOT_ROLLOUT_TEST_MODE = $previousRolloutTestSentinel } else { Remove-Item Env:SCHOOLPILOT_ROLLOUT_TEST_MODE -ErrorAction SilentlyContinue }
     if (Get-Variable oldOneDrive -ErrorAction SilentlyContinue) { $env:OneDrive = $oldOneDrive }
@@ -4413,5 +4584,17 @@ finally {
     Remove-Variable SchoolPilotTestMetricQueryPeriods -Scope Global -ErrorAction SilentlyContinue
     Remove-Variable SchoolPilotTestMetricLookbackSeconds -Scope Global -ErrorAction SilentlyContinue
     Remove-Variable SchoolPilotTestRouteLatency -Scope Global -ErrorAction SilentlyContinue
-    if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
+    if (Test-Path -LiteralPath $tempRoot) {
+        try {
+            Remove-TestDirectoryWithRetry -Path $tempRoot
+        }
+        catch {
+            $topLevelCleanupFailure = $_
+        }
+    }
+    if ($null -ne $topLevelFailure -and $null -ne $topLevelCleanupFailure) {
+        throw "Rollout automation test failed: $($topLevelFailure.Exception.Message) Final cleanup also failed: $($topLevelCleanupFailure.Exception.Message)"
+    }
+    if ($null -ne $topLevelFailure) { throw $topLevelFailure }
+    if ($null -ne $topLevelCleanupFailure) { throw $topLevelCleanupFailure }
 }
