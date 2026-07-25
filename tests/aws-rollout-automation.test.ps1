@@ -4031,24 +4031,165 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
     $terminalReuseCheckpointHashBefore = (Get-FileHash -LiteralPath $applicationRecoveryCheckpointPath -Algorithm SHA256).Hash.ToLowerInvariant()
     $terminalReuseStatePath = Join-Path $evidenceDirectory "$($terminalReuseConfig.runId)-rollback-state.json"
     $terminalReuseHeartbeatPath = Join-Path $evidenceDirectory "$($terminalReuseConfig.runId)-rollback-heartbeat.json"
+    $terminalReuseEvidencePath = Join-Path $evidenceDirectory "$($terminalReuseConfig.runId)-rollback.jsonl"
+    $terminalReuseAwsStart = $global:SchoolPilotTestAwsCalls.Count
     $terminalReuseUpdateStart = $global:SchoolPilotTestUpdateServiceCallCount
     $terminalReuseRegisterStart = $global:SchoolPilotTestAutoscalingRegisterCallCount
     $terminalReuseError = $null
     try { & $rollbackScript -ConfigPath $rollbackConfigPath -Action Application -Mode Execute | Out-Null }
     catch { $terminalReuseError = $_ }
-    $terminalReuseCheckpointHashAfter = (Get-FileHash -LiteralPath $applicationRecoveryCheckpointPath -Algorithm SHA256).Hash.ToLowerInvariant()
-    $terminalReuseCheckpointAfter = Get-Content -LiteralPath $applicationRecoveryCheckpointPath -Raw | ConvertFrom-Json -Depth 30
+    $terminalReuseCheckpointExistsAfter = Test-Path -LiteralPath $applicationRecoveryCheckpointPath -PathType Leaf
+    $terminalReuseCheckpointHashAfter = if ($terminalReuseCheckpointExistsAfter) {
+        (Get-FileHash -LiteralPath $applicationRecoveryCheckpointPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    } else { "" }
+    $terminalReuseCheckpointAfter = if ($terminalReuseCheckpointExistsAfter) {
+        Get-Content -LiteralPath $applicationRecoveryCheckpointPath -Raw | ConvertFrom-Json -DateKind String -Depth 30
+    } else { $null }
+    $terminalReuseStateExists = Test-Path -LiteralPath $terminalReuseStatePath -PathType Leaf
+    $terminalReuseState = if ($terminalReuseStateExists) {
+        Get-Content -LiteralPath $terminalReuseStatePath -Raw | ConvertFrom-Json -DateKind String -Depth 20
+    } else { $null }
+    $terminalReuseEvidenceExists = Test-Path -LiteralPath $terminalReuseEvidencePath -PathType Leaf
+    $terminalReuseEvidence = if ($terminalReuseEvidenceExists) {
+        @(Get-Content -LiteralPath $terminalReuseEvidencePath | ForEach-Object { $_ | ConvertFrom-Json -DateKind String -Depth 20 })
+    } else { @() }
+    $terminalReuseFailedEvidence = @($terminalReuseEvidence | Where-Object status -eq "failed")
     $terminalReuseErrorMessage = if ($null -eq $terminalReuseError) { "<none>" } else { $terminalReuseError.Exception.Message }
+    $terminalReuseStateKeys = if ($null -eq $terminalReuseState) { @() } else {
+        @($terminalReuseState.PSObject.Properties.Name | Sort-Object)
+    }
+    $terminalReuseEvidenceKeys = if ($terminalReuseFailedEvidence.Count -eq 1) {
+        @($terminalReuseFailedEvidence[0].PSObject.Properties.Name | Sort-Object)
+    } else { @() }
+    $terminalReuseDetailKeys = if ($terminalReuseFailedEvidence.Count -eq 1) {
+        @($terminalReuseFailedEvidence[0].details.PSObject.Properties.Name | Sort-Object)
+    } else { @() }
+    $expectedTerminalReuseStateKeys = @("action", "deadlineUtc", "error", "runId", "status", "step", "timestamp")
+    $expectedTerminalReuseEvidenceKeys = @("action", "details", "error", "runId", "schemaVersion", "status", "timestamp", "type")
+    $expectedTerminalReuseDetailKeys = @(
+        "admissionRejected",
+        "admissionStage",
+        "awsReadStarted",
+        "failureCode",
+        "heartbeatStarted",
+        "recoveryMutationStarted"
+    )
+    $terminalReuseAwsDelta = $global:SchoolPilotTestAwsCalls.Count - $terminalReuseAwsStart
     $terminalReuseUpdateDelta = $global:SchoolPilotTestUpdateServiceCallCount - $terminalReuseUpdateStart
     $terminalReuseRegisterDelta = $global:SchoolPilotTestAutoscalingRegisterCallCount - $terminalReuseRegisterStart
     Assert-Condition (
-        $null -ne $terminalReuseError -and $terminalReuseError.Exception.Message -match "terminal availability-violation checkpoint" -and
-        $terminalReuseUpdateDelta -eq 0 -and $terminalReuseRegisterDelta -eq 0 -and
+        $null -ne $terminalReuseError -and
+        $terminalReuseError.Exception.Message -ceq "Application rollback found a terminal availability-violation checkpoint; progression remains blocked and this evidence directory cannot be reused." -and
+        $terminalReuseAwsDelta -eq 0 -and $terminalReuseUpdateDelta -eq 0 -and $terminalReuseRegisterDelta -eq 0 -and
+        $terminalReuseCheckpointExistsAfter -and
         $terminalReuseCheckpointHashAfter -eq $terminalReuseCheckpointHashBefore -and
         $terminalReuseCheckpointAfter.status -eq "completed_with_availability_violation" -and
-        -not (Test-Path -LiteralPath $terminalReuseStatePath) -and
+        $terminalReuseStateExists -and $terminalReuseState.status -eq "failed" -and
+        $terminalReuseState.step -eq "checkpoint-admission-rejected" -and
+        @(Compare-Object $terminalReuseStateKeys $expectedTerminalReuseStateKeys).Count -eq 0 -and
+        $terminalReuseState.runId -ceq [string]$terminalReuseConfig.runId -and
+        $terminalReuseState.action -ceq "Application" -and
+        $terminalReuseState.error -ceq "Application rollback rejected immutable terminal checkpoint reuse before heartbeat startup." -and
+        $terminalReuseState.timestamp -is [string] -and
+        $terminalReuseState.deadlineUtc -is [string] -and
+        $terminalReuseEvidence.Count -eq 1 -and $terminalReuseFailedEvidence.Count -eq 1 -and
+        @(Compare-Object $terminalReuseEvidenceKeys $expectedTerminalReuseEvidenceKeys).Count -eq 0 -and
+        @(Compare-Object $terminalReuseDetailKeys $expectedTerminalReuseDetailKeys).Count -eq 0 -and
+        $terminalReuseFailedEvidence[0].type -ceq "aws_rollout_rollback" -and
+        $terminalReuseFailedEvidence[0].schemaVersion -is [long] -and
+        $terminalReuseFailedEvidence[0].schemaVersion -eq 1 -and
+        $terminalReuseFailedEvidence[0].runId -ceq [string]$terminalReuseConfig.runId -and
+        $terminalReuseFailedEvidence[0].action -ceq "Application" -and
+        $terminalReuseFailedEvidence[0].status -ceq "failed" -and
+        $terminalReuseFailedEvidence[0].error -ceq "Application rollback rejected immutable terminal checkpoint reuse before heartbeat startup." -and
+        $terminalReuseFailedEvidence[0].timestamp -is [string] -and
+        $terminalReuseFailedEvidence[0].details.admissionRejected -is [bool] -and
+        $terminalReuseFailedEvidence[0].details.admissionRejected -eq $true -and
+        $terminalReuseFailedEvidence[0].details.admissionStage -ceq "application_recovery_checkpoint" -and
+        $terminalReuseFailedEvidence[0].details.failureCode -ceq "terminal_checkpoint_reuse" -and
+        $terminalReuseFailedEvidence[0].details.heartbeatStarted -is [bool] -and
+        $terminalReuseFailedEvidence[0].details.heartbeatStarted -eq $false -and
+        $terminalReuseFailedEvidence[0].details.awsReadStarted -is [bool] -and
+        $terminalReuseFailedEvidence[0].details.awsReadStarted -eq $false -and
+        $terminalReuseFailedEvidence[0].details.recoveryMutationStarted -is [bool] -and
+        $terminalReuseFailedEvidence[0].details.recoveryMutationStarted -eq $false -and
         -not (Test-Path -LiteralPath $terminalReuseHeartbeatPath)
-    ) "A terminal availability-violation checkpoint must fail closed before heartbeat startup or recovery mutation (error=$terminalReuseErrorMessage; updateDelta=$terminalReuseUpdateDelta; registerDelta=$terminalReuseRegisterDelta; hashUnchanged=$($terminalReuseCheckpointHashAfter -eq $terminalReuseCheckpointHashBefore); status=$($terminalReuseCheckpointAfter.status); stateExists=$(Test-Path -LiteralPath $terminalReuseStatePath); heartbeatExists=$(Test-Path -LiteralPath $terminalReuseHeartbeatPath))."
+    ) "A terminal availability-violation checkpoint must fail closed before heartbeat startup or AWS/recovery mutation while sealing failure evidence (error=$terminalReuseErrorMessage; awsDelta=$terminalReuseAwsDelta; updateDelta=$terminalReuseUpdateDelta; registerDelta=$terminalReuseRegisterDelta; checkpointExists=$terminalReuseCheckpointExistsAfter; hashUnchanged=$($terminalReuseCheckpointHashAfter -eq $terminalReuseCheckpointHashBefore); status=$($terminalReuseCheckpointAfter.status); stateExists=$terminalReuseStateExists; stateStatus=$($terminalReuseState.status); evidenceCount=$($terminalReuseFailedEvidence.Count); heartbeatExists=$(Test-Path -LiteralPath $terminalReuseHeartbeatPath))."
+
+    $malformedCheckpointConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -DateKind String -Depth 20
+    $malformedCheckpointConfig.runId = "malformed-application-checkpoint-admission"
+    [IO.File]::WriteAllText($rollbackConfigPath, ($malformedCheckpointConfig | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText($applicationRecoveryCheckpointPath, "{malformed-checkpoint", [Text.UTF8Encoding]::new($false))
+    $malformedCheckpointHashBefore = (Get-FileHash -LiteralPath $applicationRecoveryCheckpointPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $malformedCheckpointStatePath = Join-Path $evidenceDirectory "$($malformedCheckpointConfig.runId)-rollback-state.json"
+    $malformedCheckpointHeartbeatPath = Join-Path $evidenceDirectory "$($malformedCheckpointConfig.runId)-rollback-heartbeat.json"
+    $malformedCheckpointEvidencePath = Join-Path $evidenceDirectory "$($malformedCheckpointConfig.runId)-rollback.jsonl"
+    $malformedCheckpointAwsStart = $global:SchoolPilotTestAwsCalls.Count
+    $malformedCheckpointUpdateStart = $global:SchoolPilotTestUpdateServiceCallCount
+    $malformedCheckpointRegisterStart = $global:SchoolPilotTestAutoscalingRegisterCallCount
+    $malformedCheckpointError = $null
+    try { & $rollbackScript -ConfigPath $rollbackConfigPath -Action Application -Mode Execute | Out-Null }
+    catch { $malformedCheckpointError = $_ }
+    $malformedCheckpointState = Get-Content -LiteralPath $malformedCheckpointStatePath -Raw | ConvertFrom-Json -DateKind String -Depth 20
+    $malformedCheckpointEvidence = @(
+        Get-Content -LiteralPath $malformedCheckpointEvidencePath |
+            ForEach-Object { $_ | ConvertFrom-Json -DateKind String -Depth 20 }
+    )
+    $malformedCheckpointRecord = @($malformedCheckpointEvidence | Where-Object status -eq "failed")
+    $malformedCheckpointHashAfter = (Get-FileHash -LiteralPath $applicationRecoveryCheckpointPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    Assert-Condition (
+        $null -ne $malformedCheckpointError -and
+        $malformedCheckpointError.Exception.Message -ceq "Application rollback checkpoint admission failed before heartbeat startup." -and
+        ($global:SchoolPilotTestAwsCalls.Count - $malformedCheckpointAwsStart) -eq 0 -and
+        ($global:SchoolPilotTestUpdateServiceCallCount - $malformedCheckpointUpdateStart) -eq 0 -and
+        ($global:SchoolPilotTestAutoscalingRegisterCallCount - $malformedCheckpointRegisterStart) -eq 0 -and
+        $malformedCheckpointHashAfter -eq $malformedCheckpointHashBefore -and
+        $malformedCheckpointState.status -ceq "failed" -and
+        $malformedCheckpointState.step -ceq "checkpoint-admission-rejected" -and
+        $malformedCheckpointState.error -ceq "Application rollback checkpoint admission failed before heartbeat startup." -and
+        $malformedCheckpointEvidence.Count -eq 1 -and $malformedCheckpointRecord.Count -eq 1 -and
+        $malformedCheckpointRecord[0].error -ceq "Application rollback checkpoint admission failed before heartbeat startup." -and
+        $malformedCheckpointRecord[0].details.failureCode -ceq "checkpoint_admission_invalid" -and
+        $malformedCheckpointRecord[0].details.admissionRejected -is [bool] -and
+        $malformedCheckpointRecord[0].details.admissionRejected -eq $true -and
+        $malformedCheckpointRecord[0].details.heartbeatStarted -is [bool] -and
+        $malformedCheckpointRecord[0].details.heartbeatStarted -eq $false -and
+        $malformedCheckpointRecord[0].details.awsReadStarted -is [bool] -and
+        $malformedCheckpointRecord[0].details.awsReadStarted -eq $false -and
+        $malformedCheckpointRecord[0].details.recoveryMutationStarted -is [bool] -and
+        $malformedCheckpointRecord[0].details.recoveryMutationStarted -eq $false -and
+        -not (Test-Path -LiteralPath $malformedCheckpointHeartbeatPath)
+    ) "A malformed checkpoint must fail with only sanitized admission evidence before heartbeat startup or AWS/recovery mutation."
+
+    $evidenceSealFailureConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -DateKind String -Depth 20
+    $evidenceSealFailureConfig.runId = "checkpoint-admission-evidence-seal-failure"
+    [IO.File]::WriteAllText($rollbackConfigPath, ($evidenceSealFailureConfig | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
+    $evidenceSealFailureStatePath = Join-Path $evidenceDirectory "$($evidenceSealFailureConfig.runId)-rollback-state.json"
+    $evidenceSealFailureHeartbeatPath = Join-Path $evidenceDirectory "$($evidenceSealFailureConfig.runId)-rollback-heartbeat.json"
+    $evidenceSealFailureEvidencePath = Join-Path $evidenceDirectory "$($evidenceSealFailureConfig.runId)-rollback.jsonl"
+    New-Item -ItemType Directory -Path $evidenceSealFailureEvidencePath -Force | Out-Null
+    $evidenceSealFailureAwsStart = $global:SchoolPilotTestAwsCalls.Count
+    $evidenceSealFailureUpdateStart = $global:SchoolPilotTestUpdateServiceCallCount
+    $evidenceSealFailureRegisterStart = $global:SchoolPilotTestAutoscalingRegisterCallCount
+    $evidenceSealFailureError = $null
+    try { & $rollbackScript -ConfigPath $rollbackConfigPath -Action Application -Mode Execute | Out-Null }
+    catch { $evidenceSealFailureError = $_ }
+    $evidenceSealFailureState = Get-Content -LiteralPath $evidenceSealFailureStatePath -Raw | ConvertFrom-Json -DateKind String -Depth 20
+    $evidenceSealFailureCheckpointHashAfter = (Get-FileHash -LiteralPath $applicationRecoveryCheckpointPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    Assert-Condition (
+        $null -ne $evidenceSealFailureError -and
+        $evidenceSealFailureError.Exception.Message -ceq "Application rollback checkpoint admission failed and its failure evidence could not be sealed." -and
+        ($global:SchoolPilotTestAwsCalls.Count - $evidenceSealFailureAwsStart) -eq 0 -and
+        ($global:SchoolPilotTestUpdateServiceCallCount - $evidenceSealFailureUpdateStart) -eq 0 -and
+        ($global:SchoolPilotTestAutoscalingRegisterCallCount - $evidenceSealFailureRegisterStart) -eq 0 -and
+        $evidenceSealFailureCheckpointHashAfter -eq $malformedCheckpointHashBefore -and
+        $evidenceSealFailureState.status -ceq "failed" -and
+        $evidenceSealFailureState.step -ceq "checkpoint-admission-rejected" -and
+        $evidenceSealFailureState.error -ceq "Application rollback checkpoint admission failed before heartbeat startup." -and
+        (Test-Path -LiteralPath $evidenceSealFailureEvidencePath -PathType Container) -and
+        -not (Test-Path -LiteralPath $evidenceSealFailureHeartbeatPath)
+    ) "A checkpoint-admission evidence write failure must stay sanitized and must not start heartbeat, AWS reads, or recovery mutation."
+    Remove-Item -LiteralPath $evidenceSealFailureEvidencePath -Force
     [IO.File]::Delete($applicationRecoveryCheckpointPath)
 
     $workerRestartConfig = $rollbackConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20

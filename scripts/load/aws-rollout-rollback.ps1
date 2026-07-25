@@ -2150,13 +2150,6 @@ $config = Read-Config
 } | ConvertTo-Json
 if ($Mode -eq "Validate") { exit 0 }
 
-# A terminal availability violation is immutable recovery evidence. Reject its
-# reuse before starting the heartbeat worker or performing any AWS read, while
-# retaining the same check inside Restore-Application to close the TOCTOU gap.
-if ($Action -eq "Application") {
-    [void](Read-ApplicationRecoveryCheckpointForReuse -Config $config)
-}
-
 $script:RollbackRunId = [string]$config.runId
 New-Item -ItemType Directory -Path $config.resolvedEvidenceDirectory -Force | Out-Null
 $script:RollbackProgressStatePath = Join-ContainedPath $config.resolvedEvidenceDirectory "$($config.runId)-rollback-state.json"
@@ -2164,6 +2157,58 @@ $rollbackHeartbeatPath = Join-ContainedPath $config.resolvedEvidenceDirectory "$
 if (Test-Path -LiteralPath $script:RollbackProgressStatePath) { throw "Rollback heartbeat state already exists; use a unique runId." }
 $script:RollbackDeadline = [DateTimeOffset]::UtcNow.AddSeconds([int]$config.resolvedRollbackMaximumSeconds)
 Set-RollbackProgress -Status "running" -Step "starting"
+
+# A terminal availability violation is immutable recovery evidence. Reject its
+# reuse before starting the heartbeat worker or performing any AWS read, while
+# retaining the same check inside Restore-Application to close the TOCTOU gap.
+if ($Action -eq "Application") {
+    try {
+        [void](Read-ApplicationRecoveryCheckpointForReuse -Config $config)
+    }
+    catch {
+        $checkpointAdmissionError = $_
+        $isTerminalCheckpoint = $checkpointAdmissionError.Exception.Message -match "terminal availability-violation checkpoint"
+        $failureCode = if ($isTerminalCheckpoint) {
+            "terminal_checkpoint_reuse"
+        } else {
+            "checkpoint_admission_invalid"
+        }
+        $sanitizedError = if ($isTerminalCheckpoint) {
+            "Application rollback rejected immutable terminal checkpoint reuse before heartbeat startup."
+        } else {
+            "Application rollback checkpoint admission failed before heartbeat startup."
+        }
+        $details = [ordered]@{
+            admissionRejected = $true
+            admissionStage = "application_recovery_checkpoint"
+            failureCode = $failureCode
+            heartbeatStarted = $false
+            awsReadStarted = $false
+            recoveryMutationStarted = $false
+        }
+        $evidenceFailures = [System.Collections.Generic.List[string]]::new()
+        try {
+            Set-RollbackProgress -Status "failed" -Step "checkpoint-admission-rejected" -ErrorMessage $sanitizedError
+        }
+        catch {
+            $evidenceFailures.Add("state: $($_.Exception.Message)")
+        }
+        try {
+            Write-RollbackEvidence -Config $config -Status "failed" -ErrorMessage $sanitizedError -Details $details
+        }
+        catch {
+            $evidenceFailures.Add("record: $($_.Exception.Message)")
+        }
+        if ($evidenceFailures.Count -gt 0) {
+            throw "Application rollback checkpoint admission failed and its failure evidence could not be sealed."
+        }
+        if ($isTerminalCheckpoint) {
+            throw "Application rollback found a terminal availability-violation checkpoint; progression remains blocked and this evidence directory cannot be reused."
+        }
+        throw "Application rollback checkpoint admission failed before heartbeat startup."
+    }
+}
+
 $pwsh = (Get-Process -Id $PID).Path
 $parentStartedAt = ([DateTimeOffset](Get-Process -Id $PID).StartTime).ToUniversalTime().ToString("o")
 $heartbeatArguments = @(
