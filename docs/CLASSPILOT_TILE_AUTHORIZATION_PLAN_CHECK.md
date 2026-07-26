@@ -152,6 +152,36 @@ unavailable task, log, network, or posture evidence seals
 `evidence_unavailable`. A launched task whose exit cannot be recovered retains
 its exact ARN with tagged state `exit_unavailable`.
 
+The observation evidence collector owns log binding and collection in one Node
+process. At process entry it creates the five-minute
+`process.hrtime.bigint()` deadline, reads the exact terminal task-result and
+task-definition log-configuration files, invokes the shared PR #250 resolver,
+derives and validates the exact stream when ECS returns a null or omitted
+`logStreamName`, and performs every fresh CloudWatch snapshot under that same
+monotonic clock. An absolute `hrtime` value must never cross a process
+boundary. The collector accepts only:
+
+- `--task-result-file`
+- `--log-configuration-file`
+- `--expected-task-arn`
+- `--expected-task-definition-arn`
+- `--expected-region`
+- `--expected-account-id`
+- the optional bounded `--deadline-ms`
+
+The old direct log-group/log-stream/task-exit arguments and
+`--deadline-monotonic-nanoseconds` are prohibited. Pagination remains explicit
+and bounded to 100 pages and 10,000 events, with cycle/conflict detection,
+30-second-or-remaining per-page process limits, fresh snapshots, and delays of
+0, 1, 2, 4, then 5 seconds. A binding failure is
+`log_binding_unavailable` with zero CloudWatch attempts; failure to start the
+collector is `collector_start_unavailable` with zero attempts; and
+`log_evidence_unavailable` is valid for a new packet only after at least one
+CloudWatch snapshot attempt. Historical observation-v2 packets with the old
+zero-attempt log failure remain inspectable but cannot be rewritten or used for
+admission. Exit zero without the exact preflight and selection events is never
+eligible.
+
 The packet binds the attempt hash, terminal task state and exit when known,
 sanitized collection status and attempt count, canonical whole-event hash,
 final network/posture envelopes, and UTC completion time. Verified final hashes
@@ -160,6 +190,46 @@ must equal the immutable initial hashes. Every packet sets
 `eligibleForCertification` to `false`; rehearsal inspection/consumption,
 deployment, diagnostic, and certification admission reject it. Version 1
 observation packets are historical/inspect-only and no writer may create one.
+
+All task launch and terminal-description scratch JSON for new observations
+must live inside the ACL-private per-run observation root, never in the
+repository. Remove those transient files only after the terminal packet and
+its companions have been sealed and independently inspected. If sealing,
+inspection, or cleanup fails, retain the private controller workspace for
+forensic review and return nonzero. The two repository-root scratch files
+retained by the failed
+`cf9b70420b71668d4f06c9376b5274d27a259d0f` observation are historical
+evidence: archive their exact bytes and SHA-256 values under that observation's
+private evidence tree, then remove only those two known files so the checkout
+can become clean.
+
+The one approved historical reread uses
+`classpilot-tile-auth-plan-observation-evidence-reread-attempt-v1` and
+`classpilot-tile-auth-plan-observation-evidence-reread-v1`. Its immutable
+attempt and terminal groups live beneath the original observation root at
+`evidence-reread/attempt` and `evidence-reread/terminal`. The reread binds the
+original observation ID, attempt and packet hashes, application SHA, image
+digest, inactive task definitions, active baseline, network/posture hashes,
+exact stopped task ARN and exit, plus the current controller SHA. Durable
+admission requires a clean `main == origin/main == <controller SHA>` check and
+the one canonical source path under
+`tile-auth-observations/<application SHA>/<observation ID>/terminal`;
+hash-identical copies cannot mint another reread. It may call only
+`ecs describe-tasks`, `ecs describe-task-definition`, and the collector's
+exact-stream `logs get-log-events`; `taskLaunchCount` is fixed at zero.
+
+The reread must recover the canonical selection values `40/19/19/1/1`, one
+passing base, and the `80/80/0/0` required/reused/missing/conflicting session
+posture. Its packet and companions publish group-atomically, retain
+`rawErrorPersisted:false`, and set deployment, diagnostic, and certification
+eligibility permanently to false. It never modifies the original
+observation-v2 packet and cannot satisfy any downstream admission. Exactly one
+reread is permitted; a missing stopped task, identity drift, collection
+failure, malformed evidence, or second attempt seals a sanitized ineligible
+terminal result and stops before a fresh observation. The terminal packet uses
+an exact failure-stage matrix so task/configuration/binding hashes and actual
+CloudWatch attempt, stream, and canonical-event hashes cannot be discarded or
+misreported as a zero-read failure after collection.
 
 For an authorized production release, first invoke the candidate-only
 rehearsal:
@@ -254,6 +324,18 @@ historical-only. Its terminal funnel isolated the old any-relationship
 predicate at `noCoTeacherGroups`; the run produced no observation packet and
 made no serving or fixture change.
 
+The later observation at SHA
+`cf9b70420b71668d4f06c9376b5274d27a259d0f`, image digest
+`sha256:293e31c70c779da9d20af62957af70d2f6fb4c8ed327c0f9d7d4730053e8e570`,
+inactive `api:136`/`api-emergency:36` and `worker:51`, and observation ID
+`tile-plan-observe-20260726t035926z-cf9b70420b71` is historical-only. Its
+terminal task exited zero and its exact CloudWatch stream proved selection
+`40/19/19/1/1`, one eligible base, and session posture `80/80/0/0`, but the old
+cross-process monotonic-deadline boundary sealed
+`log_evidence_unavailable` with zero reads. The immutable original packet
+remains unchanged and ineligible. Only the one approved same-task reread above
+may recover its evidence, and that reread remains permanently ineligible.
+
 The production gate cannot start during the actual 01:15-02:15
 America/New_York purge/rollup window. A missing, ambiguous, inactive,
 incomplete, cross-school, or conflicted owned base fixture is a failed gate,
@@ -270,9 +352,18 @@ atomically, and independently inspects them. Every outcome is ineligible for
 deployment, diagnostics, and certification. Evidence rereads may retry only
 the exact terminal stream and never rerun the ECS task.
 
-The current authorization permits one new observation. Only a sealed
-`base_eligible` packet with selection values `40/19/19/1/1` may proceed to one
+The current authorization first requires the one exact historical reread, then
+permits one new release-bound observation. A failed reread stops before that
+observation. Only a fresh sealed `base_eligible` observation-v2 packet with a
+completed collection containing at least one CloudWatch read, selection values
+`40/19/19/1/1`, one eligible base, session posture totaling 80 pairs with zero
+conflicts, and unchanged verified network/posture hashes may proceed to one
 gate-only rehearsal and immediate single-use guarded deployment. Any other
-observation stops without retry or report-only fallback. Fixture refresh,
-Database Insights lease, diagnostic validation or traffic, and certification
-remain separately authorized.
+observation stops without another task or a report-only fallback.
+
+After the guarded backend, matching same-SHA frontend publication, route and
+posture verification, one offline preparation rehearsal, and one 1,560-second
+harmless host-supervision smoke, independently seal the readiness packet and
+stop. Fixture refresh or provisioning, Database Insights lease, diagnostic
+binding or traffic, certification, Terraform apply, RDS resize, cache/workload
+change, and threshold relaxation remain separately authorized.

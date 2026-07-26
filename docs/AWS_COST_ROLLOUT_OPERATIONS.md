@@ -878,6 +878,19 @@ migration, service activation, frontend publication, fixture mutation,
 monitoring lease, or traffic occurred. Never promote or reuse these
 identities.
 
+The later observation at application SHA
+`cf9b70420b71668d4f06c9376b5274d27a259d0f`, image digest
+`sha256:293e31c70c779da9d20af62957af70d2f6fb4c8ed327c0f9d7d4730053e8e570`,
+inactive `api:136`/`api-emergency:36` and `worker:51`, and observation ID
+`tile-plan-observe-20260726t035926z-cf9b70420b71` is historical-only. Its
+terminal task exited zero and its exact stream proved selection
+`40/19/19/1/1`, one eligible base, and session posture `80/80/0/0`, but the old
+cross-process monotonic-deadline boundary sealed
+`log_evidence_unavailable` with zero reads. The immutable original
+observation-v2 packet remains unchanged and ineligible. Never promote its
+candidate identities or use the original packet for rehearsal, deployment,
+diagnostic, or certification admission.
+
 For an explicitly authorized, non-consuming investigation, run exactly one
 inactive-candidate observation:
 
@@ -899,15 +912,33 @@ ACL-private `classpilot-tile-auth-plan-observation-attempt-v1` record binding
 the observation ID, release and candidate identities, active baseline, and
 initial network/posture hashes. Seal every terminal result as a sibling
 `classpilot-tile-auth-plan-observation-v2` packet. A monotonic five-minute
-collector rereads only the exact terminal task and log stream, using fresh
-snapshots, bounded calls, explicit pagination, and delays of 0, 1, 2, 4, then
-5 seconds. It never launches another task or merges partial reads. The strict
-outcomes are `base_eligible`, `base_ineligible`, `task_failed`, and
-`evidence_unavailable`. Exit-zero eligibility requires the unchanged
-preflight-v1 plus the exact selection-v1 companion; expected exit-one
-ineligibility requires the canonical funnel-v1 companion. Collection,
-network, and final-posture failures are retained as sanitized source
-envelopes instead of bypassing packet finalization.
+collector owns both exact-stream binding and every CloudWatch read in one Node
+process. At process entry it latches its `process.hrtime.bigint()` deadline,
+reads the exact terminal task-result and task-definition log-configuration
+files, invokes the shared PR #250 resolver, derives a null or omitted ECS
+`logStreamName`, and performs all fresh snapshots under that same clock.
+Absolute monotonic values must not cross a process boundary.
+
+The collector interface accepts the task-result file, log-configuration file,
+expected task/task-definition/region/account identities, and an optional
+bounded duration. It must not accept a caller-created
+`--deadline-monotonic-nanoseconds` or direct log-group/log-stream/task-exit
+arguments. Preserve 30-second-or-remaining process limits, explicit pagination,
+100-page/10,000-event caps, cycle and conflicting-event detection, fresh
+snapshots, and delays of 0, 1, 2, 4, then 5 seconds. It never launches another
+task or merges partial reads.
+
+The strict failures are `log_binding_unavailable` with zero CloudWatch reads,
+`collector_start_unavailable` with zero reads, and
+`log_evidence_unavailable` only after at least one attempted fresh snapshot.
+New observation writes reject a zero-attempt `log_evidence_unavailable`;
+historical observation-v2 inspection remains compatible with the old packet
+but cannot rewrite it. The strict outcomes remain `base_eligible`,
+`base_ineligible`, `task_failed`, and `evidence_unavailable`. Exit-zero
+eligibility requires the unchanged preflight-v1 plus the exact selection-v1
+companion; expected exit-one ineligibility requires the canonical funnel-v1
+companion. Collection, network, and final-posture failures are retained as
+sanitized source envelopes instead of bypassing packet finalization.
 
 The packet binds the exact immutable attempt hash, observation ID, SHA, digest,
 inactive task definitions, active baseline, initial and final network/posture
@@ -922,6 +953,54 @@ seal first and then return nonzero.
 cannot be written or used for admission. Rehearsal consumption, deployment,
 diagnostic binding, and certification validation must reject every
 observation packet.
+
+New observations keep their task-launch, terminal-description, and
+task-definition log-configuration scratch JSON inside the ACL-private per-run
+observation root. Remove those transient copies only after the terminal packet
+and companions are sealed and independently inspected. A sealing, inspection,
+or cleanup failure retains the private controller workspace for forensic
+review and returns nonzero. The two known repository-root scratch files
+from the historical `cf9b70420b71668d4f06c9376b5274d27a259d0f`
+observation must first be archived byte-for-byte with their SHA-256 values
+under that observation's private evidence tree; remove only those two known
+files afterward so the checkout becomes clean.
+
+The one approved same-task reread publishes an immutable
+`classpilot-tile-auth-plan-observation-evidence-reread-attempt-v1` admission
+and `classpilot-tile-auth-plan-observation-evidence-reread-v1` terminal group
+under the original observation root:
+
+```text
+<original-observation-root>\evidence-reread\attempt
+<original-observation-root>\evidence-reread\terminal
+```
+
+It binds the original observation ID, immutable attempt/packet paths and
+hashes, application SHA, image digest, inactive task definitions, active
+baseline, original network/posture hashes, exact stopped task ARN and exit, and
+the current controller SHA. Before durable reread admission, the controller
+must independently prove a clean `main == origin/main == <controller SHA>`.
+The source packet must be at its one canonical
+`tile-auth-observations/<application SHA>/<observation ID>/terminal` path;
+hash-identical copies are rejected and cannot create another attempt. It may
+call only `ecs describe-tasks`,
+`ecs describe-task-definition`, and the corrected collector's exact-stream
+`logs get-log-events`; it must never call `ecs run-task`. Require
+`taskLaunchCount:0`, `rawErrorPersisted:false`, and deployment, diagnostic, and
+certification eligibility all false.
+
+A successful reread independently recovers selection `40/19/19/1/1`, one
+eligible base, and required/reused/missing/conflicting session posture
+`80/80/0/0`. Packet and companions publish group-atomically and leave the
+original observation-v2 packet unchanged. Exactly one reread is permitted. A
+missing stopped task, identity mismatch, collection failure, malformed
+companion, or second attempt seals a sanitized, permanently ineligible terminal
+result and stops before any fresh observation. Failure-stage validation binds
+the exact task/configuration/binding hashes and truthful CloudWatch attempt,
+stream, and canonical-event hashes available at that stage; a post-collection
+companion rejection may not be rewritten as a zero-read failure. The reread
+proves the corrected
+evidence path only; it can never authorize deployment.
 
 For the completed session-independent remediation, require exact merged-SHA
 CI, CodeQL, Gitleaks, and Trivy success, then save and independently parse a
@@ -1009,9 +1088,12 @@ sanitized gate failure code. Exit zero plus complete valid evidence remains
 mandatory for acceptance; log binding must never replace the real gate
 failure.
 
-The current remediation authorizes exactly one independently inspected
-observation. Continue only when its v2 packet proves exit zero,
-`base_eligible`, one unchanged preflight-v1 base, the selection-v1 values
+The current remediation first authorizes exactly one historical reread of
+`tile-plan-observe-20260726t035926z-cf9b70420b71`, then exactly one fresh,
+release-bound, independently inspected observation. A failed historical reread
+stops before the fresh task. Continue only when the fresh v2 packet proves exit
+zero, `base_eligible`, a completed collection with at least one CloudWatch
+attempt, one unchanged preflight-v1 base, the selection-v1 values
 `40/19/19/1/1`, 80 required session pairs with reused plus missing equal to 80
 and zero conflicts, and unchanged verified network and serving posture. Any
 other observation outcome is terminal for the SHA and must not be retried or
@@ -1031,6 +1113,13 @@ traffic, certification preparation, and certification traffic. Any
 observation, rehearsal, preflight, gate, rollback, residue, deployment,
 convergence, route, offline-rehearsal, host-smoke, posture, or restoration
 failure is terminal for the SHA.
+
+The readiness packet must additionally bind the historical reread attempt and
+terminal hashes, its fixed zero-task-launch and permanent-ineligibility
+attestations, the fresh observation attempt/packet/companion hashes, and the
+collector implementation and schema hashes. Readiness remains the terminal
+boundary: sealing it does not authorize fixture work, a monitoring lease, a
+diagnostic, or certification.
 
 Any later separately authorized diagnostic-only Waf/800 must use the new batch
 workload. Every RDS CPU minute must be below 65%; HTTP 5xx and network

@@ -52,6 +52,7 @@ jobs:
           tests/classpilot-tile-auth-plan-base-selection-evidence.test.ts
           tests/classpilot-tile-auth-plan-observation.test.ts
           tests/classpilot-tile-auth-plan-observation-collector.test.ts
+          tests/classpilot-tile-auth-plan-observation-reread.test.ts
           tests/classpilot-tile-auth-plan-rehearsal-receipt.test.ts
           tests/classpilot-tile-auth-plan-readiness-governance.test.ts
           tests/deploy-runtime-secret-preflight.test.ts

@@ -461,7 +461,7 @@ describe("ClassPilot tile authorization plan observation v2", () => {
     assert.equal(sealed.packet.terminalTask.exitCode, 137);
   });
 
-  it("requires zero collection attempts before a log read can begin", () => {
+  it("enforces failure-code attempt arithmetic for new writes", () => {
     const unavailable: any = {
       createdAtUtc: "2026-07-25T15:00:10.000Z",
       terminalTask: null,
@@ -499,6 +499,76 @@ describe("ClassPilot tile authorization plan observation v2", () => {
       seal(unavailable).packet.observationOutcome,
       "evidence_unavailable"
     );
+
+    unavailable.collection.attemptCount = 0;
+    assert.throws(
+      () =>
+        buildClasspilotTileAuthorizationPlanObservation({
+          ...identity(),
+          attemptRecordSha256: "3".repeat(64),
+          terminalEvidence: unavailable,
+        }),
+      /classpilot_tile_auth_plan_observation_invalid/
+    );
+
+    unavailable.collection.failureCode = "collector_start_unavailable";
+    assert.equal(
+      seal(unavailable).packet.observationOutcome,
+      "evidence_unavailable"
+    );
+    unavailable.collection.attemptCount = 1;
+    assert.throws(
+      () =>
+        buildClasspilotTileAuthorizationPlanObservation({
+          ...identity(),
+          attemptRecordSha256: "3".repeat(64),
+          terminalEvidence: unavailable,
+        }),
+      /classpilot_tile_auth_plan_observation_invalid/
+    );
+  });
+
+  it("keeps zero-attempt log failures inspectable but never writable", () => {
+    const sealed = seal();
+    const historicalPacket: any = structuredClone(sealed.packet);
+    historicalPacket.observationOutcome = "evidence_unavailable";
+    historicalPacket.collection = {
+      status: "failed",
+      attemptCount: 0,
+      completedAtUtc: "2026-07-25T15:05:00.000Z",
+      failureCode: "log_evidence_unavailable",
+      canonicalEventSha256: null,
+      logStreamSha256: null,
+      rawErrorPersisted: false,
+    };
+
+    assert.throws(
+      () =>
+        writeClasspilotTileAuthorizationPlanObservation(
+          path.dirname(sealed.written.path),
+          historicalPacket,
+          evidenceValues(historicalPacket)
+        ),
+      /classpilot_tile_auth_plan_observation_invalid/
+    );
+
+    const historicalBytes = Buffer.from(
+      `${JSON.stringify(historicalPacket, null, 2)}\n`,
+      "utf8"
+    );
+    fs.writeFileSync(sealed.written.path, historicalBytes);
+    const inspected = inspectClasspilotTileAuthorizationPlanObservation(
+      sealed.written.path,
+      {
+        ...sealed.expected,
+        expectedPacketSha256: sha256(historicalBytes),
+      }
+    );
+    assert.equal(inspected.version, OBSERVATION_VERSION);
+    assert.equal(inspected.observationOutcome, "evidence_unavailable");
+    assert.equal(inspected.eligibleForDeployment, false);
+    assert.equal(inspected.eligibleForDiagnostic, false);
+    assert.equal(inspected.eligibleForCertification, false);
   });
 
   it("canonically downgrades verified final-hash drift", () => {

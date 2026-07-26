@@ -56,6 +56,7 @@ const COLLECTION_FAILURE_CODES = new Set([
   "terminal_task_timeout",
   "terminal_task_description_unavailable",
   "log_binding_unavailable",
+  "collector_start_unavailable",
   "log_evidence_unavailable",
 ]);
 const EXIT_UNAVAILABLE_FAILURE_CODES = new Set([
@@ -287,7 +288,12 @@ export function canonicalObservationEventsSha256(eventsDocument) {
   return sha256(stableJson(eventsDocument));
 }
 
-function validateCollection(value, eventsDocument, verifyEventHash = true) {
+function validateCollection(
+  value,
+  eventsDocument,
+  verifyEventHash = true,
+  allowHistoricalZeroAttemptLogEvidence = false
+) {
   if (!hasExactKeys(value, COLLECTION_KEYS)) invalid();
   const normalized = {
     status: value.status,
@@ -318,8 +324,10 @@ function validateCollection(value, eventsDocument, verifyEventHash = true) {
       eventsDocument !== null ||
       normalized.canonicalEventSha256 !== null ||
       normalized.logStreamSha256 !== null ||
-      (normalized.failureCode !== "log_evidence_unavailable" &&
-        normalized.attemptCount !== 0)
+      (normalized.failureCode === "log_evidence_unavailable"
+        ? normalized.attemptCount < 1 &&
+          !allowHistoricalZeroAttemptLogEvidence
+        : normalized.attemptCount !== 0)
     ) {
       invalid();
     }
@@ -784,7 +792,8 @@ export function validateClasspilotTileAuthorizationPlanObservation(
   const collection = validateCollection(
     packet.collection,
     null,
-    false
+    false,
+    true
   );
   const finalNetwork = validateFinalEvidence(
     packet.finalNetwork,
@@ -1203,6 +1212,13 @@ export function writeClasspilotTileAuthorizationPlanObservation(
   evidence
 ) {
   validateClasspilotTileAuthorizationPlanObservation(packet);
+  if (
+    packet.collection.status === "failed" &&
+    packet.collection.failureCode === "log_evidence_unavailable" &&
+    packet.collection.attemptCount < 1
+  ) {
+    invalid();
+  }
   inspectClasspilotTileAuthorizationPlanObservationAttempt(
     attemptPathForTerminalDirectory(outputDirectory),
     {

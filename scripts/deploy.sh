@@ -194,6 +194,10 @@ TILE_AUTH_PLAN_OBSERVATION_INITIAL_POSTURE_SHA256=""
 TILE_AUTH_PLAN_OBSERVATION_FINAL_NETWORK_JSON=""
 TILE_AUTH_PLAN_OBSERVATION_FINAL_POSTURE_JSON=""
 TILE_AUTH_PLAN_OBSERVATION_RUN_ROOT=""
+TILE_AUTH_PLAN_OBSERVATION_CONTROLLER_ROOT=""
+TILE_AUTH_PLAN_OBSERVATION_TASK_PATH=""
+TILE_AUTH_PLAN_OBSERVATION_RESULT_PATH=""
+TILE_AUTH_PLAN_OBSERVATION_LOG_CONFIGURATION_PATH=""
 TILE_AUTH_PLAN_OBSERVATION_ATTEMPT_PATH=""
 TILE_AUTH_PLAN_OBSERVATION_ATTEMPT_SHA256=""
 TILE_AUTH_PLAN_OBSERVATION_ATTEMPT_ADMITTED=false
@@ -1517,7 +1521,7 @@ const allowed = new Set([
   "terminal_task_timeout",
   "terminal_task_description_unavailable",
   "log_binding_unavailable",
-  "log_evidence_unavailable",
+  "collector_start_unavailable",
 ]);
 const failureCode = process.env.OBSERVATION_FAILURE_CODE;
 if (!allowed.has(failureCode)) process.exit(1);
@@ -1565,14 +1569,14 @@ run_classpilot_tile_auth_plan_observation_task() {
     --overrides '{"containerOverrides":[{"name":"api","command":["node","dist/cli/checkClasspilotTileAuthorizationPlans.js","--preflight-base","--observation-selection"],"environment":[{"name":"RUN_MIGRATIONS_ON_STARTUP","value":"false"},{"name":"RUN_MIGRATIONS_ONLY","value":"false"},{"name":"SCHEDULER_ENABLED","value":"false"}]}]}' \
     --output json \
     --region "$REGION" \
-    --no-cli-pager > .tile-auth-plan-observation-task.json; then
+    --no-cli-pager > "$TILE_AUTH_PLAN_OBSERVATION_TASK_PATH"; then
     set_classpilot_tile_auth_observation_collection_failure \
       "terminal_task_unavailable"
     return 0
   fi
 
   local task_arn
-  if ! task_arn=$(TILE_AUTH_PLAN_TASK_PATH=".tile-auth-plan-observation-task.json" \
+  if ! task_arn=$(TILE_AUTH_PLAN_TASK_PATH="$TILE_AUTH_PLAN_OBSERVATION_TASK_PATH" \
     EXPECTED_TASK_DEFINITION="$API_ROLLOUT_TASK_DEF" \
     EXPECTED_REGION="$REGION" \
     EXPECTED_ACCOUNT_ID="$ACCOUNT_ID" node <<'NODE'
@@ -1621,13 +1625,13 @@ NODE
     --cli-connect-timeout 10 \
     --cli-read-timeout 30 \
     --region "$REGION" \
-    --no-cli-pager > .tile-auth-plan-observation-result.json; then
+    --no-cli-pager > "$TILE_AUTH_PLAN_OBSERVATION_RESULT_PATH"; then
     terminal_description_available=true
   fi
 
   local task_exit_code
   if [[ "$terminal_description_available" == true ]] &&
-     task_exit_code=$(OBSERVATION_RESULT_PATH=".tile-auth-plan-observation-result.json" \
+     task_exit_code=$(OBSERVATION_RESULT_PATH="$TILE_AUTH_PLAN_OBSERVATION_RESULT_PATH" \
     EXPECTED_TASK_ARN="$task_arn" \
     EXPECTED_TASK_DEFINITION="$API_ROLLOUT_TASK_DEF" node <<'NODE'
 const fs = require("fs");
@@ -1664,66 +1668,30 @@ NODE
     return 0
   fi
 
-  local evidence_deadline_monotonic_ns
-  if ! evidence_deadline_monotonic_ns=$(OBSERVATION_DEADLINE_MS="$TILE_AUTH_PLAN_OBSERVATION_EVIDENCE_DEADLINE_MS" node <<'NODE'
-const milliseconds = Number(process.env.OBSERVATION_DEADLINE_MS);
-if (!Number.isSafeInteger(milliseconds) || milliseconds < 1) process.exit(1);
-process.stdout.write(
-  (process.hrtime.bigint() + BigInt(milliseconds) * 1_000_000n).toString()
-);
-NODE
-  ); then
-    set_classpilot_tile_auth_observation_collection_failure \
-      "log_binding_unavailable"
-    return 0
-  fi
-
-  local log_configuration_json log_binding log_group log_region log_prefix
-  local log_stream bound_task_exit_code extra
-  if ! log_configuration_json=$(AWS_MAX_ATTEMPTS=1 aws ecs describe-task-definition \
+  if ! AWS_MAX_ATTEMPTS=1 aws ecs describe-task-definition \
     --task-definition "$API_ROLLOUT_TASK_DEF" \
     --query 'taskDefinition.containerDefinitions[?name==`api`] | [0].logConfiguration' \
     --output json \
     --cli-connect-timeout 10 \
     --cli-read-timeout 30 \
     --region "$REGION" \
-    --no-cli-pager); then
-    set_classpilot_tile_auth_observation_collection_failure \
-      "log_binding_unavailable"
-    return 0
-  fi
-  if ! log_binding=$(TILE_AUTH_PLAN_RESULT_PATH=".tile-auth-plan-observation-result.json" \
-    TILE_AUTH_PLAN_LOG_CONFIGURATION_JSON="$log_configuration_json" \
-    EXPECTED_TASK_ARN="$task_arn" \
-    EXPECTED_TASK_DEFINITION="$API_ROLLOUT_TASK_DEF" \
-    EXPECTED_REGION="$REGION" \
-    EXPECTED_ACCOUNT_ID="$ACCOUNT_ID" \
-    node "$SCRIPT_DIR/resolve-classpilot-tile-auth-plan-log-binding.mjs" 2>/dev/null
-  ); then
-    set_classpilot_tile_auth_observation_collection_failure \
-      "log_binding_unavailable"
-    return 0
-  fi
-  IFS=$'\t' read -r log_group log_region log_prefix log_stream bound_task_exit_code extra <<< "$log_binding"
-  if [[ -z "$log_group" || "$log_region" != "$REGION" || -z "$log_prefix" ||
-        -z "$log_stream" || "$log_stream" != "${log_prefix}/api/"* ||
-        "$bound_task_exit_code" != "$task_exit_code" ||
-        -n "$extra" ]]; then
+    --no-cli-pager > "$TILE_AUTH_PLAN_OBSERVATION_LOG_CONFIGURATION_PATH"; then
     set_classpilot_tile_auth_observation_collection_failure \
       "log_binding_unavailable"
     return 0
   fi
   if ! TILE_AUTH_PLAN_OBSERVATION_COLLECTION_JSON=$(MSYS_NO_PATHCONV=1 node \
     "$SCRIPT_DIR/collect-classpilot-tile-auth-plan-observation-evidence.mjs" \
-    --log-group-name "$log_group" \
-    --log-stream-name "$log_stream" \
-    --region "$REGION" \
-    --task-exit-code "$task_exit_code" \
+    --task-result-file "$TILE_AUTH_PLAN_OBSERVATION_RESULT_PATH" \
+    --log-configuration-file "$TILE_AUTH_PLAN_OBSERVATION_LOG_CONFIGURATION_PATH" \
+    --expected-task-arn "$task_arn" \
+    --expected-task-definition-arn "$API_ROLLOUT_TASK_DEF" \
+    --expected-region "$REGION" \
+    --expected-account-id "$ACCOUNT_ID" \
     --deadline-ms "$TILE_AUTH_PLAN_OBSERVATION_EVIDENCE_DEADLINE_MS" \
-    --deadline-monotonic-nanoseconds "$evidence_deadline_monotonic_ns" \
     2>/dev/null); then
     set_classpilot_tile_auth_observation_collection_failure \
-      "log_evidence_unavailable"
+      "collector_start_unavailable"
   fi
   return 0
 }
@@ -2211,6 +2179,28 @@ NODE
   fi
   TILE_AUTH_PLAN_OBSERVATION_ATTEMPT_PATH="$attempt_path"
   TILE_AUTH_PLAN_OBSERVATION_ATTEMPT_SHA256="$attempt_sha"
+
+  TILE_AUTH_PLAN_OBSERVATION_CONTROLLER_ROOT="${TILE_AUTH_PLAN_OBSERVATION_RUN_ROOT}/controller"
+  TILE_AUTH_PLAN_OBSERVATION_TASK_PATH="${TILE_AUTH_PLAN_OBSERVATION_CONTROLLER_ROOT}/run-task.private.json"
+  TILE_AUTH_PLAN_OBSERVATION_RESULT_PATH="${TILE_AUTH_PLAN_OBSERVATION_CONTROLLER_ROOT}/terminal-task.private.json"
+  TILE_AUTH_PLAN_OBSERVATION_LOG_CONFIGURATION_PATH="${TILE_AUTH_PLAN_OBSERVATION_CONTROLLER_ROOT}/log-configuration.private.json"
+  if ! MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' node --input-type=module - \
+    "$SCRIPT_DIR/load/prepare-classpilot-load-test.mjs" \
+    "$TILE_AUTH_PLAN_OBSERVATION_CONTROLLER_ROOT" <<'NODE'
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+const helper = await import(pathToFileURL(path.resolve(process.argv[2])).href);
+const requested = path.resolve(process.argv[3]);
+const prepared = helper.preparePrivateOutputDirectory(requested);
+if (prepared !== requested) process.exit(1);
+NODE
+  then
+    TILE_AUTH_PLAN_OBSERVATION_INITIALIZATION_FAILED=true
+    set_classpilot_tile_auth_observation_collection_failure \
+      "collector_start_unavailable"
+    error "The ACL-private ClassPilot tile authorization observation controller workspace could not be prepared."
+    return 0
+  fi
 }
 
 capture_classpilot_tile_auth_observation_final_network() {
@@ -2819,6 +2809,29 @@ NODE
   TILE_AUTH_PLAN_REHEARSAL_RECEIPT_PATH="$receipt_path"
   TILE_AUTH_PLAN_REHEARSAL_RECEIPT_SHA256="$receipt_sha"
   success "ClassPilot tile authorization candidate rehearsal passed (receipt=${receipt_path}, receiptSha256=${receipt_sha}, expiresAtUtc=${expires_at})"
+}
+
+cleanup_classpilot_tile_auth_plan_observation_controller_workspace() {
+  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" != true ||
+        -z "$TILE_AUTH_PLAN_OBSERVATION_CONTROLLER_ROOT" ]]; then
+    return 0
+  fi
+  if [[ -z "$TILE_AUTH_PLAN_OBSERVATION_RUN_ROOT" ||
+        "$TILE_AUTH_PLAN_OBSERVATION_CONTROLLER_ROOT" != "${TILE_AUTH_PLAN_OBSERVATION_RUN_ROOT}/controller" ]]; then
+    error "The ClassPilot tile authorization observation controller workspace binding is invalid."
+    return 1
+  fi
+  rm -f -- \
+    "$TILE_AUTH_PLAN_OBSERVATION_TASK_PATH" \
+    "$TILE_AUTH_PLAN_OBSERVATION_RESULT_PATH" \
+    "$TILE_AUTH_PLAN_OBSERVATION_LOG_CONFIGURATION_PATH"
+  if [[ -d "$TILE_AUTH_PLAN_OBSERVATION_CONTROLLER_ROOT" ]]; then
+    if ! rmdir -- "$TILE_AUTH_PLAN_OBSERVATION_CONTROLLER_ROOT"; then
+      error "The ClassPilot tile authorization observation controller workspace retained unexpected files."
+      return 1
+    fi
+  fi
+  return 0
 }
 
 write_classpilot_tile_auth_plan_observation_packet_v2() {
@@ -4534,6 +4547,13 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
       capture_classpilot_tile_auth_observation_final_posture
       write_classpilot_tile_auth_plan_observation_packet_v2
       observation_finalization_result=$?
+      if [[ "$observation_finalization_result" -eq 0 ]]; then
+        if ! cleanup_classpilot_tile_auth_plan_observation_controller_workspace; then
+          observation_finalization_result=1
+        fi
+      else
+        warn "Retaining the ACL-private ClassPilot observation controller workspace because terminal packet sealing or inspection failed."
+      fi
       set -e
     else
       run_classpilot_tile_auth_plan_base_preflight
