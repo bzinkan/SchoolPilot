@@ -576,6 +576,43 @@ describe("ClassPilot observation evidence reread", () => {
       );
     }
 
+    const containmentRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), "sp-reread-git-boundary-")
+    );
+    temporaryRoots.push(containmentRoot);
+    const temporaryBoundary = path.join(
+      containmentRoot,
+      "temporary-boundary"
+    );
+    const outsideTarget = path.join(
+      containmentRoot,
+      "outside-target"
+    );
+    const escapeLink = path.join(
+      temporaryBoundary,
+      "junction-escape"
+    );
+    fs.mkdirSync(temporaryBoundary);
+    fs.mkdirSync(outsideTarget);
+    fs.symlinkSync(
+      outsideTarget,
+      escapeLink,
+      process.platform === "win32" ? "junction" : "dir"
+    );
+    assert.throws(
+      () =>
+        resolveObservationRereadGitExecutable(
+          {
+            NODE_ENV: "test",
+            CLP_LOAD_FIXTURE_TEST_MODE: "1",
+            CLP_LOAD_GATES_TEST_ROOT: escapeLink,
+            GIT_EXECUTABLE: process.execPath,
+          } as NodeJS.ProcessEnv,
+          temporaryBoundary
+        ),
+      /observation_reread_controller_repository_invalid/
+    );
+
     const processStub = writeRereadProcessPreload(
       fixture.root,
       fixture.options.controllerGitSha,

@@ -76,14 +76,20 @@ export function resolveObservationRereadGitExecutable(
   if (!overriddenGitExecutable) return "git";
   const configuredTestRoot =
     environment.CLP_LOAD_GATES_TEST_ROOT;
-  const relativeTestRoot =
-    typeof configuredTestRoot === "string" &&
-    configuredTestRoot.length > 0
-      ? path.relative(
-          path.resolve(temporaryRoot),
-          path.resolve(configuredTestRoot)
-        )
-      : null;
+  let relativeTestRoot = null;
+  try {
+    if (
+      typeof configuredTestRoot === "string" &&
+      configuredTestRoot.length > 0
+    ) {
+      relativeTestRoot = path.relative(
+        fs.realpathSync(path.resolve(temporaryRoot)),
+        fs.realpathSync(path.resolve(configuredTestRoot))
+      );
+    }
+  } catch {
+    relativeTestRoot = null;
+  }
   if (
     environment.NODE_ENV !== "test" ||
     environment.CLP_LOAD_FIXTURE_TEST_MODE !== "1" ||
