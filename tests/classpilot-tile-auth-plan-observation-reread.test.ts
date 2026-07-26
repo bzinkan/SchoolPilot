@@ -13,12 +13,19 @@ import {
   writeClasspilotTileAuthorizationPlanObservationAttempt,
 } from "../scripts/manage-classpilot-tile-auth-plan-observation.mjs";
 import {
+  APPROVED_OBSERVATION_REREAD_SUPERSESSION_SOURCE,
+  buildClasspilotTileAuthorizationPlanObservationRereadSupersession,
+  createClasspilotTileAuthorizationPlanObservationRereadSupersessionApprovalPolicyForTest,
   inspectClasspilotTileAuthorizationPlanObservationReread,
+  inspectClasspilotTileAuthorizationPlanObservationRereadSupersession,
   OBSERVATION_REREAD_ATTEMPT_FILENAME,
   OBSERVATION_REREAD_PACKET_FILENAME,
   OBSERVATION_REREAD_PREFLIGHT_FILENAME,
   OBSERVATION_REREAD_SELECTION_FILENAME,
+  OBSERVATION_REREAD_SUPERSESSION_FILENAME,
+  OBSERVATION_REREAD_SUPERSESSION_VERSION,
   OBSERVATION_REREAD_VERSION,
+  writeClasspilotTileAuthorizationPlanObservationRereadSupersession,
 } from "../scripts/manage-classpilot-tile-auth-plan-observation-evidence-reread.mjs";
 import {
   resolveObservationRereadGitExecutable,
@@ -307,6 +314,123 @@ function testDependencies(
       controllerRepository(fixture.options),
     ...dependencies,
   };
+}
+
+function supersessionTarget() {
+  return {
+    observationId:
+      "tile-plan-observe-20260726t180000z-supersession-target",
+    applicationGitSha: "e".repeat(40),
+    imageDigest: `sha256:${"6".repeat(64)}`,
+    candidateApiTaskDefinitionArn:
+      "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:137",
+    candidateWorkerTaskDefinitionArn:
+      "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:52",
+    activeBaseline: {
+      apiTaskDefinitionArn:
+        "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:31",
+      workerTaskDefinitionArn:
+        "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:48",
+    },
+    initialNetworkConfigurationSha256: "7".repeat(64),
+    initialProductionPostureSha256: "8".repeat(64),
+  };
+}
+
+async function historicalTaskMissingReread() {
+  const fixture = sourceFixture();
+  const result =
+    await runClasspilotTileAuthorizationPlanObservationReread(
+      fixture.options,
+      testDependencies(fixture, {
+        runAwsJson: async () => ({
+          tasks: [],
+          failures: [
+            {
+              arn: fixture.options.expectedTaskArn,
+              reason: "MISSING",
+              detail: "discarded",
+            },
+          ],
+        }),
+        collectBound: async () => {
+          throw new Error("must_not_collect");
+        },
+      })
+    );
+  return { fixture, result };
+}
+
+function supersessionApprovalPolicy(
+  fixture: ReturnType<typeof sourceFixture>,
+  result: { path: string; sha256: string }
+) {
+  const packet = JSON.parse(fs.readFileSync(result.path, "utf8"));
+  return createClasspilotTileAuthorizationPlanObservationRereadSupersessionApprovalPolicyForTest(
+    {
+      sourceApplicationGitSha:
+        fixture.options.expectedApplicationGitSha,
+      sourceObservationId: fixture.options.expectedObservationId,
+      canonicalRereadPacketRelativePath: [
+        "tile-auth-observations",
+        fixture.options.expectedApplicationGitSha,
+        fixture.options.expectedObservationId,
+        "evidence-reread",
+        "terminal",
+        OBSERVATION_REREAD_PACKET_FILENAME,
+      ].join("/"),
+      rereadPacketSha256: result.sha256,
+      rereadAttemptSha256:
+        packet.observationRereadAttemptSha256,
+      rereadControllerGitSha: packet.controllerGitSha,
+      originalObservationPacketSha256: fixture.packetSha256,
+      originalObservationAttemptSha256: fixture.admitted.sha256,
+      taskDescriptionSha256: packet.taskDescriptionSha256,
+    }
+  );
+}
+
+function rewriteRereadFailure(
+  packetPath: string,
+  failureCode:
+    | "terminal_task_description_unavailable"
+    | "log_configuration_unavailable"
+    | "log_binding_unavailable"
+    | "collector_start_unavailable"
+    | "log_evidence_unavailable"
+    | "recovered_evidence_invalid"
+) {
+  const packet = JSON.parse(fs.readFileSync(packetPath, "utf8"));
+  packet.failureCode = failureCode;
+  packet.logConfigurationSha256 = null;
+  packet.logBindingSha256 = null;
+  packet.logStreamSha256 = null;
+  packet.canonicalEventSha256 = null;
+  packet.collectionAttemptCount = 0;
+  if (
+    [
+      "log_binding_unavailable",
+      "collector_start_unavailable",
+      "log_evidence_unavailable",
+      "recovered_evidence_invalid",
+    ].includes(failureCode)
+  ) {
+    packet.logConfigurationSha256 = "9".repeat(64);
+  }
+  if (
+    ["log_evidence_unavailable", "recovered_evidence_invalid"].includes(
+      failureCode
+    )
+  ) {
+    packet.logBindingSha256 = "a".repeat(64);
+    packet.collectionAttemptCount = 1;
+  }
+  if (failureCode === "recovered_evidence_invalid") {
+    packet.logStreamSha256 = "b".repeat(64);
+    packet.canonicalEventSha256 = "c".repeat(64);
+  }
+  fs.writeFileSync(packetPath, privateJson(packet), { mode: 0o600 });
+  return hash(fs.readFileSync(packetPath));
 }
 
 function rereadCliArguments(
@@ -874,6 +998,277 @@ describe("ClassPilot observation evidence reread", () => {
           runAwsJson: async () => stoppedTask(fixture.options),
         })
       )
+    );
+  });
+
+  it("supersedes only the exact missing-task matrix for one bound fresh observation and one hour", async () => {
+    const { fixture, result } = await historicalTaskMissingReread();
+    const target = supersessionTarget();
+    const approvalPolicy = supersessionApprovalPolicy(fixture, result);
+    const originalPacket = fs.readFileSync(result.path);
+    const attemptPath = path.join(
+      fixture.runRoot,
+      "evidence-reread",
+      "attempt",
+      OBSERVATION_REREAD_ATTEMPT_FILENAME
+    );
+    const originalAttempt = fs.readFileSync(attemptPath);
+    assert.deepEqual(APPROVED_OBSERVATION_REREAD_SUPERSESSION_SOURCE, {
+      sourceApplicationGitSha:
+        "cf9b70420b71668d4f06c9376b5274d27a259d0f",
+      sourceObservationId:
+        "tile-plan-observe-20260726t035926z-cf9b70420b71",
+      canonicalRereadPacketRelativePath:
+        "tile-auth-observations/cf9b70420b71668d4f06c9376b5274d27a259d0f/tile-plan-observe-20260726t035926z-cf9b70420b71/evidence-reread/terminal/classpilot-tile-auth-plan-observation-evidence-reread.private.json",
+      rereadPacketSha256:
+        "9c8c092756264fc0686f0aeab8a540526a3b7a60f5c861f122aad69f9f039087",
+      rereadAttemptSha256:
+        "3f0ff5a217e04635deefa1d07ee61030732675c83ba43ed3d38f5d4c96fd2b44",
+      rereadControllerGitSha:
+        "4fc219114899c37544ce5017b5e41b7842516e4c",
+      originalObservationPacketSha256:
+        "5427ff0e5af5f2245479646d1b1dd621213782e01c28a971399295274a8a16fd",
+      originalObservationAttemptSha256:
+        "01fb533aa87befbba1dba760566afe66c3536e5437726f0d76b1fae0de86c6aa",
+      taskDescriptionSha256:
+        "75e94f99f136d5d484be97b8a073a22072645cdd6794980114250455f8578756",
+    });
+    assert.throws(
+      () =>
+        buildClasspilotTileAuthorizationPlanObservationRereadSupersession({
+          supersessionId:
+            "tile-plan-reread-supersession-20260726t180000z-unapproved",
+          sourceRereadPacketPath: result.path,
+          expectedSourceRereadPacketSha256: result.sha256,
+          targetFreshObservation: target,
+          createdAtUtc: "2026-07-26T18:00:00.000Z",
+        }),
+      /observation_reread_not_approved/
+    );
+    const packet =
+      buildClasspilotTileAuthorizationPlanObservationRereadSupersession({
+        supersessionId:
+          "tile-plan-reread-supersession-20260726t180000z-target",
+        sourceRereadPacketPath: result.path,
+        expectedSourceRereadPacketSha256: result.sha256,
+        targetFreshObservation: target,
+        createdAtUtc: "2026-07-26T18:00:00.000Z",
+        approvalPolicy,
+      });
+    const written =
+      writeClasspilotTileAuthorizationPlanObservationRereadSupersession(
+        packet,
+        approvalPolicy
+      );
+
+    assert.equal(
+      written.path,
+      path.join(
+        fixture.runRoot,
+        "evidence-reread",
+        "supersession",
+        OBSERVATION_REREAD_SUPERSESSION_FILENAME
+      )
+    );
+    assert.deepEqual(
+      fs.readdirSync(path.dirname(written.path)),
+      [OBSERVATION_REREAD_SUPERSESSION_FILENAME]
+    );
+    const inspected =
+      inspectClasspilotTileAuthorizationPlanObservationRereadSupersession(
+        written.path,
+        written.sha256,
+        target,
+        "2026-07-26T18:59:59.999Z",
+        approvalPolicy
+      );
+    assert.equal(
+      inspected.version,
+      OBSERVATION_REREAD_SUPERSESSION_VERSION
+    );
+    assert.equal(inspected.sourceRereadId, packet.sourceReread.rereadId);
+    assert.equal(inspected.targetObservationId, target.observationId);
+    assert.equal(inspected.expiresAtUtc, "2026-07-26T19:00:00.000Z");
+    assert.equal(inspected.taskLaunchCount, 0);
+    assert.equal(inspected.eligibleForFreshObservationAdmission, true);
+    assert.equal(inspected.eligibleForDeployment, false);
+    assert.equal(inspected.eligibleForDiagnostic, false);
+    assert.equal(inspected.eligibleForCertification, false);
+    assert.deepEqual(fs.readFileSync(result.path), originalPacket);
+    assert.deepEqual(fs.readFileSync(attemptPath), originalAttempt);
+
+    assert.throws(
+      () =>
+        inspectClasspilotTileAuthorizationPlanObservationRereadSupersession(
+          written.path,
+          written.sha256,
+          target,
+          "2026-07-26T19:00:00.000Z",
+          approvalPolicy
+        ),
+      /supersession_expired/
+    );
+    assert.throws(
+      () =>
+        inspectClasspilotTileAuthorizationPlanObservationRereadSupersession(
+          written.path,
+          written.sha256,
+          {
+            ...target,
+            observationId:
+              "tile-plan-observe-20260726t180001z-other-target",
+          },
+          "2026-07-26T18:30:00.000Z",
+          approvalPolicy
+        ),
+      /observation_reread_mismatch/
+    );
+    assert.throws(
+      () =>
+        writeClasspilotTileAuthorizationPlanObservationRereadSupersession(
+          packet,
+          approvalPolicy
+        ),
+      /supersession_already_exists/
+    );
+  });
+
+  it("rejects every valid reread outcome other than the exact historical-task-missing matrix", async () => {
+    const otherFailureCodes = [
+      "terminal_task_description_unavailable",
+      "log_configuration_unavailable",
+      "log_binding_unavailable",
+      "collector_start_unavailable",
+      "log_evidence_unavailable",
+      "recovered_evidence_invalid",
+    ] as const;
+    for (const failureCode of otherFailureCodes) {
+      const { fixture, result } = await historicalTaskMissingReread();
+      const packetSha256 = rewriteRereadFailure(
+        result.path,
+        failureCode
+      );
+      const approvalPolicy = supersessionApprovalPolicy(fixture, {
+        path: result.path,
+        sha256: packetSha256,
+      });
+      const inspected =
+        inspectClasspilotTileAuthorizationPlanObservationReread(
+          result.path,
+          packetSha256
+        );
+      assert.equal(inspected.rereadOutcome, "evidence_unavailable");
+      assert.throws(
+        () =>
+          buildClasspilotTileAuthorizationPlanObservationRereadSupersession({
+            supersessionId:
+              "tile-plan-reread-supersession-20260726t180000z-blocked",
+            sourceRereadPacketPath: result.path,
+            expectedSourceRereadPacketSha256: packetSha256,
+            targetFreshObservation: supersessionTarget(),
+            createdAtUtc: "2026-07-26T18:00:00.000Z",
+            approvalPolicy,
+          }),
+        /observation_reread_not_supersedable/,
+        failureCode
+      );
+    }
+
+    const fixture = sourceFixture();
+    const recovered =
+      await runClasspilotTileAuthorizationPlanObservationReread(
+        fixture.options,
+        testDependencies(fixture, {
+          runAwsJson: async (
+            _service: string,
+            operation: string
+          ) =>
+            operation === "describe-tasks"
+              ? stoppedTask(fixture.options)
+              : logConfiguration(),
+          collectBound: async () => recoveredCollection(),
+        })
+      );
+    const recoveredApprovalPolicy = supersessionApprovalPolicy(
+      fixture,
+      recovered
+    );
+    assert.throws(
+      () =>
+        buildClasspilotTileAuthorizationPlanObservationRereadSupersession({
+          supersessionId:
+            "tile-plan-reread-supersession-20260726t180000z-recovered",
+          sourceRereadPacketPath: recovered.path,
+          expectedSourceRereadPacketSha256: recovered.sha256,
+          targetFreshObservation: supersessionTarget(),
+          createdAtUtc: "2026-07-26T18:00:00.000Z",
+          approvalPolicy: recoveredApprovalPolicy,
+        }),
+      /observation_reread_not_supersedable/
+    );
+  });
+
+  it("keeps the CLI approval fixed to the single production reread and sanitizes rejection", async () => {
+    const { result } = await historicalTaskMissingReread();
+    const target = supersessionTarget();
+    const managerScript = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../scripts/manage-classpilot-tile-auth-plan-observation-evidence-reread.mjs"
+    );
+    const targetArguments = [
+      "--target-observation-id",
+      target.observationId,
+      "--target-application-git-sha",
+      target.applicationGitSha,
+      "--target-image-digest",
+      target.imageDigest,
+      "--target-api-task-definition-arn",
+      target.candidateApiTaskDefinitionArn,
+      "--target-worker-task-definition-arn",
+      target.candidateWorkerTaskDefinitionArn,
+      "--target-active-api-task-definition-arn",
+      target.activeBaseline.apiTaskDefinitionArn,
+      "--target-active-worker-task-definition-arn",
+      target.activeBaseline.workerTaskDefinitionArn,
+      "--target-network-configuration-sha256",
+      target.initialNetworkConfigurationSha256,
+      "--target-production-posture-sha256",
+      target.initialProductionPostureSha256,
+    ];
+    const environment = {
+      ...process.env,
+      NODE_ENV: "test",
+      CLP_LOAD_FIXTURE_TEST_MODE: "1",
+    };
+    const rejected = spawnSync(
+      process.execPath,
+      [
+        managerScript,
+        "supersede",
+        "--reread-packet-path",
+        result.path,
+        "--expected-reread-packet-sha256",
+        result.sha256,
+        "--supersession-id",
+        "tile-plan-reread-supersession-20260726t180000z-cli",
+        ...targetArguments,
+      ],
+      { encoding: "utf8", env: environment, timeout: 30_000 }
+    );
+    assert.equal(rejected.status, 1);
+    assert.equal(rejected.stdout, "");
+    assert.equal(
+      rejected.stderr,
+      "classpilot_tile_auth_plan_observation_reread_supersession_failed\n"
+    );
+    assert.equal(
+      fs.existsSync(
+        path.join(
+          path.dirname(path.dirname(result.path)),
+          "supersession"
+        )
+      ),
+      false
     );
   });
 

@@ -224,12 +224,44 @@ posture. Its packet and companions publish group-atomically, retain
 `rawErrorPersisted:false`, and set deployment, diagnostic, and certification
 eligibility permanently to false. It never modifies the original
 observation-v2 packet and cannot satisfy any downstream admission. Exactly one
-reread is permitted; a missing stopped task, identity drift, collection
-failure, malformed evidence, or second attempt seals a sanitized ineligible
-terminal result and stops before a fresh observation. The terminal packet uses
-an exact failure-stage matrix so task/configuration/binding hashes and actual
-CloudWatch attempt, stream, and canonical-event hashes cannot be discarded or
-misreported as a zero-read failure after collection.
+reread is permitted. Identity drift, collection failure, malformed evidence,
+or any other failure remains permanently ineligible and blocks a fresh
+observation. The terminal packet uses an exact failure-stage matrix so
+task/configuration/binding hashes and actual CloudWatch attempt, stream, and
+canonical-event hashes cannot be discarded or misreported as a zero-read
+failure after collection.
+
+One already-sealed, retention-compatible task-unavailable outcome is eligible
+only to supersede the unrepeatable historical proof step, never the evidence
+gate. The packet records that the exact historical stopped task is no longer
+describable; it does not establish retention or any other mechanism as the
+exclusive cause. Its canonical terminal SHA-256 is
+`9c8c092756264fc0686f0aeab8a540526a3b7a60f5c861f122aad69f9f039087`,
+its immutable reread-attempt SHA-256 is
+`3f0ff5a217e04635deefa1d07ee61030732675c83ba43ed3d38f5d4c96fd2b44`,
+and it binds controller SHA
+`4fc219114899c37544ce5017b5e41b7842516e4c`, source observation packet
+SHA-256
+`5427ff0e5af5f2245479646d1b1dd621213782e01c28a971399295274a8a16fd`,
+and source attempt SHA-256
+`01fb533aa87befbba1dba760566afe66c3536e5437726f0d76b1fae0de86c6aa`.
+The packet is exactly `status: failed`,
+`rereadOutcome: evidence_unavailable`,
+`failureCode: historical_task_missing`, `taskLaunchCount: 0`,
+`collectionAttemptCount: 0`, terminal task exit zero, task-description
+SHA-256
+`75e94f99f136d5d484be97b8a073a22072645cdd6794980114250455f8578756`,
+and null log-configuration, binding, stream, and canonical-event hashes.
+
+Only that exact immutable matrix may be bound by a clean new merged controller
+to an atomic single-use marker for one strict fresh observation. No second
+reread is allowed. No other reread failure code, copied packet, hash drift,
+source drift, or exit-only claim can create the marker. The historical packet
+and marker remain permanently false for deployment, diagnostic, and
+certification eligibility. The fresh observation must still collect at least
+one CloudWatch snapshot and independently prove selection `40/19/19/1/1`, one
+base, 80 required session pairs with zero conflicts, and unchanged final
+network and production posture.
 
 For an authorized production release, first invoke the candidate-only
 rehearsal:
@@ -333,8 +365,11 @@ terminal task exited zero and its exact CloudWatch stream proved selection
 `40/19/19/1/1`, one eligible base, and session posture `80/80/0/0`, but the old
 cross-process monotonic-deadline boundary sealed
 `log_evidence_unavailable` with zero reads. The immutable original packet
-remains unchanged and ineligible. Only the one approved same-task reread above
-may recover its evidence, and that reread remains permanently ineligible.
+remains unchanged and ineligible. The one approved same-task reread above
+sealed the exact, retention-compatible no-longer-describable outcome rather
+than recovering evidence; it remains immutable and permanently ineligible, and
+only the exact single-use supersession described above can admit one fresh
+observation.
 
 The production gate cannot start during the actual 01:15-02:15
 America/New_York purge/rollup window. A missing, ambiguous, inactive,
@@ -352,14 +387,21 @@ atomically, and independently inspects them. Every outcome is ineligible for
 deployment, diagnostics, and certification. Evidence rereads may retry only
 the exact terminal stream and never rerun the ECS task.
 
-The current authorization first requires the one exact historical reread, then
-permits one new release-bound observation. A failed reread stops before that
-observation. Only a fresh sealed `base_eligible` observation-v2 packet with a
-completed collection containing at least one CloudWatch read, selection values
+The current authorization does not run a second historical reread. It requires
+exact-new-merged-SHA CI, CodeQL, Gitleaks, and Trivy success, fresh protected
+state backups, a unique zero-action/no-apply production Terraform plan, and a
+fresh read-only production baseline before consuming the exact single-use
+retention-aware supersession marker. That marker permits one new release-bound
+observation only. The earlier controller-SHA plan and baseline remain
+comparison evidence and cannot admit the new SHA.
+
+Only a fresh sealed `base_eligible` observation-v2 packet with a completed
+collection containing at least one CloudWatch read, selection values
 `40/19/19/1/1`, one eligible base, session posture totaling 80 pairs with zero
 conflicts, and unchanged verified network/posture hashes may proceed to one
-gate-only rehearsal and immediate single-use guarded deployment. Any other
-observation stops without another task or a report-only fallback.
+gate-only rehearsal and immediate single-use guarded deployment. Exit code
+alone never satisfies this evidence contract. Any other observation stops
+without another task or a report-only fallback.
 
 After the guarded backend, matching same-SHA frontend publication, route and
 posture verification, one offline preparation rehearsal, and one 1,560-second

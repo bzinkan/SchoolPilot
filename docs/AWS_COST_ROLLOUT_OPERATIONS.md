@@ -992,15 +992,48 @@ certification eligibility all false.
 A successful reread independently recovers selection `40/19/19/1/1`, one
 eligible base, and required/reused/missing/conflicting session posture
 `80/80/0/0`. Packet and companions publish group-atomically and leave the
-original observation-v2 packet unchanged. Exactly one reread is permitted. A
-missing stopped task, identity mismatch, collection failure, malformed
-companion, or second attempt seals a sanitized, permanently ineligible terminal
-result and stops before any fresh observation. Failure-stage validation binds
-the exact task/configuration/binding hashes and truthful CloudWatch attempt,
-stream, and canonical-event hashes available at that stage; a post-collection
-companion rejection may not be rewritten as a zero-read failure. The reread
-proves the corrected
-evidence path only; it can never authorize deployment.
+original observation-v2 packet unchanged. Exactly one reread is permitted.
+Identity mismatch, collection failure, malformed companion, or any other
+reread failure remains permanently ineligible and stops before a fresh
+observation. Failure-stage validation binds the exact
+task/configuration/binding hashes and truthful CloudWatch attempt, stream, and
+canonical-event hashes available at that stage; a post-collection companion
+rejection may not be rewritten as a zero-read failure. The reread proves the
+corrected evidence path only; it can never authorize deployment.
+
+There is one retention-aware supersession for the already-consumed reread and
+no general best-effort or exit-only path. The immutable terminal packet at the
+canonical historical observation root has SHA-256
+`9c8c092756264fc0686f0aeab8a540526a3b7a60f5c861f122aad69f9f039087`;
+its immutable reread-attempt SHA-256 is
+`3f0ff5a217e04635deefa1d07ee61030732675c83ba43ed3d38f5d4c96fd2b44`.
+It binds controller SHA
+`4fc219114899c37544ce5017b5e41b7842516e4c`, source observation packet
+SHA-256
+`5427ff0e5af5f2245479646d1b1dd621213782e01c28a971399295274a8a16fd`,
+and source observation-attempt SHA-256
+`01fb533aa87befbba1dba760566afe66c3536e5437726f0d76b1fae0de86c6aa`.
+Its exact failure matrix is `status: failed`,
+`rereadOutcome: evidence_unavailable`,
+`failureCode: historical_task_missing`, `taskLaunchCount: 0`,
+`collectionAttemptCount: 0`, terminal task exit zero, task-description
+SHA-256
+`75e94f99f136d5d484be97b8a073a22072645cdd6794980114250455f8578756`,
+and null log-configuration, log-binding, log-stream, and canonical-event
+hashes. Deployment, diagnostic, and certification eligibility remain false.
+
+The exact packet above records that the historical stopped task is no longer
+describable. Its zero-read, null-binding matrix is compatible with the task
+having aged beyond the describable retention window, but does not establish an
+exclusive cause. A new clean merged controller may bind that packet and those
+hashes to one atomic, single-use supersession marker for exactly one fresh
+release-bound observation. It must not attempt a second reread, rewrite either
+historical packet, accept another failure code, or infer success from the
+historical exit code. Any path, hash, source identity, failure-matrix, or
+single-use-marker mismatch blocks the fresh task. The supersession authorizes
+only the fresh observation; neither the historical packet nor its exit code
+satisfies preflight, rehearsal, deployment, diagnostic, or certification
+admission.
 
 For the completed session-independent remediation, require exact merged-SHA
 CI, CodeQL, Gitleaks, and Trivy success, then save and independently parse a
@@ -1088,16 +1121,22 @@ sanitized gate failure code. Exit zero plus complete valid evidence remains
 mandatory for acceptance; log binding must never replace the real gate
 failure.
 
-The current remediation first authorizes exactly one historical reread of
-`tile-plan-observe-20260726t035926z-cf9b70420b71`, then exactly one fresh,
-release-bound, independently inspected observation. A failed historical reread
-stops before the fresh task. Continue only when the fresh v2 packet proves exit
-zero, `base_eligible`, a completed collection with at least one CloudWatch
-attempt, one unchanged preflight-v1 base, the selection-v1 values
-`40/19/19/1/1`, 80 required session pairs with reused plus missing equal to 80
-and zero conflicts, and unchanged verified network and serving posture. Any
-other observation outcome is terminal for the SHA and must not be retried or
-converted to report-only.
+The current remediation binds the exact failed historical reread described
+above and authorizes no second reread. After exact-new-merged-SHA CI, CodeQL,
+Gitleaks, and Trivy success, create fresh DPAPI and AES-GCM state backups, a
+unique saved zero-action/no-apply production Terraform plan, and a fresh
+read-only production baseline. The earlier controller-SHA plan and baseline
+remain comparison evidence only. Atomically consuming the exact
+retention-aware supersession marker then authorizes exactly one fresh,
+release-bound, independently inspected observation.
+
+Continue only when the fresh v2 packet proves exit zero, `base_eligible`, a
+completed collection with at least one CloudWatch attempt, one unchanged
+preflight-v1 base, the selection-v1 values `40/19/19/1/1`, 80 required session
+pairs with reused plus missing equal to 80 and zero conflicts, and unchanged
+verified network and serving posture. Exit zero without those exact terminal
+events is never sufficient. Any other observation outcome is terminal for the
+SHA and must not be retried or converted to report-only.
 
 After that exact observation result, the same merged SHA may run exactly one
 gate-only rehearsal and immediately consume its exact single-use 60-minute
@@ -1115,11 +1154,11 @@ convergence, route, offline-rehearsal, host-smoke, posture, or restoration
 failure is terminal for the SHA.
 
 The readiness packet must additionally bind the historical reread attempt and
-terminal hashes, its fixed zero-task-launch and permanent-ineligibility
-attestations, the fresh observation attempt/packet/companion hashes, and the
-collector implementation and schema hashes. Readiness remains the terminal
-boundary: sealing it does not authorize fixture work, a monitoring lease, a
-diagnostic, or certification.
+terminal hashes, the consumed single-use retention-aware supersession marker,
+the fixed zero-task-launch and permanent-ineligibility attestations, the fresh
+observation attempt/packet/companion hashes, and the collector implementation
+and schema hashes. Readiness remains the terminal boundary: sealing it does not
+authorize fixture work, a monitoring lease, a diagnostic, or certification.
 
 Any later separately authorized diagnostic-only Waf/800 must use the new batch
 workload. Every RDS CPU minute must be below 65%; HTTP 5xx and network

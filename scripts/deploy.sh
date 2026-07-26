@@ -13,7 +13,9 @@
 #     --classpilot-tile-auth-plan-gate --classpilot-tile-auth-plan-rehearsal
 #                                       # Build/register inactive exact candidates and run the preflight/full gate only
 #   ./scripts/deploy.sh production --backend --activate-emergency \
-#     --classpilot-tile-auth-plan-observation
+#     --classpilot-tile-auth-plan-observation \
+#     --classpilot-tile-auth-plan-observation-reread <canonical-private-reread-packet-path> \
+#     --expected-classpilot-tile-auth-plan-observation-reread-sha256 <64-hex>
 #                                       # Build/register inactive exact candidates and run one read-only base observation only
 #   ./scripts/deploy.sh production --backend --activate-emergency \
 #     --classpilot-tile-auth-plan-gate \
@@ -41,6 +43,8 @@ ACTIVATE_EMERGENCY=false
 RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE=false
 RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=false
 RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION=false
+CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD=""
+EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD_SHA256=""
 REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=""
 EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL_SHA256=""
 SAME_IMAGE_NETWORKING_STAGE=""
@@ -86,6 +90,16 @@ while [[ $# -gt 0 ]]; do
     --classpilot-tile-auth-plan-observation)
       RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION=true
       shift
+      ;;
+    --classpilot-tile-auth-plan-observation-reread)
+      [[ $# -ge 2 ]] || { echo "--classpilot-tile-auth-plan-observation-reread requires an absolute canonical private reread packet path"; exit 1; }
+      CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD="$2"
+      shift 2
+      ;;
+    --expected-classpilot-tile-auth-plan-observation-reread-sha256)
+      [[ $# -ge 2 ]] || { echo "--expected-classpilot-tile-auth-plan-observation-reread-sha256 requires a 64-hex SHA-256"; exit 1; }
+      EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD_SHA256="$2"
+      shift 2
       ;;
     --reuse-classpilot-tile-auth-plan-rehearsal)
       [[ $# -ge 2 ]] || { echo "--reuse-classpilot-tile-auth-plan-rehearsal requires an absolute private receipt path"; exit 1; }
@@ -205,6 +219,9 @@ TILE_AUTH_PLAN_OBSERVATION_INITIALIZATION_FAILED=false
 TILE_AUTH_PLAN_OBSERVATION_PACKET_PATH=""
 TILE_AUTH_PLAN_OBSERVATION_PACKET_SHA256=""
 TILE_AUTH_PLAN_OBSERVATION_OUTCOME=""
+TILE_AUTH_PLAN_OBSERVATION_SUPERSESSION_ID=""
+TILE_AUTH_PLAN_OBSERVATION_SUPERSESSION_PATH=""
+TILE_AUTH_PLAN_OBSERVATION_SUPERSESSION_SHA256=""
 CLASSPILOT_TILE_AUTH_SERVICE_MUTATION_STARTED=false
 CLASSPILOT_TILE_AUTH_SAFE_TERMINAL_REACHED=false
 
@@ -1143,7 +1160,22 @@ validate_classpilot_tile_auth_plan_gate_mode() {
       error "--classpilot-tile-auth-plan-observation is allowed only with production --backend --activate-emergency and rejects frontend, same-image, and --skip-wait modes."
       return 1
     fi
+    if [[ -z "$CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD" ||
+          ! "$EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD_SHA256" =~ ^[a-f0-9]{64}$ ]]; then
+      error "--classpilot-tile-auth-plan-observation requires the canonical historical reread packet and its out-of-band expected SHA-256."
+      return 1
+    fi
+    if [[ ! "$CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD" =~ ^([A-Za-z]:[\\/]|/) ]]; then
+      error "The ClassPilot tile authorization observation reread packet path must be absolute."
+      return 1
+    fi
     return 0
+  fi
+
+  if [[ -n "$CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD" ||
+        -n "$EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD_SHA256" ]]; then
+    error "Historical reread supersession inputs are allowed only with --classpilot-tile-auth-plan-observation."
+    return 1
   fi
 
   if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE" != true ]]; then
@@ -1559,6 +1591,11 @@ run_classpilot_tile_auth_plan_observation_task() {
 
   local started_by="sp-tile-observe-${LOCAL_SHA:0:12}"
   info "Running the read-only ClassPilot tile authorization base observation against ${API_ROLLOUT_TASK_DEF}..."
+  if ! reinspect_classpilot_tile_auth_plan_observation_supersession_before_launch; then
+    set_classpilot_tile_auth_observation_collection_failure \
+      "terminal_task_unavailable"
+    return 0
+  fi
   if ! aws ecs run-task \
     --cluster "$CLUSTER" \
     --launch-type FARGATE \
@@ -2021,6 +2058,367 @@ preflight_classpilot_tile_auth_plan_observation_admission() {
   fi
 }
 
+create_and_inspect_classpilot_tile_auth_plan_observation_supersession() {
+  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" != true ]]; then
+    return 0
+  fi
+  if [[ -z "$TILE_AUTH_PLAN_OBSERVATION_ID" ||
+        ! "$LOCAL_SHA" =~ ^[a-f0-9]{40}$ ||
+        ! "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ||
+        ! "$TILE_AUTH_PLAN_OBSERVATION_INITIAL_NETWORK_SHA256" =~ ^[a-f0-9]{64}$ ||
+        ! "$TILE_AUTH_PLAN_OBSERVATION_INITIAL_POSTURE_SHA256" =~ ^[a-f0-9]{64}$ ||
+        -z "$API_ROLLOUT_TASK_DEF" ||
+        -z "$WORKER_CANDIDATE_TASK_DEF" ||
+        -z "$PRODUCTION_ROLLBACK_API_TASK_DEFINITION_ARN" ||
+        -z "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION_ARN" ]]; then
+    error "The fresh observation target identity is incomplete; refusing historical reread supersession."
+    return 1
+  fi
+
+  TILE_AUTH_PLAN_OBSERVATION_SUPERSESSION_ID="supersede-${TILE_AUTH_PLAN_OBSERVATION_ID}"
+  local target_args=(
+    --target-observation-id "$TILE_AUTH_PLAN_OBSERVATION_ID"
+    --target-application-git-sha "$LOCAL_SHA"
+    --target-image-digest "$DIGEST"
+    --target-api-task-definition-arn "$API_ROLLOUT_TASK_DEF"
+    --target-worker-task-definition-arn "$WORKER_CANDIDATE_TASK_DEF"
+    --target-active-api-task-definition-arn "$PRODUCTION_ROLLBACK_API_TASK_DEFINITION_ARN"
+    --target-active-worker-task-definition-arn "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION_ARN"
+    --target-network-configuration-sha256 "$TILE_AUTH_PLAN_OBSERVATION_INITIAL_NETWORK_SHA256"
+    --target-production-posture-sha256 "$TILE_AUTH_PLAN_OBSERVATION_INITIAL_POSTURE_SHA256"
+  )
+
+  local create_summary create_binding create_schema create_path create_sha create_id
+  local create_source_reread create_target_observation create_expires
+  local create_admission create_deploy create_diagnostic create_certification
+  local create_scope create_created create_task_launches
+  local extra
+  if ! create_summary=$(MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*" node \
+    "$SCRIPT_DIR/manage-classpilot-tile-auth-plan-observation-evidence-reread.mjs" \
+    supersede \
+    --reread-packet-path "$CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD" \
+    --expected-reread-packet-sha256 "$EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD_SHA256" \
+    --supersession-id "$TILE_AUTH_PLAN_OBSERVATION_SUPERSESSION_ID" \
+    "${target_args[@]}" 2>/dev/null); then
+    error "The exact historical observation reread could not be superseded for this fresh observation."
+    return 1
+  fi
+  if ! create_binding=$(CLASSPILOT_SUPERSESSION_SUMMARY="$create_summary" node <<'NODE'
+const value = JSON.parse(process.env.CLASSPILOT_SUPERSESSION_SUMMARY || "null");
+const keys = [
+  "eligibleForCertification",
+  "eligibleForDeployment",
+  "eligibleForDiagnostic",
+  "eligibleForFreshObservationAdmission",
+  "createdAtUtc",
+  "expiresAtUtc",
+  "path",
+  "schemaVersion",
+  "sha256",
+  "scope",
+  "sourceRereadId",
+  "supersessionId",
+  "taskLaunchCount",
+  "targetObservationId",
+  "version",
+].sort();
+const createdAt = Date.parse(value?.createdAtUtc);
+const expiresAt = Date.parse(value?.expiresAtUtc);
+if (JSON.stringify(Object.keys(value || {}).sort()) !== JSON.stringify(keys) ||
+    value.schemaVersion !== 1 ||
+    value.version !==
+      "classpilot-tile-auth-plan-observation-reread-supersession-v1" ||
+    value.scope !== "fresh_observation_admission_only" ||
+    value.taskLaunchCount !== 0 ||
+    typeof value.path !== "string" || value.path.length === 0 ||
+    !/^([A-Za-z]:[\\/]|\/)/.test(value.path) ||
+    !/^[a-f0-9]{64}$/.test(value.sha256 || "") ||
+    !/^[a-z0-9][a-z0-9-]{7,127}$/.test(value.supersessionId || "") ||
+    !/^[a-z0-9][a-z0-9-]{7,127}$/.test(value.sourceRereadId || "") ||
+    !/^[a-z0-9][a-z0-9-]{7,127}$/.test(value.targetObservationId || "") ||
+    !Number.isFinite(createdAt) ||
+    new Date(createdAt).toISOString() !== value.createdAtUtc ||
+    !Number.isFinite(expiresAt) ||
+    new Date(expiresAt).toISOString() !== value.expiresAtUtc ||
+    createdAt >= expiresAt ||
+    expiresAt <= Date.now() ||
+    value.eligibleForFreshObservationAdmission !== true ||
+    value.eligibleForDeployment !== false ||
+    value.eligibleForDiagnostic !== false ||
+    value.eligibleForCertification !== false) process.exit(1);
+process.stdout.write([
+  String(value.schemaVersion),
+  value.path,
+  value.sha256,
+  value.supersessionId,
+  value.sourceRereadId,
+  value.targetObservationId,
+  value.scope,
+  value.createdAtUtc,
+  value.expiresAtUtc,
+  String(value.taskLaunchCount),
+  String(value.eligibleForFreshObservationAdmission),
+  String(value.eligibleForDeployment),
+  String(value.eligibleForDiagnostic),
+  String(value.eligibleForCertification),
+].join("\t"));
+NODE
+  ); then
+    error "The historical observation reread supersession summary was malformed."
+    return 1
+  fi
+  IFS=$'\t' read -r create_schema create_path create_sha create_id \
+    create_source_reread create_target_observation create_scope create_created \
+    create_expires create_task_launches create_admission create_deploy \
+    create_diagnostic create_certification extra <<< "$create_binding"
+  if [[ "$create_schema" != "1" ||
+        "$create_id" != "$TILE_AUTH_PLAN_OBSERVATION_SUPERSESSION_ID" ||
+        "$create_target_observation" != "$TILE_AUTH_PLAN_OBSERVATION_ID" ||
+        "$create_scope" != "fresh_observation_admission_only" ||
+        "$create_task_launches" != "0" ||
+        "$create_admission" != "true" || "$create_deploy" != "false" ||
+        "$create_diagnostic" != "false" ||
+        "$create_certification" != "false" || -n "$extra" ]]; then
+    error "The historical observation reread supersession target was ambiguous."
+    return 1
+  fi
+
+  local inspect_summary inspect_binding inspect_schema inspect_path inspect_sha
+  local inspect_id
+  local inspect_source_reread inspect_target_observation inspect_expires
+  local inspect_admission inspect_deploy inspect_diagnostic
+  local inspect_certification inspect_scope inspect_created
+  local inspect_task_launches
+  if ! inspect_summary=$(MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*" node \
+    "$SCRIPT_DIR/manage-classpilot-tile-auth-plan-observation-evidence-reread.mjs" \
+    inspect-supersession \
+    --packet-path "$create_path" \
+    --expected-packet-sha256 "$create_sha" \
+    "${target_args[@]}" 2>/dev/null); then
+    error "The one-shot historical observation reread supersession failed independent inspection."
+    return 1
+  fi
+  if ! inspect_binding=$(CLASSPILOT_SUPERSESSION_SUMMARY="$inspect_summary" node <<'NODE'
+const value = JSON.parse(process.env.CLASSPILOT_SUPERSESSION_SUMMARY || "null");
+const keys = [
+  "eligibleForCertification",
+  "eligibleForDeployment",
+  "eligibleForDiagnostic",
+  "eligibleForFreshObservationAdmission",
+  "createdAtUtc",
+  "expiresAtUtc",
+  "path",
+  "schemaVersion",
+  "sha256",
+  "scope",
+  "sourceRereadId",
+  "supersessionId",
+  "taskLaunchCount",
+  "targetObservationId",
+  "version",
+].sort();
+const createdAt = Date.parse(value?.createdAtUtc);
+const expiresAt = Date.parse(value?.expiresAtUtc);
+if (JSON.stringify(Object.keys(value || {}).sort()) !== JSON.stringify(keys) ||
+    value.schemaVersion !== 1 ||
+    value.version !==
+      "classpilot-tile-auth-plan-observation-reread-supersession-v1" ||
+    value.scope !== "fresh_observation_admission_only" ||
+    value.taskLaunchCount !== 0 ||
+    typeof value.path !== "string" || value.path.length === 0 ||
+    !/^([A-Za-z]:[\\/]|\/)/.test(value.path) ||
+    !/^[a-f0-9]{64}$/.test(value.sha256 || "") ||
+    !/^[a-z0-9][a-z0-9-]{7,127}$/.test(value.supersessionId || "") ||
+    !/^[a-z0-9][a-z0-9-]{7,127}$/.test(value.sourceRereadId || "") ||
+    !/^[a-z0-9][a-z0-9-]{7,127}$/.test(value.targetObservationId || "") ||
+    !Number.isFinite(createdAt) ||
+    new Date(createdAt).toISOString() !== value.createdAtUtc ||
+    !Number.isFinite(expiresAt) ||
+    new Date(expiresAt).toISOString() !== value.expiresAtUtc ||
+    createdAt >= expiresAt ||
+    expiresAt <= Date.now() ||
+    value.eligibleForFreshObservationAdmission !== true ||
+    value.eligibleForDeployment !== false ||
+    value.eligibleForDiagnostic !== false ||
+    value.eligibleForCertification !== false) process.exit(1);
+process.stdout.write([
+  String(value.schemaVersion),
+  value.path,
+  value.sha256,
+  value.supersessionId,
+  value.sourceRereadId,
+  value.targetObservationId,
+  value.scope,
+  value.createdAtUtc,
+  value.expiresAtUtc,
+  String(value.taskLaunchCount),
+  String(value.eligibleForFreshObservationAdmission),
+  String(value.eligibleForDeployment),
+  String(value.eligibleForDiagnostic),
+  String(value.eligibleForCertification),
+].join("\t"));
+NODE
+  ); then
+    error "The independently inspected historical observation reread supersession summary was malformed."
+    return 1
+  fi
+  IFS=$'\t' read -r inspect_schema inspect_path inspect_sha inspect_id \
+    inspect_source_reread inspect_target_observation inspect_scope \
+    inspect_created inspect_expires inspect_task_launches inspect_admission \
+    inspect_deploy inspect_diagnostic inspect_certification extra \
+    <<< "$inspect_binding"
+  if [[ "$inspect_schema" != "$create_schema" ||
+        "$inspect_path" != "$create_path" || "$inspect_sha" != "$create_sha" ||
+        "$inspect_id" != "$create_id" ||
+        "$inspect_source_reread" != "$create_source_reread" ||
+        "$inspect_target_observation" != "$create_target_observation" ||
+        "$inspect_scope" != "$create_scope" ||
+        "$inspect_created" != "$create_created" ||
+        "$inspect_expires" != "$create_expires" ||
+        "$inspect_task_launches" != "$create_task_launches" ||
+        "$inspect_admission" != "true" || "$inspect_deploy" != "false" ||
+        "$inspect_diagnostic" != "false" ||
+        "$inspect_certification" != "false" || -n "$extra" ]]; then
+    error "The historical observation reread supersession changed between creation and independent inspection."
+    return 1
+  fi
+
+  TILE_AUTH_PLAN_OBSERVATION_SUPERSESSION_PATH="$inspect_path"
+  TILE_AUTH_PLAN_OBSERVATION_SUPERSESSION_SHA256="$inspect_sha"
+  success "Bound the one-shot historical reread supersession to observation ${TILE_AUTH_PLAN_OBSERVATION_ID} (packet=${inspect_path}, packetSha256=${inspect_sha}, eligibleForDeployment=false, eligibleForDiagnostic=false, eligibleForCertification=false)"
+}
+
+reinspect_classpilot_tile_auth_plan_observation_supersession_before_launch() {
+  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" != true ]]; then
+    return 0
+  fi
+  if [[ -z "$TILE_AUTH_PLAN_OBSERVATION_ID" ||
+        "$TILE_AUTH_PLAN_OBSERVATION_SUPERSESSION_ID" != "supersede-${TILE_AUTH_PLAN_OBSERVATION_ID}" ||
+        -z "$TILE_AUTH_PLAN_OBSERVATION_SUPERSESSION_PATH" ||
+        ! "$TILE_AUTH_PLAN_OBSERVATION_SUPERSESSION_PATH" =~ ^([A-Za-z]:[\\/]|/) ||
+        ! "$TILE_AUTH_PLAN_OBSERVATION_SUPERSESSION_SHA256" =~ ^[a-f0-9]{64}$ ||
+        ! "$LOCAL_SHA" =~ ^[a-f0-9]{40}$ ||
+        ! "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ||
+        ! "$TILE_AUTH_PLAN_OBSERVATION_INITIAL_NETWORK_SHA256" =~ ^[a-f0-9]{64}$ ||
+        ! "$TILE_AUTH_PLAN_OBSERVATION_INITIAL_POSTURE_SHA256" =~ ^[a-f0-9]{64}$ ||
+        -z "$API_ROLLOUT_TASK_DEF" ||
+        -z "$WORKER_CANDIDATE_TASK_DEF" ||
+        -z "$PRODUCTION_ROLLBACK_API_TASK_DEFINITION_ARN" ||
+        -z "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION_ARN" ]]; then
+    error "The bound historical observation reread supersession is incomplete at the task-launch boundary."
+    return 1
+  fi
+
+  local target_args=(
+    --target-observation-id "$TILE_AUTH_PLAN_OBSERVATION_ID"
+    --target-application-git-sha "$LOCAL_SHA"
+    --target-image-digest "$DIGEST"
+    --target-api-task-definition-arn "$API_ROLLOUT_TASK_DEF"
+    --target-worker-task-definition-arn "$WORKER_CANDIDATE_TASK_DEF"
+    --target-active-api-task-definition-arn "$PRODUCTION_ROLLBACK_API_TASK_DEFINITION_ARN"
+    --target-active-worker-task-definition-arn "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION_ARN"
+    --target-network-configuration-sha256 "$TILE_AUTH_PLAN_OBSERVATION_INITIAL_NETWORK_SHA256"
+    --target-production-posture-sha256 "$TILE_AUTH_PLAN_OBSERVATION_INITIAL_POSTURE_SHA256"
+  )
+
+  local inspect_summary inspect_binding inspect_schema inspect_path inspect_sha
+  local inspect_id inspect_source_reread inspect_target_observation
+  local inspect_scope inspect_created inspect_expires inspect_task_launches
+  local inspect_admission inspect_deploy inspect_diagnostic
+  local inspect_certification extra
+  if ! inspect_summary=$(MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*" node \
+    "$SCRIPT_DIR/manage-classpilot-tile-auth-plan-observation-evidence-reread.mjs" \
+    inspect-supersession \
+    --packet-path "$TILE_AUTH_PLAN_OBSERVATION_SUPERSESSION_PATH" \
+    --expected-packet-sha256 "$TILE_AUTH_PLAN_OBSERVATION_SUPERSESSION_SHA256" \
+    "${target_args[@]}" 2>/dev/null); then
+    error "The historical observation reread supersession failed its immediate prelaunch inspection."
+    return 1
+  fi
+  if ! inspect_binding=$(CLASSPILOT_SUPERSESSION_SUMMARY="$inspect_summary" node <<'NODE'
+const value = JSON.parse(process.env.CLASSPILOT_SUPERSESSION_SUMMARY || "null");
+const keys = [
+  "eligibleForCertification",
+  "eligibleForDeployment",
+  "eligibleForDiagnostic",
+  "eligibleForFreshObservationAdmission",
+  "createdAtUtc",
+  "expiresAtUtc",
+  "path",
+  "schemaVersion",
+  "sha256",
+  "scope",
+  "sourceRereadId",
+  "supersessionId",
+  "taskLaunchCount",
+  "targetObservationId",
+  "version",
+].sort();
+const createdAt = Date.parse(value?.createdAtUtc);
+const expiresAt = Date.parse(value?.expiresAtUtc);
+if (JSON.stringify(Object.keys(value || {}).sort()) !== JSON.stringify(keys) ||
+    value.schemaVersion !== 1 ||
+    value.version !==
+      "classpilot-tile-auth-plan-observation-reread-supersession-v1" ||
+    value.scope !== "fresh_observation_admission_only" ||
+    value.taskLaunchCount !== 0 ||
+    typeof value.path !== "string" || value.path.length === 0 ||
+    !/^([A-Za-z]:[\\/]|\/)/.test(value.path) ||
+    !/^[a-f0-9]{64}$/.test(value.sha256 || "") ||
+    !/^[a-z0-9][a-z0-9-]{7,127}$/.test(value.supersessionId || "") ||
+    !/^[a-z0-9][a-z0-9-]{7,127}$/.test(value.sourceRereadId || "") ||
+    !/^[a-z0-9][a-z0-9-]{7,127}$/.test(value.targetObservationId || "") ||
+    !Number.isFinite(createdAt) ||
+    new Date(createdAt).toISOString() !== value.createdAtUtc ||
+    !Number.isFinite(expiresAt) ||
+    new Date(expiresAt).toISOString() !== value.expiresAtUtc ||
+    createdAt >= expiresAt ||
+    expiresAt <= Date.now() ||
+    value.eligibleForFreshObservationAdmission !== true ||
+    value.eligibleForDeployment !== false ||
+    value.eligibleForDiagnostic !== false ||
+    value.eligibleForCertification !== false) process.exit(1);
+process.stdout.write([
+  String(value.schemaVersion),
+  value.path,
+  value.sha256,
+  value.supersessionId,
+  value.sourceRereadId,
+  value.targetObservationId,
+  value.scope,
+  value.createdAtUtc,
+  value.expiresAtUtc,
+  String(value.taskLaunchCount),
+  String(value.eligibleForFreshObservationAdmission),
+  String(value.eligibleForDeployment),
+  String(value.eligibleForDiagnostic),
+  String(value.eligibleForCertification),
+].join("\t"));
+NODE
+  ); then
+    error "The immediate prelaunch historical reread supersession summary was malformed or expired."
+    return 1
+  fi
+  IFS=$'\t' read -r inspect_schema inspect_path inspect_sha inspect_id \
+    inspect_source_reread inspect_target_observation inspect_scope \
+    inspect_created inspect_expires inspect_task_launches inspect_admission \
+    inspect_deploy inspect_diagnostic inspect_certification extra \
+    <<< "$inspect_binding"
+  if [[ "$inspect_schema" != "1" ||
+        "$inspect_path" != "$TILE_AUTH_PLAN_OBSERVATION_SUPERSESSION_PATH" ||
+        "$inspect_sha" != "$TILE_AUTH_PLAN_OBSERVATION_SUPERSESSION_SHA256" ||
+        "$inspect_id" != "$TILE_AUTH_PLAN_OBSERVATION_SUPERSESSION_ID" ||
+        "$inspect_target_observation" != "$TILE_AUTH_PLAN_OBSERVATION_ID" ||
+        "$inspect_scope" != "fresh_observation_admission_only" ||
+        "$inspect_task_launches" != "0" ||
+        "$inspect_admission" != "true" || "$inspect_deploy" != "false" ||
+        "$inspect_diagnostic" != "false" ||
+        "$inspect_certification" != "false" || -n "$extra" ]]; then
+    error "The historical observation reread supersession changed before task launch."
+    return 1
+  fi
+}
+
 initialize_classpilot_tile_auth_plan_observation() {
   if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" != true ]]; then
     return 0
@@ -2048,6 +2446,9 @@ initialize_classpilot_tile_auth_plan_observation() {
   TILE_AUTH_PLAN_OBSERVATION_INITIAL_POSTURE_SHA256="$posture_sha"
 
   TILE_AUTH_PLAN_OBSERVATION_RUN_ROOT="${LOCALAPPDATA}/SchoolPilot/load-gates/tile-auth-observations/${LOCAL_SHA}/${TILE_AUTH_PLAN_OBSERVATION_ID}"
+  if ! create_and_inspect_classpilot_tile_auth_plan_observation_supersession; then
+    return 1
+  fi
   local identity_args=(
     --observation-id "$TILE_AUTH_PLAN_OBSERVATION_ID"
     --application-sha "$LOCAL_SHA"
@@ -4122,6 +4523,7 @@ info "2048 API:   $ACTIVATE_EMERGENCY"
 info "Tile plans: $RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE"
 info "Plan rehearse: $RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL"
 info "Plan observe:  $RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION"
+info "Observe reread: ${CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD:+provided}"
 info "Plan receipt:  ${REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL:+provided}"
 info "Same image: ${SAME_IMAGE_NETWORKING_STAGE:-false}"
 echo ""
@@ -4568,7 +4970,7 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
       error "Candidate base observation sealed a valid base-ineligible result; the mandatory plan gate remains blocked."
       exit 1
     fi
-    success "Candidate base observation complete; no rehearsal admission, full plan gate, migration, scaling hold, service update, frontend publication, fixture mutation, lease, or traffic action was attempted."
+    success "Candidate base observation complete; supersessionPacket=${TILE_AUTH_PLAN_OBSERVATION_SUPERSESSION_PATH}, supersessionSha256=${TILE_AUTH_PLAN_OBSERVATION_SUPERSESSION_SHA256}; no rehearsal admission, full plan gate, migration, scaling hold, service update, frontend publication, fixture mutation, lease, or traffic action was attempted."
     exit 0
   fi
   run_classpilot_tile_auth_plan_gate predeploy
