@@ -18,7 +18,9 @@ describe("ClassPilot tile authorization readiness governance", () => {
       "tests/classpilot-tile-auth-plan-evidence-validator.test.ts",
       "tests/classpilot-tile-auth-plan-lifecycle-cli.test.ts",
       "tests/deploy-classpilot-tile-auth-plan-gate.test.ts",
+      "tests/classpilot-tile-auth-plan-base-selection-evidence.test.ts",
       "tests/classpilot-tile-auth-plan-observation.test.ts",
+      "tests/classpilot-tile-auth-plan-observation-collector.test.ts",
       "tests/classpilot-tile-auth-plan-rehearsal-receipt.test.ts",
       "tests/classpilot-tile-auth-plan-readiness-governance.test.ts",
     ];
@@ -123,14 +125,18 @@ describe("ClassPilot tile authorization readiness governance", () => {
     for (const required of [
       "--classpilot-tile-auth-plan-observation",
       "`classpilot-tile-auth-plan-base-funnel-v1`",
+      "`classpilot-tile-auth-plan-base-selection-v1`",
+      "`40/19/19/1/1`",
+      "`classpilot-tile-auth-plan-observation-attempt-v1`",
+      "`classpilot-tile-auth-plan-observation-v2`",
       "`classpilot-tile-auth-plan-observation-v1`",
       "creates no\nrehearsal admission or receipt",
       "`base_eligible`",
       "`base_ineligible`",
-      "`eligibleForDeployment`, `eligibleForDiagnostic`, and\n`eligibleForCertification` are exactly `false`",
-      "current authorization permits exactly one and no\nautomatic retry",
+      "`eligibleForDeployment`, `eligibleForDiagnostic`, and\n`eligibleForCertification` to exactly `false`",
+      "current remediation authorizes exactly one independently inspected\nobservation",
       "is never an alternate deployment path",
-      "report-only exception",
+      "converted to report-only",
     ]) {
       assert.ok(
         runbook.includes(required),
@@ -144,7 +150,7 @@ describe("ClassPilot tile authorization readiness governance", () => {
     );
     assert.match(
       runbook,
-      /Rehearsal inspection and\s+consumption, deployment admission, diagnostic binding, and certification\s+validation must reject an observation packet/
+      /Rehearsal consumption, deployment,\s+diagnostic binding, and certification validation must reject every\s+observation packet/
     );
   });
 
@@ -155,11 +161,14 @@ describe("ClassPilot tile authorization readiness governance", () => {
       "`schoolpilot-production-api:133`",
       "`schoolpilot-production-api-emergency:33`",
       "is historical-only",
-      "The current observation-only remediation stops after one independently\ninspected observation packet.",
-      "It authorizes no rehearsal, serving deployment",
+      "The current remediation authorizes exactly one independently inspected\nobservation.",
+      "Any\nother observation outcome is terminal for the SHA",
+      "the same merged SHA may run exactly one\ngate-only rehearsal",
+      "one guarded backend deployment",
+      "Seal the readiness packet and stop.",
       "production fixture refresh or provisioning",
       "diagnostic binding",
-      "failure is\nterminal for that SHA",
+      "failure is terminal for the SHA.",
       "the per-SHA atomic admission marker, immutable passed terminal marker",
       "their common protected execution-authority\n  SHA-256",
       "an explicit record that no apply occurred",

@@ -801,6 +801,18 @@ reused plus missing equal to 80, and zero conflicts. It contains aggregate
 counts only. Preflight is advisory fail-fast evidence; it does not replace
 either complete rollback-only gate.
 
+Candidate classes must have the canonical teacher-relationship posture used by
+the application: exactly one `group_teachers` row matching the group's primary
+teacher with role `primary`, and no additional relationship row of any role.
+Missing, mismatched, malformed, or additional relationships make that class
+ineligible. Observation mode also emits one
+`classpilot-tile-auth-plan-base-selection-v1` companion from the same
+transaction snapshot. Its exact fields are `version`, `cohortSize`,
+`canonicalPrimaryOnlyGroups`, `exactCohortGroups`, `eligibleSchools`, and
+`finalBases`. The production-owned fixture is accepted only at
+`40/19/19/1/1`; this companion does not change preflight-v1 or admit a
+deployment.
+
 A failed base preflight emits one
 `classpilot-tile-auth-plan-base-funnel-v1` object from that same
 snapshot-consistent statement. Its exact top-level fields are `version`,
@@ -853,6 +865,19 @@ service activation, frontend publication, fixture mutation, monitoring lease,
 or traffic. These identities are ineligible for deployment, diagnostics, and
 certification and must not be promoted or reused.
 
+The later observation candidate at application SHA
+`abf820cc02b69599857739afe42f86baacd2351d`, image digest
+`sha256:cbd7a7d2e07d41120ace5cda19c990de26dac0f9a140bcad5b7c0c298f6531a5`,
+and inactive task definitions `schoolpilot-production-api:135`,
+`schoolpilot-production-api-emergency:35`, and
+`schoolpilot-production-scheduler-worker:50` is historical-only. Its exact
+terminal stream proved that all 20 licensed groups and 800 canonical,
+unsupervised roster students reached `noCoTeacherGroups`, where the old
+any-row predicate excluded all groups. The wrapper sealed no packet. No
+migration, service activation, frontend publication, fixture mutation,
+monitoring lease, or traffic occurred. Never promote or reuse these
+identities.
+
 For an explicitly authorized, non-consuming investigation, run exactly one
 inactive-candidate observation:
 
@@ -869,23 +894,34 @@ fixture mutation, Database Insights lease, or workload traffic. It creates no
 rehearsal admission or receipt, does not consume the per-SHA one-attempt
 rehearsal boundary, and is never an alternate deployment path.
 
-Seal the result as an ACL-private
-`classpilot-tile-auth-plan-observation-v1` packet. The packet is a strict
-tagged union: terminal exit zero requires outcome `base_eligible` and exactly
-one canonical `classpilot-tile-auth-plan-base-preflight-v1` companion; the
-expected base-ineligibility exit `1` requires outcome `base_ineligible` and
-exactly one canonical `classpilot-tile-auth-plan-base-funnel-v1` companion.
-Every other nonzero exit fails closed without an observation packet. It binds the observation
-ID, SHA, digest, inactive task definitions, active baseline, network and
-production-posture hashes, terminal task ARN/exit code/log-stream hash,
-canonical evidence/hash, and UTC creation timestamp. In both variants,
+Before `run-task`, atomically write and independently inspect one immutable,
+ACL-private `classpilot-tile-auth-plan-observation-attempt-v1` record binding
+the observation ID, release and candidate identities, active baseline, and
+initial network/posture hashes. Seal every terminal result as a sibling
+`classpilot-tile-auth-plan-observation-v2` packet. A monotonic five-minute
+collector rereads only the exact terminal task and log stream, using fresh
+snapshots, bounded calls, explicit pagination, and delays of 0, 1, 2, 4, then
+5 seconds. It never launches another task or merges partial reads. The strict
+outcomes are `base_eligible`, `base_ineligible`, `task_failed`, and
+`evidence_unavailable`. Exit-zero eligibility requires the unchanged
+preflight-v1 plus the exact selection-v1 companion; expected exit-one
+ineligibility requires the canonical funnel-v1 companion. Collection,
+network, and final-posture failures are retained as sanitized source
+envelopes instead of bypassing packet finalization.
+
+The packet binds the exact immutable attempt hash, observation ID, SHA, digest,
+inactive task definitions, active baseline, initial and final network/posture
+evidence, terminal
+task/exit/log-stream identity when available, canonical whole-event hash, and
+UTC timestamps. Packet and companions publish by one same-parent atomic
+rename and are independently inspected. All variants set
 `eligibleForDeployment`, `eligibleForDiagnostic`, and
-`eligibleForCertification` are exactly `false`. Rehearsal inspection and
-consumption, deployment admission, diagnostic binding, and certification
-validation must reject an observation packet even when its base preflight
-passed. Observation is technically retryable, but a run authorization may
-bound it more tightly; the current authorization permits exactly one and no
-automatic retry.
+`eligibleForCertification` to exactly `false`; unavailable or failed outcomes
+seal first and then return nonzero.
+`classpilot-tile-auth-plan-observation-v1` is historical/inspect-only and
+cannot be written or used for admission. Rehearsal consumption, deployment,
+diagnostic binding, and certification validation must reject every
+observation packet.
 
 For the completed session-independent remediation, require exact merged-SHA
 CI, CodeQL, Gitleaks, and Trivy success, then save and independently parse a
@@ -973,16 +1009,28 @@ sanitized gate failure code. Exit zero plus complete valid evidence remains
 mandatory for acceptance; log binding must never replace the real gate
 failure.
 
-The current observation-only remediation stops after one independently
-inspected observation packet. It authorizes no rehearsal, serving deployment,
-report-only exception, production fixture refresh or provisioning,
-historical-state promotion, Database Insights lease, diagnostic binding,
-`Validate`, workload traffic, certification preparation, or certification
-traffic. The observed stage counts must drive a new, separately approved
-predicate or fixture-continuity remediation; do not apply an automatic fix.
-Any candidate rehearsal, preflight, gate, rollback, residue check, deployment,
-convergence, offline rehearsal, host smoke, or scaling-restoration failure is
-terminal for that SHA; do not repeat, patch in place, or consume its receipt.
+The current remediation authorizes exactly one independently inspected
+observation. Continue only when its v2 packet proves exit zero,
+`base_eligible`, one unchanged preflight-v1 base, the selection-v1 values
+`40/19/19/1/1`, 80 required session pairs with reused plus missing equal to 80
+and zero conflicts, and unchanged verified network and serving posture. Any
+other observation outcome is terminal for the SHA and must not be retried or
+converted to report-only.
+
+After that exact observation result, the same merged SHA may run exactly one
+gate-only rehearsal and immediately consume its exact single-use 60-minute
+receipt for one guarded backend deployment. The backend must reuse the
+rehearsed digest and task definitions and rerun the rollback-only gate before
+migration and after convergence. Publish the matching frontend, verify the
+unchanged production posture and scaling, then run exactly one offline
+preparation rehearsal and one 1,560-second harmless host-supervision smoke.
+Seal the readiness packet and stop. This authorization still excludes a
+Terraform apply, production fixture refresh or provisioning, historical-state
+promotion, Database Insights lease, diagnostic binding, `Validate`, workload
+traffic, certification preparation, and certification traffic. Any
+observation, rehearsal, preflight, gate, rollback, residue, deployment,
+convergence, route, offline-rehearsal, host-smoke, posture, or restoration
+failure is terminal for the SHA.
 
 Any later separately authorized diagnostic-only Waf/800 must use the new batch
 workload. Every RDS CPU minute must be below 65%; HTTP 5xx and network

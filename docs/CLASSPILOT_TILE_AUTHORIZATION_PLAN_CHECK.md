@@ -34,6 +34,15 @@ tenant data is ineligible. Active `student_sessions` do not participate in
 base or cohort selection; they are classified only after the deterministic 80
 pairs have been selected.
 
+An eligible class must have exactly one canonical `group_teachers`
+relationship: its `teacher_id` must equal the group's primary teacher and its
+role must be `primary`. Any missing, mismatched, malformed, or additional
+relationship row makes that class ineligible. The production load fixture has
+one real co-teacher on class 1, so classes 2-20 are the expected 19
+primary-only candidates. Observation mode seals that count in a
+`classpilot-tile-auth-plan-base-selection-v1` companion without changing the
+passing preflight-v1 schema.
+
 For the 80 canonical pairs, the gate reuses an active session only when it
 matches the exact student and device. It inserts an explicit-ID active session
 when neither side has an active counterpart and fails if either side is bound
@@ -128,19 +137,29 @@ mutation, monitoring lease, or workload traffic. It creates neither a
 rehearsal admission nor a rehearsal receipt and therefore does not consume the
 one-attempt rehearsal boundary.
 
-The final ACL-private `classpilot-tile-auth-plan-observation-v1` packet is a
-strict tagged union. Exit zero binds one canonical
-`classpilot-tile-auth-plan-base-preflight-v1` companion and outcome
-`base_eligible`; the expected base-ineligibility exit `1` binds one canonical
-`classpilot-tile-auth-plan-base-funnel-v1` companion and outcome
-`base_ineligible`. Every other nonzero exit fails closed and cannot seal an
-observation packet. A packet cannot contain both companions. It binds the
+Before `run-task`, observation mode atomically writes and independently
+inspects one ACL-private
+`classpilot-tile-auth-plan-observation-attempt-v1` record. It binds the
 observation ID, SHA, digest, inactive API/worker definitions, active baseline,
-network and posture hashes, terminal task/exit/log-stream hash, evidence hash,
-and creation time. Every packet sets `eligibleForDeployment`,
-`eligibleForDiagnostic`, and `eligibleForCertification` to `false`.
-Observation packets are evidence only: rehearsal inspection/consumption,
-deployment, diagnostic, and certification admission must reject them.
+and initial network/posture hashes and cannot be overwritten. Its sibling
+terminal directory then publishes one
+`classpilot-tile-auth-plan-observation-v2` packet plus any companion files by
+one atomic rename. Exit zero binds one canonical preflight-v1 companion, one
+canonical selection-v1 companion, and outcome `base_eligible`; the expected
+base-ineligibility exit `1` binds one canonical funnel-v1 companion and
+outcome `base_ineligible`. Other terminal task exits seal `task_failed`;
+unavailable task, log, network, or posture evidence seals
+`evidence_unavailable`. A launched task whose exit cannot be recovered retains
+its exact ARN with tagged state `exit_unavailable`.
+
+The packet binds the attempt hash, terminal task state and exit when known,
+sanitized collection status and attempt count, canonical whole-event hash,
+final network/posture envelopes, and UTC completion time. Verified final hashes
+must equal the immutable initial hashes. Every packet sets
+`eligibleForDeployment`, `eligibleForDiagnostic`, and
+`eligibleForCertification` to `false`; rehearsal inspection/consumption,
+deployment, diagnostic, and certification admission reject it. Version 1
+observation packets are historical/inspect-only and no writer may create one.
 
 For an authorized production release, first invoke the candidate-only
 rehearsal:
@@ -227,6 +246,14 @@ migration, service activation, frontend publication, fixture mutation,
 monitoring lease, traffic, diagnostic provenance, or certification
 provenance. Never reuse or promote those identities.
 
+The later observation candidate at SHA
+`abf820cc02b69599857739afe42f86baacd2351d`, image digest
+`sha256:cbd7a7d2e07d41120ace5cda19c990de26dac0f9a140bcad5b7c0c298f6531a5`,
+and inactive `api:135`, `api-emergency:35`, and `worker:50` definitions is
+historical-only. Its terminal funnel isolated the old any-relationship
+predicate at `noCoTeacherGroups`; the run produced no observation packet and
+made no serving or fixture change.
+
 The production gate cannot start during the actual 01:15-02:15
 America/New_York purge/rollup window. A missing, ambiguous, inactive,
 incomplete, cross-school, or conflicted owned base fixture is a failed gate,
@@ -234,10 +261,18 @@ not permission to inspect ordinary tenants, refresh fixtures, or reduce the
 cohort. The checker reports whether existing plans pass; it never creates or
 recommends an index by itself.
 
-The current observation-only authorization ends after exactly one sealed and
-independently inspected observation packet. It does not authorize a rehearsal,
-serving deployment, report-only exception, production fixture refresh or
-provisioning, historical-state promotion, Terraform apply, Database Insights
-lease, diagnostic binding or validation, workload traffic, or certification.
-Use the observed first-empty-stage/count evidence to write a separately
-approved remediation; do not mutate an eligibility predicate automatically.
+New observation writes use
+`classpilot-tile-auth-plan-observation-v2`. The terminal finalizer runs even
+after task, collection, network, or posture failure; it seals one of
+`base_eligible`, `base_ineligible`, `task_failed`, or
+`evidence_unavailable`, publishes the packet and optional companions
+atomically, and independently inspects them. Every outcome is ineligible for
+deployment, diagnostics, and certification. Evidence rereads may retry only
+the exact terminal stream and never rerun the ECS task.
+
+The current authorization permits one new observation. Only a sealed
+`base_eligible` packet with selection values `40/19/19/1/1` may proceed to one
+gate-only rehearsal and immediate single-use guarded deployment. Any other
+observation stops without retry or report-only fallback. Fixture refresh,
+Database Insights lease, diagnostic validation or traffic, and certification
+remain separately authorized.

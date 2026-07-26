@@ -6,6 +6,7 @@ import {
   createClasspilotTilePlanResidueClientReleaseError,
   createClasspilotTilePlanWriteClientReleaseError,
   parseClasspilotTilePlanCliArgs,
+  sanitizeClasspilotTileAuthorizationPlanBaseSelection,
   sanitizeClasspilotTileAuthorizationPlanCheckFailure,
 } from "../src/cli/checkClasspilotTileAuthorizationPlans.ts";
 import {
@@ -28,6 +29,7 @@ import {
   summarizeClasspilotTileHistoryFallbackPlan,
   summarizeClasspilotTilePlanScenario,
   validateClasspilotTileAuthorizationPlanBaseFunnelEvidence,
+  validateClasspilotTileAuthorizationPlanBaseSelectionEvidence,
 } from "../src/services/classpilotTileAuthorizationPlanCheck.ts";
 
 function sample(overrides: Partial<{
@@ -626,19 +628,40 @@ describe("ClassPilot tile authorization plan checker", () => {
     assert.deepEqual(parseClasspilotTilePlanCliArgs(["--execute"]), {
       execute: true,
       preflightBase: false,
+      observationSelection: false,
       help: false,
       samples: 20,
     });
     assert.deepEqual(
       parseClasspilotTilePlanCliArgs(["--execute", "--samples", "30"]),
-      { execute: true, preflightBase: false, help: false, samples: 30 }
+      {
+        execute: true,
+        preflightBase: false,
+        observationSelection: false,
+        help: false,
+        samples: 30,
+      }
     );
     assert.deepEqual(parseClasspilotTilePlanCliArgs(["--preflight-base"]), {
       execute: false,
       preflightBase: true,
+      observationSelection: false,
       help: false,
       samples: 20,
     });
+    assert.deepEqual(
+      parseClasspilotTilePlanCliArgs([
+        "--preflight-base",
+        "--observation-selection",
+      ]),
+      {
+        execute: false,
+        preflightBase: true,
+        observationSelection: true,
+        help: false,
+        samples: 20,
+      }
+    );
     assert.throws(
       () =>
         parseClasspilotTilePlanCliArgs(["--execute", "--preflight-base"]),
@@ -646,6 +669,10 @@ describe("ClassPilot tile authorization plan checker", () => {
     );
     assert.throws(
       () => parseClasspilotTilePlanCliArgs(["--samples", "19"]),
+      /invalid_arguments/
+    );
+    assert.throws(
+      () => parseClasspilotTilePlanCliArgs(["--observation-selection"]),
       /invalid_arguments/
     );
     assert.throws(
@@ -1065,6 +1092,73 @@ describe("ClassPilot tile authorization plan checker", () => {
         "BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY",
         "ROLLBACK",
       ]
+    );
+  });
+
+  it("derives same-snapshot selection evidence without changing preflight-v1", async () => {
+    const harness = createQueryIdGateHarness();
+    const selectionEvents: unknown[] = [];
+    const report =
+      await runClasspilotTileAuthorizationPlanBasePreflight({
+        client: harness.client,
+        onSelectionEvidence: (event) => selectionEvents.push(event),
+      });
+    assert.equal(report.version, "classpilot-tile-auth-plan-base-preflight-v1");
+    assert.deepEqual(selectionEvents, [{
+      version: "classpilot-tile-auth-plan-base-selection-v1",
+      cohortSize: 40,
+      canonicalPrimaryOnlyGroups: 2,
+      exactCohortGroups: 2,
+      eligibleSchools: 1,
+      finalBases: 1,
+    }]);
+    assert.deepEqual(
+      validateClasspilotTileAuthorizationPlanBaseSelectionEvidence(
+        selectionEvents[0]
+      ),
+      selectionEvents[0]
+    );
+    assert.equal(
+      harness.getQueryLog().filter(({ text }) =>
+        text.includes("/* transactional_plan_base_v2 */")
+      ).length,
+      1
+    );
+  });
+
+  it("accepts only the exact production observation selection companion", () => {
+    const productionSelection = {
+      version: "classpilot-tile-auth-plan-base-selection-v1",
+      cohortSize: 40,
+      canonicalPrimaryOnlyGroups: 19,
+      exactCohortGroups: 19,
+      eligibleSchools: 1,
+      finalBases: 1,
+    };
+    assert.deepEqual(
+      sanitizeClasspilotTileAuthorizationPlanBaseSelection(
+        productionSelection
+      ),
+      productionSelection
+    );
+    for (const tampered of [
+      { ...productionSelection, canonicalPrimaryOnlyGroups: 20 },
+      { ...productionSelection, exactCohortGroups: 18 },
+      { ...productionSelection, extra: 1 },
+    ]) {
+      assert.throws(
+        () => sanitizeClasspilotTileAuthorizationPlanBaseSelection(tampered),
+        /classpilot_tile_authorization_plan_base_selection_invalid/
+      );
+    }
+    assert.throws(
+      () =>
+        validateClasspilotTileAuthorizationPlanBaseSelectionEvidence({
+          ...productionSelection,
+          canonicalPrimaryOnlyGroups: 0,
+          exactCohortGroups: 0,
+        }),
+      /classpilot_tile_authorization_plan_base_selection_invalid/
     );
   });
 
@@ -2036,7 +2130,15 @@ describe("ClassPilot tile authorization plan checker", () => {
       /\^synthetic-load-fixture:\(\[a-z0-9\]\[a-z0-9-\]\{2,40\}\):class:\[0-9\]\{2\}\$/
     );
     assert.match(service, /school\.name LIKE '%\[SYNTHETIC LOAD TEST - NON-BILLABLE\]%'/);
-    assert.match(service, /existing_co_teacher/);
+    assert.match(
+      service,
+      /count\(\*\)[\s\S]*group_teachers AS existing_co_teacher[\s\S]*\) = 1/
+    );
+    assert.match(
+      service,
+      /canonical_primary_teacher\.teacher_id =[\s\S]*qualified\.primary_teacher_id/
+    );
+    assert.match(service, /canonical_primary_teacher\.role = 'primary'/);
     assert.doesNotMatch(service, /FROM teaching_sessions AS existing_session/);
     assert.match(service, /WHERE session\.id = \$5/);
     assert.match(service, /AND co_teacher\.id = \$6/);

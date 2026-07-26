@@ -981,6 +981,10 @@ describe("ClassPilot synthetic load fixture preparer", () => {
       staff: { primary: [], canary: [] },
       students: { primary: [], canary: [] },
       classes: new Map<string, any>(),
+      groupTeachers: new Map<string, Array<{
+        teacherId: string;
+        role: "primary" | "co-teacher";
+      }>>(),
       rosters: new Map<string, Set<string>>(),
       devices: { primary: new Map<string, any>(), canary: new Map<string, any>() },
       sessions: new Map<string, any>(),
@@ -1229,6 +1233,13 @@ describe("ClassPilot synthetic load fixture preparer", () => {
             coTeachers: (body.coTeacherIds || []).map((id: string) => ({ id })),
           };
           model.classes.set(value.id, value);
+          model.groupTeachers.set(value.id, [
+            { teacherId: body.primaryTeacherId, role: "primary" },
+            ...(body.coTeacherIds || []).map((teacherId: string) => ({
+              teacherId,
+              role: "co-teacher" as const,
+            })),
+          ]);
           model.rosters.set(value.id, new Set());
           model.events.push(`class-created:${value.id}`);
           return send(201, { class: value });
@@ -1267,6 +1278,14 @@ describe("ClassPilot synthetic load fixture preparer", () => {
             teacherId: body.primaryTeacherId || value.teacherId,
             coTeachers: (body.coTeacherIds || []).map((id: string) => ({ id })),
           });
+          const primaryTeacherId = body.primaryTeacherId || value.teacherId;
+          model.groupTeachers.set(value.id, [
+            { teacherId: primaryTeacherId, role: "primary" },
+            ...(body.coTeacherIds || []).map((teacherId: string) => ({
+              teacherId,
+              role: "co-teacher" as const,
+            })),
+          ]);
           return send(200, { class: value });
         }
         if (url.pathname === "/api/classpilot/coverage/contexts" && request.method === "GET") {
@@ -1452,6 +1471,34 @@ describe("ClassPilot synthetic load fixture preparer", () => {
       assert.equal(model.staff.primary.filter((entry: any) => entry.role === "office_staff").length, 1);
       assert.equal(model.classes.size, 20);
       assert.deepEqual(model.classes.get("class-1").coTeachers, [{ id: model.staff.primary.find((entry: any) => entry.user.email.endsWith("-20@primary-load.example.org")).userId }]);
+      const primaryRelationships = [...model.groupTeachers.values()]
+        .flat()
+        .filter((entry: any) => entry.role === "primary");
+      const coTeacherRelationships = [...model.groupTeachers.values()]
+        .flat()
+        .filter((entry: any) => entry.role === "co-teacher");
+      assert.equal(primaryRelationships.length, 20);
+      assert.equal(
+        new Set(
+          [...model.classes.values()].map((entry: any) => entry.teacherId)
+        ).size,
+        20
+      );
+      for (const [classId, classRecord] of model.classes) {
+        assert.deepEqual(
+          model.groupTeachers
+            .get(classId)
+            .filter((entry: any) => entry.role === "primary"),
+          [{ teacherId: classRecord.teacherId, role: "primary" }]
+        );
+      }
+      assert.deepEqual(coTeacherRelationships, [{
+        teacherId: model.staff.primary.find(
+          (entry: any) =>
+            entry.user.email.endsWith("-20@primary-load.example.org")
+        ).userId,
+        role: "co-teacher",
+      }]);
       assert.equal([...model.contexts.values()].filter((entry: any) => entry.status === "active").length, 1);
       assert.equal([...model.sessions.values()].filter((entry: any) => !entry.endTime).length, 20);
       for (const filename of readdirSync(output)) {
