@@ -6,11 +6,13 @@ import {
   runClasspilotTileAuthorizationPlanBasePreflight,
   runClasspilotTileAuthorizationPlanCheck,
   validateClasspilotTileAuthorizationPlanBaseFunnelEvidence,
+  validateClasspilotTileAuthorizationPlanBaseSelectionEvidence,
 } from "../services/classpilotTileAuthorizationPlanCheck.js";
 
 type CliOptions = {
   execute: boolean;
   preflightBase: boolean;
+  observationSelection: boolean;
   help: boolean;
   samples: number;
 };
@@ -45,6 +47,16 @@ const BASE_PREFLIGHT_KEYS = [
   "requiredSessionPairs",
   "reusedActiveSessionPairs",
   "status",
+  "version",
+] as const;
+const BASE_SELECTION_VERSION =
+  "classpilot-tile-auth-plan-base-selection-v1";
+const BASE_SELECTION_KEYS = [
+  "canonicalPrimaryOnlyGroups",
+  "cohortSize",
+  "eligibleSchools",
+  "exactCohortGroups",
+  "finalBases",
   "version",
 ] as const;
 
@@ -209,6 +221,27 @@ export function sanitizeClasspilotTileAuthorizationPlanBasePreflight(
   };
 }
 
+export function sanitizeClasspilotTileAuthorizationPlanBaseSelection(
+  event: unknown
+): Record<string, unknown> {
+  const selection =
+    validateClasspilotTileAuthorizationPlanBaseSelectionEvidence(event);
+  if (
+    !hasExactKeys(selection, BASE_SELECTION_KEYS) ||
+    selection.version !== BASE_SELECTION_VERSION ||
+    selection.cohortSize !== 40 ||
+    selection.canonicalPrimaryOnlyGroups !== 19 ||
+    selection.exactCohortGroups !== 19 ||
+    selection.eligibleSchools !== 1 ||
+    selection.finalBases !== 1
+  ) {
+    throw new Error(
+      "classpilot_tile_authorization_plan_base_selection_invalid"
+    );
+  }
+  return selection;
+}
+
 export function createClasspilotTilePlanWriteClientReleaseError(
   lifecycleEvent: unknown
 ): Error | undefined {
@@ -260,6 +293,8 @@ function usage(): string {
     "Options:",
     "  --samples <20-100>  Measured warm-plan samples per scenario (default 20).",
     "  --preflight-base     Read-only validation of the stable 80-pair base.",
+    "  --observation-selection",
+    "                       Emit the exact production selection companion; requires --preflight-base.",
     "  --help                Show help without connecting to PostgreSQL.",
     "",
     "Provisions rollback-only plan scenarios, runs six tenant-scoped",
@@ -272,6 +307,7 @@ export function parseClasspilotTilePlanCliArgs(args: string[]): CliOptions {
   const options: CliOptions = {
     execute: false,
     preflightBase: false,
+    observationSelection: false,
     help: false,
     samples: CLASSPILOT_TILE_AUTHORIZATION_PLAN_SAMPLES,
   };
@@ -283,6 +319,10 @@ export function parseClasspilotTilePlanCliArgs(args: string[]): CliOptions {
     }
     if (argument === "--preflight-base") {
       options.preflightBase = true;
+      continue;
+    }
+    if (argument === "--observation-selection") {
+      options.observationSelection = true;
       continue;
     }
     if (argument === "--help" || argument === "-h") {
@@ -305,7 +345,10 @@ export function parseClasspilotTilePlanCliArgs(args: string[]): CliOptions {
   ) {
     throw new Error("invalid_arguments");
   }
-  if (options.execute && options.preflightBase) {
+  if (
+    (options.execute && options.preflightBase) ||
+    (options.observationSelection && !options.preflightBase)
+  ) {
     throw new Error("invalid_arguments");
   }
   return options;
@@ -341,12 +384,33 @@ export async function runClasspilotTilePlanCli(args: string[]): Promise<number> 
   let residueClientReleaseError: Error | undefined;
   let lifecycleEventCount = 0;
   let lifecycleCleanupPassed = false;
+  let selectionEventCount = 0;
   try {
     databaseModule = await import("../db.js");
     client = await databaseModule.pool.connect();
     if (options.preflightBase) {
       const preflight =
-        await runClasspilotTileAuthorizationPlanBasePreflight({ client });
+        await runClasspilotTileAuthorizationPlanBasePreflight({
+          client,
+          onSelectionEvidence: options.observationSelection
+            ? (event) => {
+                if (selectionEventCount !== 0) {
+                  throw new Error(
+                    "classpilot_tile_auth_plan_base_selection_duplicate"
+                  );
+                }
+                emit(
+                  sanitizeClasspilotTileAuthorizationPlanBaseSelection(event)
+                );
+                selectionEventCount += 1;
+              }
+            : undefined,
+        });
+      if (options.observationSelection && selectionEventCount !== 1) {
+        throw new Error(
+          "classpilot_tile_auth_plan_base_selection_missing"
+        );
+      }
       emit(sanitizeClasspilotTileAuthorizationPlanBasePreflight(preflight));
       return 0;
     }

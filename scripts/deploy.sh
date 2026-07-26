@@ -71,6 +71,7 @@ TILE_AUTH_PLAN_TASK_POLL_SECONDS=5
 TILE_AUTH_PLAN_TASK_STOP_WAIT_SECONDS=120
 TILE_AUTH_PLAN_LOG_WAIT_SECONDS=60
 TILE_AUTH_PLAN_LOG_POLL_SECONDS=3
+TILE_AUTH_PLAN_OBSERVATION_EVIDENCE_DEADLINE_MS=300000
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -186,11 +187,20 @@ TILE_AUTH_PLAN_REHEARSAL_ATTEMPT_TERMINAL=false
 TILE_AUTH_PLAN_OBSERVATION_ID=""
 TILE_AUTH_PLAN_OBSERVATION_TASK_ARN=""
 TILE_AUTH_PLAN_OBSERVATION_TASK_EXIT_CODE=""
-TILE_AUTH_PLAN_OBSERVATION_LOG_STREAM_SHA256=""
-TILE_AUTH_PLAN_OBSERVATION_EVIDENCE_JSON=""
-TILE_AUTH_PLAN_OBSERVATION_POSTURE_SHA256=""
+TILE_AUTH_PLAN_OBSERVATION_TASK_STATE=""
+TILE_AUTH_PLAN_OBSERVATION_COLLECTION_JSON=""
+TILE_AUTH_PLAN_OBSERVATION_INITIAL_NETWORK_SHA256=""
+TILE_AUTH_PLAN_OBSERVATION_INITIAL_POSTURE_SHA256=""
+TILE_AUTH_PLAN_OBSERVATION_FINAL_NETWORK_JSON=""
+TILE_AUTH_PLAN_OBSERVATION_FINAL_POSTURE_JSON=""
+TILE_AUTH_PLAN_OBSERVATION_RUN_ROOT=""
+TILE_AUTH_PLAN_OBSERVATION_ATTEMPT_PATH=""
+TILE_AUTH_PLAN_OBSERVATION_ATTEMPT_SHA256=""
+TILE_AUTH_PLAN_OBSERVATION_ATTEMPT_ADMITTED=false
+TILE_AUTH_PLAN_OBSERVATION_INITIALIZATION_FAILED=false
 TILE_AUTH_PLAN_OBSERVATION_PACKET_PATH=""
 TILE_AUTH_PLAN_OBSERVATION_PACKET_SHA256=""
+TILE_AUTH_PLAN_OBSERVATION_OUTCOME=""
 CLASSPILOT_TILE_AUTH_SERVICE_MUTATION_STARTED=false
 CLASSPILOT_TILE_AUTH_SAFE_TERMINAL_REACHED=false
 
@@ -1499,9 +1509,227 @@ NODE
   printf '%s\n' "$sanitized_report"
 }
 
+set_classpilot_tile_auth_observation_collection_failure() {
+  local failure_code="$1"
+  TILE_AUTH_PLAN_OBSERVATION_COLLECTION_JSON=$(OBSERVATION_FAILURE_CODE="$failure_code" node <<'NODE'
+const allowed = new Set([
+  "terminal_task_unavailable",
+  "terminal_task_timeout",
+  "terminal_task_description_unavailable",
+  "log_binding_unavailable",
+  "log_evidence_unavailable",
+]);
+const failureCode = process.env.OBSERVATION_FAILURE_CODE;
+if (!allowed.has(failureCode)) process.exit(1);
+process.stdout.write(JSON.stringify({
+  collection: {
+    status: "failed",
+    attemptCount: 0,
+    completedAtUtc: new Date().toISOString(),
+    failureCode,
+    canonicalEventSha256: null,
+    logStreamSha256: null,
+    rawErrorPersisted: false,
+  },
+  eventsDocument: null,
+}));
+NODE
+  )
+}
+
+run_classpilot_tile_auth_plan_observation_task() {
+  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" != true ]]; then
+    return 0
+  fi
+
+  local expected_task_pattern="^arn:aws:ecs:${REGION}:${ACCOUNT_ID}:task-definition/${NAME}-api-emergency:[1-9][0-9]*$"
+  if [[ ! "$API_ROLLOUT_TASK_DEF" =~ $expected_task_pattern ||
+        -z "$TILE_AUTH_PLAN_OBSERVATION_ID" ||
+        ! "$TILE_AUTH_PLAN_OBSERVATION_ID" =~ ^[a-z0-9][a-z0-9-]{7,127}$ ||
+        -z "$TILE_AUTH_PLAN_OBSERVATION_ATTEMPT_PATH" ||
+        ! "$TILE_AUTH_PLAN_OBSERVATION_ATTEMPT_SHA256" =~ ^[a-f0-9]{64}$ ]]; then
+    set_classpilot_tile_auth_observation_collection_failure \
+      "terminal_task_unavailable"
+    return 0
+  fi
+
+  local started_by="sp-tile-observe-${LOCAL_SHA:0:12}"
+  info "Running the read-only ClassPilot tile authorization base observation against ${API_ROLLOUT_TASK_DEF}..."
+  if ! aws ecs run-task \
+    --cluster "$CLUSTER" \
+    --launch-type FARGATE \
+    --task-definition "$API_ROLLOUT_TASK_DEF" \
+    --network-configuration "$NETWORK_CONFIG" \
+    --count 1 \
+    --started-by "$started_by" \
+    --overrides '{"containerOverrides":[{"name":"api","command":["node","dist/cli/checkClasspilotTileAuthorizationPlans.js","--preflight-base","--observation-selection"],"environment":[{"name":"RUN_MIGRATIONS_ON_STARTUP","value":"false"},{"name":"RUN_MIGRATIONS_ONLY","value":"false"},{"name":"SCHEDULER_ENABLED","value":"false"}]}]}' \
+    --output json \
+    --region "$REGION" \
+    --no-cli-pager > .tile-auth-plan-observation-task.json; then
+    set_classpilot_tile_auth_observation_collection_failure \
+      "terminal_task_unavailable"
+    return 0
+  fi
+
+  local task_arn
+  if ! task_arn=$(TILE_AUTH_PLAN_TASK_PATH=".tile-auth-plan-observation-task.json" \
+    EXPECTED_TASK_DEFINITION="$API_ROLLOUT_TASK_DEF" \
+    EXPECTED_REGION="$REGION" \
+    EXPECTED_ACCOUNT_ID="$ACCOUNT_ID" node <<'NODE'
+const fs = require("fs");
+const response = JSON.parse(fs.readFileSync(process.env.TILE_AUTH_PLAN_TASK_PATH, "utf8"));
+const tasks = Array.isArray(response?.tasks) ? response.tasks : [];
+const failures = Array.isArray(response?.failures) ? response.failures : [];
+const task = tasks[0];
+const taskPattern = new RegExp(
+  `^arn:aws:ecs:${process.env.EXPECTED_REGION}:${process.env.EXPECTED_ACCOUNT_ID}:task/(?:[^/]+/)?[a-f0-9]{32}$`
+);
+if (failures.length !== 0 || tasks.length !== 1 ||
+    task?.taskDefinitionArn !== process.env.EXPECTED_TASK_DEFINITION ||
+    typeof task?.taskArn !== "string" ||
+    !taskPattern.test(task.taskArn)) process.exit(1);
+process.stdout.write(task.taskArn);
+NODE
+  ); then
+    set_classpilot_tile_auth_observation_collection_failure \
+      "terminal_task_unavailable"
+    return 0
+  fi
+  TILE_AUTH_PLAN_OBSERVATION_TASK_ARN="$task_arn"
+  TILE_AUTH_PLAN_OBSERVATION_TASK_STATE="exit_unavailable"
+
+  local wait_result
+  if wait_for_classpilot_tile_auth_plan_task_stopped "$task_arn"; then
+    wait_result=0
+  else
+    wait_result=$?
+  fi
+
+  local terminal_failure_code=""
+  if [[ "$wait_result" -eq 124 || "$wait_result" -eq 125 ]]; then
+    terminal_failure_code="terminal_task_timeout"
+  elif [[ "$wait_result" -ne 0 ]]; then
+    terminal_failure_code="terminal_task_description_unavailable"
+  fi
+
+  local terminal_description_available=false
+  if AWS_MAX_ATTEMPTS=1 aws ecs describe-tasks \
+    --cluster "$CLUSTER" \
+    --tasks "$task_arn" \
+    --query '{failures:failures,tasks:tasks[].{taskArn:taskArn,taskDefinitionArn:taskDefinitionArn,lastStatus:lastStatus,containers:containers[].{name:name,lastStatus:lastStatus,exitCode:exitCode,logStreamName:logStreamName}}}' \
+    --output json \
+    --cli-connect-timeout 10 \
+    --cli-read-timeout 30 \
+    --region "$REGION" \
+    --no-cli-pager > .tile-auth-plan-observation-result.json; then
+    terminal_description_available=true
+  fi
+
+  local task_exit_code
+  if [[ "$terminal_description_available" == true ]] &&
+     task_exit_code=$(OBSERVATION_RESULT_PATH=".tile-auth-plan-observation-result.json" \
+    EXPECTED_TASK_ARN="$task_arn" \
+    EXPECTED_TASK_DEFINITION="$API_ROLLOUT_TASK_DEF" node <<'NODE'
+const fs = require("fs");
+const result = JSON.parse(
+  fs.readFileSync(process.env.OBSERVATION_RESULT_PATH, "utf8")
+);
+const tasks = Array.isArray(result?.tasks) ? result.tasks : [];
+const failures = Array.isArray(result?.failures) ? result.failures : [];
+const task = tasks[0];
+const containers = Array.isArray(task?.containers)
+  ? task.containers.filter((container) => container?.name === "api")
+  : [];
+const exitCode = containers[0]?.exitCode;
+if (failures.length !== 0 || tasks.length !== 1 ||
+    task?.taskArn !== process.env.EXPECTED_TASK_ARN ||
+    task?.taskDefinitionArn !== process.env.EXPECTED_TASK_DEFINITION ||
+    task?.lastStatus !== "STOPPED" || containers.length !== 1 ||
+    containers[0]?.lastStatus !== "STOPPED" ||
+    !Number.isInteger(exitCode) || exitCode < 0 || exitCode > 255) {
+  process.exit(1);
+}
+process.stdout.write(String(exitCode));
+NODE
+  ); then
+    TILE_AUTH_PLAN_OBSERVATION_TASK_EXIT_CODE="$task_exit_code"
+    TILE_AUTH_PLAN_OBSERVATION_TASK_STATE="exited"
+  elif [[ -z "$terminal_failure_code" ]]; then
+    terminal_failure_code="terminal_task_description_unavailable"
+  fi
+
+  if [[ -n "$terminal_failure_code" ]]; then
+    set_classpilot_tile_auth_observation_collection_failure \
+      "$terminal_failure_code"
+    return 0
+  fi
+
+  local evidence_deadline_monotonic_ns
+  if ! evidence_deadline_monotonic_ns=$(OBSERVATION_DEADLINE_MS="$TILE_AUTH_PLAN_OBSERVATION_EVIDENCE_DEADLINE_MS" node <<'NODE'
+const milliseconds = Number(process.env.OBSERVATION_DEADLINE_MS);
+if (!Number.isSafeInteger(milliseconds) || milliseconds < 1) process.exit(1);
+process.stdout.write(
+  (process.hrtime.bigint() + BigInt(milliseconds) * 1_000_000n).toString()
+);
+NODE
+  ); then
+    set_classpilot_tile_auth_observation_collection_failure \
+      "log_binding_unavailable"
+    return 0
+  fi
+
+  local log_configuration_json log_binding log_group log_region log_prefix
+  local log_stream bound_task_exit_code extra
+  if ! log_configuration_json=$(AWS_MAX_ATTEMPTS=1 aws ecs describe-task-definition \
+    --task-definition "$API_ROLLOUT_TASK_DEF" \
+    --query 'taskDefinition.containerDefinitions[?name==`api`] | [0].logConfiguration' \
+    --output json \
+    --cli-connect-timeout 10 \
+    --cli-read-timeout 30 \
+    --region "$REGION" \
+    --no-cli-pager); then
+    set_classpilot_tile_auth_observation_collection_failure \
+      "log_binding_unavailable"
+    return 0
+  fi
+  if ! log_binding=$(TILE_AUTH_PLAN_RESULT_PATH=".tile-auth-plan-observation-result.json" \
+    TILE_AUTH_PLAN_LOG_CONFIGURATION_JSON="$log_configuration_json" \
+    EXPECTED_TASK_ARN="$task_arn" \
+    EXPECTED_TASK_DEFINITION="$API_ROLLOUT_TASK_DEF" \
+    EXPECTED_REGION="$REGION" \
+    EXPECTED_ACCOUNT_ID="$ACCOUNT_ID" \
+    node "$SCRIPT_DIR/resolve-classpilot-tile-auth-plan-log-binding.mjs" 2>/dev/null
+  ); then
+    set_classpilot_tile_auth_observation_collection_failure \
+      "log_binding_unavailable"
+    return 0
+  fi
+  IFS=$'\t' read -r log_group log_region log_prefix log_stream bound_task_exit_code extra <<< "$log_binding"
+  if [[ -z "$log_group" || "$log_region" != "$REGION" || -z "$log_prefix" ||
+        -z "$log_stream" || "$log_stream" != "${log_prefix}/api/"* ||
+        "$bound_task_exit_code" != "$task_exit_code" ||
+        -n "$extra" ]]; then
+    set_classpilot_tile_auth_observation_collection_failure \
+      "log_binding_unavailable"
+    return 0
+  fi
+  if ! TILE_AUTH_PLAN_OBSERVATION_COLLECTION_JSON=$(MSYS_NO_PATHCONV=1 node \
+    "$SCRIPT_DIR/collect-classpilot-tile-auth-plan-observation-evidence.mjs" \
+    --log-group-name "$log_group" \
+    --log-stream-name "$log_stream" \
+    --region "$REGION" \
+    --task-exit-code "$task_exit_code" \
+    --deadline-ms "$TILE_AUTH_PLAN_OBSERVATION_EVIDENCE_DEADLINE_MS" \
+    --deadline-monotonic-nanoseconds "$evidence_deadline_monotonic_ns" \
+    2>/dev/null); then
+    set_classpilot_tile_auth_observation_collection_failure \
+      "log_evidence_unavailable"
+  fi
+  return 0
+}
+
 run_classpilot_tile_auth_plan_base_preflight() {
-  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" != true &&
-        "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" != true ]]; then
+  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" != true ]]; then
     return 0
   fi
 
@@ -1560,10 +1788,6 @@ NODE
     error "ECS did not return exactly one base-preflight task bound to the expected candidate revision."
     return 1
   fi
-  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" == true ]]; then
-    TILE_AUTH_PLAN_OBSERVATION_TASK_ARN="$task_arn"
-  fi
-
   set +e
   wait_for_classpilot_tile_auth_plan_task_stopped "$task_arn"
   local wait_result=$?
@@ -1619,28 +1843,8 @@ NODE
     error "The ClassPilot tile authorization base preflight log stream does not match the exact candidate task definition."
     return 1
   fi
-  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" == true ]]; then
-    TILE_AUTH_PLAN_OBSERVATION_TASK_EXIT_CODE="$task_exit_code"
-    if ! TILE_AUTH_PLAN_OBSERVATION_LOG_STREAM_SHA256=$(
-      printf '%s' "$log_stream" | node -e '
-        const crypto = require("crypto");
-        let value = "";
-        process.stdin.setEncoding("utf8");
-        process.stdin.on("data", chunk => { value += chunk; });
-        process.stdin.on("end", () => {
-          process.stdout.write(
-            crypto.createHash("sha256").update(value, "utf8").digest("hex")
-          );
-        });
-      '
-    ) || [[ ! "$TILE_AUTH_PLAN_OBSERVATION_LOG_STREAM_SHA256" =~ ^[a-f0-9]{64}$ ]]; then
-      error "The ClassPilot tile authorization observation log-stream binding could not be hashed."
-      return 1
-    fi
-  fi
-
   local log_deadline=$((SECONDS + TILE_AUTH_PLAN_LOG_WAIT_SECONDS))
-  local events_json="" sanitized_preflight="" sanitized_failure_code="" sanitized_funnel=""
+  local events_json="" sanitized_preflight="" sanitized_failure_code=""
   while (( SECONDS < log_deadline )); do
     if events_json=$(MSYS_NO_PATHCONV=1 node \
       "$SCRIPT_DIR/read-classpilot-tile-auth-plan-log-events.mjs" \
@@ -1655,34 +1859,15 @@ NODE
         sanitized_preflight=""
       elif sanitized_failure_code=$(printf '%s' "$events_json" | \
         node "$SCRIPT_DIR/extract-classpilot-tile-auth-plan-failure.mjs" 2>/dev/null); then
-        if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" == true ]]; then
-          if sanitized_funnel=$(printf '%s' "$events_json" | \
-            node "$SCRIPT_DIR/validate-classpilot-tile-auth-plan-base-funnel-evidence.mjs" 2>/dev/null); then
-            break
-          fi
-          sanitized_funnel=""
-          sanitized_failure_code=""
-        else
-          break
-        fi
+        break
       else
         sanitized_failure_code=""
-        sanitized_funnel=""
       fi
     fi
     sleep "$TILE_AUTH_PLAN_LOG_POLL_SECONDS"
   done
 
   if [[ "$task_exit_code" != "0" ]]; then
-    if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" == true &&
-          "$task_exit_code" == "1" &&
-          "$sanitized_failure_code" == "representative_scenario_missing" &&
-          -n "$sanitized_funnel" ]]; then
-      TILE_AUTH_PLAN_OBSERVATION_EVIDENCE_JSON="$events_json"
-      success "ClassPilot tile authorization base observation captured a sanitized eligibility-funnel failure (failureCode=${sanitized_failure_code}, logStreamSha256=${TILE_AUTH_PLAN_OBSERVATION_LOG_STREAM_SHA256})"
-      printf '%s\n' "$sanitized_funnel"
-      return 0
-    fi
     if [[ -z "$sanitized_failure_code" ]]; then
       error "The failed ClassPilot tile authorization base preflight did not publish one allowlisted sanitized failure."
     else
@@ -1697,9 +1882,6 @@ NODE
 
   TILE_AUTH_PLAN_PREFLIGHT_EVENTS_JSON="$events_json"
   TILE_AUTH_PLAN_PREFLIGHT_EVIDENCE_JSON="$sanitized_preflight"
-  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" == true ]]; then
-    TILE_AUTH_PLAN_OBSERVATION_EVIDENCE_JSON="$events_json"
-  fi
   success "ClassPilot tile authorization base preflight passed (logGroup=${log_group}, logStream=${log_stream})"
   printf '%s\n' "$sanitized_preflight"
 }
@@ -1752,26 +1934,9 @@ resolve_classpilot_tile_auth_candidate_network() {
   TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256="$network_sha"
 }
 
-capture_classpilot_tile_auth_observation_posture() {
-  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" != true ]]; then
-    return 0
-  fi
-
-  local snapshot
-  if ! snapshot=$(production_service_snapshot); then
-    error "The ClassPilot tile authorization observation could not capture the final production service posture."
-    return 1
-  fi
-  if ! validate_production_service_snapshot \
-    "$snapshot" \
-    "$PRODUCTION_ROLLBACK_API_TASK_DEFINITION" \
-    "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION"; then
-    error "The production service posture drifted before the ClassPilot tile authorization observation packet was sealed."
-    return 1
-  fi
-
-  if ! TILE_AUTH_PLAN_OBSERVATION_POSTURE_SHA256=$(
-    TILE_AUTH_PLAN_OBSERVATION_SERVICE_SNAPSHOT="$snapshot" \
+classpilot_tile_auth_observation_posture_sha256() {
+  local snapshot="$1"
+  TILE_AUTH_PLAN_OBSERVATION_SERVICE_SNAPSHOT="$snapshot" \
     EXPECTED_API_SERVICE="$SERVICE" \
     EXPECTED_WORKER_SERVICE="$WORKER_SERVICE" \
     EXPECTED_ENVIRONMENT="$ENV" \
@@ -1828,29 +1993,286 @@ process.stdout.write(
     .digest("hex")
 );
 NODE
-  ) || [[ ! "$TILE_AUTH_PLAN_OBSERVATION_POSTURE_SHA256" =~ ^[a-f0-9]{64}$ ]]; then
-    error "The ClassPilot tile authorization observation posture could not be canonicalized."
+}
+
+classpilot_tile_auth_observation_status_envelope() {
+  local status="$1"
+  local sha256="$2"
+  local failure_code="$3"
+  OBSERVATION_STATUS="$status" \
+    OBSERVATION_SHA256="$sha256" \
+    OBSERVATION_FAILURE_CODE="$failure_code" node <<'NODE'
+const status = process.env.OBSERVATION_STATUS;
+const sha256 = process.env.OBSERVATION_SHA256 || null;
+const failureCode = process.env.OBSERVATION_FAILURE_CODE || null;
+if (!["verified", "failed"].includes(status) ||
+    (status === "verified" &&
+      (!/^[a-f0-9]{64}$/.test(sha256 || "") || failureCode !== null)) ||
+    (status === "failed" && (sha256 !== null || failureCode === null))) {
+  process.exit(1);
+}
+process.stdout.write(JSON.stringify({status, sha256, failureCode}));
+NODE
+}
+
+set_classpilot_tile_auth_observation_final_evidence() {
+  local variable_name="$1"
+  local status="$2"
+  local sha256="$3"
+  local failure_code="$4"
+  local fallback_failure_code="$5"
+  local envelope
+  if ! envelope=$(classpilot_tile_auth_observation_status_envelope \
+    "$status" "$sha256" "$failure_code"); then
+    printf -v "$variable_name" \
+      '{"status":"failed","sha256":null,"failureCode":"%s"}' \
+      "$fallback_failure_code"
+    return 0
+  fi
+  printf -v "$variable_name" '%s' "$envelope"
+  return 0
+}
+
+preflight_classpilot_tile_auth_plan_observation_admission() {
+  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" != true ]]; then
+    return 0
+  fi
+  if [[ -z "${LOCALAPPDATA:-}" ]]; then
+    error "LOCALAPPDATA is required for the ACL-restricted ClassPilot tile authorization observation attempt."
+    return 1
+  fi
+  if ! production_backend_deploy_window_preflight \
+    "before ClassPilot plan-gate observation admission" ||
+     ! classpilot_tile_auth_plan_window_preflight; then
+    return 1
+  fi
+  local expected_task_pattern="^arn:aws:ecs:${REGION}:${ACCOUNT_ID}:task-definition/${NAME}-api-emergency:[1-9][0-9]*$"
+  if [[ ! "$API_ROLLOUT_TASK_DEF" =~ $expected_task_pattern ]]; then
+    error "The ClassPilot tile authorization observation requires the exact freshly registered emergency task-definition ARN."
     return 1
   fi
 }
 
-assert_classpilot_tile_auth_observation_network_unchanged() {
+initialize_classpilot_tile_auth_plan_observation() {
   if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" != true ]]; then
     return 0
   fi
-  local expected_network_sha="$TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256"
-  if [[ ! "$expected_network_sha" =~ ^[a-f0-9]{64}$ ]]; then
-    error "The ClassPilot tile authorization observation has no bound candidate network hash."
+
+  TILE_AUTH_PLAN_OBSERVATION_ID="tile-plan-observe-$(date -u +%Y%m%dt%H%M%Sz)-${LOCAL_SHA:0:12}"
+  if [[ ! "$TILE_AUTH_PLAN_OBSERVATION_ID" =~ ^[a-z0-9][a-z0-9-]{7,127}$ ||
+        ! "$TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256" =~ ^[a-f0-9]{64}$ ]]; then
+    error "The ClassPilot tile authorization observation attempt binding is malformed."
     return 1
   fi
+  TILE_AUTH_PLAN_OBSERVATION_INITIAL_NETWORK_SHA256="$TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256"
+
+  local snapshot posture_sha
+  if ! snapshot=$(production_service_snapshot) ||
+     ! validate_production_service_snapshot \
+       "$snapshot" \
+       "$PRODUCTION_ROLLBACK_API_TASK_DEFINITION" \
+       "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION" ||
+     ! posture_sha=$(classpilot_tile_auth_observation_posture_sha256 "$snapshot") ||
+     [[ ! "$posture_sha" =~ ^[a-f0-9]{64}$ ]]; then
+    error "The ClassPilot tile authorization observation could not bind the initial production posture."
+    return 1
+  fi
+  TILE_AUTH_PLAN_OBSERVATION_INITIAL_POSTURE_SHA256="$posture_sha"
+
+  TILE_AUTH_PLAN_OBSERVATION_RUN_ROOT="${LOCALAPPDATA}/SchoolPilot/load-gates/tile-auth-observations/${LOCAL_SHA}/${TILE_AUTH_PLAN_OBSERVATION_ID}"
+  local identity_args=(
+    --observation-id "$TILE_AUTH_PLAN_OBSERVATION_ID"
+    --application-sha "$LOCAL_SHA"
+    --image-digest "$DIGEST"
+    --candidate-api-task-definition-arn "$API_ROLLOUT_TASK_DEF"
+    --candidate-worker-task-definition-arn "$WORKER_CANDIDATE_TASK_DEF"
+    --active-api-task-definition-arn "$PRODUCTION_ROLLBACK_API_TASK_DEFINITION_ARN"
+    --active-worker-task-definition-arn "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION_ARN"
+    --initial-network-configuration-sha256 "$TILE_AUTH_PLAN_OBSERVATION_INITIAL_NETWORK_SHA256"
+    --initial-production-posture-sha256 "$TILE_AUTH_PLAN_OBSERVATION_INITIAL_POSTURE_SHA256"
+  )
+  local admit_summary admit_binding attempt_path attempt_sha attempt_id
+  local eligible_deploy eligible_diagnostic eligible_certification extra
+  attempt_path="${TILE_AUTH_PLAN_OBSERVATION_RUN_ROOT}/attempt/classpilot-tile-auth-plan-observation-attempt.private.json"
+  if ! admit_summary=$(node \
+    "$SCRIPT_DIR/manage-classpilot-tile-auth-plan-observation.mjs" admit \
+    --output "$TILE_AUTH_PLAN_OBSERVATION_RUN_ROOT" \
+    "${identity_args[@]}" 2>/dev/null); then
+    error "The immutable ClassPilot tile authorization observation attempt could not be admitted."
+    return 1
+  fi
+  TILE_AUTH_PLAN_OBSERVATION_ATTEMPT_ADMITTED=true
+  TILE_AUTH_PLAN_OBSERVATION_ATTEMPT_PATH="$attempt_path"
+  if ! attempt_sha=$(CLASSPILOT_OBSERVATION_ATTEMPT_PATH="$attempt_path" node <<'NODE'
+const { createHash } = require("crypto");
+const fs = require("fs");
+const bytes = fs.readFileSync(
+  process.env.CLASSPILOT_OBSERVATION_ATTEMPT_PATH
+);
+process.stdout.write(createHash("sha256").update(bytes).digest("hex"));
+NODE
+  ) || [[ ! "$attempt_sha" =~ ^[a-f0-9]{64}$ ]]; then
+    TILE_AUTH_PLAN_OBSERVATION_INITIALIZATION_FAILED=true
+    set_classpilot_tile_auth_observation_collection_failure \
+      "terminal_task_unavailable"
+    error "The immutable ClassPilot tile authorization observation attempt could not be hash-bound."
+    return 0
+  fi
+  TILE_AUTH_PLAN_OBSERVATION_ATTEMPT_SHA256="$attempt_sha"
+
+  if ! admit_binding=$(CLASSPILOT_OBSERVATION_ATTEMPT_SUMMARY="$admit_summary" \
+    CLASSPILOT_OBSERVATION_ATTEMPT_PATH="$attempt_path" \
+    EXPECTED_ATTEMPT_SHA256="$attempt_sha" \
+    EXPECTED_OBSERVATION_ID="$TILE_AUTH_PLAN_OBSERVATION_ID" \
+    EXPECTED_APPLICATION_SHA="$LOCAL_SHA" \
+    EXPECTED_IMAGE_DIGEST="$DIGEST" \
+    EXPECTED_CANDIDATE_API_TASK_DEFINITION="$API_ROLLOUT_TASK_DEF" \
+    EXPECTED_CANDIDATE_WORKER_TASK_DEFINITION="$WORKER_CANDIDATE_TASK_DEF" \
+    EXPECTED_ACTIVE_API_TASK_DEFINITION="$PRODUCTION_ROLLBACK_API_TASK_DEFINITION_ARN" \
+    EXPECTED_ACTIVE_WORKER_TASK_DEFINITION="$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION_ARN" \
+    EXPECTED_INITIAL_NETWORK_SHA256="$TILE_AUTH_PLAN_OBSERVATION_INITIAL_NETWORK_SHA256" \
+    EXPECTED_INITIAL_POSTURE_SHA256="$TILE_AUTH_PLAN_OBSERVATION_INITIAL_POSTURE_SHA256" \
+    node --input-type=module - \
+      "$SCRIPT_DIR/manage-classpilot-tile-auth-plan-observation.mjs" <<'NODE'
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+const attemptPath = path.resolve(process.env.CLASSPILOT_OBSERVATION_ATTEMPT_PATH);
+const bytes = fs.readFileSync(attemptPath);
+const attemptSha256 = createHash("sha256").update(bytes).digest("hex");
+if (attemptSha256 !== process.env.EXPECTED_ATTEMPT_SHA256) process.exit(1);
+const manager = await import(
+  pathToFileURL(path.resolve(process.argv[2])).href
+);
+const expected = {
+  expectedAttemptRecordSha256: attemptSha256,
+  observationId: process.env.EXPECTED_OBSERVATION_ID,
+  applicationGitSha: process.env.EXPECTED_APPLICATION_SHA,
+  imageDigest: process.env.EXPECTED_IMAGE_DIGEST,
+  candidateApiTaskDefinitionArn:
+    process.env.EXPECTED_CANDIDATE_API_TASK_DEFINITION,
+  candidateWorkerTaskDefinitionArn:
+    process.env.EXPECTED_CANDIDATE_WORKER_TASK_DEFINITION,
+  activeApiTaskDefinitionArn:
+    process.env.EXPECTED_ACTIVE_API_TASK_DEFINITION,
+  activeWorkerTaskDefinitionArn:
+    process.env.EXPECTED_ACTIVE_WORKER_TASK_DEFINITION,
+  initialNetworkConfigurationSha256:
+    process.env.EXPECTED_INITIAL_NETWORK_SHA256,
+  initialProductionPostureSha256:
+    process.env.EXPECTED_INITIAL_POSTURE_SHA256,
+};
+const inspected =
+  manager.inspectClasspilotTileAuthorizationPlanObservationAttempt(
+    attemptPath,
+    expected
+  );
+const admitted = JSON.parse(
+  process.env.CLASSPILOT_OBSERVATION_ATTEMPT_SUMMARY || "null"
+);
+if (admitted?.path !== inspected.path ||
+    admitted?.sha256 !== inspected.sha256 ||
+    admitted?.observationId !== inspected.observationId ||
+    admitted?.schemaVersion !== inspected.schemaVersion ||
+    admitted?.version !== inspected.version ||
+    admitted?.eligibleForDeployment !== false ||
+    admitted?.eligibleForDiagnostic !== false ||
+    admitted?.eligibleForCertification !== false) {
+  process.exit(1);
+}
+process.stdout.write([
+  inspected.path,
+  inspected.sha256,
+  inspected.observationId,
+  String(inspected.eligibleForDeployment),
+  String(inspected.eligibleForDiagnostic),
+  String(inspected.eligibleForCertification),
+].join("\t"));
+NODE
+  ); then
+    TILE_AUTH_PLAN_OBSERVATION_INITIALIZATION_FAILED=true
+    set_classpilot_tile_auth_observation_collection_failure \
+      "terminal_task_unavailable"
+    error "The immutable ClassPilot tile authorization observation attempt failed independent inspection."
+    return 0
+  fi
+  IFS=$'\t' read -r attempt_path attempt_sha attempt_id eligible_deploy eligible_diagnostic eligible_certification extra <<< "$admit_binding"
+  if [[ -z "$attempt_path" || ! "$attempt_sha" =~ ^[a-f0-9]{64}$ ||
+        "$attempt_id" != "$TILE_AUTH_PLAN_OBSERVATION_ID" ||
+        "$eligible_deploy" != "false" || "$eligible_diagnostic" != "false" ||
+        "$eligible_certification" != "false" || -n "$extra" ]]; then
+    TILE_AUTH_PLAN_OBSERVATION_INITIALIZATION_FAILED=true
+    set_classpilot_tile_auth_observation_collection_failure \
+      "terminal_task_unavailable"
+    error "The immutable ClassPilot tile authorization observation attempt binding was ambiguous."
+    return 0
+  fi
+  TILE_AUTH_PLAN_OBSERVATION_ATTEMPT_PATH="$attempt_path"
+  TILE_AUTH_PLAN_OBSERVATION_ATTEMPT_SHA256="$attempt_sha"
+}
+
+capture_classpilot_tile_auth_observation_final_network() {
+  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" != true ]]; then
+    return 0
+  fi
+  local expected_network_sha="$TILE_AUTH_PLAN_OBSERVATION_INITIAL_NETWORK_SHA256"
+  NETWORK_CONFIG=""
+  TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256=""
   if ! resolve_classpilot_tile_auth_candidate_network; then
-    error "The ClassPilot tile authorization observation could not re-read the active candidate network."
-    return 1
+    set_classpilot_tile_auth_observation_final_evidence \
+      TILE_AUTH_PLAN_OBSERVATION_FINAL_NETWORK_JSON \
+      "failed" "" "network_unavailable" "network_unavailable"
+  elif [[ "$TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256" != "$expected_network_sha" ]]; then
+    set_classpilot_tile_auth_observation_final_evidence \
+      TILE_AUTH_PLAN_OBSERVATION_FINAL_NETWORK_JSON \
+      "failed" "" "network_drift" "network_unavailable"
+  else
+    set_classpilot_tile_auth_observation_final_evidence \
+      TILE_AUTH_PLAN_OBSERVATION_FINAL_NETWORK_JSON \
+      "verified" "$TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256" "" \
+      "network_unavailable"
   fi
-  if [[ "$TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256" != "$expected_network_sha" ]]; then
-    error "The active candidate network drifted during the ClassPilot tile authorization observation."
-    return 1
+  return 0
+}
+
+capture_classpilot_tile_auth_observation_final_posture() {
+  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" != true ]]; then
+    return 0
   fi
+  local snapshot posture_sha
+  if ! snapshot=$(production_service_snapshot); then
+    set_classpilot_tile_auth_observation_final_evidence \
+      TILE_AUTH_PLAN_OBSERVATION_FINAL_POSTURE_JSON \
+      "failed" "" "production_posture_unavailable" \
+      "production_posture_unavailable"
+  elif ! validate_production_service_snapshot \
+    "$snapshot" \
+    "$PRODUCTION_ROLLBACK_API_TASK_DEFINITION" \
+    "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION"; then
+    set_classpilot_tile_auth_observation_final_evidence \
+      TILE_AUTH_PLAN_OBSERVATION_FINAL_POSTURE_JSON \
+      "failed" "" "production_posture_drift" \
+      "production_posture_unavailable"
+  elif ! posture_sha=$(classpilot_tile_auth_observation_posture_sha256 "$snapshot") ||
+       [[ ! "$posture_sha" =~ ^[a-f0-9]{64}$ ]]; then
+    set_classpilot_tile_auth_observation_final_evidence \
+      TILE_AUTH_PLAN_OBSERVATION_FINAL_POSTURE_JSON \
+      "failed" "" "production_posture_unavailable" \
+      "production_posture_unavailable"
+  elif [[ "$posture_sha" != "$TILE_AUTH_PLAN_OBSERVATION_INITIAL_POSTURE_SHA256" ]]; then
+    set_classpilot_tile_auth_observation_final_evidence \
+      TILE_AUTH_PLAN_OBSERVATION_FINAL_POSTURE_JSON \
+      "failed" "" "production_posture_drift" \
+      "production_posture_unavailable"
+  else
+    set_classpilot_tile_auth_observation_final_evidence \
+      TILE_AUTH_PLAN_OBSERVATION_FINAL_POSTURE_JSON \
+      "verified" "$posture_sha" "" \
+      "production_posture_unavailable"
+  fi
+  return 0
 }
 
 assert_classpilot_rehearsal_network_unchanged() {
@@ -2399,26 +2821,89 @@ NODE
   success "ClassPilot tile authorization candidate rehearsal passed (receipt=${receipt_path}, receiptSha256=${receipt_sha}, expiresAtUtc=${expires_at})"
 }
 
-write_classpilot_tile_auth_plan_observation_packet() {
+write_classpilot_tile_auth_plan_observation_packet_v2() {
   if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" != true ]]; then
     return 0
   fi
-  if [[ -z "${LOCALAPPDATA:-}" ]]; then
-    error "LOCALAPPDATA is required for the ACL-restricted ClassPilot tile authorization observation packet."
-    return 1
-  fi
-  if [[ -z "$TILE_AUTH_PLAN_OBSERVATION_EVIDENCE_JSON" ||
-        ! "$TILE_AUTH_PLAN_OBSERVATION_TASK_ARN" =~ ^arn:aws:ecs:${REGION}:${ACCOUNT_ID}:task/([^/]+/)?[a-f0-9]{32}$ ||
-        ! "$TILE_AUTH_PLAN_OBSERVATION_TASK_EXIT_CODE" =~ ^([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$ ||
-        ! "$TILE_AUTH_PLAN_OBSERVATION_LOG_STREAM_SHA256" =~ ^[a-f0-9]{64}$ ||
-        ! "$TILE_AUTH_PLAN_OBSERVATION_POSTURE_SHA256" =~ ^[a-f0-9]{64}$ ||
-        ! "$TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256" =~ ^[a-f0-9]{64}$ ]]; then
-    error "The ClassPilot tile authorization observation bindings are incomplete or malformed."
+  if [[ -z "${LOCALAPPDATA:-}" ||
+        ! "$TILE_AUTH_PLAN_OBSERVATION_ID" =~ ^[a-z0-9][a-z0-9-]{7,127}$ ||
+        ! "$TILE_AUTH_PLAN_OBSERVATION_INITIAL_NETWORK_SHA256" =~ ^[a-f0-9]{64}$ ||
+        ! "$TILE_AUTH_PLAN_OBSERVATION_INITIAL_POSTURE_SHA256" =~ ^[a-f0-9]{64}$ ||
+        -z "$TILE_AUTH_PLAN_OBSERVATION_RUN_ROOT" ||
+        -z "$TILE_AUTH_PLAN_OBSERVATION_ATTEMPT_PATH" ||
+        ! "$TILE_AUTH_PLAN_OBSERVATION_ATTEMPT_SHA256" =~ ^[a-f0-9]{64}$ ||
+        -z "$TILE_AUTH_PLAN_OBSERVATION_COLLECTION_JSON" ||
+        -z "$TILE_AUTH_PLAN_OBSERVATION_FINAL_NETWORK_JSON" ||
+        -z "$TILE_AUTH_PLAN_OBSERVATION_FINAL_POSTURE_JSON" ]]; then
+    error "The ClassPilot tile authorization observation finalization bindings are incomplete or malformed."
     return 1
   fi
 
-  TILE_AUTH_PLAN_OBSERVATION_ID="tile-plan-observe-$(date -u +%Y%m%dt%H%M%Sz)-${LOCAL_SHA:0:12}"
-  local output_directory="${LOCALAPPDATA}/SchoolPilot/load-gates/tile-auth-observations/${LOCAL_SHA}/${TILE_AUTH_PLAN_OBSERVATION_ID}"
+  local finalization_json
+  if ! finalization_json=$(
+    OBSERVATION_COLLECTION_JSON="$TILE_AUTH_PLAN_OBSERVATION_COLLECTION_JSON" \
+    OBSERVATION_FINAL_NETWORK_JSON="$TILE_AUTH_PLAN_OBSERVATION_FINAL_NETWORK_JSON" \
+    OBSERVATION_FINAL_POSTURE_JSON="$TILE_AUTH_PLAN_OBSERVATION_FINAL_POSTURE_JSON" \
+    OBSERVATION_TASK_ARN="$TILE_AUTH_PLAN_OBSERVATION_TASK_ARN" \
+    OBSERVATION_TASK_EXIT_CODE="$TILE_AUTH_PLAN_OBSERVATION_TASK_EXIT_CODE" \
+    OBSERVATION_TASK_STATE="$TILE_AUTH_PLAN_OBSERVATION_TASK_STATE" \
+    EXPECTED_REGION="$REGION" \
+    EXPECTED_ACCOUNT_ID="$ACCOUNT_ID" node <<'NODE'
+const collected = JSON.parse(process.env.OBSERVATION_COLLECTION_JSON || "null");
+const finalNetwork = JSON.parse(process.env.OBSERVATION_FINAL_NETWORK_JSON || "null");
+const finalProductionPosture = JSON.parse(
+  process.env.OBSERVATION_FINAL_POSTURE_JSON || "null"
+);
+const taskArn = process.env.OBSERVATION_TASK_ARN || "";
+const exitCodeText = process.env.OBSERVATION_TASK_EXIT_CODE || "";
+const taskState = process.env.OBSERVATION_TASK_STATE || "";
+let terminalTask = null;
+if (taskArn) {
+  const taskPattern = new RegExp(
+    `^arn:aws:ecs:${process.env.EXPECTED_REGION}:${process.env.EXPECTED_ACCOUNT_ID}:task/(?:[^/]+/)?[a-f0-9]{32}$`
+  );
+  if (!taskPattern.test(taskArn)) {
+    process.exit(1);
+  }
+  if (taskState === "exited" &&
+      /^(?:[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$/.test(exitCodeText)) {
+    terminalTask = {
+      state: "exited",
+      taskArn,
+      exitCode: Number(exitCodeText),
+    };
+  } else if (taskState === "exit_unavailable" && exitCodeText === "") {
+    terminalTask = {
+      state: "exit_unavailable",
+      taskArn,
+      exitCode: null,
+    };
+  } else {
+    process.exit(1);
+  }
+} else if (exitCodeText || taskState) {
+  process.exit(1);
+}
+if (!collected || typeof collected !== "object" ||
+    !Object.hasOwn(collected, "collection") ||
+    !Object.hasOwn(collected, "eventsDocument")) {
+  process.exit(1);
+}
+process.stdout.write(JSON.stringify({
+  createdAtUtc: new Date().toISOString(),
+  terminalTask,
+  collection: collected.collection,
+  finalNetwork,
+  finalProductionPosture,
+  eventsDocument: collected.eventsDocument,
+}));
+NODE
+  ); then
+    error "The ClassPilot tile authorization observation finalization input could not be canonicalized."
+    return 1
+  fi
+
+  local output_directory="${TILE_AUTH_PLAN_OBSERVATION_RUN_ROOT}/terminal"
   local identity_args=(
     --observation-id "$TILE_AUTH_PLAN_OBSERVATION_ID"
     --application-sha "$LOCAL_SHA"
@@ -2427,29 +2912,29 @@ write_classpilot_tile_auth_plan_observation_packet() {
     --candidate-worker-task-definition-arn "$WORKER_CANDIDATE_TASK_DEF"
     --active-api-task-definition-arn "$PRODUCTION_ROLLBACK_API_TASK_DEFINITION_ARN"
     --active-worker-task-definition-arn "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION_ARN"
-    --network-configuration-sha256 "$TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256"
-    --production-posture-sha256 "$TILE_AUTH_PLAN_OBSERVATION_POSTURE_SHA256"
-    --terminal-task-arn "$TILE_AUTH_PLAN_OBSERVATION_TASK_ARN"
-    --terminal-task-exit-code "$TILE_AUTH_PLAN_OBSERVATION_TASK_EXIT_CODE"
-    --terminal-log-stream-sha256 "$TILE_AUTH_PLAN_OBSERVATION_LOG_STREAM_SHA256"
+    --initial-network-configuration-sha256 "$TILE_AUTH_PLAN_OBSERVATION_INITIAL_NETWORK_SHA256"
+    --initial-production-posture-sha256 "$TILE_AUTH_PLAN_OBSERVATION_INITIAL_POSTURE_SHA256"
   )
 
-  local write_summary write_binding packet_path packet_sha observation_id outcome eligible_deploy eligible_diagnostic eligible_certification extra
-  if ! write_summary=$(printf '%s' "$TILE_AUTH_PLAN_OBSERVATION_EVIDENCE_JSON" | node \
+  local write_summary write_binding packet_path packet_sha observation_id outcome
+  local eligible_deploy eligible_diagnostic eligible_certification extra
+  if ! write_summary=$(printf '%s' "$finalization_json" | node \
     "$SCRIPT_DIR/manage-classpilot-tile-auth-plan-observation.mjs" write \
     --output "$output_directory" \
+    --expected-attempt-sha256 "$TILE_AUTH_PLAN_OBSERVATION_ATTEMPT_SHA256" \
     "${identity_args[@]}" 2>/dev/null); then
-    error "The ACL-restricted ClassPilot tile authorization observation packet could not be sealed."
+    error "The ACL-restricted ClassPilot tile authorization observation-v2 packet could not be sealed."
     return 1
   fi
   if ! write_binding=$(CLASSPILOT_OBSERVATION_SUMMARY="$write_summary" node <<'NODE'
 const value = JSON.parse(process.env.CLASSPILOT_OBSERVATION_SUMMARY || "null");
-if (value?.schemaVersion !== 1 ||
-    value?.version !== "classpilot-tile-auth-plan-observation-v1" ||
+if (value?.schemaVersion !== 2 ||
+    value?.version !== "classpilot-tile-auth-plan-observation-v2" ||
     typeof value.path !== "string" || value.path.length === 0 ||
     !/^[a-f0-9]{64}$/.test(value.sha256 || "") ||
     !/^[a-z0-9][a-z0-9-]{7,127}$/.test(value.observationId || "") ||
-    !["base_eligible", "base_ineligible"].includes(value.observationOutcome) ||
+    !["base_eligible", "base_ineligible", "task_failed", "evidence_unavailable"]
+      .includes(value.observationOutcome) ||
     value.eligibleForDeployment !== false ||
     value.eligibleForDiagnostic !== false ||
     value.eligibleForCertification !== false) process.exit(1);
@@ -2464,36 +2949,38 @@ process.stdout.write([
 ].join("\t"));
 NODE
   ); then
-    error "The sealed ClassPilot tile authorization observation summary was malformed."
+    error "The sealed ClassPilot tile authorization observation-v2 summary was malformed."
     return 1
   fi
   IFS=$'\t' read -r packet_path packet_sha observation_id outcome eligible_deploy eligible_diagnostic eligible_certification extra <<< "$write_binding"
   if [[ -z "$packet_path" || ! "$packet_sha" =~ ^[a-f0-9]{64}$ ||
         "$observation_id" != "$TILE_AUTH_PLAN_OBSERVATION_ID" ||
-        ( "$outcome" != "base_eligible" && "$outcome" != "base_ineligible" ) ||
         "$eligible_deploy" != "false" || "$eligible_diagnostic" != "false" ||
         "$eligible_certification" != "false" || -n "$extra" ]]; then
-    error "The sealed ClassPilot tile authorization observation summary was ambiguous."
+    error "The sealed ClassPilot tile authorization observation-v2 summary was ambiguous."
     return 1
   fi
 
-  local inspect_summary inspect_binding inspect_path inspect_sha inspect_id inspect_outcome inspect_deploy inspect_diagnostic inspect_certification
+  local inspect_summary inspect_binding inspect_path inspect_sha inspect_id
+  local inspect_outcome inspect_deploy inspect_diagnostic inspect_certification
   if ! inspect_summary=$(node \
     "$SCRIPT_DIR/manage-classpilot-tile-auth-plan-observation.mjs" inspect \
     --packet "$packet_path" \
     --expected-packet-sha256 "$packet_sha" \
+    --expected-attempt-sha256 "$TILE_AUTH_PLAN_OBSERVATION_ATTEMPT_SHA256" \
     "${identity_args[@]}" 2>/dev/null); then
-    error "The sealed ClassPilot tile authorization observation packet failed independent identity and companion-evidence inspection."
+    error "The sealed ClassPilot tile authorization observation-v2 packet failed independent inspection."
     return 1
   fi
   if ! inspect_binding=$(CLASSPILOT_OBSERVATION_SUMMARY="$inspect_summary" node <<'NODE'
 const value = JSON.parse(process.env.CLASSPILOT_OBSERVATION_SUMMARY || "null");
-if (value?.schemaVersion !== 1 ||
-    value?.version !== "classpilot-tile-auth-plan-observation-v1" ||
+if (value?.schemaVersion !== 2 ||
+    value?.version !== "classpilot-tile-auth-plan-observation-v2" ||
     typeof value.path !== "string" || value.path.length === 0 ||
     !/^[a-f0-9]{64}$/.test(value.sha256 || "") ||
     !/^[a-z0-9][a-z0-9-]{7,127}$/.test(value.observationId || "") ||
-    !["base_eligible", "base_ineligible"].includes(value.observationOutcome) ||
+    !["base_eligible", "base_ineligible", "task_failed", "evidence_unavailable"]
+      .includes(value.observationOutcome) ||
     value.eligibleForDeployment !== false ||
     value.eligibleForDiagnostic !== false ||
     value.eligibleForCertification !== false) process.exit(1);
@@ -2508,7 +2995,7 @@ process.stdout.write([
 ].join("\t"));
 NODE
   ); then
-    error "The inspected ClassPilot tile authorization observation summary was malformed."
+    error "The inspected ClassPilot tile authorization observation-v2 summary was malformed."
     return 1
   fi
   IFS=$'\t' read -r inspect_path inspect_sha inspect_id inspect_outcome inspect_deploy inspect_diagnostic inspect_certification extra <<< "$inspect_binding"
@@ -2516,13 +3003,105 @@ NODE
         "$inspect_id" != "$observation_id" || "$inspect_outcome" != "$outcome" ||
         "$inspect_deploy" != "false" || "$inspect_diagnostic" != "false" ||
         "$inspect_certification" != "false" || -n "$extra" ]]; then
-    error "The ClassPilot tile authorization observation packet changed between sealing and inspection."
+    error "The ClassPilot tile authorization observation-v2 packet changed between sealing and inspection."
+    return 1
+  fi
+
+  if [[ "$outcome" == "base_eligible" ]] &&
+     ! OBSERVATION_PACKET_PATH="$packet_path" \
+       EXPECTED_PACKET_SHA256="$packet_sha" node <<'NODE'
+const crypto = require("crypto");
+const fs = require("fs");
+const path = require("path");
+
+const packetPath = path.resolve(process.env.OBSERVATION_PACKET_PATH);
+const packetBytes = fs.readFileSync(packetPath);
+if (crypto.createHash("sha256").update(packetBytes).digest("hex") !==
+    process.env.EXPECTED_PACKET_SHA256) process.exit(1);
+const packet = JSON.parse(packetBytes.toString("utf8"));
+if (packet?.schemaVersion !== 2 ||
+    packet?.version !== "classpilot-tile-auth-plan-observation-v2" ||
+    packet?.observationOutcome !== "base_eligible" ||
+    packet?.preflightEvidenceFile !== "base-preflight.evidence.private.json" ||
+    packet?.selectionEvidenceFile !== "base-selection.evidence.private.json") {
+  process.exit(1);
+}
+const directory = path.dirname(packetPath);
+function readCompanion(filename, expectedHash) {
+  const bytes = fs.readFileSync(path.join(directory, filename));
+  if (!/^[a-f0-9]{64}$/.test(expectedHash || "") ||
+      crypto.createHash("sha256").update(bytes).digest("hex") !== expectedHash) {
+    process.exit(1);
+  }
+  return JSON.parse(bytes.toString("utf8"));
+}
+const preflight = readCompanion(
+  packet.preflightEvidenceFile,
+  packet.preflightEvidenceSha256
+);
+const selection = readCompanion(
+  packet.selectionEvidenceFile,
+  packet.selectionEvidenceSha256
+);
+const preflightKeys = [
+  "conflictingSessionPairs",
+  "eligibleBases",
+  "missingSessionPairs",
+  "requiredSessionPairs",
+  "reusedActiveSessionPairs",
+  "status",
+  "version",
+].sort();
+const selectionKeys = [
+  "canonicalPrimaryOnlyGroups",
+  "cohortSize",
+  "eligibleSchools",
+  "exactCohortGroups",
+  "finalBases",
+  "version",
+].sort();
+if (JSON.stringify(Object.keys(preflight).sort()) !==
+      JSON.stringify(preflightKeys) ||
+    preflight.version !== "classpilot-tile-auth-plan-base-preflight-v1" ||
+    preflight.status !== "passed" ||
+    preflight.eligibleBases !== 1 ||
+    preflight.requiredSessionPairs !== 80 ||
+    !Number.isInteger(preflight.reusedActiveSessionPairs) ||
+    !Number.isInteger(preflight.missingSessionPairs) ||
+    preflight.reusedActiveSessionPairs < 0 ||
+    preflight.missingSessionPairs < 0 ||
+    preflight.reusedActiveSessionPairs + preflight.missingSessionPairs !== 80 ||
+    preflight.conflictingSessionPairs !== 0 ||
+    JSON.stringify(Object.keys(selection).sort()) !==
+      JSON.stringify(selectionKeys) ||
+    selection.version !==
+      "classpilot-tile-auth-plan-base-selection-v1" ||
+    selection.cohortSize !== 40 ||
+    selection.canonicalPrimaryOnlyGroups !== 19 ||
+    selection.exactCohortGroups !== 19 ||
+    selection.eligibleSchools !== 1 ||
+    selection.finalBases !== 1) {
+  process.exit(1);
+}
+NODE
+  then
+    error "The independently inspected ClassPilot tile authorization observation did not prove the exact 40/19/19/1/1 selection and 80-pair session posture."
     return 1
   fi
 
   TILE_AUTH_PLAN_OBSERVATION_PACKET_PATH="$packet_path"
   TILE_AUTH_PLAN_OBSERVATION_PACKET_SHA256="$packet_sha"
-  success "ClassPilot tile authorization observation sealed (outcome=${outcome}, packet=${packet_path}, packetSha256=${packet_sha}, eligibleForDeployment=false, eligibleForDiagnostic=false, eligibleForCertification=false)"
+  TILE_AUTH_PLAN_OBSERVATION_OUTCOME="$outcome"
+  success "ClassPilot tile authorization observation-v2 sealed (outcome=${outcome}, packet=${packet_path}, packetSha256=${packet_sha}, eligibleForDeployment=false, eligibleForDiagnostic=false, eligibleForCertification=false)"
+  if [[ "$outcome" == "base_eligible" || "$outcome" == "base_ineligible" ]]; then
+    return 0
+  fi
+  return 1
+}
+
+write_classpilot_tile_auth_plan_observation_packet_v1_disabled() {
+  error "ClassPilot tile authorization observation-v1 is historical/inspect-only and cannot be written."
+  return 1
 }
 
 launch_safe_active_api_preflight() {
@@ -3926,12 +4505,49 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
       error "The active API/worker baseline changed after candidate preparation; refusing the read-only candidate preflight."
       exit 1
     fi
-    run_classpilot_tile_auth_plan_base_preflight
+    if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" == true ]]; then
+      if ! preflight_classpilot_tile_auth_plan_observation_admission; then
+        exit 1
+      fi
+      set +e
+      initialize_classpilot_tile_auth_plan_observation
+      observation_initialization_result=$?
+      if [[ "$observation_initialization_result" -ne 0 &&
+            "$TILE_AUTH_PLAN_OBSERVATION_ATTEMPT_ADMITTED" != true ]]; then
+        set -e
+        error "The ClassPilot tile authorization observation attempt was not admitted."
+        exit 1
+      fi
+      if [[ "$observation_initialization_result" -eq 0 &&
+            "$TILE_AUTH_PLAN_OBSERVATION_INITIALIZATION_FAILED" != true ]]; then
+        run_classpilot_tile_auth_plan_observation_task
+        observation_task_result=$?
+        if [[ "$observation_task_result" -ne 0 ]]; then
+          set_classpilot_tile_auth_observation_collection_failure \
+            "terminal_task_unavailable"
+        fi
+      elif [[ -z "$TILE_AUTH_PLAN_OBSERVATION_COLLECTION_JSON" ]]; then
+        set_classpilot_tile_auth_observation_collection_failure \
+          "terminal_task_unavailable"
+      fi
+      capture_classpilot_tile_auth_observation_final_network
+      capture_classpilot_tile_auth_observation_final_posture
+      write_classpilot_tile_auth_plan_observation_packet_v2
+      observation_finalization_result=$?
+      set -e
+    else
+      run_classpilot_tile_auth_plan_base_preflight
+    fi
   fi
   if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" == true ]]; then
-    assert_classpilot_tile_auth_observation_network_unchanged
-    capture_classpilot_tile_auth_observation_posture
-    write_classpilot_tile_auth_plan_observation_packet
+    if [[ "$observation_finalization_result" -ne 0 ]]; then
+      error "Candidate base observation reached a sealed non-admissible terminal outcome."
+      exit 1
+    fi
+    if [[ "$TILE_AUTH_PLAN_OBSERVATION_OUTCOME" != "base_eligible" ]]; then
+      error "Candidate base observation sealed a valid base-ineligible result; the mandatory plan gate remains blocked."
+      exit 1
+    fi
     success "Candidate base observation complete; no rehearsal admission, full plan gate, migration, scaling hold, service update, frontend publication, fixture mutation, lease, or traffic action was attempted."
     exit 0
   fi

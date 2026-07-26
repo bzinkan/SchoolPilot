@@ -38,6 +38,8 @@ const coTeacherId = randomUUID();
 const officeStaffId = randomUUID();
 const classGroupId = randomUUID();
 const otherGroupId = randomUUID();
+const classPrimaryRelationshipId = randomUUID();
+const otherPrimaryRelationshipId = randomUUID();
 const expiredTeachingSessionId = randomUUID();
 const rosterStudentIds = Array.from({ length: 40 }, () => randomUUID());
 const officeStudentIds = Array.from({ length: 40 }, () => randomUUID());
@@ -57,6 +59,8 @@ const ambiguousCoTeacherId = randomUUID();
 const ambiguousOfficeStaffId = randomUUID();
 const ambiguousClassGroupId = randomUUID();
 const ambiguousOtherGroupId = randomUUID();
+const ambiguousClassPrimaryRelationshipId = randomUUID();
+const ambiguousOtherPrimaryRelationshipId = randomUUID();
 const ambiguousStudentIds = Array.from({ length: 80 }, () => randomUUID());
 const ambiguousDeviceIds = ambiguousStudentIds.map(
   (_studentId, index) =>
@@ -87,7 +91,12 @@ async function readTransientRowCount(client: pg.Client): Promise<number> {
     const result = await client.query<{ transient_count: string }>(
       `
         SELECT (
-          (SELECT count(*) FROM group_teachers WHERE group_id = $1)
+          (
+            SELECT count(*)
+            FROM group_teachers
+            WHERE group_id = $1
+              AND role = 'co-teacher'
+          )
           + (
             SELECT count(*)
             FROM teaching_sessions
@@ -326,6 +335,24 @@ async function seedOwnedFixture(client: pg.Client): Promise<void> {
   );
   await client.query(
     `
+      INSERT INTO group_teachers (
+        id, group_id, teacher_id, role, assigned_at
+      )
+      VALUES
+        ($1, $3, $5, 'primary', now()),
+        ($2, $4, $6, 'primary', now())
+    `,
+    [
+      classPrimaryRelationshipId,
+      otherPrimaryRelationshipId,
+      classGroupId,
+      otherGroupId,
+      primaryTeacherId,
+      coTeacherId,
+    ]
+  );
+  await client.query(
+    `
       INSERT INTO group_students (id, group_id, student_id)
       SELECT
         gen_random_uuid()::text,
@@ -418,6 +445,7 @@ async function seedOwnedFixture(client: pg.Client): Promise<void> {
 
   for (const table of [
     "groups",
+    "group_teachers",
     "group_students",
     "students",
     "devices",
@@ -534,6 +562,24 @@ async function seedAmbiguousOwnedFixture(client: pg.Client): Promise<void> {
   );
   await client.query(
     `
+      INSERT INTO group_teachers (
+        id, group_id, teacher_id, role, assigned_at
+      )
+      VALUES
+        ($1, $3, $5, 'primary', now()),
+        ($2, $4, $6, 'primary', now())
+    `,
+    [
+      ambiguousClassPrimaryRelationshipId,
+      ambiguousOtherPrimaryRelationshipId,
+      ambiguousClassGroupId,
+      ambiguousOtherGroupId,
+      ambiguousPrimaryTeacherId,
+      ambiguousCoTeacherId,
+    ]
+  );
+  await client.query(
+    `
       INSERT INTO group_students (id, group_id, student_id)
       SELECT gen_random_uuid()::text, $2, fixture.student_id
       FROM unnest($1::text[]) AS fixture(student_id)
@@ -574,6 +620,10 @@ async function seedAmbiguousOwnedFixture(client: pg.Client): Promise<void> {
 }
 
 async function cleanupAmbiguousOwnedFixture(client: pg.Client): Promise<void> {
+  await client.query(
+    "DELETE FROM group_teachers WHERE group_id = ANY($1::text[])",
+    [[ambiguousClassGroupId, ambiguousOtherGroupId]]
+  );
   await client.query(
     "DELETE FROM group_students WHERE group_id = ANY($1::text[])",
     [[ambiguousClassGroupId, ambiguousOtherGroupId]]
@@ -987,6 +1037,80 @@ describe(
             { unsupervisedRosterStudents: 40, noCoTeacherGroups: 0 },
             () =>
               adminClient!.query(
+                "DELETE FROM group_teachers WHERE id = $1",
+                [classPrimaryRelationshipId]
+              ),
+            () =>
+              adminClient!.query(
+                `
+                  INSERT INTO group_teachers (
+                    id, group_id, teacher_id, role, assigned_at
+                  )
+                  VALUES ($1, $2, $3, 'primary', now())
+                `,
+                [
+                  classPrimaryRelationshipId,
+                  classGroupId,
+                  primaryTeacherId,
+                ]
+              )
+          );
+
+          await runMutationCase(
+            "noCoTeacherGroups",
+            { unsupervisedRosterStudents: 40, noCoTeacherGroups: 0 },
+            () =>
+              adminClient!.query(
+                "UPDATE group_teachers SET teacher_id = $1 WHERE id = $2",
+                [coTeacherId, classPrimaryRelationshipId]
+              ),
+            () =>
+              adminClient!.query(
+                "UPDATE group_teachers SET teacher_id = $1 WHERE id = $2",
+                [primaryTeacherId, classPrimaryRelationshipId]
+              )
+          );
+
+          await runMutationCase(
+            "noCoTeacherGroups",
+            { unsupervisedRosterStudents: 40, noCoTeacherGroups: 0 },
+            () =>
+              adminClient!.query(
+                "UPDATE group_teachers SET role = 'co-teacher' WHERE id = $1",
+                [classPrimaryRelationshipId]
+              ),
+            () =>
+              adminClient!.query(
+                "UPDATE group_teachers SET role = 'primary' WHERE id = $1",
+                [classPrimaryRelationshipId]
+              )
+          );
+
+          await runMutationCase(
+            "noCoTeacherGroups",
+            { unsupervisedRosterStudents: 40, noCoTeacherGroups: 0 },
+            () =>
+              adminClient!.query(
+                `
+                  INSERT INTO group_teachers (
+                    id, group_id, teacher_id, role, assigned_at
+                  )
+                  VALUES ($1, $2, $3, 'primary', now())
+                `,
+                [existingCoTeacherId, classGroupId, coTeacherId]
+              ),
+            () =>
+              adminClient!.query(
+                "DELETE FROM group_teachers WHERE id = $1",
+                [existingCoTeacherId]
+              )
+          );
+
+          await runMutationCase(
+            "noCoTeacherGroups",
+            { unsupervisedRosterStudents: 40, noCoTeacherGroups: 0 },
+            () =>
+              adminClient!.query(
                 `
                   INSERT INTO group_teachers (
                     id, group_id, teacher_id, role, assigned_at
@@ -1188,6 +1312,161 @@ describe(
     );
 
     it(
+      "proves the production-shaped 20-class primary-only selection yields 19 exact cohorts",
+      { timeout: 60_000 },
+      async () => {
+        assert.ok(adminClient);
+        assert.ok(applicationDatabaseUrl);
+        assert.ok(planCheckModule);
+
+        const applicationClient = new pg.Client({
+          connectionString: applicationDatabaseUrl,
+          statement_timeout: 15_000,
+        });
+        const extraGroupIds = Array.from({ length: 18 }, () => randomUUID());
+        const extraPrimaryRelationshipIds = extraGroupIds.map(() =>
+          randomUUID()
+        );
+        const classTwoRosterMembershipIds = rosterStudentIds.map(() =>
+          randomUUID()
+        );
+        const classOneCoTeacherRelationshipId = randomUUID();
+        await applicationClient.connect();
+        try {
+          await adminClient.query(
+            `
+              INSERT INTO group_students (id, group_id, student_id)
+              SELECT
+                fixture.membership_id,
+                $3,
+                fixture.student_id
+              FROM unnest($1::text[], $2::text[])
+                AS fixture(membership_id, student_id)
+            `,
+            [
+              classTwoRosterMembershipIds,
+              rosterStudentIds,
+              otherGroupId,
+            ]
+          );
+          await adminClient.query(
+            `
+              INSERT INTO groups (
+                id, school_id, teacher_id, name, description, group_type,
+                status, schedule_enabled
+              )
+              SELECT
+                fixture.group_id,
+                $2,
+                $3,
+                'Synthetic plan class ' || numbered.class_number,
+                'synthetic-load-fixture:' || $4 ||
+                  ':class:' || numbered.class_number,
+                'admin_class',
+                'active',
+                false
+              FROM unnest($1::text[])
+                WITH ORDINALITY AS fixture(group_id, ordinality)
+              CROSS JOIN LATERAL (
+                SELECT lpad((fixture.ordinality + 2)::text, 2, '0')
+                  AS class_number
+              ) AS numbered
+            `,
+            [
+              extraGroupIds,
+              schoolId,
+              primaryTeacherId,
+              fixtureId,
+            ]
+          );
+          await adminClient.query(
+            `
+              INSERT INTO group_teachers (
+                id, group_id, teacher_id, role, assigned_at
+              )
+              SELECT
+                fixture.relationship_id,
+                fixture.group_id,
+                $3,
+                'primary',
+                now()
+              FROM unnest($1::text[], $2::text[])
+                AS fixture(relationship_id, group_id)
+            `,
+            [
+              extraPrimaryRelationshipIds,
+              extraGroupIds,
+              primaryTeacherId,
+            ]
+          );
+          await adminClient.query(
+            `
+              INSERT INTO group_students (id, group_id, student_id)
+              SELECT
+                gen_random_uuid()::text,
+                fixture.group_id,
+                roster.student_id
+              FROM unnest($1::text[]) AS fixture(group_id)
+              CROSS JOIN unnest($2::text[]) AS roster(student_id)
+            `,
+            [extraGroupIds, rosterStudentIds]
+          );
+          await adminClient.query(
+            `
+              INSERT INTO group_teachers (
+                id, group_id, teacher_id, role, assigned_at
+              )
+              VALUES ($1, $2, $3, 'co-teacher', now())
+            `,
+            [
+              classOneCoTeacherRelationshipId,
+              classGroupId,
+              coTeacherId,
+            ]
+          );
+
+          const selectionEvents: unknown[] = [];
+          const preflight =
+            await planCheckModule.runClasspilotTileAuthorizationPlanBasePreflight({
+              client: applicationClient,
+              onSelectionEvidence: (event) => selectionEvents.push(event),
+            });
+          assert.equal(preflight.status, "passed");
+          assert.deepEqual(selectionEvents, [{
+            version: "classpilot-tile-auth-plan-base-selection-v1",
+            cohortSize: 40,
+            canonicalPrimaryOnlyGroups: 19,
+            exactCohortGroups: 19,
+            eligibleSchools: 1,
+            finalBases: 1,
+          }]);
+        } finally {
+          await adminClient.query(
+            "DELETE FROM group_students WHERE id = ANY($1::text[])",
+            [classTwoRosterMembershipIds]
+          );
+          await adminClient.query(
+            "DELETE FROM group_teachers WHERE id = $1",
+            [classOneCoTeacherRelationshipId]
+          );
+          await adminClient.query(
+            "DELETE FROM group_teachers WHERE group_id = ANY($1::text[])",
+            [extraGroupIds]
+          );
+          await adminClient.query(
+            "DELETE FROM group_students WHERE group_id = ANY($1::text[])",
+            [extraGroupIds]
+          );
+          await adminClient.query(
+            "DELETE FROM groups WHERE id = ANY($1::text[])",
+            [extraGroupIds]
+          );
+          await applicationClient.end();
+        }
+      }
+    );
+
+    it(
       "provisions missing device sessions, hides all 123 rows, rolls back, and serializes two real gates",
       { timeout: 180_000 },
       async () => {
@@ -1304,6 +1583,22 @@ describe(
             )
           );
 
+          const persistentPrimary = await adminClient.query<{
+            teacher_id: string;
+            role: string;
+          }>(
+            `
+              SELECT teacher_id, role
+              FROM group_teachers
+              WHERE group_id = $1
+              ORDER BY teacher_id, role
+            `,
+            [classGroupId]
+          );
+          assert.deepEqual(persistentPrimary.rows, [{
+            teacher_id: primaryTeacherId,
+            role: "primary",
+          }]);
           assert.equal(await readTransientRowCount(observerClient), 0);
           assert.deepEqual(await readExpiredSessionPosture(observerClient), {
             expired_count: "1",

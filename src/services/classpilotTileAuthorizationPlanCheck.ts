@@ -38,6 +38,8 @@ const TRANSACTIONAL_PLAN_BASE_PREFLIGHT_VERSION =
   "classpilot-tile-auth-plan-base-preflight-v1" as const;
 export const CLASSPILOT_TILE_AUTHORIZATION_PLAN_BASE_FUNNEL_VERSION =
   "classpilot-tile-auth-plan-base-funnel-v1" as const;
+export const CLASSPILOT_TILE_AUTHORIZATION_PLAN_BASE_SELECTION_VERSION =
+  "classpilot-tile-auth-plan-base-selection-v1" as const;
 const TRANSACTIONAL_PLAN_ADVISORY_LOCK_KEY =
   "classpilot-tile-authorization-plan-gate-v1";
 const TRANSACTIONAL_PLAN_REQUIRED_SESSION_PAIRS =
@@ -207,6 +209,20 @@ export type ClasspilotTileAuthorizationPlanBaseFunnelEvidence = {
     conflictingSessionPairs: number;
   } | null;
 };
+
+export type ClasspilotTileAuthorizationPlanBaseSelectionEvidence = {
+  version:
+    typeof CLASSPILOT_TILE_AUTHORIZATION_PLAN_BASE_SELECTION_VERSION;
+  cohortSize: typeof CLASSPILOT_TILE_AUTHORIZATION_PLAN_COHORT_SIZE;
+  canonicalPrimaryOnlyGroups: number;
+  exactCohortGroups: number;
+  eligibleSchools: number;
+  finalBases: number;
+};
+
+export type ClasspilotTileAuthorizationPlanBaseSelectionListener = (
+  event: ClasspilotTileAuthorizationPlanBaseSelectionEvidence
+) => void | Promise<void>;
 
 export type ClasspilotTilePlanEvidence = {
   executionMs: number;
@@ -457,10 +473,18 @@ const TRANSACTIONAL_PLAN_BASE_SQL = `
   no_co_teacher_group_students AS MATERIALIZED (
     SELECT qualified.*
     FROM qualified_group_students AS qualified
-    WHERE NOT EXISTS (
-      SELECT 1
+    WHERE (
+      SELECT count(*)
       FROM group_teachers AS existing_co_teacher
       WHERE existing_co_teacher.group_id = qualified.group_id
+    ) = 1
+      AND EXISTS (
+      SELECT 1
+      FROM group_teachers AS canonical_primary_teacher
+      WHERE canonical_primary_teacher.group_id = qualified.group_id
+        AND canonical_primary_teacher.teacher_id =
+          qualified.primary_teacher_id
+        AND canonical_primary_teacher.role = 'primary'
     )
   ),
   eligible_groups AS MATERIALIZED (
@@ -1384,6 +1408,14 @@ const BASE_FUNNEL_DATABASE_COLUMNS = {
 >;
 
 const BASE_FUNNEL_MAX_COUNT = 1_000_000;
+const BASE_SELECTION_KEYS = [
+  "canonicalPrimaryOnlyGroups",
+  "cohortSize",
+  "eligibleSchools",
+  "exactCohortGroups",
+  "finalBases",
+  "version",
+] as const;
 
 function isPlainRecord(
   value: unknown
@@ -1595,6 +1627,64 @@ export function validateClasspilotTileAuthorizationPlanBaseFunnelEvidence(
     counts,
     sessionPosture,
   };
+}
+
+export function validateClasspilotTileAuthorizationPlanBaseSelectionEvidence(
+  value: unknown
+): ClasspilotTileAuthorizationPlanBaseSelectionEvidence {
+  if (
+    !hasExactRecordKeys(value, BASE_SELECTION_KEYS) ||
+    value.version !==
+      CLASSPILOT_TILE_AUTHORIZATION_PLAN_BASE_SELECTION_VERSION ||
+    value.cohortSize !== CLASSPILOT_TILE_AUTHORIZATION_PLAN_COHORT_SIZE ||
+    !isNonnegativeInteger(value.canonicalPrimaryOnlyGroups) ||
+    !isNonnegativeInteger(value.exactCohortGroups) ||
+    !isNonnegativeInteger(value.eligibleSchools) ||
+    !isNonnegativeInteger(value.finalBases)
+  ) {
+    throw new Error(
+      "classpilot_tile_authorization_plan_base_selection_invalid"
+    );
+  }
+
+  const canonicalPrimaryOnlyGroups = value.canonicalPrimaryOnlyGroups;
+  const exactCohortGroups = value.exactCohortGroups;
+  const eligibleSchools = value.eligibleSchools;
+  const finalBases = value.finalBases;
+  if (
+    canonicalPrimaryOnlyGroups > BASE_FUNNEL_MAX_COUNT ||
+    exactCohortGroups > canonicalPrimaryOnlyGroups ||
+    eligibleSchools > exactCohortGroups ||
+    finalBases > eligibleSchools ||
+    eligibleSchools !== 1 ||
+    finalBases !== 1
+  ) {
+    throw new Error(
+      "classpilot_tile_authorization_plan_base_selection_invalid"
+    );
+  }
+
+  return {
+    version: CLASSPILOT_TILE_AUTHORIZATION_PLAN_BASE_SELECTION_VERSION,
+    cohortSize: CLASSPILOT_TILE_AUTHORIZATION_PLAN_COHORT_SIZE,
+    canonicalPrimaryOnlyGroups,
+    exactCohortGroups,
+    eligibleSchools,
+    finalBases,
+  };
+}
+
+function createBaseSelectionEvidence(
+  counts: ClasspilotTileAuthorizationPlanBaseFunnelCounts
+): ClasspilotTileAuthorizationPlanBaseSelectionEvidence {
+  return validateClasspilotTileAuthorizationPlanBaseSelectionEvidence({
+    version: CLASSPILOT_TILE_AUTHORIZATION_PLAN_BASE_SELECTION_VERSION,
+    cohortSize: CLASSPILOT_TILE_AUTHORIZATION_PLAN_COHORT_SIZE,
+    canonicalPrimaryOnlyGroups: counts.noCoTeacherGroups,
+    exactCohortGroups: counts.exactCohortGroups,
+    eligibleSchools: counts.eligibleSchools,
+    finalBases: counts.finalBases,
+  });
 }
 
 function readBaseFunnelCounts(
@@ -2665,6 +2755,7 @@ async function measureHistoryFallback(
 
 export async function runClasspilotTileAuthorizationPlanBasePreflight(options: {
   client: ClasspilotTilePlanQueryClient;
+  onSelectionEvidence?: ClasspilotTileAuthorizationPlanBaseSelectionListener;
 }): Promise<ClasspilotTileAuthorizationPlanBasePreflightReport> {
   let transactionStarted = false;
   let report: ClasspilotTileAuthorizationPlanBasePreflightReport | undefined;
@@ -2683,6 +2774,11 @@ export async function runClasspilotTileAuthorizationPlanBasePreflight(options: {
       options.client,
       CLASSPILOT_TILE_AUTHORIZATION_PLAN_COHORT_SIZE
     );
+    if (options.onSelectionEvidence) {
+      await options.onSelectionEvidence(
+        createBaseSelectionEvidence(baseEvaluation.funnelCounts)
+      );
+    }
     const posture = await readTransactionalPlanSessionPosture(
       options.client,
       baseEvaluation.base,

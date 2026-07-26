@@ -7,6 +7,10 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $testClock = [Diagnostics.Stopwatch]::StartNew()
 $script:AssertionCount = 0
+# GitHub's Windows runners can spend more than 15 seconds launching the
+# short-lived PowerShell/AWS-mock children used by this suite. Keep one
+# test-only startup bound that matches the existing slow-sample allowance.
+$script:MonitorStartupDeadlineSeconds = 60
 $previousRolloutTestSentinel = $env:SCHOOLPILOT_ROLLOUT_TEST_MODE
 $env:SCHOOLPILOT_ROLLOUT_TEST_MODE = "I_UNDERSTAND_TEST_ONLY"
 
@@ -1761,7 +1765,7 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
             -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$monitorScript,"-ConfigPath",$childConfigPath,"-Mode","Monitor") `
             -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $childRoot "monitor.out") -RedirectStandardError (Join-Path $childRoot "monitor.err")
         $evidencePath = Join-Path $childEvidence "$childRunId-aws-monitor.jsonl"
-        $waitDeadline = [DateTimeOffset]::UtcNow.AddSeconds(15)
+        $waitDeadline = [DateTimeOffset]::UtcNow.AddSeconds($script:MonitorStartupDeadlineSeconds)
         while (-not (Test-Path -LiteralPath $evidencePath) -and [DateTimeOffset]::UtcNow -lt $waitDeadline) { Start-Sleep -Milliseconds 100 }
         Assert-Condition (Test-Path -LiteralPath $evidencePath) "Child monitor did not begin sampling."
         $fatal = @{reasonCodes=@("valid-http-403","cross-school-http-response","tenant-isolation-probe-unavailable","command-target-scope","invalid-teacher-response");observedAt=[DateTimeOffset]::UtcNow.ToString("o")}
@@ -2139,7 +2143,7 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
             -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$monitorScript,"-ConfigPath",$uncorrelatedConfigPath,"-Mode","Monitor") `
             -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $childRoot "uncorrelated.out") -RedirectStandardError (Join-Path $childRoot "uncorrelated.err")
         $uncorrelatedEvidencePath = Join-Path $childEvidence "$uncorrelatedRunId-aws-monitor.jsonl"
-        $uncorrelatedStartDeadline = [DateTimeOffset]::UtcNow.AddSeconds(15)
+        $uncorrelatedStartDeadline = [DateTimeOffset]::UtcNow.AddSeconds($script:MonitorStartupDeadlineSeconds)
         while (-not (Test-Path -LiteralPath $uncorrelatedEvidencePath) -and [DateTimeOffset]::UtcNow -lt $uncorrelatedStartDeadline) { Start-Sleep -Milliseconds 100 }
         Assert-Condition (Test-Path -LiteralPath $uncorrelatedEvidencePath) "Uncorrelated valid-403 monitor did not start."
         $uncorrelatedFatal = @{reasonCodes=@("uncorrelated-valid-http-403");observedAt=[DateTimeOffset]::UtcNow.ToString("o")}
@@ -2176,7 +2180,7 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
             -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$monitorScript,"-ConfigPath",$genericRejectedConfigPath,"-Mode","Monitor") `
             -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $childRoot "generic-rejected.out") -RedirectStandardError (Join-Path $childRoot "generic-rejected.err")
         $genericRejectedEvidencePath = Join-Path $childEvidence "$genericRejectedRunId-aws-monitor.jsonl"
-        $genericRejectedStartDeadline = [DateTimeOffset]::UtcNow.AddSeconds(15)
+        $genericRejectedStartDeadline = [DateTimeOffset]::UtcNow.AddSeconds($script:MonitorStartupDeadlineSeconds)
         while (-not (Test-Path -LiteralPath $genericRejectedEvidencePath) -and [DateTimeOffset]::UtcNow -lt $genericRejectedStartDeadline) { Start-Sleep -Milliseconds 100 }
         Assert-Condition (Test-Path -LiteralPath $genericRejectedEvidencePath) "Generic valid-401 monitor did not start."
         $genericRejectedFatal = @{reasonCodes=@("valid-http-401");observedAt=[DateTimeOffset]::UtcNow.ToString("o")}
@@ -2278,7 +2282,7 @@ Wait-ForPath $TerminalProgressPath "the harness to commit terminal progress"
             -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$monitorScript,"-ConfigPath",$correlatedConfigPath,"-Mode","Monitor") `
             -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $childRoot "correlated.out") -RedirectStandardError (Join-Path $childRoot "correlated.err")
         $correlatedEvidencePath = Join-Path $childEvidence "$correlatedRunId-aws-monitor.jsonl"
-        $correlatedStartDeadline = [DateTimeOffset]::UtcNow.AddSeconds(15)
+        $correlatedStartDeadline = [DateTimeOffset]::UtcNow.AddSeconds($script:MonitorStartupDeadlineSeconds)
         while (-not (Test-Path -LiteralPath $correlatedEvidencePath) -and [DateTimeOffset]::UtcNow -lt $correlatedStartDeadline) { Start-Sleep -Milliseconds 100 }
         Assert-Condition (Test-Path -LiteralPath $correlatedEvidencePath) "Correlated valid-403 monitor did not start."
         [IO.File]::WriteAllText($correlatedWafBlockFlag, "blocked")
@@ -2551,7 +2555,7 @@ exit 0
                     }
                 }
                 $evidencePath = Join-Path $childEvidence "$CaseId-aws-monitor.jsonl"
-                $startDeadline = [DateTimeOffset]::UtcNow.AddSeconds(15)
+                $startDeadline = [DateTimeOffset]::UtcNow.AddSeconds($script:MonitorStartupDeadlineSeconds)
                 $startError = Get-Content -LiteralPath (Join-Path $childRoot "$CaseId.err") -Raw -ErrorAction SilentlyContinue
                 if ($StopHarnessAfterFinal) {
                     while (-not (Test-Path -LiteralPath $caseBarrierReady) -and
@@ -3199,7 +3203,7 @@ exit 0
                 -ArgumentList @("-NoProfile","-ExecutionPolicy","Bypass","-File",$monitorScript,"-ConfigPath",$completedWaitConfigPath,"-Mode","Monitor") `
                 -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $childRoot "$completedWaitRunId.out") -RedirectStandardError (Join-Path $childRoot "$completedWaitRunId.err")
             Remove-Item Env:SCHOOLPILOT_TEST_METRIC_TIMESTAMP -ErrorAction SilentlyContinue
-            $completedWaitBarrierDeadline = [DateTimeOffset]::UtcNow.AddSeconds(15)
+            $completedWaitBarrierDeadline = [DateTimeOffset]::UtcNow.AddSeconds($script:MonitorStartupDeadlineSeconds)
             while (-not (Test-Path -LiteralPath $completedWaitBarrierReady) -and
                 -not $completedWaitMonitor.HasExited -and [DateTimeOffset]::UtcNow -lt $completedWaitBarrierDeadline) {
                 Start-Sleep -Milliseconds 100
@@ -3244,7 +3248,7 @@ exit 0
         }
 
         $completedWaitEvidencePath = Join-Path $childEvidence "$completedWaitRunId-aws-monitor.jsonl"
-        $completedWaitStartDeadline = [DateTimeOffset]::UtcNow.AddSeconds(15)
+        $completedWaitStartDeadline = [DateTimeOffset]::UtcNow.AddSeconds($script:MonitorStartupDeadlineSeconds)
         while (-not (Test-Path -LiteralPath $completedWaitEvidencePath) -and [DateTimeOffset]::UtcNow -lt $completedWaitStartDeadline) { Start-Sleep -Milliseconds 100 }
         $completedWaitStartError = Get-Content -LiteralPath (Join-Path $childRoot "$completedWaitRunId.err") -Raw -ErrorAction SilentlyContinue
         Assert-Condition (Test-Path -LiteralPath $completedWaitEvidencePath) "Completed-final snapshot-wait monitor did not start (stderr: $completedWaitStartError)."

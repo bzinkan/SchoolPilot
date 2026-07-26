@@ -2,7 +2,14 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   collectClasspilotTileAuthorizationPlanLogEvents,
@@ -42,7 +49,11 @@ function bashExecutable(): string {
   return candidates.find(existsSync) ?? "bash";
 }
 
-function runDeployHelper(body: string, easternClock = "1 1200") {
+function runDeployHelper(
+  body: string,
+  easternClock = "1 1200",
+  extraEnv: NodeJS.ProcessEnv = {}
+) {
   return spawnSync(bashExecutable(), ["-s"], {
     encoding: "utf8",
     input: `
@@ -58,7 +69,11 @@ warn() { :; }
 error() { printf '%s\\n' "$*" >&2; }
 ${body}
 `,
-    env: { ...process.env, TEST_EASTERN_CLOCK: easternClock },
+    env: {
+      ...process.env,
+      TEST_EASTERN_CLOCK: easternClock,
+      ...extraEnv,
+    },
   });
 }
 
@@ -353,13 +368,17 @@ admit_classpilot_tile_auth_plan_rehearsal_attempt
       "register_classpilot_candidate_worker_task_definition",
       backendStart
     );
-    const preflight = deploySource.indexOf(
-      "run_classpilot_tile_auth_plan_base_preflight",
+    const initialize = deploySource.indexOf(
+      "initialize_classpilot_tile_auth_plan_observation",
       candidateRegistration
     );
+    const observationTask = deploySource.indexOf(
+      "run_classpilot_tile_auth_plan_observation_task",
+      initialize
+    );
     const packet = deploySource.indexOf(
-      "write_classpilot_tile_auth_plan_observation_packet",
-      preflight
+      "write_classpilot_tile_auth_plan_observation_packet_v2",
+      observationTask
     );
     const observationStop = deploySource.indexOf(
       'success "Candidate base observation complete;',
@@ -377,8 +396,9 @@ admit_classpilot_tile_auth_plan_rehearsal_attempt
     assert.ok(
       backendStart > 0 &&
       candidateRegistration > backendStart &&
-      preflight > candidateRegistration &&
-      packet > preflight &&
+      initialize > candidateRegistration &&
+      observationTask > initialize &&
+      packet > observationTask &&
       observationStop > packet &&
       observationExit > observationStop &&
       fullGate > observationExit &&
@@ -401,26 +421,43 @@ admit_classpilot_tile_auth_plan_rehearsal_attempt
     );
     assert.match(
       observationPath,
-      /run_classpilot_tile_auth_plan_base_preflight[\s\S]*assert_classpilot_tile_auth_observation_network_unchanged[\s\S]*capture_classpilot_tile_auth_observation_posture[\s\S]*write_classpilot_tile_auth_plan_observation_packet/
+      /initialize_classpilot_tile_auth_plan_observation[\s\S]*run_classpilot_tile_auth_plan_observation_task[\s\S]*capture_classpilot_tile_auth_observation_final_network[\s\S]*capture_classpilot_tile_auth_observation_final_posture[\s\S]*write_classpilot_tile_auth_plan_observation_packet_v2/
     );
     assert.match(
       deploySource,
       /eligibleForDeployment=false, eligibleForDiagnostic=false, eligibleForCertification=false/
     );
     const preflightImplementation = deploySource.slice(
-      deploySource.indexOf("run_classpilot_tile_auth_plan_base_preflight() {"),
+      deploySource.indexOf("run_classpilot_tile_auth_plan_observation_task() {"),
       deploySource.indexOf(
-        "\nresolve_classpilot_tile_auth_candidate_network()",
-        deploySource.indexOf("run_classpilot_tile_auth_plan_base_preflight() {")
+        "\nrun_classpilot_tile_auth_plan_base_preflight()",
+        deploySource.indexOf("run_classpilot_tile_auth_plan_observation_task() {")
       )
     );
     assert.match(
       preflightImplementation,
-      /validate-classpilot-tile-auth-plan-base-funnel-evidence\.mjs/
+      /"--preflight-base","--observation-selection"/
     );
     assert.match(
       preflightImplementation,
-      /task_exit_code" == "1"[\s\S]*sanitized_failure_code" == "representative_scenario_missing"[\s\S]*TILE_AUTH_PLAN_OBSERVATION_EVIDENCE_JSON="\$events_json"[\s\S]*return 0/
+      /collect-classpilot-tile-auth-plan-observation-evidence\.mjs[\s\S]*--deadline-ms "\$TILE_AUTH_PLAN_OBSERVATION_EVIDENCE_DEADLINE_MS"[\s\S]*--deadline-monotonic-nanoseconds "\$evidence_deadline_monotonic_ns"/
+    );
+    assert.ok(
+      preflightImplementation.indexOf(
+        'process.hrtime.bigint() + BigInt(milliseconds) * 1_000_000n'
+      ) <
+        preflightImplementation.indexOf(
+          "aws ecs describe-task-definition"
+        ),
+      "the shared monotonic evidence deadline must begin before log binding"
+    );
+    assert.equal(
+      [...preflightImplementation.matchAll(/aws ecs run-task/g)].length,
+      1
+    );
+    assert.match(
+      deploySource,
+      /classpilot-tile-auth-plan-observation-v2/
     );
     assert.match(
       deploySource,
@@ -431,18 +468,18 @@ admit_classpilot_tile_auth_plan_rehearsal_attempt
   it("revalidates the exact candidate network after the observation task", () => {
     const implementation = deploySource.slice(
       deploySource.indexOf(
-        "assert_classpilot_tile_auth_observation_network_unchanged() {"
+        "capture_classpilot_tile_auth_observation_final_network() {"
       ),
       deploySource.indexOf(
         "\nassert_classpilot_rehearsal_network_unchanged()",
         deploySource.indexOf(
-          "assert_classpilot_tile_auth_observation_network_unchanged() {"
+          "capture_classpilot_tile_auth_observation_final_network() {"
         )
       )
     );
     assert.match(
       implementation,
-      /expected_network_sha="\$TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256"/
+      /expected_network_sha="\$TILE_AUTH_PLAN_OBSERVATION_INITIAL_NETWORK_SHA256"/
     );
     assert.match(
       implementation,
@@ -450,8 +487,288 @@ admit_classpilot_tile_auth_plan_rehearsal_attempt
     );
     assert.match(
       implementation,
-      /TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256" != "\$expected_network_sha"/
+      /"network_unavailable"[\s\S]*TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256" != "\$expected_network_sha"[\s\S]*"network_drift"[\s\S]*"verified"/
     );
+  });
+
+  it("turns a task-start failure into terminal evidence without escaping set -e", () => {
+    const result = runDeployHelper(`
+RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE=false
+RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=false
+RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION=true
+API_ROLLOUT_TASK_DEF='arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:35'
+OBSERVATION_TIME_COMPONENT='20260725t220000z'
+OBSERVATION_SHA_COMPONENT='abf820cc02b6'
+TILE_AUTH_PLAN_OBSERVATION_ID="tile-plan-observe-\${OBSERVATION_TIME_COMPONENT}-\${OBSERVATION_SHA_COMPONENT}"
+TILE_AUTH_PLAN_OBSERVATION_ATTEMPT_PATH='observation-attempt.private.json'
+TILE_AUTH_PLAN_OBSERVATION_ATTEMPT_SHA256='eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
+LOCAL_SHA='abf820cc02b69599857739afe42f86baacd2351d'
+IMAGE_TAG='abf820cc02b6'
+NETWORK_CONFIG='awsvpcConfiguration={subnets=[subnet-a],securityGroups=[sg-a],assignPublicIp=DISABLED}'
+production_backend_deploy_window_preflight() { return 0; }
+classpilot_tile_auth_plan_window_preflight() { return 0; }
+AWS_RUN_TASK_COUNT_FILE="$(mktemp)"
+printf '0\\n' > "$AWS_RUN_TASK_COUNT_FILE"
+aws() {
+  if [[ "$1 $2" == 'ecs run-task' ]]; then
+    call_count="$(<"$AWS_RUN_TASK_COUNT_FILE")"
+    printf '%s\\n' "$((call_count + 1))" > "$AWS_RUN_TASK_COUNT_FILE"
+    return 1
+  fi
+  return 99
+}
+run_classpilot_tile_auth_plan_observation_task
+[[ "$(<"$AWS_RUN_TASK_COUNT_FILE")" -eq 1 ]]
+COLLECTION="$TILE_AUTH_PLAN_OBSERVATION_COLLECTION_JSON" node -e '
+  const value = JSON.parse(process.env.COLLECTION);
+  if (value.collection.status !== "failed" ||
+      value.collection.failureCode !== "terminal_task_unavailable" ||
+      value.collection.attemptCount !== 0 ||
+      value.collection.rawErrorPersisted !== false ||
+      value.eventsDocument !== null) process.exit(1);
+'
+rm -f .tile-auth-plan-observation-task.json "$AWS_RUN_TASK_COUNT_FILE"
+`);
+    assert.equal(result.status, 0, result.stderr);
+  });
+
+  it("retains the launched task identity when bounded stop cannot recover an exit", () => {
+    const result = runDeployHelper(`
+RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE=false
+RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=false
+RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION=true
+API_ROLLOUT_TASK_DEF='arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:35'
+OBSERVATION_TIME_COMPONENT='20260725t220000z'
+OBSERVATION_SHA_COMPONENT='abf820cc02b6'
+TILE_AUTH_PLAN_OBSERVATION_ID="tile-plan-observe-\${OBSERVATION_TIME_COMPONENT}-\${OBSERVATION_SHA_COMPONENT}"
+TILE_AUTH_PLAN_OBSERVATION_ATTEMPT_PATH='observation-attempt.private.json'
+TILE_AUTH_PLAN_OBSERVATION_ATTEMPT_SHA256='eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
+LOCAL_SHA='abf820cc02b69599857739afe42f86baacd2351d'
+NETWORK_CONFIG='awsvpcConfiguration={subnets=[subnet-a],securityGroups=[sg-a],assignPublicIp=DISABLED}'
+TASK_ARN='arn:aws:ecs:us-east-1:135775632425:task/schoolpilot-production-cluster/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+AWS_RUN_TASK_CALLS=0
+wait_for_classpilot_tile_auth_plan_task_stopped() { return 125; }
+aws() {
+  if [[ "$1 $2" == 'ecs run-task' ]]; then
+    AWS_RUN_TASK_CALLS=$((AWS_RUN_TASK_CALLS + 1))
+    printf '{"failures":[],"tasks":[{"taskArn":"%s","taskDefinitionArn":"%s"}]}\\n' \
+      "$TASK_ARN" "$API_ROLLOUT_TASK_DEF"
+    return 0
+  fi
+  if [[ "$1 $2" == 'ecs describe-tasks' ]]; then
+    printf '{"failures":[],"tasks":[{"taskArn":"%s","taskDefinitionArn":"%s","lastStatus":"RUNNING","containers":[{"name":"api","lastStatus":"RUNNING","logStreamName":null}]}]}\\n' \
+      "$TASK_ARN" "$API_ROLLOUT_TASK_DEF"
+    return 0
+  fi
+  return 99
+}
+run_classpilot_tile_auth_plan_observation_task
+[[ "$AWS_RUN_TASK_CALLS" -eq 1 ]]
+[[ "$TILE_AUTH_PLAN_OBSERVATION_TASK_ARN" == "$TASK_ARN" ]]
+[[ "$TILE_AUTH_PLAN_OBSERVATION_TASK_STATE" == 'exit_unavailable' ]]
+[[ -z "$TILE_AUTH_PLAN_OBSERVATION_TASK_EXIT_CODE" ]]
+COLLECTION="$TILE_AUTH_PLAN_OBSERVATION_COLLECTION_JSON" node -e '
+  const value = JSON.parse(process.env.COLLECTION);
+  if (value.collection.status !== "failed" ||
+      value.collection.failureCode !== "terminal_task_timeout" ||
+      value.collection.attemptCount !== 0 ||
+      value.eventsDocument !== null) process.exit(1);
+'
+rm -f .tile-auth-plan-observation-task.json .tile-auth-plan-observation-result.json
+`);
+    assert.equal(result.status, 0, result.stderr);
+  });
+
+  it("seals and independently inspects a task-start failure through the observation manager", () => {
+    const localAppData = mkdtempSync(
+      join(tmpdir(), "schoolpilot-observation-shell-")
+    );
+    const loadGatesRoot = join(localAppData, "SchoolPilot", "load-gates");
+    const scriptDirectory = fileURLToPath(
+      new URL("../scripts", import.meta.url)
+    );
+    try {
+      const result = runDeployHelper(`
+RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE=false
+RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=false
+RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION=true
+SCRIPT_DIR="$TEST_SCRIPT_DIRECTORY"
+cd "$TEST_WORK_DIRECTORY"
+LOCAL_SHA='abf820cc02b69599857739afe42f86baacd2351d'
+DIGEST='sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+IMAGE_TAG="\${LOCAL_SHA:0:12}"
+API_ROLLOUT_TASK_DEF='arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:36'
+WORKER_CANDIDATE_TASK_DEF='arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:51'
+PRODUCTION_ROLLBACK_API_TASK_DEFINITION='schoolpilot-production-api-emergency:31'
+PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION='schoolpilot-production-scheduler-worker:48'
+PRODUCTION_ROLLBACK_API_TASK_DEFINITION_ARN='arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:31'
+PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION_ARN='arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:48'
+TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256='dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'
+NETWORK_CONFIG='awsvpcConfiguration={subnets=[subnet-a],securityGroups=[sg-a],assignPublicIp=DISABLED}'
+production_service_snapshot() {
+  printf '%s\\tACTIVE\\t1\\t1\\t0\\t1\\t%s\\t%s\\tCOMPLETED\\n' \
+    "$SERVICE" \
+    "$PRODUCTION_ROLLBACK_API_TASK_DEFINITION_ARN" \
+    "$PRODUCTION_ROLLBACK_API_TASK_DEFINITION_ARN"
+  printf '%s\\tACTIVE\\t1\\t1\\t0\\t1\\t%s\\t%s\\tCOMPLETED\\n' \
+    "$WORKER_SERVICE" \
+    "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION_ARN" \
+    "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION_ARN"
+}
+initialize_classpilot_tile_auth_plan_observation
+[[ "$TILE_AUTH_PLAN_OBSERVATION_ATTEMPT_ADMITTED" == true ]]
+[[ "$TILE_AUTH_PLAN_OBSERVATION_ATTEMPT_SHA256" =~ ^[a-f0-9]{64}$ ]]
+[[ -f "$TILE_AUTH_PLAN_OBSERVATION_ATTEMPT_PATH" ]]
+AWS_RUN_TASK_CALLS=0
+aws() {
+  if [[ "$1 $2" == 'ecs run-task' ]]; then
+    AWS_RUN_TASK_CALLS=$((AWS_RUN_TASK_CALLS + 1))
+    return 1
+  fi
+  return 99
+}
+run_classpilot_tile_auth_plan_observation_task
+[[ "$AWS_RUN_TASK_CALLS" -eq 1 ]]
+set_classpilot_tile_auth_observation_final_evidence \
+  TILE_AUTH_PLAN_OBSERVATION_FINAL_NETWORK_JSON \
+  verified "$TILE_AUTH_PLAN_OBSERVATION_INITIAL_NETWORK_SHA256" "" \
+  network_unavailable
+set_classpilot_tile_auth_observation_final_evidence \
+  TILE_AUTH_PLAN_OBSERVATION_FINAL_POSTURE_JSON \
+  verified "$TILE_AUTH_PLAN_OBSERVATION_INITIAL_POSTURE_SHA256" "" \
+  production_posture_unavailable
+set +e
+write_classpilot_tile_auth_plan_observation_packet_v2
+write_result=$?
+set -e
+[[ "$write_result" -ne 0 ]]
+[[ -f "$TILE_AUTH_PLAN_OBSERVATION_PACKET_PATH" ]]
+OBSERVATION_PACKET_PATH="$TILE_AUTH_PLAN_OBSERVATION_PACKET_PATH" \
+EXPECTED_ATTEMPT_SHA256="$TILE_AUTH_PLAN_OBSERVATION_ATTEMPT_SHA256" \
+node <<'NODE'
+const fs = require("fs");
+const packet = JSON.parse(
+  fs.readFileSync(process.env.OBSERVATION_PACKET_PATH, "utf8")
+);
+if (packet?.schemaVersion !== 2 ||
+    packet?.version !== "classpilot-tile-auth-plan-observation-v2" ||
+    packet?.observationOutcome !== "evidence_unavailable" ||
+    packet?.terminalTask !== null ||
+    packet?.collection?.status !== "failed" ||
+    packet?.collection?.failureCode !== "terminal_task_unavailable" ||
+    packet?.collection?.attemptCount !== 0 ||
+    packet?.collection?.rawErrorPersisted !== false ||
+    packet?.attemptRecordSha256 !== process.env.EXPECTED_ATTEMPT_SHA256 ||
+    packet?.eligibleForDeployment !== false ||
+    packet?.eligibleForDiagnostic !== false ||
+    packet?.eligibleForCertification !== false) {
+  process.exit(1);
+}
+NODE
+rm -f .tile-auth-plan-observation-task.json
+`, "1 1200", {
+        LOCALAPPDATA: localAppData,
+        NODE_ENV: "test",
+        CLP_LOAD_FIXTURE_TEST_MODE: "1",
+        CLP_LOAD_GATES_TEST_ROOT: loadGatesRoot,
+        TEST_SCRIPT_DIRECTORY: scriptDirectory,
+        TEST_WORK_DIRECTORY: localAppData,
+      });
+      assert.equal(result.status, 0, result.stderr);
+    } finally {
+      rmSync(localAppData, { recursive: true, force: true });
+    }
+  });
+
+  it("retains the attempt hash and seals when the admit summary fails independent inspection", () => {
+    const localAppData = mkdtempSync(
+      join(tmpdir(), "schoolpilot-observation-attempt-inspect-")
+    );
+    const loadGatesRoot = join(localAppData, "SchoolPilot", "load-gates");
+    const scriptDirectory = fileURLToPath(
+      new URL("../scripts", import.meta.url)
+    );
+    try {
+      const result = runDeployHelper(`
+RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE=false
+RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=false
+RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION=true
+SCRIPT_DIR="$TEST_SCRIPT_DIRECTORY"
+cd "$TEST_WORK_DIRECTORY"
+LOCAL_SHA='abf820cc02b69599857739afe42f86baacd2351d'
+DIGEST='sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+API_ROLLOUT_TASK_DEF='arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:36'
+WORKER_CANDIDATE_TASK_DEF='arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:51'
+PRODUCTION_ROLLBACK_API_TASK_DEFINITION='schoolpilot-production-api-emergency:31'
+PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION='schoolpilot-production-scheduler-worker:48'
+PRODUCTION_ROLLBACK_API_TASK_DEFINITION_ARN='arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:31'
+PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION_ARN='arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:48'
+TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256='dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'
+production_service_snapshot() {
+  printf '%s\\tACTIVE\\t1\\t1\\t0\\t1\\t%s\\t%s\\tCOMPLETED\\n' \
+    "$SERVICE" \
+    "$PRODUCTION_ROLLBACK_API_TASK_DEFINITION_ARN" \
+    "$PRODUCTION_ROLLBACK_API_TASK_DEFINITION_ARN"
+  printf '%s\\tACTIVE\\t1\\t1\\t0\\t1\\t%s\\t%s\\tCOMPLETED\\n' \
+    "$WORKER_SERVICE" \
+    "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION_ARN" \
+    "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION_ARN"
+}
+node() {
+  if [[ "$*" == *'manage-classpilot-tile-auth-plan-observation.mjs admit'* ]]; then
+    command node "$@" | command node -e '
+      let input = "";
+      process.stdin.setEncoding("utf8");
+      process.stdin.on("data", chunk => { input += chunk; });
+      process.stdin.on("end", () => {
+        const value = JSON.parse(input);
+        value.path += ".mismatch";
+        process.stdout.write(JSON.stringify(value));
+      });
+    '
+  else
+    command node "$@"
+  fi
+}
+initialize_classpilot_tile_auth_plan_observation
+[[ "$TILE_AUTH_PLAN_OBSERVATION_ATTEMPT_ADMITTED" == true ]]
+[[ "$TILE_AUTH_PLAN_OBSERVATION_INITIALIZATION_FAILED" == true ]]
+[[ "$TILE_AUTH_PLAN_OBSERVATION_ATTEMPT_SHA256" =~ ^[a-f0-9]{64}$ ]]
+[[ -f "$TILE_AUTH_PLAN_OBSERVATION_ATTEMPT_PATH" ]]
+set_classpilot_tile_auth_observation_final_evidence \
+  TILE_AUTH_PLAN_OBSERVATION_FINAL_NETWORK_JSON \
+  verified "$TILE_AUTH_PLAN_OBSERVATION_INITIAL_NETWORK_SHA256" "" \
+  network_unavailable
+set_classpilot_tile_auth_observation_final_evidence \
+  TILE_AUTH_PLAN_OBSERVATION_FINAL_POSTURE_JSON \
+  verified "$TILE_AUTH_PLAN_OBSERVATION_INITIAL_POSTURE_SHA256" "" \
+  production_posture_unavailable
+set +e
+write_classpilot_tile_auth_plan_observation_packet_v2
+write_result=$?
+set -e
+[[ "$write_result" -ne 0 ]]
+[[ -f "$TILE_AUTH_PLAN_OBSERVATION_PACKET_PATH" ]]
+PACKET="$TILE_AUTH_PLAN_OBSERVATION_PACKET_PATH" node -e '
+  const fs = require("fs");
+  const packet = JSON.parse(fs.readFileSync(process.env.PACKET, "utf8"));
+  if (packet.observationOutcome !== "evidence_unavailable" ||
+      packet.collection.failureCode !== "terminal_task_unavailable" ||
+      packet.collection.attemptCount !== 0 ||
+      packet.terminalTask !== null) process.exit(1);
+'
+`, "1 1200", {
+        LOCALAPPDATA: localAppData,
+        NODE_ENV: "test",
+        CLP_LOAD_FIXTURE_TEST_MODE: "1",
+        CLP_LOAD_GATES_TEST_ROOT: loadGatesRoot,
+        TEST_SCRIPT_DIRECTORY: scriptDirectory,
+        TEST_WORK_DIRECTORY: localAppData,
+      });
+      assert.equal(result.status, 0, result.stderr);
+    } finally {
+      rmSync(localAppData, { recursive: true, force: true });
+    }
   });
 
   it("hashes only a stable exact serving posture into observation evidence", () => {
@@ -463,14 +780,9 @@ admit_classpilot_tile_auth_plan_rehearsal_attempt
 RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE=false
 RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=false
 RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION=true
-PRODUCTION_ROLLBACK_API_TASK_DEFINITION='schoolpilot-production-api-emergency:31'
-PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION='schoolpilot-production-scheduler-worker:48'
-production_service_snapshot() {
-  printf '%s\\tACTIVE\\t1\\t1\\t0\\t1\\t%s\\t%s\\tCOMPLETED\\n' "$SERVICE" '${apiArn}' '${apiArn}'
-  printf '%s\\tACTIVE\\t1\\t1\\t0\\t1\\t%s\\t%s\\tCOMPLETED\\n' "$WORKER_SERVICE" '${workerArn}' '${workerArn}'
-}
-capture_classpilot_tile_auth_observation_posture
-[[ "$TILE_AUTH_PLAN_OBSERVATION_POSTURE_SHA256" =~ ^[a-f0-9]{64}$ ]]
+snapshot="$(printf '%s\\tACTIVE\\t1\\t1\\t0\\t1\\t%s\\t%s\\tCOMPLETED\\n' "$SERVICE" '${apiArn}' '${apiArn}'; printf '%s\\tACTIVE\\t1\\t1\\t0\\t1\\t%s\\t%s\\tCOMPLETED\\n' "$WORKER_SERVICE" '${workerArn}' '${workerArn}')"
+posture_sha="$(classpilot_tile_auth_observation_posture_sha256 "$snapshot")"
+[[ "$posture_sha" =~ ^[a-f0-9]{64}$ ]]
 `);
     assert.equal(accepted.status, 0, accepted.stderr);
 
@@ -484,10 +796,11 @@ production_service_snapshot() {
   printf '%s\\tACTIVE\\t1\\t1\\t0\\t1\\t%s\\t%s\\tCOMPLETED\\n' "$SERVICE" '${apiArn.replace(":31", ":32")}' '${apiArn.replace(":31", ":32")}'
   printf '%s\\tACTIVE\\t1\\t1\\t0\\t1\\t%s\\t%s\\tCOMPLETED\\n' "$WORKER_SERVICE" '${workerArn}' '${workerArn}'
 }
-capture_classpilot_tile_auth_observation_posture
+capture_classpilot_tile_auth_observation_final_posture
+[[ "$TILE_AUTH_PLAN_OBSERVATION_FINAL_POSTURE_JSON" == *'"status":"failed"'* ]]
+[[ "$TILE_AUTH_PLAN_OBSERVATION_FINAL_POSTURE_JSON" == *'"failureCode":"production_posture_drift"'* ]]
 `);
-    assert.notEqual(drifted.status, 0);
-    assert.match(drifted.stderr, /drifted|unexpected task definition/i);
+    assert.equal(drifted.status, 0, drifted.stderr);
   });
 
   it("blocks only the actual 01:15-02:15 Eastern maintenance window", () => {
