@@ -34,6 +34,31 @@ export const OBSERVATION_REREAD_PREFLIGHT_FILENAME =
   "base-preflight.evidence.private.json";
 export const OBSERVATION_REREAD_SELECTION_FILENAME =
   "base-selection.evidence.private.json";
+export const OBSERVATION_REREAD_SUPERSESSION_VERSION =
+  "classpilot-tile-auth-plan-observation-reread-supersession-v1";
+export const OBSERVATION_REREAD_SUPERSESSION_FILENAME =
+  "classpilot-tile-auth-plan-observation-reread-supersession.private.json";
+export const APPROVED_OBSERVATION_REREAD_SUPERSESSION_SOURCE =
+  Object.freeze({
+    sourceApplicationGitSha:
+      "cf9b70420b71668d4f06c9376b5274d27a259d0f",
+    sourceObservationId:
+      "tile-plan-observe-20260726t035926z-cf9b70420b71",
+    canonicalRereadPacketRelativePath:
+      "tile-auth-observations/cf9b70420b71668d4f06c9376b5274d27a259d0f/tile-plan-observe-20260726t035926z-cf9b70420b71/evidence-reread/terminal/classpilot-tile-auth-plan-observation-evidence-reread.private.json",
+    rereadPacketSha256:
+      "9c8c092756264fc0686f0aeab8a540526a3b7a60f5c861f122aad69f9f039087",
+    rereadAttemptSha256:
+      "3f0ff5a217e04635deefa1d07ee61030732675c83ba43ed3d38f5d4c96fd2b44",
+    rereadControllerGitSha:
+      "4fc219114899c37544ce5017b5e41b7842516e4c",
+    originalObservationPacketSha256:
+      "5427ff0e5af5f2245479646d1b1dd621213782e01c28a971399295274a8a16fd",
+    originalObservationAttemptSha256:
+      "01fb533aa87befbba1dba760566afe66c3536e5437726f0d76b1fae0de86c6aa",
+    taskDescriptionSha256:
+      "75e94f99f136d5d484be97b8a073a22072645cdd6794980114250455f8578756",
+  });
 
 const SHA256 = /^[a-f0-9]{64}$/;
 const GIT_SHA = /^[a-f0-9]{40}$/;
@@ -114,6 +139,57 @@ const PACKET_KEYS = [
   "type",
   "version",
 ];
+const SUPERSESSION_SOURCE_KEYS = [
+  "attemptPath",
+  "attemptSha256",
+  "controllerGitSha",
+  "failureCode",
+  "packetPath",
+  "packetSha256",
+  "rereadId",
+  "taskDescriptionSha256",
+];
+const SUPERSESSION_TARGET_KEYS = [
+  "activeBaseline",
+  "applicationGitSha",
+  "candidateApiTaskDefinitionArn",
+  "candidateWorkerTaskDefinitionArn",
+  "imageDigest",
+  "initialNetworkConfigurationSha256",
+  "initialProductionPostureSha256",
+  "observationId",
+];
+const SUPERSESSION_KEYS = [
+  "createdAtUtc",
+  "disposition",
+  "eligibleForCertification",
+  "eligibleForDeployment",
+  "eligibleForDiagnostic",
+  "eligibleForFreshObservationAdmission",
+  "expiresAtUtc",
+  "rawErrorPersisted",
+  "schemaVersion",
+  "scope",
+  "sourceReread",
+  "status",
+  "supersessionId",
+  "targetFreshObservation",
+  "taskLaunchCount",
+  "type",
+  "version",
+];
+const SUPERSESSION_APPROVAL_KEYS = [
+  "canonicalRereadPacketRelativePath",
+  "originalObservationAttemptSha256",
+  "originalObservationPacketSha256",
+  "rereadAttemptSha256",
+  "rereadControllerGitSha",
+  "rereadPacketSha256",
+  "sourceApplicationGitSha",
+  "sourceObservationId",
+  "taskDescriptionSha256",
+];
+const TEST_SUPERSESSION_APPROVAL_POLICIES = new WeakSet();
 
 function invalid() {
   throw new Error("classpilot_tile_auth_plan_observation_reread_invalid");
@@ -180,6 +256,102 @@ function taskArn(value) {
     /^arn:aws:ecs:[a-z0-9-]+:\d{12}:task\/(?:[A-Za-z0-9_-]+\/)?[a-f0-9]{32}$/,
     512
   );
+}
+
+function normalizeSupersessionApprovalPolicy(policy) {
+  if (!exactKeys(policy, SUPERSESSION_APPROVAL_KEYS)) invalid();
+  const normalized = {
+    sourceApplicationGitSha: string(
+      policy.sourceApplicationGitSha,
+      GIT_SHA,
+      40
+    ),
+    sourceObservationId: string(
+      policy.sourceObservationId,
+      SAFE_ID,
+      128
+    ),
+    canonicalRereadPacketRelativePath: string(
+      policy.canonicalRereadPacketRelativePath,
+      null,
+      1024
+    ),
+    rereadPacketSha256: string(policy.rereadPacketSha256, SHA256, 64),
+    rereadAttemptSha256: string(policy.rereadAttemptSha256, SHA256, 64),
+    rereadControllerGitSha: string(
+      policy.rereadControllerGitSha,
+      GIT_SHA,
+      40
+    ),
+    originalObservationPacketSha256: string(
+      policy.originalObservationPacketSha256,
+      SHA256,
+      64
+    ),
+    originalObservationAttemptSha256: string(
+      policy.originalObservationAttemptSha256,
+      SHA256,
+      64
+    ),
+    taskDescriptionSha256: string(
+      policy.taskDescriptionSha256,
+      SHA256,
+      64
+    ),
+  };
+  const expectedRelativePath = path.posix.join(
+    "tile-auth-observations",
+    normalized.sourceApplicationGitSha,
+    normalized.sourceObservationId,
+    "evidence-reread",
+    "terminal",
+    OBSERVATION_REREAD_PACKET_FILENAME
+  );
+  if (
+    normalized.canonicalRereadPacketRelativePath !==
+    expectedRelativePath
+  ) {
+    invalid();
+  }
+  return normalized;
+}
+
+export function createClasspilotTileAuthorizationPlanObservationRereadSupersessionApprovalPolicyForTest(
+  policy
+) {
+  if (
+    process.env.NODE_ENV !== "test" ||
+    process.env.CLP_LOAD_FIXTURE_TEST_MODE !== "1" ||
+    typeof process.env.CLP_LOAD_GATES_TEST_ROOT !== "string" ||
+    process.env.CLP_LOAD_GATES_TEST_ROOT.length === 0
+  ) {
+    throw new Error(
+      "classpilot_tile_auth_plan_observation_reread_supersession_test_policy_prohibited"
+    );
+  }
+  const immutable = Object.freeze(
+    normalizeSupersessionApprovalPolicy(policy)
+  );
+  TEST_SUPERSESSION_APPROVAL_POLICIES.add(immutable);
+  return immutable;
+}
+
+function resolveSupersessionApprovalPolicy(policy) {
+  if (policy === undefined) {
+    return normalizeSupersessionApprovalPolicy(
+      APPROVED_OBSERVATION_REREAD_SUPERSESSION_SOURCE
+    );
+  }
+  if (
+    !isRecord(policy) ||
+    !Object.isFrozen(policy) ||
+    !TEST_SUPERSESSION_APPROVAL_POLICIES.has(policy)
+  ) {
+    throw new Error(
+      "classpilot_tile_auth_plan_observation_reread_not_approved"
+    );
+  }
+  return normalizeSupersessionApprovalPolicy(policy);
 }
 
 function sha256(value) {
@@ -474,11 +646,17 @@ export function validateClasspilotTileAuthorizationPlanObservationRereadAttempt(
   return attempt;
 }
 
-function atomicDirectory(parent, finalName, writer) {
+function atomicDirectory(
+  parent,
+  finalName,
+  writer,
+  alreadyExistsCode =
+    "classpilot_tile_auth_plan_observation_reread_already_exists"
+) {
   const preparedParent = preparePrivateOutputDirectory(path.resolve(parent));
   const finalDirectory = path.join(preparedParent, finalName);
   if (fs.existsSync(finalDirectory)) {
-    throw new Error("classpilot_tile_auth_plan_observation_reread_already_exists");
+    throw new Error(alreadyExistsCode);
   }
   const stagingDirectory = path.join(
     preparedParent,
@@ -975,13 +1153,506 @@ export function deriveClasspilotTileAuthorizationPlanObservationRereadRoot(
   return path.join(path.dirname(path.dirname(real)), "evidence-reread");
 }
 
+function canonicalRereadPacketPath(realPacketPath, packet) {
+  const root = fs.realpathSync(configuredLoadGatesRoot());
+  const expected = path.join(
+    root,
+    "tile-auth-observations",
+    string(packet.sourceObservation?.applicationGitSha, GIT_SHA, 40),
+    string(packet.sourceObservation?.observationId, SAFE_ID, 128),
+    "evidence-reread",
+    "terminal",
+    OBSERVATION_REREAD_PACKET_FILENAME
+  );
+  if (comparablePath(realPacketPath) !== comparablePath(expected)) {
+    invalid();
+  }
+  return realPacketPath;
+}
+
+function readSupersedableReread(
+  packetPath,
+  expectedPacketSha256,
+  approvalPolicy
+) {
+  const approval = resolveSupersessionApprovalPolicy(approvalPolicy);
+  if (expectedPacketSha256 !== approval.rereadPacketSha256) {
+    throw new Error(
+      "classpilot_tile_auth_plan_observation_reread_not_approved"
+    );
+  }
+  const inspected =
+    inspectClasspilotTileAuthorizationPlanObservationReread(
+      packetPath,
+      expectedPacketSha256
+    );
+  const realPacketPath = canonicalRereadPacketPath(
+    inspected.path,
+    JSON.parse(fs.readFileSync(inspected.path, "utf8"))
+  );
+  const approvedPacketPath = path.join(
+    fs.realpathSync(configuredLoadGatesRoot()),
+    ...approval.canonicalRereadPacketRelativePath.split("/")
+  );
+  if (comparablePath(realPacketPath) !== comparablePath(approvedPacketPath)) {
+    throw new Error(
+      "classpilot_tile_auth_plan_observation_reread_not_approved"
+    );
+  }
+  const bytes = fs.readFileSync(realPacketPath);
+  const packet = JSON.parse(bytes.toString("utf8"));
+  if (
+    packet.status !== "failed" ||
+    packet.rereadOutcome !== "evidence_unavailable" ||
+    packet.failureCode !== "historical_task_missing" ||
+    packet.collectionAttemptCount !== 0 ||
+    packet.taskDescriptionSha256 === null ||
+    packet.logConfigurationSha256 !== null ||
+    packet.logBindingSha256 !== null ||
+    packet.logStreamSha256 !== null ||
+    packet.canonicalEventSha256 !== null ||
+    packet.preflightEvidenceFile !== null ||
+    packet.preflightEvidenceSha256 !== null ||
+    packet.selectionEvidenceFile !== null ||
+    packet.selectionEvidenceSha256 !== null ||
+    packet.sourceObservation.applicationGitSha !==
+      approval.sourceApplicationGitSha ||
+    packet.sourceObservation.observationId !==
+      approval.sourceObservationId ||
+    packet.sourceObservation.observationPacketSha256 !==
+      approval.originalObservationPacketSha256 ||
+    packet.sourceObservation.observationAttemptSha256 !==
+      approval.originalObservationAttemptSha256 ||
+    packet.observationRereadAttemptSha256 !==
+      approval.rereadAttemptSha256 ||
+    packet.controllerGitSha !== approval.rereadControllerGitSha ||
+    packet.taskDescriptionSha256 !== approval.taskDescriptionSha256 ||
+    !exactFailureEvidence({
+      failureCode: packet.failureCode,
+      taskDescriptionSha256: packet.taskDescriptionSha256,
+      logConfigurationSha256: packet.logConfigurationSha256,
+      logBindingSha256: packet.logBindingSha256,
+      logStreamSha256: packet.logStreamSha256,
+      canonicalEventSha256: packet.canonicalEventSha256,
+      collectionAttemptCount: packet.collectionAttemptCount,
+    })
+  ) {
+    throw new Error(
+      "classpilot_tile_auth_plan_observation_reread_not_supersedable"
+    );
+  }
+  const rereadRoot = path.dirname(path.dirname(realPacketPath));
+  const attemptPath = path.join(
+    rereadRoot,
+    packet.observationRereadAttemptFile
+  );
+  const realAttemptPath = sourcePath(
+    attemptPath,
+    OBSERVATION_REREAD_ATTEMPT_FILENAME
+  );
+  const attemptBytes = fs.readFileSync(realAttemptPath);
+  if (sha256(attemptBytes) !== packet.observationRereadAttemptSha256) {
+    mismatch();
+  }
+  return {
+    packetPath: realPacketPath,
+    packetSha256: string(expectedPacketSha256, SHA256, 64),
+    attemptPath: realAttemptPath,
+    attemptSha256: string(
+      packet.observationRereadAttemptSha256,
+      SHA256,
+      64
+    ),
+    rereadId: string(packet.rereadId, SAFE_ID, 128),
+    controllerGitSha: string(packet.controllerGitSha, GIT_SHA, 40),
+    failureCode: "historical_task_missing",
+    taskDescriptionSha256: string(
+      packet.taskDescriptionSha256,
+      SHA256,
+      64
+    ),
+  };
+}
+
+function validateSupersessionSource(sourceReread, approvalPolicy) {
+  if (!exactKeys(sourceReread, SUPERSESSION_SOURCE_KEYS)) invalid();
+  const normalized = {
+    packetPath: sourcePath(
+      sourceReread.packetPath,
+      OBSERVATION_REREAD_PACKET_FILENAME
+    ),
+    packetSha256: string(sourceReread.packetSha256, SHA256, 64),
+    attemptPath: sourcePath(
+      sourceReread.attemptPath,
+      OBSERVATION_REREAD_ATTEMPT_FILENAME
+    ),
+    attemptSha256: string(sourceReread.attemptSha256, SHA256, 64),
+    rereadId: string(sourceReread.rereadId, SAFE_ID, 128),
+    controllerGitSha: string(sourceReread.controllerGitSha, GIT_SHA, 40),
+    failureCode: sourceReread.failureCode,
+    taskDescriptionSha256: string(
+      sourceReread.taskDescriptionSha256,
+      SHA256,
+      64
+    ),
+  };
+  if (normalized.failureCode !== "historical_task_missing") invalid();
+  const actual = readSupersedableReread(
+    normalized.packetPath,
+    normalized.packetSha256,
+    approvalPolicy
+  );
+  if (JSON.stringify(actual) !== JSON.stringify(normalized)) mismatch();
+  return normalized;
+}
+
+function validateSupersessionTarget(target) {
+  if (
+    !exactKeys(target, SUPERSESSION_TARGET_KEYS) ||
+    !exactKeys(target.activeBaseline, BASELINE_KEYS)
+  ) {
+    invalid();
+  }
+  return {
+    observationId: string(target.observationId, SAFE_ID, 128),
+    applicationGitSha: string(target.applicationGitSha, GIT_SHA, 40),
+    imageDigest: string(target.imageDigest, IMAGE_DIGEST, 71),
+    candidateApiTaskDefinitionArn: taskDefinitionArn(
+      target.candidateApiTaskDefinitionArn,
+      /-api-emergency$/
+    ),
+    candidateWorkerTaskDefinitionArn: taskDefinitionArn(
+      target.candidateWorkerTaskDefinitionArn,
+      /-scheduler-worker$/
+    ),
+    activeBaseline: {
+      apiTaskDefinitionArn: taskDefinitionArn(
+        target.activeBaseline.apiTaskDefinitionArn,
+        /-api(?:-emergency)?$/
+      ),
+      workerTaskDefinitionArn: taskDefinitionArn(
+        target.activeBaseline.workerTaskDefinitionArn,
+        /-scheduler-worker$/
+      ),
+    },
+    initialNetworkConfigurationSha256: string(
+      target.initialNetworkConfigurationSha256,
+      SHA256,
+      64
+    ),
+    initialProductionPostureSha256: string(
+      target.initialProductionPostureSha256,
+      SHA256,
+      64
+    ),
+  };
+}
+
+export function buildClasspilotTileAuthorizationPlanObservationRereadSupersession(
+  {
+    supersessionId,
+    sourceRereadPacketPath,
+    expectedSourceRereadPacketSha256,
+    targetFreshObservation,
+    createdAtUtc = new Date().toISOString(),
+    approvalPolicy,
+  }
+) {
+  const created = utc(createdAtUtc);
+  const expiresAtUtc = new Date(
+    Date.parse(created) + 60 * 60 * 1000
+  ).toISOString();
+  return {
+    schemaVersion: 1,
+    type: "classpilot_tile_auth_plan_observation_reread_supersession",
+    version: OBSERVATION_REREAD_SUPERSESSION_VERSION,
+    status: "sealed",
+    supersessionId: string(supersessionId, SAFE_ID, 128),
+    disposition:
+      "historical_task_missing_nonblocking_for_fresh_observation",
+    sourceReread: readSupersedableReread(
+      sourceRereadPacketPath,
+      expectedSourceRereadPacketSha256,
+      approvalPolicy
+    ),
+    targetFreshObservation: validateSupersessionTarget(
+      targetFreshObservation
+    ),
+    scope: "fresh_observation_admission_only",
+    createdAtUtc: created,
+    expiresAtUtc,
+    taskLaunchCount: 0,
+    rawErrorPersisted: false,
+    eligibleForFreshObservationAdmission: true,
+    eligibleForDeployment: false,
+    eligibleForDiagnostic: false,
+    eligibleForCertification: false,
+  };
+}
+
+export function validateClasspilotTileAuthorizationPlanObservationRereadSupersession(
+  packet,
+  approvalPolicy
+) {
+  if (
+    !exactKeys(packet, SUPERSESSION_KEYS) ||
+    packet.schemaVersion !== 1 ||
+    packet.type !==
+      "classpilot_tile_auth_plan_observation_reread_supersession" ||
+    packet.version !== OBSERVATION_REREAD_SUPERSESSION_VERSION ||
+    packet.status !== "sealed" ||
+    packet.disposition !==
+      "historical_task_missing_nonblocking_for_fresh_observation" ||
+    packet.scope !== "fresh_observation_admission_only" ||
+    packet.taskLaunchCount !== 0 ||
+    packet.rawErrorPersisted !== false ||
+    packet.eligibleForFreshObservationAdmission !== true ||
+    packet.eligibleForDeployment !== false ||
+    packet.eligibleForDiagnostic !== false ||
+    packet.eligibleForCertification !== false
+  ) {
+    invalid();
+  }
+  string(packet.supersessionId, SAFE_ID, 128);
+  validateSupersessionSource(packet.sourceReread, approvalPolicy);
+  validateSupersessionTarget(packet.targetFreshObservation);
+  const createdAtUtc = utc(packet.createdAtUtc);
+  const expiresAtUtc = utc(packet.expiresAtUtc);
+  if (
+    Date.parse(expiresAtUtc) - Date.parse(createdAtUtc) !==
+    60 * 60 * 1000
+  ) {
+    invalid();
+  }
+  return packet;
+}
+
+export function writeClasspilotTileAuthorizationPlanObservationRereadSupersession(
+  packet,
+  approvalPolicy
+) {
+  validateClasspilotTileAuthorizationPlanObservationRereadSupersession(
+    packet,
+    approvalPolicy
+  );
+  const rereadRoot = path.dirname(
+    path.dirname(packet.sourceReread.packetPath)
+  );
+  const directory = atomicDirectory(
+    rereadRoot,
+    "supersession",
+    (staging) => {
+      writePrivateJson(
+        staging,
+        OBSERVATION_REREAD_SUPERSESSION_FILENAME,
+        packet
+      );
+    },
+    "classpilot_tile_auth_plan_observation_reread_supersession_already_exists"
+  );
+  const packetPath = path.join(
+    directory,
+    OBSERVATION_REREAD_SUPERSESSION_FILENAME
+  );
+  return {
+    path: packetPath,
+    sha256: sha256(fs.readFileSync(packetPath)),
+    packet,
+  };
+}
+
+function compareSupersessionTarget(actual, expected) {
+  if (expected === undefined) return;
+  const normalized = validateSupersessionTarget(expected);
+  if (JSON.stringify(actual) !== JSON.stringify(normalized)) mismatch();
+}
+
+export function inspectClasspilotTileAuthorizationPlanObservationRereadSupersession(
+  packetPath,
+  expectedPacketSha256,
+  expectedTargetFreshObservation,
+  nowUtc = new Date().toISOString(),
+  approvalPolicy
+) {
+  const real = sourcePath(
+    packetPath,
+    OBSERVATION_REREAD_SUPERSESSION_FILENAME
+  );
+  const bytes = fs.readFileSync(real);
+  if (sha256(bytes) !== string(expectedPacketSha256, SHA256, 64)) {
+    mismatch();
+  }
+  const packet = JSON.parse(bytes.toString("utf8"));
+  validateClasspilotTileAuthorizationPlanObservationRereadSupersession(
+    packet,
+    approvalPolicy
+  );
+  const expectedPath = path.join(
+    path.dirname(path.dirname(packet.sourceReread.packetPath)),
+    "supersession",
+    OBSERVATION_REREAD_SUPERSESSION_FILENAME
+  );
+  if (comparablePath(real) !== comparablePath(expectedPath)) invalid();
+  const actualFiles = fs
+    .readdirSync(path.dirname(real), { withFileTypes: true })
+    .map((entry) => {
+      if (!entry.isFile()) invalid();
+      return entry.name;
+    });
+  if (
+    actualFiles.length !== 1 ||
+    actualFiles[0] !== OBSERVATION_REREAD_SUPERSESSION_FILENAME
+  ) {
+    invalid();
+  }
+  compareSupersessionTarget(
+    packet.targetFreshObservation,
+    expectedTargetFreshObservation
+  );
+  const inspectedAt = Date.parse(utc(nowUtc));
+  const createdAt = Date.parse(packet.createdAtUtc);
+  const expiresAt = Date.parse(packet.expiresAtUtc);
+  if (inspectedAt < createdAt || inspectedAt >= expiresAt) {
+    throw new Error(
+      "classpilot_tile_auth_plan_observation_reread_supersession_expired"
+    );
+  }
+  return {
+    schemaVersion: 1,
+    version: OBSERVATION_REREAD_SUPERSESSION_VERSION,
+    path: real,
+    sha256: sha256(bytes),
+    supersessionId: packet.supersessionId,
+    sourceRereadId: packet.sourceReread.rereadId,
+    targetObservationId: packet.targetFreshObservation.observationId,
+    scope: packet.scope,
+    createdAtUtc: packet.createdAtUtc,
+    expiresAtUtc: packet.expiresAtUtc,
+    taskLaunchCount: 0,
+    eligibleForFreshObservationAdmission: true,
+    eligibleForDeployment: false,
+    eligibleForDiagnostic: false,
+    eligibleForCertification: false,
+  };
+}
+
+function parseCliArguments(argv) {
+  const [mode, ...rest] = argv;
+  if (!["supersede", "inspect-supersession"].includes(mode)) invalid();
+  if (rest.length % 2 !== 0) invalid();
+  const values = {};
+  for (let index = 0; index < rest.length; index += 2) {
+    const key = rest[index];
+    const value = rest[index + 1];
+    if (
+      typeof key !== "string" ||
+      !key.startsWith("--") ||
+      typeof value !== "string" ||
+      value.length === 0 ||
+      Object.hasOwn(values, key)
+    ) {
+      invalid();
+    }
+    values[key] = value;
+  }
+  return { mode, values };
+}
+
+function cliTarget(values) {
+  return {
+    observationId: values["--target-observation-id"],
+    applicationGitSha: values["--target-application-git-sha"],
+    imageDigest: values["--target-image-digest"],
+    candidateApiTaskDefinitionArn:
+      values["--target-api-task-definition-arn"],
+    candidateWorkerTaskDefinitionArn:
+      values["--target-worker-task-definition-arn"],
+    activeBaseline: {
+      apiTaskDefinitionArn:
+        values["--target-active-api-task-definition-arn"],
+      workerTaskDefinitionArn:
+        values["--target-active-worker-task-definition-arn"],
+    },
+    initialNetworkConfigurationSha256:
+      values["--target-network-configuration-sha256"],
+    initialProductionPostureSha256:
+      values["--target-production-posture-sha256"],
+  };
+}
+
+function exactCliKeys(values, expectedKeys) {
+  if (
+    JSON.stringify(Object.keys(values).sort()) !==
+    JSON.stringify([...expectedKeys].sort())
+  ) {
+    invalid();
+  }
+}
+
+function runCli(argv) {
+  const { mode, values } = parseCliArguments(argv);
+  const targetKeys = [
+    "--target-observation-id",
+    "--target-application-git-sha",
+    "--target-image-digest",
+    "--target-api-task-definition-arn",
+    "--target-worker-task-definition-arn",
+    "--target-active-api-task-definition-arn",
+    "--target-active-worker-task-definition-arn",
+    "--target-network-configuration-sha256",
+    "--target-production-posture-sha256",
+  ];
+  const target = cliTarget(values);
+  if (mode === "supersede") {
+    exactCliKeys(values, [
+      "--reread-packet-path",
+      "--expected-reread-packet-sha256",
+      "--supersession-id",
+      ...targetKeys,
+    ]);
+    const packet =
+      buildClasspilotTileAuthorizationPlanObservationRereadSupersession({
+        supersessionId: values["--supersession-id"],
+        sourceRereadPacketPath: values["--reread-packet-path"],
+        expectedSourceRereadPacketSha256:
+          values["--expected-reread-packet-sha256"],
+        targetFreshObservation: target,
+      });
+    const written =
+      writeClasspilotTileAuthorizationPlanObservationRereadSupersession(
+        packet
+      );
+    return inspectClasspilotTileAuthorizationPlanObservationRereadSupersession(
+      written.path,
+      written.sha256,
+      target
+    );
+  }
+  exactCliKeys(values, [
+    "--packet-path",
+    "--expected-packet-sha256",
+    ...targetKeys,
+  ]);
+  return inspectClasspilotTileAuthorizationPlanObservationRereadSupersession(
+    values["--packet-path"],
+    values["--expected-packet-sha256"],
+    target
+  );
+}
+
 const invokedPath = process.argv[1];
 if (
   invokedPath &&
   import.meta.url === pathToFileURL(path.resolve(invokedPath)).href
 ) {
-  process.stderr.write(
-    "classpilot_tile_auth_plan_observation_reread_manager_library_only\n"
-  );
-  process.exitCode = 1;
+  try {
+    process.stdout.write(
+      `${JSON.stringify(runCli(process.argv.slice(2)))}\n`
+    );
+  } catch {
+    process.stderr.write(
+      "classpilot_tile_auth_plan_observation_reread_supersession_failed\n"
+    );
+    process.exitCode = 1;
+  }
 }

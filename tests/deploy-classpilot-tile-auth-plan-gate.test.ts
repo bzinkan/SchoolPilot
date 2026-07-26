@@ -318,6 +318,8 @@ SKIP_WAIT=false
 RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE=false
 RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=false
 RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION=true
+CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD="C:/private/historical-reread.json"
+EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD_SHA256="${"a".repeat(64)}"
 REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=""
 EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL_SHA256=""
 validate_classpilot_tile_auth_plan_gate_mode
@@ -343,6 +345,8 @@ SKIP_WAIT=false
 RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE=false
 RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=false
 RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION=true
+CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD="C:/private/historical-reread.json"
+EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD_SHA256="${"a".repeat(64)}"
 REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=""
 EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL_SHA256=""
 ${invalid}
@@ -350,6 +354,52 @@ validate_classpilot_tile_auth_plan_gate_mode
 `);
       assert.notEqual(rejected.status, 0, invalid);
     }
+
+    for (const invalidInputs of [
+      'CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD=""',
+      'EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD_SHA256=""',
+      'EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD_SHA256="not-a-hash"',
+      'CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD="relative/reread.json"',
+    ]) {
+      const rejected = runDeployHelper(`
+ENV=production
+DEPLOY_BACKEND=true
+DEPLOY_FRONTEND=false
+ACTIVATE_EMERGENCY=true
+SAME_IMAGE_NETWORKING_STAGE=""
+SKIP_WAIT=false
+RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE=false
+RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=false
+RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION=true
+CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD="C:/private/historical-reread.json"
+EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD_SHA256="${"a".repeat(64)}"
+REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=""
+EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL_SHA256=""
+${invalidInputs}
+validate_classpilot_tile_auth_plan_gate_mode
+`);
+      assert.notEqual(rejected.status, 0, invalidInputs);
+    }
+
+    const rejectedOutsideObservation = runDeployHelper(`
+ENV=production
+DEPLOY_BACKEND=true
+DEPLOY_FRONTEND=false
+ACTIVATE_EMERGENCY=true
+SAME_IMAGE_NETWORKING_STAGE=""
+SKIP_WAIT=false
+RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE=false
+RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=false
+RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION=false
+CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD="C:/private/historical-reread.json"
+EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD_SHA256="${"a".repeat(64)}"
+validate_classpilot_tile_auth_plan_gate_mode
+`);
+    assert.notEqual(rejectedOutsideObservation.status, 0);
+    assert.match(
+      rejectedOutsideObservation.stderr,
+      /allowed only with --classpilot-tile-auth-plan-observation/
+    );
 
     const noAdmission = runDeployHelper(`
 RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE=false
@@ -360,6 +410,245 @@ admit_classpilot_tile_auth_plan_rehearsal_attempt
 [[ "$TILE_AUTH_PLAN_REHEARSAL_ATTEMPT_ADMITTED" == false ]]
 `);
     assert.equal(noAdmission.status, 0, noAdmission.stderr);
+  });
+
+  it("binds one exact reread supersession before observation admission and fails closed on invalid, expired, or reused receipts", () => {
+    const observationId =
+      "tile-plan-observe-20260726t120000z-aaaaaaaaaaaa";
+    const supersessionId = `supersede-${observationId}`;
+    const summary = {
+      schemaVersion: 1,
+      version:
+        "classpilot-tile-auth-plan-observation-reread-supersession-v1",
+      path: "C:/private/reread/supersession/private.json",
+      sha256: "b".repeat(64),
+      supersessionId,
+      sourceRereadId:
+        "tile-plan-evidence-reread-20260726t072227z-4fc219114899",
+      targetObservationId: observationId,
+      scope: "fresh_observation_admission_only",
+      createdAtUtc: "2099-07-26T12:00:00.000Z",
+      expiresAtUtc: "2099-07-26T13:00:00.000Z",
+      taskLaunchCount: 0,
+      eligibleForFreshObservationAdmission: true,
+      eligibleForDeployment: false,
+      eligibleForDiagnostic: false,
+      eligibleForCertification: false,
+    };
+    const identity = `
+RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION=true
+SCRIPT_DIR='C:/repo/scripts'
+CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD='C:/private/reread/terminal/private.json'
+EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD_SHA256='${"9".repeat(64)}'
+TILE_AUTH_PLAN_OBSERVATION_ID='${observationId}'
+LOCAL_SHA='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+DIGEST='sha256:${"c".repeat(64)}'
+API_ROLLOUT_TASK_DEF='arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:40'
+WORKER_CANDIDATE_TASK_DEF='arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:55'
+PRODUCTION_ROLLBACK_API_TASK_DEFINITION_ARN='arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:31'
+PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION_ARN='arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:48'
+TILE_AUTH_PLAN_OBSERVATION_INITIAL_NETWORK_SHA256='${"d".repeat(64)}'
+TILE_AUTH_PLAN_OBSERVATION_INITIAL_POSTURE_SHA256='${"e".repeat(64)}'
+`;
+    const stubs = `
+PROHIBITED_CALLS_FILE="$(mktemp)"
+MANAGER_CALLS_FILE="$(mktemp)"
+record_prohibited() { printf '%s\\n' "$1" >> "$PROHIBITED_CALLS_FILE"; }
+aws() { record_prohibited "aws $*"; return 99; }
+acquire_production_scaling_hold() { record_prohibited scaling; }
+run_classpilot_tile_auth_plan_observation_task() { record_prohibited run-task; }
+run_classpilot_tile_auth_plan_gate() { record_prohibited full-gate; }
+write_classpilot_rehearsal_receipt() { record_prohibited rehearsal; }
+refresh_and_snapshot_fixtures() { record_prohibited fixture; }
+database_insights_lease() { record_prohibited lease; }
+load_classpilot() { record_prohibited traffic; }
+node() {
+  if [[ "$*" == *'manage-classpilot-tile-auth-plan-observation-evidence-reread.mjs supersede'* ]]; then
+    [[ "\${MSYS_NO_PATHCONV:-}" == '1' ]]
+    [[ "\${MSYS2_ARG_CONV_EXCL:-}" == '*' ]]
+    [[ "$*" == *'--reread-packet-path C:/private/reread/terminal/private.json'* ]]
+    printf 'supersede\\n' >> "$MANAGER_CALLS_FILE"
+    if [[ "$TEST_SUPERSESSION_MODE" == 'reused' ]]; then
+      return 1
+    fi
+    printf '%s' "$TEST_SUPERSESSION_CREATE_SUMMARY"
+    return 0
+  fi
+  if [[ "$*" == *'manage-classpilot-tile-auth-plan-observation-evidence-reread.mjs inspect-supersession'* ]]; then
+    [[ "\${MSYS_NO_PATHCONV:-}" == '1' ]]
+    [[ "\${MSYS2_ARG_CONV_EXCL:-}" == '*' ]]
+    [[ "$*" == *'--packet-path C:/private/reread/supersession/private.json'* ]]
+    printf 'inspect\\n' >> "$MANAGER_CALLS_FILE"
+    if [[ "$TEST_SUPERSESSION_MODE" == 'expired' ]]; then
+      return 1
+    fi
+    printf '%s' "$TEST_SUPERSESSION_INSPECT_SUMMARY"
+    return 0
+  fi
+  command node "$@"
+}
+`;
+
+    const valid = runDeployHelper(`
+${identity}
+${stubs}
+create_and_inspect_classpilot_tile_auth_plan_observation_supersession
+[[ "$TILE_AUTH_PLAN_OBSERVATION_SUPERSESSION_ID" == '${supersessionId}' ]]
+[[ "$TILE_AUTH_PLAN_OBSERVATION_SUPERSESSION_PATH" == '${summary.path}' ]]
+[[ "$TILE_AUTH_PLAN_OBSERVATION_SUPERSESSION_SHA256" == '${summary.sha256}' ]]
+[[ "$(cat "$MANAGER_CALLS_FILE")" == $'supersede\\ninspect' ]]
+[[ ! -s "$PROHIBITED_CALLS_FILE" ]]
+rm -f "$MANAGER_CALLS_FILE" "$PROHIBITED_CALLS_FILE"
+`, "1 1200", {
+      TEST_SUPERSESSION_MODE: "valid",
+      TEST_SUPERSESSION_CREATE_SUMMARY: JSON.stringify(summary),
+      TEST_SUPERSESSION_INSPECT_SUMMARY: JSON.stringify(summary),
+    });
+    assert.equal(valid.status, 0, valid.stderr);
+
+    const malformed = {
+      ...summary,
+      targetObservationId:
+        "tile-plan-observe-20260726t120001z-aaaaaaaaaaaa",
+    };
+    for (const scenario of [
+      {
+        mode: "invalid",
+        create: malformed,
+        inspect: malformed,
+      },
+      {
+        mode: "expired",
+        create: summary,
+        inspect: summary,
+      },
+      {
+        mode: "reused",
+        create: summary,
+        inspect: summary,
+      },
+    ]) {
+      const rejected = runDeployHelper(`
+${identity}
+${stubs}
+if create_and_inspect_classpilot_tile_auth_plan_observation_supersession; then
+  record_prohibited observation-admission
+  run_classpilot_tile_auth_plan_observation_task
+fi
+[[ ! -s "$PROHIBITED_CALLS_FILE" ]]
+rm -f "$MANAGER_CALLS_FILE" "$PROHIBITED_CALLS_FILE"
+`, "1 1200", {
+        TEST_SUPERSESSION_MODE: scenario.mode,
+        TEST_SUPERSESSION_CREATE_SUMMARY: JSON.stringify(scenario.create),
+        TEST_SUPERSESSION_INSPECT_SUMMARY: JSON.stringify(scenario.inspect),
+      });
+      assert.equal(rejected.status, 0, `${scenario.mode}: ${rejected.stderr}`);
+    }
+  });
+
+  it("reinspects the exact supersession immediately before launch and refuses a newly expired receipt without mutation", () => {
+    const observationId =
+      "tile-plan-observe-20260726t121500z-aaaaaaaaaaaa";
+    const supersessionId = `supersede-${observationId}`;
+    const summary = {
+      schemaVersion: 1,
+      version:
+        "classpilot-tile-auth-plan-observation-reread-supersession-v1",
+      path: "C:/private/reread/supersession/prelaunch.private.json",
+      sha256: "b".repeat(64),
+      supersessionId,
+      sourceRereadId:
+        "tile-plan-evidence-reread-20260726t072227z-4fc219114899",
+      targetObservationId: observationId,
+      scope: "fresh_observation_admission_only",
+      createdAtUtc: "2099-07-26T12:00:00.000Z",
+      expiresAtUtc: "2099-07-26T13:00:00.000Z",
+      taskLaunchCount: 0,
+      eligibleForFreshObservationAdmission: true,
+      eligibleForDeployment: false,
+      eligibleForDiagnostic: false,
+      eligibleForCertification: false,
+    };
+    const result = runDeployHelper(`
+RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE=false
+RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=false
+RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION=true
+SCRIPT_DIR='C:/repo/scripts'
+REGION='us-east-1'
+ACCOUNT_ID='135775632425'
+NAME='schoolpilot-production'
+CLUSTER='schoolpilot-production-cluster'
+NETWORK_CONFIG='awsvpcConfiguration={subnets=[subnet-a],securityGroups=[sg-a],assignPublicIp=DISABLED}'
+CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD='C:/private/reread/terminal/private.json'
+EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD_SHA256='${"9".repeat(64)}'
+TILE_AUTH_PLAN_OBSERVATION_ID='${observationId}'
+LOCAL_SHA='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+DIGEST='sha256:${"c".repeat(64)}'
+API_ROLLOUT_TASK_DEF='arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:40'
+WORKER_CANDIDATE_TASK_DEF='arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:55'
+PRODUCTION_ROLLBACK_API_TASK_DEFINITION_ARN='arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:31'
+PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION_ARN='arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-scheduler-worker:48'
+TILE_AUTH_PLAN_OBSERVATION_INITIAL_NETWORK_SHA256='${"d".repeat(64)}'
+TILE_AUTH_PLAN_OBSERVATION_INITIAL_POSTURE_SHA256='${"e".repeat(64)}'
+TILE_AUTH_PLAN_OBSERVATION_ATTEMPT_PATH='C:/private/observation-attempt.private.json'
+TILE_AUTH_PLAN_OBSERVATION_ATTEMPT_SHA256='${"f".repeat(64)}'
+TILE_AUTH_PLAN_OBSERVATION_TASK_PATH="$(mktemp)"
+PROHIBITED_CALLS_FILE="$(mktemp)"
+MANAGER_CALLS_FILE="$(mktemp)"
+INSPECT_COUNT_FILE="$(mktemp)"
+printf '0\\n' > "$INSPECT_COUNT_FILE"
+record_prohibited() { printf '%s\\n' "$1" >> "$PROHIBITED_CALLS_FILE"; }
+aws() { record_prohibited "aws $*"; return 99; }
+acquire_production_scaling_hold() { record_prohibited scaling; }
+run_classpilot_tile_auth_plan_gate() { record_prohibited full-gate; }
+write_classpilot_rehearsal_receipt() { record_prohibited rehearsal; }
+refresh_and_snapshot_fixtures() { record_prohibited fixture; }
+database_insights_lease() { record_prohibited lease; }
+load_classpilot() { record_prohibited traffic; }
+node() {
+  if [[ "$*" == *'manage-classpilot-tile-auth-plan-observation-evidence-reread.mjs supersede'* ]]; then
+    [[ "\${MSYS_NO_PATHCONV:-}" == '1' ]]
+    [[ "\${MSYS2_ARG_CONV_EXCL:-}" == '*' ]]
+    printf 'supersede\\n' >> "$MANAGER_CALLS_FILE"
+    printf '%s' "$TEST_SUPERSESSION_SUMMARY"
+    return 0
+  fi
+  if [[ "$*" == *'manage-classpilot-tile-auth-plan-observation-evidence-reread.mjs inspect-supersession'* ]]; then
+    [[ "\${MSYS_NO_PATHCONV:-}" == '1' ]]
+    [[ "\${MSYS2_ARG_CONV_EXCL:-}" == '*' ]]
+    [[ "$*" == *'--packet-path C:/private/reread/supersession/prelaunch.private.json'* ]]
+    inspect_count="$(<"$INSPECT_COUNT_FILE")"
+    inspect_count=$((inspect_count + 1))
+    printf '%s\\n' "$inspect_count" > "$INSPECT_COUNT_FILE"
+    printf 'inspect-%s\\n' "$inspect_count" >> "$MANAGER_CALLS_FILE"
+    if [[ "$inspect_count" -eq 2 ]]; then
+      return 1
+    fi
+    printf '%s' "$TEST_SUPERSESSION_SUMMARY"
+    return 0
+  fi
+  command node "$@"
+}
+create_and_inspect_classpilot_tile_auth_plan_observation_supersession
+[[ "$(<"$INSPECT_COUNT_FILE")" -eq 1 ]]
+run_classpilot_tile_auth_plan_observation_task
+[[ "$(<"$INSPECT_COUNT_FILE")" -eq 2 ]]
+[[ "$(cat "$MANAGER_CALLS_FILE")" == $'supersede\\ninspect-1\\ninspect-2' ]]
+[[ ! -s "$PROHIBITED_CALLS_FILE" ]]
+COLLECTION="$TILE_AUTH_PLAN_OBSERVATION_COLLECTION_JSON" command node -e '
+  const value = JSON.parse(process.env.COLLECTION);
+  if (value.collection.status !== "failed" ||
+      value.collection.failureCode !== "terminal_task_unavailable" ||
+      value.collection.attemptCount !== 0 ||
+      value.collection.rawErrorPersisted !== false ||
+      value.eventsDocument !== null) process.exit(1);
+'
+rm -f "$TILE_AUTH_PLAN_OBSERVATION_TASK_PATH" "$PROHIBITED_CALLS_FILE" \
+  "$MANAGER_CALLS_FILE" "$INSPECT_COUNT_FILE"
+`, "1 1200", {
+      TEST_SUPERSESSION_SUMMARY: JSON.stringify(summary),
+    });
+    assert.equal(result.status, 0, result.stderr);
   });
 
   it("stops a base observation before the full gate and every deployment mutation", () => {
@@ -454,6 +743,10 @@ admit_classpilot_tile_auth_plan_rehearsal_attempt
       preflightImplementation,
       /resolve-classpilot-tile-auth-plan-log-binding\.mjs/
     );
+    assert.match(
+      preflightImplementation,
+      /reinspect_classpilot_tile_auth_plan_observation_supersession_before_launch; then[\s\S]*"terminal_task_unavailable"[\s\S]*return 0[\s\S]*fi\n  if ! aws ecs run-task/
+    );
     assert.equal(
       [...preflightImplementation.matchAll(/aws ecs run-task/g)].length,
       1
@@ -465,6 +758,25 @@ admit_classpilot_tile_auth_plan_rehearsal_attempt
     assert.match(
       deploySource,
       /manage-classpilot-tile-auth-plan-observation\.mjs" write[\s\S]*manage-classpilot-tile-auth-plan-observation\.mjs" inspect/
+    );
+    const initializeImplementation = deploySource.slice(
+      deploySource.indexOf(
+        "initialize_classpilot_tile_auth_plan_observation() {"
+      ),
+      deploySource.indexOf(
+        "\nrun_classpilot_tile_auth_plan_observation_task()",
+        deploySource.indexOf(
+          "initialize_classpilot_tile_auth_plan_observation() {"
+        )
+      )
+    );
+    assert.match(
+      initializeImplementation,
+      /TILE_AUTH_PLAN_OBSERVATION_INITIAL_POSTURE_SHA256="\$posture_sha"[\s\S]*create_and_inspect_classpilot_tile_auth_plan_observation_supersession[\s\S]*manage-classpilot-tile-auth-plan-observation\.mjs" admit/
+    );
+    assert.match(
+      deploySource,
+      /manage-classpilot-tile-auth-plan-observation-evidence-reread\.mjs"[\s\S]*supersede[\s\S]*manage-classpilot-tile-auth-plan-observation-evidence-reread\.mjs"[\s\S]*inspect-supersession/
     );
   });
 
@@ -523,6 +835,9 @@ aws() {
   fi
   return 99
 }
+reinspect_classpilot_tile_auth_plan_observation_supersession_before_launch() {
+  return 0
+}
 run_classpilot_tile_auth_plan_observation_task
 [[ "$(<"$AWS_RUN_TASK_COUNT_FILE")" -eq 1 ]]
 COLLECTION="$TILE_AUTH_PLAN_OBSERVATION_COLLECTION_JSON" node -e '
@@ -573,6 +888,9 @@ aws() {
     return 0
   fi
   return 99
+}
+reinspect_classpilot_tile_auth_plan_observation_supersession_before_launch() {
+  return 0
 }
 run_classpilot_tile_auth_plan_observation_task
 [[ "$AWS_RUN_TASK_CALLS" -eq 1 ]]
@@ -628,6 +946,13 @@ production_service_snapshot() {
     "$WORKER_SERVICE" \
     "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION_ARN" \
     "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION_ARN"
+}
+create_and_inspect_classpilot_tile_auth_plan_observation_supersession() {
+  TILE_AUTH_PLAN_OBSERVATION_SUPERSESSION_PATH='C:/private/supersession.json'
+  TILE_AUTH_PLAN_OBSERVATION_SUPERSESSION_SHA256='ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'
+}
+reinspect_classpilot_tile_auth_plan_observation_supersession_before_launch() {
+  return 0
 }
 initialize_classpilot_tile_auth_plan_observation
 [[ "$TILE_AUTH_PLAN_OBSERVATION_ATTEMPT_ADMITTED" == true ]]
@@ -727,6 +1052,10 @@ production_service_snapshot() {
     "$WORKER_SERVICE" \
     "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION_ARN" \
     "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION_ARN"
+}
+create_and_inspect_classpilot_tile_auth_plan_observation_supersession() {
+  TILE_AUTH_PLAN_OBSERVATION_SUPERSESSION_PATH='C:/private/supersession.json'
+  TILE_AUTH_PLAN_OBSERVATION_SUPERSESSION_SHA256='ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'
 }
 node() {
   if [[ "$*" == *'manage-classpilot-tile-auth-plan-observation.mjs admit'* ]]; then
@@ -1624,13 +1953,19 @@ fi
     );
   });
 
-  it("disables Git Bash path conversion at both CloudWatch reader boundaries", () => {
+  it("disables Git Bash path conversion at CloudWatch and supersession packet boundaries", () => {
     const outerCalls = [
       ...deploySource.matchAll(
         /MSYS_NO_PATHCONV=1 node \\\n\s+"\$SCRIPT_DIR\/read-classpilot-tile-auth-plan-log-events\.mjs"/g
       ),
     ];
     assert.equal(outerCalls.length, 2);
+    const supersessionCalls = [
+      ...deploySource.matchAll(
+        /MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="\*" node \\\n\s+"\$SCRIPT_DIR\/manage-classpilot-tile-auth-plan-observation-evidence-reread\.mjs"/g
+      ),
+    ];
+    assert.equal(supersessionCalls.length, 3);
 
     const result = spawnSync(
       bashExecutable(),
@@ -1642,6 +1977,20 @@ fi
     );
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stdout, "/ecs/schoolpilot-production-api");
+
+    const windowsPath = spawnSync(
+      bashExecutable(),
+      [
+        "-lc",
+        "MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*' node -e 'process.stdout.write(process.argv[1])' C:/private/reread/terminal/private.json",
+      ],
+      { encoding: "utf8" }
+    );
+    assert.equal(windowsPath.status, 0, windowsPath.stderr);
+    assert.equal(
+      windowsPath.stdout,
+      "C:/private/reread/terminal/private.json"
+    );
   });
 
   it("paginates the exact bound stream so terminal failures after event 100 survive", async () => {

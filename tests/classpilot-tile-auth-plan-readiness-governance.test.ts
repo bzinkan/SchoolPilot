@@ -6,6 +6,10 @@ const runbook = readFileSync(
   new URL("../docs/AWS_COST_ROLLOUT_OPERATIONS.md", import.meta.url),
   "utf8"
 ).replace(/\r\n/g, "\n");
+const planCheck = readFileSync(
+  new URL("../docs/CLASSPILOT_TILE_AUTHORIZATION_PLAN_CHECK.md", import.meta.url),
+  "utf8"
+).replace(/\r\n/g, "\n");
 const ciWorkflow = readFileSync(
   new URL("../.github/workflows/ci-build.yml", import.meta.url),
   "utf8"
@@ -135,8 +139,8 @@ describe("ClassPilot tile authorization readiness governance", () => {
       "`base_eligible`",
       "`base_ineligible`",
       "`eligibleForDeployment`, `eligibleForDiagnostic`, and\n`eligibleForCertification` to exactly `false`",
-      "current remediation first authorizes exactly one historical reread",
-      "then exactly one fresh,\nrelease-bound, independently inspected observation",
+      "current remediation binds the exact failed historical reread",
+      "then authorizes exactly one fresh,\nrelease-bound, independently inspected observation",
       "is never an alternate deployment path",
       "converted to report-only",
     ]) {
@@ -156,6 +160,63 @@ describe("ClassPilot tile authorization readiness governance", () => {
     );
   });
 
+  it("allows only the exact retention-aware historical supersession", () => {
+    const exactHashes = [
+      "`9c8c092756264fc0686f0aeab8a540526a3b7a60f5c861f122aad69f9f039087`",
+      "`3f0ff5a217e04635deefa1d07ee61030732675c83ba43ed3d38f5d4c96fd2b44`",
+      "`4fc219114899c37544ce5017b5e41b7842516e4c`",
+      "`5427ff0e5af5f2245479646d1b1dd621213782e01c28a971399295274a8a16fd`",
+      "`01fb533aa87befbba1dba760566afe66c3536e5437726f0d76b1fae0de86c6aa`",
+      "`75e94f99f136d5d484be97b8a073a22072645cdd6794980114250455f8578756`",
+    ];
+    for (const document of [runbook, planCheck]) {
+      for (const hash of exactHashes) {
+        assert.ok(
+          document.includes(hash),
+          `governance is missing the exact retention binding: ${hash}`
+        );
+      }
+      assert.match(
+        document,
+        /`failureCode: historical_task_missing`, `taskLaunchCount: 0`,\s+`collectionAttemptCount: 0`/
+      );
+      assert.match(
+        document,
+        /null log-configuration, (?:log-)?binding, (?:log-)?stream, and canonical-event\s+hashes/
+      );
+      assert.match(
+        document,
+        /(?:No second\s+reread is allowed|must not attempt a\s+second reread)/
+      );
+      assert.match(
+        document,
+        /No other reread failure code|accept another failure code/
+      );
+      assert.match(
+        document,
+        /one strict fresh observation|exactly one fresh,\s+release-bound, independently inspected observation/
+      );
+      assert.match(
+        document,
+        /at least one CloudWatch (?:snapshot|attempt|read)/
+      );
+      assert.match(document, /`40\/19\/19\/1\/1`/);
+      assert.match(document, /80 required\s+session\s+pairs/);
+      assert.match(document, /zero conflicts/);
+      assert.match(document, /unchanged\s+(?:final|verified)\s+network/);
+      assert.match(
+        document,
+        /exit-only|Exit zero without those exact terminal\s+events is never sufficient/
+      );
+      assert.match(document, /historical stopped task is no longer\s+describable/);
+      assert.match(
+        document,
+        /does not establish (?:an\s+exclusive cause|retention or any other mechanism as the\s+exclusive cause)/
+      );
+      assert.doesNotMatch(document, /proves that ECS retention removed/);
+    }
+  });
+
   it("records the failed candidate and enforces the readiness-only boundary", () => {
     for (const required of [
       "`3c82f540cccfaf0badd70312e76e69770b6cfaed`",
@@ -163,15 +224,17 @@ describe("ClassPilot tile authorization readiness governance", () => {
       "`schoolpilot-production-api:133`",
       "`schoolpilot-production-api-emergency:33`",
       "is historical-only",
-      "The current remediation first authorizes exactly one historical reread",
-      "then exactly one fresh,\nrelease-bound, independently inspected observation.",
-      "Any\nother observation outcome is terminal for the SHA",
+      "The current remediation binds the exact failed historical reread",
+      "then authorizes exactly one fresh,\nrelease-bound, independently inspected observation.",
+      "fresh DPAPI and AES-GCM state backups",
+      "The earlier controller-SHA plan and baseline\nremain comparison evidence only",
       "the same merged SHA may run exactly one\ngate-only rehearsal",
       "one guarded backend deployment",
       "Seal the readiness packet and stop.",
       "production fixture refresh or provisioning",
       "diagnostic binding",
       "failure is terminal for the SHA.",
+      "consumed single-use retention-aware supersession marker",
       "the per-SHA atomic admission marker, immutable passed terminal marker",
       "their common protected execution-authority\n  SHA-256",
       "an explicit record that no apply occurred",
@@ -181,6 +244,10 @@ describe("ClassPilot tile authorization readiness governance", () => {
         `runbook is missing the stop-boundary invariant: ${required}`
       );
     }
+    assert.match(
+      runbook,
+      /Any other observation outcome is terminal for the\s+SHA/
+    );
     assert.doesNotMatch(
       runbook,
       /--classpilot-tile-auth-plan-gate\s+\\\s*\n\s*--classpilot-tile-auth-plan-observation/,
