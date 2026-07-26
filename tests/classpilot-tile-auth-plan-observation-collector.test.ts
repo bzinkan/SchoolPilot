@@ -1,7 +1,11 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import fs, { readFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   collectBoundClasspilotTileAuthorizationPlanObservationEvidence,
@@ -167,6 +171,100 @@ function fakeClock() {
     },
     delays,
   };
+}
+
+function bashQuote(value: string) {
+  return `'${value.replaceAll("'", `'\"'\"'`)}'`;
+}
+
+function bashExecutable() {
+  const executable =
+    process.platform === "win32"
+      ? "C:\\Program Files\\Git\\bin\\bash.exe"
+      : "/bin/bash";
+  assert.equal(
+    fs.existsSync(executable),
+    true,
+    `required Bash executable is missing: ${executable}`
+  );
+  return executable;
+}
+
+function writeFakeAwsPreload(root: string) {
+  const preloadPath = path.join(root, "fake-aws-preload.cjs");
+  fs.writeFileSync(
+    preloadPath,
+    String.raw`
+const fs = require("node:fs");
+const path = require("node:path");
+const command = path.basename(process.argv[1] || "");
+if (command === "logs") {
+  const args = process.argv.slice(2);
+  fs.appendFileSync(
+    process.env.FAKE_AWS_CALLS_FILE,
+    JSON.stringify({ command, args }) + "\n",
+    "utf8"
+  );
+  const tokenIndex = args.indexOf("--next-token");
+  if (tokenIndex >= 0) {
+    process.stdout.write(
+      JSON.stringify({
+        events: [],
+        nextForwardToken: args[tokenIndex + 1],
+      })
+    );
+  } else {
+    process.stdout.write(
+      JSON.stringify({
+        events: JSON.parse(
+          Buffer.from(
+            process.env.FAKE_LOG_EVENTS_BASE64,
+            "base64"
+          ).toString("utf8")
+        ),
+        nextForwardToken: "stable-token",
+      })
+    );
+  }
+  process.exit(0);
+}
+`,
+    { mode: 0o600 }
+  );
+  return preloadPath;
+}
+
+function shellCollectorInvocation(
+  taskResultFile: string,
+  logConfigurationFile: string,
+  deadlineMs = 5_000
+) {
+  const collectorPath = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../scripts/collect-classpilot-tile-auth-plan-observation-evidence.mjs"
+  );
+  const args = [
+    "--task-result-file",
+    taskResultFile,
+    "--log-configuration-file",
+    logConfigurationFile,
+    "--expected-task-arn",
+    taskArn,
+    "--expected-task-definition-arn",
+    taskDefinitionArn,
+    "--expected-region",
+    region,
+    "--expected-account-id",
+    accountId,
+    "--deadline-ms",
+    String(deadlineMs),
+  ];
+  return [
+    "MSYS_NO_PATHCONV=1",
+    "node",
+    bashQuote(collectorPath.replaceAll("\\", "/")),
+    ...args.map((value) => bashQuote(value.replaceAll("\\", "/"))),
+  ].join(" ");
 }
 
 describe("ClassPilot tile authorization observation collector", () => {
@@ -430,6 +528,153 @@ describe("ClassPilot tile authorization observation collector", () => {
       rawErrorPersisted: false,
     });
     assert.equal(result.eventsDocument, null);
+  });
+
+  it("caps every collector deadline at the authorized five minutes", async () => {
+    await assert.rejects(
+      () =>
+        collectClasspilotTileAuthorizationPlanObservationEvidence({
+          taskExitCode: 0,
+          deadlineMs: 300_001,
+          fetchFreshSnapshot: async () => ({ events: [] }),
+        }),
+      /observation_collection_configuration_invalid/
+    );
+    await assert.rejects(
+      () =>
+        runObservationCollectorCli(collectorCliArguments(300_001), {
+          readFile: () => {
+            throw new Error("must_not_read");
+          },
+        }),
+      /observation_collection_arguments_invalid/
+    );
+  });
+
+  it("runs Git Bash through the real CLI, resolver, and AWS page reader", () => {
+    const root = fs.mkdtempSync(
+      path.join(os.tmpdir(), "sp-observation-collector-cli-")
+    );
+    try {
+      const logConfigurationFile = path.join(
+        root,
+        "log-configuration.private.json"
+      );
+      const awsCallsFile = path.join(root, "aws-calls.jsonl");
+      const preloadPath = writeFakeAwsPreload(root);
+      fs.writeFileSync(
+        logConfigurationFile,
+        JSON.stringify(logConfiguration),
+        { mode: 0o600 }
+      );
+      fs.writeFileSync(awsCallsFile, "", { mode: 0o600 });
+      const logEvents = [
+        event(validPreflight()),
+        event(validSelection(), 3),
+      ];
+      const environment = {
+        ...process.env,
+        AWS_CLI_EXECUTABLE: process.execPath,
+        NODE_OPTIONS:
+          `--require=${preloadPath.replaceAll("\\", "/")}`,
+        FAKE_AWS_CALLS_FILE: awsCallsFile,
+        FAKE_LOG_EVENTS_BASE64: Buffer.from(
+          JSON.stringify(logEvents),
+          "utf8"
+        ).toString("base64"),
+      };
+
+      const cases = [
+        { label: "omitted", taskResult: terminalTaskResult(), read: true },
+        {
+          label: "null",
+          taskResult: terminalTaskResult(null),
+          read: true,
+        },
+        {
+          label: "matching",
+          taskResult: terminalTaskResult(exactLogStream),
+          read: true,
+        },
+        {
+          label: "mismatched",
+          taskResult: terminalTaskResult(
+            "api/api/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          ),
+          read: false,
+        },
+        {
+          label: "malformed",
+          taskResult: terminalTaskResult(
+            123 as unknown as string
+          ),
+          read: false,
+        },
+      ];
+
+      for (const entry of cases) {
+        const taskResultFile = path.join(
+          root,
+          `${entry.label}-terminal-task.private.json`
+        );
+        fs.writeFileSync(
+          taskResultFile,
+          JSON.stringify(entry.taskResult),
+          { mode: 0o600 }
+        );
+        const callsBefore = fs
+          .readFileSync(awsCallsFile, "utf8")
+          .trim()
+          .split("\n")
+          .filter(Boolean).length;
+        const child = spawnSync(
+          bashExecutable(),
+          [
+            "-lc",
+            shellCollectorInvocation(
+              taskResultFile,
+              logConfigurationFile
+            ),
+          ],
+          {
+            cwd: path.resolve(
+              path.dirname(fileURLToPath(import.meta.url)),
+              ".."
+            ),
+            encoding: "utf8",
+            env: environment,
+            timeout: 30_000,
+          }
+        );
+        assert.equal(
+          child.status,
+          0,
+          `${entry.label}: ${child.stderr}`
+        );
+        const result = JSON.parse(child.stdout);
+        const callsAfter = fs
+          .readFileSync(awsCallsFile, "utf8")
+          .trim()
+          .split("\n")
+          .filter(Boolean).length;
+        if (entry.read) {
+          assert.equal(result.collection.status, "completed", entry.label);
+          assert.equal(result.collection.attemptCount, 1, entry.label);
+          assert.ok(callsAfter > callsBefore, entry.label);
+        } else {
+          assert.equal(result.collection.status, "failed", entry.label);
+          assert.equal(
+            result.collection.failureCode,
+            "log_binding_unavailable",
+            entry.label
+          );
+          assert.equal(result.collection.attemptCount, 0, entry.label);
+          assert.equal(callsAfter, callsBefore, entry.label);
+        }
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("fails binding with zero reads and never imports an absolute deadline", async () => {

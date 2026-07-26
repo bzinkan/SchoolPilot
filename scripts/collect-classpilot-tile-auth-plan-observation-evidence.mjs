@@ -140,6 +140,7 @@ export async function collectClasspilotTileAuthorizationPlanObservationEvidence(
     typeof fetchFreshSnapshot !== "function" ||
     !Number.isSafeInteger(deadlineMs) ||
     deadlineMs < 1 ||
+    deadlineMs > DEFAULT_DEADLINE_MS ||
     typeof nowNanoseconds !== "function" ||
     typeof sleep !== "function"
   ) {
@@ -246,7 +247,8 @@ function parseArguments(argv) {
   }
   if (
     options["--deadline-ms"] !== undefined &&
-    !/^[1-9][0-9]{0,8}$/.test(options["--deadline-ms"])
+    (!/^[1-9][0-9]{0,8}$/.test(options["--deadline-ms"]) ||
+      Number(options["--deadline-ms"]) > DEFAULT_DEADLINE_MS)
   ) {
     throw new Error("observation_collection_arguments_invalid");
   }
@@ -353,6 +355,7 @@ export async function collectBoundClasspilotTileAuthorizationPlanObservationEvid
   if (
     !Number.isSafeInteger(deadlineMs) ||
     deadlineMs < 1 ||
+    deadlineMs > DEFAULT_DEADLINE_MS ||
     typeof nowNanoseconds !== "function" ||
     typeof sleep !== "function" ||
     typeof freshSnapshotFetcherFactory !== "function"

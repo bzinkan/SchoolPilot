@@ -1,9 +1,11 @@
 import { afterEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   buildClasspilotTileAuthorizationPlanObservationAttempt,
@@ -306,7 +308,310 @@ function testDependencies(
   };
 }
 
+function rereadCliArguments(
+  options: ReturnType<typeof sourceFixture>["options"],
+  deadlineMs = options.deadlineMs
+) {
+  return [
+    "--source-packet",
+    options.sourcePacketPath,
+    "--expected-source-packet-sha256",
+    options.expectedSourcePacketSha256,
+    "--expected-source-attempt-sha256",
+    options.expectedSourceAttemptSha256,
+    "--reread-id",
+    options.rereadId,
+    "--controller-sha",
+    options.controllerGitSha,
+    "--expected-observation-id",
+    options.expectedObservationId,
+    "--expected-application-sha",
+    options.expectedApplicationGitSha,
+    "--expected-image-digest",
+    options.expectedImageDigest,
+    "--expected-candidate-api-task-definition-arn",
+    options.expectedCandidateApiTaskDefinitionArn,
+    "--expected-candidate-worker-task-definition-arn",
+    options.expectedCandidateWorkerTaskDefinitionArn,
+    "--expected-task-arn",
+    options.expectedTaskArn,
+    "--cluster",
+    options.cluster,
+    "--region",
+    options.region,
+    "--account-id",
+    options.accountId,
+    "--deadline-ms",
+    String(deadlineMs),
+  ];
+}
+
+function writeRereadProcessPreload(
+  root: string,
+  controllerGitSha: string,
+  options: ReturnType<typeof sourceFixture>["options"]
+) {
+  const preloadPath = path.join(root, "fake-process-preload.cjs");
+  const callsPath = path.join(root, "process-calls.jsonl");
+  fs.writeFileSync(callsPath, "", { mode: 0o600 });
+  fs.writeFileSync(
+    preloadPath,
+    String.raw`
+const fs = require("node:fs");
+const path = require("node:path");
+const command = path.basename(process.argv[1] || "");
+const args = process.argv.slice(2);
+const handled = new Set(["rev-parse", "status", "ecs", "logs"]);
+if (handled.has(command)) {
+  fs.appendFileSync(
+    process.env.FAKE_PROCESS_CALLS_FILE,
+    JSON.stringify({ command, args }) + "\n",
+    "utf8"
+  );
+}
+if (command === "rev-parse") {
+  process.stdout.write(
+    args[0] === "--abbrev-ref"
+      ? "main\n"
+      : process.env.FAKE_CONTROLLER_SHA + "\n"
+  );
+  process.exit(0);
+}
+if (command === "status") {
+  process.exit(0);
+}
+if (command === "ecs" && args[0] === "describe-tasks") {
+  process.stdout.write(
+    JSON.stringify({
+      failures: [],
+      tasks: [{
+        taskArn: process.env.FAKE_TASK_ARN,
+        taskDefinitionArn: process.env.FAKE_TASK_DEFINITION_ARN,
+        lastStatus: "STOPPED",
+        containers: [{
+          name: "api",
+          lastStatus: "STOPPED",
+          exitCode: 0,
+          logStreamName: null,
+        }],
+      }],
+    })
+  );
+  process.exit(0);
+}
+if (
+  command === "ecs" &&
+  args[0] === "describe-task-definition"
+) {
+  process.stdout.write(
+    JSON.stringify({
+      logDriver: "awslogs",
+      options: {
+        "awslogs-group": "/ecs/schoolpilot-production-api",
+        "awslogs-region": "us-east-1",
+        "awslogs-stream-prefix": "api",
+      },
+    })
+  );
+  process.exit(0);
+}
+if (command === "logs") {
+  const tokenIndex = args.indexOf("--next-token");
+  if (tokenIndex >= 0) {
+    process.stdout.write(
+      JSON.stringify({
+        events: [],
+        nextForwardToken: args[tokenIndex + 1],
+      })
+    );
+  } else {
+    process.stdout.write(
+      JSON.stringify({
+        events: JSON.parse(
+          Buffer.from(
+            process.env.FAKE_LOG_EVENTS_BASE64,
+            "base64"
+          ).toString("utf8")
+        ),
+        nextForwardToken: "stable-token",
+      })
+    );
+  }
+  process.exit(0);
+}
+`,
+    { mode: 0o600 }
+  );
+  return {
+    callsPath,
+    environment: {
+      ...process.env,
+      NODE_ENV: "test",
+      CLP_LOAD_FIXTURE_TEST_MODE: "1",
+      GIT_EXECUTABLE: process.execPath,
+      AWS_CLI_EXECUTABLE: process.execPath,
+      NODE_OPTIONS:
+        `--require=${preloadPath.replaceAll("\\", "/")}`,
+      FAKE_PROCESS_CALLS_FILE: callsPath,
+      FAKE_CONTROLLER_SHA: controllerGitSha,
+      FAKE_TASK_ARN: options.expectedTaskArn,
+      FAKE_TASK_DEFINITION_ARN:
+        options.expectedCandidateApiTaskDefinitionArn,
+      FAKE_LOG_EVENTS_BASE64: Buffer.from(
+        JSON.stringify([
+          {
+            timestamp: 1,
+            ingestionTime: 2,
+            message: JSON.stringify(validSelection()),
+          },
+          {
+            timestamp: 3,
+            ingestionTime: 4,
+            message: JSON.stringify(validPreflight()),
+          },
+        ]),
+        "utf8"
+      ).toString("base64"),
+    },
+  };
+}
+
 describe("ClassPilot observation evidence reread", () => {
+  it("caps both programmatic and CLI rereads at five minutes", async () => {
+    const fixture = sourceFixture();
+    let awsCalls = 0;
+    await assert.rejects(
+      () =>
+        runClasspilotTileAuthorizationPlanObservationReread(
+          { ...fixture.options, deadlineMs: 300_001 },
+          testDependencies(fixture, {
+            runAwsJson: async () => {
+              awsCalls += 1;
+              return {};
+            },
+          })
+        ),
+      /observation_reread_arguments_invalid/
+    );
+    assert.equal(awsCalls, 0);
+    assert.equal(
+      fs.existsSync(path.join(fixture.runRoot, "evidence-reread")),
+      false
+    );
+
+    const rereadScript = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../scripts/reread-classpilot-tile-auth-plan-observation-evidence.mjs"
+    );
+    const child = spawnSync(
+      process.execPath,
+      [
+        rereadScript,
+        ...rereadCliArguments(fixture.options, 300_001),
+      ],
+      {
+        cwd: path.resolve(
+          path.dirname(fileURLToPath(import.meta.url)),
+          ".."
+        ),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          NODE_ENV: "test",
+          CLP_LOAD_FIXTURE_TEST_MODE: "1",
+        },
+        timeout: 30_000,
+      }
+    );
+    assert.equal(child.status, 1);
+    assert.equal(
+      child.stderr,
+      "classpilot_tile_auth_plan_observation_reread_failed\n"
+    );
+    assert.equal(
+      fs.existsSync(path.join(fixture.runRoot, "evidence-reread")),
+      false
+    );
+  });
+
+  it("executes the real CLI, Git inspection, AWS reads, resolver, and packet writer", () => {
+    const fixture = sourceFixture();
+    const processStub = writeRereadProcessPreload(
+      fixture.root,
+      fixture.options.controllerGitSha,
+      fixture.options
+    );
+    const rereadScript = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../scripts/reread-classpilot-tile-auth-plan-observation-evidence.mjs"
+    );
+    const child = spawnSync(
+      process.execPath,
+      [rereadScript, ...rereadCliArguments(fixture.options, 5_000)],
+      {
+        cwd: path.resolve(
+          path.dirname(fileURLToPath(import.meta.url)),
+          ".."
+        ),
+        encoding: "utf8",
+        env: processStub.environment,
+        timeout: 60_000,
+      }
+    );
+    assert.equal(child.status, 0, child.stderr);
+    const result = JSON.parse(child.stdout);
+    assert.equal(result.recovered, true);
+    assert.equal(result.rereadOutcome, "evidence_recovered");
+    assert.equal(result.taskLaunchCount, 0);
+    assert.equal(result.eligibleForDeployment, false);
+    assert.equal(result.eligibleForDiagnostic, false);
+    assert.equal(result.eligibleForCertification, false);
+
+    const calls = fs
+      .readFileSync(processStub.callsPath, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+    assert.ok(
+      calls.some(
+        (call) =>
+          call.command === "ecs" &&
+          call.args[0] === "describe-tasks"
+      )
+    );
+    assert.ok(
+      calls.some(
+        (call) =>
+          call.command === "ecs" &&
+          call.args[0] === "describe-task-definition"
+      )
+    );
+    assert.ok(
+      calls.filter((call) => call.command === "logs").length >= 2
+    );
+    assert.equal(
+      calls.some(
+        (call) =>
+          call.command === "ecs" &&
+          call.args[0] === "run-task"
+      ),
+      false
+    );
+
+    const packet = JSON.parse(fs.readFileSync(result.path, "utf8"));
+    assert.equal(packet.status, "recovered");
+    assert.equal(packet.collectionAttemptCount, 1);
+    assert.match(packet.logBindingSha256, /^[a-f0-9]{64}$/);
+    assert.match(packet.canonicalEventSha256, /^[a-f0-9]{64}$/);
+    const inspected =
+      inspectClasspilotTileAuthorizationPlanObservationReread(
+        result.path,
+        result.sha256
+      );
+    assert.equal(inspected.rereadOutcome, "evidence_recovered");
+  });
+
   it("admits once, performs only read operations, and seals recovered companions atomically", async () => {
     const fixture = sourceFixture();
     const calls: string[] = [];

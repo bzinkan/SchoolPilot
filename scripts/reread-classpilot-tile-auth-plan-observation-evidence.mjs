@@ -45,6 +45,7 @@ const CONTROLLER_REPOSITORY_KEYS = [
   "headSha",
   "originMainSha",
 ];
+const MAX_EVIDENCE_DEADLINE_MS = 300_000;
 
 function isRecord(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -67,7 +68,15 @@ function stableSha256(value) {
 }
 
 function defaultGitText(args) {
-  const result = spawnSync("git", args, {
+  const overriddenGitExecutable = process.env.GIT_EXECUTABLE;
+  if (
+    overriddenGitExecutable &&
+    (process.env.NODE_ENV !== "test" ||
+      process.env.CLP_LOAD_FIXTURE_TEST_MODE !== "1")
+  ) {
+    throw new Error("observation_reread_controller_repository_invalid");
+  }
+  const result = spawnSync(overriddenGitExecutable || "git", args, {
     cwd: REPOSITORY_ROOT,
     encoding: "utf8",
     windowsHide: true,
@@ -187,12 +196,15 @@ function parseArguments(argv) {
     !SAFE_REGION.test(options.region) ||
     !SAFE_ACCOUNT.test(options.accountId) ||
     (options.deadlineMs !== undefined &&
-      !/^[1-9][0-9]{0,8}$/.test(options.deadlineMs))
+      (!/^[1-9][0-9]{0,8}$/.test(options.deadlineMs) ||
+        Number(options.deadlineMs) > MAX_EVIDENCE_DEADLINE_MS))
   ) {
     throw new Error("observation_reread_arguments_invalid");
   }
   options.deadlineMs =
-    options.deadlineMs === undefined ? 300_000 : Number(options.deadlineMs);
+    options.deadlineMs === undefined
+      ? MAX_EVIDENCE_DEADLINE_MS
+      : Number(options.deadlineMs);
   return options;
 }
 
@@ -391,6 +403,14 @@ export async function runClasspilotTileAuthorizationPlanObservationReread(
   options,
   dependencies = {}
 ) {
+  if (
+    !isRecord(options) ||
+    !Number.isSafeInteger(options.deadlineMs) ||
+    options.deadlineMs < 1 ||
+    options.deadlineMs > MAX_EVIDENCE_DEADLINE_MS
+  ) {
+    throw new Error("observation_reread_arguments_invalid");
+  }
   const runAwsJson = dependencies.runAwsJson || defaultAwsJson;
   const collectBound =
     dependencies.collectBound ||
