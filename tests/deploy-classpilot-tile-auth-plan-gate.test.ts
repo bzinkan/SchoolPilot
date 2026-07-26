@@ -424,6 +424,10 @@ admit_classpilot_tile_auth_plan_rehearsal_attempt
       /initialize_classpilot_tile_auth_plan_observation[\s\S]*run_classpilot_tile_auth_plan_observation_task[\s\S]*capture_classpilot_tile_auth_observation_final_network[\s\S]*capture_classpilot_tile_auth_observation_final_posture[\s\S]*write_classpilot_tile_auth_plan_observation_packet_v2/
     );
     assert.match(
+      observationPath,
+      /write_classpilot_tile_auth_plan_observation_packet_v2[\s\S]*observation_finalization_result=\$\?[\s\S]*if \[\[ "\$observation_finalization_result" -eq 0 \]\]; then[\s\S]*cleanup_classpilot_tile_auth_plan_observation_controller_workspace[\s\S]*else[\s\S]*Retaining the ACL-private ClassPilot observation controller workspace/
+    );
+    assert.match(
       deploySource,
       /eligibleForDeployment=false, eligibleForDiagnostic=false, eligibleForCertification=false/
     );
@@ -440,16 +444,15 @@ admit_classpilot_tile_auth_plan_rehearsal_attempt
     );
     assert.match(
       preflightImplementation,
-      /collect-classpilot-tile-auth-plan-observation-evidence\.mjs[\s\S]*--deadline-ms "\$TILE_AUTH_PLAN_OBSERVATION_EVIDENCE_DEADLINE_MS"[\s\S]*--deadline-monotonic-nanoseconds "\$evidence_deadline_monotonic_ns"/
+      /collect-classpilot-tile-auth-plan-observation-evidence\.mjs[\s\S]*--task-result-file "\$TILE_AUTH_PLAN_OBSERVATION_RESULT_PATH"[\s\S]*--log-configuration-file "\$TILE_AUTH_PLAN_OBSERVATION_LOG_CONFIGURATION_PATH"[\s\S]*--expected-task-arn "\$task_arn"[\s\S]*--expected-task-definition-arn "\$API_ROLLOUT_TASK_DEF"[\s\S]*--expected-region "\$REGION"[\s\S]*--expected-account-id "\$ACCOUNT_ID"[\s\S]*--deadline-ms "\$TILE_AUTH_PLAN_OBSERVATION_EVIDENCE_DEADLINE_MS"/
     );
-    assert.ok(
-      preflightImplementation.indexOf(
-        'process.hrtime.bigint() + BigInt(milliseconds) * 1_000_000n'
-      ) <
-        preflightImplementation.indexOf(
-          "aws ecs describe-task-definition"
-        ),
-      "the shared monotonic evidence deadline must begin before log binding"
+    assert.doesNotMatch(
+      preflightImplementation,
+      /deadline-monotonic-nanoseconds|evidence_deadline_monotonic_ns/
+    );
+    assert.doesNotMatch(
+      preflightImplementation,
+      /resolve-classpilot-tile-auth-plan-log-binding\.mjs/
     );
     assert.equal(
       [...preflightImplementation.matchAll(/aws ecs run-task/g)].length,
@@ -505,6 +508,9 @@ TILE_AUTH_PLAN_OBSERVATION_ATTEMPT_SHA256='eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
 LOCAL_SHA='abf820cc02b69599857739afe42f86baacd2351d'
 IMAGE_TAG='abf820cc02b6'
 NETWORK_CONFIG='awsvpcConfiguration={subnets=[subnet-a],securityGroups=[sg-a],assignPublicIp=DISABLED}'
+TILE_AUTH_PLAN_OBSERVATION_TASK_PATH="$(mktemp)"
+TILE_AUTH_PLAN_OBSERVATION_RESULT_PATH="$(mktemp)"
+TILE_AUTH_PLAN_OBSERVATION_LOG_CONFIGURATION_PATH="$(mktemp)"
 production_backend_deploy_window_preflight() { return 0; }
 classpilot_tile_auth_plan_window_preflight() { return 0; }
 AWS_RUN_TASK_COUNT_FILE="$(mktemp)"
@@ -527,7 +533,10 @@ COLLECTION="$TILE_AUTH_PLAN_OBSERVATION_COLLECTION_JSON" node -e '
       value.collection.rawErrorPersisted !== false ||
       value.eventsDocument !== null) process.exit(1);
 '
-rm -f .tile-auth-plan-observation-task.json "$AWS_RUN_TASK_COUNT_FILE"
+rm -f "$TILE_AUTH_PLAN_OBSERVATION_TASK_PATH" \
+  "$TILE_AUTH_PLAN_OBSERVATION_RESULT_PATH" \
+  "$TILE_AUTH_PLAN_OBSERVATION_LOG_CONFIGURATION_PATH" \
+  "$AWS_RUN_TASK_COUNT_FILE"
 `);
     assert.equal(result.status, 0, result.stderr);
   });
@@ -545,6 +554,9 @@ TILE_AUTH_PLAN_OBSERVATION_ATTEMPT_PATH='observation-attempt.private.json'
 TILE_AUTH_PLAN_OBSERVATION_ATTEMPT_SHA256='eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
 LOCAL_SHA='abf820cc02b69599857739afe42f86baacd2351d'
 NETWORK_CONFIG='awsvpcConfiguration={subnets=[subnet-a],securityGroups=[sg-a],assignPublicIp=DISABLED}'
+TILE_AUTH_PLAN_OBSERVATION_TASK_PATH="$(mktemp)"
+TILE_AUTH_PLAN_OBSERVATION_RESULT_PATH="$(mktemp)"
+TILE_AUTH_PLAN_OBSERVATION_LOG_CONFIGURATION_PATH="$(mktemp)"
 TASK_ARN='arn:aws:ecs:us-east-1:135775632425:task/schoolpilot-production-cluster/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 AWS_RUN_TASK_CALLS=0
 wait_for_classpilot_tile_auth_plan_task_stopped() { return 125; }
@@ -574,7 +586,9 @@ COLLECTION="$TILE_AUTH_PLAN_OBSERVATION_COLLECTION_JSON" node -e '
       value.collection.attemptCount !== 0 ||
       value.eventsDocument !== null) process.exit(1);
 '
-rm -f .tile-auth-plan-observation-task.json .tile-auth-plan-observation-result.json
+rm -f "$TILE_AUTH_PLAN_OBSERVATION_TASK_PATH" \
+  "$TILE_AUTH_PLAN_OBSERVATION_RESULT_PATH" \
+  "$TILE_AUTH_PLAN_OBSERVATION_LOG_CONFIGURATION_PATH"
 `);
     assert.equal(result.status, 0, result.stderr);
   });
@@ -665,7 +679,7 @@ if (packet?.schemaVersion !== 2 ||
   process.exit(1);
 }
 NODE
-rm -f .tile-auth-plan-observation-task.json
+cleanup_classpilot_tile_auth_plan_observation_controller_workspace
 `, "1 1200", {
         LOCALAPPDATA: localAppData,
         NODE_ENV: "test",

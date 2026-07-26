@@ -4,8 +4,10 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 import {
+  collectBoundClasspilotTileAuthorizationPlanObservationEvidence,
   collectClasspilotTileAuthorizationPlanObservationEvidence,
   hashClasspilotTileAuthorizationPlanObservationEvents,
+  runCli as runObservationCollectorCli,
 } from "../scripts/collect-classpilot-tile-auth-plan-observation-evidence.mjs";
 
 const collectorSource = readFileSync(
@@ -15,6 +17,63 @@ const collectorSource = readFileSync(
   ),
   "utf8"
 );
+const region = "us-east-1";
+const accountId = "135775632425";
+const taskId = "a".repeat(32);
+const taskArn =
+  `arn:aws:ecs:${region}:${accountId}:task/schoolpilot-production-cluster/${taskId}`;
+const taskDefinitionArn =
+  `arn:aws:ecs:${region}:${accountId}:task-definition/schoolpilot-production-api-emergency:36`;
+const exactLogStream = `api/api/${taskId}`;
+const logConfiguration = {
+  logDriver: "awslogs",
+  options: {
+    "awslogs-group": "/ecs/schoolpilot-production-api",
+    "awslogs-region": region,
+    "awslogs-stream-prefix": "api",
+  },
+};
+
+function terminalTaskResult(
+  reportedLogStream: string | null | undefined = undefined
+) {
+  const api: Record<string, unknown> = {
+    name: "api",
+    lastStatus: "STOPPED",
+    exitCode: 0,
+  };
+  if (arguments.length > 0) api.logStreamName = reportedLogStream;
+  return {
+    failures: [],
+    tasks: [
+      {
+        taskArn,
+        taskDefinitionArn,
+        lastStatus: "STOPPED",
+        containers: [api],
+      },
+    ],
+  };
+}
+
+function collectorCliArguments(deadlineMs = 500) {
+  return [
+    "--task-result-file",
+    "terminal-task.private.json",
+    "--log-configuration-file",
+    "log-configuration.private.json",
+    "--expected-task-arn",
+    taskArn,
+    "--expected-task-definition-arn",
+    taskDefinitionArn,
+    "--expected-region",
+    region,
+    "--expected-account-id",
+    accountId,
+    "--deadline-ms",
+    String(deadlineMs),
+  ];
+}
 
 function event(message: unknown, timestamp = 1) {
   return {
@@ -227,24 +286,209 @@ describe("ClassPilot tile authorization observation collector", () => {
     assert.doesNotMatch(JSON.stringify(result), /sensitive-provider-error/);
   });
 
-  it("honors an absolute monotonic deadline that began before log binding", async () => {
-    const clock = fakeClock();
-    clock.advance(2_500);
+  it("resolves null, omitted, and exact streams before the first read", async () => {
+    for (const taskResult of [
+      terminalTaskResult(),
+      terminalTaskResult(null),
+      terminalTaskResult(exactLogStream),
+    ]) {
+      const clock = fakeClock();
+      clock.advance(2_500);
+      let reads = 0;
+      let observedDeadline = 0n;
+      const result =
+        await collectBoundClasspilotTileAuthorizationPlanObservationEvidence({
+          taskResult,
+          logConfiguration,
+          expectedTaskArn: taskArn,
+          expectedTaskDefinitionArn: taskDefinitionArn,
+          expectedRegion: region,
+          expectedAccountId: accountId,
+          deadlineMs: 500,
+          nowNanoseconds: clock.nowNanoseconds,
+          sleep: clock.sleep,
+          freshSnapshotFetcherFactory: (binding, deadlineNanoseconds) => {
+            assert.deepEqual(binding, {
+              logGroupName: "/ecs/schoolpilot-production-api",
+              logStreamName: exactLogStream,
+              region,
+            });
+            observedDeadline = deadlineNanoseconds;
+            return async () => {
+              reads += 1;
+              return {
+                events: [
+                  event(validPreflight()),
+                  event(validSelection(), 3),
+                ],
+              };
+            };
+          },
+        });
+
+      assert.equal(observedDeadline, 3_000_000_000n);
+      assert.equal(reads, 1);
+      assert.equal(result.collection.status, "completed");
+      assert.equal(result.collection.attemptCount, 1);
+      assert.equal(
+        result.collection.logStreamSha256,
+        createHash("sha256").update(exactLogStream, "utf8").digest("hex")
+      );
+      assert.equal(result.binding?.logStream, exactLogStream);
+    }
+  });
+
+  it("does not count a deadline crossing as a CloudWatch attempt", async () => {
+    const points = [0n, 0n, 500_000_000n];
+    let last = points[0];
+    let reads = 0;
     const result =
-      await collectClasspilotTileAuthorizationPlanObservationEvidence({
-        taskExitCode: 0,
-        deadlineMs: 300_000,
-        deadlineNanoseconds: 3_000_000_000n,
-        nowNanoseconds: clock.nowNanoseconds,
-        sleep: clock.sleep,
-        fetchFreshSnapshot: async () => {
-          throw new Error("unavailable");
+      await collectBoundClasspilotTileAuthorizationPlanObservationEvidence({
+        taskResult: terminalTaskResult(),
+        logConfiguration,
+        expectedTaskArn: taskArn,
+        expectedTaskDefinitionArn: taskDefinitionArn,
+        expectedRegion: region,
+        expectedAccountId: accountId,
+        deadlineMs: 500,
+        nowNanoseconds: () => {
+          last = points.shift() ?? last;
+          return last;
+        },
+        sleep: async () => undefined,
+        freshSnapshotFetcherFactory: () => async () => {
+          reads += 1;
+          return { events: [] };
         },
       });
 
-    assert.equal(result.collection.status, "failed");
-    assert.equal(result.collection.attemptCount, 1);
-    assert.deepEqual(clock.delays, []);
+    assert.equal(reads, 0);
+    assert.deepEqual(result.collection, {
+      status: "failed",
+      attemptCount: 0,
+      completedAtUtc: result.collection.completedAtUtc,
+      failureCode: "collector_start_unavailable",
+      canonicalEventSha256: null,
+      logStreamSha256: null,
+      rawErrorPersisted: false,
+    });
+    assert.equal(result.eventsDocument, null);
+  });
+
+  it("latches the CLI deadline before delayed parsing and file reads", async () => {
+    const clock = fakeClock();
+    let clockLatched = false;
+    let parseDelayApplied = false;
+    let reads = 0;
+    const rawArguments = collectorCliArguments();
+    const delayedArguments = new Proxy(rawArguments, {
+      get(target, property, receiver) {
+        assert.equal(
+          clockLatched,
+          true,
+          "runCli must latch its monotonic start before reading argv"
+        );
+        if (!parseDelayApplied) {
+          parseDelayApplied = true;
+          clock.advance(100);
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+
+    const result = await runObservationCollectorCli(delayedArguments, {
+      nowNanoseconds: () => {
+        clockLatched = true;
+        return clock.nowNanoseconds();
+      },
+      sleep: clock.sleep,
+      readFile: (filePath: string) => {
+        clock.advance(200);
+        if (filePath === "terminal-task.private.json") {
+          return JSON.stringify(terminalTaskResult());
+        }
+        if (filePath === "log-configuration.private.json") {
+          return JSON.stringify(logConfiguration);
+        }
+        throw new Error("unexpected_file");
+      },
+      freshSnapshotFetcherFactory: () => async () => {
+        reads += 1;
+        return { events: [] };
+      },
+    });
+
+    assert.equal(parseDelayApplied, true);
+    assert.equal(reads, 0);
+    assert.deepEqual(result.collection, {
+      status: "failed",
+      attemptCount: 0,
+      completedAtUtc: result.collection.completedAtUtc,
+      failureCode: "collector_start_unavailable",
+      canonicalEventSha256: null,
+      logStreamSha256: null,
+      rawErrorPersisted: false,
+    });
+    assert.equal(result.eventsDocument, null);
+  });
+
+  it("fails binding with zero reads and never imports an absolute deadline", async () => {
+    for (const taskResult of [
+      terminalTaskResult("api/api/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+      terminalTaskResult(123 as unknown as string),
+      {
+        ...terminalTaskResult(),
+        tasks: [
+          {
+            ...terminalTaskResult().tasks[0],
+            taskDefinitionArn:
+              "arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:999",
+          },
+        ],
+      },
+    ]) {
+      let factoryCalls = 0;
+      const result =
+        await collectBoundClasspilotTileAuthorizationPlanObservationEvidence({
+          taskResult,
+          logConfiguration,
+          expectedTaskArn: taskArn,
+          expectedTaskDefinitionArn: taskDefinitionArn,
+          expectedRegion: region,
+          expectedAccountId: accountId,
+          freshSnapshotFetcherFactory: () => {
+            factoryCalls += 1;
+            return async () => ({ events: [] });
+          },
+        });
+      assert.equal(factoryCalls, 0);
+      assert.equal(result.binding, null);
+      assert.deepEqual(result.collection, {
+        status: "failed",
+        attemptCount: 0,
+        completedAtUtc: result.collection.completedAtUtc,
+        failureCode: "log_binding_unavailable",
+        canonicalEventSha256: null,
+        logStreamSha256: null,
+        rawErrorPersisted: false,
+      });
+      assert.equal(result.eventsDocument, null);
+    }
+
+    assert.doesNotMatch(collectorSource, /--deadline-monotonic-nanoseconds/);
+    assert.doesNotMatch(collectorSource, /deadlineNanoseconds\s*=\s*null/);
+    assert.doesNotMatch(
+      collectorSource,
+      /^import\s+\{[\s\S]*?resolveClasspilotTileAuthorizationPlanLogBinding[\s\S]*?from\s+"\.\/resolve-classpilot-tile-auth-plan-log-binding\.mjs";/m
+    );
+    assert.match(
+      collectorSource,
+      /await import\(\s*"\.\/resolve-classpilot-tile-auth-plan-log-binding\.mjs"\s*\)/
+    );
+    assert.match(
+      collectorSource,
+      /collectBoundClasspilotTileAuthorizationPlanObservationEvidence[\s\S]*nowNanoseconds\(\) \+ BigInt\(deadlineMs\)/
+    );
   });
 
   it("hashes the complete snapshot with recursive key sorting", () => {

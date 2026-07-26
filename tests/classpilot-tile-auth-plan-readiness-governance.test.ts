@@ -21,6 +21,7 @@ describe("ClassPilot tile authorization readiness governance", () => {
       "tests/classpilot-tile-auth-plan-base-selection-evidence.test.ts",
       "tests/classpilot-tile-auth-plan-observation.test.ts",
       "tests/classpilot-tile-auth-plan-observation-collector.test.ts",
+      "tests/classpilot-tile-auth-plan-observation-reread.test.ts",
       "tests/classpilot-tile-auth-plan-rehearsal-receipt.test.ts",
       "tests/classpilot-tile-auth-plan-readiness-governance.test.ts",
     ];
@@ -134,7 +135,8 @@ describe("ClassPilot tile authorization readiness governance", () => {
       "`base_eligible`",
       "`base_ineligible`",
       "`eligibleForDeployment`, `eligibleForDiagnostic`, and\n`eligibleForCertification` to exactly `false`",
-      "current remediation authorizes exactly one independently inspected\nobservation",
+      "current remediation first authorizes exactly one historical reread",
+      "then exactly one fresh,\nrelease-bound, independently inspected observation",
       "is never an alternate deployment path",
       "converted to report-only",
     ]) {
@@ -161,7 +163,8 @@ describe("ClassPilot tile authorization readiness governance", () => {
       "`schoolpilot-production-api:133`",
       "`schoolpilot-production-api-emergency:33`",
       "is historical-only",
-      "The current remediation authorizes exactly one independently inspected\nobservation.",
+      "The current remediation first authorizes exactly one historical reread",
+      "then exactly one fresh,\nrelease-bound, independently inspected observation.",
       "Any\nother observation outcome is terminal for the SHA",
       "the same merged SHA may run exactly one\ngate-only rehearsal",
       "one guarded backend deployment",

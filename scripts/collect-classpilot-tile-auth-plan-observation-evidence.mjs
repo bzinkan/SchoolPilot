@@ -2,6 +2,7 @@
 
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 import {
@@ -19,13 +20,17 @@ import {
 import {
   validateClasspilotTileAuthorizationPlanPreflightEvidence,
 } from "./validate-classpilot-tile-auth-plan-preflight-evidence.mjs";
-
 export const OBSERVATION_COLLECTION_VERSION =
   "classpilot-tile-auth-plan-observation-collection-v1";
 
 const SAFE_LOG_GROUP = /^[A-Za-z0-9_.\-/#]+$/;
 const SAFE_LOG_STREAM = /^[A-Za-z0-9_.\-/#]+$/;
 const SAFE_REGION = /^[a-z]{2}-[a-z]+-\d$/;
+const SAFE_ACCOUNT_ID = /^\d{12}$/;
+const SAFE_TASK_ARN =
+  /^arn:aws:ecs:[a-z]{2}-[a-z]+-\d:\d{12}:task\/(?:[A-Za-z0-9_-]+\/)?[a-f0-9]{32}$/;
+const SAFE_TASK_DEFINITION_ARN =
+  /^arn:aws:ecs:[a-z]{2}-[a-z]+-\d:\d{12}:task-definition\/[A-Za-z0-9_-]+:[1-9]\d*$/;
 const MAX_PAGES = 100;
 const MAX_EVENTS = 10_000;
 const DEFAULT_DEADLINE_MS = 300_000;
@@ -75,7 +80,10 @@ function completedCollection(attemptCount, eventsDocument) {
   };
 }
 
-function failedCollection(attemptCount, failureCode) {
+export function failedClasspilotTileAuthorizationPlanObservationCollection(
+  attemptCount,
+  failureCode
+) {
   return {
     collection: {
       status: "failed",
@@ -122,7 +130,6 @@ export async function collectClasspilotTileAuthorizationPlanObservationEvidence(
   taskExitCode,
   fetchFreshSnapshot,
   deadlineMs = DEFAULT_DEADLINE_MS,
-  deadlineNanoseconds = null,
   nowNanoseconds = () => process.hrtime.bigint(),
   sleep = defaultSleep,
 }) {
@@ -133,37 +140,51 @@ export async function collectClasspilotTileAuthorizationPlanObservationEvidence(
     typeof fetchFreshSnapshot !== "function" ||
     !Number.isSafeInteger(deadlineMs) ||
     deadlineMs < 1 ||
-    (deadlineNanoseconds !== null &&
-      (typeof deadlineNanoseconds !== "bigint" ||
-        deadlineNanoseconds < 1n)) ||
     typeof nowNanoseconds !== "function" ||
     typeof sleep !== "function"
   ) {
     throw new Error("observation_collection_configuration_invalid");
   }
 
-  const deadline =
-    deadlineNanoseconds ??
-    nowNanoseconds() + BigInt(deadlineMs) * 1_000_000n;
+  const deadline = nowNanoseconds() + BigInt(deadlineMs) * 1_000_000n;
+  return collectUntilDeadline({
+    taskExitCode,
+    fetchFreshSnapshot,
+    deadlineNanoseconds: deadline,
+    nowNanoseconds,
+    sleep,
+  });
+}
+
+async function collectUntilDeadline({
+  taskExitCode,
+  fetchFreshSnapshot,
+  deadlineNanoseconds,
+  nowNanoseconds,
+  sleep,
+}) {
   let attemptCount = 0;
 
-  while (nowNanoseconds() < deadline) {
+  while (nowNanoseconds() < deadlineNanoseconds) {
     const delayMs = nextRetryDelay(attemptCount);
     if (delayMs > 0) {
       const remainingBeforeDelay = Number(
-        (deadline - nowNanoseconds()) / 1_000_000n
+        (deadlineNanoseconds - nowNanoseconds()) / 1_000_000n
       );
       if (remainingBeforeDelay <= delayMs) break;
       await sleep(delayMs);
-      if (nowNanoseconds() >= deadline) break;
+      if (nowNanoseconds() >= deadlineNanoseconds) break;
     }
 
-    attemptCount += 1;
     const remainingMs = Number(
-      (deadline - nowNanoseconds()) / 1_000_000n
+      (deadlineNanoseconds - nowNanoseconds()) / 1_000_000n
     );
     if (remainingMs < 1) break;
 
+    // Count an attempt only once the fresh snapshot reader is about to be
+    // invoked. A deadline crossing between the loop guard and the remaining
+    // time check must remain a zero-read collector-start failure.
+    attemptCount += 1;
     try {
       const eventsDocument = await fetchFreshSnapshot({
         remainingMs,
@@ -178,18 +199,22 @@ export async function collectClasspilotTileAuthorizationPlanObservationEvidence(
     }
   }
 
-  return failedCollection(attemptCount, "log_evidence_unavailable");
+  return failedClasspilotTileAuthorizationPlanObservationCollection(
+    attemptCount,
+    "log_evidence_unavailable"
+  );
 }
 
 function parseArguments(argv) {
   const options = {};
   const allowed = new Set([
-    "--log-group-name",
-    "--log-stream-name",
-    "--region",
-    "--task-exit-code",
+    "--task-result-file",
+    "--log-configuration-file",
+    "--expected-task-arn",
+    "--expected-task-definition-arn",
+    "--expected-region",
+    "--expected-account-id",
     "--deadline-ms",
-    "--deadline-monotonic-nanoseconds",
   ]);
   for (let index = 0; index < argv.length; index += 2) {
     const name = argv[index];
@@ -204,12 +229,18 @@ function parseArguments(argv) {
     options[name] = value;
   }
   if (
-    !SAFE_LOG_GROUP.test(options["--log-group-name"] || "") ||
-    !SAFE_LOG_STREAM.test(options["--log-stream-name"] || "") ||
-    !SAFE_REGION.test(options["--region"] || "") ||
-    !/^(?:[0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$/.test(
-      options["--task-exit-code"] || ""
-    )
+    typeof options["--task-result-file"] !== "string" ||
+    options["--task-result-file"].length === 0 ||
+    options["--task-result-file"].length > 4096 ||
+    typeof options["--log-configuration-file"] !== "string" ||
+    options["--log-configuration-file"].length === 0 ||
+    options["--log-configuration-file"].length > 4096 ||
+    !SAFE_TASK_ARN.test(options["--expected-task-arn"] || "") ||
+    !SAFE_TASK_DEFINITION_ARN.test(
+      options["--expected-task-definition-arn"] || ""
+    ) ||
+    !SAFE_REGION.test(options["--expected-region"] || "") ||
+    !SAFE_ACCOUNT_ID.test(options["--expected-account-id"] || "")
   ) {
     throw new Error("observation_collection_arguments_invalid");
   }
@@ -219,27 +250,18 @@ function parseArguments(argv) {
   ) {
     throw new Error("observation_collection_arguments_invalid");
   }
-  if (
-    options["--deadline-monotonic-nanoseconds"] !== undefined &&
-    !/^[1-9][0-9]{0,20}$/.test(
-      options["--deadline-monotonic-nanoseconds"]
-    )
-  ) {
-    throw new Error("observation_collection_arguments_invalid");
-  }
   return {
-    logGroupName: options["--log-group-name"],
-    logStreamName: options["--log-stream-name"],
-    region: options["--region"],
-    taskExitCode: Number(options["--task-exit-code"]),
+    taskResultFile: options["--task-result-file"],
+    logConfigurationFile: options["--log-configuration-file"],
+    expectedTaskArn: options["--expected-task-arn"],
+    expectedTaskDefinitionArn:
+      options["--expected-task-definition-arn"],
+    expectedRegion: options["--expected-region"],
+    expectedAccountId: options["--expected-account-id"],
     deadlineMs:
       options["--deadline-ms"] === undefined
         ? DEFAULT_DEADLINE_MS
         : Number(options["--deadline-ms"]),
-    deadlineNanoseconds:
-      options["--deadline-monotonic-nanoseconds"] === undefined
-        ? null
-        : BigInt(options["--deadline-monotonic-nanoseconds"]),
   };
 }
 
@@ -316,26 +338,169 @@ function awsFreshSnapshotFetcher(binding, deadlineNanoseconds) {
     });
 }
 
-export async function runCli(argv) {
-  const options = parseArguments(argv);
+export async function collectBoundClasspilotTileAuthorizationPlanObservationEvidence({
+  taskResult,
+  logConfiguration,
+  expectedTaskArn,
+  expectedTaskDefinitionArn,
+  expectedRegion,
+  expectedAccountId,
+  deadlineMs = DEFAULT_DEADLINE_MS,
+  nowNanoseconds = () => process.hrtime.bigint(),
+  sleep = defaultSleep,
+  freshSnapshotFetcherFactory = awsFreshSnapshotFetcher,
+}) {
+  if (
+    !Number.isSafeInteger(deadlineMs) ||
+    deadlineMs < 1 ||
+    typeof nowNanoseconds !== "function" ||
+    typeof sleep !== "function" ||
+    typeof freshSnapshotFetcherFactory !== "function"
+  ) {
+    throw new Error("observation_collection_configuration_invalid");
+  }
+
   const deadlineNanoseconds =
-    options.deadlineNanoseconds ??
-    process.hrtime.bigint() + BigInt(options.deadlineMs) * 1_000_000n;
-  const result =
-    await collectClasspilotTileAuthorizationPlanObservationEvidence({
-      taskExitCode: options.taskExitCode,
-      deadlineMs: options.deadlineMs,
-      deadlineNanoseconds,
-      fetchFreshSnapshot: awsFreshSnapshotFetcher(
-        options,
-        deadlineNanoseconds
+    nowNanoseconds() + BigInt(deadlineMs) * 1_000_000n;
+  return collectBoundUntilDeadline({
+    taskResult,
+    logConfiguration,
+    expectedTaskArn,
+    expectedTaskDefinitionArn,
+    expectedRegion,
+    expectedAccountId,
+    deadlineNanoseconds,
+    nowNanoseconds,
+    sleep,
+    freshSnapshotFetcherFactory,
+  });
+}
+
+async function collectBoundUntilDeadline({
+  taskResult,
+  logConfiguration,
+  expectedTaskArn,
+  expectedTaskDefinitionArn,
+  expectedRegion,
+  expectedAccountId,
+  deadlineNanoseconds,
+  nowNanoseconds,
+  sleep,
+  freshSnapshotFetcherFactory,
+}) {
+  let resolveClasspilotTileAuthorizationPlanLogBinding;
+  try {
+    ({
+      resolveClasspilotTileAuthorizationPlanLogBinding,
+    } = await import(
+      "./resolve-classpilot-tile-auth-plan-log-binding.mjs"
+    ));
+  } catch {
+    return {
+      ...failedClasspilotTileAuthorizationPlanObservationCollection(
+        0,
+        "collector_start_unavailable"
       ),
+      binding: null,
+    };
+  }
+
+  let binding;
+  try {
+    binding = resolveClasspilotTileAuthorizationPlanLogBinding({
+      taskResult,
+      logConfiguration,
+      expectedTaskArn,
+      expectedTaskDefinitionArn,
+      expectedRegion,
+      expectedAccountId,
     });
+  } catch {
+    return {
+      ...failedClasspilotTileAuthorizationPlanObservationCollection(
+        0,
+        "log_binding_unavailable"
+      ),
+      binding: null,
+    };
+  }
+
+  let result = await collectUntilDeadline({
+    taskExitCode: binding.exitCode,
+    deadlineNanoseconds,
+    nowNanoseconds,
+    sleep,
+    fetchFreshSnapshot: freshSnapshotFetcherFactory(
+      {
+        logGroupName: binding.logGroup,
+        logStreamName: binding.logStream,
+        region: binding.logRegion,
+      },
+      deadlineNanoseconds
+    ),
+  });
+  if (
+    result.collection.status === "failed" &&
+    result.collection.attemptCount === 0
+  ) {
+    result =
+      failedClasspilotTileAuthorizationPlanObservationCollection(
+        0,
+        "collector_start_unavailable"
+      );
+  }
   if (result.collection.status === "completed") {
     result.collection.logStreamSha256 = createHash("sha256")
-      .update(options.logStreamName, "utf8")
+      .update(binding.logStream, "utf8")
       .digest("hex");
   }
+  return { ...result, binding };
+}
+
+export async function runCli(
+  argv,
+  {
+    nowNanoseconds = () => process.hrtime.bigint(),
+    sleep = defaultSleep,
+    readFile = readFileSync,
+    freshSnapshotFetcherFactory = awsFreshSnapshotFetcher,
+  } = {}
+) {
+  // Latch before argument parsing or file I/O. This absolute monotonic value
+  // never crosses a process or CLI boundary; it only bounds work performed by
+  // this collector process.
+  const startedAtNanoseconds = nowNanoseconds();
+  const options = parseArguments(argv);
+  const deadlineNanoseconds =
+    startedAtNanoseconds + BigInt(options.deadlineMs) * 1_000_000n;
+  let taskResult;
+  let logConfiguration;
+  try {
+    taskResult = JSON.parse(
+      readFile(options.taskResultFile, "utf8")
+    );
+    logConfiguration = JSON.parse(
+      readFile(options.logConfigurationFile, "utf8")
+    );
+  } catch {
+    return failedClasspilotTileAuthorizationPlanObservationCollection(
+      0,
+      "log_binding_unavailable"
+    );
+  }
+  const { binding: _binding, ...result } =
+    await collectBoundUntilDeadline({
+      taskResult,
+      logConfiguration,
+      expectedTaskArn: options.expectedTaskArn,
+      expectedTaskDefinitionArn: options.expectedTaskDefinitionArn,
+      expectedRegion: options.expectedRegion,
+      expectedAccountId: options.expectedAccountId,
+      deadlineNanoseconds,
+      nowNanoseconds,
+      sleep,
+      freshSnapshotFetcherFactory,
+    });
   return result;
 }
 
