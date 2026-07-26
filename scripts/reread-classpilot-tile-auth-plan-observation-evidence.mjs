@@ -3,6 +3,7 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -67,22 +68,48 @@ function stableSha256(value) {
     .digest("hex");
 }
 
-function defaultGitText(args) {
-  const overriddenGitExecutable = process.env.GIT_EXECUTABLE;
+export function resolveObservationRereadGitExecutable(
+  environment = process.env,
+  temporaryRoot = os.tmpdir()
+) {
+  const overriddenGitExecutable = environment.GIT_EXECUTABLE;
+  if (!overriddenGitExecutable) return "git";
+  const configuredTestRoot =
+    environment.CLP_LOAD_GATES_TEST_ROOT;
+  const relativeTestRoot =
+    typeof configuredTestRoot === "string" &&
+    configuredTestRoot.length > 0
+      ? path.relative(
+          path.resolve(temporaryRoot),
+          path.resolve(configuredTestRoot)
+        )
+      : null;
   if (
-    overriddenGitExecutable &&
-    (process.env.NODE_ENV !== "test" ||
-      process.env.CLP_LOAD_FIXTURE_TEST_MODE !== "1")
+    environment.NODE_ENV !== "test" ||
+    environment.CLP_LOAD_FIXTURE_TEST_MODE !== "1" ||
+    relativeTestRoot === null ||
+    relativeTestRoot.length === 0 ||
+    relativeTestRoot === ".." ||
+    relativeTestRoot.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relativeTestRoot)
   ) {
     throw new Error("observation_reread_controller_repository_invalid");
   }
-  const result = spawnSync(overriddenGitExecutable || "git", args, {
+  return overriddenGitExecutable;
+}
+
+function defaultGitText(args) {
+  const result = spawnSync(
+    resolveObservationRereadGitExecutable(),
+    args,
+    {
     cwd: REPOSITORY_ROOT,
     encoding: "utf8",
     windowsHide: true,
     timeout: 30_000,
     maxBuffer: 4 * 1024 * 1024,
-  });
+    }
+  );
   if (result.error || result.status !== 0 || result.signal) {
     throw new Error("observation_reread_controller_repository_invalid");
   }

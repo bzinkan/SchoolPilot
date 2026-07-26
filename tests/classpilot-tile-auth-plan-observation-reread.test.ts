@@ -21,6 +21,7 @@ import {
   OBSERVATION_REREAD_VERSION,
 } from "../scripts/manage-classpilot-tile-auth-plan-observation-evidence-reread.mjs";
 import {
+  resolveObservationRereadGitExecutable,
   runClasspilotTileAuthorizationPlanObservationReread,
 } from "../scripts/reread-classpilot-tile-auth-plan-observation-evidence.mjs";
 
@@ -531,6 +532,85 @@ describe("ClassPilot observation evidence reread", () => {
     assert.equal(
       fs.existsSync(path.join(fixture.runRoot, "evidence-reread")),
       false
+    );
+  });
+
+  it("confines the subprocess Git override to a disposable test evidence root", () => {
+    const fixture = sourceFixture();
+    assert.equal(
+      resolveObservationRereadGitExecutable(
+        {
+          NODE_ENV: "test",
+          CLP_LOAD_FIXTURE_TEST_MODE: "1",
+          CLP_LOAD_GATES_TEST_ROOT: fixture.root,
+          GIT_EXECUTABLE: process.execPath,
+        } as NodeJS.ProcessEnv,
+        os.tmpdir()
+      ),
+      process.execPath
+    );
+    for (const environment of [
+      {
+        NODE_ENV: "test",
+        CLP_LOAD_FIXTURE_TEST_MODE: "1",
+        GIT_EXECUTABLE: process.execPath,
+      },
+      {
+        NODE_ENV: "test",
+        CLP_LOAD_FIXTURE_TEST_MODE: "1",
+        CLP_LOAD_GATES_TEST_ROOT: path.resolve(
+          os.tmpdir(),
+          "..",
+          "not-disposable"
+        ),
+        GIT_EXECUTABLE: process.execPath,
+      },
+    ]) {
+      assert.throws(
+        () =>
+          resolveObservationRereadGitExecutable(
+            environment as NodeJS.ProcessEnv,
+            os.tmpdir()
+          ),
+        /observation_reread_controller_repository_invalid/
+      );
+    }
+
+    const processStub = writeRereadProcessPreload(
+      fixture.root,
+      fixture.options.controllerGitSha,
+      fixture.options
+    );
+    delete processStub.environment.CLP_LOAD_GATES_TEST_ROOT;
+    const rereadScript = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../scripts/reread-classpilot-tile-auth-plan-observation-evidence.mjs"
+    );
+    const child = spawnSync(
+      process.execPath,
+      [rereadScript, ...rereadCliArguments(fixture.options, 5_000)],
+      {
+        cwd: path.resolve(
+          path.dirname(fileURLToPath(import.meta.url)),
+          ".."
+        ),
+        encoding: "utf8",
+        env: processStub.environment,
+        timeout: 30_000,
+      }
+    );
+    assert.equal(child.status, 1);
+    assert.equal(
+      child.stderr,
+      "classpilot_tile_auth_plan_observation_reread_failed\n"
+    );
+    assert.equal(
+      fs.existsSync(path.join(fixture.runRoot, "evidence-reread")),
+      false
+    );
+    assert.equal(
+      fs.readFileSync(processStub.callsPath, "utf8"),
+      ""
     );
   });
 

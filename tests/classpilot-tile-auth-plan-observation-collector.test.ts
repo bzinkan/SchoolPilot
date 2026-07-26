@@ -542,6 +542,19 @@ describe("ClassPilot tile authorization observation collector", () => {
     );
     await assert.rejects(
       () =>
+        collectBoundClasspilotTileAuthorizationPlanObservationEvidence({
+          taskResult: terminalTaskResult(),
+          logConfiguration,
+          expectedTaskArn: taskArn,
+          expectedTaskDefinitionArn: taskDefinitionArn,
+          expectedRegion: region,
+          expectedAccountId: accountId,
+          deadlineMs: 300_001,
+        }),
+      /observation_collection_configuration_invalid/
+    );
+    await assert.rejects(
+      () =>
         runObservationCollectorCli(collectorCliArguments(300_001), {
           readFile: () => {
             throw new Error("must_not_read");
