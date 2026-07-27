@@ -5,22 +5,211 @@ reduction. It is deliberately fail-closed. A passing load summary is necessary
 but not sufficient; the corresponding AWS monitor result, rollback evidence,
 deployment checks, snapshots, and cost checks must also pass.
 
+## Current medium decision path: engineering capacity acceptance
+
+The active medium-capacity decision is a single engineering acceptance run,
+not the historical supervisor certification chain. The frozen application
+baseline is commit `f5759465b5a2ae43d4808c9aa53acc43c3c375b0`; its tooling-only
+successor may change only load/deployment tooling, tests, this runbook, and
+`docs/SCALE_READINESS.md`. Application, frontend, SQL, dependency, Docker, and
+Terraform content must remain byte-identical to that baseline.
+
+Deploy the merged successor once with the strict rollback-only tile-plan gate:
+
+```bash
+bash scripts/deploy.sh production --backend --activate-emergency \
+  --classpilot-tile-auth-plan-gate --capacity-acceptance-release
+bash scripts/deploy.sh production --frontend \
+  --capacity-acceptance-frontend-sha <full-40-hex-merged-sha>
+```
+
+The capacity-release path builds and registers the candidate, runs the
+authorization SQL plan gate before migration, deploys and converges the API and
+worker, and reruns the gate from the active revision. It does not require or
+consume an observation, reread, supersession, rehearsal receipt, offline
+preparation rehearsal, host smoke, certification receipt, chain root, or
+attestation. A gate, migration, convergence, identity, rollback, or restoration
+failure remains authoritative and fail-closed.
+
+Run the two-stage decision through
+`scripts/load/start-classpilot-capacity-acceptance.ps1`. `Validate` is
+non-mutating. One `Run` owns fixture refresh/verification, the harness and AWS
+monitor start-gate order, a temporary six-API capacity pin, PostgreSQL `57014`
+evidence, cause-specific rollback, and exact scaling restoration:
+
+```powershell
+pwsh -NoProfile -File scripts/load/start-classpilot-capacity-acceptance.ps1 `
+  -Mode Validate -ConfigPath C:\absolute\private\capacity-acceptance.json
+pwsh -NoProfile -File scripts/load/start-classpilot-capacity-acceptance.ps1 `
+  -Mode Run -ConfigPath C:\absolute\private\capacity-acceptance.json
+```
+
+Create all run roots as disjoint, ACL-private directories. Bootstrap the
+continuity root exactly once; it must initially contain only the two durable
+authority files:
+
+```powershell
+$AuthorityRoot = Join-Path $env:LOCALAPPDATA "SchoolPilot\load-gates\launch-safe-20260711"
+$AcceptanceRoot = Join-Path $env:LOCALAPPDATA ("SchoolPilot\capacity-acceptance\" + [Guid]::NewGuid().ToString("N"))
+$ContinuityRoot = Join-Path $AcceptanceRoot "continuity"
+$SupportRoot = Join-Path $AcceptanceRoot "support"
+$EvidenceParent = Join-Path $AcceptanceRoot "evidence"
+$EvidenceRoot = Join-Path $EvidenceParent "run"
+$ConfigRoot = Join-Path $AcceptanceRoot "config"
+$ReportRoot = Join-Path $AcceptanceRoot "report"
+New-Item -ItemType Directory -Path $ContinuityRoot,$SupportRoot,$EvidenceParent,$ConfigRoot,$ReportRoot |
+  Out-Null
+$Sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+foreach ($Root in @($AcceptanceRoot,$ContinuityRoot,$SupportRoot,$EvidenceParent,$ConfigRoot,$ReportRoot)) {
+  & icacls.exe $Root /inheritance:r /grant:r "*${Sid}:(OI)(CI)F" | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw "Could not make $Root private" }
+}
+foreach ($Name in @("fixture-state.private.json","fixture-ownership.private.json")) {
+  Copy-Item -LiteralPath (Join-Path $AuthorityRoot $Name) -Destination (Join-Path $ContinuityRoot $Name)
+  $SourceHash = (Get-FileHash -LiteralPath (Join-Path $AuthorityRoot $Name) -Algorithm SHA256).Hash
+  $CopyHash = (Get-FileHash -LiteralPath (Join-Path $ContinuityRoot $Name) -Algorithm SHA256).Hash
+  if ($SourceHash -cne $CopyHash) { throw "$Name changed during continuity bootstrap" }
+}
+if (@(Get-ChildItem -LiteralPath $ContinuityRoot -Force).Count -ne 2) {
+  throw "Continuity root contains an unauthorized artifact"
+}
+if (Test-Path -LiteralPath $EvidenceRoot) {
+  throw "The exact evidence root must remain absent until Run creates it"
+}
+```
+
+Copy the hash-identical fixture config, fixture-password DPAPI document,
+super-admin DPAPI document, and matching operation document into the separate
+support. Those four files must be its only direct children. Never print their
+contents. Capture the exact active and prior API/worker revision ARNs. The
+runner independently re-describes all four ACTIVE revisions and rejects CPU,
+memory, network mode, role, container, environment-name, or secret-name
+incompatibility. It also reads and validates the committed 05:45/10:00 ET
+schedule and 70% CPU policy directly; no operator-authored schedule receipt or
+canonical hash is required.
+
+The ACL-private capacity config has this exact shape. Replace every placeholder,
+use the source/destination SHA-256 values, use the post-deploy active and
+captured rollback revisions, and choose same-width start windows near 22:30 ET
+and 01:15 ET on consecutive local dates:
+
+```json
+{
+  "schemaVersion": 1,
+  "engineeringAcceptance": true,
+  "runId": "REPLACE_UNIQUE_CAMPAIGN_ID",
+  "baseUrl": "https://school-pilot.net",
+  "evidenceRoot": "C:/absolute/private/evidence",
+  "reportPath": "C:/absolute/private/report/capacity.txt",
+  "fixture": {
+    "authorityFixtureId": "launch-safe-20260711",
+    "authoritySourceRoot": "C:/absolute/private/launch-safe-20260711",
+    "authorityStateSha256": "REPLACE_64_HEX",
+    "authorityOwnershipSha256": "REPLACE_64_HEX",
+    "configPath": "C:/absolute/private/support/fixture-config.json",
+    "configSha256": "REPLACE_64_HEX",
+    "continuityRoot": "C:/absolute/private/continuity",
+    "stateSha256": "REPLACE_SAME_AUTHORITY_STATE_HASH",
+    "ownershipSha256": "REPLACE_SAME_AUTHORITY_OWNERSHIP_HASH",
+    "support": {
+      "root": "C:/absolute/private/support",
+      "fixturePasswordsPath": "C:/absolute/private/support/fixture-passwords.dpapi.json",
+      "fixturePasswordsSha256": "REPLACE_64_HEX",
+      "superAdminPasswordPath": "C:/absolute/private/support/temporary-local-password.dpapi.json",
+      "superAdminPasswordSha256": "REPLACE_64_HEX",
+      "superAdminOperationPath": "C:/absolute/private/support/operation.json",
+      "superAdminOperationSha256": "REPLACE_64_HEX"
+    }
+  },
+  "deploymentIdentity": {
+    "applicationGitSha": "REPLACE_40_HEX",
+    "deployedImageDigest": "sha256:REPLACE_64_HEX",
+    "apiTaskDefinitionArn": "REPLACE_ACTIVE_API_REVISION_ARN",
+    "workerTaskDefinitionArn": "REPLACE_ACTIVE_WORKER_REVISION_ARN",
+    "rollbackApiTaskDefinitionArn": "REPLACE_PRIOR_API_REVISION_ARN",
+    "rollbackWorkerTaskDefinitionArn": "REPLACE_PRIOR_WORKER_REVISION_ARN"
+  },
+  "expectedGeneratorPublicIp": "REPLACE_IPV4",
+  "notificationTopicArn": "arn:aws:sns:us-east-1:135775632425:REPLACE_TOPIC",
+  "resources": {
+    "region": "us-east-1",
+    "accountId": "135775632425",
+    "cluster": "schoolpilot-production-cluster",
+    "apiService": "schoolpilot-production-api",
+    "workerService": "schoolpilot-production-scheduler-worker",
+    "rdsInstanceId": "REPLACE_RDS_ID",
+    "redisCacheClusterId": "REPLACE_CACHE_CLUSTER_ID",
+    "redisReplicationGroupId": "REPLACE_REPLICATION_GROUP_ID",
+    "vpcId": "REPLACE_VPC_ID",
+    "wafWebAclName": "REPLACE_WEB_ACL_NAME",
+    "wafDeviceClassifierMetricName": "REPLACE_METRIC",
+    "wafDeviceRuleMetricName": "REPLACE_METRIC",
+    "wafApiRuleMetricName": "REPLACE_METRIC",
+    "cloudFrontDistributionId": "REPLACE_DISTRIBUTION_ID",
+    "targetGroupArn": "REPLACE_TARGET_GROUP_ARN",
+    "route53HealthCheckId": "REPLACE_HEALTH_CHECK_ID",
+    "route53AlarmName": "REPLACE_ALARM_NAME",
+    "expectedNatGatewayCount": 2,
+    "expectedRoute53MeasureLatency": true,
+    "expectedEcsAssignPublicIp": false,
+    "ecsTaskSubnetIds": ["subnet-REPLACE_A", "subnet-REPLACE_B"],
+    "expectedRedisNodeType": "cache.t4g.small",
+    "expectedRdsInstanceClass": "db.t4g.medium",
+    "expectedActiveApiTaskDefinitionArn": "REPLACE_ACTIVE_API_REVISION_ARN",
+    "expectedActiveWorkerTaskDefinitionArn": "REPLACE_ACTIVE_WORKER_REVISION_ARN"
+  },
+  "stages": [
+    {"stage":"500","runId":"REPLACE_WAF500_ID",
+      "trafficStartNotBeforeUtc":"REPLACE_UTC","trafficStartNotAfterUtc":"REPLACE_UTC"},
+    {"stage":"800","runId":"REPLACE_WAF800_ID",
+      "trafficStartNotBeforeUtc":"REPLACE_UTC","trafficStartNotAfterUtc":"REPLACE_UTC"}
+  ]
+}
+```
+
+The only accepted profiles are Waf/500 at `510` sockets for `1,800` seconds
+with `25` targets per class, followed by Waf/800 at `810` sockets for `5,400`
+seconds with `40` targets per class. Waf/800 must span the local 01:30 purge
+and 02:00 rollup. Waf/500 rejection prevents Waf/800. A stage may receive one
+in-process pretraffic retry only when no start gate or progress record was
+released and exact restoration is proven; traffic itself is one-shot.
+
+The harness and monitor identify these runs with `engineeringAcceptance=true`,
+`diagnosticOnly=false`, and `certificationEligible=false`. CloudWatch,
+PostgreSQL logs, workload summaries, identity checks, and restoration state are
+the acceptance evidence. Performance Insights remains Standard-mode
+informational context only; query-ID discovery, Advanced mode, PI ratios,
+supervisor sealing, and predecessor chaining are not acceptance gates.
+
+Success is named **SchoolPilot 800-device engineering capacity acceptance on
+`db.t4g.medium`**. It is not a supervisor-sealed certification and does not
+lift the managed-Chromebook or real-student onboarding hold. A workload,
+provider-evidence, or restoration failure produces the terminal engineering
+report; after the tooling successor merges, it does not authorize another code
+remediation, workload retry, RDS resize, cache change, threshold relaxation, or
+xlarge fallback.
+
+All older diagnostic, certification, observation-reread, supersession,
+rehearsal-receipt, chain, seal, and Database Insights Advanced procedures below
+remain historical/inspection material only. They cannot admit, invalidate, or
+seed this engineering acceptance.
+
 ## Non-negotiable boundaries
 
 - Use one Terraform operator and the local backend through launch.
-- Run rollout, diagnostic, certification, PI-finalization, and credential
-  operations from PowerShell 7.5 or newer (`pwsh`), not Windows PowerShell 5.1
-  (`powershell.exe`). Date-preserving AWS evidence decoding requires 7.5. The
-  scripts enforce their runtime floors before operational work.
+- Run rollout, capacity-acceptance, and credential operations from PowerShell
+  7.5 or newer (`pwsh`), not Windows PowerShell 5.1 (`powershell.exe`).
+  Date-preserving AWS evidence decoding requires 7.5. Historical diagnostic,
+  certification, and PI-finalization tools retain the same runtime floor but
+  are not active admission paths.
 - Use the committed AWS provider `5.100.0` lock file. Never run
   `terraform init -upgrade` during this rollout.
-- Deploy the application only from a clean merged `main`. While the launch-safe
-  2048 MiB API posture is selected, first run the inactive candidate through
-  the gate-only rehearsal described below. Then deploy that exact rehearsed
-  candidate with the single-use receipt before publishing the matching
-  frontend without changing the checkout. Both backend operations must bind
-  the identical release SHA and image digest; the frontend binds that same
-  SHA. Do not package or upload the ClassPilot extension.
+- Deploy the application only from a clean merged `main`. For this medium
+  decision, use the capacity-release command above and publish the matching
+  frontend without changing the checkout. Backend and frontend bind the
+  identical release SHA; API and worker bind the identical image digest. Do
+  not substitute the historical observation/rehearsal/receipt path, and do not
+  package or upload the ClassPilot extension.
 - Keep RDS and Redis private. Public IPv4 is only for outbound egress from the
   staged ECS API and worker tasks; the ALB remains the only inbound API path.
 - Keep Route 53 DNS, nameservers, CloudFront routing, the HTTPS `/health`
@@ -163,7 +352,7 @@ finally { $PlanHandle.Dispose() }
 Remove-Item -LiteralPath $PlanPath -Force
 ```
 
-## Publish and same-SHA application deployment
+## Publish the frozen same-SHA capacity release
 
 The rollout branch is `codex/aws-cost-reduction-launch-safety`. Before opening
 the PR, run backend tests/type-check/build/SOC 2 checks, frontend lint/API-route
@@ -176,29 +365,21 @@ mark ready, squash-merge, update local `main`, and require a clean tree exactly
 equal to `origin/main`. Wait for post-merge CI and Trivy.
 
 Capture the current API and worker task-definition ARNs before deploying. From
-the clean merged checkout, run the inactive candidate rehearsal first:
+the clean merged checkout, run the one guarded capacity backend deployment:
 
 ```bash
 ./scripts/deploy.sh production --backend --activate-emergency \
   --classpilot-tile-auth-plan-gate \
-  --classpilot-tile-auth-plan-rehearsal
+  --capacity-acceptance-release
 ```
 
-After it seals a passing receipt, deploy the exact same candidate:
-
-```bash
-./scripts/deploy.sh production --backend --activate-emergency \
-  --classpilot-tile-auth-plan-gate \
-  --reuse-classpilot-tile-auth-plan-rehearsal <absolute-private-receipt-path> \
-  --expected-classpilot-tile-auth-plan-rehearsal-sha256 <64-hex>
-```
-
-The rehearsal keeps the current release serving and performs no migration or
-service mutation. The guarded reuse keeps the current 2048 MiB API serving
-until the rehearsed, digest-matched 2048 MiB revision is healthy. It binds that
-exact revision to the migration task, API service update, and strict stability
-check; the worker is updated to the same image digest at its existing 256/512
-size.
+The capacity path runs the strict rollback-only authorization SQL plan gate
+before migration, keeps the current 2048 MiB API serving until the new
+digest-matched revision is healthy, and reruns the gate from the active
+revision. It requires no observation, reread, supersession, rehearsal receipt,
+offline rehearsal, host smoke, certification receipt, chain root, or
+attestation. The worker is updated to the same image digest at its existing
+256/512 size.
 
 Do not use `--skip-wait` in production. The script fails closed unless the API
 is stable at `1/1` or `2/2` and the worker is stable at `1/1`. After the slow
@@ -230,7 +411,8 @@ before publishing the matching frontend or running any load test. Without
 changing the checkout, republish the frontend from the identical SHA:
 
 ```bash
-./scripts/deploy.sh production --frontend
+./scripts/deploy.sh production --frontend \
+  --capacity-acceptance-frontend-sha <full-40-hex-merged-sha>
 ```
 
 Re-read `git rev-parse HEAD`, require it to equal the backend release SHA, and
@@ -241,6 +423,21 @@ require the worktree to remain clean after both deployments.
 The preparer uses supported production APIs only. Its private config and
 artifacts must be under `%LOCALAPPDATA%\SchoolPilot\load-gates`; no real student
 record or repository-local secret is permitted.
+
+For this acceptance, create one new ACL-private mutable continuity root from
+the tool-owned `launch-safe-20260711` authority. Copy only
+`fixture-state.private.json` and `fixture-ownership.private.json` byte-for-byte,
+and verify the source and destination SHA-256 values. Put the hash-identical
+fixture config plus required DPAPI credential and operation documents in a
+separate ACL-private support root. Do not copy historical device, authentication,
+command, verification, snapshot, diagnostic, or certification artifacts. The
+capacity runner refreshes and verifies the same continuity root once per stage;
+it does not promote an old stage result.
+
+The remaining provision/deactivate procedure in this section is historical
+fixture-operator reference. The capacity acceptance does not call `provision`,
+`deactivate`, or `cleanup`; only its two owned `refresh`/`verify` operations are
+authorized.
 
 ```powershell
 node scripts/load/prepare-classpilot-load-test.mjs --help
@@ -298,7 +495,12 @@ checkpointed as complete until the supported super-admin list/detail APIs prove
 that the exact ID is absent or returns the exact suspended record with a valid
 `deletedAt` timestamp.
 
-## Load harness and AWS supervision
+## Historical load harness and supervisor reference (inactive)
+
+The direct harness and legacy supervisor commands below remain inspectable for
+their underlying workload semantics. They are not active admission or execution
+paths. Use the capacity runner and exact two profiles documented at the top of
+this runbook.
 
 Credential-free fixture validation:
 
@@ -599,7 +801,8 @@ Production monitor `Validate` and `Monitor` invocations require the supervisor's
 `-ExpectedConfigSha256`; direct production invocation without that bound config
 digest is rejected. Isolated `testMode` unit calls may omit it.
 
-The medium-RDS production chain is:
+Historical supervisor-chain reference (inactive for the current medium
+decision):
 
 `Waf/500 -> Waf/800 -> PublicEcs/800 -> PublicEcs/24h no-load -> NatRemoved/800 -> Route53/no-load -> Redis/500 -> Redis/800 -> Redis/burst -> Final/endurance`.
 
@@ -678,7 +881,7 @@ one-minute resource breaches. A missing metric, missed duration, stale
 artifact, notification failure, or incomplete acceptance invalidates the run;
 monitoring-completeness failures never guess at an infrastructure mutation.
 
-## Optimized-build certification and conditional capacity path (2026-07-17)
+## Historical optimized-build certification path (inactive, 2026-07-17)
 
 The current application baseline is `805a0f73c63e0c8f5706776d3d8bbcb4afcbbc00`
 at digest
@@ -1075,7 +1278,7 @@ sanitized gate failure code. Exit zero plus complete valid evidence remains
 mandatory for acceptance; log binding must never replace the real gate
 failure.
 
-## Final stop-loss campaign authorization
+## Historical final stop-loss campaign authorization (inactive)
 
 This is the campaign's final remediation PR. Its exact changed-file allowlist
 is:
@@ -1845,10 +2048,11 @@ Do not rerun the historical WAF/alarm creation plan or the prior diagnostic
 partial smoke. Verify the live 100,000/5-minute device-ingest and 50,000/5-minute
 generic API rules remain in `BLOCK`, both per-rule WAF alarms are healthy, and
 the Redis alarms have real `CacheClusterId` datapoints. Never detach WAF. The
-next authorized traffic is the fresh supervisor-owned Waf/500 -> Waf/800 chain
-described above; historical results and drills cannot seed it.
+next authorized traffic is the engineering-capacity Waf/500 -> Waf/800 run
+owned by `start-classpilot-capacity-acceptance.ps1`; historical results and
+drills cannot seed it.
 
-## Phase 2: public ECS while NAT remains
+## Deferred phase 2: public ECS while NAT remains (inactive)
 
 Keep the canonical profile unchanged during this phase. Explicitly override
 only the ECS subnet posture for the reviewed public-task plan; the profile
@@ -1904,7 +2108,7 @@ Run the 810-socket 90-minute gate, then the exact 24-hour `MonitorOnly` soak.
 The final six hours require all 360 fresh one-minute datapoints, under 1 MiB
 total NAT bytes, no drops/allocation errors, and no upward trend.
 
-## Phase 3: NAT removal
+## Deferred phase 3: NAT removal (inactive)
 
 Only after the soak passes, merge a phase-specific `production.tfvars` PR that
 sets `ecs_tasks_in_public_subnets=true` and `enable_nat_gateway=false`. This
@@ -1966,7 +2170,7 @@ repeat all egress checks and the 810-socket
 gate, and verify no NAT gateway remains. Confirm delayed billing reports
 `NatGateway-Hours` at zero before final cost acceptance.
 
-## Phase 4: Route 53 latency measurement
+## Deferred phase 4: Route 53 latency measurement (inactive)
 
 Only after NAT removal is accepted, merge a phase-specific
 `production.tfvars` PR that changes `route53_measure_latency` from `true` to
@@ -1977,7 +2181,7 @@ hosted-zone, DNS, nameserver, CloudFront, or unrelated change.
 Require every Route 53 checker to report exact HTTP 200 on HTTPS `/health` and
 the replacement alarm to remain `OK` for three one-minute periods.
 
-## Phase 5: Redis micro and final workload
+## Deferred phase 5: Redis micro and final workload (inactive)
 
 Confirm no pending maintenance. Create a uniquely named manual snapshot from
 `schoolpilot-production-redis-001` and wait for `available`. Merge only the

@@ -21,6 +21,11 @@ $script:MissingMetrics = @{}
 $script:SeenStoppedTasks = @{}
 $script:LastMetricTimestamps = @{}
 $script:AcceptanceSeries = @{}
+$script:AcceptanceSourceStatuses = @{}
+$script:AcceptanceSourceCoverage = @{}
+$script:AcceptanceSparseCoverageRequired = [System.Collections.Generic.HashSet[string]]::new(
+    [StringComparer]::Ordinal
+)
 $script:AcceptanceViolations = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 $script:NatSamples = [System.Collections.Generic.List[object]]::new()
 $script:Route53AlarmOkPeriods = 0
@@ -313,6 +318,48 @@ function Get-VerifiedPredecessorEvidence {
     }
 }
 
+function Test-ContainsForbiddenEngineeringBinding {
+    param(
+        $Value,
+        [int]$Depth = 0
+    )
+    if ($Depth -gt 40) {
+        throw "Engineering acceptance config nesting exceeds the bounded validation depth."
+    }
+    if ($null -eq $Value -or $Value -is [string] -or $Value.GetType().IsPrimitive) {
+        return $false
+    }
+    if ($Value -is [System.Collections.IDictionary]) {
+        foreach ($key in @($Value.Keys)) {
+            $name = [string]$key
+            if ($name -match '(?i)(predecessor|receipt|seal|chainroot|attestation|queryidentity|databaseinsightslease|certification)') {
+                return $true
+            }
+            if (Test-ContainsForbiddenEngineeringBinding -Value $Value[$key] -Depth ($Depth + 1)) {
+                return $true
+            }
+        }
+        return $false
+    }
+    if ($Value -is [System.Collections.IEnumerable]) {
+        foreach ($entry in @($Value)) {
+            if (Test-ContainsForbiddenEngineeringBinding -Value $entry -Depth ($Depth + 1)) {
+                return $true
+            }
+        }
+        return $false
+    }
+    foreach ($property in @($Value.PSObject.Properties)) {
+        if ($property.Name -match '(?i)(predecessor|receipt|seal|chainroot|attestation|queryidentity|databaseinsightslease|certification)') {
+            return $true
+        }
+        if (Test-ContainsForbiddenEngineeringBinding -Value $property.Value -Depth ($Depth + 1)) {
+            return $true
+        }
+    }
+    return $false
+}
+
 function Read-Configuration {
     $path = Assert-ExternalPath -Path $ConfigPath -Name "ConfigPath"
     try { $config = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json -DateKind String -Depth 30 }
@@ -343,8 +390,22 @@ function Read-Configuration {
     $diagnosticOnlyValue = Get-OptionalValue $config "diagnosticOnly" $false
     if ($diagnosticOnlyValue -isnot [bool]) { throw "diagnosticOnly must be a JSON boolean." }
     $diagnosticOnly = [bool]$diagnosticOnlyValue
-    if ($diagnosticOnly -and $testMode) {
-        throw "diagnosticOnly is reserved for the governed production Waf/800 diagnostic path."
+    $engineeringAcceptanceValue = Get-OptionalValue $config "engineeringAcceptance" $false
+    if ($engineeringAcceptanceValue -isnot [bool]) { throw "engineeringAcceptance must be a JSON boolean." }
+    $engineeringAcceptance = [bool]$engineeringAcceptanceValue
+    if ($diagnosticOnly -and $engineeringAcceptance) {
+        throw "diagnosticOnly and engineeringAcceptance are mutually exclusive."
+    }
+    if ($engineeringAcceptance -and $null -eq $progress) {
+        throw "Engineering acceptance requires bound load progress and summary artifacts."
+    }
+    if (($diagnosticOnly -or $engineeringAcceptance) -and $testMode) {
+        throw "Diagnostic-only and engineering-acceptance modes are reserved for governed production Waf paths and cannot use testMode."
+    }
+    if ($engineeringAcceptance) {
+        if (Test-ContainsForbiddenEngineeringBinding -Value $config) {
+            throw "Engineering acceptance must not declare certification, predecessor, query-identity, or Database Insights lease bindings, including nested receipt, seal, chain, and attestation data."
+        }
     }
 
     $expectedGeneratorPublicIp = $null
@@ -392,18 +453,28 @@ function Read-Configuration {
             WorkloadSchemaVersion = $workloadSchemaVersion
             EndpointShapeSha256 = $workloadEndpointShapeSha256
         }
+        $signature = "$($workload.Devices):$($workload.DurationSeconds):$($workload.ScreenshotBytes):$($workload.CanaryDevices)"
+        if ($engineeringAcceptance) {
+            $engineeringProfiles = [ordered]@{
+                "510:1800:40960:10" = "500"
+                "810:5400:40960:10" = "800"
+            }
+            if ($phase -ne "Waf" -or -not $engineeringProfiles.Contains($signature) -or
+                $workload.Stage -ne [string]$engineeringProfiles[$signature]) {
+                throw "Engineering acceptance permits only exact Waf/500 510-device/1800-second and Waf/800 810-device/5400-second profiles."
+            }
+        }
         if (-not $testMode) {
             if ($workload.WorkloadSchemaVersion -cne $script:RequiredWorkloadSchemaVersion -or
                 $workload.EndpointShapeSha256 -cne $script:RequiredWorkloadEndpointShapeSha256) {
                 throw "Production load monitoring requires the reviewed tile-batch workload schema and endpoint shape."
             }
-            $signature = "$($workload.Devices):$($workload.DurationSeconds):$($workload.ScreenshotBytes):$($workload.CanaryDevices)"
             if ($diagnosticOnly) {
                 if ($phase -ne "Waf" -or $workload.Stage -ne "800" -or $signature -ne "810:1800:40960:10") {
                     throw "Diagnostic-only monitoring permits only the exact private Waf/800 810-device, 1800-second, 40-KiB, 10-canary profile."
                 }
             }
-            else {
+            elseif (-not $engineeringAcceptance) {
                 $approved = [ordered]@{
                     "510:1800:40960:10" = "500"
                     "810:5400:40960:10" = "800"
@@ -449,7 +520,7 @@ function Read-Configuration {
         }
     }
 
-    if (-not $testMode -and -not $diagnosticOnly) {
+    if (-not $testMode -and -not $diagnosticOnly -and -not $engineeringAcceptance) {
         $stageKey = if ($null -eq $workload) { "no-load" } else { [string]$workload.Stage }
         $progressionKey = "$phase`:$stageKey"
         $predecessorContract = switch ($progressionKey) {
@@ -492,18 +563,18 @@ function Read-Configuration {
                 -RequireSupervisorSeal (-not $testMode)
         }
     }
-    elseif ($diagnosticOnly -and (Get-OptionalValue $config "predecessorResultPath")) {
-        throw "Diagnostic-only evidence must not declare or consume predecessor evidence."
+    elseif (($diagnosticOnly -or $engineeringAcceptance) -and (Get-OptionalValue $config "predecessorResultPath")) {
+        throw "Diagnostic-only and engineering-acceptance evidence must not declare or consume predecessor evidence."
     }
 
     $rollbackConfig = $null
     $automaticRollbackValue = Get-OptionalValue $config "automaticRollback" $false
     if ($automaticRollbackValue -isnot [bool]) { throw "automaticRollback must be a JSON boolean." }
-    if (-not $testMode -and -not $diagnosticOnly -and -not [bool]$automaticRollbackValue) {
+    if (-not $testMode -and -not $diagnosticOnly -and -not $engineeringAcceptance -and -not [bool]$automaticRollbackValue) {
         throw "Production monitoring requires automaticRollback=true."
     }
-    if ($diagnosticOnly -and [bool]$automaticRollbackValue) {
-        throw "Diagnostic-only monitoring must not mutate application, WAF, or infrastructure rollback posture."
+    if (($diagnosticOnly -or $engineeringAcceptance) -and [bool]$automaticRollbackValue) {
+        throw "Diagnostic-only and engineering-acceptance monitoring must not mutate application, WAF, or infrastructure rollback posture."
     }
     if ($automaticRollbackValue) {
         $rollbackConfig = Assert-ExternalPath -Path (Get-RequiredString $config "rollbackConfigPath") -Name "rollbackConfigPath"
@@ -546,8 +617,10 @@ function Read-Configuration {
         if (-not $testMode) { throw "testRuntimeSeriesNotBeforeUtc is test-only." }
         $runtimeSeriesNotBeforeUtc = Get-RequiredUtcTimestamp $config "testRuntimeSeriesNotBeforeUtc"
     }
+    $testTelemetryWindow = $testMode -and
+        $null -ne $config.PSObject.Properties["testTelemetryExpectedSeconds"]
     $telemetryExpectedSeconds = if ($null -eq $workload) { $minimumWallClockSeconds } else { $workload.DurationSeconds }
-    if ($testMode -and $null -ne $config.PSObject.Properties["testTelemetryExpectedSeconds"]) {
+    if ($testTelemetryWindow) {
         $telemetryExpectedSeconds = Get-RequiredInteger $config "testTelemetryExpectedSeconds" 0 86400
     }
     $telemetryMetricNames = @(
@@ -579,7 +652,7 @@ function Read-Configuration {
     $expectedEcsAssignPublicIp = Get-RequiredBoolean $resources "expectedEcsAssignPublicIp"
     $ecsTaskSubnetIds = @(Get-RequiredStringArray $resources "ecsTaskSubnetIds")
     $expectedRedisNodeType = Get-RequiredString $resources "expectedRedisNodeType"
-    if ($diagnosticOnly) {
+    if ($diagnosticOnly -or $engineeringAcceptance) {
         [void](Get-RequiredString $resources "wafDeviceClassifierMetricName")
         $cloudFrontDistributionId = Get-RequiredString $resources "cloudFrontDistributionId"
         if ($cloudFrontDistributionId -notmatch '^E[A-Z0-9]{8,20}$') {
@@ -658,8 +731,10 @@ function Read-Configuration {
             [bool]$expectedRoute53MeasureLatencyValue -ne $phaseContract.latency) {
             throw "AWS resource expectations do not match the immutable $phase phase contract."
         }
-        Assert-WafMetricIdentity -Resources $resources -RequireDiagnosticContract:$diagnosticOnly
-        if ($diagnosticOnly) { [void](Assert-DiagnosticRedisIdentity -Resources $resources -ExpectedNodeType $expectedRedisNodeType) }
+        Assert-WafMetricIdentity -Resources $resources -RequireDiagnosticContract:($diagnosticOnly -or $engineeringAcceptance)
+        if ($diagnosticOnly -or $engineeringAcceptance) {
+            [void](Assert-DiagnosticRedisIdentity -Resources $resources -ExpectedNodeType $expectedRedisNodeType)
+        }
     }
 
     $redisResizeCompletedAtUtc = $null
@@ -695,6 +770,83 @@ function Read-Configuration {
         if (-not (Test-Path -LiteralPath $harnessProcessPath -PathType Leaf)) {
             throw "harnessProcessPath does not exist."
         }
+    }
+    $controllerProcessId = [int](Get-OptionalValue $config "controllerProcessId" 0)
+    $controllerProcessStartedAtUtc = $null
+    $controllerProcessPath = $null
+    $engineeringScalingRestoration = Get-OptionalValue $config "engineeringScalingRestoration"
+    if ($engineeringAcceptance) {
+        if ($controllerProcessId -le 0 -or $null -eq $engineeringScalingRestoration) {
+            throw "Engineering acceptance requires a bound controller and scaling-restoration fail-safe."
+        }
+        $controllerProcessStartedAtUtc = Get-RequiredUtcTimestamp $config "controllerProcessStartedAtUtc"
+        $controllerProcessPath = [IO.Path]::GetFullPath((
+            Get-RequiredString $config "controllerProcessPath"
+        ))
+        if (-not (Test-Path -LiteralPath $controllerProcessPath -PathType Leaf)) {
+            throw "controllerProcessPath does not exist."
+        }
+        $restorationKeys = @($engineeringScalingRestoration.PSObject.Properties.Name | Sort-Object)
+        $expectedRestorationKeys = @(
+            "apiDesiredCount", "maxCapacity", "minCapacity",
+            "rollbackApiTaskDefinitionArn", "rollbackWorkerTaskDefinitionArn",
+            "scalingPoliciesSha256", "scheduledActionsSha256", "suspendedState"
+        )
+        if (@(Compare-Object $expectedRestorationKeys $restorationKeys).Count -ne 0) {
+            throw "engineeringScalingRestoration has an invalid exact key set."
+        }
+        $suspendedState = Get-OptionalValue $engineeringScalingRestoration "suspendedState"
+        $suspensionKeys = @($suspendedState.PSObject.Properties.Name | Sort-Object)
+        $expectedSuspensionKeys = @(
+            "DynamicScalingInSuspended", "DynamicScalingOutSuspended",
+            "ScheduledScalingSuspended"
+        )
+        if (@(Compare-Object $expectedSuspensionKeys $suspensionKeys).Count -ne 0) {
+            throw "engineeringScalingRestoration.suspendedState has an invalid exact key set."
+        }
+        $engineeringScalingRestoration = [pscustomobject]@{
+            ApiDesiredCount = Get-RequiredInteger $engineeringScalingRestoration `
+                "apiDesiredCount" 1 8
+            MinCapacity = Get-RequiredInteger $engineeringScalingRestoration "minCapacity" 1 6
+            MaxCapacity = Get-RequiredInteger $engineeringScalingRestoration "maxCapacity" 8 8
+            RollbackApiTaskDefinitionArn = Get-RequiredString $engineeringScalingRestoration `
+                "rollbackApiTaskDefinitionArn"
+            RollbackWorkerTaskDefinitionArn = Get-RequiredString $engineeringScalingRestoration `
+                "rollbackWorkerTaskDefinitionArn"
+            ScheduledActionsSha256 = Get-RequiredString $engineeringScalingRestoration `
+                "scheduledActionsSha256"
+            ScalingPoliciesSha256 = Get-RequiredString $engineeringScalingRestoration `
+                "scalingPoliciesSha256"
+            SuspendedState = [ordered]@{
+                DynamicScalingInSuspended = Get-RequiredBoolean $suspendedState `
+                    "DynamicScalingInSuspended"
+                DynamicScalingOutSuspended = Get-RequiredBoolean $suspendedState `
+                    "DynamicScalingOutSuspended"
+                ScheduledScalingSuspended = Get-RequiredBoolean $suspendedState `
+                    "ScheduledScalingSuspended"
+            }
+        }
+        if ($engineeringScalingRestoration.MinCapacity -notin @(1, 6) -or
+            $engineeringScalingRestoration.RollbackApiTaskDefinitionArn -notmatch
+                '^arn:aws:ecs:[a-z0-9-]+:\d{12}:task-definition/[A-Za-z0-9_-]+:\d+$' -or
+            $engineeringScalingRestoration.RollbackWorkerTaskDefinitionArn -notmatch
+                '^arn:aws:ecs:[a-z0-9-]+:\d{12}:task-definition/[A-Za-z0-9_-]+:\d+$' -or
+            $engineeringScalingRestoration.RollbackApiTaskDefinitionArn -ceq
+                $expectedActiveApiTaskDefinitionArn -or
+            $engineeringScalingRestoration.RollbackWorkerTaskDefinitionArn -ceq
+                $expectedActiveWorkerTaskDefinitionArn -or
+            $engineeringScalingRestoration.ScheduledActionsSha256 -notmatch '^[0-9a-f]{64}$' -or
+            $engineeringScalingRestoration.ScalingPoliciesSha256 -notmatch '^[0-9a-f]{64}$' -or
+            $engineeringScalingRestoration.SuspendedState.DynamicScalingInSuspended -ne $false -or
+            $engineeringScalingRestoration.SuspendedState.DynamicScalingOutSuspended -ne $false -or
+            $engineeringScalingRestoration.SuspendedState.ScheduledScalingSuspended -ne $false) {
+            throw "Engineering scaling restoration must bind the ordinary unsuspended production posture."
+        }
+    }
+    elseif ($controllerProcessId -ne 0 -or $null -ne $engineeringScalingRestoration -or
+        $null -ne $config.PSObject.Properties["controllerProcessStartedAtUtc"] -or
+        $null -ne $config.PSObject.Properties["controllerProcessPath"]) {
+        throw "Controller and engineering scaling-restoration bindings are engineering-acceptance only."
     }
 
     $thresholdDefaults = @{
@@ -768,10 +920,10 @@ function Read-Configuration {
     if (-not $testMode -and [string]::IsNullOrWhiteSpace($expectedRdsInstanceClass)) {
         throw "Production monitoring requires resources.expectedRdsInstanceClass."
     }
-    if ($diagnosticOnly -and ($expectedRdsInstanceClass -ne "db.t4g.medium" -or
+    if (($diagnosticOnly -or $engineeringAcceptance) -and ($expectedRdsInstanceClass -ne "db.t4g.medium" -or
         $expectedRedisNodeType -ne "cache.t4g.small" -or $expectedNatGatewayCount -ne 2 -or
         $expectedEcsAssignPublicIp -ne $false)) {
-        throw "Diagnostic-only Waf/800 requires db.t4g.medium, cache.t4g.small, two NAT gateways, and private ECS tasks."
+        throw "Diagnostic-only and engineering-acceptance Waf runs require db.t4g.medium, cache.t4g.small, two NAT gateways, and private ECS tasks."
     }
     if (-not $testMode -and ([string]::IsNullOrWhiteSpace($expectedActiveApiTaskDefinitionArn) -or
         [string]::IsNullOrWhiteSpace($expectedActiveWorkerTaskDefinitionArn))) {
@@ -795,14 +947,20 @@ function Read-Configuration {
         TestMinimumIterationsBeforeAcceptance = $testMinimumIterationsBeforeAcceptance
         MinimumWallClockSeconds = $minimumWallClockSeconds
         TelemetryExpectedSeconds = $telemetryExpectedSeconds
+        TestTelemetryWindow = $testTelemetryWindow
         TelemetryMetricNames = $telemetryMetricNames
         RuntimeSeriesNotBeforeUtc = $runtimeSeriesNotBeforeUtc
         DeadlineUtc = $deadlineUtc
         TestMode = $testMode
         DiagnosticOnly = $diagnosticOnly
+        EngineeringAcceptance = $engineeringAcceptance
         HarnessProcessId = $harnessProcessId
         HarnessProcessStartedAtUtc = $harnessProcessStartedAtUtc
         HarnessProcessPath = $harnessProcessPath
+        ControllerProcessId = $controllerProcessId
+        ControllerProcessStartedAtUtc = $controllerProcessStartedAtUtc
+        ControllerProcessPath = $controllerProcessPath
+        EngineeringScalingRestoration = $engineeringScalingRestoration
         ArtifactsNotBeforeUtc = $artifactsNotBeforeUtc
         Workload = $workload
         PredecessorEvidence = $predecessorEvidence
@@ -1083,7 +1241,15 @@ function Invoke-CloudWatchMetricBatch {
     $collectedThroughUtc = [DateTimeOffset]::UtcNow
     $latestMetrics = @{}
     $series = @{}
+    $statuses = @{}
+    foreach ($query in @($Queries)) { $statuses[[string]$query.Id] = "Missing" }
     foreach ($result in @($response.MetricDataResults)) {
+        $id = [string]$result.Id
+        if (-not $statuses.ContainsKey($id)) { continue }
+        if ($statuses[$id] -ne "Missing") {
+            throw "CloudWatch metric batch returned a duplicate query result."
+        }
+        $statuses[$id] = [string]$result.StatusCode
         if ([string]$result.StatusCode -notin @("Complete", "PartialData")) { continue }
         $points = for ($index = 0; $index -lt @($result.Timestamps).Count; $index++) {
             [pscustomobject]@{
@@ -1093,7 +1259,6 @@ function Invoke-CloudWatchMetricBatch {
         }
         $orderedPoints = @($points | Sort-Object Timestamp)
         $latest = @($orderedPoints | Where-Object Timestamp -le $collectedThroughUtc | Select-Object -Last 1)
-        $id = [string]$result.Id
         $series[$id] = $orderedPoints
         $isCompleteSparseWafZero = [string]$result.StatusCode -eq "Complete" -and $latest.Count -eq 0 -and
             $id -in @("waf_device_blocked", "waf_api_blocked")
@@ -1104,6 +1269,9 @@ function Invoke-CloudWatchMetricBatch {
     return [pscustomobject]@{
         Latest = $latestMetrics
         Series = $series
+        Status = $statuses
+        QueryStartUtc = $start
+        QueryEndUtc = $end
         CollectedThroughUtc = $collectedThroughUtc
     }
 }
@@ -1364,7 +1532,7 @@ function Get-RedisState {
         replicationGroupId = [string](Get-OptionalValue $group "ReplicationGroupId" "")
         memberClusterIds = @((Get-OptionalValue $group "MemberClusters" @()) | ForEach-Object { [string]$_ })
     }
-    if ($Config.DiagnosticOnly) {
+    if ($Config.DiagnosticOnly -or [bool](Get-OptionalValue $Config "EngineeringAcceptance" $false)) {
         $clusterResponse = Invoke-AwsJson -Arguments @(
             "elasticache", "describe-cache-clusters", "--region", $r.region,
             "--cache-cluster-id", $r.redisCacheClusterId, "--show-cache-node-info"
@@ -1909,6 +2077,12 @@ function Get-ValidatedLoadSummaryTiming {
     }
     $diagnosticContractValid = -not [bool](Get-OptionalValue $Config "DiagnosticOnly" $false) -or (
         (Get-OptionalValue $summary "diagnosticOnly" $false) -eq $true -and
+        (Get-OptionalValue $summary "engineeringAcceptance" $false) -eq $false -and
+        (Get-OptionalValue $summary "certificationEligible" $true) -eq $false
+    )
+    $engineeringAcceptanceContractValid = -not [bool](Get-OptionalValue $Config "EngineeringAcceptance" $false) -or (
+        (Get-OptionalValue $summary "diagnosticOnly" $true) -eq $false -and
+        (Get-OptionalValue $summary "engineeringAcceptance" $false) -eq $true -and
         (Get-OptionalValue $summary "certificationEligible" $true) -eq $false
     )
     $valid = (
@@ -1922,6 +2096,7 @@ function Get-ValidatedLoadSummaryTiming {
         (Get-OptionalValue $summaryRun "completedConfiguredDuration" $false) -eq $true -and
         $monotonicDurationContractValid -and
         $diagnosticContractValid -and
+        $engineeringAcceptanceContractValid -and
         $tileBatchValid -and
         $finalProgressAtUtc -le [DateTimeOffset]::UtcNow.AddSeconds(5)
     )
@@ -2173,15 +2348,43 @@ function Get-RdsCreditSlopeResult {
 
 function Get-TelemetryAcceptanceWindow {
     param($Config, [DateTimeOffset]$CollectedThroughUtc)
-    $logicalStart = if ($Config.LoadProgressPath) { $script:TrafficStartedAtUtc } else { $script:StartedAt }
-    if ($null -eq $logicalStart) { return $null }
-    $logicalStart = ([DateTimeOffset]$logicalStart).ToUniversalTime()
-    $logicalEnd = if ($Config.LoadProgressPath -and $null -ne $script:TrafficStoppedAtUtc) {
-        $script:TrafficStoppedAtUtc
-    } elseif ($Config.TelemetryExpectedSeconds -gt 0) {
-        $logicalStart.AddSeconds([double]$Config.TelemetryExpectedSeconds)
-    } else {
-        $CollectedThroughUtc.ToUniversalTime()
+    $collectedThrough = $CollectedThroughUtc.ToUniversalTime()
+    if ((Get-OptionalValue $Config "TestTelemetryWindow" $false) -eq $true -and
+        -not $Config.LoadProgressPath) {
+        # testTelemetryExpectedSeconds compresses a completed provider window
+        # into a short-running test. Anchor that synthetic window at the
+        # collected snapshot so historical five-minute datapoints are tested
+        # with their real cadence without changing production or load-bound
+        # traffic-window semantics.
+        $logicalEnd = $collectedThrough
+        $logicalStart = $logicalEnd.AddSeconds(-[double]$Config.TelemetryExpectedSeconds)
+    }
+    else {
+        $logicalStart = if ($Config.LoadProgressPath) {
+            $script:TrafficStartedAtUtc
+        }
+        else {
+            $script:StartedAt
+        }
+        if ($null -eq $logicalStart) { return $null }
+        $logicalStart = ([DateTimeOffset]$logicalStart).ToUniversalTime()
+        $logicalEnd = if ($Config.LoadProgressPath -and $null -ne $script:TrafficStoppedAtUtc) {
+            $script:TrafficStoppedAtUtc
+        }
+        elseif ($Config.TelemetryExpectedSeconds -gt 0) {
+            $logicalStart.AddSeconds([double]$Config.TelemetryExpectedSeconds)
+        }
+        else {
+            $collectedThrough
+        }
+    }
+    # Coverage grows only through the provider snapshot this sample actually
+    # collected. Requiring sparse-source coverage through a future logical end
+    # makes an in-progress query window unsatisfiable by construction. At the
+    # completed-duration acceptance boundary CollectedThroughUtc is at or past
+    # logicalEnd, so the strict final window remains unchanged.
+    if ($logicalEnd -gt $collectedThrough) {
+        $logicalEnd = $collectedThrough
     }
     $minuteTicks = [TimeSpan]::TicksPerMinute
     $startTicks = $logicalStart.Ticks - ($logicalStart.Ticks % $minuteTicks)
@@ -2195,17 +2398,152 @@ function Get-TelemetryAcceptanceWindow {
 }
 
 function Add-AcceptanceSeriesDatapoints {
-    param([string]$Name, $MetricBatch, $Config)
+    param(
+        [string]$Name,
+        $MetricBatch,
+        $Config,
+        [string]$SourceName = $Name,
+        [double]$Scale = 1.0
+    )
+    $sourceStatus = Get-BatchSeriesStatus $MetricBatch $SourceName
+    $script:AcceptanceSourceStatuses[$Name] = $sourceStatus
+    if ($sourceStatus -cne "Complete") { return }
     $window = Get-TelemetryAcceptanceWindow -Config $Config -CollectedThroughUtc $MetricBatch.CollectedThroughUtc
     if ($null -eq $window) { return }
-    foreach ($point in @((Get-BatchSeries $MetricBatch $Name) | Sort-Object Timestamp)) {
+    foreach ($point in @((Get-BatchSeries $MetricBatch $SourceName) | Sort-Object Timestamp)) {
         $timestamp = ([DateTimeOffset]$point.Timestamp).ToUniversalTime()
         if ($timestamp -lt $window.StartInclusive -or $timestamp -ge $window.EndExclusive -or
             $timestamp -gt $MetricBatch.CollectedThroughUtc) {
             continue
         }
-        Add-AcceptanceDatapoint -Name $Name -Metric $point
+        Add-AcceptanceDatapoint -Name $Name -Metric ([pscustomobject]@{
+            Timestamp = $timestamp
+            Value = [double]$point.Value * $Scale
+        })
     }
+}
+
+function Get-BatchSeriesStatus {
+    param($Metrics, [string]$Id)
+    if ($null -eq $Metrics.PSObject.Properties["Status"] -or
+        -not $Metrics.Status.ContainsKey($Id)) {
+        return "Missing"
+    }
+    return [string]$Metrics.Status[$Id]
+}
+
+function Add-SparseAcceptanceSourceCoverage {
+    param($MetricBatch, $Config, [string]$SourceName)
+    [void]$script:AcceptanceSparseCoverageRequired.Add($SourceName)
+    $status = Get-BatchSeriesStatus $MetricBatch $SourceName
+    $script:AcceptanceSourceStatuses[$SourceName] = $status
+    if ($status -cne "Complete" -or
+        $null -eq $MetricBatch.PSObject.Properties["QueryStartUtc"] -or
+        $null -eq $MetricBatch.PSObject.Properties["QueryEndUtc"]) {
+        return
+    }
+    if (-not $script:AcceptanceSourceCoverage.ContainsKey($SourceName)) {
+        $script:AcceptanceSourceCoverage[$SourceName] =
+            [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    }
+    $acceptanceWindow = Get-TelemetryAcceptanceWindow -Config $Config `
+        -CollectedThroughUtc $MetricBatch.CollectedThroughUtc
+    if ($null -eq $acceptanceWindow) { return }
+    $queryStart = ([DateTimeOffset]$MetricBatch.QueryStartUtc).ToUniversalTime()
+    $queryEnd = ([DateTimeOffset]$MetricBatch.QueryEndUtc).ToUniversalTime()
+    $minuteTicks = [TimeSpan]::TicksPerMinute
+    $firstTicks = $queryStart.Ticks - ($queryStart.Ticks % $minuteTicks)
+    if ($firstTicks -lt $queryStart.Ticks) { $firstTicks += $minuteTicks }
+    $cursorTicks = if ($firstTicks -gt $acceptanceWindow.StartInclusive.Ticks) {
+        $firstTicks
+    } else {
+        $acceptanceWindow.StartInclusive.Ticks
+    }
+    $cursor = [DateTimeOffset]::new($cursorTicks, [TimeSpan]::Zero)
+    $endExclusive = if ($queryEnd -lt $acceptanceWindow.EndExclusive) {
+        $queryEnd
+    } else {
+        $acceptanceWindow.EndExclusive
+    }
+    while ($cursor -lt $endExclusive) {
+        [void]$script:AcceptanceSourceCoverage[$SourceName].Add($cursor.ToString("o"))
+        $cursor = $cursor.AddMinutes(1)
+    }
+}
+
+function Test-SparseAcceptanceCoverageReady {
+    param($Config)
+    if ($script:AcceptanceSparseCoverageRequired.Count -eq 0) { return $true }
+    $window = Get-TelemetryAcceptanceWindow -Config $Config `
+        -CollectedThroughUtc ([DateTimeOffset]::UtcNow)
+    if ($null -eq $window) { return $false }
+    $requiredMinutes = [int][math]::Round(
+        ($window.EndExclusive - $window.StartInclusive).TotalMinutes
+    )
+    foreach ($sourceName in $script:AcceptanceSparseCoverageRequired) {
+        if (-not $script:AcceptanceSourceCoverage.ContainsKey($sourceName) -or
+            $script:AcceptanceSourceCoverage[$sourceName].Count -lt $requiredMinutes) {
+            return $false
+        }
+    }
+    return $true
+}
+
+function Add-NatAcceptanceSeriesDatapoints {
+    param($NatState, $MetricBatch, $Config)
+    $window = Get-TelemetryAcceptanceWindow -Config $Config -CollectedThroughUtc $MetricBatch.CollectedThroughUtc
+    if ($null -eq $window) { return }
+    $byTimestamp = @{}
+    for ($index = 0; $index -lt @($NatState.gatewayIds).Count; $index++) {
+        foreach ($suffix in @("bytes_source", "bytes_destination")) {
+            $sourceName = "nat_${index}_$suffix"
+            Add-SparseAcceptanceSourceCoverage -MetricBatch $MetricBatch -Config $Config `
+                -SourceName $sourceName
+            $sourceStatus = Get-BatchSeriesStatus $MetricBatch $sourceName
+            $script:AcceptanceSourceStatuses[$sourceName] = $sourceStatus
+            if ($sourceStatus -cne "Complete") { continue }
+            foreach ($point in @(Get-BatchSeries $MetricBatch $sourceName)) {
+                $timestamp = ([DateTimeOffset]$point.Timestamp).ToUniversalTime()
+                if ($timestamp -lt $window.StartInclusive -or $timestamp -ge $window.EndExclusive -or
+                    $timestamp -gt $MetricBatch.CollectedThroughUtc) {
+                    continue
+                }
+                $key = $timestamp.ToString("o")
+                if (-not $byTimestamp.ContainsKey($key)) { $byTimestamp[$key] = 0.0 }
+                $byTimestamp[$key] += [double]$point.Value
+            }
+        }
+    }
+    foreach ($entry in @($byTimestamp.GetEnumerator() | Sort-Object Name)) {
+        if (-not ($script:NatSamples | Where-Object {
+                    $_.timestamp.ToUniversalTime().ToString("o") -ceq $entry.Key
+                })) {
+            $script:NatSamples.Add([pscustomobject]@{
+                timestamp = ([DateTimeOffset]$entry.Key).ToUniversalTime()
+                bytes = [double]$entry.Value
+            })
+        }
+    }
+}
+
+function Test-AcceptanceWindowSeriesBreach {
+    param($MetricBatch, $Config, [string]$SourceName, [scriptblock]$IsBreached)
+    Add-SparseAcceptanceSourceCoverage -MetricBatch $MetricBatch -Config $Config `
+        -SourceName $SourceName
+    $sourceStatus = Get-BatchSeriesStatus $MetricBatch $SourceName
+    $script:AcceptanceSourceStatuses[$SourceName] = $sourceStatus
+    if ($sourceStatus -cne "Complete") { return $false }
+    $window = Get-TelemetryAcceptanceWindow -Config $Config -CollectedThroughUtc $MetricBatch.CollectedThroughUtc
+    if ($null -eq $window) { return $false }
+    foreach ($point in @(Get-BatchSeries $MetricBatch $SourceName)) {
+        $timestamp = ([DateTimeOffset]$point.Timestamp).ToUniversalTime()
+        if ($timestamp -ge $window.StartInclusive -and $timestamp -lt $window.EndExclusive -and
+            $timestamp -le $MetricBatch.CollectedThroughUtc -and
+            (& $IsBreached ([double]$point.Value))) {
+            return $true
+        }
+    }
+    return $false
 }
 
 function Get-SeriesSummary {
@@ -2259,18 +2597,128 @@ function Get-DiagnosticRdsCpuCoverageResult {
         fullCoverage=$fullCoverage;allPointsBelowMaximum=$allBelow;passed=($fullCoverage -and $allBelow)}
 }
 
+function Get-EngineeringRdsCpuCoverageResult {
+    param($Config)
+    $requiredPoints = 0
+    if ($null -ne $Config.Workload -and $null -ne $script:TrafficStartedAtUtc) {
+        # CloudWatch one-minute statistics are period buckets, not elapsed
+        # minute counters. A non-minute-aligned 30/90-minute traffic interval
+        # overlaps 31/91 buckets; every overlapping bucket must be present and
+        # below 65% so an omitted edge bucket cannot hide a breach.
+        $trafficStart = ([DateTimeOffset]$script:TrafficStartedAtUtc).ToUniversalTime()
+        $trafficEnd = if ($null -ne $script:TrafficStoppedAtUtc) {
+            ([DateTimeOffset]$script:TrafficStoppedAtUtc).ToUniversalTime()
+        }
+        else {
+            $trafficStart.AddSeconds([double]$Config.Workload.DurationSeconds)
+        }
+        $minuteTicks = [TimeSpan]::TicksPerMinute
+        $startTicks = $trafficStart.Ticks - ($trafficStart.Ticks % $minuteTicks)
+        $endFloorTicks = $trafficEnd.Ticks - ($trafficEnd.Ticks % $minuteTicks)
+        $endExclusiveTicks = if ($trafficEnd.Ticks -eq $endFloorTicks) {
+            $endFloorTicks
+        }
+        else {
+            $endFloorTicks + $minuteTicks
+        }
+        $requiredPoints = [int](($endExclusiveTicks - $startTicks) / $minuteTicks)
+    }
+    if (-not $Config.EngineeringAcceptance) {
+        return [ordered]@{required=$false;requiredPointCount=$requiredPoints;observedPointCount=0;
+            coveragePercent=$null;maximumGapSeconds=$null;spanSeconds=$null;maximumPercent=$null;
+            fullCoverage=$true;allPointsBelowMaximum=$true;passed=$true}
+    }
+    $summary = Get-SeriesSummary "rds_cpu"
+    $coveragePercent = if ($requiredPoints -gt 0) {
+        [math]::Round([math]::Min(100.0, 100.0 * [double]$summary.count / $requiredPoints), 3)
+    } else { 0.0 }
+    $requiredSpanSeconds = [math]::Max(0.0, ($requiredPoints - 1) * 60.0)
+    $fullCoverage = $requiredPoints -gt 0 -and $summary.count -ge $requiredPoints -and
+        $summary.spanSeconds -ge $requiredSpanSeconds -and $null -ne $summary.maximumGapSeconds -and
+        $summary.maximumGapSeconds -le 60.0
+    $allBelow = $summary.count -ge $requiredPoints -and $null -ne $summary.maximum -and
+        [double]$summary.maximum -lt [double]$Config.Thresholds.rdsCpuMaximumPercent
+    return [ordered]@{required=$true;requiredPointCount=$requiredPoints;observedPointCount=[int]$summary.count;
+        coveragePercent=$coveragePercent;maximumGapSeconds=$summary.maximumGapSeconds;spanSeconds=$summary.spanSeconds;
+        maximumPercent=$summary.maximum;maximumAllowedExclusivePercent=[double]$Config.Thresholds.rdsCpuMaximumPercent;
+        fullCoverage=$fullCoverage;allPointsBelowMaximum=$allBelow;passed=($fullCoverage -and $allBelow)}
+}
+
+function Test-AcceptanceTelemetryCoverageReady {
+    param($Config)
+    if ($Config.TelemetryExpectedSeconds -le 0) { return $true }
+    if (@($script:AcceptanceSourceStatuses.GetEnumerator() |
+            Where-Object { [string]$_.Value -cne "Complete" }).Count -gt 0) {
+        return $false
+    }
+    if (-not (Test-SparseAcceptanceCoverageReady -Config $Config)) { return $false }
+    $fiveMinuteMetrics = @("rds_cpu_credit", "rds_surplus_charged", "redis_cpu_credit")
+    foreach ($name in $Config.TelemetryMetricNames) {
+        $periodSeconds = if ($name -in $fiveMinuteMetrics) { 300.0 } else { 60.0 }
+        $strictRdsCpu = ($Config.DiagnosticOnly -or $Config.EngineeringAcceptance) -and
+            $name -eq "rds_cpu"
+        $maximumGapSeconds = if ($strictRdsCpu) {
+            60.0
+        }
+        elseif ($periodSeconds -eq 300.0) {
+            360.0
+        }
+        else {
+            [double]$Config.Thresholds.telemetryMaximumGapSeconds
+        }
+        $expectedPoints = [math]::Floor(
+            [double]$Config.TelemetryExpectedSeconds / $periodSeconds
+        )
+        if ($expectedPoints -lt 1) { continue }
+        $minimumPoints = if ($strictRdsCpu) {
+            $expectedPoints
+        }
+        else {
+            [math]::Ceiling(
+                $expectedPoints *
+                    ([double]$Config.Thresholds.telemetryMinimumCoveragePercent / 100.0)
+            )
+        }
+        $minimumSpan = if ($strictRdsCpu) {
+            [math]::Max(0.0, ($expectedPoints - 1) * $periodSeconds)
+        }
+        else {
+            [math]::Max(
+                0.0,
+                [double]$Config.TelemetryExpectedSeconds - $maximumGapSeconds
+            )
+        }
+        $summary = Get-SeriesSummary $name
+        if ($summary.count -lt $minimumPoints -or $summary.spanSeconds -lt $minimumSpan -or
+            ($expectedPoints -gt 1 -and $null -eq $summary.maximumGapSeconds) -or
+            ($null -ne $summary.maximumGapSeconds -and
+                $summary.maximumGapSeconds -gt $maximumGapSeconds)) {
+            return $false
+        }
+    }
+    if ($Config.DiagnosticOnly -and
+        -not (Get-DiagnosticRdsCpuCoverageResult -Config $Config).fullCoverage) {
+        return $false
+    }
+    if ($Config.EngineeringAcceptance -and
+        -not (Get-EngineeringRdsCpuCoverageResult -Config $Config).fullCoverage) {
+        return $false
+    }
+    return $true
+}
+
 function Assert-TelemetryCoverage {
     param($Config, [string[]]$MetricNames)
     if ($Config.TelemetryExpectedSeconds -le 0) { return }
     $fiveMinuteMetrics = @("rds_cpu_credit", "rds_surplus_charged", "redis_cpu_credit")
     foreach ($name in $MetricNames) {
         $periodSeconds = if ($name -in $fiveMinuteMetrics) { 300.0 } else { 60.0 }
-        $diagnosticRdsCpu = $Config.DiagnosticOnly -and $name -eq "rds_cpu"
-        $maximumGapSeconds = if ($diagnosticRdsCpu) { 60.0 } elseif ($periodSeconds -eq 300.0) { 360.0 } else { [double]$Config.Thresholds.telemetryMaximumGapSeconds }
+        $strictRdsCpu = ($Config.DiagnosticOnly -or $Config.EngineeringAcceptance) -and $name -eq "rds_cpu"
+        $maximumGapSeconds = if ($strictRdsCpu) { 60.0 } elseif ($periodSeconds -eq 300.0) { 360.0 } else { [double]$Config.Thresholds.telemetryMaximumGapSeconds }
         $expectedPoints = [math]::Floor([double]$Config.TelemetryExpectedSeconds / $periodSeconds)
         if ($expectedPoints -lt 1) { continue }
-        $minimumPoints = if ($diagnosticRdsCpu) { $expectedPoints } else { [math]::Ceiling($expectedPoints * ([double]$Config.Thresholds.telemetryMinimumCoveragePercent / 100.0)) }
-        $minimumSpan = if ($diagnosticRdsCpu) { [math]::Max(0.0, ($expectedPoints - 1) * $periodSeconds) } else { [math]::Max(0.0, [double]$Config.TelemetryExpectedSeconds - $maximumGapSeconds) }
+        $minimumPoints = if ($strictRdsCpu) { $expectedPoints } else { [math]::Ceiling($expectedPoints * ([double]$Config.Thresholds.telemetryMinimumCoveragePercent / 100.0)) }
+        $minimumSpan = if ($strictRdsCpu) { [math]::Max(0.0, ($expectedPoints - 1) * $periodSeconds) } else { [math]::Max(0.0, [double]$Config.TelemetryExpectedSeconds - $maximumGapSeconds) }
         $summary = Get-SeriesSummary $name
         if ($summary.count -lt $minimumPoints) { Add-AcceptanceViolation "telemetry_coverage:$name" }
         if ($summary.spanSeconds -lt $minimumSpan) { Add-AcceptanceViolation "telemetry_span:$name" }
@@ -2290,6 +2738,14 @@ function Get-AcceptanceResult {
     param($Config)
     $t = $Config.Thresholds
     $summaries = [ordered]@{}
+    foreach ($sourceStatus in $script:AcceptanceSourceStatuses.GetEnumerator()) {
+        if ([string]$sourceStatus.Value -cne "Complete") {
+            Add-AcceptanceViolation "telemetry_incomplete:$($sourceStatus.Key)"
+        }
+    }
+    if (-not (Test-SparseAcceptanceCoverageReady -Config $Config)) {
+        Add-AcceptanceViolation "sparse_telemetry_coverage_incomplete"
+    }
     foreach ($name in $script:AcceptanceSeries.Keys | Sort-Object) {
         $summaries[$name] = Get-SeriesSummary $name
     }
@@ -2315,6 +2771,13 @@ function Get-AcceptanceResult {
     }
     if ($diagnosticRdsCpuCoverage.required -and -not $diagnosticRdsCpuCoverage.allPointsBelowMaximum) {
         Add-AcceptanceViolation "diagnostic_rds_cpu_every_minute_below_65"
+    }
+    $engineeringRdsCpuCoverage = Get-EngineeringRdsCpuCoverageResult -Config $Config
+    if ($engineeringRdsCpuCoverage.required -and -not $engineeringRdsCpuCoverage.fullCoverage) {
+        Add-AcceptanceViolation "engineering_rds_cpu_required_minute_coverage"
+    }
+    if ($engineeringRdsCpuCoverage.required -and -not $engineeringRdsCpuCoverage.allPointsBelowMaximum) {
+        Add-AcceptanceViolation "engineering_rds_cpu_every_minute_below_65"
     }
     if ($rdsConnections.maximum -ge [double]$t.rdsConnectionsMaximum) { Add-AcceptanceViolation "rds_connections_peak" }
     if ($rdsHeadroom.minimum -le [double]$t.rdsStorageHeadroomMinimumPercent) { Add-AcceptanceViolation "rds_storage_headroom_minimum" }
@@ -2350,7 +2813,8 @@ function Get-AcceptanceResult {
         Add-AcceptanceViolation "rds_cpu_credit_hours_2_8_slope"
     }
     if ($script:AcceptanceSeries.ContainsKey("rds_swap") -and $script:AcceptanceSeries["rds_swap"].values.Count -ge 3) {
-        $swapValues = $script:AcceptanceSeries["rds_swap"].values
+        $swapValues = @($script:AcceptanceSeries["rds_swap"].points.GetEnumerator() |
+            Sort-Object { [DateTimeOffset]$_.Key } | ForEach-Object { [double]$_.Value })
         if ($swapValues[$swapValues.Count - 1] -gt $swapValues[0] + 67108864.0) { Add-AcceptanceViolation "rds_swap_growing" }
     }
 
@@ -2377,8 +2841,15 @@ function Get-AcceptanceResult {
 
     $natWindow = [ordered]@{ required = [bool]$t.requireNatSixHourAcceptance; sampleCount = 0; totalBytes = 0.0; upwardTrend = $false }
     if ($natWindow.required) {
-        $cutoff = [DateTimeOffset]::UtcNow.AddHours(-6)
-        $samples = @($script:NatSamples | Where-Object { $_.timestamp -ge $cutoff } | Sort-Object timestamp)
+        $windowEnd = if ($null -ne $script:TrafficStoppedAtUtc) {
+            ([DateTimeOffset]$script:TrafficStoppedAtUtc).ToUniversalTime()
+        } else {
+            [DateTimeOffset]::UtcNow
+        }
+        $cutoff = $windowEnd.AddHours(-6)
+        $samples = @($script:NatSamples | Where-Object {
+                $_.timestamp -ge $cutoff -and $_.timestamp -le $windowEnd
+            } | Sort-Object timestamp)
         $natWindow.sampleCount = $samples.Count
         $natWindow.totalBytes = [double](($samples | Measure-Object bytes -Sum).Sum ?? 0)
         if ($samples.Count -lt [int]$t.natSixHourRequiredSamples) { Add-AcceptanceViolation "nat_final_six_hours_incomplete" }
@@ -2407,6 +2878,7 @@ function Get-AcceptanceResult {
         violations = @($script:AcceptanceViolations | Sort-Object)
         metrics = $summaries
         diagnosticRdsCpuCoverage = $diagnosticRdsCpuCoverage
+        engineeringRdsCpuCoverage = $engineeringRdsCpuCoverage
         rdsCpuCreditHours2Through8 = $rdsCreditSlope
         natFinalSixHours = $natWindow
     }
@@ -2479,8 +2951,17 @@ function Get-Sample {
     $metricBatch = Invoke-CloudWatchMetricBatch -Region $r.region -Queries $metricQueries
     $nat = Add-NatMetrics -NatState $nat -Metrics $metricBatch
     $waf = Get-WafState -Config $Config -Metrics $metricBatch
-    Add-MetricFinding $immediate $consecutive "waf_device_blocked" (Get-BatchMetric $metricBatch "waf_device_blocked") { param($v) $v -gt 0 } $required -ImmediateOnBreach
-    Add-MetricFinding $immediate $consecutive "waf_api_blocked" (Get-BatchMetric $metricBatch "waf_api_blocked") { param($v) $v -gt 0 } $required -ImmediateOnBreach
+    if (-not $Config.EngineeringAcceptance -and -not $Config.DiagnosticOnly) {
+        Add-MetricFinding $immediate $consecutive "waf_device_blocked" (Get-BatchMetric $metricBatch "waf_device_blocked") { param($v) $v -gt 0 } $required -ImmediateOnBreach
+        Add-MetricFinding $immediate $consecutive "waf_api_blocked" (Get-BatchMetric $metricBatch "waf_api_blocked") { param($v) $v -gt 0 } $required -ImmediateOnBreach
+    }
+    foreach ($wafMetric in @("waf_device_blocked", "waf_api_blocked")) {
+        if (Test-AcceptanceWindowSeriesBreach -MetricBatch $metricBatch -Config $Config `
+                -SourceName $wafMetric -IsBreached { param($value) $value -gt 0 }) {
+            Add-AcceptanceViolation $wafMetric
+            $immediate.Add($wafMetric)
+        }
+    }
 
     $ecsMetrics = [ordered]@{}
     foreach ($service in @(
@@ -2498,9 +2979,12 @@ function Get-Sample {
         }
         Add-MetricFinding $immediate $consecutive "ecs_cpu:$serviceName" $cpuPercent { param($v) $v -ge [double]$t.ecsCpuMaximumPercent } $required
         Add-MetricFinding $immediate $consecutive "ecs_memory:$serviceName" $memoryPercent { param($v) $v -ge [double]$t.ecsMemoryMaximumPercent } $required
-        Add-AcceptanceDatapoint "ecs_$($service.Suffix)_cpu" $cpuPercent
-        Add-AcceptanceDatapoint "ecs_$($service.Suffix)_cpu_maximum" $cpuMaximumPercent
-        Add-AcceptanceDatapoint "ecs_$($service.Suffix)_memory" $memoryPercent
+        Add-AcceptanceSeriesDatapoints -Name "ecs_$($service.Suffix)_cpu" `
+            -MetricBatch $metricBatch -Config $Config
+        Add-AcceptanceSeriesDatapoints -Name "ecs_$($service.Suffix)_cpu_maximum" `
+            -MetricBatch $metricBatch -Config $Config
+        Add-AcceptanceSeriesDatapoints -Name "ecs_$($service.Suffix)_memory" `
+            -MetricBatch $metricBatch -Config $Config
     }
 
     $rdsState = Get-RdsState -Config $Config
@@ -2548,7 +3032,8 @@ function Get-Sample {
     if ($redisState.status -ne "available") { $immediate.Add("redis_unavailable") }
     if (Test-HasObjectMembers $redisState.pendingModifiedValues) { $immediate.Add("redis_pending_modifications") }
     if ($redisState.nodeType -ne $Config.ExpectedRedisNodeType) { $immediate.Add("redis_node_type_mismatch") }
-    if ($Config.DiagnosticOnly -and (Get-OptionalValue $redisState "clusterIdentityValid" $false) -ne $true) {
+    if (($Config.DiagnosticOnly -or $Config.EngineeringAcceptance) -and
+        (Get-OptionalValue $redisState "clusterIdentityValid" $false) -ne $true) {
         $immediate.Add("redis_group_member_identity_mismatch")
     }
     $redisCpu = Get-BatchMetric $metricBatch "redis_cpu"
@@ -2588,24 +3073,51 @@ function Get-Sample {
     Add-MetricFinding $immediate $consecutive "redis_rejected_connections" $redisRejected { param($v) $v -gt 0 } $required -ImmediateOnBreach
     Add-MetricFinding $immediate $consecutive "redis_cpu_credit" $redisCpuCredit { param($v) $v -lt [double]$t.redisCpuCreditMinimum } $required `
         -FreshnessMaximumSeconds ([double]$t.fiveMinuteMetricFreshnessMaximumSeconds)
-    Add-AcceptanceSeriesDatapoints -Name "rds_cpu" -MetricBatch $metricBatch -Config $Config
+    $headroomScale = if ($rdsState.allocatedStorageGiB -gt 0) {
+        100.0 / ([double]$rdsState.allocatedStorageGiB * 1GB)
+    } else { 0.0 }
     foreach ($entry in @(
-        @("rds_connections", $rdsConnections), @("rds_storage_headroom", $rdsStorageHeadroomPercent),
-        @("rds_free_memory", $rdsFreeMemory), @("rds_swap", $rdsSwap), @("rds_cpu_credit", $rdsCpuCredit), @("rds_surplus_charged", $rdsSurplusCharged),
-        @("rds_read_latency_ms", $rdsReadLatencyMs), @("rds_write_latency_ms", $rdsWriteLatencyMs),
-        @("rds_disk_queue_depth", $rdsDiskQueueDepth), @("rds_read_iops", $rdsReadIops), @("rds_write_iops", $rdsWriteIops), @("rds_total_iops", $rdsTotalIops),
-        @("redis_cpu", $redisCpu), @("redis_memory", $redisMemory), @("redis_free", $redisFree),
-        @("redis_evictions", $redisEvictions), @("redis_rejected", $redisRejected), @("redis_cpu_credit", $redisCpuCredit)
-    )) { Add-AcceptanceDatapoint $entry[0] $entry[1] }
-
-    if ($null -ne $nat.metricTimestamp) {
-        $natTimestamp = [DateTimeOffset]$nat.metricTimestamp
-        if (-not ($script:NatSamples | Where-Object { $_.timestamp -eq $natTimestamp })) {
-            $script:NatSamples.Add([pscustomobject]@{ timestamp = $natTimestamp; bytes = [double]$nat.bytesLastMinute })
+        @("rds_cpu", "rds_cpu", 1.0),
+        @("rds_connections", "rds_connections", 1.0),
+        @("rds_storage_headroom", "rds_free_storage", $headroomScale),
+        @("rds_free_memory", "rds_free_memory", 1.0),
+        @("rds_swap", "rds_swap", 1.0),
+        @("rds_cpu_credit", "rds_cpu_credit", 1.0),
+        @("rds_surplus_charged", "rds_surplus_charged", 1.0),
+        @("rds_read_latency_ms", "rds_read_latency_seconds", 1000.0),
+        @("rds_write_latency_ms", "rds_write_latency_seconds", 1000.0),
+        @("rds_disk_queue_depth", "rds_disk_queue_depth", 1.0),
+        @("rds_read_iops", "rds_read_iops", 1.0),
+        @("rds_write_iops", "rds_write_iops", 1.0),
+        @("rds_total_iops", "rds_total_iops", 1.0),
+        @("redis_cpu", "redis_cpu", 1.0),
+        @("redis_memory", "redis_memory", 1.0),
+        @("redis_free", "redis_free", 1.0),
+        @("redis_evictions", "redis_evictions", 1.0),
+        @("redis_rejected", "redis_rejected", 1.0),
+        @("redis_cpu_credit", "redis_cpu_credit", 1.0)
+    )) {
+        Add-AcceptanceSeriesDatapoints -Name $entry[0] -SourceName $entry[1] `
+            -Scale ([double]$entry[2]) -MetricBatch $metricBatch -Config $Config
+    }
+    Add-NatAcceptanceSeriesDatapoints -NatState $nat -MetricBatch $metricBatch -Config $Config
+    for ($natIndex = 0; $natIndex -lt @($nat.gatewayIds).Count; $natIndex++) {
+        foreach ($natGate in @(
+            @("drops", "nat_packet_drop_observed"),
+            @("ports", "nat_port_allocation_error_observed")
+        )) {
+            if (Test-AcceptanceWindowSeriesBreach -MetricBatch $metricBatch -Config $Config `
+                    -SourceName "nat_${natIndex}_$($natGate[0])" `
+                    -IsBreached { param($value) $value -gt 0 }) {
+                Add-AcceptanceViolation $natGate[1]
+                $immediate.Add($natGate[1])
+            }
         }
     }
-    if ($nat.packetDropsLastMinute -gt 0) { Add-AcceptanceViolation "nat_packet_drop_observed" }
-    if ($nat.portAllocationErrorsLastMinute -gt 0) { Add-AcceptanceViolation "nat_port_allocation_error_observed" }
+    if (-not $Config.EngineeringAcceptance -and -not $Config.DiagnosticOnly) {
+        if ($nat.packetDropsLastMinute -gt 0) { Add-AcceptanceViolation "nat_packet_drop_observed" }
+        if ($nat.portAllocationErrorsLastMinute -gt 0) { Add-AcceptanceViolation "nat_port_allocation_error_observed" }
+    }
 
     $generatorIp = Get-GeneratorIpState -Config $Config
     if ($null -ne $generatorIp) {
@@ -2731,6 +3243,9 @@ function Get-Sample {
         schemaVersion = 1
         runId = $Config.RunId
         phase = $Config.Phase
+        diagnosticOnly = $Config.DiagnosticOnly
+        engineeringAcceptance = $Config.EngineeringAcceptance
+        certificationEligible = -not $Config.DiagnosticOnly -and -not $Config.EngineeringAcceptance
         timestamp = [DateTimeOffset]::UtcNow.ToString("o")
         ecs = $ecs
         ecsNetwork = $ecsNetwork
@@ -2895,6 +3410,604 @@ function Get-BoundHarnessProcess {
     return $process
 }
 
+function Get-BoundControllerProcess {
+    param($Config)
+    if (-not $Config.EngineeringAcceptance -or $Config.ControllerProcessId -le 0) {
+        return $null
+    }
+    $process = Get-Process -Id $Config.ControllerProcessId -ErrorAction SilentlyContinue
+    if ($null -eq $process) { return $null }
+    try {
+        $actualStartedAt = ([DateTimeOffset]$process.StartTime).ToUniversalTime()
+        $actualPath = [IO.Path]::GetFullPath([string]$process.Path)
+    }
+    catch { return $null }
+    if ([math]::Abs(($actualStartedAt - $Config.ControllerProcessStartedAtUtc).TotalSeconds) -gt 2) {
+        return $null
+    }
+    if (-not [string]::Equals(
+            $actualPath, $Config.ControllerProcessPath, [StringComparison]::OrdinalIgnoreCase
+        )) {
+        return $null
+    }
+    return $process
+}
+
+function Get-StringSha256 {
+    param([AllowEmptyString()][string]$Value)
+    return [Convert]::ToHexString(
+        [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($Value))
+    ).ToLowerInvariant()
+}
+
+function Get-CanonicalSha256 {
+    param($Value)
+    return Get-StringSha256 ($Value | ConvertTo-Json -Depth 50 -Compress)
+}
+
+function Get-EngineeringScalingSnapshot {
+    param(
+        $Config,
+        [string]$ExpectedApiTaskDefinitionArn = "",
+        [string]$ExpectedWorkerTaskDefinitionArn = ""
+    )
+    if (-not $ExpectedApiTaskDefinitionArn) {
+        $ExpectedApiTaskDefinitionArn = $Config.ExpectedActiveApiTaskDefinitionArn
+    }
+    if (-not $ExpectedWorkerTaskDefinitionArn) {
+        $ExpectedWorkerTaskDefinitionArn = $Config.ExpectedActiveWorkerTaskDefinitionArn
+    }
+    $resourceId = "service/$($Config.Resources.cluster)/$($Config.Resources.apiService)"
+    $targetResponse = Invoke-AwsJson -Arguments @(
+        "application-autoscaling", "describe-scalable-targets",
+        "--region", $Config.Resources.region,
+        "--service-namespace", "ecs",
+        "--resource-ids", $resourceId,
+        "--scalable-dimension", "ecs:service:DesiredCount"
+    )
+    $scalableTargets = @($targetResponse.ScalableTargets)
+    if ($scalableTargets.Count -ne 1) {
+        throw "Engineering scaling restoration could not uniquely resolve the API scalable target."
+    }
+    $suspended = Get-OptionalValue $scalableTargets[0] "SuspendedState"
+    $actionsResponse = Invoke-AwsJson -Arguments @(
+        "application-autoscaling", "describe-scheduled-actions",
+        "--region", $Config.Resources.region,
+        "--service-namespace", "ecs",
+        "--resource-id", $resourceId,
+        "--scalable-dimension", "ecs:service:DesiredCount"
+    )
+    $scheduledActions = @($actionsResponse.ScheduledActions |
+        Sort-Object ScheduledActionName | ForEach-Object {
+            [ordered]@{
+                name = [string]$_.ScheduledActionName
+                schedule = [string]$_.Schedule
+                timezone = [string]$_.Timezone
+                minCapacity = Get-OptionalValue $_.ScalableTargetAction "MinCapacity"
+                maxCapacity = Get-OptionalValue $_.ScalableTargetAction "MaxCapacity"
+            }
+        })
+    $policiesResponse = Invoke-AwsJson -Arguments @(
+        "application-autoscaling", "describe-scaling-policies",
+        "--region", $Config.Resources.region,
+        "--service-namespace", "ecs",
+        "--resource-id", $resourceId,
+        "--scalable-dimension", "ecs:service:DesiredCount"
+    )
+    $scalingPolicies = @($policiesResponse.ScalingPolicies |
+        Sort-Object PolicyName | ForEach-Object {
+            [ordered]@{
+                name = [string]$_.PolicyName
+                type = [string]$_.PolicyType
+                targetTracking = $_.TargetTrackingScalingPolicyConfiguration
+            }
+        })
+    $services = Get-EcsState -Config $Config
+    $targetHealth = Get-TargetState -Config $Config
+    $api = Get-OptionalValue $services ([string]$Config.Resources.apiService)
+    $worker = Get-OptionalValue $services ([string]$Config.Resources.workerService)
+    if ($null -eq $api -or $null -eq $worker) {
+        throw "Engineering scaling restoration could not uniquely resolve both ECS services."
+    }
+    $expectedSubnets = @($Config.EcsTaskSubnetIds | Sort-Object)
+    foreach ($serviceBinding in @(
+        @($api, $ExpectedApiTaskDefinitionArn, "API"),
+        @($worker, $ExpectedWorkerTaskDefinitionArn, "worker")
+    )) {
+        $service = $serviceBinding[0]
+        if ([string]$service.taskDefinition -cne [string]$serviceBinding[1] -or
+            [int]$service.deploymentCount -ne 1 -or
+            [string]$service.assignPublicIp -cne "DISABLED" -or
+            @(Compare-Object $expectedSubnets @($service.subnets | Sort-Object)).Count -ne 0) {
+            throw "Engineering scaling restoration observed a drifted $($serviceBinding[2]) service identity or private-network posture."
+        }
+    }
+    return [ordered]@{
+        resourceId = $resourceId
+        minCapacity = [int]$scalableTargets[0].MinCapacity
+        maxCapacity = [int]$scalableTargets[0].MaxCapacity
+        suspendedState = [ordered]@{
+            DynamicScalingInSuspended = [bool](
+                Get-OptionalValue $suspended "DynamicScalingInSuspended" $false
+            )
+            DynamicScalingOutSuspended = [bool](
+                Get-OptionalValue $suspended "DynamicScalingOutSuspended" $false
+            )
+            ScheduledScalingSuspended = [bool](
+                Get-OptionalValue $suspended "ScheduledScalingSuspended" $false
+            )
+        }
+        scheduledActionsSha256 = Get-CanonicalSha256 $scheduledActions
+        scalingPoliciesSha256 = Get-CanonicalSha256 $scalingPolicies
+        api = [ordered]@{
+            desired = [int]$api.desired
+            running = [int]$api.running
+            pending = [int]$api.pending
+            taskDefinition = [string]$api.taskDefinition
+            deploymentCount = [int]$api.deploymentCount
+            subnets = @($api.subnets | Sort-Object)
+            assignPublicIp = [string]$api.assignPublicIp
+        }
+        worker = [ordered]@{
+            desired = [int]$worker.desired
+            running = [int]$worker.running
+            pending = [int]$worker.pending
+            taskDefinition = [string]$worker.taskDefinition
+            deploymentCount = [int]$worker.deploymentCount
+            subnets = @($worker.subnets | Sort-Object)
+            assignPublicIp = [string]$worker.assignPublicIp
+        }
+        targets = [ordered]@{
+            total = [int]$targetHealth.total
+            healthy = [int]$targetHealth.healthy
+            unhealthy = [int]$targetHealth.unhealthy
+        }
+    }
+}
+
+function Test-EngineeringHeldScalingPosture {
+    param($Snapshot)
+    return (
+        [int]$Snapshot.minCapacity -eq 6 -and
+        [int]$Snapshot.maxCapacity -eq 8 -and
+        $Snapshot.suspendedState.DynamicScalingInSuspended -eq $false -and
+        $Snapshot.suspendedState.DynamicScalingOutSuspended -eq $true -and
+        $Snapshot.suspendedState.ScheduledScalingSuspended -eq $false -and
+        [int]$Snapshot.api.desired -eq 6 -and
+        [int]$Snapshot.api.running -eq 6 -and
+        [int]$Snapshot.api.pending -eq 0 -and
+        [int]$Snapshot.worker.desired -eq 1 -and
+        [int]$Snapshot.worker.running -eq 1 -and
+        [int]$Snapshot.worker.pending -eq 0 -and
+        [int]$Snapshot.targets.total -eq 6 -and
+        [int]$Snapshot.targets.healthy -eq 6 -and
+        [int]$Snapshot.targets.unhealthy -eq 0
+    )
+}
+
+function Set-EngineeringScalingTarget {
+    param($Config, [int]$Minimum, [int]$Maximum, $SuspendedState)
+    [void](Invoke-AwsJson -Arguments @(
+        "application-autoscaling", "register-scalable-target",
+        "--region", $Config.Resources.region,
+        "--service-namespace", "ecs",
+        "--resource-id", "service/$($Config.Resources.cluster)/$($Config.Resources.apiService)",
+        "--scalable-dimension", "ecs:service:DesiredCount",
+        "--min-capacity", [string]$Minimum,
+        "--max-capacity", [string]$Maximum,
+        "--suspended-state", ($SuspendedState | ConvertTo-Json -Compress)
+    ))
+}
+
+function Wait-EngineeringRestoredScalingPosture {
+    param(
+        $Config, $Target, [int]$TimeoutSeconds = 600,
+        [switch]$AfterApplicationRollback
+    )
+    $deadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
+    do {
+        try {
+            $observed = if ($AfterApplicationRollback) {
+                Get-EngineeringScalingSnapshot -Config $Config `
+                    -ExpectedApiTaskDefinitionArn $Target.RollbackApiTaskDefinitionArn `
+                    -ExpectedWorkerTaskDefinitionArn $Target.RollbackWorkerTaskDefinitionArn
+            }
+            else {
+                Get-EngineeringScalingSnapshot -Config $Config
+            }
+            $matches = (
+                [int]$observed.minCapacity -eq [int]$Target.MinCapacity -and
+                [int]$observed.maxCapacity -eq [int]$Target.MaxCapacity -and
+                $observed.suspendedState.DynamicScalingInSuspended -eq
+                    $Target.SuspendedState.DynamicScalingInSuspended -and
+                $observed.suspendedState.DynamicScalingOutSuspended -eq
+                    $Target.SuspendedState.DynamicScalingOutSuspended -and
+                $observed.suspendedState.ScheduledScalingSuspended -eq
+                    $Target.SuspendedState.ScheduledScalingSuspended -and
+                [string]$observed.scheduledActionsSha256 -ceq
+                    [string]$Target.ScheduledActionsSha256 -and
+                [string]$observed.scalingPoliciesSha256 -ceq
+                    [string]$Target.ScalingPoliciesSha256 -and
+                [int]$observed.api.desired -eq [int]$Target.ApiDesiredCount -and
+                [int]$observed.api.running -eq [int]$Target.ApiDesiredCount -and
+                [int]$observed.api.pending -eq 0 -and
+                [int]$observed.worker.desired -eq 1 -and
+                [int]$observed.worker.running -eq 1 -and
+                [int]$observed.worker.pending -eq 0 -and
+                [int]$observed.targets.total -eq [int]$Target.ApiDesiredCount -and
+                [int]$observed.targets.healthy -eq [int]$Target.ApiDesiredCount -and
+                [int]$observed.targets.unhealthy -eq 0
+            )
+            if ($matches) { return $observed }
+        }
+        catch {
+            # ALB registration/draining and control-plane reads are eventually
+            # consistent. Only a complete exact snapshot can end this bounded
+            # convergence loop.
+        }
+        if ([DateTimeOffset]::UtcNow -lt $deadline) { Start-Sleep -Seconds 5 }
+    } while ([DateTimeOffset]::UtcNow -lt $deadline)
+    throw "Engineering scaling restoration did not converge to its exact bound posture."
+}
+
+function Test-EngineeringApplicationRollbackRequired {
+    param([string[]]$Failures, $Sample)
+    $hardApplicationPattern = (
+        '^(?:alb_unhealthy|' +
+        'ecs_active_(?:api|worker)_task_definition_mismatch|' +
+        'ecs_active_running_task_revision_mismatch|' +
+        'ecs_active_emergency_api_oom:[A-Za-z0-9._-]+|' +
+        'ecs_api_oom:[A-Za-z0-9._-]+|' +
+        'ecs_task_stopped:[A-Za-z0-9._-]+|' +
+        'ecs_unstable:[A-Za-z0-9._-]+|' +
+        'load:(?:cross-school-delivery|cross-school-http-response|' +
+        'tenant-isolation-probe-(?:failed|unavailable)|command-target-scope|' +
+        'invalid-teacher-response|unfinished-http-requests|' +
+        'valid-http-(?:3\d\d|4(?:0[0-24-9]|[1-9]\d))))$'
+    )
+    if (@($Failures | Where-Object {
+        [string]$_ -match $hardApplicationPattern
+    }).Count -gt 0) {
+        return $true
+    }
+    $summary = Get-OptionalValue (Get-OptionalValue $Sample "load") "summary"
+    $fatalReasons = @(
+        Get-OptionalValue (Get-OptionalValue $summary "fatalGate") "reasonCodes" @()
+    )
+    $fatalPattern = '^(?:cross-school-delivery|cross-school-http-response|' +
+        'tenant-isolation-probe-(?:failed|unavailable)|command-target-scope|' +
+        'invalid-teacher-response|unfinished-http-requests|' +
+        'valid-http-(?:3\d\d|4(?:0[0-24-9]|[1-9]\d)))$'
+    if (@($fatalReasons | Where-Object {
+        [string]$_ -match $fatalPattern
+    }).Count -gt 0) {
+        return $true
+    }
+
+    # Generic threshold failures can be derivative symptoms of capacity,
+    # provider-evidence, or WAF enforcement. Those causes take precedence.
+    $capacityOrWafPattern = '(?i)(?:^|:)(?:rds|redis|telemetry|evidence|' +
+        'performance_insights|waf_.+blocked|ecs_(?:cpu|memory))(?::|_|$)'
+    if (@($Failures | Where-Object {
+        [string]$_ -match $capacityOrWafPattern
+    }).Count -gt 0) {
+        return $false
+    }
+    $summaryFailures = @(
+        Get-OptionalValue (Get-OptionalValue $summary "thresholds") "failures" @()
+    )
+    # Keep this expression byte-for-byte equivalent to Test-ApplicationFailure
+    # in start-classpilot-capacity-acceptance.ps1. The monitor must make the
+    # same rollback decision if the controller disappears after the trigger.
+    $summaryApplicationPattern = '(?i)(HTTP 5xx rate|network error rate|admission-timeout 503|' +
+        'valid traffic received .*HTTP (?:4xx|3xx)|HTTP requests remained unfinished|' +
+        'inspected HTTP responses could not be parsed completely|' +
+        'heartbeat (?:traffic|p95)|screenshot (?:POST|GET|success)|teacher/dashboard|history batch|' +
+        'teacher command|WebSocket (?:auth|close|keepalive|reconnect)|crossed the declared school|' +
+        'command target|teacher response|tenant-canary|foreign school|known non-owned|' +
+        'tenant isolation probes passed|' +
+        'final pre-shutdown WebSocket state|class command (?:targeted|reached|was delivered)|' +
+        'only \d+/\d+ (?:device|teacher) sockets were authenticated at final pre-shutdown|' +
+        'forced reconnects (?:were requested|requested|completed)|' +
+        'command validation produced no sent targets|' +
+        'configured class bodies produced sent (?:command )?targets|class bodies reached \d+ sent targets|' +
+        'teacher WebSockets authenticated|teacher WebSockets closed unexpectedly|' +
+        '(?:GET /api/students-aggregated|POST /api/classpilot/tiles/(?:history|screenshots)|' +
+        'POST /api/classpilot/commands) (?:emitted no completed samples|p95 exceeds \d+ms)|' +
+        'command responses or update owners|server command target statuses regressed|' +
+        'command targets (?:received|sent completed ACKs)|server did not report (?:received|completed)|' +
+        'unfinished-http-requests)'
+    return @($summaryFailures | Where-Object {
+        [string]$_ -match $summaryApplicationPattern
+    }).Count -gt 0
+}
+
+function Test-EngineeringControllerLossApplicationRollbackRequired {
+    param($Config)
+    try {
+        $progress = Get-LoadProgress -Config $Config
+    }
+    catch {
+        return $false
+    }
+    if ($null -eq $progress -or $progress.parseError -or
+        $progress.summaryPending -or $null -eq $progress.event -or
+        [string](Get-OptionalValue $progress.event "runId" "") -cne $Config.RunId -or
+        [string](Get-OptionalValue $progress.event "stage" "") -cne
+            $Config.Workload.Stage) {
+        return $false
+    }
+
+    $eventType = [string](Get-OptionalValue $progress.event "type" "")
+    $eventName = [string](Get-OptionalValue $progress.event "event" "")
+    $summary = $null
+    if ($eventType -ceq "fatal_gate") {
+        $summary = [ordered]@{
+            fatalGate = Get-OptionalValue $progress.event "fatalGate"
+            thresholds = [ordered]@{ failures = @() }
+        }
+    }
+    elseif ($eventName -ceq "final" -and $null -ne $progress.summary -and
+        [string](Get-OptionalValue $progress.summary "runId" "") -ceq
+            $Config.RunId -and
+        [string](Get-OptionalValue $progress.summary "stage" "") -ceq
+            $Config.Workload.Stage) {
+        $summary = $progress.summary
+    }
+    if ($null -eq $summary) { return $false }
+    $sample = [ordered]@{
+        load = [ordered]@{ summary = $summary }
+    }
+    return Test-EngineeringApplicationRollbackRequired -Failures @() -Sample $sample
+}
+
+function Invoke-EngineeringApplicationRollback {
+    param($Config)
+    $target = $Config.EngineeringScalingRestoration
+    if ($null -eq $target) {
+        throw "Engineering application rollback binding is absent."
+    }
+    $retryDelays = @(0, 1, 2, 4)
+    for ($attempt = 1; $attempt -le $retryDelays.Count; $attempt++) {
+        $delay = [int]$retryDelays[$attempt - 1]
+        if ($delay -gt 0) { Start-Sleep -Seconds $delay }
+        $apiUpdateAccepted = $false
+        $workerUpdateAccepted = $false
+        try {
+            [void](Invoke-AwsJson -Arguments @(
+                "ecs", "update-service",
+                "--region", $Config.Resources.region,
+                "--cluster", $Config.Resources.cluster,
+                "--service", $Config.Resources.apiService,
+                "--task-definition", $target.RollbackApiTaskDefinitionArn
+            ))
+            $apiUpdateAccepted = $true
+        }
+        catch { }
+        try {
+            [void](Invoke-AwsJson -Arguments @(
+                "ecs", "update-service",
+                "--region", $Config.Resources.region,
+                "--cluster", $Config.Resources.cluster,
+                "--service", $Config.Resources.workerService,
+                "--task-definition", $target.RollbackWorkerTaskDefinitionArn
+            ))
+            $workerUpdateAccepted = $true
+        }
+        catch { }
+        if (-not $apiUpdateAccepted -or -not $workerUpdateAccepted) { continue }
+        try {
+            [void](Invoke-AwsJson -Arguments @(
+                "ecs", "wait", "services-stable",
+                "--region", $Config.Resources.region,
+                "--cluster", $Config.Resources.cluster,
+                "--services", $Config.Resources.apiService, $Config.Resources.workerService
+            ))
+            $services = Get-EcsState -Config $Config
+            $api = Get-OptionalValue $services ([string]$Config.Resources.apiService)
+            $worker = Get-OptionalValue $services ([string]$Config.Resources.workerService)
+            if ($null -ne $api -and $null -ne $worker -and
+                [string]$api.taskDefinition -ceq $target.RollbackApiTaskDefinitionArn -and
+                [int]$api.desired -eq [int]$api.running -and [int]$api.pending -eq 0 -and
+                [string]$worker.taskDefinition -ceq $target.RollbackWorkerTaskDefinitionArn -and
+                [int]$worker.desired -eq 1 -and [int]$worker.running -eq 1 -and
+                [int]$worker.pending -eq 0) {
+                return [ordered]@{
+                    approved = $true
+                    attempted = $true
+                    completed = $true
+                    mutationStarted = $true
+                    action = "Application"
+                    exitCode = 0
+                    attemptCount = $attempt
+                    completedAtUtc = [DateTimeOffset]::UtcNow.ToString("o")
+                    apiTaskDefinitionSha256 =
+                        Get-StringSha256 $target.RollbackApiTaskDefinitionArn
+                    workerTaskDefinitionSha256 =
+                        Get-StringSha256 $target.RollbackWorkerTaskDefinitionArn
+                    rawErrorPersisted = $false
+                }
+            }
+        }
+        catch { }
+    }
+    throw "Engineering application rollback did not converge to its exact prior revisions."
+}
+
+function Restore-EngineeringScaling {
+    param($Config, [switch]$AfterApplicationRollback)
+    $target = $Config.EngineeringScalingRestoration
+    if ($null -eq $target) {
+        throw "Engineering scaling restoration binding is absent."
+    }
+
+    # Freeze every automatic scaler only while the original desired count is
+    # restored. Application rollback is never inferred here; when the monitor
+    # already completed the exact bound hard-failure rollback, this routine
+    # merely verifies those prior revisions while restoring scaling.
+    $fullySuspended = [ordered]@{
+        DynamicScalingInSuspended = $true
+        DynamicScalingOutSuspended = $true
+        ScheduledScalingSuspended = $true
+    }
+    if ($AfterApplicationRollback) {
+        # A prior rollback attempt may have updated only one service before a
+        # transient provider failure. Reissue both exact prior revisions
+        # idempotently before restoring desired counts and scaler state.
+        [void](Invoke-EngineeringApplicationRollback -Config $Config)
+    }
+    Set-EngineeringScalingTarget -Config $Config -Minimum $target.MinCapacity `
+        -Maximum $target.MaxCapacity -SuspendedState $fullySuspended
+    [void](Invoke-AwsJson -Arguments @(
+        "ecs", "update-service",
+        "--region", $Config.Resources.region,
+        "--cluster", $Config.Resources.cluster,
+        "--service", $Config.Resources.apiService,
+        "--desired-count", [string]$target.ApiDesiredCount
+    ))
+    [void](Invoke-AwsJson -Arguments @(
+        "ecs", "wait", "services-stable",
+        "--region", $Config.Resources.region,
+        "--cluster", $Config.Resources.cluster,
+        "--services", $Config.Resources.apiService, $Config.Resources.workerService
+    ))
+    Set-EngineeringScalingTarget -Config $Config -Minimum $target.MinCapacity `
+        -Maximum $target.MaxCapacity -SuspendedState $target.SuspendedState
+
+    $observed = Wait-EngineeringRestoredScalingPosture -Config $Config -Target $target `
+        -AfterApplicationRollback:$AfterApplicationRollback
+    return [ordered]@{
+        schemaVersion = 1
+        runId = $Config.RunId
+        engineeringAcceptance = $true
+        restored = $true
+        afterApplicationRollback = [bool]$AfterApplicationRollback
+        completedAtUtc = [DateTimeOffset]::UtcNow.ToString("o")
+        target = [ordered]@{
+            apiDesiredCount = [int]$target.ApiDesiredCount
+            minCapacity = [int]$target.MinCapacity
+            maxCapacity = [int]$target.MaxCapacity
+            rollbackApiTaskDefinitionSha256 = Get-StringSha256 `
+                $target.RollbackApiTaskDefinitionArn
+            rollbackWorkerTaskDefinitionSha256 = Get-StringSha256 `
+                $target.RollbackWorkerTaskDefinitionArn
+            scheduledActionsSha256 = [string]$target.ScheduledActionsSha256
+            scalingPoliciesSha256 = [string]$target.ScalingPoliciesSha256
+            suspendedState = $target.SuspendedState
+        }
+        observed = $observed
+        applicationRollback = $null
+        rawErrorPersisted = $false
+    }
+}
+
+function Write-EngineeringControllerLostTerminal {
+    param(
+        $Config,
+        [string]$HeartbeatPath,
+        [string]$ResultPath,
+        [int]$Iteration,
+        [switch]$ApplicationRollbackRequired,
+        [string[]]$ObservedFailures = @()
+    )
+    $harnessStopFailure = $null
+    try { Stop-Harness -Config $Config }
+    catch { $harnessStopFailure = $_ }
+    $failureCode = if ($null -eq $harnessStopFailure) {
+        "controller_process_lost"
+    }
+    else {
+        "bound_harness_nontermination"
+    }
+    $applicationRollback = [ordered]@{
+        approved = $false
+        attempted = $false
+        completed = $false
+        mutationStarted = $false
+        action = $null
+        reason = "controller loss alone invokes only the independent scaling-restoration envelope"
+        rawErrorPersisted = $false
+    }
+    $failures = [Collections.Generic.List[string]]::new()
+    $failures.Add($failureCode)
+    foreach ($observedFailure in @($ObservedFailures)) {
+        if (-not [string]::IsNullOrWhiteSpace($observedFailure) -and
+            -not $failures.Contains([string]$observedFailure)) {
+            $failures.Add([string]$observedFailure)
+        }
+    }
+    if ($ApplicationRollbackRequired -and $null -eq $harnessStopFailure) {
+        # Persist mutation intent before the first ECS update. If the rollback
+        # itself is interrupted, final restoration must still converge to the
+        # exact prior revisions rather than the newly deployed tasks.
+        $applicationRollback = [ordered]@{
+            approved = $true
+            attempted = $true
+            completed = $false
+            mutationStarted = $true
+            action = "Application"
+            exitCode = $null
+            completedAtUtc = $null
+            failureCode = $null
+            discardedMessageSha256 = $null
+            apiTaskDefinitionSha256 = Get-StringSha256 `
+                $Config.EngineeringScalingRestoration.RollbackApiTaskDefinitionArn
+            workerTaskDefinitionSha256 = Get-StringSha256 `
+                $Config.EngineeringScalingRestoration.RollbackWorkerTaskDefinitionArn
+            rawErrorPersisted = $false
+        }
+        Write-AtomicJson -Path $ResultPath -Value ([ordered]@{
+            runId = $Config.RunId
+            phase = $Config.Phase
+            diagnosticOnly = $Config.DiagnosticOnly
+            engineeringAcceptance = $Config.EngineeringAcceptance
+            certificationEligible = $false
+            status = "failed"
+            timestamp = [DateTimeOffset]::UtcNow.ToString("o")
+            failures = @($failures)
+            rollback = $applicationRollback
+        })
+        try {
+            $applicationRollback = Invoke-EngineeringApplicationRollback -Config $Config
+        }
+        catch {
+            $applicationRollback.exitCode = 1
+            $applicationRollback.failureCode = "engineering_application_rollback_failed"
+            $applicationRollback.discardedMessageSha256 =
+                Get-StringSha256 $_.Exception.Message
+            $failures.Add("engineering_application_rollback_failed")
+        }
+    }
+    $timestamp = [DateTimeOffset]::UtcNow.ToString("o")
+    Write-AtomicJson -Path $HeartbeatPath -Value ([ordered]@{
+        runId = $Config.RunId
+        phase = $Config.Phase
+        diagnosticOnly = $Config.DiagnosticOnly
+        engineeringAcceptance = $Config.EngineeringAcceptance
+        certificationEligible = $false
+        timestamp = $timestamp
+        iteration = $Iteration
+        triggered = $true
+        scalingRestorationArmed = $true
+        failureCode = $failureCode
+    })
+    Write-AtomicJson -Path $ResultPath -Value ([ordered]@{
+        runId = $Config.RunId
+        phase = $Config.Phase
+        diagnosticOnly = $Config.DiagnosticOnly
+        engineeringAcceptance = $Config.EngineeringAcceptance
+        certificationEligible = $false
+        status = "failed"
+        timestamp = $timestamp
+        failures = @($failures)
+        rollback = $applicationRollback
+    })
+    if ($null -ne $harnessStopFailure) {
+        throw "The exact bound harness did not terminate after controller loss."
+    }
+    return $applicationRollback
+}
+
 function Stop-Harness {
     param($Config)
     if ($Config.HarnessProcessId -le 0) { return }
@@ -2905,6 +4018,14 @@ function Stop-Harness {
             if ($LASTEXITCODE -notin @(0, 128)) { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue }
         }
         else { Stop-Process -Id $process.Id -Force }
+        $deadline = [DateTimeOffset]::UtcNow.AddSeconds(30)
+        while ($null -ne (Get-BoundHarnessProcess -Config $Config) -and
+            [DateTimeOffset]::UtcNow -lt $deadline) {
+            Start-Sleep -Milliseconds 100
+        }
+        if ($null -ne (Get-BoundHarnessProcess -Config $Config)) {
+            throw "The exact bound harness remained live after bounded termination."
+        }
     }
 }
 
@@ -3074,7 +4195,8 @@ $safeValidation = [ordered]@{
     runId = $config.RunId
     phase = $config.Phase
     diagnosticOnly = $config.DiagnosticOnly
-    certificationEligible = -not $config.DiagnosticOnly
+    engineeringAcceptance = $config.EngineeringAcceptance
+    certificationEligible = -not $config.DiagnosticOnly -and -not $config.EngineeringAcceptance
     pollSeconds = $config.PollSeconds
     automaticRollback = $config.AutomaticRollback
     evidenceDirectory = $config.EvidenceDirectory
@@ -3088,7 +4210,9 @@ New-Item -ItemType Directory -Path $config.EvidenceDirectory -Force | Out-Null
 $evidencePath = Join-ContainedPath $config.EvidenceDirectory "$($config.RunId)-aws-monitor.jsonl" "evidence path"
 $heartbeatPath = Join-ContainedPath $config.EvidenceDirectory "$($config.RunId)-monitor-heartbeat.json" "heartbeat path"
 $resultPath = Join-ContainedPath $config.EvidenceDirectory "$($config.RunId)-monitor-result.json" "result path"
-foreach ($uniquePath in @($evidencePath, $heartbeatPath, $resultPath)) {
+$engineeringRestorationPath = Join-ContainedPath $config.EvidenceDirectory `
+    "$($config.RunId)-engineering-scaling-restoration.json" "engineering scaling restoration path"
+foreach ($uniquePath in @($evidencePath, $heartbeatPath, $resultPath, $engineeringRestorationPath)) {
     if (Test-Path -LiteralPath $uniquePath) { throw "Run evidence already exists at $uniquePath; use a unique runId." }
 }
 if ($config.LoadProgressPath) {
@@ -3108,8 +4232,89 @@ $iteration = 0
 $nextHourlyReportAt = [DateTimeOffset]::UtcNow.AddHours(1)
 $monotonicClock = [Diagnostics.Stopwatch]::StartNew()
 $nextPollElapsedSeconds = 0.0
+$engineeringRestorationArmed = $false
+$engineeringApplicationRollback = [ordered]@{
+    approved = $false
+    attempted = $false
+    completed = $false
+    action = $null
+    reason = "no authoritative hard application failure was observed"
+}
+$effectiveConfigSha256 = if ($normalizedConfigSha) {
+    $normalizedConfigSha
+}
+else {
+    (Get-FileHash -LiteralPath $ConfigPath -Algorithm SHA256).Hash.ToLowerInvariant()
+}
 
 try {
+    if ($config.EngineeringAcceptance) {
+        if ($null -eq (Get-BoundControllerProcess -Config $config)) {
+            throw "The bound engineering-acceptance controller process is not live."
+        }
+        # This is the monitor/controller hand-off: the detached monitor owns an
+        # exact scaling-only restoration envelope before the controller may
+        # raise capacity. A controller crash after this fsynced heartbeat cannot
+        # strand the API at the engineering hold.
+        $engineeringRestorationArmed = $true
+        Write-AtomicJson -Path $heartbeatPath -Value ([ordered]@{
+            runId = $config.RunId
+            phase = $config.Phase
+            diagnosticOnly = $config.DiagnosticOnly
+            engineeringAcceptance = $config.EngineeringAcceptance
+            certificationEligible = $false
+            timestamp = [DateTimeOffset]::UtcNow.ToString("o")
+            iteration = 0
+            triggered = $false
+            scalingRestorationArmed = $true
+            configSha256 = $effectiveConfigSha256
+            monitorProcessId = [int]$PID
+        })
+
+        $heldDeadline = [DateTimeOffset]::UtcNow.AddMinutes(10)
+        while ($true) {
+            if ($null -eq (Get-BoundControllerProcess -Config $config)) {
+                $controllerLossRollbackRequired =
+                    Test-EngineeringControllerLossApplicationRollbackRequired -Config $config
+                $engineeringApplicationRollback =
+                    Write-EngineeringControllerLostTerminal -Config $config `
+                        -HeartbeatPath $heartbeatPath -ResultPath $resultPath -Iteration 0 `
+                        -ApplicationRollbackRequired:$controllerLossRollbackRequired
+                exit 4
+            }
+            try {
+                $heldSnapshot = Get-EngineeringScalingSnapshot -Config $config
+                if (Test-EngineeringHeldScalingPosture -Snapshot $heldSnapshot) { break }
+            }
+            catch {
+                # A transient read cannot disarm restoration. The bounded hold
+                # acquisition window and the controller identity remain the
+                # authoritative stop conditions.
+            }
+            if ([DateTimeOffset]::UtcNow -ge $heldDeadline) {
+                Stop-Harness -Config $config
+                Write-AtomicJson -Path $resultPath -Value ([ordered]@{
+                    runId = $config.RunId
+                    phase = $config.Phase
+                    diagnosticOnly = $config.DiagnosticOnly
+                    engineeringAcceptance = $config.EngineeringAcceptance
+                    certificationEligible = $false
+                    status = "failed"
+                    timestamp = [DateTimeOffset]::UtcNow.ToString("o")
+                    failures = @("engineering_capacity_hold_unavailable")
+                    rollback = [ordered]@{
+                        approved = $false
+                        attempted = $false
+                        action = $null
+                        reason = "the independent scaling-restoration envelope remains authoritative"
+                    }
+                })
+                exit 4
+            }
+            Start-Sleep -Seconds 2
+        }
+    }
+
     while ($config.MaxIterations -eq 0 -or $iteration -lt $config.MaxIterations) {
         $sampleStartedElapsedSeconds = $monotonicClock.Elapsed.TotalSeconds
         $iteration++
@@ -3130,9 +4335,31 @@ try {
             }
         }
         Write-JsonLine -Path $evidencePath -Value $sample
+        if ($config.EngineeringAcceptance -and
+            $null -eq (Get-BoundControllerProcess -Config $config)) {
+            # Complete one safe observation before classifying controller
+            # loss. The harness may have committed an authoritative fatal/final
+            # summary since the prior poll; checking process liveness first
+            # would discard that decision and incorrectly restore scaling only.
+            $controllerLossFailures = @($sample.immediateFailures) +
+                @($sample.consecutiveFailures)
+            $controllerLossRollbackRequired =
+                Test-EngineeringApplicationRollbackRequired `
+                    -Failures $controllerLossFailures -Sample $sample
+            $engineeringApplicationRollback =
+                Write-EngineeringControllerLostTerminal -Config $config `
+                    -HeartbeatPath $heartbeatPath -ResultPath $resultPath `
+                    -Iteration $iteration `
+                    -ApplicationRollbackRequired:$controllerLossRollbackRequired `
+                    -ObservedFailures $controllerLossFailures
+            exit 4
+        }
         Write-AtomicJson -Path $heartbeatPath -Value ([ordered]@{
             runId = $config.RunId
             phase = $config.Phase
+            diagnosticOnly = $config.DiagnosticOnly
+            engineeringAcceptance = $config.EngineeringAcceptance
+            certificationEligible = -not $config.DiagnosticOnly -and -not $config.EngineeringAcceptance
             timestamp = [DateTimeOffset]::UtcNow.ToString("o")
             iteration = $iteration
             triggered = $sample.triggered
@@ -3168,6 +4395,9 @@ try {
                 Write-AtomicJson -Path $heartbeatPath -Value ([ordered]@{
                     runId = $config.RunId
                     phase = $config.Phase
+                    diagnosticOnly = $config.DiagnosticOnly
+                    engineeringAcceptance = $config.EngineeringAcceptance
+                    certificationEligible = -not $config.DiagnosticOnly -and -not $config.EngineeringAcceptance
                     timestamp = [DateTimeOffset]::UtcNow.ToString("o")
                     iteration = $iteration
                     triggered = $true
@@ -3179,15 +4409,28 @@ try {
         if ($sample.triggered) {
             Stop-Harness -Config $config
             $failures = @($sample.immediateFailures) + @($sample.consecutiveFailures)
-            $rollbackDecision = Resolve-ApprovedRollback -Config $config -Sample $sample
+            $engineeringHardApplicationFailure = $config.EngineeringAcceptance -and
+                (Test-EngineeringApplicationRollbackRequired -Failures $failures -Sample $sample)
+            $rollbackDecision = if ($config.EngineeringAcceptance) {
+                [pscustomobject]@{
+                    approved = [bool]$engineeringHardApplicationFailure
+                    ambiguous = $false
+                    action = if ($engineeringHardApplicationFailure) { "Application" } else { $null }
+                }
+            }
+            else {
+                Resolve-ApprovedRollback -Config $config -Sample $sample
+            }
             $rollback = [ordered]@{
                 approved = $rollbackDecision.approved
                 ambiguous = $rollbackDecision.ambiguous
                 attempted = $false
+                completed = $false
                 action = $null
                 exitCode = $null
                 error = $null
                 notificationError = $null
+                rawErrorPersisted = $false
             }
             try {
                 Send-Notification -Config $config -Subject "SchoolPilot $($config.Phase) gate FAILED" `
@@ -3214,11 +4457,69 @@ try {
                     $rollback.error = $_.Exception.Message
                 }
             }
+            elseif ($config.EngineeringAcceptance -and $engineeringHardApplicationFailure) {
+                $engineeringApplicationRollback = [ordered]@{
+                    approved = $true
+                    attempted = $true
+                    completed = $false
+                    mutationStarted = $true
+                    action = "Application"
+                    exitCode = $null
+                    completedAtUtc = $null
+                    apiTaskDefinitionSha256 = Get-StringSha256 `
+                        $config.EngineeringScalingRestoration.RollbackApiTaskDefinitionArn
+                    workerTaskDefinitionSha256 = Get-StringSha256 `
+                        $config.EngineeringScalingRestoration.RollbackWorkerTaskDefinitionArn
+                    rawErrorPersisted = $false
+                }
+                # Commit rollback intent before the first ECS mutation. If the
+                # detached monitor itself is killed mid-update, the runner can
+                # safely reassert both exact prior revisions from this existing
+                # result shape.
+                Write-AtomicJson -Path $resultPath -Value ([ordered]@{
+                    runId = $config.RunId
+                    phase = $config.Phase
+                    diagnosticOnly = $config.DiagnosticOnly
+                    engineeringAcceptance = $config.EngineeringAcceptance
+                    certificationEligible = $false
+                    status = "failed"
+                    timestamp = [DateTimeOffset]::UtcNow.ToString("o")
+                    failures = $failures
+                    rollback = $engineeringApplicationRollback
+                })
+                try {
+                    $engineeringApplicationRollback = Invoke-EngineeringApplicationRollback `
+                        -Config $config
+                    $engineeringApplicationRollback.mutationStarted = $true
+                    $rollback = $engineeringApplicationRollback
+                }
+                catch {
+                    $engineeringApplicationRollback = [ordered]@{
+                        approved = $true
+                        attempted = $true
+                        completed = $false
+                        mutationStarted = $true
+                        action = "Application"
+                        exitCode = 1
+                        completedAtUtc = $null
+                        failureCode = "engineering_application_rollback_failed"
+                        apiTaskDefinitionSha256 = Get-StringSha256 `
+                            $config.EngineeringScalingRestoration.RollbackApiTaskDefinitionArn
+                        workerTaskDefinitionSha256 = Get-StringSha256 `
+                            $config.EngineeringScalingRestoration.RollbackWorkerTaskDefinitionArn
+                        discardedMessageSha256 = Get-StringSha256 $_.Exception.Message
+                        rawErrorPersisted = $false
+                    }
+                    $rollback = $engineeringApplicationRollback
+                    $failures += "engineering_application_rollback_failed"
+                }
+            }
             $result = [ordered]@{
                 runId = $config.RunId
                 phase = $config.Phase
                 diagnosticOnly = $config.DiagnosticOnly
-                certificationEligible = -not $config.DiagnosticOnly
+                engineeringAcceptance = $config.EngineeringAcceptance
+                certificationEligible = -not $config.DiagnosticOnly -and -not $config.EngineeringAcceptance
                 status = "failed"
                 timestamp = [DateTimeOffset]::UtcNow.ToString("o")
                 failures = $failures
@@ -3235,8 +4536,16 @@ try {
         $loadSatisfied = if ($config.LoadProgressPath) { [bool]$sample.loadCompleted } else { $true }
         $route53Satisfied = $config.Phase -ne "Route53" -or $script:Route53AlarmOkPeriods -ge 3
         $automatedSnapshotSatisfied = $config.Phase -ne "Final" -or [bool]$sample.automatedRedisSnapshot.accepted
+        $telemetryCoverageReady = if ($durationSatisfied -and $loadSatisfied) {
+            Test-AcceptanceTelemetryCoverageReady -Config $config
+        }
+        else {
+            $false
+        }
         if ($durationSatisfied -and $testIterationMinimumSatisfied -and $loadSatisfied -and
-            $route53Satisfied -and $automatedSnapshotSatisfied) {
+            $route53Satisfied -and $automatedSnapshotSatisfied -and $telemetryCoverageReady) {
+            # Get-AcceptanceResult accumulates immutable violations. Do not call
+            # it while provider publication is merely incomplete.
             $acceptance = Get-AcceptanceResult -Config $config
             if (-not $acceptance.passed) {
                 Stop-Harness -Config $config
@@ -3244,7 +4553,8 @@ try {
                     runId = $config.RunId
                     phase = $config.Phase
                     diagnosticOnly = $config.DiagnosticOnly
-                    certificationEligible = -not $config.DiagnosticOnly
+                    engineeringAcceptance = $config.EngineeringAcceptance
+                    certificationEligible = -not $config.DiagnosticOnly -and -not $config.EngineeringAcceptance
                     status = "failed"
                     timestamp = [DateTimeOffset]::UtcNow.ToString("o")
                     failures = @("run_acceptance_failed") + @($acceptance.violations)
@@ -3263,7 +4573,8 @@ try {
                 runId = $config.RunId
                 phase = $config.Phase
                 diagnosticOnly = $config.DiagnosticOnly
-                certificationEligible = -not $config.DiagnosticOnly
+                engineeringAcceptance = $config.EngineeringAcceptance
+                certificationEligible = -not $config.DiagnosticOnly -and -not $config.EngineeringAcceptance
                 status = "completed"
                 timestamp = [DateTimeOffset]::UtcNow.ToString("o")
                 iterations = $iteration
@@ -3275,7 +4586,8 @@ try {
                 workload = if ($null -eq $config.Workload) { $null } else { [ordered]@{
                     stage = $config.Workload.Stage
                     diagnosticOnly = $config.DiagnosticOnly
-                    certificationEligible = -not $config.DiagnosticOnly
+                    engineeringAcceptance = $config.EngineeringAcceptance
+                    certificationEligible = -not $config.DiagnosticOnly -and -not $config.EngineeringAcceptance
                     devices = $config.Workload.Devices
                     durationSeconds = $config.Workload.DurationSeconds
                     screenshotBytes = $config.Workload.ScreenshotBytes
@@ -3307,12 +4619,52 @@ try {
         $deadlineReached = [DateTimeOffset]::UtcNow -ge $config.DeadlineUtc
         if ($iterationLimitReached -or $deadlineReached) {
             Stop-Harness -Config $config
+            # Provider publication is allowed to remain incomplete while the
+            # bounded monitor window is still open. Once that window is
+            # exhausted after every non-telemetry prerequisite has completed,
+            # missing or stale telemetry is a terminal cumulative-acceptance
+            # failure, not an indeterminate "before acceptance" state. Evaluate
+            # it exactly once here so the result retains the metric-specific
+            # coverage violations and remains fail-closed.
+            if ($durationSatisfied -and $testIterationMinimumSatisfied -and
+                $loadSatisfied -and $route53Satisfied -and
+                $automatedSnapshotSatisfied -and -not $telemetryCoverageReady) {
+                $acceptance = Get-AcceptanceResult -Config $config
+                if (-not $acceptance.passed) {
+                    $failedResult = [ordered]@{
+                        runId = $config.RunId
+                        phase = $config.Phase
+                        diagnosticOnly = $config.DiagnosticOnly
+                        engineeringAcceptance = $config.EngineeringAcceptance
+                        certificationEligible = -not $config.DiagnosticOnly -and -not $config.EngineeringAcceptance
+                        status = "failed"
+                        timestamp = [DateTimeOffset]::UtcNow.ToString("o")
+                        failures = @("run_acceptance_failed") + @($acceptance.violations)
+                        rollback = [ordered]@{
+                            approved = $false
+                            attempted = $false
+                            action = $null
+                            reason = "cumulative acceptance is not an automatic mutation trigger"
+                        }
+                        acceptance = $acceptance
+                    }
+                    Write-AtomicJson -Path $resultPath -Value $failedResult
+                    try {
+                        Send-Notification -Config $config `
+                            -Subject "SchoolPilot $($config.Phase) acceptance FAILED" `
+                            -Message "Run $($config.RunId) exhausted its telemetry publication window and failed cumulative acceptance: $($acceptance.violations -join ', '). No infrastructure rollback was attempted."
+                    }
+                    catch { }
+                    exit 2
+                }
+            }
             $reason = if ($deadlineReached) { "monitor_deadline_reached_before_acceptance" } else { "monitor_iteration_limit_reached_before_acceptance" }
             $failedResult = [ordered]@{
                 runId = $config.RunId
                 phase = $config.Phase
                 diagnosticOnly = $config.DiagnosticOnly
-                certificationEligible = -not $config.DiagnosticOnly
+                engineeringAcceptance = $config.EngineeringAcceptance
+                certificationEligible = -not $config.DiagnosticOnly -and -not $config.EngineeringAcceptance
                 status = "failed"
                 timestamp = [DateTimeOffset]::UtcNow.ToString("o")
                 failures = @($reason)
@@ -3321,7 +4673,7 @@ try {
             Write-AtomicJson -Path $resultPath -Value $failedResult
             try {
                 Send-Notification -Config $config -Subject "SchoolPilot $($config.Phase) monitoring INVALID" `
-                    -Message "Run $($config.RunId) stopped because $reason. The full stage must be repeated; no infrastructure rollback was attempted."
+                    -Message "Run $($config.RunId) stopped because $reason. The engineering campaign is terminal and no traffic rerun is permitted."
             }
             catch { }
             exit 2
@@ -3332,5 +4684,60 @@ try {
     }
 }
 finally {
-    # No credentials are persisted by this process; evidence contains metrics only.
+    # No credentials are persisted by this process; evidence contains metrics
+    # and sanitized restoration posture only. The runner repeats this restore
+    # idempotently, but the detached monitor owns it if the runner disappears.
+    if ($config.EngineeringAcceptance -and $engineeringRestorationArmed) {
+        try {
+            $engineeringRestoration = Restore-EngineeringScaling -Config $config `
+                -AfterApplicationRollback:(
+                    (Get-OptionalValue $engineeringApplicationRollback "mutationStarted" $false) -eq $true
+                )
+            if ((Get-OptionalValue $engineeringApplicationRollback "mutationStarted" $false) -eq $true -and
+                (Get-OptionalValue $engineeringApplicationRollback "completed" $false) -ne $true) {
+                $engineeringApplicationRollback.completed = $true
+                $engineeringApplicationRollback.exitCode = 0
+                $engineeringApplicationRollback.completedAtUtc =
+                    [DateTimeOffset]::UtcNow.ToString("o")
+            }
+            $engineeringRestoration.applicationRollback = $engineeringApplicationRollback
+            Write-AtomicJson -Path $engineeringRestorationPath -Value $engineeringRestoration
+        }
+        catch {
+            $restorationFailure = [ordered]@{
+                schemaVersion = 1
+                runId = $config.RunId
+                engineeringAcceptance = $true
+                restored = $false
+                completedAtUtc = [DateTimeOffset]::UtcNow.ToString("o")
+                failureCode = "engineering_scaling_restoration_failed"
+                discardedMessageSha256 = Get-StringSha256 $_.Exception.Message
+                rawErrorPersisted = $false
+            }
+            try {
+                Write-AtomicJson -Path $engineeringRestorationPath -Value $restorationFailure
+            }
+            catch { }
+            try {
+                Write-AtomicJson -Path $resultPath -Value ([ordered]@{
+                    runId = $config.RunId
+                    phase = $config.Phase
+                    diagnosticOnly = $config.DiagnosticOnly
+                    engineeringAcceptance = $config.EngineeringAcceptance
+                    certificationEligible = $false
+                    status = "failed"
+                    timestamp = [DateTimeOffset]::UtcNow.ToString("o")
+                    failures = @("engineering_scaling_restoration_failed")
+                    rollback = [ordered]@{
+                        approved = $false
+                        attempted = $false
+                        action = $null
+                        reason = "scaling restoration failed closed"
+                    }
+                })
+            }
+            catch { }
+            throw "Engineering scaling restoration failed."
+        }
+    }
 }

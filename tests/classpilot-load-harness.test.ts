@@ -2108,6 +2108,74 @@ if (signalMarker) {
     assert.equal(preflight.launchContract.tileBatchRequestsPerCohort, 2);
   });
 
+  it("admits only the two exact non-certifying engineering acceptance profiles", () => {
+    const waf500 = createLaunchArtifacts({
+      label: "engineering-500",
+      baseUrl: "http://localhost:4000",
+      primaryDevices: 500,
+      targetsPerClass: 25,
+    });
+    const waf800 = createLaunchArtifacts({
+      label: "engineering-800",
+      baseUrl: "http://localhost:4000",
+      primaryDevices: 800,
+      targetsPerClass: 40,
+    });
+    const launch = (artifacts: ReturnType<typeof createLaunchArtifacts>, stage: "500" | "800") => ({
+      LOAD_BASE_URL: "http://localhost:4000",
+      LOAD_DEVICE_MANIFEST: artifacts.manifestPath,
+      LOAD_DEVICE_COUNT: stage === "500" ? "510" : "810",
+      LOAD_DURATION_SECONDS: stage === "500" ? "1800" : "5400",
+      LOAD_SCREENSHOT_PROFILE: "standard",
+      LOAD_ENFORCE_THRESHOLDS: "true",
+      LOAD_GATE_PROFILE: "launch",
+      LOAD_ENGINEERING_ACCEPTANCE: "true",
+      LOAD_STAGE: stage,
+      LOAD_TEACHER_AUTH_FILE: artifacts.authPath,
+      ...launchTileBatchEnvironment,
+      LOAD_COMMAND_ENDPOINT: "/api/classpilot/commands",
+      LOAD_COMMAND_BODIES_FILE: artifacts.commandsPath,
+      LOAD_EXPECTED_TARGETS_PER_CLASS: stage === "500" ? "25" : "40",
+      LOAD_FORCE_RECONNECT_AT_SECONDS: "120",
+      LOAD_RUN_ID: `engineering-${stage}-supervised-run`,
+      LOAD_EXTERNAL_SUMMARY_PATH: join(tempDir, `engineering-${stage}-summary.json`),
+      LOAD_EXTERNAL_PROGRESS_PATH: join(tempDir, `engineering-${stage}-progress.jsonl`),
+    });
+
+    for (const [artifacts, stage] of [[waf500, "500"], [waf800, "800"]] as const) {
+      const accepted = run(["--validate-config"], cleanEnv(launch(artifacts, stage)));
+      assert.equal(accepted.status, 0, accepted.stderr);
+      const preflight = JSON.parse(accepted.stdout);
+      assert.equal(preflight.diagnosticOnly, false);
+      assert.equal(preflight.engineeringAcceptance, true);
+      assert.equal(preflight.certificationEligible, false);
+      assert.equal(preflight.launchContract.totalSockets, stage === "500" ? 510 : 810);
+      assert.equal(preflight.launchContract.durationSeconds, stage === "500" ? 1800 : 5400);
+      assert.equal(preflight.launchContract.teacherTileAssignments, stage === "500" ? 500 : 800);
+    }
+
+    const wrongStage = run(["--validate-config"], cleanEnv({
+      ...launch(waf500, "500"),
+      LOAD_STAGE: "800",
+    }));
+    assert.notEqual(wrongStage.status, 0);
+    assert.match(wrongStage.stderr, /requires LOAD_STAGE=500/);
+
+    const endurance = run(["--validate-config"], cleanEnv({
+      ...launch(waf800, "800"),
+      LOAD_DURATION_SECONDS: "28800",
+    }));
+    assert.notEqual(endurance.status, 0);
+    assert.match(endurance.stderr, /permits only Waf\/500 .* or Waf\/800/);
+
+    const mixedMode = run(["--validate-config"], cleanEnv({
+      ...launch(waf800, "800"),
+      LOAD_DIAGNOSTIC_ONLY: "true",
+    }));
+    assert.notEqual(mixedMode.status, 0);
+    assert.match(mixedMode.stderr, /mutually exclusive/);
+  });
+
   it("counts only the sanitized admission_timeout code as an admission-timeout 503", async () => {
     const admissionManifestPath = join(tempDir, "admission-timeout-devices.private.json");
     writeFileSync(admissionManifestPath, JSON.stringify([{

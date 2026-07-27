@@ -20,6 +20,12 @@
 #     --reuse-classpilot-tile-auth-plan-rehearsal <private-receipt-path> \
 #     --expected-classpilot-tile-auth-plan-rehearsal-sha256 <64-hex>
 #                                       # Consume one fresh rehearsal receipt and deploy only its exact candidates
+#   ./scripts/deploy.sh production --backend --activate-emergency \
+#     --capacity-acceptance-release
+#                                       # One guarded engineering-capacity release; strict pre/post SQL gates, no rehearsal receipt
+#   ./scripts/deploy.sh production --frontend \
+#     --capacity-acceptance-frontend-sha <40-hex-sha>
+#                                       # Matching frontend publication for the exact engineering-capacity release SHA
 #   ./scripts/deploy.sh production --backend --same-image-networking-stage PublicEcs \
 #     --expected-app-sha <40-hex-sha> --expected-image-digest sha256:<64-hex> \
 #     --expected-api-task-definition <full-arn> --expected-worker-task-definition <full-arn> \
@@ -41,6 +47,8 @@ ACTIVATE_EMERGENCY=false
 RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE=false
 RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=false
 RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION=false
+CAPACITY_ACCEPTANCE_RELEASE=false
+CAPACITY_ACCEPTANCE_FRONTEND_SHA=""
 CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD=""
 EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD_SHA256=""
 REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=""
@@ -88,6 +96,16 @@ while [[ $# -gt 0 ]]; do
     --classpilot-tile-auth-plan-observation)
       RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION=true
       shift
+      ;;
+    --capacity-acceptance-release)
+      CAPACITY_ACCEPTANCE_RELEASE=true
+      RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE=true
+      shift
+      ;;
+    --capacity-acceptance-frontend-sha)
+      [[ $# -ge 2 ]] || { echo "--capacity-acceptance-frontend-sha requires a full 40-hex SHA"; exit 1; }
+      CAPACITY_ACCEPTANCE_FRONTEND_SHA="$2"
+      shift 2
       ;;
     --reuse-classpilot-tile-auth-plan-rehearsal)
       [[ $# -ge 2 ]] || { echo "--reuse-classpilot-tile-auth-plan-rehearsal requires an absolute private receipt path"; exit 1; }
@@ -211,6 +229,7 @@ TILE_AUTH_PLAN_OBSERVATION_OUTCOME=""
 TILE_AUTH_PLAN_OBSERVATION_SUPERSESSION_ID=""
 TILE_AUTH_PLAN_OBSERVATION_SUPERSESSION_PATH=""
 TILE_AUTH_PLAN_OBSERVATION_SUPERSESSION_SHA256=""
+CAPACITY_ACCEPTANCE_NETWORK_SHA256=""
 CLASSPILOT_TILE_AUTH_SERVICE_MUTATION_STARTED=false
 CLASSPILOT_TILE_AUTH_SAFE_TERMINAL_REACHED=false
 
@@ -1126,6 +1145,25 @@ validate_emergency_activation_mode() {
 }
 
 validate_classpilot_tile_auth_plan_gate_mode() {
+  if [[ "$CAPACITY_ACCEPTANCE_RELEASE" == true ]]; then
+    if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" == true ||
+          "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" == true ||
+          -n "$REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" ||
+          -n "$EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL_SHA256" ]]; then
+      error "The capacity-acceptance release uses its own strict pre/post plan gates and cannot observe, rehearse, or consume a rehearsal receipt."
+      return 1
+    fi
+    if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE" != true ||
+          "$ENV" != "production" || "$DEPLOY_BACKEND" != true ||
+          "$DEPLOY_FRONTEND" != false || "$ACTIVATE_EMERGENCY" != true ||
+          -n "$SAME_IMAGE_NETWORKING_STAGE" || "$SKIP_WAIT" == true ||
+          -n "$IMAGE_TAG" ]]; then
+      error "--capacity-acceptance-release is allowed only with production --backend --activate-emergency and requires strict plan gates while rejecting frontend, same-image, --skip-wait, and --tag modes."
+      return 1
+    fi
+    return 0
+  fi
+
   if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" == true ]]; then
     if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE" == true ||
           "$RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" == true ||
@@ -1166,7 +1204,8 @@ validate_classpilot_tile_auth_plan_gate_mode() {
     error "A ClassPilot tile authorization plan rehearsal cannot consume another rehearsal receipt."
     return 1
   fi
-  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" != true &&
+  if [[ "$CAPACITY_ACCEPTANCE_RELEASE" != true &&
+        "$RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" != true &&
         ( -z "$REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" ||
           ! "$EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL_SHA256" =~ ^[a-f0-9]{64}$ ) ]]; then
     error "A guarded ClassPilot tile authorization plan deployment requires --reuse-classpilot-tile-auth-plan-rehearsal and its out-of-band --expected-classpilot-tile-auth-plan-rehearsal-sha256."
@@ -2729,6 +2768,28 @@ assert_classpilot_rehearsal_network_unchanged() {
   fi
 }
 
+assert_capacity_acceptance_network_unchanged() {
+  if [[ "$CAPACITY_ACCEPTANCE_RELEASE" != true ]]; then
+    return 0
+  fi
+  if [[ ! "$CAPACITY_ACCEPTANCE_NETWORK_SHA256" =~ ^[a-f0-9]{64}$ ]]; then
+    error "The initial capacity-acceptance candidate network binding is unavailable."
+    return 1
+  fi
+
+  local expected_network_sha="$CAPACITY_ACCEPTANCE_NETWORK_SHA256"
+  NETWORK_CONFIG=""
+  TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256=""
+  if ! resolve_classpilot_tile_auth_candidate_network; then
+    error "The active API network configuration could not be revalidated for the capacity-acceptance release."
+    return 1
+  fi
+  if [[ "$TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256" != "$expected_network_sha" ]]; then
+    error "The active API network configuration drifted after capacity-acceptance candidate registration."
+    return 1
+  fi
+}
+
 canonical_classpilot_candidate_source_task_definition_arn() {
   local ref="${1%$'\r'}"
   local kind="$2"
@@ -3690,6 +3751,33 @@ launch_safe_active_api_preflight() {
   fi
 
   success "Active API launch-safe posture verified: ${PRODUCTION_PREFLIGHT_API_TASK_DEFINITION} (512 CPU / 2048 MiB)"
+}
+
+validate_capacity_acceptance_frontend_mode() {
+  if [[ -z "$CAPACITY_ACCEPTANCE_FRONTEND_SHA" ]]; then
+    return 0
+  fi
+  if [[ ! "$CAPACITY_ACCEPTANCE_FRONTEND_SHA" =~ ^[0-9a-f]{40}$ ||
+        "$ENV" != "production" || "$DEPLOY_BACKEND" != false ||
+        "$DEPLOY_FRONTEND" != true || "$CAPACITY_ACCEPTANCE_RELEASE" == true ||
+        -n "$SAME_IMAGE_NETWORKING_STAGE" || -n "$IMAGE_TAG" || "$SKIP_WAIT" == true ]]; then
+    error "--capacity-acceptance-frontend-sha requires an exact lowercase 40-hex SHA and a production frontend-only deployment without --tag, --skip-wait, capacity-backend, or same-image flags."
+    return 1
+  fi
+}
+
+validate_retired_certification_admission_mode() {
+  if [[ "$ENV" != "production" || "$CAPACITY_ACCEPTANCE_RELEASE" == true ]]; then
+    return 0
+  fi
+  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE" == true ||
+        "$RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" == true ||
+        "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" == true ||
+        -n "$CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD" ||
+        -n "$REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" ]]; then
+    error "The legacy observation/rehearsal/reread certification admission path is retired for production. Use the frozen --capacity-acceptance-release path; historical evidence remains inspectable only."
+    return 1
+  fi
 }
 
 validate_same_image_networking_mode() {
@@ -4657,10 +4745,17 @@ info "Tile plans: $RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE"
 info "Plan rehearse: $RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL"
 info "Plan observe:  $RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION"
 info "Plan receipt:  ${REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL:+provided}"
+info "Capacity release: $CAPACITY_ACCEPTANCE_RELEASE"
 info "Same image: ${SAME_IMAGE_NETWORKING_STAGE:-false}"
 echo ""
 
 if ! validate_emergency_activation_mode; then
+  exit 1
+fi
+if ! validate_capacity_acceptance_frontend_mode; then
+  exit 1
+fi
+if ! validate_retired_certification_admission_mode; then
   exit 1
 fi
 if ! validate_same_image_networking_mode; then
@@ -4714,6 +4809,11 @@ LOCAL_SHA=$(git rev-parse HEAD)
 REMOTE_SHA=$(git rev-parse origin/main)
 if [[ "$LOCAL_SHA" != "$REMOTE_SHA" ]]; then
   error "Local main is not exactly origin/main. Pull the latest main before deploying."
+  exit 1
+fi
+if [[ -n "$CAPACITY_ACCEPTANCE_FRONTEND_SHA" &&
+      "$LOCAL_SHA" != "$CAPACITY_ACCEPTANCE_FRONTEND_SHA" ]]; then
+  error "The capacity-acceptance frontend SHA does not match clean main == origin/main."
   exit 1
 fi
 
@@ -4794,6 +4894,13 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
   fi
 
   resolve_classpilot_tile_auth_candidate_network
+  if [[ "$CAPACITY_ACCEPTANCE_RELEASE" == true ]]; then
+    if [[ ! "$TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256" =~ ^[a-f0-9]{64}$ ]]; then
+      error "The capacity-acceptance release could not bind the initial candidate network configuration."
+      exit 1
+    fi
+    CAPACITY_ACCEPTANCE_NETWORK_SHA256="$TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256"
+  fi
 
   if [[ -n "$REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" ]]; then
     production_backend_capacity_preflight "before rehearsal receipt consumption"
@@ -5098,27 +5205,35 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
     success "Candidate gate-only rehearsal complete; receipt is inspectable and unconsumed, and no rehearsal attempt, migration, scaling hold, service update, frontend publication, fixture mutation, lease, or traffic action was attempted."
     exit 0
   fi
-  production_backend_capacity_preflight "before rehearsal receipt consumption"
+  production_backend_capacity_preflight "after strict predeploy plan gate"
   if [[ "$PRODUCTION_PREFLIGHT_API_TASK_DEFINITION" != "$PRODUCTION_ROLLBACK_API_TASK_DEFINITION" ||
         "$PRODUCTION_PREFLIGHT_WORKER_TASK_DEFINITION" != "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION" ]]; then
-    error "The active API/worker baseline changed before rehearsal receipt consumption."
+    error "The active API/worker baseline changed after the strict predeploy plan gate."
     exit 1
   fi
-  if ! assert_classpilot_rehearsal_network_unchanged "$local_rehearsal_network_sha"; then
-    error "The rehearsal baseline drifted before the guarded deployment."
-    exit 1
+  if [[ "$CAPACITY_ACCEPTANCE_RELEASE" == true ]]; then
+    if ! assert_capacity_acceptance_network_unchanged; then
+      error "The capacity-acceptance network baseline drifted before the guarded deployment."
+      exit 1
+    fi
+    success "Capacity-acceptance predeploy gate passed; no observation, rehearsal admission, or rehearsal receipt was required or consumed."
+  else
+    if ! assert_classpilot_rehearsal_network_unchanged "$local_rehearsal_network_sha"; then
+      error "The rehearsal baseline drifted before the guarded deployment."
+      exit 1
+    fi
+    inspect_or_consume_classpilot_rehearsal_receipt consume
+    if [[ "$TILE_AUTH_PLAN_REHEARSAL_RECEIPT_SHA256" != "$local_rehearsal_receipt_sha" ||
+          "$API_ROLLOUT_TASK_DEF" != "$local_rehearsal_api" ||
+          "$WORKER_CANDIDATE_TASK_DEF" != "$local_rehearsal_worker" ||
+          "$DIGEST" != "$local_rehearsal_digest" ||
+          "$TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256" != "$local_rehearsal_network_sha" ]]; then
+      error "The rehearsal receipt binding changed between inspection and its single-use consumption."
+      exit 1
+    fi
+    TILE_AUTH_PLAN_REHEARSAL_CONSUMED_NETWORK_SHA256="$local_rehearsal_network_sha"
+    success "Consumed the one-use candidate rehearsal receipt immediately before production mutation (receiptSha256=${TILE_AUTH_PLAN_REHEARSAL_RECEIPT_SHA256})"
   fi
-  inspect_or_consume_classpilot_rehearsal_receipt consume
-  if [[ "$TILE_AUTH_PLAN_REHEARSAL_RECEIPT_SHA256" != "$local_rehearsal_receipt_sha" ||
-        "$API_ROLLOUT_TASK_DEF" != "$local_rehearsal_api" ||
-        "$WORKER_CANDIDATE_TASK_DEF" != "$local_rehearsal_worker" ||
-        "$DIGEST" != "$local_rehearsal_digest" ||
-        "$TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256" != "$local_rehearsal_network_sha" ]]; then
-    error "The rehearsal receipt binding changed between inspection and its single-use consumption."
-    exit 1
-  fi
-  TILE_AUTH_PLAN_REHEARSAL_CONSUMED_NETWORK_SHA256="$local_rehearsal_network_sha"
-  success "Consumed the one-use candidate rehearsal receipt immediately before production mutation (receiptSha256=${TILE_AUTH_PLAN_REHEARSAL_RECEIPT_SHA256})"
 
   # Acquire the hold only after the slow image and task-definition work, then
   # keep it through the one-off migration and both ECS service deployments.
@@ -5201,6 +5316,10 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
   fi
   if ! assert_classpilot_rehearsal_network_unchanged; then
     error "The consumed rehearsal network binding drifted before service rollout."
+    exit 1
+  fi
+  if ! assert_capacity_acceptance_network_unchanged; then
+    error "The capacity-acceptance network binding drifted before service rollout."
     exit 1
   fi
   launch_safe_active_api_preflight
@@ -5286,7 +5405,9 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
   CLASSPILOT_TILE_AUTH_SERVICE_MUTATION_STARTED=false
   CLASSPILOT_TILE_AUTH_SAFE_TERMINAL_REACHED=true
 
-  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE" == true ]]; then
+  if [[ "$CAPACITY_ACCEPTANCE_RELEASE" == true ]]; then
+    success "Capacity-acceptance backend release complete; strict rollback-only predeploy and active-revision plan gates passed."
+  elif [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE" == true ]]; then
     success "Backend deploy complete (historyFallbackIdentityReceiptPathSha256=${TILE_AUTH_PLAN_IDENTITY_RECEIPT_PATH_SHA256}, receiptSha256=${TILE_AUTH_PLAN_IDENTITY_RECEIPT_SHA256})"
   else
     success "Backend deploy complete!"
@@ -5343,12 +5464,34 @@ if [[ "$DEPLOY_FRONTEND" == true ]]; then
   # Git Bash on Windows from rewriting the leading-slash "/index.html" "/" into
   # Windows paths (which CloudFront rejects as InvalidArgument); harmless elsewhere.
   info "Invalidating CloudFront cache..."
-  MSYS_NO_PATHCONV=1 aws cloudfront create-invalidation \
+  CLOUDFRONT_INVALIDATION_ID=$(MSYS_NO_PATHCONV=1 aws cloudfront create-invalidation \
     --distribution-id "$CF_DIST_ID" \
     --paths "/index.html" "/" \
-    --query 'Invalidation.{Id:Id,Status:Status}' \
-    --output table
-  success "CloudFront invalidation created"
+    --query 'Invalidation.Id' \
+    --output text \
+    --no-cli-pager)
+  CLOUDFRONT_INVALIDATION_ID="${CLOUDFRONT_INVALIDATION_ID%$'\r'}"
+  if [[ ! "$CLOUDFRONT_INVALIDATION_ID" =~ ^I[A-Z0-9]+$ ]]; then
+    error "CloudFront did not return one exact invalidation ID."
+    exit 1
+  fi
+  info "Waiting for CloudFront invalidation ${CLOUDFRONT_INVALIDATION_ID}..."
+  aws cloudfront wait invalidation-completed \
+    --distribution-id "$CF_DIST_ID" \
+    --id "$CLOUDFRONT_INVALIDATION_ID" \
+    --no-cli-pager
+  CLOUDFRONT_INVALIDATION_STATUS=$(aws cloudfront get-invalidation \
+    --distribution-id "$CF_DIST_ID" \
+    --id "$CLOUDFRONT_INVALIDATION_ID" \
+    --query 'Invalidation.Status' \
+    --output text \
+    --no-cli-pager)
+  CLOUDFRONT_INVALIDATION_STATUS="${CLOUDFRONT_INVALIDATION_STATUS%$'\r'}"
+  if [[ "$CLOUDFRONT_INVALIDATION_STATUS" != "Completed" ]]; then
+    error "CloudFront invalidation did not reach Completed."
+    exit 1
+  fi
+  success "CloudFront invalidation completed (id=${CLOUDFRONT_INVALIDATION_ID}, appSha=${LOCAL_SHA})"
 
   success "Frontend deploy complete!"
 fi

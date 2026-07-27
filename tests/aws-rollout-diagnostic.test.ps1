@@ -182,16 +182,17 @@ Assert-Condition ($lastDelayedCollectionIndex -ge 0 -and $leaseRestoreAfterDelay
 Assert-Condition ($controller.Contains('$healthyTargets = Get-HealthyTargetCount $Config')) "Read-only AWS posture validation must retain strict target-health enforcement."
 Assert-Condition ($controller.Contains('$output.Count -ne 1')) "Controller Git identity must require exactly one native-command output line."
 Assert-Condition (-not $controller.Contains('start-aws-rollout-supervisor.ps1')) "Diagnostic controller must never call the certification supervisor."
-Assert-Condition ($monitor.Contains('Diagnostic-only evidence must not declare or consume predecessor evidence.')) "Monitor must reject diagnostic predecessor consumption."
+Assert-Condition ($monitor.Contains('Diagnostic-only and engineering-acceptance evidence must not declare or consume predecessor evidence.')) "Monitor must reject diagnostic and engineering predecessor consumption."
 Assert-Condition ($monitor.Contains('DiagnosticOnly = $diagnosticOnly')) "Monitor must retain the diagnostic marker in bound runtime state."
-Assert-Condition ($monitor.Contains('certificationEligible = -not $config.DiagnosticOnly')) "Monitor terminal results must mark diagnostic evidence non-eligible."
+Assert-Condition ($monitor.Contains('certificationEligible = -not $config.DiagnosticOnly -and -not $config.EngineeringAcceptance')) "Monitor terminal results must mark diagnostic and engineering evidence non-eligible."
 Assert-Condition ($monitor.Contains('diagnostic_rds_cpu_30_of_30_coverage')) "Monitor must require all 30 diagnostic RDS CPU points."
 Assert-Condition ($monitor.Contains('diagnostic_rds_cpu_every_minute_below_65')) "Monitor must require every diagnostic RDS CPU point below 65 percent."
-Assert-Condition ($monitor.Contains('redis_group_member_identity_mismatch')) "Monitor must fail runtime Redis group/member identity drift."
+Assert-Condition ($monitor.Contains('if (($Config.DiagnosticOnly -or $Config.EngineeringAcceptance) -and') -and
+    $monitor.Contains('redis_group_member_identity_mismatch')) "Monitor must fail runtime Redis group/member identity drift for both diagnostic and engineering traffic."
 Assert-Condition ($supervisor.Contains('Diagnostic-only runs can never enter or seed the certification supervisor.')) "Certification supervisor must reject diagnostic configs."
 Assert-Condition ($supervisor.Contains('LOAD_DIAGNOSTIC_ONLY                 = "false"')) "Certification harness launch must override ambient diagnostic mode."
 Assert-Condition ($harness.Contains('LOAD_DIAGNOSTIC_ONLY=true')) "Harness help must expose the explicit diagnostic-only switch."
-Assert-Condition ($harness.Contains('certificationEligible: isLaunchGate && !diagnosticOnly')) "Harness evidence must make diagnostic eligibility explicit."
+Assert-Condition ($harness.Contains('const certificationEligible = isLaunchGate && !diagnosticOnly && !engineeringAcceptance;')) "Harness evidence must make diagnostic and engineering eligibility explicit."
 Assert-Condition ($harness.Contains('diagnosticOnly ? 30 * 60')) "Only explicit diagnostic mode may select the 30-minute Waf/800 duration."
 
 $tokens = $null; $parseErrors = $null
@@ -2218,6 +2219,15 @@ $monitorRedisConfig = [pscustomobject]@{
 $monitorRedisState = Get-RedisState -Config $monitorRedisConfig
 Assert-Condition ((Get-OptionalValue $monitorRedisState 'clusterIdentityValid' $false) -eq $true) `
     'A valid diagnostic Redis group/member identity must remain true when the runtime gate reads the state through Get-OptionalValue.'
+$engineeringRedisConfig = [pscustomobject]@{
+    DiagnosticOnly=$false
+    EngineeringAcceptance=$true
+    ExpectedRedisNodeType='cache.t4g.small'
+    Resources=$monitorRedisConfig.Resources
+}
+$engineeringRedisState = Get-RedisState -Config $engineeringRedisConfig
+Assert-Condition ((Get-OptionalValue $engineeringRedisState 'clusterIdentityValid' $false) -eq $true) `
+    'Engineering acceptance must enforce the same exact Redis group/member identity during traffic.'
 $wrongMonitorRedisCluster = $redisCluster | ConvertTo-Json -Depth 10 | ConvertFrom-Json -DateKind String -Depth 10
 $wrongMonitorRedisCluster.ReplicationGroupId = 'other-group'
 $script:monitorRedisClusterResponse = [pscustomobject]@{CacheClusters=@($wrongMonitorRedisCluster)}
