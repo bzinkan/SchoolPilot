@@ -203,65 +203,19 @@ evidence: archive their exact bytes and SHA-256 values under that observation's
 private evidence tree, then remove only those two known files so the checkout
 can become clean.
 
-The one approved historical reread uses
-`classpilot-tile-auth-plan-observation-evidence-reread-attempt-v1` and
-`classpilot-tile-auth-plan-observation-evidence-reread-v1`. Its immutable
-attempt and terminal groups live beneath the original observation root at
-`evidence-reread/attempt` and `evidence-reread/terminal`. The reread binds the
-original observation ID, attempt and packet hashes, application SHA, image
-digest, inactive task definitions, active baseline, network/posture hashes,
-exact stopped task ARN and exit, plus the current controller SHA. Durable
-admission requires a clean `main == origin/main == <controller SHA>` check and
-the one canonical source path under
-`tile-auth-observations/<application SHA>/<observation ID>/terminal`;
-hash-identical copies cannot mint another reread. It may call only
-`ecs describe-tasks`, `ecs describe-task-definition`, and the collector's
-exact-stream `logs get-log-events`; `taskLaunchCount` is fixed at zero.
+Historical observation reread and supersession artifacts remain immutable and
+inspectable under their existing private roots, with every downstream
+eligibility flag false. They are not active observation, rehearsal, readiness,
+deployment, diagnostic, or certification prerequisites. No new run may depend
+on a stopped task remaining describable, and no historical packet, exit code,
+reread, or supersession marker can admit a fresh task. This removes the
+retention-limited circular dependency without rewriting historical evidence.
 
-The reread must recover the canonical selection values `40/19/19/1/1`, one
-passing base, and the `80/80/0/0` required/reused/missing/conflicting session
-posture. Its packet and companions publish group-atomically, retain
-`rawErrorPersisted:false`, and set deployment, diagnostic, and certification
-eligibility permanently to false. It never modifies the original
-observation-v2 packet and cannot satisfy any downstream admission. Exactly one
-reread is permitted. Identity drift, collection failure, malformed evidence,
-or any other failure remains permanently ineligible and blocks a fresh
-observation. The terminal packet uses an exact failure-stage matrix so
-task/configuration/binding hashes and actual CloudWatch attempt, stream, and
-canonical-event hashes cannot be discarded or misreported as a zero-read
-failure after collection.
-
-One already-sealed, retention-compatible task-unavailable outcome is eligible
-only to supersede the unrepeatable historical proof step, never the evidence
-gate. The packet records that the exact historical stopped task is no longer
-describable; it does not establish retention or any other mechanism as the
-exclusive cause. Its canonical terminal SHA-256 is
-`9c8c092756264fc0686f0aeab8a540526a3b7a60f5c861f122aad69f9f039087`,
-its immutable reread-attempt SHA-256 is
-`3f0ff5a217e04635deefa1d07ee61030732675c83ba43ed3d38f5d4c96fd2b44`,
-and it binds controller SHA
-`4fc219114899c37544ce5017b5e41b7842516e4c`, source observation packet
-SHA-256
-`5427ff0e5af5f2245479646d1b1dd621213782e01c28a971399295274a8a16fd`,
-and source attempt SHA-256
-`01fb533aa87befbba1dba760566afe66c3536e5437726f0d76b1fae0de86c6aa`.
-The packet is exactly `status: failed`,
-`rereadOutcome: evidence_unavailable`,
-`failureCode: historical_task_missing`, `taskLaunchCount: 0`,
-`collectionAttemptCount: 0`, terminal task exit zero, task-description
-SHA-256
-`75e94f99f136d5d484be97b8a073a22072645cdd6794980114250455f8578756`,
-and null log-configuration, binding, stream, and canonical-event hashes.
-
-Only that exact immutable matrix may be bound by a clean new merged controller
-to an atomic single-use marker for one strict fresh observation. No second
-reread is allowed. No other reread failure code, copied packet, hash drift,
-source drift, or exit-only claim can create the marker. The historical packet
-and marker remain permanently false for deployment, diagnostic, and
-certification eligibility. The fresh observation must still collect at least
-one CloudWatch snapshot and independently prove selection `40/19/19/1/1`, one
-base, 80 required session pairs with zero conflicts, and unchanged final
-network and production posture.
+Standalone observation is optional audit evidence. When explicitly run, it
+still requires strict CloudWatch-backed preflight and selection evidence and
+remains ineligible downstream. The production-connected gate-only rehearsal is
+the stronger release proof and is the required predecessor to guarded
+deployment.
 
 For an authorized production release, first invoke the candidate-only
 rehearsal:
@@ -272,18 +226,6 @@ rehearsal:
   --classpilot-tile-auth-plan-rehearsal
 ```
 
-Before any candidate build, push, registration, or candidate base preflight,
-the deployer
-atomically and exclusively writes the fixed admission marker at
-`$LOCALAPPDATA/SchoolPilot/load-gates/tile-auth-rehearsals/<SHA>/classpilot-tile-auth-plan-rehearsal-attempt.private.json`.
-The marker is durable and permits exactly one rehearsal admission for that
-SHA. Once admitted, an EXIT/failure trap must seal exactly one immutable
-`classpilot-tile-auth-plan-rehearsal-terminal.private.json` marker with
-`status: passed` or `status: failed`; neither marker may be deleted, reset, or
-overwritten. A passed terminal binds the exact receipt SHA-256. A failed
-terminal, or an admitted attempt without a coherent passed terminal,
-permanently disqualifies the SHA.
-
 After building and registering the new digest-pinned 512/2048 API revision,
 the deployer runs the read-only preflight and complete gate using the live
 service VPC/security groups and inherited database secret/container identity.
@@ -291,19 +233,30 @@ It performs no migration, scaling hold, serving-service update, frontend
 publication, fixture mutation, lease, or traffic. Its build, image push, and
 inactive task-definition registrations are the only candidate control-plane
 writes; the plan task's bounded data writes remain transaction-local and are
-rolled back before acceptance. A pass seals an ACL-private, single-use, 60-minute
-`classpilot-tile-auth-plan-rehearsal-v1` receipt. Receipt `inspect` and
-`consume` require the immutable passed terminal and its matching receipt hash.
-Admission, terminal, receipt, inspection, consumption, and the canonical
-consumption marker bind a protected execution-authority SHA-256. Production
-Windows derives it from the stable machine identity and current user SID and
-never persists or logs either raw value. Missing authority data or a mismatch
-fails closed, so a complete copied evidence tree is not consumable by another
-host or user.
-Consumption is an atomic marker in the canonical per-SHA attempt root, not
-beside the caller-supplied receipt. Consequently, copying a byte-identical
-receipt and companion set anywhere else under the load-gates root cannot
-create another consumable capability, and concurrent consumers can produce
+rolled back before acceptance. CloudWatch-backed lifecycle, plan-report, and
+query-identity evidence is mandatory. Exit zero without that complete
+sanitized evidence never passes.
+
+A non-authoritative provider or evidence-transport failure before production
+mutation creates no SHA-wide attempt, terminal, or consumption marker and
+permits one same-SHA gate-only retry. A nonzero task or authoritative SQL,
+query-identity, RLS, rollback, residue, or plan-threshold failure atomically
+creates the existing admission plus failed terminal and permanently
+disqualifies that SHA. A passing gate seals and inspects an ACL-private,
+single-use, 60-minute `classpilot-tile-auth-plan-rehearsal-v1` receipt without
+yet consuming the SHA-wide attempt.
+
+During guarded deployment the exact receipt is inspected first. The deployer
+reruns the strict gate and verifies the rehearsed candidate, baseline, network,
+and posture before atomically creating or resuming the existing passed
+admission/terminal records and consuming the existing single-use marker.
+Consumption occurs immediately before the scaling hold and first production
+mutation. Admission, terminal, receipt, inspection, consumption, and the
+canonical consumption marker bind a protected execution-authority SHA-256.
+Production Windows derives it from the stable machine identity and current
+user SID and never persists or logs either raw value. Missing authority data or
+a mismatch fails closed, so copying a complete private tree to another host or
+user does not transfer deployment authority. Concurrent consumers can produce
 only one winner.
 The validity interval is half-open: the exact expiry instant is rejected, so
 `now >= expiresAtUtc` is expired. Consumption captures its actual UTC time and
@@ -319,8 +272,10 @@ that exact candidate with the receipt path and its out-of-band SHA-256:
 ```
 
 The guarded deployment verifies the bound SHA, digest, task definitions,
-baseline, network, evidence hashes, and receipt freshness before consuming it.
-It reruns the complete gate before migration and after strict convergence.
+baseline, network, evidence hashes, and receipt freshness before late
+consumption. It reruns the complete gate before migration and after strict
+convergence. The active-revision gate remains CloudWatch-strict and must
+produce the same query identity as the rehearsal.
 
 The task has a 900-second controller deadline and a bounded 120-second stop
 observation. The deployer resolves the exact task's awslogs stream before
@@ -365,11 +320,9 @@ terminal task exited zero and its exact CloudWatch stream proved selection
 `40/19/19/1/1`, one eligible base, and session posture `80/80/0/0`, but the old
 cross-process monotonic-deadline boundary sealed
 `log_evidence_unavailable` with zero reads. The immutable original packet
-remains unchanged and ineligible. The one approved same-task reread above
-sealed the exact, retention-compatible no-longer-describable outcome rather
-than recovering evidence; it remains immutable and permanently ineligible, and
-only the exact single-use supersession described above can admit one fresh
-observation.
+remains unchanged and ineligible. Its reread and supersession artifacts remain
+historical and inspectable but are not active prerequisites for any new
+observation or readiness packet.
 
 The production gate cannot start during the actual 01:15-02:15
 America/New_York purge/rollup window. A missing, ambiguous, inactive,
@@ -384,28 +337,28 @@ after task, collection, network, or posture failure; it seals one of
 `base_eligible`, `base_ineligible`, `task_failed`, or
 `evidence_unavailable`, publishes the packet and optional companions
 atomically, and independently inspects them. Every outcome is ineligible for
-deployment, diagnostics, and certification. Evidence rereads may retry only
-the exact terminal stream and never rerun the ECS task.
+deployment, diagnostics, and certification. Observation is optional and never
+an admission prerequisite. If it is run, CloudWatch evidence remains strict:
+exit zero without the exact terminal events is insufficient.
 
-The current authorization does not run a second historical reread. It requires
-exact-new-merged-SHA CI, CodeQL, Gitleaks, and Trivy success, fresh protected
-state backups, a unique zero-action/no-apply production Terraform plan, and a
-fresh read-only production baseline before consuming the exact single-use
-retention-aware supersession marker. That marker permits one new release-bound
-observation only. The earlier controller-SHA plan and baseline remain
-comparison evidence and cannot admit the new SHA.
+This final campaign authorization proceeds from the strict gate-only rehearsal
+through one guarded same-candidate backend deployment, matching frontend,
+route and posture verification, readiness, one fresh diagnostic, then a fresh
+Waf/500 -> Waf/800 certification chain. After the final stop-loss PR merges,
+the release and acceptance criteria freeze: no later campaign commit, schema,
+controller, marker, evidence layer, workload retry, threshold change, or
+automatic RDS resize is permitted.
 
-Only a fresh sealed `base_eligible` observation-v2 packet with a completed
-collection containing at least one CloudWatch read, selection values
-`40/19/19/1/1`, one eligible base, session posture totaling 80 pairs with zero
-conflicts, and unchanged verified network/posture hashes may proceed to one
-gate-only rehearsal and immediate single-use guarded deployment. Exit code
-alone never satisfies this evidence contract. Any other observation stops
-without another task or a report-only fallback.
+Certification validation-receipt inspection is early, but consumption remains
+immediately before the harness start gate. That late consumption prevents a
+pretraffic startup failure from falsely burning traffic authority; it is not
+permission for another binding or run. Any failure before the start gate is a
+decisive terminal no-traffic result after exact scaling and Database Insights
+Standard/7 restoration. Do not create a second binding, repeat fixture
+preparation, or run validation or traffic again.
 
-After the guarded backend, matching same-SHA frontend publication, route and
-posture verification, one offline preparation rehearsal, and one 1,560-second
-harmless host-supervision smoke, independently seal the readiness packet and
-stop. Fixture refresh or provisioning, Database Insights lease, diagnostic
-binding or traffic, certification, Terraform apply, RDS resize, cache/workload
-change, and threshold relaxation remain separately authorized.
+Pre-mutation provider or evidence-transport failures may use only the bounded
+same-SHA retry above. Any authoritative gate or post-mutation failure is
+terminal. The only successful endpoint is a supervisor-sealed Waf/800 result
+binding the frozen release and observed `db.t4g.medium`; otherwise the campaign
+ends with an immutable terminal report and no remediation PR.

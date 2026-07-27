@@ -1,22 +1,100 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
-const runbook = readFileSync(
-  new URL("../docs/AWS_COST_ROLLOUT_OPERATIONS.md", import.meta.url),
-  "utf8"
-).replace(/\r\n/g, "\n");
-const planCheck = readFileSync(
-  new URL("../docs/CLASSPILOT_TILE_AUTHORIZATION_PLAN_CHECK.md", import.meta.url),
-  "utf8"
-).replace(/\r\n/g, "\n");
-const ciWorkflow = readFileSync(
-  new URL("../.github/workflows/ci-build.yml", import.meta.url),
-  "utf8"
-).replace(/\r\n/g, "\n");
+const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
+const readRepositoryFile = (path: string) =>
+  readFileSync(new URL(`../${path}`, import.meta.url), "utf8").replace(
+    /\r\n/g,
+    "\n"
+  );
 
-describe("ClassPilot tile authorization readiness governance", () => {
-  it("keeps the v2 evidence, one-attempt receipt, and database regressions in CI", () => {
+const runbook = readRepositoryFile("docs/AWS_COST_ROLLOUT_OPERATIONS.md");
+const planCheck = readRepositoryFile(
+  "docs/CLASSPILOT_TILE_AUTHORIZATION_PLAN_CHECK.md"
+);
+const ciWorkflow = readRepositoryFile(".github/workflows/ci-build.yml");
+const deployScript = readRepositoryFile("scripts/deploy.sh");
+const certificationSupervisor = readRepositoryFile(
+  "scripts/load/start-aws-rollout-supervisor.ps1"
+);
+
+const finalStopLossAllowedFiles = [
+  "scripts/deploy.sh",
+  "scripts/manage-classpilot-tile-auth-plan-rehearsal-receipt.mjs",
+  "scripts/load/start-aws-rollout-supervisor.ps1",
+  "tests/deploy-classpilot-tile-auth-plan-gate.test.ts",
+  "tests/classpilot-tile-auth-plan-rehearsal-receipt.test.ts",
+  "tests/aws-rollout-certification-chain.test.ps1",
+  "tests/classpilot-tile-auth-plan-readiness-governance.test.ts",
+  "docs/AWS_COST_ROLLOUT_OPERATIONS.md",
+  "docs/CLASSPILOT_TILE_AUTHORIZATION_PLAN_CHECK.md",
+] as const;
+
+const runtimeFiles = finalStopLossAllowedFiles.slice(0, 3);
+
+function git(args: string[]): string {
+  return execFileSync("git", args, {
+    cwd: repositoryRoot,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
+}
+
+function resolveDiffBase(): string | null {
+  const explicit = process.env.SCHOOLPILOT_FINAL_STOP_LOSS_BASE_SHA;
+  if (explicit && /^[0-9a-f]{40}$/i.test(explicit)) return explicit;
+
+  const eventPath = process.env.GITHUB_EVENT_PATH;
+  if (!eventPath || !existsSync(eventPath)) return null;
+  const event = JSON.parse(readFileSync(eventPath, "utf8")) as {
+    before?: unknown;
+    pull_request?: { base?: { sha?: unknown } };
+  };
+  const candidate =
+    event.pull_request?.base?.sha ??
+    (typeof event.before === "string" && !/^0+$/.test(event.before)
+      ? event.before
+      : null);
+  return typeof candidate === "string" && /^[0-9a-f]{40}$/i.test(candidate)
+    ? candidate
+    : null;
+}
+
+function ensureCommitAvailable(sha: string): void {
+  try {
+    git(["cat-file", "-e", `${sha}^{commit}`]);
+    return;
+  } catch {
+    try {
+      git(["fetch", "--no-tags", "--depth=1", "origin", sha]);
+      git(["cat-file", "-e", `${sha}^{commit}`]);
+      return;
+    } catch {
+      assert.fail(
+        `the declared final stop-loss diff base ${sha} is unavailable; CI may not skip boundary enforcement`
+      );
+    }
+  }
+}
+
+function contractLiterals(source: string): Set<string> {
+  const values = new Set<string>();
+  const patterns = [
+    /["'`]([a-z0-9][a-z0-9_.-]*-v\d+)["'`]/gi,
+    /["'`]([a-z0-9][a-z0-9_.-]*(?:schema|controller|marker)[a-z0-9_.-]*)["'`]/gi,
+    /["'`]([a-z0-9][a-z0-9_.-]*(?:failed|failure|unavailable|invalid|timeout|rejected|drift|missing)[a-z0-9_.-]*)["'`]/gi,
+  ];
+  for (const pattern of patterns) {
+    for (const match of source.matchAll(pattern)) values.add(match[1]);
+  }
+  return values;
+}
+
+describe("ClassPilot final stop-loss governance", () => {
+  it("keeps the v2 evidence and database regressions in CI", () => {
     const backendTests = [
       "tests/classpilot-tile-auth-plan-base-funnel-evidence.test.ts",
       "tests/classpilot-tile-auth-plan-evidence-validator.test.ts",
@@ -68,16 +146,13 @@ describe("ClassPilot tile authorization readiness governance", () => {
         `runbook is missing the readiness invariant: ${required}`
       );
     }
-
     assert.match(
       runbook,
       /The gate must not depend on an ambient open teaching, supervision, or student\s+device session\./
     );
-    assert.ok(
-      /The gate\s+never updates, deactivates, or deletes an existing session\./.test(
-        runbook
-      ),
-      "the gate must not alter existing sessions"
+    assert.match(
+      runbook,
+      /The gate\s+never updates, deactivates, or deletes an existing session\./
     );
     assert.match(
       runbook,
@@ -85,190 +160,251 @@ describe("ClassPilot tile authorization readiness governance", () => {
     );
   });
 
-  it("requires an exact single-use candidate rehearsal before deployment", () => {
-    for (const required of [
-      "--classpilot-tile-auth-plan-rehearsal",
-      "--reuse-classpilot-tile-auth-plan-rehearsal <absolute-private-receipt-path>",
-      "`classpilot-tile-auth-plan-rehearsal-v1`",
-      "`$LOCALAPPDATA/SchoolPilot/load-gates/tile-auth-rehearsals/<SHA>`",
-      "`classpilot-tile-auth-plan-rehearsal-attempt.private.json`",
-      "`classpilot-tile-auth-plan-rehearsal-terminal.private.json`",
-      "`status` equal to `passed` or `failed`",
-      "permanently makes that SHA ineligible",
-      "`inspect` and `consume` require the passed terminal marker",
-      "bind one protected execution-authority\nSHA-256",
-      "stable machine\nidentity plus the current user SID",
-      "neither raw value is written or logged",
-      "copying the\ncomplete private tree to another host or user does not transfer deployment\nauthority",
-      "exact\nexpiry instant and every later instant (`now >= expiresAtUtc`) are rejected",
-      "repeats that half-open\ncheck immediately before attempting the atomic consumption marker",
-      "expires after 60\nminutes",
-      "consumed once through its immutable sidecar",
-      "byte-identical copies and\nconcurrent consumers on the authorized execution authority share the same\nsingle-use marker",
-      "performs no migration,\nscaling hold, serving-service update, frontend publication, fixture mutation",
-      "Building, pushing, and registering the\ninactive candidate are the only candidate control-plane writes",
-      "do not\nchange the serving release or committed production data",
-      "Fetch\nthat exact stream even when exit is nonzero",
-    ]) {
+  it("freezes the final PR to the nine approved existing files", () => {
+    for (const path of finalStopLossAllowedFiles) {
       assert.ok(
-        runbook.includes(required),
-        `runbook is missing the rehearsal invariant: ${required}`
+        runbook.includes(`\`${path}\``),
+        `runbook is missing the exact final-PR allowlist entry: ${path}`
       );
     }
-
+    assert.match(runbook, /may add no file/);
     assert.match(
       runbook,
-      /A direct\s+unrehearsed plan-gated deployment is ineligible\./
+      /no runtime schema\/version, controller, marker, or\s+failure-code literal/
     );
-    assert.match(
-      runbook,
-      /Exit zero plus complete valid evidence remains\s+mandatory for acceptance/
-    );
-  });
+    assert.match(runbook, /No later campaign\s+commit or remediation PR is allowed/);
 
-  it("keeps observation evidence non-consuming and ineligible", () => {
-    for (const required of [
-      "--classpilot-tile-auth-plan-observation",
-      "`classpilot-tile-auth-plan-base-funnel-v1`",
-      "`classpilot-tile-auth-plan-base-selection-v1`",
-      "`40/19/19/1/1`",
-      "`classpilot-tile-auth-plan-observation-attempt-v1`",
-      "`classpilot-tile-auth-plan-observation-v2`",
-      "`classpilot-tile-auth-plan-observation-v1`",
-      "creates no\nrehearsal admission or receipt",
-      "`base_eligible`",
-      "`base_ineligible`",
-      "`eligibleForDeployment`, `eligibleForDiagnostic`, and\n`eligibleForCertification` to exactly `false`",
-      "current remediation binds the exact failed historical reread",
-      "then authorizes exactly one fresh,\nrelease-bound, independently inspected observation",
-      "is never an alternate deployment path",
-      "converted to report-only",
-    ]) {
+    const base = resolveDiffBase();
+    if (!base) {
       assert.ok(
-        runbook.includes(required),
-        `runbook is missing the observation invariant: ${required}`
+        !process.env.CI,
+        "CI must declare the final stop-loss diff base through its event or SCHOOLPILOT_FINAL_STOP_LOSS_BASE_SHA"
       );
+      return;
     }
+    ensureCommitAvailable(base);
 
-    assert.match(
-      runbook,
-      /This failure evidence cannot satisfy the unchanged passing preflight or either\s+complete release gate\./
+    const nameStatus = git(["diff", "--name-status", base, "--"]);
+    const changed = nameStatus
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((line) => {
+        const [status, ...pathParts] = line.split("\t");
+        return { status, path: pathParts.at(-1) ?? "" };
+      });
+    assert.ok(changed.length > 0, "the final stop-loss PR diff is empty");
+    assert.deepEqual(
+      [...new Set(changed.map(({ path }) => path))].sort(),
+      [...finalStopLossAllowedFiles].sort(),
+      "the final stop-loss PR changed something outside its exact allowlist"
     );
-    assert.match(
-      runbook,
-      /Rehearsal consumption, deployment,\s+diagnostic binding, and certification validation must reject every\s+observation packet/
+    assert.ok(
+      changed.every(({ status }) => status !== "A"),
+      "the final stop-loss PR may not add files"
     );
-  });
 
-  it("allows only the exact retention-aware historical supersession", () => {
-    const exactHashes = [
-      "`9c8c092756264fc0686f0aeab8a540526a3b7a60f5c861f122aad69f9f039087`",
-      "`3f0ff5a217e04635deefa1d07ee61030732675c83ba43ed3d38f5d4c96fd2b44`",
-      "`4fc219114899c37544ce5017b5e41b7842516e4c`",
-      "`5427ff0e5af5f2245479646d1b1dd621213782e01c28a971399295274a8a16fd`",
-      "`01fb533aa87befbba1dba760566afe66c3536e5437726f0d76b1fae0de86c6aa`",
-      "`75e94f99f136d5d484be97b8a073a22072645cdd6794980114250455f8578756`",
-    ];
-    for (const document of [runbook, planCheck]) {
-      for (const hash of exactHashes) {
-        assert.ok(
-          document.includes(hash),
-          `governance is missing the exact retention binding: ${hash}`
-        );
+    const priorLiterals = new Set<string>();
+    const currentLiterals = new Set<string>();
+    for (const path of runtimeFiles) {
+      const prior = git(["show", `${base}:${path}`]);
+      for (const value of contractLiterals(prior)) priorLiterals.add(value);
+      for (const value of contractLiterals(readRepositoryFile(path))) {
+        currentLiterals.add(value);
       }
-      assert.match(
-        document,
-        /`failureCode: historical_task_missing`, `taskLaunchCount: 0`,\s+`collectionAttemptCount: 0`/
-      );
-      assert.match(
-        document,
-        /null log-configuration, (?:log-)?binding, (?:log-)?stream, and canonical-event\s+hashes/
-      );
-      assert.match(
-        document,
-        /(?:No second\s+reread is allowed|must not attempt a\s+second reread)/
-      );
-      assert.match(
-        document,
-        /No other reread failure code|accept another failure code/
-      );
-      assert.match(
-        document,
-        /one strict fresh observation|exactly one fresh,\s+release-bound, independently inspected observation/
-      );
-      assert.match(
-        document,
-        /at least one CloudWatch (?:snapshot|attempt|read)/
-      );
-      assert.match(document, /`40\/19\/19\/1\/1`/);
-      assert.match(document, /80 required\s+session\s+pairs/);
-      assert.match(document, /zero conflicts/);
-      assert.match(document, /unchanged\s+(?:final|verified)\s+network/);
-      assert.match(
-        document,
-        /exit-only|Exit zero without those exact terminal\s+events is never sufficient/
-      );
-      assert.match(document, /historical stopped task is no longer\s+describable/);
-      assert.match(
-        document,
-        /does not establish (?:an\s+exclusive cause|retention or any other mechanism as the\s+exclusive cause)/
-      );
-      assert.doesNotMatch(document, /proves that ECS retention removed/);
     }
+    const additions = [...currentLiterals].filter(
+      (value) => !priorLiterals.has(value)
+    );
+    assert.deepEqual(
+      additions,
+      [],
+      `the final PR introduced runtime contract literals: ${additions.join(", ")}`
+    );
   });
 
-  it("records the failed candidate and enforces the readiness-only boundary", () => {
+  it("keeps observation optional and historical evidence out of admission", () => {
+    for (const document of [runbook, planCheck]) {
+      assert.match(
+        document,
+        /Historical observation reread and supersession artifacts remain immutable/
+      );
+      assert.match(
+        document,
+        /not active observation, rehearsal, readiness,\s+deployment, diagnostic, or\s+certification prerequisites/
+      );
+      assert.match(document, /Standalone observation is optional audit evidence/);
+      assert.match(
+        document,
+        /production-connected gate-only\s+rehearsal[\s\S]{0,140}(?:the stronger|stronger and required)/
+      );
+    }
+    assert.doesNotMatch(
+      deployScript,
+      /^\s+(?:if\s+!\s+)?create_and_inspect_classpilot_tile_auth_plan_observation_supersession(?:\s|;)/m
+    );
+    assert.doesNotMatch(
+      deployScript,
+      /^\s+(?:if\s+!\s+)?reinspect_classpilot_tile_auth_plan_observation_supersession_before_launch(?:\s|;)/m
+    );
+  });
+
+  it("keeps CloudWatch strict and moves the scarce attempt to mutation", () => {
+    for (const document of [runbook, planCheck]) {
+      assert.match(
+        document,
+        /CloudWatch-backed\s+(?:preflight, )?lifecycle, plan-report, and\s+query-identity evidence is mandatory/
+      );
+      assert.match(
+        document,
+        /[Ee]xit zero without that complete\s+sanitized evidence never passes/
+      );
+      assert.match(
+        document,
+        /non-authoritative provider or evidence-transport failure before production\s+mutation creates no SHA-wide attempt/
+      );
+      assert.match(document, /permits one same-SHA gate-only retry/);
+      assert.match(
+        document,
+        /authoritative SQL,\s+query-identity, RLS, rollback, residue, or plan-threshold failure/
+      );
+      assert.match(
+        document,
+        /(?:Consumption occurs immediately before the scaling hold and first production\s+mutation|immediately before\s+the scaling hold and first production mutation)/
+      );
+    }
+
+    const predeployGate = deployScript.lastIndexOf(
+      "run_classpilot_tile_auth_plan_gate predeploy"
+    );
+    const consume = deployScript.lastIndexOf(
+      "inspect_or_consume_classpilot_rehearsal_receipt consume"
+    );
+    const scalingHold = deployScript.indexOf(
+      "acquire_production_scaling_hold",
+      consume
+    );
+    assert.ok(
+      predeployGate >= 0 && predeployGate < consume && consume < scalingHold,
+      "the strict predeploy gate must precede receipt consumption and mutation"
+    );
+    assert.doesNotMatch(
+      deployScript,
+      /Candidate rehearsal exited without a terminal attempt record/
+    );
+  });
+
+  it("consumes certification authority only at the traffic start gate", () => {
+    const inspect = certificationSupervisor.lastIndexOf(
+      "$validationReceiptInspection = Inspect-CertificationValidationReceipt"
+    );
+    const harness = certificationSupervisor.indexOf(
+      "$harness = Start-Process",
+      inspect
+    );
+    const monitor = certificationSupervisor.indexOf(
+      "$monitor = Start-Process",
+      harness
+    );
+    const recheck = certificationSupervisor.indexOf(
+      "$preTrafficRollbackBinding = Assert-CertificationRollbackConfigBinding",
+      monitor
+    );
+    const consume = certificationSupervisor.indexOf(
+      "Use-CertificationValidationReceipt",
+      recheck
+    );
+    const startGate = certificationSupervisor.indexOf(
+      "Write-AtomicJson -Path $harnessStartGatePath",
+      consume
+    );
+    assert.ok(
+      inspect >= 0 &&
+        inspect < harness &&
+        harness < monitor &&
+        monitor < recheck &&
+        recheck < consume &&
+        consume < startGate,
+      "inspection, startup, recheck, consumption, and start-gate order drifted"
+    );
+    for (const document of [runbook, planCheck]) {
+      assert.match(
+        document,
+        /(?:That )?[Ll]ate (?:receipt )?consumption prevents a\s+(?:pretraffic )?startup failure from falsely burning\s+traffic authority/
+      );
+      assert.match(
+        document,
+        /failure before the start gate is (?:released is )?a\s+decisive\s+terminal no-traffic/
+      );
+      assert.match(
+        document,
+        /Do\s+not create a second binding, repeat fixture\s+preparation, or run/
+      );
+      assert.doesNotMatch(
+        document,
+        /one fresh immutable\s+pretraffic binding|no-traffic pre-start binding may continue/
+      );
+    }
+    assert.match(runbook, /traffic is one-shot/);
+  });
+
+  it("binds fresh continuity, diagnostic, and the medium-only terminal chain", () => {
+    for (const required of [
+      "`launch-safe-20260711`",
+      "`fixture-state.private.json` and `fixture-ownership.private.json`",
+      "zero pending intents",
+      "one fresh Waf/500 -> Waf/800 certification chain",
+      "`expectedRdsInstanceClass=db.t4g.medium`",
+      "not certified - evidence unavailable",
+      "`db.t4g.medium` uncertified",
+    ]) {
+      assert.ok(
+        runbook.includes(required),
+        `runbook is missing the final campaign invariant: ${required}`
+      );
+    }
+    assert.match(runbook, /two owned schools,\s+20\s+teachers, one office user/);
+    assert.match(runbook, /one strict 30-minute Waf\/800\s+diagnostic traffic start/);
+    assert.match(
+      runbook,
+      /Start Waf\/800 around 01:15 ET so its\s+90-minute interval contains the existing 01:30 purge and 02:00 rollup/
+    );
+    assert.match(
+      runbook,
+      /Do not copy any historical device, auth, command, verification, snapshot, or\s+diagnostic artifact/
+    );
+    assert.match(
+      runbook,
+      /Reuse the mutable continuity root sequentially for the diagnostic,\s+Waf\/500, and Waf\/800/
+    );
+    assert.match(
+      runbook,
+      /supervisor-sealed Waf\/800 terminal result binding the frozen\s+release and observed `db\.t4g\.medium`/
+    );
+    assert.match(
+      runbook,
+      /No (?:RDS resize or xlarge fallback|xlarge path, RDS resize)/
+    );
+  });
+
+  it("retains failed candidates as historical-only", () => {
     for (const required of [
       "`3c82f540cccfaf0badd70312e76e69770b6cfaed`",
       "`sha256:776bd7e55a64c9da26d5eb1f38887f0402b0f1d143d3a1ca20a47246d459c1d6`",
-      "`schoolpilot-production-api:133`",
-      "`schoolpilot-production-api-emergency:33`",
-      "is historical-only",
-      "The current remediation binds the exact failed historical reread",
-      "then authorizes exactly one fresh,\nrelease-bound, independently inspected observation.",
-      "fresh DPAPI and AES-GCM state backups",
-      "The earlier controller-SHA plan and baseline\nremain comparison evidence only",
-      "the same merged SHA may run exactly one\ngate-only rehearsal",
-      "one guarded backend deployment",
-      "Seal the readiness packet and stop.",
-      "production fixture refresh or provisioning",
-      "diagnostic binding",
-      "failure is terminal for the SHA.",
-      "consumed single-use retention-aware supersession marker",
-      "the per-SHA atomic admission marker, immutable passed terminal marker",
-      "their common protected execution-authority\n  SHA-256",
-      "an explicit record that no apply occurred",
+      "`f3265563ac2efb673a2974a1adafefe32dcedb42`",
+      "`sha256:56e973299479638e02f496b0641a21945440367cbe0a3d782c3fc75e6442673a`",
+      "`representative_scenario_missing`",
+      "`cf9b70420b71668d4f06c9376b5274d27a259d0f`",
+      "`sha256:293e31c70c779da9d20af62957af70d2f6fb4c8ed327c0f9d7d4730053e8e570`",
     ]) {
       assert.ok(
-        runbook.includes(required),
-        `runbook is missing the stop-boundary invariant: ${required}`
+        planCheck.includes(required),
+        `plan-check history is missing: ${required}`
       );
     }
-    assert.match(
-      runbook,
-      /Any other observation outcome is terminal for the\s+SHA/
-    );
     assert.doesNotMatch(
       runbook,
       /--classpilot-tile-auth-plan-gate\s+\\\s*\n\s*--classpilot-tile-auth-plan-observation/,
-      "observation mode must remain standalone from the deployment gate"
+      "observation mode must remain standalone"
     );
-  });
-
-  it("records the f326 observation predecessor as historical-only", () => {
-    for (const required of [
-      "`f3265563ac2efb673a2974a1adafefe32dcedb42`",
-      "`sha256:56e973299479638e02f496b0641a21945440367cbe0a3d782c3fc75e6442673a`",
-      "`schoolpilot-production-api-emergency:34`",
-      "`schoolpilot-production-scheduler-worker:49`",
-      "`representative_scenario_missing`",
-      "ineligible for deployment, diagnostics, and\ncertification",
-      "must not be promoted or reused",
-    ]) {
-      assert.ok(
-        runbook.includes(required),
-        `runbook is missing the historical observation predecessor: ${required}`
-      );
-    }
   });
 });

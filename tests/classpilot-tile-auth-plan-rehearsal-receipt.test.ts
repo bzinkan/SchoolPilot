@@ -809,7 +809,7 @@ describe("ClassPilot tile authorization candidate rehearsal evidence", () => {
     );
   });
 
-  it("leaves a tombstone when suspension crosses expiry after reservation", () => {
+  it("leaves no marker when expiry is crossed before atomic publication", () => {
     const { root, options, expected } = fixture();
     const { written } = sealPassedReceipt(root, options, expected);
     const phases: string[] = [];
@@ -836,6 +836,7 @@ describe("ClassPilot tile authorization candidate rehearsal evidence", () => {
     );
     assert.deepEqual(phases, [
       "before-preliminary-timestamp",
+      "before-marker-write",
       "before-final-post-reservation-timestamp",
     ]);
     const canonicalConsumptionPath = path.join(
@@ -844,23 +845,23 @@ describe("ClassPilot tile authorization candidate rehearsal evidence", () => {
       options.applicationGitSha,
       REHEARSAL_CONSUMPTION_FILENAME
     );
-    assert.equal(fs.existsSync(canonicalConsumptionPath), true);
-    assert.equal(fs.statSync(canonicalConsumptionPath).size, 0);
-    assert.throws(() =>
+    assert.equal(fs.existsSync(canonicalConsumptionPath), false);
+    assert.doesNotThrow(() =>
       inspectClasspilotTileAuthorizationPlanRehearsalReceipt(
         written.path,
         expected
       )
     );
-    assert.throws(() =>
+    assert.doesNotThrow(() =>
       consumeClasspilotTileAuthorizationPlanRehearsalReceipt(
         written.path,
         expected
       )
     );
+    assert.ok(fs.statSync(canonicalConsumptionPath).size > 0);
   });
 
-  it("keeps a failed post-reservation marker permanently consumed", () => {
+  it("publishes no marker when materialization fails before the atomic link", () => {
     const { root, options, expected } = fixture();
     const { written } = sealPassedReceipt(root, options, expected);
     const phases: string[] = [];
@@ -886,7 +887,6 @@ describe("ClassPilot tile authorization candidate rehearsal evidence", () => {
     );
     assert.deepEqual(phases, [
       "before-preliminary-timestamp",
-      "before-final-post-reservation-timestamp",
       "before-marker-write",
     ]);
     const canonicalConsumptionPath = path.join(
@@ -895,28 +895,38 @@ describe("ClassPilot tile authorization candidate rehearsal evidence", () => {
       options.applicationGitSha,
       REHEARSAL_CONSUMPTION_FILENAME
     );
-    assert.equal(fs.existsSync(canonicalConsumptionPath), true);
-    assert.equal(fs.statSync(canonicalConsumptionPath).size, 0);
-    if (process.platform !== "win32") {
-      assert.equal(fs.statSync(canonicalConsumptionPath).mode & 0o777, 0o600);
-    }
-    assert.throws(() =>
+    assert.equal(fs.existsSync(canonicalConsumptionPath), false);
+    assert.doesNotThrow(() =>
       inspectClasspilotTileAuthorizationPlanRehearsalReceipt(
         written.path,
         expected
       )
     );
-    assert.throws(() =>
+    assert.doesNotThrow(() =>
       consumeClasspilotTileAuthorizationPlanRehearsalReceipt(
         written.path,
         expected
       )
     );
+    assert.ok(fs.statSync(canonicalConsumptionPath).size > 0);
   });
 
-  it("atomically permits only one concurrent consumer across receipt copies", async () => {
+  it("atomically publishes a complete lifecycle and marker for only one concurrent consumer", async () => {
     const { root, options, expected } = fixture();
-    const { written } = sealPassedReceipt(root, options, expected);
+    const receipt =
+      buildClasspilotTileAuthorizationPlanRehearsalReceipt(options);
+    const written = writeClasspilotTileAuthorizationPlanRehearsalReceipt(
+      path.join(root, "concurrent"),
+      receipt,
+      {
+        preflight: validPreflight(),
+        report: validateClasspilotTileAuthorizationPlanEvidence(
+          options.planEventsDocument
+        ),
+        lifecycle: validLifecycle(),
+      }
+    );
+    expected.expectedReceiptSha256 = written.sha256;
     const copiedRoot = path.join(root, "concurrent-copy");
     fs.cpSync(path.dirname(written.path), copiedRoot, { recursive: true });
     const copiedReceiptPath = path.join(
@@ -940,6 +950,18 @@ describe("ClassPilot tile authorization candidate rehearsal evidence", () => {
       ),
       true
     );
+    const attemptRoot = path.join(
+      root,
+      "tile-auth-rehearsals",
+      options.applicationGitSha
+    );
+    for (const filename of [
+      REHEARSAL_ATTEMPT_FILENAME,
+      REHEARSAL_TERMINAL_FILENAME,
+      REHEARSAL_CONSUMPTION_FILENAME,
+    ]) {
+      assert.ok(fs.statSync(path.join(attemptRoot, filename)).size > 0);
+    }
     for (const receiptPath of [written.path, copiedReceiptPath]) {
       assert.throws(() =>
         inspectClasspilotTileAuthorizationPlanRehearsalReceipt(
@@ -950,13 +972,8 @@ describe("ClassPilot tile authorization candidate rehearsal evidence", () => {
     }
   });
 
-  it("requires the immutable passed terminal before inspect or consume", () => {
+  it("inspects a successful receipt without an attempt and commits lifecycle evidence only at consumption", () => {
     const { root, options, expected } = fixture();
-    const admission =
-      admitClasspilotTileAuthorizationPlanRehearsalAttempt({
-        applicationGitSha: options.applicationGitSha,
-        admittedAtUtc: "2026-07-24T15:59:00.000Z",
-      });
     const receipt =
       buildClasspilotTileAuthorizationPlanRehearsalReceipt(options);
     const written = writeClasspilotTileAuthorizationPlanRehearsalReceipt(
@@ -971,6 +988,132 @@ describe("ClassPilot tile authorization candidate rehearsal evidence", () => {
       }
     );
     expected.expectedReceiptSha256 = written.sha256;
+    const attemptRoot = path.join(
+      root,
+      "tile-auth-rehearsals",
+      options.applicationGitSha
+    );
+    assert.equal(fs.existsSync(attemptRoot), false);
+    assert.equal(
+      inspectClasspilotTileAuthorizationPlanRehearsalReceipt(
+        written.path,
+        expected
+      ).receiptSha256,
+      written.sha256
+    );
+    assert.equal(fs.existsSync(attemptRoot), false);
+    const consumed =
+      consumeClasspilotTileAuthorizationPlanRehearsalReceipt(
+        written.path,
+        expected
+      );
+    assert.equal(consumed.receiptSha256, written.sha256);
+    assert.equal(
+      JSON.parse(
+        fs.readFileSync(
+          path.join(attemptRoot, REHEARSAL_TERMINAL_FILENAME),
+          "utf8"
+        )
+      ).status,
+      "passed"
+    );
+    assert.equal(
+      fs.existsSync(path.join(attemptRoot, REHEARSAL_CONSUMPTION_FILENAME)),
+      true
+    );
+  });
+
+  it("does not burn the SHA when an expired receipt is replaced before consumption", () => {
+    const { root, options, expected } = fixture();
+    const expiredReceipt =
+      buildClasspilotTileAuthorizationPlanRehearsalReceipt(options);
+    const expiredWritten = writeClasspilotTileAuthorizationPlanRehearsalReceipt(
+      path.join(root, "expired"),
+      expiredReceipt,
+      {
+        preflight: validPreflight(),
+        report: validateClasspilotTileAuthorizationPlanEvidence(
+          options.planEventsDocument
+        ),
+        lifecycle: validLifecycle(),
+      }
+    );
+    expected.expectedReceiptSha256 = expiredWritten.sha256;
+    expected.nowUtc = expiredReceipt.expiresAtUtc;
+    assert.throws(() =>
+      consumeClasspilotTileAuthorizationPlanRehearsalReceipt(
+        expiredWritten.path,
+        expected
+      )
+    );
+    const attemptRoot = path.join(
+      root,
+      "tile-auth-rehearsals",
+      options.applicationGitSha
+    );
+    assert.equal(fs.existsSync(attemptRoot), false);
+
+    const replacementOptions = {
+      ...options,
+      createdAtUtc: "2026-07-24T17:01:00.000Z",
+    };
+    const replacementReceipt =
+      buildClasspilotTileAuthorizationPlanRehearsalReceipt(replacementOptions);
+    const replacementWritten =
+      writeClasspilotTileAuthorizationPlanRehearsalReceipt(
+        path.join(root, "replacement"),
+        replacementReceipt,
+        {
+          preflight: validPreflight(),
+          report: validateClasspilotTileAuthorizationPlanEvidence(
+            replacementOptions.planEventsDocument
+          ),
+          lifecycle: validLifecycle(),
+        }
+      );
+    expected.expectedReceiptSha256 = replacementWritten.sha256;
+    expected.nowUtc = "2026-07-24T17:30:00.000Z";
+    assert.equal(
+      inspectClasspilotTileAuthorizationPlanRehearsalReceipt(
+        replacementWritten.path,
+        expected
+      ).receiptSha256,
+      replacementWritten.sha256
+    );
+    assert.equal(
+      consumeClasspilotTileAuthorizationPlanRehearsalReceipt(
+        replacementWritten.path,
+        expected
+      ).receiptSha256,
+      replacementWritten.sha256
+    );
+    assert.equal(
+      fs.existsSync(path.join(attemptRoot, REHEARSAL_CONSUMPTION_FILENAME)),
+      true
+    );
+  });
+
+  it("fails closed on an admission left by interrupted authoritative failure sealing", () => {
+    const { root, options, expected } = fixture();
+    admitClasspilotTileAuthorizationPlanRehearsalAttempt({
+      applicationGitSha: options.applicationGitSha,
+      admittedAtUtc: "2026-07-24T15:59:00.000Z",
+    });
+    const receipt =
+      buildClasspilotTileAuthorizationPlanRehearsalReceipt(options);
+    const written = writeClasspilotTileAuthorizationPlanRehearsalReceipt(
+      path.join(root, "interrupted-failure"),
+      receipt,
+      {
+        preflight: validPreflight(),
+        report: validateClasspilotTileAuthorizationPlanEvidence(
+          options.planEventsDocument
+        ),
+        lifecycle: validLifecycle(),
+      }
+    );
+    expected.expectedReceiptSha256 = written.sha256;
+
     assert.throws(() =>
       inspectClasspilotTileAuthorizationPlanRehearsalReceipt(
         written.path,
@@ -983,13 +1126,49 @@ describe("ClassPilot tile authorization candidate rehearsal evidence", () => {
         expected
       )
     );
+    const attemptRoot = path.join(
+      root,
+      "tile-auth-rehearsals",
+      options.applicationGitSha
+    );
+    assert.equal(
+      fs.existsSync(path.join(attemptRoot, REHEARSAL_TERMINAL_FILENAME)),
+      false
+    );
+    assert.equal(
+      fs.existsSync(path.join(attemptRoot, REHEARSAL_CONSUMPTION_FILENAME)),
+      false
+    );
+  });
 
+  it("never converts an authoritative failed terminal into a passing consumption", () => {
+    const { root, options, expected } = fixture();
+    const admission =
+      admitClasspilotTileAuthorizationPlanRehearsalAttempt({
+        applicationGitSha: options.applicationGitSha,
+        admittedAtUtc: "2026-07-24T15:59:00.000Z",
+      });
+    const receipt =
+      buildClasspilotTileAuthorizationPlanRehearsalReceipt(options);
+    const written = writeClasspilotTileAuthorizationPlanRehearsalReceipt(
+      path.join(root, "failed"),
+      receipt,
+      {
+        preflight: validPreflight(),
+        report: validateClasspilotTileAuthorizationPlanEvidence(
+          options.planEventsDocument
+        ),
+        lifecycle: validLifecycle(),
+      }
+    );
+    expected.expectedReceiptSha256 = written.sha256;
     terminalClasspilotTileAuthorizationPlanRehearsalAttempt({
       applicationGitSha: options.applicationGitSha,
       expectedAdmissionSha256: admission.sha256,
       outcome: "failed",
       terminalAtUtc: "2026-07-24T16:01:00.000Z",
     });
+
     assert.throws(() =>
       inspectClasspilotTileAuthorizationPlanRehearsalReceipt(
         written.path,
@@ -1002,15 +1181,16 @@ describe("ClassPilot tile authorization candidate rehearsal evidence", () => {
         expected
       )
     );
-    assert.throws(() =>
-      terminalClasspilotTileAuthorizationPlanRehearsalAttempt({
-        applicationGitSha: options.applicationGitSha,
-        expectedAdmissionSha256: admission.sha256,
-        outcome: "passed",
-        receiptPath: written.path,
-        receiptSha256: written.sha256,
-        terminalAtUtc: "2026-07-24T16:02:00.000Z",
-      })
+    assert.equal(
+      fs.existsSync(
+        path.join(
+          root,
+          "tile-auth-rehearsals",
+          options.applicationGitSha,
+          REHEARSAL_CONSUMPTION_FILENAME
+        )
+      ),
+      false
     );
   });
 

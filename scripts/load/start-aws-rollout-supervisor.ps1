@@ -4839,15 +4839,24 @@ function New-CertificationValidationReceipt {
     })
 }
 
-function Use-CertificationValidationReceipt {
-    param($Contract, [string]$ReceiptPath, [string]$SealPath, [string]$ConsumedPath)
+function Get-CertificationValidationReceiptBinding {
+    param(
+        $Contract,
+        [string]$ReceiptPath,
+        [string]$SealPath,
+        [string]$ConsumedPath,
+        [switch]$Consume
+    )
     if ($null -eq $Contract) { return $null }
     $expectedConsumedPath = [IO.Path]::GetFullPath("$ReceiptPath.consumed")
     if (-not [string]::Equals([IO.Path]::GetFullPath($ConsumedPath),$expectedConsumedPath,[StringComparison]::OrdinalIgnoreCase)) {
         throw "Validation receipt consumed path must be the exact receipt path with the .consumed suffix."
     }
     return Invoke-WithAtomicJsonMutex -Path $ReceiptPath -Operation {
-        if (Test-Path -LiteralPath $ConsumedPath) { throw "Validation receipt was already consumed; replay is forbidden." }
+        if (Test-Path -LiteralPath $ConsumedPath) {
+            if ($Consume) { throw "Validation receipt was already consumed; replay is forbidden." }
+            throw "Validation receipt was already consumed; a pretraffic inspection cannot replay it."
+        }
         if (-not (Test-Path -LiteralPath $ReceiptPath -PathType Leaf) -or -not (Test-Path -LiteralPath $SealPath -PathType Leaf)) {
             throw "Run requires the fresh one-use receipt produced by Mode Validate."
         }
@@ -4881,10 +4890,32 @@ function Use-CertificationValidationReceipt {
             [string]$seal.receiptSha256 -ne (Get-CertificationSha256 $ReceiptPath)) {
             throw "Validation receipt is stale, tampered, or bound to a different configuration/controller."
         }
-        [IO.File]::Move($ReceiptPath,$ConsumedPath)
-        Remove-Item -LiteralPath $SealPath -Force
-        return [ordered]@{path=$ConsumedPath;sha256=Get-CertificationSha256 $ConsumedPath;nonce=[string]$receipt.nonce;operatorConfigSha256=[string]$receipt.configSha256;rollbackConfig=$receiptRollback}
+        $binding = [ordered]@{
+            path=$ConsumedPath;sha256=Get-CertificationSha256 $ReceiptPath
+            nonce=[string]$receipt.nonce;operatorConfigSha256=[string]$receipt.configSha256
+            rollbackConfig=$receiptRollback
+        }
+        if ($Consume) {
+            [IO.File]::Move($ReceiptPath,$ConsumedPath)
+            Remove-Item -LiteralPath $SealPath -Force
+            if ((Get-CertificationSha256 $ConsumedPath) -ne $binding.sha256) {
+                throw "Validation receipt changed during atomic consumption."
+            }
+        }
+        return $binding
     }
+}
+
+function Inspect-CertificationValidationReceipt {
+    param($Contract, [string]$ReceiptPath, [string]$SealPath, [string]$ConsumedPath)
+    return Get-CertificationValidationReceiptBinding -Contract $Contract -ReceiptPath $ReceiptPath `
+        -SealPath $SealPath -ConsumedPath $ConsumedPath
+}
+
+function Use-CertificationValidationReceipt {
+    param($Contract, [string]$ReceiptPath, [string]$SealPath, [string]$ConsumedPath)
+    return Get-CertificationValidationReceiptBinding -Contract $Contract -ReceiptPath $ReceiptPath `
+        -SealPath $SealPath -ConsumedPath $ConsumedPath -Consume
 }
 
 function Get-CertificationChainRootBinding {
@@ -5630,8 +5661,17 @@ try {
         if (Test-Path -LiteralPath $path) { throw "Supervisor artifact already exists: $path" }
     }
 
-    $validationReceiptBinding = Use-CertificationValidationReceipt -Contract $certificationContract `
+    # Load supervision validates the receipt now but does not consume its
+    # one-shot authority until every pretraffic process and AWS recheck has
+    # passed. MonitorOnly has no harness start gate, so preserve its existing
+    # consume-before-attestation behavior.
+    $validationReceiptInspection = Inspect-CertificationValidationReceipt -Contract $certificationContract `
         -ReceiptPath $validationReceiptPath -SealPath $validationReceiptSealPath -ConsumedPath $consumedValidationReceiptPath
+    $validationReceiptBinding = $validationReceiptInspection
+    if ($SupervisionKind -eq "MonitorOnly") {
+        $validationReceiptBinding = Use-CertificationValidationReceipt -Contract $certificationContract `
+            -ReceiptPath $validationReceiptPath -SealPath $validationReceiptSealPath -ConsumedPath $consumedValidationReceiptPath
+    }
     if ($null -ne $certificationContract) {
         Assert-CertificationOperatorConfigUnchanged
         if ($runRollbackBinding.sha256 -ne $validationReceiptBinding.rollbackConfig.sha256) {
@@ -5804,6 +5844,19 @@ try {
         Assert-HealthyMonitorArmingHeartbeat -Heartbeat $releaseHeartbeat -ExpectedRunId $runId `
             -ExpectedPhase ([string]$config.phase) -MonitorStartedAt $monitorStartedAt `
             -Now ([DateTimeOffset]::UtcNow) -StaleSeconds $monitorHeartbeatStaleSeconds
+        if ($null -ne $certificationContract) {
+            # The prospective binding staged into the chain root and stage
+            # attestation names the exact .consumed path and immutable receipt
+            # bytes. Consume only now, immediately before the sole traffic
+            # release, and prove the binding did not change in between.
+            $consumedReceiptBinding = Use-CertificationValidationReceipt -Contract $certificationContract `
+                -ReceiptPath $validationReceiptPath -SealPath $validationReceiptSealPath -ConsumedPath $consumedValidationReceiptPath
+            if ((ConvertTo-CertificationComparableJson $consumedReceiptBinding) -cne
+                (ConvertTo-CertificationComparableJson $validationReceiptInspection)) {
+                throw "Validation receipt binding changed between pretraffic inspection and atomic consumption."
+            }
+            $validationReceiptBinding = $consumedReceiptBinding
+        }
         Write-AtomicJson -Path $harnessStartGatePath -Value ([ordered]@{
             schemaVersion = 1; type = "load_supervisor_start"; runId = $runId;
             harnessProcessId = $harness.Id; monitorProcessId = $monitor.Id;

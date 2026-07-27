@@ -10,7 +10,6 @@ import { pathToFileURL } from "node:url";
 import {
   configuredLoadGatesRoot,
   preparePrivateOutputDirectory,
-  restrictPrivateOutputArtifact,
   writePrivateJson,
 } from "./load/prepare-classpilot-load-test.mjs";
 import {
@@ -404,16 +403,27 @@ function validateRehearsalTerminal(
   return value;
 }
 
-function requirePassedRehearsalTerminal(receipt, receiptSha256) {
+function inspectOptionalRehearsalTerminal(receipt, receiptSha256) {
   const directory = rehearsalAttemptRoot(receipt.applicationGitSha);
   const admissionPath = path.join(directory, REHEARSAL_ATTEMPT_FILENAME);
   const terminalPath = path.join(directory, REHEARSAL_TERMINAL_FILENAME);
+  const admissionExists = fs.existsSync(admissionPath);
+  const terminalExists = fs.existsSync(terminalPath);
+  if (!admissionExists && !terminalExists) {
+    return null;
+  }
+  if (!admissionExists) {
+    throw new Error("classpilot_tile_auth_plan_rehearsal_terminal_invalid");
+  }
   const admissionBytes = fs.readFileSync(admissionPath);
   const admissionHash = sha256(admissionBytes);
   const admission = validateRehearsalAttempt(
     JSON.parse(admissionBytes.toString("utf8")),
     receipt.applicationGitSha
   );
+  if (!terminalExists) {
+    throw new Error("classpilot_tile_auth_plan_rehearsal_terminal_invalid");
+  }
   const terminalBytes = fs.readFileSync(terminalPath);
   const terminal = validateRehearsalTerminal(
     JSON.parse(terminalBytes.toString("utf8")),
@@ -438,6 +448,74 @@ function requirePassedRehearsalTerminal(receipt, receiptSha256) {
     admissionSha256: admissionHash,
     terminal,
     terminalSha256: sha256(terminalBytes),
+  };
+}
+
+function requirePassedRehearsalTerminal(receipt, receiptSha256) {
+  const binding = inspectOptionalRehearsalTerminal(receipt, receiptSha256);
+  if (binding?.terminal?.status !== "passed") {
+    throw new Error("classpilot_tile_auth_plan_rehearsal_terminal_invalid");
+  }
+  return binding;
+}
+
+function buildConsumptionRecords(
+  receipt,
+  receiptSha256,
+  consumedAtUtc
+) {
+  const authorityHash =
+    resolveClasspilotTileAuthorizationPlanExecutionAuthority();
+  const consumedAt = requireUtc(consumedAtUtc);
+  const admission = {
+    schemaVersion: 1,
+    type: "classpilot_tile_auth_plan_rehearsal_attempt",
+    version: REHEARSAL_ATTEMPT_VERSION,
+    status: "admitted",
+    applicationGitSha: receipt.applicationGitSha,
+    executionAuthoritySha256: authorityHash,
+    admittedAtUtc: consumedAt,
+  };
+  validateRehearsalAttempt(admission, receipt.applicationGitSha);
+  const admissionSha256 = sha256(privateJsonPayload(admission));
+  const terminal = {
+    schemaVersion: 1,
+    type: "classpilot_tile_auth_plan_rehearsal_terminal",
+    version: REHEARSAL_TERMINAL_VERSION,
+    status: "passed",
+    applicationGitSha: receipt.applicationGitSha,
+    executionAuthoritySha256: authorityHash,
+    admissionSha256,
+    receiptSha256,
+    terminalAtUtc: consumedAt,
+  };
+  validateRehearsalTerminal(terminal, {
+    expectedApplicationGitSha: receipt.applicationGitSha,
+    expectedAdmissionSha256: admissionSha256,
+    expectedReceiptSha256: receiptSha256,
+    requirePassed: true,
+  });
+  const terminalSha256 = sha256(privateJsonPayload(terminal));
+  const marker = {
+    schemaVersion: 1,
+    type: "classpilot_tile_auth_plan_rehearsal_consumption",
+    version: REHEARSAL_RECEIPT_VERSION,
+    applicationGitSha: receipt.applicationGitSha,
+    executionAuthoritySha256: authorityHash,
+    receiptSha256,
+    rehearsalAdmissionSha256: admissionSha256,
+    rehearsalTerminalSha256: terminalSha256,
+    consumedAtUtc: consumedAt,
+  };
+  if (!hasExactKeys(marker, CONSUMPTION_KEYS)) {
+    throw new Error("classpilot_tile_auth_plan_rehearsal_receipt_invalid");
+  }
+  return {
+    admission,
+    admissionSha256,
+    marker,
+    terminal,
+    terminalSha256,
   };
 }
 
@@ -792,50 +870,46 @@ function requirePrivateReceiptPath(receiptPath) {
   return real;
 }
 
-function reserveConsumptionMarker(directory) {
-  const target = path.join(directory, REHEARSAL_CONSUMPTION_FILENAME);
-  try {
-    return {
-      descriptor: fs.openSync(target, "wx", 0o600),
-      target,
-    };
-  } catch {
-    throw new Error("classpilot_tile_auth_plan_rehearsal_receipt_already_used");
-  }
-}
-
 function commitConsumptionMarker(
-  reservation,
+  directory,
   receipt,
   markerBinding,
   expected
 ) {
-  let marker;
+  const target = path.join(directory, REHEARSAL_CONSUMPTION_FILENAME);
+  if (fs.existsSync(target)) {
+    throw new Error("classpilot_tile_auth_plan_rehearsal_receipt_already_used");
+  }
+  const consumedAtUtc = requireReceiptFreshAtConsumption(
+    receipt,
+    currentConsumptionUtc(expected)
+  );
+  const marker = {
+    schemaVersion: 1,
+    type: "classpilot_tile_auth_plan_rehearsal_consumption",
+    version: REHEARSAL_RECEIPT_VERSION,
+    ...markerBinding,
+    consumedAtUtc,
+  };
+  if (!hasExactKeys(marker, CONSUMPTION_KEYS)) {
+    throw new Error("classpilot_tile_auth_plan_rehearsal_receipt_invalid");
+  }
+  const candidateName =
+    `.${REHEARSAL_CONSUMPTION_FILENAME}.${process.pid}.` +
+    `${randomBytes(16).toString("hex")}.json`;
+  const candidate = path.join(directory, candidateName);
   try {
+    writePrivateJson(directory, candidateName, marker);
+    runTestConsumptionHook(expected, "before-marker-write");
     runTestConsumptionHook(
       expected,
       "before-final-post-reservation-timestamp"
     );
-    const consumedAtUtc = requireReceiptFreshAtConsumption(
+    requireReceiptFreshAtConsumption(
       receipt,
       currentConsumptionUtc(expected)
     );
-    marker = {
-      schemaVersion: 1,
-      type: "classpilot_tile_auth_plan_rehearsal_consumption",
-      version: REHEARSAL_RECEIPT_VERSION,
-      ...markerBinding,
-      consumedAtUtc,
-    };
-    if (!hasExactKeys(marker, CONSUMPTION_KEYS)) {
-      throw new Error("classpilot_tile_auth_plan_rehearsal_receipt_invalid");
-    }
-    restrictPrivateOutputArtifact(reservation.target);
-    runTestConsumptionHook(expected, "before-marker-write");
-    fs.writeFileSync(reservation.descriptor, privateJsonPayload(marker), {
-      encoding: "utf8",
-    });
-    fs.fsyncSync(reservation.descriptor);
+    fs.linkSync(candidate, target);
   } catch (error) {
     if (
       error instanceof Error &&
@@ -850,15 +924,87 @@ function commitConsumptionMarker(
       "classpilot_tile_auth_plan_rehearsal_consumption_commit_failed"
     );
   } finally {
-    if (reservation.descriptor !== undefined) {
-      try {
-        fs.closeSync(reservation.descriptor);
-      } catch {
-        // The exclusive canonical marker remains fail-closed even if close fails.
-      }
-    }
+    fs.rmSync(candidate, { force: true });
   }
   return marker;
+}
+
+function publishFreshConsumptionGroup(
+  receipt,
+  receiptSha256,
+  expected
+) {
+  const target = rehearsalAttemptRoot(receipt.applicationGitSha);
+  if (fs.existsSync(target)) {
+    throw new Error("classpilot_tile_auth_plan_rehearsal_terminal_invalid");
+  }
+  const parent = preparePrivateOutputDirectory(path.dirname(target));
+  const staging = fs.mkdtempSync(
+    path.join(parent, `.${receipt.applicationGitSha}.consume-`)
+  );
+  preparePrivateOutputDirectory(staging);
+  let published = false;
+  try {
+    const records = buildConsumptionRecords(
+      receipt,
+      receiptSha256,
+      requireReceiptFreshAtConsumption(
+        receipt,
+        currentConsumptionUtc(expected)
+      )
+    );
+    writePrivateJson(staging, REHEARSAL_ATTEMPT_FILENAME, records.admission);
+    writePrivateJson(staging, REHEARSAL_TERMINAL_FILENAME, records.terminal);
+    runTestConsumptionHook(expected, "before-marker-write");
+    writePrivateJson(
+      staging,
+      REHEARSAL_CONSUMPTION_FILENAME,
+      records.marker
+    );
+    runTestConsumptionHook(
+      expected,
+      "before-final-post-reservation-timestamp"
+    );
+    requireReceiptFreshAtConsumption(
+      receipt,
+      currentConsumptionUtc(expected)
+    );
+    try {
+      fs.renameSync(staging, target);
+    } catch {
+      throw new Error(
+        "classpilot_tile_auth_plan_rehearsal_receipt_already_used"
+      );
+    }
+    published = true;
+    return {
+      marker: records.marker,
+      terminalBinding: {
+        admissionSha256: records.admissionSha256,
+        terminal: records.terminal,
+        terminalSha256: records.terminalSha256,
+      },
+    };
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      [
+        "classpilot_tile_auth_plan_rehearsal_receipt_already_used",
+        "classpilot_tile_auth_plan_rehearsal_receipt_invalid",
+        "classpilot_tile_auth_plan_rehearsal_receipt_mismatch",
+        "classpilot_tile_auth_plan_rehearsal_terminal_invalid",
+      ].includes(error.message)
+    ) {
+      throw error;
+    }
+    throw new Error(
+      "classpilot_tile_auth_plan_rehearsal_consumption_commit_failed"
+    );
+  } finally {
+    if (!published) {
+      fs.rmSync(staging, { force: true, recursive: true });
+    }
+  }
 }
 
 function requireReceiptFreshAtConsumption(receipt, consumedAtUtc) {
@@ -1013,33 +1159,40 @@ export function consumeClasspilotTileAuthorizationPlanRehearsalReceipt(
     expected
   );
   validateCompanionEvidence(realReceiptPath, receipt);
-  const terminalBinding = requirePassedRehearsalTerminal(
-    receipt,
-    sha256(bytes)
-  );
-  const authorityHash =
-    resolveClasspilotTileAuthorizationPlanExecutionAuthority();
-  const consumptionDirectory = preparePrivateOutputDirectory(
-    rehearsalAttemptRoot(receipt.applicationGitSha)
-  );
   runTestConsumptionHook(expected, "before-preliminary-timestamp");
   requireReceiptFreshAtConsumption(
     receipt,
     currentConsumptionUtc(expected)
   );
-  const reservation = reserveConsumptionMarker(consumptionDirectory);
-  const marker = commitConsumptionMarker(
-    reservation,
+  const receiptSha256 = sha256(bytes);
+  const existingTerminal = inspectOptionalRehearsalTerminal(
     receipt,
-    {
-      applicationGitSha: receipt.applicationGitSha,
-      executionAuthoritySha256: authorityHash,
-      receiptSha256: sha256(bytes),
-      rehearsalAdmissionSha256: terminalBinding.admissionSha256,
-      rehearsalTerminalSha256: terminalBinding.terminalSha256,
-    },
-    expected
+    receiptSha256
   );
+  const authorityHash =
+    resolveClasspilotTileAuthorizationPlanExecutionAuthority();
+  let marker;
+  if (existingTerminal === null) {
+    const published = publishFreshConsumptionGroup(
+      receipt,
+      receiptSha256,
+      expected
+    );
+    marker = published.marker;
+  } else {
+    marker = commitConsumptionMarker(
+      rehearsalAttemptRoot(receipt.applicationGitSha),
+      receipt,
+      {
+        applicationGitSha: receipt.applicationGitSha,
+        executionAuthoritySha256: authorityHash,
+        receiptSha256,
+        rehearsalAdmissionSha256: existingTerminal.admissionSha256,
+        rehearsalTerminalSha256: existingTerminal.terminalSha256,
+      },
+      expected
+    );
+  }
   return {
     schemaVersion: 1,
     version: REHEARSAL_RECEIPT_VERSION,
@@ -1077,7 +1230,7 @@ export function inspectClasspilotTileAuthorizationPlanRehearsalReceipt(
     expected
   );
   validateCompanionEvidence(realReceiptPath, receipt);
-  requirePassedRehearsalTerminal(receipt, sha256(bytes));
+  inspectOptionalRehearsalTerminal(receipt, sha256(bytes));
   const consumedPath = rehearsalConsumptionPath(
     receipt.applicationGitSha
   );

@@ -13,9 +13,7 @@
 #     --classpilot-tile-auth-plan-gate --classpilot-tile-auth-plan-rehearsal
 #                                       # Build/register inactive exact candidates and run the preflight/full gate only
 #   ./scripts/deploy.sh production --backend --activate-emergency \
-#     --classpilot-tile-auth-plan-observation \
-#     --classpilot-tile-auth-plan-observation-reread <canonical-private-reread-packet-path> \
-#     --expected-classpilot-tile-auth-plan-observation-reread-sha256 <64-hex>
+#     --classpilot-tile-auth-plan-observation
 #                                       # Build/register inactive exact candidates and run one read-only base observation only
 #   ./scripts/deploy.sh production --backend --activate-emergency \
 #     --classpilot-tile-auth-plan-gate \
@@ -90,16 +88,6 @@ while [[ $# -gt 0 ]]; do
     --classpilot-tile-auth-plan-observation)
       RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION=true
       shift
-      ;;
-    --classpilot-tile-auth-plan-observation-reread)
-      [[ $# -ge 2 ]] || { echo "--classpilot-tile-auth-plan-observation-reread requires an absolute canonical private reread packet path"; exit 1; }
-      CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD="$2"
-      shift 2
-      ;;
-    --expected-classpilot-tile-auth-plan-observation-reread-sha256)
-      [[ $# -ge 2 ]] || { echo "--expected-classpilot-tile-auth-plan-observation-reread-sha256 requires a 64-hex SHA-256"; exit 1; }
-      EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD_SHA256="$2"
-      shift 2
       ;;
     --reuse-classpilot-tile-auth-plan-rehearsal)
       [[ $# -ge 2 ]] || { echo "--reuse-classpilot-tile-auth-plan-rehearsal requires an absolute private receipt path"; exit 1; }
@@ -198,6 +186,7 @@ TILE_AUTH_PLAN_REHEARSAL_WORKER_TASK_DEFINITION_SHA256=""
 TILE_AUTH_PLAN_REHEARSAL_ATTEMPT_ADMITTED=false
 TILE_AUTH_PLAN_REHEARSAL_ATTEMPT_SHA256=""
 TILE_AUTH_PLAN_REHEARSAL_ATTEMPT_TERMINAL=false
+TILE_AUTH_PLAN_REHEARSAL_AUTHORITATIVE_FAILURE=false
 TILE_AUTH_PLAN_OBSERVATION_ID=""
 TILE_AUTH_PLAN_OBSERVATION_TASK_ARN=""
 TILE_AUTH_PLAN_OBSERVATION_TASK_EXIT_CODE=""
@@ -985,15 +974,6 @@ deploy_exit_cleanup() {
     fi
   fi
 
-  if [[ "$TILE_AUTH_PLAN_REHEARSAL_ATTEMPT_ADMITTED" == true &&
-        "$TILE_AUTH_PLAN_REHEARSAL_ATTEMPT_TERMINAL" != true ]]; then
-    warn "Candidate rehearsal exited without a terminal attempt record; sealing a failed terminal."
-    if ! seal_classpilot_tile_auth_plan_rehearsal_terminal failed; then
-      error "The failed ClassPilot candidate rehearsal terminal could not be sealed."
-      exit_code=1
-    fi
-  fi
-
   cleanup_temp_files
   exit "$exit_code"
 }
@@ -1160,22 +1140,7 @@ validate_classpilot_tile_auth_plan_gate_mode() {
       error "--classpilot-tile-auth-plan-observation is allowed only with production --backend --activate-emergency and rejects frontend, same-image, and --skip-wait modes."
       return 1
     fi
-    if [[ -z "$CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD" ||
-          ! "$EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD_SHA256" =~ ^[a-f0-9]{64}$ ]]; then
-      error "--classpilot-tile-auth-plan-observation requires the canonical historical reread packet and its out-of-band expected SHA-256."
-      return 1
-    fi
-    if [[ ! "$CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD" =~ ^([A-Za-z]:[\\/]|/) ]]; then
-      error "The ClassPilot tile authorization observation reread packet path must be absolute."
-      return 1
-    fi
     return 0
-  fi
-
-  if [[ -n "$CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD" ||
-        -n "$EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD_SHA256" ]]; then
-    error "Historical reread supersession inputs are allowed only with --classpilot-tile-auth-plan-observation."
-    return 1
   fi
 
   if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE" != true ]]; then
@@ -1340,12 +1305,56 @@ NODE
   success "History fallback query identity receipt sealed (receiptSha256=${receipt_sha}, queryIdentifierSha256=${receipt_query_sha})"
 }
 
+read_classpilot_tile_auth_plan_terminal_exit_code() {
+  local result_path="$1"
+  local expected_task_arn="$2"
+  local expected_task_definition="$3"
+  TILE_AUTH_PLAN_RESULT_PATH="$result_path" \
+    EXPECTED_TASK_ARN="$expected_task_arn" \
+    EXPECTED_TASK_DEFINITION="$expected_task_definition" \
+    EXPECTED_REGION="$REGION" \
+    EXPECTED_ACCOUNT_ID="$ACCOUNT_ID" node <<'NODE'
+const fs = require("fs");
+const value = JSON.parse(
+  fs.readFileSync(process.env.TILE_AUTH_PLAN_RESULT_PATH, "utf8")
+);
+const failures = Array.isArray(value?.failures) ? value.failures : [];
+const tasks = Array.isArray(value?.tasks) ? value.tasks : [];
+const task = tasks[0];
+const taskPrefix =
+  `arn:aws:ecs:${process.env.EXPECTED_REGION}:` +
+  `${process.env.EXPECTED_ACCOUNT_ID}:task/`;
+const containers = Array.isArray(task?.containers) ? task.containers : [];
+const api = containers.filter((container) => container?.name === "api");
+const exitCode = api[0]?.exitCode;
+if (
+  failures.length !== 0 ||
+  tasks.length !== 1 ||
+  task?.taskArn !== process.env.EXPECTED_TASK_ARN ||
+  !task.taskArn.startsWith(taskPrefix) ||
+  task?.taskDefinitionArn !== process.env.EXPECTED_TASK_DEFINITION ||
+  task?.lastStatus !== "STOPPED" ||
+  api.length !== 1 ||
+  api[0]?.lastStatus !== "STOPPED" ||
+  !Number.isInteger(exitCode) ||
+  exitCode < 0 ||
+  exitCode > 255
+) {
+  process.exit(1);
+}
+process.stdout.write(String(exitCode));
+NODE
+}
+
 run_classpilot_tile_auth_plan_gate() {
   if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE" != true ]]; then
     return 0
   fi
 
   local phase="${1:-predeploy}"
+  if [[ "$phase" == "predeploy" ]]; then
+    TILE_AUTH_PLAN_REHEARSAL_AUTHORITATIVE_FAILURE=false
+  fi
   local failure_suffix="No migration or service rollout was attempted."
   if [[ "$phase" != "predeploy" && "$phase" != "postdeploy" ]]; then
     error "The ClassPilot tile authorization plan gate phase is invalid."
@@ -1416,6 +1425,9 @@ NODE
   local wait_result=$?
   set -e
   if [[ "$wait_result" -eq 124 ]]; then
+    if [[ "$phase" == "predeploy" ]]; then
+      TILE_AUTH_PLAN_REHEARSAL_AUTHORITATIVE_FAILURE=true
+    fi
     error "The ClassPilot tile authorization plan task exceeded its 900-second controller deadline and was stopped. ${failure_suffix}"
     return 1
   elif [[ "$wait_result" -eq 125 ]]; then
@@ -1437,7 +1449,19 @@ NODE
     return 1
   fi
 
-  local log_configuration_json log_binding log_group log_region log_prefix log_stream task_exit_code extra
+  local task_exit_code
+  if ! task_exit_code=$(read_classpilot_tile_auth_plan_terminal_exit_code \
+    ".tile-auth-plan-result.json" \
+    "$task_arn" \
+    "$API_ROLLOUT_TASK_DEF"); then
+    error "The terminal ClassPilot tile authorization plan task identity or exit code was invalid. ${failure_suffix}"
+    return 1
+  fi
+  if [[ "$phase" == "predeploy" && "$task_exit_code" != "0" ]]; then
+    TILE_AUTH_PLAN_REHEARSAL_AUTHORITATIVE_FAILURE=true
+  fi
+
+  local log_configuration_json log_binding log_group log_region log_prefix log_stream bound_task_exit_code extra
   if ! log_configuration_json=$(aws ecs describe-task-definition \
     --task-definition "$API_ROLLOUT_TASK_DEF" \
     --query 'taskDefinition.containerDefinitions[?name==`api`] | [0].logConfiguration' \
@@ -1458,10 +1482,10 @@ NODE
     error "The ClassPilot tile authorization plan task or its exact awslogs binding is invalid. ${failure_suffix}"
     return 1
   fi
-  IFS=$'\t' read -r log_group log_region log_prefix log_stream task_exit_code extra <<< "$log_binding"
+  IFS=$'\t' read -r log_group log_region log_prefix log_stream bound_task_exit_code extra <<< "$log_binding"
   if [[ -z "$log_group" || "$log_region" != "$REGION" || -z "$log_prefix" || -n "$extra" ||
         -z "$log_stream" || "$log_stream" != "${log_prefix}/api/"* ||
-        ! "$task_exit_code" =~ ^([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$ ]]; then
+        "$bound_task_exit_code" != "$task_exit_code" ]]; then
     error "The ClassPilot tile authorization plan log stream does not match the exact API task definition. ${failure_suffix}"
     return 1
   fi
@@ -1491,6 +1515,9 @@ NODE
     sleep "$TILE_AUTH_PLAN_LOG_POLL_SECONDS"
   done
   if [[ "$task_exit_code" != "0" ]]; then
+    if [[ "$phase" == "predeploy" ]]; then
+      TILE_AUTH_PLAN_REHEARSAL_AUTHORITATIVE_FAILURE=true
+    fi
     if [[ -z "$sanitized_failure_code" ]]; then
       error "The failed ClassPilot tile authorization plan task did not publish one allowlisted sanitized failure within the bounded CloudWatch window. ${failure_suffix}"
     else
@@ -1505,12 +1532,18 @@ NODE
 
   local identity_binding identity_sha256 query_identifier_sha256 extra
   if ! identity_binding=$(classpilot_tile_auth_plan_identity_binding "$sanitized_report"); then
+    if [[ "$phase" == "predeploy" ]]; then
+      TILE_AUTH_PLAN_REHEARSAL_AUTHORITATIVE_FAILURE=true
+    fi
     error "The sanitized ClassPilot history fallback SQL identity could not be canonicalized. ${failure_suffix}"
     return 1
   fi
   IFS=$'\t' read -r identity_sha256 query_identifier_sha256 extra <<< "$identity_binding"
   if [[ ! "$identity_sha256" =~ ^[a-f0-9]{64}$ ||
         ! "$query_identifier_sha256" =~ ^[a-f0-9]{64}$ || -n "$extra" ]]; then
+    if [[ "$phase" == "predeploy" ]]; then
+      TILE_AUTH_PLAN_REHEARSAL_AUTHORITATIVE_FAILURE=true
+    fi
     error "The sanitized ClassPilot history fallback SQL identity was malformed. ${failure_suffix}"
     return 1
   fi
@@ -1519,6 +1552,7 @@ NODE
     if [[ -n "$REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" &&
           ( "$identity_sha256" != "$TILE_AUTH_PLAN_REHEARSAL_IDENTITY_SHA256" ||
             "$query_identifier_sha256" != "$TILE_AUTH_PLAN_REHEARSAL_QUERY_IDENTIFIER_SHA256" ) ]]; then
+      TILE_AUTH_PLAN_REHEARSAL_AUTHORITATIVE_FAILURE=true
       error "The pre-deployment history fallback SQL identity differs from the consumed candidate rehearsal. ${failure_suffix}"
       return 1
     fi
@@ -1591,11 +1625,6 @@ run_classpilot_tile_auth_plan_observation_task() {
 
   local started_by="sp-tile-observe-${LOCAL_SHA:0:12}"
   info "Running the read-only ClassPilot tile authorization base observation against ${API_ROLLOUT_TASK_DEF}..."
-  if ! reinspect_classpilot_tile_auth_plan_observation_supersession_before_launch; then
-    set_classpilot_tile_auth_observation_collection_failure \
-      "terminal_task_unavailable"
-    return 0
-  fi
   if ! aws ecs run-task \
     --cluster "$CLUSTER" \
     --launch-type FARGATE \
@@ -1737,6 +1766,7 @@ run_classpilot_tile_auth_plan_base_preflight() {
   if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" != true ]]; then
     return 0
   fi
+  TILE_AUTH_PLAN_REHEARSAL_AUTHORITATIVE_FAILURE=false
 
   if ! production_backend_deploy_window_preflight "before ClassPilot plan-gate base-preflight task"; then
     return 1
@@ -1798,6 +1828,7 @@ NODE
   local wait_result=$?
   set -e
   if [[ "$wait_result" -eq 124 ]]; then
+    TILE_AUTH_PLAN_REHEARSAL_AUTHORITATIVE_FAILURE=true
     error "The ClassPilot tile authorization base preflight exceeded its 900-second controller deadline and was stopped."
     return 1
   elif [[ "$wait_result" -eq 125 ]]; then
@@ -1819,7 +1850,19 @@ NODE
     return 1
   fi
 
-  local log_configuration_json log_binding log_group log_region log_prefix log_stream task_exit_code extra
+  local task_exit_code
+  if ! task_exit_code=$(read_classpilot_tile_auth_plan_terminal_exit_code \
+    ".tile-auth-plan-preflight-result.json" \
+    "$task_arn" \
+    "$API_ROLLOUT_TASK_DEF"); then
+    error "The terminal ClassPilot tile authorization base preflight task identity or exit code was invalid."
+    return 1
+  fi
+  if [[ "$task_exit_code" != "0" ]]; then
+    TILE_AUTH_PLAN_REHEARSAL_AUTHORITATIVE_FAILURE=true
+  fi
+
+  local log_configuration_json log_binding log_group log_region log_prefix log_stream bound_task_exit_code extra
   if ! log_configuration_json=$(aws ecs describe-task-definition \
     --task-definition "$API_ROLLOUT_TASK_DEF" \
     --query 'taskDefinition.containerDefinitions[?name==`api`] | [0].logConfiguration' \
@@ -1840,10 +1883,10 @@ NODE
     error "The ClassPilot tile authorization base preflight task or its exact awslogs binding is invalid."
     return 1
   fi
-  IFS=$'\t' read -r log_group log_region log_prefix log_stream task_exit_code extra <<< "$log_binding"
+  IFS=$'\t' read -r log_group log_region log_prefix log_stream bound_task_exit_code extra <<< "$log_binding"
   if [[ -z "$log_group" || "$log_region" != "$REGION" || -z "$log_prefix" ||
         -z "$log_stream" || "$log_stream" != "${log_prefix}/api/"* ||
-        ! "$task_exit_code" =~ ^([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$ ||
+        "$bound_task_exit_code" != "$task_exit_code" ||
         -n "$extra" ]]; then
     error "The ClassPilot tile authorization base preflight log stream does not match the exact candidate task definition."
     return 1
@@ -1873,6 +1916,7 @@ NODE
   done
 
   if [[ "$task_exit_code" != "0" ]]; then
+    TILE_AUTH_PLAN_REHEARSAL_AUTHORITATIVE_FAILURE=true
     if [[ -z "$sanitized_failure_code" ]]; then
       error "The failed ClassPilot tile authorization base preflight did not publish one allowlisted sanitized failure."
     else
@@ -2446,9 +2490,6 @@ initialize_classpilot_tile_auth_plan_observation() {
   TILE_AUTH_PLAN_OBSERVATION_INITIAL_POSTURE_SHA256="$posture_sha"
 
   TILE_AUTH_PLAN_OBSERVATION_RUN_ROOT="${LOCALAPPDATA}/SchoolPilot/load-gates/tile-auth-observations/${LOCAL_SHA}/${TILE_AUTH_PLAN_OBSERVATION_ID}"
-  if ! create_and_inspect_classpilot_tile_auth_plan_observation_supersession; then
-    return 1
-  fi
   local identity_args=(
     --observation-id "$TILE_AUTH_PLAN_OBSERVATION_ID"
     --application-sha "$LOCAL_SHA"
@@ -2667,11 +2708,12 @@ capture_classpilot_tile_auth_observation_final_posture() {
 }
 
 assert_classpilot_rehearsal_network_unchanged() {
+  local expected_network_sha="${1:-$TILE_AUTH_PLAN_REHEARSAL_CONSUMED_NETWORK_SHA256}"
   if [[ -z "$REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" ]]; then
     return 0
   fi
-  if [[ ! "$TILE_AUTH_PLAN_REHEARSAL_CONSUMED_NETWORK_SHA256" =~ ^[a-f0-9]{64}$ ]]; then
-    error "The consumed ClassPilot rehearsal network binding is unavailable."
+  if [[ ! "$expected_network_sha" =~ ^[a-f0-9]{64}$ ]]; then
+    error "The expected ClassPilot rehearsal network binding is unavailable."
     return 1
   fi
 
@@ -2681,8 +2723,8 @@ assert_classpilot_rehearsal_network_unchanged() {
     error "The active API network configuration could not be revalidated against the consumed candidate rehearsal."
     return 1
   fi
-  if [[ "$TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256" != "$TILE_AUTH_PLAN_REHEARSAL_CONSUMED_NETWORK_SHA256" ]]; then
-    error "The active API network configuration drifted from the consumed candidate rehearsal."
+  if [[ "$TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256" != "$expected_network_sha" ]]; then
+    error "The active API network configuration drifted from the candidate rehearsal."
     return 1
   fi
 }
@@ -3023,7 +3065,8 @@ NODE
 
 admit_classpilot_tile_auth_plan_rehearsal_attempt() {
   local summary binding attempt_sha extra
-  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" != true ]]; then
+  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" != true &&
+        -z "$REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" ]]; then
     return 0
   fi
   if [[ "$TILE_AUTH_PLAN_REHEARSAL_ATTEMPT_ADMITTED" == true ]]; then
@@ -3127,6 +3170,61 @@ NODE
   TILE_AUTH_PLAN_REHEARSAL_ATTEMPT_TERMINAL=true
 }
 
+seal_classpilot_tile_auth_plan_rehearsal_authoritative_failure() {
+  if [[ ( "$RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" != true &&
+          -z "$REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" ) ||
+        "$TILE_AUTH_PLAN_REHEARSAL_AUTHORITATIVE_FAILURE" != true ]]; then
+    return 0
+  fi
+  if [[ "$TILE_AUTH_PLAN_REHEARSAL_ATTEMPT_ADMITTED" != true ]] &&
+     ! admit_classpilot_tile_auth_plan_rehearsal_attempt; then
+    error "The authoritative ClassPilot candidate rehearsal failure could not be admitted."
+    return 1
+  fi
+  if ! seal_classpilot_tile_auth_plan_rehearsal_terminal failed; then
+    error "The authoritative ClassPilot candidate rehearsal failure could not be sealed."
+    return 1
+  fi
+  success "Sealed the authoritative ClassPilot candidate rehearsal failure for this SHA."
+}
+
+run_classpilot_tile_auth_plan_predeploy_with_retry() {
+  local include_base_preflight="$1"
+  local attempt
+  if [[ "$include_base_preflight" != true &&
+        "$include_base_preflight" != false ]]; then
+    return 1
+  fi
+  for attempt in 1 2; do
+    TILE_AUTH_PLAN_REHEARSAL_AUTHORITATIVE_FAILURE=false
+    if [[ "$include_base_preflight" == true ]] &&
+       ! run_classpilot_tile_auth_plan_base_preflight; then
+      if [[ "$TILE_AUTH_PLAN_REHEARSAL_AUTHORITATIVE_FAILURE" == true ]]; then
+        seal_classpilot_tile_auth_plan_rehearsal_authoritative_failure
+        return 1
+      fi
+      if [[ "$attempt" -lt 2 ]]; then
+        warn "ClassPilot base-preflight evidence was unavailable before mutation; retrying the same SHA once."
+        continue
+      fi
+      return 1
+    fi
+    if run_classpilot_tile_auth_plan_gate predeploy; then
+      return 0
+    fi
+    if [[ "$TILE_AUTH_PLAN_REHEARSAL_AUTHORITATIVE_FAILURE" == true ]]; then
+      seal_classpilot_tile_auth_plan_rehearsal_authoritative_failure
+      return 1
+    fi
+    if [[ "$attempt" -lt 2 ]]; then
+      warn "ClassPilot plan-gate evidence was unavailable before mutation; retrying the same SHA once."
+      continue
+    fi
+    return 1
+  done
+  return 1
+}
+
 inspect_or_consume_classpilot_rehearsal_receipt() {
   local mode="$1"
   local summary binding receipt_sha digest api_arn api_sha worker_arn worker_sha identity_sha query_sha extra
@@ -3209,6 +3307,41 @@ NODE
   fi
   TILE_AUTH_PLAN_REHEARSAL_RECEIPT_PATH="$receipt_path"
   TILE_AUTH_PLAN_REHEARSAL_RECEIPT_SHA256="$receipt_sha"
+  local inspected inspected_binding inspected_receipt inspected_digest
+  local inspected_api inspected_api_sha inspected_worker inspected_worker_sha
+  local inspected_identity inspected_query inspected_extra
+  if ! inspected=$(node \
+    "$SCRIPT_DIR/manage-classpilot-tile-auth-plan-rehearsal-receipt.mjs" inspect \
+    --receipt "$receipt_path" \
+    --expected-receipt-sha256 "$receipt_sha" \
+    --application-sha "$LOCAL_SHA" \
+    --active-api-task-definition-arn "$PRODUCTION_PREFLIGHT_API_TASK_DEFINITION_ARN" \
+    --active-worker-task-definition-arn "$PRODUCTION_PREFLIGHT_WORKER_TASK_DEFINITION_ARN" \
+    --network-configuration-sha256 "$TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256" \
+    2>/dev/null); then
+    error "The sealed ClassPilot tile authorization rehearsal receipt failed independent inspection."
+    return 1
+  fi
+  if ! inspected_binding=$(parse_classpilot_rehearsal_binding "$inspected"); then
+    error "The independently inspected ClassPilot rehearsal receipt binding was malformed."
+    return 1
+  fi
+  IFS=$'\t' read -r \
+    inspected_receipt inspected_digest inspected_api inspected_api_sha \
+    inspected_worker inspected_worker_sha inspected_identity inspected_query \
+    inspected_extra <<< "$inspected_binding"
+  if [[ -n "$inspected_extra" ||
+        "$inspected_receipt" != "$receipt_sha" ||
+        "$inspected_digest" != "$DIGEST" ||
+        "$inspected_api" != "$API_ROLLOUT_TASK_DEF" ||
+        "$inspected_api_sha" != "$TILE_AUTH_PLAN_REHEARSAL_API_TASK_DEFINITION_SHA256" ||
+        "$inspected_worker" != "$WORKER_CANDIDATE_TASK_DEF" ||
+        "$inspected_worker_sha" != "$TILE_AUTH_PLAN_REHEARSAL_WORKER_TASK_DEFINITION_SHA256" ||
+        "$inspected_identity" != "$TILE_AUTH_PLAN_REHEARSAL_IDENTITY_SHA256" ||
+        "$inspected_query" != "$TILE_AUTH_PLAN_REHEARSAL_QUERY_IDENTIFIER_SHA256" ]]; then
+    error "The independently inspected ClassPilot rehearsal receipt drifted from the passing gate."
+    return 1
+  fi
   success "ClassPilot tile authorization candidate rehearsal passed (receipt=${receipt_path}, receiptSha256=${receipt_sha}, expiresAtUtc=${expires_at})"
 }
 
@@ -4523,7 +4656,6 @@ info "2048 API:   $ACTIVATE_EMERGENCY"
 info "Tile plans: $RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE"
 info "Plan rehearse: $RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL"
 info "Plan observe:  $RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION"
-info "Observe reread: ${CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD:+provided}"
 info "Plan receipt:  ${REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL:+provided}"
 info "Same image: ${SAME_IMAGE_NETWORKING_STAGE:-false}"
 echo ""
@@ -4661,9 +4793,6 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
     exit 0
   fi
 
-  if ! admit_classpilot_tile_auth_plan_rehearsal_attempt; then
-    exit 1
-  fi
   resolve_classpilot_tile_auth_candidate_network
 
   if [[ -n "$REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" ]]; then
@@ -4681,17 +4810,6 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
     local_rehearsal_worker="$WORKER_CANDIDATE_TASK_DEF"
     local_rehearsal_digest="$DIGEST"
     local_rehearsal_network_sha="$TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256"
-    inspect_or_consume_classpilot_rehearsal_receipt consume
-    if [[ "$TILE_AUTH_PLAN_REHEARSAL_RECEIPT_SHA256" != "$local_rehearsal_receipt_sha" ||
-          "$API_ROLLOUT_TASK_DEF" != "$local_rehearsal_api" ||
-          "$WORKER_CANDIDATE_TASK_DEF" != "$local_rehearsal_worker" ||
-          "$DIGEST" != "$local_rehearsal_digest" ||
-          "$TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256" != "$local_rehearsal_network_sha" ]]; then
-      error "The rehearsal receipt binding changed between inspection and its single-use consumption."
-      exit 1
-    fi
-    TILE_AUTH_PLAN_REHEARSAL_CONSUMED_NETWORK_SHA256="$local_rehearsal_network_sha"
-    success "Consumed the one-use candidate rehearsal receipt (receiptSha256=${TILE_AUTH_PLAN_REHEARSAL_RECEIPT_SHA256})"
   else
   resolve_classpilot_candidate_source_task_definitions
 
@@ -4957,8 +5075,6 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
         warn "Retaining the ACL-private ClassPilot observation controller workspace because terminal packet sealing or inspection failed."
       fi
       set -e
-    else
-      run_classpilot_tile_auth_plan_base_preflight
     fi
   fi
   if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" == true ]]; then
@@ -4970,23 +5086,39 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
       error "Candidate base observation sealed a valid base-ineligible result; the mandatory plan gate remains blocked."
       exit 1
     fi
-    success "Candidate base observation complete; supersessionPacket=${TILE_AUTH_PLAN_OBSERVATION_SUPERSESSION_PATH}, supersessionSha256=${TILE_AUTH_PLAN_OBSERVATION_SUPERSESSION_SHA256}; no rehearsal admission, full plan gate, migration, scaling hold, service update, frontend publication, fixture mutation, lease, or traffic action was attempted."
+    success "Candidate base observation complete; no rehearsal admission, full plan gate, migration, scaling hold, service update, frontend publication, fixture mutation, lease, or traffic action was attempted."
     exit 0
   fi
-  run_classpilot_tile_auth_plan_gate predeploy
-  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" == true ]]; then
-    write_classpilot_rehearsal_receipt
-    if ! seal_classpilot_tile_auth_plan_rehearsal_terminal passed; then
-      error "The passing ClassPilot candidate rehearsal terminal could not be sealed."
-      exit 1
-    fi
-    success "Candidate gate-only rehearsal complete; no migration, scaling hold, service update, frontend publication, fixture mutation, lease, or traffic action was attempted."
-    exit 0
-  fi
-  if ! assert_classpilot_rehearsal_network_unchanged; then
-    error "The consumed rehearsal baseline drifted before the guarded deployment."
+  if ! run_classpilot_tile_auth_plan_predeploy_with_retry \
+    "$RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL"; then
     exit 1
   fi
+  if [[ "$RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" == true ]]; then
+    write_classpilot_rehearsal_receipt
+    success "Candidate gate-only rehearsal complete; receipt is inspectable and unconsumed, and no rehearsal attempt, migration, scaling hold, service update, frontend publication, fixture mutation, lease, or traffic action was attempted."
+    exit 0
+  fi
+  production_backend_capacity_preflight "before rehearsal receipt consumption"
+  if [[ "$PRODUCTION_PREFLIGHT_API_TASK_DEFINITION" != "$PRODUCTION_ROLLBACK_API_TASK_DEFINITION" ||
+        "$PRODUCTION_PREFLIGHT_WORKER_TASK_DEFINITION" != "$PRODUCTION_ROLLBACK_WORKER_TASK_DEFINITION" ]]; then
+    error "The active API/worker baseline changed before rehearsal receipt consumption."
+    exit 1
+  fi
+  if ! assert_classpilot_rehearsal_network_unchanged "$local_rehearsal_network_sha"; then
+    error "The rehearsal baseline drifted before the guarded deployment."
+    exit 1
+  fi
+  inspect_or_consume_classpilot_rehearsal_receipt consume
+  if [[ "$TILE_AUTH_PLAN_REHEARSAL_RECEIPT_SHA256" != "$local_rehearsal_receipt_sha" ||
+        "$API_ROLLOUT_TASK_DEF" != "$local_rehearsal_api" ||
+        "$WORKER_CANDIDATE_TASK_DEF" != "$local_rehearsal_worker" ||
+        "$DIGEST" != "$local_rehearsal_digest" ||
+        "$TILE_AUTH_PLAN_REHEARSAL_NETWORK_SHA256" != "$local_rehearsal_network_sha" ]]; then
+    error "The rehearsal receipt binding changed between inspection and its single-use consumption."
+    exit 1
+  fi
+  TILE_AUTH_PLAN_REHEARSAL_CONSUMED_NETWORK_SHA256="$local_rehearsal_network_sha"
+  success "Consumed the one-use candidate rehearsal receipt immediately before production mutation (receiptSha256=${TILE_AUTH_PLAN_REHEARSAL_RECEIPT_SHA256})"
 
   # Acquire the hold only after the slow image and task-definition work, then
   # keep it through the one-off migration and both ECS service deployments.
