@@ -475,11 +475,25 @@ recomputed operator summary, or an unsealed result cannot be a predecessor.
 deployed application SHA/digest and task definitions, fixture generation,
 config/script hashes, generator IPv4, AWS posture, rollback identities, and
 output paths. It also freezes the operator config and executable rollback JSON
-by SHA-256. `Run` consumes the receipt, copies the rollback JSON to
-`<evidenceDirectory>/<runId>-bound-rollback-config.json`, writes
-`<runId>-bound-monitor-config.json`, and passes that runtime config's hash to
-the monitor. Any byte change blocks traffic or, after arming, blocks the
-automatic mutation. A receipt or evidence directory cannot be replayed.
+by SHA-256. `Run` first calls `Inspect-CertificationValidationReceipt` without
+consuming it. It starts and validates the harness and monitor, rechecks lease,
+fixture, rollback, IP, schedule, task, and posture identities, and stages the
+chain-root and stage-attestation artifacts. Only after those pretraffic checks
+pass does it call `Use-CertificationValidationReceipt`; that consumption must
+occur immediately before the atomic harness start-gate publication. The
+consumed receipt binds the copied
+`<evidenceDirectory>/<runId>-bound-rollback-config.json` and
+`<runId>-bound-monitor-config.json`. Any byte change blocks traffic or, after
+arming, blocks the automatic mutation. A receipt or evidence directory cannot
+be replayed.
+
+Late receipt consumption prevents a startup failure from falsely burning
+traffic authority, but it does not authorize another binding or run. Any
+certification startup failure before the start gate is released is a decisive
+terminal no-traffic failure. Seal exact no-traffic evidence, restore
+schedule-appropriate scaling and Database Insights Standard/7, and stop. Do
+not create a second binding, repeat fixture preparation, or run `Validate` or
+`Run` again. Once the start gate is released, traffic is one-shot.
 
 The production certification member must use this concrete shape. Every path
 is an absolute external file and every `REPLACE_*` value must be populated
@@ -965,75 +979,19 @@ observation must first be archived byte-for-byte with their SHA-256 values
 under that observation's private evidence tree; remove only those two known
 files afterward so the checkout becomes clean.
 
-The one approved same-task reread publishes an immutable
-`classpilot-tile-auth-plan-observation-evidence-reread-attempt-v1` admission
-and `classpilot-tile-auth-plan-observation-evidence-reread-v1` terminal group
-under the original observation root:
+Historical observation reread and supersession artifacts remain immutable,
+ACL-private, and inspectable with all downstream eligibility flags false. They
+are not active observation, rehearsal, readiness, deployment, diagnostic, or
+certification prerequisites. No current phase may depend on a stopped ECS task
+remaining describable, and no historical packet, exit code, reread, or
+supersession marker admits a fresh task. The prior artifacts stay historical
+without being rewritten or promoted.
 
-```text
-<original-observation-root>\evidence-reread\attempt
-<original-observation-root>\evidence-reread\terminal
-```
-
-It binds the original observation ID, immutable attempt/packet paths and
-hashes, application SHA, image digest, inactive task definitions, active
-baseline, original network/posture hashes, exact stopped task ARN and exit, and
-the current controller SHA. Before durable reread admission, the controller
-must independently prove a clean `main == origin/main == <controller SHA>`.
-The source packet must be at its one canonical
-`tile-auth-observations/<application SHA>/<observation ID>/terminal` path;
-hash-identical copies are rejected and cannot create another attempt. It may
-call only `ecs describe-tasks`,
-`ecs describe-task-definition`, and the corrected collector's exact-stream
-`logs get-log-events`; it must never call `ecs run-task`. Require
-`taskLaunchCount:0`, `rawErrorPersisted:false`, and deployment, diagnostic, and
-certification eligibility all false.
-
-A successful reread independently recovers selection `40/19/19/1/1`, one
-eligible base, and required/reused/missing/conflicting session posture
-`80/80/0/0`. Packet and companions publish group-atomically and leave the
-original observation-v2 packet unchanged. Exactly one reread is permitted.
-Identity mismatch, collection failure, malformed companion, or any other
-reread failure remains permanently ineligible and stops before a fresh
-observation. Failure-stage validation binds the exact
-task/configuration/binding hashes and truthful CloudWatch attempt, stream, and
-canonical-event hashes available at that stage; a post-collection companion
-rejection may not be rewritten as a zero-read failure. The reread proves the
-corrected evidence path only; it can never authorize deployment.
-
-There is one retention-aware supersession for the already-consumed reread and
-no general best-effort or exit-only path. The immutable terminal packet at the
-canonical historical observation root has SHA-256
-`9c8c092756264fc0686f0aeab8a540526a3b7a60f5c861f122aad69f9f039087`;
-its immutable reread-attempt SHA-256 is
-`3f0ff5a217e04635deefa1d07ee61030732675c83ba43ed3d38f5d4c96fd2b44`.
-It binds controller SHA
-`4fc219114899c37544ce5017b5e41b7842516e4c`, source observation packet
-SHA-256
-`5427ff0e5af5f2245479646d1b1dd621213782e01c28a971399295274a8a16fd`,
-and source observation-attempt SHA-256
-`01fb533aa87befbba1dba760566afe66c3536e5437726f0d76b1fae0de86c6aa`.
-Its exact failure matrix is `status: failed`,
-`rereadOutcome: evidence_unavailable`,
-`failureCode: historical_task_missing`, `taskLaunchCount: 0`,
-`collectionAttemptCount: 0`, terminal task exit zero, task-description
-SHA-256
-`75e94f99f136d5d484be97b8a073a22072645cdd6794980114250455f8578756`,
-and null log-configuration, log-binding, log-stream, and canonical-event
-hashes. Deployment, diagnostic, and certification eligibility remain false.
-
-The exact packet above records that the historical stopped task is no longer
-describable. Its zero-read, null-binding matrix is compatible with the task
-having aged beyond the describable retention window, but does not establish an
-exclusive cause. A new clean merged controller may bind that packet and those
-hashes to one atomic, single-use supersession marker for exactly one fresh
-release-bound observation. It must not attempt a second reread, rewrite either
-historical packet, accept another failure code, or infer success from the
-historical exit code. Any path, hash, source identity, failure-matrix, or
-single-use-marker mismatch blocks the fresh task. The supersession authorizes
-only the fresh observation; neither the historical packet nor its exit code
-satisfies preflight, rehearsal, deployment, diagnostic, or certification
-admission.
+Standalone observation is optional audit evidence. When explicitly run, its
+CloudWatch-backed preflight and selection evidence remains strict and the
+packet remains ineligible downstream. The production-connected gate-only
+rehearsal runs both the read-only preflight and rollback-only transactional
+gate, so it is the stronger and required proof before guarded deployment.
 
 For the completed session-independent remediation, require exact merged-SHA
 CI, CodeQL, Gitleaks, and Trivy success, then save and independently parse a
@@ -1050,50 +1008,44 @@ Run the inactive candidate once in gate-only mode:
   --classpilot-tile-auth-plan-rehearsal
 ```
 
-Before any candidate build, push, registration, or candidate base preflight,
-the deployer
-must atomically and exclusively admit the SHA under
-`$LOCALAPPDATA/SchoolPilot/load-gates/tile-auth-rehearsals/<SHA>`. The fixed
-`classpilot-tile-auth-plan-rehearsal-attempt.private.json` admission marker is
-durable and may be created only once. An existing admission or terminal marker
-rejects another rehearsal for that SHA.
-
-After admission, an EXIT/failure trap must seal exactly one immutable
-`classpilot-tile-auth-plan-rehearsal-terminal.private.json` marker with
-`status` equal to `passed` or `failed`; it must never delete, reset, or
-overwrite either marker. A passed terminal binds the exact rehearsal-receipt
-SHA-256. A failed terminal, or an admitted attempt that cannot produce a
-coherent passed terminal, permanently makes that SHA ineligible. Receipt
-`inspect` and `consume` require the passed terminal marker and its matching
-receipt hash. Admission, terminal, receipt, inspection, consumption, and the
-canonical consumption marker also bind one protected execution-authority
-SHA-256. On production Windows that hash is derived from the stable machine
-identity plus the current user SID; neither raw value is written or logged.
-Resolution failure or an authority mismatch fails closed, so copying the
-complete private tree to another host or user does not transfer deployment
-authority. Receipt freshness is half-open: `now < expiresAtUtc`; the exact
-expiry instant and every later instant (`now >= expiresAtUtc`) are rejected.
-Consumption captures its own current UTC value and repeats that half-open
-check immediately before attempting the atomic consumption marker; an earlier
-successful inspection cannot bridge the expiry boundary.
-
 This mode performs the normal source, workflow, timing, AWS, and posture
 checks; builds, pushes, and registers inactive candidate definitions; runs the
 read-only preflight and complete rollback-only gate; and performs no migration,
 scaling hold, serving-service update, frontend publication, fixture mutation,
 Database Insights lease, or traffic. Building, pushing, and registering the
 inactive candidate are the only candidate control-plane writes; they do not
-change the serving release or committed production data. A pass seals one ACL-private
-`classpilot-tile-auth-plan-rehearsal-v1` receipt. The receipt binds the SHA,
-digest, inactive task definitions, active baseline, network configuration,
-preflight, lifecycle, plan, and query-identity hashes; expires after 60
-minutes; and is consumed once through its immutable sidecar. The consumption
-sidecar is atomically created in the canonical
-`tile-auth-rehearsals/<SHA>` attempt root and explicitly binds the immutable
-admission, terminal, receipt, and protected execution-authority hashes. It is
-not scoped to the supplied receipt directory: byte-identical copies and
-concurrent consumers on the authorized execution authority share the same
-single-use marker.
+change the serving release or committed production data. CloudWatch-backed
+preflight, lifecycle, plan-report, and query-identity evidence is mandatory;
+exit zero without that complete sanitized evidence never passes.
+
+A non-authoritative provider or evidence-transport failure before production
+mutation creates no SHA-wide attempt, terminal, or consumption marker and
+permits one same-SHA gate-only retry. A nonzero task or authoritative SQL,
+query-identity, RLS, rollback, residue, or plan-threshold failure atomically
+creates the existing admission plus failed terminal and permanently makes that
+SHA ineligible. No raw provider response, SQL, identifier, stderr, or error is
+persisted; only the existing allowlisted sanitized failure is retained.
+
+A pass seals and inspects one ACL-private
+`classpilot-tile-auth-plan-rehearsal-v1` receipt without consuming the
+SHA-wide attempt. The receipt binds the SHA, digest, inactive task definitions,
+active baseline, network configuration, preflight, lifecycle, plan, and
+query-identity hashes and expires after 60 minutes. During guarded deployment,
+the exact receipt is inspected first. After the strict predeploy gate and
+candidate/baseline/network/posture equality checks pass, and immediately before
+the scaling hold and first production mutation, the deployer atomically creates
+or resumes the existing passed admission/terminal records and consumes the
+existing single-use marker.
+
+Admission, terminal, receipt, inspection, consumption, and the canonical
+consumption marker bind one protected execution-authority SHA-256. Production
+Windows derives it from the stable machine identity plus the current user SID;
+neither raw value is written or logged. Resolution failure or an authority
+mismatch fails closed, so copying the complete private tree to another host or
+user does not transfer deployment authority. Byte-identical copies and
+concurrent consumers share the canonical single-use marker. Receipt freshness
+is half-open: `now < expiresAtUtc`; the exact expiry instant and every later
+instant are rejected immediately before consumption.
 
 Deploy only that exact candidate:
 
@@ -1105,10 +1057,12 @@ Deploy only that exact candidate:
 ```
 
 The deployment verifies the unused, unexpired receipt and all bound state,
-reruns the complete gate before migration, then reruns it from the active
-revision after strict convergence. It rejects a different SHA, digest, task
-definition, baseline, network configuration, identity, expired receipt, or
-second consumption. After the guarded backend passes, publish the matching
+reruns the complete gate before late consumption and migration, then reruns it
+from the active revision after strict convergence. The postdeployment gate is
+CloudWatch-strict and must reproduce the rehearsal query identity. It rejects a
+different SHA, digest, task definition, baseline, network configuration,
+identity, expired receipt, or second consumption. After the guarded backend
+passes, publish the matching
 frontend from the unchanged checkout, run one offline preparation/binding
 rehearsal, and run one 1,560-second harmless host-supervision smoke.
 
@@ -1121,44 +1075,54 @@ sanitized gate failure code. Exit zero plus complete valid evidence remains
 mandatory for acceptance; log binding must never replace the real gate
 failure.
 
-The current remediation binds the exact failed historical reread described
-above and authorizes no second reread. After exact-new-merged-SHA CI, CodeQL,
-Gitleaks, and Trivy success, create fresh DPAPI and AES-GCM state backups, a
-unique saved zero-action/no-apply production Terraform plan, and a fresh
-read-only production baseline. The earlier controller-SHA plan and baseline
-remain comparison evidence only. Atomically consuming the exact
-retention-aware supersession marker then authorizes exactly one fresh,
-release-bound, independently inspected observation.
+## Final stop-loss campaign authorization
 
-Continue only when the fresh v2 packet proves exit zero, `base_eligible`, a
-completed collection with at least one CloudWatch attempt, one unchanged
-preflight-v1 base, the selection-v1 values `40/19/19/1/1`, 80 required session
-pairs with reused plus missing equal to 80 and zero conflicts, and unchanged
-verified network and serving posture. Exit zero without those exact terminal
-events is never sufficient. Any other observation outcome is terminal for the
-SHA and must not be retried or converted to report-only.
+This is the campaign's final remediation PR. Its exact changed-file allowlist
+is:
 
-After that exact observation result, the same merged SHA may run exactly one
-gate-only rehearsal and immediately consume its exact single-use 60-minute
-receipt for one guarded backend deployment. The backend must reuse the
-rehearsed digest and task definitions and rerun the rollback-only gate before
-migration and after convergence. Publish the matching frontend, verify the
-unchanged production posture and scaling, then run exactly one offline
-preparation rehearsal and one 1,560-second harmless host-supervision smoke.
-Seal the readiness packet and stop. This authorization still excludes a
-Terraform apply, production fixture refresh or provisioning, historical-state
-promotion, Database Insights lease, diagnostic binding, `Validate`, workload
-traffic, certification preparation, and certification traffic. Any
-observation, rehearsal, preflight, gate, rollback, residue, deployment,
-convergence, route, offline-rehearsal, host-smoke, posture, or restoration
-failure is terminal for the SHA.
+- `scripts/deploy.sh`
+- `scripts/manage-classpilot-tile-auth-plan-rehearsal-receipt.mjs`
+- `scripts/load/start-aws-rollout-supervisor.ps1`
+- `tests/deploy-classpilot-tile-auth-plan-gate.test.ts`
+- `tests/classpilot-tile-auth-plan-rehearsal-receipt.test.ts`
+- `tests/aws-rollout-certification-chain.test.ps1`
+- `tests/classpilot-tile-auth-plan-readiness-governance.test.ts`
+- `docs/AWS_COST_ROLLOUT_OPERATIONS.md`
+- `docs/CLASSPILOT_TILE_AUTHORIZATION_PLAN_CHECK.md`
 
-The readiness packet must additionally bind the historical reread attempt and
-terminal hashes, the consumed single-use retention-aware supersession marker,
-the fixed zero-task-launch and permanent-ineligibility attestations, the fresh
-observation attempt/packet/companion hashes, and the collector implementation
-and schema hashes. Readiness remains the terminal boundary: sealing it does not
-authorize fixture work, a monitoring lease, a diagnostic, or certification.
+The PR may add no file and no runtime schema/version, controller, marker, or
+failure-code literal. It may not introduce an active dependency on
+retention-limited historical evidence or make a phase depend on an artifact
+produced only by a later phase. After exact merged-SHA CI, CodeQL, Gitleaks, and
+Trivy success, the release and acceptance criteria freeze. No later campaign
+commit or remediation PR is allowed.
+
+Create fresh DPAPI and AES-GCM state backups, a unique saved zero-action/no-apply
+production Terraform plan, and a fresh read-only baseline. Run the offline
+preparation rehearsal and 1,560-second host-supervision smoke before production
+mutation. Standalone observation is optional; it is not a readiness
+prerequisite and remains ineligible downstream.
+
+Run the strict production-connected gate-only rehearsal. One
+non-authoritative provider or evidence-transport failure before mutation may
+receive one same-SHA retry; an authoritative gate failure is terminal. Inspect
+the exact passing 60-minute receipt, then run one guarded backend deployment
+against the rehearsed candidate. Rerun the strict gate before late receipt
+consumption/migration and after active-revision convergence, publish the
+matching frontend from the frozen SHA, verify routes and production posture,
+and seal readiness. The readiness packet binds only current workflow,
+Terraform, rehearsal, deployment, query-identity, frontend, posture, route, and
+smoke evidence. Historical reread/supersession artifacts and optional
+observation packets are not required.
+
+This authorization continues through one fresh strict diagnostic and, only
+after diagnostic acceptance, one fresh Waf/500 -> Waf/800 certification chain.
+Pre-mutation retry and schedule rollover are operational continuation; after a
+traffic start there is no workload rerun. A genuine application, SQL, security,
+deployment, fixture, workload, evidence, or restoration failure ends the
+campaign with an immutable terminal report. A genuine medium performance
+failure leaves `db.t4g.medium` uncertified. No RDS resize, xlarge fallback,
+threshold relaxation, cache/workload change, or new remediation is authorized.
 
 Any later separately authorized diagnostic-only Waf/800 must use the new batch
 workload. Every RDS CPU minute must be below 65%; HTTP 5xx and network
@@ -1443,7 +1407,25 @@ smoke receipt is historical-only and cannot prove readiness. The host smoke
 must be launched from a disposable initiating shell and polled from a separate
 shell so its evidence proves survival beyond the former caller-owned timeout.
 
-For a separately approved future production diagnostic, start from the tracked
+The durable `launch-safe-20260711` fixture authority is continuity input only;
+it is not a historical diagnostic snapshot. Before the diagnostic, create one
+new current-user-only ACL-private mutable continuity root. Copy only
+`fixture-state.private.json` and `fixture-ownership.private.json` from the
+durable authority into that root, byte-for-byte, and independently verify the
+source and destination SHA-256 values. In a separate ACL-private support root,
+copy the fixture config and required DPAPI/operation documents with the same
+hash discipline.
+
+Before refresh, validate the exact fixture identity, two owned schools, 20
+teachers, one office user, zero pending intents, and no hold or cleanup state.
+Do not copy any historical device, auth, command, verification, snapshot, or
+diagnostic artifact. Old diagnostic snapshots remain historical and
+ineligible. Reuse the mutable continuity root sequentially for the diagnostic,
+Waf/500, and Waf/800; each stage performs its own refresh/verification and
+publishes a new immutable five-file stage snapshot before the next stage may
+touch the continuity root.
+
+For the authorized production diagnostic, start from the tracked
 [`scripts/load/waf800-diagnostic-prep-manifest.template.json`](../scripts/load/waf800-diagnostic-prep-manifest.template.json).
 Copy it to a fresh ACL-private external directory, replace every `__...__`
 placeholder, retain the exact key set, and bind every path and SHA-256 before
@@ -1525,9 +1507,10 @@ pwsh -NoProfile -File scripts/load/bind-fresh-diagnostic.ps1 `
   -ExpectedGeneratorPublicIp "__CURRENT_BOUND_GENERATOR_IPV4__"
 ```
 
-The current remediation-readiness authorization stops before every command in
-this production recipe. It is documented now so a future approved run uses
-reviewed repository-owned inputs rather than another ephemeral wrapper.
+The final stop-loss authorization includes this production recipe after the
+same frozen release has sealed readiness. No additional code, schema,
+controller, evidence layer, or approval is introduced between readiness and
+the one strict diagnostic.
 
 Before either deployment, prepare one production saved plan solely as
 zero-change readiness evidence. Obey the weekday plan/deployment guards above,
@@ -1590,26 +1573,24 @@ The readiness packet is complete only when it contains:
 
 - the remediation audit, exact merged SHA, PR, and exact-SHA CI, CodeQL,
   Gitleaks, and Trivy results;
-- the per-SHA atomic admission marker, immutable passed terminal marker, the
-  unused-to-consumed `classpilot-tile-auth-plan-rehearsal-v1` receipt, its
+- the late-created per-SHA admission marker, immutable passed terminal marker,
+  the inspected-to-consumed `classpilot-tile-auth-plan-rehearsal-v1` receipt, its
   immutable consumption sidecar, their common protected execution-authority
   SHA-256, exact candidate/baseline/network bindings, base-preflight evidence,
   and predeployment and postdeployment
   `transactional-plan-scenarios-v2` rollback/residue evidence;
 - the deployed image digest, API and worker task-definition revisions, frontend
   publication identity, and fresh pre/post-deployment query-identity receipt;
-- SHA-256 values for all three preparation scripts and the mandatory
-  preparation, journal, binding, diagnostic, and certification schema/version
-  contracts;
+- SHA-256 values for all three preparation scripts and the frozen preparation,
+  journal, binding, diagnostic, and certification contracts;
 - the post-merge offline fake-provider preparation/binding receipt and the
   separate 26-minute disposable-shell host-smoke journal, status, terminal
   result, and elapsed-time evidence;
 - the reviewed zero-change Terraform plan, its SHA-256, human/JSON review
   evidence, and an explicit record that no apply occurred; and
-- a stop-boundary attestation proving no production fixture refresh or
-  provisioning, historical-state promotion, Database Insights lease, eligible
-  diagnostic binding, `Validate`, workload traffic, or certification
-  preparation occurred.
+- an authorization attestation binding the frozen release to the subsequent
+  diagnostic and conditional certification path, with no historical
+  reread/supersession prerequisite and no Terraform apply.
 
 The acquisition preflight reads the live Scheduler group, numeric SSM document
 and content hash, both role trusts and complete permission sets, SQS encryption
@@ -1641,9 +1622,19 @@ outcome. A restore, schedule, Automation, DLQ, alarm, or disarm failure blocks
 progression. Historical receipts lacking this recurring guard are ineligible
 even if they carry the v2 lease label.
 
-Use a fresh 90-minute diagnostic lease. Certification uses a distinct bounded
-480-minute lease spanning Waf/500 through the final Waf/800 evidence seal; do
-not reuse a diagnostic receipt or extend an existing receipt. For example:
+Use a fresh 90-minute diagnostic lease after the new diagnostic fixture
+refresh, verification, freshness check, and atomic stage snapshot succeed.
+Bind a new immutable diagnostic ID, config/controller hashes, generator IPv4,
+run/binding/evidence roots, release identities, query receipt, and reserved
+stage-local lease path. Run one `Validate` and one strict 30-minute Waf/800
+diagnostic traffic start. The existing hash-identical filesystem-only
+publication recovery is the only preparation recovery.
+
+Certification uses a distinct bounded 480-minute lease spanning Waf/500
+through the final Waf/800 evidence seal; do not reuse a diagnostic receipt or
+extend an existing receipt. The recurring guard remains armed across both
+certification stages while schedule-appropriate scaling is restored between
+them. For example:
 
 ```powershell
 pwsh -NoProfile -File scripts/load/database-insights-lease.ps1 `
@@ -1717,14 +1708,40 @@ also forces `LOAD_DIAGNOSTIC_ONLY=false` and rejects any monitor or predecessor
 carrying diagnostic markers, so this result cannot seed or be sealed into the
 fresh Waf/500 -> Waf/800 chain.
 
-The corrected release requires a completely fresh Waf/500 with no predecessor,
-then Waf/800 using only that sealed Waf/500 result. Both stages must bind the
-same new application SHA/digest, the tile-batch workload schema/shape, and
+Only a completely accepted diagnostic may proceed. Create a fresh Waf/500
+with no predecessor, refresh and publish its own immutable fixture snapshot,
+then run one 510-device, 30-minute traffic start around 22:30 ET. Require a
+supervisor-sealed accepted result whose Database Insights state is retained
+for Waf/800.
+
+Restore scaling between stages without releasing the certification lease.
+Refresh the continuity root again, publish a distinct Waf/800 snapshot, and
+create Waf/800 using only the newly sealed Waf/500 predecessor. Both stages
+bind the identical frozen application SHA/digest, API/worker revisions, query
+identity, workload/evidence contracts, lease, and
 `expectedRdsInstanceClass=db.t4g.medium`. Start Waf/800 around 01:15 ET so its
-90-minute interval contains the existing 01:30 purge and 02:00 rollup. Restore
-schedule-appropriate scaling after every terminal outcome. If the corrected
-run is otherwise valid and still fails solely on RDS CPU, medium remains
-uncertified and work stops; an xlarge path requires separate approval.
+90-minute interval contains the existing 01:30 purge and 02:00 rollup. Start
+each stage's `Validate`/`Run` within 60 minutes of its own fixture verification.
+If readiness misses the evening cutoff, shift the certification schedule
+exactly 24 hours and regenerate external IDs and immutable artifacts without a
+code change or new approval.
+
+Restore schedule-appropriate scaling after every terminal outcome and restore
+Database Insights Standard/7 after the final evidence seal or any failure.
+Bounded provider/evidence reads may complete inside the existing attempt, but
+a startup failure before the start gate is terminal and cannot create a fresh
+binding, fixture preparation, validation, or run. Traffic is never rerun after
+its start gate releases.
+Evidence unavailability after bounded collection is terminal
+`not certified - evidence unavailable`, not a medium-capacity finding. A
+genuine application, SQL, security, fixture, deployment, latency, CPU, error,
+workload, or restoration failure stops the campaign without a remediation.
+If an otherwise valid run fails solely on RDS CPU, medium remains uncertified.
+No xlarge path, RDS resize, cache/workload change, or threshold relaxation is
+authorized.
+Success is a supervisor-sealed Waf/800 terminal result binding the frozen
+release and observed `db.t4g.medium`; every other outcome is an immutable
+terminal report, not another remediation.
 
 The RDS capacity path below is retained as a separately reviewable procedure;
 it is not authorized by this remediation. Before any future resize, require the

@@ -318,8 +318,6 @@ SKIP_WAIT=false
 RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE=false
 RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=false
 RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION=true
-CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD="C:/private/historical-reread.json"
-EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD_SHA256="${"a".repeat(64)}"
 REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=""
 EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL_SHA256=""
 validate_classpilot_tile_auth_plan_gate_mode
@@ -345,8 +343,6 @@ SKIP_WAIT=false
 RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE=false
 RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=false
 RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION=true
-CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD="C:/private/historical-reread.json"
-EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD_SHA256="${"a".repeat(64)}"
 REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=""
 EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL_SHA256=""
 ${invalid}
@@ -355,50 +351,9 @@ validate_classpilot_tile_auth_plan_gate_mode
       assert.notEqual(rejected.status, 0, invalid);
     }
 
-    for (const invalidInputs of [
-      'CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD=""',
-      'EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD_SHA256=""',
-      'EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD_SHA256="not-a-hash"',
-      'CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD="relative/reread.json"',
-    ]) {
-      const rejected = runDeployHelper(`
-ENV=production
-DEPLOY_BACKEND=true
-DEPLOY_FRONTEND=false
-ACTIVATE_EMERGENCY=true
-SAME_IMAGE_NETWORKING_STAGE=""
-SKIP_WAIT=false
-RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE=false
-RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=false
-RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION=true
-CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD="C:/private/historical-reread.json"
-EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD_SHA256="${"a".repeat(64)}"
-REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=""
-EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL_SHA256=""
-${invalidInputs}
-validate_classpilot_tile_auth_plan_gate_mode
-`);
-      assert.notEqual(rejected.status, 0, invalidInputs);
-    }
-
-    const rejectedOutsideObservation = runDeployHelper(`
-ENV=production
-DEPLOY_BACKEND=true
-DEPLOY_FRONTEND=false
-ACTIVATE_EMERGENCY=true
-SAME_IMAGE_NETWORKING_STAGE=""
-SKIP_WAIT=false
-RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE=false
-RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=false
-RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION=false
-CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD="C:/private/historical-reread.json"
-EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD_SHA256="${"a".repeat(64)}"
-validate_classpilot_tile_auth_plan_gate_mode
-`);
-    assert.notEqual(rejectedOutsideObservation.status, 0);
-    assert.match(
-      rejectedOutsideObservation.stderr,
-      /allowed only with --classpilot-tile-auth-plan-observation/
+    assert.doesNotMatch(
+      deploySource.slice(0, deploySource.indexOf("# --- Configuration ---")),
+      /classpilot-tile-auth-plan-observation-reread/
     );
 
     const noAdmission = runDeployHelper(`
@@ -546,7 +501,7 @@ rm -f "$MANAGER_CALLS_FILE" "$PROHIBITED_CALLS_FILE"
     }
   });
 
-  it("reinspects the exact supersession immediately before launch and refuses a newly expired receipt without mutation", () => {
+  it("does not make a fresh observation launch depend on historical supersession reinspection", () => {
     const observationId =
       "tile-plan-observe-20260726t121500z-aaaaaaaaaaaa";
     const supersessionId = `supersede-${observationId}`;
@@ -632,9 +587,9 @@ node() {
 create_and_inspect_classpilot_tile_auth_plan_observation_supersession
 [[ "$(<"$INSPECT_COUNT_FILE")" -eq 1 ]]
 run_classpilot_tile_auth_plan_observation_task
-[[ "$(<"$INSPECT_COUNT_FILE")" -eq 2 ]]
-[[ "$(cat "$MANAGER_CALLS_FILE")" == $'supersede\\ninspect-1\\ninspect-2' ]]
-[[ ! -s "$PROHIBITED_CALLS_FILE" ]]
+[[ "$(<"$INSPECT_COUNT_FILE")" -eq 1 ]]
+[[ "$(cat "$MANAGER_CALLS_FILE")" == $'supersede\\ninspect-1' ]]
+grep -q '^aws ecs run-task ' "$PROHIBITED_CALLS_FILE"
 COLLECTION="$TILE_AUTH_PLAN_OBSERVATION_COLLECTION_JSON" command node -e '
   const value = JSON.parse(process.env.COLLECTION);
   if (value.collection.status !== "failed" ||
@@ -675,7 +630,7 @@ rm -f "$TILE_AUTH_PLAN_OBSERVATION_TASK_PATH" "$PROHIBITED_CALLS_FILE" \
     );
     const observationExit = deploySource.indexOf("exit 0", observationStop);
     const fullGate = deploySource.indexOf(
-      "run_classpilot_tile_auth_plan_gate predeploy",
+      "run_classpilot_tile_auth_plan_predeploy_with_retry",
       observationExit
     );
     const hold = deploySource.indexOf(
@@ -695,7 +650,10 @@ rm -f "$TILE_AUTH_PLAN_OBSERVATION_TASK_PATH" "$PROHIBITED_CALLS_FILE" \
     );
 
     const observationPath = deploySource.slice(backendStart, observationExit);
-    assert.doesNotMatch(observationPath, /run_classpilot_tile_auth_plan_gate predeploy/);
+    assert.doesNotMatch(
+      observationPath,
+      /run_classpilot_tile_auth_plan_predeploy_with_retry/
+    );
     assert.doesNotMatch(observationPath, /write_classpilot_rehearsal_receipt/);
     assert.doesNotMatch(observationPath, /acquire_production_scaling_hold/);
     assert.doesNotMatch(observationPath, /RUN_MIGRATIONS_ONLY","value":"true"/);
@@ -743,9 +701,9 @@ rm -f "$TILE_AUTH_PLAN_OBSERVATION_TASK_PATH" "$PROHIBITED_CALLS_FILE" \
       preflightImplementation,
       /resolve-classpilot-tile-auth-plan-log-binding\.mjs/
     );
-    assert.match(
+    assert.doesNotMatch(
       preflightImplementation,
-      /reinspect_classpilot_tile_auth_plan_observation_supersession_before_launch; then[\s\S]*"terminal_task_unavailable"[\s\S]*return 0[\s\S]*fi\n  if ! aws ecs run-task/
+      /reinspect_classpilot_tile_auth_plan_observation_supersession_before_launch/
     );
     assert.equal(
       [...preflightImplementation.matchAll(/aws ecs run-task/g)].length,
@@ -772,7 +730,11 @@ rm -f "$TILE_AUTH_PLAN_OBSERVATION_TASK_PATH" "$PROHIBITED_CALLS_FILE" \
     );
     assert.match(
       initializeImplementation,
-      /TILE_AUTH_PLAN_OBSERVATION_INITIAL_POSTURE_SHA256="\$posture_sha"[\s\S]*create_and_inspect_classpilot_tile_auth_plan_observation_supersession[\s\S]*manage-classpilot-tile-auth-plan-observation\.mjs" admit/
+      /TILE_AUTH_PLAN_OBSERVATION_INITIAL_POSTURE_SHA256="\$posture_sha"[\s\S]*manage-classpilot-tile-auth-plan-observation\.mjs" admit/
+    );
+    assert.doesNotMatch(
+      initializeImplementation,
+      /create_and_inspect_classpilot_tile_auth_plan_observation_supersession/
     );
     assert.match(
       deploySource,
@@ -1173,13 +1135,9 @@ capture_classpilot_tile_auth_observation_final_posture
       'production_backend_deploy_window_preflight "before ClassPilot plan-gate execution"',
       candidateRegistration
     );
-    const basePreflight = deploySource.indexOf(
-      "run_classpilot_tile_auth_plan_base_preflight",
-      finalDeployWindow
-    );
     const gate = deploySource.indexOf(
-      "run_classpilot_tile_auth_plan_gate predeploy",
-      rolloutStart
+      "run_classpilot_tile_auth_plan_predeploy_with_retry",
+      finalDeployWindow
     );
     const hold = deploySource.indexOf("acquire_production_scaling_hold", gate);
     const migration = deploySource.indexOf('info "Running startup migrations', hold);
@@ -1188,10 +1146,21 @@ capture_classpilot_tile_auth_observation_final_posture
     assert.ok(
       rolloutStart < candidateRegistration &&
       candidateRegistration < finalDeployWindow &&
-      finalDeployWindow < basePreflight &&
-      basePreflight < gate
+      finalDeployWindow < gate
     );
     assert.ok(rolloutStart < gate && gate < hold && hold < migration && migration < update);
+    const retryImplementation = deploySource.slice(
+      deploySource.indexOf(
+        "run_classpilot_tile_auth_plan_predeploy_with_retry() {"
+      ),
+      deploySource.indexOf(
+        "\ninspect_or_consume_classpilot_rehearsal_receipt()"
+      )
+    );
+    assert.match(
+      retryImplementation,
+      /run_classpilot_tile_auth_plan_base_preflight[\s\S]*run_classpilot_tile_auth_plan_gate predeploy/
+    );
 
     const implementationStart = deploySource.indexOf("run_classpilot_tile_auth_plan_gate() {");
     const implementationEnd = deploySource.indexOf("\nlaunch_safe_active_api_preflight()", implementationStart);
@@ -1558,53 +1527,220 @@ rm -f "$capture_path" .candidate-api-source.json .candidate-worker-source.json
     );
     assert.match(
       admittedGateOnlyPath,
-      /run_classpilot_tile_auth_plan_base_preflight[\s\S]*run_classpilot_tile_auth_plan_gate predeploy[\s\S]*write_classpilot_rehearsal_receipt/
+      /run_classpilot_tile_auth_plan_predeploy_with_retry[\s\S]*write_classpilot_rehearsal_receipt/
+    );
+    assert.match(
+      deploySource.slice(
+        deploySource.indexOf(
+          "run_classpilot_tile_auth_plan_predeploy_with_retry() {"
+        ),
+        deploySource.indexOf(
+          "\ninspect_or_consume_classpilot_rehearsal_receipt()"
+        )
+      ),
+      /run_classpilot_tile_auth_plan_base_preflight[\s\S]*run_classpilot_tile_auth_plan_gate predeploy/
     );
   });
 
-  it("durably admits exactly one rehearsal attempt and seals every terminal path", () => {
+  it("defers the scarce rehearsal attempt until consumption and seals only authoritative failures early", () => {
     const backendStart = deploySource.indexOf("# BACKEND DEPLOY");
-    const admission = deploySource.indexOf(
-      "admit_classpilot_tile_auth_plan_rehearsal_attempt",
-      backendStart
-    );
     const candidateNetwork = deploySource.indexOf(
       "resolve_classpilot_tile_auth_candidate_network",
-      admission
+      backendStart
     );
-    const build = deploySource.indexOf('info "Building Docker image', admission);
-    const receipt = deploySource.indexOf(
-      "write_classpilot_rehearsal_receipt",
+    const build = deploySource.indexOf('info "Building Docker image', candidateNetwork);
+    const gate = deploySource.indexOf(
+      "run_classpilot_tile_auth_plan_predeploy_with_retry",
       build
     );
-    const passedTerminal = deploySource.indexOf(
-      "seal_classpilot_tile_auth_plan_rehearsal_terminal passed",
-      receipt
+    const receipt = deploySource.indexOf(
+      "write_classpilot_rehearsal_receipt",
+      gate
     );
-    const rehearsalExit = deploySource.indexOf("exit 0", passedTerminal);
+    const rehearsalExit = deploySource.indexOf("exit 0", receipt);
+    const rehearsalPath = deploySource.slice(backendStart, rehearsalExit);
     assert.ok(
-      admission > backendStart &&
-      candidateNetwork > admission &&
+      candidateNetwork > backendStart &&
       build > candidateNetwork &&
-      receipt > build &&
-      passedTerminal > receipt &&
-      rehearsalExit > passedTerminal
+      gate > build &&
+      receipt > gate &&
+      rehearsalExit > receipt
+    );
+    assert.doesNotMatch(
+      rehearsalPath,
+      /admit_classpilot_tile_auth_plan_rehearsal_attempt|seal_classpilot_tile_auth_plan_rehearsal_terminal passed/
     );
     assert.match(
       deploySource,
-      /deploy_exit_cleanup\(\)[\s\S]*TILE_AUTH_PLAN_REHEARSAL_ATTEMPT_ADMITTED[\s\S]*seal_classpilot_tile_auth_plan_rehearsal_terminal failed/
+      /seal_classpilot_tile_auth_plan_rehearsal_authoritative_failure\(\)[\s\S]*admit_classpilot_tile_auth_plan_rehearsal_attempt[\s\S]*seal_classpilot_tile_auth_plan_rehearsal_terminal failed/
     );
     assert.match(
-      deploySource,
-      /manage-classpilot-tile-auth-plan-rehearsal-receipt\.mjs" admit/
+      rehearsalReceiptManagerSource,
+      /publishFreshConsumptionGroup[\s\S]*writePrivateJson\(staging, REHEARSAL_ATTEMPT_FILENAME[\s\S]*writePrivateJson\(staging, REHEARSAL_TERMINAL_FILENAME[\s\S]*REHEARSAL_CONSUMPTION_FILENAME[\s\S]*fs\.renameSync\(staging, target\)/
     );
     assert.match(
-      deploySource,
-      /manage-classpilot-tile-auth-plan-rehearsal-receipt\.mjs"[\s\S]*terminal[\s\S]*--expected-admission-sha256/
+      deploySource.slice(
+        deploySource.indexOf("write_classpilot_rehearsal_receipt() {"),
+        deploySource.indexOf(
+          "\ncleanup_classpilot_tile_auth_plan_observation_controller_workspace()"
+        )
+      ),
+      /manage-classpilot-tile-auth-plan-rehearsal-receipt\.mjs" inspect[\s\S]*parse_classpilot_rehearsal_binding/
+    );
+    assert.doesNotMatch(
+      deploySource.slice(
+        deploySource.indexOf("deploy_exit_cleanup() {"),
+        deploySource.indexOf("\nruntime_securestring_preflight()")
+      ),
+      /seal_classpilot_tile_auth_plan_rehearsal_terminal/
     );
   });
 
-  it("binds guarded reuse to one Windows execution authority and last-moment expiry", () => {
+  it("retries transport failures once without burning the SHA and terminalizes authoritative failures immediately", () => {
+    const recoveredTransport = runDeployHelper(`
+base_calls=0
+gate_calls=0
+sealed_calls=0
+run_classpilot_tile_auth_plan_base_preflight() {
+  ((base_calls += 1))
+  return 0
+}
+run_classpilot_tile_auth_plan_gate() {
+  ((gate_calls += 1))
+  TILE_AUTH_PLAN_REHEARSAL_AUTHORITATIVE_FAILURE=false
+  [[ "$gate_calls" -eq 2 ]]
+}
+seal_classpilot_tile_auth_plan_rehearsal_authoritative_failure() {
+  ((sealed_calls += 1))
+}
+run_classpilot_tile_auth_plan_predeploy_with_retry true
+[[ "$base_calls" -eq 2 ]]
+[[ "$gate_calls" -eq 2 ]]
+[[ "$sealed_calls" -eq 0 ]]
+`);
+    assert.equal(recoveredTransport.status, 0, recoveredTransport.stderr);
+
+    const exhaustedTransport = runDeployHelper(`
+gate_calls=0
+sealed_calls=0
+run_classpilot_tile_auth_plan_gate() {
+  ((gate_calls += 1))
+  TILE_AUTH_PLAN_REHEARSAL_AUTHORITATIVE_FAILURE=false
+  return 1
+}
+seal_classpilot_tile_auth_plan_rehearsal_authoritative_failure() {
+  ((sealed_calls += 1))
+}
+if run_classpilot_tile_auth_plan_predeploy_with_retry false; then
+  exit 1
+fi
+[[ "$gate_calls" -eq 2 ]]
+[[ "$sealed_calls" -eq 0 ]]
+`);
+    assert.equal(exhaustedTransport.status, 0, exhaustedTransport.stderr);
+
+    const authoritativeFailure = runDeployHelper(`
+RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=false
+REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL="C:/private/rehearsal.json"
+gate_calls=0
+sealed_calls=0
+run_classpilot_tile_auth_plan_gate() {
+  ((gate_calls += 1))
+  TILE_AUTH_PLAN_REHEARSAL_AUTHORITATIVE_FAILURE=true
+  return 1
+}
+seal_classpilot_tile_auth_plan_rehearsal_authoritative_failure() {
+  ((sealed_calls += 1))
+}
+if run_classpilot_tile_auth_plan_predeploy_with_retry false; then
+  exit 1
+fi
+[[ "$gate_calls" -eq 1 ]]
+[[ "$sealed_calls" -eq 1 ]]
+`);
+    assert.equal(authoritativeFailure.status, 0, authoritativeFailure.stderr);
+  });
+
+  it("classifies stopped-task timeouts and known nonzero exits as authoritative before log binding", () => {
+    const common = `
+REGION=us-east-1
+ACCOUNT_ID=135775632425
+NAME=schoolpilot-production
+IMAGE_TAG=abcdef123456
+CLUSTER=schoolpilot-production
+NETWORK_CONFIG='{"awsvpcConfiguration":{}}'
+API_ROLLOUT_TASK_DEF=arn:aws:ecs:us-east-1:135775632425:task-definition/schoolpilot-production-api-emergency:40
+TASK_ARN=arn:aws:ecs:us-east-1:135775632425:task/schoolpilot-production/0123456789abcdef0123456789abcdef
+production_backend_deploy_window_preflight() { return 0; }
+classpilot_tile_auth_plan_window_preflight() { return 0; }
+`;
+    const gateTimeout = runDeployHelper(`
+${common}
+aws() {
+  if [[ "$1 $2" == "ecs run-task" ]]; then
+    printf '{"failures":[],"tasks":[{"taskArn":"%s","taskDefinitionArn":"%s"}]}\\n' "$TASK_ARN" "$API_ROLLOUT_TASK_DEF"
+    return 0
+  fi
+  return 1
+}
+wait_for_classpilot_tile_auth_plan_task_stopped() { return 124; }
+if run_classpilot_tile_auth_plan_gate predeploy; then
+  exit 1
+fi
+rm -f .tile-auth-plan-task.json
+[[ "$TILE_AUTH_PLAN_REHEARSAL_AUTHORITATIVE_FAILURE" == true ]]
+`);
+    assert.equal(gateTimeout.status, 0, gateTimeout.stderr);
+
+    const preflightTimeout = runDeployHelper(`
+${common}
+aws() {
+  if [[ "$1 $2" == "ecs run-task" ]]; then
+    printf '{"failures":[],"tasks":[{"taskArn":"%s","taskDefinitionArn":"%s"}]}\\n' "$TASK_ARN" "$API_ROLLOUT_TASK_DEF"
+    return 0
+  fi
+  return 1
+}
+wait_for_classpilot_tile_auth_plan_task_stopped() { return 124; }
+if run_classpilot_tile_auth_plan_base_preflight; then
+  exit 1
+fi
+rm -f .tile-auth-plan-preflight-task.json
+[[ "$TILE_AUTH_PLAN_REHEARSAL_AUTHORITATIVE_FAILURE" == true ]]
+`);
+    assert.equal(preflightTimeout.status, 0, preflightTimeout.stderr);
+
+    const nonzeroBeforeLogBinding = runDeployHelper(`
+${common}
+aws() {
+  if [[ "$1 $2" == "ecs run-task" ]]; then
+    printf '{"failures":[],"tasks":[{"taskArn":"%s","taskDefinitionArn":"%s"}]}\\n' "$TASK_ARN" "$API_ROLLOUT_TASK_DEF"
+    return 0
+  fi
+  if [[ "$1 $2" == "ecs describe-tasks" ]]; then
+    printf '{"failures":[],"tasks":[{"taskArn":"%s","taskDefinitionArn":"%s","lastStatus":"STOPPED","containers":[{"name":"api","lastStatus":"STOPPED","exitCode":1,"logStreamName":null}]}]}\\n' "$TASK_ARN" "$API_ROLLOUT_TASK_DEF"
+    return 0
+  fi
+  if [[ "$1 $2" == "ecs describe-task-definition" ]]; then
+    return 1
+  fi
+  return 1
+}
+wait_for_classpilot_tile_auth_plan_task_stopped() { return 0; }
+if run_classpilot_tile_auth_plan_gate predeploy; then
+  exit 1
+fi
+rm -f .tile-auth-plan-task.json .tile-auth-plan-result.json
+[[ "$TILE_AUTH_PLAN_REHEARSAL_AUTHORITATIVE_FAILURE" == true ]]
+`);
+    assert.equal(
+      nonzeroBeforeLogBinding.status,
+      0,
+      nonzeroBeforeLogBinding.stderr
+    );
+  });
+
+  it("binds guarded reuse to one authority and atomically publishes complete consumption evidence", () => {
     assert.match(
       rehearsalReceiptManagerSource,
       /classpilot-tile-auth-plan-execution-authority-v1/
@@ -1620,66 +1756,57 @@ rm -f "$capture_path" .candidate-api-source.json .candidate-worker-source.json
     const consumeStart = rehearsalReceiptManagerSource.indexOf(
       "export function consumeClasspilotTileAuthorizationPlanRehearsalReceipt"
     );
-    const finalAuthority = rehearsalReceiptManagerSource.indexOf(
-      "resolveClasspilotTileAuthorizationPlanExecutionAuthority()",
-      consumeStart
-    );
-    const preparedDirectory = rehearsalReceiptManagerSource.indexOf(
-      "const consumptionDirectory = preparePrivateOutputDirectory(",
-      finalAuthority
-    );
     const preliminaryFreshness = rehearsalReceiptManagerSource.indexOf(
       'runTestConsumptionHook(expected, "before-preliminary-timestamp")',
-      preparedDirectory
+      consumeStart
     );
-    const atomicReservation = rehearsalReceiptManagerSource.indexOf(
-      "const reservation = reserveConsumptionMarker(consumptionDirectory)",
+    const existingTerminal = rehearsalReceiptManagerSource.indexOf(
+      "const existingTerminal = inspectOptionalRehearsalTerminal(",
       preliminaryFreshness
     );
-    const commitCall = rehearsalReceiptManagerSource.indexOf(
-      "const marker = commitConsumptionMarker(",
-      atomicReservation
+    const freshPublication = rehearsalReceiptManagerSource.indexOf(
+      "publishFreshConsumptionGroup(",
+      existingTerminal
     );
     const commitStart = rehearsalReceiptManagerSource.indexOf(
       "function commitConsumptionMarker("
     );
-    const finalPostReservationHook = rehearsalReceiptManagerSource.indexOf(
-      '"before-final-post-reservation-timestamp"',
-      commitStart
+    const freshStart = rehearsalReceiptManagerSource.indexOf(
+      "function publishFreshConsumptionGroup("
     );
-    const finalConsumedAt = rehearsalReceiptManagerSource.indexOf(
-      "const consumedAtUtc = requireReceiptFreshAtConsumption(",
-      finalPostReservationHook
-    );
-    const privateAcl = rehearsalReceiptManagerSource.indexOf(
-      "restrictPrivateOutputArtifact(reservation.target)",
-      finalConsumedAt
+    const freshEnd = rehearsalReceiptManagerSource.indexOf(
+      "\nfunction requireReceiptFreshAtConsumption(",
+      freshStart
     );
     assert.ok(
       consumeStart > 0 &&
-      finalAuthority > consumeStart &&
-      preparedDirectory > finalAuthority &&
-      preliminaryFreshness > preparedDirectory &&
-      atomicReservation > preliminaryFreshness &&
-      commitCall > atomicReservation &&
+      preliminaryFreshness > consumeStart &&
+      existingTerminal > preliminaryFreshness &&
+      freshPublication > existingTerminal &&
       commitStart > 0 &&
-      finalPostReservationHook > commitStart &&
-      finalConsumedAt > finalPostReservationHook &&
-      privateAcl > finalConsumedAt
+      freshStart > commitStart &&
+      freshEnd > freshStart
     );
-    const preReservationWindow = rehearsalReceiptManagerSource.slice(
-      preliminaryFreshness,
-      atomicReservation
+    const commitImplementation = rehearsalReceiptManagerSource.slice(
+      commitStart,
+      freshStart
     );
-    const postReservationWindow = rehearsalReceiptManagerSource.slice(
-      finalConsumedAt,
-      privateAcl
+    assert.match(
+      commitImplementation,
+      /writePrivateJson\(directory, candidateName, marker\)[\s\S]*requireReceiptFreshAtConsumption[\s\S]*fs\.linkSync\(candidate, target\)/
+    );
+    const freshImplementation = rehearsalReceiptManagerSource.slice(
+      freshStart,
+      freshEnd
+    );
+    assert.match(
+      freshImplementation,
+      /writePrivateJson\(staging, REHEARSAL_ATTEMPT_FILENAME[\s\S]*writePrivateJson\(staging, REHEARSAL_TERMINAL_FILENAME[\s\S]*REHEARSAL_CONSUMPTION_FILENAME[\s\S]*requireReceiptFreshAtConsumption[\s\S]*fs\.renameSync\(staging, target\)/
     );
     assert.doesNotMatch(
-      preReservationWindow,
-      /resolveClasspilotTileAuthorizationPlanExecutionAuthority|preparePrivateOutputDirectory/
+      rehearsalReceiptManagerSource,
+      /openSync\(target,\s*"wx"/
     );
-    assert.doesNotMatch(postReservationWindow, /restrictPrivateOutputArtifact/);
     assert.doesNotMatch(
       rehearsalReceiptManagerSource,
       /executionAuthority(?:Host|Hostname|MachineGuid|UserSid)/

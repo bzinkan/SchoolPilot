@@ -33,7 +33,8 @@ $functionNames = @(
     "Assert-CertificationPrepJournalNestedShape",
     "Assert-CertificationInitialPreparationHasNoRecoveryProvenance",
     "Assert-CertificationFixturePreparationPublicBinding",
-    "Get-CertificationConfigHash","New-CertificationValidationReceipt","Use-CertificationValidationReceipt",
+    "Get-CertificationConfigHash","New-CertificationValidationReceipt",
+    "Get-CertificationValidationReceiptBinding","Inspect-CertificationValidationReceipt","Use-CertificationValidationReceipt",
     "Assert-CertificationReceiptLifetime","Assert-CertificationTaskDefinitionAttestations","Assert-CertificationPreflightContract",
     "Assert-CertificationFixtureVerificationContract","Get-CertificationHarnessArtifactBindings","Assert-CertificationHarnessArtifactContract",
     "Assert-CertificationHarnessArtifactEnvironment","Assert-CertificationFixtureAttestation",
@@ -372,6 +373,47 @@ try {
         $preMutationIsolationIndex -gt $validationContractIndex -and
         $preMutationIsolationIndex -lt $firstStaticMonitorMutationIndex) `
         "Certification must reject config/control/write-path overlap before creating static monitor evidence.";$assertions++
+    $receiptInspectIndex=$supervisorSource.IndexOf(
+        '$validationReceiptInspection = Inspect-CertificationValidationReceipt',
+        [StringComparison]::Ordinal
+    )
+    $pretrafficRootIndex=$supervisorSource.IndexOf(
+        '$chainRootBinding = Get-CertificationChainRootBinding',
+        $receiptInspectIndex,
+        [StringComparison]::Ordinal
+    )
+    $pretrafficAttestationIndex=$supervisorSource.IndexOf(
+        '$stageAttestationBinding = Write-CertificationStageAttestation',
+        $pretrafficRootIndex,
+        [StringComparison]::Ordinal
+    )
+    $lateReceiptConsumeIndex=$supervisorSource.IndexOf(
+        '$consumedReceiptBinding = Use-CertificationValidationReceipt',
+        $pretrafficAttestationIndex,
+        [StringComparison]::Ordinal
+    )
+    $harnessStartGatePublishIndex=$supervisorSource.IndexOf(
+        'Write-AtomicJson -Path $harnessStartGatePath',
+        $lateReceiptConsumeIndex,
+        [StringComparison]::Ordinal
+    )
+    Assert-Condition ($receiptInspectIndex -ge 0 -and
+        $pretrafficRootIndex -gt $receiptInspectIndex -and
+        $pretrafficAttestationIndex -gt $pretrafficRootIndex -and
+        $lateReceiptConsumeIndex -gt $pretrafficAttestationIndex -and
+        $harnessStartGatePublishIndex -gt $lateReceiptConsumeIndex) `
+        "Load certification must inspect the receipt first, stage chain evidence, atomically consume once, and only then publish the harness start gate.";$assertions++
+    $receiptToStartGateSection=$supervisorSource.Substring(
+        $receiptInspectIndex,
+        ($harnessStartGatePublishIndex + 'Write-AtomicJson -Path $harnessStartGatePath'.Length) - $receiptInspectIndex
+    )
+    Assert-Condition ($receiptToStartGateSection.Contains('$SupervisionKind -eq "MonitorOnly"') -and
+        $receiptToStartGateSection.Contains('$certificationLeaseValidation = Invoke-CertificationDatabaseInsightsLeaseCommand') -and
+        $receiptToStartGateSection.Contains('$preTrafficRollbackBinding = Assert-CertificationRollbackConfigBinding') -and
+        $receiptToStartGateSection.Contains('$preTrafficPreflight = Get-CertificationTaskPreflight') -and
+        $receiptToStartGateSection.Contains('$monitor.Refresh()') -and
+        $receiptToStartGateSection.Contains('$harness.Refresh()')) `
+        "Late receipt consumption must preserve MonitorOnly while following load harness, monitor, lease, rollback, schedule, fixture, IP, and task rechecks.";$assertions++
     Assert-Condition ($supervisorSource.Contains('"journalSha256"') -and
         $supervisorSource.Contains('Get-CertificationValue $resultJournal "sha256"') -and
         $supervisorSource.Contains('Assert-CertificationPrepJournalRecordKeys $record')) `
@@ -1170,9 +1212,21 @@ try {
     $rollbackBinding = [ordered]@{path=$rollbackPath;sha256=Get-CertificationSha256 $rollbackPath}
     $preflight.observedAtUtc=[DateTimeOffset]::UtcNow.AddSeconds(-1).ToString("o")
     New-CertificationValidationReceipt -Contract $receiptContract -Preflight $preflight -RollbackConfig $rollbackBinding -ReceiptPath $receiptPath -SealPath $sealPath
+    $inspection = Inspect-CertificationValidationReceipt -Contract $receiptContract -ReceiptPath $receiptPath -SealPath $sealPath -ConsumedPath $consumedPath
+    Assert-Condition ((Test-Path $receiptPath) -and (Test-Path $sealPath) -and -not (Test-Path $consumedPath) -and
+        $inspection.path -eq $consumedPath -and $inspection.sha256 -eq (Get-CertificationSha256 $receiptPath)) `
+        "Pretraffic receipt inspection must validate the future consumed binding without consuming the one-shot receipt."
+    $assertions++
+    $secondInspection = Inspect-CertificationValidationReceipt -Contract $receiptContract -ReceiptPath $receiptPath -SealPath $sealPath -ConsumedPath $consumedPath
+    Assert-Condition ((ConvertTo-CertificationComparableJson $secondInspection) -ceq
+        (ConvertTo-CertificationComparableJson $inspection)) `
+        "A pretraffic failure must leave the inspected validation receipt reusable and unconsumed."
+    $assertions++
     $binding = Use-CertificationValidationReceipt -Contract $receiptContract -ReceiptPath $receiptPath -SealPath $sealPath -ConsumedPath $consumedPath
     Assert-Condition ((Test-Path $consumedPath) -and -not (Test-Path $receiptPath) -and -not (Test-Path $sealPath) -and
-        $binding.sha256 -eq (Get-CertificationSha256 $consumedPath)) "A valid receipt must be atomically consumed exactly once."
+        $binding.sha256 -eq (Get-CertificationSha256 $consumedPath) -and
+        (ConvertTo-CertificationComparableJson $binding) -ceq (ConvertTo-CertificationComparableJson $inspection)) `
+        "A valid receipt must retain its inspected binding and be atomically consumed exactly once immediately before traffic."
     $assertions++
     $replayRejected = $false
     try { Use-CertificationValidationReceipt -Contract $receiptContract -ReceiptPath $receiptPath -SealPath $sealPath -ConsumedPath $consumedPath | Out-Null }
