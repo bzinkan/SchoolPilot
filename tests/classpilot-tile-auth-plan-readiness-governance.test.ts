@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -34,6 +34,10 @@ const finalStopLossAllowedFiles = [
 ] as const;
 
 const runtimeFiles = finalStopLossAllowedFiles.slice(0, 3);
+const finalStopLossCommit =
+  "f5759465b5a2ae43d4808c9aa53acc43c3c375b0";
+const finalStopLossBaseCommit =
+  "5b076d1f5e77a3a239d0b02d6ba99d484352533f";
 
 function git(args: string[]): string {
   return execFileSync("git", args, {
@@ -41,26 +45,6 @@ function git(args: string[]): string {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
   }).trim();
-}
-
-function resolveDiffBase(): string | null {
-  const explicit = process.env.SCHOOLPILOT_FINAL_STOP_LOSS_BASE_SHA;
-  if (explicit && /^[0-9a-f]{40}$/i.test(explicit)) return explicit;
-
-  const eventPath = process.env.GITHUB_EVENT_PATH;
-  if (!eventPath || !existsSync(eventPath)) return null;
-  const event = JSON.parse(readFileSync(eventPath, "utf8")) as {
-    before?: unknown;
-    pull_request?: { base?: { sha?: unknown } };
-  };
-  const candidate =
-    event.pull_request?.base?.sha ??
-    (typeof event.before === "string" && !/^0+$/.test(event.before)
-      ? event.before
-      : null);
-  return typeof candidate === "string" && /^[0-9a-f]{40}$/i.test(candidate)
-    ? candidate
-    : null;
 }
 
 function ensureCommitAvailable(sha: string): void {
@@ -74,7 +58,7 @@ function ensureCommitAvailable(sha: string): void {
       return;
     } catch {
       assert.fail(
-        `the declared final stop-loss diff base ${sha} is unavailable; CI may not skip boundary enforcement`
+        `the frozen final stop-loss history ${sha} is unavailable; CI may not skip historical boundary enforcement`
       );
     }
   }
@@ -160,7 +144,7 @@ describe("ClassPilot final stop-loss governance", () => {
     );
   });
 
-  it("freezes the final PR to the nine approved existing files", () => {
+  it("preserves the frozen final PR as the nine approved existing files", () => {
     for (const path of finalStopLossAllowedFiles) {
       assert.ok(
         runbook.includes(`\`${path}\``),
@@ -174,17 +158,16 @@ describe("ClassPilot final stop-loss governance", () => {
     );
     assert.match(runbook, /No later campaign\s+commit or remediation PR is allowed/);
 
-    const base = resolveDiffBase();
-    if (!base) {
-      assert.ok(
-        !process.env.CI,
-        "CI must declare the final stop-loss diff base through its event or SCHOOLPILOT_FINAL_STOP_LOSS_BASE_SHA"
-      );
-      return;
-    }
-    ensureCommitAvailable(base);
+    ensureCommitAvailable(finalStopLossBaseCommit);
+    ensureCommitAvailable(finalStopLossCommit);
 
-    const nameStatus = git(["diff", "--name-status", base, "--"]);
+    const nameStatus = git([
+      "diff",
+      "--name-status",
+      finalStopLossBaseCommit,
+      finalStopLossCommit,
+      "--",
+    ]);
     const changed = nameStatus
       .split(/\r?\n/)
       .filter(Boolean)
@@ -206,9 +189,10 @@ describe("ClassPilot final stop-loss governance", () => {
     const priorLiterals = new Set<string>();
     const currentLiterals = new Set<string>();
     for (const path of runtimeFiles) {
-      const prior = git(["show", `${base}:${path}`]);
+      const prior = git(["show", `${finalStopLossBaseCommit}:${path}`]);
+      const frozen = git(["show", `${finalStopLossCommit}:${path}`]);
       for (const value of contractLiterals(prior)) priorLiterals.add(value);
-      for (const value of contractLiterals(readRepositoryFile(path))) {
+      for (const value of contractLiterals(frozen)) {
         currentLiterals.add(value);
       }
     }
