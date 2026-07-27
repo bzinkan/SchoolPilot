@@ -335,6 +335,93 @@ finally {
     Remove-Item -LiteralPath $monitorJsonBoundaryPath -Force -ErrorAction SilentlyContinue
 }
 
+foreach ($functionName in @("Get-OptionalValue", "Get-ValidatedLoadSummaryTiming")) {
+    $definition = $monitorAst.Find({
+        param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $functionName
+    }, $true)
+    Assert-Condition ($null -ne $definition) "The rollout monitor must define $functionName."
+    Invoke-Expression $definition.Extent.Text
+}
+$script:RequiredWorkloadSchemaVersion = "classpilot-tile-batch-v1"
+$script:RequiredWorkloadEndpointShapeSha256 = "8e9f1942e4b3a27de7dd0571a9f60ffeb276c089e4baae96a885dba69e3233b2"
+$script:RequiredPollAccountingVersion = "staggered-deadline-v1"
+$engineeringSummaryNow = [DateTimeOffset]::UtcNow
+$script:TrafficStartedAtUtc = $engineeringSummaryNow.AddSeconds(-1800)
+$engineeringSummaryConfig = [pscustomobject]@{
+    RunId = "engineering-summary-contract"
+    TestMode = $true
+    DiagnosticOnly = $false
+    EngineeringAcceptance = $true
+    Workload = [pscustomobject]@{
+        Stage = "500"
+        Devices = 510
+        DurationSeconds = 1800
+        ScreenshotBytes = 40960
+        CanaryDevices = 10
+        WorkloadSchemaVersion = $script:RequiredWorkloadSchemaVersion
+        EndpointShapeSha256 = $script:RequiredWorkloadEndpointShapeSha256
+    }
+}
+$engineeringSummary = [ordered]@{
+    runId = $engineeringSummaryConfig.RunId
+    stage = "500"
+    diagnosticOnly = $false
+    engineeringAcceptance = $true
+    certificationEligible = $false
+    devices = 510
+    declaredSecondSchoolCanaryDevices = 10
+    workloadSchemaVersion = $script:RequiredWorkloadSchemaVersion
+    workloadEndpointShapeSha256 = $script:RequiredWorkloadEndpointShapeSha256
+    run = [ordered]@{
+        shutdownReason = "duration"
+        durationClock = "monotonic-hrtime-v1"
+        runtimeTargetTrafficSeconds = 1800
+        plannedTrafficMilliseconds = 1800000
+        actualTrafficMilliseconds = 1800000
+        plannedTrafficSeconds = 1800
+        actualTrafficSeconds = 1800
+        completedConfiguredDuration = $true
+    }
+    screenshotFixture = [ordered]@{ decodedBytes = 40960 }
+    screenshotRetrieval = [ordered]@{ attempts = 500; successes = 500 }
+    tileBatch = [ordered]@{
+        configured = $true
+        pollAccountingVersion = $script:RequiredPollAccountingVersion
+        teacherCohorts = 20
+        studentsPerCohort = 25
+        teacherTileAssignments = 500
+        requestsPerCohortPerPoll = 2
+        logicalOperationsPerPoll = 1000
+        historyRequestsByCohort = @(1) * 20
+        screenshotRequestsByCohort = @(1) * 20
+        completeRoundsPerCohort = 1
+        maximumRoundsPerCohort = 1
+        partialFinalRoundCohorts = 0
+        historyRequests = 20
+        screenshotRequests = 20
+        historyLogicalOperations = 500
+        screenshotLogicalOperations = 500
+        networkRequests = 40
+        logicalOperations = 1000
+    }
+}
+$engineeringProgress = [pscustomobject]@{
+    event = [pscustomobject]@{ event = "final"; timestamp = $engineeringSummaryNow.ToString("o") }
+    summary = [pscustomobject]$engineeringSummary
+}
+Assert-Condition ($null -ne (Get-ValidatedLoadSummaryTiming -Config $engineeringSummaryConfig -Progress $engineeringProgress)) `
+    "Engineering acceptance must accept the exact monotonic Waf/500 summary with non-certifying identity markers."
+$engineeringSummary["engineeringAcceptance"] = $false
+$engineeringProgress.summary = [pscustomobject]$engineeringSummary
+Assert-Condition ($null -eq (Get-ValidatedLoadSummaryTiming -Config $engineeringSummaryConfig -Progress $engineeringProgress)) `
+    "Engineering acceptance must reject a summary missing its exact engineeringAcceptance=true identity."
+$engineeringSummary["engineeringAcceptance"] = $true
+$engineeringSummary["certificationEligible"] = $true
+$engineeringProgress.summary = [pscustomobject]$engineeringSummary
+Assert-Condition ($null -eq (Get-ValidatedLoadSummaryTiming -Config $engineeringSummaryConfig -Progress $engineeringProgress)) `
+    "Engineering acceptance must reject any summary claiming certification eligibility."
+
 $rollbackTokens = $null
 $rollbackParseErrors = $null
 $rollbackAst = [Management.Automation.Language.Parser]::ParseFile(
@@ -1028,6 +1115,111 @@ try {
     try { & $monitorScript -ConfigPath $production800Path -Mode Validate | Out-Null }
     catch { $predecessorError=$_.Exception.Message;$predecessorRequired = $predecessorError -match "predecessorResultPath" }
     Assert-Condition $predecessorRequired "The immutable Waf500→Waf800 progression must require hashed predecessor acceptance evidence (actual: $predecessorError)."
+
+    $engineering800 = $production800 | ConvertTo-Json -Depth 12 | ConvertFrom-Json -Depth 12
+    $engineering800.runId = "engineering-800-no-predecessor"
+    $engineering800 | Add-Member -NotePropertyName engineeringAcceptance -NotePropertyValue $true -Force
+    $engineering800Path = Join-Path $tempRoot "engineering-800-no-predecessor.json"
+    [IO.File]::WriteAllText($engineering800Path, ($engineering800 | ConvertTo-Json -Depth 12), [Text.UTF8Encoding]::new($false))
+    $engineeringAdvancedPastPredecessor = $false
+    $engineeringValidationError = ""
+    try { & $monitorScript -ConfigPath $engineering800Path -Mode Validate | Out-Null }
+    catch {
+        $engineeringValidationError = $_.Exception.Message
+        $engineeringAdvancedPastPredecessor =
+            $engineeringValidationError -notmatch "predecessorResultPath" -and
+            $engineeringValidationError -match "property 'resources'|requires 'region'"
+    }
+    Assert-Condition $engineeringAdvancedPastPredecessor `
+        "Exact Waf/800 engineering acceptance must not consume predecessor evidence (actual: $engineeringValidationError)."
+
+    $engineering500 = $engineering800 | ConvertTo-Json -Depth 12 | ConvertFrom-Json -Depth 12
+    $engineering500.runId = "engineering-500-no-predecessor"
+    $engineering500.minimumWallClockSeconds = 1800
+    $engineering500.workload.stage = "500"
+    $engineering500.workload.devices = 510
+    $engineering500.workload.durationSeconds = 1800
+    $engineering500Path = Join-Path $tempRoot "engineering-500-no-predecessor.json"
+    [IO.File]::WriteAllText($engineering500Path, ($engineering500 | ConvertTo-Json -Depth 12), [Text.UTF8Encoding]::new($false))
+    $engineering500Accepted = $false
+    try { & $monitorScript -ConfigPath $engineering500Path -Mode Validate | Out-Null }
+    catch {
+        $engineering500Accepted =
+            $_.Exception.Message -notmatch "predecessorResultPath" -and
+            $_.Exception.Message -match "property 'resources'|requires 'region'"
+    }
+    Assert-Condition $engineering500Accepted `
+        "Exact Waf/500 engineering acceptance must validate without predecessor evidence."
+
+    $engineeringWrongProfile = $engineering800 | ConvertTo-Json -Depth 12 | ConvertFrom-Json -Depth 12
+    $engineeringWrongProfile.runId = "engineering-profile-rejected"
+    $engineeringWrongProfile.workload.stage = "500"
+    $engineeringWrongProfilePath = Join-Path $tempRoot "engineering-profile-rejected.json"
+    [IO.File]::WriteAllText($engineeringWrongProfilePath, ($engineeringWrongProfile | ConvertTo-Json -Depth 12), [Text.UTF8Encoding]::new($false))
+    $engineeringWrongProfileRejected = $false
+    try { & $monitorScript -ConfigPath $engineeringWrongProfilePath -Mode Validate | Out-Null }
+    catch { $engineeringWrongProfileRejected = $_.Exception.Message -match "permits only exact Waf/500" }
+    Assert-Condition $engineeringWrongProfileRejected `
+        "Engineering acceptance must reject every workload outside the exact Waf/500 and Waf/800 profiles."
+
+    $engineeringForbiddenBinding = $engineering800 | ConvertTo-Json -Depth 12 | ConvertFrom-Json -Depth 12
+    $engineeringForbiddenBinding.runId = "engineering-forbidden-binding"
+    $engineeringForbiddenBinding | Add-Member -NotePropertyName databaseInsightsLeaseReceiptPath -NotePropertyValue "forbidden" -Force
+    $engineeringForbiddenBindingPath = Join-Path $tempRoot "engineering-forbidden-binding.json"
+    [IO.File]::WriteAllText($engineeringForbiddenBindingPath, ($engineeringForbiddenBinding | ConvertTo-Json -Depth 12), [Text.UTF8Encoding]::new($false))
+    $engineeringForbiddenBindingRejected = $false
+    try { & $monitorScript -ConfigPath $engineeringForbiddenBindingPath -Mode Validate | Out-Null }
+    catch { $engineeringForbiddenBindingRejected = $_.Exception.Message -match "must not declare certification, predecessor, query-identity, or Database Insights" }
+    Assert-Condition $engineeringForbiddenBindingRejected `
+        "Engineering acceptance must reject Database Insights, query-identity, predecessor, seal, chain, and attestation bindings."
+
+    $engineeringNestedBinding = $engineering800 | ConvertTo-Json -Depth 12 | ConvertFrom-Json -Depth 12
+    $engineeringNestedBinding.runId = "engineering-nested-binding"
+    $engineeringNestedBinding | Add-Member -NotePropertyName context -NotePropertyValue ([pscustomobject]@{
+        certification = [pscustomobject]@{
+            chainRoot = [pscustomobject]@{ receiptSha256 = ("a" * 64) }
+        }
+    }) -Force
+    $engineeringNestedBindingPath = Join-Path $tempRoot "engineering-nested-binding.json"
+    [IO.File]::WriteAllText(
+        $engineeringNestedBindingPath,
+        ($engineeringNestedBinding | ConvertTo-Json -Depth 12),
+        [Text.UTF8Encoding]::new($false)
+    )
+    $engineeringNestedBindingRejected = $false
+    try { & $monitorScript -ConfigPath $engineeringNestedBindingPath -Mode Validate | Out-Null }
+    catch {
+        $engineeringNestedBindingRejected =
+            $_.Exception.Message -match "must not declare certification, predecessor, query-identity, or Database Insights"
+    }
+    Assert-Condition $engineeringNestedBindingRejected `
+        "Engineering acceptance must recursively reject nested certification, receipt, seal, chain, query, and lease bindings."
+
+    $engineeringMixedMode = $engineering800 | ConvertTo-Json -Depth 12 | ConvertFrom-Json -Depth 12
+    $engineeringMixedMode.runId = "engineering-diagnostic-mixed-mode"
+    $engineeringMixedMode | Add-Member -NotePropertyName diagnosticOnly -NotePropertyValue $true -Force
+    $engineeringMixedModePath = Join-Path $tempRoot "engineering-diagnostic-mixed-mode.json"
+    [IO.File]::WriteAllText($engineeringMixedModePath, ($engineeringMixedMode | ConvertTo-Json -Depth 12), [Text.UTF8Encoding]::new($false))
+    $engineeringMixedModeRejected = $false
+    try { & $monitorScript -ConfigPath $engineeringMixedModePath -Mode Validate | Out-Null }
+    catch { $engineeringMixedModeRejected = $_.Exception.Message -match "mutually exclusive" }
+    Assert-Condition $engineeringMixedModeRejected `
+        "Engineering acceptance must remain distinct from diagnostic-only monitoring."
+
+    $engineeringTestMode = $engineering800 | ConvertTo-Json -Depth 12 | ConvertFrom-Json -Depth 12
+    $engineeringTestMode.runId = "engineering-test-mode-rejected"
+    $engineeringTestMode | Add-Member -NotePropertyName testMode -NotePropertyValue $true -Force
+    $engineeringTestModePath = Join-Path $tempRoot "engineering-test-mode-rejected.json"
+    [IO.File]::WriteAllText(
+        $engineeringTestModePath,
+        ($engineeringTestMode | ConvertTo-Json -Depth 12),
+        [Text.UTF8Encoding]::new($false)
+    )
+    $engineeringTestModeRejected = $false
+    try { & $monitorScript -ConfigPath $engineeringTestModePath -Mode Validate | Out-Null }
+    catch { $engineeringTestModeRejected = $_.Exception.Message -match "cannot use testMode" }
+    Assert-Condition $engineeringTestModeRejected `
+        "Engineering acceptance must never use testMode's relaxed provider and production gates."
 
     $publicEcsLoadResultPath = Join-Path $tempRoot "public-ecs-800-result.json"
     $publicEcsLoadResult = @{runId="public-800";phase="PublicEcs";status="completed";loadAccepted=$true;postureAccepted=$true;
@@ -2869,7 +3061,10 @@ exit 0
         $rdsBackfillCase = Invoke-ChildMonitorCase "rds-cpu-publication-backfill" $rdsBackfillConfig
         Assert-Condition ($rdsBackfillCase.process.ExitCode -eq 0 -and $rdsBackfillCase.result.status -eq "completed" -and
             $rdsBackfillCase.result.acceptance.metrics.rds_cpu.count -eq 2 -and
-            $rdsBackfillCase.result.acceptance.metrics.rds_cpu.maximum -eq 12) "Delayed RDS CPU datapoints returned in one poll must backfill strict one-minute acceptance coverage."
+            $rdsBackfillCase.result.acceptance.metrics.rds_cpu.maximum -eq 12) (
+                "Delayed RDS CPU datapoints returned in one poll must backfill strict one-minute acceptance coverage. " +
+                "Result: $($rdsBackfillCase.result | ConvertTo-Json -Compress -Depth 30)"
+            )
 
         $rdsSpikeConfig = $rdsBackfillConfig | ConvertTo-Json -Depth 20 | ConvertFrom-Json -Depth 20
         $rdsSpikeConfig.runId = "rds-cpu-publication-backfill-spike"

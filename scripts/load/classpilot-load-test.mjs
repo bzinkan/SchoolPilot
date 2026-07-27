@@ -147,6 +147,7 @@ Safety/gates:
   LOAD_ENFORCE_THRESHOLDS=true
   LOAD_GATE_PROFILE=launch              # launch requires every documented traffic input
   LOAD_DIAGNOSTIC_ONLY=true             # only 810 devices / 1800s; never certification eligible
+  LOAD_ENGINEERING_ACCEPTANCE=true      # only Waf/500 510/1800/25 or Waf/800 810/5400/40; never certification eligible
   LOAD_EXPECTED_CANARY_DEVICES=10
   LOAD_WAF_DEVICE_LIMIT=100000
   LOAD_WAF_GENERAL_LIMIT=50000
@@ -970,9 +971,16 @@ if (!["launch", "partial"].includes(gateProfile)) {
 }
 const isLaunchGate = enforceThresholds && gateProfile === "launch";
 const diagnosticOnly = boolEnv("LOAD_DIAGNOSTIC_ONLY", false);
-if (diagnosticOnly && !isLaunchGate) {
-  throw new Error("LOAD_DIAGNOSTIC_ONLY=true requires the fully enforced launch gate profile");
+const engineeringAcceptance = boolEnv("LOAD_ENGINEERING_ACCEPTANCE", false);
+if (diagnosticOnly && engineeringAcceptance) {
+  throw new Error("LOAD_DIAGNOSTIC_ONLY and LOAD_ENGINEERING_ACCEPTANCE are mutually exclusive");
 }
+if ((diagnosticOnly || engineeringAcceptance) && !isLaunchGate) {
+  throw new Error(
+    `${diagnosticOnly ? "LOAD_DIAGNOSTIC_ONLY" : "LOAD_ENGINEERING_ACCEPTANCE"}=true requires the fully enforced launch gate profile`
+  );
+}
+const certificationEligible = isLaunchGate && !diagnosticOnly && !engineeringAcceptance;
 const commandBodyValue = process.env.LOAD_COMMAND_BODY?.trim() || "";
 const commandBodiesFile = process.env.LOAD_COMMAND_BODIES_FILE?.trim() || "";
 if (commandBodyValue && commandBodiesFile) {
@@ -1127,6 +1135,23 @@ if (isLaunchGate) {
   if (diagnosticOnly && (devices.length !== 810 || configuredPrimaryDevices !== 800 || durationMs !== 30 * 60 * 1000)) {
     throw new Error("Diagnostic-only launch requires exactly 800 primary devices, 10 canaries, and 1800 seconds");
   }
+  if (engineeringAcceptance) {
+    const engineering500 =
+      devices.length === 510 &&
+      configuredPrimaryDevices === 500 &&
+      durationMs === 30 * 60 * 1000 &&
+      expectedTargetsPerClass === 25;
+    const engineering800 =
+      devices.length === 810 &&
+      configuredPrimaryDevices === 800 &&
+      durationMs === 90 * 60 * 1000 &&
+      expectedTargetsPerClass === 40;
+    if (!engineering500 && !engineering800) {
+      throw new Error(
+        "Engineering acceptance permits only Waf/500 510-device, 1800-second, 25-target or Waf/800 810-device, 5400-second, 40-target profiles"
+      );
+    }
+  }
   if (configuredCanaries !== 10 || expectedCanaryDevices !== 10 || canarySchoolIds.size !== 1) {
     throw new Error("Launch gate requires exactly 10 devices from one declared second-school canary");
   }
@@ -1199,6 +1224,12 @@ const sharedIpLabel = process.env.LOAD_SHARED_IP_LABEL?.trim() || "single-genera
 const stage = process.env.LOAD_STAGE?.trim() || `devices-${devices.length}-${Math.round(durationMs / 1000)}s`;
 if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(stage)) {
   throw new Error("LOAD_STAGE must be 1-128 letters, numbers, dots, underscores, or hyphens");
+}
+if (engineeringAcceptance) {
+  const expectedEngineeringStage = devices.length === 510 ? "500" : "800";
+  if (stage !== expectedEngineeringStage) {
+    throw new Error(`Engineering acceptance requires LOAD_STAGE=${expectedEngineeringStage}`);
+  }
 }
 const wsUrl = `${baseUrl.replace(/^http:/, "ws:").replace(/^https:/, "wss:")}/ws`;
 
@@ -1370,7 +1401,8 @@ function progressRecord(event, nowMonoNs = monotonicNowNs()) {
     runId,
     stage,
     diagnosticOnly,
-    certificationEligible: isLaunchGate && !diagnosticOnly,
+    engineeringAcceptance,
+    certificationEligible,
     timestamp: new Date(nowWallMs).toISOString(),
     elapsedSeconds: Number((Number(monotonicElapsedNs(runStartedAtMonoNs, nowMonoNs)) / 1_000_000_000).toFixed(1)),
     deltaWindowSeconds: Number((Number(monotonicElapsedNs(previousProgressMonoNs, nowMonoNs)) / 1_000_000_000).toFixed(1)),
@@ -2924,7 +2956,8 @@ function summarize(shutdownReason) {
     runId,
     stage,
     diagnosticOnly,
-    certificationEligible: isLaunchGate && !diagnosticOnly,
+    engineeringAcceptance,
+    certificationEligible,
     workloadSchemaVersion: workloadSchemaVersion || null,
     workloadEndpointShapeSha256: tileBatchConfigured ? TILE_BATCH_ENDPOINT_SHAPE_SHA256 : null,
     targetOrigin: baseUrl,
@@ -3159,7 +3192,8 @@ if (validateConfigOnly) {
     trafficStarted: false,
     runId,
     diagnosticOnly,
-    certificationEligible: isLaunchGate && !diagnosticOnly,
+    engineeringAcceptance,
+    certificationEligible,
     workloadSchemaVersion: workloadSchemaVersion || null,
     workloadEndpointShapeSha256: tileBatchConfigured ? TILE_BATCH_ENDPOINT_SHAPE_SHA256 : null,
     gateProfile,

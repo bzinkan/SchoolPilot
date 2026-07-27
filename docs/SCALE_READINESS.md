@@ -13,6 +13,40 @@
 > listing at smoke-test time; do not package or upload the extension from this
 > repository.
 
+### Medium engineering acceptance
+
+The current decision path is one two-stage engineering-capacity run from the
+tooling-only successor to frozen application commit
+`f5759465b5a2ae43d4808c9aa53acc43c3c375b0`. It is intentionally distinct from
+the retired supervisor-sealed certification apparatus.
+
+The accepted label is **SchoolPilot 800-device engineering capacity acceptance
+on `db.t4g.medium`**. It requires:
+
+- Waf/500: 500 primary devices plus ten canaries for exactly 30 minutes, with
+  25 command targets per class.
+- Waf/800: 800 primary devices plus ten canaries for exactly 90 minutes, with
+  40 command targets per class, spanning the local 01:30 purge and 02:00
+  rollup.
+- The complete harness security, isolation, WebSocket, command, tile, latency,
+  screenshot, error, and duration gates.
+- Complete CloudWatch capacity evidence, zero PostgreSQL `57014` events, exact
+  release/task identity, and exact scaling and production-posture restoration.
+- Every required RDS CPU minute strictly below 65%, connections below 150,
+  CPU credit balance strictly above 24, and zero surplus charged credits.
+
+Performance Insights Standard-mode data is informational. Advanced mode,
+query-ID discovery, PI ratios, predecessor chaining, supervisor receipts, and
+cryptographic sealing are not part of this decision. The raw harness summary,
+AWS monitor result, PostgreSQL-log result, and restoration observation decide
+the outcome; failure to format the convenience report cannot change it.
+
+A pass establishes simulated 800-device capacity only. It is not the prior
+form of certification, does not authorize real-student onboarding, and does
+not satisfy the separate managed-Chromebook and real-device acceptance gates.
+A post-traffic failure is terminal for this campaign and must be reported
+without a workload rerun or another remediation release.
+
 The launch gate is performance-first but cost-conscious. It is intentionally
 different from the deferred 2,000-device HA profile:
 
@@ -21,11 +55,15 @@ different from the deferred 2,000-device HA profile:
   higher memory revision is retained because launch performance takes priority
   over the original 1024 MB cost model.
 - Scheduler: exactly one task at `256 CPU / 512 MB`.
-- ECS application tasks: public subnets with public IPv4; the ALB remains the
-  only inbound application path and RDS/Redis remain private.
+- ECS application tasks: the medium engineering acceptance retains the current
+  private subnets and NAT egress. A later, separately reviewed cost stage may
+  move tasks to public subnets; the ALB remains the only inbound application
+  path and RDS/Redis remain private.
 - RDS: `db.t4g.medium`, Single-AZ, 100 GB gp3 with a 1,000 GB autoscaling ceiling.
-- Redis: one `cache.t4g.micro` node only after its snapshot and load gates pass.
-- NAT gateways: removed only after public-task egress soaks successfully.
+- Redis: one `cache.t4g.small` node. The micro-node cost experiment is deferred
+  and is not part of medium engineering acceptance.
+- NAT gateways: retained for this acceptance and removed only after a
+  separately authorized public-task egress soak succeeds.
 - Container Insights: enabled through testing and the first five live school
   days, then disabled while native ECS/ALB/RDS/Redis alarms remain active.
 - WAF: 100,000 requests/5 minutes/IP for exact device-ingest POST aliases and
@@ -52,16 +90,22 @@ idempotent `(student_id, date)` upserts make restart catch-up safe. Raw
 heartbeats remain subject to each school's `retentionHours` setting (720 hours
 by default) and are purged in 5,000-row batches.
 
-## Launch load gate
+## Engineering capacity workload contract
 
-First run the credential-free harness check:
+The active entry point is the tooling-only capacity runner. Run its read-only
+validation before its single two-stage run:
 
 ```powershell
-npm run load:classpilot -- --validate-fixtures
+pwsh -NoProfile -File scripts/load/start-classpilot-capacity-acceptance.ps1 `
+  -Mode Validate -ConfigPath C:\absolute\private\capacity-acceptance.json
+pwsh -NoProfile -File scripts/load/start-classpilot-capacity-acceptance.ps1 `
+  -Mode Run -ConfigPath C:\absolute\private\capacity-acceptance.json
 ```
 
-For a gate run, the manifest must contain unique, non-empty `deviceId` and
-`studentToken` values. Launch/certification entries must also contain a unique,
+The runner supplies the exact immutable harness environment and rejects any
+profile other than the two stages below. For a stage run, the manifest must
+contain unique, non-empty `deviceId` and `studentToken` values. Engineering
+acceptance entries must also contain a unique,
 non-empty `studentId`; batch tile requests never expose or accept device IDs.
 Include `schoolId` for tenant-canary validation. Put ten second-school
 canary devices inside every tested manifest prefix; their `schoolId` must differ
@@ -82,7 +126,7 @@ Production-like browser traffic must provide:
 - `LOAD_TEACHER_TOKEN` and `LOAD_TEACHER_SCHOOL_ID` for teacher WebSocket auth
   and server-side command ACK observation.
 - Every selected manifest entry must declare `schoolId` for tenant-canary validation.
-- The supervisor supplies `LOAD_RUN_ID`; accepted runs must not generate or
+- The capacity runner supplies `LOAD_RUN_ID`; accepted runs must not generate or
   substitute their own identity.
 - Unique external `LOAD_EXTERNAL_PROGRESS_PATH` and
   `LOAD_EXTERNAL_SUMMARY_PATH` values under
@@ -100,7 +144,7 @@ Production-like browser traffic must provide:
   POSTs carry that teacher's CSRF token. Legacy `{deviceId}`/`{studentId}`
   template paths and `LOAD_SCREENSHOT_GET_PATH_TEMPLATE` are forbidden in a
   launch run and remain available only for diagnostic detail/range traffic.
-- `LOAD_WORKLOAD_SCHEMA_VERSION=classpilot-tile-batch-v1`. Certification also
+- `LOAD_WORKLOAD_SCHEMA_VERSION=classpilot-tile-batch-v1`. Acceptance also
   binds endpoint-shape SHA-256
   `8e9f1942e4b3a27de7dd0571a9f60ffeb276c089e4baae96a885dba69e3233b2` in
   `workload.endpointShapeSha256`; older per-device results cannot be a
@@ -127,30 +171,22 @@ overrides cannot weaken those invariants. `LOAD_GATE_PROFILE=partial` is the
 explicit opt-out for an intentionally incomplete diagnostic baseline; it is
 not launch evidence.
 
-Run this sequence against the current-size baseline, then repeat after each
-infrastructure stage:
+Run this sequence once against the frozen medium baseline:
 
 1. 500 primary devices plus 10 canaries (510 sockets) for 30 minutes, standard
    40 KiB screenshots and 25 sent command targets across each of 20 classes.
 2. 800 primary devices plus 10 canaries (810 sockets) for 90 minutes, with 40
    sent targets across each of 20 classes, timed to cross school-local 02:00
    rollup eligibility and a `:30` purge tick.
-3. 1,000 primary devices plus 10 canaries (1,010 sockets) for 10 minutes with
-   `LOAD_SCREENSHOT_PROFILE=burst`
-   (valid 50 KiB JPEGs); 20 classes retain 40 command targets each and the
-   additional 200 primary devices exercise ingest/WebSocket burst capacity.
-4. 800 primary devices plus 10 canaries (810 sockets), again with 40 targets per
-   class, for eight hours followed by idle recovery.
-
-For accepted `Waf/800` and private `Waf/endurance`, verify through the live
+For Waf/800, verify through the live
 fixture API that both synthetic schools' `schoolTimezone` and
 `schoolHours.timezone` equal the configured timezone. For `Waf/800`, convert
 the planned UTC interval through that timezone and require it to contain local
 `01:30` purge and `02:00` rollup eligibility. The live-schedule endurance run
-does not inherit that night-window condition. Locally defaulted timezone values
-are not acceptance evidence.
+is historical and is not part of this decision. Locally defaulted timezone
+values are not acceptance evidence.
 
-Set `LOAD_DEVICE_COUNT` to `510`, `810`, `1010`, and `810` respectively. Order
+Set `LOAD_DEVICE_COUNT` to `510` and `810` respectively. Order
 the ignored manifest so its first ten entries are the second-school canaries;
 every tested prefix then includes the tenant-isolation probe.
 
@@ -200,7 +236,7 @@ The HTTP/WebSocket/WAF harness scope passes only when all of the following hold:
   schema/hash plus 20 cohorts, two requests per cohort per poll, the stage's
   25- or 40-student cohort size, and logical history/screenshot counts equal to
   batch requests multiplied by that size. Missing or inconsistent accounting
-  cannot seed the next certification stage.
+  rejects the current engineering-capacity stage.
 - 100% of devices receive WebSocket `auth-success`; unexpected closes remain
   below 0.1%; every forced reconnect completes within 30 seconds; before
   intentional shutdown every selected device and all 20 teacher sockets must
@@ -230,8 +266,8 @@ The external evidence that must also pass is:
   consecutive one-minute values >=2; and total ReadIOPS + WriteIOPS requires
   p95 <2400 and peak <3000. Directional IOPS series remain evidence, not
   separate thresholds. These new capacity series are collected as evidence on
-  the medium baseline but do not create new medium-track gates. Missing, stale,
-  or incomplete required series invalidate the resized run.
+  the medium baseline but do not create new medium-track gates. The resized
+  profile is deferred and is not an acceptance prerequisite.
 - Redis sustained CPU/memory <60%, peak <70%, free memory >100 MiB, zero
   evictions/rejected connections, ≥99% screenshot retrieval, and available
   manual and subsequent automated snapshots.
@@ -242,7 +278,7 @@ Configured traffic classes must produce samples; a zero-sample latency class
 does not pass. Keep bounded histogram and shared-IP results with the rollout
 evidence, but never retain the manifest or authentication values with them.
 
-## Staged cost changes and rollback
+## Deferred cost stages (historical reference; inactive for acceptance)
 
 1. **Safety baseline:** deploy the WAF split, limiter/logging/rollup changes and
    alarms with NAT, current Redis, and Container Insights still enabled. Stop on

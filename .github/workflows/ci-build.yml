@@ -49,6 +49,7 @@ jobs:
           tests/classpilot-tile-auth-plan-evidence-validator.test.ts
           tests/classpilot-tile-auth-plan-lifecycle-cli.test.ts
           tests/deploy-classpilot-tile-auth-plan-gate.test.ts
+          tests/deploy-capacity-acceptance-release.test.ts
           tests/classpilot-tile-auth-plan-base-selection-evidence.test.ts
           tests/classpilot-tile-auth-plan-observation.test.ts
           tests/classpilot-tile-auth-plan-observation-collector.test.ts
@@ -233,6 +234,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v6
         with:
@@ -261,6 +264,14 @@ jobs:
             throw "PowerShell 7.5 or newer is required; found $($PSVersionTable.PSVersion)."
           }
           pwsh -NoProfile -File tests/powershell-json-datekind-conformance.test.ps1
+
+      - name: Capacity-acceptance tooling-only boundary
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/capacity-acceptance-tooling-boundary.test.ps1
+
+      - name: Engineering capacity-acceptance runner tests
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/aws-rollout-capacity-acceptance.test.ps1
 
       - name: Git Bash production Eastern clock
         shell: pwsh

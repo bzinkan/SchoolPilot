@@ -5344,6 +5344,9 @@ $evidenceDirectory = Resolve-ExternalPath -Path ([string](Get-RequiredProperty $
 $testModeProperty = $config.PSObject.Properties["testMode"]
 $testMode = if ($null -eq $testModeProperty) { $false } else { $testModeProperty.Value }
 if ($testMode -isnot [bool]) { throw "testMode must be a JSON boolean." }
+if (-not $testMode -and $Mode -eq "Run" -and $SupervisionKind -eq "Load") {
+    throw "The legacy production certification load supervisor is retired and historical-only. Use start-classpilot-capacity-acceptance.ps1 for the frozen medium engineering decision."
+}
 $progressPath = $null
 $summaryPath = $null
 $expectedGeneratorPublicIp = $null
