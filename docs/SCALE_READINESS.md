@@ -15,10 +15,12 @@
 
 ### Medium engineering acceptance
 
-The current decision path is one two-stage engineering-capacity run from the
-tooling-only successor to frozen application commit
-`f5759465b5a2ae43d4808c9aa53acc43c3c375b0`. It is intentionally distinct from
-the retired supervisor-sealed certification apparatus.
+The current decision path is one fresh two-stage, no-deploy
+engineering-capacity run against the unchanged serving application release
+`b2918be83d4d5d6be89c06bfa4486894ecc8747b` (API `emergency:31`, worker
+`:48`). The tooling controller and serving application identities are bound
+separately. This run is intentionally distinct from the retired
+supervisor-sealed certification apparatus.
 
 The accepted label is **SchoolPilot 800-device engineering capacity acceptance
 on `db.t4g.medium`**. It requires:
@@ -46,6 +48,28 @@ form of certification, does not authorize real-student onboarding, and does
 not satisfy the separate managed-Chromebook and real-device acceptance gates.
 A post-traffic failure is terminal for this campaign and must be reported
 without a workload rerun or another remediation release.
+
+#### One-time controller correction and campaign boundary
+
+- Before campaign admission, the controller must prove that
+  `fixture.continuityRoot` is a directional descendant of
+  `%LOCALAPPDATA%\SchoolPilot\load-gates`. An invalid parent, sibling, prefix
+  collision, ACL, or reparse path fails before credentials or provider calls.
+- Pre-attempt posture preservation compares the stable production contract:
+  service/task-definition and network state, scaling, target health, RDS,
+  Redis, NAT, WAF, and Route53. Observation timestamps and replaceable worker
+  execution identifiers are not restoration state.
+- Preserve failed campaign `medium-live-b2918-20260727-r1`, its lock, seeds,
+  reports, and hashes byte-for-byte as historical evidence. The fresh campaign
+  uses new immutable IDs, roots, bindings, and traffic windows; it does not
+  promote or rewrite the failed campaign.
+- This correction changes tooling only. It does not deploy the application or
+  frontend, run Terraform or migrations, invoke deployment plan gates, change
+  infrastructure, or execute a deferred cost stage.
+- The fresh campaign ends at the current Medium/Small baseline decision:
+  accepted, capacity-rejected, evidence-unavailable, or restoration-failed.
+  NAT removal, Redis downsizing, or any other cost experiment requires a
+  separately reviewed change and a new capacity run.
 
 The launch gate is performance-first but cost-conscious. It is intentionally
 different from the deferred 2,000-device HA profile:

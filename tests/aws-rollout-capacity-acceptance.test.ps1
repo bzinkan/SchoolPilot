@@ -66,6 +66,8 @@ foreach ($requiredFunction in @(
     "Get-CapacityCampaignLockPath", "Get-CapacityCampaignAdmission",
     "Assert-CapacityCampaignAdmission", "Enter-CapacityCampaignAdmission",
     "Get-CapacityRunIdentity", "Assert-CapacityRunIdentity",
+    "Get-CapacityLoadGatesRoot", "Assert-StrictChildPath",
+    "Get-StableProductionPostureProjection", "Get-StableProductionPostureSha256",
     "Read-RawStageOutcome", "Read-RawStageOutcomeSafely", "Read-RawCapacityOutcome",
     "Repair-InterruptedApplicationRollback",
     "Assert-BoundChildProcessExited", "Get-AttemptTrafficStarted",
@@ -121,6 +123,24 @@ Assert-Condition ($readConfigSource.Contains("22 * 60 + 25") -and
     $readConfigSource.Contains('$localStartDelta -ne 165') -and
     $readConfigSource.Contains("Test-PathsOverlap")) `
     "Stage windows and all sensitive roots must remain relationship-bound and disjoint."
+$continuityResolveIndex = $readConfigSource.IndexOf('$continuityRoot = Resolve-ExternalPath')
+$continuityChildIndex = $readConfigSource.IndexOf(
+    'Assert-StrictChildPath $continuityRoot (Get-CapacityLoadGatesRoot) "fixture.continuityRoot"'
+)
+$continuityAclIndex = $readConfigSource.IndexOf(
+    'Assert-CurrentUserPrivateAcl $continuityRoot "fixture.continuityRoot" -Directory'
+)
+Assert-Condition ($continuityResolveIndex -ge 0 -and
+    $continuityChildIndex -gt $continuityResolveIndex -and
+    $continuityAclIndex -gt $continuityChildIndex) `
+    "Configuration must directionally constrain continuity under load-gates immediately after path resolution."
+$loadGatesSource = $functions["Get-CapacityLoadGatesRoot"].Extent.Text
+$strictChildSource = $functions["Assert-StrictChildPath"].Extent.Text
+Assert-Condition ($loadGatesSource.Contains('"SchoolPilot\load-gates"') -and
+    $strictChildSource.Contains('$childFull.StartsWith(') -and
+    $strictChildSource.Contains('$parentFull + [IO.Path]::DirectorySeparatorChar') -and
+    -not $strictChildSource.Contains("Test-PathsOverlap")) `
+    "Continuity containment must be directional and separator-bound, not a symmetric overlap check."
 foreach ($privateContract in @(
     "Assert-CurrentUserPrivateAcl", "Assert-ExactDirectChildren", "fixture.support.root"
 )) {
@@ -196,6 +216,40 @@ Assert-Condition ($functions["Assert-StageSummary"].Extent.Text.Contains(
 Assert-Condition ($functions["Get-WorkerExecutionPosture"].Extent.Text.Contains(
     '$containers = @(if ('
 )) "Worker container cardinality must remain an explicit array for one-container responses."
+$stableProjectionSource = $functions["Get-StableProductionPostureProjection"].Extent.Text
+foreach ($contract in @(
+    '"Services"', '"ApiTask"', '"WorkerTask"', '"Targets"', '"Scaling"', '"Rds"', '"Redis"',
+    '"Nat"', '"Waf"', '"Route53"', '"taskDefinitionArn"', '"subnetSetSha256"',
+    '"databaseInsightsMode"', '"nodeType"', '"deviceRuleAction"', '"apiRuleAction"'
+)) {
+    Assert-Condition ($stableProjectionSource.Contains($contract)) `
+        "Stable posture comparison must bind $contract."
+}
+foreach ($volatileContract in @(
+    '"ObservedAtUtc"', '"TaskArn"', '"TaskArnSha256"', '"StartedAtUtc"',
+    '"LogGroup"', '"LogStream"', '"LogStreamSha256"'
+)) {
+    Assert-Condition (-not $stableProjectionSource.Contains($volatileContract)) `
+        "Stable posture comparison must exclude replaceable field $volatileContract."
+}
+$capacityRunSource = $functions["Invoke-CapacityRun"].Extent.Text
+$postFailureReadIndex = $capacityRunSource.IndexOf(
+    '$postFailurePosture = Get-ProductionPosture $Config'
+)
+$stablePostFailureIndex = $capacityRunSource.IndexOf(
+    '(Get-StableProductionPostureSha256 $postFailurePosture)'
+)
+$stableBaselineIndex = $capacityRunSource.IndexOf(
+    '(Get-StableProductionPostureSha256 $recoveryBaseline)'
+)
+$fixtureFailureHashIndex = $capacityRunSource.IndexOf(
+    'FailureSha256=Get-StringSha256 $stageFailure.Exception.Message'
+)
+Assert-Condition ($postFailureReadIndex -ge 0 -and
+    $stablePostFailureIndex -gt $postFailureReadIndex -and
+    $stableBaselineIndex -gt $stablePostFailureIndex -and
+    $fixtureFailureHashIndex -gt $stableBaselineIndex) `
+    "The real pre-attempt catch must compare stable posture while preserving the fixture failure."
 
 $secretScrubSource = $functions["Get-NonCredentialChildEnvironment"].Extent.Text
 foreach ($name in @(
@@ -369,7 +423,9 @@ Assert-Condition ($source -notmatch 'DatabaseInsightsMode\s*=\s*"advanced"|query
 foreach ($name in @(
     "Get-Value", "Assert-ExactKeys", "Get-RequiredString", "Get-UtcTimestamp", "Read-JsonFile",
     "Get-StringSha256", "Get-CanonicalSha256", "Assert-Sha256",
-    "Resolve-ExternalPath", "Test-PathsOverlap",
+    "Resolve-ExternalPath", "Get-CapacityLoadGatesRoot", "Assert-StrictChildPath",
+    "Test-PathsOverlap", "Get-StableProductionPostureProjection",
+    "Get-StableProductionPostureSha256",
     "Write-AtomicJson", "Write-AtomicJsonReplace",
     "Invoke-BoundedProcess",
     "Assert-PlannedWindowsSchedulable", "Assert-NoTrafficProgress", "Test-ApplicationFailure",
@@ -444,6 +500,176 @@ try {
         "Nested sensitive paths must be detected as overlapping."
     Assert-Condition (-not (Test-PathsOverlap (Join-Path $tempRoot "a") (Join-Path $tempRoot "b"))) `
         "Sibling sensitive paths must remain independently usable."
+
+    $loadGatesRoot = Get-CapacityLoadGatesRoot
+    $validContinuityRoot = Join-Path $loadGatesRoot "capacity-acceptance\run-a\deep\continuity"
+    [void][IO.Directory]::CreateDirectory($validContinuityRoot)
+    Assert-StrictChildPath $validContinuityRoot $loadGatesRoot "fixture.continuityRoot"
+    Assert-Throws {
+        Assert-StrictChildPath (
+            Join-Path (Split-Path -Parent $loadGatesRoot) "load-gates-sibling\continuity"
+        ) $loadGatesRoot "fixture.continuityRoot"
+    } "strict child" "A sibling continuity root must be rejected."
+    Assert-Throws {
+        Assert-StrictChildPath (
+            "{0}-archive{1}continuity" -f $loadGatesRoot,[IO.Path]::DirectorySeparatorChar
+        ) $loadGatesRoot "fixture.continuityRoot"
+    } "strict child" "A load-gates prefix collision must be rejected."
+    Assert-Throws {
+        Assert-StrictChildPath (Split-Path -Parent $loadGatesRoot) `
+            $loadGatesRoot "fixture.continuityRoot"
+    } "strict child" "A parent of load-gates must be rejected."
+    $inheritedAclContinuityRoot = Join-Path $loadGatesRoot (
+        "capacity-acceptance\inherited-acl\continuity"
+    )
+    [void][IO.Directory]::CreateDirectory($inheritedAclContinuityRoot)
+    Assert-StrictChildPath $inheritedAclContinuityRoot $loadGatesRoot "fixture.continuityRoot"
+    Assert-Throws {
+        Assert-CurrentUserPrivateAcl $inheritedAclContinuityRoot `
+            "fixture.continuityRoot" -Directory
+    } "protected current-user" `
+        "A path-valid continuity root with inherited or broad ACLs must be rejected."
+
+    $junctionTarget = Join-Path $tempRoot "continuity-junction-target"
+    [void][IO.Directory]::CreateDirectory($junctionTarget)
+    $junctionPath = Join-Path $loadGatesRoot "capacity-acceptance\junction-continuity"
+    [void][IO.Directory]::CreateDirectory((Split-Path -Parent $junctionPath))
+    [void](New-Item -ItemType Junction -Path $junctionPath -Target $junctionTarget -ErrorAction Stop)
+    try {
+        Assert-Throws {
+            Resolve-ExternalPath $junctionPath "fixture.continuityRoot" | Out-Null
+        } "reparse point" "Continuity resolution must reject a junction under load-gates."
+    }
+    finally {
+        if (Test-Path -LiteralPath $junctionPath) {
+            [IO.Directory]::Delete($junctionPath, $false)
+        }
+    }
+
+    $stablePosture = [pscustomobject]@{
+        ObservedAtUtc = "2026-07-27T20:00:00.0000000+00:00"
+        Services = [pscustomobject]@{
+            api = [pscustomobject]@{
+                desired=1;running=1;pending=0
+                taskDefinitionArn="arn:aws:ecs:us-east-1:135775632425:task-definition/api:31"
+                assignPublicIp="DISABLED";subnetSetSha256=("1" * 64)
+            }
+            worker = [pscustomobject]@{
+                desired=1;running=1;pending=0
+                taskDefinitionArn="arn:aws:ecs:us-east-1:135775632425:task-definition/worker:48"
+                assignPublicIp="DISABLED";subnetSetSha256=("2" * 64)
+            }
+        }
+        ApiTask = [pscustomobject]@{
+            Arn="arn:aws:ecs:us-east-1:135775632425:task-definition/api:31"
+            ContainerName="api";Cpu="512";Memory="2048"
+            Logging=[pscustomobject]@{Sanitized=[pscustomobject]@{
+                driver="awslogs";groupSha256=("3" * 64);streamPrefixSha256=("4" * 64)
+            }}
+        }
+        WorkerTask = [pscustomobject]@{
+            Arn="arn:aws:ecs:us-east-1:135775632425:task-definition/worker:48"
+            ContainerName="scheduler-worker";Cpu="256";Memory="512"
+            Logging=[pscustomobject]@{Sanitized=[pscustomobject]@{
+                driver="awslogs";groupSha256=("5" * 64);streamPrefixSha256=("6" * 64)
+            }}
+        }
+        WorkerExecution = [pscustomobject]@{
+            TaskArn="arn:aws:ecs:us-east-1:135775632425:task/old"
+            TaskArnSha256=("7" * 64)
+            TaskDefinitionArn="arn:aws:ecs:us-east-1:135775632425:task-definition/worker:48"
+            StartedAtUtc="2026-07-27T19:00:00.0000000+00:00"
+            LogGroup="/ecs/worker";LogStream="worker/scheduler-worker/old"
+            LogStreamSha256=("8" * 64)
+        }
+        Targets=[pscustomobject]@{total=1;healthy=1;nonHealthy=0}
+        Scaling=[pscustomobject]@{
+            resourceId="service/cluster/api";minCapacity=1;maxCapacity=8
+            suspendedState=[pscustomobject]@{
+                DynamicScalingInSuspended=$false
+                DynamicScalingOutSuspended=$false
+                ScheduledScalingSuspended=$false
+            }
+            scheduledActionsSha256=("9" * 64);scalingPoliciesSha256=("a" * 64)
+        }
+        Rds=[pscustomobject]@{
+            instanceClass="db.t4g.medium";status="available";publiclyAccessible=$false
+            databaseInsightsMode="standard";performanceInsightsEnabled=$true
+            performanceInsightsRetentionPeriod=7;dbiResourceId="db-resource"
+            dbiResourceIdSha256=("b" * 64)
+        }
+        Redis=[pscustomobject]@{
+            status="available";nodeType="cache.t4g.small";replicationGroupSha256=("c" * 64)
+        }
+        Nat=[pscustomobject]@{availableCount=2}
+        Waf=[pscustomobject]@{
+            name="production-waf";defaultAction="ALLOW";webAclSha256=("d" * 64)
+            cloudFrontAssociationVerified=$true;deviceRuleAction="BLOCK";apiRuleAction="BLOCK"
+        }
+        Route53=[pscustomobject]@{
+            measureLatency=$true;alarmState="OK";healthCheckSha256=("e" * 64)
+        }
+    }
+    $stablePostureHash = Get-StableProductionPostureSha256 $stablePosture
+    $volatileOnlyPosture = $stablePosture | ConvertTo-Json -Depth 20 |
+        ConvertFrom-Json -DateKind String -Depth 20
+    $volatileOnlyPosture.ObservedAtUtc = "2026-07-28T01:00:00.0000000+00:00"
+    $volatileOnlyPosture.WorkerExecution.TaskArn =
+        "arn:aws:ecs:us-east-1:135775632425:task/replacement"
+    $volatileOnlyPosture.WorkerExecution.TaskArnSha256 = "f" * 64
+    $volatileOnlyPosture.WorkerExecution.StartedAtUtc = "2026-07-28T00:59:00.0000000+00:00"
+    $volatileOnlyPosture.WorkerExecution.LogGroup = "/ecs/replacement-worker"
+    $volatileOnlyPosture.WorkerExecution.LogStream = "worker/scheduler-worker/replacement"
+    $volatileOnlyPosture.WorkerExecution.LogStreamSha256 = "0" * 64
+    Assert-Condition (
+        (Get-StableProductionPostureSha256 $volatileOnlyPosture) -ceq $stablePostureHash
+    ) "Observation time and replaceable worker execution identity must not create posture drift."
+
+    $stablePostureMutations = @(
+        [pscustomobject]@{Name="RDS instance class";Apply={
+            param($p);$p.Rds.instanceClass="db.t4g.large"
+        }},
+        [pscustomobject]@{Name="Database Insights mode";Apply={
+            param($p);$p.Rds.databaseInsightsMode="advanced"
+        }},
+        [pscustomobject]@{Name="Redis node type";Apply={
+            param($p);$p.Redis.nodeType="cache.t4g.micro"
+        }},
+        [pscustomobject]@{Name="WAF device action";Apply={
+            param($p);$p.Waf.deviceRuleAction="COUNT"
+        }},
+        [pscustomobject]@{Name="WAF API action";Apply={
+            param($p);$p.Waf.apiRuleAction="COUNT"
+        }},
+        [pscustomobject]@{Name="scaling maximum";Apply={
+            param($p);$p.Scaling.maxCapacity=9
+        }},
+        [pscustomobject]@{Name="API service task definition";Apply={
+            param($p);$p.Services.api.taskDefinitionArn=
+                "arn:aws:ecs:us-east-1:135775632425:task-definition/api:32"
+        }},
+        [pscustomobject]@{Name="worker service subnet";Apply={
+            param($p);$p.Services.worker.subnetSetSha256="0" * 64
+        }},
+        [pscustomobject]@{Name="worker execution task definition";Apply={
+            param($p);$p.WorkerExecution.TaskDefinitionArn=
+                "arn:aws:ecs:us-east-1:135775632425:task-definition/worker:49"
+        }},
+        [pscustomobject]@{Name="NAT topology";Apply={
+            param($p);$p.Nat.availableCount=1
+        }},
+        [pscustomobject]@{Name="Route53 topology";Apply={
+            param($p);$p.Route53.measureLatency=$false
+        }}
+    )
+    foreach ($mutation in $stablePostureMutations) {
+        $driftedPosture = $stablePosture | ConvertTo-Json -Depth 20 |
+            ConvertFrom-Json -DateKind String -Depth 20
+        & $mutation.Apply $driftedPosture
+        Assert-Condition (
+            (Get-StableProductionPostureSha256 $driftedPosture) -cne $stablePostureHash
+        ) "Stable posture comparison must reject $($mutation.Name) drift."
+    }
 
     $scheduleNow = [DateTimeOffset]::Parse("2026-07-27T20:00:00+00:00")
     $scheduleConfig = [pscustomobject]@{Stages=@(
