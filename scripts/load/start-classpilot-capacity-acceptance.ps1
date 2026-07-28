@@ -287,6 +287,33 @@ function Resolve-ExternalPath {
     return $absolute
 }
 
+function Get-CapacityLoadGatesRoot {
+    $localAppData = [string]$env:LOCALAPPDATA
+    if ([string]::IsNullOrWhiteSpace($localAppData) -or
+        -not [IO.Path]::IsPathRooted($localAppData)) {
+        throw "LOCALAPPDATA is unavailable for the private load-gates root."
+    }
+    return [IO.Path]::GetFullPath((Join-Path $localAppData "SchoolPilot\load-gates"))
+}
+
+function Assert-StrictChildPath {
+    param([string]$Child, [string]$Parent, [string]$Name)
+    $childFull = [IO.Path]::GetFullPath($Child).TrimEnd('\', '/')
+    $parentFull = [IO.Path]::GetFullPath($Parent).TrimEnd('\', '/')
+    $comparison = if ($IsWindows) {
+        [StringComparison]::OrdinalIgnoreCase
+    } else {
+        [StringComparison]::Ordinal
+    }
+    if ([string]::Equals($childFull, $parentFull, $comparison) -or
+        -not $childFull.StartsWith(
+            $parentFull + [IO.Path]::DirectorySeparatorChar,
+            $comparison
+        )) {
+        throw "$Name must remain a strict child of the private load-gates root."
+    }
+}
+
 function Test-PathsOverlap {
     param([string]$Left, [string]$Right)
     $comparison = if ($IsWindows) {
@@ -531,6 +558,7 @@ function Read-CapacityConfiguration {
         throw "fixture.configPath does not match fixture.configSha256."
     }
     $continuityRoot = Resolve-ExternalPath (Get-RequiredString $fixture "continuityRoot" "fixture") "fixture.continuityRoot"
+    Assert-StrictChildPath $continuityRoot (Get-CapacityLoadGatesRoot) "fixture.continuityRoot"
     Assert-CurrentUserPrivateAcl $continuityRoot "fixture.continuityRoot" -Directory
     $stateSha256 = Assert-Sha256 (Get-RequiredString $fixture "stateSha256" "fixture") "fixture.stateSha256"
     $ownershipSha256 = Assert-Sha256 (Get-RequiredString $fixture "ownershipSha256" "fixture") "fixture.ownershipSha256"
@@ -1445,6 +1473,127 @@ function Get-ProductionPosture {
             healthCheckSha256 = Get-StringSha256 ([string]$Config.Resources.route53HealthCheckId)
         }
     }
+}
+
+function Get-StableProductionPostureProjection {
+    param($Posture)
+    $services = Get-Value $Posture "Services"
+    $apiService = Get-Value $services "api"
+    $workerService = Get-Value $services "worker"
+    $apiTask = Get-Value $Posture "ApiTask"
+    $workerTask = Get-Value $Posture "WorkerTask"
+    $apiLogging = Get-Value (Get-Value $apiTask "Logging") "Sanitized"
+    $workerLogging = Get-Value (Get-Value $workerTask "Logging") "Sanitized"
+    $workerExecution = Get-Value $Posture "WorkerExecution"
+    $targets = Get-Value $Posture "Targets"
+    $scaling = Get-Value $Posture "Scaling"
+    $suspendedState = Get-Value $scaling "suspendedState"
+    $rds = Get-Value $Posture "Rds"
+    $redis = Get-Value $Posture "Redis"
+    $nat = Get-Value $Posture "Nat"
+    $waf = Get-Value $Posture "Waf"
+    $route53 = Get-Value $Posture "Route53"
+
+    return [ordered]@{
+        services = [ordered]@{
+            api = [ordered]@{
+                desired = [int](Get-Value $apiService "desired" -1)
+                running = [int](Get-Value $apiService "running" -1)
+                pending = [int](Get-Value $apiService "pending" -1)
+                taskDefinitionArn = [string](Get-Value $apiService "taskDefinitionArn" "")
+                assignPublicIp = [string](Get-Value $apiService "assignPublicIp" "")
+                subnetSetSha256 = [string](Get-Value $apiService "subnetSetSha256" "")
+            }
+            worker = [ordered]@{
+                desired = [int](Get-Value $workerService "desired" -1)
+                running = [int](Get-Value $workerService "running" -1)
+                pending = [int](Get-Value $workerService "pending" -1)
+                taskDefinitionArn = [string](Get-Value $workerService "taskDefinitionArn" "")
+                assignPublicIp = [string](Get-Value $workerService "assignPublicIp" "")
+                subnetSetSha256 = [string](Get-Value $workerService "subnetSetSha256" "")
+            }
+        }
+        taskDefinitions = [ordered]@{
+            api = [ordered]@{
+                arn = [string](Get-Value $apiTask "Arn" "")
+                containerName = [string](Get-Value $apiTask "ContainerName" "")
+                cpu = [string](Get-Value $apiTask "Cpu" "")
+                memory = [string](Get-Value $apiTask "Memory" "")
+                logging = [ordered]@{
+                    driver = [string](Get-Value $apiLogging "driver" "")
+                    groupSha256 = [string](Get-Value $apiLogging "groupSha256" "")
+                    streamPrefixSha256 = [string](Get-Value $apiLogging "streamPrefixSha256" "")
+                }
+            }
+            worker = [ordered]@{
+                arn = [string](Get-Value $workerTask "Arn" "")
+                containerName = [string](Get-Value $workerTask "ContainerName" "")
+                cpu = [string](Get-Value $workerTask "Cpu" "")
+                memory = [string](Get-Value $workerTask "Memory" "")
+                logging = [ordered]@{
+                    driver = [string](Get-Value $workerLogging "driver" "")
+                    groupSha256 = [string](Get-Value $workerLogging "groupSha256" "")
+                    streamPrefixSha256 = [string](Get-Value $workerLogging "streamPrefixSha256" "")
+                }
+            }
+        }
+        workerExecution = [ordered]@{
+            taskDefinitionArn = [string](Get-Value $workerExecution "TaskDefinitionArn" "")
+        }
+        targets = [ordered]@{
+            total = [int](Get-Value $targets "total" -1)
+            healthy = [int](Get-Value $targets "healthy" -1)
+            nonHealthy = [int](Get-Value $targets "nonHealthy" -1)
+        }
+        scaling = [ordered]@{
+            resourceId = [string](Get-Value $scaling "resourceId" "")
+            minCapacity = [int](Get-Value $scaling "minCapacity" -1)
+            maxCapacity = [int](Get-Value $scaling "maxCapacity" -1)
+            suspendedState = [ordered]@{
+                DynamicScalingInSuspended = [bool](Get-Value $suspendedState "DynamicScalingInSuspended" $false)
+                DynamicScalingOutSuspended = [bool](Get-Value $suspendedState "DynamicScalingOutSuspended" $false)
+                ScheduledScalingSuspended = [bool](Get-Value $suspendedState "ScheduledScalingSuspended" $false)
+            }
+            scheduledActionsSha256 = [string](Get-Value $scaling "scheduledActionsSha256" "")
+            scalingPoliciesSha256 = [string](Get-Value $scaling "scalingPoliciesSha256" "")
+        }
+        rds = [ordered]@{
+            instanceClass = [string](Get-Value $rds "instanceClass" "")
+            status = [string](Get-Value $rds "status" "")
+            publiclyAccessible = [bool](Get-Value $rds "publiclyAccessible" $true)
+            databaseInsightsMode = [string](Get-Value $rds "databaseInsightsMode" "")
+            performanceInsightsEnabled = [bool](Get-Value $rds "performanceInsightsEnabled" $false)
+            performanceInsightsRetentionPeriod = [int](Get-Value $rds "performanceInsightsRetentionPeriod" -1)
+            dbiResourceId = [string](Get-Value $rds "dbiResourceId" "")
+            dbiResourceIdSha256 = [string](Get-Value $rds "dbiResourceIdSha256" "")
+        }
+        redis = [ordered]@{
+            status = [string](Get-Value $redis "status" "")
+            nodeType = [string](Get-Value $redis "nodeType" "")
+            replicationGroupSha256 = [string](Get-Value $redis "replicationGroupSha256" "")
+        }
+        nat = [ordered]@{
+            availableCount = [int](Get-Value $nat "availableCount" -1)
+        }
+        waf = [ordered]@{
+            name = [string](Get-Value $waf "name" "")
+            defaultAction = [string](Get-Value $waf "defaultAction" "")
+            webAclSha256 = [string](Get-Value $waf "webAclSha256" "")
+            cloudFrontAssociationVerified = [bool](Get-Value $waf "cloudFrontAssociationVerified" $false)
+            deviceRuleAction = [string](Get-Value $waf "deviceRuleAction" "")
+            apiRuleAction = [string](Get-Value $waf "apiRuleAction" "")
+        }
+        route53 = [ordered]@{
+            measureLatency = [bool](Get-Value $route53 "measureLatency" $false)
+            alarmState = [string](Get-Value $route53 "alarmState" "")
+            healthCheckSha256 = [string](Get-Value $route53 "healthCheckSha256" "")
+        }
+    }
+}
+
+function Get-StableProductionPostureSha256 {
+    param($Posture)
+    return Get-CanonicalSha256 (Get-StableProductionPostureProjection $Posture)
 }
 
 function Set-ScalingTarget {
@@ -4535,8 +4684,8 @@ function Invoke-CapacityRun {
             }
             else {
                 $postFailurePosture = Get-ProductionPosture $Config
-                if ((Get-CanonicalSha256 $postFailurePosture) -cne
-                    (Get-CanonicalSha256 $recoveryBaseline)) {
+                if ((Get-StableProductionPostureSha256 $postFailurePosture) -cne
+                    (Get-StableProductionPostureSha256 $recoveryBaseline)) {
                     throw "A pre-attempt stage failure did not preserve the exact healthy production posture."
                 }
                 $orchestrationRestoration = [ordered]@{
