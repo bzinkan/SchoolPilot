@@ -406,9 +406,11 @@ function Get-UtcTimestamp {
     param($Object, [string]$Name, [string]$Owner)
     $raw = Get-RequiredString $Object $Name $Owner
     $parsed = [DateTimeOffset]::MinValue
-    if (-not [DateTimeOffset]::TryParseExact(
+    if ($raw -cnotmatch (
+            '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{1,7}(?:Z|\+00:00)$'
+        ) -or -not [DateTimeOffset]::TryParseExact(
             $raw,
-            "o",
+            "yyyy-MM-dd'T'HH:mm:ss.FFFFFFFK",
             [Globalization.CultureInfo]::InvariantCulture,
             [Globalization.DateTimeStyles]::None,
             [ref]$parsed
