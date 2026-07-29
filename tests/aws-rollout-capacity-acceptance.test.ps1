@@ -422,6 +422,7 @@ Assert-Condition ($source -notmatch 'DatabaseInsightsMode\s*=\s*"advanced"|query
 # Load a small, side-effect-free subset of the runner functions for behavioral checks.
 foreach ($name in @(
     "Get-Value", "Assert-ExactKeys", "Get-RequiredString", "Get-UtcTimestamp", "Read-JsonFile",
+    "Assert-FixtureVerification",
     "Get-StringSha256", "Get-CanonicalSha256", "Assert-Sha256",
     "Resolve-ExternalPath", "Get-CapacityLoadGatesRoot", "Assert-StrictChildPath",
     "Test-PathsOverlap", "Get-StableProductionPostureProjection",
@@ -466,6 +467,124 @@ Set-CurrentUserPrivateAcl $tempRoot -Directory
 $originalLocalAppData = $env:LOCALAPPDATA
 $env:LOCALAPPDATA = Join-Path $tempRoot "local-app-data"
 try {
+    $nodeTimestamp = & (Get-Command node).Source -e (
+        'process.stdout.write(new Date("2026-07-29T02:10:05.517Z").toISOString())'
+    )
+    Assert-Condition ($LASTEXITCODE -eq 0 -and $nodeTimestamp -ceq "2026-07-29T02:10:05.517Z") `
+        "The cross-runtime regression must exercise Node's exact ISO timestamp output."
+
+    $acceptedTimestampCases = @(
+        [pscustomobject]@{
+            Value = "2026-07-29T02:10:05.5Z"
+            Expected = "2026-07-29T02:10:05.5000000+00:00"
+        },
+        [pscustomobject]@{
+            Value = $nodeTimestamp
+            Expected = "2026-07-29T02:10:05.5170000+00:00"
+        },
+        [pscustomobject]@{
+            Value = "2026-07-29T02:10:05.5170000Z"
+            Expected = "2026-07-29T02:10:05.5170000+00:00"
+        },
+        [pscustomobject]@{
+            Value = "2026-07-29T02:10:05.5170000+00:00"
+            Expected = "2026-07-29T02:10:05.5170000+00:00"
+        }
+    )
+    foreach ($case in $acceptedTimestampCases) {
+        $actual = Get-UtcTimestamp ([pscustomobject]@{ timestamp = $case.Value }) `
+            "timestamp" "cross-runtime timestamp"
+        Assert-Condition ($actual.ToString("o") -ceq $case.Expected) `
+            "The exact UTC timestamp '$($case.Value)' must normalize without losing precision."
+    }
+    Assert-Condition (
+        (Get-UtcTimestamp ([pscustomobject]@{ timestamp = $nodeTimestamp }) `
+            "timestamp" "Node timestamp") -eq
+        (Get-UtcTimestamp ([pscustomobject]@{
+            timestamp = "2026-07-29T02:10:05.5170000+00:00"
+        }) "timestamp" ".NET timestamp")
+    ) "Equivalent Node and .NET UTC timestamps must represent the same instant."
+
+    foreach ($rejectedTimestamp in @(
+        "2026-07-29T02:10:05",
+        "2026-07-29T02:10:05Z",
+        "2026-07-29T02:10:05.517-04:00",
+        "2026-07-29T02:10:05.517+01:00",
+        "2026-07-29T02:10:05.517z",
+        " 2026-07-29T02:10:05.517Z",
+        "2026-07-29T02:10:05.517Z ",
+        "2026-07-29T02:10:05.12345678Z",
+        "2026-02-30T02:10:05.517Z",
+        "2026-07-29 02:10:05.517Z"
+    )) {
+        Assert-Throws {
+            Get-UtcTimestamp ([pscustomobject]@{ timestamp = $rejectedTimestamp }) `
+                "timestamp" "cross-runtime timestamp" | Out-Null
+        } "ISO-8601 timestamp with an explicit zero offset" `
+            "The malformed or non-UTC timestamp '$rejectedTimestamp' must fail closed."
+    }
+
+    $verificationIngressPath = Join-Path $tempRoot "fixture-verification.json"
+    [IO.File]::WriteAllText(
+        $verificationIngressPath,
+        (@{
+            schemaVersion = 1
+            passed = $true
+            verifiedAt = $nodeTimestamp
+            counts = @{
+                schools = 2
+                teachers = 20
+                officeStaff = 1
+                students = 1010
+                classes = 20
+                classRosterStudents = 800
+                devices = 1010
+                activeDeviceSessions = 1010
+                activeSessions = 20
+                commandBodies = 20
+                authorizationPlanCohorts = @{
+                    coTeacherStudents = 40
+                    officeSupervisionStudents = 40
+                }
+                liveAuth = @{ commandAdministrators = 1; teachers = 20 }
+            }
+            gates = @{
+                autoEnrollDisabled = $true
+                trackingDisabled = $true
+                schedulesDisabled = $true
+                exactSchoolTimezones = $true
+                classRostersExactAndDisjoint = $true
+                authorizationPlanCohortsExact = $true
+                authorizationPlanOfficeStudentsOutsideTeacherRosters = $true
+                allDeviceTokensLive = $true
+                allStaffAuthArtifactsLive = $true
+            }
+        } | ConvertTo-Json -Depth 10),
+        [Text.UTF8Encoding]::new($false)
+    )
+    $verificationIngress = Read-JsonFile $verificationIngressPath `
+        "cross-runtime fixture verification"
+    Assert-FixtureVerification $verificationIngress
+    Assert-Condition (
+        (Get-UtcTimestamp $verificationIngress "verifiedAt" "fixture verification").ToString("o") `
+            -ceq "2026-07-29T02:10:05.5170000+00:00"
+    ) "A verifier-shaped JSON artifact must preserve and accept Node timestamp precision."
+
+    $harnessReadyIngress = (
+        '{"readyAt":"2026-07-29T02:10:05.517Z"}' |
+            ConvertFrom-Json -DateKind String
+    )
+    $harnessProgressIngress = (
+        '{"timestamp":"2026-07-29T02:10:05.518Z"}' |
+            ConvertFrom-Json -DateKind String
+    )
+    Assert-Condition (
+        (Get-UtcTimestamp $harnessReadyIngress "readyAt" "harness ready gate").Offset -eq
+            [TimeSpan]::Zero -and
+        (Get-UtcTimestamp $harnessProgressIngress "timestamp" "harness progress").Offset -eq
+            [TimeSpan]::Zero
+    ) "Harness-ready and progress JSON must accept Node ISO timestamps."
+
     $secretEnvironmentNames = @(
         "CLP_SUPER_ADMIN_BEARER", "CLP_SUPER_ADMIN_EMAIL", "CLP_SUPER_ADMIN_PASSWORD",
         "CLP_FIXTURE_ADMIN_PASSWORD", "CLP_FIXTURE_TEACHER_PASSWORD",

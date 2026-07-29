@@ -55,6 +55,9 @@ without a workload rerun or another remediation release.
   `fixture.continuityRoot` is a directional descendant of
   `%LOCALAPPDATA%\SchoolPilot\load-gates`. An invalid parent, sibling, prefix
   collision, ACL, or reparse path fails before credentials or provider calls.
+- Cross-runtime UTC timestamps must use an explicit `Z` or `+00:00` offset and
+  one through seven fractional-second digits. This accepts both JavaScript
+  `toISOString()` and .NET round-trip output while rejecting local timestamps.
 - Pre-attempt posture preservation compares the stable production contract:
   service/task-definition and network state, scaling, target health, RDS,
   Redis, NAT, WAF, and Route53. Observation timestamps and replaceable worker
