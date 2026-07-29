@@ -807,7 +807,7 @@ cd schoolpilot-app && npm run build
 MSYS_NO_PATHCONV=1 aws s3 sync "C:/GitHub/SchoolPilot/schoolpilot-app/dist/" s3://schoolpilot-production-frontend/ --delete --region us-east-1
 
 # Step 3: Invalidate CloudFront cache (use targeted paths to reduce costs — "/*" causes ALL cached objects to refetch)
-MSYS_NO_PATHCONV=1 aws cloudfront create-invalidation --distribution-id E1TPPJOD7C2CXR --paths "/index.html" "/" "/robots.txt" "/sitemap.xml" --region us-east-1
+MSYS_NO_PATHCONV=1 aws cloudfront create-invalidation --distribution-id E1TPPJOD7C2CXR --paths "/index.html" "/" --region us-east-1
 
 # Step 4: VERIFY — check invalidation completed
 MSYS_NO_PATHCONV=1 aws cloudfront list-invalidations --distribution-id E1TPPJOD7C2CXR --region us-east-1 --query 'InvalidationList.Items[0]'
@@ -820,7 +820,7 @@ MSYS_NO_PATHCONV=1 aws cloudfront list-invalidations --distribution-id E1TPPJOD7
 2. **ECR login expired** — `docker push` will fail with auth errors if you haven't run `ecr get-login-password` recently. Tokens last 12 hours.
 3. **ECS service names** — Must be exactly `schoolpilot-production-api` and `schoolpilot-production-scheduler-worker` in cluster `schoolpilot-production-cluster`.
 4. **Task not starting** — If the new task fails to start after a service update, ECS rolls back automatically. Check CloudWatch logs for the failed task. Common causes: missing env vars, bad image, port mismatch. Rollback is explicit now: `update-service --task-definition schoolpilot-production-api:<previousRev>` or `schoolpilot-production-scheduler-worker:<previousRev>`.
-5. **CloudFront invalidation costs** — Use targeted invalidation (`/index.html / /robots.txt /sitemap.xml`) instead of `/*`. Wildcard `/*` invalidates ALL cached objects, causing every request to refetch from origin, generating massive CloudFront + S3 request charges during development.
+5. **CloudFront invalidation costs** — Use targeted invalidation (`/index.html /`) instead of `/*`. Wildcard `/*` invalidates ALL cached objects, causing every request to refetch from origin, generating massive CloudFront + S3 request charges during development.
 6. **Windows path conversion** — Always prefix AWS CLI commands with `MSYS_NO_PATHCONV=1` in Git Bash on Windows, otherwise paths like `--paths "/*"` get mangled.
 7. **Task definition env vars** — The ECS task definition must include `CLIENT_URL=https://school-pilot.net` and `GOOGLE_CALLBACK_URL=https://school-pilot.net/api/auth/google/callback`. These are set in the task definition, not in the container.
 8. **Dockerfile CMD** — Runs `node dist/index.js` directly (no `drizzle-kit push`). Production schema changes are handled by the explicit deploy-script migration task (`RUN_MIGRATIONS_ONLY=true`), not by normal web/worker startup.

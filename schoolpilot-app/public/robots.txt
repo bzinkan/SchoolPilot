@@ -1,7 +1,0 @@
-User-agent: *
-Allow: /
-Disallow: /api/
-Disallow: /ws
-Disallow: /gopilot-socket/
-
-Sitemap: https://school-pilot.net/sitemap.xml
