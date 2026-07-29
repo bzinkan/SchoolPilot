@@ -5441,6 +5441,8 @@ if [[ "$DEPLOY_FRONTEND" == true ]]; then
     --delete \
     --cache-control "public, max-age=31536000, immutable" \
     --exclude "index.html" \
+    --exclude "robots.txt" \
+    --exclude "sitemap.xml" \
     --exclude "*.json" \
     --region "$REGION"
 
@@ -5448,6 +5450,15 @@ if [[ "$DEPLOY_FRONTEND" == true ]]; then
   aws s3 cp schoolpilot-app/dist/index.html "s3://${BUCKET}/index.html" \
     --cache-control "no-cache, no-store, must-revalidate" \
     --region "$REGION"
+
+  # Search crawler directives — short cache so indexing corrections propagate.
+  for f in schoolpilot-app/dist/robots.txt schoolpilot-app/dist/sitemap.xml; do
+    if [[ -f "$f" ]]; then
+      aws s3 cp "$f" "s3://${BUCKET}/$(basename "$f")" \
+        --cache-control "public, max-age=300" \
+        --region "$REGION"
+    fi
+  done
 
   # JSON manifests — short cache
   for f in schoolpilot-app/dist/*.json; do
@@ -5460,13 +5471,13 @@ if [[ "$DEPLOY_FRONTEND" == true ]]; then
   success "S3 sync complete"
 
   # Step 3: Invalidate CloudFront. index.html is no-cache and references the hashed
-  # asset bundles, so invalidating it + root is sufficient. MSYS_NO_PATHCONV=1 stops
+  # asset bundles; crawler directives are invalidated with it. MSYS_NO_PATHCONV=1 stops
   # Git Bash on Windows from rewriting the leading-slash "/index.html" "/" into
   # Windows paths (which CloudFront rejects as InvalidArgument); harmless elsewhere.
   info "Invalidating CloudFront cache..."
   CLOUDFRONT_INVALIDATION_ID=$(MSYS_NO_PATHCONV=1 aws cloudfront create-invalidation \
     --distribution-id "$CF_DIST_ID" \
-    --paths "/index.html" "/" \
+    --paths "/index.html" "/" "/robots.txt" "/sitemap.xml" \
     --query 'Invalidation.Id' \
     --output text \
     --no-cli-pager)

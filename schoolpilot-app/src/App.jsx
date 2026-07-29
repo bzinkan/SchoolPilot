@@ -7,6 +7,7 @@ import { LicenseProvider, useLicenses } from './contexts/LicenseContext';
 import { NativeProvider, useNative } from './contexts/NativeContext';
 import { SocketProvider } from './contexts/SocketContext';
 import { ThemeProvider } from './contexts/ThemeContext';
+import SeoMetadata from './seo/SeoMetadata';
 import Spinner from './shared/components/Spinner';
 import { Toaster } from './components/ui/toaster';
 // import { AIChatButton } from './components/chat/AIChatButton'; // AI Chat FAB — disabled, using backend-only monitoring
@@ -243,6 +244,7 @@ function AppRoutes() {
 export default function App() {
   return (
     <BrowserRouter>
+      <SeoMetadata />
       <QueryClientProvider client={queryClient}>
         <NativeProvider>
           <ThemeProvider>

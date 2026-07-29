@@ -97,10 +97,44 @@ async function assertClassPilotDashboard(page) {
 
 const cases = [
   {
+    requestedPath: '/',
+    expectedPath: '/',
+    persona: personas.anonymous,
+    assertion: async (page) => {
+      await page
+        .getByRole('heading', {
+          name: 'School management tools that work together',
+          exact: true,
+        })
+        .waitFor({ state: 'visible' });
+    },
+    expectedCanonical: 'https://school-pilot.net/',
+    expectedRobots: 'index, follow',
+    expectedTitle: 'Schoolpilot | Student Safety and School Operations',
+    surface: 'public indexable homepage',
+  },
+  {
+    requestedPath: '/privacy',
+    expectedPath: '/privacy',
+    persona: personas.anonymous,
+    assertion: async (page) => {
+      await page
+        .getByRole('heading', { name: 'Privacy Policy', exact: true })
+        .waitFor({ state: 'visible' });
+    },
+    expectedCanonical: 'https://school-pilot.net/privacy',
+    expectedRobots: 'index, follow',
+    expectedTitle: 'Privacy Policy | Schoolpilot',
+    surface: 'public indexable privacy policy',
+  },
+  {
     requestedPath: '/classpilot',
     expectedPath: '/classpilot',
     persona: personas.classpilotTeacher,
     assertion: assertClassPilotDashboard,
+    expectedCanonical: null,
+    expectedRobots: 'noindex, nofollow',
+    expectedTitle: 'Schoolpilot',
     surface: 'licensed teacher dashboard',
   },
   {
@@ -115,6 +149,9 @@ const cases = [
         .getByText('?school=YOUR_SCHOOL_ID', { exact: true })
         .waitFor({ state: 'visible' });
     },
+    expectedCanonical: null,
+    expectedRobots: 'noindex, nofollow',
+    expectedTitle: 'Schoolpilot',
     surface: 'public kiosk setup guard',
   },
   {
@@ -132,6 +169,9 @@ const cases = [
         .getByText('Preview Child', { exact: true })
         .waitFor({ state: 'visible' });
     },
+    expectedCanonical: null,
+    expectedRobots: 'noindex, nofollow',
+    expectedTitle: 'Schoolpilot',
     surface: 'licensed parent application',
   },
   {
@@ -140,6 +180,9 @@ const cases = [
     expectCatchAllRedirect: true,
     persona: personas.classpilotTeacher,
     assertion: assertClassPilotDashboard,
+    expectedCanonical: null,
+    expectedRobots: 'noindex, nofollow',
+    expectedTitle: 'Schoolpilot',
     surface: 'authenticated catch-all redirect to licensed default',
   },
 ];
@@ -493,6 +536,33 @@ async function verifyCase(browser, testCase) {
       );
     }
     await testCase.assertion(page);
+    const canonical = page.locator('link[rel="canonical"]');
+    const canonicalCount = await canonical.count();
+    if (testCase.expectedCanonical === null) {
+      if (canonicalCount !== 0) {
+        fail(`${testCase.requestedPath} unexpectedly exposes a canonical URL`);
+      }
+    } else {
+      const canonicalHref = await canonical.getAttribute('href');
+      if (
+        canonicalCount !== 1 ||
+        canonicalHref !== testCase.expectedCanonical
+      ) {
+        fail(
+          `${testCase.requestedPath} canonical mismatch: ${canonicalHref}`
+        );
+      }
+    }
+    const robots = await page
+      .locator('meta[name="robots"]')
+      .getAttribute('content');
+    if (robots !== testCase.expectedRobots) {
+      fail(`${testCase.requestedPath} robots mismatch: ${robots}`);
+    }
+    const title = await page.title();
+    if (title !== testCase.expectedTitle) {
+      fail(`${testCase.requestedPath} title mismatch: ${title}`);
+    }
     await page.waitForTimeout(250);
     assertApiRequestsAllowlisted();
     if (browserErrors.length > 0) {

@@ -85,8 +85,8 @@ resource "aws_cloudfront_function" "spa_rewrite" {
   name    = "${local.name}-spa-rewrite"
   runtime = "cloudfront-js-2.0"
   publish = true
-  comment = "Rewrite extensionless SPA routes to /index.html (S3 behavior only)"
-  code    = file("${path.module}/spa-rewrite.js")
+  comment = "Canonicalize frontend URLs and rewrite SPA routes (S3 behavior only)"
+  code    = replace(file("${path.module}/spa-rewrite.js"), "__CANONICAL_HOST__", var.domain_name)
 }
 
 # --- CloudFront Distribution ---
