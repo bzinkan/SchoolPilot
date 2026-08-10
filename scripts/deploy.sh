@@ -5259,7 +5259,7 @@ if [[ "$DEPLOY_BACKEND" == true ]]; then
       exit 1
     fi
     success "Capacity-acceptance predeploy gate passed; no observation, rehearsal admission, or rehearsal receipt was required or consumed."
-  else
+  elif [[ -n "$REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" ]]; then
     if ! assert_classpilot_rehearsal_network_unchanged "$local_rehearsal_network_sha"; then
       error "The rehearsal baseline drifted before the guarded deployment."
       exit 1

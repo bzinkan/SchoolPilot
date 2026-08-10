@@ -341,7 +341,7 @@ validate_capacity_acceptance_frontend_mode
   it("bypasses only rehearsal bookkeeping while retaining rollback and scaling recovery", () => {
     assert.match(
       deploySource,
-      /if \[\[ "\$CAPACITY_ACCEPTANCE_RELEASE" == true \]\]; then[\s\S]*?no observation, rehearsal admission, or rehearsal receipt was required or consumed\.[\s\S]*?else[\s\S]*?inspect_or_consume_classpilot_rehearsal_receipt consume/
+      /if \[\[ "\$CAPACITY_ACCEPTANCE_RELEASE" == true \]\]; then[\s\S]*?no observation, rehearsal admission, or rehearsal receipt was required or consumed\.[\s\S]*?elif \[\[ -n "\$REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" \]\]; then[\s\S]*?inspect_or_consume_classpilot_rehearsal_receipt consume/
     );
     assert.match(
       deploySource,
@@ -361,7 +361,10 @@ validate_capacity_acceptance_frontend_mode
       'if [[ "$CAPACITY_ACCEPTANCE_RELEASE" == true ]]; then',
       successIndex
     );
-    const branchEnd = deploySource.indexOf("\n  else", successIndex);
+    const branchEnd = deploySource.indexOf(
+      '\n  elif [[ -n "$REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" ]]; then',
+      successIndex
+    );
     assert.ok(branchStart >= 0 && branchEnd > branchStart);
     const capacityBranch = deploySource.slice(branchStart, branchEnd);
 
