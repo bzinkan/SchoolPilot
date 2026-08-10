@@ -5,16 +5,27 @@ reduction. It is deliberately fail-closed. A passing load summary is necessary
 but not sufficient; the corresponding AWS monitor result, rollback evidence,
 deployment checks, snapshots, and cost checks must also pass.
 
-## Current medium decision path: engineering capacity acceptance
+## Medium decision path: terminal and paused
 
-The active medium-capacity decision is a single engineering acceptance run,
-not the historical supervisor certification chain. The frozen application
-baseline is commit `f5759465b5a2ae43d4808c9aa53acc43c3c375b0`; its tooling-only
-successor may change only load/deployment tooling, tests, this runbook, and
-`docs/SCALE_READINESS.md`. Application, frontend, SQL, dependency, Docker, and
-Terraform content must remain byte-identical to that baseline.
+The last authorized engineering-capacity campaign,
+`medium-live-b2918-20260729-r3`, ended before traffic with the terminal outcome
+**not accepted — evidence unavailable**. Its frozen application baseline
+`f5759465b5a2ae43d4808c9aa53acc43c3c375b0` and tooling-only successor
+`cca43f8ab6479c197cd8430446a86b5703aabb2b` remain historical evidence, but
+their changed-file freeze no longer governs new application work.
 
-Deploy the merged successor once with the strict rollback-only tile-plan gate:
+The 2026-08-10 production authentication repair formally supersedes the old
+serving release. Capacity acceptance is paused: no prior campaign, result,
+fixture snapshot, or release binding may be reused. A future acceptance requires
+a separately reviewed authorization that binds the exact post-repair merged
+SHA, image digest, task revisions, fresh immutable IDs and roots, and new traffic
+windows. The historical procedure below is retained for inspection only and
+must not be executed until that reauthorization is merged.
+The committed `scripts/load/capacity-acceptance-authorization.json` remains in
+`paused` state and fail-closes both capacity deployment flags and runner
+`Mode Run`; changing that state requires the same separately reviewed binding.
+
+The historical merged successor used the strict rollback-only tile-plan gate:
 
 ```bash
 bash scripts/deploy.sh production --backend --activate-emergency \
@@ -204,12 +215,13 @@ seed this engineering acceptance.
   are not active admission paths.
 - Use the committed AWS provider `5.100.0` lock file. Never run
   `terraform init -upgrade` during this rollout.
-- Deploy the application only from a clean merged `main`. For this medium
-  decision, use the capacity-release command above and publish the matching
-  frontend without changing the checkout. Backend and frontend bind the
-  identical release SHA; API and worker bind the identical image digest. Do
-  not substitute the historical observation/rehearsal/receipt path, and do not
-  package or upload the ClassPilot extension.
+- Deploy the application only from a clean merged `main`. The historical medium
+  campaign used the capacity-release command above and published the matching
+  frontend without changing the checkout. Do not use that inactive campaign
+  path for ordinary or incident-response releases. Backend and frontend must
+  still bind the identical release SHA; API and worker bind the identical image
+  digest. Do not substitute the historical observation/rehearsal/receipt path,
+  and do not package or upload the ClassPilot extension.
 - Keep RDS and Redis private. Public IPv4 is only for outbound egress from the
   staged ECS API and worker tasks; the ALB remains the only inbound API path.
 - Keep Route 53 DNS, nameservers, CloudFront routing, the HTTPS `/health`
@@ -352,7 +364,7 @@ finally { $PlanHandle.Dispose() }
 Remove-Item -LiteralPath $PlanPath -Force
 ```
 
-## Publish the frozen same-SHA capacity release
+## Historical: publish the frozen same-SHA capacity release
 
 The rollout branch is `codex/aws-cost-reduction-launch-safety`. Before opening
 the PR, run backend tests/type-check/build/SOC 2 checks, frontend lint/API-route

@@ -152,18 +152,13 @@ function baseContext(options: {
   phase?: "collect" | "final";
   productionLockPackages?: string[];
 } = {}) {
-  const router: AdvisoryFixture = {
-    id: ROUTER_ADVISORY,
-    name: "react-router",
-    severity: "high",
-  };
   const brace: AdvisoryFixture = {
     id: BRACE_ADVISORY,
     name: "brace-expansion",
     severity: "high",
   };
-  const production = options.production ?? [router];
-  const full = options.full ?? [router, brace];
+  const production = options.production ?? [];
+  const full = options.full ?? [brace];
   const productionRecordNames = new Set(auditRecordNames(production));
   for (const packageName of options.productionLockPackages ?? []) {
     productionRecordNames.add(packageName);
@@ -176,7 +171,7 @@ function baseContext(options: {
       `node_modules/${name}`,
       {
         version: name === "react-router" || name === "react-router-dom"
-          ? "7.18.0"
+          ? "7.18.2"
           : "1.0.0",
         ...(productionRecordNames.has(name) ||
             name === "react-router" ||
@@ -184,7 +179,7 @@ function baseContext(options: {
           ? {}
           : { dev: true }),
         ...(name === "react-router-dom"
-          ? { dependencies: { "react-router": "7.18.0" } }
+          ? { dependencies: { "react-router": "7.18.2" } }
           : {}),
       },
     ])
@@ -195,43 +190,25 @@ function baseContext(options: {
     packages: {
       "": {
         name: "schoolpilot-app",
-        dependencies: { "react-router-dom": "7.18.0" },
+        dependencies: { "react-router-dom": "7.18.2" },
       },
       ...packageEntries,
     },
   }, null, 2)}\n`;
   const packageLockSha256 = sha256(packageLockText);
-  const disposition = {
-    schemaVersion: "frontend-dependency-disposition-v1",
-    advisoryId: ROUTER_ADVISORY,
-    expiresAtUtc: "2026-08-24T00:00:00Z",
-    packageLockSha256,
-    router: {
-      packageName: "react-router",
-      version: "7.18.0",
-    },
-    routerDom: {
-      packageName: "react-router-dom",
-      version: "7.18.0",
-    },
-    reachabilityEvidenceVersion: "frontend-router-reachability-v1",
-  };
-  const dispositionText = `${JSON.stringify(disposition, null, 2)}\n`;
-  const dispositionSha256 = sha256(dispositionText);
   const phase = options.phase ?? "final";
   const variants = phase === "final"
     ? ["standard", "gopilot", "passpilot"]
     : ["standard"];
   const reachabilityEvidenceSet = variants.map((variant) => ({
-    schemaVersion: "frontend-router-reachability-v1",
+    schemaVersion: "frontend-router-reachability-v2",
     mode: phase === "final" ? "post-build" : "source-only",
     variant,
     status: "passed",
     passed: true,
-    dispositionSha256,
     packageLockSha256,
-    routerVersion: "7.18.0",
-    routerDomVersion: "7.18.0",
+    routerVersion: "7.18.2",
+    routerDomVersion: "7.18.2",
     sourceTreeSha256: "b".repeat(64),
     bundleTreeSha256: phase === "final"
       ? sha256(`bundle-${variant}`)
@@ -252,9 +229,6 @@ function baseContext(options: {
         options.evaluatedAtUtc ?? "2026-07-24T18:00:00.000Z",
     },
     packageLockText,
-    disposition,
-    dispositionText,
-    dispositionSha256,
     reachabilityEvidenceSet,
     phase,
   };
@@ -311,64 +285,52 @@ describe("frontend dependency audit engine", () => {
     }
   });
 
-  it("blocks a production high advisory that lacks the exact disposition", () => {
+  it("blocks every production high advisory without exceptions", () => {
+    const router: AdvisoryFixture = {
+      id: ROUTER_ADVISORY,
+      name: "react-router",
+      severity: "high",
+    };
     const other: AdvisoryFixture = {
       id: OTHER_ADVISORY,
       name: "runtime-package",
       severity: "high",
     };
     const context = baseContext({
-      production: [
-        {
-          id: ROUTER_ADVISORY,
-          name: "react-router",
-          severity: "high",
-        },
-        other,
-      ],
-      full: [
-        {
-          id: ROUTER_ADVISORY,
-          name: "react-router",
-          severity: "high",
-        },
-        other,
-      ],
+      production: [router, other],
+      full: [router, other],
     });
     const report = evaluate(context);
     assert.equal(report.status, "blocked");
-    assert.deepEqual(report.review.blockingAdvisoryIds, [OTHER_ADVISORY]);
-    assert.deepEqual(report.review.acceptedDispositionAdvisoryIds, [
+    assert.deepEqual(report.review.blockingAdvisoryIds, [
+      OTHER_ADVISORY,
       ROUTER_ADVISORY,
+    ]);
+    assert.deepEqual(report.review.blockingVulnerabilityRecordNames, [
+      "react-router",
+      "react-router-dom",
+      "runtime-package",
     ]);
   });
 
-  it("accepts only the exact Router disposition and all final evidence variants", () => {
+  it("records the fixed Router identity and all final evidence variants", () => {
     const report = evaluate();
     assert.equal(report.status, "passed");
-    assert.equal(report.review.acceptedDispositionCount, 1);
-    assert.equal(report.disposition.status, "accepted");
+    assert.equal(report.routerReachability.router.version, "7.18.2");
+    assert.equal(report.routerReachability.routerDom.version, "7.18.2");
     assert.deepEqual(
-      report.disposition.reachabilityEvidence.map(
+      report.routerReachability.evidence.map(
         (evidence: { variant: string }) => evidence.variant
       ),
       ["gopilot", "passpilot", "standard"]
     );
     assert.ok(
-      report.disposition.reachabilityEvidence.every(
+      report.routerReachability.evidence.every(
         (evidence: { bundleTreeSha256: string | null }) =>
           typeof evidence.bundleTreeSha256 === "string"
       )
     );
-    const routerDomRecord = report.production.vulnerabilityRecords.find(
-      (record: { name: string }) => record.name === "react-router-dom"
-    );
-    assert.deepEqual(routerDomRecord?.resolvedAdvisoryIds, [ROUTER_ADVISORY]);
-    assert.equal(routerDomRecord?.reviewStatus, "accepted-disposition");
-    assert.deepEqual(report.production.advisories[0].affectedPackages, [
-      "react-router",
-      "react-router-dom",
-    ]);
+    assert.equal(report.production.advisories.length, 0);
   });
 
   it("resolves string via edges transitively and rejects missing, cyclic, or severity-conflicting graphs", () => {
@@ -427,57 +389,30 @@ describe("frontend dependency audit engine", () => {
     , /npm_audit_via_severity_conflict/);
   });
 
-  it("binds the Router disposition to the exact package, URL, title, and range", () => {
-    const fakeRouterAdvisory: AdvisoryFixture = {
-      id: ROUTER_ADVISORY,
-      name: "runtime-package",
+  it("merges legitimate multi-range records for one GHSA deterministically", () => {
+    const document = auditDocument([{
+      id: BRACE_ADVISORY,
+      name: "brace-expansion",
       severity: "high",
-    };
-    const wrongPackage = evaluate(baseContext({
-      production: [fakeRouterAdvisory],
-      full: [fakeRouterAdvisory],
-    }));
-    assert.equal(wrongPackage.status, "blocked");
-    assert.equal(wrongPackage.review.acceptedDispositionCount, 0);
-    assert.deepEqual(wrongPackage.review.blockingAdvisoryIds, [
-      ROUTER_ADVISORY,
-    ]);
-    assert.deepEqual(wrongPackage.review.blockingVulnerabilityRecordNames, [
-      "runtime-package",
-    ]);
+      range: "<1.1.18",
+    }]);
+    const firstVia = document.vulnerabilities["brace-expansion"].via[0];
+    document.vulnerabilities["brace-expansion"].via.push({
+      ...firstVia,
+      source: 1200001,
+      range: ">=4.0.0 <5.0.9",
+    });
 
-    const wrongUrlContext = baseContext();
-    for (const audit of [
-      wrongUrlContext.productionAudit,
-      wrongUrlContext.fullAudit,
-    ]) {
-      const advisory = audit.advisories.find(
-        (item: { advisoryId: string }) =>
-          item.advisoryId === ROUTER_ADVISORY
-      );
-      advisory.url =
-        `https://example.invalid/advisories/${ROUTER_ADVISORY}`;
-    }
-    const wrongUrl = evaluate(wrongUrlContext);
-    assert.equal(wrongUrl.status, "blocked");
-    assert.equal(wrongUrl.review.acceptedDispositionCount, 0);
-
-    for (const [field, value] of [
-      ["title", "Different advisory title"],
-      ["vulnerableRange", ">=7.12.0 <9.0.0"],
-    ] as const) {
-      const context = baseContext();
-      for (const audit of [context.productionAudit, context.fullAudit]) {
-        const advisory = audit.advisories.find(
-          (item: { advisoryId: string }) =>
-            item.advisoryId === ROUTER_ADVISORY
-        );
-        advisory[field] = value;
-      }
-      const report = evaluate(context);
-      assert.equal(report.status, "blocked");
-      assert.equal(report.review.acceptedDispositionCount, 0);
-    }
+    const parsed = parseNpmAuditV2Result({
+      scope: "full",
+      exitCode: 1,
+      stdout: JSON.stringify(document),
+    });
+    assert.equal(parsed.advisories.length, 1);
+    assert.deepEqual(parsed.advisories[0].vulnerableRanges, [
+      "<1.1.18",
+      ">=4.0.0 <5.0.9",
+    ]);
   });
 
   it("fails when successive audit snapshots hide a production-scoped full-tree finding", () => {
@@ -487,14 +422,7 @@ describe("frontend dependency audit engine", () => {
       severity: "high",
     };
     const context = baseContext({
-      full: [
-        {
-          id: ROUTER_ADVISORY,
-          name: "react-router",
-          severity: "high",
-        },
-        runtimeHigh,
-      ],
+      full: [runtimeHigh],
       productionLockPackages: ["runtime-package"],
     });
     assert.throws(
@@ -503,35 +431,16 @@ describe("frontend dependency audit engine", () => {
     );
   });
 
-  it("rejects disposition tampering, expiry, version drift, and lock drift", () => {
-    const mutateCases = [
-      (context: ReturnType<typeof baseContext>) => {
-        context.disposition.advisoryId = OTHER_ADVISORY;
-      },
-      (context: ReturnType<typeof baseContext>) => {
-        context.metadata.evaluatedAtUtc = "2026-08-24T00:00:00.000Z";
-      },
-      (context: ReturnType<typeof baseContext>) => {
-        context.disposition.router.version = "7.17.0";
-      },
-      (context: ReturnType<typeof baseContext>) => {
-        context.disposition.packageLockSha256 = "c".repeat(64);
-      },
-      (context: ReturnType<typeof baseContext>) => {
-        context.packageLockText = context.packageLockText.replace(
-          '"version": "7.18.0"',
-          '"version": "7.17.0"'
-        );
-      },
-    ];
-    for (const mutate of mutateCases) {
-      const context = baseContext();
-      mutate(context);
-      assert.throws(
-        () => evaluate(context),
-        /frontend_dependency_disposition_invalid/
-      );
-    }
+  it("rejects fixed Router lock drift", () => {
+    const context = baseContext();
+    context.packageLockText = context.packageLockText.replaceAll(
+      '"7.18.2"',
+      '"7.18.1"'
+    );
+    assert.throws(
+      () => evaluate(context),
+      /frontend_router_reachability_evidence_invalid/
+    );
   });
 
   it("rejects missing, duplicate, failed, or drifted reachability evidence", () => {
@@ -556,7 +465,11 @@ describe("frontend dependency audit engine", () => {
         context.reachabilityEvidenceSet[0].bundleTreeSha256 = null;
       },
       (context: ReturnType<typeof baseContext>) => {
-        context.reachabilityEvidenceSet[0].dispositionSha256 = "f".repeat(64);
+        context.reachabilityEvidenceSet[0].schemaVersion =
+          "frontend-router-reachability-v1";
+      },
+      (context: ReturnType<typeof baseContext>) => {
+        context.reachabilityEvidenceSet[0].routerVersion = "7.18.1";
       },
     ];
     for (const mutate of cases) {
@@ -576,7 +489,7 @@ describe("frontend dependency audit engine", () => {
     const report = evaluate(context);
     assert.equal(report.status, "passed");
     assert.deepEqual(
-      report.disposition.reachabilityEvidence.map(
+      report.routerReachability.evidence.map(
         (evidence: { variant: string }) => evidence.variant
       ),
       ["gopilot", "passpilot", "standard"]
@@ -589,13 +502,13 @@ describe("frontend dependency audit engine", () => {
     assert.equal(report.phase, "collect");
     assert.equal(report.status, "passed");
     assert.deepEqual(
-      report.disposition.reachabilityEvidence.map(
+      report.routerReachability.evidence.map(
         (evidence: { variant: string }) => evidence.variant
       ),
       ["standard"]
     );
     assert.equal(
-      report.disposition.reachabilityEvidence[0].bundleTreeSha256,
+      report.routerReachability.evidence[0].bundleTreeSha256,
       null
     );
   });
@@ -741,16 +654,16 @@ describe("frontend dependency audit engine", () => {
 
   it("produces deterministic artifacts without unreviewed audit fields", () => {
     const secret = "tenant-private-secret";
-    const router: AdvisoryFixture = {
-      id: ROUTER_ADVISORY,
-      name: "react-router",
+    const runtime: AdvisoryFixture = {
+      id: OTHER_ADVISORY,
+      name: "runtime-package",
       severity: "high",
       secret,
     };
     const context = baseContext({
-      production: [router],
+      production: [runtime],
       full: [
-        router,
+        runtime,
         {
           id: BRACE_ADVISORY,
           name: "brace-expansion",
@@ -768,7 +681,7 @@ describe("frontend dependency audit engine", () => {
     assert.equal(firstJson.includes(secret), false);
     assert.equal(firstJson.includes("privateContext"), false);
     assert.equal(markdown.includes(secret), false);
-    assert.match(markdown, /accepted-disposition/);
+    assert.match(markdown, /blocking-production/);
     assert.match(markdown, /reported-development/);
   });
 
@@ -780,32 +693,20 @@ describe("frontend dependency audit engine", () => {
       writeFileSync(join(root, "package-lock.json"), context.packageLockText);
       writeFileSync(
         join(root, "production.json"),
-        JSON.stringify(auditDocument([{
-          id: ROUTER_ADVISORY,
-          name: "react-router",
-          severity: "high",
-        }]))
+        JSON.stringify(auditDocument([]))
       );
       writeFileSync(
         join(root, "full.json"),
-        JSON.stringify(auditDocument([
-          {
-            id: ROUTER_ADVISORY,
-            name: "react-router",
-            severity: "high",
-          },
-          {
-            id: BRACE_ADVISORY,
-            name: "brace-expansion",
-            severity: "high",
-          },
-        ]))
+        JSON.stringify(auditDocument([{
+          id: BRACE_ADVISORY,
+          name: "brace-expansion",
+          severity: "high",
+        }]))
       );
       writeFileSync(
         join(root, "metadata.json"),
         JSON.stringify(context.metadata)
       );
-      writeFileSync(join(root, "disposition.json"), context.dispositionText);
       const evidencePaths = context.reachabilityEvidenceSet.map(
         (evidence: { variant: string }, index: number) => {
           const path = join(root, `reachability-${index}.json`);
@@ -822,8 +723,6 @@ describe("frontend dependency audit engine", () => {
         script,
         "--project-root",
         root,
-        "--disposition",
-        join(root, "disposition.json"),
         ...evidencePaths.flatMap((path) => [
           "--reachability-evidence",
           path,
@@ -835,7 +734,7 @@ describe("frontend dependency audit engine", () => {
         "--production-json",
         join(root, "production.json"),
         "--production-exit-code",
-        "1",
+        "0",
         "--full-json",
         join(root, "full.json"),
         "--full-exit-code",
@@ -852,7 +751,7 @@ describe("frontend dependency audit engine", () => {
       assert.equal(result.status, 0, result.stderr);
       assert.equal(result.stdout, "passed\n");
       const report = JSON.parse(readFileSync(jsonOutput, "utf8"));
-      assert.equal(report.schemaVersion, "frontend-dependency-audit-v1");
+      assert.equal(report.schemaVersion, "frontend-dependency-audit-v2");
       assert.equal(report.status, "passed");
       assert.match(
         readFileSync(markdownOutput, "utf8"),

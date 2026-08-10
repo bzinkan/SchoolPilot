@@ -23,7 +23,15 @@ function Assert-Throws {
 
 $repositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $runnerPath = Join-Path $repositoryRoot "scripts\load\start-classpilot-capacity-acceptance.ps1"
+$authorizationPath = Join-Path $repositoryRoot "scripts\load\capacity-acceptance-authorization.json"
 Assert-Condition (Test-Path -LiteralPath $runnerPath -PathType Leaf) "The capacity acceptance runner must exist."
+Assert-Condition (Test-Path -LiteralPath $authorizationPath -PathType Leaf) `
+    "The committed capacity acceptance authorization must exist."
+Assert-Throws {
+    & $runnerPath -Mode Run -ConfigPath (Join-Path $repositoryRoot "missing-capacity-config.json") `
+        2>$null | Out-Null
+} "Capacity acceptance is paused" `
+    "Runner Run must reject the committed pause before reading even an invalid config path."
 $source = Get-Content -LiteralPath $runnerPath -Raw
 $tokens = $null
 $parseErrors = $null
@@ -51,6 +59,7 @@ foreach ($definition in $functionDefinitions) {
     $functions[$definition.Name] = $definition
 }
 foreach ($requiredFunction in @(
+    "Read-CapacityAcceptanceAuthorization", "Assert-CapacityAcceptanceRunAuthorized",
     "Read-CapacityConfiguration", "Assert-FixtureAuthority", "Assert-RollbackCompatibility",
     "Get-ProductionPosture", "Assert-EngineeringWafContract", "Assert-HeldCapacityPosture",
     "Set-SixApiCapacity", "Restore-Scaling", "Get-RollbackProductionPosture",
@@ -82,6 +91,23 @@ foreach ($requiredFunction in @(
 )) {
     Assert-Condition $functions.ContainsKey($requiredFunction) "Missing required function $requiredFunction."
 }
+
+$runAuthorizationIndex = $source.LastIndexOf('if ($Mode -ceq "Run")')
+$runAuthorizationCallIndex = $source.IndexOf(
+    "Assert-CapacityAcceptanceRunAuthorized",
+    $runAuthorizationIndex
+)
+$toolInitializationIndex = $source.LastIndexOf("Initialize-ToolPaths")
+$configurationReadIndex = $source.LastIndexOf('$configuration = Read-CapacityConfiguration')
+$validateBranchIndex = $source.LastIndexOf('if ($Mode -ceq "Validate")')
+$capacityRunIndex = $source.LastIndexOf('Invoke-CapacityRunUnderMutex $configuration')
+Assert-Condition ($runAuthorizationIndex -ge 0 -and
+    $runAuthorizationCallIndex -gt $runAuthorizationIndex -and
+    $toolInitializationIndex -gt $runAuthorizationCallIndex -and
+    $configurationReadIndex -gt $toolInitializationIndex -and
+    $validateBranchIndex -gt $configurationReadIndex -and
+    $capacityRunIndex -gt $validateBranchIndex) `
+    "Run must fail on committed authorization before tool, config, provider, evidence, or traffic work while Validate bypasses the mutating guard."
 
 Assert-Condition ($source -match '"500"\s*=\s*\[ordered\]@\{\s*devices\s*=\s*510;\s*durationSeconds\s*=\s*1800;\s*targetsPerClass\s*=\s*25') `
     "Waf/500 must remain exactly 510 devices, 1,800 seconds, and 25 targets per class."
@@ -422,6 +448,7 @@ Assert-Condition ($source -notmatch 'DatabaseInsightsMode\s*=\s*"advanced"|query
 # Load a small, side-effect-free subset of the runner functions for behavioral checks.
 foreach ($name in @(
     "Get-Value", "Assert-ExactKeys", "Get-RequiredString", "Get-UtcTimestamp", "Read-JsonFile",
+    "Read-CapacityAcceptanceAuthorization", "Assert-CapacityAcceptanceRunAuthorized",
     "Assert-FixtureVerification",
     "Get-StringSha256", "Get-CanonicalSha256", "Assert-Sha256",
     "Resolve-ExternalPath", "Get-CapacityLoadGatesRoot", "Assert-StrictChildPath",
@@ -458,6 +485,11 @@ foreach ($name in @(
 )) {
     Invoke-Expression $functions[$name].Extent.Text
 }
+$script:CapacityAcceptanceAuthorizationPath = $authorizationPath
+Assert-Throws {
+    Assert-CapacityAcceptanceRunAuthorized
+} "Capacity acceptance is paused" `
+    "The committed paused authorization must reject runner Run."
 
 $tempRoot = Join-Path ([IO.Path]::GetTempPath()) (
     "schoolpilot-capacity-test-{0}" -f [Guid]::NewGuid().ToString("N")

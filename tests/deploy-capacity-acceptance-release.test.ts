@@ -2,6 +2,9 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+const scriptsRoot = fileURLToPath(new URL("../scripts/", import.meta.url));
 
 const deploySource = readFileSync(
   new URL("../scripts/deploy.sh", import.meta.url),
@@ -26,6 +29,7 @@ function bashExecutable(): string {
 
 function runDeployHelper(body: string) {
   return spawnSync(bashExecutable(), ["-s"], {
+    cwd: scriptsRoot,
     encoding: "utf8",
     input: `
 ${deployLibrarySource}
@@ -40,6 +44,7 @@ ${body}
 
 function runArgumentParser(args: string[]) {
   return spawnSync(bashExecutable(), ["-s", "--", ...args], {
+    cwd: scriptsRoot,
     encoding: "utf8",
     input: `${argumentParserSource}
 printf '%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n' \\
@@ -50,6 +55,13 @@ printf '%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n' \\
   "$DEPLOY_BACKEND" \\
   "$DEPLOY_FRONTEND"
 `,
+  });
+}
+
+function runDeployScript(args: string[]) {
+  return spawnSync(bashExecutable(), ["deploy.sh", ...args], {
+    cwd: scriptsRoot,
+    encoding: "utf8",
   });
 }
 
@@ -81,7 +93,7 @@ describe("capacity-acceptance guarded release", () => {
     );
     assert.match(
       deploySource,
-      /--capacity-acceptance-release is allowed only with production --backend --activate-emergency/
+      /historical --capacity-acceptance-release shape requires production --backend --activate-emergency/
     );
 
     const parsed = runArgumentParser([
@@ -94,7 +106,59 @@ describe("capacity-acceptance guarded release", () => {
     assert.equal(parsed.stdout.trim(), "true\ttrue\tfalse\tfalse\ttrue\tfalse");
   });
 
-  it("accepts only a production emergency backend deployment without rehearsal artifacts", () => {
+  it("blocks both capacity deployment flags while paused and leaves ordinary deployment admission unchanged", () => {
+    const backend = runDeployScript([
+      "production",
+      "--backend",
+      "--activate-emergency",
+      "--capacity-acceptance-release",
+    ]);
+    assert.notEqual(backend.status, 0);
+    assert.match(`${backend.stdout}${backend.stderr}`, /Capacity acceptance is paused/);
+
+    const frontend = runDeployScript([
+      "production",
+      "--frontend",
+      "--capacity-acceptance-frontend-sha",
+      "a".repeat(40),
+    ]);
+    assert.notEqual(frontend.status, 0);
+    assert.match(`${frontend.stdout}${frontend.stderr}`, /Capacity acceptance is paused/);
+
+    const ordinary = runDeployHelper(`
+CAPACITY_ACCEPTANCE_RELEASE=false
+CAPACITY_ACCEPTANCE_FRONTEND_SHA=""
+RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE=false
+RUN_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=false
+RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION=false
+REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=""
+EXPECTED_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL_SHA256=""
+CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD=""
+ENV=production
+DEPLOY_BACKEND=true
+DEPLOY_FRONTEND=true
+ACTIVATE_EMERGENCY=false
+SAME_IMAGE_NETWORKING_STAGE=""
+SKIP_WAIT=false
+IMAGE_TAG=""
+validate_capacity_acceptance_authorization_mode
+validate_capacity_acceptance_frontend_mode
+validate_retired_certification_admission_mode
+validate_classpilot_tile_auth_plan_gate_mode
+`);
+    assert.equal(ordinary.status, 0, ordinary.stderr);
+
+    const pauseIndex = deploySource.indexOf(
+      "if ! validate_capacity_acceptance_authorization_mode"
+    );
+    const credentialIndex = deploySource.indexOf(
+      "aws sts get-caller-identity",
+      pauseIndex
+    );
+    assert.ok(pauseIndex >= 0 && credentialIndex > pauseIndex);
+  });
+
+  it("retains the historical backend shape behind the committed pause", () => {
     const accepted = runDeployHelper(validCapacityMode());
     assert.equal(accepted.status, 0, accepted.stderr);
 
@@ -193,7 +257,7 @@ assert_capacity_acceptance_network_unchanged
     assert.match(drifted.stderr, /network configuration drifted/);
   });
 
-  it("binds the matching frontend to the exact release SHA and waits for CloudFront completion", () => {
+  it("retains the historical frontend binding behind the committed pause", () => {
     const sha = "a".repeat(40);
     const accepted = runDeployHelper(`
 CAPACITY_ACCEPTANCE_FRONTEND_SHA="${sha}"
