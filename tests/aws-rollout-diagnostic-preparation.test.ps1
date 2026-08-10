@@ -1214,6 +1214,32 @@ foreach ($required in @(
     'CREATE_SUSPENDED','PROC_THREAD_ATTRIBUTE_HANDLE_LIST','PROC_THREAD_ATTRIBUTE_JOB_LIST',
     'CreateSuspendedProcessInJob','ResumeThread'
 )) { Assert-Condition $supervisorText.Contains($required) "Preparation supervisor is missing invariant: $required" }
+$emptyFileFunction = [regex]::Match(
+    $supervisorText,
+    '(?s)function New-PrivateEmptyFile \{.*?\r?\n\}'
+).Value
+Assert-Condition (
+    $emptyFileFunction.Contains('Write-PrivateBytes $Path ([byte[]]::new(0)) -Immutable') -and
+    -not $emptyFileFunction.Contains('[IO.FileStream]::new')
+) 'Empty private control files must receive their final ACL before atomic publication.'
+$privateBytesFunction = [regex]::Match(
+    $supervisorText,
+    '(?s)function Write-PrivateBytes \{.*?\r?\n\}'
+).Value
+$temporaryAclIndex = $privateBytesFunction.IndexOf('Set-PrivateAcl $temporary', [StringComparison]::Ordinal)
+$atomicPublishIndex = $privateBytesFunction.IndexOf(
+    'Publish-PrivateFileAtomicWithRetry $temporary $Path',
+    [StringComparison]::Ordinal
+)
+$finalAclIndex = $privateBytesFunction.IndexOf(
+    'Assert-PrivateAcl $Path "private preparation bytes"',
+    [StringComparison]::Ordinal
+)
+Assert-Condition (
+    $temporaryAclIndex -ge 0 -and
+    $atomicPublishIndex -gt $temporaryAclIndex -and
+    $finalAclIndex -gt $atomicPublishIndex
+) 'Private bytes must be ACL-normalized before atomic publication and verified afterward.'
 Assert-Condition (-not $supervisorText.Contains('Start-Process -FilePath $pwsh')) `
     'Preparation workers must never execute before atomic Job admission.'
 Assert-Condition (-not $workerText.Contains('05:48')) 'Preparation errors must not retain the historical hard-coded window.'

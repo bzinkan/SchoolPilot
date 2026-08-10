@@ -15,11 +15,8 @@ import { pathToFileURL } from 'node:url';
 import { parse } from '@babel/parser';
 
 export const ROUTER_REACHABILITY_EVIDENCE_VERSION =
-  'frontend-router-reachability-v1';
-export const ROUTER_DISPOSITION_SCHEMA_VERSION =
-  'frontend-dependency-disposition-v1';
-export const ROUTER_ADVISORY_ID = 'GHSA-qwww-vcr4-c8h2';
-export const REQUIRED_ROUTER_VERSION = '7.18.0';
+  'frontend-router-reachability-v2';
+export const REQUIRED_ROUTER_VERSION = '7.18.2';
 
 const SOURCE_EXTENSIONS = new Set([
   '.js',
@@ -342,7 +339,12 @@ function isExcludedProjectDirectory(relativePath) {
   if (PROJECT_EXCLUDED_DIRECTORY_NAMES.has(topLevelDirectory)) {
     return true;
   }
-  return /^android-(?:gopilot|passpilot)\/app\/build(?:\/|$)/.test(normalized);
+  return (
+    /^android-(?:gopilot|passpilot)\/app\/build(?:\/|$)/.test(normalized) ||
+    /^android-(?:gopilot|passpilot)\/app\/src\/main\/assets\/public(?:\/|$)/.test(
+      normalized
+    )
+  );
 }
 
 async function collectProjectSourceFiles(projectRoot) {
@@ -400,10 +402,7 @@ async function hashTree(files) {
 function validatePackageIdentity({
   packageJson,
   packageLock,
-  disposition,
   packageLockSha256,
-  dispositionSha256,
-  now,
   violations,
 }) {
   const packageRouterDom = packageJson?.dependencies?.['react-router-dom'];
@@ -427,49 +426,7 @@ function validatePackageIdentity({
     violations.push(violation('identity.lock-router-version'));
   }
 
-  if (disposition?.schemaVersion !== ROUTER_DISPOSITION_SCHEMA_VERSION) {
-    violations.push(violation('identity.disposition-schema'));
-  }
-  if (disposition?.advisoryId !== ROUTER_ADVISORY_ID) {
-    violations.push(violation('identity.disposition-advisory'));
-  }
-  if (
-    disposition?.reachabilityEvidenceVersion !==
-    ROUTER_REACHABILITY_EVIDENCE_VERSION
-  ) {
-    violations.push(violation('identity.disposition-evidence-version'));
-  }
-  if (disposition?.packageLockSha256 !== packageLockSha256) {
-    violations.push(violation('identity.disposition-lock-hash'));
-  }
-  if (
-    disposition?.router?.packageName !== 'react-router' ||
-    disposition?.router?.version !== REQUIRED_ROUTER_VERSION
-  ) {
-    violations.push(violation('identity.disposition-router-version'));
-  }
-  if (
-    disposition?.routerDom?.packageName !== 'react-router-dom' ||
-    disposition?.routerDom?.version !== REQUIRED_ROUTER_VERSION
-  ) {
-    violations.push(violation('identity.disposition-router-dom-version'));
-  }
-
-  const expiresAtUtc = disposition?.expiresAtUtc;
-  if (
-    typeof expiresAtUtc !== 'string' ||
-    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/.test(
-      expiresAtUtc
-    ) ||
-    !Number.isFinite(Date.parse(expiresAtUtc))
-  ) {
-    violations.push(violation('identity.disposition-expiration'));
-  } else if (now.getTime() >= Date.parse(expiresAtUtc)) {
-    violations.push(violation('identity.disposition-expired'));
-  }
-
   return {
-    dispositionSha256,
     packageLockSha256,
     routerDomVersion:
       typeof lockRouterDom?.version === 'string' ? lockRouterDom.version : null,
@@ -997,12 +954,10 @@ function sortViolations(violations) {
 export async function evaluateRouterReachability({
   packageJsonPath,
   packageLockPath,
-  dispositionPath,
   sourceRoot,
   distRoot = null,
   mode,
   variant,
-  now = new Date(),
 }) {
   const violations = [];
   if (!VALID_MODES.has(mode)) violations.push(violation('input.mode-invalid'));
@@ -1024,25 +979,13 @@ export async function evaluateRouterReachability({
     'input.package-lock-missing',
     violations
   );
-  const dispositionResult = await readJsonFile(
-    dispositionPath,
-    'input.disposition-missing',
-    violations
-  );
-
   const packageLockSha256 = lockResult.bytes
     ? sha256(lockResult.bytes)
-    : null;
-  const dispositionSha256 = dispositionResult.bytes
-    ? sha256(dispositionResult.bytes)
     : null;
   const identity = validatePackageIdentity({
     packageJson: packageResult.value,
     packageLock: lockResult.value,
-    disposition: dispositionResult.value,
     packageLockSha256,
-    dispositionSha256,
-    now,
     violations,
   });
 
@@ -1060,7 +1003,6 @@ export async function evaluateRouterReachability({
     variant,
     status: passed ? 'passed' : 'failed',
     passed,
-    dispositionSha256: identity.dispositionSha256,
     packageLockSha256: identity.packageLockSha256,
     routerVersion: identity.routerVersion,
     routerDomVersion: identity.routerDomVersion,
@@ -1089,7 +1031,6 @@ function parseArgs(argv) {
   const required = [
     'package-json',
     'package-lock',
-    'disposition',
     'source-root',
     'mode',
     'variant',
@@ -1108,7 +1049,6 @@ function parseArgs(argv) {
   return {
     packageJsonPath: values.get('package-json'),
     packageLockPath: values.get('package-lock'),
-    dispositionPath: values.get('disposition'),
     sourceRoot: values.get('source-root'),
     mode: values.get('mode'),
     variant: values.get('variant'),
@@ -1132,7 +1072,7 @@ async function writeEvidence(outputPath, evidence) {
   }
 }
 
-export async function runRouterReachabilityCli(argv, { now = new Date() } = {}) {
+export async function runRouterReachabilityCli(argv) {
   let parsed;
   try {
     parsed = parseArgs(argv);
@@ -1145,7 +1085,6 @@ export async function runRouterReachabilityCli(argv, { now = new Date() } = {}) 
   try {
     evidence = await evaluateRouterReachability({
       ...parsed,
-      now,
     });
   } catch {
     evidence = {
@@ -1154,7 +1093,6 @@ export async function runRouterReachabilityCli(argv, { now = new Date() } = {}) 
       variant: parsed.variant,
       status: 'failed',
       passed: false,
-      dispositionSha256: null,
       packageLockSha256: null,
       routerVersion: null,
       routerDomVersion: null,

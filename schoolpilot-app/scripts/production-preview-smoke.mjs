@@ -27,6 +27,7 @@ export const personas = {
   classpilotTeacher: {
     schoolId: 'preview-classpilot-school',
     auth: {
+      activeSchoolId: 'preview-classpilot-school',
       user: {
         id: 'preview-classpilot-teacher',
         email: 'preview-classpilot-teacher@example.invalid',
@@ -35,6 +36,14 @@ export const personas = {
         isSuperAdmin: false,
       },
       memberships: [
+        {
+          id: 'preview-alternate-membership',
+          schoolId: 'preview-alternate-school',
+          schoolName: 'Preview Alternate School',
+          schoolSlug: 'preview-alternate-school',
+          schoolTimezone: 'America/Chicago',
+          role: 'teacher',
+        },
         {
           id: 'preview-classpilot-membership',
           schoolId: 'preview-classpilot-school',
@@ -84,6 +93,19 @@ export const personas = {
   },
 };
 
+// Token handoff tests isolate authentication ordering from tenant switching.
+// The multi-school persona above remains dedicated to stale-school recovery.
+const classpilotLoginPersona = {
+  ...personas.classpilotTeacher,
+  auth: {
+    ...personas.classpilotTeacher.auth,
+    memberships: personas.classpilotTeacher.auth.memberships.filter(
+      (membership) =>
+        membership.schoolId === personas.classpilotTeacher.schoolId
+    ),
+  },
+};
+
 async function assertClassPilotDashboard(page) {
   await page
     .getByRole('heading', { name: 'ClassPilot', exact: true })
@@ -99,9 +121,10 @@ const cases = [
   {
     requestedPath: '/classpilot',
     expectedPath: '/classpilot',
+    initialSchoolId: 'preview-deleted-school',
     persona: personas.classpilotTeacher,
     assertion: assertClassPilotDashboard,
-    surface: 'licensed teacher dashboard',
+    surface: 'licensed teacher dashboard with stale-school recovery',
   },
   {
     requestedPath: '/passpilot/kiosk',
@@ -260,7 +283,12 @@ function dateInTimezone(date, timezone) {
   }).format(date);
 }
 
-function validateApiRequestEnvelope(testCase, request, requestUrl) {
+function validateApiRequestEnvelope(
+  testCase,
+  request,
+  requestUrl,
+  expectedSchoolId = testCase.persona.schoolId
+) {
   if (requestUrl.origin !== baseUrl) {
     apiFailure('preview_api_origin_invalid');
   }
@@ -269,7 +297,6 @@ function validateApiRequestEnvelope(testCase, request, requestUrl) {
   }
 
   const actualSchoolId = requestHeaders(request)['x-school-id'];
-  const expectedSchoolId = testCase.persona.schoolId;
   if (
     (expectedSchoolId === null && actualSchoolId !== undefined) ||
     (expectedSchoolId !== null && actualSchoolId !== expectedSchoolId)
@@ -365,12 +392,15 @@ export function responseBodyFor(
     apiFailure('preview_api_request_not_allowlisted');
   }
   if (pathname === '/api/admin/attendance') {
+    const activeMembership = testCase.persona.auth.memberships.find(
+      (membership) => membership.schoolId === testCase.persona.schoolId
+    );
     assertExactQuery(requestUrl, [
       [
         'date',
         dateInTimezone(
           now,
-          testCase.persona.auth.memberships[0].schoolTimezone
+          activeMembership?.schoolTimezone || 'America/New_York'
         ),
       ],
     ]);
@@ -391,10 +421,11 @@ async function verifyCase(browser, testCase) {
     } else {
       window.localStorage.removeItem('sp_activeSchoolId');
     }
-  }, testCase.persona.schoolId);
+  }, testCase.initialSchoolId ?? testCase.persona.schoolId);
   const page = await context.newPage();
   const browserErrors = [];
   let apiFailureCode = null;
+  let authBootstrapRequests = 0;
 
   const assertApiRequestsAllowlisted = () => {
     if (apiFailureCode) {
@@ -432,7 +463,25 @@ async function verifyCase(browser, testCase) {
   });
   await page.route('**/api/**', async (route) => {
     try {
-      const body = responseBodyFor(testCase, route.request());
+      const request = route.request();
+      const requestUrl = new URL(request.url());
+      let body;
+      if (
+        testCase.initialSchoolId !== undefined &&
+        requestUrl.pathname === '/api/auth/me'
+      ) {
+        authBootstrapRequests += 1;
+        validateApiRequestEnvelope(
+          testCase,
+          request,
+          requestUrl,
+          testCase.initialSchoolId
+        );
+        assertExactQuery(requestUrl, []);
+        body = testCase.persona.auth;
+      } else {
+        body = responseBodyFor(testCase, request);
+      }
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -495,6 +544,19 @@ async function verifyCase(browser, testCase) {
     await testCase.assertion(page);
     await page.waitForTimeout(250);
     assertApiRequestsAllowlisted();
+    if (testCase.initialSchoolId !== undefined) {
+      const repairedSchoolId = await page.evaluate(() =>
+        window.localStorage.getItem('sp_activeSchoolId')
+      );
+      if (repairedSchoolId !== testCase.persona.schoolId) {
+        fail(`${testCase.requestedPath} did not repair its stale school selection`);
+      }
+      if (authBootstrapRequests !== 1) {
+        fail(
+          `${testCase.requestedPath} bootstrapped auth ${authBootstrapRequests} times`
+        );
+      }
+    }
     if (browserErrors.length > 0) {
       fail(
         `${testCase.requestedPath} emitted browser errors: ` +
@@ -504,6 +566,324 @@ async function verifyCase(browser, testCase) {
     process.stdout.write(
       `preview_smoke_passed ${testCase.requestedPath} ` +
         `${testCase.surface}\n`
+    );
+  } finally {
+    await context.close();
+  }
+}
+
+async function verifyPasswordLoginHandoff(browser) {
+  const context = await browser.newContext({
+    baseURL: baseUrl,
+    serviceWorkers: 'block',
+  });
+  await context.addInitScript(() => {
+    window.localStorage.removeItem('sp_activeSchoolId');
+  });
+
+  const page = await context.newPage();
+  const persona = classpilotLoginPersona;
+  const freshToken = 'preview-fresh-login-token';
+  let loginComplete = false;
+  let loginRequests = 0;
+  let initialMeRequests = 0;
+  let postLoginMeRequests = 0;
+  let protectedAuthorizationFailures = 0;
+  let dashboardRequests = 0;
+
+  await page.routeWebSocket('**/ws', (webSocket) => {
+    webSocket.onMessage((message) => {
+      try {
+        if (JSON.parse(String(message)).type === 'auth') {
+          webSocket.send(JSON.stringify({ type: 'auth-success' }));
+        }
+      } catch {
+        // Ignore heartbeat/non-JSON messages in this focused auth test.
+      }
+    });
+  });
+  await page.route('**/api/**', async (route) => {
+    const request = route.request();
+    const requestUrl = new URL(request.url());
+    const authorization = requestHeaders(request).authorization;
+
+    if (requestUrl.pathname === '/api/auth/login') {
+      loginRequests += 1;
+      loginComplete = true;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          token: freshToken,
+          user: persona.auth.user,
+          memberships: persona.auth.memberships,
+        }),
+      });
+      return;
+    }
+
+    if (requestUrl.pathname === '/api/auth/me') {
+      if (!loginComplete) {
+        initialMeRequests += 1;
+        await route.fulfill({
+          status: 401,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'Authentication required' }),
+        });
+        return;
+      }
+
+      postLoginMeRequests += 1;
+      if (authorization !== `Bearer ${freshToken}`) {
+        protectedAuthorizationFailures += 1;
+        await route.fulfill({
+          status: 401,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'Authentication required' }),
+        });
+        return;
+      }
+
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ ...persona.auth, token: freshToken }),
+      });
+      return;
+    }
+
+    dashboardRequests += 1;
+    if (authorization !== `Bearer ${freshToken}`) {
+      protectedAuthorizationFailures += 1;
+      await route.fulfill({
+        status: 401,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'Authentication required' }),
+      });
+      return;
+    }
+
+    try {
+      const body = responseBodyFor(
+        { requestedPath: '/classpilot', persona },
+        request
+      );
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(body),
+      });
+    } catch {
+      await route.abort('blockedbyclient');
+    }
+  });
+  await page.route('https://fonts.googleapis.com/**', (route) =>
+    route.fulfill({ status: 200, contentType: 'text/css', body: '' })
+  );
+  await page.route('https://fonts.gstatic.com/**', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/octet-stream',
+      body: '',
+    })
+  );
+
+  try {
+    await page.goto('/login', {
+      waitUntil: 'networkidle',
+      timeout: timeoutMilliseconds,
+    });
+    await page
+      .getByRole('button', { name: 'Sign in with email instead', exact: true })
+      .click();
+    await page.getByPlaceholder('you@school.edu').fill('teacher@example.invalid');
+    await page.getByPlaceholder('Enter your password').fill('PreviewPassword1!');
+    await page
+      .getByRole('button', { name: 'Sign In with Email', exact: true })
+      .click();
+
+    await page.waitForURL((url) => url.pathname === '/classpilot', {
+      timeout: timeoutMilliseconds,
+    });
+    await assertClassPilotDashboard(page);
+    await page.waitForTimeout(250);
+
+    if (loginRequests !== 1) fail(`password login requested ${loginRequests} times`);
+    if (initialMeRequests !== 1) {
+      fail(`initial auth bootstrap requested ${initialMeRequests} times`);
+    }
+    if (postLoginMeRequests !== 1) {
+      fail(`post-login auth bootstrap requested ${postLoginMeRequests} times`);
+    }
+    if (protectedAuthorizationFailures !== 0) {
+      fail(
+        `password login exposed ${protectedAuthorizationFailures} protected requests before JWT publication`
+      );
+    }
+    if (dashboardRequests === 0) fail('password login mounted no dashboard requests');
+
+    process.stdout.write(
+      'preview_smoke_passed /login atomic password JWT handoff\n'
+    );
+  } finally {
+    await context.close();
+  }
+}
+
+async function verifyOAuthCodeHandoff(browser) {
+  const context = await browser.newContext({
+    baseURL: baseUrl,
+    serviceWorkers: 'block',
+  });
+  await context.addInitScript(() => {
+    window.localStorage.removeItem('sp_activeSchoolId');
+  });
+
+  const page = await context.newPage();
+  const persona = classpilotLoginPersona;
+  const freshToken = 'preview-fresh-oauth-token';
+  let csrfBootstrapRequests = 0;
+  let exchangeRequests = 0;
+  let initialMeRequests = 0;
+  let postExchangeMeRequests = 0;
+  let protectedAuthorizationFailures = 0;
+  let dashboardRequests = 0;
+
+  await page.routeWebSocket('**/ws', (webSocket) => {
+    webSocket.onMessage((message) => {
+      try {
+        if (JSON.parse(String(message)).type === 'auth') {
+          webSocket.send(JSON.stringify({ type: 'auth-success' }));
+        }
+      } catch {
+        // Ignore heartbeat/non-JSON messages in this focused auth test.
+      }
+    });
+  });
+  await page.route('**/api/**', async (route) => {
+    const request = route.request();
+    const requestUrl = new URL(request.url());
+    const authorization = requestHeaders(request).authorization;
+
+    if (requestUrl.pathname === '/api/auth/csrf') {
+      csrfBootstrapRequests += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ csrfToken: 'preview-oauth-csrf-token' }),
+      });
+      return;
+    }
+
+    if (requestUrl.pathname === '/api/auth/exchange-code') {
+      exchangeRequests += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ token: freshToken }),
+      });
+      return;
+    }
+
+    if (requestUrl.pathname === '/api/auth/me') {
+      if (exchangeRequests === 0) {
+        initialMeRequests += 1;
+        await route.fulfill({
+          status: 401,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'Authentication required' }),
+        });
+        return;
+      }
+
+      postExchangeMeRequests += 1;
+      if (authorization !== `Bearer ${freshToken}`) {
+        protectedAuthorizationFailures += 1;
+        await route.fulfill({
+          status: 401,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'Authentication required' }),
+        });
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ ...persona.auth, token: freshToken }),
+      });
+      return;
+    }
+
+    dashboardRequests += 1;
+    if (authorization !== `Bearer ${freshToken}`) {
+      protectedAuthorizationFailures += 1;
+      await route.fulfill({
+        status: 401,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'Authentication required' }),
+      });
+      return;
+    }
+
+    try {
+      const body = responseBodyFor(
+        { requestedPath: '/classpilot', persona },
+        request
+      );
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(body),
+      });
+    } catch {
+      await route.abort('blockedbyclient');
+    }
+  });
+  await page.route('https://fonts.googleapis.com/**', (route) =>
+    route.fulfill({ status: 200, contentType: 'text/css', body: '' })
+  );
+  await page.route('https://fonts.gstatic.com/**', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/octet-stream',
+      body: '',
+    })
+  );
+
+  try {
+    await page.goto('/login?code=preview-one-time-code', {
+      waitUntil: 'networkidle',
+      timeout: timeoutMilliseconds,
+    });
+    await page.waitForURL((url) => url.pathname === '/classpilot', {
+      timeout: timeoutMilliseconds,
+    });
+    await assertClassPilotDashboard(page);
+    await page.waitForTimeout(250);
+
+    if (exchangeRequests !== 1) {
+      fail(`OAuth code exchanged ${exchangeRequests} times`);
+    }
+    if (csrfBootstrapRequests !== 1) {
+      fail(`OAuth CSRF bootstrapped ${csrfBootstrapRequests} times`);
+    }
+    if (initialMeRequests !== 1 || postExchangeMeRequests !== 1) {
+      fail(
+        `OAuth auth bootstrap counts were ${initialMeRequests}/${postExchangeMeRequests}`
+      );
+    }
+    if (protectedAuthorizationFailures !== 0) {
+      fail(
+        `OAuth login exposed ${protectedAuthorizationFailures} requests before JWT publication`
+      );
+    }
+    if (dashboardRequests === 0) fail('OAuth login mounted no dashboard requests');
+    if (new URL(page.url()).searchParams.has('code')) {
+      fail('OAuth one-time code remained in browser URL');
+    }
+
+    process.stdout.write(
+      'preview_smoke_passed /login atomic OAuth JWT handoff\n'
     );
   } finally {
     await context.close();
@@ -520,6 +900,8 @@ async function main() {
     for (const testCase of cases) {
       await verifyCase(browser, testCase);
     }
+    await verifyPasswordLoginHandoff(browser);
+    await verifyOAuthCodeHandoff(browser);
   } finally {
     await browser?.close();
     await stopPreview(child);

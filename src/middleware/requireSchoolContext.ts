@@ -1,5 +1,5 @@
 import type { RequestHandler, Response } from "express";
-import { eq, and } from "drizzle-orm";
+import { eq, and, isNull } from "drizzle-orm";
 import { schoolMemberships, schools } from "../schema/core.js";
 import db from "../db.js";
 import { bindTenantContext } from "./tenantContext.js";
@@ -24,6 +24,7 @@ function loadActiveMembershipContext(
     const conditions = [
       eq(schoolMemberships.userId, userId),
       eq(schoolMemberships.status, "active"),
+      isNull(schools.deletedAt),
     ];
     if (schoolId) conditions.push(eq(schoolMemberships.schoolId, schoolId));
     const [context] = await db

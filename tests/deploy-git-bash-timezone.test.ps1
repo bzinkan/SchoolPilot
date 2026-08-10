@@ -39,7 +39,7 @@ $output = @($probe | & $bash -s 2>&1)
 $exitCode = $LASTEXITCODE
 $text = ($output | ForEach-Object { [string]$_ }) -join "`n"
 if ($exitCode -ne 0) {
-    throw "The Git Bash Eastern-clock probe failed closed (exit=$exitCode)."
+    throw "The Git Bash Eastern-clock probe failed closed (exit=$exitCode): $text"
 }
 if ($text -notmatch '(?m)^tzif=/(?:usr|mingw64)/share/zoneinfo/America/New_York$' -or
     $text -notmatch '(?m)^winter=4 0700 -0500 EST$' -or

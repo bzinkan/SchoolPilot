@@ -13,17 +13,28 @@
 > listing at smoke-test time; do not package or upload the extension from this
 > repository.
 
-### Medium engineering acceptance
+### Medium engineering acceptance — terminal and paused
 
-The current decision path is one fresh two-stage, no-deploy
-engineering-capacity run against the unchanged serving application release
+The last authorized campaign, `medium-live-b2918-20260729-r3`, ended before
+traffic with the terminal outcome **not accepted — evidence unavailable**. The
+fixture refresh completed after the immutable Waf/500 traffic window closed, so
+no harness, AWS monitor, capacity pin, or load traffic started and Medium
+capacity was not measured. The immutable campaign evidence remains preserved.
+
+The 2026-08-10 production authentication repair supersedes the unchanged
+serving-release contract for
 `b2918be83d4d5d6be89c06bfa4486894ecc8747b` (API `emergency:31`, worker
-`:48`). The tooling controller and serving application identities are bound
-separately. This run is intentionally distinct from the retired
-supervisor-sealed certification apparatus.
+`:48`). That release and every prior campaign ID are historical evidence only;
+they cannot admit a future capacity result. Engineering capacity acceptance is
+paused. A future run requires a separately reviewed authorization that binds
+the exact post-repair merged SHA, image digest, API/worker revisions, fresh
+immutable campaign IDs and roots, and new traffic windows. Until then, the cost
+experiments and real-student onboarding hold remain unchanged.
+The committed capacity-acceptance authorization remains `paused`, so capacity
+deployment flags and runner `Mode Run` fail before provider or traffic work.
 
-The accepted label is **SchoolPilot 800-device engineering capacity acceptance
-on `db.t4g.medium`**. It requires:
+The retired campaign's acceptance label would have been **SchoolPilot
+800-device engineering capacity acceptance on `db.t4g.medium`**. It required:
 
 - Waf/500: 500 primary devices plus ten canaries for exactly 30 minutes, with
   25 command targets per class.
@@ -43,13 +54,13 @@ cryptographic sealing are not part of this decision. The raw harness summary,
 AWS monitor result, PostgreSQL-log result, and restoration observation decide
 the outcome; failure to format the convenience report cannot change it.
 
-A pass establishes simulated 800-device capacity only. It is not the prior
-form of certification, does not authorize real-student onboarding, and does
-not satisfy the separate managed-Chromebook and real-device acceptance gates.
+A future pass would establish simulated 800-device capacity only. It is not the
+prior form of certification, does not authorize real-student onboarding, and
+does not satisfy the separate managed-Chromebook and real-device acceptance gates.
 A post-traffic failure is terminal for this campaign and must be reported
 without a workload rerun or another remediation release.
 
-#### One-time controller correction and campaign boundary
+#### Historical one-time controller correction and campaign boundary
 
 - Before campaign admission, the controller must prove that
   `fixture.continuityRoot` is a directional descendant of
@@ -62,10 +73,11 @@ without a workload rerun or another remediation release.
   service/task-definition and network state, scaling, target health, RDS,
   Redis, NAT, WAF, and Route53. Observation timestamps and replaceable worker
   execution identifiers are not restoration state.
-- Preserve failed campaign `medium-live-b2918-20260727-r1`, its lock, seeds,
-  reports, and hashes byte-for-byte as historical evidence. The fresh campaign
-  uses new immutable IDs, roots, bindings, and traffic windows; it does not
-  promote or rewrite the failed campaign.
+- Preserve every terminal `medium-live-b2918-*` campaign, including
+  `medium-live-b2918-20260727-r1` and `medium-live-b2918-20260729-r3`, with its
+  lock, seeds, reports, and hashes byte-for-byte as historical evidence. A
+  future separately authorized campaign must use new immutable IDs, roots,
+  bindings, and traffic windows; it must not promote or rewrite prior evidence.
 - This correction changes tooling only. It does not deploy the application or
   frontend, run Terraform or migrations, invoke deployment plan gates, change
   infrastructure, or execute a deferred cost stage.
@@ -119,8 +131,10 @@ by default) and are purged in 5,000-row batches.
 
 ## Engineering capacity workload contract
 
-The active entry point is the tooling-only capacity runner. Run its read-only
-validation before its single two-stage run:
+The historical entry point was the tooling-only capacity runner. Do not invoke
+it while acceptance is paused. A future authorization must first rebind and
+review its exact release identity before using its read-only validation and
+single two-stage run:
 
 ```powershell
 pwsh -NoProfile -File scripts/load/start-classpilot-capacity-acceptance.ps1 `
@@ -198,7 +212,8 @@ overrides cannot weaken those invariants. `LOAD_GATE_PROFILE=partial` is the
 explicit opt-out for an intentionally incomplete diagnostic baseline; it is
 not launch evidence.
 
-Run this sequence once against the frozen medium baseline:
+The retired campaign was authorized to run this sequence once against its
+frozen medium baseline. It is not authorization to run it again:
 
 1. 500 primary devices plus 10 canaries (510 sockets) for 30 minutes, standard
    40 KiB screenshots and 25 sent command targets across each of 20 classes.

@@ -6,20 +6,11 @@ import { dirname, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
-const AUDIT_SCHEMA_VERSION = "frontend-dependency-audit-v1";
-const DISPOSITION_SCHEMA_VERSION = "frontend-dependency-disposition-v1";
-const REACHABILITY_SCHEMA_VERSION = "frontend-router-reachability-v1";
-const ROUTER_ADVISORY_ID = "GHSA-qwww-vcr4-c8h2";
+const AUDIT_SCHEMA_VERSION = "frontend-dependency-audit-v2";
+const REACHABILITY_SCHEMA_VERSION = "frontend-router-reachability-v2";
 const ROUTER_PACKAGE = "react-router";
 const ROUTER_DOM_PACKAGE = "react-router-dom";
-const ROUTER_VERSION = "7.18.0";
-const DISPOSITION_EXPIRY = "2026-08-24T00:00:00Z";
-const ROUTER_ADVISORY_URL =
-  "https://github.com/advisories/GHSA-qwww-vcr4-c8h2";
-const ROUTER_ADVISORY_TITLE =
-  "React Router: RSC Mode CSRF Bypass Allows Action Execution Before 400 Response";
-const ROUTER_ADVISORY_RANGE = ">=7.12.0 <8.3.0";
-const ROUTER_AFFECTED_PACKAGES = [ROUTER_PACKAGE, ROUTER_DOM_PACKAGE].sort();
+const ROUTER_VERSION = "7.18.2";
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const COMMIT_PATTERN = /^[a-f0-9]{40}$/;
 const ADVISORY_ID_PATTERN = /(?:^|\/)(GHSA-[23456789cfghjmpqrvwx]{4}-[23456789cfghjmpqrvwx]{4}-[23456789cfghjmpqrvwx]{4})(?:$|[/?#])/i;
@@ -133,7 +124,7 @@ function normalizeAdvisory(via, packageName, fixAvailable) {
     severity: via.severity,
     title: via.title,
     url: via.url,
-    vulnerableRange: via.range,
+    vulnerableRanges: [via.range],
     advisoryPackages: [via.dependency],
     affectedPackages: [...new Set([via.dependency, packageName])].sort(),
     fixAvailability: [fixAvailable],
@@ -141,11 +132,14 @@ function normalizeAdvisory(via, packageName, fixAvailable) {
 }
 
 function mergeAdvisory(target, candidate) {
-  for (const key of ["severity", "title", "url", "vulnerableRange"]) {
+  for (const key of ["severity", "title", "url"]) {
     if (target[key] !== candidate[key]) {
       throw new Error("npm_audit_advisory_conflict");
     }
   }
+  target.vulnerableRanges = [
+    ...new Set([...target.vulnerableRanges, ...candidate.vulnerableRanges]),
+  ].sort();
   target.advisoryPackages = [
     ...new Set([...target.advisoryPackages, ...candidate.advisoryPackages]),
   ].sort();
@@ -165,7 +159,7 @@ function cloneAdvisory(advisory) {
     severity: advisory.severity,
     title: advisory.title,
     url: advisory.url,
-    vulnerableRange: advisory.vulnerableRange,
+    vulnerableRanges: [...advisory.vulnerableRanges],
     advisoryPackages: [...advisory.advisoryPackages],
     affectedPackages: [...advisory.affectedPackages],
     fixAvailability: advisory.fixAvailability.map((fix) => ({ ...fix })),
@@ -527,63 +521,11 @@ function validateAuditScopeSnapshots(production, full) {
   }
 }
 
-function validateDisposition(disposition, lockfileSha256, routerIdentity, nowUtc) {
-  requireExactKeys(
-    disposition,
-    [
-      "schemaVersion",
-      "advisoryId",
-      "expiresAtUtc",
-      "packageLockSha256",
-      "router",
-      "routerDom",
-      "reachabilityEvidenceVersion",
-    ],
-    "frontend_dependency_disposition_invalid"
-  );
-  requireExactKeys(
-    disposition.router,
-    ["packageName", "version"],
-    "frontend_dependency_disposition_invalid"
-  );
-  requireExactKeys(
-    disposition.routerDom,
-    ["packageName", "version"],
-    "frontend_dependency_disposition_invalid"
-  );
-  if (disposition.schemaVersion !== DISPOSITION_SCHEMA_VERSION ||
-      disposition.advisoryId !== ROUTER_ADVISORY_ID ||
-      disposition.expiresAtUtc !== DISPOSITION_EXPIRY ||
-      disposition.packageLockSha256 !== lockfileSha256 ||
-      disposition.reachabilityEvidenceVersion !== REACHABILITY_SCHEMA_VERSION ||
-      disposition.router.packageName !== ROUTER_PACKAGE ||
-      disposition.router.version !== ROUTER_VERSION ||
-      disposition.routerDom.packageName !== ROUTER_DOM_PACKAGE ||
-      disposition.routerDom.version !== ROUTER_VERSION ||
-      routerIdentity.router.version !== ROUTER_VERSION ||
-      routerIdentity.routerDom.version !== ROUTER_VERSION ||
-      Date.parse(nowUtc) >= Date.parse(disposition.expiresAtUtc)) {
-    throw new Error("frontend_dependency_disposition_invalid");
-  }
-  return disposition;
-}
-
-function isExactRouterDispositionAdvisory(advisory) {
-  return advisory.advisoryId === ROUTER_ADVISORY_ID &&
-    advisory.url === ROUTER_ADVISORY_URL &&
-    advisory.title === ROUTER_ADVISORY_TITLE &&
-    advisory.vulnerableRange === ROUTER_ADVISORY_RANGE &&
-    sameStringSet(advisory.advisoryPackages, [ROUTER_PACKAGE]) &&
-    sameStringSet(advisory.affectedPackages, ROUTER_AFFECTED_PACKAGES);
-}
-
 function validateOneReachabilityEvidence(
   evidence,
-  disposition,
   lockfileSha256,
   routerIdentity,
-  phase,
-  dispositionSha256
+  phase
 ) {
   requireExactKeys(
     evidence,
@@ -593,7 +535,6 @@ function validateOneReachabilityEvidence(
       "variant",
       "status",
       "passed",
-      "dispositionSha256",
       "packageLockSha256",
       "routerVersion",
       "routerDomVersion",
@@ -613,12 +554,11 @@ function validateOneReachabilityEvidence(
       !["standard", "gopilot", "passpilot"].includes(evidence.variant) ||
       evidence.status !== "passed" ||
       evidence.passed !== true ||
-      evidence.dispositionSha256 !== dispositionSha256 ||
       evidence.packageLockSha256 !== lockfileSha256 ||
-      evidence.routerVersion !== disposition.router.version ||
-      evidence.routerDomVersion !== disposition.routerDom.version ||
       evidence.routerVersion !== routerIdentity.router.version ||
       evidence.routerDomVersion !== routerIdentity.routerDom.version ||
+      evidence.routerVersion !== ROUTER_VERSION ||
+      evidence.routerDomVersion !== ROUTER_VERSION ||
       !SHA256_PATTERN.test(evidence.sourceTreeSha256 ?? "") ||
       !Number.isSafeInteger(evidence.sourceFileCount) ||
       evidence.sourceFileCount <= 0 ||
@@ -653,11 +593,9 @@ function validateOneReachabilityEvidence(
 
 function validateReachabilityEvidenceSet(
   evidenceSet,
-  disposition,
   lockfileSha256,
   routerIdentity,
-  phase,
-  dispositionSha256
+  phase
 ) {
   if (!Array.isArray(evidenceSet)) {
     throw new Error("frontend_router_reachability_evidence_invalid");
@@ -669,14 +607,12 @@ function validateReachabilityEvidenceSet(
     throw new Error("frontend_router_reachability_evidence_invalid");
   }
   const validated = evidenceSet.map((evidence) =>
-    validateOneReachabilityEvidence(
-      evidence,
-      disposition,
-      lockfileSha256,
-      routerIdentity,
-      phase,
-      dispositionSha256
-    )
+      validateOneReachabilityEvidence(
+        evidence,
+        lockfileSha256,
+        routerIdentity,
+        phase
+      )
   ).sort((left, right) => left.variant.localeCompare(right.variant));
   if (JSON.stringify(validated.map((item) => item.variant)) !==
       JSON.stringify(expectedVariants) ||
@@ -693,7 +629,7 @@ function normalizeAdvisoryForReport(advisory, dependencyScope, reviewStatus) {
     title: advisory.title,
     url: advisory.url,
     dependencyScope,
-    vulnerableRange: advisory.vulnerableRange,
+    vulnerableRanges: advisory.vulnerableRanges,
     advisoryPackages: advisory.advisoryPackages,
     affectedPackages: advisory.affectedPackages,
     fixAvailability: advisory.fixAvailability,
@@ -727,8 +663,6 @@ export function evaluateFrontendDependencyAudit({
   fullAudit,
   metadata,
   packageLockText,
-  disposition,
-  dispositionSha256,
   reachabilityEvidenceSet,
   phase = "final",
 }) {
@@ -751,22 +685,11 @@ export function evaluateFrontendDependencyAudit({
   );
   const fullScope = classifyAuditScopeAgainstLock(fullAudit, packageLock);
   validateAuditScopeSnapshots(productionScope, fullScope);
-  const validDisposition = validateDisposition(
-    disposition,
-    packageLockSha256,
-    routerIdentity,
-    normalizedMetadata.evaluatedAtUtc
-  );
-  if (!SHA256_PATTERN.test(dispositionSha256 ?? "")) {
-    throw new Error("frontend_dependency_disposition_invalid");
-  }
   const validReachabilityEvidence = validateReachabilityEvidenceSet(
     reachabilityEvidenceSet,
-    validDisposition,
     packageLockSha256,
     routerIdentity,
-    phase,
-    dispositionSha256
+    phase
   );
 
   const productionIds = new Set(productionAudit.advisories.map(
@@ -784,8 +707,12 @@ export function evaluateFrontendDependencyAudit({
     );
     const fullAdvisory = fullById.get(advisoryId);
     if (!fullAdvisory ||
-        ["severity", "title", "url", "vulnerableRange"].some(
+        ["severity", "title", "url"].some(
           (key) => productionAdvisory[key] !== fullAdvisory[key]
+        ) ||
+        !sameStringSet(
+          productionAdvisory.vulnerableRanges,
+          fullAdvisory.vulnerableRanges
         ) ||
         !sameStringSet(
           productionAdvisory.advisoryPackages,
@@ -807,23 +734,15 @@ export function evaluateFrontendDependencyAudit({
   }
 
   const blockingIds = new Set();
-  const acceptedDispositionIds = new Set();
   const productionAdvisories = productionAudit.advisories.map((advisory) => {
-    let reviewStatus = "nonblocking-severity";
-    if (BLOCKING_SEVERITIES.has(advisory.severity)) {
-      if (isExactRouterDispositionAdvisory(advisory)) {
-        reviewStatus = "accepted-disposition";
-        acceptedDispositionIds.add(advisory.advisoryId);
-      } else {
-        reviewStatus = "blocking-production";
-        blockingIds.add(advisory.advisoryId);
-      }
+    const reviewStatus = BLOCKING_SEVERITIES.has(advisory.severity)
+      ? "blocking-production"
+      : "nonblocking-severity";
+    if (reviewStatus === "blocking-production") {
+      blockingIds.add(advisory.advisoryId);
     }
     return normalizeAdvisoryForReport(advisory, "production", reviewStatus);
   });
-  if (acceptedDispositionIds.size > 1) {
-    throw new Error("frontend_dependency_disposition_ambiguous");
-  }
 
   const productionReview = new Map(
     productionAdvisories.map((advisory) => [
@@ -844,22 +763,10 @@ export function evaluateFrontendDependencyAudit({
         if (resolvedBlocking.length === 0) {
           throw new Error("frontend_dependency_audit_record_unresolved");
         }
-        const exactRouterRecord =
-          [ROUTER_PACKAGE, ROUTER_DOM_PACKAGE].includes(record.name) &&
-          sameStringSet(resolvedBlocking, [ROUTER_ADVISORY_ID]) &&
-          resolvedBlocking.every((advisoryId) =>
-            acceptedDispositionIds.has(advisoryId)
-          );
-        if (exactRouterRecord) {
-          reviewStatus = "accepted-disposition";
-        } else {
-          reviewStatus = "blocking-production";
-          blockingRecordNames.add(record.name);
-          for (const advisoryId of resolvedBlocking) {
-            if (!acceptedDispositionIds.has(advisoryId)) {
-              blockingIds.add(advisoryId);
-            }
-          }
+        reviewStatus = "blocking-production";
+        blockingRecordNames.add(record.name);
+        for (const advisoryId of resolvedBlocking) {
+          blockingIds.add(advisoryId);
         }
       }
       productionRecordReview.set(record.name, reviewStatus);
@@ -904,18 +811,11 @@ export function evaluateFrontendDependencyAudit({
       nodeVersion: normalizedMetadata.nodeVersion,
       npmVersion: normalizedMetadata.npmVersion,
     },
-    disposition: {
-      schemaVersion: validDisposition.schemaVersion,
-      sha256: dispositionSha256,
-      advisoryId: validDisposition.advisoryId,
-      expiresAtUtc: validDisposition.expiresAtUtc,
-      packageLockSha256: validDisposition.packageLockSha256,
-      router: validDisposition.router,
-      routerDom: validDisposition.routerDom,
-      reachabilityEvidenceVersion:
-        validDisposition.reachabilityEvidenceVersion,
-      reachabilityEvidence: validReachabilityEvidence,
-      status: acceptedDispositionIds.size === 1 ? "accepted" : "not-used",
+    routerReachability: {
+      schemaVersion: REACHABILITY_SCHEMA_VERSION,
+      router: routerIdentity.router,
+      routerDom: routerIdentity.routerDom,
+      evidence: validReachabilityEvidence,
     },
     production: reportAuditScope(
       productionAudit,
@@ -933,9 +833,6 @@ export function evaluateFrontendDependencyAudit({
         productionAdvisories.filter(
            (advisory) => BLOCKING_SEVERITIES.has(advisory.severity)
          ).length,
-      acceptedDispositionCount: acceptedDispositionIds.size,
-      acceptedDispositionAdvisoryIds:
-        [...acceptedDispositionIds].sort(),
       blockingAdvisoryCount: blockingIds.size,
       blockingAdvisoryIds: [...blockingIds].sort(),
       blockingVulnerabilityRecordCount: blockingRecordNames.size,
@@ -970,7 +867,7 @@ export function renderFrontendDependencyAuditMarkdown(report) {
     "",
     "## Production gate",
     "",
-    `Blocking advisories: **${report.review.blockingAdvisoryCount}**; blocking vulnerability records: **${report.review.blockingVulnerabilityRecordCount}**; accepted dispositions: **${report.review.acceptedDispositionCount}**.`,
+    `Blocking advisories: **${report.review.blockingAdvisoryCount}**; blocking vulnerability records: **${report.review.blockingVulnerabilityRecordCount}**.`,
     "",
     "| Advisory | Severity | Scope | Review | Fix availability |",
     "|---|---:|---|---|---|",
@@ -1090,7 +987,6 @@ function parseArguments(argv) {
   const options = {};
   const valueOptions = new Set([
     "project-root",
-    "disposition",
     "reachability-evidence",
     "json-output",
     "markdown-output",
@@ -1163,7 +1059,6 @@ export function runFrontendDependencyAuditCli(argv) {
   const projectRoot = resolve(options["project-root"] ?? process.cwd());
   const phase = options.phase ?? "final";
   const requiredPaths = [
-    "disposition",
     "json-output",
     "markdown-output",
   ];
@@ -1213,11 +1108,6 @@ export function runFrontendDependencyAuditCli(argv) {
     resolve(projectRoot, "package-lock.json"),
     "utf8"
   );
-  const dispositionText = readFileSync(resolve(options.disposition), "utf8");
-  const disposition = parseJsonDocument(
-    dispositionText,
-    "frontend_dependency_disposition_invalid"
-  );
   const reachabilityEvidenceSet = options["reachability-evidence"].map(
     (evidencePath) =>
       parseJsonDocument(
@@ -1230,8 +1120,6 @@ export function runFrontendDependencyAuditCli(argv) {
     fullAudit,
     metadata,
     packageLockText,
-    disposition,
-    dispositionSha256: sha256(Buffer.from(dispositionText, "utf8")),
     reachabilityEvidenceSet,
     phase,
   });

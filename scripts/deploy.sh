@@ -22,10 +22,10 @@
 #                                       # Consume one fresh rehearsal receipt and deploy only its exact candidates
 #   ./scripts/deploy.sh production --backend --activate-emergency \
 #     --capacity-acceptance-release
-#                                       # One guarded engineering-capacity release; strict pre/post SQL gates, no rehearsal receipt
+#                                       # Historical capacity flag; rejected while authorization is paused
 #   ./scripts/deploy.sh production --frontend \
 #     --capacity-acceptance-frontend-sha <40-hex-sha>
-#                                       # Matching frontend publication for the exact engineering-capacity release SHA
+#                                       # Historical capacity flag; rejected while authorization is paused
 #   ./scripts/deploy.sh production --backend --same-image-networking-stage PublicEcs \
 #     --expected-app-sha <40-hex-sha> --expected-image-digest sha256:<64-hex> \
 #     --expected-api-task-definition <full-arn> --expected-worker-task-definition <full-arn> \
@@ -37,6 +37,10 @@
 # ============================================================================
 
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+CAPACITY_ACCEPTANCE_AUTHORIZATION_PATH="$SCRIPT_DIR/load/capacity-acceptance-authorization.json"
 
 # --- Parse arguments ---
 ENV="production"
@@ -1158,7 +1162,7 @@ validate_classpilot_tile_auth_plan_gate_mode() {
           "$DEPLOY_FRONTEND" != false || "$ACTIVATE_EMERGENCY" != true ||
           -n "$SAME_IMAGE_NETWORKING_STAGE" || "$SKIP_WAIT" == true ||
           -n "$IMAGE_TAG" ]]; then
-      error "--capacity-acceptance-release is allowed only with production --backend --activate-emergency and requires strict plan gates while rejecting frontend, same-image, --skip-wait, and --tag modes."
+      error "The historical --capacity-acceptance-release shape requires production --backend --activate-emergency with strict plan gates and rejects frontend, same-image, --skip-wait, and --tag modes; authorization is enforced separately."
       return 1
     fi
     return 0
@@ -1216,6 +1220,43 @@ validate_classpilot_tile_auth_plan_gate_mode() {
     error "The ClassPilot tile authorization plan rehearsal receipt path must be absolute."
     return 1
   fi
+}
+
+read_capacity_acceptance_authorization_state() {
+  node -e '
+    const fs = require("node:fs");
+    const path = process.argv[1];
+    const document = JSON.parse(fs.readFileSync(path, "utf8"));
+    const keys = Object.keys(document).sort();
+    const expectedKeys = ["authorizedCampaign", "schemaVersion", "state"];
+    if (JSON.stringify(keys) !== JSON.stringify(expectedKeys) ||
+        document.schemaVersion !== "capacity-acceptance-authorization-v1" ||
+        typeof document.state !== "string" ||
+        document.authorizedCampaign !== null) {
+      process.exit(1);
+    }
+    process.stdout.write(document.state);
+  ' "$CAPACITY_ACCEPTANCE_AUTHORIZATION_PATH"
+}
+
+validate_capacity_acceptance_authorization_mode() {
+  if [[ "$CAPACITY_ACCEPTANCE_RELEASE" != true &&
+        -z "$CAPACITY_ACCEPTANCE_FRONTEND_SHA" ]]; then
+    return 0
+  fi
+
+  local authorization_state
+  if ! authorization_state=$(read_capacity_acceptance_authorization_state 2>/dev/null); then
+    error "Capacity-acceptance authorization is missing or invalid; production capacity deployment is blocked."
+    return 1
+  fi
+  if [[ "$authorization_state" == "paused" ]]; then
+    error "Capacity acceptance is paused; --capacity-acceptance-release and --capacity-acceptance-frontend-sha are historical-only until a separately reviewed authorization is merged."
+    return 1
+  fi
+
+  error "Capacity-acceptance authorization state '$authorization_state' is unsupported; production capacity deployment is blocked."
+  return 1
 }
 
 classpilot_tile_auth_plan_identity_binding() {
@@ -3761,7 +3802,7 @@ validate_capacity_acceptance_frontend_mode() {
         "$ENV" != "production" || "$DEPLOY_BACKEND" != false ||
         "$DEPLOY_FRONTEND" != true || "$CAPACITY_ACCEPTANCE_RELEASE" == true ||
         -n "$SAME_IMAGE_NETWORKING_STAGE" || -n "$IMAGE_TAG" || "$SKIP_WAIT" == true ]]; then
-    error "--capacity-acceptance-frontend-sha requires an exact lowercase 40-hex SHA and a production frontend-only deployment without --tag, --skip-wait, capacity-backend, or same-image flags."
+    error "The historical --capacity-acceptance-frontend-sha shape requires an exact lowercase 40-hex SHA and a production frontend-only deployment without --tag, --skip-wait, capacity-backend, or same-image flags; authorization is enforced separately."
     return 1
   fi
 }
@@ -3775,7 +3816,7 @@ validate_retired_certification_admission_mode() {
         "$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" == true ||
         -n "$CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION_REREAD" ||
         -n "$REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL" ]]; then
-    error "The legacy observation/rehearsal/reread certification admission path is retired for production. Use the frozen --capacity-acceptance-release path; historical evidence remains inspectable only."
+    error "The legacy observation/rehearsal/reread certification admission path is retired for production. Capacity acceptance is paused; historical evidence remains inspectable only."
     return 1
   fi
 }
@@ -4749,6 +4790,9 @@ info "Capacity release: $CAPACITY_ACCEPTANCE_RELEASE"
 info "Same image: ${SAME_IMAGE_NETWORKING_STAGE:-false}"
 echo ""
 
+if ! validate_capacity_acceptance_authorization_mode; then
+  exit 1
+fi
 if ! validate_emergency_activation_mode; then
   exit 1
 fi
@@ -4773,8 +4817,6 @@ fi
 success "AWS credentials OK"
 
 # Resolve project root (script lives in scripts/)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
 info "Working directory: $PROJECT_ROOT"
 

@@ -378,7 +378,7 @@ export async function createSchool(data: InsertSchool): Promise<School> {
     let slug = base;
     let attempt = 0;
     while (attempt < 10) {
-      const existing = await getSchoolBySlug(slug);
+      const existing = await getSchoolBySlugIncludingDeleted(slug);
       if (!existing) break;
       attempt++;
       slug = `${base}-${Math.random().toString(36).slice(2, 6)}`;
@@ -418,7 +418,8 @@ export async function getMembershipsWithSchool(userId: string) {
     .where(
       and(
         eq(schoolMemberships.userId, userId),
-        eq(schoolMemberships.status, "active")
+        eq(schoolMemberships.status, "active"),
+        isNull(schools.deletedAt)
       )
     );
 }
@@ -1047,18 +1048,20 @@ export async function getMembershipByUserAndSchool(
   userId: string,
   schoolId: string
 ): Promise<SchoolMembership | undefined> {
-  const [membership] = await db
-    .select()
+  const [result] = await db
+    .select({ membership: schoolMemberships })
     .from(schoolMemberships)
+    .innerJoin(schools, eq(schoolMemberships.schoolId, schools.id))
     .where(
       and(
         eq(schoolMemberships.userId, userId),
         eq(schoolMemberships.schoolId, schoolId),
-        eq(schoolMemberships.status, "active")
+        eq(schoolMemberships.status, "active"),
+        isNull(schools.deletedAt)
       )
     )
     .limit(1);
-  return membership;
+  return result?.membership;
 }
 
 export async function updateMembership(
@@ -2489,6 +2492,21 @@ export async function getFamilyGroupStudentsByCarNumber(
 // ============================================================================
 
 export async function getSchoolBySlug(
+  slug: string
+): Promise<School | undefined> {
+  const [school] = await db
+    .select()
+    .from(schools)
+    .where(and(eq(schools.slug, slug), isNull(schools.deletedAt)))
+    .limit(1);
+  return school;
+}
+
+/**
+ * Slug uniqueness includes soft-deleted rows so a deleted tenant cannot have
+ * its public identifier silently reused by a new school.
+ */
+export async function getSchoolBySlugIncludingDeleted(
   slug: string
 ): Promise<School | undefined> {
   const [school] = await db

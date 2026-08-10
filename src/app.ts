@@ -16,6 +16,10 @@ import { safeCompare } from "./util/safeCompare.js";
 import routes from "./routes/index.js";
 import monitoringRoutes from "./routes/monitoring.js";
 import { buildMonitoringHealthSnapshot } from "./services/monitoringDashboard.js";
+import {
+  SESSION_COOKIE_NAME,
+  sessionCookieOptions,
+} from "./config/sessionCookie.js";
 
 const PgStore = connectPgSimple(session);
 const isProduction = process.env.NODE_ENV === "production";
@@ -157,18 +161,12 @@ export function createApp() {
       // rolling expiry with at most one minute of skew.
       disableTouch: true,
     }),
-    name: "schoolpilot.sid",
+    name: SESSION_COOKIE_NAME,
     secret: sessionSecret,
     rolling: true,
     resave: false,
     saveUninitialized: false,
-    cookie: {
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-      httpOnly: true,
-      secure: isProduction,
-      sameSite: "lax", // "lax" required for cross-subdomain navigation
-      domain: process.env.COOKIE_DOMAIN || undefined, // .classpilot.net in production
-    },
+    cookie: sessionCookieOptions(),
   });
 
   // Session (connect-pg-simple stores sessions in the "session" table).

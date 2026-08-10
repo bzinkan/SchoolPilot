@@ -2,13 +2,12 @@ import { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useNative } from '../contexts/NativeContext';
-import api, { setApiToken } from '../shared/utils/api';
-import { saveToken } from '../native/storage';
+import api from '../shared/utils/api';
 import { queryClient } from '../lib/queryClient';
 import { Capacitor } from '@capacitor/core';
 
 export default function Login() {
-  const { login, register, refetchUser } = useAuth();
+  const { login, register, refetchUser, acceptToken } = useAuth();
   const { isNative, product } = useNative();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -35,12 +34,12 @@ export default function Login() {
       // Strip the code from URL immediately so it doesn't end up in browser history
       window.history.replaceState({}, '', '/login');
       api.post('/auth/exchange-code', { code })
-        .then(res => {
+        .then(async res => {
           const token = res.data?.token;
           if (token) {
-            setApiToken(token);
+            acceptToken(token);
             queryClient.clear();
-            refetchUser();
+            await refetchUser({ throwOnError: true });
           } else {
             setError('Sign-in code was invalid or expired. Please try again.');
           }
@@ -58,8 +57,10 @@ export default function Login() {
       setError('Google sign-in failed. Please try again.');
     } else if (oauthError === 'no_email') {
       setError('Could not retrieve email from Google. Please try again.');
+    } else if (oauthError === 'no_school') {
+      setError('Your account does not have access to an active school. Please contact your school administrator.');
     }
-  }, [searchParams, refetchUser]);
+  }, [searchParams, refetchUser, acceptToken]);
 
   // Native: listen for deep link callback from OAuth.
   // Deep link contains a one-time code (not the JWT) — exchange via API for the JWT.
@@ -80,8 +81,7 @@ export default function Login() {
             console.error('[Login] Code exchange returned no token');
             return;
           }
-          setApiToken(token);
-          await saveToken(token);
+          acceptToken(token);
           queryClient.clear();
           await refetchUser();
           if (redirect && redirect.startsWith('/')) {
@@ -93,7 +93,7 @@ export default function Login() {
       }).then(l => { listener = l; });
     });
     return () => { listener?.remove(); };
-  }, [refetchUser, navigate]);
+  }, [refetchUser, navigate, acceptToken]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();

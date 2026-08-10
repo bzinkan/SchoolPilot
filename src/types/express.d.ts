@@ -8,6 +8,7 @@ declare module "express-session" {
     role: string; // admin | teacher | office_staff | super_admin
     schoolId: string | null;
     schoolSessionVersion: number;
+    lastActivityAt?: number;
     csrfToken: string;
     googleOAuthState?: string;
     googleOAuthNonce?: string;

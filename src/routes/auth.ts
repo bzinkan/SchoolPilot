@@ -26,6 +26,8 @@ import { logAudit } from "../services/audit.js";
 import {
   exchangeGoogleAuthCode,
 } from "../util/googleOAuthTokenExchange.js";
+import { establishWebSession } from "../services/webSession.js";
+import { clearSessionCookie } from "../config/sessionCookie.js";
 
 function clientIp(req: any): string | undefined {
   // Trust proxy is set by the app — this gives us the client IP, not ALB
@@ -37,6 +39,8 @@ function headerString(value: string | string[] | undefined): string | undefined 
 }
 
 const router = Router();
+const NO_ACTIVE_SCHOOL_ERROR =
+  "Your account does not have access to an active school. Contact your school administrator.";
 
 // POST /api/auth/login
 // Returns both session cookie AND JWT for dual-auth compatibility
@@ -95,16 +99,27 @@ router.post("/login", authLimiter, async (req, res, next) => {
     // Get memberships
     const membershipsWithSchool = await getMembershipsWithSchool(user.id);
     const firstMembership = membershipsWithSchool[0];
+    if (!user.isSuperAdmin && !firstMembership) {
+      await logAudit({
+        userId: user.id,
+        userEmail: user.email,
+        action: "auth.rejected",
+        metadata: { reason: "no_active_school", method: "password" },
+      });
+      return res.status(403).json({ error: NO_ACTIVE_SCHOOL_ERROR });
+    }
 
-    // Set session (for PassPilot/ClassPilot web clients)
-    req.session.userId = user.id;
-    req.session.email = user.email;
-    req.session.role = user.isSuperAdmin
-      ? "super_admin"
-      : firstMembership?.membership.role || "teacher";
-    req.session.schoolId = firstMembership?.membership.schoolId || null;
-    req.session.schoolSessionVersion =
-      firstMembership?.school.schoolSessionVersion ?? 1;
+    // Start a fresh session so an expired/stale browser cookie cannot carry
+    // idle metadata into the newly authenticated login.
+    await establishWebSession(req, {
+      userId: user.id,
+      email: user.email,
+      role: user.isSuperAdmin
+        ? "super_admin"
+        : firstMembership?.membership.role || "teacher",
+      schoolId: firstMembership?.membership.schoolId || null,
+      schoolSessionVersion: firstMembership?.school.schoolSessionVersion,
+    });
 
     // Generate JWT (for GoPilot clients)
     const token = signUserToken({
@@ -205,11 +220,6 @@ router.post("/register", authLimiter, async (req, res, next) => {
         role: "parent",
       });
 
-      req.session.userId = user.id;
-      req.session.email = user.email;
-      req.session.role = "parent";
-      req.session.schoolId = school.id;
-      req.session.schoolSessionVersion = school.schoolSessionVersion;
     } else if (schoolName) {
       // Admin registration: create a new school
       school = await createSchool({
@@ -238,17 +248,15 @@ router.post("/register", authLimiter, async (req, res, next) => {
           <p><a href="https://school-pilot.net/super-admin">View in Super Admin Dashboard</a></p>`,
       }).catch(() => { /* non-blocking */ });
 
-      req.session.userId = user.id;
-      req.session.email = user.email;
-      req.session.role = "admin";
-      req.session.schoolId = school.id;
-      req.session.schoolSessionVersion = school.schoolSessionVersion;
-    } else {
-      req.session.userId = user.id;
-      req.session.email = user.email;
-      req.session.role = "teacher";
-      req.session.schoolId = null;
     }
+
+    await establishWebSession(req, {
+      userId: user.id,
+      email: user.email,
+      role: membership?.role || "teacher",
+      schoolId: membership?.schoolId || null,
+      schoolSessionVersion: school?.schoolSessionVersion,
+    });
 
     // Persist session to PostgreSQL before responding
     await new Promise<void>((resolve, reject) => {
@@ -285,6 +293,9 @@ router.get("/me", authenticate, async (req, res, next) => {
     const membershipsWithSchool = await getMembershipsWithSchool(
       req.authUser.id
     );
+    if (!req.authUser.isSuperAdmin && membershipsWithSchool.length === 0) {
+      return res.status(403).json({ error: NO_ACTIVE_SCHOOL_ERROR });
+    }
 
     const { password: _, ...safeUser } = req.authUser;
     const isImpersonating = Boolean(
@@ -339,6 +350,7 @@ router.get("/me", authenticate, async (req, res, next) => {
         impersonating: isImpersonating,
       },
       token,
+      activeSchoolId: schoolId || null,
       licenses,
       memberships: membershipsWithSchool.map((m) => ({
         id: m.membership.id,
@@ -512,6 +524,15 @@ router.get("/google/callback", async (req, res, next) => {
     // Get memberships for session
     const membershipsWithSchool = await getMembershipsWithSchool(user.id);
     const firstMembership = membershipsWithSchool[0];
+    if (!user.isSuperAdmin && !firstMembership) {
+      await logAudit({
+        userId: user.id,
+        userEmail: user.email,
+        action: "auth.rejected",
+        metadata: { reason: "no_active_school", method: "google" },
+      });
+      return res.redirect(`${frontendUrl}/login?error=no_school`);
+    }
     const emailDomain = getEmailDomain(profile.email);
     const hostedDomain = normalizeDomain(payload.hd);
     const expectedHostedDomain = membershipsWithSchool
@@ -532,15 +553,15 @@ router.get("/google/callback", async (req, res, next) => {
       return res.redirect(`${frontendUrl}/login?error=domain_mismatch`);
     }
 
-    // Set session
-    req.session.userId = user.id;
-    req.session.email = user.email;
-    req.session.role = user.isSuperAdmin
-      ? "super_admin"
-      : firstMembership?.membership.role || "teacher";
-    req.session.schoolId = firstMembership?.membership.schoolId || null;
-    req.session.schoolSessionVersion =
-      firstMembership?.school.schoolSessionVersion ?? 1;
+    await establishWebSession(req, {
+      userId: user.id,
+      email: user.email,
+      role: user.isSuperAdmin
+        ? "super_admin"
+        : firstMembership?.membership.role || "teacher",
+      schoolId: firstMembership?.membership.schoolId || null,
+      schoolSessionVersion: firstMembership?.school.schoolSessionVersion,
+    });
 
     // Generate JWT so the frontend can authenticate immediately
     // (Session cookies don't work behind CloudFront→ALB HTTP proxy)
@@ -594,7 +615,7 @@ router.post("/logout", (req, res) => {
   const schoolId = req.session?.schoolId;
   const role = req.session?.role;
   req.session.destroy(() => {
-    res.clearCookie("schoolpilot.sid");
+    clearSessionCookie(res);
     if (userId) {
       logAudit({
         schoolId: schoolId ?? null,

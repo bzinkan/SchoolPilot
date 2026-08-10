@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import {
   mkdir,
   mkdtemp,
@@ -13,8 +12,6 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import {
   REQUIRED_ROUTER_VERSION,
-  ROUTER_ADVISORY_ID,
-  ROUTER_DISPOSITION_SCHEMA_VERSION,
   ROUTER_REACHABILITY_EVIDENCE_VERSION,
   evaluateRouterReachability,
   runRouterReachabilityCli,
@@ -22,7 +19,6 @@ import {
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = path.resolve(SCRIPT_DIR, '..');
-const FIXED_NOW = new Date('2026-07-24T12:00:00.000Z');
 const ALLOWED_SOURCE = `
 import {
   BrowserRouter,
@@ -46,10 +42,6 @@ export const surface = [
 ];
 `;
 
-function sha256(value) {
-  return createHash('sha256').update(value).digest('hex');
-}
-
 async function writeJson(filePath, value) {
   await mkdir(path.dirname(filePath), { recursive: true });
   await writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
@@ -60,13 +52,10 @@ async function createFixture({
   packageRouterDomVersion = REQUIRED_ROUTER_VERSION,
   lockRouterDomVersion = REQUIRED_ROUTER_VERSION,
   lockRouterVersion = REQUIRED_ROUTER_VERSION,
-  dispositionLockHash = null,
-  expiresAtUtc = '2026-08-24T00:00:00Z',
 } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'router-reachability-'));
   const packageJsonPath = path.join(root, 'package.json');
   const packageLockPath = path.join(root, 'package-lock.json');
-  const dispositionPath = path.join(root, 'disposition.json');
   const sourceRoot = path.join(root, 'src');
   const distRoot = path.join(root, 'dist');
   const outputPath = path.join(root, 'evidence.json');
@@ -99,22 +88,6 @@ async function createFixture({
   };
   await writeJson(packageJsonPath, packageJson);
   await writeJson(packageLockPath, packageLock);
-  const lockBytes = await readFile(packageLockPath);
-  await writeJson(dispositionPath, {
-    schemaVersion: ROUTER_DISPOSITION_SCHEMA_VERSION,
-    advisoryId: ROUTER_ADVISORY_ID,
-    expiresAtUtc,
-    packageLockSha256: dispositionLockHash ?? sha256(lockBytes),
-    router: {
-      packageName: 'react-router',
-      version: REQUIRED_ROUTER_VERSION,
-    },
-    routerDom: {
-      packageName: 'react-router-dom',
-      version: REQUIRED_ROUTER_VERSION,
-    },
-    reachabilityEvidenceVersion: ROUTER_REACHABILITY_EVIDENCE_VERSION,
-  });
   await mkdir(sourceRoot, { recursive: true });
   await writeFile(path.join(sourceRoot, 'App.jsx'), source, 'utf8');
 
@@ -122,7 +95,6 @@ async function createFixture({
     root,
     packageJsonPath,
     packageLockPath,
-    dispositionPath,
     sourceRoot,
     distRoot,
     outputPath,
@@ -133,55 +105,30 @@ async function evaluate(fixture, overrides = {}) {
   return evaluateRouterReachability({
     packageJsonPath: fixture.packageJsonPath,
     packageLockPath: fixture.packageLockPath,
-    dispositionPath: fixture.dispositionPath,
     sourceRoot: fixture.sourceRoot,
     mode: 'source-only',
     variant: 'standard',
-    now: FIXED_NOW,
     ...overrides,
   });
 }
 
-test('accepts the current declarative source tree with exact Router identity', async (t) => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'router-current-tree-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
+test('accepts the current declarative source tree with exact Router identity', async () => {
   const packageJsonPath = path.join(APP_ROOT, 'package.json');
   const packageLockPath = path.join(APP_ROOT, 'package-lock.json');
-  const lockBytes = await readFile(packageLockPath);
-  const dispositionPath = path.join(root, 'disposition.json');
-  await writeJson(dispositionPath, {
-    schemaVersion: ROUTER_DISPOSITION_SCHEMA_VERSION,
-    advisoryId: ROUTER_ADVISORY_ID,
-    expiresAtUtc: '2026-08-24T00:00:00Z',
-    packageLockSha256: sha256(lockBytes),
-    router: {
-      packageName: 'react-router',
-      version: REQUIRED_ROUTER_VERSION,
-    },
-    routerDom: {
-      packageName: 'react-router-dom',
-      version: REQUIRED_ROUTER_VERSION,
-    },
-    reachabilityEvidenceVersion: ROUTER_REACHABILITY_EVIDENCE_VERSION,
-  });
 
   const first = await evaluateRouterReachability({
     packageJsonPath,
     packageLockPath,
-    dispositionPath,
     sourceRoot: path.join(APP_ROOT, 'src'),
     mode: 'source-only',
     variant: 'standard',
-    now: FIXED_NOW,
   });
   const second = await evaluateRouterReachability({
     packageJsonPath,
     packageLockPath,
-    dispositionPath,
     sourceRoot: path.join(APP_ROOT, 'src'),
     mode: 'source-only',
     variant: 'standard',
-    now: FIXED_NOW,
   });
 
   assert.equal(first.passed, true, JSON.stringify(first.violations));
@@ -490,6 +437,69 @@ test('binds project code into the source hash and excludes generated trees', asy
   );
 });
 
+test('excludes only generated Capacitor public assets while scanning adjacent Android files', async (t) => {
+  const fixture = await createFixture();
+  t.after(() => rm(fixture.root, { recursive: true, force: true }));
+  const baseline = await evaluate(fixture);
+
+  for (const application of ['gopilot', 'passpilot']) {
+    const publicAssets = path.join(
+      fixture.root,
+      `android-${application}`,
+      'app',
+      'src',
+      'main',
+      'assets',
+      'public'
+    );
+    await mkdir(publicAssets, { recursive: true });
+    await writeFile(
+      path.join(publicAssets, 'ignored-server.mjs'),
+      "import { renderToString } from 'react-dom/server';\n",
+      'utf8'
+    );
+  }
+
+  const generatedAssetsAdded = await evaluate(fixture);
+  assert.equal(
+    generatedAssetsAdded.passed,
+    true,
+    JSON.stringify(generatedAssetsAdded.violations)
+  );
+  assert.equal(generatedAssetsAdded.sourceFileCount, baseline.sourceFileCount);
+  assert.equal(
+    generatedAssetsAdded.sourceTreeSha256,
+    baseline.sourceTreeSha256
+  );
+
+  const adjacentAssets = path.join(
+    fixture.root,
+    'android-gopilot',
+    'app',
+    'src',
+    'main',
+    'assets'
+  );
+  await writeFile(
+    path.join(adjacentAssets, 'checked-server.mjs'),
+    "import { renderToString } from 'react-dom/server';\n",
+    'utf8'
+  );
+
+  const adjacentFileAdded = await evaluate(fixture);
+  assert.equal(adjacentFileAdded.passed, false);
+  assert.ok(
+    adjacentFileAdded.violations.some(
+      (entry) =>
+        entry.file ===
+          'android-gopilot/app/src/main/assets/checked-server.mjs' &&
+        entry.code === 'source.forbidden-react-dom-module' &&
+        entry.rule === 'ssr-react-dom-module'
+    ),
+    JSON.stringify(adjacentFileAdded.violations)
+  );
+});
+
 test('scans and hash-binds generated-looking directories nested under shipped source', async (t) => {
   const fixture = await createFixture();
   t.after(() => rm(fixture.root, { recursive: true, force: true }));
@@ -646,12 +656,10 @@ test('post-build mode fails closed when dist or required entries are missing', a
   );
 });
 
-test('fails closed on package, lock, disposition, and expiration drift', async (t) => {
+test('fails closed on package and lock Router version drift', async (t) => {
   const fixture = await createFixture({
-    packageRouterDomVersion: '^7.18.0',
+    packageRouterDomVersion: '^7.18.2',
     lockRouterVersion: '7.17.0',
-    dispositionLockHash: '0'.repeat(64),
-    expiresAtUtc: '2026-07-24T12:00:00Z',
   });
   t.after(() => rm(fixture.root, { recursive: true, force: true }));
 
@@ -661,8 +669,6 @@ test('fails closed on package, lock, disposition, and expiration drift', async (
   assert.ok(codes.has('identity.package-router-dom-version'));
   assert.ok(codes.has('identity.lock-router-edge-version'));
   assert.ok(codes.has('identity.lock-router-version'));
-  assert.ok(codes.has('identity.disposition-lock-hash'));
-  assert.ok(codes.has('identity.disposition-expired'));
 });
 
 test('failure evidence and CLI output redact source content and absolute roots', async (t) => {
@@ -687,8 +693,6 @@ const forbidden = createCallServer;
       fixture.packageJsonPath,
       '--package-lock',
       fixture.packageLockPath,
-      '--disposition',
-      fixture.dispositionPath,
       '--source-root',
       fixture.sourceRoot,
       '--mode',
@@ -697,8 +701,7 @@ const forbidden = createCallServer;
       'standard',
       '--output',
       fixture.outputPath,
-    ],
-    { now: FIXED_NOW }
+    ]
   );
   assert.equal(exitCode, 1);
   const persisted = await readFile(fixture.outputPath, 'utf8');

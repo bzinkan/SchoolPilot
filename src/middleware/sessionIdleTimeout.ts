@@ -1,4 +1,5 @@
 import type { RequestHandler } from "express";
+import { clearSessionCookie } from "../config/sessionCookie.js";
 
 /**
  * Enforce a tighter idle timeout for privileged roles.
@@ -17,13 +18,41 @@ const ADMIN_IDLE_TIMEOUT_MS = 60 * 60 * 1000; // 1 hour for admin/super_admin
 const ACTIVITY_PERSIST_INTERVAL_MS = 60 * 1000;
 const ELEVATED_ROLES = new Set(["admin", "school_admin", "super_admin"]);
 
+const SESSION_BOOTSTRAP_ROUTES = new Set([
+  "GET /auth/google",
+  "GET /auth/google/callback",
+  "POST /auth/exchange-code",
+  "POST /auth/login",
+  "POST /auth/logout",
+  "POST /auth/register",
+  "POST /auth/register/parent",
+  // Legacy ClassPilot/PassPilot aliases are rewritten after this middleware.
+  "POST /login",
+  "POST /logout",
+]);
+
+export function bypassesSessionIdleTimeout(
+  method: string | undefined,
+  path: string | undefined
+): boolean {
+  return SESSION_BOOTSTRAP_ROUTES.has(
+    `${String(method || "GET").toUpperCase()} ${path || ""}`
+  );
+}
+
 export const sessionIdleTimeout: RequestHandler = (req, res, next) => {
+  // A stale authenticated cookie must never block the routes that replace or
+  // destroy it. Ordinary API routes remain subject to the idle timeout even
+  // when the web client also carries a JWT, preserving the one-hour admin
+  // browser-session control.
+  if (bypassesSessionIdleTimeout(req.method, req.path)) return next();
+
   const role = req.session?.role;
   // express-session creates an empty object even when no cookie exists. Do not
   // mutate it for bearer-only/public requests or save a new anonymous session.
   if (!req.session?.userId || !role) return next();
 
-  const lastActivityAt = (req.session as any).lastActivityAt as number | undefined;
+  const lastActivityAt = req.session.lastActivityAt;
   const now = Date.now();
 
   if (
@@ -36,7 +65,7 @@ export const sessionIdleTimeout: RequestHandler = (req, res, next) => {
       if (err) {
         console.warn("[SessionIdle] destroy failed:", err);
       }
-      res.clearCookie("schoolpilot.sid");
+      clearSessionCookie(res);
       return res.status(401).json({ error: "Session expired due to inactivity. Please log in again." });
     });
   }
@@ -44,7 +73,7 @@ export const sessionIdleTimeout: RequestHandler = (req, res, next) => {
   // One mutation per minute is enough to preserve the rolling seven-day DB
   // expiry and admin idle clock without writing PostgreSQL on every poll.
   if (!lastActivityAt || now - lastActivityAt >= ACTIVITY_PERSIST_INTERVAL_MS) {
-    (req.session as any).lastActivityAt = now;
+    req.session.lastActivityAt = now;
   }
   next();
 };

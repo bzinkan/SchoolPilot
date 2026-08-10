@@ -12,7 +12,8 @@ export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       staleTime: 0,
-      retry: 1,
+      retry: (failureCount, error) =>
+        error?.response?.status !== 401 && failureCount < 1,
       refetchOnWindowFocus: false,
       refetchOnReconnect: false,
       gcTime: 1000 * 60 * 5,

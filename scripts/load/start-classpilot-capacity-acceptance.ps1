@@ -14,6 +14,9 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $script:RepositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\.."))
+$script:CapacityAcceptanceAuthorizationPath = [IO.Path]::GetFullPath((
+    Join-Path $PSScriptRoot "capacity-acceptance-authorization.json"
+))
 $script:HarnessPath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "classpilot-load-test.mjs"))
 $script:MonitorPath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "aws-rollout-monitor.ps1"))
 $script:FixtureToolPath = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot "prepare-classpilot-load-test.mjs"))
@@ -487,6 +490,37 @@ function Read-JsonFile {
     param([string]$Path, [string]$Name)
     try { return Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -DateKind String -Depth 50 }
     catch { throw "$Name must contain valid date-preserving JSON." }
+}
+
+function Read-CapacityAcceptanceAuthorization {
+    if (-not (Test-Path -LiteralPath $script:CapacityAcceptanceAuthorizationPath -PathType Leaf)) {
+        throw "Capacity-acceptance authorization is missing or invalid; production capacity execution is blocked."
+    }
+    $authorization = Read-JsonFile $script:CapacityAcceptanceAuthorizationPath `
+        "capacity-acceptance authorization"
+    try {
+        Assert-ExactKeys $authorization @(
+            "schemaVersion", "state", "authorizedCampaign"
+        ) @() "capacity-acceptance authorization"
+    }
+    catch {
+        throw "Capacity-acceptance authorization is missing or invalid; production capacity execution is blocked."
+    }
+    if ((Get-Value $authorization "schemaVersion") -cne
+            "capacity-acceptance-authorization-v1" -or
+        (Get-Value $authorization "state") -isnot [string] -or
+        $null -ne (Get-Value $authorization "authorizedCampaign")) {
+        throw "Capacity-acceptance authorization is missing or invalid; production capacity execution is blocked."
+    }
+    return $authorization
+}
+
+function Assert-CapacityAcceptanceRunAuthorized {
+    $authorization = Read-CapacityAcceptanceAuthorization
+    if ([string](Get-Value $authorization "state") -ceq "paused") {
+        throw "Capacity acceptance is paused; Run is historical-only until a separately reviewed authorization is merged."
+    }
+    throw "Capacity-acceptance authorization state '$([string](Get-Value $authorization "state"))' is unsupported; production capacity execution is blocked."
 }
 
 function Read-CapacityConfiguration {
@@ -4767,6 +4801,9 @@ function Invoke-CapacityRunUnderMutex {
     }
 }
 
+if ($Mode -ceq "Run") {
+    Assert-CapacityAcceptanceRunAuthorized
+}
 Initialize-ToolPaths
 $configuration = Read-CapacityConfiguration
 if ($Mode -ceq "Validate") {

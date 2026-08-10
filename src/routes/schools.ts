@@ -28,7 +28,7 @@ import {
   getTeacherGrades,
   assignTeacherGrade,
   removeTeacherGrade,
-  getSchoolBySlug,
+  getSchoolBySlugIncludingDeleted,
 } from "../services/storage.js";
 
 const router = Router();
@@ -113,7 +113,7 @@ router.get("/:schoolId", requireSchoolContext, async (req, res, next) => {
       let slug = base;
       let attempt = 0;
       while (attempt < 10) {
-        const existing = await getSchoolBySlug(slug);
+        const existing = await getSchoolBySlugIncludingDeleted(slug);
         if (!existing) break;
         attempt++;
         slug = `${base}-${Math.random().toString(36).slice(2, 6)}`;
