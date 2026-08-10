@@ -825,13 +825,10 @@ function New-PrivateDirectory {
 function New-PrivateEmptyFile {
     param([string]$Path)
     if (Test-Path -LiteralPath $Path) { throw "A fresh preparation control file is required." }
-    $stream = [IO.FileStream]::new(
-        $Path, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None,
-        4096, [IO.FileOptions]::WriteThrough
-    )
-    try { $stream.Flush($true) }
-    finally { $stream.Dispose() }
-    Set-PrivateAcl $Path
+    # Normalize the owner and DACL on a private temporary file before the final
+    # name becomes visible. A create-then-ACL sequence can be interrupted and
+    # leave a permanently visible control file with inherited ownership.
+    Write-PrivateBytes $Path ([byte[]]::new(0)) -Immutable
 }
 
 function Publish-PrivateFileAtomicWithRetry {
@@ -933,6 +930,7 @@ function Write-PrivateBytes {
         finally { $stream.Dispose() }
         Set-PrivateAcl $temporary
         Publish-PrivateFileAtomicWithRetry $temporary $Path -Immutable:$Immutable
+        Assert-PrivateAcl $Path "private preparation bytes"
     }
     finally { if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force } }
 }
