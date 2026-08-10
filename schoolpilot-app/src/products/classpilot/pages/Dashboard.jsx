@@ -2127,9 +2127,9 @@ export default function Dashboard() {
             </div>
             {/* Center: Status badges */}
             <div className="flex items-center gap-3">
-              <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium ${wsConnected ? 'bg-green-500/15 border border-green-500/30 text-green-400' : 'bg-slate-600/30 border border-slate-500/30 text-slate-400'}`} data-testid="badge-connection-status">
-                <div className={`h-2 w-2 rounded-full ${wsConnected ? 'bg-green-400 animate-pulse' : 'bg-slate-500'}`} />
-                {wsConnected ? 'Connected' : 'Disconnected'}
+              <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium ${wsAuthenticated ? 'bg-green-500/15 border border-green-500/30 text-green-400' : 'bg-slate-600/30 border border-slate-500/30 text-slate-400'}`} data-testid="badge-connection-status">
+                <div className={`h-2 w-2 rounded-full ${wsAuthenticated ? 'bg-green-400 animate-pulse' : 'bg-slate-500'}`} />
+                {wsAuthenticated ? 'Connected' : wsConnected ? 'Authenticating...' : 'Disconnected'}
               </div>
               {isTeacher && activeSession && (
                 <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-amber-400/15 border border-amber-400/30 text-amber-400" data-testid="badge-active-session">

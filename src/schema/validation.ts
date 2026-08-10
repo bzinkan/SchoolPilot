@@ -27,10 +27,20 @@ export const registerSchema = z.object({
   lastName: z.string().min(1, "Last name is required"),
   phone: z.string().optional(),
   // GoPilot-style: create school on register
-  schoolName: z.string().optional(),
+  schoolName: z.string().trim().optional(),
   timezone: z.string().optional(),
   // Parent registration: join existing school by slug
-  schoolSlug: z.string().optional(),
+  schoolSlug: z.string().trim().optional(),
+}).superRefine((data, ctx) => {
+  const hasSchoolName = Boolean(data.schoolName?.trim());
+  const hasSchoolSlug = Boolean(data.schoolSlug?.trim());
+  if (hasSchoolName === hasSchoolSlug) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Provide exactly one school name or school code",
+      path: ["schoolSlug"],
+    });
+  }
 });
 export type RegisterData = z.infer<typeof registerSchema>;
 

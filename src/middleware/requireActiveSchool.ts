@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { schools } from "../schema/core.js";
 import db from "../db.js";
 import { createSingleFlight } from "../util/singleFlight.js";
+import { clearSessionCookie } from "../config/sessionCookie.js";
 
 const loadSchoolSingleFlight = createSingleFlight<
   string,
@@ -61,8 +62,14 @@ const resolveActiveSchool: RequestHandler = async (req, res, next) => {
       ? verifiedSchool
       : await loadSchoolById(schoolId);
 
-  if (!school || school.deletedAt) {
-    return res.status(401).json({ error: "School not found" });
+  if (!school) {
+    return res.status(404).json({ error: "School not found" });
+  }
+  if (school.deletedAt) {
+    // The caller is authenticated; a removed tenant is an authorization/lifecycle
+    // failure, not an authentication failure. Returning 401 here makes browser
+    // clients bounce between /login and the product route forever.
+    return res.status(403).json({ error: "School is no longer available" });
   }
 
   // Validate session version (session-based auth only)
@@ -72,8 +79,13 @@ const resolveActiveSchool: RequestHandler = async (req, res, next) => {
     school.schoolSessionVersion !== undefined &&
     req.session.schoolSessionVersion !== school.schoolSessionVersion
   ) {
-    req.session.destroy(() => {});
-    return res.status(401).json({ error: "Session invalidated" });
+    return req.session.destroy((error) => {
+      if (error) {
+        console.warn("[Session] invalidated session destroy failed:", error);
+      }
+      clearSessionCookie(res);
+      return res.status(401).json({ error: "Session invalidated" });
+    });
   }
 
   if (!isSchoolEntitled(school)) {

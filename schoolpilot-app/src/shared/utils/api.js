@@ -131,6 +131,7 @@ const api = axios.create({
 
 // In-memory token store (never persisted to localStorage)
 let _token = null;
+let _authRedirectPending = false;
 // CSRF token for cookie-authenticated state-changing requests.
 // Fetched lazily from /auth/csrf — JWT-bearer requests skip CSRF entirely.
 let _csrfToken = null;
@@ -138,6 +139,7 @@ let _csrfFetchPromise = null;
 
 export function setApiToken(token) {
   _token = token;
+  if (token) _authRedirectPending = false;
 }
 
 function getActiveSchoolId() {
@@ -233,8 +235,14 @@ api.interceptors.response.use(
   (error) => {
     const url = error.config?.url || '';
     const isAuthCheck = url.includes('/auth/me') || url.includes('/auth/login');
-    if (error.response?.status === 401 && !isAuthCheck && !window.location.pathname.startsWith('/login')) {
-      window.location.href = '/login';
+    if (
+      error.response?.status === 401 &&
+      !isAuthCheck &&
+      !_authRedirectPending &&
+      !window.location.pathname.startsWith('/login')
+    ) {
+      _authRedirectPending = true;
+      window.location.replace('/login');
     }
     return Promise.reject(error);
   }
