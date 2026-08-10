@@ -30,6 +30,24 @@ const rehearsalReceiptManagerSource = readFileSync(
 const libraryBoundary = deploySource.indexOf("# --- Preflight checks ---");
 assert.ok(libraryBoundary > 0);
 const deployLibrarySource = deploySource.slice(0, libraryBoundary);
+const postGatePreflightIndex = deploySource.indexOf(
+  'production_backend_capacity_preflight "after strict predeploy plan gate"'
+);
+assert.ok(postGatePreflightIndex > 0);
+const receiptAdmissionStart = deploySource.indexOf(
+  '  if [[ "$CAPACITY_ACCEPTANCE_RELEASE" == true ]]; then',
+  postGatePreflightIndex
+);
+const receiptAdmissionEnd = deploySource.indexOf(
+  "  # Acquire the hold only after the slow image and task-definition work",
+  receiptAdmissionStart
+);
+assert.ok(receiptAdmissionStart > postGatePreflightIndex);
+assert.ok(receiptAdmissionEnd > receiptAdmissionStart);
+const receiptAdmissionSource = deploySource.slice(
+  receiptAdmissionStart,
+  receiptAdmissionEnd
+);
 const validatorPath = new URL(
   "../scripts/validate-classpilot-tile-auth-plan-evidence.mjs",
   import.meta.url
@@ -1385,6 +1403,19 @@ validate_classpilot_tile_auth_plan_gate_mode
       deploySource,
       /register_classpilot_candidate_worker_task_definition[\s\S]*if \[\[ "\$RUN_CLASSPILOT_TILE_AUTH_PLAN_GATE" == true \|\|[\s\S]*"\$RUN_CLASSPILOT_TILE_AUTH_PLAN_OBSERVATION" == true \]\]; then\s+verify_classpilot_rehearsed_candidates/
     );
+
+    const ordinaryReceiptAdmission = runDeployHelper(`
+CAPACITY_ACCEPTANCE_RELEASE=false
+REUSE_CLASSPILOT_TILE_AUTH_PLAN_REHEARSAL=""
+receipt_call_path="$(mktemp)"
+rm -f "$receipt_call_path"
+assert_capacity_acceptance_network_unchanged() { printf 'capacity\n' > "$receipt_call_path"; return 1; }
+assert_classpilot_rehearsal_network_unchanged() { printf 'rehearsal\n' > "$receipt_call_path"; return 1; }
+inspect_or_consume_classpilot_rehearsal_receipt() { printf 'consume\n' > "$receipt_call_path"; return 1; }
+${receiptAdmissionSource}
+[[ ! -e "$receipt_call_path" ]]
+`);
+    assert.equal(ordinaryReceiptAdmission.status, 0, ordinaryReceiptAdmission.stderr);
   });
 
   it("renders candidates only from exact serving revisions when higher inactive revisions exist", () => {
